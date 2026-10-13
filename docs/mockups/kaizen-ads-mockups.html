@@ -1,0 +1,572 @@
+<title>Kaizen Ads Mockups</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: tabbed mockup board — client phone frames side by side, then team board and Jorgi's queue at full width. Tokens mirror Kaizen Track (dark-first). */
+:root{
+  --brand:#b21e2c; --brand-hover:#c42a38; --brand-text:#e0505c; --brand-soft:rgba(178,30,44,.16);
+  --bg:#060606; --surface:#101011; --surface-2:#18181a; --surface-3:#202023; --border:#26262a;
+  --fg:#f2f2f2; --muted:#9a9aa2; --faint:#6a6a72;
+  --ok:#3fb27f; --ok-soft:rgba(63,178,127,.15); --warn:#e0a63a; --warn-soft:rgba(224,166,58,.15); --bad:#e0505c; --bad-soft:rgba(224,80,92,.15);
+  --phone:#0b0b0c; --shadow:0 20px 60px rgba(0,0,0,.55);
+  --font:"Poppins",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --r:5px;
+  color-scheme:dark;
+}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){
+  --brand-text:#b21e2c; --brand-soft:rgba(178,30,44,.09);
+  --bg:#fafafa; --surface:#ffffff; --surface-2:#f2f2f2; --surface-3:#e9e9ec; --border:#e4e4e7;
+  --fg:#060606; --muted:#5a5a62; --faint:#8a8a92; --phone:#ffffff; --shadow:0 20px 50px rgba(20,20,30,.14);
+  --ok:#1f8a5b; --warn:#a86f0c; --bad:#b21e2c; color-scheme:light}}
+:root[data-theme="light"]{
+  --brand-text:#b21e2c; --brand-soft:rgba(178,30,44,.09);
+  --bg:#fafafa; --surface:#ffffff; --surface-2:#f2f2f2; --surface-3:#e9e9ec; --border:#e4e4e7;
+  --fg:#060606; --muted:#5a5a62; --faint:#8a8a92; --phone:#ffffff; --shadow:0 20px 50px rgba(20,20,30,.14);
+  --ok:#1f8a5b; --warn:#a86f0c; --bad:#b21e2c; color-scheme:light}
+*{box-sizing:border-box}
+html,body{background:var(--bg);color:var(--fg)}
+body{font-family:var(--font);font-size:14px;line-height:1.5;padding-inline:16px;padding-block:20px 48px}
+.wrap{max-width:1240px;margin:0 auto;display:grid;gap:20px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--brand-text);outline-offset:2px}
+.top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}
+.logo{display:flex;align-items:center;gap:10px}
+.mark{width:30px;height:30px;border-radius:var(--r);background:var(--brand);display:grid;place-items:center;color:#fff;font-weight:700;font-size:15px}
+.logo h1{font-size:18px;margin:0;font-weight:600;letter-spacing:.01em}
+.logo small{color:var(--muted);font-size:12px;display:block;margin-top:-2px}
+.tabs{display:flex;gap:4px;background:var(--surface);border:1px solid var(--border);padding:4px;border-radius:calc(var(--r) + 3px);flex-wrap:wrap}
+.tabs button{background:none;border:0;padding:8px 14px;border-radius:var(--r);color:var(--muted);font-weight:500;font-size:13px}
+.tabs button[aria-selected="true"]{background:var(--brand);color:#fff}
+.note{color:var(--muted);font-size:13px;max-width:78ch;margin:0}
+.note b{color:var(--fg);font-weight:600}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;padding:2px 8px;border-radius:99px;background:var(--surface-3);color:var(--muted);white-space:nowrap;letter-spacing:.01em}
+.pill.ok{background:var(--ok-soft);color:var(--ok)} .pill.warn{background:var(--warn-soft);color:var(--warn)} .pill.bad{background:var(--bad-soft);color:var(--bad)} .pill.brand{background:var(--brand-soft);color:var(--brand-text)}
+.btn{border:0;border-radius:var(--r);padding:9px 14px;font-weight:500;font-size:13px;background:var(--surface-3);color:var(--fg)}
+.btn.primary{background:var(--brand);color:#fff} .btn.primary:hover{background:var(--brand-hover)}
+.btn.ghost{background:none;border:1px solid var(--border)}
+.btn.sm{padding:5px 10px;font-size:12px}
+.eyebrow{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);font-weight:600}
+
+/* ---------- Client portal ---------- */
+.phones{display:flex;flex-wrap:wrap;gap:28px;justify-content:center;align-items:flex-start}
+.phone-col{display:grid;gap:10px;justify-items:center}
+.phone-col .cap{font-size:12px;color:var(--muted);text-align:center;max-width:340px}
+.phone{width:min(360px,100%);height:740px;background:var(--phone);border:1px solid var(--border);border-radius:34px;box-shadow:var(--shadow);overflow:hidden;position:relative;display:flex;flex-direction:column}
+.status{height:30px;flex:none;display:flex;justify-content:space-between;align-items:center;padding:0 22px;font-size:11px;color:var(--muted);font-weight:500}
+.p-head{flex:none;display:flex;align-items:center;justify-content:space-between;padding:6px 16px 10px;border-bottom:1px solid var(--border)}
+.brandsw{position:relative}
+.brandsw>button{background:none;border:0;display:flex;align-items:center;gap:8px;padding:4px 0;font-weight:600;font-size:15px}
+.avatar{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:700;color:#fff;flex:none}
+.av-crust{background:linear-gradient(135deg,#c2410c,#7c2d12)}
+.av-gumby{background:linear-gradient(135deg,#2563eb,#1e3a8a)}
+.caret{color:var(--muted);font-size:11px}
+.menu{position:absolute;top:38px;left:0;z-index:20;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;min-width:220px;padding:6px;box-shadow:var(--shadow)}
+.menu button{width:100%;display:flex;gap:10px;align-items:center;background:none;border:0;padding:8px;border-radius:var(--r);text-align:left;font-size:13px}
+.menu button:hover{background:var(--surface-3)}
+.menu .count{margin-left:auto}
+.p-body{flex:1;overflow-y:auto;padding:14px 16px 20px;display:grid;gap:14px;align-content:start}
+.hero-card{background:var(--brand);color:#fff;border-radius:12px;padding:16px;display:grid;gap:10px}
+.hero-card h3{margin:0;font-size:20px;font-weight:600;line-height:1.2}
+.hero-card p{margin:0;font-size:12.5px;opacity:.9}
+.hero-card .btn{background:#fff;color:#7f1420;font-weight:600;justify-self:start}
+.sec{display:grid;gap:8px}
+.sec-h{display:flex;justify-content:space-between;align-items:baseline}
+.sec-h h4{margin:0;font-size:13px;font-weight:600}
+.row{display:flex;gap:10px;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px}
+.row .t{min-width:0;flex:1}
+.row .t b{display:block;font-weight:500;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .t span{font-size:11.5px;color:var(--muted)}
+.thumb{width:44px;height:44px;border-radius:6px;flex:none;position:relative;overflow:hidden}
+.thumbs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.thumbs .run{aspect-ratio:4/5;border-radius:8px;position:relative;overflow:hidden;max-width:100%}
+.run .live{position:absolute;left:6px;top:6px;font-size:9.5px;background:rgba(0,0,0,.55);color:#fff;padding:1px 6px;border-radius:99px;display:flex;gap:4px;align-items:center}
+.dot{width:6px;height:6px;border-radius:50%;background:#3fb27f;display:inline-block}
+.allot{background:var(--surface);border:1px dashed var(--border);border-radius:8px;padding:12px;display:grid;gap:8px}
+.bar{height:6px;background:var(--surface-3);border-radius:99px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--brand)}
+
+/* creative art (CSS-drawn stand-ins for real uploads) */
+.art{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:flex-end;padding:10%;color:#fff;overflow:hidden}
+.art::before{content:"";position:absolute;inset:0;z-index:0}
+.art>*{position:relative;z-index:1}
+.art .k{font-weight:700;line-height:1.02;letter-spacing:-.01em;text-transform:uppercase}
+.art .s{font-size:.62em;opacity:.92;margin-top:.4em;font-weight:500}
+.art .chip{align-self:flex-start;background:#fff;color:#7c2d12;font-weight:700;border-radius:4px;padding:.25em .6em;font-size:.6em;margin-top:.6em}
+.a-calzone::before{background:radial-gradient(circle at 70% 28%,#f59e0b 0 16%,#b45309 17% 24%,transparent 25%),radial-gradient(circle at 30% 30%,rgba(255,255,255,.08),transparent 40%),linear-gradient(160deg,#9a3412,#431407)}
+.a-family::before{background:radial-gradient(circle at 26% 30%,#fbbf24 0 12%,#92400e 13% 18%,transparent 19%),radial-gradient(circle at 66% 36%,#f97316 0 13%,#7c2d12 14% 19%,transparent 20%),linear-gradient(170deg,#7c2d12,#1c0a03)}
+.a-craft::before{background:repeating-linear-gradient(115deg,rgba(255,255,255,.04) 0 6px,transparent 6px 16px),radial-gradient(circle at 60% 40%,#ea580c 0 20%,transparent 21%),linear-gradient(180deg,#292524,#0c0a09)}
+.a-winter::before{background:radial-gradient(circle at 50% 34%,#fde68a 0 15%,#b45309 16% 22%,transparent 23%),radial-gradient(circle at 20% 15%,rgba(255,255,255,.35) 0 1.5%,transparent 2%),radial-gradient(circle at 80% 20%,rgba(255,255,255,.35) 0 1.2%,transparent 1.6%),linear-gradient(180deg,#1e3a5f,#0b1526)}
+.a-run1::before{background:linear-gradient(160deg,#b45309,#451a03)}
+.a-run2::before{background:radial-gradient(circle at 50% 40%,#fbbf24 0 22%,transparent 23%),linear-gradient(160deg,#7f1d1d,#1c0a0a)}
+.a-run3::before{background:linear-gradient(200deg,#0f766e,#042f2e)}
+.a-donate::before{background:linear-gradient(160deg,#be123c,#4c0519)}
+
+/* swipe deck */
+.deck-top{flex:none;padding:8px 16px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.progress{flex:1;display:flex;gap:3px}
+.progress i{flex:1;height:3px;border-radius:99px;background:var(--surface-3)}
+.progress i.done{background:var(--brand)}
+.deck{flex:1;position:relative;margin:0 12px}
+.card{position:absolute;inset:0;background:var(--surface);border:1px solid var(--border);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;touch-action:pan-y;user-select:none;transition:transform .28s ease, opacity .28s ease}
+.card.dragging{transition:none}
+.card.back{transform:scale(.96) translateY(10px);opacity:.6}
+.card.back2{transform:scale(.92) translateY(20px);opacity:.3}
+.stamp{position:absolute;top:18px;z-index:5;font-weight:700;font-size:20px;padding:2px 10px;border:3px solid;border-radius:6px;opacity:0;letter-spacing:.04em;transform:rotate(-10deg);pointer-events:none}
+.stamp.yes{left:16px;color:var(--ok);border-color:var(--ok)}
+.stamp.no{right:16px;color:var(--warn);border-color:var(--warn);transform:rotate(10deg)}
+.batchbar{flex:none;display:flex;justify-content:space-between;align-items:center;padding:8px 12px;font-size:11.5px;color:var(--muted);border-bottom:1px solid var(--border);gap:8px}
+.batchbar b{color:var(--fg);font-weight:600}
+.fb{flex:none;display:flex;align-items:center;gap:8px;padding:9px 12px}
+.fb .nm{font-weight:600;font-size:12.5px;line-height:1.1}
+.fb .sp{font-size:10.5px;color:var(--muted)}
+.ptext{flex:none;padding:0 12px 8px;font-size:12px;line-height:1.45;position:relative}
+.ptext .ctl{display:flex;gap:6px;align-items:center;margin-top:6px}
+.ptext .ctl button{background:none;border:1px solid var(--border);border-radius:99px;font-size:10.5px;padding:1px 8px;color:var(--muted)}
+.ptext .ctl button[aria-pressed="true"]{border-color:var(--brand-text);color:var(--brand-text)}
+.media{position:relative;margin:0;background:#000;flex:1;min-height:0;display:grid;place-items:center;overflow:hidden}
+.media .frame{position:relative;height:100%;max-width:100%;overflow:hidden;font-size:22px}
+.media .frame.r11{aspect-ratio:1/1}.media .frame.r45{aspect-ratio:4/5}.media .frame.r916{aspect-ratio:9/16}
+.pin{position:absolute;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;background:var(--warn);color:#111;font-size:11px;font-weight:700;display:grid;place-items:center;border:2px solid #fff;z-index:4}
+.vid{position:absolute;left:0;right:0;bottom:0;z-index:3;padding:8px 10px;background:linear-gradient(transparent,rgba(0,0,0,.7));display:flex;align-items:center;gap:8px;color:#fff;font-size:11px}
+.vid .track{flex:1;height:4px;background:rgba(255,255,255,.3);border-radius:99px;position:relative;cursor:pointer}
+.vid .track i{position:absolute;left:0;top:0;bottom:0;background:#fff;border-radius:99px}
+.vid .track em{position:absolute;top:-4px;width:4px;height:12px;background:var(--warn);border-radius:2px}
+.headline{flex:none;display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 12px;background:var(--surface-2);font-size:12px}
+.headline .h{font-weight:600;min-width:0}
+.headline .u{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.headline .cta{background:var(--surface-3);border-radius:4px;padding:4px 9px;font-weight:600;font-size:11px;white-space:nowrap}
+.sizes{flex:none;display:flex;gap:6px;justify-content:center;padding:8px 12px 2px}
+.sizes button{background:none;border:1px solid var(--border);color:var(--muted);border-radius:99px;font-size:10.5px;padding:2px 9px}
+.sizes button[aria-pressed="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.approve-what{flex:none;display:flex;gap:6px;justify-content:center;padding:6px 12px 10px;font-size:11px;color:var(--muted);align-items:center;flex-wrap:wrap}
+.tog{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border);border-radius:99px;padding:2px 9px;background:none;font-size:11px;color:var(--muted)}
+.tog[aria-pressed="true"]{border-color:var(--ok);color:var(--ok);background:var(--ok-soft)}
+.actions{flex:none;display:flex;justify-content:center;gap:18px;padding:12px 0 16px}
+.round{width:54px;height:54px;border-radius:50%;border:1px solid var(--border);background:var(--surface);display:grid;place-items:center;font-size:20px;font-weight:600}
+.round.no{color:var(--warn)} .round.yes{color:#fff;background:var(--ok);border-color:var(--ok);width:62px;height:62px;font-size:24px}
+.round.skip{width:44px;height:44px;font-size:15px;align-self:center;color:var(--muted)}
+.hint{flex:none;text-align:center;font-size:10.5px;color:var(--faint);padding-bottom:6px}
+.sheet{position:absolute;left:0;right:0;bottom:0;z-index:30;background:var(--surface-2);border-top:1px solid var(--border);border-radius:18px 18px 0 0;padding:14px 16px 18px;display:grid;gap:10px;box-shadow:0 -10px 40px rgba(0,0,0,.4)}
+.sheet h5{margin:0;font-size:15px;font-weight:600}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.seg button{border:1px solid var(--border);background:none;border-radius:99px;padding:5px 12px;font-size:12px;color:var(--muted)}
+.seg button[aria-pressed="true"]{border-color:var(--brand-text);color:var(--fg);background:var(--brand-soft)}
+.sheet textarea{width:100%;min-height:70px;resize:none;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--fg);font:inherit;font-size:13px;padding:10px}
+.sheet .tip{font-size:11.5px;color:var(--muted);background:var(--surface);border-radius:8px;padding:8px 10px}
+.toast{position:absolute;left:12px;right:12px;bottom:14px;z-index:40;background:var(--fg);color:var(--bg);border-radius:10px;padding:10px 12px;display:flex;justify-content:space-between;align-items:center;font-size:12.5px;gap:10px}
+.toast button{background:none;border:0;color:var(--brand);font-weight:600}
+.done{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:20px}
+.done h3{margin:8px 0 4px;font-size:20px;font-weight:600}
+.done p{color:var(--muted);font-size:13px;margin:0 0 14px}
+.done ul{list-style:none;padding:0;margin:0 0 16px;display:grid;gap:6px;font-size:12.5px;text-align:left}
+.prev{flex:none;margin:0 12px 6px;font-size:11.5px;background:var(--warn-soft);color:var(--fg);border-radius:8px;padding:7px 10px}
+.prev b{color:var(--warn)}
+
+/* ---------- Team pipeline ---------- */
+.shell{background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;display:grid;grid-template-columns:200px 1fr;min-height:620px}
+.side{border-right:1px solid var(--border);padding:14px 10px;display:grid;align-content:start;gap:2px}
+.side .lg{display:flex;gap:8px;align-items:center;padding:4px 8px 14px;font-weight:600}
+.side a{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-radius:var(--r);color:var(--muted);text-decoration:none;font-size:13px}
+.side a.on{background:var(--brand-soft);color:var(--fg)}
+.side a .n{font-size:11px;background:var(--surface-3);border-radius:99px;padding:0 7px;color:var(--muted)}
+.side a.on .n{background:var(--brand);color:#fff}
+.side .sub{margin-top:14px;padding:0 10px 4px}
+.main{min-width:0;display:grid;grid-template-rows:auto auto 1fr}
+.mh{display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid var(--border)}
+.mh h2{margin:0;font-size:17px;font-weight:600}
+.filters{display:flex;gap:6px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--border)}
+.filters .f{border:1px solid var(--border);border-radius:99px;padding:4px 11px;font-size:12px;color:var(--muted);background:none}
+.filters .f.on{color:var(--fg);border-color:var(--brand-text)}
+.board{overflow-x:auto;padding:14px 16px;display:flex;gap:12px;align-items:flex-start}
+.col{flex:0 0 236px;background:var(--surface-2);border-radius:8px;padding:8px;display:grid;gap:8px}
+.col-h{display:flex;justify-content:space-between;align-items:center;padding:2px 4px;font-size:12px;font-weight:600}
+.col-h .who{font-weight:400;color:var(--faint);font-size:11px}
+.col-h .cnt{color:var(--muted);font-weight:500}
+.tcard{background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:9px 10px;display:grid;gap:6px;font-size:12px}
+.tcard.over{border-left:3px solid var(--bad)}
+.tcard .cl{font-size:10.5px;color:var(--muted);display:flex;justify-content:space-between;gap:6px}
+.tcard .ti{font-weight:500;line-height:1.35}
+.tcard .meta{display:flex;justify-content:space-between;align-items:center;gap:6px}
+.ini{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:9.5px;font-weight:600;background:var(--surface-3);color:var(--fg);flex:none}
+.tags{display:flex;gap:4px;flex-wrap:wrap}
+
+/* ---------- Jorgi queue ---------- */
+.q{display:grid;gap:16px;padding:16px}
+.qsec{display:grid;gap:8px}
+.qsec>header{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+.qsec h3{margin:0;font-size:14px;font-weight:600}
+.qsec h3 .pill{margin-left:6px}
+.qrow{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr) auto;gap:12px;align-items:center;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:10px 12px}
+.qrow .c b{font-weight:600;font-size:13px;display:block}
+.qrow .c span{font-size:11.5px;color:var(--muted)}
+.qrow .acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.clock{font-variant-numeric:tabular-nums;font-size:12px;display:grid;gap:4px}
+.clock .bar{height:5px}
+.clock .bar i.w{background:var(--warn)} .clock .bar i.b{background:var(--bad)} .clock .bar i.g{background:var(--ok)}
+.legend{font-size:11.5px;color:var(--muted)}
+@media (max-width:820px){
+  .shell{grid-template-columns:1fr}
+  .side{display:none}
+  .qrow{grid-template-columns:1fr}
+  .qrow .acts{justify-content:flex-start}
+}
+@media (prefers-reduced-motion: reduce){.card{transition:none}}
+</style>
+
+<div class="wrap">
+  <div class="top">
+    <div class="logo"><div class="mark">K</div><div><h1>Kaizen Ads</h1><small>Phase 0 mockups · ads.kaizenmarketing.agency</small></div></div>
+    <div class="tabs" role="tablist" aria-label="Mockup">
+      <button role="tab" id="t-client" aria-selected="true" data-tab="client">Client portal</button>
+      <button role="tab" id="t-board" aria-selected="false" data-tab="board">Team pipeline</button>
+      <button role="tab" id="t-queue" aria-selected="false" data-tab="queue">Jorgi's queue</button>
+    </div>
+  </div>
+
+  <!-- ================= CLIENT ================= -->
+  <section id="p-client" role="tabpanel" aria-labelledby="t-client" class="wrap" style="gap:16px">
+    <p class="note"><b>Try it:</b> drag the card right to approve, left to request changes, or use the buttons or your ← → ↑ keys. When requesting changes, tap the image to drop a pin, or tap the video bar to comment at a timestamp. The client name at the top-left is the brand switcher. Example content is Crust Pizza Co. (real copy from the September copy sheet); creatives are drawn placeholders.</p>
+    <div class="phones">
+      <div class="phone-col">
+        <div class="phone" aria-label="Client home screen">
+          <div class="status"><span>9:41</span><span>ads.kaizenmarketing.agency</span></div>
+          <div class="p-head">
+            <div class="brandsw">
+              <button id="brandBtn" aria-haspopup="true" aria-expanded="false"><span class="avatar av-crust">CP</span>Crust Pizza Co. <span class="caret">▼</span></button>
+              <div class="menu" id="brandMenu" hidden>
+                <div class="eyebrow" style="padding:4px 8px">Your brands</div>
+                <button><span class="avatar av-crust">CP</span>Crust Pizza Co.<span class="pill brand count">5</span></button>
+                <button><span class="avatar av-gumby">GP</span>Gumby's Pizza <span class="pill count">0</span></button>
+                <div class="eyebrow" style="padding:6px 8px 2px;text-transform:none;letter-spacing:0;font-weight:400">Example of a contact with 2 brands</div>
+              </div>
+            </div>
+            <span class="pill">Kaizen</span>
+          </div>
+          <div class="p-body">
+            <div class="hero-card">
+              <div class="eyebrow" style="color:rgba(255,255,255,.75)">Waiting on you</div>
+              <h3>5 new ads are ready for your review</h3>
+              <p>2 batches · about 2 minutes. Swipe right to approve, left to ask for changes.</p>
+              <button class="btn" id="startBtn">Start reviewing →</button>
+            </div>
+
+            <div class="sec">
+              <div class="sec-h"><h4>In revision</h4><span class="pill warn">1</span></div>
+              <div class="row"><div class="thumb"><div class="art a-donate"></div></div><div class="t"><b>Donation Program · in-store poster</b><span>You asked: make Crust &amp; St Jude logos larger · Kaizen is on it, due Wed</span></div></div>
+            </div>
+
+            <div class="sec">
+              <div class="sec-h"><h4>Running now</h4><span class="legend">synced 12 min ago</span></div>
+              <div class="thumbs">
+                <div class="run"><div class="art a-run1" style="font-size:9px"><div class="k">Pick 2<br>for $12</div></div><span class="live"><i class="dot"></i>Live</span></div>
+                <div class="run"><div class="art a-run2" style="font-size:9px"><div class="k">Pepperoni<br>Roll</div></div><span class="live"><i class="dot"></i>Live</span></div>
+                <div class="run"><div class="art a-run3" style="font-size:9px"><div class="k">Rewards</div></div><span class="live"><i class="dot"></i>Live</span></div>
+              </div>
+            </div>
+
+            <div class="sec">
+              <div class="sec-h"><h4>Approved · launching soon</h4><span class="pill ok">2</span></div>
+              <div class="row"><div class="thumb"><div class="art a-run2"></div></div><div class="t"><b>Spooky Monster · 2 designs</b><span>Approved Oct 10 · Eduarda is setting it up</span></div></div>
+            </div>
+
+            <div class="allot">
+              <div class="sec-h"><h4>October creative</h4><span class="pill">later phase</span></div>
+              <div style="font-size:12px;color:var(--muted)">Images · 15 of 20 used</div>
+              <div class="bar"><i style="width:75%"></i></div>
+              <div style="display:flex;gap:8px"><button class="btn sm ghost">New request</button><button class="btn sm ghost">Upgrade package</button></div>
+            </div>
+          </div>
+        </div>
+        <div class="cap">Home: what's waiting on you first, then what we're fixing, what's live, and what's launching.</div>
+      </div>
+
+      <div class="phone-col">
+        <div class="phone" id="deckPhone" aria-label="Swipe review deck">
+          <div class="status"><span>9:41</span><span>Crust Pizza Co. · Review</span></div>
+          <div class="deck-top"><div class="progress" id="prog"></div><span class="legend" id="cnt">1 / 5</span></div>
+          <div class="deck" id="deck"></div>
+          <div class="actions">
+            <button class="round no" id="bNo" aria-label="Request changes">✎</button>
+            <button class="round skip" id="bSkip" aria-label="Decide later">↑</button>
+            <button class="round yes" id="bYes" aria-label="Approve">✓</button>
+          </div>
+          <div class="hint">← changes · ↑ later · → approve</div>
+        </div>
+        <div class="cap">Each card is the ad as people will see it. Creative and copy are approved separately; copy approved before isn't asked again.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= BOARD ================= -->
+  <section id="p-board" role="tabpanel" aria-labelledby="t-board" hidden>
+    <div class="shell">
+      <nav class="side" aria-label="Team navigation">
+        <div class="lg"><div class="mark" style="width:24px;height:24px;font-size:12px">K</div>Kaizen Ads</div>
+        <a href="#board" class="on">Pipeline <span class="n">138</span></a>
+        <a href="#board">My work <span class="n">7</span></a>
+        <a href="#board">New request</a>
+        <a href="#board">Client queue <span class="n">42</span></a>
+        <a href="#board">Launch queue <span class="n">9</span></a>
+        <div class="eyebrow sub">Admin</div>
+        <a href="#board">Clients &amp; contacts</a>
+        <a href="#board">AI instructions</a>
+        <a href="#board">SLAs &amp; rules</a>
+      </nav>
+      <div class="main">
+        <div class="mh"><h2>Pipeline</h2><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost sm">Board</button><button class="btn ghost sm">List</button><button class="btn primary sm">+ New request</button></div></div>
+        <div class="filters">
+          <button class="f on">All clients</button><button class="f">Assignee</button><button class="f">Video</button><button class="f">Image</button><button class="f">Carousel</button><button class="f on">Overdue · 6</button><button class="f">Urgent</button><button class="f">BFCM</button>
+        </div>
+        <div class="board" id="board"></div>
+      </div>
+    </div>
+    <p class="note" style="margin-top:10px">Columns match today's Asana sections. Every card has one owner, a due date in business hours, and a real priority instead of "URGENT: URGENT:" in the title. The red edge means past its SLA. Task names and clients are from the Asana print of Oct 13.</p>
+  </section>
+
+  <!-- ================= QUEUE ================= -->
+  <section id="p-queue" role="tabpanel" aria-labelledby="t-queue" hidden>
+    <div class="shell">
+      <nav class="side" aria-label="Team navigation">
+        <div class="lg"><div class="mark" style="width:24px;height:24px;font-size:12px">K</div>Kaizen Ads</div>
+        <a href="#queue">Pipeline <span class="n">138</span></a>
+        <a href="#queue">My work <span class="n">12</span></a>
+        <a href="#queue" class="on">Client queue <span class="n">42</span></a>
+        <a href="#queue">Launch queue <span class="n">9</span></a>
+      </nav>
+      <div class="main" style="grid-template-rows:auto 1fr">
+        <div class="mh"><h2>Client queue</h2><span class="legend">Clocks count Mon–Fri, 8am–6pm ET</span></div>
+        <div class="q" id="queue"></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+(function(){
+  // ---------- tabs ----------
+  const tabs=[...document.querySelectorAll('[role=tab]')];
+  function show(name){
+    tabs.forEach(t=>t.setAttribute('aria-selected',t.dataset.tab===name));
+    ['client','board','queue'].forEach(n=>document.getElementById('p-'+n).hidden=n!==name);
+    try{localStorage.setItem('ka-tab',name)}catch(e){}
+  }
+  tabs.forEach(t=>t.addEventListener('click',()=>show(t.dataset.tab)));
+  let start=(location.hash||'').slice(1);
+  if(!['client','board','queue'].includes(start)){try{start=localStorage.getItem('ka-tab')||'client'}catch(e){start='client'}}
+  show(start);
+
+  // ---------- brand switcher ----------
+  const bb=document.getElementById('brandBtn'),bm=document.getElementById('brandMenu');
+  bb.addEventListener('click',e=>{e.stopPropagation();bm.hidden=!bm.hidden;bb.setAttribute('aria-expanded',!bm.hidden)});
+  document.addEventListener('click',()=>{bm.hidden=true;bb.setAttribute('aria-expanded','false')});
+
+  // ---------- swipe deck ----------
+  const COPY={
+    angle:'Weekly Deals',
+    primary:[
+      'Your week at Crust Pizza Co: $8 calzones Monday, free kids meals Tuesday, $5 pizza add ons daily.',
+      'Plan the week around pizza. $8 calzones Monday, free kids meals Tuesday, $5 add ons the rest of the week.',
+      'A new reason to order every day. Calzones Monday, free kids meals Tuesday, $5 pizza deals all week.'],
+    head:['Three Deals, One Pizza Place','Family Pizza Night for Less','Monday Calzones Start at $8']
+  };
+  const CRAFT={angle:'Quality / Craft',primary:['Hand-stretched dough, house sauce, real wood-fired char. Taste the difference a craft kitchen makes.'],head:['Made by Hand, Every Time']};
+  const ITEMS=[
+    {id:1,batch:'Weekly Deals · 3 designs',bi:1,bn:3,title:'$8 Calzone Mondays · Hero',art:'a-calzone',big:'$8<br>Calzone<br>Mondays',sub:'3 toppings, every Monday',chip:'ORDER NOW',sizes:['1x1','4x5','9x16'],copy:COPY,copyNeeds:true,cta:'Order now'},
+    {id:2,batch:'Weekly Deals · 3 designs',bi:2,bn:3,title:'Family table',art:'a-family',big:'Kids eat<br>free<br>Tuesdays',sub:'Free kids meal with every order',sizes:['1x1','4x5','9x16'],copy:COPY,copyNeeds:false,cta:'Order now',copyNote:'Same copy as card 1 · approve it once'},
+    {id:3,batch:'Weekly Deals · 3 designs',bi:3,bn:3,title:'Variation of Hero · button test',art:'a-calzone',big:'$8<br>Calzone<br>Mondays',sub:'3 toppings, every Monday',chip:'GET YOURS',sizes:['1x1','4x5'],copy:COPY,copyNeeds:false,cta:'Order now',variation:true},
+    {id:4,batch:'Quality / Craft · 1 video',bi:1,bn:1,title:'Skilled Craftsmanship · 0:30',art:'a-craft',big:'Made<br>by hand',sub:'Since day one',sizes:['9x16','4x5'],copy:CRAFT,copyNeeds:false,cta:'Learn more',video:30,copyPrev:true},
+    {id:5,batch:'Winter LTO · revised',bi:1,bn:1,title:'Winter LTO · The Garfield · v2',art:'a-winter',big:'Winter<br>LTO',sub:'The Garfield is back',sizes:['1x1','4x5'],copy:{angle:'Winter LTO',primary:['The Garfield is back for winter. One pizza, all the comfort. Limited time only.'],head:['The Garfield Is Back']},copyNeeds:false,cta:'Order now',copyPrev:true,
+      prev:'You asked (v1): "On The Garfield just do one pizza image not 3." · Fixed in v2'}
+  ];
+  const deckEl=document.getElementById('deck'),prog=document.getElementById('prog'),cnt=document.getElementById('cnt'),phone=document.getElementById('deckPhone');
+  let idx=0;const results=[];const state={};
+  ITEMS.forEach(it=>state[it.id]={size:it.sizes[it.sizes.length>1?1:0],p:0,h:0,c:true,k:true,pins:[],t:null});
+
+  function ratio(s){return s==='1x1'?'r11':s==='4x5'?'r45':'r916'}
+  function fmt(s){return '0:'+String(s).padStart(2,'0')}
+  function cardHTML(it,depth){
+    const st=state[it.id];
+    const pins=st.pins.map((p,i)=>`<span class="pin" style="left:${p.x}%;top:${p.y}%">${i+1}</span>`).join('');
+    const vid=it.video?`<div class="vid"><span>▶</span><div class="track" data-track><i style="width:${st.t!=null?st.t/it.video*100:22}%"></i>${st.t!=null?`<em style="left:${st.t/it.video*100}%"></em>`:''}</div><span>${st.t!=null?fmt(st.t):'0:07'} / ${fmt(it.video)}</span></div>`:'';
+    const copyCtl=it.copy.primary.length>1?`<div class="ctl"><span style="font-size:10px;color:var(--faint)">Copy</span>${it.copy.primary.map((_,i)=>`<button data-p="${i}" aria-pressed="${st.p===i}">${i+1}</button>`).join('')}<span style="font-size:10px;color:var(--faint);margin-left:auto">Angle: ${it.copy.angle}</span></div>`:`<div class="ctl"><span style="font-size:10px;color:var(--faint)">Angle: ${it.copy.angle}</span></div>`;
+    const approveWhat = it.copyNeeds
+      ? `<div class="approve-what">Approving: <button class="tog" data-tog="c" aria-pressed="${st.c}">✓ Creative</button><button class="tog" data-tog="k" aria-pressed="${st.k}">✓ Ad copy (3 versions)</button></div>`
+      : `<div class="approve-what">${it.copyPrev?'<span class="pill ok">Copy previously approved</span>':it.copyNote?`<span class="pill">${it.copyNote}</span>`:''}${it.variation?'<span class="pill brand">Variation · doesn\'t use a credit</span>':''}<span>Approving: creative</span></div>`;
+    return `<div class="card ${depth===1?'back':depth===2?'back2':''}" data-id="${it.id}" style="z-index:${10-depth}">
+      <span class="stamp yes">APPROVE</span><span class="stamp no">CHANGES</span>
+      <div class="batchbar"><span><b>${it.batch}</b> · ${it.bi} of ${it.bn}</span><span>${it.title}</span></div>
+      ${it.prev?`<div class="prev" style="margin-top:8px"><b>Revision</b> · ${it.prev}</div>`:''}
+      <div class="fb"><span class="avatar av-crust">CP</span><div><div class="nm">Crust Pizza Co.</div><div class="sp">Sponsored</div></div></div>
+      <div class="ptext">${it.copy.primary[st.p]}${copyCtl}</div>
+      <div class="media"><div class="frame ${ratio(st.size)}" data-media><div class="art ${it.art}"><div class="k">${it.big}</div><div class="s">${it.sub}</div>${it.chip?`<span class="chip">${it.chip}</span>`:''}</div>${pins}${vid}</div></div>
+      <div class="headline"><div class="h"><div class="u">crustpizzaco.com</div>${it.copy.head[st.h%it.copy.head.length]}</div><span class="cta">${it.cta}</span></div>
+      <div class="sizes">${it.sizes.map(s=>`<button data-size="${s}" aria-pressed="${st.size===s}">${s.replace('x',':')}</button>`).join('')}${it.copy.head.length>1?`<button data-h aria-pressed="false">Headline ${st.h%it.copy.head.length+1}/3</button>`:''}</div>
+      ${approveWhat}
+    </div>`;
+  }
+  function render(){
+    prog.innerHTML=ITEMS.map((_,i)=>`<i class="${i<idx?'done':''}"></i>`).join('');
+    cnt.textContent=idx<ITEMS.length?`${idx+1} / ${ITEMS.length}`:'Done';
+    if(idx>=ITEMS.length){
+      const a=results.filter(r=>r.d==='yes').length,c=results.filter(r=>r.d==='no').length,s=results.filter(r=>r.d==='skip').length;
+      deckEl.innerHTML=`<div class="done"><div><div class="mark" style="margin:0 auto;width:44px;height:44px;font-size:20px">✓</div><h3>You're all caught up</h3><p>Thanks. Your Kaizen team was notified.</p><ul>
+        <li><span class="pill ok">${a} approved</span> Eduarda will set these up</li>
+        <li><span class="pill warn">${c} with changes</span> routed to the right person</li>
+        ${s?`<li><span class="pill">${s} for later</span> still on your home screen</li>`:''}</ul>
+        <button class="btn primary" id="again">Run the demo again</button></div></div>`;
+      document.getElementById('again').onclick=()=>{idx=0;results.length=0;ITEMS.forEach(it=>{state[it.id].pins=[];state[it.id].t=null});render()};
+      return;
+    }
+    const vis=ITEMS.slice(idx,idx+3);
+    deckEl.innerHTML=vis.map((it,d)=>cardHTML(it,d)).reverse().join('');
+    wire(deckEl.querySelector(`.card[data-id="${ITEMS[idx].id}"]`),ITEMS[idx]);
+  }
+  function wire(card,it){
+    const st=state[it.id];
+    card.querySelectorAll('[data-size]').forEach(b=>b.onclick=e=>{e.stopPropagation();st.size=b.dataset.size;render()});
+    card.querySelectorAll('[data-p]').forEach(b=>b.onclick=e=>{e.stopPropagation();st.p=+b.dataset.p;render()});
+    const hb=card.querySelector('[data-h]');if(hb)hb.onclick=e=>{e.stopPropagation();st.h++;render()};
+    card.querySelectorAll('[data-tog]').forEach(b=>b.onclick=e=>{e.stopPropagation();st[b.dataset.tog]=!st[b.dataset.tog];render()});
+    // drag
+    let sx=null,dx=0;
+    const yes=card.querySelector('.stamp.yes'),no=card.querySelector('.stamp.no');
+    card.addEventListener('pointerdown',e=>{if(e.target.closest('button,[data-track]')||sheetOpen)return;sx=e.clientX;dx=0;card.classList.add('dragging');card.setPointerCapture(e.pointerId)});
+    card.addEventListener('pointermove',e=>{if(sx==null)return;dx=e.clientX-sx;card.style.transform=`translateX(${dx}px) rotate(${dx/22}deg)`;yes.style.opacity=Math.max(0,Math.min(1,dx/100));no.style.opacity=Math.max(0,Math.min(1,-dx/100))});
+    const end=()=>{if(sx==null)return;card.classList.remove('dragging');sx=null;
+      if(dx>110)decide('yes');else if(dx<-110)openSheet(it);else{card.style.transform='';yes.style.opacity=0;no.style.opacity=0}};
+    card.addEventListener('pointerup',end);card.addEventListener('pointercancel',end);
+  }
+  function fly(dir,cb){
+    const card=deckEl.querySelector(`.card[data-id="${ITEMS[idx].id}"]`);
+    if(!card){cb();return}
+    card.style.transform=dir==='yes'?'translateX(140%) rotate(18deg)':dir==='no'?'translateX(-140%) rotate(-18deg)':'translateY(-120%)';
+    card.style.opacity='0';setTimeout(cb,260);
+  }
+  let toastTimer=null;
+  function toast(msg){
+    phone.querySelector('.toast')?.remove();
+    const t=document.createElement('div');t.className='toast';t.innerHTML=`<span>${msg}</span><button>Undo</button>`;
+    t.querySelector('button').onclick=()=>{if(!results.length)return;results.pop();idx--;t.remove();render()};
+    phone.appendChild(t);clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.remove(),5000);
+  }
+  function decide(d,extra){
+    if(idx>=ITEMS.length)return;
+    const it=ITEMS[idx],st=state[it.id];
+    results.push({id:it.id,d,...extra});
+    fly(d,()=>{idx++;render();
+      if(d==='yes')toast(it.copyNeeds?`Approved: ${st.c?'creative':''}${st.c&&st.k?' + ':''}${st.k?'ad copy':''}`:'Approved. Posted to your team.');
+      else if(d==='no')toast('Sent to Kaizen. We\'ll let you know when v2 is ready.');
+      else toast('Saved for later');});
+  }
+  // change-request sheet
+  let sheetOpen=false;
+  function openSheet(it){
+    if(sheetOpen)return;sheetOpen=true;
+    const st=state[it.id];const card=deckEl.querySelector(`.card[data-id="${it.id}"]`);
+    if(card){card.style.transform='';card.querySelectorAll('.stamp').forEach(s=>s.style.opacity=0)}
+    const sh=document.createElement('div');sh.className='sheet';sh.setAttribute('role','dialog');sh.setAttribute('aria-label','Request changes');
+    let target='creative';
+    sh.innerHTML=`<h5>What should we change?</h5>
+      <div class="seg" id="tg"><button aria-pressed="true" data-v="creative">The creative</button><button aria-pressed="false" data-v="copy">The ad copy</button><button aria-pressed="false" data-v="both">Both</button></div>
+      <div class="tip" id="tip">${it.video?'Tap the video bar to comment at a moment. Text on the video counts as creative.':'Tap the image to drop a pin where the change goes. Text on the image counts as creative.'}</div>
+      <label for="chg" class="eyebrow">Your note</label>
+      <textarea id="chg" placeholder="${it.video?'e.g. At 0:12, show the dough stretch longer':'e.g. Make the $8 bigger, swap the photo for pepperoni'}"></textarea>
+      <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn ghost" id="cx">Cancel</button><button class="btn primary" id="sd">Send to Kaizen</button></div>`;
+    phone.appendChild(sh);
+    sh.querySelectorAll('#tg button').forEach(b=>b.onclick=()=>{target=b.dataset.v;sh.querySelectorAll('#tg button').forEach(x=>x.setAttribute('aria-pressed',x===b));
+      sh.querySelector('#tip').textContent=target==='copy'?'Tell us which line to change. We\'ll send you a new copy version.':(it.video?'Tap the video bar to comment at a moment. Text on the video counts as creative.':'Tap the image to drop a pin where the change goes. Text on the image counts as creative.')});
+    const media=card&&card.querySelector('[data-media]');
+    const onMedia=e=>{
+      const tr=e.target.closest('[data-track]');
+      if(tr&&it.video){const r=tr.getBoundingClientRect();st.t=Math.round(Math.max(0,Math.min(1,(e.clientX-r.left)/r.width))*it.video);refreshMedia();return}
+      if(it.video)return;
+      const r=media.getBoundingClientRect();st.pins.push({x:((e.clientX-r.left)/r.width*100).toFixed(1),y:((e.clientY-r.top)/r.height*100).toFixed(1)});refreshMedia();
+    };
+    function refreshMedia(){
+      const ta=sh.querySelector('#chg').value;render();sheetOpen=true;
+      const c2=deckEl.querySelector(`.card[data-id="${it.id}"]`);const m2=c2.querySelector('[data-media]');m2.addEventListener('click',onMedia2);
+      sh.querySelector('#chg').value=ta;
+      if(it.video&&st.t!=null)sh.querySelector('#tip').textContent=`Comment pinned at ${fmt(st.t)}. Type your note below.`;
+      else if(st.pins.length)sh.querySelector('#tip').textContent=`${st.pins.length} pin${st.pins.length>1?'s':''} dropped. Add a note for each number.`;
+    }
+    function onMedia2(e){onMedia(e)}
+    if(media)media.addEventListener('click',onMedia);
+    const close=()=>{sh.remove();sheetOpen=false};
+    sh.querySelector('#cx').onclick=()=>{close();st.pins=[];st.t=null;render()};
+    sh.querySelector('#sd').onclick=()=>{close();decide('no',{target})};
+    setTimeout(()=>sh.querySelector('#chg').focus(),50);
+  }
+  document.getElementById('bYes').onclick=()=>{if(!sheetOpen)decide('yes')};
+  document.getElementById('bNo').onclick=()=>{if(idx<ITEMS.length)openSheet(ITEMS[idx])};
+  document.getElementById('bSkip').onclick=()=>{if(!sheetOpen)decide('skip')};
+  document.getElementById('startBtn').onclick=()=>{phone.scrollIntoView({behavior:'smooth',block:'center'});phone.animate([{boxShadow:'0 0 0 0 rgba(178,30,44,.8)'},{boxShadow:'0 0 0 14px rgba(178,30,44,0)'}],{duration:900})};
+  document.addEventListener('keydown',e=>{
+    if(document.getElementById('p-client').hidden||sheetOpen||e.target.closest('textarea,input'))return;
+    if(e.key==='ArrowRight')decide('yes');else if(e.key==='ArrowLeft'&&idx<ITEMS.length)openSheet(ITEMS[idx]);else if(e.key==='ArrowUp'){e.preventDefault();decide('skip')}
+  });
+  render();
+
+  // ---------- board ----------
+  const P={u:'<span class="pill bad">Urgent</span>',h:'<span class="pill warn">High</span>'};
+  const SLA={over:d=>`<span class="pill bad">${d} over</span>`,today:'<span class="pill warn">Due today</span>',ok:d=>`<span class="pill ok">${d}</span>`};
+  const COLS=[
+    ['Requested','auto-assigned',29,[
+      ['Sierra Dreams','BFCM · Buy More, Save More',' Image ×5','NF','h',SLA.ok('Oct 15'),['BFCM']],
+      ['Nectr','Iteration · Energy Anywhere hook','Video','MD','',SLA.ok('Oct 16'),[]],
+      ['Best Tickets','Local Presence · UGC selfie','Video','DA','',SLA.today,['UGC']]]],
+    ['In production','designer / editor',24,[
+      ['Tejas Brewery','Seasonal tap list','Video','DA','u',SLA.over('1d'),[]],
+      ['Lice Treatment Center','Prevention reframe hooks','Video','MD','',SLA.ok('Oct 14'),[]],
+      ['Wild World Paintball','Weekend activities','Carousel','HG','',SLA.today,[]]]],
+    ['Internal review','Jesus',7,[
+      ['Fast Conversational Spanish','$7 trial · teachers image','Image','JA','u',SLA.today,[]],
+      ['Union Hill Day School','October stacked','Carousel','JA','',SLA.ok('Oct 14'),[]]]],
+    ['Copy','media buyer',12,[
+      ['Idalia Photography','Book Lovers · discover your confidence','Image','PA','',SLA.ok('Oct 14'),['AI draft ready']],
+      ['7th Dimension Aesthetics','Nat &amp; Full','Image','ET','u',SLA.over('3d'),[]]]],
+    ['Copy review','Camille',1,[
+      ['Fast Conversational Spanish','$7 trial · Unlimited Live Classes','Video','CA','',SLA.today,['AI draft']]]],
+    ['Ready for client','Jorgi',5,[
+      ['Nectr','Performance claim statics','Image ×3','JO','',SLA.ok('Oct 14'),[]],
+      ['Atlas Print Solutions','Website leads refresh','Video','JO','',SLA.ok('Oct 14'),[]]]],
+    ['Client review','client · Jorgi tracks',37,[
+      ['Leap Funding','Special Category · instant form','Video ×3','JO','u',SLA.over('2d'),['48h passed']],
+      ['Crust Pizza Co.','$8 Calzone Mondays','Image ×3','JO','',SLA.ok('17h left'),[]]]],
+    ['Client revision','routed automatically',3,[
+      ['Crust Pizza Co.','Donation Program · poster','Image','VC','u',SLA.today,['creative']],
+      ['Aldecoa Coffee','Aluminium capsules','Video','JA','u',SLA.over('5d'),['AI-flagged']]]],
+    ['Ready for launch','media buyer',9,[
+      ['Limelight Entertainment','Photo+Video+DJ · price point','Carousel','PA','u',SLA.ok('Oct 14'),['Launcher proposal ready']],
+      ['Extreme Velocity','Zombie Shoot 2026','Video','RA','u',SLA.today,[]]]],
+    ['Launched','',211,[
+      ['Darling Psychology','Profile visits · Oct','Carousel','ET','',`<span class="pill">Paused in Meta · QA</span>`,[]]]]
+  ];
+  document.getElementById('board').innerHTML=COLS.map(([n,who,c,cards])=>`<div class="col"><div class="col-h"><span>${n} <span class="who">${who}</span></span><span class="cnt">${c}</span></div>
+    ${cards.map(([cl,ti,fmt,ini,pr,sla,tg])=>`<div class="tcard ${sla.includes('bad')?'over':''}"><div class="cl"><span>${cl}</span><span>${fmt}</span></div><div class="ti">${ti}</div>
+      ${tg.length||pr?`<div class="tags">${pr?P[pr]:''}${tg.map(t=>`<span class="pill">${t}</span>`).join('')}</div>`:''}
+      <div class="meta">${sla}<span class="ini" title="Owner">${ini}</span></div></div>`).join('')}</div>`).join('');
+
+  // ---------- queue ----------
+  const clock=(used,label,cls)=>`<div class="clock"><span>${label}</span><div class="bar"><i class="${cls}" style="width:${Math.min(100,used)}%"></i></div></div>`;
+  document.getElementById('queue').innerHTML=`
+    <div class="qsec"><header><h3>Past 48 business hours <span class="pill bad">3</span></h3><span class="legend">Client hasn't responded. Nothing approves on its own unless the client opted in.</span></header>
+      <div class="qrow"><div class="c"><b>Leap Funding · 3 videos</b><span>Sent Fri 4:10pm · 2 reminders sent · no auto-approval</span></div>${clock(100,'51h 20m business','b')}<div class="acts"><button class="btn sm">Nudge again</button><button class="btn sm ghost">Record approval…</button></div></div>
+      <div class="qrow"><div class="c"><b>Darling Psychology · 1 video</b><span>Sent Thu 11:02am · client opted into auto-approval</span></div>${clock(100,'49h 05m business','b')}<div class="acts"><button class="btn sm primary">Auto-approve now</button><button class="btn sm">Nudge</button></div></div>
+      <div class="qrow"><div class="c"><b>Nectr · 2 images</b><span>Sent Thu 9:40am · client said "looks good" in Slack</span></div>${clock(100,'48h 30m business','b')}<div class="acts"><button class="btn sm ghost">Record approval…</button><button class="btn sm">Nudge</button></div></div>
+    </div>
+    <div class="qsec"><header><h3>Ready to send <span class="pill brand">5</span></h3><span class="legend">Creative + copy cleared internally. One press sends the whole batch with a magic link.</span></header>
+      <div class="qrow"><div class="c"><b>Nectr · 3 images</b><span>Performance claim statics · copy approved by Camille</span></div><span class="legend">Due today</span><div class="acts"><button class="btn sm primary">Send to client</button><button class="btn sm ghost">Preview</button></div></div>
+      <div class="qrow"><div class="c"><b>Atlas Print Solutions · 1 video</b><span>Copy previously approved for this angle</span></div><span class="legend">Due Oct 14</span><div class="acts"><button class="btn sm primary">Send to client</button><button class="btn sm ghost">Preview</button></div></div>
+      <div class="qrow"><div class="c"><b>Fast Conversational Spanish · 1 image (v2)</b><span>Revision fixed · client's 2 pins attached</span></div><span class="legend">Due Oct 14</span><div class="acts"><button class="btn sm primary">Re-send v2</button><button class="btn sm ghost">Preview</button></div></div>
+    </div>
+    <div class="qsec"><header><h3>Waiting on client <span class="pill">37</span></h3><span class="legend">Reminders go out at 24h and 48h automatically.</span></header>
+      <div class="qrow"><div class="c"><b>Crust Pizza Co. · 5 ads</b><span>Sent today 9:15am · opened 9:20am</span></div>${clock(15,'6h 45m of 48h','g')}<div class="acts"><button class="btn sm ghost">View</button></div></div>
+      <div class="qrow"><div class="c"><b>Sierra Dreams · 4 images</b><span>Sent Fri 5:30pm · clock started Mon 8:00am · 24h reminder sent</span></div>${clock(58,'28h 10m of 48h','w')}<div class="acts"><button class="btn sm ghost">View</button><button class="btn sm">Nudge</button></div></div>
+    </div>
+    <div class="qsec"><header><h3>Client changes, routed <span class="pill warn">3</span></h3><span class="legend">Sent automatically. Override if it went to the wrong person.</span></header>
+      <div class="qrow"><div class="c"><b>Crust Pizza Co. · Donation Program</b><span>Creative: "Make Crust &amp; St Jude logos larger at the top" → Victor (designer)</span></div><span class="legend">v2 due today</span><div class="acts"><button class="btn sm ghost">Reassign</button></div></div>
+      <div class="qrow"><div class="c"><b>Idalia Photography · Bridal Boudoir</b><span>Ad copy: headline 2 tone → Priscila (buyer), then Camille</span></div><span class="legend">Due Oct 14</span><div class="acts"><button class="btn sm ghost">Reassign</button></div></div>
+    </div>`;
+})();
+</script>

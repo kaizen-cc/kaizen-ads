@@ -1,0 +1,30 @@
+name: Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 10 * * *" # daily, 6am New York — catches database drift
+  workflow_dispatch:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Lint
+        run: npx eslint src tests
+      - name: Types
+        run: npx next typegen && npx tsc --noEmit
+      - name: Logic tests
+        run: npm test
+      - name: Database rules (rolled back, safe on production)
+        run: npm run test:db
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}

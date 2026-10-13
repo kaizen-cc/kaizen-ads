@@ -1,0 +1,120 @@
+@import "tailwindcss";
+
+/* Kaizen brand palette — from the official brand guide.
+   #B21E2C is the brand red; --brand-text is a lighter tint used only for
+   small red text on dark surfaces where #B21E2C fails contrast. */
+:root {
+  --brand: #b21e2c;
+  --brand-hover: #c42a38;
+  --brand-text: #e0505c;
+  --brand-soft: rgba(178, 30, 44, 0.14);
+
+  --bg: #060606;
+  --surface: #101011;
+  --surface-2: #18181a;
+  --border: #26262a;
+  --fg: #f2f2f2;
+  --fg-muted: #9a9aa2;
+  --fg-faint: #6a6a72;
+
+  /* Status colors (on time / due soon / overdue) */
+  --ok: #3fb27f;
+  --ok-soft: rgba(63, 178, 127, 0.15);
+  --warn: #e0a63a;
+  --warn-soft: rgba(224, 166, 58, 0.15);
+  --bad: #e0505c;
+  --bad-soft: rgba(224, 80, 92, 0.15);
+}
+
+:root[data-theme="light"] {
+  --brand-text: #b21e2c;
+  --brand-soft: rgba(178, 30, 44, 0.08);
+  --bg: #fafafa;
+  --surface: #ffffff;
+  --surface-2: #f2f2f2;
+  --border: #e4e4e7;
+  --fg: #060606;
+  --fg-muted: #5a5a62;
+  --fg-faint: #8a8a92;
+  --ok: #1f8a5b;
+  --warn: #a86f0c;
+  --bad: #b21e2c;
+}
+
+@theme inline {
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-text: var(--brand-text);
+  --color-brand-soft: var(--brand-soft);
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--border);
+  --color-fg: var(--fg);
+  --color-muted: var(--fg-muted);
+  --color-faint: var(--fg-faint);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+
+  --font-sans: var(--font-poppins), ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-flexa), var(--font-poppins), ui-sans-serif, sans-serif;
+
+  --radius-brand: 5px;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+/* Phones: iOS zooms into any field under 16px when tapped, so fields are 16px there */
+@media (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* Room for the notch / home indicator when installed full-screen */
+.pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Horizontal strips that scroll without a visible scrollbar (week strip, tabs) */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+}
+@keyframes sheet-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes drawer-in {
+  from {
+    transform: translateX(-100%);
+  }
+}
+
