@@ -21,7 +21,7 @@ export default async function Login({ searchParams }: PageProps<"/login">) {
       <div className="w-full max-w-sm rounded-brand border border-line bg-surface p-8">
         <div className="mb-8 flex items-center gap-2">
           <Image src="/kaizen-logo.png" alt="Kaizen" width={120} height={28} priority />
-          <span className="mt-1 font-heading text-sm tracking-wide text-muted">ads</span>
+          <span className="mt-1 font-display text-sm tracking-wide text-muted">ads</span>
         </div>
         <h1 className="font-heading text-xl md:text-2xl">Sign in</h1>
         <p className="mt-1 mb-6 text-sm text-muted">Review and approve your ads with Kaizen. No password needed.</p>

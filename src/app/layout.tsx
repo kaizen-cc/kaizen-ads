@@ -16,6 +16,13 @@ const flexa = localFont({
   display: "swap",
 });
 
+// Osake is the display face — subset to the letters of the "ads" wordmark only (same approach as Track)
+const osake = localFont({
+  variable: "--font-osake",
+  src: "./fonts/Osake-ads.woff2",
+  display: "swap",
+});
+
 export const metadata: Metadata = {
   title: "Kaizen Ads",
   description: "Creative requests, approvals and launches with Kaizen Marketing",
@@ -33,7 +40,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${poppins.variable} ${flexa.variable} h-full antialiased`}>
+    <html lang="en" className={`${poppins.variable} ${flexa.variable} ${osake.variable} h-full antialiased`}>
       <body className="min-h-full font-sans">{children}</body>
     </html>
   );

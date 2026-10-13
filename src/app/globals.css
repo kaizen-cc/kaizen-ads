@@ -62,6 +62,7 @@
 
   --font-sans: var(--font-poppins), ui-sans-serif, system-ui, sans-serif;
   --font-heading: var(--font-flexa), var(--font-poppins), ui-sans-serif, sans-serif;
+  --font-display: var(--font-osake), var(--font-poppins), sans-serif;
 
   --radius-brand: 5px;
 }

@@ -24,11 +24,11 @@ export function TeamShell({ name, roles, children }: { name: string; roles: stri
   const active = (href: string) => path === href || path.startsWith(`${href}/`);
 
   return (
-    <div className="min-h-screen md:grid md:grid-cols-[220px_1fr]">
+    <div className="min-h-screen md:grid md:grid-cols-[240px_1fr]">
       <aside className="pt-safe hidden border-r border-line bg-surface md:flex md:min-h-screen md:flex-col">
         <Link href="/pipeline" className="flex items-center gap-2 px-5 py-5">
-          <Image src="/kaizen-logo.png" alt="Kaizen" width={96} height={22} />
-          <span className="mt-0.5 font-heading text-xs tracking-wide text-muted">ads</span>
+          <Image src="/kaizen-logo.png" alt="Kaizen" width={110} height={26} priority />
+          <span className="mt-1 font-display text-sm tracking-wide text-muted">ads</span>
         </Link>
         <nav className="grid gap-0.5 px-3" aria-label="Main">
           {NAV.map((item) => (
@@ -61,8 +61,8 @@ export function TeamShell({ name, roles, children }: { name: string; roles: stri
       <header className="pt-safe sticky top-0 z-20 border-b border-line bg-surface md:hidden">
         <div className="flex items-center justify-between px-4 py-3">
           <Link href="/pipeline" className="flex items-center gap-2">
-            <Image src="/kaizen-logo.png" alt="Kaizen" width={84} height={20} />
-            <span className="mt-0.5 font-heading text-xs text-muted">ads</span>
+            <Image src="/kaizen-logo.png" alt="Kaizen" width={96} height={22} />
+            <span className="mt-1 font-display text-xs tracking-wide text-muted">ads</span>
           </Link>
           <form action="/auth/signout" method="post">
             <button className="text-xs text-muted">Sign out</button>

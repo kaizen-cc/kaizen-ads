@@ -14,7 +14,7 @@ export default async function BrandPicker() {
     <main className="pt-safe mx-auto grid max-w-md gap-6 px-4 py-10">
       <div className="flex items-center gap-2">
         <Image src="/kaizen-logo.png" alt="Kaizen" width={100} height={24} />
-        <span className="mt-0.5 font-heading text-xs text-muted">ads</span>
+        <span className="mt-0.5 font-display text-xs tracking-wide text-muted">ads</span>
       </div>
       <div>
         <h1 className="font-heading text-2xl">Which brand?</h1>
