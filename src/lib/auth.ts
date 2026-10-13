@@ -2,6 +2,7 @@ import "server-only";
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import type { TeamRole } from "@/lib/roles";
 
 export type Staff = {
   kind: "staff";
@@ -9,6 +10,7 @@ export type Staff = {
   email: string;
   fullName: string;
   avatarUrl: string | null;
+  role: TeamRole;
   isExec: boolean;
   isLead: boolean;
   isCreative: boolean;
@@ -38,7 +40,7 @@ export const getViewer = cache(async (): Promise<Viewer> => {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("id, email, full_name, avatar_url, is_exec, is_lead, is_creative, is_buyer, is_copywriter, is_coordinator")
+    .select("id, email, full_name, avatar_url, role, is_exec, is_lead, is_creative, is_buyer, is_copywriter, is_coordinator")
     .eq("auth_user_id", uid)
     .eq("is_active", true)
     .maybeSingle();
@@ -50,6 +52,7 @@ export const getViewer = cache(async (): Promise<Viewer> => {
       email: profile.email,
       fullName: profile.full_name,
       avatarUrl: profile.avatar_url,
+      role: profile.role as TeamRole,
       isExec: profile.is_exec,
       isLead: profile.is_lead,
       isCreative: profile.is_creative,
@@ -83,6 +86,9 @@ export async function requireStaff() {
   if (viewer.kind !== "staff") redirect("/");
   return viewer;
 }
+
+/** Executives and leaders (Head of Meta / Creative / Google). */
+export const isExecOrLead = (s: Staff) => s.isExec || s.isLead;
 
 export async function requireExec() {
   const staff = await requireStaff();

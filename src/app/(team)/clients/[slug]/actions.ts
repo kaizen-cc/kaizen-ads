@@ -36,26 +36,6 @@ export async function saveClientDetails(clientId: string, slug: string, form: Fo
   return done(slug, error);
 }
 
-/** Execs: who is the Meta buyer / designer / video editor for this client. */
-export async function saveAssignments(clientId: string, slug: string, form: FormData): Promise<ActionResult> {
-  await requireStaff();
-  const supabase = await createClient();
-  const rows = (["meta_buyer", "graphic_designer", "video_editor"] as const).flatMap((role) =>
-    form.getAll(role).filter((v): v is string => typeof v === "string" && v.length > 0).map((profile_id) => ({ client_id: clientId, role, profile_id })),
-  );
-  const { error: delError } = await supabase
-    .from("client_assignments")
-    .delete()
-    .eq("client_id", clientId)
-    .in("role", ["meta_buyer", "graphic_designer", "video_editor"]);
-  if (delError) return done(slug, delError);
-  if (rows.length) {
-    const { error } = await supabase.from("client_assignments").insert(rows);
-    return done(slug, error);
-  }
-  return done(slug);
-}
-
 export async function addContact(clientId: string, slug: string, form: FormData): Promise<ActionResult> {
   await requireStaff();
   const supabase = await createClient();

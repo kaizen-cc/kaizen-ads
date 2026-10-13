@@ -37,9 +37,9 @@ begin
   insert into public.clients (name, slug) values ('Test Client Y', 'zz-test-y') returning id into c_y;
   insert into public.contacts (email) values ('zz-owner@example.com') returning id into k_id;
   insert into public.contact_clients (contact_id, client_id) values (k_id, c_x);
-  insert into public.profiles (email, full_name, is_buyer) values ('zz-buyer@kaizenmarketing.agency', 'ZZ Buyer', true) returning id into p_buyer;
-  insert into public.profiles (email, full_name, is_coordinator) values ('zz-coord@kaizenmarketing.agency', 'ZZ Coord', true);
-  insert into public.profiles (email, full_name, is_exec) values ('zz-exec@kaizenmarketing.agency', 'ZZ Exec', true);
+  insert into public.profiles (email, full_name, role) values ('zz-buyer@kaizenmarketing.agency', 'ZZ Buyer', 'media_buyer') returning id into p_buyer;
+  insert into public.profiles (email, full_name, role) values ('zz-coord@kaizenmarketing.agency', 'ZZ Coord', 'customer_success');
+  insert into public.profiles (email, full_name, role) values ('zz-exec@kaizenmarketing.agency', 'ZZ Exec', 'executive');
   insert into public.client_assignments (client_id, profile_id, role) values (c_x, p_buyer, 'meta_buyer');
 
   a_contact := pg_temp.new_auth('zz-owner@example.com');
@@ -101,9 +101,16 @@ begin
     test := 'buyer cannot add an angle to another client'; ok := true; detail := sqlerrm; results := results || jsonb_build_object('test', test, 'ok', ok, 'detail', detail);
   end;
   begin
-    update public.profiles set is_exec = true where id = p_buyer;
+    update public.profiles set role = 'executive' where id = p_buyer;
     get diagnostics n = row_count;
     test := 'buyer cannot make themselves an exec'; ok := n = 0; detail := n || ' rows updated'; results := results || jsonb_build_object('test', test, 'ok', ok, 'detail', detail);
+  end;
+
+  begin
+    insert into public.client_assignments (client_id, profile_id, role) values (c_y, p_buyer, 'meta_buyer');
+    test := 'buyer cannot assign themselves to another client'; ok := false; detail := 'insert succeeded'; results := results || jsonb_build_object('test', test, 'ok', ok, 'detail', detail);
+  exception when others then
+    test := 'buyer cannot assign themselves to another client'; ok := true; detail := sqlerrm; results := results || jsonb_build_object('test', test, 'ok', ok, 'detail', detail);
   end;
 
   -- Coordinator (Jorgi) and exec see everything

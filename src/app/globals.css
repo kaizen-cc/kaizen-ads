@@ -4,6 +4,7 @@
    #B21E2C is the brand red; --brand-text is a lighter tint used only for
    small red text on dark surfaces where #B21E2C fails contrast. */
 :root {
+  color-scheme: dark; /* native scrollbars, selects and date pickers follow the dark theme */
   --brand: #b21e2c;
   --brand-hover: #c42a38;
   --brand-text: #e0505c;
@@ -27,6 +28,7 @@
 }
 
 :root[data-theme="light"] {
+  color-scheme: light;
   --brand-text: #b21e2c;
   --brand-soft: rgba(178, 30, 44, 0.08);
   --bg: #fafafa;

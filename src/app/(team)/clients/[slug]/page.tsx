@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ActionButton, ActionForm } from "@/components/action-form";
-import { requireStaff, seesAllClients } from "@/lib/auth";
-import { ASSIGNMENT_ROLES } from "@/lib/roles";
+import { isExecOrLead, requireStaff, seesAllClients } from "@/lib/auth";
+import { SLOTS, type TeamRole } from "@/lib/roles";
+import { AssignSelect } from "../assign-select";
 import { createClient } from "@/lib/supabase/server";
-import { addAngle, addContact, removeContact, saveAllotment, saveAssignments, saveClientDetails, setAngleStatus } from "./actions";
+import { addAngle, addContact, removeContact, saveAllotment, saveClientDetails, setAngleStatus } from "./actions";
 
 const field = "h-9 w-full rounded-brand border border-line bg-bg px-3 text-sm outline-none focus:border-brand-text";
 const label = "grid gap-1 text-xs text-muted";
@@ -22,19 +23,23 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
   if (!client) notFound();
 
   const [{ data: assignments }, { data: links }, { data: angles }, { data: allotment }, { data: staff }] = await Promise.all([
-    supabase.from("client_assignments").select("role, profile_id").eq("client_id", client.id),
+    supabase.from("client_assignments").select("role, profile_id, profiles(full_name)").eq("client_id", client.id),
     supabase.from("contact_clients").select("is_primary, contacts(id, email, full_name, auth_user_id)").eq("client_id", client.id),
     supabase.from("angles").select("id, name, kind, description, status").eq("client_id", client.id).order("status").order("name"),
     supabase.from("client_allotments").select("images_per_month, videos_per_month").eq("client_id", client.id).maybeSingle(),
-    supabase.from("profiles").select("id, full_name, is_buyer, is_creative").eq("is_active", true).order("full_name"),
+    supabase.from("profiles").select("id, full_name, role").eq("is_active", true).order("full_name"),
   ]);
 
   const canAdmin = me.isExec;
   const canContacts = seesAllClients(me);
   const canAllot = me.isExec || me.isLead;
-  const assigned = (role: string) => new Set((assignments ?? []).filter((a) => a.role === role).map((a) => a.profile_id));
-  const eligible = (role: string) => (staff ?? []).filter((p) => (role === "meta_buyer" ? p.is_buyer : p.is_creative));
-  const nameOf = (id: string) => staff?.find((p) => p.id === id)?.full_name ?? "Unknown";
+  const canAssign = isExecOrLead(me);
+  const currentIn = (slot: string) => {
+    const a = (assignments ?? []).find((x) => x.role === slot);
+    return a ? { id: a.profile_id, name: (a.profiles as unknown as { full_name: string } | null)?.full_name ?? "Unknown" } : null;
+  };
+  const optionsFor = (eligible: readonly TeamRole[]) =>
+    (staff ?? []).filter((p) => eligible.includes(p.role as TeamRole)).map((p) => ({ id: p.id, name: p.full_name }));
   const contacts = (links ?? []).flatMap((l: { is_primary: boolean; contacts: unknown }) => {
     const c = l.contacts as { id: string; email: string; full_name: string | null; auth_user_id: string | null } | null;
     return c ? [{ ...c, isPrimary: l.is_primary }] : [];
@@ -57,32 +62,24 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
         {/* Team */}
         <section className="grid content-start gap-3 rounded-brand border border-line bg-surface p-5">
           <h2 className="font-medium">Kaizen team</h2>
-          {canAdmin ? (
-            <ActionForm action={saveAssignments.bind(null, client.id, client.slug)} submitLabel="Save team" className="grid gap-4">
-              {ASSIGNMENT_ROLES.map((r) => (
-                <fieldset key={r.value} className="grid gap-1.5">
-                  <legend className="mb-1 text-xs text-muted">{r.label}</legend>
-                  <div className="flex flex-wrap gap-1.5">
-                    {eligible(r.value).map((p) => (
-                      <label key={p.id} className="flex cursor-pointer items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-xs has-[:checked]:border-brand-text has-[:checked]:bg-brand-soft">
-                        <input type="checkbox" name={r.value} value={p.id} defaultChecked={assigned(r.value).has(p.id)} className="accent-[#b21e2c]" />
-                        {p.full_name}
-                      </label>
-                    ))}
-                  </div>
-                </fieldset>
-              ))}
-            </ActionForm>
-          ) : (
-            <dl className="grid gap-2 text-sm">
-              {ASSIGNMENT_ROLES.map((r) => (
-                <div key={r.value} className="flex justify-between gap-3">
-                  <dt className="text-muted">{r.label}</dt>
-                  <dd>{[...assigned(r.value)].map(nameOf).join(", ") || "—"}</dd>
-                </div>
-              ))}
-            </dl>
-          )}
+          <dl className="grid gap-2">
+            {SLOTS.map((slot) => (
+              <div key={slot.value} className="grid grid-cols-[110px_1fr] items-center gap-3">
+                <dt className="text-sm text-muted">{slot.label}</dt>
+                <dd>
+                  <AssignSelect
+                    clientId={client.id}
+                    slot={slot.value}
+                    label={slot.label}
+                    current={currentIn(slot.value)}
+                    options={optionsFor(slot.eligible)}
+                    canEdit={canAssign}
+                    size="md"
+                  />
+                </dd>
+              </div>
+            ))}
+          </dl>
           <p className="text-xs text-faint">Camille reviews all copy and Jorgi handles every client, so they aren&apos;t assigned per client.</p>
         </section>
 
