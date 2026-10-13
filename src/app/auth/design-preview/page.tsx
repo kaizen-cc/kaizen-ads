@@ -1,12 +1,15 @@
 import { notFound } from "next/navigation";
 import { TeamShell } from "@/components/team-shell";
-import { HomeView } from "@/app/(team)/pipeline/home-view";
+import { PulseView } from "@/app/(team)/pipeline/views/pulse-view";
+import { LeaderView } from "@/app/(team)/pipeline/views/leader-view";
+import { WorkView } from "@/app/(team)/pipeline/views/work-view";
+import type { PhaseKey, PhaseStat, QueueItem } from "@/app/(team)/pipeline/views/shared";
 import { TeamList, type Person } from "@/app/(team)/team/team-list";
 import { ClientsTable, type ClientRow } from "@/app/(team)/clients/clients-table";
 import { greetingFor, todayLabel } from "@/lib/dates";
 
 // Local-only design check with sample data (never served in production).
-// Open /auth/design-preview?view=home | home-empty | team | clients
+// Open /auth/design-preview?view=exec | exec-empty | leader | buyer | creative | team | clients
 
 const people: Person[] = [
   { id: "1", email: "santi@kaizenmarketing.agency", fullName: "Santi Lozano", role: "executive", isActive: true, joined: true, clientCount: 0 },
@@ -31,12 +34,45 @@ const rows: ClientRow[] = [
   { id: "c4", name: "Atomic Wings", slug: "atomic-wings", whiteLabel: false, contacts: 0, assigned: { meta_buyer: null, graphic_designer: null, video_editor: null } },
 ];
 
+const phases: Record<PhaseKey, PhaseStat> = {
+  brief: { count: 29, avgDays: 0.8, slaDays: 1 },
+  make: { count: 24, avgDays: 3.6, slaDays: 3 },
+  review: { count: 8, avgDays: 0.7, slaDays: 1 },
+  client: { count: 42, avgDays: 2.9, slaDays: 2 },
+  launch: { count: 9, avgDays: 0.6, slaDays: 1 },
+};
+const noPhases: Record<PhaseKey, PhaseStat> = { brief: { count: 0 }, make: { count: 0 }, review: { count: 0 }, client: { count: 0 }, launch: { count: 0 } };
+
+const team = [
+  { name: "Jazem", role: "Video editor", active: 14, overdue: 2, capacity: 10 },
+  { name: "Nelson", role: "Designer", active: 9, overdue: 0, capacity: 12 },
+  { name: "Hillary", role: "Designer", active: 7, overdue: 1, capacity: 10 },
+  { name: "Daniel", role: "Video editor", active: 6, overdue: 1, capacity: 8 },
+  { name: "Mira", role: "Video editor", active: 5, overdue: 0, capacity: 8 },
+];
+
+const buyerQueue: QueueItem[] = [
+  { id: "b1", client: "Leap Funding", title: "Confirm launch · Special Category", format: "Video", stage: "Ready to launch · proposal ready", due: "1 day over", tone: "bad", priority: "Urgent" },
+  { id: "b2", client: "Crust Pizza Co.", title: "QA paused ads · $8 Calzone Mondays", format: "Image", stage: "Paused in Meta", due: "Today", tone: "warn" },
+  { id: "b3", client: "Best Tickets", title: "Request: Local Presence UGC", format: "Video", stage: "Brief draft", due: "Thu", tone: "ok", priority: "High" },
+];
+
+const creativeQueue: QueueItem[] = [
+  { id: "c1", client: "Crust Pizza Co.", title: "Donation Program · poster v3", format: "Image", stage: "Client revision", due: "Today 6pm", tone: "warn", priority: "Urgent", note: "Make Crust & St Jude logos larger at the top" },
+  { id: "c2", client: "Fast Conversational Spanish", title: "$7 trial · Unlimited Live Classes", format: "Image", stage: "In production", due: "1 day over", tone: "bad" },
+  { id: "c3", client: "Sierra Dreams", title: "BFCM · Save up to 30%", format: "Image", stage: "In production", due: "Thu", tone: "ok", priority: "High" },
+  { id: "c4", client: "Idalia Photography", title: "Book Lovers · discover your confidence", format: "Image", stage: "Requested", due: "Fri", tone: "ok" },
+];
+
 export default async function DesignPreview({ searchParams }: PageProps<"/auth/design-preview">) {
   if (process.env.NODE_ENV === "production") notFound();
   const { view } = await searchParams;
   const now = new Date();
+  const base = { greeting: greetingFor(now), firstName: "Santi", today: todayLabel(now) };
 
   let body: React.ReactNode;
+  let who = { name: "Santi Lozano", role: "Executive" };
+
   if (view === "team") {
     body = (
       <div className="grid max-w-4xl gap-6">
@@ -54,43 +90,105 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
         <ClientsTable rows={rows} slotOptions={{ meta_buyer: buyers, graphic_designer: designers, video_editor: editors }} canEdit emptyText="No clients match." />
       </div>
     );
-  } else {
-    const empty = view === "home-empty";
+  } else if (view === "leader") {
+    who = { name: "Jesus", role: "Head of Creative" };
     body = (
-      <HomeView
-        firstName="Santi"
-        role="Executive"
-        today={todayLabel(now)}
-        greeting={greetingFor(now)}
-        focus={empty ? { mine: 0, today: 0, overdue: 0, clients: 0 } : { mine: 7, today: 3, overdue: 2, clients: 37 }}
-        phases={empty ? { brief: 0, make: 0, review: 0, client: 0, launch: 0 } : { brief: 29, make: 24, review: 8, client: 42, launch: 9 }}
-        queue={
+      <LeaderView
+        {...base}
+        firstName="Jesus"
+        department="Creative"
+        reviewLabel="Waiting for your review"
+        stats={{ waitingOnYou: 6, teamActive: 41, teamOverdue: 3, onTimeRate: 84 }}
+        review={[
+          { id: "r1", client: "Fast Conversational Spanish", title: "$7 trial · teachers image", format: "Image", stage: "Uploaded by Nelson · 5h ago", due: "Due today", tone: "warn", priority: "Urgent" },
+          { id: "r2", client: "Union Hill Day School", title: "October stacked", format: "Carousel", stage: "Uploaded by Hillary · 2h ago", due: "Tomorrow", tone: "ok" },
+          { id: "r3", client: "Nectr", title: "Performance claim statics · v2", format: "Image", stage: "Revision from Nelson", due: "Tomorrow", tone: "ok" },
+        ]}
+        attention={[
+          { id: "a1", tone: "bad", kind: "Stuck", client: "Tejas Brewery", title: "Seasonal tap list", detail: "In production 6 business days (turnaround 4)", owner: "Daniel" },
+          { id: "a2", tone: "warn", kind: "Revisions", client: "Crust Pizza Co.", title: "Donation Program", detail: "3rd revision round · client asked for larger logos twice", owner: "Victor" },
+        ]}
+        team={team}
+        phases={phases}
+        canRequest
+      />
+    );
+  } else if (view === "buyer" || view === "creative") {
+    const buyer = view === "buyer";
+    who = buyer ? { name: "Mark", role: "Media buyer" } : { name: "Nelson", role: "Graphic designer" };
+    body = (
+      <WorkView
+        {...base}
+        firstName={who.name}
+        variant={buyer ? "buyer" : "creative"}
+        role={who.role}
+        stats={buyer ? { mine: 5, dueToday: 1, overdue: 1, fourth: 3 } : { mine: 7, dueToday: 2, overdue: 1, fourth: 2 }}
+        queue={buyer ? buyerQueue : creativeQueue}
+        side={
+          buyer
+            ? {
+                title: "Waiting on your clients",
+                empty: "",
+                items: [
+                  { label: "Leap Funding", detail: "3 videos · 2 reminders sent", value: "51h", tone: "bad" },
+                  { label: "Crust Pizza Co.", detail: "5 ads", value: "6h", tone: "ok" },
+                ],
+              }
+            : {
+                title: "Coming up",
+                empty: "",
+                items: [
+                  { label: "Sierra Dreams", detail: "BFCM · 5 images", value: "Thu", tone: "ok" },
+                  { label: "Idalia Photography", detail: "Book Lovers · 2 images", value: "Fri", tone: "ok" },
+                ],
+              }
+        }
+        delivered={buyer ? undefined : { week: 11, firstPass: 73 }}
+        canAct
+      />
+    );
+  } else {
+    const empty = view === "exec-empty";
+    body = (
+      <PulseView
+        {...base}
+        vitals={
+          empty
+            ? { inMotion: 0, turnaroundDays: null, turnaroundTarget: 5, firstPassRate: null, onTimeRate: null }
+            : { inMotion: 112, turnaroundDays: 6.4, turnaroundTarget: 5, firstPassRate: 58, onTimeRate: 81 }
+        }
+        attention={
           empty
             ? []
             : [
-                { id: "q1", client: "Leap Funding", title: "Special Category · instant form", format: "Video", stage: "With client · 51h", due: "2 days over", tone: "bad", priority: "Urgent" },
-                { id: "q2", client: "Tejas Brewery", title: "Seasonal tap list", format: "Video", stage: "In production", due: "1 day over", tone: "bad", priority: "Urgent" },
-                { id: "q3", client: "Crust Pizza Co.", title: "$8 Calzone Mondays", format: "Image", stage: "Copy review", due: "Today 6pm", tone: "warn" },
-                { id: "q4", client: "Sierra Dreams", title: "BFCM · Buy More, Save More", format: "Image", stage: "Requested", due: "Thu", tone: "ok", priority: "High" },
-                { id: "q5", client: "Nectr", title: "Energy Anywhere hook iteration", format: "Video", stage: "In production", due: "Fri", tone: "ok" },
+                { id: "e1", tone: "bad", kind: "No reply", client: "Leap Funding", title: "3 videos with the client", detail: "51 business hours, 2 reminders, no reply · Jorgi following up", owner: "Jorgi" },
+                { id: "e2", tone: "bad", kind: "Revisions", client: "Crust Pizza Co.", title: "Revision-heavy this month", detail: "2.4 revision rounds per piece · logos and product shots keep coming back", owner: "Nelson · Victor" },
+                { id: "e3", tone: "warn", kind: "Allotment", client: "Sierra Dreams", title: "Burning fast", detail: "48 of 60 used with 40% of the month gone · upgrade conversation?", owner: "Dipesh" },
+                { id: "e4", tone: "warn", kind: "Behind", client: "OceanBox", title: "Behind on creative", detail: "4 of 13 delivered with 60% of the month gone", owner: "Jazem" },
+                { id: "e5", tone: "warn", kind: "Stuck", client: "Tejas Brewery", title: "Seasonal tap list", detail: "In production 6 business days (turnaround 4)", owner: "Daniel" },
               ]
         }
-        waiting={empty ? [] : [
-          { client: "Leap Funding", what: "3 videos", clock: "51h", tone: "bad" },
-          { client: "Sierra Dreams", what: "4 images", clock: "28h", tone: "warn" },
-          { client: "Crust Pizza Co.", what: "5 ads", clock: "6h", tone: "ok" },
-        ]}
-        launched={empty ? [] : [
-          { client: "Darling Psychology", what: "Profile visits carousel", when: "Today" },
-          { client: "Limelight", what: "Photo + Video + DJ", when: "Mon" },
-        ]}
-        canRequest={!empty}
+        phases={empty ? noPhases : phases}
+        clients={
+          empty
+            ? []
+            : [
+                { name: "Crust Pizza Co.", slug: "crust-pizza-co", tone: "bad", used: 15, allotment: 20, revisionsPerItem: 2.4, waiting: 5, note: "Unhappy with revisions" },
+                { name: "Sierra Dreams", slug: "sierra-dreams", tone: "warn", used: 48, allotment: 60, revisionsPerItem: 0.6, waiting: 4, note: "Burning fast" },
+                { name: "OceanBox", slug: "oceanbox", tone: "warn", used: 4, allotment: 13, revisionsPerItem: 0.8, waiting: 0, note: "Behind on creative" },
+                { name: "Leap Funding", slug: "leap-funding", tone: "warn", used: 5, allotment: 13, revisionsPerItem: 1.1, waiting: 3, note: "Slow to approve" },
+                { name: "Nectr", slug: "nectr", tone: "ok", used: 8, allotment: 13, revisionsPerItem: 0.4, waiting: 2, note: "On pace" },
+                { name: "Limelight Entertainment", slug: "limelight-entertainment", tone: "ok", used: 36, allotment: 60, revisionsPerItem: 0.3, waiting: 0, note: "On pace" },
+              ]
+        }
+        team={empty ? [] : team}
+        monthElapsed={0.4}
       />
     );
   }
 
   return (
-    <TeamShell name="Santi Lozano" roles="Executive">
+    <TeamShell name={who.name} roles={who.role}>
       {body}
     </TeamShell>
   );
