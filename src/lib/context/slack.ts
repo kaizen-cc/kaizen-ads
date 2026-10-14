@@ -209,3 +209,58 @@ export async function checkSlack() {
   const channels = await listChannels();
   return `Connected to ${body.team} as @${body.user}${header ? ", all scopes in place" : ""}. Sees ${channels.length} channels and is a member of ${channels.filter((c) => c.is_member).length}.`;
 }
+
+/**
+ * Add the bot to the private client channels a person is in, using their user token (SLACK_USER_TOKEN,
+ * scopes groups:read and groups:write). Bots can't join private channels themselves. Only channels named
+ * like a client channel ("…-<Account Overview ID>") are touched. Dry run unless go is true.
+ */
+export async function inviteBotToClientChannels(go: boolean) {
+  const userToken = process.env.SLACK_USER_TOKEN;
+  if (!userToken?.startsWith("xoxp-")) throw new Error("Add SLACK_USER_TOKEN (the xoxp- User OAuth Token) in Vercel, redeploy, then try again");
+  const asUser = async <T>(method: string, params: Record<string, string>) => {
+    const res = await fetch(`https://slack.com/api/${method}?${new URLSearchParams(params)}`, { headers: { authorization: `Bearer ${userToken}` }, cache: "no-store" });
+    const body = (await res.json()) as { ok: boolean; error?: string } & T;
+    if (!body.ok) throw new Error(`Slack ${method}: ${body.error}`);
+    return body;
+  };
+  const { user_id: botUser } = await slack<{ user_id: string }>("auth.test", {});
+  const { user: who } = await asUser<{ user: string }>("auth.test", {});
+
+  const mine: SlackChannel[] = [];
+  let cursor = "";
+  do {
+    const page = await asUser<{ channels: SlackChannel[]; response_metadata?: { next_cursor?: string } }>("users.conversations", {
+      types: "private_channel",
+      exclude_archived: "true",
+      limit: "1000",
+      ...(cursor ? { cursor } : {}),
+    });
+    mine.push(...page.channels);
+    cursor = page.response_metadata?.next_cursor ?? "";
+  } while (cursor);
+
+  const targets = mine.filter((c) => /-\d{2,6}$/.test(c.name));
+  const added: string[] = [];
+  const already: string[] = [];
+  const wouldAdd: string[] = [];
+  const failed: string[] = [];
+  for (const c of targets) {
+    const { members } = await asUser<{ members: string[] }>("conversations.members", { channel: c.id, limit: "1000" });
+    if (members.includes(botUser)) already.push(`#${c.name}`);
+    else if (!go) wouldAdd.push(`#${c.name}`);
+    else
+      try {
+        await asUser("conversations.invite", { channel: c.id, users: botUser });
+        added.push(`#${c.name}`);
+      } catch (e) {
+        failed.push(`#${c.name}: ${e instanceof Error ? e.message : e}`);
+      }
+  }
+  return {
+    as: who,
+    privateClientChannels: targets.length,
+    ...(go ? { added, failed } : { wouldAdd, next: "Looks right? Add &go=1 to the URL to do it." }),
+    alreadyHasBot: already.length,
+  };
+}

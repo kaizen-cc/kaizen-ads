@@ -1,6 +1,7 @@
 import { isCronRequest } from "@/lib/cron";
 import { checkSetup } from "@/lib/context/check";
 import { collectStep, refreshAll, type Step } from "@/lib/context/run";
+import { inviteBotToClientChannels } from "@/lib/context/slack";
 import { reportError } from "@/lib/error-report";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -32,6 +33,15 @@ export async function GET(request: Request) {
   const force = !cron || new URL(request.url).searchParams.get("force") === "1";
   const step = new URL(request.url).searchParams.get("step");
   if (step === "check" && adminConfigured()) return Response.json(await checkSetup(createAdminClient()));
+  // Execs only, by hand: add the bot to private client channels (dry run unless &go=1)
+  if (step === "invite") {
+    if (cron) return new Response("Not for the schedule", { status: 400 });
+    try {
+      return Response.json(await inviteBotToClientChannels(new URL(request.url).searchParams.get("go") === "1"));
+    } catch (e) {
+      return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 400 });
+    }
+  }
   if (!force && ![12, 18].includes(nyHour())) return Response.json({ skipped: "not 12pm or 6pm in New York" });
   if (!adminConfigured()) return Response.json({ error: "SUPABASE_SECRET_KEY not set" }, { status: 500 });
 
