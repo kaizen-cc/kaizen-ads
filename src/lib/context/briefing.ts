@@ -60,6 +60,7 @@ export async function refreshBriefing(admin: SupabaseClient, clientId: string, f
 
   const ctx = await clientContext(admin, clientId);
   if (!ctx) return { skipped: true };
+  ctx.sinceBriefing = []; // the briefing reads the new messages itself, below
 
   // A Drive file counts as used once a request links to it
   const used = (refs ?? []).map((r) => `${r.brief ?? ""} ${(r.refs ?? []).join(" ")}`).join(" ");
@@ -78,8 +79,9 @@ export async function refreshBriefing(admin: SupabaseClient, clientId: string, f
 
   const result = await askJson<{ digest: Digest; suggestions: Suggestions }>({
     label: `briefing ${ctx.name}`,
+    model: "light", // gathering and summarizing: Haiku at low effort
     system: AGENCY_SYSTEM,
-    effort: "medium",
+    effort: "low",
     schema: { type: "object", properties: { digest: DIGEST_SCHEMA, suggestions: SUGGESTIONS_SCHEMA }, required: ["digest", "suggestions"], additionalProperties: false },
     prompt: `${contextBlock(ctx)}
 

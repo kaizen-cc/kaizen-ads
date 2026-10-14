@@ -19,13 +19,32 @@ async function isExec() {
   return Boolean(data?.is_exec);
 }
 
-const nyHour = () => Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false }).format(new Date()));
+/** New York time right now: weekday, hour, minute. */
+function nyNow() {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", hour: "numeric", minute: "numeric", hour12: false }).formatToParts(new Date());
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return { weekday: get("weekday"), hour: Number(get("hour")) % 24, minute: Number(get("minute")) };
+}
 
 /**
- * At 12pm and 6pm New York time, Slack, Drive and Gmail are each pulled in their own run (?step=slack, drive,
- * gmail) and fifteen minutes later ?step=brief refreshes the client briefings. Each step gets its own time limit.
- * Vercel Cron calls at both UTC hours that can be noon or 6pm in New York (daylight saving shifts them),
- * and only the right one does the work. ?force=1, or an exec opening the URL, runs it now.
+ * Whether a scheduled call should do its step now (Vercel Cron runs in UTC; this is New York time):
+ * - slack, drive, gmail: every 30 minutes on weekdays 8am to 6pm, every 3 hours otherwise
+ * - meta: every 2 hours (Meta's own numbers settle slowly)
+ * - brief: 12pm and 6pm
+ */
+function due(step: string | null) {
+  const { weekday, hour, minute } = nyNow();
+  const businessHours = !["Sat", "Sun"].includes(weekday) && hour >= 8 && hour < 18;
+  if (step === "slack" || step === "drive" || step === "gmail") return businessHours || (hour % 3 === 0 && minute < 30);
+  if (step === "meta") return hour % 2 === 0;
+  if (step === "brief") return [12, 18].includes(hour) && minute < 30;
+  return false;
+}
+
+/**
+ * Each source is pulled in its own run (?step=slack, drive, gmail, meta) and ?step=brief refreshes the client
+ * briefings; see due() for how often. Vercel Cron calls on a fixed UTC schedule and each call checks New York
+ * time, so daylight saving never shifts the timing. ?force=1, or an exec opening the URL, runs it now.
  * ?step=check tests every connection without reading client data. ?step=brief&rebuild=1 redoes every briefing.
  */
 export async function GET(request: Request) {
@@ -58,7 +77,7 @@ export async function GET(request: Request) {
       return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 400 });
     }
   }
-  if (!force && ![12, 18].includes(nyHour())) return Response.json({ skipped: "not 12pm or 6pm in New York" });
+  if (!force && !due(step)) return Response.json({ skipped: "not this step's time in New York" });
   if (!adminConfigured()) return Response.json({ error: "SUPABASE_SECRET_KEY not set" }, { status: 500 });
 
   try {

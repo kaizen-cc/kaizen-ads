@@ -7,8 +7,9 @@ import { describeMeta } from "@/lib/context/meta";
 // Claude for the request form (suggestions, pre-submit review) and the twice-daily client briefings.
 // Every call is optional. Without ANTHROPIC_API_KEY the form still works, just without suggestions.
 
-// deep: briefings and the request review, where judgement matters. fast: live suggestions someone is waiting on.
-const MODELS = { deep: "claude-opus-5-5", fast: "claude-sonnet-5-5" } as const;
+// deep: the request review, where judgement matters. fast: creative suggestions someone is waiting on (strategy).
+// light: the twice-daily briefings, which gather and summarize, so the smallest model at low effort is plenty.
+const MODELS = { deep: "claude-opus-5-5", fast: "claude-sonnet-5-5", light: "claude-haiku-5-5" } as const;
 
 export const aiEnabled = () => Boolean(process.env.ANTHROPIC_API_KEY);
 
@@ -48,14 +49,18 @@ export async function askJson<T>({
   };
   try {
     let res;
-    try {
-      // With a server-side fallback model in case the main one declines
-      res = await anthropic().beta.messages.create({ ...request, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" });
-    } catch (e) {
-      if (!(e instanceof Anthropic.BadRequestError)) throw e;
-      console.error("[ai] request with fallbacks rejected, retrying without:", e.message);
+    if (model === "light") {
+      // Haiku has no server-side fallback model, so it's a plain request
       res = await anthropic().messages.create(request);
-    }
+    } else
+      try {
+        // With a server-side fallback model in case the main one declines
+        res = await anthropic().beta.messages.create({ ...request, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" });
+      } catch (e) {
+        if (!(e instanceof Anthropic.BadRequestError)) throw e;
+        console.error("[ai] request with fallbacks rejected, retrying without:", e.message);
+        res = await anthropic().messages.create(request);
+      }
     console.log(`[ai] ${label} · ${res.model} · ${Date.now() - started}ms · ${res.usage.input_tokens} in / ${res.usage.output_tokens} out`);
     if (res.stop_reason === "refusal") throw new AiUnavailable("The AI couldn't help with this one.");
     if (res.stop_reason === "max_tokens") throw new AiUnavailable("The AI ran out of room. Try again.");
@@ -88,6 +93,7 @@ export type ClientContext = {
   allotment: Allotment | null;
   digest: Digest | null; // from the twice-daily briefing: Slack, email and Drive, already summarized
   meta: string | null; // the latest Meta ad performance, in readable lines
+  sinceBriefing: { source: string; at: string; author: string | null; title: string | null; body: string | null }[]; // newer than the briefing
   angles: { name: string; kind: string; description: string | null }[];
   memory: { kind: "avoid" | "prefer" | "note"; body: string; source: string }[];
   recent: {
@@ -108,7 +114,7 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
   const [{ data: c }, { data: usage }, { data: briefing }, { data: snap }, { data: angles }, { data: memory }, { data: recent }] = await Promise.all([
     supabase.from("clients").select("name, website, meta_ad_account_id").eq("id", clientId).maybeSingle(),
     supabase.from("client_allotment_usage").select("*").eq("client_id", clientId).maybeSingle(),
-    supabase.from("client_briefings").select("digest").eq("client_id", clientId).maybeSingle(),
+    supabase.from("client_briefings").select("digest, generated_at").eq("client_id", clientId).maybeSingle(),
     supabase.from("meta_snapshots").select("date_start, date_stop, summary, weekly, ads").eq("client_id", clientId).order("fetched_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("angles").select("name, kind, description").eq("client_id", clientId).eq("status", "active").order("name").limit(40),
     supabase.from("client_memory").select("kind, body, source").eq("client_id", clientId).eq("status", "active").order("created_at", { ascending: false }).limit(60),
@@ -120,7 +126,17 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
       .limit(25),
   ]);
   if (!c) return null;
+  // Slack and email that came in after the briefing was written, so suggestions and the review are current
+  const { data: newer } = await supabase
+    .from("context_items")
+    .select("source, occurred_at, author, title, body")
+    .eq("client_id", clientId)
+    .neq("source", "drive")
+    .gt("created_at", briefing?.generated_at ?? new Date(Date.now() - 2 * 86_400_000).toISOString())
+    .order("occurred_at", { ascending: false })
+    .limit(40);
   return {
+    sinceBriefing: (newer ?? []).map((i) => ({ source: i.source, at: i.occurred_at, author: i.author, title: i.title, body: i.body?.slice(0, 800) ?? null })),
     name: c.name,
     website: c.website,
     adAccountConnected: Boolean(c.meta_ad_account_id),
@@ -148,6 +164,17 @@ export function contextBlock(ctx: ClientContext, request?: { images: number; vid
   if (ctx.meta) lines.push("<meta_ads_performance>", ctx.meta, "</meta_ads_performance>");
   else lines.push(ctx.adAccountConnected ? "Meta ad account linked, but no performance pulled yet. Don't invent metrics." : "No Meta ad account linked yet. Don't invent metrics.");
   if (ctx.digest) lines.push("<briefing from Slack, email and Drive>", describeDigest(ctx.digest), "</briefing>");
+  if (ctx.sinceBriefing.length)
+    lines.push(
+      "<newer_than_the_briefing>",
+      "Messages that arrived after the briefing was written. Where they change something, they win.",
+      ...ctx.sinceBriefing
+        .slice()
+        .reverse()
+        .map((i) => `- ${i.at.slice(0, 16).replace("T", " ")} · ${i.source === "gmail" ? "Email" : i.source === "slack_internal" ? "Slack (internal)" : "Slack (with client)"}${i.author ? ` · ${i.author}` : ""}${i.title ? ` · "${i.title}"` : ""}${i.body ? `
+  ${i.body.replace(/\s+/g, " ")}` : ""}`),
+      "</newer_than_the_briefing>",
+    );
   lines.push("<allotment_this_month>", describeAllotment(ctx.allotment, request), "</allotment_this_month>");
   lines.push("<client_memory>");
   if (ctx.memory.length === 0) lines.push("Nothing recorded yet.");
