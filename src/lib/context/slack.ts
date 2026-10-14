@@ -218,11 +218,18 @@ export async function checkSlack() {
 export async function inviteBotToClientChannels(go: boolean) {
   const userToken = process.env.SLACK_USER_TOKEN;
   if (!userToken?.startsWith("xoxp-")) throw new Error("Add SLACK_USER_TOKEN (the xoxp- User OAuth Token) in Vercel, redeploy, then try again");
-  const asUser = async <T>(method: string, params: Record<string, string>) => {
-    const res = await fetch(`https://slack.com/api/${method}?${new URLSearchParams(params)}`, { headers: { authorization: `Bearer ${userToken}` }, cache: "no-store" });
-    const body = (await res.json()) as { ok: boolean; error?: string } & T;
-    if (!body.ok) throw new Error(`Slack ${method}: ${body.error}`);
-    return body;
+  const asUser = async <T>(method: string, params: Record<string, string>): Promise<{ ok: boolean; error?: string } & T> => {
+    for (;;) {
+      const res = await fetch(`https://slack.com/api/${method}?${new URLSearchParams(params)}`, { headers: { authorization: `Bearer ${userToken}` }, cache: "no-store" });
+      if (res.status === 429) {
+        // Inviting hundreds of channels hits Slack's limit; wait as told and carry on
+        await new Promise((r) => setTimeout(r, Number(res.headers.get("retry-after") ?? 5) * 1000));
+        continue;
+      }
+      const body = (await res.json()) as { ok: boolean; error?: string } & T;
+      if (!body.ok && !(method === "conversations.invite" && body.error === "already_in_channel")) throw new Error(`Slack ${method}: ${body.error}`);
+      return body;
+    }
   };
   const { user_id: botUser } = await slack<{ user_id: string }>("auth.test", {});
   const { user: who } = await asUser<{ user: string }>("auth.test", {});
@@ -246,16 +253,18 @@ export async function inviteBotToClientChannels(go: boolean) {
   const wouldAdd: string[] = [];
   const failed: string[] = [];
   for (const c of targets) {
-    const { members } = await asUser<{ members: string[] }>("conversations.members", { channel: c.id, limit: "1000" });
-    if (members.includes(botUser)) already.push(`#${c.name}`);
-    else if (!go) wouldAdd.push(`#${c.name}`);
-    else
+    if (go) {
+      // Invite straight away; "already in channel" just means it's done
       try {
-        await asUser("conversations.invite", { channel: c.id, users: botUser });
-        added.push(`#${c.name}`);
+        const r = await asUser("conversations.invite", { channel: c.id, users: botUser });
+        (r.ok ? added : already).push(`#${c.name}`);
       } catch (e) {
         failed.push(`#${c.name}: ${e instanceof Error ? e.message : e}`);
       }
+      continue;
+    }
+    const { members } = await asUser<{ members: string[] }>("conversations.members", { channel: c.id, limit: "1000" });
+    (members.includes(botUser) ? already : wouldAdd).push(`#${c.name}`);
   }
   return {
     as: who,
