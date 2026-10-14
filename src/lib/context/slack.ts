@@ -118,13 +118,14 @@ export async function matchSlackChannels(admin: SupabaseClient) {
 /** Zapier tells us a client channel was just created (still public): join it now and link it to its client. */
 export async function linkNewChannel(admin: SupabaseClient, channelId: string) {
   const { channel } = await slack<{ channel: SlackChannel }>("conversations.info", { channel: channelId });
+  const id = idOf(channel);
+  // Only client channels ("…-<client ID>"); the bot stays out of everything else
+  if (!id) return { ok: true, channel: `#${channel.name}`, joined: false, linked: null, note: "Not a client channel (no client ID at the end of the name), so the bot didn't join" };
   let joined = Boolean(channel.is_member);
   if (!joined && !channel.is_private) {
     await slack("conversations.join", { channel: channelId });
     joined = true;
   }
-  const id = idOf(channel);
-  if (!id) return { ok: true, channel: `#${channel.name}`, joined, linked: null, note: "No client ID at the end of the channel name, so it wasn't linked" };
   const { data: client } = await admin.from("clients").select("id, name, slack_channel_id, internal_slack_channel_id").eq("kaizen_id", Number(id)).maybeSingle();
   if (!client) return { ok: true, channel: `#${channel.name}`, joined, linked: null, note: `No client with ID ${id} in Kaizen Ads yet; it links on the next run once they're added` };
   const field = isInternal(channel) ? "internal_slack_channel_id" : "slack_channel_id";

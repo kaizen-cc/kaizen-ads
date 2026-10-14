@@ -221,3 +221,27 @@ export function describeMeta(s: { date_start: string; date_stop: string; summary
     ),
   ].join("\n");
 }
+
+/** Setup help: try progressively bigger requests on one ad account and report Meta's exact answer to each. */
+export async function debugMeta(adAccountId: string) {
+  const token = process.env.META_SYSTEM_USER_TOKEN!;
+  const proof: Record<string, string> = process.env.META_APP_SECRET ? { appsecret_proof: createHmac("sha256", process.env.META_APP_SECRET).update(token).digest("hex") } : {};
+  const act = `act_${adAccountId.replace(/^act_/, "")}`;
+  const probe = async (label: string, version: string, path: string, params: Record<string, string>) => {
+    const res = await fetch(`https://graph.facebook.com/${version}/${path}?${new URLSearchParams({ ...params, ...proof, access_token: token })}`, { cache: "no-store" });
+    const body = (await res.json()) as { error?: { message: string; code: number; error_subcode?: number; type?: string; fbtrace_id?: string }; data?: unknown[] };
+    return body.error
+      ? { label, version, ok: false, code: body.error.code, subcode: body.error.error_subcode ?? null, type: body.error.type, message: body.error.message }
+      : { label, version, ok: true, rows: Array.isArray(body.data) ? body.data.length : undefined };
+  };
+  const out = [];
+  for (const v of [VERSION, "v23.0", "v25.0"]) out.push(await probe("account details", v, act, { fields: "name,account_status,currency,timezone_name" }));
+  out.push(await probe("spend, last 7 days", VERSION, `${act}/insights`, { date_preset: "last_7d", fields: "spend" }));
+  out.push(await probe("spend, last 30 days", VERSION, `${act}/insights`, { date_preset: "last_30d", fields: "spend,impressions,ctr,cpm,frequency" }));
+  out.push(await probe("+ actions", VERSION, `${act}/insights`, { date_preset: "last_30d", fields: "spend,actions,cost_per_action_type" }));
+  out.push(await probe("+ ROAS", VERSION, `${act}/insights`, { date_preset: "last_30d", fields: "spend,purchase_roas" }));
+  out.push(await probe("by ad", VERSION, `${act}/insights`, { date_preset: "last_30d", level: "ad", fields: "ad_name,spend", limit: "5" }));
+  out.push(await probe("ads list", VERSION, `${act}/ads`, { fields: "name,effective_status", limit: "5" }));
+  out.push(await probe("token permissions", VERSION, "me/permissions", {}));
+  return { version: VERSION, appSecretProof: Boolean(process.env.META_APP_SECRET), probes: out };
+}

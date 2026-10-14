@@ -1,7 +1,7 @@
 import { isCronRequest } from "@/lib/cron";
 import { checkSetup } from "@/lib/context/check";
 import { collectStep, refreshAll, type Step } from "@/lib/context/run";
-import { linkAdAccounts } from "@/lib/context/meta";
+import { debugMeta, linkAdAccounts } from "@/lib/context/meta";
 import { inviteBotToClientChannels } from "@/lib/context/slack";
 import { reportError } from "@/lib/error-report";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
@@ -34,6 +34,13 @@ export async function GET(request: Request) {
   const force = !cron || new URL(request.url).searchParams.get("force") === "1";
   const step = new URL(request.url).searchParams.get("step");
   if (step === "check" && adminConfigured()) return Response.json(await checkSetup(createAdminClient()));
+  // Execs only, by hand: what Meta says to each kind of request on one client's ad account (?client=<slug>)
+  if (step === "meta-debug" && !cron && adminConfigured()) {
+    const slug = new URL(request.url).searchParams.get("client") ?? "nectr";
+    const { data: c } = await createAdminClient().from("clients").select("meta_ad_account_id").eq("slug", slug).maybeSingle();
+    if (!c?.meta_ad_account_id) return Response.json({ error: `No ad account linked for "${slug}"` }, { status: 400 });
+    return Response.json(await debugMeta(c.meta_ad_account_id));
+  }
   // Execs only, by hand: which ad accounts the system user sees, linking creative clients to theirs by name
   if (step === "meta-accounts" && !cron && adminConfigured()) {
     try {
