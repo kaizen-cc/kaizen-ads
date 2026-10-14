@@ -5,7 +5,8 @@ import { LeaderView } from "@/app/(team)/pipeline/views/leader-view";
 import { WorkView } from "@/app/(team)/pipeline/views/work-view";
 import type { PhaseKey, PhaseStat, QueueItem } from "@/app/(team)/pipeline/views/shared";
 import { TeamList, type Person } from "@/app/(team)/team/team-list";
-import { ClientGrid, type ClientCard } from "@/app/(team)/clients/client-grid";
+import { type ClientCard } from "@/app/(team)/clients/client-grid";
+import { ClientsBrowser } from "@/app/(team)/clients/clients-browser";
 import { greetingFor, todayLabel } from "@/lib/dates";
 import { BoardClient } from "@/app/(team)/board/board-client";
 import { UploadProvider } from "@/components/upload-provider";
@@ -170,7 +171,11 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
     body = (
       <div className="grid gap-5">
         <h1 className="font-heading text-[32px]">Clients</h1>
-        <ClientGrid
+        <ClientsBrowser
+          tab="creative"
+          nav={<span className="text-sm text-muted">Creative clients</span>}
+          other={[]}
+          emptyText="No clients."
           cards={rows.map((r, i): ClientCard => ({
             ...r,
             status: i === 3 ? "paused" : "active",

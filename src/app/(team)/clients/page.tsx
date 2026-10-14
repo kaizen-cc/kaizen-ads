@@ -5,7 +5,8 @@ import { SLOTS, type SlotRole, type TeamRole } from "@/lib/roles";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { Option } from "./assign-select";
-import { ClientGrid, UpsellList, type ClientCard } from "./client-grid";
+import { type ClientCard } from "./client-grid";
+import { ClientsBrowser } from "./clients-browser";
 
 type Row = {
   id: string;
@@ -25,20 +26,18 @@ type Row = {
 
 export default async function Clients({ searchParams }: PageProps<"/clients">) {
   const me = await requireStaff();
-  const { q, view, gaps } = await searchParams;
-  const query = typeof q === "string" ? q.trim() : "";
+  const { view, gaps } = await searchParams;
   const tab = view === "other" ? "other" : "creative";
   const onlyGaps = gaps === "1";
 
   const supabase = await createClient();
-  let req = supabase
+  const req = supabase
     .from("clients")
     .select(
       "id, name, slug, status, client_type, creative_package, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, creative_packages(label), client_assignments(role, profile_id, profiles(full_name)), contact_clients(contact_id)",
     )
     .neq("status", "offboarded")
     .order("name");
-  if (query) req = req.ilike("name", `%${query}%`);
   const [{ data }, { data: staff }, { data: usage }, { data: open }, { data: snaps }] = await Promise.all([
     req,
     supabase.from("profiles").select("id, full_name, role").eq("is_active", true).order("full_name"),
@@ -96,7 +95,7 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
   });
 
   const link = (params: Record<string, string>) => {
-    const merged: Record<string, string> = { q: query, view: tab === "other" ? "other" : "", gaps: onlyGaps ? "1" : "", ...params };
+    const merged: Record<string, string> = { view: tab === "other" ? "other" : "", gaps: onlyGaps ? "1" : "", ...params };
     const sp = new URLSearchParams(Object.entries(merged).filter(([, v]) => v));
     return `/clients${sp.size ? `?${sp}` : ""}`;
   };
@@ -117,57 +116,37 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
                   : "The clients you're on."}
           </p>
         </div>
-        <form role="search" className="relative">
-          {tab === "other" && <input type="hidden" name="view" value="other" />}
-          <svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-faint">
-            <circle cx="11" cy="11" r="7" />
-            <path d="m20 20-3.5-3.5" />
-          </svg>
-          <input
-            name="q"
-            defaultValue={query}
-            placeholder="Search clients"
-            aria-label="Search clients"
-            className="h-10 w-72 max-w-full rounded-full border border-line bg-surface pl-10 pr-4 text-sm outline-none transition-colors hover:border-faint/60 focus:border-brand-text/70"
-          />
-        </form>
       </header>
 
+      <ClientsBrowser
+        tab={tab}
+        cards={cards}
+        other={other.map((r) => ({ id: r.id, name: r.name, slug: r.slug, status: r.status, whiteLabel: r.client_type === "whitelabel", buyer: current(r, "meta_buyer")?.name ?? null }))}
+        slotOptions={slotOptions}
+        canEdit={canEdit}
+        emptyText={tab === "other" ? "Every current client is on a creative package." : onlyGaps ? "Every creative client is fully staffed." : "No clients on a creative package yet."}
+        nav={
       <nav className="flex flex-wrap items-center gap-1.5">
-        <Link href={link({ view: "", gaps: "" })} className={pill(tab === "creative" && !onlyGaps)}>
-          Creative clients <span className="tabular opacity-60">{creative.length}</span>
-        </Link>
-        <Link href={link({ view: "other", gaps: "" })} className={pill(tab === "other")}>
-          Not on a package <span className="tabular opacity-60">{other.length}</span>
-        </Link>
-        {tab === "creative" && gapCount > 0 && (
-          <>
-            <span className="mx-1 h-4 w-px bg-line" />
-            <Link
-              href={link({ gaps: onlyGaps ? "" : "1" })}
-              className={`inline-flex h-9 items-center gap-2 rounded-full px-4 text-sm transition-colors ${onlyGaps ? "bg-warn-soft text-warn" : "text-muted hover:bg-surface-2 hover:text-fg"}`}
-            >
-              Missing someone <span className="tabular opacity-70">{gapCount}</span>
-            </Link>
-          </>
-        )}
-      </nav>
-
-      {tab === "creative" ? (
-        cards.length ? (
-          <ClientGrid cards={cards} slotOptions={slotOptions} canEdit={canEdit} />
-        ) : (
-          <p className="rounded-[14px] border border-dashed border-line px-6 py-14 text-center text-sm text-faint">
-            {onlyGaps ? "Every creative client is fully staffed." : query ? "No creative client matches." : "No clients on a creative package yet."}
-          </p>
-        )
-      ) : other.length ? (
-        <UpsellList
-          clients={other.map((r) => ({ id: r.id, name: r.name, slug: r.slug, status: r.status, whiteLabel: r.client_type === "whitelabel", buyer: current(r, "meta_buyer")?.name ?? null }))}
-        />
-      ) : (
-        <p className="rounded-[14px] border border-dashed border-line px-6 py-14 text-center text-sm text-faint">{query ? "No client matches." : "Every current client is on a creative package."}</p>
-      )}
+          <Link href={link({ view: "", gaps: "" })} className={pill(tab === "creative" && !onlyGaps)}>
+            Creative clients <span className="tabular opacity-60">{creative.length}</span>
+          </Link>
+          <Link href={link({ view: "other", gaps: "" })} className={pill(tab === "other")}>
+            Not on a package <span className="tabular opacity-60">{other.length}</span>
+          </Link>
+          {tab === "creative" && gapCount > 0 && (
+            <>
+              <span className="mx-1 h-4 w-px bg-line" />
+              <Link
+                href={link({ gaps: onlyGaps ? "" : "1" })}
+                className={`inline-flex h-9 items-center gap-2 rounded-full px-4 text-sm transition-colors ${onlyGaps ? "bg-warn-soft text-warn" : "text-muted hover:bg-surface-2 hover:text-fg"}`}
+              >
+                Missing someone <span className="tabular opacity-70">{gapCount}</span>
+              </Link>
+            </>
+          )}
+        </nav>
+        }
+      />
     </div>
   );
 }
