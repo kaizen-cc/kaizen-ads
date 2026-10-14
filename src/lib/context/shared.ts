@@ -27,8 +27,10 @@ export const trimBody = (s: string | null | undefined, max = 3000) => {
 };
 
 export async function saveItems(admin: SupabaseClient, items: ContextItem[]) {
-  for (let i = 0; i < items.length; i += 500) {
-    const { error } = await admin.from("context_items").upsert(items.slice(i, i + 500), { onConflict: "source,external_id" });
+  // The same message can arrive twice in one read (a thread reply also sent to the channel); keep the last
+  const unique = [...new Map(items.map((i) => [`${i.source}|${i.external_id}`, i])).values()];
+  for (let i = 0; i < unique.length; i += 500) {
+    const { error } = await admin.from("context_items").upsert(unique.slice(i, i + 500), { onConflict: "source,external_id" });
     if (error) throw new Error(`Saving context: ${error.message}`);
   }
 }

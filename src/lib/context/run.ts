@@ -14,7 +14,7 @@ async function collect(admin: SupabaseClient, source: string, run: (since: Date)
     await saveItems(admin, items);
     // Small overlap so a message posted mid-run isn't missed; duplicates are ignored on save
     await setCursor(admin, source, new Date(started.getTime() - 5 * 60_000), { ok: true, items: items.length, ...notes });
-    return { source, items: items.length };
+    return { source, items: items.length + Number(notes?.saved ?? 0) };
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
     await admin.from("sync_state").upsert({ source, last_run_at: started.toISOString(), last_result: { ok: false, error } });

@@ -1,6 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { compact, getCursor, setCursor, trimBody, type CollectResult, type ContextItem } from "./shared";
+import { compact, getCursor, saveItems, setCursor, trimBody, type CollectResult, type ContextItem } from "./shared";
 
 // Reads client channels through the Kaizen OS Slack app (its bot token, set as SLACK_BOT_TOKEN).
 // The bot must be a member of a channel to read it. Needs channels:history, groups:history,
@@ -184,7 +184,7 @@ export async function collectSlack(admin: SupabaseClient): Promise<CollectResult
     .from("clients")
     .select("id, slack_channel_id, internal_slack_channel_id")
     .eq("creative_package", true);
-  const items: ContextItem[] = [];
+  let saved = 0;
   const errors: string[] = [];
   for (const c of clients ?? []) {
     for (const [channel, source] of [
@@ -196,16 +196,20 @@ export async function collectSlack(admin: SupabaseClient): Promise<CollectResult
       const key = `slack:${channel}`;
       const started = new Date();
       try {
-        items.push(...(await readChannel(channel, await getCursor(admin, key), c.id, source)));
-        await setCursor(admin, key, new Date(started.getTime() - 5 * 60_000), { ok: true });
+        // Save before moving the channel's bookmark, so a failure never skips messages
+        const read = await readChannel(channel, await getCursor(admin, key), c.id, source);
+        await saveItems(admin, read);
+        await setCursor(admin, key, new Date(started.getTime() - 5 * 60_000), { ok: true, items: read.length });
+        saved += read.length;
       } catch (e) {
         errors.push(e instanceof Error ? e.message : String(e)); // e.g. not_in_channel: invite the bot
       }
     }
   }
   return {
-    items,
+    items: [], // already saved channel by channel
     notes: {
+      saved,
       channelsSeen: access.channelsSeen,
       channelsMatched: access.matched,
       joined: access.joined,
