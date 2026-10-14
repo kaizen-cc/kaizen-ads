@@ -4,8 +4,10 @@ import { Section, field, label } from "@/components/ui";
 import type { Digest } from "@/lib/ai";
 import { SLOTS } from "@/lib/roles";
 import { AssignSelect, type Option } from "../assign-select";
+import type { Freshness } from "@/lib/dates";
 import { BriefingPanel } from "./briefing-panel";
-import { addAngle, addContact, addMemory, archiveMemory, refreshClientBriefing, removeContact, saveAllotment, saveClientDetails, setAngleStatus } from "./actions";
+import { ConnectionStatus } from "./connection-status";
+import { syncMetaNow, addAngle, addContact, addMemory, archiveMemory, refreshClientBriefing, removeContact, saveAllotment, saveClientDetails, setAngleStatus } from "./actions";
 
 const fmt = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
 const chip = "inline-flex items-center rounded-full px-2.5 py-1 text-xs";
@@ -41,10 +43,11 @@ export type ClientViewProps = {
   videosUsed: number;
   can: { admin: boolean; contacts: boolean; allot: boolean; assign: boolean };
   demo?: boolean; // design preview: the refresh only plays its animation
+  connections: { meta: Freshness | null; slackClient: Freshness | null; slackInternal: Freshness | null; drive: Freshness | null };
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, can, demo = false }: ClientViewProps) {
+export function ClientView({ client, packageLabel, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, can, demo = false, connections }: ClientViewProps) {
   return (
     <div className="mx-auto grid max-w-6xl gap-8">
       {/* Header */}
@@ -374,16 +377,30 @@ export function ClientView({ client, packageLabel, team, contacts, angles, memor
                   <p className="text-xs font-medium uppercase tracking-[0.12em] text-faint">Connections</p>
                   <label className={label}>
                     Meta ad account ID
-                    <input name="meta_ad_account_id" defaultValue={client.meta_ad_account_id ?? ""} className={`${field} tabular`} placeholder="From Ads Manager, e.g. 6615…" />
+                    <span className="relative block">
+                      <input name="meta_ad_account_id" defaultValue={client.meta_ad_account_id ?? ""} className={`${field} tabular pr-20`} placeholder="From Ads Manager, e.g. 6615…" />
+                      {connections.meta?.tone === "ok" && (
+                        <span className="pointer-events-none absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-1.5 text-[11px] font-medium text-ok">
+                          <span className="relative flex h-2 w-2">
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-ok opacity-60" />
+                            <span className="relative inline-flex h-2 w-2 rounded-full bg-ok" />
+                          </span>
+                          Live
+                        </span>
+                      )}
+                    </span>
+                    <ConnectionStatus status={connections.meta} sync={syncMetaNow.bind(null, client.id, client.slug)} demo={demo} />
                   </label>
                   <div className="grid grid-cols-2 gap-3">
                     <label className={label}>
                       Client Slack channel
                       <input name="slack_channel_id" defaultValue={client.slack_channel_id ?? ""} className={field} placeholder="Linked automatically" />
+                      <ConnectionStatus status={connections.slackClient} />
                     </label>
                     <label className={label}>
                       Internal Slack channel
                       <input name="internal_slack_channel_id" defaultValue={client.internal_slack_channel_id ?? ""} className={field} placeholder="Linked automatically" />
+                      <ConnectionStatus status={connections.slackInternal} />
                     </label>
                   </div>
                   <label className={label}>
@@ -391,6 +408,7 @@ export function ClientView({ client, packageLabel, team, contacts, angles, memor
                       Drive folder <span className="font-normal text-faint">(ID or link)</span>
                     </span>
                     <input name="drive_folder_id" defaultValue={client.drive_folder_id ?? ""} className={field} placeholder="Linked automatically" />
+                    <ConnectionStatus status={connections.drive} />
                   </label>
                   <div className="grid grid-cols-[minmax(0,1fr)_110px] gap-3">
                     <label className={label}>
@@ -406,18 +424,21 @@ export function ClientView({ client, packageLabel, team, contacts, angles, memor
               </ActionForm>
             ) : (
               <dl className="grid gap-2.5 text-sm">
+                <div className="flex justify-between gap-3">
+                  <dt className="text-muted">Status</dt>
+                  <dd className="capitalize">{client.status}</dd>
+                </div>
                 {(
                   [
-                    ["Status", client.status],
-                    ["Meta ad account", client.meta_ad_account_id],
-                    ["Client Slack", client.slack_channel_id ? "Linked" : null],
-                    ["Internal Slack", client.internal_slack_channel_id ? "Linked" : null],
-                    ["Drive folder", client.drive_folder_id ? "Linked" : null],
+                    ["Meta ad account", connections.meta, true],
+                    ["Client Slack", connections.slackClient, false],
+                    ["Internal Slack", connections.slackInternal, false],
+                    ["Drive folder", connections.drive, false],
                   ] as const
-                ).map(([k, v]) => (
-                  <div key={k} className="flex justify-between gap-3">
+                ).map(([k, st, canSync]) => (
+                  <div key={k} className="grid gap-1">
                     <dt className="text-muted">{k}</dt>
-                    <dd className={`capitalize ${v ? "" : "text-faint"}`}>{v ?? "—"}</dd>
+                    <dd>{st ? <ConnectionStatus status={st} sync={canSync ? syncMetaNow.bind(null, client.id, client.slug) : undefined} demo={demo} /> : <span className="text-faint">Not linked</span>}</dd>
                   </div>
                 ))}
               </dl>

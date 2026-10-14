@@ -395,6 +395,15 @@ export async function linkAdAccounts(admin: SupabaseClient) {
   };
 }
 
+/** One client, on demand (the client page's Sync now): daily metrics, reach, and the AI snapshot. */
+export async function syncClientMeta(admin: SupabaseClient, clientId: string, adAccountId: string) {
+  const account = adAccountId.replace(/^act_/, "");
+  const daily = await syncDaily(admin, clientId, account);
+  await syncReach(admin, clientId, account);
+  await snapshot(admin, clientId, account);
+  return daily;
+}
+
 /** The 12pm/6pm step: link accounts, then for each creative client with one: daily metrics, reach, and the AI snapshot. */
 export async function collectMeta(admin: SupabaseClient, budgetMs = 700_000) {
   const deadline = Date.now() + budgetMs;

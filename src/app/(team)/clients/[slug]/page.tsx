@@ -2,11 +2,13 @@ import { notFound } from "next/navigation";
 import type { Digest } from "@/lib/ai";
 import { isExecOrLead, requireStaff, seesAllClients } from "@/lib/auth";
 import { SLOTS, type TeamRole } from "@/lib/roles";
+import { freshness } from "@/lib/dates";
+import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { ClientView } from "./client-view";
 
 // Refreshing a briefing asks the AI to read everything new about the client
-export const maxDuration = 120;
+export const maxDuration = 300; // also covers Sync now on the Meta ad account
 
 
 export default async function ClientPage({ params }: PageProps<"/clients/[slug]">) {
@@ -56,8 +58,23 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
     return c ? [{ ...c, isPrimary: l.is_primary }] : [];
   });
 
+  // When each connection last synced. Sync bookmarks are server-side, so they're read with the server's rights (timestamps only)
+  const keys = [client.slack_channel_id && `slack:${client.slack_channel_id}`, client.internal_slack_channel_id && `slack:${client.internal_slack_channel_id}`, client.drive_folder_id && `drive:${client.drive_folder_id}`].filter(Boolean) as string[];
+  const [{ data: synced }, { data: lastMeta }] = await Promise.all([
+    adminConfigured() && keys.length ? createAdminClient().from("sync_state").select("source, last_run_at").in("source", keys) : Promise.resolve({ data: [] as { source: string; last_run_at: string | null }[] }),
+    supabase.from("meta_snapshots").select("fetched_at").eq("client_id", client.id).order("fetched_at", { ascending: false }).limit(1).maybeSingle(),
+  ]);
+  const at = (key: string) => (synced ?? []).find((r) => r.source === key)?.last_run_at ?? null;
+  const connections = {
+    meta: client.meta_ad_account_id ? freshness(lastMeta?.fetched_at) : null,
+    slackClient: client.slack_channel_id ? freshness(at(`slack:${client.slack_channel_id}`)) : null,
+    slackInternal: client.internal_slack_channel_id ? freshness(at(`slack:${client.internal_slack_channel_id}`)) : null,
+    drive: client.drive_folder_id ? freshness(at(`drive:${client.drive_folder_id}`)) : null,
+  };
+
   return (
     <ClientView
+      connections={connections}
       client={client}
       packageLabel={packageLabel ?? null}
       team={Object.fromEntries(SLOTS.map((slot) => [slot.value, { current: currentIn(slot.value), options: optionsFor(slot.eligible) }]))}

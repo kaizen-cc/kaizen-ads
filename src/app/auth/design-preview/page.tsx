@@ -82,7 +82,7 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
   if (view === "client") {
     body = (
       <ClientView
-        client={{ id: "c1", name: "Crust Pizza Co.", slug: "crust-pizza-co", status: "active", client_type: "traditional", website: "https://crustpizza.com", meta_ad_account_id: null, slack_channel_id: "C078D34T7FX", internal_slack_channel_id: "C06TQ0WMCJ1", drive_folder_id: "1Rnwf-WH7tz", kaizen_id: 403, auto_approve_opt_in: false, creative_package: true }}
+        client={{ id: "c1", name: "Crust Pizza Co.", slug: "crust-pizza-co", status: "active", client_type: "traditional", website: "https://crustpizza.com", meta_ad_account_id: "526528539355910", slack_channel_id: "C078D34T7FX", internal_slack_channel_id: "C06TQ0WMCJ1", drive_folder_id: "1Rnwf-WH7tz", kaizen_id: 403, auto_approve_opt_in: false, creative_package: true }}
         packageLabel="Silver"
         team={{
           meta_buyer: { current: buyers[1], options: buyers },
@@ -119,6 +119,12 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
         imagesUsed={6}
         videosUsed={0}
         can={{ admin: true, contacts: true, allot: true, assign: true }}
+        connections={{
+          meta: { label: "Synced 5 hours ago", tone: "ok" },
+          slackClient: { label: "Synced 5 hours ago", tone: "ok" },
+          slackInternal: { label: "Synced 2 days ago", tone: "warn" },
+          drive: { label: "Not synced yet", tone: "off" },
+        }}
         demo
       />
     );

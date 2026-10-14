@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireStaff } from "@/lib/auth";
 import { refreshBriefing } from "@/lib/context/briefing";
+import { metaConfigured, syncClientMeta } from "@/lib/context/meta";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -130,6 +131,22 @@ export async function refreshClientBriefing(clientId: string, slug: string): Pro
     await refreshBriefing(createAdminClient(), clientId, true);
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Couldn't refresh the briefing." };
+  }
+  return done(slug);
+}
+
+/** Pull this client's Meta numbers now instead of waiting for the next 12pm or 6pm run. */
+export async function syncMetaNow(clientId: string, slug: string): Promise<ActionResult> {
+  await requireStaff();
+  const supabase = await createClient();
+  const { data: c } = await supabase.from("clients").select("meta_ad_account_id").eq("id", clientId).maybeSingle();
+  if (!c) return { ok: false, error: "You don't work on this client." };
+  if (!c.meta_ad_account_id) return { ok: false, error: "Add the ad account ID and save first." };
+  if (!metaConfigured() || !adminConfigured()) return { ok: false, error: "Meta isn't connected on the server." };
+  try {
+    await syncClientMeta(createAdminClient(), clientId, c.meta_ad_account_id);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't reach Meta." };
   }
   return done(slug);
 }
