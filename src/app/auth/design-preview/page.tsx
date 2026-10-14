@@ -11,10 +11,11 @@ import { BoardClient } from "@/app/(team)/board/board-client";
 import { UploadProvider } from "@/components/upload-provider";
 import { RequestForm } from "@/app/(team)/requests/new/request-form";
 import { sampleRequest } from "./sample-request";
+import { ClientView } from "@/app/(team)/clients/[slug]/client-view";
 import { sampleTickets } from "./sample-tickets";
 
 // Local-only design check with sample data (never served in production).
-// Open /auth/design-preview?view=exec | exec-empty | leader | buyer | creative | board | team | clients | request | request-off
+// Open /auth/design-preview?view=exec | exec-empty | leader | buyer | creative | board | team | clients | client | request | request-off
 
 const people: Person[] = [
   { id: "1", email: "santi@kaizenmarketing.agency", fullName: "Santi Lozano", role: "executive", isActive: true, joined: true, clientCount: 0 },
@@ -78,7 +79,48 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
   let body: React.ReactNode;
   let who = { name: "Santi Lozano", role: "Executive" };
 
-  if (view === "request" || view === "request-off") {
+  if (view === "client") {
+    body = (
+      <ClientView
+        client={{ id: "c1", name: "Crust Pizza Co.", slug: "crust-pizza-co", status: "active", client_type: "traditional", website: "https://crustpizza.com", meta_ad_account_id: null, slack_channel_id: "C078D34T7FX", internal_slack_channel_id: "C06TQ0WMCJ1", drive_folder_id: "1Rnwf-WH7tz", kaizen_id: 403, auto_approve_opt_in: false, creative_package: true }}
+        packageLabel="Silver"
+        team={{
+          meta_buyer: { current: buyers[1], options: buyers },
+          graphic_designer: { current: designers[1], options: designers },
+          video_editor: { current: null, options: editors },
+        }}
+        contacts={[
+          { id: "k1", email: "tammy@crustpizza.com", full_name: "Tammy Kravitz", auth_user_id: "x" },
+          { id: "k2", email: "kim@crustpizza.com", full_name: "Kim Juda", auth_user_id: null },
+        ]}
+        angles={[
+          { id: "a1", name: "Weekly Deals", kind: "angle", description: "Price-led offers like $8 Calzone Mondays", status: "active" },
+          { id: "a2", name: "Skilled Craftsmanship", kind: "angle", description: null, status: "active" },
+          { id: "a3", name: "Families nearby", kind: "avatar", description: "Parents within 10 miles", status: "active" },
+        ]}
+        memory={[
+          { id: "m1", kind: "avoid", body: "Football Package is weekends only. Never imply it's every day.", source: "client", by: "Jorgi Conti" },
+          { id: "m2", kind: "prefer", body: "Real food shots beat stock; the cheese pull always wins.", source: "team", by: "Mark" },
+        ]}
+        digest={{
+          summary: "Tammy Kravitz is now the main approver alongside Kim Juda. Award-winning, Gift Card and Winter LTO creatives are approved; Donation Program and $8 Calzone Mondays iterations are in progress.",
+          direction: "Seasonal promos on top of evergreen brand creative. Next up: Veterans Day (free 10\" pizza with Military ID), the Winter Menu/BOGA launch and St. Jude's (Nov 1 to Dec 31).",
+          asks: ["Veterans Day statics by Nov 4", "Larger Crust and St. Jude logos on the donation poster"],
+          avoid: ["LTO items in evergreen creative", "Ads for Richmond (permanently closed)"],
+          works: ["Price-first headlines", "Cheese-pull close-ups"],
+          newAssets: [{ name: "Winter menu shoot / BOGA hero.jpg", url: "https://drive.google.com", note: "Hero for the Winter Menu launch" }],
+          openQuestions: ["Is the mobile app launch still on hold?"],
+        }}
+        briefingAt="2026-10-14T16:02:00Z"
+        needsInvite={[]}
+        images={20}
+        videos={0}
+        imagesUsed={6}
+        videosUsed={0}
+        can={{ admin: true, contacts: true, allot: true, assign: true }}
+      />
+    );
+  } else if (view === "request" || view === "request-off") {
     body = (
       <div className="mx-auto max-w-5xl">
         <RequestForm

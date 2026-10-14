@@ -58,7 +58,7 @@ export function AssignSelect({
             }
           });
         }}
-        className={`w-full cursor-pointer appearance-none truncate rounded-brand border bg-transparent pr-6 outline-none transition-colors focus:border-brand-text ${
+        className={`w-full truncate rounded-[8px] border bg-transparent outline-none transition-colors focus:border-brand-text ${
           size === "md" ? "h-10 px-3 text-sm" : "h-8 px-2 text-sm"
         } ${state === "saved" ? "border-ok" : state === "error" ? "border-brand-text" : "border-transparent hover:border-line"} ${value ? "text-fg" : "text-faint"}`}
         title={error ?? undefined}
@@ -70,9 +70,11 @@ export function AssignSelect({
           </option>
         ))}
       </select>
-      <span aria-hidden className="pointer-events-none absolute right-2 text-[10px] text-faint">
-        {pending ? "…" : state === "saved" ? "✓" : "▾"}
-      </span>
+      {(pending || state === "saved") && (
+        <span aria-hidden className={`pointer-events-none absolute right-8 text-xs ${state === "saved" ? "text-ok" : "text-faint"}`}>
+          {pending ? "…" : "✓"}
+        </span>
+      )}
     </span>
   );
 }

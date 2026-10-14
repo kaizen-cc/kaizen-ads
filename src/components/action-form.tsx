@@ -43,7 +43,7 @@ export function ActionForm({
       <div className="flex flex-wrap items-center gap-3">
         <button
           disabled={pending}
-          className="h-9 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:bg-brand-hover disabled:opacity-60"
+          className="h-10 rounded-[8px] bg-brand px-5 text-sm font-medium text-white shadow-[0_8px_24px_-12px_rgba(178,30,44,0.9)] transition-colors hover:bg-brand-hover disabled:opacity-60"
         >
           {pending ? "Saving…" : submitLabel}
         </button>

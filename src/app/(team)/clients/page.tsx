@@ -79,7 +79,7 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
             defaultValue={query}
             placeholder="Search clients"
             aria-label="Search clients"
-            className="h-9 w-56 max-w-full rounded-brand border border-line bg-surface px-3 text-sm outline-none focus:border-brand-text"
+            className="h-10 w-64 max-w-full rounded-[8px] border border-line bg-surface px-3 text-sm outline-none transition-colors hover:border-faint/60 focus:border-brand-text/70"
           />
         </form>
       </div>

@@ -65,7 +65,7 @@ export function Combobox({
       >
         {selected?.dot && <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: selected.dot }} />}
         <span className="truncate">{selected ? selected.label : placeholder}</span>
-        <span className="ml-auto text-[10px] text-faint">▾</span>
+        <svg aria-hidden width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="ml-auto shrink-0 text-faint"><path d="m6 9 6 6 6-6" /></svg>
       </button>
       {open && (
         <div className="absolute left-0 top-11 z-40 w-72 overflow-hidden rounded-brand border border-line bg-surface-2 shadow-2xl">

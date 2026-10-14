@@ -58,7 +58,7 @@ export function BrandSwitcher({ current, brands }: { current: BrandLink; brands:
       >
         <BrandAvatar name={current.name} />
         <span className="truncate">{current.name}</span>
-        <span className="text-xs text-muted">▾</span>
+        <svg aria-hidden width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="ml-auto shrink-0 text-faint"><path d="m6 9 6 6 6-6" /></svg>
       </button>
       {open && (
         <div role="menu" className="absolute left-0 top-10 z-30 w-64 rounded-brand border border-line bg-surface-2 p-1.5 shadow-2xl">

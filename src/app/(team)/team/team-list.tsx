@@ -15,7 +15,7 @@ export type Person = {
   clientCount: number;
 };
 
-const select = "h-9 rounded-brand border border-line bg-bg px-2 text-sm outline-none focus:border-brand-text";
+const select = "h-10 rounded-[8px] border border-line bg-bg px-3 text-sm outline-none transition-colors hover:border-faint/60 focus:border-brand-text/70";
 
 function RoleOptions() {
   return (
@@ -104,16 +104,16 @@ function Invite() {
           if (res.ok) formEl.reset();
         });
       }}
-      className="grid gap-2 rounded-brand border border-line bg-surface p-4"
+      className="grid gap-3 rounded-[12px] border border-line bg-surface p-5"
     >
       <p className="text-sm font-medium">Invite a teammate</p>
-      <div className="grid gap-2 sm:grid-cols-[1fr_1.4fr_200px_auto]">
+      <div className="grid gap-3 sm:grid-cols-[1fr_1.4fr_200px_auto]">
         <input name="full_name" required placeholder="Name" aria-label="Name" className={select} />
         <input name="email" type="email" required placeholder="name@kaizenmarketing.agency" aria-label="Email" className={select} />
         <select name="role" defaultValue="media_buyer" aria-label="Role" className={select}>
           <RoleOptions />
         </select>
-        <button disabled={pending} className="h-9 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:bg-brand-hover disabled:opacity-60">
+        <button disabled={pending} className="h-10 rounded-[8px] bg-brand px-5 text-sm font-medium text-white hover:bg-brand-hover disabled:opacity-60">
           {pending ? "Inviting…" : "Invite"}
         </button>
       </div>
