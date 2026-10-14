@@ -3,39 +3,70 @@
 import { useState } from "react";
 import type { SlotRole } from "@/lib/roles";
 import type { Option } from "./assign-select";
-import { ClientGrid, UpsellList, type ClientCard, type OtherClient } from "./client-grid";
+import { ClientGrid, type ClientCard } from "./client-grid";
 
-/** The tabs row with a live search: from two letters typed, only matching clients stay on screen. */
+export type Filter = "all" | "creative" | "sprint" | "none" | "gaps";
+
+const FILTERS: { key: Filter; label: string; test: (c: ClientCard) => boolean }[] = [
+  { key: "all", label: "All clients", test: () => true },
+  { key: "creative", label: "Creative package", test: (c) => c.pkg !== "none" },
+  { key: "sprint", label: "Sprint", test: (c) => c.pkg === "sprint" },
+  { key: "none", label: "No package", test: (c) => c.pkg === "none" },
+  { key: "gaps", label: "Missing someone", test: (c) => c.missing > 0 },
+];
+
+/** Every client in one place: filter chips plus a live search that narrows the cards from two letters typed. */
 export function ClientsBrowser({
-  nav,
-  tab,
   cards,
-  other,
   slotOptions,
   canEdit,
-  emptyText,
+  initialFilter = "all",
 }: {
-  nav: React.ReactNode;
-  tab: "creative" | "other";
   cards: ClientCard[];
-  other: OtherClient[];
   slotOptions: Record<SlotRole, Option[]>;
   canEdit: boolean;
-  emptyText: string;
+  initialFilter?: Filter;
 }) {
   const [q, setQ] = useState("");
+  const [filter, setFilter] = useState<Filter>(initialFilter);
   const term = q.trim().toLowerCase();
   const searching = term.length >= 2;
-  const match = (name: string) => !searching || name.toLowerCase().includes(term);
-  const shownCards = cards.filter((c) => match(c.name));
-  const shownOther = other.filter((c) => match(c.name));
-  const total = tab === "creative" ? cards.length : other.length;
-  const found = tab === "creative" ? shownCards.length : shownOther.length;
+  const test = FILTERS.find((f) => f.key === filter)!.test;
+  const inFilter = cards.filter(test);
+  const shown = inFilter.filter((c) => !searching || c.name.toLowerCase().includes(term));
+
+  const pick = (f: Filter) => {
+    setFilter(f);
+    const url = new URL(window.location.href);
+    if (f === "all") url.searchParams.delete("filter");
+    else url.searchParams.set("filter", f);
+    window.history.replaceState(null, "", url);
+  };
 
   return (
     <>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        {nav}
+        <nav className="flex flex-wrap items-center gap-1.5">
+          {FILTERS.map((f) => {
+            const n = cards.filter(f.test).length;
+            if (!n && f.key !== "all" && f.key !== filter) return null;
+            const on = filter === f.key;
+            const warn = f.key === "gaps";
+            return (
+              <span key={f.key} className="contents">
+                {warn && <span className="mx-1 h-4 w-px bg-line" />}
+                <button
+                  onClick={() => pick(f.key)}
+                  className={`inline-flex h-9 items-center gap-2 rounded-full px-4 text-sm transition-colors ${
+                    on ? (warn ? "bg-warn-soft text-warn" : "bg-fg text-bg") : "text-muted hover:bg-surface-2 hover:text-fg"
+                  }`}
+                >
+                  {f.label} <span className="tabular opacity-60">{n}</span>
+                </button>
+              </span>
+            );
+          })}
+        </nav>
         <div className="relative">
           <svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-faint">
             <circle cx="11" cy="11" r="7" />
@@ -55,8 +86,8 @@ export function ClientsBrowser({
 
       {searching && (
         <p className="-mt-3 text-xs text-faint" aria-live="polite">
-          {found ? `${found} of ${total} match "${q.trim()}"` : `Nothing matches "${q.trim()}"`}
-          {found ? null : (
+          {shown.length ? `${shown.length} of ${inFilter.length} match "${q.trim()}"` : `Nothing matches "${q.trim()}"`}
+          {shown.length ? null : (
             <button onClick={() => setQ("")} className="ml-2 text-muted underline-offset-4 hover:text-fg hover:underline">
               Clear
             </button>
@@ -64,14 +95,12 @@ export function ClientsBrowser({
         </p>
       )}
 
-      {found ? (
-        tab === "creative" ? (
-          <ClientGrid cards={shownCards} slotOptions={slotOptions} canEdit={canEdit} />
-        ) : (
-          <UpsellList clients={shownOther} />
-        )
+      {shown.length ? (
+        <ClientGrid cards={shown} slotOptions={slotOptions} canEdit={canEdit} />
       ) : searching ? null : (
-        <p className="rounded-[14px] border border-dashed border-line px-6 py-14 text-center text-sm text-faint">{emptyText}</p>
+        <p className="rounded-[14px] border border-dashed border-line px-6 py-14 text-center text-sm text-faint">
+          {filter === "gaps" ? "Every client is fully staffed." : filter === "sprint" ? "No clients on a sprint package." : "No clients here yet."}
+        </p>
       )}
     </>
   );

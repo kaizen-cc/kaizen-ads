@@ -37,7 +37,6 @@ export async function saveClientDetails(clientId: string, slug: string, form: Fo
       // Accept a pasted folder link as well as a bare ID
       drive_folder_id: str(form, "drive_folder_id")?.match(/folders\/([\w-]+)/)?.[1] ?? str(form, "drive_folder_id"),
       kaizen_id: kaizenId && /^\d+$/.test(kaizenId) ? Number(kaizenId) : null,
-      creative_package: form.get("creative_package") === "on",
     })
     .eq("id", clientId);
   return done(slug, error);
@@ -92,6 +91,34 @@ export async function saveAllotment(clientId: string, slug: string, form: FormDa
   const { error } = await supabase
     .from("client_allotments")
     .upsert({ client_id: clientId, images_per_month: n("images"), videos_per_month: n("videos"), updated_by: me.id, updated_at: new Date().toISOString() });
+  return done(slug, error);
+}
+
+/** Execs: put a client on a sprint package until a date (or change one). The database checks it's an exec. */
+export async function setSprintPackage(clientId: string, slug: string, form: FormData): Promise<ActionResult> {
+  await requireStaff();
+  const until = str(form, "until");
+  if (!until || !/^\d{4}-\d{2}-\d{2}$/.test(until)) return { ok: false, error: "Pick the day the sprint ends." };
+  const pkg = str(form, "package");
+  const custom = pkg === "custom";
+  const n = (k: string) => Math.max(0, Math.min(999, Number(form.get(k)) || 0));
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("set_sprint_package", {
+    p_client: clientId,
+    p_until: until,
+    p_package: custom ? null : pkg,
+    p_images: custom ? n("images") : null,
+    p_videos: custom ? n("videos") : null,
+    p_note: str(form, "note"),
+  });
+  return done(slug, error);
+}
+
+/** Execs: take a client off their creative package now. */
+export async function endCreativePackage(clientId: string, slug: string): Promise<ActionResult> {
+  await requireStaff();
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("end_creative_package", { p_client: clientId });
   return done(slug, error);
 }
 

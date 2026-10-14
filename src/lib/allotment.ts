@@ -4,16 +4,32 @@ import type { Format } from "@/lib/stages";
 export const MAX_VARIATIONS = 5;
 
 /** A client's monthly creative allotment and what this month's requests already used. null = not set yet. */
-export type Allotment = { images: number | null; videos: number | null; imagesUsed: number; videosUsed: number };
+export type Allotment = { images: number | null; videos: number | null; imagesUsed: number; videosUsed: number; until: string | null };
 
-export type UsageRow = { client_id: string; images_per_month: number | null; videos_per_month: number | null; images_used: number; videos_used: number };
+/** until: a sprint package's last day (YYYY-MM-DD); null = ongoing. */
+export type UsageRow = {
+  client_id: string;
+  images_per_month: number | null;
+  videos_per_month: number | null;
+  images_used: number;
+  videos_used: number;
+  package_until?: string | null;
+};
 
 export const toAllotment = (r: UsageRow): Allotment => ({
   images: r.images_per_month,
   videos: r.videos_per_month,
   imagesUsed: r.images_used,
   videosUsed: r.videos_used,
+  until: r.package_until ?? null,
 });
+
+/** "Nov 30" (or "Nov 30, 2027" outside this year) for a YYYY-MM-DD day. */
+export function untilLabel(day: string) {
+  const d = new Date(`${day}T12:00:00`);
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", ...(sameYear ? {} : { year: "numeric" }) });
+}
 
 /** Only net new designs draw on the allotment. Images and carousels share the image pool. */
 export function draws(formats: Partial<Record<Format, { new: number }>>) {

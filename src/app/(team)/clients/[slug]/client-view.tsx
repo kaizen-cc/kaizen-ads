@@ -7,7 +7,22 @@ import { AssignSelect, type Option } from "../assign-select";
 import type { Freshness } from "@/lib/dates";
 import { BriefingPanel } from "./briefing-panel";
 import { ConnectionStatus } from "./connection-status";
-import { syncMetaNow, addAngle, addContact, addMemory, archiveMemory, refreshClientBriefing, removeContact, saveAllotment, saveClientDetails, setAngleStatus } from "./actions";
+import {
+  syncMetaNow,
+  addAngle,
+  addContact,
+  addMemory,
+  archiveMemory,
+  endCreativePackage,
+  refreshClientBriefing,
+  removeContact,
+  saveAllotment,
+  saveClientDetails,
+  setAngleStatus,
+  setSprintPackage,
+} from "./actions";
+import { PackagePanel, type PackageOption } from "./package-panel";
+import { untilLabel } from "@/lib/allotment";
 
 const fmt = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
 const chip = "inline-flex items-center rounded-full px-2.5 py-1 text-xs";
@@ -28,7 +43,12 @@ export type ClientViewProps = {
     kaizen_id: number | null;
     auto_approve_opt_in: boolean;
     creative_package: boolean;
+    creative_package_key?: string | null;
+    creative_package_until?: string | null;
+    creative_package_note?: string | null;
   };
+  packages: PackageOption[];
+  today: string; // YYYY-MM-DD in New York
   packageLabel: string | null;
   team: Record<string, { current: Option | null; options: Option[] }>;
   contacts: { id: string; email: string; full_name: string | null; auth_user_id: string | null }[];
@@ -47,7 +67,10 @@ export type ClientViewProps = {
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, can, demo = false, connections }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, can, demo = false, connections }: ClientViewProps) {
+  // A sprint whose end date passed is off, even before the nightly job switches it off
+  const until = client.creative_package_until ?? null;
+  const active = client.creative_package && (!until || until >= today);
   return (
     <div className="mx-auto grid max-w-6xl gap-8">
       {/* Header */}
@@ -57,11 +80,18 @@ export function ClientView({ client, packageLabel, team, contacts, angles, memor
         </Link>
         <h1 className="font-heading text-[32px] leading-tight">{client.name}</h1>
         <div className="flex flex-wrap items-center gap-2">
-          {client.creative_package ? (
+          {active ? (
             <span className={`${chip} bg-brand-soft text-brand-text`}>{packageLabel ? `${packageLabel} creative package` : "Creative package"}</span>
           ) : (
-            <span className={`${chip} bg-surface-2 text-faint`}>Not on a creative package</span>
+            <span className={`${chip} gap-1.5 border border-dashed border-line text-faint`}>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+                <rect x="5" y="11" width="14" height="9" rx="2" />
+                <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+              </svg>
+              Not on a creative package
+            </span>
           )}
+          {active && until && <span className={`${chip} bg-warn-soft text-warn`}>Sprint until {untilLabel(until)}</span>}
           <span className={`${chip} bg-surface-2 capitalize text-muted`}>{client.status}</span>
           {client.client_type === "whitelabel" && <span className={`${chip} bg-surface-2 text-muted`}>White label</span>}
           {client.auto_approve_opt_in && <span className={`${chip} bg-ok-soft text-ok`}>Opted into auto-approval</span>}
@@ -75,7 +105,7 @@ export function ClientView({ client, packageLabel, team, contacts, angles, memor
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         {/* Main column: what the AI knows and what the team adds to it */}
         <div className="grid min-w-0 gap-6">
-          {client.creative_package && (
+          {active && (
             <BriefingPanel
               demo={demo}
               refresh={refreshClientBriefing.bind(null, client.id, client.slug)}
@@ -258,42 +288,23 @@ export function ClientView({ client, packageLabel, team, contacts, angles, memor
 
         {/* Side column: who, how much, and how it's wired */}
         <div className="grid min-w-0 gap-6">
-          <Section title="This month">
-            <div className="grid gap-4">
-              {(
-                [
-                  ["Images & carousels", images, imagesUsed],
-                  ["Videos", videos, videosUsed],
-                ] as const
-              ).map(([name, cap, used]) => (
-                <div key={name} className="grid gap-2">
-                  <div className="flex items-baseline justify-between text-sm">
-                    <span className="text-muted">{name}</span>
-                    <span className="tabular">
-                      {used} <span className="text-faint">of {cap}</span>
-                    </span>
-                  </div>
-                  <span className="h-1.5 overflow-hidden rounded-full bg-surface-2">
-                    <span className={`block h-full rounded-full ${used > cap ? "bg-bad" : "bg-brand"}`} style={{ width: `${cap ? Math.min(100, (used / cap) * 100) : used ? 100 : 0}%` }} />
-                  </span>
-                </div>
-              ))}
-            </div>
-            {can.allot && (
-              <ActionForm action={saveAllotment.bind(null, client.id, client.slug)} submitLabel="Save allotment" className="grid gap-4 border-t border-line pt-5">
-                <div className="grid grid-cols-2 gap-3">
-                  <label className={label}>
-                    Images / month
-                    <input name="images" type="number" min={0} defaultValue={images} className={`${field} tabular`} />
-                  </label>
-                  <label className={label}>
-                    Videos / month
-                    <input name="videos" type="number" min={0} defaultValue={videos} className={`${field} tabular`} />
-                  </label>
-                </div>
-              </ActionForm>
-            )}
-          </Section>
+          <PackagePanel
+            active={active}
+            packageLabel={packageLabel}
+            packageKey={client.creative_package_key ?? null}
+            until={client.creative_package_until ?? null}
+            note={client.creative_package_note ?? null}
+            today={today}
+            images={images}
+            videos={videos}
+            imagesUsed={imagesUsed}
+            videosUsed={videosUsed}
+            packages={packages}
+            can={{ exec: can.admin, allot: can.allot }}
+            setSprint={setSprintPackage.bind(null, client.id, client.slug)}
+            endPackage={endCreativePackage.bind(null, client.id, client.slug)}
+            saveAllotment={saveAllotment.bind(null, client.id, client.slug)}
+          />
 
           <Section title="Kaizen team" description="Camille reviews all copy and Jorgi handles every client.">
             <dl className="grid gap-1">
@@ -366,13 +377,6 @@ export function ClientView({ client, packageLabel, team, contacts, angles, memor
                     </select>
                   </label>
                 </div>
-                <label className="flex items-start gap-3 rounded-[8px] border border-line bg-bg px-4 py-3 text-sm">
-                  <input type="checkbox" name="creative_package" defaultChecked={client.creative_package} className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span className="grid gap-0.5">
-                    On a creative package
-                    <span className="text-xs text-muted">Only these clients can get creative requests.</span>
-                  </span>
-                </label>
                 <div className="grid gap-3 border-t border-line pt-5">
                   <p className="text-xs font-medium uppercase tracking-[0.12em] text-faint">Connections</p>
                   <label className={label}>

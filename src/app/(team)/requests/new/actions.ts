@@ -109,6 +109,7 @@ ${describeDraft(draft, ctx.name)}
 
 Review this request before it goes to the creative team. Flag only real problems:
 - net new counts that go over what's left of the monthly allotment (block; say by how much and that it needs an upgrade or variations instead). Skip this if no allotment is set.
+- on a temporary sprint package: a due date after the sprint ends (block), or more work than fits before it ends (warn). Mention the end date.
 - anything that goes against client memory, especially "avoid" items (block)
 - content that's off-topic for this client or doesn't match the campaign direction set by the title, angle and audience (block if clearly wrong, warn if unclear)
 - contradictions inside the request, e.g. the brief describes video but only images are picked, or sizes that don't fit the formats (warn)

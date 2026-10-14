@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { tintFor } from "@/lib/colors";
 import type { Freshness } from "@/lib/dates";
+import { untilLabel } from "@/lib/allotment";
 import { SLOTS, type SlotRole } from "@/lib/roles";
 import { AssignSelect, type Option } from "./assign-select";
 
@@ -11,10 +12,15 @@ export type ClientCard = {
   status: string;
   whiteLabel: boolean;
   packageLabel: string | null;
+  /** ongoing (from the forms), sprint (exec override with an end date) or none */
+  pkg: "ongoing" | "sprint" | "none";
+  until: string | null;
   images: { used: number; cap: number };
   videos: { used: number; cap: number };
   inFlight: number;
   contacts: number;
+  /** team slots and contacts still empty */
+  missing: number;
   live: { meta: Freshness["tone"] | null; slack: Freshness["tone"] | null; drive: Freshness["tone"] | null };
   assigned: Record<SlotRole, Option | null>;
 };
@@ -48,7 +54,7 @@ function Light({ label, tone }: { label: string; tone: Freshness["tone"] | null 
   );
 }
 
-/** Creative clients as cards: package, allotment, what's in flight, live connections, and the team. */
+/** Every client as a card: package, allotment, what's in flight, live connections, and the team. */
 export function ClientGrid({ cards, slotOptions, canEdit }: { cards: ClientCard[]; slotOptions: Record<SlotRole, Option[]>; canEdit: boolean }) {
   return (
     <ul className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -71,7 +77,8 @@ export function ClientGrid({ cards, slotOptions, canEdit }: { cards: ClientCard[
                   {c.name}
                 </Link>
                 <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-faint">
-                  <span className="text-muted">{c.packageLabel ?? "Creative"}</span>
+                  {c.pkg === "none" ? <span>No creative package</span> : <span className="text-muted">{c.packageLabel ?? "Creative"}</span>}
+                  {c.pkg === "sprint" && c.until && <span className="text-warn">· Sprint until {untilLabel(c.until)}</span>}
                   {c.status !== "active" && <span className="capitalize">· {c.status}</span>}
                   {c.whiteLabel && <span>· White label</span>}
                 </p>
@@ -85,10 +92,23 @@ export function ClientGrid({ cards, slotOptions, canEdit }: { cards: ClientCard[
               </Link>
             </div>
 
-            <div className="relative grid grid-cols-2 gap-4">
-              <Meter label="Images" used={c.images.used} cap={c.images.cap} />
-              <Meter label="Videos" used={c.videos.used} cap={c.videos.cap} />
-            </div>
+            {c.pkg === "none" ? (
+              <Link
+                href={`/clients/${c.slug}`}
+                className="relative flex items-center gap-2.5 rounded-[10px] border border-dashed border-line px-3.5 py-2.5 text-xs text-faint transition-colors hover:text-muted"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden className="shrink-0">
+                  <rect x="5" y="11" width="14" height="9" rx="2" />
+                  <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+                </svg>
+                <span className="min-w-0 flex-1">Creative requests are off. An upsell conversation.</span>
+              </Link>
+            ) : (
+              <div className="relative grid grid-cols-2 gap-4">
+                <Meter label="Images" used={c.images.used} cap={c.images.cap} />
+                <Meter label="Videos" used={c.videos.used} cap={c.videos.cap} />
+              </div>
+            )}
 
             <div className="relative flex flex-wrap items-center gap-x-4 gap-y-1">
               <Light label="Meta" tone={c.live.meta} />
@@ -121,40 +141,6 @@ export function ClientGrid({ cards, slotOptions, canEdit }: { cards: ClientCard[
                 Open →
               </Link>
             </div>
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
-export type OtherClient = { id: string; name: string; slug: string; status: string; whiteLabel: boolean; buyer: string | null };
-
-/** Clients not on a creative package: the upsell list. */
-export function UpsellList({ clients }: { clients: OtherClient[] }) {
-  return (
-    <ul className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-      {clients.map((c) => {
-        const tint = tintFor(c.name);
-        return (
-          <li key={c.id}>
-            <Link
-              href={`/clients/${c.slug}`}
-              className="flex items-center gap-3 rounded-[10px] border border-line bg-surface px-4 py-3 transition-colors hover:border-faint/70"
-            >
-              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[8px] text-sm font-semibold" style={{ background: `${tint}1f`, color: tint }}>
-                {c.name.replace(/[^A-Za-z0-9]/g, "").slice(0, 1).toUpperCase()}
-              </span>
-              <span className="grid min-w-0 flex-1">
-                <span className="truncate text-sm">{c.name}</span>
-                <span className="truncate text-xs text-faint">
-                  <span className="capitalize">{c.status}</span>
-                  {c.whiteLabel && " · White label"}
-                  {c.buyer && ` · ${c.buyer}`}
-                </span>
-              </span>
-              <span className="shrink-0 text-[11px] text-faint">No package</span>
-            </Link>
           </li>
         );
       })}

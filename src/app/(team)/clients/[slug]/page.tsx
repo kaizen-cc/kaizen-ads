@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import type { Digest } from "@/lib/ai";
 import { isExecOrLead, requireStaff, seesAllClients } from "@/lib/auth";
 import { SLOTS, type TeamRole } from "@/lib/roles";
-import { freshness } from "@/lib/dates";
+import { freshness, nyToday } from "@/lib/dates";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { ClientView } from "./client-view";
@@ -19,7 +19,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
   const { data: client } = await supabase
     .from("clients")
     .select(
-      "id, name, slug, status, client_type, website, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, kaizen_id, auto_approve_opt_in, creative_package, creative_packages(label)",
+      "id, name, slug, status, client_type, website, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, kaizen_id, auto_approve_opt_in, creative_package, creative_package_key, creative_package_until, creative_package_note, creative_packages(label)",
     )
     .eq("slug", slug)
     .maybeSingle();
@@ -37,6 +37,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
       // Execs only (RLS): which of this client's Slack channels the bot couldn't get into on the last run
       supabase.from("sync_state").select("last_result").eq("source", "slack").maybeSingle(),
     ]);
+  const { data: packages } = await supabase.from("creative_packages").select("key, label, images, videos").order("sort_order");
   const { data: allotment } = usage ? { data: null } : await supabase.from("client_allotments").select("images_per_month, videos_per_month").eq("client_id", client.id).maybeSingle();
   const images = usage?.images_per_month ?? allotment?.images_per_month ?? 0;
   const videos = usage?.videos_per_month ?? allotment?.videos_per_month ?? 0;
@@ -77,6 +78,8 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
       connections={connections}
       client={client}
       packageLabel={packageLabel ?? null}
+      packages={packages ?? []}
+      today={nyToday()}
       team={Object.fromEntries(SLOTS.map((slot) => [slot.value, { current: currentIn(slot.value), options: optionsFor(slot.eligible) }]))}
       contacts={contacts}
       angles={angles ?? []}

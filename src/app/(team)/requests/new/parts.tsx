@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useMemo, useState } from "react";
-import { left, type Allotment } from "@/lib/allotment";
+import { left, untilLabel, type Allotment } from "@/lib/allotment";
 import { tintFor } from "@/lib/colors";
 import type { Size } from "./draft";
 
@@ -14,7 +14,8 @@ export function allotmentSummary(a: Allotment | undefined) {
     const l = left(cap, used);
     return l === null ? null : l < 0 ? `${-l} ${what} over` : `${l} of ${cap} ${what} left`;
   };
-  return [part(a.images, a.imagesUsed, "images"), part(a.videos, a.videosUsed, "videos")].filter(Boolean).join(" · ");
+  const sprint = a.until ? `Sprint until ${untilLabel(a.until)}` : null;
+  return [sprint, part(a.images, a.imagesUsed, "images"), part(a.videos, a.videosUsed, "videos")].filter(Boolean).join(" · ");
 }
 
 /** The AI mark: a small four-point spark. */
@@ -291,7 +292,14 @@ export function AllotmentMeter({ allotment, request, compact = false }: { allotm
   ].filter((r) => r.cap !== null) as { label: string; cap: number; used: number; add: number }[];
   return (
     <div className={`grid gap-3.5 rounded-[10px] border border-line bg-surface ${compact ? "px-4 py-3.5" : "p-4"}`}>
-      {!compact && <p className="text-xs text-muted">This month&apos;s allotment</p>}
+      {(!compact || allotment.until) && (
+        <p className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
+          {!compact && <span>This month&apos;s allotment</span>}
+          {allotment.until && (
+            <span className="rounded-full bg-warn-soft px-2 py-0.5 text-[11px] text-warn">Sprint package until {untilLabel(allotment.until)}</span>
+          )}
+        </p>
+      )}
       {rows.map((r) => {
         const after = r.cap - r.used - r.add;
         const over = after < 0;

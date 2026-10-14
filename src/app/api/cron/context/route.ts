@@ -82,6 +82,8 @@ export async function GET(request: Request) {
 
   try {
     const admin = createAdminClient();
+    // Sprint packages past their end date switch off (cheap, so every run checks)
+    await admin.rpc("expire_sprint_packages");
     if (step === "brief") return Response.json(await refreshAll(admin, undefined, new URL(request.url).searchParams.get("rebuild") === "1"));
     if (step === "slack" || step === "drive" || step === "gmail" || step === "meta") return Response.json(await collectStep(admin, step as Step));
     return Response.json({ error: "Use ?step=slack, drive, gmail, brief or check" }, { status: 400 });

@@ -9,6 +9,9 @@ export const todayLabel = (date: Date) =>
   new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "America/New_York" }).format(date);
 
 /** ISO timestamp for `days` calendar days ago. */
+/** Today's date in New York as YYYY-MM-DD (how sprint end dates are compared). */
+export const nyToday = (date = new Date()) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(date);
+
 export const daysAgoIso = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();
 
 export type Freshness = { label: string; tone: "ok" | "warn" | "off" };

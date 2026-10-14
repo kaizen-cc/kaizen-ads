@@ -81,11 +81,18 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
   let body: React.ReactNode;
   let who = { name: "Santi Lozano", role: "Executive" };
 
-  if (view === "client") {
+  if (view === "client" || view === "client-none") {
     body = (
       <ClientView
-        client={{ id: "c1", name: "Crust Pizza Co.", slug: "crust-pizza-co", status: "active", client_type: "traditional", website: "https://crustpizza.com", meta_ad_account_id: "526528539355910", slack_channel_id: "C078D34T7FX", internal_slack_channel_id: "C06TQ0WMCJ1", drive_folder_id: "1Rnwf-WH7tz", kaizen_id: 403, auto_approve_opt_in: false, creative_package: true }}
+        client={{ id: "c1", name: "Crust Pizza Co.", slug: "crust-pizza-co", status: "active", client_type: "traditional", website: "https://crustpizza.com", meta_ad_account_id: "526528539355910", slack_channel_id: "C078D34T7FX", internal_slack_channel_id: "C06TQ0WMCJ1", drive_folder_id: "1Rnwf-WH7tz", kaizen_id: 403, auto_approve_opt_in: false, creative_package: view !== "client-none", creative_package_key: "silver", creative_package_until: "2026-11-30", creative_package_note: "Holiday push through Black Friday" }}
         packageLabel="Silver"
+        packages={[
+          { key: "mvp", label: "MVP", images: 3, videos: 0 },
+          { key: "basic", label: "Basic", images: 10, videos: 3 },
+          { key: "silver", label: "Silver", images: 25, videos: 5 },
+          { key: "gold", label: "Gold", images: 50, videos: 10 },
+        ]}
+        today="2026-10-14"
         team={{
           meta_buyer: { current: buyers[1], options: buyers },
           graphic_designer: { current: designers[1], options: designers },
@@ -135,7 +142,7 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
       <div className="mx-auto max-w-5xl">
         <RequestForm
           clients={[...rows, { id: "c5", name: "Crustacean Seafood", slug: "crustacean", whiteLabel: false, contacts: 0, assigned: {} }].map((r) => ({ id: r.id, name: r.name, slug: r.slug, creative: r.id !== "c4" && r.id !== "c5" }))}
-          allotments={{ c1: { images: 10, videos: 4, imagesUsed: 6, videosUsed: 1 }, c2: { images: 20, videos: 6, imagesUsed: 4, videosUsed: 0 } }}
+          allotments={{ c1: { images: 10, videos: 4, imagesUsed: 6, videosUsed: 1, until: null }, c2: { images: 20, videos: 6, imagesUsed: 4, videosUsed: 0, until: "2026-11-30" } }}
           anglesByClient={{ c1: ["Weekly Deals", "Fresh, never frozen", "Local favorite"] }}
           teamByClient={{ c1: { graphic_designer: "Nelson", video_editor: "Jazem", meta_buyer: "Mark" }, c2: { graphic_designer: "Nelson", meta_buyer: "Dipesh" } }}
           initialClient={null}
@@ -172,14 +179,13 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
       <div className="grid gap-5">
         <h1 className="font-heading text-[32px]">Clients</h1>
         <ClientsBrowser
-          tab="creative"
-          nav={<span className="text-sm text-muted">Creative clients</span>}
-          other={[]}
-          emptyText="No clients."
           cards={rows.map((r, i): ClientCard => ({
             ...r,
             status: i === 3 ? "paused" : "active",
-            packageLabel: ["Silver", "Gold", "Basic", "MVP"][i],
+            packageLabel: ["Silver", "Gold", "Basic", null][i],
+            pkg: (["ongoing", "sprint", "ongoing", "none"] as const)[i],
+            until: i === 1 ? "2026-11-30" : null,
+            missing: i === 2 ? 1 : 0,
             images: [{ used: 6, cap: 20 }, { used: 48, cap: 50 }, { used: 12, cap: 10 }, { used: 0, cap: 3 }][i],
             videos: [{ used: 0, cap: 0 }, { used: 7, cap: 10 }, { used: 1, cap: 3 }, { used: 0, cap: 0 }][i],
             inFlight: [4, 9, 2, 0][i],

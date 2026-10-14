@@ -18,12 +18,13 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
     supabase.from("client_assignments").select("client_id, role, profiles(full_name)"),
   ]);
 
-  // Clients on a creative package can be picked. Other current clients show greyed out, as an upsell prompt.
-  const clients = (rows ?? [])
-    .filter((c) => c.creative_package || c.status === "active" || c.status === "onboarding")
-    .map((c) => ({ id: c.id, name: c.name, slug: c.slug, creative: c.creative_package }));
+  // Clients whose package is live (a sprint counts until its end date) can be picked.
+  // Other current clients show greyed out, as an upsell prompt.
   const allotments: Record<string, Allotment> = {};
   for (const u of (usage ?? []) as UsageRow[]) allotments[u.client_id] = toAllotment(u);
+  const clients = (rows ?? [])
+    .filter((c) => c.creative_package || c.status === "active" || c.status === "onboarding")
+    .map((c) => ({ id: c.id, name: c.name, slug: c.slug, creative: c.id in allotments }));
 
   const anglesByClient: Record<string, string[]> = {};
   for (const a of angles ?? []) (anglesByClient[a.client_id] ??= []).push(a.name);
