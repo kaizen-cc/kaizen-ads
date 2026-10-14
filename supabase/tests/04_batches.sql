@@ -25,8 +25,8 @@ declare
   results jsonb := '[]';
 begin
  begin
-  insert into public.clients (name, slug) values ('ZZ Batch Client', 'zz-batch-x') returning id into c_x;
-  insert into public.clients (name, slug) values ('ZZ Batch Other', 'zz-batch-y') returning id into c_y;
+  insert into public.clients (name, slug, creative_package) values ('ZZ Batch Client', 'zz-batch-x', true) returning id into c_x;
+  insert into public.clients (name, slug, creative_package) values ('ZZ Batch Other', 'zz-batch-y', true) returning id into c_y;
   insert into public.profiles (email, full_name, role) values ('zz-bb@kaizenmarketing.agency', 'ZZ Buyer', 'media_buyer') returning id into p_buyer;
   insert into public.profiles (email, full_name, role) values ('zz-bd@kaizenmarketing.agency', 'ZZ Designer', 'graphic_designer') returning id into p_designer;
   insert into public.profiles (email, full_name, role) values ('zz-be@kaizenmarketing.agency', 'ZZ Editor', 'video_editor') returning id into p_editor;
@@ -66,6 +66,9 @@ begin
     results := results || jsonb_build_object('test', 'a format needs at least one creative', 'ok', true, 'detail', sqlerrm);
   end;
 
+  results := results || jsonb_build_object('test', 'allotment usage counts net new only',
+    'ok', (select images_used = 3 and videos_used = 1 from public.client_allotment_usage where client_id = c_x), 'detail', '');
+
   insert into public.client_memory (client_id, kind, body, created_by) values (c_x, 'avoid', 'Never show the old logo', p_buyer);
   perform pg_temp.act_as(a_other);
   select count(*) into n from public.client_memory where client_id = c_x;
@@ -75,6 +78,22 @@ begin
     results := results || jsonb_build_object('test', 'cannot batch for another client', 'ok', false, 'detail', 'created');
   exception when others then
     results := results || jsonb_build_object('test', 'cannot batch for another client', 'ok', true, 'detail', sqlerrm);
+  end;
+  begin
+    perform private.create_request_batch_unchecked(c_x, 'Bypass', '[{"format":"image","new":1}]'::jsonb);
+    results := results || jsonb_build_object('test', 'the unchecked function is not callable', 'ok', false, 'detail', 'called');
+  exception when others then
+    results := results || jsonb_build_object('test', 'the unchecked function is not callable', 'ok', true, 'detail', sqlerrm);
+  end;
+
+  reset role;
+  update public.clients set creative_package = false where id = c_x;
+  perform pg_temp.act_as(a_buyer);
+  begin
+    perform public.create_request_batch(c_x, 'No package', '[{"format":"image","new":1}]'::jsonb);
+    results := results || jsonb_build_object('test', 'no creative package, no request', 'ok', false, 'detail', 'created');
+  exception when others then
+    results := results || jsonb_build_object('test', 'no creative package, no request', 'ok', true, 'detail', sqlerrm);
   end;
 
   perform pg_temp.act_as(null);

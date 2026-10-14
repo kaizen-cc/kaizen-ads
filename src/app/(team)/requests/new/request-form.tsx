@@ -4,11 +4,12 @@ import Link from "next/link";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { PersonAvatar } from "@/components/person-avatar";
 import type { Review, ReviewIssue, Suggestions } from "@/lib/ai";
+import { draws, type Allotment } from "@/lib/allotment";
 import { FORMAT_LABEL, type Format, type Priority } from "@/lib/stages";
 import { ClientTag, FormatIcon } from "@/app/(team)/board/ticket-card";
 import { createBatch, reviewRequest, suggestForRequest, type ContextSummary, type ReviewResult } from "./actions";
 import { FORMATS, SIZES, emptyDraft, selectedFormats, totalFor, type Draft, type Size } from "./draft";
-import { AspectOption, Chip, ClientSearch, Progress, Spark, Stepper, Thinking, type ClientOption } from "./parts";
+import { AllotmentMeter, AspectOption, Chip, ClientSearch, Progress, Spark, Stepper, Thinking, type ClientOption } from "./parts";
 
 const STEPS = ["Client", "Formats", "Direction", "Brief", "Review"];
 const TURNAROUND: Record<Format, number> = { image: 2, video: 4, carousel: 2 };
@@ -63,6 +64,7 @@ function Field({ id, label, hint, children }: { id?: string; label: string; hint
 
 export function RequestForm({
   clients,
+  allotments,
   anglesByClient,
   teamByClient,
   initialClient,
@@ -70,6 +72,7 @@ export function RequestForm({
   demo,
 }: {
   clients: ClientOption[];
+  allotments: Record<string, Allotment>;
   anglesByClient: Record<string, string[]>;
   teamByClient: Record<string, Record<string, string>>;
   initialClient: string | null;
@@ -95,6 +98,8 @@ export function RequestForm({
   const formats = selectedFormats(draft);
   const total = formats.reduce((n, f) => n + totalFor(draft.formats[f]), 0);
   const s = ai.status === "ready" ? ai.s : null;
+  const allotment = draft.clientId ? allotments[draft.clientId] : undefined;
+  const taking = draws(draft.formats);
 
   const fetchSuggestions = (d: Draft): Promise<AiState> =>
     demo
@@ -261,7 +266,7 @@ export function RequestForm({
               <p className="text-sm text-muted">{heading[1]}</p>
             </div>
 
-            {step === 0 && <ClientSearch clients={clients} onPick={pickClient} />}
+            {step === 0 && <ClientSearch clients={clients} allotments={allotments} onPick={pickClient} />}
 
             {step === 1 && (
               <div className="grid gap-8">
@@ -327,6 +332,8 @@ export function RequestForm({
                     {s.mixWhy && <p className="text-xs leading-relaxed text-muted">{s.mixWhy}</p>}
                   </div>
                 )}
+
+                <AllotmentMeter allotment={allotment} request={taking} />
 
                 {formats.length > 0 && (
                   <Field label="How many" hint={`${plural(formats.length, "ticket")} · ${plural(total, "creative")}`}>
@@ -543,6 +550,8 @@ export function RequestForm({
                     );
                   })}
                 </div>
+
+                <AllotmentMeter allotment={allotment} request={taking} compact />
 
                 <dl className="grid gap-x-6 gap-y-4 rounded-[10px] border border-line bg-surface p-5 text-sm sm:grid-cols-2">
                   {[

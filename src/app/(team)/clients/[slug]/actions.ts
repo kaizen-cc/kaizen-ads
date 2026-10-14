@@ -31,6 +31,7 @@ export async function saveClientDetails(clientId: string, slug: string, form: Fo
       meta_ad_account_id: str(form, "meta_ad_account_id")?.replace(/^act_/, "") ?? null,
       slack_channel_id: str(form, "slack_channel_id"),
       kaizen_id: kaizenId && /^\d+$/.test(kaizenId) ? Number(kaizenId) : null,
+      creative_package: form.get("creative_package") === "on",
     })
     .eq("id", clientId);
   return done(slug, error);

@@ -26,8 +26,8 @@ declare
   results jsonb := '[]';
 begin
  begin
-  insert into public.clients (name, slug) values ('ZZ Ticket Client', 'zz-ticket-x') returning id into c_x;
-  insert into public.clients (name, slug) values ('ZZ Other Client', 'zz-ticket-y') returning id into c_y;
+  insert into public.clients (name, slug, creative_package) values ('ZZ Ticket Client', 'zz-ticket-x', true) returning id into c_x;
+  insert into public.clients (name, slug, creative_package) values ('ZZ Other Client', 'zz-ticket-y', true) returning id into c_y;
   insert into public.profiles (email, full_name, role) values ('zz-tb@kaizenmarketing.agency', 'ZZ Buyer', 'media_buyer') returning id into p_buyer;
   insert into public.profiles (email, full_name, role) values ('zz-td@kaizenmarketing.agency', 'ZZ Designer', 'graphic_designer') returning id into p_designer;
   insert into public.profiles (email, full_name, role) values ('zz-te@kaizenmarketing.agency', 'ZZ Editor', 'video_editor') returning id into p_editor;

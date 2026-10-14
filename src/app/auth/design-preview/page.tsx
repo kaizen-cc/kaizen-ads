@@ -81,7 +81,8 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
     body = (
       <div className="mx-auto max-w-5xl">
         <RequestForm
-          clients={[...rows, { id: "c5", name: "Crustacean Seafood", slug: "crustacean", whiteLabel: false, contacts: 0, assigned: {} }].map((r) => ({ id: r.id, name: r.name, slug: r.slug }))}
+          clients={[...rows, { id: "c5", name: "Crustacean Seafood", slug: "crustacean", whiteLabel: false, contacts: 0, assigned: {} }].map((r) => ({ id: r.id, name: r.name, slug: r.slug, creative: r.id !== "c4" && r.id !== "c5" }))}
+          allotments={{ c1: { images: 10, videos: 4, imagesUsed: 6, videosUsed: 1 }, c2: { images: 20, videos: 6, imagesUsed: 4, videosUsed: 0 } }}
           anglesByClient={{ c1: ["Weekly Deals", "Fresh, never frozen", "Local favorite"] }}
           teamByClient={{ c1: { graphic_designer: "Nelson", video_editor: "Jazem", meta_buyer: "Mark" }, c2: { graphic_designer: "Nelson", meta_buyer: "Dipesh" } }}
           initialClient={null}

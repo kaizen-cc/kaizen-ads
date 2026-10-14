@@ -1,6 +1,7 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { describeAllotment, toAllotment, type Allotment, type UsageRow } from "@/lib/allotment";
 
 // Claude for the request form: field suggestions and the pre-submit review.
 // Every call is optional. Without ANTHROPIC_API_KEY the form still works, just without suggestions.
@@ -27,16 +28,23 @@ export async function askJson<T>({
   effort: "low" | "medium" | "high";
 }): Promise<T> {
   if (!aiEnabled()) throw new AiUnavailable("AI isn't connected yet.");
+  const request = {
+    model: MODEL,
+    max_tokens: 16000,
+    system,
+    output_config: { effort, format: { type: "json_schema" as const, schema } },
+    messages: [{ role: "user" as const, content: prompt }],
+  };
   try {
-    const res = await anthropic().beta.messages.create({
-      model: MODEL,
-      max_tokens: 16000,
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
-      system,
-      output_config: { effort, format: { type: "json_schema", schema } },
-      messages: [{ role: "user", content: prompt }],
-    });
+    let res;
+    try {
+      // With a server-side fallback model in case the main one declines
+      res = await anthropic().beta.messages.create({ ...request, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" });
+    } catch (e) {
+      if (!(e instanceof Anthropic.BadRequestError)) throw e;
+      console.error("[ai] request with fallbacks rejected, retrying without:", e.message);
+      res = await anthropic().messages.create(request);
+    }
     if (res.stop_reason === "refusal") throw new AiUnavailable("The AI couldn't help with this one.");
     if (res.stop_reason === "max_tokens") throw new AiUnavailable("The AI ran out of room. Try again.");
     const text = res.content.find((b) => b.type === "text");
@@ -44,11 +52,19 @@ export async function askJson<T>({
     return JSON.parse(text.text) as T;
   } catch (e) {
     if (e instanceof AiUnavailable) throw e;
+    console.error("[ai] request failed:", e instanceof Error ? e.message : e);
     if (e instanceof Anthropic.RateLimitError) throw new AiUnavailable("The AI is busy. Try again in a moment.");
     if (e instanceof Anthropic.AuthenticationError) throw new AiUnavailable("The AI key isn't valid.");
-    if (e instanceof Anthropic.APIError) throw new AiUnavailable(`The AI had a problem (${e.status ?? "network"}).`);
+    if (e instanceof Anthropic.BadRequestError) throw new AiUnavailable(`The AI rejected the request: ${apiMessage(e)}`);
+    if (e instanceof Anthropic.APIError) throw new AiUnavailable(`The AI had a problem (${e.status ?? "network"}). Try again.`);
     throw new AiUnavailable("The AI had a problem. Try again.");
   }
+}
+
+/** The API's own explanation, without the status prefix the SDK adds. */
+function apiMessage(e: InstanceType<typeof Anthropic.APIError>) {
+  const err = (e.error as { error?: { message?: string } } | undefined)?.error?.message;
+  return (err ?? e.message).slice(0, 220);
 }
 
 // ─── Client context ─────────────────────────────────────────────────────────
@@ -57,6 +73,7 @@ export type ClientContext = {
   name: string;
   website: string | null;
   adAccountConnected: boolean;
+  allotment: Allotment | null;
   angles: { name: string; kind: string; description: string | null }[];
   memory: { kind: "avoid" | "prefer" | "note"; body: string; source: string }[];
   recent: {
@@ -74,8 +91,9 @@ export type ClientContext = {
 
 /** Everything the AI should know about a client. Reads through the caller's RLS. */
 export async function clientContext(supabase: SupabaseClient, clientId: string): Promise<ClientContext | null> {
-  const [{ data: c }, { data: angles }, { data: memory }, { data: recent }] = await Promise.all([
+  const [{ data: c }, { data: usage }, { data: angles }, { data: memory }, { data: recent }] = await Promise.all([
     supabase.from("clients").select("name, website, meta_ad_account_id").eq("id", clientId).maybeSingle(),
+    supabase.from("client_allotment_usage").select("*").eq("client_id", clientId).maybeSingle(),
     supabase.from("angles").select("name, kind, description").eq("client_id", clientId).eq("status", "active").order("name").limit(40),
     supabase.from("client_memory").select("kind, body, source").eq("client_id", clientId).eq("status", "active").order("created_at", { ascending: false }).limit(60),
     supabase
@@ -90,6 +108,7 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
     name: c.name,
     website: c.website,
     adAccountConnected: Boolean(c.meta_ad_account_id),
+    allotment: usage ? toAllotment(usage as UsageRow) : null,
     angles: angles ?? [],
     memory: (memory ?? []) as ClientContext["memory"],
     recent: (recent ?? []).map((r) => ({
@@ -106,13 +125,14 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
   };
 }
 
-export function contextBlock(ctx: ClientContext) {
+export function contextBlock(ctx: ClientContext, request?: { images: number; videos: number }) {
   const lines: string[] = [`<client name="${ctx.name}"${ctx.website ? ` website="${ctx.website}"` : ""}>`];
   lines.push(
     ctx.adAccountConnected
       ? "Meta ad account is linked, but performance data isn't synced into this app yet. Don't invent metrics."
       : "No Meta ad account linked yet. Don't invent metrics.",
   );
+  lines.push("<allotment_this_month>", describeAllotment(ctx.allotment, request), "</allotment_this_month>");
   lines.push("<client_memory>");
   if (ctx.memory.length === 0) lines.push("Nothing recorded yet.");
   for (const m of ctx.memory) lines.push(`- [${m.kind}${m.source !== "team" ? `, from ${m.source}` : ""}] ${m.body}`);
@@ -137,6 +157,7 @@ export const AGENCY_SYSTEM = `You help Kaizen Marketing, a paid social agency, w
 A request goes to a graphic designer (images, carousels) or a video editor (videos). One request can cover several formats; each format becomes its own ticket.
 A "net new" creative is a distinct design. A "variation" reuses the same design and tests copy, title, CTA or layout; it doesn't count as a new deliverable. A carousel counts as one deliverable. Sizes of one design count as one.
 Sizes are 1:1, 4:5 (feed) and 9:16 (stories, reels).
+The client pays for a monthly allotment of net new images (carousels count here too) and net new videos. Variations don't use it. Never suggest more net new than what's left; if nothing is left, suggest variations or say an upgrade is needed.
 Client memory holds what the team has learned about the client. Items marked "avoid" are things the client asked us not to do or that failed before; never suggest them. Items marked "prefer" are what works for them.
 Base everything on the client context you're given. When there's little context, keep suggestions sensible and generic rather than inventing facts about the business (prices, offers, locations, claims).
 Write plainly, like a sharp media buyer briefing a designer. No hype, no emojis.`;

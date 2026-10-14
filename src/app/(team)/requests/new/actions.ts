@@ -14,6 +14,7 @@ import {
   type Suggestions,
 } from "@/lib/ai";
 import { createClient } from "@/lib/supabase/server";
+import { draws } from "@/lib/allotment";
 import { FORMATS, SIZES, describeDraft, refLinks, selectedFormats, type Draft } from "./draft";
 
 type Fail = { ok: false; error: string };
@@ -51,7 +52,7 @@ Suggest values for this request. Build on what's already filled in; don't contra
 - titles: 3 short ticket titles (under 50 characters), in the style of the recent requests if there are any.
 - angles: up to 3. Prefer existing angles that fit; a new one only when it's clearly better. "why" is one short sentence.
 - audiences: up to 3 short audience descriptions.
-- mix: the formats and counts you'd make for this request, with 1 to 6 net new per format and variations only when testing copy or hooks makes sense. mixWhy: one sentence.
+- mix: the formats and counts you'd make for this request, with 1 to 6 net new per format and variations only when testing copy or hooks makes sense. The net new total must fit what's left of the allotment (images and carousels share the image pool). mixWhy: one sentence, mentioning the allotment when it limited the mix.
 - sizes: the sizes to deliver.
 - brief: a ready-to-use brief for the designer or editor, 4 to 8 lines: what to show, what to say, the hook, on-image text limits, and what to avoid from client memory.
 - hooks: up to 4 opening hooks or headlines to try.
@@ -90,13 +91,14 @@ export async function reviewRequest(draft: Draft): Promise<ReviewResult> {
       system: AGENCY_SYSTEM,
       effort: "medium",
       schema: REVIEW_SCHEMA,
-      prompt: `${contextBlock(ctx)}
+      prompt: `${contextBlock(ctx, draws(draft.formats))}
 
 <request>
 ${describeDraft(draft, ctx.name)}
 </request>
 
 Review this request before it goes to the creative team. Flag only real problems:
+- net new counts that go over what's left of the monthly allotment (block; say by how much and that it needs an upgrade or variations instead). Skip this if no allotment is set.
 - anything that goes against client memory, especially "avoid" items (block)
 - content that's off-topic for this client or doesn't match the campaign direction set by the title, angle and audience (block if clearly wrong, warn if unclear)
 - contradictions inside the request, e.g. the brief describes video but only images are picked, or sizes that don't fit the formats (warn)

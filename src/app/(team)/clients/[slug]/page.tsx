@@ -17,7 +17,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
 
   const { data: client } = await supabase
     .from("clients")
-    .select("id, name, slug, status, client_type, website, meta_ad_account_id, slack_channel_id, kaizen_id, auto_approve_opt_in")
+    .select("id, name, slug, status, client_type, website, meta_ad_account_id, slack_channel_id, kaizen_id, auto_approve_opt_in, creative_package")
     .eq("slug", slug)
     .maybeSingle();
   if (!client) notFound();
@@ -60,6 +60,11 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
         <h1 className="mt-1 font-heading text-2xl">{client.name}</h1>
         <p className="mt-1 text-sm text-muted">
           Client portal: <span className="text-fg">ads.kaizenmarketing.agency/c/{client.slug}</span>
+          {client.creative_package ? (
+            <span className="ml-2 rounded-full bg-brand-soft px-2 py-0.5 text-xs text-brand-text">Creative package</span>
+          ) : (
+            <span className="ml-2 rounded-full bg-surface-2 px-2 py-0.5 text-xs text-faint">Not on a creative package</span>
+          )}
           {client.auto_approve_opt_in && <span className="ml-2 rounded-full bg-ok-soft px-2 py-0.5 text-xs text-ok">Opted into auto-approval</span>}
         </p>
       </div>
@@ -281,6 +286,13 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
                 <label className={label}>
                   Website
                   <input name="website" defaultValue={client.website ?? ""} className={field} />
+                </label>
+                <label className="flex items-center gap-2.5 self-end rounded-brand border border-line bg-bg px-3 py-2 text-sm sm:col-span-2">
+                  <input type="checkbox" name="creative_package" defaultChecked={client.creative_package} className="h-4 w-4 accent-[var(--brand)]" />
+                  <span>
+                    On a creative package
+                    <span className="block text-xs text-muted">Only these clients can get creative requests. Set their allotment too.</span>
+                  </span>
                 </label>
                 <label className={label}>
                   Account Overview ID
