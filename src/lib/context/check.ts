@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { aiEnabled } from "@/lib/ai";
 import { checkGoogle } from "./google";
+import { linkAdAccounts, metaConfigured } from "./meta";
 import { checkSlack } from "./slack";
 
 type Check = { ok: boolean; detail: string };
@@ -25,6 +26,12 @@ export async function checkSetup(admin: SupabaseClient) {
     cronSecret: { ok: Boolean(process.env.CRON_SECRET), detail: process.env.CRON_SECRET ? "Set" : "CRON_SECRET is missing, so the 12pm/6pm runs won't start" },
     claude: { ok: aiEnabled(), detail: aiEnabled() ? "Key set" : "ANTHROPIC_API_KEY is missing" },
     slack: await run(checkSlack),
+    meta: metaConfigured()
+      ? await run(async () => {
+          const r = await linkAdAccounts(admin);
+          return `Sees ${r.accounts.length} ad accounts${r.linked.length ? `; just linked ${r.linked.join(", ")}` : ""}. Creative clients without an ad account: ${r.creativeClientsWithoutAccount.length ? r.creativeClientsWithoutAccount.join(", ") : "none"}.`;
+        })
+      : { ok: false, detail: "META_SYSTEM_USER_TOKEN is missing" },
     drive: google.drive,
     mailboxes: google.mailboxes,
     gmail: google.gmail,

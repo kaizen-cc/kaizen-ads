@@ -76,7 +76,7 @@ export function ClientView({ client, packageLabel, team, contacts, angles, memor
               title="Briefing"
               description={
                 <>
-                  What the AI knows from Slack, email, Drive and past requests. Refreshes at 12pm and 6pm ET.
+                  What the AI knows from Slack, email, Drive, Meta and past requests. Refreshes at 12pm and 6pm ET.
                   {briefingAt && <span className="text-faint"> Updated {fmt(briefingAt)}.</span>}
                 </>
               }
@@ -95,6 +95,12 @@ export function ClientView({ client, packageLabel, team, contacts, angles, memor
                       <p className="rounded-[8px] border-l-2 border-brand bg-brand-soft/30 px-4 py-3 leading-relaxed text-muted">
                         <span className="mb-1 block text-xs font-medium text-fg">Direction</span>
                         {digest.direction}
+                      </p>
+                    )}
+                    {digest.performance && (
+                      <p className="rounded-[8px] border-l-2 border-ok bg-ok-soft/30 px-4 py-3 leading-relaxed text-muted">
+                        <span className="mb-1 block text-xs font-medium text-fg">Ad performance · Meta</span>
+                        {digest.performance}
                       </p>
                     )}
                   </div>

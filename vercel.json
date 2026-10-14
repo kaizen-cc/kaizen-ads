@@ -1,9 +1,25 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "crons": [
-    { "path": "/api/cron/context?step=slack", "schedule": "0 16,17,22,23 * * *" },
-    { "path": "/api/cron/context?step=drive", "schedule": "1 16,17,22,23 * * *" },
-    { "path": "/api/cron/context?step=gmail", "schedule": "2 16,17,22,23 * * *" },
-    { "path": "/api/cron/context?step=brief", "schedule": "15 16,17,22,23 * * *" }
+    {
+      "path": "/api/cron/context?step=slack",
+      "schedule": "0 16,17,22,23 * * *"
+    },
+    {
+      "path": "/api/cron/context?step=drive",
+      "schedule": "1 16,17,22,23 * * *"
+    },
+    {
+      "path": "/api/cron/context?step=gmail",
+      "schedule": "2 16,17,22,23 * * *"
+    },
+    {
+      "path": "/api/cron/context?step=meta",
+      "schedule": "3 16,17,22,23 * * *"
+    },
+    {
+      "path": "/api/cron/context?step=brief",
+      "schedule": "15 16,17,22,23 * * *"
+    }
   ]
 }

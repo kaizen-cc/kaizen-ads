@@ -39,7 +39,7 @@ export async function refreshBriefing(admin: SupabaseClient, clientId: string, f
   let newFiles = admin.from("context_items").select("id", { count: "exact", head: true }).eq("client_id", clientId).eq("source", "drive");
   if (lastRun) newFiles = newFiles.gt("created_at", lastRun);
 
-  const [{ data: fresh }, { count: fileCount }, { count: newRequests }, { count: newMemory }, { data: driveFiles }, { data: refs }] = await Promise.all([
+  const [{ data: fresh }, { count: fileCount }, { count: newRequests }, { count: newMemory }, { data: driveFiles }, { data: refs }, { count: newMeta }] = await Promise.all([
     messages,
     newFiles,
     admin.from("requests").select("id", { count: "exact", head: true }).eq("client_id", clientId).gt("created_at", lastRun ?? monthAgo),
@@ -53,9 +53,10 @@ export async function refreshBriefing(admin: SupabaseClient, clientId: string, f
       .order("occurred_at", { ascending: false })
       .limit(60),
     admin.from("requests").select("brief, refs").eq("client_id", clientId).gt("created_at", new Date(Date.now() - 60 * 86_400_000).toISOString()),
+    admin.from("meta_snapshots").select("id", { count: "exact", head: true }).eq("client_id", clientId).gt("fetched_at", lastRun ?? monthAgo),
   ]);
   const items = (fresh ?? []) as Item[];
-  if (lastRun && items.length === 0 && !fileCount && !newRequests && !newMemory) return { skipped: true };
+  if (lastRun && items.length === 0 && !fileCount && !newRequests && !newMemory && !newMeta) return { skipped: true };
 
   const ctx = await clientContext(admin, clientId);
   if (!ctx) return { skipped: true };
@@ -94,6 +95,7 @@ Update this client's briefing for the creative team. Keep what still holds from 
 digest:
 - summary: 2 to 3 sentences on where things stand with this client's creative right now.
 - direction: the current campaign direction in one or two sentences (offers, seasons, launches, focus), or empty if unknown.
+- performance: what the Meta numbers say, in two to four sentences: which ads, angles or hooks are winning on cost per result or ROAS, what's tiring (rising frequency or cost), and the trend week to week. Empty if there's no ad data.
 - asks: open requests or changes the client or team asked for, short.
 - avoid: things the client said not to do or that went badly, short. Include client memory "avoid" items that still apply.
 - works: what the client likes or what performed well, short.

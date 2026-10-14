@@ -1,6 +1,7 @@
 import { isCronRequest } from "@/lib/cron";
 import { checkSetup } from "@/lib/context/check";
 import { collectStep, refreshAll, type Step } from "@/lib/context/run";
+import { linkAdAccounts } from "@/lib/context/meta";
 import { inviteBotToClientChannels } from "@/lib/context/slack";
 import { reportError } from "@/lib/error-report";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
@@ -33,6 +34,14 @@ export async function GET(request: Request) {
   const force = !cron || new URL(request.url).searchParams.get("force") === "1";
   const step = new URL(request.url).searchParams.get("step");
   if (step === "check" && adminConfigured()) return Response.json(await checkSetup(createAdminClient()));
+  // Execs only, by hand: which ad accounts the system user sees, linking creative clients to theirs by name
+  if (step === "meta-accounts" && !cron && adminConfigured()) {
+    try {
+      return Response.json(await linkAdAccounts(createAdminClient()));
+    } catch (e) {
+      return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 400 });
+    }
+  }
   // Execs only, by hand: add the bot to private client channels (dry run unless &go=1)
   if (step === "invite") {
     if (cron) return new Response("Not for the schedule", { status: 400 });
@@ -48,7 +57,7 @@ export async function GET(request: Request) {
   try {
     const admin = createAdminClient();
     if (step === "brief") return Response.json(await refreshAll(admin, undefined, new URL(request.url).searchParams.get("rebuild") === "1"));
-    if (step === "slack" || step === "drive" || step === "gmail") return Response.json(await collectStep(admin, step as Step));
+    if (step === "slack" || step === "drive" || step === "gmail" || step === "meta") return Response.json(await collectStep(admin, step as Step));
     return Response.json({ error: "Use ?step=slack, drive, gmail, brief or check" }, { status: 400 });
   } catch (e) {
     await reportError({ message: `Context sync: ${e instanceof Error ? e.message : String(e)}`, path: "/api/cron/context", kind: "server", stack: e instanceof Error ? e.stack : null });

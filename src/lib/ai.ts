@@ -2,6 +2,7 @@ import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { MAX_VARIATIONS, describeAllotment, toAllotment, type Allotment, type UsageRow } from "@/lib/allotment";
+import { describeMeta } from "@/lib/context/meta";
 
 // Claude for the request form (suggestions, pre-submit review) and the twice-daily client briefings.
 // Every call is optional. Without ANTHROPIC_API_KEY the form still works, just without suggestions.
@@ -86,6 +87,7 @@ export type ClientContext = {
   adAccountConnected: boolean;
   allotment: Allotment | null;
   digest: Digest | null; // from the twice-daily briefing: Slack, email and Drive, already summarized
+  meta: string | null; // the latest Meta ad performance, in readable lines
   angles: { name: string; kind: string; description: string | null }[];
   memory: { kind: "avoid" | "prefer" | "note"; body: string; source: string }[];
   recent: {
@@ -103,10 +105,11 @@ export type ClientContext = {
 
 /** Everything the AI should know about a client. Reads through the caller's RLS. */
 export async function clientContext(supabase: SupabaseClient, clientId: string): Promise<ClientContext | null> {
-  const [{ data: c }, { data: usage }, { data: briefing }, { data: angles }, { data: memory }, { data: recent }] = await Promise.all([
+  const [{ data: c }, { data: usage }, { data: briefing }, { data: snap }, { data: angles }, { data: memory }, { data: recent }] = await Promise.all([
     supabase.from("clients").select("name, website, meta_ad_account_id").eq("id", clientId).maybeSingle(),
     supabase.from("client_allotment_usage").select("*").eq("client_id", clientId).maybeSingle(),
     supabase.from("client_briefings").select("digest").eq("client_id", clientId).maybeSingle(),
+    supabase.from("meta_snapshots").select("date_start, date_stop, summary, weekly, ads").eq("client_id", clientId).order("fetched_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("angles").select("name, kind, description").eq("client_id", clientId).eq("status", "active").order("name").limit(40),
     supabase.from("client_memory").select("kind, body, source").eq("client_id", clientId).eq("status", "active").order("created_at", { ascending: false }).limit(60),
     supabase
@@ -123,6 +126,7 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
     adAccountConnected: Boolean(c.meta_ad_account_id),
     allotment: usage ? toAllotment(usage as UsageRow) : null,
     digest: briefing?.digest && Object.keys(briefing.digest).length ? (briefing.digest as Digest) : null,
+    meta: snap ? describeMeta(snap as Parameters<typeof describeMeta>[0]) : null,
     angles: angles ?? [],
     memory: (memory ?? []) as ClientContext["memory"],
     recent: (recent ?? []).map((r) => ({
@@ -141,11 +145,8 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
 
 export function contextBlock(ctx: ClientContext, request?: { images: number; videos: number }) {
   const lines: string[] = [`<client name="${ctx.name}"${ctx.website ? ` website="${ctx.website}"` : ""}>`];
-  lines.push(
-    ctx.adAccountConnected
-      ? "Meta ad account is linked, but performance data isn't synced into this app yet. Don't invent metrics."
-      : "No Meta ad account linked yet. Don't invent metrics.",
-  );
+  if (ctx.meta) lines.push("<meta_ads_performance>", ctx.meta, "</meta_ads_performance>");
+  else lines.push(ctx.adAccountConnected ? "Meta ad account linked, but no performance pulled yet. Don't invent metrics." : "No Meta ad account linked yet. Don't invent metrics.");
   if (ctx.digest) lines.push("<briefing from Slack, email and Drive>", describeDigest(ctx.digest), "</briefing>");
   lines.push("<allotment_this_month>", describeAllotment(ctx.allotment, request), "</allotment_this_month>");
   lines.push("<client_memory>");
@@ -173,6 +174,7 @@ export function describeDigest(d: Digest) {
   return [
     d.summary,
     d.direction && `Campaign direction: ${d.direction}`,
+    d.performance && `Ad performance: ${d.performance}`,
     list("Recent asks from the client or team", d.asks),
     list("Avoid", d.avoid),
     list("Works for them", d.works),
@@ -250,6 +252,7 @@ export const REVIEW_SCHEMA = obj({
 export type Digest = {
   summary: string;
   direction: string;
+  performance?: string; // what the Meta numbers say is working or tiring; older briefings don't have it
   asks: string[];
   avoid: string[];
   works: string[];
@@ -260,6 +263,7 @@ export type Digest = {
 export const DIGEST_SCHEMA = obj({
   summary: str,
   direction: str,
+  performance: str,
   asks: strArr,
   avoid: strArr,
   works: strArr,
