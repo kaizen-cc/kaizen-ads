@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { refreshBriefing } from "./briefing";
-import { collectDrive, collectGmail, gmailMailboxes, googleConfigured } from "./google";
+import { collectDrive, collectGmail, contactMap, gmailMailboxes, googleConfigured } from "./google";
 import { getCursor, saveItems, setCursor, type CollectResult } from "./shared";
 import { collectSlack, slackConfigured } from "./slack";
 
@@ -33,15 +33,26 @@ async function pool<T, R>(list: T[], size: number, fn: (x: T) => Promise<R>) {
   return out;
 }
 
-export async function runContextSync(admin: SupabaseClient, budgetMs = 240_000) {
-  const deadline = Date.now() + budgetMs;
+/** Step 1: pull what's new from Slack, Drive and every mailbox. */
+export async function collectAll(admin: SupabaseClient) {
   const sources = [];
   if (slackConfigured()) sources.push(await collect(admin, "slack", (since) => collectSlack(admin, since)));
   if (googleConfigured()) {
     sources.push(await collect(admin, "drive", (since) => collectDrive(admin, since)));
-    for (const mailbox of gmailMailboxes()) sources.push(await collect(admin, `gmail:${mailbox}`, (since) => collectGmail(admin, mailbox, since)));
+    // Every mailbox keeps its own cursor, so someone new to the org starts with their last 30 days
+    try {
+      const [mailboxes, contacts] = await Promise.all([gmailMailboxes(), contactMap(admin)]);
+      sources.push(...(await pool(mailboxes, 4, (m) => collect(admin, `gmail:${m}`, (since) => collectGmail(m, since, contacts)))));
+    } catch (e) {
+      sources.push({ source: "gmail", error: e instanceof Error ? e.message : String(e) });
+    }
   }
+  return { sources };
+}
 
+/** Step 2: refresh the briefings of clients with news, stalest first, until the time budget runs out. */
+export async function refreshAll(admin: SupabaseClient, budgetMs = 250_000) {
+  const deadline = Date.now() + budgetMs;
   const [{ data: list }, { data: done }] = await Promise.all([
     admin.from("clients").select("id, name").eq("creative_package", true),
     admin.from("client_briefings").select("client_id, generated_at"),
@@ -59,7 +70,6 @@ export async function runContextSync(admin: SupabaseClient, budgetMs = 240_000) 
     }
   });
   return {
-    sources,
     refreshed: briefings.filter((b) => !("skipped" in b && b.skipped) && !("deferred" in b)),
     skipped: briefings.filter((b) => "skipped" in b && b.skipped).length,
     deferred: briefings.filter((b) => "deferred" in b).map((b) => b.client),
