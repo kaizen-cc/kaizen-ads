@@ -48,24 +48,33 @@ async function listChannels() {
 }
 
 /**
- * Fill in channels for clients that don't have one yet (shared Slack Connect channels are external, the rest internal),
+ * Fill in channels for clients that don't have one yet (matched by the Account Overview ID at the end of the
+ * channel name, or else by name; "internal-" channels are internal, the rest are the channel with the client),
  * join the public ones the bot isn't in, and list the private ones someone needs to invite it to.
  */
 export async function matchSlackChannels(admin: SupabaseClient) {
   const [channels, { data: clients }] = await Promise.all([
     listChannels(),
-    admin.from("clients").select("id, name, slack_channel_id, internal_slack_channel_id").eq("creative_package", true),
+    admin.from("clients").select("id, name, kaizen_id, slack_channel_id, internal_slack_channel_id").eq("creative_package", true),
   ]);
+  // Kaizen names channels "<client>-<Account Overview ID>" and "internal-<client>-<ID>"
+  const idOf = (ch: SlackChannel) => ch.name.match(/-(\d{2,6})$/)?.[1];
+  const isInternal = (ch: SlackChannel) => ch.name.startsWith("internal-");
   let matched = 0;
   for (const c of clients ?? []) {
     const key = compact(c.name);
-    if (key.length < 4) continue;
-    const hits = channels.filter((ch) => {
-      const n = compact(ch.name);
-      return n.includes(key) || (n.length >= 6 && key.includes(n));
-    });
-    const external = hits.filter((ch) => ch.is_ext_shared || ch.is_shared);
-    const internal = hits.filter((ch) => !ch.is_ext_shared && !ch.is_shared);
+    const byId = c.kaizen_id ? channels.filter((ch) => idOf(ch) === String(c.kaizen_id)) : [];
+    // Without an ID match, fall back to the client's name appearing in the channel name
+    const hits = byId.length
+      ? byId
+      : key.length >= 4
+        ? channels.filter((ch) => {
+            const n = compact(ch.name);
+            return n.includes(key) || (n.length >= 6 && key.includes(n));
+          })
+        : [];
+    const external = hits.filter((ch) => !isInternal(ch));
+    const internal = hits.filter((ch) => isInternal(ch));
     const patch: Record<string, string> = {};
     if (!c.slack_channel_id && external.length === 1) patch.slack_channel_id = external[0].id;
     if (!c.internal_slack_channel_id && internal.length === 1) patch.internal_slack_channel_id = internal[0].id;

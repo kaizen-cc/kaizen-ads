@@ -2,6 +2,7 @@
 //
 //   SLACK_USER_TOKEN=xoxp-… SLACK_BOT_TOKEN=xoxb-… node scripts/slack-invite-bot.mjs            lists what it would do
 //   SLACK_USER_TOKEN=xoxp-… SLACK_BOT_TOKEN=xoxb-… node scripts/slack-invite-bot.mjs --go       does it
+//   … --clients               only client channels (names ending in the client's ID, e.g. internal-crust-pizza-212)
 //   … --match=crust,nectr     only channels whose name contains one of these
 //
 // The user token needs groups:read and groups:write (User Token Scopes on the Kaizen OS app).
@@ -41,7 +42,10 @@ do {
   cursor = page.response_metadata?.next_cursor ?? "";
 } while (cursor);
 
-const targets = channels.filter((c) => !match.length || match.some((m) => c.name.toLowerCase().includes(m)));
+const clientsOnly = process.argv.includes("--clients");
+const targets = channels
+  .filter((c) => !clientsOnly || /-\d{2,6}$/.test(c.name))
+  .filter((c) => !match.length || match.some((m) => c.name.toLowerCase().includes(m)));
 console.log(`${targets.length} private channel(s) you're in${match.length ? " matching " + match.join(", ") : ""}:`);
 
 let added = 0;
