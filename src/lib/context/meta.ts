@@ -89,7 +89,9 @@ function shape(row: Row, kind?: string) {
 export type MetaSummary = ReturnType<typeof shape>;
 export type MetaAd = MetaSummary & { name: string; campaign: string; adset: string; headline: string | null; text: string | null; thumbnail: string | null };
 
-const FIELDS = "spend,impressions,reach,frequency,clicks,ctr,cpm,actions,cost_per_action_type,purchase_roas";
+// No reach or clicks: reach makes Meta count unique people across the whole range, and on busier accounts
+// it answers "Service temporarily unavailable" instead of the numbers. Frequency covers what we need.
+const FIELDS = "spend,impressions,frequency,ctr,cpm,actions,cost_per_action_type,purchase_roas";
 
 /** The last 30 days of one ad account: totals, week by week, and the top ads with their creative. */
 export async function readAdAccount(adAccountId: string) {
