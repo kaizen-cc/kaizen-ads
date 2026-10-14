@@ -12,15 +12,15 @@ export const metaConfigured = () => Boolean(process.env.META_SYSTEM_USER_TOKEN);
 async function graph<T>(path: string, params: Record<string, string> = {}): Promise<T> {
   const token = process.env.META_SYSTEM_USER_TOKEN!;
   const proof: Record<string, string> = process.env.META_APP_SECRET ? { appsecret_proof: createHmac("sha256", process.env.META_APP_SECRET).update(token).digest("hex") } : {};
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 4; attempt++) {
     const res = await fetch(`https://graph.facebook.com/${VERSION}/${path}?${new URLSearchParams({ ...params, ...proof, access_token: token })}`, { cache: "no-store" });
     const body = (await res.json()) as T & { error?: { message: string; code: number } };
-    // 4, 17, 32, 613: rate limits. Wait a little and try again
-    if (body.error && [4, 17, 32, 613].includes(body.error.code) && attempt < 2) {
-      await new Promise((r) => setTimeout(r, 5000 * (attempt + 1)));
+    // 1, 2: Meta busy or the query too heavy for a moment; 4, 17, 32, 613: rate limits. Wait a little and try again
+    if (body.error && [1, 2, 4, 17, 32, 613].includes(body.error.code) && attempt < 3) {
+      await new Promise((r) => setTimeout(r, 4000 * (attempt + 1)));
       continue;
     }
-    if (body.error) throw new Error(`Meta: ${body.error.message}`);
+    if (body.error) throw new Error(`Meta (${path.split("/").pop() || "ads"}): ${body.error.message}`);
     return body;
   }
   throw new Error("Meta: rate limited");
@@ -94,29 +94,30 @@ const FIELDS = "spend,impressions,reach,frequency,clicks,ctr,cpm,actions,cost_pe
 /** The last 30 days of one ad account: totals, week by week, and the top ads with their creative. */
 export async function readAdAccount(adAccountId: string) {
   const act = `act_${adAccountId.replace(/^act_/, "")}`;
-  const [total, weeks, ads] = await Promise.all([
-    graph<{ data: Row[] }>(`${act}/insights`, { date_preset: "last_30d", level: "account", fields: FIELDS }),
-    graph<{ data: Row[] }>(`${act}/insights`, { date_preset: "last_28d", level: "account", time_increment: "7", fields: FIELDS }),
-    graph<{ data: Row[] }>(`${act}/insights`, {
-      date_preset: "last_30d",
-      level: "ad",
-      fields: `ad_id,ad_name,adset_name,campaign_name,${FIELDS}`,
-      sort: "spend_descending",
-      limit: "25",
-    }),
-  ]);
+  // One at a time: Meta turns away heavy insights queries that arrive together
+  const total = await graph<{ data: Row[] }>(`${act}/insights`, { date_preset: "last_30d", level: "account", fields: FIELDS });
+  const weeks = await graph<{ data: Row[] }>(`${act}/insights`, { date_preset: "last_28d", level: "account", time_increment: "7", fields: FIELDS });
+  const ads = await graph<{ data: Row[] }>(`${act}/insights`, {
+    date_preset: "last_30d",
+    level: "ad",
+    fields: `ad_id,ad_name,adset_name,campaign_name,${FIELDS}`,
+    sort: "spend_descending",
+    limit: "25",
+  });
   const row = total.data[0];
   const summary = row ? shape(row) : null;
   const kind = summary?.result ?? undefined; // judge every ad on the account's main result
 
   // The creative behind the top ads: headline, primary text, thumbnail
   const ids = ads.data.slice(0, 15).map((a) => a.ad_id).filter(Boolean) as string[];
-  const creatives = ids.length
-    ? await graph<Record<string, { creative?: { title?: string; body?: string; thumbnail_url?: string; object_story_spec?: { link_data?: { name?: string; message?: string } } } }>>("", {
-        ids: ids.join(","),
-        fields: "creative{title,body,thumbnail_url,object_story_spec}",
-      })
-    : {};
+  // Nice to have: if Meta won't return the creatives, the numbers are still saved
+  let creatives: Record<string, { creative?: { title?: string; body?: string; thumbnail_url?: string; object_story_spec?: { link_data?: { name?: string; message?: string } } } }> = {};
+  if (ids.length)
+    try {
+      creatives = await graph("", { ids: ids.join(","), fields: "creative{title,body,thumbnail_url}" });
+    } catch {
+      creatives = {};
+    }
 
   return {
     dateStart: row?.date_start ?? null,
