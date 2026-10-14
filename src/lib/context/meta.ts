@@ -284,12 +284,46 @@ async function snapshot(admin: SupabaseClient, clientId: string, adAccountId: st
     .map(([id, list]) => ({ id, list, t: totals(list, kind) }))
     .sort((a, b) => b.t.spend - a.t.spend)
     .slice(0, 20);
-  let creatives: Record<string, { creative?: { title?: string; body?: string; thumbnail_url?: string } }> = {};
+  // Copy lives in different places by ad type: plain fields, link/video ads, dynamic (asset feed) ads, boosted posts
+  type Creative = {
+    title?: string;
+    body?: string;
+    thumbnail_url?: string;
+    object_story_spec?: { link_data?: { name?: string; message?: string }; video_data?: { title?: string; message?: string } };
+    asset_feed_spec?: { titles?: { text: string }[]; bodies?: { text: string }[] };
+    effective_object_story_id?: string;
+  };
+  let creatives: Record<string, { creative?: Creative }> = {};
   try {
-    if (top.length) creatives = await graph("", { ids: top.slice(0, 15).map((a) => a.id).join(","), fields: "creative{title,body,thumbnail_url}" });
+    if (top.length)
+      creatives = await graph("", {
+        ids: top.slice(0, 15).map((a) => a.id).join(","),
+        fields: "creative{title,body,thumbnail_url,object_story_spec{link_data{name,message},video_data{title,message}},asset_feed_spec{titles,bodies},effective_object_story_id}",
+      });
   } catch {
     creatives = {}; // nice to have: the numbers still save without it
   }
+  // Boosted posts keep their text on the post itself
+  const posts = Object.values(creatives)
+    .map((c) => c.creative)
+    .filter((c): c is Creative => Boolean(c && !c.body && !c.object_story_spec?.link_data?.message && !c.object_story_spec?.video_data?.message && !c.asset_feed_spec?.bodies?.length && c.effective_object_story_id))
+    .map((c) => c.effective_object_story_id!);
+  let postText: Record<string, { message?: string }> = {};
+  try {
+    if (posts.length) postText = await graph("", { ids: posts.join(","), fields: "message" });
+  } catch {
+    postText = {}; // needs page access; the numbers still save without it
+  }
+  const copyOf = (c?: Creative) => ({
+    headline: c?.title ?? c?.object_story_spec?.link_data?.name ?? c?.object_story_spec?.video_data?.title ?? c?.asset_feed_spec?.titles?.[0]?.text ?? null,
+    text:
+      c?.body ??
+      c?.object_story_spec?.link_data?.message ??
+      c?.object_story_spec?.video_data?.message ??
+      c?.asset_feed_spec?.bodies?.[0]?.text ??
+      (c?.effective_object_story_id ? postText[c.effective_object_story_id]?.message : undefined) ??
+      null,
+  });
   const ranking = (list: InsightRow[], key: string) =>
     (list
       .slice()
@@ -305,8 +339,8 @@ async function snapshot(admin: SupabaseClient, clientId: string, adAccountId: st
       name: String(latest.ad_name ?? ""),
       campaign: String(latest.campaign_name ?? ""),
       adset: String(latest.adset_name ?? ""),
-      headline: c?.title ?? null,
-      text: c?.body?.slice(0, 400) ?? null,
+      headline: copyOf(c).headline,
+      text: copyOf(c).text?.slice(0, 400) ?? null,
       thumbnail: c?.thumbnail_url ?? null,
       rankings: { quality: ranking(list, "quality_ranking"), engagement: ranking(list, "engagement_rate_ranking"), conversion: ranking(list, "conversion_rate_ranking") },
     };
