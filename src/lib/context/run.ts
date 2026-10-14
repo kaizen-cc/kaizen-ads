@@ -53,7 +53,8 @@ export async function collectStep(admin: SupabaseClient, step: Step, budgetMs = 
 }
 
 /** Step 2: refresh the briefings of clients with news, stalest first, until the time budget runs out. */
-export async function refreshAll(admin: SupabaseClient, budgetMs = 700_000) {
+/** rebuild: redo every briefing from the last 30 days instead of only clients with news. */
+export async function refreshAll(admin: SupabaseClient, budgetMs = 700_000, rebuild = false) {
   const deadline = Date.now() + budgetMs;
   const [{ data: list }, { data: done }] = await Promise.all([
     admin.from("clients").select("id, name").eq("creative_package", true),
@@ -66,7 +67,7 @@ export async function refreshAll(admin: SupabaseClient, budgetMs = 700_000) {
   const briefings = await pool(clients, 6, async (c) => {
     if (Date.now() > deadline) return { client: c.name, deferred: true };
     try {
-      return { client: c.name, ...(await refreshBriefing(admin, c.id)) };
+      return { client: c.name, ...(await refreshBriefing(admin, c.id, rebuild)) };
     } catch (e) {
       return { client: c.name, error: e instanceof Error ? e.message : String(e) };
     }

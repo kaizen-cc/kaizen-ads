@@ -22,19 +22,28 @@ type Item = { source: string; occurred_at: string; author: string | null; title:
 
 export async function refreshBriefing(admin: SupabaseClient, clientId: string, force = false) {
   const { data: prev } = await admin.from("client_briefings").select("updated_through, generated_at").eq("client_id", clientId).maybeSingle();
-  const since = prev?.updated_through ?? new Date(Date.now() - 30 * 86_400_000).toISOString();
-  const lastRun = prev?.generated_at ?? since;
+  const monthAgo = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  // "New" means arrived since the last briefing, not dated since: a mailbox read later can bring older emails
+  const lastRun = force || !prev ? null : prev.generated_at;
+  const since = prev?.updated_through ?? monthAgo;
 
-  const [{ data: fresh }, { count: newRequests }, { count: newMemory }, { data: driveFiles }, { data: refs }] = await Promise.all([
-    admin
-      .from("context_items")
-      .select("source, occurred_at, author, title, body, url, meta")
-      .eq("client_id", clientId)
-      .gt("occurred_at", since)
-      .order("occurred_at", { ascending: false })
-      .limit(150),
-    admin.from("requests").select("id", { count: "exact", head: true }).eq("client_id", clientId).gt("created_at", lastRun),
-    admin.from("client_memory").select("id", { count: "exact", head: true }).eq("client_id", clientId).gt("created_at", lastRun),
+  let messages = admin
+    .from("context_items")
+    .select("source, occurred_at, author, title, body, url, meta")
+    .eq("client_id", clientId)
+    .neq("source", "drive") // Drive files are listed on their own below, so hundreds of photos don't crowd out emails
+    .gt("occurred_at", monthAgo)
+    .order("occurred_at", { ascending: false })
+    .limit(150);
+  if (lastRun) messages = messages.gt("created_at", lastRun);
+  let newFiles = admin.from("context_items").select("id", { count: "exact", head: true }).eq("client_id", clientId).eq("source", "drive");
+  if (lastRun) newFiles = newFiles.gt("created_at", lastRun);
+
+  const [{ data: fresh }, { count: fileCount }, { count: newRequests }, { count: newMemory }, { data: driveFiles }, { data: refs }] = await Promise.all([
+    messages,
+    newFiles,
+    admin.from("requests").select("id", { count: "exact", head: true }).eq("client_id", clientId).gt("created_at", lastRun ?? monthAgo),
+    admin.from("client_memory").select("id", { count: "exact", head: true }).eq("client_id", clientId).gt("created_at", lastRun ?? monthAgo),
     admin
       .from("context_items")
       .select("external_id, title, url, occurred_at, meta")
@@ -46,7 +55,7 @@ export async function refreshBriefing(admin: SupabaseClient, clientId: string, f
     admin.from("requests").select("brief, refs").eq("client_id", clientId).gt("created_at", new Date(Date.now() - 60 * 86_400_000).toISOString()),
   ]);
   const items = (fresh ?? []) as Item[];
-  if (!force && prev && items.length === 0 && !newRequests && !newMemory) return { skipped: true };
+  if (lastRun && items.length === 0 && !fileCount && !newRequests && !newMemory) return { skipped: true };
 
   const ctx = await clientContext(admin, clientId);
   if (!ctx) return { skipped: true };
@@ -73,9 +82,9 @@ export async function refreshBriefing(admin: SupabaseClient, clientId: string, f
     schema: { type: "object", properties: { digest: DIGEST_SCHEMA, suggestions: SUGGESTIONS_SCHEMA }, required: ["digest", "suggestions"], additionalProperties: false },
     prompt: `${contextBlock(ctx)}
 
-<new_activity since="${since.slice(0, 10)}">
-${activity || "Nothing new in Slack, email or Drive."}
-</new_activity>
+<new_messages>
+${activity || "Nothing new in Slack or email."}
+</new_messages>
 
 <drive_files_last_30_days_not_used_in_a_request>
 ${unused.map((f) => `- ${f.title} (${f.occurred_at.slice(0, 10)})${(f.meta as { folder?: string })?.folder ? ` in ${(f.meta as { folder?: string }).folder}` : ""} ${f.url}`).join("\n") || "None."}
@@ -95,18 +104,17 @@ suggestions: suggestions for the next creative request, with nothing filled in y
 ${SUGGEST_FIELDS}`,
   });
 
-  const counts = { slack: 0, gmail: 0, drive: 0 };
+  const counts = { slack: 0, gmail: 0, drive: fileCount ?? 0 };
   for (const i of items) {
     if (i.source.startsWith("slack")) counts.slack++;
     else if (i.source === "gmail") counts.gmail++;
-    else if (i.source === "drive") counts.drive++;
   }
   const { error } = await admin.from("client_briefings").upsert({
     client_id: clientId,
     digest: result.digest,
     suggestions: cleanSuggestions(result.suggestions),
     sources: counts,
-    updated_through: items[0]?.occurred_at ?? since,
+    updated_through: items[0]?.occurred_at && items[0].occurred_at > since ? items[0].occurred_at : since,
     generated_at: new Date().toISOString(),
   });
   if (error) throw new Error(`Saving briefing: ${error.message}`);

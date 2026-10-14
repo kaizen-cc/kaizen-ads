@@ -24,7 +24,7 @@ const nyHour = () => Number(new Intl.DateTimeFormat("en-US", { timeZone: "Americ
  * gmail) and fifteen minutes later ?step=brief refreshes the client briefings. Each step gets its own time limit.
  * Vercel Cron calls at both UTC hours that can be noon or 6pm in New York (daylight saving shifts them),
  * and only the right one does the work. ?force=1, or an exec opening the URL, runs it now.
- * ?step=check tests every connection without reading client data.
+ * ?step=check tests every connection without reading client data. ?step=brief&rebuild=1 redoes every briefing.
  */
 export async function GET(request: Request) {
   const cron = isCronRequest(request);
@@ -37,7 +37,7 @@ export async function GET(request: Request) {
 
   try {
     const admin = createAdminClient();
-    if (step === "brief") return Response.json(await refreshAll(admin));
+    if (step === "brief") return Response.json(await refreshAll(admin, undefined, new URL(request.url).searchParams.get("rebuild") === "1"));
     if (step === "slack" || step === "drive" || step === "gmail") return Response.json(await collectStep(admin, step as Step));
     return Response.json({ error: "Use ?step=slack, drive, gmail, brief or check" }, { status: 400 });
   } catch (e) {
