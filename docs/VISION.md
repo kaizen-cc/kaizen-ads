@@ -68,7 +68,7 @@
 | Copy reviewer | **One copywriter** reviews all copy. |
 | Client chasing | **Jorgi only**. |
 | Internal creative approval | **Jesus** (Head of Creative), plus the execs **Ryan (CMO), Kyle, Santi** as backups. |
-| Business hours | Approval clocks count **Mon–Fri, 8am–6pm ET** only. |
+| Business hours | Approval clocks count **Mon–Fri, 8am–6pm ET** only. Time left in the business day counts: a Friday 5pm send uses 5–6pm Friday, so its 24h reminder is Monday 5pm. After-hours sends start at 8am on the next business day. |
 | What counts as a deliverable | A **new deliverable** is a distinct design (e.g. a folder of similar-style designs with different products = several deliverables). A **variation** reuses the same graphics/design and tests copy, title, CTA or button placement (A/B test), and does **not** count as a new deliverable. A **carousel = 1 deliverable**. Sizes of one design = 1. *Kaizen is still finalizing these rules internally, so keep them configurable.* |
 | Copy structure | Copy is approved **once per angle** and covers all creatives on that angle. Each copy set has **up to 3 primary texts and 3 headlines**. |
 | Platforms (v1) | **Meta only.** Expand to Google, TikTok and Organic once the shell is right. |
