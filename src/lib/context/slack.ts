@@ -57,9 +57,9 @@ export async function matchSlackChannels(admin: SupabaseClient) {
     listChannels(),
     admin.from("clients").select("id, name, kaizen_id, slack_channel_id, internal_slack_channel_id").eq("creative_package", true),
   ]);
-  // Kaizen names channels "<client>-<Account Overview ID>" and "internal-<client>-<ID>"
+  // Kaizen names channels "<client>-<Account Overview ID>" and "internal-<client>-<ID>" (white label: "wl-…", "wl-internal-…")
   const idOf = (ch: SlackChannel) => ch.name.match(/-(\d{2,6})$/)?.[1];
-  const isInternal = (ch: SlackChannel) => ch.name.startsWith("internal-");
+  const isInternal = (ch: SlackChannel) => /^(wl-)?internal-/.test(ch.name); // white-label channels are "wl-internal-…"
   let matched = 0;
   for (const c of clients ?? []) {
     const key = compact(c.name);
