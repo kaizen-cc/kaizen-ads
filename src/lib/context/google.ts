@@ -1,7 +1,7 @@
 import "server-only";
 import { JWT } from "google-auth-library";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { compact, trimBody, type CollectResult, type ContextItem } from "./shared";
+import { compact, saveItems, trimBody, type CollectResult, type ContextItem } from "./shared";
 
 // Reads Gmail and the client Drive folders with a Workspace service account (domain-wide delegation).
 //   GOOGLE_SERVICE_ACCOUNT_JSON  the service account's JSON key
@@ -215,19 +215,38 @@ export async function collectDrive(admin: SupabaseClient, since: Date): Promise<
 
   // Only the creative-package clients' folders are walked and searched
   const { parentOf, nameOf } = await folderTree(token, [...clientOfFolder.keys()], driveId);
-  const folders = [...clientOfFolder.keys(), ...parentOf.keys()];
-  const files: DriveFile[] = [];
-  for (let i = 0; i < folders.length; i += 40) {
-    const parents = folders.slice(i, i + 40).map((id) => `'${id}' in parents`).join(" or ");
-    files.push(
-      ...(await listFiles(
-        token,
-        `(${parents}) and mimeType != '${FOLDER}' and trashed = false and createdTime > '${since.toISOString()}'`,
-        "id, name, mimeType, parents, createdTime, webViewLink, lastModifyingUser(displayName)",
-        driveId,
-      )),
-    );
+  // A client folder linked since the last run (new client, upgrade, pasted by hand) gets its last 30 days;
+  // the rest only what's new since the last run
+  const topOf = (folder: string) => {
+    let at: string | undefined = folder;
+    for (let depth = 0; at && depth < 8; depth++) {
+      if (clientOfFolder.has(at)) return at;
+      at = parentOf.get(at);
+    }
+    return undefined;
+  };
+  const { data: seen } = await admin.from("sync_state").select("source").like("source", "drive:%");
+  const known = new Set((seen ?? []).map((r) => (r.source as string).slice(6)));
+  const monthAgo = new Date(Date.now() - 30 * 86_400_000);
+  const groups = new Map<string, string[]>(); // since → folders
+  for (const f of [...clientOfFolder.keys(), ...parentOf.keys()]) {
+    const top = topOf(f);
+    const from = (top && known.has(top) ? since : monthAgo).toISOString();
+    groups.set(from, [...(groups.get(from) ?? []), f]);
   }
+  const files: DriveFile[] = [];
+  for (const [from, folders] of groups)
+    for (let i = 0; i < folders.length; i += 40) {
+      const parents = folders.slice(i, i + 40).map((id) => `'${id}' in parents`).join(" or ");
+      files.push(
+        ...(await listFiles(
+          token,
+          `(${parents}) and mimeType != '${FOLDER}' and trashed = false and createdTime > '${from}'`,
+          "id, name, mimeType, parents, createdTime, webViewLink, lastModifyingUser(displayName)",
+          driveId,
+        )),
+      );
+    }
 
   const items: ContextItem[] = [];
   for (const f of files) {
@@ -254,7 +273,14 @@ export async function collectDrive(admin: SupabaseClient, since: Date): Promise<
       meta: { mimeType: f.mimeType, folder: path.filter(Boolean).join(" / ") },
     });
   }
-  return { items, notes: { clientFolders: clientOfFolder.size, foldersMatched: matched, noFolder: unmatched, subfolders: parentOf.size, newFiles: items.length } };
+  // Save first, then mark every client folder as read, so a failure never skips a folder's backfill
+  await saveItems(admin, items);
+  const now = new Date().toISOString();
+  await admin.from("sync_state").upsert([...clientOfFolder.keys()].map((f) => ({ source: `drive:${f}`, cursor_at: now, last_run_at: now, last_result: {} })));
+  return {
+    items: [],
+    notes: { saved: items.length, clientFolders: clientOfFolder.size, foldersMatched: matched, noFolder: unmatched, subfolders: parentOf.size, backfilled: [...clientOfFolder.keys()].filter((f) => !known.has(f)).length },
+  };
 }
 
 // ─── Setup check ────────────────────────────────────────────────────────────
