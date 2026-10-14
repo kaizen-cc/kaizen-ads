@@ -1,4 +1,5 @@
 import { isCronRequest } from "@/lib/cron";
+import { checkSetup } from "@/lib/context/check";
 import { collectAll, refreshAll } from "@/lib/context/run";
 import { reportError } from "@/lib/error-report";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
@@ -23,17 +24,19 @@ const nyHour = () => Number(new Intl.DateTimeFormat("en-US", { timeZone: "Americ
  * later ?step=brief refreshes the client briefings. Each step gets its own time limit.
  * Vercel Cron calls at both UTC hours that can be noon or 6pm in New York (daylight saving shifts them),
  * and only the right one does the work. ?force=1, or an exec opening the URL, runs it now.
+ * ?step=check tests every connection without reading client data.
  */
 export async function GET(request: Request) {
   const cron = isCronRequest(request);
   if (!cron && !(await isExec())) return new Response("Unauthorized", { status: 401 });
   const force = !cron || new URL(request.url).searchParams.get("force") === "1";
+  const step = new URL(request.url).searchParams.get("step");
+  if (step === "check" && adminConfigured()) return Response.json(await checkSetup(createAdminClient()));
   if (!force && ![12, 18].includes(nyHour())) return Response.json({ skipped: "not 12pm or 6pm in New York" });
   if (!adminConfigured()) return Response.json({ error: "SUPABASE_SECRET_KEY not set" }, { status: 500 });
 
   try {
     const admin = createAdminClient();
-    const step = new URL(request.url).searchParams.get("step");
     return Response.json(step === "brief" ? await refreshAll(admin) : await collectAll(admin));
   } catch (e) {
     await reportError({ message: `Context sync: ${e instanceof Error ? e.message : String(e)}`, path: "/api/cron/context", kind: "server", stack: e instanceof Error ? e.stack : null });

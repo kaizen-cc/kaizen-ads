@@ -245,3 +245,71 @@ export async function collectDrive(admin: SupabaseClient, since: Date): Promise<
   }
   return { items, notes: { foldersMatched: matched, folders: parentOf.size, newFiles: files.length, clientFiles: items.length } };
 }
+
+// ─── Setup check ────────────────────────────────────────────────────────────
+
+const explain = (e: unknown) => {
+  const m = e instanceof Error ? e.message : String(e);
+  if (m.includes("unauthorized_client")) return `${m} (domain-wide delegation isn't authorized for this scope yet; check the scopes in the Admin console, it can take a few minutes)`;
+  if (m.includes("accessNotConfigured") || m.includes("has not been used in project")) return `${m} (turn this API on in Google Cloud)`;
+  return m;
+};
+
+/** Setup check for Drive, the mailbox lookup and Gmail. Reads names and counts only. */
+export async function checkGoogle() {
+  const fail = (detail: string) => ({ ok: false, detail });
+  if (!googleConfigured()) {
+    const missing = fail("GOOGLE_SERVICE_ACCOUNT_JSON is missing");
+    return { drive: missing, mailboxes: missing, gmail: missing };
+  }
+  try {
+    JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON!);
+  } catch {
+    const bad = fail("GOOGLE_SERVICE_ACCOUNT_JSON isn't valid JSON; paste the whole key file, braces included");
+    return { drive: bad, mailboxes: bad, gmail: bad };
+  }
+
+  let drive;
+  try {
+    const root = process.env.GOOGLE_SHARED_DRIVE_ID;
+    const user = process.env.GOOGLE_DRIVE_USER;
+    if (!root || !user) throw new Error("GOOGLE_SHARED_DRIVE_ID or GOOGLE_DRIVE_USER is missing");
+    const token = await tokenFor(user, DRIVE_SCOPE);
+    let name: string;
+    let driveId: string | undefined;
+    try {
+      name = (await google<{ name: string }>(token, `https://www.googleapis.com/drive/v3/drives/${root}`)).name;
+      driveId = root;
+    } catch {
+      const f = await google<{ name: string; driveId?: string }>(token, `https://www.googleapis.com/drive/v3/files/${root}`, { supportsAllDrives: "true", fields: "name, driveId" });
+      name = f.name;
+      driveId = f.driveId;
+    }
+    const top = await listFiles(token, `'${root}' in parents and mimeType = '${FOLDER}' and trashed = false`, "id, name", driveId);
+    drive = { ok: true, detail: `Reading "${name}" as ${user}: ${top.length} client folders directly inside` };
+  } catch (e) {
+    drive = fail(explain(e));
+  }
+
+  let mailboxes;
+  let first: string | undefined;
+  try {
+    const list = await gmailMailboxes();
+    first = list[0];
+    mailboxes = { ok: list.length > 0, detail: `${list.length} mailboxes will be read${list.length ? ` (e.g. ${list.slice(0, 3).join(", ")})` : ""}` };
+  } catch (e) {
+    mailboxes = fail(`${explain(e)}. Is GOOGLE_DRIVE_USER (or GOOGLE_ADMIN_USER) a Workspace admin, and is the Admin SDK API on?`);
+  }
+
+  let gmail;
+  try {
+    const who = first ?? process.env.GOOGLE_DRIVE_USER;
+    if (!who) throw new Error("No mailbox to test");
+    const token = await tokenFor(who, GMAIL_SCOPE);
+    const p = await google<{ emailAddress: string; messagesTotal: number }>(token, "https://gmail.googleapis.com/gmail/v1/users/me/profile");
+    gmail = { ok: true, detail: `Can read ${p.emailAddress} (${p.messagesTotal.toLocaleString()} emails)` };
+  } catch (e) {
+    gmail = fail(explain(e));
+  }
+  return { drive, mailboxes, gmail };
+}

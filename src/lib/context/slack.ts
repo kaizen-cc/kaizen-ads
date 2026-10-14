@@ -169,3 +169,19 @@ export async function collectSlack(admin: SupabaseClient, since: Date): Promise<
   }
   return { items, notes: { channelsMatched: access.matched, joined: access.joined, needsInvite: access.needsInvite, errors: errors.slice(0, 10) } };
 }
+
+const NEEDED_SCOPES = ["channels:history", "groups:history", "channels:read", "groups:read", "users:read", "channels:join"];
+
+/** Setup check: is the token valid, does it have every scope, and how many channels is the bot in. */
+export async function checkSlack() {
+  if (!slackConfigured()) throw new Error("SLACK_BOT_TOKEN is missing");
+  const res = await fetch("https://slack.com/api/auth.test", { headers: { authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` }, cache: "no-store" });
+  const body = (await res.json()) as { ok: boolean; error?: string; team?: string; user?: string };
+  if (!body.ok) throw new Error(`Slack token rejected: ${body.error}`);
+  const header = res.headers.get("x-oauth-scopes");
+  const scopes = (header ?? "").split(",").map((s) => s.trim());
+  const missing = header ? NEEDED_SCOPES.filter((s) => !scopes.includes(s)) : [];
+  if (missing.length) throw new Error(`Connected to ${body.team} as @${body.user}, but missing scopes: ${missing.join(", ")}. Add them under Bot Token Scopes and reinstall the app.`);
+  const channels = await listChannels();
+  return `Connected to ${body.team} as @${body.user}${header ? ", all scopes in place" : ""}. Sees ${channels.length} channels and is a member of ${channels.filter((c) => c.is_member).length}.`;
+}
