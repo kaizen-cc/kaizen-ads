@@ -125,6 +125,26 @@ body {
     transform: translateX(-100%);
   }
 }
+/* Request form: each step rises in; the AI review sweeps while it reads */
+@keyframes step-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+@keyframes ai-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+@keyframes ai-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
 
 
 @media (prefers-reduced-motion: reduce) {

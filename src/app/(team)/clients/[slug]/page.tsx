@@ -5,7 +5,7 @@ import { isExecOrLead, requireStaff, seesAllClients } from "@/lib/auth";
 import { SLOTS, type TeamRole } from "@/lib/roles";
 import { AssignSelect } from "../assign-select";
 import { createClient } from "@/lib/supabase/server";
-import { addAngle, addContact, removeContact, saveAllotment, saveClientDetails, setAngleStatus } from "./actions";
+import { addAngle, addContact, addMemory, archiveMemory, removeContact, saveAllotment, saveClientDetails, setAngleStatus } from "./actions";
 
 const field = "h-9 w-full rounded-brand border border-line bg-bg px-3 text-sm outline-none focus:border-brand-text";
 const label = "grid gap-1 text-xs text-muted";
@@ -22,12 +22,18 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
     .maybeSingle();
   if (!client) notFound();
 
-  const [{ data: assignments }, { data: links }, { data: angles }, { data: allotment }, { data: staff }] = await Promise.all([
+  const [{ data: assignments }, { data: links }, { data: angles }, { data: allotment }, { data: staff }, { data: memory }] = await Promise.all([
     supabase.from("client_assignments").select("role, profile_id, profiles(full_name)").eq("client_id", client.id),
     supabase.from("contact_clients").select("is_primary, contacts(id, email, full_name, auth_user_id)").eq("client_id", client.id),
     supabase.from("angles").select("id, name, kind, description, status").eq("client_id", client.id).order("status").order("name"),
     supabase.from("client_allotments").select("images_per_month, videos_per_month").eq("client_id", client.id).maybeSingle(),
     supabase.from("profiles").select("id, full_name, role").eq("is_active", true).order("full_name"),
+    supabase
+      .from("client_memory")
+      .select("id, kind, body, source, created_at, profiles(full_name)")
+      .eq("client_id", client.id)
+      .eq("status", "active")
+      .order("created_at", { ascending: false }),
   ]);
 
   const canAdmin = me.isExec;
@@ -157,6 +163,63 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
               <label className={label}>
                 Description (optional)
                 <input name="description" className={field} />
+              </label>
+            </div>
+          </ActionForm>
+        </section>
+
+        {/* Client memory */}
+        <section className="grid content-start gap-3 rounded-brand border border-line bg-surface p-5 lg:col-span-2">
+          <div>
+            <h2 className="font-medium">Client memory</h2>
+            <p className="mt-1 text-xs text-muted">
+              What we&apos;ve learned about this client. The AI reads it when suggesting requests and flags anything that goes against it before a request is sent.
+            </p>
+          </div>
+          <ul className="grid gap-1.5">
+            {(memory ?? []).map((m) => (
+              <li key={m.id} className="flex items-start justify-between gap-3 rounded-brand bg-surface-2 px-3 py-2.5 text-sm">
+                <span className="flex min-w-0 items-start gap-2.5">
+                  <span
+                    className={`mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                      m.kind === "avoid" ? "bg-bad-soft text-bad" : m.kind === "prefer" ? "bg-ok-soft text-ok" : "bg-bg text-muted"
+                    }`}
+                  >
+                    {m.kind === "avoid" ? "Avoid" : m.kind === "prefer" ? "Works" : "Note"}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block">{m.body}</span>
+                    <span className="block text-[11px] text-faint">
+                      {m.source === "client" ? "Client said" : "Team"}
+                      {(m.profiles as unknown as { full_name: string } | null)?.full_name ? ` · added by ${(m.profiles as unknown as { full_name: string }).full_name}` : ""}
+                    </span>
+                  </span>
+                </span>
+                <ActionButton action={archiveMemory.bind(null, client.slug, m.id)} label="Remove" confirmText="Remove this from the client's memory?" />
+              </li>
+            ))}
+            {(memory ?? []).length === 0 && <li className="text-sm text-faint">Nothing yet. Add what the client loves, hates, or asked us never to do again.</li>}
+          </ul>
+          <ActionForm action={addMemory.bind(null, client.id, client.slug)} submitLabel="Add to memory" resetOnSuccess className="grid gap-2">
+            <div className="grid gap-2 sm:grid-cols-[130px_130px_1fr]">
+              <label className={label}>
+                Type
+                <select name="kind" className={field} defaultValue="avoid">
+                  <option value="avoid">Avoid</option>
+                  <option value="prefer">Works well</option>
+                  <option value="note">Note</option>
+                </select>
+              </label>
+              <label className={label}>
+                From
+                <select name="source" className={field} defaultValue="client">
+                  <option value="client">Client said</option>
+                  <option value="team">Team</option>
+                </select>
+              </label>
+              <label className={label}>
+                What should the AI know?
+                <input name="body" required maxLength={1000} className={field} placeholder="Don't mention delivery; pickup only until December" />
               </label>
             </div>
           </ActionForm>

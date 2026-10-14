@@ -87,3 +87,27 @@ export async function saveAllotment(clientId: string, slug: string, form: FormDa
     .upsert({ client_id: clientId, images_per_month: n("images"), videos_per_month: n("videos"), updated_by: me.id, updated_at: new Date().toISOString() });
   return done(slug, error);
 }
+
+/** Something the team learned about this client. The AI uses it for suggestions and the request review. */
+export async function addMemory(clientId: string, slug: string, form: FormData): Promise<ActionResult> {
+  const me = await requireStaff();
+  const body = str(form, "body");
+  if (!body) return { ok: false, error: "Write what the AI should know." };
+  const kind = str(form, "kind");
+  const supabase = await createClient();
+  const { error } = await supabase.from("client_memory").insert({
+    client_id: clientId,
+    kind: kind === "avoid" || kind === "prefer" ? kind : "note",
+    body: body.slice(0, 1000),
+    source: str(form, "source") === "client" ? "client" : "team",
+    created_by: me.id,
+  });
+  return done(slug, error);
+}
+
+export async function archiveMemory(slug: string, memoryId: string): Promise<ActionResult> {
+  await requireStaff();
+  const supabase = await createClient();
+  const { error } = await supabase.from("client_memory").update({ status: "archived" }).eq("id", memoryId);
+  return done(slug, error);
+}

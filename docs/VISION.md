@@ -57,7 +57,7 @@
 | Database | **New, separate Supabase project.** Clients and team synced in from Track and the Account Overview sheet. |
 | Roles source | Account Overview sheet (Meta buyer, Google buyer, graphic designer, video editor, copywriter, etc. per client). |
 | Approval rule | **First** approval from any client contact counts. |
-| Reminders | **24h** reminder, then a **48h** final reminder. Counted in **business time only**: weekends don't count (e.g. something sent Friday 5pm ET starts counting **Monday 8am ET**). |
+| Reminders | **24h** reminder, then a **48h** final reminder. Counted in **business time only** (see Business hours): weekends don't count, and a Friday 5pm send gets its 24h reminder Monday 5pm. |
 | Auto-approval | **Never automatic by default.** At 48h it moves to **Jorgi's queue**: she nudges the client or pushes it to approval. Auto-approval only applies if the **client opted in with a checkbox**. |
 | Jorgi | Owns chasing approvals, routing revisions and re-sending. |
 | "Currently running" | **Previews only**, no metrics (for now). |
@@ -91,6 +91,10 @@
 | Role-based homes | **Execs** get a *pulse*: vitals, flow, needs attention (stuck items, revision-heavy or unhappy clients, allotment burning fast or behind, no reply), team load, client health. They have no task queue. **Leaders** get their review queue, their team's load and their area's problems. **Members** get their own queue, specific to their role. |
 | Design bar | Every screen must look **high-end with a wow factor**. The Phase 0 mockups (especially the client swipe portal) set the standard to keep. |
 | Creative intelligence | Kaizen uses **Motion** (motionapp.com) for creative and account metrics, and it has an **MCP**. Use it for fact-finding: fatigue detection, top-performing angles and copy, and brief context. |
+| Board | Asana-like in function, never in look. Stage columns, client search/filter, collapsed cards with client tag, title, assignee and a time-in-stage stamp: **green** within turnaround, **yellow** up to 12 business hours over, **red** beyond. Clicking opens the full ticket to change assignee, stage, due date and priority. |
+| Request form | A **multistep** flow with a progress bar: client → formats → direction → brief → review. The client field is a **type-ahead** (2 letters) with a short list. **Formats are multi-select; each format becomes its own ticket** routed to its maker (image/carousel → designer, video → editor), grouped as one batch. Counts are explicit per format: **net new** vs **variations**. Sizes are picked from outline shapes (1:1, 4:5, 9:16). |
+| AI in the request form | Every field has AI suggestions built from the client's past requests, angles and client memory (ad-account metrics join once Meta syncs). On "Request creative" the AI **reviews the request** for anything off-direction, off-topic, against client memory (e.g. something the client said not to do), contradictory or likely to be rejected by Meta. Issues are shown as "Must fix" / "Heads up"; the person can fix or send anyway, and the review is saved on the tickets. |
+| Client memory (v1) | Kept on each client page as **Avoid / Works well / Note** items, marked as what the client said or what the team learned. Later, revision feedback and Camille's edits feed it automatically. |
 
 ## 4. Future ideas (keep, don't build first)
 

@@ -23,6 +23,9 @@ export type BoardRow = {
   refs: string[] | null;
   sizes: string[] | null;
   quantity: number;
+  new_count: number | null;
+  variation_count: number | null;
+  batch_id: string | null;
   stage_entered_at: string;
   stage_due_at: string | null;
   minutes_in_stage: number;
@@ -51,6 +54,9 @@ export const toTicket = (r: BoardRow): Ticket => ({
   refs: r.refs ?? [],
   sizes: r.sizes ?? [],
   quantity: r.quantity,
+  newCount: r.new_count ?? r.quantity,
+  variationCount: r.variation_count ?? 0,
+  batchId: r.batch_id,
   stageEnteredAt: r.stage_entered_at,
   stageDueAt: r.stage_due_at,
   minutesInStage: r.minutes_in_stage ?? 0,

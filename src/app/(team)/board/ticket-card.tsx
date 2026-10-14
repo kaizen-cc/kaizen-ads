@@ -12,7 +12,7 @@ const STAMP: Record<Health, string> = {
 };
 const EDGE: Record<Health, string> = { ok: "before:bg-transparent", warn: "before:bg-warn", bad: "before:bg-bad" };
 
-export function FormatIcon({ format }: { format: Ticket["format"] }) {
+export function FormatIcon({ format, size = 14 }: { format: Ticket["format"]; size?: number }) {
   const d =
     format === "video"
       ? "M4 6h11v12H4zM15 10l5-3v10l-5-3"
@@ -20,7 +20,7 @@ export function FormatIcon({ format }: { format: Ticket["format"] }) {
         ? "M7 5h10v14H7zM3 7v10M21 7v10"
         : "M4 5h16v14H4zM4 15l4-4 4 4 3-3 5 5";
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-label={FORMAT_LABEL[format]}>
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-label={FORMAT_LABEL[format]}>
       <path d={d} />
     </svg>
   );

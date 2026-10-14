@@ -1,6 +1,10 @@
+import { aiEnabled } from "@/lib/ai";
 import { requireStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { RequestForm } from "./request-form";
+
+// The AI review can take a little while
+export const maxDuration = 60;
 
 export default async function NewRequest({ searchParams }: PageProps<"/requests/new">) {
   await requireStaff();
@@ -20,16 +24,12 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
   }
 
   return (
-    <div className="mx-auto grid max-w-3xl gap-8">
-      <div>
-        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">New request</p>
-        <h1 className="mt-2 font-heading text-3xl">What do we need to make?</h1>
-        <p className="mt-2 text-sm text-muted">It goes straight to the client&apos;s designer or editor with its turnaround running.</p>
-      </div>
+    <div className="mx-auto max-w-5xl">
       <RequestForm
         clients={clients ?? []}
         anglesByClient={anglesByClient}
         teamByClient={teamByClient}
+        aiOn={aiEnabled()}
         initialClient={typeof client === "string" ? (clients ?? []).find((c) => c.slug === client)?.id ?? null : null}
       />
     </div>

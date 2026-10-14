@@ -8,10 +8,12 @@ import { TeamList, type Person } from "@/app/(team)/team/team-list";
 import { ClientsTable, type ClientRow } from "@/app/(team)/clients/clients-table";
 import { greetingFor, todayLabel } from "@/lib/dates";
 import { BoardClient } from "@/app/(team)/board/board-client";
+import { RequestForm } from "@/app/(team)/requests/new/request-form";
+import { sampleRequest } from "./sample-request";
 import { sampleTickets } from "./sample-tickets";
 
 // Local-only design check with sample data (never served in production).
-// Open /auth/design-preview?view=exec | exec-empty | leader | buyer | creative | board | team | clients
+// Open /auth/design-preview?view=exec | exec-empty | leader | buyer | creative | board | team | clients | request | request-off
 
 const people: Person[] = [
   { id: "1", email: "santi@kaizenmarketing.agency", fullName: "Santi Lozano", role: "executive", isActive: true, joined: true, clientCount: 0 },
@@ -75,7 +77,20 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
   let body: React.ReactNode;
   let who = { name: "Santi Lozano", role: "Executive" };
 
-  if (view === "board") {
+  if (view === "request" || view === "request-off") {
+    body = (
+      <div className="mx-auto max-w-5xl">
+        <RequestForm
+          clients={[...rows, { id: "c5", name: "Crustacean Seafood", slug: "crustacean", whiteLabel: false, contacts: 0, assigned: {} }].map((r) => ({ id: r.id, name: r.name, slug: r.slug }))}
+          anglesByClient={{ c1: ["Weekly Deals", "Fresh, never frozen", "Local favorite"] }}
+          teamByClient={{ c1: { graphic_designer: "Nelson", video_editor: "Jazem", meta_buyer: "Mark" }, c2: { graphic_designer: "Nelson", meta_buyer: "Dipesh" } }}
+          initialClient={null}
+          aiOn={view === "request"}
+          demo={sampleRequest}
+        />
+      </div>
+    );
+  } else if (view === "board") {
     const names = [...new Set(sampleTickets.map((x) => x.clientName))].sort();
     body = (
       <BoardClient

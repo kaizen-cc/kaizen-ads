@@ -21,6 +21,9 @@ export type Ticket = {
   refs: string[];
   sizes: string[];
   quantity: number;
+  newCount: number;
+  variationCount: number;
+  batchId: string | null;
   stageEnteredAt: string;
   stageDueAt: string | null;
   minutesInStage: number;
