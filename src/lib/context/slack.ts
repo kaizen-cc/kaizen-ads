@@ -97,7 +97,11 @@ export async function matchSlackChannels(admin: SupabaseClient) {
       needsInvite.push(`${ch ? `#${ch.name}` : id} (${c.name})`);
     }
   }
-  return { matched, joined, needsInvite };
+  // Names only, so we can see the naming and link the rest by hand or improve the matching
+  const linked = new Set((clients ?? []).flatMap((c) => [c.slack_channel_id, c.internal_slack_channel_id]).filter(Boolean));
+  const unlinkedChannels = channels.filter((ch) => !linked.has(ch.id)).map((ch) => `#${ch.name}${ch.is_ext_shared || ch.is_shared ? " (shared)" : ""}`).slice(0, 150);
+  const noChannel = (clients ?? []).filter((c) => !c.slack_channel_id && !c.internal_slack_channel_id).map((c) => c.name);
+  return { matched, joined, needsInvite, channelsSeen: channels.length, unlinkedChannels, noChannel };
 }
 
 const names = new Map<string, string>();
@@ -167,7 +171,18 @@ export async function collectSlack(admin: SupabaseClient, since: Date): Promise<
       }
     }
   }
-  return { items, notes: { channelsMatched: access.matched, joined: access.joined, needsInvite: access.needsInvite, errors: errors.slice(0, 10) } };
+  return {
+    items,
+    notes: {
+      channelsSeen: access.channelsSeen,
+      channelsMatched: access.matched,
+      joined: access.joined,
+      needsInvite: access.needsInvite,
+      clientsWithoutChannel: access.noChannel,
+      unlinkedChannels: access.unlinkedChannels,
+      errors: errors.slice(0, 10),
+    },
+  };
 }
 
 const NEEDED_SCOPES = ["channels:history", "groups:history", "channels:read", "groups:read", "users:read", "channels:join"];

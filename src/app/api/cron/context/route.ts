@@ -1,12 +1,12 @@
 import { isCronRequest } from "@/lib/cron";
 import { checkSetup } from "@/lib/context/check";
-import { collectAll, refreshAll } from "@/lib/context/run";
+import { collectStep, refreshAll, type Step } from "@/lib/context/run";
 import { reportError } from "@/lib/error-report";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
 // Briefings take a while when many clients have news
-export const maxDuration = 300;
+export const maxDuration = 800;
 
 /** A signed-in exec can open this URL to run a step by hand. */
 async function isExec() {
@@ -20,8 +20,8 @@ async function isExec() {
 const nyHour = () => Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false }).format(new Date()));
 
 /**
- * At 12pm and 6pm New York time: ?step=collect pulls new Slack, Gmail and Drive activity, and ten minutes
- * later ?step=brief refreshes the client briefings. Each step gets its own time limit.
+ * At 12pm and 6pm New York time, Slack, Drive and Gmail are each pulled in their own run (?step=slack, drive,
+ * gmail) and fifteen minutes later ?step=brief refreshes the client briefings. Each step gets its own time limit.
  * Vercel Cron calls at both UTC hours that can be noon or 6pm in New York (daylight saving shifts them),
  * and only the right one does the work. ?force=1, or an exec opening the URL, runs it now.
  * ?step=check tests every connection without reading client data.
@@ -37,7 +37,9 @@ export async function GET(request: Request) {
 
   try {
     const admin = createAdminClient();
-    return Response.json(step === "brief" ? await refreshAll(admin) : await collectAll(admin));
+    if (step === "brief") return Response.json(await refreshAll(admin));
+    if (step === "slack" || step === "drive" || step === "gmail") return Response.json(await collectStep(admin, step as Step));
+    return Response.json({ error: "Use ?step=slack, drive, gmail, brief or check" }, { status: 400 });
   } catch (e) {
     await reportError({ message: `Context sync: ${e instanceof Error ? e.message : String(e)}`, path: "/api/cron/context", kind: "server", stack: e instanceof Error ? e.stack : null });
     return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });

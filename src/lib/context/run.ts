@@ -33,25 +33,27 @@ async function pool<T, R>(list: T[], size: number, fn: (x: T) => Promise<R>) {
   return out;
 }
 
-/** Step 1: pull what's new from Slack, Drive and every mailbox. */
-export async function collectAll(admin: SupabaseClient) {
-  const sources = [];
-  if (slackConfigured()) sources.push(await collect(admin, "slack", (since) => collectSlack(admin, since)));
-  if (googleConfigured()) {
-    sources.push(await collect(admin, "drive", (since) => collectDrive(admin, since)));
-    // Every mailbox keeps its own cursor, so someone new to the org starts with their last 30 days
-    try {
-      const [mailboxes, contacts] = await Promise.all([gmailMailboxes(), contactMap(admin)]);
-      sources.push(...(await pool(mailboxes, 4, (m) => collect(admin, `gmail:${m}`, (since) => collectGmail(m, since, contacts)))));
-    } catch (e) {
-      sources.push({ source: "gmail", error: e instanceof Error ? e.message : String(e) });
-    }
-  }
-  return { sources };
+export type Step = "slack" | "drive" | "gmail";
+
+/** Pull what's new from one source. Each runs on its own schedule slot with its own time limit. */
+export async function collectStep(admin: SupabaseClient, step: Step, budgetMs = 600_000) {
+  const deadline = Date.now() + budgetMs;
+  if (step === "slack") return slackConfigured() ? [await collect(admin, "slack", (since) => collectSlack(admin, since))] : [{ source: "slack", skipped: "not set up" }];
+  if (!googleConfigured()) return [{ source: step, skipped: "Google not set up" }];
+  if (step === "drive") return [await collect(admin, "drive", (since) => collectDrive(admin, since))];
+  // Every mailbox keeps its own cursor, so someone new to the org starts with their last 30 days,
+  // and a mailbox not reached before the time runs out is simply first in line next run
+  const [mailboxes, contacts] = await Promise.all([gmailMailboxes(), contactMap(admin)]);
+  const { data: states } = await admin.from("sync_state").select("source, last_run_at").like("source", "gmail:%");
+  const last = new Map((states ?? []).map((s) => [s.source as string, (s.last_run_at as string) ?? ""]));
+  mailboxes.sort((a, b) => (last.get(`gmail:${a}`) ?? "").localeCompare(last.get(`gmail:${b}`) ?? ""));
+  return pool(mailboxes, 6, async (m): Promise<Record<string, unknown>> =>
+    Date.now() > deadline ? { source: `gmail:${m}`, deferred: true } : collect(admin, `gmail:${m}`, (since) => collectGmail(m, since, contacts)),
+  );
 }
 
 /** Step 2: refresh the briefings of clients with news, stalest first, until the time budget runs out. */
-export async function refreshAll(admin: SupabaseClient, budgetMs = 250_000) {
+export async function refreshAll(admin: SupabaseClient, budgetMs = 700_000) {
   const deadline = Date.now() + budgetMs;
   const [{ data: list }, { data: done }] = await Promise.all([
     admin.from("clients").select("id, name").eq("creative_package", true),

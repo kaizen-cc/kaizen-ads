@@ -107,9 +107,11 @@ export async function collectGmail(mailbox: string, since: Date, contacts: Map<s
     });
     for (const m of list.messages ?? []) ids.add(m.id);
   }
+  // A busy inbox's first 30-day read is capped; after that each run only has a few hours of mail
+  const capped = [...ids].slice(0, 200);
 
   const items: ContextItem[] = [];
-  for (const id of ids) {
+  for (const id of capped) {
     const m = await google<GmailMessage>(token, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}`, { format: "full" });
     const header = (n: string) => m.payload.headers.find((h) => h.name.toLowerCase() === n)?.value ?? null;
     const clients = new Set(["from", "to", "cc"].flatMap((h) => addresses(header(h))).flatMap((a) => contacts.get(a) ?? []));
@@ -157,18 +159,18 @@ async function listFiles(token: string, q: string, fields: string, driveId?: str
   return out;
 }
 
-/** Every folder under the root, with its parent, found level by level. */
-async function folderTree(token: string, root: string, driveId?: string) {
+/** Every folder under the given folders, with its parent, found level by level. */
+async function folderTree(token: string, roots: string[], driveId?: string) {
   const parentOf = new Map<string, string>();
   const nameOf = new Map<string, string>();
-  let level = [root];
-  for (let depth = 0; level.length && depth < 8; depth++) {
+  let level = roots;
+  for (let depth = 0; level.length && depth < 6; depth++) {
     const next: string[] = [];
     for (let i = 0; i < level.length; i += 40) {
       const parents = level.slice(i, i + 40).map((id) => `'${id}' in parents`).join(" or ");
       for (const f of await listFiles(token, `(${parents}) and mimeType = '${FOLDER}' and trashed = false`, "id, name, parents", driveId)) {
         if (parentOf.has(f.id)) continue;
-        parentOf.set(f.id, f.parents?.[0] ?? root);
+        parentOf.set(f.id, f.parents?.[0] ?? "");
         nameOf.set(f.id, f.name);
         next.push(f.id);
       }
@@ -194,11 +196,9 @@ export async function collectDrive(admin: SupabaseClient, since: Date): Promise<
     driveId = f.driveId;
   }
 
-  const { parentOf, nameOf } = await folderTree(token, root, driveId);
-
-  // Folders directly under the root are clients: link any that aren't linked yet, by name
+  // Folders directly under the root are clients: link any creative-package client that isn't linked yet, by name
+  const topLevel = await listFiles(token, `'${root}' in parents and mimeType = '${FOLDER}' and trashed = false`, "id, name", driveId);
   const { data: clients } = await admin.from("clients").select("id, name, drive_folder_id").eq("creative_package", true);
-  const topLevel = [...parentOf].filter(([, p]) => p === root).map(([id]) => ({ id, name: nameOf.get(id)! }));
   let matched = 0;
   for (const c of clients ?? []) {
     if (c.drive_folder_id) continue;
@@ -211,20 +211,31 @@ export async function collectDrive(admin: SupabaseClient, since: Date): Promise<
     }
   }
   const clientOfFolder = new Map((clients ?? []).filter((c) => c.drive_folder_id).map((c) => [c.drive_folder_id as string, c.id as string]));
+  const unmatched = (clients ?? []).filter((c) => !c.drive_folder_id).map((c) => c.name);
 
-  const files = await listFiles(
-    token,
-    `mimeType != '${FOLDER}' and trashed = false and createdTime > '${since.toISOString()}'`,
-    "id, name, mimeType, parents, createdTime, webViewLink, lastModifyingUser(displayName)",
-    driveId,
-  );
+  // Only the creative-package clients' folders are walked and searched
+  const { parentOf, nameOf } = await folderTree(token, [...clientOfFolder.keys()], driveId);
+  const folders = [...clientOfFolder.keys(), ...parentOf.keys()];
+  const files: DriveFile[] = [];
+  for (let i = 0; i < folders.length; i += 40) {
+    const parents = folders.slice(i, i + 40).map((id) => `'${id}' in parents`).join(" or ");
+    files.push(
+      ...(await listFiles(
+        token,
+        `(${parents}) and mimeType != '${FOLDER}' and trashed = false and createdTime > '${since.toISOString()}'`,
+        "id, name, mimeType, parents, createdTime, webViewLink, lastModifyingUser(displayName)",
+        driveId,
+      )),
+    );
+  }
+
   const items: ContextItem[] = [];
   for (const f of files) {
-    // Walk up the folders until we reach a client's folder; files outside the umbrella never match
+    // Walk up to the client's folder, keeping the subfolder path (e.g. "Headquarters / Photos")
     const path: string[] = [];
     let at: string | undefined = f.parents?.[0];
     let clientId: string | undefined;
-    for (let depth = 0; at && depth < 12 && !clientId; depth++) {
+    for (let depth = 0; at && depth < 8 && !clientId; depth++) {
       clientId = clientOfFolder.get(at);
       if (!clientId) path.unshift(nameOf.get(at) ?? "");
       at = parentOf.get(at);
@@ -243,7 +254,7 @@ export async function collectDrive(admin: SupabaseClient, since: Date): Promise<
       meta: { mimeType: f.mimeType, folder: path.filter(Boolean).join(" / ") },
     });
   }
-  return { items, notes: { foldersMatched: matched, folders: parentOf.size, newFiles: files.length, clientFiles: items.length } };
+  return { items, notes: { clientFolders: clientOfFolder.size, foldersMatched: matched, noFolder: unmatched, subfolders: parentOf.size, newFiles: items.length } };
 }
 
 // ─── Setup check ────────────────────────────────────────────────────────────
