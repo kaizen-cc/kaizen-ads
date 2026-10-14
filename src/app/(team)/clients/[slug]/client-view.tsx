@@ -4,12 +4,12 @@ import { Section, field, label } from "@/components/ui";
 import type { Digest } from "@/lib/ai";
 import { SLOTS } from "@/lib/roles";
 import { AssignSelect, type Option } from "../assign-select";
+import { BriefingPanel } from "./briefing-panel";
 import { addAngle, addContact, addMemory, archiveMemory, refreshClientBriefing, removeContact, saveAllotment, saveClientDetails, setAngleStatus } from "./actions";
 
 const fmt = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
 const chip = "inline-flex items-center rounded-full px-2.5 py-1 text-xs";
 const row = "flex items-start justify-between gap-3 rounded-[8px] bg-surface-2/70 px-4 py-3 text-sm";
-const quiet = "h-8 rounded-full border border-line px-3.5 text-xs text-muted transition-colors hover:border-faint hover:text-fg";
 
 export type ClientViewProps = {
   client: {
@@ -40,10 +40,11 @@ export type ClientViewProps = {
   imagesUsed: number;
   videosUsed: number;
   can: { admin: boolean; contacts: boolean; allot: boolean; assign: boolean };
+  demo?: boolean; // design preview: the refresh only plays its animation
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, can }: ClientViewProps) {
+export function ClientView({ client, packageLabel, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, can, demo = false }: ClientViewProps) {
   return (
     <div className="mx-auto grid max-w-6xl gap-8">
       {/* Header */}
@@ -72,15 +73,15 @@ export function ClientView({ client, packageLabel, team, contacts, angles, memor
         {/* Main column: what the AI knows and what the team adds to it */}
         <div className="grid min-w-0 gap-6">
           {client.creative_package && (
-            <Section
-              title="Briefing"
+            <BriefingPanel
+              demo={demo}
+              refresh={refreshClientBriefing.bind(null, client.id, client.slug)}
               description={
                 <>
                   What the AI knows from Slack, email, Drive, Meta and past requests. Refreshes at 12pm and 6pm ET.
                   {briefingAt && <span className="text-faint"> Updated {fmt(briefingAt)}.</span>}
                 </>
               }
-              action={<ActionButton action={refreshClientBriefing.bind(null, client.id, client.slug)} label="Refresh now" className={quiet} />}
             >
               {needsInvite.length > 0 && (
                 <p className="rounded-[8px] border border-warn/30 bg-warn-soft px-4 py-3 text-sm text-warn">
@@ -104,7 +105,7 @@ export function ClientView({ client, packageLabel, team, contacts, angles, memor
                       </p>
                     )}
                   </div>
-                  <div className="grid gap-x-8 gap-y-6 sm:grid-cols-2">
+                  <div className="grid gap-x-10 gap-y-7 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                     {(
                       [
                         ["Asks", digest.asks, "bg-fg"],
@@ -115,12 +116,12 @@ export function ClientView({ client, packageLabel, team, contacts, angles, memor
                     )
                       .filter(([, items]) => items.length > 0)
                       .map(([title, items, dot]) => (
-                        <div key={title} className="grid content-start gap-2.5">
+                        <div key={title} className="grid min-w-0 content-start gap-3">
                           <p className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.12em] text-faint">
                             <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
                             {title}
                           </p>
-                          <ul className="grid gap-2 leading-relaxed text-muted">
+                          <ul className="grid gap-2.5 leading-relaxed text-muted">
                             {items.map((x) => (
                               <li key={x}>{x}</li>
                             ))}
@@ -151,7 +152,7 @@ export function ClientView({ client, packageLabel, team, contacts, angles, memor
               ) : (
                 <p className="text-sm text-faint">No briefing yet. It&apos;s made at the next 12pm or 6pm run, or now with Refresh now.</p>
               )}
-            </Section>
+            </BriefingPanel>
           )}
 
           <Section title="Client memory" description="What we've learned about this client. The AI reads it for suggestions and flags anything that goes against it before a request is sent.">

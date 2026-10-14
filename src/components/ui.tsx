@@ -19,7 +19,7 @@ export function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className={`grid content-start gap-5 rounded-[12px] border border-line bg-surface p-6 ${className}`}>
+    <section className={`grid min-w-0 content-start gap-5 rounded-[12px] border border-line bg-surface p-6 [overflow-wrap:break-word] ${className}`}>
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <h2 className="font-heading text-[17px]">{title}</h2>

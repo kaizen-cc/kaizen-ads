@@ -106,7 +106,7 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
           summary: "Tammy Kravitz is now the main approver alongside Kim Juda. Award-winning, Gift Card and Winter LTO creatives are approved; Donation Program and $8 Calzone Mondays iterations are in progress.",
           direction: "Seasonal promos on top of evergreen brand creative. Next up: Veterans Day (free 10\" pizza with Military ID), the Winter Menu/BOGA launch and St. Jude's (Nov 1 to Dec 31).",
           performance: "Price-first statics lead on cost per order ($11 vs $19 account average). The cheese-pull video still has the best CTR but frequency is 4.1 and cost is up 30% week over week, so it's tiring.",
-          asks: ["Veterans Day statics by Nov 4", "Larger Crust and St. Jude logos on the donation poster"],
+          asks: ["Apply only the client's UTM on all Meta ads: utm_source=facebook&utm_medium=paid_social&utm_campaign={{campaign.id}}&utm_term={{adset.id}}&utm_content={{ad.id}}", "Veterans Day statics by Nov 4", "Larger Crust and St. Jude logos on the donation poster"],
           avoid: ["LTO items in evergreen creative", "Ads for Richmond (permanently closed)"],
           works: ["Price-first headlines", "Cheese-pull close-ups"],
           newAssets: [{ name: "Winter menu shoot / BOGA hero.jpg", url: "https://drive.google.com", note: "Hero for the Winter Menu launch" }],
@@ -119,6 +119,7 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
         imagesUsed={6}
         videosUsed={0}
         can={{ admin: true, contacts: true, allot: true, assign: true }}
+        demo
       />
     );
   } else if (view === "request" || view === "request-off") {
