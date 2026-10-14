@@ -5,7 +5,7 @@ import { LeaderView } from "@/app/(team)/pipeline/views/leader-view";
 import { WorkView } from "@/app/(team)/pipeline/views/work-view";
 import type { PhaseKey, PhaseStat, QueueItem } from "@/app/(team)/pipeline/views/shared";
 import { TeamList, type Person } from "@/app/(team)/team/team-list";
-import { ClientsTable, type ClientRow } from "@/app/(team)/clients/clients-table";
+import { ClientGrid, type ClientCard } from "@/app/(team)/clients/client-grid";
 import { greetingFor, todayLabel } from "@/lib/dates";
 import { BoardClient } from "@/app/(team)/board/board-client";
 import { UploadProvider } from "@/components/upload-provider";
@@ -33,7 +33,8 @@ const opt = (id: string, name: string) => ({ id, name });
 const buyers = [opt("4", "Dipesh"), opt("5", "Mark"), opt("b2", "Priscila"), opt("b3", "Rahul")];
 const designers = [opt("3", "Jesus"), opt("6", "Nelson"), opt("d2", "Hillary"), opt("d3", "Eunhye")];
 const editors = [opt("3", "Jesus"), opt("7", "Jazem"), opt("e2", "Mira"), opt("e3", "Daniel")];
-const rows: ClientRow[] = [
+type SampleClient = { id: string; name: string; slug: string; whiteLabel: boolean; contacts: number; assigned: ClientCard["assigned"] };
+const rows: SampleClient[] = [
   { id: "c1", name: "Crust Pizza Co.", slug: "crust-pizza-co", whiteLabel: false, contacts: 5, assigned: { meta_buyer: buyers[1], graphic_designer: designers[1], video_editor: editors[1] } },
   { id: "c2", name: "Sierra Dreams", slug: "sierra-dreams", whiteLabel: false, contacts: 2, assigned: { meta_buyer: buyers[0], graphic_designer: designers[1], video_editor: editors[1] } },
   { id: "c3", name: "Propr Dental", slug: "propr-dental", whiteLabel: true, contacts: 1, assigned: { meta_buyer: buyers[2], graphic_designer: null, video_editor: null } },
@@ -168,8 +169,25 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
   } else if (view === "clients") {
     body = (
       <div className="grid gap-5">
-        <h1 className="font-heading text-2xl">Clients</h1>
-        <ClientsTable rows={rows} slotOptions={{ meta_buyer: buyers, graphic_designer: designers, video_editor: editors }} canEdit emptyText="No clients match." />
+        <h1 className="font-heading text-[32px]">Clients</h1>
+        <ClientGrid
+          cards={rows.map((r, i): ClientCard => ({
+            ...r,
+            status: i === 3 ? "paused" : "active",
+            packageLabel: ["Silver", "Gold", "Basic", "MVP"][i],
+            images: [{ used: 6, cap: 20 }, { used: 48, cap: 50 }, { used: 12, cap: 10 }, { used: 0, cap: 3 }][i],
+            videos: [{ used: 0, cap: 0 }, { used: 7, cap: 10 }, { used: 1, cap: 3 }, { used: 0, cap: 0 }][i],
+            inFlight: [4, 9, 2, 0][i],
+            live: [
+              { meta: "ok", slack: "ok", drive: "ok" },
+              { meta: "ok", slack: "ok", drive: "warn" },
+              { meta: null, slack: "ok", drive: "off" },
+              { meta: null, slack: null, drive: null },
+            ][i] as ClientCard["live"],
+          }))}
+          slotOptions={{ meta_buyer: buyers, graphic_designer: designers, video_editor: editors }}
+          canEdit
+        />
       </div>
     );
   } else if (view === "leader") {
