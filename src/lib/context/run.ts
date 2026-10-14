@@ -38,7 +38,7 @@ export type Step = "slack" | "drive" | "gmail";
 /** Pull what's new from one source. Each runs on its own schedule slot with its own time limit. */
 export async function collectStep(admin: SupabaseClient, step: Step, budgetMs = 600_000) {
   const deadline = Date.now() + budgetMs;
-  if (step === "slack") return slackConfigured() ? [await collect(admin, "slack", (since) => collectSlack(admin, since))] : [{ source: "slack", skipped: "not set up" }];
+  if (step === "slack") return slackConfigured() ? [await collect(admin, "slack", () => collectSlack(admin))] : [{ source: "slack", skipped: "not set up" }];
   if (!googleConfigured()) return [{ source: step, skipped: "Google not set up" }];
   if (step === "drive") return [await collect(admin, "drive", (since) => collectDrive(admin, since))];
   // Every mailbox keeps its own cursor, so someone new to the org starts with their last 30 days,

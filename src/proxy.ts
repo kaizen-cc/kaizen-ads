@@ -1,8 +1,8 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-// /api/cron/ (Vercel Cron) checks its own secret
-const PUBLIC_PATHS = ["/login", "/auth/", "/api/cron/", "/manifest.webmanifest"];
+// /api/cron/ (Vercel Cron) and /api/zapier/ (Zapier) check their own secrets
+const PUBLIC_PATHS = ["/login", "/auth/", "/api/cron/", "/api/zapier/", "/manifest.webmanifest"];
 
 // Refreshes the Supabase session cookie on every request and sends signed-out
 // visitors to /login (keeping where they were headed). Real authorization is RLS.

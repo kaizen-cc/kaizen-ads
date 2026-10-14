@@ -1,6 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { compact, trimBody, type CollectResult, type ContextItem } from "./shared";
+import { compact, getCursor, setCursor, trimBody, type CollectResult, type ContextItem } from "./shared";
 
 // Reads client channels through the Kaizen OS Slack app (its bot token, set as SLACK_BOT_TOKEN).
 // The bot must be a member of a channel to read it. Needs channels:history, groups:history,
@@ -47,27 +47,28 @@ async function listChannels() {
   return out;
 }
 
+// Kaizen names channels "<client>-<Account Overview ID>" and "internal-<client>-<ID>" (white label: "wl-…", "wl-internal-…")
+const idOf = (ch: { name: string }) => ch.name.match(/-(\d{2,6})$/)?.[1];
+const isInternal = (ch: { name: string }) => /^(wl-)?internal-/.test(ch.name);
+
 /**
- * Fill in channels for clients that don't have one yet (matched by the Account Overview ID at the end of the
- * channel name, or else by name; "internal-" channels are internal, the rest are the channel with the client),
- * join the public ones the bot isn't in, and list the private ones someone needs to invite it to.
+ * Link channels to clients (by the Account Overview ID at the end of the name; for creative-package clients
+ * also by name), join every public client channel the bot isn't in yet (any client, so it's already inside
+ * when ops makes the channel private), and list private channels of creative clients it still needs an invite to.
  */
 export async function matchSlackChannels(admin: SupabaseClient) {
   const [channels, { data: clients }] = await Promise.all([
     listChannels(),
-    admin.from("clients").select("id, name, kaizen_id, slack_channel_id, internal_slack_channel_id").eq("creative_package", true),
+    admin.from("clients").select("id, name, kaizen_id, creative_package, slack_channel_id, internal_slack_channel_id").neq("status", "offboarded"),
   ]);
-  // Kaizen names channels "<client>-<Account Overview ID>" and "internal-<client>-<ID>" (white label: "wl-…", "wl-internal-…")
-  const idOf = (ch: SlackChannel) => ch.name.match(/-(\d{2,6})$/)?.[1];
-  const isInternal = (ch: SlackChannel) => /^(wl-)?internal-/.test(ch.name); // white-label channels are "wl-internal-…"
   let matched = 0;
   for (const c of clients ?? []) {
     const key = compact(c.name);
     const byId = c.kaizen_id ? channels.filter((ch) => idOf(ch) === String(c.kaizen_id)) : [];
-    // Without an ID match, fall back to the client's name appearing in the channel name
+    // Without an ID match, fall back to the client's name in the channel name (creative clients only, to avoid look-alikes)
     const hits = byId.length
       ? byId
-      : key.length >= 4
+      : c.creative_package && key.length >= 4
         ? channels.filter((ch) => {
             const n = compact(ch.name);
             return n.includes(key) || (n.length >= 6 && key.includes(n));
@@ -85,32 +86,50 @@ export async function matchSlackChannels(admin: SupabaseClient) {
     }
   }
 
-  const byId = new Map(channels.map((ch) => [ch.id, ch]));
+  // Join every public client channel now; once ops makes it private the bot can no longer join by itself
   const joined: string[] = [];
-  const needsInvite: string[] = [];
-  for (const c of clients ?? []) {
-    for (const id of [c.internal_slack_channel_id, c.slack_channel_id]) {
-      if (!id) continue;
-      const ch = byId.get(id);
-      if (ch?.is_member) continue;
-      if (ch && !ch.is_private) {
-        try {
-          await slack("conversations.join", { channel: id });
-          ch.is_member = true;
-          joined.push(`#${ch.name}`);
-          continue;
-        } catch {
-          // Missing channels:join, or a Slack Connect channel that doesn't allow it: falls through to "needs invite"
-        }
-      }
-      needsInvite.push(`${ch ? `#${ch.name}` : id} (${c.name})`);
+  for (const ch of channels) {
+    if (ch.is_member || ch.is_private || !idOf(ch)) continue;
+    try {
+      await slack("conversations.join", { channel: ch.id });
+      ch.is_member = true;
+      joined.push(`#${ch.name}`);
+    } catch {
+      // Some Slack Connect channels don't allow it; they show up under needsInvite below
     }
   }
+
+  const creative = (clients ?? []).filter((c) => c.creative_package);
+  const byChannel = new Map(channels.map((ch) => [ch.id, ch]));
+  const needsInvite: string[] = [];
+  for (const c of creative)
+    for (const id of [c.internal_slack_channel_id, c.slack_channel_id]) {
+      if (!id || byChannel.get(id)?.is_member) continue;
+      const ch = byChannel.get(id);
+      needsInvite.push(`${ch ? `#${ch.name}` : id} (${c.name})`);
+    }
   // Names only, so we can see the naming and link the rest by hand or improve the matching
   const linked = new Set((clients ?? []).flatMap((c) => [c.slack_channel_id, c.internal_slack_channel_id]).filter(Boolean));
   const unlinkedChannels = channels.filter((ch) => !linked.has(ch.id)).map((ch) => `#${ch.name}${ch.is_ext_shared || ch.is_shared ? " (shared)" : ""}`).slice(0, 150);
-  const noChannel = (clients ?? []).filter((c) => !c.slack_channel_id && !c.internal_slack_channel_id).map((c) => c.name);
+  const noChannel = creative.filter((c) => !c.slack_channel_id && !c.internal_slack_channel_id).map((c) => c.name);
   return { matched, joined, needsInvite, channelsSeen: channels.length, unlinkedChannels, noChannel };
+}
+
+/** Zapier tells us a client channel was just created (still public): join it now and link it to its client. */
+export async function linkNewChannel(admin: SupabaseClient, channelId: string) {
+  const { channel } = await slack<{ channel: SlackChannel }>("conversations.info", { channel: channelId });
+  let joined = Boolean(channel.is_member);
+  if (!joined && !channel.is_private) {
+    await slack("conversations.join", { channel: channelId });
+    joined = true;
+  }
+  const id = idOf(channel);
+  if (!id) return { ok: true, channel: `#${channel.name}`, joined, linked: null, note: "No client ID at the end of the channel name, so it wasn't linked" };
+  const { data: client } = await admin.from("clients").select("id, name, slack_channel_id, internal_slack_channel_id").eq("kaizen_id", Number(id)).maybeSingle();
+  if (!client) return { ok: true, channel: `#${channel.name}`, joined, linked: null, note: `No client with ID ${id} in Kaizen Ads yet; it links on the next run once they're added` };
+  const field = isInternal(channel) ? "internal_slack_channel_id" : "slack_channel_id";
+  if (!client[field]) await admin.from("clients").update({ [field]: channelId }).eq("id", client.id);
+  return { ok: true, channel: `#${channel.name}`, joined, linked: client.name, as: field === "internal_slack_channel_id" ? "internal" : "client channel", alreadyLinked: Boolean(client[field]) };
 }
 
 const names = new Map<string, string>();
@@ -159,7 +178,7 @@ async function readChannel(channel: string, since: Date, clientId: string, sourc
   return items;
 }
 
-export async function collectSlack(admin: SupabaseClient, since: Date): Promise<CollectResult> {
+export async function collectSlack(admin: SupabaseClient): Promise<CollectResult> {
   const access = await matchSlackChannels(admin);
   const { data: clients } = await admin
     .from("clients")
@@ -173,8 +192,12 @@ export async function collectSlack(admin: SupabaseClient, since: Date): Promise<
       [c.slack_channel_id, "slack_external"],
     ] as const) {
       if (!channel) continue;
+      // Each channel keeps its own place, so a channel linked today (new client, upgrade) gets its last 30 days
+      const key = `slack:${channel}`;
+      const started = new Date();
       try {
-        items.push(...(await readChannel(channel, since, c.id, source)));
+        items.push(...(await readChannel(channel, await getCursor(admin, key), c.id, source)));
+        await setCursor(admin, key, new Date(started.getTime() - 5 * 60_000), { ok: true });
       } catch (e) {
         errors.push(e instanceof Error ? e.message : String(e)); // e.g. not_in_channel: invite the bot
       }
@@ -247,7 +270,7 @@ export async function inviteBotToClientChannels(go: boolean) {
     cursor = page.response_metadata?.next_cursor ?? "";
   } while (cursor);
 
-  const targets = mine.filter((c) => /-\d{2,6}$/.test(c.name));
+  const targets = mine.filter((c) => idOf(c));
   const added: string[] = [];
   const already: string[] = [];
   const wouldAdd: string[] = [];
