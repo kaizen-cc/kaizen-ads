@@ -186,8 +186,8 @@ export function ClientSearch({ clients, allotments, onPick }: { clients: ClientO
 }
 
 /** − 3 + */
-export function Stepper({ label, value, onChange, min = 0 }: { label: string; value: number; onChange: (n: number) => void; min?: number }) {
-  const set = (n: number) => onChange(Math.min(100, Math.max(min, n)));
+export function Stepper({ label, value, onChange, min = 0, max = 100 }: { label: string; value: number; onChange: (n: number) => void; min?: number; max?: number }) {
+  const set = (n: number) => onChange(Math.min(max, Math.max(min, n)));
   return (
     <div className="grid gap-1.5">
       <span className="text-[11px] text-faint">{label}</span>
@@ -202,7 +202,7 @@ export function Stepper({ label, value, onChange, min = 0 }: { label: string; va
           onChange={(e) => set(Number(e.target.value.replace(/\D/g, "")) || 0)}
           className="tabular h-full w-10 bg-transparent text-center text-sm outline-none"
         />
-        <button type="button" aria-label={`More ${label.toLowerCase()}`} onClick={() => set(value + 1)} className="grid h-full w-9 place-items-center text-muted hover:text-fg">
+        <button type="button" aria-label={`More ${label.toLowerCase()}`} onClick={() => set(value + 1)} disabled={value >= max} className="grid h-full w-9 place-items-center text-muted hover:text-fg disabled:opacity-30">
           +
         </button>
       </div>

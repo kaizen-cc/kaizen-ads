@@ -8,7 +8,7 @@ import { draws, type Allotment } from "@/lib/allotment";
 import { FORMAT_LABEL, type Format, type Priority } from "@/lib/stages";
 import { ClientTag, FormatIcon } from "@/app/(team)/board/ticket-card";
 import { createBatch, reviewRequest, suggestForRequest, type ContextSummary, type ReviewResult } from "./actions";
-import { FORMATS, SIZES, emptyDraft, selectedFormats, totalFor, type Draft, type Size } from "./draft";
+import { FORMATS, MAX_VARIATIONS, SIZES, emptyDraft, selectedFormats, totalFor, type Draft, type Size } from "./draft";
 import { AllotmentMeter, AspectOption, Chip, ClientSearch, Progress, Spark, Stepper, Thinking, type ClientOption } from "./parts";
 
 const STEPS = ["Client", "Formats", "Direction", "Brief", "Review"];
@@ -146,7 +146,7 @@ export function RequestForm({
 
   const applyMix = (sg: Suggestions) =>
     set({
-      formats: Object.fromEntries(sg.mix.map((m) => [m.format, { new: m.new, variations: m.variations }])),
+      formats: Object.fromEntries(sg.mix.map((m) => [m.format, { new: m.new, variations: Math.min(m.variations, MAX_VARIATIONS) }])),
       ...(sg.sizes.length ? { sizes: sg.sizes } : {}),
     });
 
@@ -347,7 +347,7 @@ export function RequestForm({
                             </span>
                             <div className="grid grid-cols-[auto_auto_minmax(40px,1fr)] items-end gap-3">
                               <Stepper label="Net new" value={c.new} onChange={(n) => setCount(f, "new", n)} />
-                              <Stepper label="Variations" value={c.variations} onChange={(n) => setCount(f, "variations", n)} />
+                              <Stepper label="Variations" value={c.variations} max={MAX_VARIATIONS} onChange={(n) => setCount(f, "variations", n)} />
                               <span className="grid justify-items-end gap-1.5">
                                 <span className="text-[11px] text-faint">Total</span>
                                 <span className={`tabular grid h-10 place-items-center text-lg ${c.new + c.variations === 0 ? "text-bad" : ""}`}>{c.new + c.variations}</span>
@@ -358,7 +358,7 @@ export function RequestForm({
                       })}
                     </div>
                     <p className="text-xs leading-relaxed text-faint">
-                      <span className="text-muted">Net new</span> is a distinct design. A <span className="text-muted">variation</span> keeps the design and tests copy, headline or CTA. Variations don&apos;t count toward the allotment.
+                      <span className="text-muted">Net new</span> is a distinct design. A <span className="text-muted">variation</span> keeps the design and tests copy, headline or CTA. Up to {MAX_VARIATIONS} per format, and they don&apos;t count toward the allotment.
                     </p>
                   </Field>
                 )}

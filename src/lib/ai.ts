@@ -11,7 +11,11 @@ const MODEL = "claude-opus-5-5";
 export const aiEnabled = () => Boolean(process.env.ANTHROPIC_API_KEY);
 
 let client: Anthropic | null = null;
-const anthropic = () => (client ??= new Anthropic());
+// Org-level keys need to name the workspace their usage belongs to
+const anthropic = () =>
+  (client ??= new Anthropic(
+    process.env.ANTHROPIC_WORKSPACE_ID ? { defaultHeaders: { "anthropic-workspace-id": process.env.ANTHROPIC_WORKSPACE_ID } } : {},
+  ));
 
 export class AiUnavailable extends Error {}
 

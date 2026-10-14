@@ -15,7 +15,7 @@ import {
 } from "@/lib/ai";
 import { createClient } from "@/lib/supabase/server";
 import { draws } from "@/lib/allotment";
-import { FORMATS, SIZES, describeDraft, refLinks, selectedFormats, type Draft } from "./draft";
+import { FORMATS, MAX_VARIATIONS, SIZES, describeDraft, refLinks, selectedFormats, type Draft } from "./draft";
 
 type Fail = { ok: false; error: string };
 export type CreateResult = { ok: true; numbers: number[] } | Fail;
@@ -52,7 +52,7 @@ Suggest values for this request. Build on what's already filled in; don't contra
 - titles: 3 short ticket titles (under 50 characters), in the style of the recent requests if there are any.
 - angles: up to 3. Prefer existing angles that fit; a new one only when it's clearly better. "why" is one short sentence.
 - audiences: up to 3 short audience descriptions.
-- mix: the formats and counts you'd make for this request, with 1 to 6 net new per format and variations only when testing copy or hooks makes sense. The net new total must fit what's left of the allotment (images and carousels share the image pool). mixWhy: one sentence, mentioning the allotment when it limited the mix.
+- mix: the formats and counts you'd make for this request, with 1 to 6 net new per format and variations (0 to 5 per format) only when testing copy or hooks makes sense. The net new total must fit what's left of the allotment (images and carousels share the image pool). mixWhy: one sentence, mentioning the allotment when it limited the mix.
 - sizes: the sizes to deliver.
 - brief: a ready-to-use brief for the designer or editor, 4 to 8 lines: what to show, what to say, the hook, on-image text limits, and what to avoid from client memory.
 - hooks: up to 4 opening hooks or headlines to try.
@@ -68,7 +68,7 @@ Suggest values for this request. Build on what's already filled in; don't contra
       watchouts: raw.watchouts.slice(0, 4),
       mix: raw.mix
         .filter((m, i, all) => FORMATS.includes(m.format) && all.findIndex((x) => x.format === m.format) === i)
-        .map((m) => ({ ...m, new: clamp(m.new), variations: clamp(m.variations) }))
+        .map((m) => ({ ...m, new: clamp(m.new), variations: Math.min(clamp(m.variations), MAX_VARIATIONS) }))
         .filter((m) => m.new + m.variations > 0),
       sizes: raw.sizes.filter((s) => SIZES.includes(s)),
     };
@@ -121,6 +121,7 @@ export async function createBatch(draft: Draft, review: Review | null): Promise<
   const formats = selectedFormats(draft);
   if (formats.length === 0) return { ok: false, error: "Pick at least one format." };
   const items = formats.map((f) => ({ format: f, new: clamp(draft.formats[f]!.new), variations: clamp(draft.formats[f]!.variations) }));
+  if (items.some((i) => i.variations > MAX_VARIATIONS)) return { ok: false, error: `Up to ${MAX_VARIATIONS} variations per format.` };
   if (items.some((i) => i.new + i.variations < 1)) return { ok: false, error: "Each format needs at least one creative." };
 
   const supabase = await createClient();
