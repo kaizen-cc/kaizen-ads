@@ -51,7 +51,7 @@ export default async function Home() {
         attention={[]}
         team={[]}
         phases={noPhases()}
-        canRequest={false}
+        canRequest
       />
     );
   }
@@ -74,7 +74,7 @@ export default async function Home() {
               : { title: "Waiting on clients", items: [], empty: "Approvals in progress, with their business-hours clock." }
       }
       delivered={variant === "creative" ? { week: 0, firstPass: null } : undefined}
-      canAct={false}
+      canAct={variant === "buyer"}
     />
   );
 }

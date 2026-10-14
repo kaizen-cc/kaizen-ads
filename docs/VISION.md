@@ -87,6 +87,9 @@
 | AI learning loop | Camille's edits continuously teach the copy agent how to write for **that client**. |
 | Client memory | All internal and client **feedback is stored per client**. It's used as context for future requests, briefs and copy so the **same mistakes aren't repeated**. |
 | Meta assets | Ad accounts, Pages, Instagram accounts and **datasets (pixels)** are all shared to Kaizen's BM. Kaizen OS already has a Meta app (ID and secret) we can reuse. |
+| Access tiers | **Executives** · **Leaders** (Head of Meta = Dipesh, Head of Creative = Jesus, Head of Google later) · **Team** (media buyer, Google buyer, graphic designer, video editor, copywriter, customer success). One role per person. |
+| Role-based homes | **Execs** get a *pulse*: vitals, flow, needs attention (stuck items, revision-heavy or unhappy clients, allotment burning fast or behind, no reply), team load, client health. They have no task queue. **Leaders** get their review queue, their team's load and their area's problems. **Members** get their own queue, specific to their role. |
+| Design bar | Every screen must look **high-end with a wow factor**. The Phase 0 mockups (especially the client swipe portal) set the standard to keep. |
 | Creative intelligence | Kaizen uses **Motion** (motionapp.com) for creative and account metrics, and it has an **MCP**. Use it for fact-finding: fatigue detection, top-performing angles and copy, and brief context. |
 
 ## 4. Future ideas (keep, don't build first)

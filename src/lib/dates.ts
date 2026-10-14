@@ -7,3 +7,6 @@ export function greetingFor(date: Date) {
 /** e.g. "Tuesday, October 13" in New York time. */
 export const todayLabel = (date: Date) =>
   new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "America/New_York" }).format(date);
+
+/** ISO timestamp for `days` calendar days ago. */
+export const daysAgoIso = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();

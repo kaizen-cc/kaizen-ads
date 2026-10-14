@@ -7,9 +7,11 @@ import type { PhaseKey, PhaseStat, QueueItem } from "@/app/(team)/pipeline/views
 import { TeamList, type Person } from "@/app/(team)/team/team-list";
 import { ClientsTable, type ClientRow } from "@/app/(team)/clients/clients-table";
 import { greetingFor, todayLabel } from "@/lib/dates";
+import { BoardClient } from "@/app/(team)/board/board-client";
+import { sampleTickets } from "./sample-tickets";
 
 // Local-only design check with sample data (never served in production).
-// Open /auth/design-preview?view=exec | exec-empty | leader | buyer | creative | team | clients
+// Open /auth/design-preview?view=exec | exec-empty | leader | buyer | creative | board | team | clients
 
 const people: Person[] = [
   { id: "1", email: "santi@kaizenmarketing.agency", fullName: "Santi Lozano", role: "executive", isActive: true, joined: true, clientCount: 0 },
@@ -73,7 +75,18 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
   let body: React.ReactNode;
   let who = { name: "Santi Lozano", role: "Executive" };
 
-  if (view === "team") {
+  if (view === "board") {
+    const names = [...new Set(sampleTickets.map((x) => x.clientName))].sort();
+    body = (
+      <BoardClient
+        tickets={sampleTickets}
+        clients={names.map((name) => ({ id: name, name, slug: sampleTickets.find((x) => x.clientName === name)!.clientSlug }))}
+        people={people.map((p) => ({ id: p.fullName, name: p.fullName, role: p.role }))}
+        canRequest
+        demo
+      />
+    );
+  } else if (view === "team") {
     body = (
       <div className="grid max-w-4xl gap-6">
         <div>

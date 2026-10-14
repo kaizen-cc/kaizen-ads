@@ -56,7 +56,7 @@ export function WorkView(d: WorkData) {
         today={d.today}
         title={`${d.greeting}, ${d.firstName}`}
         subtitle={`${d.role} · ${d.stats.mine ? `${d.stats.mine} on your plate` : "your plate is clear"}`}
-        action={<PrimaryAction label={c.action} disabled={!d.canAct} />}
+        action={<PrimaryAction label={c.action} disabled={!d.canAct} href={d.variant === "buyer" ? "/requests/new" : undefined} />}
       />
 
       <Stats

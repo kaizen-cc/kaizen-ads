@@ -22,7 +22,7 @@ export function LeaderView(d: LeaderData) {
         today={d.today}
         title={`${d.greeting}, ${d.firstName}`}
         subtitle={`Head of ${d.department} · ${d.stats.waitingOnYou ? `${d.stats.waitingOnYou} waiting on you` : "nothing waiting on you"}`}
-        action={<PrimaryAction label="New request" disabled={!d.canRequest} />}
+        action={<PrimaryAction label="New request" disabled={!d.canRequest} href="/requests/new" />}
       />
 
       <Stats
