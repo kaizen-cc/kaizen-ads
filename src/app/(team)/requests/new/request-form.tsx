@@ -7,7 +7,7 @@ import type { Review, ReviewIssue, Suggestions } from "@/lib/ai";
 import { draws, type Allotment } from "@/lib/allotment";
 import { FORMAT_LABEL, type Format, type Priority } from "@/lib/stages";
 import { ClientTag, FormatIcon } from "@/app/(team)/board/ticket-card";
-import { createBatch, reviewRequest, suggestForRequest, type ContextSummary, type ReviewResult } from "./actions";
+import { createBatch, loadBriefing, reviewRequest, suggestForRequest, type ContextSummary, type ReviewResult, type SuggestResult } from "./actions";
 import { FORMATS, MAX_VARIATIONS, SIZES, emptyDraft, selectedFormats, totalFor, type Draft, type Size } from "./draft";
 import { AllotmentMeter, AspectOption, Chip, ClientSearch, Progress, Spark, Stepper, Thinking, type ClientOption } from "./parts";
 
@@ -35,7 +35,7 @@ const input =
 type AiState =
   | { status: "idle" }
   | { status: "loading" }
-  | { status: "ready"; s: Suggestions; context: ContextSummary }
+  | { status: "ready"; s: Suggestions; context: ContextSummary; prepared: boolean }
   | { status: "error"; error: string };
 type ReviewState = { status: "idle" } | { status: "running" } | { status: "done"; review: Review } | { status: "error"; error: string };
 
@@ -101,23 +101,28 @@ export function RequestForm({
   const allotment = draft.clientId ? allotments[draft.clientId] : undefined;
   const taking = draws(draft.formats);
 
-  const fetchSuggestions = (d: Draft): Promise<AiState> =>
-    demo
-      ? new Promise((r) => setTimeout(() => r({ status: "ready", s: demo.suggestions, context: demo.context }), 1100))
-      : suggestForRequest(d).then((res) => (res.ok ? { status: "ready", s: res.suggestions, context: res.context } : { status: "error", error: res.error }));
+  // Prepared suggestions come from the twice-daily briefing and load instantly. Live ones ask the AI now,
+  // using what's filled in; that's also the fallback for a client with no briefing yet.
+  const fetchSuggestions = (d: Draft, live: boolean): Promise<AiState> => {
+    if (demo) return new Promise((r) => setTimeout(() => r({ status: "ready", s: demo.suggestions, context: demo.context, prepared: !live }), live ? 1100 : 250));
+    const toState = (res: SuggestResult, prepared: boolean): AiState =>
+      res.ok ? { status: "ready", s: res.suggestions, context: res.context, prepared } : { status: "error", error: res.error };
+    if (live) return suggestForRequest(d).then((r) => toState(r, false));
+    return loadBriefing(d.clientId!).then((b) => (b ? toState(b, true) : suggestForRequest(d).then((r) => toState(r, false))));
+  };
 
-  const suggest = (d: Draft) => {
+  const suggest = (d: Draft, live: boolean) => {
     if (!aiOn) return;
     const id = ++latest.current;
     setAi({ status: "loading" });
-    fetchSuggestions(d).then((r) => id === latest.current && setAi(r));
+    fetchSuggestions(d, live).then((r) => id === latest.current && setAi(r));
   };
 
   // Arriving with ?client= starts reading that client right away
   useEffect(() => {
     if (!initialClient || !aiOn) return;
     const id = ++latest.current;
-    fetchSuggestions(draft).then((r) => id === latest.current && setAi(r));
+    fetchSuggestions(draft, false).then((r) => id === latest.current && setAi(r));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -132,7 +137,7 @@ export function RequestForm({
     setBriefAi({ status: "idle" });
     setReview({ status: "idle" });
     go(1);
-    suggest(next);
+    suggest(next, false);
   };
 
   const toggleFormat = (f: Format) => {
@@ -171,7 +176,7 @@ export function RequestForm({
   const draftBrief = () => {
     if (!aiOn) return;
     setBriefAi({ status: "loading" });
-    fetchSuggestions(draft).then((r) => {
+    fetchSuggestions(draft, true).then((r) => {
       if (r.status !== "ready") {
         setBriefAi({ status: "idle" });
         setError(r.status === "error" ? r.error : null);
@@ -239,7 +244,7 @@ export function RequestForm({
             </Link>
           </div>
           {!created && <Progress steps={STEPS} current={step} onJump={go} />}
-          {!created && <AiStrip aiOn={aiOn} ai={ai} clientName={client?.name ?? null} onRefresh={() => suggest(draft)} />}
+          {!created && <AiStrip aiOn={aiOn} ai={ai} clientName={client?.name ?? null} onRefresh={() => suggest(draft, true)} />}
         </div>
 
         {created ? (
@@ -650,7 +655,7 @@ export function RequestForm({
         )}
       </div>
 
-      <AiPanel aiOn={aiOn} ai={ai} clientName={client?.name ?? null} onRefresh={() => suggest(draft)} />
+      <AiPanel aiOn={aiOn} ai={ai} clientName={client?.name ?? null} onRefresh={() => suggest(draft, true)} />
     </div>
   );
 }
@@ -756,6 +761,25 @@ function ReviewCard({ review, onEdit }: { review: Review; onEdit: (f: ReviewIssu
   );
 }
 
+function sourcesLine(c: ContextSummary) {
+  const parts = [plural(c.requests, "past request"), plural(c.angles, "angle"), plural(c.memory, "feedback note")];
+  if (c.briefing) {
+    const b = c.briefing;
+    if (b.slack) parts.push(plural(b.slack, "Slack message"));
+    if (b.gmail) parts.push(plural(b.gmail, "email"));
+    if (b.drive) parts.push(plural(b.drive, "new Drive file"));
+  }
+  return `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+}
+
+/** "today 12:02 PM", "Mon 6:01 PM" */
+function when(iso: string) {
+  const d = new Date(iso);
+  const day = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", dateStyle: "short" });
+  const time = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" }).format(d);
+  return day.format(d) === day.format(new Date()) ? `today ${time}` : `${new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short" }).format(d)} ${time}`;
+}
+
 function AiPanel({ aiOn, ai, clientName, onRefresh }: { aiOn: boolean; ai: AiState; clientName: string | null; onRefresh: () => void }) {
   return (
     <aside className="hidden xl:sticky xl:top-8 xl:block xl:self-start">
@@ -786,9 +810,10 @@ function AiPanel({ aiOn, ai, clientName, onRefresh }: { aiOn: boolean; ai: AiSta
           ) : ai.status === "ready" ? (
             <>
               <p className="text-muted">
-                Read {plural(ai.context.requests, "past request")}, {plural(ai.context.angles, "angle")} and {plural(ai.context.memory, "feedback note")} for{" "}
-                <span className="text-fg">{clientName}</span>. Look for <Spark size={10} className="inline text-brand-text" /> on each field.
+                {ai.prepared ? "Prepared" : "Suggested"} for <span className="text-fg">{clientName}</span> from {sourcesLine(ai.context)}. Look for{" "}
+                <Spark size={10} className="inline text-brand-text" /> on each field.
               </p>
+              {ai.context.briefing && <p className="text-xs text-faint">Briefing updated {when(ai.context.briefing.generatedAt)}</p>}
               {!ai.context.adAccount && <p className="text-xs text-faint">No Meta ad account linked to this client yet.</p>}
               <button type="button" onClick={onRefresh} className="justify-self-start text-xs text-muted underline-offset-4 hover:text-fg hover:underline">
                 Refresh with what&apos;s filled in
@@ -828,7 +853,7 @@ function AiStrip({ aiOn, ai, clientName, onRefresh }: { aiOn: boolean; ai: AiSta
         {ai.status === "loading"
           ? `Reading ${clientName}\u2019s history\u2026`
           : ai.status === "ready"
-            ? `Kaizen AI read ${plural(ai.context.requests, "past request")}, ${plural(ai.context.angles, "angle")} and ${plural(ai.context.memory, "feedback note")}`
+            ? `${ai.prepared ? "Prepared" : "Suggested"} from ${sourcesLine(ai.context)}`
             : ai.status === "error"
               ? ai.error
               : "Kaizen AI is standing by"}

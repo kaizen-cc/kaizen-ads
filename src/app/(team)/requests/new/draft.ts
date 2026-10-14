@@ -6,8 +6,7 @@ export const FORMATS: Format[] = ["image", "video", "carousel"];
 
 export type Counts = { new: number; variations: number };
 
-/** Variations per format are capped; more than this should be its own design. */
-export const MAX_VARIATIONS = 5;
+export { MAX_VARIATIONS } from "@/lib/allotment";
 
 /** Everything the request form collects. One batch; one ticket per selected format. */
 export type Draft = {

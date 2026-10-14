@@ -2,7 +2,7 @@ import type { RequestDemo } from "@/app/(team)/requests/new/request-form";
 
 // Sample AI answers for the request form in the local design preview only.
 export const sampleRequest: RequestDemo = {
-  context: { requests: 14, angles: 5, memory: 4, adAccount: true },
+  context: { requests: 14, angles: 5, memory: 4, adAccount: true, briefing: { generatedAt: "2026-10-14T16:02:00Z", slack: 23, gmail: 6, drive: 4 } },
   suggestions: {
     titles: ["BFCM · Buy More, Save More", "BFCM · Doorbusters week", "Black Friday · Family bundle"],
     angles: [

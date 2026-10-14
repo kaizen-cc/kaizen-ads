@@ -1,5 +1,8 @@
 import type { Format } from "@/lib/stages";
 
+/** Variations per format are capped; more than this should be its own design. */
+export const MAX_VARIATIONS = 5;
+
 /** A client's monthly creative allotment and what this month's requests already used. null = not set yet. */
 export type Allotment = { images: number | null; videos: number | null; imagesUsed: number; videosUsed: number };
 

@@ -7,20 +7,29 @@ import {
   AiUnavailable,
   REVIEW_SCHEMA,
   SUGGESTIONS_SCHEMA,
+  SUGGEST_FIELDS,
   askJson,
+  cleanSuggestions,
   clientContext,
   contextBlock,
+  type ClientContext,
   type Review,
   type Suggestions,
 } from "@/lib/ai";
 import { createClient } from "@/lib/supabase/server";
 import { draws } from "@/lib/allotment";
-import { FORMATS, MAX_VARIATIONS, SIZES, describeDraft, refLinks, selectedFormats, type Draft } from "./draft";
+import { MAX_VARIATIONS, SIZES, describeDraft, refLinks, selectedFormats, type Draft } from "./draft";
 
 type Fail = { ok: false; error: string };
 export type CreateResult = { ok: true; numbers: number[] } | Fail;
 /** What the AI read, so the form can say so. */
-export type ContextSummary = { requests: number; angles: number; memory: number; adAccount: boolean };
+export type ContextSummary = {
+  requests: number;
+  angles: number;
+  memory: number;
+  adAccount: boolean;
+  briefing: { generatedAt: string; slack: number; gmail: number; drive: number } | null;
+};
 export type SuggestResult = { ok: true; suggestions: Suggestions; context: ContextSummary } | Fail;
 export type ReviewResult = { ok: true; review: Review } | Fail;
 
@@ -33,12 +42,37 @@ async function loadContext(clientId: string | null) {
   return clientContext(supabase, clientId);
 }
 
+async function summarize(ctx: ClientContext, clientId: string): Promise<ContextSummary> {
+  const supabase = await createClient();
+  const { data: b } = await supabase.from("client_briefings").select("generated_at, sources").eq("client_id", clientId).maybeSingle();
+  const src = (b?.sources ?? {}) as Record<string, number>;
+  return {
+    requests: ctx.recent.length,
+    angles: ctx.angles.length,
+    memory: ctx.memory.length,
+    adAccount: ctx.adAccountConnected,
+    briefing: b ? { generatedAt: b.generated_at, slack: src.slack ?? 0, gmail: src.gmail ?? 0, drive: src.drive ?? 0 } : null,
+  };
+}
+
+/** Suggestions made by the twice-daily briefing, so the form fills in instantly. Null when there are none yet. */
+export async function loadBriefing(clientId: string): Promise<SuggestResult | null> {
+  const ctx = await loadContext(clientId);
+  if (!ctx) return null;
+  const supabase = await createClient();
+  const { data } = await supabase.from("client_briefings").select("suggestions").eq("client_id", clientId).maybeSingle();
+  if (!data?.suggestions) return null;
+  return { ok: true, suggestions: cleanSuggestions(data.suggestions as Suggestions), context: await summarize(ctx, clientId) };
+}
+
 /** Suggestions for every field, from what we know about the client and what's filled in so far. */
 export async function suggestForRequest(draft: Draft): Promise<SuggestResult> {
   const ctx = await loadContext(draft.clientId);
   if (!ctx) return { ok: false, error: "Pick a client first." };
   try {
     const raw = await askJson<Suggestions>({
+      label: "suggest",
+      model: "fast",
       system: AGENCY_SYSTEM,
       effort: "low",
       schema: SUGGESTIONS_SCHEMA,
@@ -48,35 +82,10 @@ export async function suggestForRequest(draft: Draft): Promise<SuggestResult> {
 ${describeDraft(draft, ctx.name)}
 </draft_so_far>
 
-Suggest values for this request. Build on what's already filled in; don't contradict it.
-- titles: 3 short ticket titles (under 50 characters), in the style of the recent requests if there are any.
-- angles: up to 3. Prefer existing angles that fit; a new one only when it's clearly better. "why" is one short sentence.
-- audiences: up to 3 short audience descriptions.
-- mix: the formats and counts you'd make for this request, with 1 to 6 net new per format and variations (0 to 5 per format) only when testing copy or hooks makes sense. The net new total must fit what's left of the allotment (images and carousels share the image pool). mixWhy: one sentence, mentioning the allotment when it limited the mix.
-- sizes: the sizes to deliver.
-- brief: a ready-to-use brief for the designer or editor, 4 to 8 lines: what to show, what to say, the hook, on-image text limits, and what to avoid from client memory.
-- hooks: up to 4 opening hooks or headlines to try.
-- watchouts: client memory items that matter for this request, rephrased as short reminders. Empty if none.`,
+${SUGGEST_FIELDS}`,
     });
-    // Keep the model's output inside what the form accepts
-    const suggestions: Suggestions = {
-      ...raw,
-      titles: raw.titles.slice(0, 3),
-      angles: raw.angles.slice(0, 3),
-      audiences: raw.audiences.slice(0, 3),
-      hooks: raw.hooks.slice(0, 4),
-      watchouts: raw.watchouts.slice(0, 4),
-      mix: raw.mix
-        .filter((m, i, all) => FORMATS.includes(m.format) && all.findIndex((x) => x.format === m.format) === i)
-        .map((m) => ({ ...m, new: clamp(m.new), variations: Math.min(clamp(m.variations), MAX_VARIATIONS) }))
-        .filter((m) => m.new + m.variations > 0),
-      sizes: raw.sizes.filter((s) => SIZES.includes(s)),
-    };
-    return {
-      ok: true,
-      suggestions,
-      context: { requests: ctx.recent.length, angles: ctx.angles.length, memory: ctx.memory.length, adAccount: ctx.adAccountConnected },
-    };
+    const suggestions = cleanSuggestions(raw);
+    return { ok: true, suggestions, context: await summarize(ctx, draft.clientId!) };
   } catch (e) {
     return { ok: false, error: e instanceof AiUnavailable ? e.message : "Couldn't get suggestions." };
   }
@@ -88,6 +97,7 @@ export async function reviewRequest(draft: Draft): Promise<ReviewResult> {
   if (!ctx) return { ok: false, error: "Pick a client first." };
   try {
     const review = await askJson<Review>({
+      label: "review",
       system: AGENCY_SYSTEM,
       effort: "medium",
       schema: REVIEW_SCHEMA,

@@ -5,7 +5,11 @@ import { isExecOrLead, requireStaff, seesAllClients } from "@/lib/auth";
 import { SLOTS, type TeamRole } from "@/lib/roles";
 import { AssignSelect } from "../assign-select";
 import { createClient } from "@/lib/supabase/server";
-import { addAngle, addContact, addMemory, archiveMemory, removeContact, saveAllotment, saveClientDetails, setAngleStatus } from "./actions";
+import type { Digest } from "@/lib/ai";
+import { addAngle, addContact, addMemory, archiveMemory, refreshClientBriefing, removeContact, saveAllotment, saveClientDetails, setAngleStatus } from "./actions";
+
+// Refreshing a briefing asks the AI to read everything new about the client
+export const maxDuration = 120;
 
 const field = "h-9 w-full rounded-brand border border-line bg-bg px-3 text-sm outline-none focus:border-brand-text";
 const label = "grid gap-1 text-xs text-muted";
@@ -17,12 +21,12 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
 
   const { data: client } = await supabase
     .from("clients")
-    .select("id, name, slug, status, client_type, website, meta_ad_account_id, slack_channel_id, kaizen_id, auto_approve_opt_in, creative_package")
+    .select("id, name, slug, status, client_type, website, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, kaizen_id, auto_approve_opt_in, creative_package")
     .eq("slug", slug)
     .maybeSingle();
   if (!client) notFound();
 
-  const [{ data: assignments }, { data: links }, { data: angles }, { data: allotment }, { data: staff }, { data: memory }] = await Promise.all([
+  const [{ data: assignments }, { data: links }, { data: angles }, { data: allotment }, { data: staff }, { data: memory }, { data: briefing }] = await Promise.all([
     supabase.from("client_assignments").select("role, profile_id, profiles(full_name)").eq("client_id", client.id),
     supabase.from("contact_clients").select("is_primary, contacts(id, email, full_name, auth_user_id)").eq("client_id", client.id),
     supabase.from("angles").select("id, name, kind, description, status").eq("client_id", client.id).order("status").order("name"),
@@ -34,7 +38,9 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
       .eq("client_id", client.id)
       .eq("status", "active")
       .order("created_at", { ascending: false }),
+    supabase.from("client_briefings").select("digest, generated_at, sources").eq("client_id", client.id).maybeSingle(),
   ]);
+  const digest = briefing?.digest && Object.keys(briefing.digest).length ? (briefing.digest as Digest) : null;
 
   const canAdmin = me.isExec;
   const canContacts = seesAllClients(me);
@@ -173,6 +179,81 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
           </ActionForm>
         </section>
 
+        {/* Briefing */}
+        {client.creative_package && (
+          <section className="grid content-start gap-4 rounded-brand border border-line bg-surface p-5 lg:col-span-2">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="font-medium">Briefing</h2>
+                <p className="mt-1 text-xs text-muted">
+                  What the AI knows from Slack, email, Drive and past requests. It refreshes at 12pm and 6pm ET and feeds the request form.
+                  {briefing && (
+                    <>
+                      {" "}
+                      Last updated{" "}
+                      {new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", dateStyle: "medium", timeStyle: "short" }).format(new Date(briefing.generated_at))}.
+                    </>
+                  )}
+                </p>
+              </div>
+              <ActionButton action={refreshClientBriefing.bind(null, client.id, client.slug)} label="Refresh briefing" />
+            </div>
+            {digest ? (
+              <div className="grid gap-4 text-sm">
+                <p className="leading-relaxed">{digest.summary}</p>
+                {digest.direction && (
+                  <p className="text-muted">
+                    <span className="text-faint">Direction · </span>
+                    {digest.direction}
+                  </p>
+                )}
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {(
+                    [
+                      ["Asks", digest.asks, "text-fg"],
+                      ["Avoid", digest.avoid, "text-bad"],
+                      ["Works", digest.works, "text-ok"],
+                      ["Open questions", digest.openQuestions, "text-warn"],
+                    ] as const
+                  )
+                    .filter(([, items]) => items.length > 0)
+                    .map(([title, items, tone]) => (
+                      <div key={title} className="grid content-start gap-1.5">
+                        <p className={`text-xs font-medium ${tone}`}>{title}</p>
+                        <ul className="grid gap-1 text-muted">
+                          {items.map((x) => (
+                            <li key={x}>· {x}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                </div>
+                {digest.newAssets.length > 0 && (
+                  <div className="grid gap-1.5">
+                    <p className="text-xs font-medium">New Drive assets not used yet</p>
+                    <ul className="grid gap-1">
+                      {digest.newAssets.map((a) => (
+                        <li key={a.url || a.name} className="text-muted">
+                          {a.url ? (
+                            <a href={a.url} target="_blank" rel="noreferrer" className="text-brand-text hover:underline">
+                              {a.name}
+                            </a>
+                          ) : (
+                            a.name
+                          )}
+                          {a.note && <span className="text-faint"> · {a.note}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-faint">No briefing yet. It&apos;s made at the next 12pm or 6pm run, or now with Refresh briefing.</p>
+            )}
+          </section>
+        )}
+
         {/* Client memory */}
         <section className="grid content-start gap-3 rounded-brand border border-line bg-surface p-5 lg:col-span-2">
           <div>
@@ -280,8 +361,16 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
                   <input name="meta_ad_account_id" defaultValue={client.meta_ad_account_id ?? ""} className={field} placeholder="661576002884215" />
                 </label>
                 <label className={label}>
-                  Slack channel ID
+                  Slack channel with the client
                   <input name="slack_channel_id" defaultValue={client.slack_channel_id ?? ""} className={field} placeholder="C0123ABCD" />
+                </label>
+                <label className={label}>
+                  Internal Slack channel
+                  <input name="internal_slack_channel_id" defaultValue={client.internal_slack_channel_id ?? ""} className={field} placeholder="C0456EFGH" />
+                </label>
+                <label className={label}>
+                  Drive folder (ID or link)
+                  <input name="drive_folder_id" defaultValue={client.drive_folder_id ?? ""} className={field} placeholder="Matched automatically from the Clients drive" />
                 </label>
                 <label className={label}>
                   Website

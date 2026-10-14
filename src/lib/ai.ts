@@ -1,12 +1,13 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { describeAllotment, toAllotment, type Allotment, type UsageRow } from "@/lib/allotment";
+import { MAX_VARIATIONS, describeAllotment, toAllotment, type Allotment, type UsageRow } from "@/lib/allotment";
 
-// Claude for the request form: field suggestions and the pre-submit review.
+// Claude for the request form (suggestions, pre-submit review) and the twice-daily client briefings.
 // Every call is optional. Without ANTHROPIC_API_KEY the form still works, just without suggestions.
 
-const MODEL = "claude-opus-5-5";
+// deep: briefings and the request review, where judgement matters. fast: live suggestions someone is waiting on.
+const MODELS = { deep: "claude-opus-5-5", fast: "claude-sonnet-5-5" } as const;
 
 export const aiEnabled = () => Boolean(process.env.ANTHROPIC_API_KEY);
 
@@ -21,19 +22,24 @@ export class AiUnavailable extends Error {}
 
 /** One structured call. Returns the parsed JSON or throws AiUnavailable with a message the UI can show. */
 export async function askJson<T>({
+  label,
   system,
   prompt,
   schema,
   effort,
+  model = "deep",
 }: {
+  label: string; // for the timing log
   system: string;
   prompt: string;
   schema: Record<string, unknown>;
   effort: "low" | "medium" | "high";
+  model?: keyof typeof MODELS;
 }): Promise<T> {
   if (!aiEnabled()) throw new AiUnavailable("AI isn't connected yet.");
+  const started = Date.now();
   const request = {
-    model: MODEL,
+    model: MODELS[model],
     max_tokens: 16000,
     system,
     output_config: { effort, format: { type: "json_schema" as const, schema } },
@@ -49,6 +55,7 @@ export async function askJson<T>({
       console.error("[ai] request with fallbacks rejected, retrying without:", e.message);
       res = await anthropic().messages.create(request);
     }
+    console.log(`[ai] ${label} · ${res.model} · ${Date.now() - started}ms · ${res.usage.input_tokens} in / ${res.usage.output_tokens} out`);
     if (res.stop_reason === "refusal") throw new AiUnavailable("The AI couldn't help with this one.");
     if (res.stop_reason === "max_tokens") throw new AiUnavailable("The AI ran out of room. Try again.");
     const text = res.content.find((b) => b.type === "text");
@@ -78,6 +85,7 @@ export type ClientContext = {
   website: string | null;
   adAccountConnected: boolean;
   allotment: Allotment | null;
+  digest: Digest | null; // from the twice-daily briefing: Slack, email and Drive, already summarized
   angles: { name: string; kind: string; description: string | null }[];
   memory: { kind: "avoid" | "prefer" | "note"; body: string; source: string }[];
   recent: {
@@ -95,9 +103,10 @@ export type ClientContext = {
 
 /** Everything the AI should know about a client. Reads through the caller's RLS. */
 export async function clientContext(supabase: SupabaseClient, clientId: string): Promise<ClientContext | null> {
-  const [{ data: c }, { data: usage }, { data: angles }, { data: memory }, { data: recent }] = await Promise.all([
+  const [{ data: c }, { data: usage }, { data: briefing }, { data: angles }, { data: memory }, { data: recent }] = await Promise.all([
     supabase.from("clients").select("name, website, meta_ad_account_id").eq("id", clientId).maybeSingle(),
     supabase.from("client_allotment_usage").select("*").eq("client_id", clientId).maybeSingle(),
+    supabase.from("client_briefings").select("digest").eq("client_id", clientId).maybeSingle(),
     supabase.from("angles").select("name, kind, description").eq("client_id", clientId).eq("status", "active").order("name").limit(40),
     supabase.from("client_memory").select("kind, body, source").eq("client_id", clientId).eq("status", "active").order("created_at", { ascending: false }).limit(60),
     supabase
@@ -113,6 +122,7 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
     website: c.website,
     adAccountConnected: Boolean(c.meta_ad_account_id),
     allotment: usage ? toAllotment(usage as UsageRow) : null,
+    digest: briefing?.digest && Object.keys(briefing.digest).length ? (briefing.digest as Digest) : null,
     angles: angles ?? [],
     memory: (memory ?? []) as ClientContext["memory"],
     recent: (recent ?? []).map((r) => ({
@@ -136,6 +146,7 @@ export function contextBlock(ctx: ClientContext, request?: { images: number; vid
       ? "Meta ad account is linked, but performance data isn't synced into this app yet. Don't invent metrics."
       : "No Meta ad account linked yet. Don't invent metrics.",
   );
+  if (ctx.digest) lines.push("<briefing from Slack, email and Drive>", describeDigest(ctx.digest), "</briefing>");
   lines.push("<allotment_this_month>", describeAllotment(ctx.allotment, request), "</allotment_this_month>");
   lines.push("<client_memory>");
   if (ctx.memory.length === 0) lines.push("Nothing recorded yet.");
@@ -155,6 +166,21 @@ export function contextBlock(ctx: ClientContext, request?: { images: number; vid
   lines.push("</recent_requests>");
   lines.push("</client>");
   return lines.join("\n");
+}
+
+export function describeDigest(d: Digest) {
+  const list = (label: string, items: string[]) => (items.length ? `${label}:\n${items.map((x) => `- ${x}`).join("\n")}` : null);
+  return [
+    d.summary,
+    d.direction && `Campaign direction: ${d.direction}`,
+    list("Recent asks from the client or team", d.asks),
+    list("Avoid", d.avoid),
+    list("Works for them", d.works),
+    list("New assets not used in a request yet", d.newAssets.map((a) => `${a.name}${a.note ? ` (${a.note})` : ""}${a.url ? ` ${a.url}` : ""}`)),
+    list("Open questions", d.openQuestions),
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export const AGENCY_SYSTEM = `You help Kaizen Marketing, a paid social agency, write creative requests for Meta ads.
@@ -220,3 +246,53 @@ export const REVIEW_SCHEMA = obj({
     }),
   },
 });
+
+export type Digest = {
+  summary: string;
+  direction: string;
+  asks: string[];
+  avoid: string[];
+  works: string[];
+  newAssets: { name: string; url: string; note: string }[];
+  openQuestions: string[];
+};
+
+export const DIGEST_SCHEMA = obj({
+  summary: str,
+  direction: str,
+  asks: strArr,
+  avoid: strArr,
+  works: strArr,
+  newAssets: { type: "array", items: obj({ name: str, url: str, note: str }) },
+  openQuestions: strArr,
+});
+
+/** What each suggestion field should hold. Shared by live suggestions and the twice-daily briefing. */
+export const SUGGEST_FIELDS = `Suggest values for this request. Build on what's already filled in; don't contradict it.
+- titles: 3 short ticket titles (under 50 characters), in the style of the recent requests if there are any.
+- angles: up to 3. Prefer existing angles that fit; a new one only when it's clearly better. "why" is one short sentence.
+- audiences: up to 3 short audience descriptions.
+- mix: the formats and counts you'd make for this request, with 1 to 6 net new per format and variations (0 to 5 per format) only when testing copy or hooks makes sense. The net new total must fit what's left of the allotment (images and carousels share the image pool). mixWhy: one sentence, mentioning the allotment when it limited the mix.
+- sizes: the sizes to deliver.
+- brief: a ready-to-use brief for the designer or editor, 4 to 8 lines: what to show, what to say, the hook, on-image text limits, and what to avoid from client memory.
+- hooks: up to 4 opening hooks or headlines to try.
+- watchouts: client memory items that matter for this request, rephrased as short reminders. Empty if none.`;
+
+const count = (n: unknown) => Math.min(100, Math.max(0, Math.floor(Number(n) || 0)));
+
+/** Keep the model's output inside what the form accepts. */
+export function cleanSuggestions(raw: Suggestions): Suggestions {
+  return {
+    ...raw,
+    titles: raw.titles.slice(0, 3),
+    angles: raw.angles.slice(0, 3),
+    audiences: raw.audiences.slice(0, 3),
+    hooks: raw.hooks.slice(0, 4),
+    watchouts: raw.watchouts.slice(0, 4),
+    mix: raw.mix
+      .filter((m, i, all) => ["image", "video", "carousel"].includes(m.format) && all.findIndex((x) => x.format === m.format) === i)
+      .map((m) => ({ ...m, new: count(m.new), variations: Math.min(count(m.variations), MAX_VARIATIONS) }))
+      .filter((m) => m.new + m.variations > 0),
+    sizes: raw.sizes.filter((z) => ["1x1", "4x5", "9x16"].includes(z)),
+  };
+}

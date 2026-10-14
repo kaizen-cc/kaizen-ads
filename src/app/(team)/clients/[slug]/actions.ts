@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { requireStaff } from "@/lib/auth";
+import { refreshBriefing } from "@/lib/context/briefing";
+import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -30,6 +32,9 @@ export async function saveClientDetails(clientId: string, slug: string, form: Fo
       website: str(form, "website"),
       meta_ad_account_id: str(form, "meta_ad_account_id")?.replace(/^act_/, "") ?? null,
       slack_channel_id: str(form, "slack_channel_id"),
+      internal_slack_channel_id: str(form, "internal_slack_channel_id"),
+      // Accept a pasted folder link as well as a bare ID
+      drive_folder_id: str(form, "drive_folder_id")?.match(/folders\/([\w-]+)/)?.[1] ?? str(form, "drive_folder_id"),
       kaizen_id: kaizenId && /^\d+$/.test(kaizenId) ? Number(kaizenId) : null,
       creative_package: form.get("creative_package") === "on",
     })
@@ -111,4 +116,20 @@ export async function archiveMemory(slug: string, memoryId: string): Promise<Act
   const supabase = await createClient();
   const { error } = await supabase.from("client_memory").update({ status: "archived" }).eq("id", memoryId);
   return done(slug, error);
+}
+
+/** Rebuild this client's briefing now instead of waiting for the next 12pm or 6pm run. */
+export async function refreshClientBriefing(clientId: string, slug: string): Promise<ActionResult> {
+  await requireStaff();
+  // Only people who can see the client can refresh it; the write itself needs the server's rights
+  const supabase = await createClient();
+  const { data: visible } = await supabase.from("clients").select("id").eq("id", clientId).maybeSingle();
+  if (!visible) return { ok: false, error: "You don't work on this client." };
+  if (!adminConfigured()) return { ok: false, error: "Server key missing." };
+  try {
+    await refreshBriefing(createAdminClient(), clientId, true);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't refresh the briefing." };
+  }
+  return done(slug);
 }
