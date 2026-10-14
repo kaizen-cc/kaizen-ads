@@ -5,6 +5,8 @@ import { useEffect, useState, useTransition } from "react";
 import { PersonAvatar } from "@/components/person-avatar";
 import { BOARD_ORDER, FORMAT_LABEL, PHASE_LABEL, businessDuration, health, stageInfo, type Phase, type Priority, type Stage } from "@/lib/stages";
 import { assignTicket, commentTicket, moveTicket, setTicketDue, setTicketPriority, ticketHistory, type TicketEvent } from "./actions";
+import type { Design } from "./design-actions";
+import { Deliverables } from "./deliverables";
 import { ClientTag, FormatIcon, TimeStamp } from "./ticket-card";
 import type { Person, Ticket } from "./types";
 
@@ -21,6 +23,21 @@ const DEMO_HISTORY = (t: Ticket): TicketEvent[] => [
   { id: "d1", kind: "created", fromStage: null, toStage: "requested", actor: t.buyerName, body: null, data: {}, at: t.createdAt },
   { id: "d2", kind: "stage", fromStage: "requested", toStage: "in_production", actor: t.creativeName, body: null, data: {}, at: t.stageEnteredAt },
   { id: "d3", kind: "comment", fromStage: null, toStage: null, actor: "Jesus", body: "Lead with the price. The calzone should be cut open so you see the cheese pull.", data: {}, at: t.stageEnteredAt },
+];
+
+const DEMO_DESIGNS: Design[] = [
+  { id: "dd1", position: 1, name: "Calzone pull", isVariation: false, variationOf: null, currentVersion: 2, versions: [
+    { id: "dv2", version: 2, note: "Bigger price, logo top left", by: "Nelson", at: "2026-10-13T15:20:00Z", files: [
+      { id: "f1", name: "calzone_4x5.jpg", mime: "image/jpeg", bytes: 820000, aspect: "4x5", width: 1080, height: 1350, durationMs: null, card: null, url: null, thumbUrl: null },
+      { id: "f2", name: "calzone_9x16.jpg", mime: "image/jpeg", bytes: 910000, aspect: "9x16", width: 1080, height: 1920, durationMs: null, card: null, url: null, thumbUrl: null },
+    ] },
+    { id: "dv1", version: 1, note: null, by: "Nelson", at: "2026-10-12T19:02:00Z", files: [] },
+  ] },
+  { id: "dd2", position: 2, name: "Calzone pull · CTA test", isVariation: true, variationOf: "dd1", currentVersion: 1, versions: [
+    { id: "dv3", version: 1, note: null, by: "Nelson", at: "2026-10-13T15:40:00Z", files: [
+      { id: "f3", name: "calzone_cta_4x5.jpg", mime: "image/jpeg", bytes: 800000, aspect: "4x5", width: 1080, height: 1350, durationMs: null, card: null, url: null, thumbUrl: null },
+    ] },
+  ] },
 ];
 
 const fmtDate = (iso: string) =>
@@ -72,6 +89,14 @@ function describe(e: TicketEvent) {
       );
     case "comment":
       return "commented";
+    case "upload":
+      return e.data.version ? (
+        <>
+          uploaded <span className="text-fg">v{e.data.version}</span> of {e.data.design}
+        </>
+      ) : (
+        `uploaded ${String(e.data.designs) === "1" ? "a design" : `${e.data.designs} designs`}`
+      );
   }
 }
 
@@ -356,17 +381,7 @@ export function TicketDrawer({
             )}
           </section>
 
-          {/* Deliverables */}
-          <section className={section}>
-            <div className="flex items-baseline justify-between">
-              <h3 className={sectionTitle}>Deliverables</h3>
-              <span className="text-xs text-faint">{ticket.quantity} expected</span>
-            </div>
-            <div className="grid place-items-center gap-1 rounded-[10px] border border-dashed border-line px-6 py-9 text-center">
-              <p className="text-sm text-muted">Uploads land here</p>
-              <p className="text-xs text-faint">Drag-and-drop uploads with versions arrive in the next step.</p>
-            </div>
-          </section>
+          <Deliverables ticket={ticket} demoDesigns={demo ? DEMO_DESIGNS : undefined} />
 
           {/* Activity */}
           <section className="grid gap-4">

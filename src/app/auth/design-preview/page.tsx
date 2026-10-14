@@ -8,6 +8,7 @@ import { TeamList, type Person } from "@/app/(team)/team/team-list";
 import { ClientsTable, type ClientRow } from "@/app/(team)/clients/clients-table";
 import { greetingFor, todayLabel } from "@/lib/dates";
 import { BoardClient } from "@/app/(team)/board/board-client";
+import { UploadProvider } from "@/components/upload-provider";
 import { RequestForm } from "@/app/(team)/requests/new/request-form";
 import { sampleRequest } from "./sample-request";
 import { sampleTickets } from "./sample-tickets";
@@ -94,6 +95,7 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
   } else if (view === "board") {
     const names = [...new Set(sampleTickets.map((x) => x.clientName))].sort();
     body = (
+      <UploadProvider demo>
       <BoardClient
         tickets={sampleTickets}
         clients={names.map((name) => ({ id: name, name, slug: sampleTickets.find((x) => x.clientName === name)!.clientSlug }))}
@@ -101,6 +103,7 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
         canRequest
         demo
       />
+      </UploadProvider>
     );
   } else if (view === "team") {
     body = (

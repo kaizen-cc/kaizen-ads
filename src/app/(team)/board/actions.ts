@@ -51,7 +51,7 @@ export async function commentTicket(id: string, body: string): Promise<ActionRes
 
 export type TicketEvent = {
   id: string;
-  kind: "created" | "stage" | "assign" | "due" | "priority" | "comment";
+  kind: "created" | "stage" | "assign" | "due" | "priority" | "comment" | "upload";
   fromStage: Stage | null;
   toStage: Stage | null;
   actor: string | null;
