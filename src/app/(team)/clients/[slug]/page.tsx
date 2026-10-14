@@ -26,7 +26,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
     .maybeSingle();
   if (!client) notFound();
 
-  const [{ data: assignments }, { data: links }, { data: angles }, { data: allotment }, { data: staff }, { data: memory }, { data: briefing }] = await Promise.all([
+  const [{ data: assignments }, { data: links }, { data: angles }, { data: allotment }, { data: staff }, { data: memory }, { data: briefing }, { data: slackSync }] = await Promise.all([
     supabase.from("client_assignments").select("role, profile_id, profiles(full_name)").eq("client_id", client.id),
     supabase.from("contact_clients").select("is_primary, contacts(id, email, full_name, auth_user_id)").eq("client_id", client.id),
     supabase.from("angles").select("id, name, kind, description, status").eq("client_id", client.id).order("status").order("name"),
@@ -39,7 +39,12 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
       .eq("status", "active")
       .order("created_at", { ascending: false }),
     supabase.from("client_briefings").select("digest, generated_at, sources").eq("client_id", client.id).maybeSingle(),
+    // Execs only (RLS): which of this client's Slack channels the bot couldn't get into on the last run
+    supabase.from("sync_state").select("last_result").eq("source", "slack").maybeSingle(),
   ]);
+  const needsInvite = (((slackSync?.last_result as { needsInvite?: string[] } | null)?.needsInvite ?? []) as string[])
+    .filter((x) => x.endsWith(`(${client.name})`))
+    .map((x) => x.slice(0, -(client.name.length + 3)));
   const digest = briefing?.digest && Object.keys(briefing.digest).length ? (briefing.digest as Digest) : null;
 
   const canAdmin = me.isExec;
@@ -198,6 +203,17 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
               </div>
               <ActionButton action={refreshClientBriefing.bind(null, client.id, client.slug)} label="Refresh briefing" />
             </div>
+            {(!client.slack_channel_id || !client.internal_slack_channel_id) && (
+              <p className="text-xs text-faint">
+                No {!client.slack_channel_id && !client.internal_slack_channel_id ? "Slack channels" : !client.slack_channel_id ? "client Slack channel" : "internal Slack channel"} linked yet.
+                Private channels only show up once the bot is invited; you can also paste the channel ID under Details.
+              </p>
+            )}
+            {needsInvite.length > 0 && (
+              <p className="rounded-brand border border-warn/30 bg-warn-soft px-3 py-2 text-xs text-warn">
+                The Slack bot can&apos;t read {needsInvite.join(" and ")} yet. It&apos;s private, so someone in it needs to type /invite and the bot&apos;s name there.
+              </p>
+            )}
             {digest ? (
               <div className="grid gap-4 text-sm">
                 <p className="leading-relaxed">{digest.summary}</p>

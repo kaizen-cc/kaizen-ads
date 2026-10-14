@@ -4,12 +4,14 @@ import { compact, trimBody, type CollectResult, type ContextItem } from "./share
 
 // Reads client channels through the Kaizen OS Slack app (its bot token, set as SLACK_BOT_TOKEN).
 // The bot must be a member of a channel to read it. Needs channels:history, groups:history,
-// channels:read, groups:read and users:read.
+// channels:read, groups:read, users:read and channels:join.
+// Public client channels are joined automatically on every run, so new ones are picked up by the next run.
+// Private channels can't be joined by a bot (it can't even see them until invited); those are listed as needing an invite.
 
 export const slackConfigured = () => Boolean(process.env.SLACK_BOT_TOKEN);
 
 type SlackMessage = { ts: string; user?: string; text?: string; thread_ts?: string; reply_count?: number; latest_reply?: string; subtype?: string; bot_id?: string };
-type SlackChannel = { id: string; name: string; is_ext_shared?: boolean; is_shared?: boolean; is_member?: boolean; is_archived?: boolean };
+type SlackChannel = { id: string; name: string; is_private?: boolean; is_ext_shared?: boolean; is_shared?: boolean; is_member?: boolean; is_archived?: boolean };
 
 async function slack<T>(method: string, params: Record<string, string>): Promise<T> {
   for (let attempt = 0; attempt < 4; attempt++) {
@@ -45,7 +47,10 @@ async function listChannels() {
   return out;
 }
 
-/** Fill in channels for clients that don't have one yet: shared (Slack Connect) channels are external, the rest internal. */
+/**
+ * Fill in channels for clients that don't have one yet (shared Slack Connect channels are external, the rest internal),
+ * join the public ones the bot isn't in, and list the private ones someone needs to invite it to.
+ */
 export async function matchSlackChannels(admin: SupabaseClient) {
   const [channels, { data: clients }] = await Promise.all([
     listChannels(),
@@ -66,10 +71,33 @@ export async function matchSlackChannels(admin: SupabaseClient) {
     if (!c.internal_slack_channel_id && internal.length === 1) patch.internal_slack_channel_id = internal[0].id;
     if (Object.keys(patch).length) {
       await admin.from("clients").update(patch).eq("id", c.id);
+      Object.assign(c, patch);
       matched++;
     }
   }
-  return matched;
+
+  const byId = new Map(channels.map((ch) => [ch.id, ch]));
+  const joined: string[] = [];
+  const needsInvite: string[] = [];
+  for (const c of clients ?? []) {
+    for (const id of [c.internal_slack_channel_id, c.slack_channel_id]) {
+      if (!id) continue;
+      const ch = byId.get(id);
+      if (ch?.is_member) continue;
+      if (ch && !ch.is_private) {
+        try {
+          await slack("conversations.join", { channel: id });
+          ch.is_member = true;
+          joined.push(`#${ch.name}`);
+          continue;
+        } catch {
+          // Missing channels:join, or a Slack Connect channel that doesn't allow it: falls through to "needs invite"
+        }
+      }
+      needsInvite.push(`${ch ? `#${ch.name}` : id} (${c.name})`);
+    }
+  }
+  return { matched, joined, needsInvite };
 }
 
 const names = new Map<string, string>();
@@ -119,7 +147,7 @@ async function readChannel(channel: string, since: Date, clientId: string, sourc
 }
 
 export async function collectSlack(admin: SupabaseClient, since: Date): Promise<CollectResult> {
-  const matched = await matchSlackChannels(admin);
+  const access = await matchSlackChannels(admin);
   const { data: clients } = await admin
     .from("clients")
     .select("id, slack_channel_id, internal_slack_channel_id")
@@ -139,5 +167,5 @@ export async function collectSlack(admin: SupabaseClient, since: Date): Promise<
       }
     }
   }
-  return { items, notes: { channelsMatched: matched, errors: errors.slice(0, 10) } };
+  return { items, notes: { channelsMatched: access.matched, joined: access.joined, needsInvite: access.needsInvite, errors: errors.slice(0, 10) } };
 }
