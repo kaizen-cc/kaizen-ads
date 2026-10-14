@@ -5,6 +5,7 @@ import { debugMeta, linkAdAccounts } from "@/lib/context/meta";
 import { inviteBotToClientChannels } from "@/lib/context/slack";
 import { reportError } from "@/lib/error-report";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
+import { refreshAllKpis } from "@/lib/kpi/sync";
 import { createClient } from "@/lib/supabase/server";
 
 // Briefings take a while when many clients have news
@@ -30,6 +31,7 @@ function nyNow() {
  * Whether a scheduled call should do its step now (Vercel Cron runs in UTC; this is New York time):
  * - slack, drive, gmail: every 30 minutes on weekdays 8am to 6pm, every 3 hours otherwise
  * - meta: every 2 hours (Meta's own numbers settle slowly)
+ * - kpi: every 2 hours (campaign numbers for the KPI dashboard; no AI, so it's cheap)
  * - brief: 12pm and 6pm
  */
 function due(step: string | null) {
@@ -37,6 +39,7 @@ function due(step: string | null) {
   const businessHours = !["Sat", "Sun"].includes(weekday) && hour >= 8 && hour < 18;
   if (step === "slack" || step === "drive" || step === "gmail") return businessHours || (hour % 3 === 0 && minute < 30);
   if (step === "meta") return hour % 2 === 0;
+  if (step === "kpi") return true; // every 2 hours (vercel.json)
   if (step === "brief") return [12, 18].includes(hour) && minute < 30;
   return false;
 }
@@ -84,6 +87,7 @@ export async function GET(request: Request) {
     const admin = createAdminClient();
     // Sprint packages past their end date switch off (cheap, so every run checks)
     await admin.rpc("expire_sprint_packages");
+    if (step === "kpi") return Response.json(await refreshAllKpis(admin));
     if (step === "brief") return Response.json(await refreshAll(admin, undefined, new URL(request.url).searchParams.get("rebuild") === "1"));
     if (step === "slack" || step === "drive" || step === "gmail" || step === "meta") return Response.json(await collectStep(admin, step as Step));
     return Response.json({ error: "Use ?step=slack, drive, gmail, brief or check" }, { status: 400 });

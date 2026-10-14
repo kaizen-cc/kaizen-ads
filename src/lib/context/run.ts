@@ -23,7 +23,7 @@ async function collect(admin: SupabaseClient, source: string, run: (since: Date)
   }
 }
 
-async function pool<T, R>(list: T[], size: number, fn: (x: T) => Promise<R>) {
+export async function pool<T, R>(list: T[], size: number, fn: (x: T) => Promise<R>) {
   const out: R[] = [];
   let next = 0;
   await Promise.all(

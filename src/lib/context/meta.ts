@@ -51,7 +51,7 @@ export type InsightRow = Record<string, unknown> & {
  * Meta's async report: submit, wait for it to finish in the background, then read every page.
  * This is how Meta wants heavy reports (reach, many days, ad level) requested.
  */
-async function asyncReport(act: string, params: Record<string, string>, timeoutMs = 240_000): Promise<InsightRow[]> {
+export async function asyncReport(act: string, params: Record<string, string>, timeoutMs = 240_000): Promise<InsightRow[]> {
   const { report_run_id: id } = await graph<{ report_run_id: string }>(`${act}/insights`, params, "POST");
   const until = Date.now() + timeoutMs;
   for (;;) {

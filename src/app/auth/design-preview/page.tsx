@@ -14,6 +14,8 @@ import { RequestForm } from "@/app/(team)/requests/new/request-form";
 import { sampleRequest } from "./sample-request";
 import { ClientView } from "@/app/(team)/clients/[slug]/client-view";
 import { sampleTickets } from "./sample-tickets";
+import { KpiBoard } from "@/app/(team)/kpis/kpi-board";
+import { sampleKpis } from "./sample-kpis";
 
 // Local-only design check with sample data (never served in production).
 // Open /auth/design-preview?view=exec | exec-empty | leader | buyer | creative | board | team | clients | client | request | request-off
@@ -173,6 +175,17 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
         </div>
         <TeamList people={people} canEdit meId="1" />
       </div>
+    );
+  } else if (view === "kpis") {
+    body = (
+      <KpiBoard
+        rows={sampleKpis}
+        buyers={[{ id: "Rahul", name: "Rahul" }, { id: "Dipesh", name: "Dipesh" }, { id: "Priscila", name: "Priscila" }, { id: "Mark", name: "Mark" }, { id: "Eduarda", name: "Eduarda" }]}
+        clients={sampleKpis.map((r) => ({ id: r.clientId, name: r.client }))}
+        me={{ id: "Santi", firstName: "Santi" }}
+        initialOwner="all"
+        lastSync={new Date(now.getTime() - 40 * 60_000).toISOString()}
+      />
     );
   } else if (view === "clients") {
     body = (
