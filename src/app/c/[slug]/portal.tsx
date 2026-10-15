@@ -411,41 +411,73 @@ const Chip = ({ choice }: { choice?: PieceDecision }) =>
 
 function Intro({ item, designs, ads, onStart }: { item: PortalItem; designs: number; ads: number; onStart: () => void }) {
   const s = item.summary;
+  const [about, setAbout] = useState(!item.revised);
+  // The pieces we changed for them, each with what they asked
+  const revisedDesigns = item.designs.filter((d) => !d.context && d.clientStatus === "changes");
+  const revisedAds = item.ads.map((a, i) => ({ ...a, i })).filter((a) => a.status === "changes");
+  const thumb = (d: PortalDesign) => d.files[0]?.thumbUrl ?? (d.files[0] && !isVideo(d.files[0]) ? d.files[0].url : null);
   return (
     <div className="grid min-h-0 flex-1 content-start gap-4 overflow-y-auto px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-2">
-      <div>
-        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-faint">{item.revised ? `Revised · round ${item.revised.round + 1}` : "Before you review"}</p>
-        <h3 className="text-[22px] font-semibold leading-tight">{item.title}</h3>
-      </div>
-      {item.revised && item.revised.changes.length > 0 && (
-        <div className="grid gap-2 rounded-[12px] border border-brand-text/30 bg-brand-soft/30 p-3.5">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-brand-text">What you asked · what we changed</p>
-          {item.revised.changes.map((c, i) => (
-            <div key={i} className="grid gap-0.5 text-[12.5px]">
-              <span className="text-muted">You asked: {c.asked}</span>
-              <span>✓ {c.changed}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      {s ? (
-        <div className="grid gap-3">
-          {(
-            [
-              ["Why we made this", s.why],
-              ["Who it's for", s.audience],
-              ["The strategy", s.strategy],
-            ] as const
-          ).map(([k, v]) => (
-            <div key={k} className="grid gap-1 rounded-[10px] border border-line bg-surface p-3.5">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-faint">{k}</p>
-              <p className="text-[13.5px] leading-relaxed">{v}</p>
-            </div>
-          ))}
+      {item.revised ? (
+        <div className="grid gap-3 rounded-[14px] bg-brand p-4 text-white">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-white/75">Revised · round {item.revised.round + 1}</p>
+          <h3 className="text-[21px] font-semibold leading-tight">We made the changes you asked for</h3>
+          <p className="text-[12.5px] text-white/85">{item.title}. Here&apos;s what we updated. You&apos;ll see each one next to your notes.</p>
+          <div className="grid gap-2">
+            {revisedDesigns.map((d) => (
+              <div key={d.id} className="flex items-center gap-2.5 rounded-[10px] bg-black/20 p-2">
+                <Thumb url={thumb(d)} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[12.5px] font-semibold">
+                    {item.format === "video" ? "Video" : "Design"} · {d.name}
+                  </span>
+                  <span className="line-clamp-2 text-[11.5px] text-white/80">You asked: {d.previous?.notes.map((n) => n.body).join(" · ") || "changes"}</span>
+                </span>
+              </div>
+            ))}
+            {revisedAds.map((a) => (
+              <div key={a.i} className="flex items-center gap-2.5 rounded-[10px] bg-black/20 p-2">
+                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-[6px] bg-black/25 text-[11px] font-semibold">Aa</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[12.5px] font-semibold">Copy {a.i + 1}</span>
+                  <span className="line-clamp-2 text-[11.5px] text-white/80">You asked: {a.note ?? "changes"}</span>
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       ) : (
-        <p className="rounded-[10px] border border-line bg-surface p-3.5 text-[13px] text-muted">Your Kaizen team made these ads for you. Look at each design and each copy, and approve it or tell us what to change.</p>
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-faint">Before you review</p>
+          <h3 className="text-[22px] font-semibold leading-tight">{item.title}</h3>
+        </div>
       )}
+
+      {item.revised && (
+        <button onClick={() => setAbout(!about)} className="flex items-center justify-between rounded-[10px] border border-line bg-surface px-3.5 py-2.5 text-left text-[12.5px]">
+          <span className="text-muted">About these ads: why, who it&apos;s for, the strategy</span>
+          <span className="text-faint">{about ? "▴" : "▾"}</span>
+        </button>
+      )}
+      {about &&
+        (s ? (
+          <div className="grid gap-3">
+            {(
+              [
+                ["Why we made this", s.why],
+                ["Who it's for", s.audience],
+                ["The strategy", s.strategy],
+              ] as const
+            ).map(([k, v]) => (
+              <div key={k} className="grid gap-1 rounded-[10px] border border-line bg-surface p-3.5">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-faint">{k}</p>
+                <p className="text-[13.5px] leading-relaxed">{v}</p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="rounded-[10px] border border-line bg-surface p-3.5 text-[13px] text-muted">Your Kaizen team made these ads for you. Look at each design and each copy, and approve it or tell us what to change.</p>
+        ))}
       {item.landingUrl && (
         <a href={item.landingUrl} target="_blank" rel="noreferrer" className="flex items-center justify-between gap-2 rounded-[10px] border border-line bg-surface px-3.5 py-2.5 text-[12.5px]">
           <span className="text-muted">Where the ads send people</span>
@@ -459,7 +491,7 @@ function Intro({ item, designs, ads, onStart }: { item: PortalItem; designs: num
           {ads ? `${ads} cop${ads === 1 ? "y" : "ies"}` : ""}, one at a time.
         </p>
         <button onClick={onStart} className="h-11 rounded-[5px] bg-brand text-sm font-medium text-white">
-          Start →
+          {item.revised ? "See the changes →" : "Start →"}
         </button>
       </div>
     </div>
@@ -543,30 +575,40 @@ function Toggle({ before, onChange, now, then }: { before: boolean; onChange: (b
   );
 }
 
-/** What they asked for last time, each ticked off. */
-function YouAsked({ notes, onShow }: { notes: { body: string; where?: string }[]; onShow?: () => void }) {
+/** What they asked for last time, and what we changed for each. */
+function YouAsked({ notes, onShow }: { notes: { body: string; where?: string; changed?: string | null }[]; onShow?: () => void }) {
   return (
-    <div className="grid max-h-[22vh] gap-1.5 overflow-y-auto rounded-[10px] border border-line bg-surface p-3">
+    <div className="grid max-h-[26vh] gap-2.5 overflow-y-auto rounded-[12px] border border-brand-text/30 bg-brand-soft/25 p-3">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-faint">You asked last time</p>
+        <p className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-brand-text">What you asked · what we changed</p>
         {onShow && (
-          <button onClick={onShow} className="text-[11px] text-muted underline-offset-2 hover:text-fg hover:underline">
-            See it on the old version
+          <button onClick={onShow} className="shrink-0 text-[11px] text-muted underline-offset-2 hover:text-fg hover:underline">
+            See the old version
           </button>
         )}
       </div>
       {notes.map((n, i) => (
-        <p key={i} className="flex items-start gap-2 text-[12.5px] leading-snug">
-          <span className="mt-px grid h-4 w-4 shrink-0 place-items-center rounded-full bg-ok text-[9px] font-bold text-white">✓</span>
-          <span className="min-w-0">
-            <span className="text-muted line-through decoration-faint/60">{n.body}</span>
-            {n.where && <span className="ml-1 text-[11px] text-faint">· {n.where}</span>}
-          </span>
-        </p>
+        <div key={i} className="grid gap-1 text-[12.5px] leading-snug">
+          <p className="text-muted">
+            You asked: {n.body}
+            {n.where && <span className="text-[11px] text-faint"> · {n.where}</span>}
+          </p>
+          <p className="flex items-start gap-2">
+            <span className="mt-px grid h-4 w-4 shrink-0 place-items-center rounded-full bg-ok text-[9px] font-bold text-white">✓</span>
+            <span>{n.changed ?? "Updated in this version."}</span>
+          </p>
+        </div>
       ))}
-      <p className="text-[11px] text-ok">Updated in this version. Take a look and approve, or tell us what&apos;s still off.</p>
     </div>
   );
+}
+
+/** The line from the "what we changed" summary that answers this note, if there is one. */
+function changedFor(item: PortalItem, note: string) {
+  const key = note.toLowerCase().replace(/^ad \d+:\s*/, "").slice(0, 28).trim();
+  if (!key) return null;
+  const hit = item.revised?.changes.find((c) => c.asked.toLowerCase().includes(key) || key.includes(c.asked.toLowerCase().slice(0, 28)));
+  return hit?.changed ?? null;
 }
 
 const whereOf = (n: PastNote) => (n.tMs != null ? `at ${clock(n.tMs)}` : n.w != null ? "the area you boxed" : n.x != null ? "the spot you marked" : undefined);
@@ -579,7 +621,7 @@ function DesignStep({ item, step, choice, onApprove, onChanges, onMark }: { item
   const prev = d.previous ?? null;
   const now = d.files[fi] ?? d.files[0];
   // The old version: the same size as the one showing now, if it had one
-  const old = prev ? (prev.files.find((f) => f.aspect === now.aspect) ?? prev.files[fi] ?? prev.files[0]) : null;
+  const old = prev?.files.length ? (prev.files.find((f) => f.aspect === now.aspect) ?? prev.files[fi] ?? prev.files[0]) : null;
   const file = before && old ? old : now;
   const pins = before && old ? prev!.notes.filter((n) => n.fileId === old.id && n.x != null && n.y != null) : [];
   const { bind, style, dx } = useSwipe(onApprove, onChanges, (cx, cy) => {
@@ -599,7 +641,7 @@ function DesignStep({ item, step, choice, onApprove, onChanges, onMark }: { item
           <p className="truncate text-[15px] font-semibold">{d.name}</p>
         </div>
         <span className="flex shrink-0 items-center gap-1.5">
-          {prev ? <Toggle before={before} onChange={setBefore} now="Revised" then="Before" /> : d.clientStatus === "changes" && <span className="rounded-full bg-brand-soft px-2 py-0.5 text-[11px] font-medium text-brand-text">Revised</span>}
+          {old ? <Toggle before={before} onChange={setBefore} now="Revised" then="Before" /> : d.clientStatus === "changes" && <span className="rounded-full bg-brand-soft px-2 py-0.5 text-[11px] font-medium text-brand-text">Revised</span>}
           {choice && <Chip choice={choice.decision} />}
         </span>
       </div>
@@ -623,7 +665,7 @@ function DesignStep({ item, step, choice, onApprove, onChanges, onMark }: { item
       </div>
       {prev && prev.notes.length > 0 ? (
         <div className="px-3 pt-2.5">
-          <YouAsked notes={prev.notes.map((n) => ({ body: n.body, where: whereOf(n) }))} onShow={before ? undefined : () => setBefore(true)} />
+          <YouAsked notes={prev.notes.map((n) => ({ body: n.body, where: whereOf(n), changed: changedFor(item, n.body) }))} onShow={!old || before ? undefined : () => setBefore(true)} />
         </div>
       ) : (
         !isVideo(file) && <p className="pt-2 text-center text-[11px] text-faint">Tap the design to comment on a spot</p>
@@ -676,7 +718,7 @@ function CopyStep({
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
           {asked && (
             <div className="mb-3.5">
-              <YouAsked notes={[{ body: asked }]} />
+              <YouAsked notes={[{ body: asked, changed: changedFor(item, asked) }]} />
             </div>
           )}
           {showBefore && <p className="mb-2 inline-block rounded-full bg-surface-3 px-2.5 py-0.5 text-[11px] text-muted">Before · what you commented on</p>}

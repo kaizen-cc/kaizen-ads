@@ -55,12 +55,14 @@ async function designsFor(db: SupabaseClient, requestIds: string[]) {
     .order("position");
   const rows = (data ?? []) as unknown as DesignRow[];
   const sorted = (files: FileRow[]) => files.slice().sort((a, b) => (a.card ?? 0) - (b.card ?? 0) || a.original_name.localeCompare(b.original_name));
-  // A revised design: the client asked for changes on an earlier version, and there's a newer one now
-  const revisedFrom = (d: DesignRow) => (d.client_status === "changes" && d.client_version && d.client_version < d.current_version ? d.client_version : null);
+  // A revised design: the client asked for changes on the version they reviewed (client_version)
+  const revisedFrom = (d: DesignRow) => (d.client_status === "changes" && d.client_version ? d.client_version : null);
+  // ...and the old files, when there's a newer version to compare with
+  const hasOlder = (d: DesignRow) => Boolean(revisedFrom(d) && revisedFrom(d)! < d.current_version);
   const current = rows.map((d) => ({
     d,
     files: sorted(d.design_versions.find((v) => v.version === d.current_version)?.design_files ?? []),
-    before: revisedFrom(d) ? sorted(d.design_versions.find((v) => v.version === revisedFrom(d))?.design_files ?? []) : [],
+    before: hasOlder(d) ? sorted(d.design_versions.find((v) => v.version === revisedFrom(d))?.design_files ?? []) : [],
   }));
   const paths = current.flatMap(({ files, before }) => [...files, ...before].flatMap((f) => [f.path, f.thumb_path].filter(Boolean) as string[]));
   // What the client said on the versions they reviewed

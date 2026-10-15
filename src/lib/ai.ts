@@ -703,7 +703,8 @@ Skip one-off fixes that only apply to this ad (move this text up, fix this typo)
 
 export const REVISION_SUMMARY_SCHEMA = obj({ items: { type: "array", items: obj({ asked: str, changed: str }) } });
 export const REVISION_SUMMARY_SYSTEM = `You write the "what we changed" note a client sees when their revised ad comes back to them. You get what they asked for and what the team and the AI changed.
-Return one item per thing they asked: asked = their request in a few words, in their terms; changed = what we did, plainly and specifically, in the agency's voice ("Moved the price above the fold", "Removed 'cheap' from every ad"). Warm, confident, no fluff, no emojis. If something they asked couldn't be done, say so honestly in changed.`;
+Return one item per thing they asked: asked = their request in a few words, in their terms; changed = what we did, plainly and specifically, in the agency's voice ("Moved the price above the fold", "Removed 'cheap' from every ad"). Warm, confident, no fluff, no emojis. If something they asked couldn't be done, say so honestly in changed.
+Only describe changes that are in what_changed. Never invent or assume a change (a new colour, a moved element) that isn't written there; if an ask has nothing in what_changed, say plainly that the updated version is ready for them to look at.`;
 
 // ─── What the client reads before reviewing ─────────────────────────────────
 

@@ -248,6 +248,11 @@ export async function sendOn(requestId: string, opts: { force?: boolean; note?: 
   if (!r) return { ok: false, error: "Ticket not found." };
   if (!MAKING.includes(r.stage)) return { ok: false, error: "This ticket isn't being made right now." };
   const next = stageInfo(r.stage).next!;
+  if (r.stage === "client_revision") {
+    const { data: unchanged } = await supabase.from("designs").select("name, current_version, client_version").eq("request_id", requestId).eq("client_status", "changes");
+    const stale = (unchanged ?? []).filter((d) => d.client_version != null && d.current_version <= d.client_version);
+    if (stale.length) return { ok: false, error: `The client asked for changes on ${stale.map((d) => d.name).join(", ")}. Replace ${stale.length === 1 ? "it" : "them"} with the revised version before it goes back.` };
+  }
   const state = await aiReview(requestId);
   if (!state.hasCreative) return { ok: false, error: "Upload the creative first." };
   const run = state.latest;
