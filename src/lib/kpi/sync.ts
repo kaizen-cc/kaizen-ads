@@ -65,14 +65,16 @@ type Target = {
   monthly_budget: number | null;
 };
 
-/** Every stored day of an account (paged: there can be thousands of campaign rows). */
-async function accountRows(admin: SupabaseClient, account: string) {
+export type CampaignRow = Parameters<typeof toDays>[0][number] & { campaign_id: string; impressions: number; clicks: number; updated_at: string };
+
+/** Every stored day of an account (paged: there can be thousands of campaign rows). Also used by Settings → Data. */
+export async function accountRows(admin: SupabaseClient, account: string): Promise<CampaignRow[]> {
   const since = ymd(new Date(Date.now() - BACKFILL_DAYS * 86_400_000));
-  const out: Parameters<typeof toDays>[0] = [];
+  const out: CampaignRow[] = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await admin
       .from("meta_campaign_daily")
-      .select("date, campaign_name, spend, actions, action_values, link_clicks, unique_link_clicks")
+      .select("date, campaign_id, campaign_name, spend, impressions, clicks, actions, action_values, link_clicks, unique_link_clicks, updated_at")
       .eq("ad_account_id", account)
       .gte("date", since)
       .order("date")

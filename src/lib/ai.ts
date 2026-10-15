@@ -3,13 +3,35 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { MAX_VARIATIONS, describeAllotment, toAllotment, type Allotment, type UsageRow } from "@/lib/allotment";
 import { describeMeta } from "@/lib/context/meta";
+import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 
 // Claude for the request form (suggestions, pre-submit review) and the twice-daily client briefings.
 // Every call is optional. Without ANTHROPIC_API_KEY the form still works, just without suggestions.
 
-// deep: the request review, where judgement matters. fast: creative suggestions someone is waiting on (strategy).
-// light: the twice-daily briefings, which gather and summarize, so the smallest model at low effort is plenty.
-const MODELS = { deep: "claude-opus-5-5", fast: "claude-sonnet-5-5", light: "claude-haiku-5-5" } as const;
+// Each AI function is an agent whose model, effort, instructions, knowledge and data sources execs set in
+// Settings → AI agents (table ai_agents). These defaults apply until the table says otherwise.
+export const MODEL_IDS = { opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5", haiku: "claude-haiku-5-5" } as const;
+export type ModelKey = keyof typeof MODEL_IDS;
+export type Effort = "low" | "medium" | "high";
+export type AgentKey = "suggest" | "review" | "briefing" | "copy";
+export const SOURCE_KEYS = ["meta", "briefing", "recent_messages", "memory", "angles", "recent_requests", "allotment"] as const;
+export type Sources = Partial<Record<(typeof SOURCE_KEYS)[number], boolean>>;
+
+export type AgentConfig = {
+  key: AgentKey;
+  model: ModelKey;
+  effort: Effort;
+  instructions: string;
+  sources: Sources;
+  knowledge: { kind: string; title: string; body: string }[];
+};
+
+const DEFAULTS: Record<AgentKey, Pick<AgentConfig, "model" | "effort">> = {
+  suggest: { model: "sonnet", effort: "low" }, // someone is waiting on it
+  review: { model: "opus", effort: "medium" }, // judgement matters
+  briefing: { model: "haiku", effort: "low" }, // gathering and summarizing
+  copy: { model: "sonnet", effort: "medium" },
+};
 
 export const aiEnabled = () => Boolean(process.env.ANTHROPIC_API_KEY);
 
@@ -20,36 +42,77 @@ const anthropic = () =>
     process.env.ANTHROPIC_WORKSPACE_ID ? { defaultHeaders: { "anthropic-workspace-id": process.env.ANTHROPIC_WORKSPACE_ID } } : {},
   ));
 
+// Settings are read with the server's rights and kept for a minute, so a change in Settings applies within a minute
+const cache = new Map<AgentKey, { at: number; config: AgentConfig }>();
+export const forgetAgent = (key?: AgentKey) => (key ? cache.delete(key) : cache.clear());
+
+export async function getAgent(key: AgentKey): Promise<AgentConfig> {
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < 60_000) return hit.config;
+  const config: AgentConfig = { key, ...DEFAULTS[key], instructions: "", sources: {}, knowledge: [] };
+  if (adminConfigured()) {
+    const admin = createAdminClient();
+    const [{ data: a }, { data: k }] = await Promise.all([
+      admin.from("ai_agents").select("model, effort, instructions, sources").eq("key", key).maybeSingle(),
+      admin.from("ai_knowledge").select("kind, title, body").eq("active", true).or(`agent_key.eq.${key},agent_key.is.null`).order("created_at"),
+    ]);
+    if (a) Object.assign(config, { model: a.model, effort: a.effort, instructions: a.instructions ?? "", sources: (a.sources ?? {}) as Sources });
+    config.knowledge = (k ?? []).map((x) => ({ kind: x.kind, title: x.title, body: x.body }));
+  }
+  cache.set(key, { at: Date.now(), config });
+  return config;
+}
+
+/** The agent's own instructions, skills, knowledge and examples, added after the shared system prompt. */
+export function withAgent(system: string, a: Pick<AgentConfig, "instructions" | "knowledge">) {
+  const parts = [system];
+  if (a.instructions.trim()) parts.push(`<agency_instructions>\n${a.instructions.trim()}\n</agency_instructions>`);
+  for (const kind of ["skill", "knowledge", "example"] as const) {
+    const items = a.knowledge.filter((k) => k.kind === kind);
+    if (items.length)
+      parts.push(`<${kind}s>\n${items.map((k) => `<${kind} title="${k.title.replace(/"/g, "'")}">\n${k.body.trim()}\n</${kind}>`).join("\n")}\n</${kind}s>`);
+  }
+  return parts.join("\n\n");
+}
+
+function logRun(row: Record<string, unknown>) {
+  if (!adminConfigured()) return;
+  void createAdminClient()
+    .from("ai_runs")
+    .insert(row)
+    .then(({ error }) => error && console.error("[ai] couldn't log run:", error.message));
+}
+
 export class AiUnavailable extends Error {}
 
-/** One structured call. Returns the parsed JSON or throws AiUnavailable with a message the UI can show. */
+/** One structured call by an agent. Returns the parsed JSON or throws AiUnavailable with a message the UI can show. */
 export async function askJson<T>({
+  agent,
   label,
   system,
   prompt,
   schema,
-  effort,
-  model = "deep",
 }: {
+  agent: AgentKey;
   label: string; // for the timing log
   system: string;
   prompt: string;
   schema: Record<string, unknown>;
-  effort: "low" | "medium" | "high";
-  model?: keyof typeof MODELS;
 }): Promise<T> {
   if (!aiEnabled()) throw new AiUnavailable("AI isn't connected yet.");
+  const cfg = await getAgent(agent);
   const started = Date.now();
   const request = {
-    model: MODELS[model],
+    model: MODEL_IDS[cfg.model],
     max_tokens: 16000,
-    system,
-    output_config: { effort, format: { type: "json_schema" as const, schema } },
+    system: withAgent(system, cfg),
+    output_config: { effort: cfg.effort, format: { type: "json_schema" as const, schema } },
     messages: [{ role: "user" as const, content: prompt }],
   };
+  const run = { agent_key: agent, label, model: cfg.model, effort: cfg.effort };
   try {
     let res;
-    if (model === "light") {
+    if (cfg.model === "haiku") {
       // Haiku has no server-side fallback model, so it's a plain request
       res = await anthropic().messages.create(request);
     } else
@@ -61,7 +124,10 @@ export async function askJson<T>({
         console.error("[ai] request with fallbacks rejected, retrying without:", e.message);
         res = await anthropic().messages.create(request);
       }
-    console.log(`[ai] ${label} · ${res.model} · ${Date.now() - started}ms · ${res.usage.input_tokens} in / ${res.usage.output_tokens} out`);
+    const ms = Date.now() - started;
+    const bad = res.stop_reason === "refusal" || res.stop_reason === "max_tokens";
+    console.log(`[ai] ${label} · ${res.model} · ${ms}ms · ${res.usage.input_tokens} in / ${res.usage.output_tokens} out`);
+    logRun({ ...run, ms, input_tokens: res.usage.input_tokens, output_tokens: res.usage.output_tokens, ok: !bad, error: bad ? res.stop_reason : null });
     if (res.stop_reason === "refusal") throw new AiUnavailable("The AI couldn't help with this one.");
     if (res.stop_reason === "max_tokens") throw new AiUnavailable("The AI ran out of room. Try again.");
     const text = res.content.find((b) => b.type === "text");
@@ -70,6 +136,7 @@ export async function askJson<T>({
   } catch (e) {
     if (e instanceof AiUnavailable) throw e;
     console.error("[ai] request failed:", e instanceof Error ? e.message : e);
+    logRun({ ...run, ms: Date.now() - started, ok: false, error: (e instanceof Error ? e.message : String(e)).slice(0, 300) });
     if (e instanceof Anthropic.RateLimitError) throw new AiUnavailable("The AI is busy. Try again in a moment.");
     if (e instanceof Anthropic.AuthenticationError) throw new AiUnavailable("The AI key isn't valid.");
     if (e instanceof Anthropic.BadRequestError) throw new AiUnavailable(`The AI rejected the request: ${apiMessage(e)}`);
@@ -159,9 +226,21 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
   };
 }
 
-export function contextBlock(ctx: ClientContext, request?: { images: number; videos: number }) {
+/** What an agent reads about a client. `sources` (from the agent's settings) can leave parts out; missing = included. */
+export function contextBlock(ctx: ClientContext, request?: { images: number; videos: number }, sources: Sources = {}) {
+  const on = (k: keyof Sources) => sources[k] !== false;
+  ctx = {
+    ...ctx,
+    meta: on("meta") ? ctx.meta : null,
+    digest: on("briefing") ? ctx.digest : null,
+    sinceBriefing: on("recent_messages") ? ctx.sinceBriefing : [],
+    memory: on("memory") ? ctx.memory : [],
+    angles: on("angles") ? ctx.angles : [],
+    recent: on("recent_requests") ? ctx.recent : [],
+  };
   const lines: string[] = [`<client name="${ctx.name}"${ctx.website ? ` website="${ctx.website}"` : ""}>`];
-  if (ctx.meta) lines.push("<meta_ads_performance>", ctx.meta, "</meta_ads_performance>");
+  if (!on("meta")) lines.push("(Ad performance isn't part of this task.)");
+  else if (ctx.meta) lines.push("<meta_ads_performance>", ctx.meta, "</meta_ads_performance>");
   else lines.push(ctx.adAccountConnected ? "Meta ad account linked, but no performance pulled yet. Don't invent metrics." : "No Meta ad account linked yet. Don't invent metrics.");
   if (ctx.digest) lines.push("<briefing from Slack, email and Drive>", describeDigest(ctx.digest), "</briefing>");
   if (ctx.sinceBriefing.length)
@@ -175,7 +254,7 @@ export function contextBlock(ctx: ClientContext, request?: { images: number; vid
   ${i.body.replace(/\s+/g, " ")}` : ""}`),
       "</newer_than_the_briefing>",
     );
-  lines.push("<allotment_this_month>", describeAllotment(ctx.allotment, request), "</allotment_this_month>");
+  if (on("allotment")) lines.push("<allotment_this_month>", describeAllotment(ctx.allotment, request), "</allotment_this_month>");
   lines.push("<client_memory>");
   if (ctx.memory.length === 0) lines.push("Nothing recorded yet.");
   for (const m of ctx.memory) lines.push(`- [${m.kind}${m.source !== "team" ? `, from ${m.source}` : ""}] ${m.body}`);

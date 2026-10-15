@@ -12,6 +12,8 @@ const NAV = [
   { href: "/clients", label: "Clients", icon: "M4 20V8l8-5 8 5v12M9 20v-6h6v6" },
   { href: "/team", label: "Team", icon: "M16 19v-1a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v1M10 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6m10 9v-1a4 4 0 0 0-3-3.9M15 4.1a3 3 0 0 1 0 5.8" },
 ];
+// Execs only: AI agents and the data under the hood
+const SETTINGS = { href: "/settings", label: "Settings", icon: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" };
 
 function Icon({ d }: { d: string }) {
   return (
@@ -21,8 +23,9 @@ function Icon({ d }: { d: string }) {
   );
 }
 
-export function TeamShell({ name, roles, children }: { name: string; roles: string; children: React.ReactNode }) {
+export function TeamShell({ name, roles, exec = false, children }: { name: string; roles: string; exec?: boolean; children: React.ReactNode }) {
   const path = usePathname();
+  const nav = exec ? [...NAV, SETTINGS] : NAV;
   const active = (href: string) => path === href || path.startsWith(`${href}/`);
 
   return (
@@ -33,7 +36,7 @@ export function TeamShell({ name, roles, children }: { name: string; roles: stri
           <span className="mt-1 font-display text-sm tracking-wide text-muted">ads</span>
         </Link>
         <nav className="grid gap-0.5 px-3" aria-label="Main">
-          {NAV.map((item) => {
+          {nav.map((item) => {
             const on = active(item.href);
             return (
               <Link
@@ -73,7 +76,7 @@ export function TeamShell({ name, roles, children }: { name: string; roles: stri
           <PersonAvatar name={name} size={30} />
         </div>
         <nav className="no-scrollbar flex gap-1 overflow-x-auto px-3 pb-2" aria-label="Main">
-          {NAV.map((item) => (
+          {nav.map((item) => (
             <Link
               key={item.href}
               href={item.href}

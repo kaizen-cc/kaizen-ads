@@ -9,6 +9,7 @@ import {
   SUGGESTIONS_SCHEMA,
   SUGGEST_FIELDS,
   askJson,
+  getAgent,
   cleanSuggestions,
   clientContext,
   contextBlock,
@@ -70,13 +71,13 @@ export async function suggestForRequest(draft: Draft): Promise<SuggestResult> {
   const ctx = await loadContext(draft.clientId);
   if (!ctx) return { ok: false, error: "Pick a client first." };
   try {
+    const { sources } = await getAgent("suggest");
     const raw = await askJson<Suggestions>({
+      agent: "suggest",
       label: "suggest",
-      model: "fast",
       system: AGENCY_SYSTEM,
-      effort: "low",
       schema: SUGGESTIONS_SCHEMA,
-      prompt: `${contextBlock(ctx)}
+      prompt: `${contextBlock(ctx, undefined, sources)}
 
 <draft_so_far>
 ${describeDraft(draft, ctx.name)}
@@ -96,12 +97,13 @@ export async function reviewRequest(draft: Draft): Promise<ReviewResult> {
   const ctx = await loadContext(draft.clientId);
   if (!ctx) return { ok: false, error: "Pick a client first." };
   try {
+    const { sources } = await getAgent("review");
     const review = await askJson<Review>({
+      agent: "review",
       label: "review",
       system: AGENCY_SYSTEM,
-      effort: "medium",
       schema: REVIEW_SCHEMA,
-      prompt: `${contextBlock(ctx, draws(draft.formats))}
+      prompt: `${contextBlock(ctx, draws(draft.formats), sources)}
 
 <request>
 ${describeDraft(draft, ctx.name)}

@@ -16,6 +16,7 @@ import { ClientView } from "@/app/(team)/clients/[slug]/client-view";
 import { sampleTickets } from "./sample-tickets";
 import { KpiBoard } from "@/app/(team)/kpis/kpi-board";
 import { sampleKpis } from "./sample-kpis";
+import { AgentsPanel } from "@/app/(team)/settings/agents";
 
 // Local-only design check with sample data (never served in production).
 // Open /auth/design-preview?view=exec | exec-empty | leader | buyer | creative | board | team | clients | client | request | request-off
@@ -174,6 +175,26 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
           <p className="mt-1 text-sm text-muted">One role per person. The role sets what they can see and do.</p>
         </div>
         <TeamList people={people} canEdit meId="1" />
+      </div>
+    );
+  } else if (view === "settings") {
+    const all = { meta: true, briefing: true, recent_messages: true, memory: true, angles: true, recent_requests: true, allotment: true };
+    const at = now.toISOString();
+    body = (
+      <div className="grid gap-7">
+        <h1 className="font-heading text-[32px]">Settings</h1>
+        <AgentsPanel
+          agents={[
+            { key: "suggest", label: "Brief strategist", description: "Suggests the angle, audience, hook, copy direction and format mix while someone fills in a creative request.", model: "sonnet", effort: "low", instructions: "Lead with the offer in the first 3 words. Always give one UGC-style option.", sources: all, live: true, updatedAt: at, updatedBy: "Santi Lozano", stats: { runs: 42, avgMs: 6400, inTokens: 512000, outTokens: 61000, failed: 0 }, recent: [{ at, label: "suggest", model: "sonnet", ms: 5900, tokens: "12,204 in · 1,402 out", ok: true, error: null }] },
+            { key: "review", label: "Request reviewer", description: "Checks a finished request before it goes to the creative team.", model: "opus", effort: "medium", instructions: "", sources: all, live: true, updatedAt: at, updatedBy: null, stats: { runs: 17, avgMs: 14100, inTokens: 240000, outTokens: 22000, failed: 1 }, recent: [] },
+            { key: "copy", label: "Copywriter", description: "Writes primary text, headlines and on-image copy for approved briefs. Not wired in yet: set it up here first.", model: "sonnet", effort: "medium", instructions: "", sources: { ...all, recent_messages: false, allotment: false }, live: false, updatedAt: at, updatedBy: null, stats: { runs: 0, avgMs: null, inTokens: 0, outTokens: 0, failed: 0 }, recent: [] },
+          ]}
+          knowledge={[
+            { id: "k1", agentKey: "suggest", kind: "skill", title: "Hook writing framework", body: "Pattern interrupt, then the offer, then proof.".repeat(20), fileName: null, active: true },
+            { id: "k2", agentKey: "suggest", kind: "example", title: "Nectr brief that won", body: "Angle: performance claims...".repeat(30), fileName: "nectr-brief.md", active: true },
+            { id: "k3", agentKey: null, kind: "knowledge", title: "Meta ad policy cheat sheet", body: "No personal attributes...".repeat(60), fileName: null, active: true },
+          ]}
+        />
       </div>
     );
   } else if (view === "kpis") {

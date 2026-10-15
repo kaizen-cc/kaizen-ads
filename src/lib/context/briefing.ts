@@ -6,6 +6,7 @@ import {
   SUGGESTIONS_SCHEMA,
   SUGGEST_FIELDS,
   askJson,
+  getAgent,
   clientContext,
   cleanSuggestions,
   contextBlock,
@@ -77,13 +78,13 @@ export async function refreshBriefing(admin: SupabaseClient, clientId: string, f
     )
     .join("\n");
 
+  const { sources } = await getAgent("briefing");
   const result = await askJson<{ digest: Digest; suggestions: Suggestions }>({
+    agent: "briefing", // model and effort come from Settings → AI agents (Haiku, low by default)
     label: `briefing ${ctx.name}`,
-    model: "light", // gathering and summarizing: Haiku at low effort
     system: AGENCY_SYSTEM,
-    effort: "low",
     schema: { type: "object", properties: { digest: DIGEST_SCHEMA, suggestions: SUGGESTIONS_SCHEMA }, required: ["digest", "suggestions"], additionalProperties: false },
-    prompt: `${contextBlock(ctx)}
+    prompt: `${contextBlock(ctx, undefined, sources)}
 
 <new_messages>
 ${activity || "Nothing new in Slack or email."}
