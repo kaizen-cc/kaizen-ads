@@ -12,7 +12,8 @@ Where things stand on 2026-10-15 and what comes next, in order. The target is th
 - **Settings**: AI agents as cards with a coach chat that edits their playbooks, raw data inspector, sync health. Playbooks imported from Kaizen's Claude projects.
 - **Video script writer** on video tickets, and the **Brand Bible builder** (web research) on every client page.
 - **Internal review**: comments pinned to a spot on an image or a moment in a video, per version; the Head of Creative approves or sends back; comments can be saved to client memory.
-- **Copy**: approving creative has the Copywriter draft Kaizen's set (3 short + 2 long) straight into Copy review, with live character counts, hard limits on approval, rewrite-with-a-note, reuse of approved copy per angle, and a learning loop from copy review's edits.
+- **Production QA**: nothing moves past production without a creative; tickets move only with the buttons in the ticket. On upload, the AI checks sizes and new vs variation against the ticket's counts (and the allotment). Before sending to review, the maker runs the **AI creative review** (real progress, notes per design and size), fixes and replaces, or sends anyway, which leads see.
+- **Copy**: approving creative has the Copywriter draft Kaizen's set (3 short + 2 long) to the approved creative, with real progress; the copywriter is assigned when it's ready. The **copy studio** has the creative, live counts (heads-ups, not gates), a feed preview and a chat with the Copywriter that can rewrite the set. Approval is blocked only by missing copy or anything against what the client told us. Edits and chat rules become client memory.
 
 ## Next: close the approval loop (Phase 1, before BFCM)
 
