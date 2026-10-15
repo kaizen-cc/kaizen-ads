@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { reviewCreative, ticketComments, type ReviewComment } from "./review-actions";
+import { clientRound, reviewCreative, ticketComments, type ReviewComment } from "./review-actions";
 import type { Ticket } from "./types";
 import { AiReviewNotes } from "./ai-review";
 
@@ -23,6 +23,7 @@ export function ReviewPanel({
   demo?: boolean;
 }) {
   const [comments, setComments] = useState<ReviewComment[] | null>(demo ? [] : null);
+  const [asked, setAsked] = useState<Awaited<ReturnType<typeof clientRound>>>(null);
   const [note, setNote] = useState("");
   const [busy, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -32,17 +33,19 @@ export function ReviewPanel({
     let live = true;
     const load = () => ticketComments(ticket.id).then((c) => live && setComments(c));
     load();
+    if (ticket.stage === "client_revision") clientRound(ticket.id).then((r) => live && setAsked(r));
     const on = (e: Event) => (e as CustomEvent).detail === ticket.id && load();
     window.addEventListener("kz:comments", on);
     return () => {
       live = false;
       window.removeEventListener("kz:comments", on);
     };
-  }, [ticket.id, demo]);
+  }, [ticket.id, ticket.stage, demo]);
 
-  const open = (comments ?? []).filter((c) => !c.resolved && c.round === "internal");
+  const clientChanges = ticket.stage === "client_revision";
+  const open = (comments ?? []).filter((c) => !c.resolved && c.round === (clientChanges ? "client" : "internal"));
   const reviewing = ticket.stage === "internal_review";
-  if (!reviewing && open.length === 0) return null;
+  if (!reviewing && open.length === 0 && !(clientChanges && asked)) return null;
 
   const decide = (decision: "approve" | "changes") =>
     start(async () => {
@@ -57,13 +60,29 @@ export function ReviewPanel({
   return (
     <section className={`grid gap-4 rounded-[12px] border p-5 ${reviewing ? "border-brand/30 bg-brand-soft/20" : "border-warn/30 bg-warn-soft/30"}`}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="font-heading text-[16px]">{reviewing ? "Creative review" : "Changes requested"}</h3>
+        <h3 className="font-heading text-[16px]">{reviewing ? "Creative review" : clientChanges ? "The client asked for changes" : "Changes requested"}</h3>
         <span className="text-xs text-muted">
           {open.length ? `${open.length} open comment${open.length === 1 ? "" : "s"}` : "No comments yet"} · open a design above to pin one
         </span>
       </div>
 
       {reviewing && <AiReviewNotes ticket={ticket} demo={demo} />}
+
+      {clientChanges && asked && (
+        <div className="grid gap-1.5 text-sm">
+          <p className="text-xs text-muted">
+            {asked.byName ?? "The client"} · round {asked.round} · {asked.targets.map((t) => (t === "design" ? "design" : "copy")).join(" and ")}
+            {asked.targets.includes("copy") ? " (the AI is revising the copy for copy review)" : ""}
+          </p>
+          {asked.designNote && <p className="rounded-[8px] bg-surface px-3 py-2 leading-relaxed">{asked.designNote}</p>}
+          {asked.copyNotes && (
+            <p className="rounded-[8px] bg-surface px-3 py-2 leading-relaxed">
+              <span className="mr-1.5 text-xs text-faint">Copy</span>
+              {asked.copyNotes}
+            </p>
+          )}
+        </div>
+      )}
 
       {open.length > 0 && (
         <ol className="grid gap-1.5">

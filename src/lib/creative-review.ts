@@ -3,6 +3,7 @@ import sharp from "sharp";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AiUnavailable, askJson, clientContext, contextBlock, CREATIVE_REVIEW_SYSTEM, DESIGN_NOTES_SCHEMA, getAgent, type CreativeNote, type CreativeNotes } from "@/lib/ai";
 import { aspectLabel } from "@/lib/uploads/media";
+import { clientAsks } from "@/lib/client-revision";
 
 // The AI's QA of a ticket's creative. The designer or editor runs it before sending the work to creative review, fixes
 // what it finds and runs it again; the Head of Creative sees the latest run. It reviews design by design (every size,
@@ -136,6 +137,8 @@ Brief:
 ${r.brief ?? "(no brief)"}
 </ticket>`;
     const context = contextBlock(ctx, undefined, sources);
+    // In a client revision: what the client asked for, so the check confirms each one was done
+    const asks = await clientAsks(admin, requestId);
 
     // 2. Review design by design, a few at a time
     const notes: CreativeNote[] = [];
@@ -173,6 +176,13 @@ You're reviewing D${d.position} "${d.name}" (${d.is_variation ? `a variation${pa
 The pictures, in order:
 ${lines.join("\n")}${d.files.length > MAX_PER_DESIGN ? `\n(${d.files.length - MAX_PER_DESIGN} more files of this design weren't included.)` : ""}
 
+${(() => {
+  const mine = asks.pins.filter((p) => p.designId === d.id).map((p) => `- ${p.text}`);
+  const overall = asks.round?.design_note ? [`- Overall: ${asks.round.design_note}`] : [];
+  return mine.length || overall.length
+    ? `\n<client_asked_for_changes>\nThe client reviewed the previous version and asked for these changes. For each one, add a note with area "Client ask": severity "good" if it's clearly done, "fix" if it isn't (or only partly), saying what you see.\n${[...mine, ...overall].join("\n")}\n</client_asked_for_changes>\n`
+    : "";
+})()}
 Review it and leave your notes.`,
           });
           const mine = out.notes.map((n) => ({ ...n, design: `D${d.position}` }));

@@ -19,7 +19,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
   const { data: client } = await supabase
     .from("clients")
     .select(
-      "id, name, slug, status, client_type, website, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, kaizen_id, auto_approve_opt_in, creative_package, creative_package_key, creative_package_until, creative_package_note, creative_packages(label)",
+      "id, name, slug, status, client_type, portal_live, portal_live_at, website, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, kaizen_id, auto_approve_opt_in, creative_package, creative_package_key, creative_package_until, creative_package_note, creative_packages(label)",
     )
     .eq("slug", slug)
     .maybeSingle();

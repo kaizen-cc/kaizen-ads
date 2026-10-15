@@ -7,7 +7,7 @@ import { AssignSelect, type Option } from "../assign-select";
 import type { Freshness } from "@/lib/dates";
 import { BriefingPanel } from "./briefing-panel";
 import { ConnectionStatus } from "./connection-status";
-import {
+import { setPortalLive,
   syncMetaNow,
   addAngle,
   addContact,
@@ -36,6 +36,8 @@ export type ClientViewProps = {
     slug: string;
     status: string;
     client_type: string;
+    portal_live?: boolean;
+    portal_live_at?: string | null;
     website: string | null;
     meta_ad_account_id: string | null;
     slack_channel_id: string | null;
@@ -321,6 +323,34 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                 </div>
               ))}
             </dl>
+          </Section>
+
+          <Section title="Client portal" description="Where the client swipes through their ads to approve or ask for changes.">
+            <div className={row}>
+              <span className="grid min-w-0 gap-0.5">
+                <span className="flex items-center gap-2">
+                  <span className={`h-2 w-2 rounded-full ${client.portal_live ? "bg-ok" : "bg-faint"}`} />
+                  {client.portal_live ? "Live" : "Off"}
+                </span>
+                <span className="text-xs text-faint">
+                  {client.portal_live
+                    ? `Contacts can sign in and get notified${client.portal_live_at ? ` · live since ${new Date(client.portal_live_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}.`
+                    : "Contacts can't sign in or see anything, and nothing is sent to them. The team can test it from the preview."}
+                </span>
+              </span>
+              <span className="flex shrink-0 items-center gap-2">
+                <a href={`/c/${client.slug}`} target="_blank" rel="noreferrer" className="rounded-full border border-line px-3 py-1 text-xs text-muted hover:border-faint hover:text-fg">
+                  Preview ↗
+                </a>
+                {can.admin &&
+                  (client.portal_live ? (
+                    <ActionButton action={setPortalLive.bind(null, client.id, client.slug, false)} label="Turn off" confirmText="Turn the portal off? Contacts lose access." />
+                  ) : (
+                    <ActionButton action={setPortalLive.bind(null, client.id, client.slug, true)} label="Go live" confirmText={`Go live with ${client.name}? Their contacts can sign in and see their ads.`} />
+                  ))}
+              </span>
+            </div>
+            {contacts.length === 0 && <p className="rounded-[8px] bg-warn-soft/50 px-3 py-2 text-xs text-warn">Needs a contact: add who approves ads before going live.</p>}
           </Section>
 
           <Section title="Client contacts" description="They get a magic link and can approve. The first approval counts.">

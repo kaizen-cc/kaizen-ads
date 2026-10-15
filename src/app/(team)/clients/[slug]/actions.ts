@@ -177,3 +177,18 @@ export async function syncMetaNow(clientId: string, slug: string): Promise<Actio
   }
   return done(slug);
 }
+
+/**
+ * Execs: switch a client's portal live (or off). Until it's live their contacts can't get a sign-in link, the portal
+ * shows them nothing, and nothing is sent to them.
+ */
+export async function setPortalLive(clientId: string, slug: string, live: boolean): Promise<ActionResult> {
+  const me = await requireStaff();
+  if (!me.isExec) return { ok: false, error: "Only an exec can switch a client's portal live." };
+  if (!adminConfigured()) return { ok: false, error: "Server key missing." };
+  const { error } = await createAdminClient()
+    .from("clients")
+    .update({ portal_live: live, portal_live_at: live ? new Date().toISOString() : null, portal_live_by: live ? me.id : null })
+    .eq("id", clientId);
+  return done(slug, error);
+}

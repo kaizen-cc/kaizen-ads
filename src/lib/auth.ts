@@ -64,7 +64,7 @@ export const getViewer = cache(async (): Promise<Viewer> => {
 
   const { data: contact } = await supabase
     .from("contacts")
-    .select("id, email, full_name, contact_clients(clients(id, name, slug, logo_path))")
+    .select("id, email, full_name, contact_clients(clients(id, name, slug, logo_path, portal_live))")
     .eq("auth_user_id", uid)
     .eq("is_active", true)
     .maybeSingle();
@@ -73,8 +73,9 @@ export const getViewer = cache(async (): Promise<Viewer> => {
 
   const brands = (contact.contact_clients ?? [])
     .flatMap((cc: { clients: unknown }) => {
-      const c = cc.clients as { id: string; name: string; slug: string; logo_path: string | null } | null;
-      return c ? [{ id: c.id, name: c.name, slug: c.slug, logoPath: c.logo_path }] : [];
+      const c = cc.clients as { id: string; name: string; slug: string; logo_path: string | null; portal_live: boolean } | null;
+      // A contact only has the brands Kaizen has switched live
+      return c?.portal_live ? [{ id: c.id, name: c.name, slug: c.slug, logoPath: c.logo_path }] : [];
     })
     .sort((a, b) => a.name.localeCompare(b.name));
 

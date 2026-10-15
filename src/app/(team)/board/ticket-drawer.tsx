@@ -136,10 +136,25 @@ function describe(e: TicketEvent) {
           );
         case "stronger_brief":
           return <>used the AI&apos;s stronger brief</>;
+        case "client_approved":
+          return (
+            <>
+              <span className="text-ok">client approved</span>
+              {e.data.by_name ? <span className="text-faint"> · {String(e.data.by_name)}</span> : null}
+            </>
+          );
+        case "client_revise":
+          return (
+            <>
+              <span className="text-warn">client asked for changes</span> to the {Array.isArray(e.data.targets) ? (e.data.targets as string[]).join(" and ") : "ad"}
+              {e.data.by_name ? <span className="text-faint"> · {String(e.data.by_name)}</span> : null}
+            </>
+          );
         default:
           return "reviewed it";
       }
     case "copy":
+      if (e.data.action === "revised_for_client") return e.data.scope === "rewrite" ? "rewrote the copy for the client's notes (AI)" : "amended the copy for the client's notes (AI)";
       return e.data.action === "drafted" ? "drafted the copy with the AI" : e.data.action === "redrafted" ? "rewrote the copy with the AI" : e.data.action === "reused" ? "reused approved copy" : "approved the copy";
   }
 }
@@ -169,6 +184,9 @@ const DEMO_COPY = {
     approvedAt: null,
     updatedAt: new Date().toISOString(),
     progress: {},
+    clientNotes: null,
+    changes: null,
+    scope: null,
     reusedFrom: null,
   },
 };
@@ -371,6 +389,16 @@ export function TicketDrawer({
                     </button>
                   )}
                 </div>
+              </div>
+            )}
+            {["ready_for_client", "client_review", "client_revision", "ready_for_launch"].includes(ticket.stage) && (
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-5 py-3 text-xs">
+                <span className="text-faint">
+                  {ticket.stage === "client_review" ? "Waiting on the client in their portal." : ticket.stage === "ready_for_client" ? "Sending puts it in the client's portal." : "The client's portal shows where this stands."}
+                </span>
+                <a href={`/c/${ticket.clientSlug}`} target="_blank" rel="noreferrer" className="rounded-full border border-line px-3 py-1 text-muted hover:border-faint hover:text-fg">
+                  Open the client&apos;s view ↗
+                </a>
               </div>
             )}
             {error && <p className="border-t border-line px-5 py-3 text-sm text-brand-text">{error}</p>}

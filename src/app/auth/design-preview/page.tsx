@@ -9,6 +9,8 @@ import { type ClientCard } from "@/app/(team)/clients/client-grid";
 import { ClientsBrowser } from "@/app/(team)/clients/clients-browser";
 import { greetingFor, todayLabel } from "@/lib/dates";
 import { BoardClient } from "@/app/(team)/board/board-client";
+import { Portal } from "@/app/c/[slug]/portal";
+import { samplePortal } from "./sample-portal";
 import { UploadProvider } from "@/components/upload-provider";
 import { RequestForm } from "@/app/(team)/requests/new/request-form";
 import { sampleRequest } from "./sample-request";
@@ -83,6 +85,24 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
 
   let body: React.ReactNode;
   let who = { name: "Santi Lozano", role: "Executive" };
+
+  // The client portal stands on its own (no team shell)
+  if (view === "portal") {
+    return (
+      <div className="min-h-screen">
+        <header className="sticky top-0 z-20 border-b border-line bg-bg/90 backdrop-blur">
+          <div className="mx-auto flex max-w-md items-center justify-between gap-3 px-4 py-2.5">
+            <span className="flex items-center gap-2 text-sm font-medium">
+              <span className="grid h-7 w-7 place-items-center rounded-full bg-brand text-[11px] font-semibold text-white">CP</span>
+              Crust Pizza Co. <span className="text-[10px] text-faint">▼</span>
+            </span>
+            <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[11px] text-muted">Kaizen</span>
+          </div>
+        </header>
+        <Portal slug="crust-pizza-co" clientName="Crust Pizza Co." firstName="Maria" data={samplePortal} testing live={false} demo />
+      </div>
+    );
+  }
 
   if (view === "client" || view === "client-none") {
     body = (

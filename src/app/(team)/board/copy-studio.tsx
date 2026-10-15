@@ -436,6 +436,31 @@ export function CopyStudio({
               </div>
             ) : ad ? (
               <div className="grid gap-5">
+                {pick === 0 && set.clientNotes && (
+                  <div className="grid gap-2 rounded-[12px] border border-brand-text/30 bg-brand-soft/30 px-4 py-3 text-sm">
+                    <p className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-brand-soft px-2 py-0.5 text-[11px] font-medium text-brand-text">Revised for the client</span>
+                      <span className="text-xs text-muted">{set.scope === "rewrite" ? "They rejected the set, so it was rewritten" : "Amended: only what they asked was changed"}</span>
+                    </p>
+                    <p className="leading-relaxed">
+                      <span className="text-muted">They asked: </span>
+                      {set.clientNotes}
+                    </p>
+                    {set.changes && set.changes.length > 0 && (
+                      <ul className="grid gap-1 text-[13px] text-muted">
+                        {set.changes.map((c, i) => (
+                          <li key={i}>
+                            <button onClick={() => setPick(Math.max(0, c.ad - 1))} className="mr-1.5 text-faint hover:text-fg">
+                              Ad {c.ad}
+                            </button>
+                            {c.what}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <p className="text-[11px] text-faint">Check each change matches what they asked, then approve. It goes back to them tagged as revised.</p>
+                  </div>
+                )}
                 {pick === 0 && set.notes && (
                   <p className="rounded-[12px] border border-line bg-surface px-4 py-3 text-sm leading-relaxed text-muted">
                     <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.12em] text-faint">From the Copywriter</span>

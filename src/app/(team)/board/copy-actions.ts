@@ -22,6 +22,9 @@ export type CopySet = {
   updatedAt: string;
   reusedFrom: string | null;
   progress: { written?: number; total?: number; label?: string };
+  clientNotes: string | null; // the client's copy notes this revision answers
+  changes: { ad: number; what: string }[] | null;
+  scope: "amend" | "rewrite" | null;
 };
 export type CopyState = { set: CopySet | null; reusable: { id: string; title: string; approvedAt: string | null; ads: Ad[] } | null };
 
@@ -38,6 +41,9 @@ const toSet = (s: Record<string, unknown>): CopySet => ({
   updatedAt: s.updated_at as string,
   reusedFrom: (s.reused_from as string | null) ?? null,
   progress: (s.progress ?? {}) as CopySet["progress"],
+  clientNotes: (s.client_notes as string | null) ?? null,
+  changes: (s.changes as CopySet["changes"]) ?? null,
+  scope: (s.scope as CopySet["scope"]) ?? null,
 });
 
 /** The ticket's copy set, and an approved set for the same angle that could be reused instead of re-asking. */

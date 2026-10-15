@@ -1,6 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
+import { summarizeRevision } from "@/lib/client-revision";
+import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
 import type { Priority, Stage } from "@/lib/stages";
 import { createClient } from "@/lib/supabase/server";
@@ -17,6 +20,16 @@ export async function moveTicket(id: string, stage: Stage, note?: string): Promi
   await requireStaff();
   const supabase = await createClient();
   const { error } = await supabase.rpc("move_request", { p_request: id, p_stage: stage, p_note: note ?? null });
+  // A revised ad going back to the client: write what they asked and what changed, for the "revised" tag
+  if (!error && stage === "client_review" && adminConfigured()) {
+    after(async () => {
+      try {
+        await summarizeRevision(createAdminClient(), id);
+      } catch (e) {
+        console.error("[portal] revision summary failed:", e instanceof Error ? e.message : e);
+      }
+    });
+  }
   return done(error);
 }
 

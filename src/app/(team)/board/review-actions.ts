@@ -32,7 +32,7 @@ export async function ticketComments(requestId: string): Promise<ReviewComment[]
   const supabase = await createClient();
   const { data } = await supabase
     .from("review_comments")
-    .select("id, design_id, version, file_id, x, y, t_ms, body, round, remembered, resolved_at, created_at, profiles!review_comments_author_id_fkey(full_name)")
+    .select("id, design_id, version, file_id, x, y, t_ms, body, round, remembered, resolved_at, created_at, author_name, profiles!review_comments_author_id_fkey(full_name)")
     .eq("request_id", requestId)
     .order("created_at");
   return (data ?? []).map((c) => ({
@@ -45,7 +45,7 @@ export async function ticketComments(requestId: string): Promise<ReviewComment[]
     tMs: c.t_ms,
     body: c.body,
     round: c.round as "internal" | "client",
-    author: (c.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
+    author: c.author_name ?? (c.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
     remembered: c.remembered,
     resolved: Boolean(c.resolved_at),
     at: c.created_at,
@@ -268,4 +268,20 @@ export async function sendOn(requestId: string, opts: { force?: boolean; note?: 
   }
   revalidatePath("/board");
   return { ok: true };
+}
+
+/** The client's latest open request for changes on a ticket (their overall notes; the pins are comments). */
+export async function clientRound(requestId: string): Promise<{ round: number; byName: string | null; at: string; targets: string[]; designNote: string | null; copyNotes: string | null } | null> {
+  await requireStaff();
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("client_rounds")
+    .select("round, by_name, created_at, targets, design_note, copy_notes")
+    .eq("request_id", requestId)
+    .eq("decision", "revise")
+    .is("sent_back_at", null)
+    .order("round", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data ? { round: data.round, byName: data.by_name, at: data.created_at, targets: data.targets, designNote: data.design_note, copyNotes: data.copy_notes } : null;
 }

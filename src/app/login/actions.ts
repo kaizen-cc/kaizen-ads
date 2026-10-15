@@ -24,13 +24,15 @@ export async function requestMagicLink(rawEmail: string, rawNext?: string): Prom
   const admin = createAdminClient();
   const { data: contact } = await admin
     .from("contacts")
-    .select("id, full_name, is_active, contact_clients(clients(name, slug, status))")
+    .select("id, full_name, is_active, contact_clients(clients(name, slug, status, portal_live))")
     .eq("email", email)
     .maybeSingle();
 
+  // Only brands Kaizen has switched live: until then their contacts get no link (and the page still says "check
+  // your inbox", so nothing reveals the portal exists)
   const brands = (contact?.contact_clients ?? [])
-    .map((cc: { clients: unknown }) => cc.clients as { name: string; slug: string; status: string } | null)
-    .filter((c): c is { name: string; slug: string; status: string } => Boolean(c) && c!.status !== "offboarded");
+    .map((cc: { clients: unknown }) => cc.clients as { name: string; slug: string; status: string; portal_live: boolean } | null)
+    .filter((c): c is { name: string; slug: string; status: string; portal_live: boolean } => Boolean(c) && c!.status !== "offboarded" && c!.portal_live);
 
   if (!contact?.is_active || brands.length === 0) {
     console.info("[magic-link] no active contact for requested email");

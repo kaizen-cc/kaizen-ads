@@ -678,3 +678,29 @@ export const COPY_GUARD_SCHEMA = obj({
 export const COPY_GUARD_SYSTEM = `You check ad copy right before it's approved, against what the client has explicitly told the agency: the client memory items marked "avoid" (things the client asked us not to do, or that went wrong before) and any hard rules in their brand bible.
 Flag only clear contradictions that would embarrass the agency in front of the client: a word, claim, offer or phrasing they told us not to use, said anyway. Not style preferences, not things that are merely close, not rules you infer yourself. When in doubt, don't flag.
 For each: ad (1-5), field (primaryText, headline, linkDescription or cta), quote (the exact words in the copy), rule (the client's rule it breaks, in a few words). Usually there are none.`;
+
+// ─── Client revisions ───────────────────────────────────────────────────────
+
+export type CopyAmend = { scope: "amend" | "rewrite"; ads: { kind: "short" | "long"; formula: string; angle: string; primaryText: string; headline: string; linkDescription: string; cta: string }[]; changes: { ad: number; what: string }[]; notes: string };
+export const COPY_AMEND_SCHEMA = obj({
+  scope: { type: "string", enum: ["amend", "rewrite"] },
+  ads: {
+    type: "array",
+    items: obj({ kind: { type: "string", enum: ["short", "long"] }, formula: str, angle: str, primaryText: str, headline: str, linkDescription: str, cta: str }),
+  },
+  changes: { type: "array", items: obj({ ad: { type: "integer" }, what: str }) },
+  notes: str,
+});
+export const COPY_AMEND_SYSTEM = `You are Kaizen Marketing's AI copywriter. The client reviewed the copy set and asked for changes. Make exactly the changes they asked for, and nothing else.
+- Amend by default: keep every ad as it is except where the client's notes apply. If they say don't use a word, remove it everywhere and fix the sentence around it; if they ask for emojis, add them where they fit; if they name one ad or one headline, change only that.
+- Rewrite only when the client clearly rejects the copy as a whole ("we don't like this copy", "start over", "this isn't our voice at all"). Then scope is "rewrite" and you write a new set to the same standard (3 short, 2 long, same order).
+- Keep Kaizen's standard: short-form primary text up to 125 characters before "See more", long-form 300-800 words, headline up to 40 characters, link description up to 30, an official Meta CTA.
+- Return all 5 ads, changed or not, in the same order. changes: one line per change, saying which ad and what you changed and why ("Ad 2 headline: removed 'cheap', the client doesn't use it"). notes: one or two sentences for copy review.`;
+
+export const CLIENT_LESSONS_SYSTEM = `You help Kaizen Marketing learn from a client's revision notes on their ads. Find what the notes say about how this client's ads should be made from now on: words, claims, offers, tone, visuals, logos, colours, layouts, music or pacing they want or don't want.
+Each lesson is one plain sentence anyone at Kaizen could follow next time ("Never show the product next to competitors", "They want emojis in short-form copy"). kind: prefer or avoid.
+Skip one-off fixes that only apply to this ad (move this text up, fix this typo) and anything already in the client memory. Return 0 to 3 lessons; usually 0 or 1.`;
+
+export const REVISION_SUMMARY_SCHEMA = obj({ items: { type: "array", items: obj({ asked: str, changed: str }) } });
+export const REVISION_SUMMARY_SYSTEM = `You write the "what we changed" note a client sees when their revised ad comes back to them. You get what they asked for and what the team and the AI changed.
+Return one item per thing they asked: asked = their request in a few words, in their terms; changed = what we did, plainly and specifically, in the agency's voice ("Moved the price above the fold", "Removed 'cheap' from every ad"). Warm, confident, no fluff, no emojis. If something they asked couldn't be done, say so honestly in changed.`;
