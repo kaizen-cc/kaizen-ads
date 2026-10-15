@@ -11,14 +11,14 @@ Where things stand on 2026-10-15 and what comes next, in order. The target is th
 - **KPI dashboard**: Meta targets, moving averages, MoM/QoQ, budget pacing, auto-linking of shared ad accounts.
 - **Settings**: AI agents as cards with a coach chat that edits their playbooks, raw data inspector, sync health. Playbooks imported from Kaizen's Claude projects.
 - **Video script writer** on video tickets, and the **Brand Bible builder** (web research) on every client page.
+- **Internal review**: comments pinned to a spot on an image or a moment in a video, per version; the Head of Creative approves or sends back; comments can be saved to client memory.
+- **Copy**: approving creative has the Copywriter draft Kaizen's set (3 short + 2 long) straight into Copy review, with live character counts, hard limits on approval, rewrite-with-a-note, reuse of approved copy per angle, and a learning loop from copy review's edits.
 
 ## Next: close the approval loop (Phase 1, before BFCM)
 
-1. **Internal review stage**: Jesus (or an exec) approves or sends back a deliverable on the ticket, with comments pinned to a spot on the image or a timestamp in the video.
-2. **Copy**: the **Copywriter agent** (playbook from Kyle's project) drafts Kyle's set per angle, 3 short + 2 long with headline, link description and CTA button. It goes straight to Camille, who sees a live character count on every field, edits and passes it on. Her edits are saved as examples the agent learns from.
-3. **Client portal**: the swipe-to-approve experience from the Phase 0 mockups. It shows a full ad preview, with creative and copy approved separately and revision notes captured. The first approval counts.
-4. **Notifications and chasing**: Slack posts to each client's channel, plus 24h and 48h reminders in business time. After 48h the item goes to Jorgi's queue; auto-approval happens only for clients who opted in.
-5. **Revisions loop**: client feedback goes back to the maker as a new version. Every revision note lands in client memory automatically.
+1. **Client portal**: the swipe-to-approve experience from the Phase 0 mockups. It shows a full ad preview, with creative and copy approved separately and revision notes captured. The first approval counts.
+2. **Notifications and chasing**: Slack posts to each client's channel, plus 24h and 48h reminders in business time. After 48h the item goes to customer success's queue; auto-approval happens only for clients who opted in.
+3. **Revisions loop**: client feedback goes back to the maker as a new version. Every revision note lands in client memory automatically.
 
 ## Then: launch and learn (Phase 2)
 

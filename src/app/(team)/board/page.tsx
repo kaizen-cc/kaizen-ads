@@ -1,4 +1,4 @@
-import { requireStaff } from "@/lib/auth";
+import { isExecOrLead, requireStaff } from "@/lib/auth";
 import { daysAgoIso } from "@/lib/dates";
 import { roleLabel, type TeamRole } from "@/lib/roles";
 import { createClient } from "@/lib/supabase/server";
@@ -9,7 +9,7 @@ import { toTicket, type BoardRow } from "./to-ticket";
 export const maxDuration = 120;
 
 export default async function Board() {
-  await requireStaff();
+  const me = await requireStaff();
   const supabase = await createClient();
   const twoWeeksAgo = daysAgoIso(14);
 
@@ -26,6 +26,7 @@ export default async function Board() {
       clients={clients ?? []}
       people={(people ?? []).map((p) => ({ id: p.id, name: p.full_name, role: roleLabel(p.role as TeamRole) }))}
       canRequest
+      can={{ review: isExecOrLead(me), approveCopy: isExecOrLead(me) || me.isCopywriter }}
     />
   );
 }

@@ -102,5 +102,5 @@ export async function requireContact() {
   return viewer;
 }
 
-/** Execs, leads, Jorgi and Camille work across every client. */
+/** Execs, leads, customer success and the copywriter work across every client. */
 export const seesAllClients = (s: Staff) => s.isExec || s.isLead || s.isCoordinator || s.isCopywriter;

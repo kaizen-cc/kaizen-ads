@@ -33,7 +33,7 @@ const fmt = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "Ameri
 
 /**
  * The client's Brand Bible: built by the Brand bible builder (web research + everything Kaizen knows), reviewed
- * by Jesus, then its "Read this first" feeds every agent working on this client.
+ * by the Head of Creative, then its "Read this first" feeds every agent working on this client.
  */
 export function BrandBiblePanel({ clientId, slug, bible, canBuild }: { clientId: string; slug: string; bible: BrandBible | null; canBuild: boolean }) {
   const router = useRouter();
@@ -77,7 +77,7 @@ export function BrandBiblePanel({ clientId, slug, bible, canBuild }: { clientId:
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="font-heading text-[17px]">Brand Bible</h2>
             {bible?.status === "reviewed" && <span className="rounded-full bg-ok-soft px-2.5 py-0.5 text-[11px] text-ok">Reviewed · every agent reads it</span>}
-            {bible?.status === "draft" && <span className="rounded-full bg-warn-soft px-2.5 py-0.5 text-[11px] text-warn">Draft · waiting for Jesus</span>}
+            {bible?.status === "draft" && <span className="rounded-full bg-warn-soft px-2.5 py-0.5 text-[11px] text-warn">Draft · waiting for the Head of Creative</span>}
             {has && <span className="text-[11px] text-faint">{bible.version}{bible.generatedAt && ` · ${fmt(bible.generatedAt)}`}</span>}
           </div>
           <p className="mt-1 text-sm leading-relaxed text-muted">

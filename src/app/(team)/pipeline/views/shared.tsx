@@ -11,8 +11,8 @@ export const SOFT: Record<Tone, string> = { ok: "bg-ok-soft text-ok", warn: "bg-
 export const PHASES = [
   { key: "brief", name: "Brief", owner: "Requester → creative" },
   { key: "make", name: "Make", owner: "Designers & editors" },
-  { key: "review", name: "Review", owner: "Jesus · Camille" },
-  { key: "client", name: "Client", owner: "Jorgi · clients" },
+  { key: "review", name: "Review", owner: "Head of Creative · Copywriter" },
+  { key: "client", name: "Client", owner: "Customer success · clients" },
   { key: "launch", name: "Launch", owner: "Media buyers" },
 ] as const;
 export type PhaseKey = (typeof PHASES)[number]["key"];

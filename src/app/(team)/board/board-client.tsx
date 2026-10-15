@@ -30,12 +30,15 @@ export function BoardClient({
   clients,
   people,
   canRequest,
+  can = { review: false, approveCopy: false },
   demo = false,
 }: {
   tickets: Ticket[];
   clients: ClientOption[];
   people: Person[];
   canRequest: boolean;
+  /** review: the Head of Creative or an exec (approve / send back creative). approveCopy: the copywriter or a lead. */
+  can?: { review: boolean; approveCopy: boolean };
   demo?: boolean;
 }) {
   const router = useRouter();
@@ -305,7 +308,7 @@ export function BoardClient({
         </div>
       )}
 
-      {open && <TicketDrawer key={open.id} ticket={open} people={people} onClose={() => setParam({ t: null })} onOptimisticMove={optimisticMove} demo={demo} />}
+      {open && <TicketDrawer key={open.id} ticket={open} people={people} can={can} onClose={() => setParam({ t: null })} onOptimisticMove={optimisticMove} demo={demo} />}
 
       {toast && (
         <div role="status" className="fixed bottom-6 left-1/2 z-[60] -translate-x-1/2 rounded-full bg-fg px-4 py-2 text-sm text-bg shadow-2xl">

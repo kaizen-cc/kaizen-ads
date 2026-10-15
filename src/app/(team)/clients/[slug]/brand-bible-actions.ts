@@ -113,7 +113,7 @@ function bumpVersion(v: string) {
   return m ? `v${m[1]}.${Number(m[2]) + 1}` : "v1.1";
 }
 
-/** Jesus (or an exec) reviewed it: from now on its "Read this first" feeds the brief strategist, copywriter and reviewer. */
+/** The Head of Creative (or an exec) reviewed it: from now on its "Read this first" feeds the brief strategist, copywriter and reviewer. */
 export async function markBrandBibleReviewed(clientId: string, slug: string): Promise<ActionResult> {
   const me = await requireStaff();
   if (!isExecOrLead(me)) return { ok: false, error: "Only the head of creative or an exec can mark it reviewed." };

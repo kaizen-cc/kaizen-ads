@@ -163,6 +163,7 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
         clients={names.map((name) => ({ id: name, name, slug: sampleTickets.find((x) => x.clientName === name)!.clientSlug }))}
         people={people.map((p) => ({ id: p.fullName, name: p.fullName, role: p.role }))}
         canRequest
+        can={{ review: true, approveCopy: true }}
         demo
       />
       </UploadProvider>

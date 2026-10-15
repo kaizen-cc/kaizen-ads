@@ -27,7 +27,7 @@ const COPY: Record<WorkVariant, { action: string; fourth: string; fourthHint: st
   creative: {
     action: "Upload creative",
     fourth: "Revisions",
-    fourthHint: "Changes asked by Jesus or clients",
+    fourthHint: "Changes asked in review or by clients",
     queueTitle: "Your queue",
     empty: { title: "You're clear", body: "New briefs and revisions land here with the client, the brief and when it's due." },
   },

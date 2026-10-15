@@ -2,14 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useUploads } from "@/components/upload-provider";
-import { FORMAT_LABEL } from "@/lib/stages";
 import { aspectLabel, aspectOf, filesFromDrop, groupFiles, isMedia, probe, safeName, type Picked, type StagedDesign, type StagedFile } from "@/lib/uploads/media";
-import { startDesigns, startVersion, ticketDesigns, type Design, type DesignFile } from "./design-actions";
+import { startDesigns, startVersion, ticketDesigns, type Design } from "./design-actions";
 import { FormatIcon } from "./ticket-card";
 import type { Ticket } from "./types";
+import { ReviewViewer } from "./review-viewer";
+import { ticketComments, type ReviewComment } from "./review-actions";
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-const fmtWhen = (iso: string) => new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }).format(new Date(iso));
 
 /** Read and preview dropped files before anything uploads. */
 async function stage(picked: Picked[]): Promise<StagedFile[]> {
@@ -40,6 +40,7 @@ export function Deliverables({ ticket, demoDesigns }: { ticket: Ticket; demoDesi
   const [over, setOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [viewing, setViewing] = useState<{ design: Design; version: number } | null>(null);
+  const [comments, setComments] = useState<ReviewComment[]>([]);
   const [replacing, setReplacing] = useState<{ design: Design; files: StagedFile[]; note: string } | null>(null);
   const filesInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
@@ -56,6 +57,20 @@ export function Deliverables({ ticket, demoDesigns }: { ticket: Ticket; demoDesi
       live = false;
     };
   }, [ticket.id, finished, demo]);
+
+  // Review comments (pins), refreshed whenever the viewer or the review panel changes them
+  useEffect(() => {
+    if (demo) return;
+    let live = true;
+    const load = () => ticketComments(ticket.id).then((c) => live && setComments(c));
+    load();
+    const on = (e: Event) => (e as CustomEvent).detail === ticket.id && load();
+    window.addEventListener("kz:comments", on);
+    return () => {
+      live = false;
+      window.removeEventListener("kz:comments", on);
+    };
+  }, [ticket.id, demo]);
 
   // Folder inputs need a non-standard attribute
   useEffect(() => {
@@ -326,6 +341,14 @@ export function Deliverables({ ticket, demoDesigns }: { ticket: Ticket; demoDesi
             return (
               <li key={d.id} className="group grid gap-2 rounded-[10px] border border-line bg-surface p-2.5 transition-colors hover:border-faint">
                 <button onClick={() => setViewing({ design: d, version: d.currentVersion })} className="relative block overflow-hidden rounded-[7px]" aria-label={`Open ${d.name}`}>
+                  {(() => {
+                    const open = comments.filter((c) => c.designId === d.id && c.version === d.currentVersion && !c.resolved).length;
+                    return open ? (
+                      <span className="absolute right-1 top-1 z-10 grid h-5 min-w-5 place-items-center rounded-full bg-brand px-1.5 text-[10px] font-semibold text-white shadow" title={`${open} open comment${open === 1 ? "" : "s"}`}>
+                        {open}
+                      </span>
+                    ) : null;
+                  })()}
                   <Thumb src={cover?.thumbUrl ?? null} format={ticket.format} video={cover?.mime.startsWith("video/")} className="aspect-[4/5] w-full" />
                   <span className="absolute left-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur">D{d.position}</span>
                   {d.currentVersion > 1 && <span className="absolute right-2 top-2 rounded-full bg-brand px-2 py-0.5 text-[11px] font-medium text-white">v{d.currentVersion}</span>}
@@ -353,7 +376,19 @@ export function Deliverables({ ticket, demoDesigns }: { ticket: Ticket; demoDesi
         </ul>
       ) : null}
 
-      {viewing && <Viewer design={viewing.design} version={viewing.version} format={ticket.format} onVersion={(n) => setViewing({ ...viewing, version: n })} onClose={() => setViewing(null)} />}
+      {viewing && (
+        <ReviewViewer
+          requestId={ticket.id}
+          design={viewing.design}
+          version={viewing.version}
+          format={ticket.format}
+          comments={comments}
+          onComments={setComments}
+          onVersion={(n) => setViewing({ ...viewing, version: n })}
+          onClose={() => setViewing(null)}
+          demo={demo}
+        />
+      )}
     </section>
   );
 }
@@ -371,86 +406,5 @@ function Thumb({ src, format, video = false, className = "" }: { src: string | n
         <span className="absolute bottom-1.5 right-1.5 grid h-6 w-6 place-items-center rounded-full bg-black/60 text-[10px] text-white">▶</span>
       )}
     </span>
-  );
-}
-
-function Viewer({ design, version, format, onVersion, onClose }: { design: Design; version: number; format: Ticket["format"]; onVersion: (n: number) => void; onClose: () => void }) {
-  const v = design.versions.find((x) => x.version === version) ?? design.versions[0];
-  const [fileId, setFileId] = useState<string | null>(null);
-  const file: DesignFile | undefined = v?.files.find((f) => f.id === fileId) ?? v?.files.find((f) => f.aspect === "4x5") ?? v?.files[0];
-
-  useEffect(() => {
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", esc);
-    return () => window.removeEventListener("keydown", esc);
-  }, [onClose]);
-
-  return (
-    <div className="fixed inset-0 z-[70] grid grid-rows-[auto_1fr_auto] bg-black/90 backdrop-blur-sm animate-[sheet-fade_.2s_ease-out]" role="dialog" aria-modal="true" aria-label={design.name}>
-      <header className="flex items-center justify-between gap-4 px-6 py-4">
-        <div className="min-w-0">
-          <p className="truncate font-medium text-white">
-            D{design.position} · {design.name}
-          </p>
-          <p className="text-xs text-white/50">
-            {FORMAT_LABEL[format]} · v{v?.version} {v?.by ? `by ${v.by}` : ""} · {v ? fmtWhen(v.at) : ""}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {file?.url && (
-            <a href={file.url} target="_blank" rel="noreferrer" className="h-9 rounded-full border border-white/20 px-4 text-sm leading-9 text-white/80 hover:bg-white/10">
-              Open original
-            </a>
-          )}
-          <button onClick={onClose} className="grid h-9 w-9 place-items-center rounded-full text-white/70 hover:bg-white/10" aria-label="Close">
-            ✕
-          </button>
-        </div>
-      </header>
-
-      <div className="grid min-h-0 place-items-center px-6">
-        {!file ? (
-          <p className="text-sm text-white/60">No files on this version.</p>
-        ) : file.mime.startsWith("video/") && file.url ? (
-          <video key={file.id} src={file.url} controls autoPlay playsInline className="max-h-full max-w-full rounded-[8px]" />
-        ) : file.url && file.mime.startsWith("image/") ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img key={file.id} src={file.url} alt={file.name} className="max-h-full max-w-full rounded-[8px] object-contain" />
-        ) : (
-          <Thumb src={file.thumbUrl} format={format} className="h-80 w-64 rounded-[8px]" />
-        )}
-      </div>
-
-      <footer className="grid gap-3 px-6 pb-6 pt-4">
-        {(v?.files.length ?? 0) > 1 && (
-          <div className="flex flex-wrap justify-center gap-2">
-            {v!.files.map((f, i) => (
-              <button
-                key={f.id}
-                onClick={() => setFileId(f.id)}
-                className={`h-8 rounded-full px-3 text-xs ${f.id === file?.id ? "bg-white text-black" : "border border-white/20 text-white/70 hover:bg-white/10"}`}
-              >
-                {format === "carousel" ? `Card ${f.card ?? i + 1}` : aspectLabel(f.aspect)}
-              </button>
-            ))}
-          </div>
-        )}
-        {design.versions.length > 1 && (
-          <div className="flex flex-wrap items-center justify-center gap-2">
-            {design.versions.map((x) => (
-              <button
-                key={x.id}
-                onClick={() => (onVersion(x.version), setFileId(null))}
-                title={x.note ?? undefined}
-                className={`grid rounded-[8px] px-3 py-1.5 text-left text-xs ${x.version === v?.version ? "bg-brand text-white" : "border border-white/15 text-white/70 hover:bg-white/10"}`}
-              >
-                <span className="font-medium">v{x.version}</span>
-                {x.note && <span className="max-w-[180px] truncate opacity-80">{x.note}</span>}
-              </button>
-            ))}
-          </div>
-        )}
-      </footer>
-    </div>
   );
 }

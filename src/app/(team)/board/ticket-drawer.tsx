@@ -8,6 +8,8 @@ import { assignTicket, commentTicket, moveTicket, setTicketDue, setTicketPriorit
 import type { Design } from "./design-actions";
 import { Deliverables } from "./deliverables";
 import { ScriptPanel } from "./script-panel";
+import { ReviewPanel } from "./review-panel";
+import { CopyPanel } from "./copy-panel";
 import { ClientTag, FormatIcon, TimeStamp } from "./ticket-card";
 import type { Person, Ticket } from "./types";
 
@@ -101,15 +103,49 @@ function describe(e: TicketEvent) {
   }
 }
 
+// Design preview: a sample copy set in Kaizen's copy standard
+const DEMO_AD = (kind: "short" | "long", formula: string, primaryText: string, headline: string, linkDescription: string, cta: string) => ({ kind, formula, angle: "Live classes beat apps", primaryText, headline, linkDescription, cta });
+const DEMO_LONG =
+  "Most apps teach you to tap the right answer. Real conversations don't come with multiple choice.\n\n" +
+  Array.from({ length: 34 }, () => "Our teachers are native speakers who build every class around real situations, so you practise ordering, asking and joking the way you will on your trip.").join(" ");
+const DEMO_COPY = {
+  reusable: null,
+  set: {
+    id: "demo",
+    status: "review" as const,
+    ads: [
+      DEMO_AD("short", "Offer-led", "Speak Spanish in real conversations from day one. Unlimited live classes, $7 for your first week.", "Unlimited Live Classes for $7", "First week, cancel anytime", "Sign Up"),
+      DEMO_AD("short", "Proof-led", "4.9 stars from 2,300 learners who finally stopped freezing mid-sentence. Your turn.", "Real Teachers. Real Spanish.", "Classes every hour", "Learn More"),
+      DEMO_AD("short", "Pain + relief", "Three years of an app and you still can't order a coffee in Spanish? Talk with a teacher instead.", "Stop Tapping. Start Talking.", "", "Sign Up"),
+      DEMO_AD("long", "PASTOR", DEMO_LONG, "Your First Week Is $7", "Unlimited classes", "Sign Up"),
+      DEMO_AD("long", "Epiphany Bridge", DEMO_LONG.slice(0, 900), "Spanish That Sticks", "Live, every hour", "Learn More"),
+    ],
+    aiAds: [],
+    notes: "Leaned on the $7 first week as the offer and kept every hook about the situation, not the learner.",
+    error: null,
+    version: 1,
+    approvedBy: null,
+    approvedAt: null,
+    updatedAt: new Date().toISOString(),
+    reusedFrom: null,
+  },
+};
+
+// These stages have their own panel instead of the generic "next step" button
+const SPECIAL: Stage[] = ["internal_review", "copy", "copy_review"];
+const COPY_STAGES: Stage[] = ["copy", "copy_review", "ready_for_client", "client_review", "client_revision", "ready_for_launch", "launched"];
+
 export function TicketDrawer({
   ticket,
   people,
+  can = { review: false, approveCopy: false },
   onClose,
   onOptimisticMove,
   demo = false,
 }: {
   ticket: Ticket;
   people: Person[];
+  can?: { review: boolean; approveCopy: boolean };
   onClose: () => void;
   onOptimisticMove: (id: string, stage: Stage) => void;
   demo?: boolean; // design preview: sample history, no server calls
@@ -248,7 +284,7 @@ export function TicketDrawer({
                 )}
               </div>
             </div>
-            {ticket.stage !== "launched" && (
+            {ticket.stage !== "launched" && !SPECIAL.includes(ticket.stage) && (
               <div className="grid gap-3 border-t border-line px-5 py-4">
                 <input
                   value={moveNote}
@@ -277,6 +313,9 @@ export function TicketDrawer({
             )}
             {error && <p className="border-t border-line px-5 py-3 text-sm text-brand-text">{error}</p>}
           </section>
+
+          <ReviewPanel ticket={ticket} canReview={can.review} onMoved={(st) => onOptimisticMove(ticket.id, st)} demo={demo} />
+          {(COPY_STAGES.includes(ticket.stage)) && <CopyPanel ticket={ticket} canApprove={can.approveCopy} onMoved={(st) => onOptimisticMove(ticket.id, st)} demo={demo ? DEMO_COPY : undefined} />}
 
           {/* Properties: label on the left, editable value on the right */}
           <section className={section}>

@@ -517,3 +517,21 @@ export const BRAND_BIBLE_SCHEMA = obj({
   teamNotes: strArr,
   openQuestions: { type: "array", items: obj({ question: str, who: str }) },
 });
+
+// ─── Copy (Kaizen's copy standard) ──────────────────────────────────────────
+
+export const COPY_SCHEMA = obj({
+  ads: {
+    type: "array",
+    items: obj({
+      kind: { type: "string", enum: ["short", "long"] },
+      formula: str,
+      angle: str,
+      primaryText: str,
+      headline: str,
+      linkDescription: str,
+      cta: str,
+    }),
+  },
+  notes: str,
+});

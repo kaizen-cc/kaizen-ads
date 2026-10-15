@@ -310,7 +310,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
             saveAllotment={saveAllotment.bind(null, client.id, client.slug)}
           />
 
-          <Section title="Kaizen team" description="Camille reviews all copy and Jorgi handles every client.">
+          <Section title="Kaizen team" description="The copywriter reviews all copy and customer success handles every client.">
             <dl className="grid gap-1">
               {SLOTS.map((slot) => (
                 <div key={slot.value} className="grid grid-cols-[100px_minmax(0,1fr)] items-center gap-3">
