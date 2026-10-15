@@ -10,6 +10,7 @@ const NAV = [
   { href: "/board", label: "Board", icon: "M4 4h4v16H4zM10 4h4v10h-4zM16 4h4v13h-4z" },
   { href: "/kpis", label: "KPIs", icon: "M4 19h16M6 15l4-5 3 3 5-7" },
   { href: "/winners", label: "Winners", icon: "M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0zM7 6H4v1a3 3 0 0 0 3 3M17 6h3v1a3 3 0 0 1-3 3" },
+  { href: "/lab", label: "Ads Lab", leads: true, icon: "M9 3h6M10 3v6L4.5 18.5A1.7 1.7 0 0 0 6 21h12a1.7 1.7 0 0 0 1.5-2.5L14 9V3M7 15h10" },
   { href: "/clients", label: "Clients", icon: "M4 20V8l8-5 8 5v12M9 20v-6h6v6" },
   { href: "/team", label: "Team", icon: "M16 19v-1a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v1M10 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6m10 9v-1a4 4 0 0 0-3-3.9M15 4.1a3 3 0 0 1 0 5.8" },
 ];
@@ -26,7 +27,7 @@ function Icon({ d }: { d: string }) {
 
 export function TeamShell({ name, roles, exec = false, children }: { name: string; roles: string; exec?: boolean; children: React.ReactNode }) {
   const path = usePathname();
-  const nav = exec ? [...NAV, SETTINGS] : NAV;
+  const nav = exec ? [...NAV, SETTINGS] : NAV.filter((n) => !("leads" in n));
   const active = (href: string) => path === href || path.startsWith(`${href}/`);
 
   return (

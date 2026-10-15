@@ -286,7 +286,7 @@ export async function runStrategist(admin: SupabaseClient, startedBy: string | n
     const signals = await gatherSignals(admin);
     const since10 = new Date(Date.now() - 10 * 86_400_000).toISOString();
     const { data: busy } = await admin.from("creative_suggestions").select("client_id, kind, status, decided_at").or(`status.eq.open,and(status.eq.declined,decided_at.gte.${since10})`);
-    const open = new Set((busy ?? []).filter((b) => b.status === "open").map((b) => b.client_id));
+    const open = new Set((busy ?? []).filter((b) => b.status === "open" && b.kind !== "lab").map((b) => b.client_id));
     const declined = new Set((busy ?? []).filter((b) => b.status === "declined").map((b) => `${b.client_id}:${b.kind}`));
     const ranked = [...signals]
       .filter(([id]) => !open.has(id))
@@ -387,4 +387,47 @@ export async function loadSuggestions(db: SupabaseClient): Promise<SuggestionsSt
     lastRun: run?.finished_at ?? null,
     decided30: { approved: (decided ?? []).filter((d) => d.status === "approved").length, declined: (decided ?? []).filter((d) => d.status === "declined").length },
   };
+}
+
+/**
+ * A lab test reaching one client: the strategist writes that client's brief for it, as a suggestion on Home, so a
+ * person checks it before anything is made.
+ */
+export async function suggestForTest(
+  admin: SupabaseClient,
+  clientId: string,
+  test: { id: string; title: string; hypothesis: string; change: string; success: string },
+) {
+  const prompt = await promptFor(admin, clientId, [{ kind: "lab", weight: 1, line: `Ads Lab test: ${test.title}`, facts: [test.hypothesis, `What changes: ${test.change}`, `A win: ${test.success}`] }]);
+  if (!prompt) return false;
+  const out = await askJson<Out>({
+    agent: "strategist",
+    label: "lab test brief",
+    system: SYSTEM,
+    schema: SCHEMA,
+    prompt: `${prompt}
+
+<lab_test>
+${test.title}
+Hypothesis: ${test.hypothesis}
+What the creative does differently: ${test.change}
+What counts as a win: ${test.success}
+</lab_test>
+
+The team chose this client for this test. Write the request that runs the test for this client: keep the test's change exactly, fit it to this client's brand, offer and audience, and keep it small and clean enough to read the result (usually 2 to 3 net new, or variations of a current winner). suggest: true. kind: "flop" if it replaces an angle, otherwise "kpi" (it's replaced by the lab kind). signal: "Ads Lab test: <the test's title>". evidence: what about this client makes it a fit. why: two sentences. reply: "".`,
+  });
+  const draft = clean(out.draft);
+  if (!draft.formats.length) return false;
+  const { error } = await admin.from("creative_suggestions").insert({
+    client_id: clientId,
+    kind: "lab",
+    lab_test_id: test.id,
+    signal: `Ads Lab test: ${test.title}`,
+    evidence: out.evidence.slice(0, 5),
+    why: out.why,
+    draft,
+    original: draft,
+  });
+  if (error) console.error("[lab] couldn't save the test brief:", error.message);
+  return !error;
 }
