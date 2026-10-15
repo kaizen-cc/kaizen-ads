@@ -5,6 +5,9 @@ import { createClient } from "@/lib/supabase/server";
 import { BoardClient } from "./board-client";
 import { toTicket, type BoardRow } from "./to-ticket";
 
+// Writing a video script with the AI can take a minute
+export const maxDuration = 120;
+
 export default async function Board() {
   await requireStaff();
   const supabase = await createClient();

@@ -22,6 +22,7 @@ import {
   setSprintPackage,
 } from "./actions";
 import { PackagePanel, type PackageOption } from "./package-panel";
+import { BrandBiblePanel, type BrandBible } from "./brand-bible-panel";
 import { untilLabel } from "@/lib/allotment";
 
 const fmt = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
@@ -48,6 +49,7 @@ export type ClientViewProps = {
     creative_package_note?: string | null;
   };
   packages: PackageOption[];
+  brandBible?: BrandBible | null;
   today: string; // YYYY-MM-DD in New York
   packageLabel: string | null;
   team: Record<string, { current: Option | null; options: Option[] }>;
@@ -67,7 +69,7 @@ export type ClientViewProps = {
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, can, demo = false, connections }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, can, demo = false, connections }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -187,6 +189,8 @@ export function ClientView({ client, packageLabel, packages, today, team, contac
               )}
             </BriefingPanel>
           )}
+
+          <BrandBiblePanel clientId={client.id} slug={client.slug} bible={brandBible} canBuild={can.assign} />
 
           <Section title="Client memory" description="What we've learned about this client. The AI reads it for suggestions and flags anything that goes against it before a request is sent.">
             {memory.length > 0 ? (

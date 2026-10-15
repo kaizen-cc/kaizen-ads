@@ -7,7 +7,7 @@ import { field } from "@/components/ui";
 import { addItem, applyChange, chatWithCoach, clearChat, deleteItem, saveAgentSetup, setItemActive, updateItem, type Change, type ChatMessage } from "./actions";
 
 type Result = { ok: true } | { ok: false; error: string };
-export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue";
+export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue" | "scripts" | "brandbible";
 export type Agent = {
   key: AgentKey;
   label: string;
@@ -48,9 +48,11 @@ const ICONS: Record<string, string> = {
   pen: "M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4",
   rocket: "M5 15c-1.5 1.5-2 5-2 5s3.5-.5 5-2m-1-4 4 4m-6-6c1-4 5-9 12-9 0 7-5 11-9 12m3-7a1.5 1.5 0 1 0 0-.01",
   pulse: "M3 12h4l2-6 4 12 2-6h6",
+  film: "M4 5h16v14H4zM8 5v14M16 5v14M4 9h4M4 15h4M16 9h4M16 15h4",
+  book: "M5 4h10a4 4 0 0 1 4 4v12H9a4 4 0 0 1-4-4zM5 16a4 4 0 0 1 4-4h10",
   spark: "M12 3c.7 5 3 7.3 8 8v2c-5 .7-7.3 3-8 8h-.1c-.7-5-3-7.3-8-8v-2c5-.7 7.3-3 8-8z",
 };
-const TINT: Record<string, string> = { compass: "#5b8def", shield: "#b21e2c", feed: "#2fa37a", pen: "#c08a2e", rocket: "#8a63d2", pulse: "#d1495b", spark: "#888" };
+const TINT: Record<string, string> = { compass: "#5b8def", shield: "#b21e2c", feed: "#2fa37a", pen: "#c08a2e", rocket: "#8a63d2", pulse: "#d1495b", film: "#e07a3f", book: "#3fa7b5", spark: "#888" };
 
 const fmt = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
 const tokensOf = (s: string) => Math.round(s.length / 4);
@@ -564,6 +566,8 @@ const STARTERS: Record<string, string[]> = {
   copy: ["Camille wants headlines under 30 characters.", "Here's an example of copy we loved: …", "Our school clients need a warmer, parent-to-parent voice."],
   launcher: ["Here's Kyle's naming convention: …", "Never put prospecting and retargeting in the same ad set.", "What do you need from us before you can launch?"],
   fatigue: ["Frequency of 2.5 is already too high for our small accounts.", "Ignore ads with under $100 spend.", "How would you decide what to make next?"],
+  scripts: ["Scripts run too long. Keep them under 30 seconds.", "Always give one founder-to-camera option.", "Which framework would you pick for a law firm?"],
+  brandbible: ["Every bible needs a competitor ad table with links.", "Keep Read this first to half a page.", "What do you need from us before you build one?"],
 };
 
 function Coach({ a, initial, items }: { a: Agent; initial: ChatMessage[]; items: Item[] }) {

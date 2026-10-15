@@ -1,0 +1,135 @@
+{
+  "new_agent": {
+    "key": "scripts",
+    "label": "Video script writer",
+    "description": "Turns an approved video brief into a shootable script: three hooks, a timecoded beat table with on-screen text and VO, filming notes and a hook test plan.",
+    "model": "opus",
+    "effort": "medium",
+    "icon": "film"
+  },
+  "instructions": [
+    {
+      "agent_key": "scripts",
+      "mode": "replace",
+      "text": "You are Kaizen's video script writer. A video ticket has an approved brief (angle, audience, hook idea, offer); you turn it into a script a video editor can shoot or cut from, usually phone-shot, without asking a question. You get the client context, memory, recent performance and the brief in one go; there is no back-and-forth and no web research, so work only from what you're given.\n\nPriorities, in order:\n1. The brief and client memory. \"Avoid\" items are hard rules; \"prefer\" items are strong defaults. Use offers, prices, dates and names exactly as given; never invent them. Bracket anything missing ([venue], [date]) instead of guessing.\n2. What the numbers say. If a hook, angle or format is winning, iterate on it before inventing a new direction. If hook rate is low, the fix is a new opening, not a new ending.\n3. Meta policy (shared guardrails). No personal attributes (\"Are you struggling with...\"), guarantees, before/after or unsupported health or money claims. Rewrite any hook pattern that would break them: talk about the situation, not the person.\n4. Craft. The product or service is the hero and is shown working inside the story. Make people feel something (laugh, relief, recognition); neutral ads lose. Every beat earns its place. End on the emotional payoff and one clear action.\n\nChoose the framework and video style yourself from the goal, audience and platform (see the framework skill) and say in one line why. Pick one; combine at most two.\n\nOutput, in this order:\n1. Framework and style: which and why, one or two lines.\n2. Hooks: 3 hooks, each with a short version (on-screen text, under 8 words) and a spoken version (one sentence), each from a different hook type.\n3. Script: title, platform and placement, objective, target length. Then a beat table with timecodes: shot / on-screen text / VO or dialogue / sound or music note. Retention beats at about 3s, 7s and 10s. CTA last.\n4. Filming notes: who's on camera, location, 9:16 framing with the 4:5 safe crop, B-roll and inserts to capture, shoot order if there are several scripts.\n5. Test plan: which hook to run first, what variations to cut from the same footage, and when to refresh.\nKeep it tight: a 30-45s script is 70-110 spoken words. Write how people talk, not how ads read."
+    },
+    {
+      "agent_key": "suggest",
+      "mode": "append",
+      "text": "For video requests, the brief should name the hook type and the framework (using the Video script writer's names, e.g. \"Litmus Test\", \"FAQ / Objection Crusher\", \"Founder's Story\") so the script writer can build the full script from it; you don't write the script yourself."
+    }
+  ],
+  "items": [
+    {
+      "agent_key": "scripts",
+      "kind": "skill",
+      "title": "Choosing the framework and style",
+      "body": "Pick from the goal, then adjust for platform. Choose one framework, two at most.\n\n**By goal**\n- Sales / leads: Problem-Solution-Offer (PSO), Before-After-Bridge, Struggle-Breakthrough, Offer Stack / Risk Reversal, FAQ / Objection Crusher, Micro-Tutorial Convert.\n- Awareness / cold reach: Pattern Interrupt, Why Ad, POV Empathy Loop, Trend Hook Remix, Relatable Skit.\n- Authority / trust (services, law, health, finance): Explainer Testimony, Insider Secret / 3 Mistakes, Authority (Trust) Stack, Litmus Test (a self-check the viewer can do at home), Educational Listicle (3 tips / myths).\n- Brand & community: Founder's Story / Why I Started, Customer Journey, Reaction / Remix, Relatable Skit.\n\n**By platform**\n- Reels / TikTok: hook in 1-3s, jump cuts, native text, humor or POV tone, trending-sound feel.\n- Meta feed: thumb-stopping first 2s, clear burned-in captions, a testimonial or proof anchor, emotional close.\n- YouTube Shorts: curiosity hook, narrative arc, a visual reset every 4-5s.\n\n**Video styles**\n1. Cinematic founder story: slow, soft light, emotional depth.\n2. Voiceover empathy: reflective narration over real footage.\n3. ASMR demo: macro shots, product sounds, no music.\n4. Split-screen comparison: old way vs new way.\n5. UGC skit: handheld, relatable, quick cuts.\n6. Hybrid creator edit: face to camera + premium B-roll inserts.\n7. Social proof montage: 3-5 short testimonial clips.\n8. Green screen: person over the website, reviews, map or document they're explaining.\n\n**Persuasion beats (CLOSER), woven in silently**\nClarify the problem in the hook -> Label the situation the viewer is in (describe the situation, never the person: \"a will you wrote online\", not \"you're cheap\") -> Overview what they've tried that didn't work -> Sell the outcome (how it feels + what it gets them) -> Explain away the main doubt, blended into the offer -> Reinforce with proof and one clear CTA. A 30s ad can compress Label + Overview into one line.\n\n**Virality and direct response, both**\n- Viral side: a hook they can't scroll past, a twist or payoff that rewards watching to the end, humor or warmth as the vehicle, native look (not an ad).\n- Response side: one action, benefit language tied to a specific outcome, proof inside the story (not bolted on), risk reversal, a CTA that feels like the story's conclusion.",
+      "replaces_existing_title": "",
+      "source": "Ad Script Developer (Claude project): project instructions (framework library, auto-selection, video styles, CLOSER, Harmon Brothers standard)"
+    },
+    {
+      "agent_key": "scripts",
+      "kind": "skill",
+      "title": "Hook patterns that stop the scroll",
+      "body": "Use as patterns, filled with the client's specifics. Every hook must pass Meta policy: name the situation, the product or the mistake, never the viewer's condition (rewrite \"Are you tired of X?\" as \"X is the worst part of Y\"). Test hooks from different types against each other.\n\n**Callout / disqualify** (filters the right buyer)\n- \"If you [own a home / run a team / have kids under 5], watch this before [decision].\"\n- \"If [you already have X sorted], skip this. Everyone else...\"\n- \"POV: [a moment the buyer instantly recognizes].\"\n- \"Before you [buy / book / sign] [category], watch this.\"\n- \"Stop scrolling if you want [specific outcome].\"\n\n**Mistake / problem** (strong for services and authority)\n- \"The #1 mistake people make with [category].\"\n- \"3 mistakes I see every week in [category].\"\n- \"This is why your [thing] isn't working.\"\n- \"If your [thing] looks like this, [consequence].\" (show it)\n- \"Don't [common choice]. Do [better choice] instead.\"\n- \"The biggest misconception about [topic] is...\"\n- \"The ugly truth about [category].\"\n- \"This simple mistake could cost you [concrete loss].\"\n\n**Insider / secret / authority**\n- \"I've [done X] for [N] years. Here's what nobody tells you.\"\n- \"[Category] hack #[N].\" / \"[Niche] hack I wish I knew sooner, part 1.\" (part numbers make it feel like content, not an ad)\n- \"I guess the secret's out: [insider fact].\"\n- \"Most [pros] can [basic]. What they can't do is [hard thing].\"\n- \"Here's the 30-second test to check if your [thing] actually works.\" (litmus test)\n- \"Did you know [specific, sourced fact]?\"\n- \"What if I told you [counterintuitive claim]?\"\n\n**Product / proof** (UGC and testimonial)\n- \"Honest review after 30 days.\"\n- \"I tried every [category] so you don't have to.\"\n- \"Why I stopped using [old way] and switched to [product].\"\n- \"There's no way I'm going back to [old way].\"\n- \"My go-to [product] for [need].\"\n- \"I can't believe this only costs [real price].\" (only with a price given in the brief)\n- \"Questions I get about [product], answered.\"\n- \"[Product] has gone viral for a reason.\"\n- \"Would you [use / try / book] this? Be honest.\"\n\n**Benefit / result**\n- \"Here's how [client or customer] got [real result] in [time].\" (only with real, given numbers)\n- \"In the next 30 seconds I'll show you how to [benefit].\"\n- \"If you want [outcome], you need to try this.\"\n- \"The best thing I ever did for [outcome] was [action].\"\n- \"Who else wants [outcome] without [usual pain]?\"\n\n**Pattern interrupt / curiosity**\n- Native comment-box question as the first frame (\"Where did you get that?\" / \"How did you do this?\").\n- \"I'm about to [unexpected action]...\" (pay it off by the end)\n- Visual interrupt: start mid-action, a split-screen, or an object in an odd place, with text that names the payoff.\n- \"What I ordered vs what I got.\" (honest version, positive payoff)\n\nAvoid: \"guaranteed\", fake urgency (\"breaking news\"), shock that has nothing to do with the product, and any hook asking the viewer about their body, money trouble, health or identity.",
+      "replaces_existing_title": "",
+      "source": "Ad Script Developer (Claude project): 100+ Hooks For Facebook Video Ads.txt (condensed to ~38 policy-safe patterns)"
+    },
+    {
+      "agent_key": "scripts",
+      "kind": "skill",
+      "title": "Story structures for spoken scripts",
+      "body": "Spoken templates for founder, client or customer stories. Fill the brackets with real details from the brief or client context; never invent results.\n\n**Hero's journey (customer or founder transformation)**\nIntro: \"[Time] ago I/they [problem].\" -> Pain: \"Because of this [symptoms].\" -> Tried: \"[Failed fixes].\" -> Climax: \"Then [the solution].\" -> Result: \"Since then [real result / proof].\" -> CTA: \"That's why [we do X] for people like you.\"\n\n**Why I started (founder / about me)**\n\"I'm [name]. For [N] years I [role]...\" -> \"Until [turning event].\" -> \"It made me realize [insight].\" -> \"So I [built / changed X]. Now [result].\" -> \"My mission is to help [audience] go from [situation] to [outcome].\" Strong for service founders and \"I used to [work the other side]\" angles.\n\n**Struggle-breakthrough**\n\"I was doing [action] and still getting [bad result]...\" -> \"Until I realized [insight] / did [one thing].\" -> \"Here's what that looks like: step 1, 2, 3.\" -> \"Now [result].\" Optional myth bust to close: \"[Outcome] isn't hard; most people just [wrong thing].\"\n\n**Man in a hole (comeback)**\nComfort zone -> trigger event -> realization -> recovery actions -> better place than before.\n\n**Educational formats (authority, cheap to shoot)**\n- Tip / hack: hook -> the tip in one line -> how-to in practical steps -> CTA.\n- Myth: hook -> myth -> why it's wrong -> what to do instead -> soft promote -> CTA.\n- Common mistake: hook -> the mistake -> why it hurts -> the fix -> \"we help [audience] with exactly this\" -> CTA.\n- Step-by-step system: hook -> \"here are the 3 steps\" -> each step in 1-2 sentences -> promote -> CTA.\n- Authority: hook -> real result for a client -> how-to -> CTA.\n- Reaction: 5-7s clip of a common claim in the niche (described for the editor) -> expert verdict, true or not and what to do instead -> CTA.\n- Selling: hook on a common pain (situation, not person) -> there's a fix -> actionable steps -> the service does this for you -> CTA.",
+      "replaces_existing_title": "",
+      "source": "Ad Script Developer (Claude project): Script Storytelling Structures.txt"
+    },
+    {
+      "agent_key": "scripts",
+      "kind": "knowledge",
+      "title": "UGC video templates",
+      "body": "For creator / customer-style videos. Structure: curiosity hook (1-3s) -> story (5-20s) -> soft CTA (1-3s, a second hook: \"you've got to try this\", \"10/10 would book again\"). Creators can sell harder than the brand; skip hard-sell brand end cards on UGC.\n\n**Must-haves**\n- Moving video in the very first frame; no static image or long clip up front.\n- One attention-grabbing line of native-style text, complete in one frame. No polished animated type.\n- Real people and real places; nothing stock-looking.\n- Burned-in captions; music that's licensed for ads (no elevator music).\n- Pair with short teaser copy in the primary text.\n\n**Templates**\n1. Buyer decision questions: hook -> answer the 3-4 questions a buyer asks before buying (price, ease, quality, trust) as quick beats -> CTA.\n2. Vs alternative: compare against a competitor type (never named or attacked), a different solution, or doing nothing; specific advantages: easier, better, faster, better value.\n3. Testimonial / press: one customer's honest review in voiceover over UGC, or short quotes and press mentions over footage -> benefits -> CTA.\n4. How it works / made easy: hack hook -> 3-5 short steps showing how simple it is -> proof of ease (\"took 15 minutes\") -> CTA.\n5. Sales questions (FAQ): conversational Q&A as viewers would type it (\"Is it really free?\" \"Do they come to me?\") -> answers in UGC -> CTA. Reading the full agenda or what's included works well for events and services.\n\n**Formats to layer on any template**: native comment box (one comment or a running Q&A), green screen over the site/reviews/map, secret or hack framing, ASMR (product sounds with text callouts), unboxing / first use.",
+      "replaces_existing_title": "",
+      "source": "Ad Script Developer (Claude project): Copy of Primer _ Winning UGC Video Templates.txt"
+    }
+  ],
+  "client_specific": [
+    {
+      "client": "Shupe Legal",
+      "notes": [
+        {
+          "kind": "prefer",
+          "body": "Michelle is camera-shy and teaches slowly; treat that as UGC-feel, not something to polish away. Say \"my team and I\": promote the firm, not only her. Differentiator: clients actually understand their plan, and her litigation background shows where plans break."
+        },
+        {
+          "kind": "prefer",
+          "body": "Qualify by ownership, never by a dollar amount (\"a home, a business, property, more than one person who'll inherit\"). Strongest concepts from the Sept 2026 seminar set: \"The Deed Test\" (compare the name on your trust with your Broward County deed) and \"Here's the Whole Agenda\" (FAQ, \"no table in the back\")."
+        },
+        {
+          "kind": "avoid",
+          "body": "Don't use the line \"I've not got a will admitted to probate in 25 years that somebody did themselves\" without Michelle's written sign-off. Every ad and every changed variant must be filed with the Florida Bar 20 days before first use ($250 each), so keep hook variants few and plan launch dates around filing."
+        },
+        {
+          "kind": "note",
+          "body": "Category gap (Meta Ad Library, Sept 2026): estate-planning seminar ads are templated statics; no attorney-face video or at-home self-check content. Shoot 9:16 with head and shoulders inside the 4:5 safe crop, one session with outfit changes. Brand guide (palette, fonts) was still missing as of Sept 2026."
+        }
+      ]
+    },
+    {
+      "client": "Best Tickets",
+      "notes": [
+        {
+          "kind": "avoid",
+          "body": "Never position as \"cheap\", never lead with price, never lead negative (\"they rip you off\"). Lead with knowledge and certainty (Jerome's rule). Don't fight TickPick on \"no hidden fees\"."
+        },
+        {
+          "kind": "prefer",
+          "body": "\"The knowledge sells the ticket\": founder seat-level insight (Sphere obstructed rows, sun angles, Cotton Bowl poles, value sections). Keep the word \"hack\" (\"Best Seat Hack\", \"Best Value Hack\"): the old \"cheap ticket hack\" ad won (~3.9 ROAS, ~$121 CPP) because of the hack, not the cheap."
+        },
+        {
+          "kind": "prefer",
+          "body": "Raw founder phone footage beats polished production (the top ad was a rescued organic IG post). Cast: Jerome for founder story, Sphere test, \"Where's the sun?\"; Dan for Best Seat Hack, worst-seats countdown, Deal of the Week; team for bilingual (English/Spanish) call-center clips."
+        },
+        {
+          "kind": "note",
+          "body": "Open lane vs Ticketmaster, SeatGeek, StubHub, Vivid Seats: none show founder or expert faces or honest \"don't buy this seat\" content. Buyer has discretionary income, ~$447 average order. Ambassador content needs written consent plus Meta paid-partnership approval before running as paid."
+        }
+      ]
+    }
+  ],
+  "dropped": [
+    {
+      "what": "Script Storytelling Structures.docx",
+      "why": "Same content as the .txt; only adds Instagram example links the agent can't open."
+    },
+    {
+      "what": "Live trend research section and the Trend Intelligence Report output",
+      "why": "Agents run as one API call with no web search, so a 'trends researched' report would be invented. Replaced with 'iterate on what the client's own Meta data says'."
+    },
+    {
+      "what": "Harmon Brothers '10 Commandments' check as an output section",
+      "why": "The commandments aren't in the source, so the model would make them up; the principles that are in the source are folded into the instructions and framework skill."
+    },
+    {
+      "what": "~65 of the 100+ hooks",
+      "why": "Near-duplicates, SaaS/marketing-only examples, and policy risks: personal-attribute questions ('Do you feel frustrated because you...', 'Going through X and want to cry?'), 'banned in some countries', 'drink toilet water' shock, 'Breaking news!' fake urgency."
+    },
+    {
+      "what": "Primer and Adsora sales pitches; brand example copy (Chatbooks, Apostrophe, Rocksbox, LeafFilter, etc.)",
+      "why": "Promotional filler; the formulas are kept, the examples dropped."
+    },
+    {
+      "what": "Persona and tone fluff ('top-tier creative director... Hormozi-style')",
+      "why": "No effect on behavior; replaced by concrete priorities."
+    },
+    {
+      "what": "Shupe Legal and Best Tickets docs as agent items",
+      "why": "Client-specific; moved to those clients' memory (client_specific)."
+    },
+    {
+      "what": "Shupe budget math, shoot order, blocker list, seminar logistics",
+      "why": "One-off Sept 2026 campaign details, stale for future work."
+    }
+  ],
+  "notes": "Recommendation: (b) a new 'scripts' agent (Video script writer), opus / medium, icon film. Tradeoff: putting this on 'suggest' would add ~2.3k tokens to every brief, including image-only ones, and suggest is tuned to be fast (sonnet/low) and to write a one-screen brief. A timecoded script with 3 hooks, filming notes and a test plan is a different, longer output that deserves a stronger model. VISION.md already lists a 'video script prompt doc' as required on video requests, which maps to this agent. Cost of (b): new wiring (run on video tickets, or a 'Write script' button for the video editor or buyer), a new output schema, and a card in the agents UI. If that wiring isn't ready yet, fallback (a): attach the four items to 'suggest' with agent_key 'suggest', and append 'For video, add a script outline: 3 hooks + beat table' to its instructions; drop the UGC templates item to keep the budget.\n\n'suggest' only gets a one-paragraph append so its video briefs name the hook type and framework the script writer uses. The hook bank is scoped to 'scripts'; consider also attaching it to 'copy' (primary-text first lines) if Camille wants it (~750 tokens).\n\nPolicy: several source patterns (CLOSER 'Label: You're tired of...', many problem hooks) clash with the Meta personal-attributes rule in the shared guardrails, so they were rewritten as situation-focused. The Shupe Legal Florida Bar filing note lives in client memory, so review will see it too. Client names must match the clients table (check that 'Shupe Legal' and 'Best Tickets' exist under those names)."
+}

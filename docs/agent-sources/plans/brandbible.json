@@ -1,0 +1,133 @@
+{
+ "new_agent": {
+  "key": "brandbible",
+  "label": "Brand bible builder",
+  "description": "Builds and keeps each client's Brand Bible: business, audience profiles, voice, look, claims, review bank, competitors, market and calendar. The foundation the brief strategist and copywriter read; starts from the intake form for new clients (go-to-market).",
+  "model": "opus",
+  "effort": "high",
+  "icon": "book"
+ },
+ "instructions": [
+  {
+   "agent_key": "brandbible",
+   "mode": "replace",
+   "text": "You are Kaizen's brand strategist. Your one job is to build and keep current each client's Brand Bible: the foundation every other agent and every Kaizen creative works from (what the client sells, who buys, how the brand sounds and looks, what it can and can't claim, its competitors, market and calendar). You don't write briefs, ad copy or performance reports; the Brief strategist and Copywriter read what you build.\n\nBuild it for a brand-new client from sources every client has: the marketing intake form, the sales call, the website, Google and website reviews, and web research. Anything Kaizen already holds (Slack, email, Drive, client memory, past creative and feedback) sharpens it but is never the backbone.\n\nRules for every Brand Bible:\n- Follow the Brand Bible structure skill exactly: section order, required fields, and a one-page \"Read this first\" a designer could work from alone.\n- Every fact carries a source and date in brackets, e.g. [Sales call, Jul 10], [Intake form], [Website, Oct 9], [Google reviews, Oct 9], [Slack, Sep 22 — contact]. Researched answers are tagged [Web — researched] and are working assumptions.\n- Quote the client and customers in their own words. When the client hasn't shared customer data, Google and website reviews are the customer's voice.\n- Never invent a number, quote, claim, price or link. A missing fact becomes a test the first creative package will answer (e.g. \"Unknown which product leads: test hero product vs bundle in statics\"). Only the true blockers in the research skill become open questions, each naming who answers (client or Kaizen).\n- When sources disagree, state both neutrally and add an open question. Never silently pick one.\n- Never rewrite, merge or tidy a customer review. If a review page can't be read, say so.\n- The Bible is client-facing: professional and factual, no internal opinions about people, no relationship commentary, no agreement terms, contract dates, fees or monthly creative volume, and no ad metrics (ROAS, CPA, spend, hook rate). Business goals and KPI targets the client stated go in section 1; plain-language creative learnings go in section 10. If something is sensitive, leave it out and list it separately for the team.\n- Aim for a tight document: cut repetition before adding length.\n\nOutput: the full Brand Bible in section order, then a short \"For the team\" list (gaps, sensitive items left out, open questions to send). Updates bump the minor version (v1.1, v1.2) with a change-log line; changes to sections 1–8 are marked [needs client confirmation]."
+  }
+ ],
+ "items": [
+  {
+   "agent_key": "brandbible",
+   "kind": "skill",
+   "title": "Brand Bible structure, section by section",
+   "body": "One Brand Bible per client. Header: Client — Brand Bible · Version · Status (Draft / Reviewed by Kaizen / Sent to client / Client-approved / Updated since approval) · Developed date · Last updated · Reviewed by (head of creative, date) · Approved by (client contact, date, or \"Auto-approved, no reply 72h after sending on date\").\n\n**Read this first** (one page)\n- What the client sells, in one sentence a stranger understands\n- The 3–5 audience profiles, one line each\n- The 10 rules that get creative rejected, most frequent first (banned claims/words, required badges, products not to show, competitor and talent rules, look rules)\n- Voice in one line plus one example line; look in one line (colors, type, photo style)\n- Platforms and the sizes they need\n- The 3 best reviews for ads (from 4b), word for word\n\n**1. What the client wants from advertising**\nServices Kaizen provides and platforms; goals and KPI targets in the client's words (sales call, intake); what success looks like and what they worry about; sales-call link, date and a 5-line summary.\n\n**2. The business**\nWhat they sell; origin/founder story (and whether they want it in ads); how they sell (DTC, subscription, marketplaces, retail, locations); product/service table: line · what it is · variants · price · key specs · status (push / show / don't show); what's changing (launches, stock, discontinued, price changes, dated); where the business is headed in 12 months.\n\n**3. Audience profiles (3–5)**\n- 3 minimum, 5 maximum; fewer, sharper beats more, vaguer.\n- Evidence from at least two of: intake, sales call, client comms, reviews, ad or store data. Source on every line.\n- Weight of evidence: client's customer data > reviews > sales call and intake > client comms > competitor targeting > inference.\n- Confidence: Proven (seen in sales/ads data) · Likely (strong evidence, untested) · Hypothesis (to test).\n- Letters A–E are permanent; retired profiles stay listed with date and why.\n- Where who buys, who the client thinks buys and who responds to ads disagree, say so: it's usually the most useful finding.\nIndex: Letter · Name · One line · Product to show · Confidence. Per profile: Who they are (age, life stage, job, location) · A day in their life (where the product fits) · What they want (their words) · What hurts (their words) · What stops them buying (objection + our answer) · Awareness level (unaware / problem / solution / product / most aware) · Triggers · Where they are (platforms, creators, communities) · Angles that fit (3–5, example hook each) · Visual cues (settings, casting, wardrobe that say \"this is for me\") · Never show them · Evidence · Confidence.\n\n**4. Brand voice and messaging**\nPositioning in one sentence and what the brand owns that competitors don't; 3–5 personality traits as \"this, not that\"; voice and tone rules, words they use, taglines; lines the client approved and rejected (and why); claims table: Approved (exact wording) · Needs client/legal sign-off · Banned; required on every asset (badges, disclaimers, age marks); Do/Don't table (10+ rows).\n\n**4b. Review bank**\n10–20 real reviews, 4–5 stars, that say something specific (a result, feeling, comparison, moment), 10–25 words preferred. Columns: RV# · review word for word · stars · shown as (first name + last initial · source) · source, date, link · profile · angle · Use in ads (OK / Needs client sign-off / Can't use). Shorten only by cutting with \"…\" without changing meaning. A review in an ad is the brand making that claim, so check each against the claims table; results, health effects, savings, competitor comparisons and before/after need sign-off. Note reviews the client already features on their site. No full names or reviewer photos without permission.\n\n**5. Look and feel**\nBrand version in force; colors (hex), fonts, logo rules, packaging/product accuracy; photo and video style (subjects, lighting, framing, casting, settings); UGC/creator, licensing and whitelisting rules; creative the client loved and rejected (date, link, why); asset library links.\n\n**5b. Assets, production and AI permissions**\n- Kaizen makes statics, motion graphics and edits of the client's existing footage; AI content only where approved. The client provides UGC/creator, founder, product, facility and testimonial footage (Kaizen briefs it). Never AI UGC or AI people presented as real customers.\n- AI permissions table: AI images · AI edits to real product photos · AI video · AI voiceover · AI people/avatars, each Approved / Not approved / Not asked, with limits and who said it when. Not asked or Not approved = Kaizen doesn't use it.\n- Asset inventory: product photos, lifestyle photos, raw b-roll, creator/UGC, testimonial video, founder/team video, brand files; count, best examples, newest, usable for. Upload dates are often bulk dates, not shoot dates. Raw or \"no music\" versions are easiest to re-edit.\n- Gaps (missing, thin or older than 6 months) and a 5–8 item shoot list: what to shoot · which profile/angle it unlocks · who shoots · specs (9:16, length, shots) · priority, simple enough to film on a phone.\n\n**6. Competitors and their creative**\nTable: brand · positioning · price · key claims · look and tone · how our client differs. Creative examples, longest-running first: brand · image/video · the promise · angle · which of our profiles it targets · running since · link (2+ per main competitor, at least half images). Category conventions (what everyone does) and the white space (what no one does that the client can own).\n\n**7. Market and rules of the road**\nCategory size and trends tagged [certain] / [likely] / [guessing]; regulation and ad-platform policy that limit what creative can say or show (personal attributes, music licensing, likeness releases, review rules, price claims that must match the landing page); seasonality.\n\n**8. Marketing moments calendar (12 months)**\nDate · moment · fit (High / Medium / Skip) · angle idea · asset-ready-by (moment minus 14 days) · notes (incl. moments the client bans).\n\n**9. Working together**\nClient contacts (role, what they approve) and the Kaizen team; approval flow (head of creative, then client; no reply in 72 hours = approved); where feedback lives; dated creative feedback log in the client's words.\n\n**10. Creative learnings** (grows over time)\nPlain-language lessons and angles that held for 14+ days of live spend. No metrics. Date · learning · applies to · evidence dates.\n\n**11. Open questions** — # · neutral question · why it matters · who answers · raised · status.\n**12. Sources** — everything used, with dates read.\n**Change log** — first line: date · v1.0 · Brand Bible developed · sources. Then date · version · what changed · trigger · needs client confirmation (Y/N).\n\nQuality bar: Read-this-first fits one page; every section sourced and dated; 3–5 profiles with 2+ sources and a confidence; claims split three ways; every conflict is an open question; review bank complete and claim-checked; AI permissions filled or \"Not asked\"; no ad metrics anywhere.",
+   "replaces_existing_title": "",
+   "source": "Kaizen Brand Bible Builder (Claude.ai project) — B01 Brand Bible Template (condensed)"
+  },
+  {
+   "agent_key": "brandbible",
+   "kind": "skill",
+   "title": "Research playbook: sources, tags and tests",
+   "body": "Source order. Check every source before anything becomes a question.\nFoundational (every client): 1. marketing intake form (read every answer; copy goals, KPIs, audience, competitors and brand notes verbatim) 2. sales call transcript, not just the summary (goals, KPI targets, past agency experience, fears, how they describe customers and competitors) 3. website (products, prices, offers, stock, claims, About, FAQ) 4. customer reviews (Google, website, marketplaces) 5. socials and web research (competitors, category norms, regulation).\nWhen they exist: 6. client and internal Slack, full history 7. other calls 8. Drive (brand guide, claims/compliance doc, assets, creative feedback) 9. Kaizen's account sheet 10. ad accounts and competitor ad libraries, only if spending. A claims/compliance doc outranks everything else on claims. Missing intake or sales call: say so, keep building from website and reviews, never fill goals or KPIs from assumption.\n\nTag every answer: [Intake] [Call, date] [Website] [Google reviews] [Slack, date] [Drive] [Sheet] [Ads] [Web — researched].\n\nUnknowns become tests, not questions. Only these go to a person, and only when every source is empty:\n- Legally risky claims or topics (health, medical, finance, legal, alcohol/nicotine): list under \"Needs client sign-off\" in section 4; confirmed at approval.\n- Products or offers that must not be shown (stock, recall, discontinued), if the website is unclear: media buyer.\n- KPI unit and target, only if the account is already spending: media buyer. Never assume CPA vs ROAS.\n\nDefaults until real data exists: winner = best third of ads by in-platform cost per result after 7 days among ads with meaningful spend (the buyer replaces it after 14 days); platforms = the services the client bought; approval = 72-hour auto-approval; audiences = 3 Hypothesis profiles from intake, sales call, reviews and competitor targeting; offer = the evergreen offer on the website.\n\nReviews: record count and star rating per source, then 8–15 verbatim quotes covering why people buy, what they love, what they complain about and what nearly stopped them. Blocked page = say so; never paraphrase.\n\nCompetitors: longest-running active ads first (they're the proven ones). For each: format, headline and first line (the promise), angle, which of our profiles it targets, launch date, ad library link. Flag non-competitors (agencies, out-of-market brands). Then their websites: positioning line, price, key claims, look.\n\nClient communication: pull every client statement on product, brand, creative, approvals and rejections, with dates; find every statement on AI content (\"AI\", \"generated\", \"voiceover\", \"avatar\") and log it. Note which sources the run couldn't see.\n\nMarket: category size and trends, consumer behavior, regulation and platform policy, with the page opened for every citation; 12 months of holidays, cultural moments, industry days, client events and buying windows, ready-by = moment minus 14 days.\n\nRefresh quarterly: new client comms since the last change-log date, competitors, the review bank and the calendar; re-check every profile; show what changed, was added or retired.",
+   "replaces_existing_title": "",
+   "source": "Kaizen Brand Bible Builder (Claude.ai project) — B02 Research Playbook (condensed; Kaizen sheet IDs, tab names, Slack/Drive naming and connector steps dropped)"
+  },
+  {
+   "agent_key": "suggest",
+   "kind": "skill",
+   "title": "Audience and angle checklist",
+   "body": "When the client has a Brand Bible, build on its audience profiles by letter (A–E) and use its claims table and review bank as hard limits. Without one, answer these yourself from the client context before writing a brief:\n- Who exactly, in their words (life stage, situation), and how aware they already are: unaware, problem-aware, solution-aware, product-aware or ready to buy. Colder audiences need the problem or payoff first; warm ones need the offer and proof.\n- What they want and what hurts, quoted from reviews or the client where possible.\n- The top objection and the line or proof that answers it.\n- The trigger moment that makes them buy now (season, life event, deadline).\n- Visual cues that say \"this is for me\" (setting, casting, wardrobe) and what would turn them off.\nIf a point can't be answered from the context, make it the thing the creative tests (e.g. \"test price-led vs outcome-led hook\") rather than guessing.",
+   "replaces_existing_title": "",
+   "source": "Kaizen Brand Bible Builder (Claude.ai project) — B01 §3 audience profile fields"
+  },
+  {
+   "agent_key": "copy",
+   "kind": "skill",
+   "title": "Using customer reviews in copy",
+   "body": "Customer reviews are the strongest proof-led opener, with rules:\n- Quote word for word. Shorten only by cutting with \"…\" where the meaning stays the same. Never fix grammar, reword, combine two reviews or write one.\n- Attribute as it appears publicly: first name + last initial and the source (\"Sarah M. · Google review\"). No full names.\n- A review in an ad is the brand making that claim. If it promises a result, a health effect, savings or a comparison with a competitor, it needs client sign-off; if it contains a word the client bans, don't use it.\n- Short quotes (10–25 words) fit statics; longer ones go in primary text.\n- Only use reviews present in the client context or Brand Bible review bank. Never invent one.",
+   "replaces_existing_title": "",
+   "source": "Kaizen Brand Bible Builder (Claude.ai project) — B01 §4b review bank rules, B02 §1c"
+  },
+  {
+   "agent_key": null,
+   "kind": "knowledge",
+   "title": "What Kaizen makes, what clients provide, and AI content",
+   "body": "What Kaizen makes vs what the client provides (Kaizen is a remote agency):\n- Kaizen makes: static images and carousels, animated / motion-graphic video, and edits or re-cuts of the client's existing footage (product, lifestyle, creator, testimonial).\n- The client provides (Kaizen recommends and briefs it): UGC/creator video, founder video, product and facility shoots, customer testimonial video. Don't plan a video that needs new footage unless the client has it or agreed to shoot it; say what to shoot instead.\n- AI content (AI images, AI edits to real photos, AI video, AI voiceover, AI people) only where the client approved it. No statement means don't use it. Never AI-generated UGC or AI people presented as real customers.\n- Audio: licensed only. TikTok ads use its Commercial Music Library; on Meta use Sound Collection or licensed tracks, and replace copyrighted songs in real-event clips.\n- People featured in ads (customers, couples, guests) need the client's ad-use release.",
+   "replaces_existing_title": "",
+   "source": "Kaizen Brand Bible Builder (Claude.ai project) — B01 §5b; Limelight Part 3 rules of the road (music, likeness)"
+  }
+ ],
+ "client_specific": [
+  {
+   "client": "Limelight Entertainment",
+   "notes": [
+    {
+     "kind": "avoid",
+     "body": "Never say \"one-stop shop\", and no discounts, bundle savings (the 5% multi-service discount is never mentioned), giveaways or \"free\" offers. Don't call pricing \"fair\"; the brand is mid-to-premium: \"we are not necessarily a luxury-based company. However… we are not cheap\" (Jackie, Sep 28)."
+    },
+    {
+     "kind": "avoid",
+     "body": "No AI of any kind: no AI images, AI video scenes, AI voiceover, AI people or AI UGC (Chris and Jackie, Mar–Sep 2026; every AI use is Not approved)."
+    },
+    {
+     "kind": "avoid",
+     "body": "Copy: no emojis, no em dashes, minimal exclamation points, no staff last names, no cheesy DJ clichés or corny traditions/line dances. Weddings only in paid ads (no corporate/private events)."
+    },
+    {
+     "kind": "prefer",
+     "body": "Look (Jackie's Sep 28 Loom): very clean, crisp, true-to-color images with no filters, warm overlays or CapCut effects; professional crops with breathing room, never cut heads; high resolution only; emotion on faces, and the image must match the service and the copy. Multi-image ads use photos from ONE wedding (full-length centre image, B&W close-ups either side), no slide counters. Logo prominent. Fonts Juana (headings) / Poppins (body); palette black, white, #e8e8e8, ~5% #c1d72e accent. Benchmarks: the landing pages and the in-house designer's ads."
+    },
+    {
+     "kind": "prefer",
+     "body": "Framing: \"DJ. Photography. Video. One Team.\" A premier entertainer and a premier wedding photographer (owners Chris and Jackie Marino) brought together, sold as a quality argument rather than convenience or savings."
+    },
+    {
+     "kind": "note",
+     "body": "Assets: use Jackie's Drive folders first: Photography > \"Photography Portfolio\" for photo/video ads and \"Favorite DJ Dance Floor\" for entertainment ads; ask Jackie for anything specific. Licensed audio only."
+    },
+    {
+     "kind": "note",
+     "body": "Claims: safe to say 5.0 on WeddingWire and The Knot, WeddingWire Couples' Choice 2014–2026, The Knot Hall of Fame. Not substantiated yet, don't use: \"Voted Best NJ Wedding DJ\", \"1,000+ NJ weddings\", years in business. Don't assert the viewer is engaged; say \"For couples planning a 2027 NJ wedding\"."
+    },
+    {
+     "kind": "note",
+     "body": "A full Brand Bible v1.0 (draft, Oct 13 2026) is in the client's 20 - Ad Creatives Drive folder: 3 audience profiles (A One Team couple, B Party-first couple, C Timeless-photos couple) and a 16-review bank. Pending Kaizen creative review and client approval."
+    },
+    {
+     "kind": "note",
+     "body": "Prices on limelightentertainmentnj.com (checked Oct 15, 2026): DJ \"Your Wedding Experience\" starting at $2,200; wedding photography collections begin at $5,500; wedding video packages starting at $4,000. The site shows no bundle price, so never quote a combined \"from\" price unless the client confirms one in writing; ad prices must match the landing page."
+    }
+   ]
+  }
+ ],
+ "dropped": [
+  {
+   "what": "Chat commands (build card, build brand bible in four parts, creative review, record approval, auto-approve, update, promote learnings, asset scan, ai permission, quarterly refresh) and the 'lock the client' step",
+   "why": "Interactive Claude.ai chat workflow; the app runs one structured call per client and approval/status belongs in the app UI. Kept only versioning/change-log and quarterly refresh."
+  },
+  {
+   "what": "Google Drive publishing mechanics (HTML create_file, ARCHIVE rename, read-back, fallback HTML)",
+   "why": "Connector-specific; the app should store the Bible itself (see notes)."
+  },
+  {
+   "what": "Kaizen Account Overview sheet ID, tab/column names, Slack channel naming, Drive folder names, Fireflies/Kyle sales-call handling, Motion tool calls",
+   "why": "Internal plumbing the app resolves through its own client records and syncs; also IDs that shouldn't sit in prompts."
+  },
+  {
+   "what": "Kaizen approver names/roles in the template",
+   "why": "Already in shared 'How Kaizen works'."
+  },
+  {
+   "what": "Limelight market stats, competitor table, NJ ad examples, 12-month calendar, review quotes, contacts, address, budgets, revenue, sales numbers, Kaizen to-dos",
+   "why": "Belongs in a stored per-client Brand Bible, not client memory; revenue/budget/sales figures and to-dos are internal."
+  },
+  {
+   "what": "Limelight sensitive items (WeddingWire 'ChatGPT said:' reply, designer-vs-Kaizen performance question, revisions complaint, former agency details)",
+   "why": "Marked not-for-Bible; relationship/internal matters."
+  },
+  {
+   "what": "Limelight open questions/contradictions (photo price $2,895 vs $5,500, 50% vs 60% photo/video split, who shoots video, phone number)",
+   "why": "Point-in-time; belongs in the stored Bible's open questions or the briefing, not permanent memory."
+  }
+ ],
+ "notes": "New agent 'brandbible': coming soon (live = false), sort_order 7, opus/high because it synthesizes many sources and will likely need research tools (web, reviews, competitor ad libraries), the one agent that may break the single-call pattern. Until then it can run as one call over what the app already holds (intake form, client memory, briefing, Slack/email/Drive syncs, Meta data) plus pasted sources, turning the rest into tests/gaps. Brandbible total: instructions + 2 skills ~14.7K chars (~3.7K tokens), well under the 8K-token budget.\n\nHow its output should feed the others later: store one Brand Bible per client (e.g. a client_brand_bible table: version, status, markdown/JSON sections, reviewed/approved by+at, change log), and inject a compact slice into client context: 'Read this first' + profiles index + claims table + review-bank 'OK' rows + Do/Don't for Brief strategist (suggest) and Copywriter (copy); claims + Do/Don't for Review; nothing for Fatigue/Launcher. 'Read this first' rules could seed client memory avoid/prefer items (with exec review). It fulfils VISION §4 / ROADMAP 'go-to-market agent': intake form -> angle/avatar foundation; the brief strategist then plans first-round requests from the profiles and the tests list.\n\nExtracted for live agents now (not duplicative: existing guardrails cover personal attributes and landing-page match, but not footage ownership, AI permissions, music licensing or review-quote rules): suggest 'Audience and angle checklist', copy 'Using customer reviews in copy', shared 'What Kaizen makes, what clients provide, and AI content'.\n\nDecisions: (1) where the Bible lives (app table vs Drive doc vs both) and whether the app owns the head-of-creative/client approval flow for it; (2) label 'Brand bible builder' vs 'Go-to-market'; (3) whether the Limelight 'from $11,000' price note should stay in memory given the unresolved landing-page mismatch."
+}

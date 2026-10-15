@@ -7,6 +7,7 @@ import { BOARD_ORDER, FORMAT_LABEL, PHASE_LABEL, businessDuration, health, stage
 import { assignTicket, commentTicket, moveTicket, setTicketDue, setTicketPriority, ticketHistory, type TicketEvent } from "./actions";
 import type { Design } from "./design-actions";
 import { Deliverables } from "./deliverables";
+import { ScriptPanel } from "./script-panel";
 import { ClientTag, FormatIcon, TimeStamp } from "./ticket-card";
 import type { Person, Ticket } from "./types";
 
@@ -380,6 +381,8 @@ export function TicketDrawer({
               </ul>
             )}
           </section>
+
+          {ticket.format === "video" && <ScriptPanel requestId={ticket.id} demo={demo ? null : undefined} />}
 
           <Deliverables ticket={ticket} demoDesigns={demo ? DEMO_DESIGNS : undefined} />
 

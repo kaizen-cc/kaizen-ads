@@ -13,7 +13,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 export const MODEL_IDS = { opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5", haiku: "claude-haiku-5-5" } as const;
 export type ModelKey = keyof typeof MODEL_IDS;
 export type Effort = "low" | "medium" | "high";
-export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue" | "coach";
+export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue" | "scripts" | "brandbible" | "coach";
 export const SOURCE_KEYS = ["meta", "briefing", "recent_messages", "memory", "angles", "recent_requests", "allotment"] as const;
 export type Sources = Partial<Record<(typeof SOURCE_KEYS)[number], boolean>>;
 
@@ -33,6 +33,8 @@ const DEFAULTS: Record<AgentKey, Pick<AgentConfig, "model" | "effort">> = {
   copy: { model: "sonnet", effort: "medium" },
   launcher: { model: "opus", effort: "high" },
   fatigue: { model: "haiku", effort: "low" },
+  scripts: { model: "opus", effort: "medium" },
+  brandbible: { model: "opus", effort: "high" },
   coach: { model: "opus", effort: "medium" }, // edits other agents' playbooks from feedback (Settings → AI agents → Coach)
 };
 
@@ -148,6 +150,58 @@ export async function askJson<T>({
   }
 }
 
+/**
+ * Web research by an agent: searches and reads pages, then returns plain-text notes with sources.
+ * Server tools can pause a long turn ("pause_turn"); the paused turn is sent back to continue.
+ */
+export async function researchWeb({ agent, label, system, prompt, maxSearches = 8, maxFetches = 10 }: {
+  agent: AgentKey;
+  label: string;
+  system: string;
+  prompt: string;
+  maxSearches?: number;
+  maxFetches?: number;
+}): Promise<string> {
+  if (!aiEnabled()) throw new AiUnavailable("AI isn't connected yet.");
+  const cfg = await getAgent(agent);
+  const started = Date.now();
+  const messages: Anthropic.MessageParam[] = [{ role: "user", content: prompt }];
+  const run = { agent_key: agent, label, model: cfg.model, effort: cfg.effort };
+  let inTok = 0;
+  let outTok = 0;
+  try {
+    for (let turn = 0; turn < 6; turn++) {
+      const res = await anthropic().messages.create({
+        model: MODEL_IDS[cfg.model],
+        max_tokens: 16000,
+        system: withAgent(system, cfg),
+        output_config: { effort: cfg.effort },
+        tools: [
+          { type: "web_search_20260209", name: "web_search", max_uses: maxSearches },
+          { type: "web_fetch_20260209", name: "web_fetch", max_uses: maxFetches },
+        ],
+        messages,
+      });
+      inTok += res.usage.input_tokens;
+      outTok += res.usage.output_tokens;
+      if (res.stop_reason === "pause_turn") {
+        messages.push({ role: "assistant", content: res.content });
+        continue;
+      }
+      const text = res.content.map((b) => (b.type === "text" ? b.text : "")).join("").trim();
+      logRun({ ...run, ms: Date.now() - started, input_tokens: inTok, output_tokens: outTok, ok: Boolean(text), error: text ? null : res.stop_reason });
+      return text;
+    }
+    throw new AiUnavailable("The research took too many steps. Try again.");
+  } catch (e) {
+    if (e instanceof AiUnavailable) throw e;
+    console.error("[ai] research failed:", e instanceof Error ? e.message : e);
+    logRun({ ...run, ms: Date.now() - started, input_tokens: inTok, output_tokens: outTok, ok: false, error: (e instanceof Error ? e.message : String(e)).slice(0, 300) });
+    if (e instanceof Anthropic.BadRequestError) throw new AiUnavailable(`The AI rejected the research request: ${apiMessage(e)}`);
+    throw new AiUnavailable("The research didn't finish. Try again.");
+  }
+}
+
 /** The API's own explanation, without the status prefix the SDK adds. */
 function apiMessage(e: InstanceType<typeof Anthropic.APIError>) {
   const err = (e.error as { error?: { message?: string } } | undefined)?.error?.message;
@@ -163,6 +217,7 @@ export type ClientContext = {
   allotment: Allotment | null;
   digest: Digest | null; // from the twice-daily briefing: Slack, email and Drive, already summarized
   meta: string | null; // the latest Meta ad performance, in readable lines
+  brandBible: string | null; // "Read this first" from a Brand Bible the head of creative reviewed
   sinceBriefing: { source: string; at: string; author: string | null; title: string | null; body: string | null }[]; // newer than the briefing
   angles: { name: string; kind: string; description: string | null }[];
   memory: { kind: "avoid" | "prefer" | "note"; body: string; source: string }[];
@@ -196,6 +251,7 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
       .limit(25),
   ]);
   if (!c) return null;
+  const { data: bible } = await supabase.from("client_brand_bibles").select("read_this_first, version").eq("client_id", clientId).eq("status", "reviewed").maybeSingle();
   // Slack and email that came in after the briefing was written, so suggestions and the review are current
   const { data: newer } = await supabase
     .from("context_items")
@@ -206,6 +262,7 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
     .order("occurred_at", { ascending: false })
     .limit(40);
   return {
+    brandBible: bible?.read_this_first ? `${bible.read_this_first}\n(Brand Bible ${bible.version}, reviewed by Kaizen)` : null,
     sinceBriefing: (newer ?? []).map((i) => ({ source: i.source, at: i.occurred_at, author: i.author, title: i.title, body: i.body?.slice(0, 800) ?? null })),
     name: c.name,
     website: c.website,
@@ -242,6 +299,7 @@ export function contextBlock(ctx: ClientContext, request?: { images: number; vid
     recent: on("recent_requests") ? ctx.recent : [],
   };
   const lines: string[] = [`<client name="${ctx.name}"${ctx.website ? ` website="${ctx.website}"` : ""}>`];
+  if (ctx.brandBible) lines.push("<brand_bible_read_this_first>", "The client's reviewed Brand Bible. Its audience profiles, banned claims and rules are hard limits.", ctx.brandBible, "</brand_bible_read_this_first>");
   if (!on("meta")) lines.push("(Ad performance isn't part of this task.)");
   else if (ctx.meta) lines.push("<meta_ads_performance>", ctx.meta, "</meta_ads_performance>");
   else lines.push(ctx.adAccountConnected ? "Meta ad account linked, but no performance pulled yet. Don't invent metrics." : "No Meta ad account linked yet. Don't invent metrics.");
@@ -409,3 +467,53 @@ export function cleanSuggestions(raw: Suggestions): Suggestions {
     sizes: raw.sizes.filter((z) => ["1x1", "4x5", "9x16"].includes(z)),
   };
 }
+
+// ─── Video scripts ──────────────────────────────────────────────────────────
+
+export type Script = {
+  framework: string;
+  style: string;
+  why: string;
+  hooks: { type: string; onScreen: string; spoken: string }[];
+  title: string;
+  placement: string;
+  objective: string;
+  lengthSeconds: number;
+  beats: { time: string; shot: string; onScreen: string; voiceover: string; sound: string }[];
+  cta: string;
+  filming: string[];
+  testPlan: string;
+  watchouts: string[];
+};
+
+export const SCRIPT_SCHEMA = obj({
+  framework: str,
+  style: str,
+  why: str,
+  hooks: { type: "array", items: obj({ type: str, onScreen: str, spoken: str }) },
+  title: str,
+  placement: str,
+  objective: str,
+  lengthSeconds: { type: "integer" },
+  beats: { type: "array", items: obj({ time: str, shot: str, onScreen: str, voiceover: str, sound: str }) },
+  cta: str,
+  filming: strArr,
+  testPlan: str,
+  watchouts: strArr,
+});
+
+// ─── Brand Bible ────────────────────────────────────────────────────────────
+
+export type BrandBibleOut = {
+  markdown: string;
+  readThisFirst: string;
+  teamNotes: string[];
+  openQuestions: { question: string; who: string }[];
+};
+
+export const BRAND_BIBLE_SCHEMA = obj({
+  markdown: str,
+  readThisFirst: str,
+  teamNotes: strArr,
+  openQuestions: { type: "array", items: obj({ question: str, who: str }) },
+});

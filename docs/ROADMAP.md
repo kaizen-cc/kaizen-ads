@@ -9,12 +9,13 @@ Where things stand on 2026-10-15 and what comes next, in order. The target is th
 - **Clients**: every client in one view; client page with AI briefing, memory, angles, team, contacts, package and connections.
 - **Context sync**: Slack (internal and client channels), every inbox, the Drive client folders and Meta, on a schedule. Briefings at 12pm and 6pm.
 - **KPI dashboard**: Meta targets, moving averages, MoM/QoQ, budget pacing, auto-linking of shared ad accounts.
-- **Settings**: AI agents (model, effort, instructions, knowledge, skills, examples, data sources, run log), raw data inspector, sync health.
+- **Settings**: AI agents as cards with a coach chat that edits their playbooks, raw data inspector, sync health. Playbooks imported from Kaizen's Claude projects.
+- **Video script writer** on video tickets, and the **Brand Bible builder** (web research) on every client page.
 
 ## Next: close the approval loop (Phase 1, before BFCM)
 
 1. **Internal review stage**: Jesus (or an exec) approves or sends back a deliverable on the ticket, with comments pinned to a spot on the image or a timestamp in the video.
-2. **Copy**: the **Copywriter agent** (already configurable in Settings) drafts up to 3 primary texts and 3 headlines per angle from the brief, the creative and client memory. It goes straight to Camille, who edits and passes it on. Her edits are saved as examples the agent learns from.
+2. **Copy**: the **Copywriter agent** (playbook from Kyle's project) drafts Kyle's set per angle, 3 short + 2 long with headline, link description and CTA button. It goes straight to Camille, who sees a live character count on every field, edits and passes it on. Her edits are saved as examples the agent learns from.
 3. **Client portal**: the swipe-to-approve experience from the Phase 0 mockups. It shows a full ad preview, with creative and copy approved separately and revision notes captured. The first approval counts.
 4. **Notifications and chasing**: Slack posts to each client's channel, plus 24h and 48h reminders in business time. After 48h the item goes to Jorgi's queue; auto-approval happens only for clients who opted in.
 5. **Revisions loop**: client feedback goes back to the maker as a new version. Every revision note lands in client memory automatically.
