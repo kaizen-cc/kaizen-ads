@@ -66,10 +66,10 @@ function Progress({ p }: { p: ReviewProgress }) {
     p.phase === "files" ? p.files.label : checking.length ? `Checking ${checking.map((d) => d.ref).join(", ")}: reading the text, the offer, brand rules and placements` : "Putting the notes together";
 
   return (
-    <div className="grid gap-3">
-      <div className="flex items-baseline justify-between gap-3">
-        <p className="min-w-0 truncate text-sm text-muted">{label}…</p>
-        <span className="tabular font-heading text-[22px] leading-none" style={{ color: ACCENT }}>
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
+      <div className="flex min-w-0 items-baseline justify-between gap-3">
+        <p className="min-w-0 flex-1 truncate text-sm text-muted">{label}…</p>
+        <span className="tabular shrink-0 font-heading text-[22px] leading-none" style={{ color: ACCENT }}>
           {Math.floor(pct)}%
         </span>
       </div>
@@ -85,12 +85,12 @@ function Progress({ p }: { p: ReviewProgress }) {
           </span>
         </li>
         {p.designs.map((d) => (
-          <li key={d.ref} className="flex items-center gap-2.5 text-xs">
+          <li key={d.ref} className="flex min-w-0 items-center gap-2.5 text-xs">
             <StepDot state={d.status === "checking" ? "active" : d.status === "done" ? "done" : d.status === "failed" ? "failed" : "waiting"} />
-            <span className={d.status === "checking" ? "text-fg" : d.status === "waiting" ? "text-faint" : "text-muted"}>
+            <span className={`min-w-0 truncate ${d.status === "checking" ? "text-fg" : d.status === "waiting" ? "text-faint" : "text-muted"}`}>
               {d.ref} · {d.name}
             </span>
-            <span className="ml-auto text-faint">
+            <span className="ml-auto shrink-0 text-faint">
               {d.status === "done" ? (
                 d.fixes ? (
                   <span className="text-bad">{d.fixes} to fix</span>
@@ -253,7 +253,7 @@ export function AiGate({ ticket, onSent, back, demo = false }: { ticket: Ticket;
   const clean = current?.status === "done" && current.notes?.verdict !== "fix";
 
   return (
-    <div className="grid gap-4 rounded-[12px] border border-line bg-bg/50 p-4">
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 rounded-[12px] border border-line bg-bg/50 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="flex items-center gap-2 text-sm font-medium">
           <ScanIcon className="h-4 w-4 text-[#6c7ee1]" />

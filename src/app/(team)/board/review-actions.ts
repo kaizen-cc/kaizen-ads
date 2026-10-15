@@ -65,6 +65,8 @@ export async function addComment(v: {
   fileId: string | null;
   x?: number | null;
   y?: number | null;
+  w?: number | null; // a box: x, y is its top-left corner
+  h?: number | null;
   tMs?: number | null;
   body: string;
 }): Promise<{ ok: true; comments: ReviewComment[] } | { ok: false; error: string }> {
@@ -82,6 +84,8 @@ export async function addComment(v: {
     file_id: v.fileId,
     x: clamp(v.x),
     y: clamp(v.y),
+    w: v.w ? Math.min(1, Math.max(0.005, v.w)) : null,
+    h: v.h ? Math.min(1, Math.max(0.005, v.h)) : null,
     t_ms: v.tMs == null ? null : Math.max(0, Math.round(v.tMs)),
     body: v.body.trim().slice(0, 2000),
     round: ["ready_for_client", "client_review", "client_revision"].includes(r.stage) ? "client" : "internal",

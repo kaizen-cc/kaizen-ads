@@ -277,9 +277,17 @@ export function TicketDrawer({
       }
     });
 
+  // Moved on: the ticket closes (the work is done here). It stays open only while the AI reviews, which isn't a move.
+  const moved = (stage: Stage) => {
+    onOptimisticMove(ticket.id, stage);
+    onClose();
+  };
   const move = (stage: Stage) => {
     onOptimisticMove(ticket.id, stage);
-    run(() => moveTicket(ticket.id, stage, moveNote), () => setMoveNote(""));
+    run(() => moveTicket(ticket.id, stage, moveNote), () => {
+      setMoveNote("");
+      onClose();
+    });
   };
 
   const currentPhaseIndex = PHASES.indexOf(info.phase);
@@ -372,14 +380,14 @@ export function TicketDrawer({
               </div>
             </div>
             {making && (
-              <div className="grid gap-4 border-t border-line px-5 py-5">
+              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 border-t border-line px-5 py-5">
                 <Deliverables ticket={ticket} demoDesigns={demo ? DEMO_DESIGNS : undefined} onState={onUploads} />
                 {hasCreative && uploads.uploading === 0 ? (
                   // Remounts after each upload, so it always knows whether the review is about the current files
                   <AiGate
                     ticket={ticket}
                     demo={demo}
-                    onSent={(st) => onOptimisticMove(ticket.id, st)}
+                    onSent={moved}
                     back={
                       back && (
                         <button disabled={pending} onClick={() => move(back.to)} className="h-10 rounded-brand px-3 text-xs text-faint hover:text-fg disabled:opacity-60">
@@ -443,8 +451,8 @@ export function TicketDrawer({
           {/* Once there's creative, the files come first */}
           {filesFirst && <Deliverables ticket={ticket} demoDesigns={demo ? DEMO_DESIGNS : undefined} onState={onUploads} />}
 
-          <ReviewPanel ticket={ticket} canReview={can.review} onMoved={(st) => onOptimisticMove(ticket.id, st)} demo={demo} />
-          {(COPY_STAGES.includes(ticket.stage)) && <CopyPanel ticket={ticket} canApprove={can.approveCopy} onMoved={(st) => onOptimisticMove(ticket.id, st)} demo={demo ? DEMO_COPY : undefined} />}
+          <ReviewPanel ticket={ticket} canReview={can.review} onMoved={moved} demo={demo} />
+          {(COPY_STAGES.includes(ticket.stage)) && <CopyPanel ticket={ticket} canApprove={can.approveCopy} onMoved={moved} demo={demo ? DEMO_COPY : undefined} />}
 
           {/* Properties: label on the left, editable value on the right */}
           <section className={section}>

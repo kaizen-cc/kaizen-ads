@@ -15,10 +15,10 @@ const clock = (ms: number) => {
 /** Tell the rest of the drawer (review panel, design cards) that comments changed. */
 export const commentsChanged = (requestId: string) => window.dispatchEvent(new CustomEvent("kz:comments", { detail: requestId }));
 
-type Draft = { x: number | null; y: number | null; tMs: number | null };
+type Draft = { x: number | null; y: number | null; w?: number | null; h?: number | null; tMs: number | null };
 
 /**
- * Full-screen viewer for one design. Click the image to pin a comment to that spot; on a video, comment at the
+ * Full-screen viewer for one design. Click to pin a comment to a spot, or drag to box an area; on a video, comment at the
  * current moment. Every comment belongs to the version it was made on, so old notes don't haunt new versions.
  */
 export function ReviewViewer({
@@ -51,6 +51,7 @@ export function ReviewViewer({
   const [busy, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [hover, setHover] = useState<string | null>(null);
+  const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null); // being drawn
   const videoRef = useRef<HTMLVideoElement>(null);
   const [nowMs, setNowMs] = useState(0); // where the video is, for "Comment at 0:07"
   const input = useRef<HTMLTextAreaElement>(null);
@@ -83,13 +84,13 @@ export function ReviewViewer({
       if (demo) {
         onComments([
           ...comments,
-          { id: `demo-${Date.now()}`, designId: design.id, version: v.version, fileId: file?.id ?? null, x: draft?.x ?? null, y: draft?.y ?? null, tMs: draft?.tMs ?? null, body: text.trim(), round: "internal", author: "You", remembered: false, resolved: false, at: new Date().toISOString() },
+          { id: `demo-${Date.now()}`, designId: design.id, version: v.version, fileId: file?.id ?? null, x: draft?.x ?? null, y: draft?.y ?? null, w: draft?.w ?? null, h: draft?.h ?? null, tMs: draft?.tMs ?? null, body: text.trim(), round: "internal", author: "You", remembered: false, resolved: false, at: new Date().toISOString() },
         ]);
         setText("");
         setDraft(null);
         return;
       }
-      const r = await addComment({ requestId, designId: design.id, version: v.version, fileId: file?.id ?? null, x: draft?.x, y: draft?.y, tMs: draft?.tMs, body: text });
+      const r = await addComment({ requestId, designId: design.id, version: v.version, fileId: file?.id ?? null, x: draft?.x, y: draft?.y, w: draft?.w, h: draft?.h, tMs: draft?.tMs, body: text });
       if (!r.ok) return setError(r.error);
       onComments(r.comments);
       commentsChanged(requestId);
@@ -145,11 +146,28 @@ export function ReviewViewer({
                   key={file.id}
                   src={file.url}
                   alt={file.name}
-                  onClick={(e) => {
+                  draggable={false}
+                  onPointerDown={(e) => {
                     const r = e.currentTarget.getBoundingClientRect();
-                    begin({ x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height, tMs: null });
+                    const x = (e.clientX - r.left) / r.width;
+                    const y = (e.clientY - r.top) / r.height;
+                    setBox({ x0: x, y0: y, x1: x, y1: y });
+                    e.currentTarget.setPointerCapture(e.pointerId);
                   }}
-                  className="block max-h-[calc(100vh-220px)] max-w-full cursor-crosshair rounded-[8px] object-contain"
+                  onPointerMove={(e) => {
+                    if (!box) return;
+                    const r = e.currentTarget.getBoundingClientRect();
+                    setBox({ ...box, x1: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y1: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) });
+                  }}
+                  onPointerUp={() => {
+                    if (!box) return;
+                    const w = Math.abs(box.x1 - box.x0);
+                    const h = Math.abs(box.y1 - box.y0);
+                    begin(w < 0.03 && h < 0.03 ? { x: box.x0, y: box.y0, tMs: null } : { x: Math.min(box.x0, box.x1), y: Math.min(box.y0, box.y1), w, h, tMs: null });
+                    setBox(null);
+                  }}
+                  onPointerCancel={() => setBox(null)}
+                  className="block max-h-[calc(100vh-220px)] max-w-full cursor-crosshair touch-none select-none rounded-[8px] object-contain"
                 />
                 {pins.map((c) => (
                   <span key={c.id} className="contents">
@@ -171,7 +189,16 @@ export function ReviewViewer({
                   </span>
                   </span>
                 ))}
-                {draft?.x != null && draft.y != null && (
+                {box && (
+                  <span
+                    className="pointer-events-none absolute rounded-[4px] border-2 border-dashed border-brand bg-brand/15 shadow-[0_0_0_1.5px_rgba(255,255,255,0.8)]"
+                    style={{ left: `${Math.min(box.x0, box.x1) * 100}%`, top: `${Math.min(box.y0, box.y1) * 100}%`, width: `${Math.abs(box.x1 - box.x0) * 100}%`, height: `${Math.abs(box.y1 - box.y0) * 100}%` }}
+                  />
+                )}
+                {!box && draft?.x != null && draft.y != null && draft.w != null && draft.h != null && (
+                  <span className="pointer-events-none absolute animate-pulse rounded-[4px] border-2 border-brand bg-brand/20 shadow-[0_0_0_1.5px_rgba(255,255,255,0.8)]" style={{ left: `${draft.x * 100}%`, top: `${draft.y * 100}%`, width: `${draft.w * 100}%`, height: `${draft.h * 100}%` }} />
+                )}
+                {!box && draft?.x != null && draft.y != null && (
                   <span className="absolute grid h-7 w-7 -translate-x-1/2 -translate-y-1/2 animate-pulse place-items-center rounded-full bg-white text-xs font-semibold text-black ring-2 ring-brand" style={{ left: `${draft.x * 100}%`, top: `${draft.y * 100}%` }}>
                     +
                   </span>
@@ -220,7 +247,7 @@ export function ReviewViewer({
             <p className="text-sm font-medium text-white">
               Comments <span className="tabular text-white/40">{mine.length}</span>
             </p>
-            <p className="text-[11px] text-white/40">{isVideo ? "Pause where it's wrong, then comment" : "Click the image to pin a comment"}</p>
+            <p className="text-[11px] text-white/40">{isVideo ? "Pause where it's wrong, then comment" : "Click to pin a comment, or drag to box an area"}</p>
           </div>
 
           <ol className="grid min-h-0 content-start gap-2 overflow-y-auto px-5 pb-4">
@@ -266,7 +293,7 @@ export function ReviewViewer({
           <div className="grid gap-2 border-t border-white/10 px-5 py-4">
             {draft ? (
               <p className="text-[11px] text-white/60">
-                {draft.tMs != null ? `At ${clock(draft.tMs)}` : draft.x != null ? "Pinned to the spot you clicked" : "On the whole design"}
+                {draft.tMs != null ? `At ${clock(draft.tMs)}` : draft.w != null ? "On the area you boxed" : draft.x != null ? "Pinned to the spot you clicked" : "On the whole design"}
                 <button onClick={() => setDraft(null)} className="ml-2 text-white/40 hover:text-white">
                   cancel
                 </button>
