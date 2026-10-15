@@ -100,6 +100,7 @@ export async function askJson<T>({
   prompt,
   schema,
   images = [],
+  onText,
 }: {
   agent: AgentKey;
   label: string; // for the timing log
@@ -108,6 +109,8 @@ export async function askJson<T>({
   schema: Record<string, unknown>;
   /** Pictures the AI should look at (reference images), sent before the text */
   images?: { mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp"; data: string }[];
+  /** Streams the answer and calls this with everything written so far (for real progress). */
+  onText?: (soFar: string) => void;
 }): Promise<T> {
   if (!aiEnabled()) throw new AiUnavailable("AI isn't connected yet.");
   const cfg = await getAgent(agent);
@@ -132,7 +135,12 @@ export async function askJson<T>({
   const run = { agent_key: agent, label, model: cfg.model, effort: cfg.effort };
   try {
     let res;
-    if (cfg.model === "haiku") {
+    if (onText) {
+      // Streamed, so the caller can show what's been written so far
+      const stream = anthropic().messages.stream(request);
+      stream.on("text", (_delta, soFar) => onText(soFar));
+      res = await stream.finalMessage();
+    } else if (cfg.model === "haiku") {
       // Haiku has no server-side fallback model, so it's a plain request
       res = await anthropic().messages.create(request);
     } else
@@ -150,8 +158,8 @@ export async function askJson<T>({
     logRun({ ...run, ms, input_tokens: res.usage.input_tokens, output_tokens: res.usage.output_tokens, ok: !bad, error: bad ? res.stop_reason : null });
     if (res.stop_reason === "refusal") throw new AiUnavailable("The AI couldn't help with this one.");
     if (res.stop_reason === "max_tokens") throw new AiUnavailable("The AI ran out of room. Try again.");
-    const text = res.content.find((b) => b.type === "text");
-    if (!text || text.type !== "text") throw new AiUnavailable("The AI didn't answer. Try again.");
+    const text = (res.content as { type: string; text?: string }[]).find((b) => b.type === "text");
+    if (!text?.text) throw new AiUnavailable("The AI didn't answer. Try again.");
     return JSON.parse(text.text) as T;
   } catch (e) {
     if (e instanceof AiUnavailable) throw e;
@@ -646,3 +654,19 @@ Be specific and useful: say where on the design (top headline, price badge, CTA 
 For a video you only see one frame: don't judge motion, pacing or sound.
 size: "4:5", "9:16"… or "4:5, 9:16" (or "" when it applies to every size). area: one or two words (Text, Offer, Brand, Placement, Brief, Craft, Policy, Sizes).
 Your notes go first to the designer or editor who made it, so they can fix it before the Head of Creative sees it: write so they know exactly what to change.`;
+
+// ─── Copy: what copy review teaches the Copywriter ──────────────────────────
+
+export type CopyLesson = { kind: "prefer" | "avoid"; body: string };
+const LESSONS = { type: "array", items: obj({ kind: { type: "string", enum: ["prefer", "avoid"] }, body: str }) };
+export const COPY_LESSONS_SCHEMA = obj({ lessons: LESSONS });
+export const COPY_CHAT_SCHEMA = obj({ reply: str, rewrite: { type: "boolean" }, instructions: str, lessons: LESSONS });
+
+export const COPY_LESSONS_SYSTEM = `You help Kaizen Marketing's AI copywriter learn from copy review. You get the ads the AI wrote and the ads copy review approved after editing them.
+Find what the edits say about how this client's copy should be written, as lasting rules: voice, words to use or avoid, claims, how offers are stated, length, structure, CTA. Each lesson is one plain sentence a copywriter could follow next time ("Say 'members', never 'customers'", "Lead with the price in the first line").
+kind: prefer (do this) or avoid (don't do this). Skip one-off fixes that only apply to this ad (a typo, a date), and anything already in the client memory you're given. Return 0 to 3 lessons; return none when the edits were small.`;
+
+export const COPY_CHAT_SYSTEM = `You are Kaizen Marketing's AI copywriter, talking with the person who reviews your copy. They tell you what's wrong with the set you wrote, or what they want instead. Answer briefly and plainly, like a colleague: say what you understood and what you'll change. No emojis, no apologies.
+rewrite: true when they want the set changed (or you should change it to do what they say); false when they're only asking a question or you need something clarified first.
+instructions: when rewriting, everything the rewrite must do, written as instructions to yourself: complete enough on its own (it's all the rewrite gets from this conversation). "" when not rewriting.
+lessons: only rules they state that should apply to this client's copy from now on, not just this set ("never mention delivery", "they say 'classes', not 'lessons'"). One sentence each; kind prefer or avoid. Usually none.`;

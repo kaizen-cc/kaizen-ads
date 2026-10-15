@@ -1,10 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { AiUnavailable } from "@/lib/ai";
+import { after } from "next/server";
+import { AiUnavailable, askJson, clientContext, COPY_CHAT_SCHEMA, COPY_CHAT_SYSTEM, type CopyLesson } from "@/lib/ai";
 import { requireStaff } from "@/lib/auth";
 import { problems, type Ad } from "@/lib/copy";
-import { draftCopy } from "@/lib/copy-draft";
+import { draftCopy, learnFromCopy } from "@/lib/copy-draft";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -20,6 +21,7 @@ export type CopySet = {
   approvedAt: string | null;
   updatedAt: string;
   reusedFrom: string | null;
+  progress: { written?: number; total?: number; label?: string };
 };
 export type CopyState = { set: CopySet | null; reusable: { id: string; title: string; approvedAt: string | null; ads: Ad[] } | null };
 
@@ -35,6 +37,7 @@ const toSet = (s: Record<string, unknown>): CopySet => ({
   approvedAt: (s.approved_at as string | null) ?? null,
   updatedAt: s.updated_at as string,
   reusedFrom: (s.reused_from as string | null) ?? null,
+  progress: (s.progress ?? {}) as CopySet["progress"],
 });
 
 /** The ticket's copy set, and an approved set for the same angle that could be reused instead of re-asking. */
@@ -62,19 +65,27 @@ export async function ticketCopy(requestId: string): Promise<CopyState> {
   return { set: set ? toSet(set) : null, reusable };
 }
 
-/** Write (or rewrite with a note from copy review) the copy set. */
+/** Write (or rewrite with a note from copy review) the copy set. It runs in the background; ticketCopy shows its progress. */
 export async function redraftCopy(requestId: string, note?: string): Promise<{ ok: true; state: CopyState } | { ok: false; error: string }> {
   const me = await requireStaff();
   const supabase = await createClient();
-  const { data: visible } = await supabase.from("requests").select("id").eq("id", requestId).maybeSingle();
+  const { data: visible } = await supabase.from("requests").select("id, client_id, angle_id").eq("id", requestId).maybeSingle();
   if (!visible) return { ok: false, error: "Ticket not found." };
   if (!adminConfigured()) return { ok: false, error: "Server key missing." };
-  try {
-    await draftCopy(createAdminClient(), requestId, me.id, note);
-  } catch (e) {
-    return { ok: false, error: e instanceof AiUnavailable ? e.message : "Couldn't write the copy." };
-  }
-  revalidatePath("/board");
+  const admin = createAdminClient();
+  await admin
+    .from("copy_sets")
+    .upsert(
+      { request_id: requestId, client_id: visible.client_id, angle_id: visible.angle_id, status: "drafting", error: null, progress: { written: 0, total: 5, label: note?.trim() ? "Reading your notes" : "Reading the brief, the creative and the client's voice" }, updated_at: new Date().toISOString() },
+      { onConflict: "request_id" },
+    );
+  after(async () => {
+    try {
+      await draftCopy(admin, requestId, me.id, note);
+    } catch (e) {
+      console.error("[copy] redraft failed:", e instanceof AiUnavailable ? e.message : e);
+    }
+  });
   return { ok: true, state: await ticketCopy(requestId) };
 }
 
@@ -95,6 +106,18 @@ export async function approveCopy(setId: string, ads: Ad[]): Promise<{ ok: true 
   if (!saved.ok) return saved;
   const supabase = await createClient();
   const { error } = await supabase.rpc("approve_copy", { p_set: setId });
+  if (!error && adminConfigured()) {
+    const me = await requireStaff();
+    const { data: set } = await supabase.from("copy_sets").select("request_id").eq("id", setId).maybeSingle();
+    if (set)
+      after(async () => {
+        try {
+          await learnFromCopy(createAdminClient(), set.request_id, me.id);
+        } catch (e) {
+          console.error("[copy] learning from edits failed:", e instanceof Error ? e.message : e);
+        }
+      });
+  }
   revalidatePath("/board");
   return error ? { ok: false, error: error.message } : { ok: true };
 }
@@ -121,4 +144,82 @@ export async function reuseCopy(requestId: string, fromSetId: string): Promise<{
   const { error: approveError } = await supabase.rpc("approve_copy", { p_set: set.id });
   revalidatePath("/board");
   return approveError ? { ok: false, error: approveError.message } : { ok: true };
+}
+
+// ─── Chat with the Copywriter ───────────────────────────────────────────────
+
+export type ChatMessage = { role: "user" | "assistant"; text: string; by: string | null; at: string; rewrote?: boolean; lessons?: CopyLesson[] };
+
+export async function copyChat(requestId: string): Promise<ChatMessage[]> {
+  await requireStaff();
+  const supabase = await createClient();
+  const { data } = await supabase.from("copy_chats").select("messages").eq("request_id", requestId).maybeSingle();
+  return (data?.messages ?? []) as ChatMessage[];
+}
+
+/**
+ * Copy review talks to the agent that wrote the copy. It answers, rewrites the whole set when that's what's asked (in the
+ * background, with progress), and keeps any rule meant for this client from now on as client memory.
+ */
+export async function chatWithCopywriter(requestId: string, text: string): Promise<{ ok: true; messages: ChatMessage[]; rewriting: boolean } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  if (!text.trim()) return { ok: false, error: "Write something first." };
+  const supabase = await createClient();
+  const { data: r } = await supabase.from("board_requests").select("id, number, client_id, angle_id, title, brief, angle_name").eq("id", requestId).maybeSingle();
+  if (!r) return { ok: false, error: "Ticket not found." };
+  if (!adminConfigured()) return { ok: false, error: "Server key missing." };
+  const admin = createAdminClient();
+  const [{ data: set }, history, ctx] = await Promise.all([
+    admin.from("copy_sets").select("ads, notes, status").eq("request_id", requestId).maybeSingle(),
+    copyChat(requestId),
+    clientContext(admin, r.client_id),
+  ]);
+  const ads = (set?.ads ?? []) as Ad[];
+  const now = new Date().toISOString();
+  const mine: ChatMessage = { role: "user", text: text.trim().slice(0, 4000), by: me.fullName, at: now };
+
+  let out: { reply: string; rewrite: boolean; instructions: string; lessons: CopyLesson[] };
+  try {
+    out = await askJson({
+      agent: "copy",
+      label: `copy chat #${r.number}`,
+      system: COPY_CHAT_SYSTEM,
+      schema: COPY_CHAT_SCHEMA,
+      prompt: `<client>${ctx?.name ?? "the client"}</client>
+${ctx?.brandBible ? `<brand_bible>\n${ctx.brandBible.slice(0, 6000)}\n</brand_bible>\n` : ""}<client_memory>
+${(ctx?.memory ?? []).map((m) => `- [${m.kind}] ${m.body}`).join("\n") || "(none)"}
+</client_memory>
+
+<ticket>
+#${r.number} · ${r.title} · angle: ${r.angle_name ?? "not set"}
+Brief:
+${r.brief ?? "(no brief)"}
+</ticket>
+
+<the_copy_you_wrote>
+${ads.map((a, i) => `Ad ${i + 1} [${a.kind} · ${a.formula}]\nPrimary text: ${a.primaryText}\nHeadline: ${a.headline}\nLink description: ${a.linkDescription}\nCTA: ${a.cta}`).join("\n\n") || "(no copy yet)"}
+</the_copy_you_wrote>
+
+<conversation>
+${[...history.slice(-12), mine].map((m) => `${m.role === "user" ? (m.by ?? "Copy review") : "You"}: ${m.text}`).join("\n")}
+</conversation>
+
+Answer the last message.`,
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof AiUnavailable ? e.message : "The Copywriter didn't answer." };
+  }
+
+  const lessons = (out.lessons ?? []).filter((l) => l.body.trim()).slice(0, 3);
+  if (lessons.length) await admin.from("client_memory").insert(lessons.map((l) => ({ client_id: r.client_id, kind: l.kind, body: l.body.trim().slice(0, 1000), source: "copy", created_by: me.id })));
+  const reply: ChatMessage = { role: "assistant", text: out.reply, by: null, at: new Date().toISOString(), rewrote: out.rewrite, lessons };
+  const messages = [...history, mine, reply].slice(-60);
+  await admin.from("copy_chats").upsert({ request_id: requestId, client_id: r.client_id, messages, updated_at: new Date().toISOString() }, { onConflict: "request_id" });
+
+  if (out.rewrite && set?.status !== "approved") {
+    const instructions = out.instructions?.trim() || text.trim();
+    const res = await redraftCopy(requestId, instructions);
+    if (!res.ok) return { ok: true, messages, rewriting: false };
+  }
+  return { ok: true, messages, rewriting: out.rewrite && set?.status !== "approved" };
 }

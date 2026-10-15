@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { AGENCY_SYSTEM, AiUnavailable, askJson, clientContext, contextBlock, COPY_SCHEMA, getAgent } from "@/lib/ai";
+import { AGENCY_SYSTEM, AiUnavailable, askJson, clientContext, contextBlock, COPY_LESSONS_SCHEMA, COPY_LESSONS_SYSTEM, COPY_SCHEMA, getAgent, type CopyLesson } from "@/lib/ai";
+import { currentCreative } from "@/lib/creative-review";
 import { CTA_BUTTONS, type Ad } from "@/lib/copy";
 import { readReferences, referencesBlock } from "@/lib/references";
 
@@ -55,16 +56,32 @@ export async function draftCopy(admin: SupabaseClient, requestId: string, actorI
 
   await admin
     .from("copy_sets")
-    .upsert({ request_id: requestId, client_id: r.client_id, angle_id: r.angle_id, status: "drafting", error: null, updated_at: new Date().toISOString() }, { onConflict: "request_id" });
+    .upsert(
+      { request_id: requestId, client_id: r.client_id, angle_id: r.angle_id, status: "drafting", error: null, progress: { written: 0, total: 5, label: "Reading the brief, the creative and the client's voice" }, updated_at: new Date().toISOString() },
+      { onConflict: "request_id" },
+    );
+
+  // Real progress: the ads are counted as they're written (the answer streams in)
+  let shown = -1;
+  let last = 0;
+  const onText = (soFar: string) => {
+    const started = (soFar.match(/"primaryText"/g) ?? []).length;
+    if (started === shown || Date.now() - last < 800) return;
+    shown = started;
+    last = Date.now();
+    const label = started === 0 ? "Picking a formula for each ad" : `Writing ad ${started} of 5 · ${started <= 3 ? "short-form" : "long-form"}`;
+    void admin.from("copy_sets").update({ progress: { written: Math.max(0, started - 1), total: 5, label } }).eq("request_id", requestId);
+  };
 
   try {
-    const [{ sources, model }, refs] = await Promise.all([getAgent("copy"), readReferences(r.refs ?? [])]);
+    const [{ sources, model }, refs, creative] = await Promise.all([getAgent("copy"), readReferences(r.refs ?? []), creativeImages(admin, requestId)]);
     const out = await askJson<{ ads: Ad[]; notes: string }>({
       agent: "copy",
       label: `copy ${ctx.name}`,
       system: AGENCY_SYSTEM,
       schema: COPY_SCHEMA,
-      images: refs.images,
+      images: [...creative, ...refs.images].slice(0, 8),
+      onText,
       prompt: `${contextBlock(ctx, undefined, sources)}
 ${referencesBlock(refs.reads)}
 
@@ -75,7 +92,7 @@ Angle: ${r.angle_name ?? "not set"}
 Audience: ${r.audience ?? "not set"}
 Brief:
 ${r.brief ?? "(no brief)"}
-Designs: ${(designs ?? []).map((d) => `D${d.position} ${d.name}${d.is_variation ? " (variation)" : ""}`).join("; ") || "none listed"}
+Designs: ${(designs ?? []).map((d) => `D${d.position} ${d.name}${d.is_variation ? " (variation)" : ""}`).join("; ") || "none listed"}${creative.length ? `\nThe first ${creative.length} picture${creative.length === 1 ? " is" : "s are"} the approved creative this copy runs with: write to what's on it (don't repeat its on-image text word for word).` : ""}
 </ticket>
 ${learned.approved.length ? `\n<approved_copy_for_this_client>\nCopy the client approved before. Match this voice.\n${learned.approved.join("\n")}\n</approved_copy_for_this_client>\n` : ""}${
         learned.edits.length
@@ -93,7 +110,7 @@ Count characters and words before answering; these are hard limits.`,
     const ads = out.ads.slice(0, 5).map((a) => ({ ...a, cta: CTA_BUTTONS.includes(a.cta as (typeof CTA_BUTTONS)[number]) ? a.cta : "Learn More" }));
     await admin
       .from("copy_sets")
-      .update({ status: "review", ads, ai_ads: ads, notes: out.notes, model, version: (existing?.version ?? 0) + 1, updated_by: actorId, updated_at: new Date().toISOString(), approved_at: null, approved_by: null })
+      .update({ status: "review", ads, ai_ads: ads, notes: out.notes, model, progress: {}, version: (existing?.version ?? 0) + 1, updated_by: actorId, updated_at: new Date().toISOString(), approved_at: null, approved_by: null })
       .eq("request_id", requestId);
 
     // Straight to copy review: copy → copy review
@@ -109,7 +126,50 @@ Count characters and words before answering; these are hard limits.`,
     }
     return ads;
   } catch (e) {
-    await admin.from("copy_sets").update({ status: "failed", error: e instanceof AiUnavailable ? e.message : "The copy draft didn't finish." }).eq("request_id", requestId);
+    await admin.from("copy_sets").update({ status: "failed", progress: {}, error: e instanceof AiUnavailable ? e.message : "The copy draft didn't finish." }).eq("request_id", requestId);
     throw e;
   }
+}
+
+/** Small pictures of the creative (one per design, up to 3), so the copy is written to what's actually on it. */
+async function creativeImages(admin: SupabaseClient, requestId: string) {
+  const { designs } = await currentCreative(admin, requestId);
+  const out: { mediaType: "image/webp"; data: string }[] = [];
+  for (const d of designs.filter((x) => !x.is_variation).slice(0, 3)) {
+    const f = d.files.find((x) => x.aspect === "4x5" && x.thumb_path) ?? d.files.find((x) => x.thumb_path);
+    if (!f?.thumb_path) continue;
+    const { data } = await admin.storage.from("creative").download(f.thumb_path);
+    if (data) out.push({ mediaType: "image/webp", data: Buffer.from(await data.arrayBuffer()).toString("base64") });
+  }
+  return out;
+}
+
+/**
+ * After copy review approves a set they edited: what the edits say about this client's copy becomes client memory
+ * (source "copy"), so every later draft (and every other agent) writes that way.
+ */
+export async function learnFromCopy(admin: SupabaseClient, requestId: string, actorId: string | null) {
+  const { data: set } = await admin.from("copy_sets").select("client_id, ads, ai_ads").eq("request_id", requestId).maybeSingle();
+  if (!set) return [];
+  const ai = (set.ai_ads ?? []) as Ad[];
+  const fin = (set.ads ?? []) as Ad[];
+  const pairs: string[] = [];
+  fin.forEach((f, i) => {
+    const a = ai[i];
+    if (!a) return;
+    for (const k of ["primaryText", "headline", "linkDescription", "cta"] as const)
+      if ((a[k] ?? "").trim() !== (f[k] ?? "").trim()) pairs.push(`Ad ${i + 1} ${k}\n  AI wrote: "${clip(a[k], 600)}"\n  Approved: "${clip(f[k], 600)}"`);
+  });
+  if (!pairs.length) return [];
+  const { data: memory } = await admin.from("client_memory").select("kind, body").eq("client_id", set.client_id).eq("status", "active").limit(60);
+  const out = await askJson<{ lessons: CopyLesson[] }>({
+    agent: "copy",
+    label: "copy lessons",
+    system: COPY_LESSONS_SYSTEM,
+    schema: COPY_LESSONS_SCHEMA,
+    prompt: `<client_memory>\n${(memory ?? []).map((m) => `- [${m.kind}] ${m.body}`).join("\n") || "(none yet)"}\n</client_memory>\n\n<edits>\n${pairs.slice(0, 20).join("\n")}\n</edits>`,
+  });
+  const lessons = out.lessons.filter((l) => l.body.trim()).slice(0, 3);
+  if (lessons.length) await admin.from("client_memory").insert(lessons.map((l) => ({ client_id: set.client_id, kind: l.kind, body: l.body.trim().slice(0, 1000), source: "copy", created_by: actorId })));
+  return lessons;
 }

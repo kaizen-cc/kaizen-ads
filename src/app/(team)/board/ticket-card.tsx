@@ -102,6 +102,8 @@ export function TicketCard({
               <PersonAvatar name={ticket.assigneeName} size={20} />
               <span className="truncate">{ticket.assigneeName.split(" ")[0]}</span>
             </>
+          ) : ticket.stage === "copy" ? (
+            <span className="text-[#9aa7f0]">AI writing</span>
           ) : (
             <span className="text-faint">Unassigned</span>
           )}

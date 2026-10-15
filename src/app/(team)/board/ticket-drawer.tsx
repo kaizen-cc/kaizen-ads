@@ -168,6 +168,7 @@ const DEMO_COPY = {
     approvedBy: null,
     approvedAt: null,
     updatedAt: new Date().toISOString(),
+    progress: {},
     reusedFrom: null,
   },
 };
