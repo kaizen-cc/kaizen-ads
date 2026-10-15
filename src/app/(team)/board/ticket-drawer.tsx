@@ -9,6 +9,7 @@ import type { Design } from "./design-actions";
 import { Deliverables, type UploadState } from "./deliverables";
 import { ScriptPanel } from "./script-panel";
 import { ReviewPanel } from "./review-panel";
+import { AiGate } from "./ai-review";
 import { CopyPanel } from "./copy-panel";
 import { ClientTag, FormatIcon, TimeStamp } from "./ticket-card";
 import type { Person, Ticket } from "./types";
@@ -319,31 +320,19 @@ export function TicketDrawer({
               <div className="grid gap-4 border-t border-line px-5 py-5">
                 <Deliverables ticket={ticket} demoDesigns={demo ? DEMO_DESIGNS : undefined} onState={onUploads} />
                 {hasCreative && uploads.uploading === 0 ? (
-                  <div className="grid gap-3 border-t border-line pt-4 animate-[step-in_.25s_ease-out]">
-                    <input
-                      value={moveNote}
-                      onChange={(e) => setMoveNote(e.target.value)}
-                      placeholder="Add a note for the reviewer (optional)"
-                      aria-label="Note for this move"
-                      className="h-10 rounded-brand border border-line bg-bg px-3 text-sm outline-none placeholder:text-faint focus:border-brand-text/60"
-                    />
-                    <div className="flex flex-wrap items-center gap-2">
-                      {info.next && (
-                        <button
-                          disabled={pending}
-                          onClick={() => move(info.next!)}
-                          className="h-10 rounded-brand bg-brand px-4 text-sm font-medium text-white shadow-[0_8px_24px_-10px_rgba(178,30,44,0.9)] hover:bg-brand-hover disabled:opacity-60"
-                        >
-                          {info.nextLabel} →
-                        </button>
-                      )}
-                      {back && (
-                        <button disabled={pending} onClick={() => move(back.to)} className="h-10 rounded-brand border border-line px-4 text-sm text-muted hover:border-faint hover:text-fg disabled:opacity-60">
+                  // Remounts after each upload, so it always knows whether the review is about the current files
+                  <AiGate
+                    ticket={ticket}
+                    demo={demo}
+                    onSent={(st) => onOptimisticMove(ticket.id, st)}
+                    back={
+                      back && (
+                        <button disabled={pending} onClick={() => move(back.to)} className="h-10 rounded-brand px-3 text-xs text-faint hover:text-fg disabled:opacity-60">
                           ↩ {back.label}
                         </button>
-                      )}
-                    </div>
-                  </div>
+                      )
+                    }
+                  />
                 ) : (
                   <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-faint">
                     <span>{uploads.uploading > 0 ? "Uploading… the next step appears when it's done." : `Upload the creative to send it to ${ticket.stage === "client_revision" ? "the client" : "creative review"}.`}</span>

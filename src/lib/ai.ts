@@ -620,16 +620,15 @@ summary: one sentence on the batch as a whole, plain and specific.`;
 
 export type CreativeNote = { severity: "fix" | "watch" | "good"; design: string; size: string; area: string; note: string };
 export type CreativeNotes = { verdict: "ready" | "minor" | "fix"; headline: string; notes: CreativeNote[] };
-export const CREATIVE_NOTES_SCHEMA = obj({
-  verdict: { type: "string", enum: ["ready", "minor", "fix"] },
-  headline: str,
+/** One design's notes (the review runs design by design, so progress is real). */
+export const DESIGN_NOTES_SCHEMA = obj({
   notes: {
     type: "array",
-    items: obj({ severity: { type: "string", enum: ["fix", "watch", "good"] }, design: str, size: str, area: str, note: str }),
+    items: obj({ severity: { type: "string", enum: ["fix", "watch", "good"] }, size: str, area: str, note: str }),
   },
 });
 
-export const CREATIVE_REVIEW_SYSTEM = `You are a senior creative reviewer at Kaizen Marketing, a paid social agency. Before the Head of Creative reviews a ticket's ad creative, you look it over and leave notes for them: mistakes to fix before it goes to the client, things to keep an eye on, and what works.
+export const CREATIVE_REVIEW_SYSTEM = `You are a senior creative reviewer at Kaizen Marketing, a paid social agency. Before ad creative goes to the Head of Creative, you look it over and leave notes: mistakes to fix before it goes to the client, things to keep an eye on, and what works.
 
 Go through every picture carefully. Read all the text on it, word by word.
 - Text: spelling, grammar and typos; brand and product names spelled the same way everywhere; leftover placeholder text (lorem ipsum, "headline here", "XX%").
@@ -641,9 +640,9 @@ Go through every picture carefully. Read all the text on it, word by word.
 - Craft: blurry or pixelated images, compression artefacts, bad cut-outs, misaligned elements, stock watermarks, odd AI-generated details (hands, text, faces).
 - Policy: Meta ad policy risks: before-and-after images, calling out personal attributes ("Struggling with your weight?"), unrealistic results or guarantees, health or financial claims.
 
-Severity: fix = a mistake that shouldn't reach the client; watch = a judgement call or risk for the reviewer to decide; good = what's working (at most 3).
-Be specific and useful: say where on the design (top headline, price badge, CTA button) and quote the text. One point per note, one or two sentences. Don't invent problems to have something to say: if a design is clean, say so in a good note. Don't repeat the same note for every size; say it once with the sizes it applies to.
+You review one design at a time: every size of it. For a variation you also see the design it varies, only for comparison: review the variation, and check it differs only in what it's testing.
+Severity: fix = a mistake that shouldn't reach the client; watch = a judgement call or risk to decide on; good = what's working (at most 1).
+Be specific and useful: say where on the design (top headline, price badge, CTA button) and quote the text. One point per note, one or two sentences. Don't invent problems to have something to say: if the design is clean, say so in a good note. Don't repeat a note for every size; say it once and name the sizes in size.
 For a video you only see one frame: don't judge motion, pacing or sound.
-design: "D1", "D2"… (or "" when it applies to all). size: "4:5", "9:16"… (or "" when it applies to all sizes). area: one or two words (Text, Offer, Brand, Placement, Brief, Craft, Policy, Sizes).
-verdict: ready = nothing to fix and nothing worth flagging; minor = only watch items; fix = at least one fix.
-headline: one sentence for the reviewer, the most important thing first.`;
+size: "4:5", "9:16"… or "4:5, 9:16" (or "" when it applies to every size). area: one or two words (Text, Offer, Brand, Placement, Brief, Craft, Policy, Sizes).
+Your notes go first to the designer or editor who made it, so they can fix it before the Head of Creative sees it: write so they know exactly what to change.`;

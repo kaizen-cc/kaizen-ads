@@ -1,10 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { after } from "next/server";
-import { markRunning, runCreativeReview } from "@/lib/creative-review";
-import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
-import { requireStaff } from "@/lib/auth";
+import { isExecOrLead, requireStaff } from "@/lib/auth";
 import type { Priority, Stage } from "@/lib/stages";
 import { createClient } from "@/lib/supabase/server";
 
@@ -20,17 +17,6 @@ export async function moveTicket(id: string, stage: Stage, note?: string): Promi
   await requireStaff();
   const supabase = await createClient();
   const { error } = await supabase.rpc("move_request", { p_request: id, p_stage: stage, p_note: note ?? null });
-  // Reaching creative review: the AI looks the creative over, so its notes are ready when the reviewer opens it
-  if (!error && stage === "internal_review" && adminConfigured()) {
-    await markRunning(createAdminClient(), id);
-    after(async () => {
-      try {
-        await runCreativeReview(createAdminClient(), id);
-      } catch (e) {
-        console.error("[creative review] failed:", e instanceof Error ? e.message : e);
-      }
-    });
-  }
   return done(error);
 }
 
@@ -76,7 +62,7 @@ export type TicketEvent = {
 
 /** The ticket's history, newest last, with names filled in. */
 export async function ticketHistory(id: string): Promise<TicketEvent[]> {
-  await requireStaff();
+  const me = await requireStaff();
   const supabase = await createClient();
   const { data } = await supabase
     .from("request_events")
@@ -93,7 +79,10 @@ export async function ticketHistory(id: string): Promise<TicketEvent[]> {
     const { data: people } = await supabase.from("profiles").select("id, full_name").in("id", [...ids]);
     people?.forEach((p) => names.set(p.id, p.full_name));
   }
-  return (data ?? []).map((e) => {
+  // Sending work on past the AI review is between the maker and their lead
+  const lead = isExecOrLead(me);
+  const visible = (data ?? []).filter((e) => lead || !(e.kind === "review" && ["past_ai_fixes", "skipped_ai"].includes((e.data as { action?: string } | null)?.action ?? "")));
+  return visible.map((e) => {
     const d = { ...(e.data as Record<string, string | null>) };
     if (e.kind === "assign") {
       d.fromName = d.from ? (names.get(d.from) ?? "someone") : null;

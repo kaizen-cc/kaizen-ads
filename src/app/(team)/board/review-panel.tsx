@@ -3,7 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { reviewCreative, ticketComments, type ReviewComment } from "./review-actions";
 import type { Ticket } from "./types";
-import { AiNotesCard } from "./ai-notes";
+import { AiReviewNotes } from "./ai-review";
 
 const clock = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms / 1000) % 60)).padStart(2, "0")}`;
 
@@ -63,7 +63,7 @@ export function ReviewPanel({
         </span>
       </div>
 
-      {reviewing && <AiNotesCard requestId={ticket.id} demo={demo} />}
+      {reviewing && <AiReviewNotes ticket={ticket} demo={demo} />}
 
       {open.length > 0 && (
         <ol className="grid gap-1.5">
