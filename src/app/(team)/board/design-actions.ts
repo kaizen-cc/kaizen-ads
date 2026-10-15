@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { requireStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { AiUnavailable, askJson, CREATIVE_CHECK_SCHEMA, CREATIVE_CHECK_SYSTEM, type CreativeCheck } from "@/lib/ai";
+import { aspectLabel } from "@/lib/uploads/media";
 
 export type DesignFile = {
   id: string;
@@ -91,12 +93,12 @@ export async function ticketDesigns(requestId: string): Promise<Design[]> {
 }
 
 /** New designs on a ticket. Returns where each one's files go. */
-export async function startDesigns(requestId: string, designs: { name: string; variationOf: string | null }[]): Promise<{ ok: true; started: Started[]; prefix: string } | Fail> {
+export async function startDesigns(requestId: string, designs: { name: string; variationOf: string | null; variationOfIndex?: number | null }[]): Promise<{ ok: true; started: Started[]; prefix: string } | Fail> {
   await requireStaff();
   const supabase = await createClient();
   const { data, error } = await supabase.rpc("add_designs", {
     p_request: requestId,
-    p_designs: designs.map((d) => ({ name: d.name.slice(0, 120), variation_of: d.variationOf })),
+    p_designs: designs.map((d) => ({ name: d.name.slice(0, 120), variation_of: d.variationOf, variation_of_index: d.variationOfIndex ?? null })),
   });
   if (error) return { ok: false, error: error.message };
   const { data: r } = await supabase.from("requests").select("client_id").eq("id", requestId).single();
@@ -141,6 +143,100 @@ export async function recordFiles(versionId: string, files: UploadedFile[]): Pro
   await requireStaff();
   const supabase = await createClient();
   const { error } = await supabase.rpc("record_design_files", { p_version: versionId, p_files: files });
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/board");
+  return { ok: true };
+}
+
+// ─── Creative check ─────────────────────────────────────────────────────────
+
+/** One design in the upload, as the browser sees it: a small JPEG of its first file (base64) and its sizes. */
+export type CheckInput = { name: string; sizes: string[]; image: string | null };
+export type CheckResult = { ok: true; check: CreativeCheck; left: number | null } | Fail;
+
+/**
+ * Before an upload: the AI looks at the new designs next to what's already on the ticket and says which are
+ * net new, which are variations and which are the same design in another size. `left` is what's left of the
+ * client's allotment for this format (null when no allotment is set).
+ */
+export async function checkCreative(requestId: string, staged: CheckInput[]): Promise<CheckResult> {
+  await requireStaff();
+  const supabase = await createClient();
+  const { data: r } = await supabase
+    .from("requests")
+    .select("id, client_id, number, title, format, sizes, new_count, variation_count, angle, clients(name)")
+    .eq("id", requestId)
+    .single();
+  if (!r) return { ok: false, error: "Ticket not found." };
+
+  // What's already uploaded: the cover of each design's newest version
+  const { data: rows } = await supabase
+    .from("designs")
+    .select("id, position, name, is_variation, variation_of, current_version, design_versions(version, design_files(thumb_path, aspect))")
+    .eq("request_id", requestId)
+    .order("position");
+  type Ver = { version: number; design_files: { thumb_path: string | null; aspect: string | null }[] };
+  const existing = await Promise.all(
+    (rows ?? []).slice(0, 8).map(async (d) => {
+      const v = (d.design_versions as unknown as Ver[]).find((x) => x.version === d.current_version);
+      const cover = v?.design_files.find((f) => f.aspect === "4x5" && f.thumb_path) ?? v?.design_files.find((f) => f.thumb_path);
+      let image: string | null = null;
+      if (cover?.thumb_path) {
+        const { data } = await supabase.storage.from(BUCKET).download(cover.thumb_path);
+        if (data) image = Buffer.from(await data.arrayBuffer()).toString("base64");
+      }
+      const of = d.variation_of ? (rows ?? []).find((x) => x.id === d.variation_of) : null;
+      return { position: d.position, name: d.name, isVariation: d.is_variation, of: of?.position ?? null, sizes: [...new Set(v?.design_files.map((f) => f.aspect).filter(Boolean) ?? [])] as string[], image };
+    }),
+  );
+
+  const { data: usage } = await supabase.from("client_allotment_usage").select("images_per_month, videos_per_month, images_used, videos_used").eq("client_id", r.client_id).maybeSingle();
+  const video = r.format === "video";
+  const cap = usage ? (video ? usage.videos_per_month : usage.images_per_month) : null;
+  const left = cap === null || cap === undefined ? null : cap - (video ? usage!.videos_used : usage!.images_used);
+
+  const list = staged.slice(0, 12);
+  const pictures: { mediaType: "image/jpeg" | "image/webp"; data: string }[] = [];
+  const lines: string[] = [];
+  list.forEach((d, i) => {
+    if (d.image) pictures.push({ mediaType: "image/jpeg", data: d.image });
+    lines.push(`S${i + 1} "${d.name}" · sizes ${d.sizes.map(aspectLabel).join(", ") || "unknown"} · ${d.image ? `picture ${pictures.length}` : "no picture (couldn't be read)"}`);
+  });
+  existing.forEach((d) => {
+    if (d.image) pictures.push({ mediaType: "image/webp", data: d.image });
+    lines.push(
+      `D${d.position} "${d.name}" (already uploaded, ${d.isVariation ? `variation${d.of ? ` of D${d.of}` : ""}` : "net new"}) · sizes ${d.sizes.map(aspectLabel).join(", ") || "unknown"} · ${d.image ? `picture ${pictures.length}` : "no picture"}`,
+    );
+  });
+  if (!pictures.length) return { ok: false, error: "There's nothing the AI can look at in these files." };
+
+  const client = (r.clients as unknown as { name: string } | null)?.name ?? "the client";
+  const prompt = `Ticket #${r.number} for ${client}: "${r.title}"${r.angle ? ` · angle: ${r.angle}` : ""}
+Format: ${r.format}. Asked for: ${r.new_count} net new and ${r.variation_count} variation${r.variation_count === 1 ? "" : "s"}. Sizes asked for: ${(r.sizes as string[]).map(aspectLabel).join(", ") || "not set"}.
+
+The pictures, in order:
+${lines.join("\n")}
+
+Classify every S design.`;
+
+  try {
+    const check = await askJson<CreativeCheck>({ agent: "creativecheck", label: `creative check #${r.number}`, system: CREATIVE_CHECK_SYSTEM, prompt, schema: CREATIVE_CHECK_SCHEMA, images: pictures });
+    // Keep only answers about designs in this upload that point somewhere real
+    const refs = new Set([...list.map((_, i) => `S${i + 1}`), ...existing.map((d) => `D${d.position}`)]);
+    check.designs = check.designs
+      .filter((d) => /^S\d+$/.test(d.ref) && Number(d.ref.slice(1)) <= list.length)
+      .map((d) => (d.kind !== "new" && (!refs.has(d.of) || d.of === d.ref) ? { ...d, kind: "new" as const, of: "" } : d));
+    return { ok: true, check, left };
+  } catch (e) {
+    return { ok: false, error: e instanceof AiUnavailable ? e.message : "The creative check didn't work this time." };
+  }
+}
+
+/** Correct how many net new and variations a ticket is for. Net new is what counts toward the allotment. */
+export async function setTicketCounts(requestId: string, newCount: number, variations: number, reason: string): Promise<{ ok: true } | Fail> {
+  await requireStaff();
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("set_request_counts", { p_request: requestId, p_new: newCount, p_variations: variations, p_reason: reason });
   if (error) return { ok: false, error: error.message };
   revalidatePath("/board");
   return { ok: true };

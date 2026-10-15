@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useUploads } from "@/components/upload-provider";
-import { aspectLabel, aspectOf, filesFromDrop, groupFiles, isMedia, probe, safeName, type Picked, type StagedDesign, type StagedFile } from "@/lib/uploads/media";
-import { startDesigns, startVersion, ticketDesigns, type Design } from "./design-actions";
+import { aspectLabel, aspectOf, filesFromDrop, groupFiles, isMedia, probe, safeName, smallJpeg, type Picked, type StagedDesign, type StagedFile } from "@/lib/uploads/media";
+import type { CreativeCheck } from "@/lib/ai";
+import { checkCreative, setTicketCounts, startDesigns, startVersion, ticketDesigns, type Design } from "./design-actions";
 import { FormatIcon } from "./ticket-card";
 import type { Ticket } from "./types";
 import { ReviewViewer } from "./review-viewer";
@@ -32,6 +34,28 @@ const metaOf = (f: StagedFile, card: number | null) => ({
   card,
 });
 
+// A staged design can be a variation of a design already on the ticket (its id) or of another one in this upload
+const STAGED = "staged:";
+
+/** What the AI said about one staged design, keyed by the staged design's key. */
+type Verdict = { kind: CreativeCheck["designs"][number]["kind"]; of: { staged: string } | { design: string } | null; reason: string };
+type CheckState =
+  | { status: "idle" }
+  | { status: "running" }
+  | { status: "failed"; error: string }
+  | { status: "done"; summary: string; verdicts: Record<string, Verdict>; left: number | null; applied: boolean };
+
+/** Parents before their variations, so the database can link a variation to a design in the same upload. */
+function uploadOrder(staged: StagedDesign[]) {
+  const done: StagedDesign[] = [];
+  const pending = [...staged];
+  while (pending.length) {
+    const i = pending.findIndex((d) => !d.variationOf?.startsWith(STAGED) || done.some((x) => STAGED + x.key === d.variationOf));
+    done.push(...pending.splice(i < 0 ? 0 : i, 1));
+  }
+  return done;
+}
+
 /** uploaded: designs with at least one finished file. uploading: files still on their way. */
 export type UploadState = { uploaded: number; uploading: number; loaded: boolean };
 
@@ -49,6 +73,10 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
   const folderInput = useRef<HTMLInputElement>(null);
   const replaceInput = useRef<HTMLInputElement>(null);
   const replaceFor = useRef<Design | null>(null);
+  const [check, setCheck] = useState<CheckState>({ status: "idle" });
+  const [counts, setCounts] = useState<{ new: number; variations: number } | null>(null); // after correcting the ticket here
+  const router = useRouter();
+  const asked = counts ?? { new: ticket.newCount, variations: ticket.variationCount };
 
   const finished = uploads?.finished[ticket.id] ?? 0;
   const demo = Boolean(demoDesigns);
@@ -95,7 +123,79 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
     const files = await stage(picked);
     setReading(false);
     if (!files.length) return setError("Those files aren't images or videos.");
-    setStaged(groupFiles(files, ticket.format));
+    const grouped = groupFiles(files, ticket.format);
+    setStaged(grouped);
+    runCheck(grouped);
+  };
+
+  /** The AI looks at the staged designs next to what's on the ticket. */
+  const checkRun = useRef(0);
+  const runCheck = async (list: StagedDesign[]) => {
+    const id = ++checkRun.current;
+    setCheck({ status: "running" });
+    if (demo) {
+      await new Promise((r) => setTimeout(r, 900));
+      if (id !== checkRun.current) return;
+      const verdicts: Record<string, Verdict> = {};
+      list.forEach((d, i) => {
+        verdicts[d.key] =
+          i === 0
+            ? { kind: "new", of: null, reason: "Its own layout and main visual." }
+            : { kind: "variation", of: { staged: list[0].key }, reason: `Same layout and photo as ${list[0].name}; only the headline and colours change.` };
+      });
+      return setCheck({ status: "done", summary: list.length > 1 ? `One design and ${plural(list.length - 1, "variation")} of it.` : "One net new design.", verdicts, left: 3, applied: false });
+    }
+    const inputs = await Promise.all(
+      list.map(async (d) => ({
+        name: d.name,
+        sizes: [...new Set(d.files.map((f) => f.aspect).filter(Boolean))] as string[],
+        image: await smallJpeg((d.files.find((f) => f.aspect === "4x5" && f.thumb) ?? d.files.find((f) => f.thumb))?.thumb ?? null),
+      })),
+    );
+    const res = await checkCreative(ticket.id, inputs);
+    if (id !== checkRun.current) return;
+    if (!res.ok) return setCheck({ status: "failed", error: res.error });
+    const byPosition = new Map((designs ?? []).map((d) => [`D${d.position}`, d.id]));
+    const verdicts: Record<string, Verdict> = {};
+    for (const v of res.check.designs) {
+      const d = list[Number(v.ref.slice(1)) - 1];
+      if (!d) continue;
+      const target = v.of.startsWith("S") ? list[Number(v.of.slice(1)) - 1] : null;
+      const of = target ? { staged: target.key } : byPosition.has(v.of) ? { design: byPosition.get(v.of)! } : null;
+      verdicts[d.key] = { kind: of || v.kind === "new" ? v.kind : "new", of, reason: v.reason };
+    }
+    setCheck({ status: "done", summary: res.check.summary, verdicts, left: res.left, applied: false });
+  };
+
+  /** Take what the AI said: mark variations, put the same design's other sizes together. */
+  const applyCheck = () => {
+    if (!staged || check.status !== "done") return;
+    let next = staged.map((d) => {
+      const v = check.verdicts[d.key];
+      if (!v || v.kind === "same_design") return d;
+      if (v.kind === "new") return { ...d, variationOf: null };
+      return { ...d, variationOf: v.of ? ("staged" in v.of ? STAGED + v.of.staged : v.of.design) : null };
+    });
+    for (const d of staged) {
+      const v = check.verdicts[d.key];
+      if (v?.kind !== "same_design" || !v.of || !("staged" in v.of)) continue;
+      const into = (v.of as { staged: string }).staged;
+      if (!next.some((x) => x.key === into)) continue;
+      next = next.filter((x) => x.key !== d.key).map((x) => (x.key === into ? { ...x, files: [...x.files, ...d.files] } : x));
+      next = next.map((x) => (x.variationOf === STAGED + d.key ? { ...x, variationOf: STAGED + into } : x));
+    }
+    setStaged(next);
+    setCheck({ ...check, applied: true });
+  };
+
+  const correctCounts = async (n: number, v: number) => {
+    const reason = "Corrected at upload to match the creative";
+    if (!demo) {
+      const res = await setTicketCounts(ticket.id, n, v, reason);
+      if (!res.ok) return setError(res.error);
+      router.refresh();
+    }
+    setCounts({ new: n, variations: v });
   };
 
   const fromInput = (list: FileList | null, folders: boolean) =>
@@ -104,14 +204,19 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
   const upload = async () => {
     if (!staged?.length || !uploads) return;
     setError(null);
+    const ordered = uploadOrder(staged);
     const res = demo
-      ? { ok: true as const, prefix: "demo", started: staged.map((_, i) => ({ designId: `d${i}`, versionId: `v${i}`, version: 1 })) }
+      ? { ok: true as const, prefix: "demo", started: ordered.map((_, i) => ({ designId: `d${i}`, versionId: `v${i}`, version: 1 })) }
       : await startDesigns(
           ticket.id,
-          staged.map((d) => ({ name: d.name, variationOf: d.variationOf })),
+          ordered.map((d) =>
+            d.variationOf?.startsWith(STAGED)
+              ? { name: d.name, variationOf: null, variationOfIndex: ordered.findIndex((x) => STAGED + x.key === d.variationOf) }
+              : { name: d.name, variationOf: d.variationOf },
+          ),
         );
     if (!res.ok) return setError(res.error);
-    staged.forEach((d, i) => {
+    ordered.forEach((d, i) => {
       const s = res.started[i];
       const dir = `${res.prefix}/${s.designId}/v${s.version}`;
       uploads.enqueue({
@@ -125,6 +230,7 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
       });
     });
     setStaged(null);
+    setCheck({ status: "idle" });
   };
 
   const replace = async () => {
@@ -167,14 +273,14 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
       <div className="flex items-baseline justify-between gap-3">
         <h3 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">Deliverables</h3>
         <span className="text-xs text-faint">
-          <span className={net >= ticket.newCount ? "text-ok" : "text-muted"}>
-            {net} of {ticket.newCount} new
+          <span className={net >= asked.new ? "text-ok" : "text-muted"}>
+            {net} of {asked.new} new
           </span>
-          {ticket.variationCount > 0 && (
+          {asked.variations > 0 && (
             <>
               {" · "}
-              <span className={vars >= ticket.variationCount ? "text-ok" : "text-muted"}>
-                {vars} of {plural(ticket.variationCount, "variation")}
+              <span className={vars >= asked.variations ? "text-ok" : "text-muted"}>
+                {vars} of {plural(asked.variations, "variation")}
               </span>
             </>
           )}
@@ -210,6 +316,16 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
             </p>
             <p className="text-xs text-faint">Grouped by name. Rename or mark variations before uploading.</p>
           </div>
+          <CheckPanel
+            ticket={ticket}
+            staged={staged}
+            designs={designs ?? []}
+            check={check}
+            asked={asked}
+            onApply={applyCheck}
+            onRetry={() => runCheck(staged)}
+            onCounts={correctCounts}
+          />
           <ul className="grid gap-2">
             {staged.map((d, i) => {
               const sizes = [...new Set(d.files.map((f) => f.aspect).filter(Boolean))] as string[];
@@ -243,7 +359,7 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
                       ))
                     )}
                     {missing.length > 0 && <span className="text-warn">No {missing.map((m) => aspectLabel(m)).join(", ")} yet</span>}
-                    {(designs ?? []).filter((x) => !x.isVariation).length > 0 && (
+                    {((designs ?? []).some((x) => !x.isVariation) || staged.length > 1) && (
                       <select
                         value={d.variationOf ?? ""}
                         onChange={(e) => setStaged(staged.map((x, j) => (j === i ? { ...x, variationOf: e.target.value || null } : x)))}
@@ -251,6 +367,13 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
                         className="ml-auto h-7 rounded-full border border-line bg-bg px-2 text-xs text-muted"
                       >
                         <option value="">Net new design</option>
+                        {staged
+                          .filter((x) => x.key !== d.key && !x.variationOf)
+                          .map((x) => (
+                            <option key={x.key} value={STAGED + x.key}>
+                              Variation of {x.name}
+                            </option>
+                          ))}
                         {(designs ?? [])
                           .filter((x) => !x.isVariation)
                           .map((x) => (
@@ -261,12 +384,27 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
                       </select>
                     )}
                   </div>
+                  {check.status === "done" && check.verdicts[d.key] && (
+                    <p className="flex items-start gap-1.5 text-xs text-muted">
+                      <EyeIcon className="mt-px h-3.5 w-3.5 shrink-0 text-[#6c7ee1]" />
+                      <span>
+                        <span className="text-fg">{verdictLabel(check.verdicts[d.key], staged, designs ?? [])}</span> · {check.verdicts[d.key].reason}
+                      </span>
+                    </p>
+                  )}
                 </li>
               );
             })}
           </ul>
           <div className="flex items-center justify-end gap-2">
-            <button onClick={() => setStaged(null)} className="h-9 rounded-brand px-3 text-sm text-muted hover:text-fg">
+            <button
+              onClick={() => {
+                checkRun.current++;
+                setStaged(null);
+                setCheck({ status: "idle" });
+              }}
+              className="h-9 rounded-brand px-3 text-sm text-muted hover:text-fg"
+            >
               Cancel
             </button>
             <button onClick={upload} className="h-9 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:bg-brand-hover">
@@ -415,5 +553,172 @@ function Thumb({ src, format, video = false, className = "" }: { src: string | n
         <span className="absolute bottom-1.5 right-1.5 grid h-6 w-6 place-items-center rounded-full bg-black/60 text-[10px] text-white">▶</span>
       )}
     </span>
+  );
+}
+
+function EyeIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+      <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12zm10 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" />
+    </svg>
+  );
+}
+
+function verdictLabel(v: Verdict, staged: StagedDesign[], designs: Design[]) {
+  const name = !v.of ? "" : "staged" in v.of ? (staged.find((x) => x.key === (v.of as { staged: string }).staged)?.name ?? "another design") : `D${designs.find((x) => x.id === (v.of as { design: string }).design)?.position ?? "?"}`;
+  return v.kind === "new" ? "Net new" : v.kind === "variation" ? `Variation of ${name}` : `Same design as ${name}, another size`;
+}
+
+/** The creative check: sizes that came in and are missing, what's new vs a variation, and whether that matches the ticket. */
+function CheckPanel({
+  ticket,
+  staged,
+  designs,
+  check,
+  asked,
+  onApply,
+  onRetry,
+  onCounts,
+}: {
+  ticket: Ticket;
+  staged: StagedDesign[];
+  designs: Design[];
+  check: CheckState;
+  asked: { new: number; variations: number };
+  onApply: () => void;
+  onRetry: () => void;
+  onCounts: (n: number, v: number) => Promise<void>;
+}) {
+  const [saving, setSaving] = useState(false);
+
+  // Sizes: measured from the files themselves, against what the ticket asked for
+  const carousel = ticket.format === "carousel";
+  const sizesOf = (d: StagedDesign) => new Set(d.files.map((f) => f.aspect).filter(Boolean) as string[]);
+  const all = [...new Set(staged.flatMap((d) => [...sizesOf(d)]))];
+  const missing = ticket.sizes
+    .map((s) => ({ size: s, lacking: staged.filter((d) => !sizesOf(d).has(s)) }))
+    .filter((m) => m.lacking.length);
+  const extra = all.filter((s) => ticket.sizes.length && !ticket.sizes.includes(s));
+  const everyone = (n: number) => (staged.length === 1 ? "" : n === staged.length ? (staged.length === 2 ? " on both" : " on all") : "");
+
+  // Counts: what this upload makes, with what's already on the ticket
+  const existingNew = designs.filter((d) => !d.isVariation).length;
+  const existingVar = designs.length - existingNew;
+  const planNew = existingNew + staged.filter((d) => !d.variationOf).length;
+  const planVar = existingVar + staged.filter((d) => d.variationOf).length;
+  const overNew = planNew > asked.new;
+  const overVar = planVar > asked.variations;
+  const proposed = {
+    new: overNew ? planNew : overVar ? Math.max(planNew, asked.new - (planVar - asked.variations)) : asked.new,
+    variations: Math.max(planVar, asked.variations),
+  };
+  const mismatch = (overNew || overVar) && (proposed.new !== asked.new || proposed.variations !== asked.variations);
+  const freed = asked.new - proposed.new;
+  const extraNew = proposed.new - asked.new;
+  const left = check.status === "done" ? check.left : null;
+  const pending =
+    check.status === "done" &&
+    !check.applied &&
+    staged.some((d) => {
+      const v = check.verdicts[d.key];
+      if (!v) return false;
+      if (v.kind === "same_design") return Boolean(v.of && "staged" in v.of);
+      const want = v.kind === "new" || !v.of ? null : "staged" in v.of ? STAGED + v.of.staged : v.of.design;
+      return want !== d.variationOf;
+    });
+
+  return (
+    <div className="grid gap-2.5 rounded-[8px] border border-line bg-bg/60 p-3 text-xs">
+      <div className="flex items-center justify-between gap-2">
+        <p className="flex items-center gap-1.5 font-medium text-fg">
+          <EyeIcon className="h-4 w-4 text-[#6c7ee1]" />
+          Creative check
+        </p>
+        {check.status === "running" ? (
+          <span className="flex items-center gap-1.5 text-faint">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#6c7ee1]" />
+            Looking at the designs…
+          </span>
+        ) : (
+          check.status !== "idle" && (
+            <button onClick={onRetry} className="text-faint hover:text-fg">
+              Check again
+            </button>
+          )
+        )}
+      </div>
+
+      {!carousel && (
+        <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-x-2 gap-y-1">
+          <span className="text-faint">Sizes</span>
+          <span className="text-muted">
+            {all.length
+              ? all.map((s, i) => (
+                  <span key={s}>
+                    {i > 0 && ", "}
+                    <span className="tabular text-fg">{aspectLabel(s)}</span>
+                    {extra.includes(s) && <span className="text-faint"> (not on the ticket)</span>}
+                  </span>
+                ))
+              : "Couldn't read the sizes"}
+          </span>
+          <span className="text-faint">Missing</span>
+          {missing.length ? (
+            <span className="text-warn">
+              {missing.every((m) => m.lacking.length === staged.length)
+                ? `${missing.map((m) => aspectLabel(m.size)).join(", ")}${everyone(staged.length)}`
+                : missing.map((m) => `${aspectLabel(m.size)} on ${m.lacking.length === staged.length ? "all" : m.lacking.map((d) => d.name).join(", ")}`).join(" · ")}
+            </span>
+          ) : (
+            <span className="text-ok">Every size asked for is here</span>
+          )}
+        </div>
+      )}
+
+      {check.status === "failed" && <p className="text-faint">{check.error}</p>}
+      {check.status === "done" && (
+        <div className="grid gap-2 border-t border-line pt-2.5">
+          <p className="text-muted">{check.summary}</p>
+          {pending && (
+            <button onClick={onApply} className="justify-self-start rounded-full bg-[#6c7ee1]/15 px-3 py-1.5 font-medium text-[#9aa7f0] hover:bg-[#6c7ee1]/25">
+              Use the AI&apos;s grouping
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="grid gap-2 border-t border-line pt-2.5">
+        <p className="text-muted">
+          With this upload: <span className="text-fg tabular">{plural(planNew, "net new", "net new")}</span>
+          {planVar > 0 && <span className="text-fg tabular"> · {plural(planVar, "variation")}</span>}
+          <span className="text-faint">
+            {" "}
+            · ticket is for {asked.new} new{asked.variations ? ` + ${plural(asked.variations, "variation")}` : ""}
+          </span>
+        </p>
+        {mismatch && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-[6px] bg-warn/10 px-2.5 py-2">
+            <span className={extraNew > 0 && left !== null && extraNew > left ? "text-bad" : "text-warn"}>
+              {extraNew > 0
+                ? `${plural(extraNew, "more net new design")} would count toward the allotment${left !== null ? ` (${left} left${extraNew > left ? `, over by ${extraNew - left}` : ""})` : ""}.`
+                : freed > 0
+                  ? `Variations don't count toward the allotment: correcting the ticket gives ${freed} back.`
+                  : "Variations don't count toward the allotment."}
+            </span>
+            <button
+              disabled={saving}
+              onClick={async () => {
+                setSaving(true);
+                await onCounts(proposed.new, proposed.variations);
+                setSaving(false);
+              }}
+              className="rounded-full border border-line px-3 py-1 text-muted hover:border-faint hover:text-fg disabled:opacity-60"
+            >
+              {saving ? "Saving…" : `Make it ${proposed.new} new${proposed.variations ? ` + ${proposed.variations} var.` : ""}`}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }

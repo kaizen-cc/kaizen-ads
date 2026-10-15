@@ -142,3 +142,25 @@ export const isMedia = (f: File) => f.type.startsWith("image/") || f.type.starts
 
 /** Storage-safe file name that still reads like the original. */
 export const safeName = (name: string) => name.normalize("NFKD").replace(/[^\w.\-]+/g, "-").replace(/-+/g, "-").slice(-120);
+
+/** A small JPEG (base64, no prefix) of a thumbnail, for the AI's creative check. Keeps the request light. */
+export async function smallJpeg(blob: Blob | null, max = 448): Promise<string | null> {
+  if (!blob) return null;
+  try {
+    const bmp = await createImageBitmap(blob);
+    const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bmp.width * scale);
+    canvas.height = Math.round(bmp.height * scale);
+    canvas.getContext("2d")!.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    bmp.close();
+    const jpeg = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.72));
+    if (!jpeg) return null;
+    const bytes = new Uint8Array(await jpeg.arrayBuffer());
+    let bin = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return btoa(bin);
+  } catch {
+    return null;
+  }
+}

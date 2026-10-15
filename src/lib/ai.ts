@@ -13,7 +13,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 export const MODEL_IDS = { opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5", haiku: "claude-haiku-5-5" } as const;
 export type ModelKey = keyof typeof MODEL_IDS;
 export type Effort = "low" | "medium" | "high";
-export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue" | "scripts" | "brandbible" | "coach";
+export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue" | "scripts" | "brandbible" | "creativecheck" | "coach";
 export const SOURCE_KEYS = ["meta", "briefing", "recent_messages", "memory", "angles", "recent_requests", "allotment"] as const;
 export type Sources = Partial<Record<(typeof SOURCE_KEYS)[number], boolean>>;
 
@@ -35,6 +35,7 @@ const DEFAULTS: Record<AgentKey, Pick<AgentConfig, "model" | "effort">> = {
   fatigue: { model: "haiku", effort: "low" },
   scripts: { model: "opus", effort: "medium" },
   brandbible: { model: "opus", effort: "high" },
+  creativecheck: { model: "sonnet", effort: "low" }, // runs while the upload is staged, someone is waiting
   coach: { model: "opus", effort: "medium" }, // edits other agents' playbooks from feedback (Settings → AI agents → Coach)
 };
 
@@ -584,3 +585,32 @@ export const PATCH_SCHEMA = obj({
   changed: strArr,
   note: str,
 });
+
+// ─── Creative check (on upload) ─────────────────────────────────────────────
+
+/**
+ * What the AI makes of a batch of creative before it uploads. Designs are referred to as S1, S2… (in this upload)
+ * and D1, D2… (already on the ticket). same_design: the same creative in another size, so its files belong with `of`.
+ */
+export type CreativeCheck = {
+  designs: { ref: string; kind: "new" | "variation" | "same_design"; of: string; reason: string }[];
+  summary: string;
+};
+export const CREATIVE_CHECK_SCHEMA = obj({
+  designs: {
+    type: "array",
+    items: obj({ ref: str, kind: { type: "string", enum: ["new", "variation", "same_design"] }, of: str, reason: str }),
+  },
+  summary: str,
+});
+
+export const CREATIVE_CHECK_SYSTEM = `You check ad creative for Kaizen, a performance creative agency, as a designer or video editor uploads it to a ticket.
+
+Each ticket asks for a number of net new designs and a number of variations. Net new designs count toward the client's monthly allotment; variations don't.
+- Net new: a different concept or layout. A different main visual, composition or idea, even for the same offer.
+- Variation: the same design with a small change for testing: a different headline or hook, copy, colour, CTA, background or product shot swapped into the same layout.
+- Same design: the same creative resized or reframed for another placement (1:1, 4:5, 9:16). It is not a separate design at all; its files belong with the other one.
+
+You get one picture per design (S1, S2… are in this upload; D1, D2… are already on the ticket). For every S design, say whether it is new, a variation (of which S or D design) or the same design as another (which one). A design can only be a variation of, or the same as, a design that is itself new, and an S design should point at an earlier S or at a D. When in doubt between new and variation, look at the layout: same layout = variation.
+reason: one short sentence a designer would agree with, about what's the same and what's different ("Same layout and photo, only the headline changes").
+summary: one sentence on the batch as a whole, plain and specific.`;

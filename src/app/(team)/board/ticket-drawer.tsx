@@ -94,6 +94,18 @@ function describe(e: TicketEvent) {
     case "comment":
       return "commented";
     case "upload":
+      if (e.data.action === "counts")
+        return (
+          <>
+            changed the ticket to{" "}
+            <span className="text-fg">
+              {String(e.data.new)} new{Number(e.data.variations) ? ` + ${String(e.data.variations)} variation${Number(e.data.variations) === 1 ? "" : "s"}` : ""}
+            </span>{" "}
+            <span className="text-faint">
+              (was {String(e.data.from_new)} new{Number(e.data.from_variations) ? ` + ${String(e.data.from_variations)}` : ""})
+            </span>
+          </>
+        );
       return e.data.version ? (
         <>
           uploaded <span className="text-fg">v{e.data.version}</span> of {e.data.design}
