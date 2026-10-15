@@ -6,6 +6,7 @@
     { "path": "/api/cron/context?step=gmail", "schedule": "8,38 * * * *" },
     { "path": "/api/cron/context?step=meta", "schedule": "20 * * * *" },
     { "path": "/api/cron/context?step=kpi", "schedule": "45 */2 * * *" },
-    { "path": "/api/cron/context?step=brief", "schedule": "15 16,17,22,23 * * *" }
+    { "path": "/api/cron/context?step=brief", "schedule": "15 16,17,22,23 * * *" },
+    { "path": "/api/cron/context?step=suggest", "schedule": "30 12,13 * * 1-5" }
   ]
 }

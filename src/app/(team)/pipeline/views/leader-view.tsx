@@ -1,4 +1,6 @@
 import { KpiPulse, type KpiPulseData, AttentionList, FlowStrip, PageHeader, PrimaryAction, Queue, SectionTitle, Stats, TeamLoad, type Alert, type Load, type PhaseKey, type PhaseStat, type QueueItem } from "./shared";
+import type { SuggestionsState } from "@/lib/suggestions";
+import { SuggestedBriefs } from "./suggested-briefs";
 
 export type LeaderData = {
   greeting: string;
@@ -13,6 +15,7 @@ export type LeaderData = {
   phases: Record<PhaseKey, PhaseStat>;
   canRequest: boolean;
   kpis?: KpiPulseData | null;
+  suggestions?: SuggestionsState | null;
 };
 
 /** Leaders (Head of Creative / Meta / Google): their decisions first, then their team and its problems. */
@@ -50,6 +53,8 @@ export function LeaderView(d: LeaderData) {
           <TeamLoad people={d.team} />
         </aside>
       </div>
+
+      {d.suggestions && <SuggestedBriefs state={d.suggestions} />}
 
       {d.kpis && <KpiPulse k={d.kpis} />}
 

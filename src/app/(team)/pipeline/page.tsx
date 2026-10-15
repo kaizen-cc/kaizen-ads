@@ -4,6 +4,7 @@ import { loadHome, loadKpiPulse } from "@/lib/home";
 import { roleLabel } from "@/lib/roles";
 import { businessDuration, health, stageInfo, type Stage } from "@/lib/stages";
 import { createClient } from "@/lib/supabase/server";
+import { loadSuggestions } from "@/lib/suggestions";
 import { LeaderView } from "./views/leader-view";
 import { PulseView } from "./views/pulse-view";
 import type { Tone } from "./views/shared";
@@ -12,6 +13,9 @@ import { WorkView, type WorkVariant } from "./views/work-view";
 const variantFor = (me: Staff): WorkVariant => (me.isCreative ? "creative" : me.isCopywriter ? "copy" : me.isCoordinator ? "cs" : "buyer");
 const department = (me: Staff) => (me.role === "head_of_creative" ? "Creative" : me.role === "head_of_google" ? "Google" : "Meta");
 
+// The strategist runs in the background after "Look again", within this page's time
+export const maxDuration = 300;
+
 // Each tier gets its own home, from the live tickets.
 export default async function Home() {
   const me = await requireStaff();
@@ -19,14 +23,16 @@ export default async function Home() {
   const base = { greeting: greetingFor(now), firstName: me.fullName.split(" ")[0], today: todayLabel(now) };
   const db = await createClient();
   const variantNow = variantFor(me);
-  const [h, kpis] = await Promise.all([
+  const [h, kpis, suggestions] = await Promise.all([
     loadHome(db, me),
     // Ad accounts against target: everyone's for execs and the heads of Meta / Google, a buyer's own otherwise
     me.isExec || (me.isLead && me.role !== "head_of_creative") ? loadKpiPulse(db) : !me.isLead && variantNow === "buyer" ? loadKpiPulse(db, me.id) : Promise.resolve(null),
+    // Briefs the strategist suggests: execs and leads decide them
+    me.isExec || me.isLead ? loadSuggestions(db) : Promise.resolve(null),
   ]);
 
   if (me.isExec) {
-    return <PulseView {...base} vitals={h.vitals} attention={h.attention} phases={h.phases} clients={h.clients} team={h.team} monthElapsed={h.monthElapsed} kpis={kpis} />;
+    return <PulseView {...base} vitals={h.vitals} attention={h.attention} phases={h.phases} clients={h.clients} team={h.team} monthElapsed={h.monthElapsed} kpis={kpis} suggestions={suggestions} />;
   }
 
   if (me.isLead) {
@@ -53,6 +59,7 @@ export default async function Home() {
         phases={h.phases}
         canRequest
         kpis={kpis}
+        suggestions={suggestions}
       />
     );
   }
