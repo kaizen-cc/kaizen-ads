@@ -1,80 +1,118 @@
 import { requireStaff, type Staff } from "@/lib/auth";
 import { greetingFor, todayLabel } from "@/lib/dates";
+import { loadHome, loadKpiPulse } from "@/lib/home";
 import { roleLabel } from "@/lib/roles";
+import { businessDuration, health, stageInfo, type Stage } from "@/lib/stages";
+import { createClient } from "@/lib/supabase/server";
 import { LeaderView } from "./views/leader-view";
 import { PulseView } from "./views/pulse-view";
-import type { PhaseKey, PhaseStat } from "./views/shared";
+import type { Tone } from "./views/shared";
 import { WorkView, type WorkVariant } from "./views/work-view";
 
-const noPhases = (): Record<PhaseKey, PhaseStat> => ({
-  brief: { count: 0 },
-  make: { count: 0 },
-  review: { count: 0 },
-  client: { count: 0 },
-  launch: { count: 0 },
-});
-
-const variantFor = (me: Staff): WorkVariant =>
-  me.isCreative ? "creative" : me.isCopywriter ? "copy" : me.isCoordinator ? "cs" : "buyer";
-
+const variantFor = (me: Staff): WorkVariant => (me.isCreative ? "creative" : me.isCopywriter ? "copy" : me.isCoordinator ? "cs" : "buyer");
 const department = (me: Staff) => (me.role === "head_of_creative" ? "Creative" : me.role === "head_of_google" ? "Google" : "Meta");
 
-// Each tier gets its own home. Real numbers arrive with requests in the next phase; the layouts are final.
+// Each tier gets its own home, from the live tickets.
 export default async function Home() {
   const me = await requireStaff();
   const now = new Date();
   const base = { greeting: greetingFor(now), firstName: me.fullName.split(" ")[0], today: todayLabel(now) };
+  const db = await createClient();
+  const variantNow = variantFor(me);
+  const [h, kpis] = await Promise.all([
+    loadHome(db, me),
+    // Ad accounts against target: everyone's for execs and the heads of Meta / Google, a buyer's own otherwise
+    me.isExec || (me.isLead && me.role !== "head_of_creative") ? loadKpiPulse(db) : !me.isLead && variantNow === "buyer" ? loadKpiPulse(db, me.id) : Promise.resolve(null),
+  ]);
 
   if (me.isExec) {
-    return (
-      <PulseView
-        {...base}
-        vitals={{ inMotion: 0, turnaroundDays: null, turnaroundTarget: 5, firstPassRate: null, onTimeRate: null }}
-        attention={[]}
-        phases={noPhases()}
-        clients={[]}
-        team={[]}
-        monthElapsed={now.getDate() / new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()}
-      />
-    );
+    return <PulseView {...base} vitals={h.vitals} attention={h.attention} phases={h.phases} clients={h.clients} team={h.team} monthElapsed={h.monthElapsed} kpis={kpis} />;
   }
 
   if (me.isLead) {
     const dept = department(me);
+    const creative = dept === "Creative";
+    // The Head of Creative decides creative review; the heads of Meta and Google, launches
+    const waiting = h.rows.filter((r) => (creative ? r.stage === "internal_review" : r.stage === "ready_for_launch")).sort((a, b) => b.minutes_over - a.minutes_over);
+    const mine = new Set<Stage>(creative ? ["requested", "in_production", "client_revision", "internal_review"] : ["client_review", "ready_for_launch"]);
+    const team = h.teamOf(creative ? ["graphic_designer", "video_editor"] : ["media_buyer"]);
     return (
       <LeaderView
         {...base}
         department={dept}
-        reviewLabel={dept === "Creative" ? "Waiting for your review" : "Ready to launch"}
-        stats={{ waitingOnYou: 0, teamActive: 0, teamOverdue: 0, onTimeRate: null }}
-        review={[]}
-        attention={[]}
-        team={[]}
-        phases={noPhases()}
+        reviewLabel={creative ? "Waiting for your review" : "Ready to launch"}
+        stats={{
+          waitingOnYou: waiting.length,
+          teamActive: team.reduce((n, l) => n + l.active, 0),
+          teamOverdue: team.reduce((n, l) => n + l.overdue, 0),
+          onTimeRate: h.vitals.onTimeRate,
+        }}
+        review={waiting.map((r) => h.toQueue(r))}
+        attention={h.attention.filter((a) => a.kind === "Allotment" || h.rows.some((r) => a.href === `/board?t=${r.number}` && mine.has(r.stage)))}
+        team={team}
+        phases={h.phases}
         canRequest
+        kpis={kpis}
       />
     );
   }
 
   const variant = variantFor(me);
+  const sideRow = (r: (typeof h.rows)[number]) => ({
+    label: `${r.client_name} · ${r.title}`,
+    detail: stageInfo(r.stage)?.label ?? r.stage,
+    value: businessDuration(r.minutes_in_stage),
+    tone: health(r.minutes_over, r.stage) as Tone,
+  });
+  const titleOf = (id: string) => h.rows.find((r) => r.id === id);
+
+  const fourth =
+    variant === "buyer"
+      ? h.rows.filter((r) => r.stage === "ready_for_launch" && r.buyer_id === me.id).length
+      : variant === "creative"
+        ? h.mine.filter((r) => r.stage === "client_revision" || (r.stage === "in_production" && r.internal_rounds > 0)).length
+        : variant === "copy"
+          ? h.copyDone.filter((c) => c.approved_by === me.id).length
+          : h.rows.filter((r) => r.stage === "client_review").length;
+
+  const side =
+    variant === "buyer"
+      ? { title: "Waiting on your clients", items: h.rows.filter((r) => r.stage === "client_review" && r.buyer_id === me.id).map(sideRow), empty: "Approvals your clients owe show here." }
+      : variant === "creative"
+        ? { title: "Coming up", items: h.rows.filter((r) => r.stage === "requested" && r.creative_id === me.id).map(sideRow), empty: "Briefs assigned to you appear here before they're due." }
+        : variant === "copy"
+          ? {
+              title: "Recently passed on",
+              items: h.copyDone
+                .filter((c) => c.approved_by === me.id)
+                .map((c) => {
+                  const r = titleOf(c.request_id);
+                  return { label: r ? `${r.client_name} · ${r.title}` : "A ticket", detail: r ? (stageInfo(r.stage)?.label ?? r.stage) : "Approved", value: new Date(c.approved_at).toLocaleDateString("en-US", { weekday: "short", timeZone: "America/New_York" }), tone: "ok" as Tone };
+                }),
+              empty: "Copy you've approved this week.",
+            }
+          : { title: "Waiting on clients", items: h.rows.filter((r) => r.stage === "client_review").sort((a, b) => b.minutes_in_stage - a.minutes_in_stage).map(sideRow), empty: "Approvals in progress, with their business-hours clock." };
+
+  // For designers and editors: what they sent to review this week, and how much passed first time
+  let delivered: { week: number; firstPass: number | null } | undefined;
+  if (variant === "creative") {
+    const week = h.evs.filter((e) => e.actor_id === me.id && e.to_stage === "internal_review" && e.created_at >= h.since7).length;
+    const myTickets = new Set(h.rows.filter((r) => r.creative_id === me.id).map((r) => r.id));
+    const decisions = h.evs.filter((e) => e.kind === "review" && myTickets.has(e.request_id) && (e.data?.decision === "approve" || e.data?.decision === "changes"));
+    delivered = { week, firstPass: decisions.length ? Math.round((decisions.filter((e) => e.data?.decision === "approve").length / decisions.length) * 100) : null };
+  }
+
   return (
     <WorkView
       {...base}
       variant={variant}
       role={roleLabel(me.role)}
-      stats={{ mine: 0, dueToday: 0, overdue: 0, fourth: 0 }}
-      queue={[]}
-      side={
-        variant === "buyer"
-          ? { title: "Waiting on your clients", items: [], empty: "Approvals your clients owe show here." }
-          : variant === "creative"
-            ? { title: "Coming up", items: [], empty: "Briefs assigned to you appear here before they're due." }
-            : variant === "copy"
-              ? { title: "Recently passed on", items: [], empty: "Copy you've approved this week." }
-              : { title: "Waiting on clients", items: [], empty: "Approvals in progress, with their business-hours clock." }
-      }
-      delivered={variant === "creative" ? { week: 0, firstPass: null } : undefined}
+      stats={{ mine: h.mine.length, dueToday: h.dueToday, overdue: h.mine.filter((r) => r.minutes_over > 0).length, fourth }}
+      queue={h.mine.map((r) => h.toQueue(r))}
+      side={side}
+      delivered={delivered}
       canAct={variant === "buyer"}
+      kpis={kpis}
     />
   );
 }

@@ -1,5 +1,7 @@
 import Link from "next/link";
 import {
+  KpiPulse,
+  type KpiPulseData,
   AttentionList,
   ClientHealth,
   FlowStrip,
@@ -30,6 +32,7 @@ export type PulseData = {
   clients: ClientPulse[];
   team: Load[];
   monthElapsed: number; // 0–1, business days of the month gone
+  kpis?: KpiPulseData | null;
 };
 
 /** Executives: a read-only pulse on the creative team, the work and the clients. */
@@ -69,6 +72,8 @@ export function PulseView(d: PulseData) {
           },
         ]}
       />
+
+      {d.kpis && <KpiPulse k={d.kpis} />}
 
       <section className="grid gap-4">
         <SectionTitle aside="Average business days in each phase vs its turnaround">Flow</SectionTitle>

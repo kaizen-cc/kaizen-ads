@@ -1,4 +1,4 @@
-import { AttentionList, FlowStrip, PageHeader, PrimaryAction, Queue, SectionTitle, Stats, TeamLoad, type Alert, type Load, type PhaseKey, type PhaseStat, type QueueItem } from "./shared";
+import { KpiPulse, type KpiPulseData, AttentionList, FlowStrip, PageHeader, PrimaryAction, Queue, SectionTitle, Stats, TeamLoad, type Alert, type Load, type PhaseKey, type PhaseStat, type QueueItem } from "./shared";
 
 export type LeaderData = {
   greeting: string;
@@ -12,6 +12,7 @@ export type LeaderData = {
   team: Load[];
   phases: Record<PhaseKey, PhaseStat>;
   canRequest: boolean;
+  kpis?: KpiPulseData | null;
 };
 
 /** Leaders (Head of Creative / Meta / Google): their decisions first, then their team and its problems. */
@@ -49,6 +50,8 @@ export function LeaderView(d: LeaderData) {
           <TeamLoad people={d.team} />
         </aside>
       </div>
+
+      {d.kpis && <KpiPulse k={d.kpis} />}
 
       <section className="grid gap-3">
         <SectionTitle aside={`${d.department} only`}>Needs attention</SectionTitle>

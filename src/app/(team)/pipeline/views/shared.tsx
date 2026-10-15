@@ -197,6 +197,7 @@ export function TeamLoad({ people }: { people: Load[] }) {
 
 export type QueueItem = {
   id: string;
+  href?: string; // opens the ticket
   client: string;
   title: string;
   format: "Image" | "Video" | "Carousel";
@@ -220,7 +221,8 @@ export function Queue({ items, empty }: { items: QueueItem[]; empty: { title: st
   return (
     <ul className="divide-y divide-line overflow-hidden rounded-brand border border-line bg-surface">
       {items.map((q) => (
-        <li key={q.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-4 px-4 py-3.5 transition-colors hover:bg-surface-2">
+        <li key={q.id}>
+          <Link href={q.href ?? "/board"} className="grid grid-cols-[auto_1fr_auto] items-center gap-4 px-4 py-3.5 transition-colors hover:bg-surface-2">
           <span className={`h-2 w-2 rounded-full ${DOT[q.tone]}`} />
           <div className="min-w-0">
             <p className="truncate text-sm font-medium">{q.title}</p>
@@ -237,6 +239,7 @@ export function Queue({ items, empty }: { items: QueueItem[]; empty: { title: st
             )}
             <span className={`tabular whitespace-nowrap text-xs ${TXT[q.tone]}`}>{q.due}</span>
           </div>
+          </Link>
         </li>
       ))}
     </ul>
@@ -306,5 +309,87 @@ export function ClientHealth({ clients, monthElapsed }: { clients: ClientPulse[]
         </tbody>
       </table>
     </div>
+  );
+}
+
+export type KpiPulseData = {
+  accounts: number;
+  counts: Record<"excellent" | "good" | "close" | "off" | "idle" | "setup", number>;
+  spend30: number;
+  off: { id: string; client: string; slug: string; label: string; deviation: number | null; status: string }[];
+  pacing: { id: string; client: string; label: string; status: "over" | "under"; pace: number }[];
+  syncedAt: string | null;
+  syncedMinutes: number | null; // how long ago, worked out when the page was built
+};
+
+const KPI_BANDS: { key: keyof KpiPulseData["counts"]; label: string; bar: string; text: string }[] = [
+  { key: "excellent", label: "Crushing it", bar: "bg-ok", text: "text-ok" },
+  { key: "good", label: "On target", bar: "bg-ok/60", text: "text-ok" },
+  { key: "close", label: "Close", bar: "bg-warn", text: "text-warn" },
+  { key: "off", label: "Off target", bar: "bg-bad", text: "text-bad" },
+  { key: "idle", label: "Not spending", bar: "bg-faint/50", text: "text-faint" },
+  { key: "setup", label: "Needs setup", bar: "bg-surface-3", text: "text-faint" },
+];
+
+/** The ad accounts against their KPI targets: where they stand, who's off, and budget pacing. */
+export function KpiPulse({ k, title = "Ad accounts" }: { k: KpiPulseData; title?: string }) {
+  const synced = k.syncedMinutes;
+  return (
+    <section className="grid gap-4 rounded-brand border border-line bg-surface p-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="font-heading text-xl">{title}</h2>
+        <Link href="/kpis" className="text-xs text-faint hover:text-fg">
+          {k.accounts} accounts · ${k.spend30.toLocaleString("en-US")} spent in 30 days{synced != null ? ` · synced ${synced < 60 ? `${Math.max(1, synced)}m` : `${Math.round(synced / 60)}h`} ago` : ""} →
+        </Link>
+      </div>
+      <div className="flex h-2.5 overflow-hidden rounded-full bg-surface-2">
+        {KPI_BANDS.map((b) => (k.counts[b.key] ? <span key={b.key} className={b.bar} style={{ width: `${(k.counts[b.key] / Math.max(1, k.accounts)) * 100}%` }} title={`${b.label}: ${k.counts[b.key]}`} /> : null))}
+      </div>
+      <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs">
+        {KPI_BANDS.filter((b) => k.counts[b.key]).map((b) => (
+          <span key={b.key} className="flex items-center gap-1.5">
+            <span className={`h-2 w-2 rounded-full ${b.bar}`} />
+            <span className={`tabular font-medium ${b.text}`}>{k.counts[b.key]}</span>
+            <span className="text-muted">{b.label}</span>
+          </span>
+        ))}
+      </div>
+      {(k.off.length > 0 || k.pacing.length > 0) && (
+        <div className="grid gap-4 border-t border-line pt-4 sm:grid-cols-2">
+          <div className="grid content-start gap-2">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-faint">Off or close to target</p>
+            {k.off.length ? (
+              k.off.map((o) => (
+                <Link key={o.id} href="/kpis" className="flex items-baseline justify-between gap-3 text-sm hover:text-fg">
+                  <span className="min-w-0 truncate">
+                    {o.client} <span className="text-faint">· {o.label}</span>
+                  </span>
+                  <span className={`tabular shrink-0 text-xs ${o.status === "off" ? "text-bad" : "text-warn"}`}>{o.deviation != null ? `${o.deviation > 0 ? "+" : ""}${Math.round(o.deviation * 100)}% vs target` : "—"}</span>
+                </Link>
+              ))
+            ) : (
+              <p className="text-xs text-ok">Every account is on or ahead of target.</p>
+            )}
+          </div>
+          <div className="grid content-start gap-2">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-faint">Budget pacing</p>
+            {k.pacing.length ? (
+              k.pacing.map((p) => (
+                <Link key={p.id} href="/kpis" className="flex items-baseline justify-between gap-3 text-sm hover:text-fg">
+                  <span className="min-w-0 truncate">
+                    {p.client} <span className="text-faint">· {p.label}</span>
+                  </span>
+                  <span className={`tabular shrink-0 text-xs ${p.status === "over" ? "text-bad" : "text-warn"}`}>
+                    {p.status === "over" ? "Over" : "Under"} · {Math.round(p.pace * 100)}% of budget
+                  </span>
+                </Link>
+              ))
+            ) : (
+              <p className="text-xs text-ok">Every budget is pacing on track.</p>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
   );
 }

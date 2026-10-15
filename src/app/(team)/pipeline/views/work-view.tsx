@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { DOT, PageHeader, PrimaryAction, Queue, SectionTitle, Stats, TXT, type QueueItem, type Tone } from "./shared";
+import { DOT, KpiPulse, PageHeader, PrimaryAction, Queue, SectionTitle, Stats, TXT, type KpiPulseData, type QueueItem, type Tone } from "./shared";
 
 export type WorkVariant = "buyer" | "creative" | "copy" | "cs";
 
@@ -14,6 +14,7 @@ export type WorkData = {
   side: { title: string; items: { label: string; detail: string; value: string; tone: Tone }[]; empty: string };
   delivered?: { week: number; firstPass: number | null };
   canAct: boolean;
+  kpis?: KpiPulseData | null; // a media buyer's own accounts
 };
 
 const COPY: Record<WorkVariant, { action: string; fourth: string; fourthHint: string; queueTitle: string; empty: { title: string; body: string } }> = {
@@ -67,6 +68,8 @@ export function WorkView(d: WorkData) {
           { label: c.fourth, value: d.stats.fourth, hint: c.fourthHint, tone: "muted" },
         ]}
       />
+
+      {d.kpis && <KpiPulse k={d.kpis} title="Your ad accounts" />}
 
       <div className="grid gap-8 lg:grid-cols-[1fr_320px]">
         <section className="grid content-start gap-3">
