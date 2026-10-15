@@ -122,6 +122,7 @@ export async function loadPortal(db: SupabaseClient, clientId: string): Promise<
       .from("requests")
       .select("id, number, title, format, stage, stage_entered_at, launched_at, landing_url, client_summary, parent_id")
       .eq("client_id", clientId)
+      .is("deleted_at", null)
       .or(`stage.in.(client_review,client_revision,in_production,internal_review,copy,copy_review,ready_for_client,ready_for_launch),and(stage.eq.launched,launched_at.gte.${new Date(Date.now() - 30 * 86_400_000).toISOString()})`)
       .order("stage_entered_at"),
     db.from("meta_snapshots").select("fetched_at, ads").eq("client_id", clientId).order("fetched_at", { ascending: false }).limit(1).maybeSingle(),
@@ -129,7 +130,7 @@ export async function loadPortal(db: SupabaseClient, clientId: string): Promise<
   const all = tickets ?? [];
   const ids = all.map((t) => t.id);
   // Tickets split off from these (the pieces the client approved): their designs show as context on copy-only reworks
-  const { data: kids } = ids.length ? await db.from("requests").select("id, parent_id").in("parent_id", ids) : { data: [] as { id: string; parent_id: string }[] };
+  const { data: kids } = ids.length ? await db.from("requests").select("id, parent_id").in("parent_id", ids).is("deleted_at", null) : { data: [] as { id: string; parent_id: string }[] };
   const [designs, { data: copy }, { data: rounds }] = await Promise.all([
     designsFor(db, [...ids, ...(kids ?? []).map((k) => k.id)]),
     ids.length ? db.from("copy_sets").select("request_id, ads, previous_ads, status, client_status").in("request_id", ids) : Promise.resolve({ data: [] as { request_id: string; ads: Ad[]; previous_ads: unknown; status: string; client_status: unknown }[] }),

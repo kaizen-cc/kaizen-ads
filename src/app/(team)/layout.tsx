@@ -7,7 +7,7 @@ export default async function TeamLayout({ children }: LayoutProps<"/">) {
   const me = await requireStaff();
   return (
     <UploadProvider>
-      <TeamShell name={me.fullName} roles={roleLabel(me.role)} exec={me.isExec}>
+      <TeamShell name={me.fullName} roles={roleLabel(me.role)} exec={me.isExec || me.isLead}>
         {children}
       </TeamShell>
     </UploadProvider>

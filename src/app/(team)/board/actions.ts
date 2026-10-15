@@ -107,3 +107,21 @@ export async function ticketHistory(id: string): Promise<TicketEvent[]> {
     };
   });
 }
+
+/** Execs and leads: delete a ticket (it can be restored from Settings → Deleted). */
+export async function deleteTicket(id: string, reason: string): Promise<ActionResult> {
+  await requireStaff();
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("delete_request", { p_request: id, p_reason: reason });
+  revalidatePath("/settings");
+  return done(error);
+}
+
+/** Execs and leads: bring a deleted ticket back exactly as it was. */
+export async function restoreTicket(id: string): Promise<ActionResult> {
+  await requireStaff();
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("restore_request", { p_request: id });
+  revalidatePath("/settings");
+  return done(error);
+}

@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { PersonAvatar } from "@/components/person-avatar";
 import { FORMAT_LABEL, PHASE_LABEL, businessDuration, health, stageInfo, type Phase, type Priority, type Stage } from "@/lib/stages";
-import { assignTicket, commentTicket, moveTicket, setTicketDue, setTicketPriority, ticketHistory, type TicketEvent } from "./actions";
+import { assignTicket, commentTicket, deleteTicket, moveTicket, setTicketDue, setTicketPriority, ticketHistory, type TicketEvent } from "./actions";
 import type { Design } from "./design-actions";
 import { Deliverables, type UploadState } from "./deliverables";
 import { ScriptPanel } from "./script-panel";
@@ -71,6 +72,8 @@ function describe(e: TicketEvent) {
     case "created":
       return "created this request";
     case "stage":
+      if (e.data.action === "deleted") return <span className="text-bad">deleted the ticket</span>;
+      if (e.data.action === "restored") return <span className="text-ok">restored the ticket</span>;
       return (
         <>
           moved it to <span className="text-fg">{e.toStage ? stageInfo(e.toStage).label : "—"}</span>
@@ -559,6 +562,8 @@ export function TicketDrawer({
 
           {!making && !filesFirst && <Deliverables ticket={ticket} demoDesigns={demo ? DEMO_DESIGNS : undefined} onState={onUploads} />}
 
+          {can.review && <DeleteTicket ticket={ticket} onDeleted={onClose} />}
+
           {/* Activity */}
           <section className="grid gap-4">
             <h3 className={sectionTitle}>Activity</h3>
@@ -607,5 +612,56 @@ export function TicketDrawer({
         </div>
       </aside>
     </div>
+  );
+}
+
+/** Execs and leads: delete the ticket, with a reason. It goes to Settings → Deleted, where it can be restored. */
+function DeleteTicket({ ticket, onDeleted }: { ticket: Ticket; onDeleted: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
+  if (!open)
+    return (
+      <button onClick={() => setOpen(true)} className="justify-self-start text-xs text-faint hover:text-bad">
+        Delete ticket
+      </button>
+    );
+  return (
+    <section className="grid gap-3 rounded-[12px] border border-bad/30 bg-bad-soft/30 p-4">
+      <p className="text-sm font-medium">
+        Delete #{ticket.number} · {ticket.title}?
+      </p>
+      <p className="text-xs text-muted">It disappears from the board, the client&apos;s page and portal, and gives its creative back to the allotment. An exec or lead can restore it from Settings → Deleted.</p>
+      <input
+        autoFocus
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        placeholder="Why? e.g. Duplicate of #1044"
+        className="h-10 rounded-brand border border-line bg-bg px-3 text-sm outline-none placeholder:text-faint focus:border-bad/60"
+      />
+      <div className="flex items-center gap-2">
+        <button
+          disabled={busy || !reason.trim()}
+          onClick={async () => {
+            setBusy(true);
+            setError(null);
+            const r = await deleteTicket(ticket.id, reason);
+            setBusy(false);
+            if (!r.ok) return setError(r.error);
+            onDeleted();
+            router.refresh();
+          }}
+          className="h-9 rounded-brand bg-bad px-4 text-sm font-medium text-white disabled:opacity-40"
+        >
+          {busy ? "Deleting…" : "Delete ticket"}
+        </button>
+        <button onClick={() => (setOpen(false), setReason(""))} className="h-9 rounded-brand px-3 text-sm text-muted hover:text-fg">
+          Cancel
+        </button>
+      </div>
+      {error && <p className="text-xs text-bad">{error}</p>}
+    </section>
   );
 }

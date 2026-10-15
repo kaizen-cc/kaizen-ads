@@ -1,5 +1,8 @@
 import Link from "next/link";
-import { requireExec } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { isExecOrLead, requireStaff } from "@/lib/auth";
+import { restoreTicket } from "@/app/(team)/board/actions";
+import { ActionButton } from "@/components/action-form";
 import { daysAgoIso, freshness } from "@/lib/dates";
 import { nyParts } from "@/lib/kpi/calc";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
@@ -15,7 +18,10 @@ const TABS = [
   ["agents", "AI agents"],
   ["data", "Raw data"],
   ["sync", "Sync health"],
+  ["deleted", "Deleted"],
 ] as const;
+// Leads see only the deleted log; execs see everything
+const LEAD_TABS = ["deleted"];
 
 const day = (offset: number) => {
   const d = new Date(`${nyParts(new Date()).date}T12:00:00Z`);
@@ -147,11 +153,49 @@ async function Sync() {
   );
 }
 
-/** Execs: the AI agents and the data under the hood. */
+type DeletedRow = { id: string; number: number; title: string; client_name: string; client_slug: string; format: string; stage: string; new_count: number; variation_count: number; deleted_at: string; deleted_by: string | null; delete_reason: string | null; created_at: string };
+
+/** Every deleted ticket, newest first, with who deleted it and why. Restoring brings it back exactly as it was. */
+async function Deleted() {
+  const supabase = await createClient();
+  const { data } = await supabase.rpc("deleted_requests");
+  const rows = (data ?? []) as DeletedRow[];
+  const when = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" });
+  if (!rows.length) return <p className="rounded-[14px] border border-dashed border-line px-6 py-10 text-center text-sm text-faint">Nothing has been deleted.</p>;
+  return (
+    <div className="grid gap-3">
+      <p className="text-sm text-muted">Deleted tickets are hidden everywhere and don&apos;t count toward the allotment. Restoring one puts it back where it was, with its files, copy and history.</p>
+      <ul className="grid gap-2">
+        {rows.map((r) => (
+          <li key={r.id} className="grid gap-3 rounded-[12px] border border-line bg-surface px-5 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+            <div className="grid min-w-0 gap-1">
+              <p className="truncate text-sm font-medium">
+                <span className="text-faint">#{r.number}</span> {r.title}
+              </p>
+              <p className="text-xs text-muted">
+                {r.client_name} · <span className="capitalize">{r.format}</span> · {r.new_count} new{r.variation_count ? ` + ${r.variation_count} var.` : ""} · was in {r.stage.replaceAll("_", " ")}
+              </p>
+              <p className="text-xs text-faint">
+                Deleted {when(r.deleted_at)}
+                {r.deleted_by ? ` by ${r.deleted_by}` : ""}
+                {r.delete_reason && <span className="text-muted"> · &ldquo;{r.delete_reason}&rdquo;</span>}
+              </p>
+            </div>
+            <ActionButton action={restoreTicket.bind(null, r.id)} label="Restore" confirmText={`Restore #${r.number}?`} />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** Execs: the AI agents and the data under the hood. Leads: the deleted log. */
 export default async function Settings({ searchParams }: PageProps<"/settings">) {
-  await requireExec();
+  const me = await requireStaff();
+  if (!isExecOrLead(me)) redirect("/pipeline");
+  const tabs = me.isExec ? TABS : TABS.filter(([k]) => LEAD_TABS.includes(k));
   const sp = await searchParams;
-  const tab = TABS.some(([k]) => k === sp.tab) ? (sp.tab as (typeof TABS)[number][0]) : "agents";
+  const tab = tabs.some(([k]) => k === sp.tab) ? (sp.tab as (typeof TABS)[number][0]) : tabs[0][0];
   const valid = (d: unknown) => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d);
   const from = valid(sp.from) ? (sp.from as string) : day(-30);
   const to = valid(sp.to) ? (sp.to as string) : day(0);
@@ -163,7 +207,7 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
         <p className="mt-1.5 text-sm text-muted">Tune the AI agents and look under the hood at the data behind every number.</p>
       </header>
       <nav className="flex flex-wrap gap-1.5">
-        {TABS.map(([k, name]) => (
+        {tabs.map(([k, name]) => (
           <Link key={k} href={`/settings?tab=${k}`} className={`inline-flex h-9 items-center rounded-full px-4 text-sm transition-colors ${tab === k ? "bg-fg text-bg" : "text-muted hover:bg-surface-2 hover:text-fg"}`}>
             {name}
           </Link>
@@ -172,6 +216,7 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
       {tab === "agents" && <Agents open={typeof sp.agent === "string" ? sp.agent : null} />}
       {tab === "data" && <Data target={typeof sp.target === "string" ? sp.target : null} from={from} to={to} />}
       {tab === "sync" && <Sync />}
+      {tab === "deleted" && <Deleted />}
     </div>
   );
 }
