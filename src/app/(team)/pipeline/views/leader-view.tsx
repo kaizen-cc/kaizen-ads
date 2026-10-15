@@ -1,4 +1,6 @@
 import { KpiPulse, type KpiPulseData, AttentionList, FlowStrip, PageHeader, PrimaryAction, Queue, SectionTitle, Stats, TeamLoad, type Alert, type Load, type PhaseKey, type PhaseStat, type QueueItem } from "./shared";
+import type { WatchRow } from "@/lib/fatigue";
+import { FatigueWatch } from "@/components/fatigue-watch";
 import type { SuggestionsState } from "@/lib/suggestions";
 import { SuggestedBriefs } from "./suggested-briefs";
 
@@ -15,6 +17,7 @@ export type LeaderData = {
   phases: Record<PhaseKey, PhaseStat>;
   canRequest: boolean;
   kpis?: KpiPulseData | null;
+  fatigue?: WatchRow[] | null;
   suggestions?: SuggestionsState | null;
 };
 
@@ -57,6 +60,8 @@ export function LeaderView(d: LeaderData) {
       {d.suggestions && <SuggestedBriefs state={d.suggestions} />}
 
       {d.kpis && <KpiPulse k={d.kpis} />}
+
+      {d.fatigue && <FatigueWatch rows={d.fatigue} />}
 
       <section className="grid gap-3">
         <SectionTitle aside={`${d.department} only`}>Needs attention</SectionTitle>

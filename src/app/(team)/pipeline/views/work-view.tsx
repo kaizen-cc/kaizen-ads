@@ -1,4 +1,6 @@
 import Link from "next/link";
+import type { WatchRow } from "@/lib/fatigue";
+import { FatigueWatch } from "@/components/fatigue-watch";
 import { DOT, KpiPulse, PageHeader, PrimaryAction, Queue, SectionTitle, Stats, TXT, type KpiPulseData, type QueueItem, type Tone } from "./shared";
 
 export type WorkVariant = "buyer" | "creative" | "copy" | "cs";
@@ -15,6 +17,7 @@ export type WorkData = {
   delivered?: { week: number; firstPass: number | null };
   canAct: boolean;
   kpis?: KpiPulseData | null; // a media buyer's own accounts
+  fatigue?: WatchRow[] | null;
 };
 
 const COPY: Record<WorkVariant, { action: string; fourth: string; fourthHint: string; queueTitle: string; empty: { title: string; body: string } }> = {
@@ -70,6 +73,8 @@ export function WorkView(d: WorkData) {
       />
 
       {d.kpis && <KpiPulse k={d.kpis} title="Your ad accounts" />}
+
+      {d.fatigue && <FatigueWatch rows={d.fatigue} title="Your ads wearing out" empty="None of your clients' ads are wearing out right now." />}
 
       <div className="grid gap-8 lg:grid-cols-[1fr_320px]">
         <section className="grid content-start gap-3">

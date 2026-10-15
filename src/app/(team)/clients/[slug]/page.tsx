@@ -1,4 +1,5 @@
 import { loadClientKpis } from "@/lib/kpi/client";
+import { loadWatchList } from "@/lib/fatigue";
 import { notFound } from "next/navigation";
 import type { Digest } from "@/lib/ai";
 import { isExecOrLead, requireStaff, seesAllClients } from "@/lib/auth";
@@ -87,7 +88,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
     adminConfigured() && keys.length ? createAdminClient().from("sync_state").select("source, last_run_at").in("source", keys) : Promise.resolve({ data: [] as { source: string; last_run_at: string | null }[] }),
     supabase.from("meta_snapshots").select("fetched_at").eq("client_id", client.id).order("fetched_at", { ascending: false }).limit(1).maybeSingle(),
   ]);
-  const [creative, kpis] = await Promise.all([loadClientCreative(supabase, client.id), loadClientKpis(supabase, client.id)]);
+  const [creative, kpis, fatigue] = await Promise.all([loadClientCreative(supabase, client.id), loadClientKpis(supabase, client.id), loadWatchList(supabase, { clientId: client.id })]);
   const at = (key: string) => (synced ?? []).find((r) => r.source === key)?.last_run_at ?? null;
   const connections = {
     meta: client.meta_ad_account_id ? freshness(lastMeta?.fetched_at) : null,
@@ -101,6 +102,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
       connections={connections}
       creative={creative}
       kpis={kpis}
+      fatigue={fatigue}
       client={client}
       packageLabel={packageLabel ?? null}
       packages={packages ?? []}

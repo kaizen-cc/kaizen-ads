@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AGENCY_SYSTEM, askJson, clientContext, contextBlock, getAgent } from "@/lib/ai";
+import { describeFatigue } from "@/lib/fatigue";
 import { MAX_VARIATIONS, toAllotment, type Allotment, type UsageRow } from "@/lib/allotment";
 
 // The strategist: watches every account for what needs new creative and suggests a full brief, with concepts, to execs
@@ -40,7 +41,7 @@ const UNHAPPY = /\b(unhappy|not happy|disappointed|frustrat\w*|concern(ed)?|unde
 export async function gatherSignals(admin: SupabaseClient): Promise<Map<string, Signal[]>> {
   const since7 = new Date(Date.now() - 7 * 86_400_000).toISOString();
   const since30 = new Date(Date.now() - 30 * 86_400_000).toISOString();
-  const [{ data: usage }, { data: open }, { data: kpis }, { data: snaps }, { data: items }, { data: rounds }, { data: recentReqs }] = await Promise.all([
+  const [{ data: usage }, { data: open }, { data: kpis }, { data: snaps }, { data: items }, { data: rounds }, { data: recentReqs }, { data: watched }] = await Promise.all([
     admin.from("client_allotment_usage").select("client_id, images_per_month, videos_per_month, images_used, videos_used"),
     admin.from("board_requests").select("client_id, stage, new_count").neq("stage", "launched"),
     admin.from("kpi_snapshots").select("client_id, status, trend, deviation, kpi_targets(label)"),
@@ -48,6 +49,7 @@ export async function gatherSignals(admin: SupabaseClient): Promise<Map<string, 
     admin.from("context_items").select("client_id, source, occurred_at, author, title, body").gte("occurred_at", since7).neq("source", "drive").order("occurred_at", { ascending: false }).limit(3000),
     admin.from("client_rounds").select("decision, created_at, requests(client_id)").gte("created_at", since30),
     admin.from("requests").select("client_id, created_at").gte("created_at", since7).is("deleted_at", null),
+    admin.from("ad_fatigue").select("client_id, ad_name, headline, severity, signals, state").in("state", ["open", "refreshing"]),
   ]);
 
   const creative = new Set((usage ?? []).map((u) => u.client_id as string));
@@ -91,9 +93,8 @@ export async function gatherSignals(admin: SupabaseClient): Promise<Map<string, 
     const ads = ((s.ads ?? []) as SnapAd[]).filter((a) => (a.spend ?? 0) >= 100);
     const priced = ads.filter((a) => a.costPerResult && (a.results ?? 0) >= 2);
     const usual = median(priced.map((a) => a.costPerResult!));
-    // Frequency is over the sync window, so "high" is relative to the account: well above its usual and costing more
-    const freqUsual = median(ads.map((a) => a.frequency ?? 0).filter(Boolean));
-    const tired = ads.filter((a) => a.live && (a.frequency ?? 0) >= Math.max(1.5, freqUsual * 1.3) && usual && a.costPerResult && a.costPerResult >= usual * 1.2);
+    // The fatigue watcher's flags (each ad against its own last three weeks); ones already being refreshed are handled
+    const tired = (watched ?? []).filter((w) => w.client_id === s.client_id && w.state === "open");
     // The account as a whole: cost per result up a quarter or more over three weeks while people see the ads more
     const wk = ((s.weekly ?? []) as { costPerResult?: number | null; frequency?: number; from: string }[]).filter((w) => w.costPerResult);
     const first = wk[0];
@@ -102,11 +103,11 @@ export async function gatherSignals(admin: SupabaseClient): Promise<Map<string, 
     if (tired.length || accountTiring)
       add(s.client_id, {
         kind: "fatigue",
-        weight: 3 + tired.length + (accountTiring ? 2 : 0),
+        weight: 3 + tired.length + tired.filter((t) => t.severity === "tired").length + (accountTiring ? 2 : 0),
         line: accountTiring
           ? `Cost per result is up ${Math.round((last.costPerResult! / first.costPerResult! - 1) * 100)}% over three weeks while frequency climbs`
-          : `${tired.length} live ${tired.length === 1 ? "ad is" : "ads are"} being seen more than usual and costing more`,
-        facts: tired.slice(0, 4).map((a) => `"${a.headline ?? a.name}": frequency ${a.frequency}, ${money(a.spend ?? 0)} spent${a.costPerResult ? `, ${money(a.costPerResult)}/${a.result ?? "result"} vs usual ${money(usual)}` : ""}`),
+          : `${tired.length} ${tired.length === 1 ? "ad is" : "ads are"} wearing out against their own last three weeks`,
+        facts: describeFatigue(tired as Parameters<typeof describeFatigue>[0]).split("\n").filter(Boolean).slice(0, 4),
       });
     const flops = usual ? ads.filter((a) => (a.spend ?? 0) >= 150 && (a.costPerResult ? a.costPerResult >= usual * 1.8 : (a.results ?? 0) === 0)) : [];
     if (flops.length >= 2)
@@ -203,6 +204,7 @@ You are the agency's strategist. You watch the accounts and, when the data says 
 - Concepts: name, the hook (first line or on-image headline), the visual (what's shown, in a sentence or two), and the copy direction.
 - The brief is what the designer reads: 5 to 10 lines, specific.
 - The team's past decisions on your suggestions are the most important thing you read. Never suggest again what they declined for a reason that still holds; lean into what they approved.
+- Balance the team's time across clients (work_in_motion). If what's already in motion for this client answers the signal, don't add more: set suggest to false. A client with well above the average open work needs a strong reason for more; a client nobody has touched in weeks deserves the attention. When designers or editors are near capacity, keep it small (variations of what works, 1 to 2 net new) and say so in why.
 - If the signal isn't real or something is already in the works that covers it, set suggest to false and say why in skipReason (the rest can be empty).`;
 
 /** What the team decided about past suggestions, for the strategist to learn from. */
@@ -230,12 +232,77 @@ ${others.length ? others.map(line).join("\n") : "None yet."}
 </team_decisions_on_your_suggestions>`;
 }
 
-async function promptFor(admin: SupabaseClient, clientId: string, signals: Signal[]) {
-  const [ctx, { sources }, decisions] = await Promise.all([clientContext(admin, clientId), getAgent("strategist"), teamDecisions(admin, clientId)]);
+// ─── Balance: what's already in motion, per client and for the team ───
+
+export type Workload = {
+  clients: Map<string, { open: number; making: number; netNew: number; lastRequest: string | null; tickets: string[] }>;
+  team: { designers: { active: number; capacity: number }; editors: { active: number; capacity: number } };
+  fairShare: number; // open tickets per client with a creative package, on average
+};
+
+const MAKING = new Set(["requested", "in_production", "client_revision"]);
+
+/** Everything in motion right now, so suggestions spread the team's time instead of piling onto one client. */
+export async function workload(admin: SupabaseClient): Promise<Workload> {
+  const since60 = new Date(Date.now() - 60 * 86_400_000).toISOString();
+  const [{ data: open }, { data: people }, { data: recent }, { data: usage }] = await Promise.all([
+    admin.from("board_requests").select("client_id, number, title, format, stage, new_count").neq("stage", "launched").limit(3000),
+    admin.from("profiles").select("role").eq("is_active", true).in("role", ["graphic_designer", "video_editor"]),
+    admin.from("requests").select("client_id, created_at").gte("created_at", since60).is("deleted_at", null).order("created_at", { ascending: false }).limit(3000),
+    admin.from("client_allotment_usage").select("client_id"),
+  ]);
+  const clients: Workload["clients"] = new Map();
+  const blank = () => ({ open: 0, making: 0, netNew: 0, lastRequest: null as string | null, tickets: [] as string[] });
+  const team = { designers: { active: 0, capacity: 0 }, editors: { active: 0, capacity: 0 } };
+  for (const p of people ?? []) {
+    if (p.role === "graphic_designer") team.designers.capacity += 10;
+    else team.editors.capacity += 6;
+  }
+  for (const r of open ?? []) {
+    const c = clients.get(r.client_id) ?? blank();
+    c.open++;
+    c.netNew += r.new_count ?? 0;
+    if (MAKING.has(r.stage)) {
+      c.making++;
+      if (r.format === "video") team.editors.active++;
+      else team.designers.active++;
+    }
+    if (c.tickets.length < 8) c.tickets.push(`#${r.number} ${r.title} (${r.format}, ${String(r.stage).replace(/_/g, " ")})`);
+    clients.set(r.client_id, c);
+  }
+  for (const r of recent ?? []) {
+    const c = clients.get(r.client_id) ?? blank();
+    if (!c.lastRequest) c.lastRequest = r.created_at;
+    clients.set(r.client_id, c);
+  }
+  const served = Math.max(1, (usage ?? []).length);
+  return { clients, team, fairShare: Math.round(((open ?? []).length / served) * 10) / 10 };
+}
+
+const loadPct = (x: { active: number; capacity: number }) => (x.capacity ? Math.round((x.active / x.capacity) * 100) : null);
+
+/** The workload in lines, for the strategist. */
+function workloadBlock(w: Workload, clientId: string) {
+  const c = w.clients.get(clientId);
+  const days = c?.lastRequest ? Math.round((Date.now() - Date.parse(c.lastRequest)) / 86_400_000) : null;
+  const d = loadPct(w.team.designers);
+  const e = loadPct(w.team.editors);
+  const lines = [
+    `This client: ${c?.open ? `${c.open} open ${c.open === 1 ? "ticket" : "tickets"} (${c.making} being made, ${c.netNew} net new in the works)` : "nothing in motion"}; ${days == null ? "no request in the last 60 days" : `last request ${days} ${days === 1 ? "day" : "days"} ago`}. The average client has ${w.fairShare} open.`,
+    ...(c?.tickets ?? []).map((t) => `- ${t}`),
+    `Team: designers have ${w.team.designers.active} pieces being made${d != null ? ` (${d}% of capacity)` : ""}; video editors ${w.team.editors.active}${e != null ? ` (${e}% of capacity)` : ""}.`,
+  ];
+  return `<work_in_motion>\n${lines.join("\n")}\n</work_in_motion>`;
+}
+
+async function promptFor(admin: SupabaseClient, clientId: string, signals: Signal[], load?: Workload) {
+  const [ctx, { sources }, decisions, w] = await Promise.all([clientContext(admin, clientId), getAgent("strategist"), teamDecisions(admin, clientId), load ?? workload(admin)]);
   if (!ctx) return null;
   return `${contextBlock(ctx, undefined, sources)}
 
 ${decisions}
+
+${workloadBlock(w, clientId)}
 
 <signals>
 ${signals
@@ -258,8 +325,8 @@ const clean = (d: SuggestionDraft): SuggestionDraft => ({
 });
 
 /** One suggestion for one client from its signals. Returns null when the strategist decides it isn't needed. */
-async function suggestFor(admin: SupabaseClient, clientId: string, signals: Signal[]) {
-  const prompt = await promptFor(admin, clientId, signals);
+async function suggestFor(admin: SupabaseClient, clientId: string, signals: Signal[], load?: Workload) {
+  const prompt = await promptFor(admin, clientId, signals, load);
   if (!prompt) return null;
   const out = await askJson<Out>({
     agent: "strategist",
@@ -288,15 +355,26 @@ export async function runStrategist(admin: SupabaseClient, startedBy: string | n
     const { data: busy } = await admin.from("creative_suggestions").select("client_id, kind, status, decided_at").or(`status.eq.open,and(status.eq.declined,decided_at.gte.${since10})`);
     const open = new Set((busy ?? []).filter((b) => b.status === "open" && b.kind !== "lab").map((b) => b.client_id));
     const declined = new Set((busy ?? []).filter((b) => b.status === "declined").map((b) => `${b.client_id}:${b.kind}`));
+    // Balance: the strongest signals first, but a client already full of work drops back and one nobody has touched
+    // in weeks moves up. A client with lots in motion only gets more when they're unhappy.
+    const load = await workload(admin);
+    const busiest = Math.max(loadPct(load.team.designers) ?? 0, loadPct(load.team.editors) ?? 0);
+    const score = (id: string, list: readonly Signal[]) => {
+      const c = load.clients.get(id);
+      const days = c?.lastRequest ? (Date.now() - Date.parse(c.lastRequest)) / 86_400_000 : 60;
+      return (list.reduce((t, s) => t + s.weight, 0) / (1 + 0.35 * (c?.open ?? 0))) * (1 + Math.min(1, days / 30) * 0.5);
+    };
     const ranked = [...signals]
       .filter(([id]) => !open.has(id))
       .map(([id, list]) => [id, list.filter((s) => !declined.has(`${id}:${s.kind}`))] as const)
       .filter(([, list]) => list.length)
-      .sort((a, b) => b[1].reduce((t, s) => t + s.weight, 0) - a[1].reduce((t, s) => t + s.weight, 0))
-      .slice(0, max);
+      .filter(([id, list]) => (load.clients.get(id)?.open ?? 0) < Math.max(6, load.fairShare * 2.5) || list.some((s) => s.kind === "unhappy"))
+      .sort((a, b) => score(b[0], b[1]) - score(a[0], a[1]))
+      // A stretched team gets fewer suggestions at once
+      .slice(0, busiest >= 90 ? Math.min(max, 4) : max);
     let made = 0;
     for (let i = 0; i < ranked.length; i += 3) {
-      const done = await Promise.allSettled(ranked.slice(i, i + 3).map(([id, list]) => suggestFor(admin, id, [...list])));
+      const done = await Promise.allSettled(ranked.slice(i, i + 3).map(([id, list]) => suggestFor(admin, id, [...list], load)));
       made += done.filter((d) => d.status === "fulfilled" && d.value).length;
       for (const d of done) if (d.status === "rejected") console.error("[strategist]", d.reason);
     }
@@ -400,9 +478,9 @@ export async function loadSuggestion(db: SupabaseClient, id: string) {
 export async function loadSuggestions(db: SupabaseClient): Promise<SuggestionsState> {
   const since30 = new Date(Date.now() - 30 * 86_400_000).toISOString();
   const [{ data: rows }, { data: runs }, { data: decided }] = await Promise.all([
-    db.from("creative_suggestions").select(OPEN_COLS).eq("status", "open").neq("kind", "winner").order("created_at", { ascending: false }).limit(20),
+    db.from("creative_suggestions").select(OPEN_COLS).eq("status", "open").not("kind", "in", "(winner,refresh)").order("created_at", { ascending: false }).limit(20),
     db.from("suggestion_runs").select("started_at, finished_at").order("started_at", { ascending: false }).limit(1),
-    db.from("creative_suggestions").select("status").in("status", ["approved", "declined"]).neq("kind", "winner").gte("decided_at", since30),
+    db.from("creative_suggestions").select("status").in("status", ["approved", "declined"]).not("kind", "in", "(winner,refresh)").gte("decided_at", since30),
   ]);
   const run = runs?.[0];
   return {
@@ -501,4 +579,52 @@ The team chose this client for this test. Write the request that runs the test f
   });
   if (error) console.error("[lab] couldn't save the test brief:", error.message);
   return !error;
+}
+
+/**
+ * A refresh for one tiring ad: the strategist keeps what made it work (it was spending for a reason) and changes what
+ * people are tired of. Drafted for whoever asked, like a brief from a winner.
+ */
+export async function suggestRefresh(admin: SupabaseClient, clientId: string, adId: string, by: string) {
+  const { data: f } = await admin.from("ad_fatigue").select("ad_name, campaign, adset, headline, thumbnail, severity, signals").eq("client_id", clientId).eq("ad_id", adId).single();
+  if (!f) throw new Error("That ad isn't on the watch list");
+  const { data: snap } = await admin.from("meta_snapshots").select("ads").eq("client_id", clientId).order("fetched_at", { ascending: false }).limit(1).maybeSingle();
+  const ad = ((snap?.ads ?? []) as { id: string; text: string | null; headline: string | null }[]).find((a) => a.id === adId);
+  const watch = describeFatigue([f] as Parameters<typeof describeFatigue>[0]);
+  const prompt = await promptFor(admin, clientId, [{ kind: "fatigue", weight: 1, line: `"${f.headline ?? f.ad_name}" is ${f.severity === "tired" ? "tired" : "tiring"}`, facts: [watch] }]);
+  if (!prompt) throw new Error("Client not found");
+  const out = await askJson<Out>({
+    agent: "strategist",
+    label: "refresh a tiring ad",
+    system: SYSTEM,
+    schema: SCHEMA,
+    prompt: `${prompt}
+
+<tiring_ad>
+Name: ${f.ad_name}${f.campaign ? ` · campaign: ${f.campaign}` : ""}${f.adset ? ` · ad set: ${f.adset}` : ""}
+Headline: ${ad?.headline ?? f.headline ?? "(none)"}
+Primary text: ${ad?.text ?? "(not synced)"}
+What the watcher saw: ${watch.replace(/^- /, "")}
+</tiring_ad>
+
+The buyer wants this ad refreshed. It worked before (it ran long enough to be judged against itself), so keep what made it work: the angle, the offer, the proof. Change what people have grown tired of: the visual, the hook, the first seconds of a video, the format. Usually variations and 1 to 2 net new designs on the same angle, within what's left of the allotment. Say in the brief what to keep and what to change, and why, from the numbers. suggest: true. kind: "fatigue". signal: one line on what the watcher saw. evidence: 2 to 4 facts. why: two sentences. reply: "".`,
+  });
+  const draft = clean(out.draft);
+  const { data, error } = await admin
+    .from("creative_suggestions")
+    .insert({
+      client_id: clientId,
+      kind: "refresh",
+      signal: out.signal || `Refresh for "${f.headline ?? f.ad_name}"`,
+      evidence: out.evidence.slice(0, 5),
+      why: out.why,
+      draft,
+      original: draft,
+      created_by: by,
+      source: { adId, thumbnail: f.thumbnail, headline: f.headline ?? f.ad_name, client: "this account", fatigue: true },
+    })
+    .select("id")
+    .single();
+  if (error || !data) throw new Error(error?.message ?? "Couldn't save the brief");
+  return data.id as string;
 }

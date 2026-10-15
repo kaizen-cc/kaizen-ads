@@ -1,4 +1,6 @@
 import Link from "next/link";
+import type { WatchRow } from "@/lib/fatigue";
+import { FatigueWatch } from "@/components/fatigue-watch";
 import type { SuggestionsState } from "@/lib/suggestions";
 import { SuggestedBriefs } from "./suggested-briefs";
 import {
@@ -35,6 +37,7 @@ export type PulseData = {
   team: Load[];
   monthElapsed: number; // 0–1, business days of the month gone
   kpis?: KpiPulseData | null;
+  fatigue?: WatchRow[] | null;
   suggestions?: SuggestionsState | null;
 };
 
@@ -79,6 +82,8 @@ export function PulseView(d: PulseData) {
       {d.suggestions && <SuggestedBriefs state={d.suggestions} />}
 
       {d.kpis && <KpiPulse k={d.kpis} />}
+
+      {d.fatigue && <FatigueWatch rows={d.fatigue} />}
 
       <section className="grid gap-4">
         <SectionTitle aside="Average business days in each phase vs its turnaround">Flow</SectionTitle>

@@ -5,6 +5,7 @@ import { isExecOrLead, requireStaff } from "@/lib/auth";
 import { detectIndustries, INDUSTRIES } from "@/lib/industry";
 import { refreshBriefing } from "@/lib/context/briefing";
 import { metaConfigured, syncClientMeta } from "@/lib/context/meta";
+import { runFatigue } from "@/lib/fatigue";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -173,6 +174,7 @@ export async function syncMetaNow(clientId: string, slug: string): Promise<Actio
   if (!metaConfigured() || !adminConfigured()) return { ok: false, error: "Meta isn't connected on the server." };
   try {
     await syncClientMeta(createAdminClient(), clientId, c.meta_ad_account_id);
+    await runFatigue(createAdminClient(), [clientId]);
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Couldn't reach Meta." };
   }

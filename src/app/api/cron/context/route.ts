@@ -8,6 +8,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { refreshAllKpis } from "@/lib/kpi/sync";
 import { detectIndustries } from "@/lib/industry";
 import { runStrategist } from "@/lib/suggestions";
+import { runFatigue } from "@/lib/fatigue";
 import { createClient } from "@/lib/supabase/server";
 
 // Briefings take a while when many clients have news
@@ -105,6 +106,8 @@ export async function GET(request: Request) {
     }
     // Execs, by hand: sort every client without an industry now (&force=1 redoes the AI's own guesses)
     if (step === "industry") return Response.json({ set: await detectIndustries(admin, { force: new URL(request.url).searchParams.get("redo") === "1" }) });
+    // Execs, by hand: check every ad for fatigue now
+    if (step === "fatigue") return Response.json(await runFatigue(admin));
     if (step === "suggest") return Response.json(await runStrategist(admin, null));
     if (step === "slack" || step === "drive" || step === "gmail" || step === "meta") return Response.json(await collectStep(admin, step as Step));
     return Response.json({ error: "Use ?step=slack, drive, gmail, brief or check" }, { status: 400 });

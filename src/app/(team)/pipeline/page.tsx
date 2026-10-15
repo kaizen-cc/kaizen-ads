@@ -5,6 +5,7 @@ import { roleLabel } from "@/lib/roles";
 import { businessDuration, health, stageInfo, type Stage } from "@/lib/stages";
 import { createClient } from "@/lib/supabase/server";
 import { loadSuggestions } from "@/lib/suggestions";
+import { loadWatchList } from "@/lib/fatigue";
 import { LeaderView } from "./views/leader-view";
 import { PulseView } from "./views/pulse-view";
 import type { Tone } from "./views/shared";
@@ -23,16 +24,18 @@ export default async function Home() {
   const base = { greeting: greetingFor(now), firstName: me.fullName.split(" ")[0], today: todayLabel(now) };
   const db = await createClient();
   const variantNow = variantFor(me);
-  const [h, kpis, suggestions] = await Promise.all([
+  const [h, kpis, suggestions, fatigue] = await Promise.all([
     loadHome(db, me),
     // Ad accounts against target: everyone's for execs and the heads of Meta / Google, a buyer's own otherwise
     me.isExec || (me.isLead && me.role !== "head_of_creative") ? loadKpiPulse(db) : !me.isLead && variantNow === "buyer" ? loadKpiPulse(db, me.id) : Promise.resolve(null),
     // Briefs the strategist suggests: execs and leads decide them
     me.isExec || me.isLead ? loadSuggestions(db) : Promise.resolve(null),
+    // Ads wearing out: every client for execs and leads, a buyer's own clients for a buyer
+    me.isExec || me.isLead ? loadWatchList(db, { limit: 8 }) : variantFor(me) === "buyer" ? loadWatchList(db, { buyerId: me.id, limit: 12 }) : Promise.resolve(null),
   ]);
 
   if (me.isExec) {
-    return <PulseView {...base} vitals={h.vitals} attention={h.attention} phases={h.phases} clients={h.clients} team={h.team} monthElapsed={h.monthElapsed} kpis={kpis} suggestions={suggestions} />;
+    return <PulseView {...base} vitals={h.vitals} attention={h.attention} phases={h.phases} clients={h.clients} team={h.team} monthElapsed={h.monthElapsed} kpis={kpis} suggestions={suggestions} fatigue={fatigue} />;
   }
 
   if (me.isLead) {
@@ -60,6 +63,7 @@ export default async function Home() {
         canRequest
         kpis={kpis}
         suggestions={suggestions}
+        fatigue={fatigue}
       />
     );
   }
@@ -120,6 +124,7 @@ export default async function Home() {
       delivered={delivered}
       canAct={variant === "buyer"}
       kpis={kpis}
+      fatigue={fatigue}
     />
   );
 }

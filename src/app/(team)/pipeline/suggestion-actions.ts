@@ -44,7 +44,7 @@ export async function saveSuggestion(id: string, draft: SuggestionDraft): Promis
 export async function approveSuggestion(id: string, draft: SuggestionDraft): Promise<Result<{ numbers: number[] }>> {
   const me = await requireStaff(); // the suggestion's own rules decide: execs, leads, or whoever started it from a winner
   const supabase = await createClient();
-  const { data: s } = await supabase.from("creative_suggestions").select("client_id, status, original, signal").eq("id", id).single();
+  const { data: s } = await supabase.from("creative_suggestions").select("client_id, status, original, signal, kind, source").eq("id", id).single();
   if (!s || s.status !== "open") return { ok: false, error: "This suggestion was already decided." };
   const items = draft.formats.filter((f) => f.new + f.variations > 0);
   if (!draft.title.trim()) return { ok: false, error: "Give it a title." };
@@ -77,6 +77,10 @@ export async function approveSuggestion(id: string, draft: SuggestionDraft): Pro
       .from("creative_suggestions")
       .update({ status: "approved", draft, edited: JSON.stringify(draft) !== JSON.stringify(s.original), decided_by: me.id, decided_at: new Date().toISOString(), request_numbers: numbers })
       .eq("id", id);
+    // A refresh for a tiring ad: the watch list shows it's being replaced, with the tickets
+    const adId = (s.source as { adId?: string } | null)?.adId;
+    if (s.kind === "refresh" && adId)
+      await admin.from("ad_fatigue").update({ state: "refreshing", request_numbers: numbers, updated_at: new Date().toISOString() }).eq("client_id", s.client_id).eq("ad_id", adId);
   }
   revalidatePath("/pipeline");
   revalidatePath("/board");

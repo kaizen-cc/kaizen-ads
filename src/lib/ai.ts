@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { MAX_VARIATIONS, describeAllotment, toAllotment, type Allotment, type UsageRow } from "@/lib/allotment";
 import { describeMeta } from "@/lib/context/meta";
 import { describeKpis, loadClientKpis } from "@/lib/kpi/client";
+import { describeFatigue } from "@/lib/fatigue";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 
 // Claude for the request form (suggestions, pre-submit review) and the twice-daily client briefings.
@@ -246,6 +247,7 @@ export type ClientContext = {
   allotment: Allotment | null;
   digest: Digest | null; // from the twice-daily briefing: Slack, email and Drive, already summarized
   meta: string | null; // the latest Meta ad performance, in readable lines
+  tiring?: string; // ads the fatigue watcher flagged, in lines
   kpis?: string | null; // the KPI targets and how each account is doing against them (refreshed every 2 hours)
   brandBible: string | null; // "Read this first" from a Brand Bible the head of creative reviewed
   sinceBriefing: { source: string; at: string; author: string | null; title: string | null; body: string | null }[]; // newer than the briefing
@@ -309,6 +311,14 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
     digest: briefing?.digest && Object.keys(briefing.digest).length ? (briefing.digest as Digest) : null,
     meta: snap ? describeMeta(snap as Parameters<typeof describeMeta>[0]) : null,
     kpis: await loadClientKpis(supabase, clientId).then((k) => (k.length ? describeKpis(k) : null)),
+    tiring: await supabase
+      .from("ad_fatigue")
+      .select("ad_name, headline, severity, signals")
+      .eq("client_id", clientId)
+      .in("state", ["open", "refreshing"])
+      .order("severity", { ascending: false })
+      .limit(8)
+      .then(({ data }) => describeFatigue((data ?? []) as Parameters<typeof describeFatigue>[0])),
     angles: angles ?? [],
     memory: (memory ?? []) as ClientContext["memory"],
     recent: (recent ?? []).map((r) => ({
@@ -342,6 +352,13 @@ export function contextBlock(ctx: ClientContext, request?: { images: number; vid
   if (!on("meta")) lines.push("(Ad performance isn't part of this task.)");
   else if (ctx.meta) lines.push("<meta_ads_performance>", ctx.meta, "</meta_ads_performance>");
   else lines.push(ctx.adAccountConnected ? "Meta ad account linked, but no performance pulled yet. Don't invent metrics." : "No Meta ad account linked yet. Don't invent metrics.");
+  if (on("meta") && ctx.tiring)
+    lines.push(
+      "<tiring_ads>",
+      "Ads the fatigue watcher flagged against their own last three weeks. Don't build on them as they are: a refresh keeps what made them work (the angle, the offer) and changes what people are tired of (the visual, the hook, the first seconds).",
+      ctx.tiring,
+      "</tiring_ads>",
+    );
   if (on("kpis") && ctx.kpis)
     lines.push(
       "<kpi_targets>",

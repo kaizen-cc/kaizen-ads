@@ -18,6 +18,7 @@ const KIND_TONE: Record<SuggestionKind, string> = {
   flop: "bg-warn-soft text-warn",
   lab: "bg-brand-soft text-brand-text",
   winner: "bg-ok-soft text-ok",
+  refresh: "bg-warn-soft text-warn",
 };
 const FORMAT_LABEL = { image: "Images", video: "Videos", carousel: "Carousels" } as const;
 const SIZES = ["1x1", "4x5", "9x16"] as const;
@@ -223,9 +224,9 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
                 <img src={s.source.thumbnail} alt="" className="h-16 w-14 shrink-0 rounded-[8px] object-cover" />
               )}
               <div className="grid gap-1">
-                <p className="text-xs uppercase tracking-[0.14em] text-faint">{s.kind === "winner" ? "Built on" : "What the data shows"}</p>
-                <p className="text-sm">{s.kind === "winner" && s.source ? `"${s.source.headline ?? "A winning ad"}" from ${s.source.client}` : s.signal}</p>
-                {s.kind === "winner" && <p className="text-xs text-faint">{s.signal}</p>}
+                <p className="text-xs uppercase tracking-[0.14em] text-faint">{s.kind === "winner" ? "Built on" : s.kind === "refresh" ? "Refreshing" : "What the data shows"}</p>
+                <p className="text-sm">{s.kind === "winner" && s.source ? `"${s.source.headline ?? "A winning ad"}" from ${s.source.client}` : s.kind === "refresh" && s.source ? `"${s.source.headline}"` : s.signal}</p>
+                {(s.kind === "winner" || s.kind === "refresh") && <p className="text-xs text-faint">{s.signal}</p>}
               </div>
             </div>
             {s.evidence.length > 0 && (
@@ -327,13 +328,13 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
 
               {error && <p className="text-sm text-bad">{error}</p>}
 
-              {declining && s.kind === "winner" ? (
+              {declining && (s.kind === "winner" || s.kind === "refresh") ? (
                 <div className="flex flex-wrap items-center gap-2 rounded-[14px] border border-line bg-surface p-4">
                   <p className="flex-1 text-sm">Discard this brief? Nothing was sent to production.</p>
                   <button
                     onClick={() =>
                       act(async () => {
-                        const r = await declineSuggestion(s.id, "Discarded from the winners library", false);
+                        const r = await declineSuggestion(s.id, s.kind === "refresh" ? "Refresh brief discarded" : "Discarded from the winners library", false);
                         if (!r.ok) return setError(r.error);
                         onClose();
                       })
@@ -374,10 +375,10 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
               ) : (
                 <div className="sticky bottom-0 -mx-5 flex flex-wrap items-center gap-2 border-t border-line bg-bg/95 px-5 py-3 backdrop-blur md:-mx-6 md:px-6">
                   <button onClick={approve} disabled={busy || thinking} className="h-10 rounded-brand bg-brand px-5 text-sm font-medium text-white hover:brightness-110 disabled:opacity-50">
-                    {busy ? "Making tickets…" : s.kind === "winner" ? "Send to production" : "Approve and send to the makers"}
+                    {busy ? "Making tickets…" : s.kind === "winner" || s.kind === "refresh" ? "Send to production" : "Approve and send to the makers"}
                   </button>
                   <button onClick={() => setDeclining(true)} disabled={busy} className="h-10 rounded-brand border border-line px-4 text-sm text-muted hover:text-fg">
-                    {s.kind === "winner" ? "Discard" : "Decline"}
+                    {s.kind === "winner" || s.kind === "refresh" ? "Discard" : "Decline"}
                   </button>
                   <span className="ml-auto text-[11px] text-faint">Edits save as you go</span>
                 </div>

@@ -18,6 +18,7 @@ import { ClientView } from "@/app/(team)/clients/[slug]/client-view";
 import { sampleTickets } from "./sample-tickets";
 import { KpiBoard } from "@/app/(team)/kpis/kpi-board";
 import { sampleKpis } from "./sample-kpis";
+import type { WatchRow } from "@/lib/fatigue";
 import { AgentDetail, AgentsOverview, type Agent as AiAgent, type Item as AiItem } from "@/app/(team)/settings/agents";
 
 // Local-only design check with sample data (never served in production).
@@ -77,6 +78,16 @@ const creativeQueue: QueueItem[] = [
   { id: "c4", client: "Idalia Photography", title: "Book Lovers · discover your confidence", format: "Image", stage: "Requested", due: "Fri", tone: "ok" },
 ];
 
+// Design preview only: two ads the fatigue watcher would flag
+const series = (base: number, rise: number) =>
+  Array.from({ length: 28 }, (_, i) => ({ d: new Date(Date.UTC(2026, 8, 18 + i)).toISOString().slice(0, 10), spend: 40 + (i % 5) * 6, ctr: 1.9 - (i > 20 ? 0.6 : 0) - i * 0.01, cpr: base * (1 + (i > 20 ? rise : rise * 0.15) + ((i * 7) % 5) * 0.03) }));
+const sampleFatigue: WatchRow[] = [
+  { clientId: "c1", client: "Crust Pizza Co.", clientSlug: "crust-pizza-co", adId: "1", adName: "TOF | Sep_2026 | IMG | Game Day Bundle | V2", headline: "Game day? We've got the pies.", thumbnail: null, severity: "tired", state: "open", firstFlaggedAt: "2026-10-13T12:00:00Z", requestNumbers: [],
+    signals: { ctrNow: 1.12, ctrBefore: 1.86, ctrChange: -0.398, cprNow: 21.4, cprBefore: 13.9, cprChange: 0.54, accountCprChange: 0.08, freqNow: 1.9, freqBefore: 1.5, hookNow: null, hookBefore: null, hookChange: null, spend7: 412, results7: 19, result: "purchase", daysRunning: 46 }, series: series(13.9, 0.55) },
+  { clientId: "c1", client: "Crust Pizza Co.", clientSlug: "crust-pizza-co", adId: "2", adName: "TOF | Aug_2026 | VID | Oven POV | V1", headline: "Straight from 900°", thumbnail: null, severity: "tiring", state: "open", firstFlaggedAt: "2026-10-14T12:00:00Z", requestNumbers: [],
+    signals: { ctrNow: 1.41, ctrBefore: 1.62, ctrChange: -0.13, cprNow: 16.2, cprBefore: 12.8, cprChange: 0.27, accountCprChange: 0.08, freqNow: 1.6, freqBefore: 1.4, hookNow: 21.5, hookBefore: 29.8, hookChange: -0.28, spend7: 268, results7: 16, result: "purchase", daysRunning: 61 }, series: series(12.8, 0.27) },
+];
+
 export default async function DesignPreview({ searchParams }: PageProps<"/auth/design-preview">) {
   if (process.env.NODE_ENV === "production") notFound();
   const { view } = await searchParams;
@@ -108,6 +119,7 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
     body = (
       <ClientView
         client={{ id: "c1", name: "Crust Pizza Co.", slug: "crust-pizza-co", status: "active", client_type: "traditional", website: "https://crustpizza.com", meta_ad_account_id: "526528539355910", slack_channel_id: "C078D34T7FX", internal_slack_channel_id: "C06TQ0WMCJ1", drive_folder_id: "1Rnwf-WH7tz", kaizen_id: 403, auto_approve_opt_in: false, creative_package: view !== "client-none", creative_package_key: "silver", creative_package_until: "2026-11-30", creative_package_note: "Holiday push through Black Friday" }}
+        fatigue={view === "client" ? sampleFatigue : []}
         kpis={view === "client" ? sampleKpis.filter((k) => k.status === "off" || k.status === "good").slice(0, 2) : []}
         packageLabel="Silver"
         packages={[
