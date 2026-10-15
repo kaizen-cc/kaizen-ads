@@ -23,6 +23,8 @@ import { setPortalLive,
 } from "./actions";
 import { PackagePanel, type PackageOption } from "./package-panel";
 import { CreativePanel } from "./creative-panel";
+import { IndustryChip } from "./industry-chip";
+import { INDUSTRY_OPTIONS } from "@/lib/industries";
 import type { ClientCreative } from "@/lib/client-creative";
 import { BrandBiblePanel, type BrandBible } from "./brand-bible-panel";
 import { untilLabel } from "@/lib/allotment";
@@ -39,6 +41,9 @@ export type ClientViewProps = {
     status: string;
     client_type: string;
     portal_live?: boolean;
+    industry?: string | null;
+    industry_detail?: string | null;
+    industry_source?: "ai" | "team" | null;
     portal_live_at?: string | null;
     website: string | null;
     meta_ad_account_id: string | null;
@@ -99,6 +104,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
             </span>
           )}
           {active && until && <span className={`${chip} bg-warn-soft text-warn`}>Sprint until {untilLabel(until)}</span>}
+          <IndustryChip clientId={client.id} slug={client.slug} industry={client.industry ?? null} detail={client.industry_detail ?? null} source={client.industry_source ?? null} options={INDUSTRY_OPTIONS} canEdit={can.assign} />
           <span className={`${chip} bg-surface-2 capitalize text-muted`}>{client.status}</span>
           {client.client_type === "whitelabel" && <span className={`${chip} bg-surface-2 text-muted`}>White label</span>}
           {client.auto_approve_opt_in && <span className={`${chip} bg-ok-soft text-ok`}>Opted into auto-approval</span>}

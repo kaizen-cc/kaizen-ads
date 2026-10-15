@@ -6,6 +6,7 @@ import { inviteBotToClientChannels } from "@/lib/context/slack";
 import { reportError } from "@/lib/error-report";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { refreshAllKpis } from "@/lib/kpi/sync";
+import { detectIndustries } from "@/lib/industry";
 import { createClient } from "@/lib/supabase/server";
 
 // Briefings take a while when many clients have news
@@ -88,7 +89,19 @@ export async function GET(request: Request) {
     // Sprint packages past their end date switch off (cheap, so every run checks)
     await admin.rpc("expire_sprint_packages");
     if (step === "kpi") return Response.json(await refreshAllKpis(admin));
-    if (step === "brief") return Response.json(await refreshAll(admin, undefined, new URL(request.url).searchParams.get("rebuild") === "1"));
+    if (step === "brief") {
+      const out = await refreshAll(admin, undefined, new URL(request.url).searchParams.get("rebuild") === "1");
+      // Clients still without an industry get one (the AI reads what's known about them; a team-set one is kept)
+      let industries: number | string = 0;
+      try {
+        industries = await detectIndustries(admin);
+      } catch (e) {
+        industries = e instanceof Error ? e.message : String(e);
+      }
+      return Response.json({ ...out, industries });
+    }
+    // Execs, by hand: sort every client without an industry now (&force=1 redoes the AI's own guesses)
+    if (step === "industry") return Response.json({ set: await detectIndustries(admin, { force: new URL(request.url).searchParams.get("redo") === "1" }) });
     if (step === "slack" || step === "drive" || step === "gmail" || step === "meta") return Response.json(await collectStep(admin, step as Step));
     return Response.json({ error: "Use ?step=slack, drive, gmail, brief or check" }, { status: 400 });
   } catch (e) {

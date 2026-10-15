@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { industryLabel, industryWinners, type Winner } from "@/lib/industry";
 import { requireStaff } from "@/lib/auth";
 import {
   AGENCY_SYSTEM,
@@ -311,4 +312,15 @@ export async function createBatch(draft: Draft, review: Review | null, decisions
   revalidatePath("/board");
   revalidatePath("/pipeline");
   return { ok: true, numbers: (rows ?? []).map((r) => r.number) };
+}
+
+export type WinnersResult = { industry: string | null; label: string | null; detail: string | null; winners: Winner[] };
+
+/** What's working for other clients in this client's industry (for the request form). */
+export async function industryWinnersFor(clientId: string): Promise<WinnersResult> {
+  await requireStaff();
+  const supabase = await createClient();
+  const { data: c } = await supabase.from("clients").select("industry, industry_detail").eq("id", clientId).maybeSingle();
+  if (!c?.industry || c.industry === "other") return { industry: null, label: null, detail: null, winners: [] };
+  return { industry: c.industry, label: industryLabel(c.industry), detail: c.industry_detail, winners: await industryWinners(supabase, c.industry, clientId, 6) };
 }

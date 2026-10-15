@@ -1,5 +1,6 @@
 "use client";
 
+import { WinnersStrip } from "./winners-strip";
 import Link from "next/link";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { PersonAvatar } from "@/components/person-avatar";
@@ -580,6 +581,7 @@ export function RequestForm({
 
             {step === 2 && (
               <div className="grid gap-8">
+                {draft.clientId && !demo && <WinnersStrip clientId={draft.clientId} onUse={(line) => set({ brief: draft.brief.trim() ? `${draft.brief.trim()}\n\n${line}` : line })} />}
                 <Field id="title" label="Title">
                   <input id="title" autoFocus value={draft.title} onChange={(e) => set({ title: e.target.value })} placeholder="e.g. BFCM · Buy More, Save More" className={input} />
                   <Suggest loading={ai.status === "loading"}>

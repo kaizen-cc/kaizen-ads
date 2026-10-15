@@ -236,6 +236,9 @@ function apiMessage(e: InstanceType<typeof Anthropic.APIError>) {
 export type ClientContext = {
   name: string;
   website: string | null;
+  industry?: string | null; // e.g. "restaurant"
+  industryDetail?: string | null; // e.g. "Pizza restaurant"
+  winners?: string; // what's working for other clients in the same industry, ready for the prompt
   adAccountConnected: boolean;
   allotment: Allotment | null;
   digest: Digest | null; // from the twice-daily briefing: Slack, email and Drive, already summarized
@@ -260,7 +263,7 @@ export type ClientContext = {
 /** Everything the AI should know about a client. Reads through the caller's RLS. */
 export async function clientContext(supabase: SupabaseClient, clientId: string): Promise<ClientContext | null> {
   const [{ data: c }, { data: usage }, { data: briefing }, { data: snap }, { data: angles }, { data: memory }, { data: recent }] = await Promise.all([
-    supabase.from("clients").select("name, website, meta_ad_account_id").eq("id", clientId).maybeSingle(),
+    supabase.from("clients").select("name, website, meta_ad_account_id, industry, industry_detail").eq("id", clientId).maybeSingle(),
     supabase.from("client_allotment_usage").select("*").eq("client_id", clientId).maybeSingle(),
     supabase.from("client_briefings").select("digest, generated_at").eq("client_id", clientId).maybeSingle(),
     supabase.from("meta_snapshots").select("date_start, date_stop, summary, weekly, ads").eq("client_id", clientId).order("fetched_at", { ascending: false }).limit(1).maybeSingle(),
@@ -286,6 +289,14 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
     .limit(40);
   return {
     brandBible: bible?.read_this_first ? `${bible.read_this_first}\n(Brand Bible ${bible.version}, reviewed by Kaizen)` : null,
+    industry: c.industry,
+    industryDetail: c.industry_detail,
+    winners: await (async () => {
+      if (!c.industry || c.industry === "other") return "";
+      // Loaded here, not at the top: the industry module uses this one
+      const { industryWinners, winnersBlock } = await import("@/lib/industry");
+      return winnersBlock(c.industry, c.industry_detail, await industryWinners(supabase, c.industry, clientId, 5));
+    })(),
     sinceBriefing: (newer ?? []).map((i) => ({ source: i.source, at: i.occurred_at, author: i.author, title: i.title, body: i.body?.slice(0, 800) ?? null })),
     name: c.name,
     website: c.website,
@@ -355,6 +366,8 @@ export function contextBlock(ctx: ClientContext, request?: { images: number; vid
         `${r.audience ? `\n  audience: ${r.audience}` : ""}${r.brief ? `\n  brief: ${r.brief.replace(/\s+/g, " ")}` : ""}`,
     );
   lines.push("</recent_requests>");
+  if (ctx.industry) lines.push(`Industry: ${ctx.industryDetail ?? ctx.industry}`);
+  if (ctx.winners) lines.push(ctx.winners);
   lines.push("</client>");
   return lines.join("\n");
 }

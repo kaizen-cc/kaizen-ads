@@ -1,7 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireStaff } from "@/lib/auth";
+import { isExecOrLead, requireStaff } from "@/lib/auth";
+import { detectIndustries, INDUSTRIES } from "@/lib/industry";
 import { refreshBriefing } from "@/lib/context/briefing";
 import { metaConfigured, syncClientMeta } from "@/lib/context/meta";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
@@ -189,6 +190,29 @@ export async function setPortalLive(clientId: string, slug: string, live: boolea
   const { error } = await createAdminClient()
     .from("clients")
     .update({ portal_live: live, portal_live_at: live ? new Date().toISOString() : null, portal_live_by: live ? me.id : null })
+    .eq("id", clientId);
+  return done(slug, error);
+}
+
+/** Execs and leads: set the client's industry by hand (the AI never overwrites it), or hand it back to the AI ("auto"). */
+export async function setClientIndustry(clientId: string, slug: string, industry: string, detail: string): Promise<ActionResult> {
+  const me = await requireStaff();
+  if (!isExecOrLead(me)) return { ok: false, error: "Only execs and leads can change a client's industry." };
+  if (!adminConfigured()) return { ok: false, error: "Server key missing." };
+  const admin = createAdminClient();
+  if (industry === "auto") {
+    await admin.from("clients").update({ industry_source: null }).eq("id", clientId);
+    try {
+      await detectIndustries(admin, { ids: [clientId], force: true });
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : "The AI couldn't tell this time." };
+    }
+    return done(slug);
+  }
+  if (!INDUSTRIES.some(([k]) => k === industry)) return { ok: false, error: "Pick an industry." };
+  const { error } = await admin
+    .from("clients")
+    .update({ industry, industry_detail: detail.trim().slice(0, 80) || null, industry_source: "team", industry_set_at: new Date().toISOString() })
     .eq("id", clientId);
   return done(slug, error);
 }
