@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { MAX_VARIATIONS, describeAllotment, toAllotment, type Allotment, type UsageRow } from "@/lib/allotment";
 import { describeMeta } from "@/lib/context/meta";
+import { describeKpis, loadClientKpis } from "@/lib/kpi/client";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 
 // Claude for the request form (suggestions, pre-submit review) and the twice-daily client briefings.
@@ -14,7 +15,7 @@ export const MODEL_IDS = { opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5",
 export type ModelKey = keyof typeof MODEL_IDS;
 export type Effort = "low" | "medium" | "high";
 export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue" | "scripts" | "brandbible" | "creativecheck" | "creativereview" | "coach" | "strategist" | "lab";
-export const SOURCE_KEYS = ["meta", "briefing", "recent_messages", "memory", "angles", "recent_requests", "allotment"] as const;
+export const SOURCE_KEYS = ["meta", "briefing", "recent_messages", "memory", "angles", "recent_requests", "allotment", "kpis"] as const;
 export type Sources = Partial<Record<(typeof SOURCE_KEYS)[number], boolean>>;
 
 export type AgentConfig = {
@@ -245,6 +246,7 @@ export type ClientContext = {
   allotment: Allotment | null;
   digest: Digest | null; // from the twice-daily briefing: Slack, email and Drive, already summarized
   meta: string | null; // the latest Meta ad performance, in readable lines
+  kpis?: string | null; // the KPI targets and how each account is doing against them (refreshed every 2 hours)
   brandBible: string | null; // "Read this first" from a Brand Bible the head of creative reviewed
   sinceBriefing: { source: string; at: string; author: string | null; title: string | null; body: string | null }[]; // newer than the briefing
   angles: { name: string; kind: string; description: string | null }[];
@@ -306,6 +308,7 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
     allotment: usage ? toAllotment(usage as UsageRow) : null,
     digest: briefing?.digest && Object.keys(briefing.digest).length ? (briefing.digest as Digest) : null,
     meta: snap ? describeMeta(snap as Parameters<typeof describeMeta>[0]) : null,
+    kpis: await loadClientKpis(supabase, clientId).then((k) => (k.length ? describeKpis(k) : null)),
     angles: angles ?? [],
     memory: (memory ?? []) as ClientContext["memory"],
     recent: (recent ?? []).map((r) => ({
@@ -339,6 +342,13 @@ export function contextBlock(ctx: ClientContext, request?: { images: number; vid
   if (!on("meta")) lines.push("(Ad performance isn't part of this task.)");
   else if (ctx.meta) lines.push("<meta_ads_performance>", ctx.meta, "</meta_ads_performance>");
   else lines.push(ctx.adAccountConnected ? "Meta ad account linked, but no performance pulled yet. Don't invent metrics." : "No Meta ad account linked yet. Don't invent metrics.");
+  if (on("kpis") && ctx.kpis)
+    lines.push(
+      "<kpi_targets>",
+      "How each ad account is doing against the target Kaizen or the client set. When an account is off target or slipping, the creative should answer it: say how in the brief, and don't repeat what isn't working.",
+      ctx.kpis,
+      "</kpi_targets>",
+    );
   if (ctx.digest) lines.push("<briefing from Slack, email and Drive>", describeDigest(ctx.digest), "</briefing>");
   if (ctx.sinceBriefing.length)
     lines.push(

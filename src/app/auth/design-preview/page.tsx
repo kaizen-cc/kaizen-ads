@@ -108,6 +108,7 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
     body = (
       <ClientView
         client={{ id: "c1", name: "Crust Pizza Co.", slug: "crust-pizza-co", status: "active", client_type: "traditional", website: "https://crustpizza.com", meta_ad_account_id: "526528539355910", slack_channel_id: "C078D34T7FX", internal_slack_channel_id: "C06TQ0WMCJ1", drive_folder_id: "1Rnwf-WH7tz", kaizen_id: 403, auto_approve_opt_in: false, creative_package: view !== "client-none", creative_package_key: "silver", creative_package_until: "2026-11-30", creative_package_note: "Holiday push through Black Friday" }}
+        kpis={view === "client" ? sampleKpis.filter((k) => k.status === "off" || k.status === "good").slice(0, 2) : []}
         packageLabel="Silver"
         packages={[
           { key: "mvp", label: "MVP", images: 3, videos: 0 },
