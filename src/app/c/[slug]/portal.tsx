@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Ad } from "@/lib/copy";
-import type { PortalData, PortalDesign, PortalFile, PortalItem, PortalRow } from "@/lib/portal";
+import type { PastNote, PortalData, PortalDesign, PortalFile, PortalItem, PortalRow } from "@/lib/portal";
 import { submitReview, type Pin, type PieceDecision } from "./actions";
 
 // The client portal. Home: what's waiting on them, what we're changing, what's live, what's launching. Reviewing a
@@ -14,6 +14,8 @@ const LIMIT = 125;
 const clock = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms / 1000) % 60)).padStart(2, "0")}`;
 const sizeLabel = (a: string | null) => (!a ? "" : a === "191x100" ? "1.91:1" : a.includes("x") && a.length <= 5 ? a.replace("x", ":") : a.replace("x", "×"));
 const ratio = (a: string | null) => (a === "1x1" ? "1 / 1" : a === "9x16" ? "9 / 16" : a === "16x9" ? "16 / 9" : "4 / 5");
+/** Width over height of a file: its real pixels when known, else its named size. */
+const wOverH = (f: PortalFile) => (f.width && f.height ? f.width / f.height : f.aspect === "1x1" ? 1 : f.aspect === "9x16" ? 9 / 16 : f.aspect === "16x9" ? 16 / 9 : 4 / 5);
 const isVideo = (f: PortalFile) => f.mime.startsWith("video/");
 const host = (url: string) => url.replace(/^https?:\/\/(www\.)?/, "").split("/")[0];
 
@@ -525,15 +527,65 @@ function Decide({ onApprove, onChanges }: { onApprove: () => void; onChanges: ()
   );
 }
 
+/** Now or the version they reviewed before. */
+function Toggle({ before, onChange, now, then }: { before: boolean; onChange: (before: boolean) => void; now: string; then: string }) {
+  return (
+    <div className="inline-flex rounded-full border border-line p-0.5 text-[11px]">
+      {[
+        [false, now],
+        [true, then],
+      ].map(([b, label]) => (
+        <button key={String(b)} onClick={() => onChange(b as boolean)} className={`rounded-full px-2.5 py-1 ${before === b ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
+          {label as string}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** What they asked for last time, each ticked off. */
+function YouAsked({ notes, onShow }: { notes: { body: string; where?: string }[]; onShow?: () => void }) {
+  return (
+    <div className="grid max-h-[22vh] gap-1.5 overflow-y-auto rounded-[10px] border border-line bg-surface p-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-faint">You asked last time</p>
+        {onShow && (
+          <button onClick={onShow} className="text-[11px] text-muted underline-offset-2 hover:text-fg hover:underline">
+            See it on the old version
+          </button>
+        )}
+      </div>
+      {notes.map((n, i) => (
+        <p key={i} className="flex items-start gap-2 text-[12.5px] leading-snug">
+          <span className="mt-px grid h-4 w-4 shrink-0 place-items-center rounded-full bg-ok text-[9px] font-bold text-white">✓</span>
+          <span className="min-w-0">
+            <span className="text-muted line-through decoration-faint/60">{n.body}</span>
+            {n.where && <span className="ml-1 text-[11px] text-faint">· {n.where}</span>}
+          </span>
+        </p>
+      ))}
+      <p className="text-[11px] text-ok">Updated in this version. Take a look and approve, or tell us what&apos;s still off.</p>
+    </div>
+  );
+}
+
+const whereOf = (n: PastNote) => (n.tMs != null ? `at ${clock(n.tMs)}` : n.w != null ? "the area you boxed" : n.x != null ? "the spot you marked" : undefined);
+
 function DesignStep({ item, step, choice, onApprove, onChanges, onMark }: { item: PortalItem; step: Extract<Step, { kind: "design" }>; choice?: DesignChoice; onApprove: () => void; onChanges: () => void; onMark: (m: Mark) => void }) {
   const [fi, setFi] = useState(0);
+  const [before, setBefore] = useState(false);
   const frame = useRef<HTMLDivElement>(null);
   const d = step.design;
-  const file = d.files[fi] ?? d.files[0];
+  const prev = d.previous ?? null;
+  const now = d.files[fi] ?? d.files[0];
+  // The old version: the same size as the one showing now, if it had one
+  const old = prev ? (prev.files.find((f) => f.aspect === now.aspect) ?? prev.files[fi] ?? prev.files[0]) : null;
+  const file = before && old ? old : now;
+  const pins = before && old ? prev!.notes.filter((n) => n.fileId === old.id && n.x != null && n.y != null) : [];
   const { bind, style, dx } = useSwipe(onApprove, onChanges, (cx, cy) => {
-    // Tapping the image opens the note box right where they tapped
+    // Tapping the image opens the note box right where they tapped (on the current version)
     const r = frame.current?.getBoundingClientRect();
-    if (!r || isVideo(file) || cx < r.left || cx > r.right || cy < r.top || cy > r.bottom) return;
+    if (before || !r || isVideo(file) || cx < r.left || cx > r.right || cy < r.top || cy > r.bottom) return;
     onMark({ fileIndex: fi, x: (cx - r.left) / r.width, y: (cy - r.top) / r.height, w: null, h: null });
   });
   const label = item.format === "video" ? "Video" : "Design";
@@ -547,13 +599,18 @@ function DesignStep({ item, step, choice, onApprove, onChanges, onMark }: { item
           <p className="truncate text-[15px] font-semibold">{d.name}</p>
         </div>
         <span className="flex shrink-0 items-center gap-1.5">
-          {d.clientStatus === "changes" && <span className="rounded-full bg-brand-soft px-2 py-0.5 text-[11px] font-medium text-brand-text">Revised</span>}
+          {prev ? <Toggle before={before} onChange={setBefore} now="Revised" then="Before" /> : d.clientStatus === "changes" && <span className="rounded-full bg-brand-soft px-2 py-0.5 text-[11px] font-medium text-brand-text">Revised</span>}
           {choice && <Chip choice={choice.decision} />}
         </span>
       </div>
       <div {...bind} style={style} className="relative mx-3 flex min-h-0 flex-1 touch-pan-y select-none flex-col overflow-hidden rounded-[14px] border border-line bg-surface">
         <Stamps dx={dx} />
-        <Media file={file} frameRef={frame} />
+        {before && <span className="absolute left-3 top-3 z-10 rounded-full bg-black/70 px-2.5 py-1 text-[11px] text-white">Before · what you commented on</span>}
+        <Media file={file} frameRef={frame}>
+          {pins.map((n, i) => (
+            <Marker key={i} n={prev!.notes.indexOf(n) + 1} x={n.x!} y={n.y!} w={n.w} h={n.h} />
+          ))}
+        </Media>
         {d.files.length > 1 && (
           <div className="flex flex-wrap justify-center gap-1.5 px-3 py-2.5">
             {d.files.map((f, i) => (
@@ -564,7 +621,13 @@ function DesignStep({ item, step, choice, onApprove, onChanges, onMark }: { item
           </div>
         )}
       </div>
-      {!isVideo(file) && <p className="pt-2 text-center text-[11px] text-faint">Tap the design to comment on a spot</p>}
+      {prev && prev.notes.length > 0 ? (
+        <div className="px-3 pt-2.5">
+          <YouAsked notes={prev.notes.map((n) => ({ body: n.body, where: whereOf(n) }))} onShow={before ? undefined : () => setBefore(true)} />
+        </div>
+      ) : (
+        !isVideo(file) && <p className="pt-2 text-center text-[11px] text-faint">Tap the design to comment on a spot</p>
+      )}
       <Decide onApprove={onApprove} onChanges={onChanges} />
     </>
   );
@@ -589,7 +652,9 @@ function CopyStep({
   onCancel: () => void;
   onSave: (note: string) => void;
 }) {
-  const { ad, status } = item.ads[step.index];
+  const { ad: current, status, note: asked, before: old } = item.ads[step.index];
+  const [showBefore, setShowBefore] = useState(false);
+  const ad = showBefore && old ? old : current;
   const [note, setNote] = useState(choice?.decision === "changes" ? choice.note : "");
   const { bind, style, dx } = useSwipe(onApprove, onChanges);
   return (
@@ -602,13 +667,19 @@ function CopyStep({
           <p className="text-[15px] font-semibold">{ad.kind === "long" ? "Long-form" : "Short-form"}</p>
         </div>
         <span className="flex shrink-0 items-center gap-1.5">
-          {status === "changes" && <span className="rounded-full bg-brand-soft px-2 py-0.5 text-[11px] font-medium text-brand-text">Revised</span>}
+          {old ? <Toggle before={showBefore} onChange={setShowBefore} now="Revised" then="Before" /> : status === "changes" && <span className="rounded-full bg-brand-soft px-2 py-0.5 text-[11px] font-medium text-brand-text">Revised</span>}
           {choice && <Chip choice={choice.decision} />}
         </span>
       </div>
       <div {...bind} style={style} className="relative mx-3 flex min-h-0 flex-1 touch-pan-y select-none flex-col overflow-hidden rounded-[14px] border border-line bg-surface">
         <Stamps dx={dx} />
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+          {asked && (
+            <div className="mb-3.5">
+              <YouAsked notes={[{ body: asked }]} />
+            </div>
+          )}
+          {showBefore && <p className="mb-2 inline-block rounded-full bg-surface-3 px-2.5 py-0.5 text-[11px] text-muted">Before · what you commented on</p>}
           <p className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-faint">Primary text</p>
           <p className="whitespace-pre-wrap text-[13.5px] leading-[1.55]">{ad.primaryText}</p>
           <div className="mt-4 grid gap-3 border-t border-line pt-3.5">
@@ -672,8 +743,14 @@ function Media({
   onTime?: (ms: number) => void;
 }) {
   return (
-    <div className="relative grid min-h-0 flex-1 place-items-center overflow-hidden bg-black">
-      <div ref={frameRef} {...draw} className={`relative h-full max-w-full overflow-hidden ${draw ? "cursor-crosshair touch-none" : ""}`} style={{ aspectRatio: ratio(file.aspect) }}>
+    <div className="relative grid min-h-0 flex-1 place-items-center overflow-hidden bg-black [container-type:size]">
+      {/* The frame is exactly the image's box (as wide as fits, by height or by width), so a pin's spot is a spot on the image */}
+      <div
+        ref={frameRef}
+        {...draw}
+        className={`relative overflow-hidden ${draw ? "cursor-crosshair touch-none" : ""}`}
+        style={{ aspectRatio: String(wOverH(file)), width: `min(100cqw, calc(100cqh * ${wOverH(file)}))` }}
+      >
         {isVideo(file) ? (
           <video
             ref={videoRef}

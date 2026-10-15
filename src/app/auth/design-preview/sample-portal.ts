@@ -34,7 +34,7 @@ export const samplePortal: PortalData = {
         { id: "d1", position: 1, name: "Calzone pull", isVariation: false, version: 2, files: [file("f1", "4x5", "#b21e2c", "#fff4e0", "2 PIZZAS IN.", "CALZONE FREE."), file("f2", "9x16", "#b21e2c", "#fff4e0", "2 PIZZAS IN.", "CALZONE FREE.")], clientStatus: null },
         { id: "d2", position: 2, name: "Calzone pull · yellow", isVariation: true, version: 1, files: [file("f3", "4x5", "#f5c400", "#1b1b1b", "FRIDAY NIGHT,", "SORTED.")], clientStatus: null },
       ],
-      ads: ADS.map((ad) => ({ ad, status: null })),
+      ads: ADS.map((ad) => ({ ad, status: null, note: null, before: null })),
       revised: null,
       landingUrl: "https://crustpizza.com/weekly-deals",
       summary: {
@@ -48,8 +48,19 @@ export const samplePortal: PortalData = {
       number: 1039,
       title: "Rewards · Join and get $5",
       format: "image",
-      designs: [{ id: "d3", position: 1, name: "Rewards card", isVariation: false, version: 3, files: [file("f4", "1x1", "#14213d", "#fca311", "JOIN CRUST", "REWARDS")], clientStatus: "changes" }],
-      ads: [{ ad: ADS[0], status: "approved" }, { ad: ADS[1], status: "changes" }],
+      designs: [{ id: "d3", position: 1, name: "Rewards card", isVariation: false, version: 3, files: [file("f4", "1x1", "#14213d", "#fca311", "JOIN CRUST", "REWARDS")], clientStatus: "changes",
+          previous: {
+            version: 2,
+            files: [file("f4old", "1x1", "#14213d", "#8d99ae", "join crust", "rewards")],
+            notes: [
+              { fileId: "f4old", x: 0.06, y: 0.08, w: 0.6, h: 0.3, tMs: null, body: "Headline is hard to read, make it pop" },
+              { fileId: "f4old", x: 0.25, y: 0.88, w: null, h: null, tMs: null, body: "Button should be our yellow" },
+            ],
+          } }],
+      ads: [
+        { ad: ADS[0], status: "approved", note: null, before: null },
+        { ad: ADS[1], status: "changes", note: "Don't say 'cheap'", before: { ...ADS[1], primaryText: "Cheap, hot and fresh: the cheese pull you've been thinking about all week." } },
+      ],
       landingUrl: "https://crustpizza.com/rewards",
       summary: null,
       revised: {

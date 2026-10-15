@@ -79,7 +79,7 @@ ${notes}
     const now = new Date().toISOString();
     await admin
       .from("copy_sets")
-      .update({ status: "review", ads: next, ai_ads: next, notes: out.notes, changes: out.changes, scope: out.scope, progress: {}, version: (set.version ?? 1) + 1, updated_at: now, approved_at: null, approved_by: null })
+      .update({ status: "review", ads: next, ai_ads: next, previous_ads: ads, notes: out.notes, changes: out.changes, scope: out.scope, progress: {}, version: (set.version ?? 1) + 1, updated_at: now, approved_at: null, approved_by: null })
       .eq("request_id", requestId);
 
     // Copy only: on to copy review, now that there's something to review
