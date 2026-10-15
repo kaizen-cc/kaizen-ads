@@ -704,3 +704,13 @@ Skip one-off fixes that only apply to this ad (move this text up, fix this typo)
 export const REVISION_SUMMARY_SCHEMA = obj({ items: { type: "array", items: obj({ asked: str, changed: str }) } });
 export const REVISION_SUMMARY_SYSTEM = `You write the "what we changed" note a client sees when their revised ad comes back to them. You get what they asked for and what the team and the AI changed.
 Return one item per thing they asked: asked = their request in a few words, in their terms; changed = what we did, plainly and specifically, in the agency's voice ("Moved the price above the fold", "Removed 'cheap' from every ad"). Warm, confident, no fluff, no emojis. If something they asked couldn't be done, say so honestly in changed.`;
+
+// ─── What the client reads before reviewing ─────────────────────────────────
+
+export type ClientSummary = { why: string; audience: string; strategy: string };
+export const CLIENT_SUMMARY_SCHEMA = obj({ why: str, audience: str, strategy: str });
+export const CLIENT_SUMMARY_SYSTEM = `You write the short intro a client reads before reviewing the ads Kaizen Marketing made for them. It's written to the client, in Kaizen's voice: confident, warm, plain, no jargon, no emojis, no internal details (no allotments, no team names, no prices of our services).
+- why: one or two sentences on why we made these ads now: the goal, the offer or the moment.
+- audience: one sentence on who they're for.
+- strategy: one or two sentences on the approach: the angle, what the creative leads with, and what we want people to do.
+Use only what's in the brief and the client context; don't invent offers, numbers or claims.`;

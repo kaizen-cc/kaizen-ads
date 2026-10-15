@@ -187,6 +187,7 @@ const DEMO_COPY = {
     clientNotes: null,
     changes: null,
     scope: null,
+    clientStatus: [],
     reusedFrom: null,
   },
 };
@@ -292,6 +293,11 @@ export function TicketDrawer({
 
           <div className="grid gap-2.5">
             <h2 className="font-heading text-[26px] leading-tight">{ticket.title}</h2>
+            {ticket.parentNumber && (
+              <p className="text-xs text-ok">
+                Split from #{ticket.parentNumber}: the designs and copy the client approved, ready to launch while the rest is reworked.
+              </p>
+            )}
             <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
               <span className="inline-flex items-center gap-1.5 text-fg">
                 <FormatIcon format={ticket.format} /> {FORMAT_LABEL[ticket.format]}
@@ -495,6 +501,14 @@ export function TicketDrawer({
                 ))}
                 {ticket.audience && <span className="text-muted">{ticket.audience}</span>}
               </div>
+            )}
+            {ticket.landingUrl && (
+              <p className="flex items-center gap-2 text-sm">
+                <span className="text-faint">Landing page</span>
+                <a href={ticket.landingUrl} target="_blank" rel="noreferrer" className="truncate text-brand-text hover:underline">
+                  {ticket.landingUrl.replace(/^https?:\/\//, "")}
+                </a>
+              </p>
             )}
             {ticket.brief ? (
               <p className="whitespace-pre-wrap rounded-[10px] border border-line bg-surface px-5 py-4 text-sm leading-relaxed text-muted">{ticket.brief}</p>

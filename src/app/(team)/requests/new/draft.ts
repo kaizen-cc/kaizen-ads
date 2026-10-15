@@ -19,6 +19,7 @@ export type Draft = {
   priority: Priority;
   brief: string;
   refs: string;
+  landing?: string; // where the ad sends people
 };
 
 export const emptyDraft = (clientId: string | null): Draft => ({
@@ -31,6 +32,7 @@ export const emptyDraft = (clientId: string | null): Draft => ({
   priority: "normal",
   brief: "",
   refs: "",
+  landing: "",
 });
 
 export const refLinks = (refs: string) =>

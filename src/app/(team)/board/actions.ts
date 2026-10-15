@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
-import { summarizeRevision } from "@/lib/client-revision";
+import { summarizeRevision, writeClientSummary } from "@/lib/client-revision";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
 import type { Priority, Stage } from "@/lib/stages";
@@ -23,8 +23,14 @@ export async function moveTicket(id: string, stage: Stage, note?: string): Promi
   // A revised ad going back to the client: write what they asked and what changed, for the "revised" tag
   if (!error && stage === "client_review" && adminConfigured()) {
     after(async () => {
+      const admin = createAdminClient();
       try {
-        await summarizeRevision(createAdminClient(), id);
+        await writeClientSummary(admin, id);
+      } catch (e) {
+        console.error("[portal] client summary failed:", e instanceof Error ? e.message : e);
+      }
+      try {
+        await summarizeRevision(admin, id);
       } catch (e) {
         console.error("[portal] revision summary failed:", e instanceof Error ? e.message : e);
       }

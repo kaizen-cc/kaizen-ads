@@ -28,6 +28,7 @@ export type Design = {
   variationOf: string | null;
   currentVersion: number;
   versions: DesignVersion[]; // newest first
+  clientApproved?: boolean; // locked: no new versions
 };
 
 type Fail = { ok: false; error: string };
@@ -42,7 +43,7 @@ export async function ticketDesigns(requestId: string): Promise<Design[]> {
   const { data: designs } = await supabase
     .from("designs")
     .select(
-      "id, position, name, is_variation, variation_of, current_version, design_versions(id, version, note, created_at, profiles(full_name), design_files(id, path, thumb_path, original_name, mime, bytes, width, height, duration_ms, aspect, card))",
+      "id, position, name, is_variation, variation_of, current_version, client_status, design_versions(id, version, note, created_at, profiles(full_name), design_files(id, path, thumb_path, original_name, mime, bytes, width, height, duration_ms, aspect, card))",
     )
     .eq("request_id", requestId)
     .order("position");
@@ -65,6 +66,7 @@ export async function ticketDesigns(requestId: string): Promise<Design[]> {
     isVariation: d.is_variation,
     variationOf: d.variation_of,
     currentVersion: d.current_version,
+    clientApproved: d.client_status === "approved",
     versions: (d.design_versions as unknown as Ver[])
       .sort((a, b) => b.version - a.version)
       .map((v) => ({
@@ -118,6 +120,8 @@ export async function startDesigns(requestId: string, designs: { name: string; v
 export async function startVersion(designId: string, note: string): Promise<{ ok: true; started: Started; prefix: string } | Fail> {
   await requireStaff();
   const supabase = await createClient();
+  const { data: locked } = await supabase.from("designs").select("client_status").eq("id", designId).maybeSingle();
+  if (locked?.client_status === "approved") return { ok: false, error: "The client approved this design, so it's locked." };
   const { data, error } = await supabase.rpc("add_design_version", { p_design: designId, p_note: note || null });
   if (error) return { ok: false, error: error.message };
   const { data: d } = await supabase.from("designs").select("client_id, request_id").eq("id", designId).single();

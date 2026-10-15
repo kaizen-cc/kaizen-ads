@@ -4,6 +4,9 @@ import {
   AiUnavailable,
   askJson,
   CLIENT_LESSONS_SYSTEM,
+  CLIENT_SUMMARY_SCHEMA,
+  CLIENT_SUMMARY_SYSTEM,
+  type ClientSummary,
   clientContext,
   COPY_AMEND_SCHEMA,
   COPY_AMEND_SYSTEM,
@@ -26,10 +29,12 @@ const clock = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms
 export async function amendCopy(admin: SupabaseClient, requestId: string, notes: string) {
   const [{ data: r }, { data: set }] = await Promise.all([
     admin.from("board_requests").select("id, number, client_id, title, brief, angle_name, stage").eq("id", requestId).maybeSingle(),
-    admin.from("copy_sets").select("ads, version").eq("request_id", requestId).maybeSingle(),
+    admin.from("copy_sets").select("ads, version, client_status").eq("request_id", requestId).maybeSingle(),
   ]);
   if (!r || !set) throw new AiUnavailable("No copy to revise.");
   const ads = (set.ads ?? []) as Ad[];
+  const status = (set.client_status ?? []) as { status: string | null; note?: string | null }[];
+  const locked = new Set(ads.map((_, i) => i).filter((i) => status[i]?.status === "approved"));
   const ctx = await clientContext(admin, r.client_id);
 
   let shown = -1;
@@ -58,14 +63,19 @@ ${(ctx?.memory ?? []).map((m) => `- [${m.kind}] ${m.body}`).join("\n") || "(none
 <ticket>#${r.number} · ${r.title} · angle: ${r.angle_name ?? "not set"}</ticket>
 
 <approved_copy>
-${ads.map((a, i) => `Ad ${i + 1} [${a.kind} · ${a.formula}]\nprimaryText: ${a.primaryText}\nheadline: ${a.headline}\nlinkDescription: ${a.linkDescription}\ncta: ${a.cta}`).join("\n\n")}
+${ads.map((a, i) => `Ad ${i + 1} [${a.kind} · ${a.formula}]${locked.has(i) ? " · APPROVED BY THE CLIENT: return it exactly as it is" : status[i]?.status === "changes" ? " · the client wants changes" : ""}\nprimaryText: ${a.primaryText}\nheadline: ${a.headline}\nlinkDescription: ${a.linkDescription}\ncta: ${a.cta}`).join("\n\n")}
 </approved_copy>
 
 <client_asked>
 ${notes}
 </client_asked>`,
     });
-    const next = out.ads.length === 5 ? out.ads.map((a) => ({ ...a, cta: CTA_BUTTONS.includes(a.cta as (typeof CTA_BUTTONS)[number]) ? a.cta : "Learn More" })) : ads;
+    // Approved ads are locked: whatever the AI returned for them, they stay exactly as approved
+    const next =
+      out.ads.length === ads.length
+        ? out.ads.map((a, i) => (locked.has(i) ? ads[i] : { ...a, cta: CTA_BUTTONS.includes(a.cta as (typeof CTA_BUTTONS)[number]) ? a.cta : "Learn More" }))
+        : ads;
+    out.changes = out.changes.filter((c) => !locked.has(c.ad - 1));
     const now = new Date().toISOString();
     await admin
       .from("copy_sets")
@@ -161,4 +171,32 @@ export async function summarizeRevision(admin: SupabaseClient, requestId: string
   await admin.from("client_rounds").update({ changes: items, sent_back_at: now }).eq("id", round.id);
   if (pins.length) await admin.from("review_comments").update({ resolved_at: now }).in("id", pins.map((p) => p.id));
   return items;
+}
+
+/** The client-facing "why we made this" (goal, audience, strategy), written once when the ticket first goes to them. */
+export async function writeClientSummary(admin: SupabaseClient, requestId: string, force = false) {
+  const { data: r } = await admin.from("board_requests").select("id, number, client_id, title, angle_name, audience, brief, landing_url, client_summary").eq("id", requestId).maybeSingle();
+  if (!r || (r.client_summary && !force)) return (r?.client_summary as ClientSummary | null) ?? null;
+  const ctx = await clientContext(admin, r.client_id);
+  const summary = await askJson<ClientSummary>({
+    agent: "review",
+    label: `client summary #${r.number}`,
+    system: CLIENT_SUMMARY_SYSTEM,
+    schema: CLIENT_SUMMARY_SCHEMA,
+    prompt: `<client>${ctx?.name ?? "the client"}</client>
+${ctx?.brandBible ? `<brand_bible>
+${ctx.brandBible.slice(0, 3000)}
+</brand_bible>
+` : ""}
+<request>
+Title: ${r.title}
+Angle: ${r.angle_name ?? "not set"}
+Audience: ${r.audience ?? "not set"}
+Landing page: ${r.landing_url ?? "not set"}
+Brief:
+${r.brief ?? "(no brief)"}
+</request>`,
+  });
+  await admin.from("requests").update({ client_summary: summary }).eq("id", requestId);
+  return summary;
 }

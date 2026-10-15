@@ -6,15 +6,17 @@ import type { Ad } from "@/lib/copy";
 // approved copy), what we're changing for them, what's live in their ad account, and what's approved and launching.
 
 export type PortalFile = { id: string; url: string | null; thumbUrl: string | null; aspect: string | null; mime: string; width: number | null; height: number | null; card: number | null };
-export type PortalDesign = { id: string; position: number; name: string; isVariation: boolean; version: number; files: PortalFile[] };
+export type PortalDesign = { id: string; position: number; name: string; isVariation: boolean; version: number; files: PortalFile[]; clientStatus: "approved" | "changes" | null; context?: boolean };
 export type PortalItem = {
   id: string;
   number: number;
   title: string;
   format: "image" | "video" | "carousel";
-  designs: PortalDesign[];
-  ads: Ad[];
+  designs: PortalDesign[]; // context: approved earlier (on the ticket it split into), shown in previews, not asked again
+  ads: { ad: Ad; status: "approved" | "changes" | null }[];
   revised: { round: number; changes: { asked: string; changed: string }[] } | null;
+  landingUrl: string | null;
+  summary: { why: string; audience: string; strategy: string } | null;
 };
 export type PortalRow = { id: string; title: string; note: string; thumbUrl: string | null };
 export type RunningAd = { id: string; name: string; headline: string | null; text: string | null; thumbnail: string | null };
@@ -28,14 +30,14 @@ export type PortalData = {
 const BUCKET = "creative";
 
 type FileRow = { id: string; path: string; thumb_path: string | null; mime: string; aspect: string | null; width: number | null; height: number | null; card: number | null; original_name: string };
-type DesignRow = { id: string; request_id: string; position: number; name: string; is_variation: boolean; current_version: number; design_versions: { version: number; design_files: FileRow[] }[] };
+type DesignRow = { id: string; request_id: string; position: number; name: string; is_variation: boolean; current_version: number; client_status: "approved" | "changes" | null; design_versions: { version: number; design_files: FileRow[] }[] };
 
 /** Every design's current files, with links that last an hour. */
 async function designsFor(db: SupabaseClient, requestIds: string[]) {
   if (!requestIds.length) return new Map<string, PortalDesign[]>();
   const { data } = await db
     .from("designs")
-    .select("id, request_id, position, name, is_variation, current_version, design_versions(version, design_files(id, path, thumb_path, mime, aspect, width, height, card, original_name))")
+    .select("id, request_id, position, name, is_variation, current_version, client_status, design_versions(version, design_files(id, path, thumb_path, mime, aspect, width, height, card, original_name))")
     .in("request_id", requestIds)
     .order("position");
   const rows = (data ?? []) as unknown as DesignRow[];
@@ -56,6 +58,7 @@ async function designsFor(db: SupabaseClient, requestIds: string[]) {
       name: d.name,
       isVariation: d.is_variation,
       version: d.current_version,
+      clientStatus: d.client_status,
       files: files.map((f) => ({ id: f.id, url: signed.get(f.path) ?? null, thumbUrl: f.thumb_path ? (signed.get(f.thumb_path) ?? null) : null, aspect: f.aspect, mime: f.mime, width: f.width, height: f.height, card: f.card })),
     });
     out.set(d.request_id, list);
@@ -72,7 +75,7 @@ export async function loadPortal(db: SupabaseClient, clientId: string): Promise<
   const [{ data: tickets }, { data: snap }] = await Promise.all([
     db
       .from("requests")
-      .select("id, number, title, format, stage, stage_entered_at")
+      .select("id, number, title, format, stage, stage_entered_at, landing_url, client_summary, parent_id")
       .eq("client_id", clientId)
       .in("stage", ["client_review", "client_revision", "copy", "copy_review", "ready_for_client", "ready_for_launch"])
       .order("stage_entered_at"),
@@ -80,9 +83,11 @@ export async function loadPortal(db: SupabaseClient, clientId: string): Promise<
   ]);
   const all = tickets ?? [];
   const ids = all.map((t) => t.id);
+  // Tickets split off from these (the pieces the client approved): their designs show as context on copy-only reworks
+  const { data: kids } = ids.length ? await db.from("requests").select("id, parent_id").in("parent_id", ids) : { data: [] as { id: string; parent_id: string }[] };
   const [designs, { data: copy }, { data: rounds }] = await Promise.all([
-    designsFor(db, ids),
-    ids.length ? db.from("copy_sets").select("request_id, ads, status").in("request_id", ids) : Promise.resolve({ data: [] as { request_id: string; ads: Ad[]; status: string }[] }),
+    designsFor(db, [...ids, ...(kids ?? []).map((k) => k.id)]),
+    ids.length ? db.from("copy_sets").select("request_id, ads, status, client_status").in("request_id", ids) : Promise.resolve({ data: [] as { request_id: string; ads: Ad[]; status: string; client_status: unknown }[] }),
     ids.length ? db.from("client_rounds").select("request_id, round, decision, targets, copy_notes, design_note, changes, sent_back_at, created_at").in("request_id", ids).order("round", { ascending: false }) : Promise.resolve({ data: [] as never[] }),
   ]);
   const copyOf = new Map((copy ?? []).map((c) => [c.request_id, c]));
@@ -90,18 +95,23 @@ export async function loadPortal(db: SupabaseClient, clientId: string): Promise<
   for (const r of rounds ?? []) if (!latest.has(r.request_id)) latest.set(r.request_id, r);
 
   const items: PortalItem[] = all
-    .filter((t) => t.stage === "client_review" && designs.get(t.id)?.length)
+    .filter((t) => t.stage === "client_review" && (designs.get(t.id)?.length || (kids ?? []).some((k) => k.parent_id === t.id)))
     .map((t) => {
       const r = latest.get(t.id);
       const c = copyOf.get(t.id);
+      const status = ((c?.client_status ?? []) as { status: "approved" | "changes" | null }[]).map((x) => x?.status ?? null);
+      const own = designs.get(t.id) ?? [];
+      const context = own.length ? [] : (kids ?? []).filter((k) => k.parent_id === t.id).flatMap((k) => (designs.get(k.id) ?? []).map((d) => ({ ...d, clientStatus: "approved" as const, context: true })));
       return {
         id: t.id,
         number: t.number,
         title: t.title,
         format: t.format,
-        designs: designs.get(t.id) ?? [],
-        ads: c?.status === "approved" ? ((c.ads ?? []) as Ad[]) : [],
+        designs: [...own, ...context],
+        ads: c?.status === "approved" ? ((c.ads ?? []) as Ad[]).map((ad, i) => ({ ad, status: status[i] ?? null })) : [],
         revised: r?.decision === "revise" && r.sent_back_at ? { round: r.round, changes: (r.changes ?? []) as { asked: string; changed: string }[] } : null,
+        landingUrl: t.landing_url ?? null,
+        summary: (t.client_summary as PortalItem["summary"]) ?? null,
       };
     });
 

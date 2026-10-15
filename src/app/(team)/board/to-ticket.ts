@@ -31,6 +31,8 @@ export type BoardRow = {
   minutes_in_stage: number;
   minutes_over: number;
   created_at: string;
+  landing_url?: string | null;
+  parent_number?: number | null;
 };
 
 export const toTicket = (r: BoardRow): Ticket => ({
@@ -62,4 +64,6 @@ export const toTicket = (r: BoardRow): Ticket => ({
   minutesInStage: r.minutes_in_stage ?? 0,
   minutesOver: r.minutes_over ?? 0,
   createdAt: r.created_at,
+  landingUrl: r.landing_url ?? null,
+  parentNumber: r.parent_number ?? null,
 });

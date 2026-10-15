@@ -712,6 +712,17 @@ export function RequestForm({
 
                 {s && s.watchouts.length > 0 && <Watchouts items={s.watchouts} />}
 
+                <Field id="landing" label="Landing page" hint="Where the ad sends people">
+                  <input
+                    id="landing"
+                    type="url"
+                    value={draft.landing ?? ""}
+                    onChange={(e) => set({ landing: e.target.value })}
+                    placeholder="https://brand.com/offer"
+                    className="h-11 w-full rounded-[8px] border border-line bg-surface px-4 text-sm outline-none transition-colors placeholder:text-faint focus:border-brand-text/70"
+                  />
+                </Field>
+
                 <Field id="refs" label="References" hint="One link per line">
                   <textarea
                     id="refs"
@@ -765,6 +776,7 @@ export function RequestForm({
                     ["Audience", draft.audience || "—", 2],
                     ["Priority", draft.priority[0].toUpperCase() + draft.priority.slice(1), 2],
                     ["Sizes", draft.sizes.map((z) => z.replace("x", ":")).join(", "), 1],
+                    ["Landing page", draft.landing?.trim() || "—", 3],
                     ["References", `${draft.refs.split(/\s+/).filter((u) => /^https?:\/\//i.test(u)).length || "None"}`, 3],
                   ].map(([k, v, to]) => (
                     <div key={k as string} className="group min-w-0">

@@ -42,7 +42,7 @@ async function learning(admin: SupabaseClient, clientId: string, angleId: string
 export async function draftCopy(admin: SupabaseClient, requestId: string, actorId: string | null, note?: string) {
   const { data: r } = await admin
     .from("board_requests")
-    .select("id, client_id, angle_id, angle_name, title, format, audience, brief, sizes, refs, stage, new_count, variation_count")
+    .select("id, client_id, angle_id, angle_name, title, format, audience, brief, sizes, refs, stage, new_count, variation_count, landing_url")
     .eq("id", requestId)
     .maybeSingle();
   if (!r) throw new AiUnavailable("Ticket not found.");
@@ -90,6 +90,7 @@ Title: ${r.title}
 Format: ${r.format} · ${r.new_count} net new, ${r.variation_count} variations
 Angle: ${r.angle_name ?? "not set"}
 Audience: ${r.audience ?? "not set"}
+Landing page: ${r.landing_url ?? "not set"} (where the ad sends people: the CTA and the promise should match it)
 Brief:
 ${r.brief ?? "(no brief)"}
 Designs: ${(designs ?? []).map((d) => `D${d.position} ${d.name}${d.is_variation ? " (variation)" : ""}`).join("; ") || "none listed"}${creative.length ? `\nThe first ${creative.length} picture${creative.length === 1 ? " is" : "s are"} the approved creative this copy runs with: write to what's on it (don't repeat its on-image text word for word).` : ""}

@@ -25,6 +25,7 @@ export type CopySet = {
   clientNotes: string | null; // the client's copy notes this revision answers
   changes: { ad: number; what: string }[] | null;
   scope: "amend" | "rewrite" | null;
+  clientStatus: { status: "approved" | "changes" | null; note?: string | null }[]; // per ad; approved = locked
 };
 export type CopyState = { set: CopySet | null; reusable: { id: string; title: string; approvedAt: string | null; ads: Ad[] } | null };
 
@@ -44,6 +45,7 @@ const toSet = (s: Record<string, unknown>): CopySet => ({
   clientNotes: (s.client_notes as string | null) ?? null,
   changes: (s.changes as CopySet["changes"]) ?? null,
   scope: (s.scope as CopySet["scope"]) ?? null,
+  clientStatus: (s.client_status ?? []) as CopySet["clientStatus"],
 });
 
 /** The ticket's copy set, and an approved set for the same angle that could be reused instead of re-asking. */
@@ -95,10 +97,13 @@ export async function redraftCopy(requestId: string, note?: string): Promise<{ o
   return { ok: true, state: await ticketCopy(requestId) };
 }
 
-/** Copy review's edits, saved as they type. */
+/** Copy review's edits, saved as they type. Ads the client approved stay exactly as approved. */
 export async function saveCopy(setId: string, ads: Ad[]): Promise<{ ok: true } | { ok: false; error: string }> {
   const me = await requireStaff();
   const supabase = await createClient();
+  const { data: current } = await supabase.from("copy_sets").select("ads, client_status").eq("id", setId).maybeSingle();
+  const status = (current?.client_status ?? []) as { status: string | null }[];
+  ads = ads.map((a, i) => (status[i]?.status === "approved" && (current?.ads as Ad[] | undefined)?.[i] ? (current!.ads as Ad[])[i] : a));
   const { error } = await supabase.from("copy_sets").update({ ads: ads.slice(0, 5), updated_by: me.id, updated_at: new Date().toISOString() }).eq("id", setId).neq("status", "approved");
   return error ? { ok: false, error: error.message } : { ok: true };
 }
@@ -241,4 +246,17 @@ Answer the last message.`,
     if (!res.ok) return { ok: true, messages, rewriting: false };
   }
   return { ok: true, messages, rewriting: out.rewrite && set?.status !== "approved" };
+}
+
+/** Where the ad sends people. Set on the request; copy review can fix it here. */
+export async function setLandingUrl(requestId: string, url: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  await requireStaff();
+  const clean = url.trim();
+  if (clean && !/^https?:\/\/\S+\.\S+/i.test(clean)) return { ok: false, error: "Enter a full link, starting with https://" };
+  const supabase = await createClient();
+  const { data: visible } = await supabase.from("requests").select("id").eq("id", requestId).maybeSingle();
+  if (!visible || !adminConfigured()) return { ok: false, error: "Ticket not found." };
+  const { error } = await createAdminClient().from("requests").update({ landing_url: clean || null }).eq("id", requestId);
+  revalidatePath("/board");
+  return error ? { ok: false, error: error.message } : { ok: true };
 }

@@ -20,6 +20,7 @@ const ADS: Ad[] = [
   ad("short", "Two large pizzas, one free calzone. Friday night, sorted. 🍕", "2 Pizzas In, Calzone Free", "This week only", "Order Now"),
   ad("short", "The cheese pull you've been thinking about all week is 20 minutes away.", "Hot, Fresh, Yours", "Order online", "Order Now"),
   ad("short", "Family night shouldn't need a plan. It needs two pizzas and a calzone on us.", "Family Night, Covered", "Pick up or delivery", "Order Now"),
+  ad("long", Array.from({ length: 14 }, (_, i) => (i % 3 === 0 ? "Friday night used to mean a debate about where to order from. Then someone found the Weekly Deal, and the debate was over before it started." : i % 3 === 1 ? "Two large pizzas, made the way they've been made for twenty years, and a calzone on us. It's the kind of deal that makes the whole table quiet for a minute." : "Order online in under a minute, pick it up hot, or have it at your door in about thirty.")).join("\n\n"), "The Friday Night Deal", "Two pizzas, calzone free", "Order Now"),
 ];
 
 export const samplePortal: PortalData = {
@@ -30,19 +31,27 @@ export const samplePortal: PortalData = {
       title: "Weekly Deals · Calzone free",
       format: "image",
       designs: [
-        { id: "d1", position: 1, name: "Calzone pull", isVariation: false, version: 2, files: [file("f1", "4x5", "#b21e2c", "#fff4e0", "2 PIZZAS IN.", "CALZONE FREE."), file("f2", "9x16", "#b21e2c", "#fff4e0", "2 PIZZAS IN.", "CALZONE FREE.")] },
-        { id: "d2", position: 2, name: "Calzone pull · yellow", isVariation: true, version: 1, files: [file("f3", "4x5", "#f5c400", "#1b1b1b", "FRIDAY NIGHT,", "SORTED.")] },
+        { id: "d1", position: 1, name: "Calzone pull", isVariation: false, version: 2, files: [file("f1", "4x5", "#b21e2c", "#fff4e0", "2 PIZZAS IN.", "CALZONE FREE."), file("f2", "9x16", "#b21e2c", "#fff4e0", "2 PIZZAS IN.", "CALZONE FREE.")], clientStatus: null },
+        { id: "d2", position: 2, name: "Calzone pull · yellow", isVariation: true, version: 1, files: [file("f3", "4x5", "#f5c400", "#1b1b1b", "FRIDAY NIGHT,", "SORTED.")], clientStatus: null },
       ],
-      ads: ADS,
+      ads: ADS.map((ad) => ({ ad, status: null })),
       revised: null,
+      landingUrl: "https://crustpizza.com/weekly-deals",
+      summary: {
+        why: "Weekly Deals is your biggest traffic driver, and this week's offer (two large pizzas, a calzone free) is the strongest yet. We want it in front of hungry locals before Friday.",
+        audience: "Families within 10 miles who order dinner on Thursdays and Fridays, plus people who visited the menu page in the last month.",
+        strategy: "Lead with the cheese pull, put the offer in the first three words, and make ordering one tap. One variation tests a brighter look to see what stops the scroll.",
+      },
     },
     {
       id: "p2",
       number: 1039,
       title: "Rewards · Join and get $5",
       format: "image",
-      designs: [{ id: "d3", position: 1, name: "Rewards card", isVariation: false, version: 3, files: [file("f4", "1x1", "#14213d", "#fca311", "JOIN CRUST", "REWARDS")] }],
-      ads: ADS.slice(0, 2),
+      designs: [{ id: "d3", position: 1, name: "Rewards card", isVariation: false, version: 3, files: [file("f4", "1x1", "#14213d", "#fca311", "JOIN CRUST", "REWARDS")], clientStatus: "changes" }],
+      ads: [{ ad: ADS[0], status: "approved" }, { ad: ADS[1], status: "changes" }],
+      landingUrl: "https://crustpizza.com/rewards",
+      summary: null,
       revised: {
         round: 1,
         changes: [

@@ -293,6 +293,11 @@ export async function createBatch(draft: Draft, review: Review | null, decisions
 
   const { data: rows } = await supabase.from("requests").select("id, number").eq("batch_id", batch).order("number");
 
+  // Where the ads send people: on every ticket of the batch (copy and the client's preview use it)
+  const landing = draft.landing?.trim();
+  if (landing && /^https?:\/\/\S+\.\S+/i.test(landing) && rows?.length && adminConfigured())
+    await createAdminClient().from("requests").update({ landing_url: landing.slice(0, 500) }).in("id", rows.map((r) => r.id));
+
   // On each ticket's history: who went past which heads-ups and similar tickets, so it can be looked back on
   if (decisions && adminConfigured() && rows?.length) {
     const events = rows.flatMap((t) => [

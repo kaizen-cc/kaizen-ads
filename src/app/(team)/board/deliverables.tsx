@@ -510,15 +510,21 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
                     {ticket.format === "carousel" ? <span>{plural(v?.files.length ?? 0, "card")}</span> : sizes.map((s) => <span key={s} className="tabular">{aspectLabel(s)}</span>)}
                   </div>
                 </div>
-                <button
-                  onClick={() => {
-                    replaceFor.current = d;
-                    replaceInput.current?.click();
-                  }}
-                  className="h-8 rounded-brand border border-line text-xs text-muted transition-colors hover:border-faint hover:text-fg"
-                >
-                  Replace
-                </button>
+                {d.clientApproved ? (
+                  <span className="grid h-8 place-items-center rounded-brand bg-ok/10 text-xs text-ok" title="The client approved this design; it can't be changed">
+                    ✓ Client approved · locked
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => {
+                      replaceFor.current = d;
+                      replaceInput.current?.click();
+                    }}
+                    className="h-8 rounded-brand border border-line text-xs text-muted transition-colors hover:border-faint hover:text-fg"
+                  >
+                    Replace
+                  </button>
+                )}
               </li>
             );
           })}

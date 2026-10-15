@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CTA_BUTTONS, LIMITS, meters, type Ad, type Meter } from "@/lib/copy";
-import { chatWithCopywriter, copyChat, type ChatMessage, type CopyState } from "./copy-actions";
+import { chatWithCopywriter, copyChat, setLandingUrl, type ChatMessage, type CopyState } from "./copy-actions";
 import type { CopyViolation } from "@/lib/ai";
 import { ticketDesigns, type Design } from "./design-actions";
 import type { Ticket } from "./types";
@@ -90,7 +90,7 @@ function Editor({ ad, ai, editable, onChange }: { ad: Ad; ai?: Ad; editable: boo
 }
 
 /** How the ad looks in the Facebook feed: primary text cut at "See more", the creative, then headline, description and CTA. */
-function FeedPreview({ ad, client, image }: { ad: Ad; client: string; image: { url: string | null; aspect: string | null } | null }) {
+function FeedPreview({ ad, client, image, landing }: { ad: Ad; client: string; image: { url: string | null; aspect: string | null } | null; landing?: string | null }) {
   const [more, setMore] = useState(false);
   const cut = ad.primaryText.length > LIMITS.visible && !more;
   const ratio = image?.aspect === "1x1" ? "1 / 1" : image?.aspect === "9x16" ? "9 / 16" : "4 / 5";
@@ -120,14 +120,20 @@ function FeedPreview({ ad, client, image }: { ad: Ad; client: string; image: { u
           <span className="absolute inset-0 grid place-items-center text-xs text-[#65676b]">Creative preview</span>
         )}
       </div>
-      <div className="flex items-center gap-3 bg-[#f0f2f5] px-3 py-2.5">
+      <a
+        href={landing ?? undefined}
+        target="_blank"
+        rel="noreferrer"
+        title={landing ? `Opens ${landing}` : "No landing page set"}
+        className={`flex items-center gap-3 bg-[#f0f2f5] px-3 py-2.5 ${landing ? "hover:bg-[#e8eaed]" : "pointer-events-none"}`}
+      >
         <span className="grid min-w-0 flex-1 leading-tight">
-          <span className="truncate text-[11px] uppercase text-[#65676b]">{client.replace(/\s+/g, "").toLowerCase()}.com</span>
+          <span className="truncate text-[11px] uppercase text-[#65676b]">{landing ? landing.replace(/^https?:\/\/(www\.)?/, "").split("/")[0] : `${client.replace(/\s+/g, "").toLowerCase()}.com`}</span>
           <span className="truncate text-[14px] font-semibold">{ad.headline || "Headline"}</span>
           {ad.linkDescription && <span className="truncate text-[12px] text-[#65676b]">{ad.linkDescription}</span>}
         </span>
         <span className="shrink-0 rounded-[6px] bg-[#e4e6eb] px-3 py-1.5 text-[13px] font-semibold">{ad.cta}</span>
-      </div>
+      </a>
       <div className="flex justify-around border-t border-[#e4e6eb] py-2 text-[12px] font-medium text-[#65676b]">
         <span>Like</span>
         <span>Comment</span>
@@ -321,7 +327,10 @@ export function CopyStudio({
   const [designIx, setDesignIx] = useState(0);
   const [note, setNote] = useState("");
   const drafting = set.status === "drafting";
-  const editable = set.status === "review";
+  const [landing, setLanding] = useState<string | null>(ticket.landingUrl ?? null);
+  const [landingDraft, setLandingDraft] = useState(ticket.landingUrl ?? "");
+  const lockedAd = (i: number) => set.clientStatus?.[i]?.status === "approved";
+  const editable = set.status === "review" && !lockedAd(pick);
   const ad = ads[pick] ?? ads[0];
 
   useEffect(() => {
@@ -360,6 +369,21 @@ export function CopyStudio({
             </p>
             <h2 className="truncate font-heading text-[18px]">Copy · {ticket.title}</h2>
           </div>
+          <label className="flex min-w-[220px] flex-1 items-center gap-2 rounded-full border border-line px-3 py-1 text-xs sm:max-w-[340px]">
+            <span className="shrink-0 text-faint">Landing page</span>
+            <input
+              value={landingDraft}
+              onChange={(e) => setLandingDraft(e.target.value)}
+              onBlur={async () => {
+                if (landingDraft.trim() === (landing ?? "")) return;
+                const r = demo ? ({ ok: true } as const) : await setLandingUrl(ticket.id, landingDraft);
+                if (r.ok) setLanding(landingDraft.trim() || null);
+                else setLandingDraft(landing ?? "");
+              }}
+              placeholder="https://brand.com/offer"
+              className="min-w-0 flex-1 bg-transparent py-1 outline-none placeholder:text-faint"
+            />
+          </label>
           <span className="text-xs text-faint">
             v{set.version}
             {set.status === "approved" ? ` · approved${set.approvedBy ? ` by ${set.approvedBy}` : ""}` : drafting ? " · rewriting" : dirty ? " · saving…" : " · saved"}
@@ -420,6 +444,7 @@ export function CopyStudio({
                       <span className={`h-1.5 w-1.5 rounded-full ${DOT[tone]}`} />
                       Ad {i + 1}
                       <span className="text-[11px] font-normal text-faint">{a.kind === "short" ? "Short" : "Long"}</span>
+                      {lockedAd(i) && <span className="ml-auto text-[10px] font-normal text-ok">✓ client</span>}
                     </span>
                     <span className="truncate text-[11px] text-muted">{a.formula}</span>
                   </button>
@@ -467,6 +492,10 @@ export function CopyStudio({
                     {set.notes}
                   </p>
                 )}
+                {lockedAd(pick) && <p className="rounded-[10px] bg-ok/10 px-3.5 py-2 text-xs text-ok">The client approved this ad, so it&apos;s locked.</p>}
+                {set.clientStatus?.[pick]?.status === "changes" && set.clientStatus[pick].note && (
+                  <p className="rounded-[10px] bg-warn-soft/50 px-3.5 py-2 text-xs text-warn">The client asked: {set.clientStatus[pick].note}</p>
+                )}
                 <Editor ad={ad} ai={set.aiAds[pick]} editable={editable} onChange={(a) => onChange(pick, a)} />
               </div>
             ) : null}
@@ -474,7 +503,7 @@ export function CopyStudio({
 
           <aside className="hidden min-h-0 border-l border-line bg-surface/40 p-5 lg:grid">
             {side === "preview" ? (
-              <div className="min-h-0 overflow-y-auto">{ad && <FeedPreview ad={ad} client={ticket.clientName} image={chosen ? { url: chosen.thumbUrl ?? chosen.url, aspect: chosen.aspect } : null} />}</div>
+              <div className="min-h-0 overflow-y-auto">{ad && <FeedPreview ad={ad} client={ticket.clientName} landing={landing} image={chosen ? { url: chosen.thumbUrl ?? chosen.url, aspect: chosen.aspect } : null} />}</div>
             ) : (
               <Chat ticket={ticket} demo={demo} disabled={set.status === "approved"} onRewriting={onRewriting} />
             )}

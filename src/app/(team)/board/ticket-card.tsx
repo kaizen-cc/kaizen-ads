@@ -95,6 +95,7 @@ export function TicketCard({
         </span>
       </div>
       <p className="line-clamp-2 text-sm font-medium leading-snug">{ticket.title}</p>
+      {ticket.parentNumber && <p className="-mt-1 text-[11px] text-ok">Client-approved part of #{ticket.parentNumber}</p>}
       <div className="flex items-center justify-between gap-2">
         <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted">
           {ticket.assigneeName ? (

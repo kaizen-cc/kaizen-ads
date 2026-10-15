@@ -29,6 +29,8 @@ export type Ticket = {
   minutesInStage: number;
   minutesOver: number;
   createdAt: string;
+  landingUrl?: string | null;
+  parentNumber?: number | null; // split off from this ticket (the client approved part of it)
 };
 
 export type Person = { id: string; name: string; role: string };
