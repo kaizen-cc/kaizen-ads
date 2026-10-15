@@ -17,6 +17,7 @@ const KIND_TONE: Record<SuggestionKind, string> = {
   unhappy: "bg-bad-soft text-bad",
   flop: "bg-warn-soft text-warn",
   lab: "bg-brand-soft text-brand-text",
+  winner: "bg-ok-soft text-ok",
 };
 const FORMAT_LABEL = { image: "Images", video: "Videos", carousel: "Carousels" } as const;
 const SIZES = ["1x1", "4x5", "9x16"] as const;
@@ -123,7 +124,8 @@ function Dots() {
   );
 }
 
-function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: () => void }) {
+/** One suggestion, full screen: edit it, talk it through, approve it or decline it. Also opened from the winners library. */
+export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: () => void }) {
   const router = useRouter();
   const [draft, setDraft] = useState<SuggestionDraft>(s.draft);
   const [why, setWhy] = useState(s.why);
@@ -190,11 +192,11 @@ function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: () => voi
 
   return createPortal(
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-3 backdrop-blur-sm md:p-6" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="grid max-h-[94vh] w-full max-w-[1120px] overflow-hidden rounded-[18px] border border-line bg-bg md:grid-cols-[1fr_360px]">
+      <div className="grid max-h-[94vh] w-full max-w-[1120px] overflow-y-auto overscroll-contain rounded-[18px] md:h-[92vh] md:grid-rows-[minmax(0,1fr)] md:overflow-hidden border border-line bg-bg md:grid-cols-[1fr_360px]">
         {/* The suggestion */}
-        <div className="grid min-h-0 content-start gap-5 overflow-y-auto p-5 md:p-6">
+        <div className="grid min-h-0 content-start gap-5 overscroll-contain p-5 md:overflow-y-auto md:p-6">
           <div className="flex items-start justify-between gap-3">
-            <div className="grid gap-1.5">
+            <div className="grid min-w-0 flex-1 gap-1.5">
               <span className="flex flex-wrap items-center gap-2">
                 <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${KIND_TONE[s.kind]}`}>{KIND_LABEL[s.kind]}</span>
                 <Link href={`/clients/${s.clientSlug}`} className="text-xs text-muted hover:text-fg">
@@ -215,8 +217,17 @@ function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: () => voi
           </div>
 
           <div className="grid gap-3 rounded-[14px] border border-line bg-surface p-4">
-            <p className="text-xs uppercase tracking-[0.14em] text-faint">What the data shows</p>
-            <p className="text-sm">{s.signal}</p>
+            <div className="flex items-start gap-3">
+              {s.source?.thumbnail && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={s.source.thumbnail} alt="" className="h-16 w-14 shrink-0 rounded-[8px] object-cover" />
+              )}
+              <div className="grid gap-1">
+                <p className="text-xs uppercase tracking-[0.14em] text-faint">{s.kind === "winner" ? "Built on" : "What the data shows"}</p>
+                <p className="text-sm">{s.kind === "winner" && s.source ? `"${s.source.headline ?? "A winning ad"}" from ${s.source.client}` : s.signal}</p>
+                {s.kind === "winner" && <p className="text-xs text-faint">{s.signal}</p>}
+              </div>
+            </div>
             {s.evidence.length > 0 && (
               <ul className="grid gap-1 text-xs text-muted">
                 {s.evidence.map((e, i) => (
@@ -252,7 +263,7 @@ function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: () => voi
                 </Field>
               </div>
               <Field label="Brief for the designer">
-                <textarea value={draft.brief} onChange={(e) => edit({ brief: e.target.value })} onBlur={() => save()} rows={7} className={`${INPUT} h-auto py-2 leading-relaxed`} />
+                <textarea value={draft.brief} onChange={(e) => edit({ brief: e.target.value })} onBlur={() => save()} rows={Math.max(7, draft.brief.split("\n").reduce((n, l) => n + Math.ceil((l.length || 1) / 90), 0) + 1)} className={`${INPUT} h-auto py-2 leading-relaxed`} />
               </Field>
 
               {draft.concepts.length > 0 && (
@@ -312,9 +323,31 @@ function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: () => voi
                 <input value={draft.landing} onChange={(e) => edit({ landing: e.target.value })} onBlur={() => save()} placeholder="https://" className={INPUT} />
               </Field>
 
+              <AllotmentBar allotment={s.allotment} formats={draft.formats} />
+
               {error && <p className="text-sm text-bad">{error}</p>}
 
-              {declining ? (
+              {declining && s.kind === "winner" ? (
+                <div className="flex flex-wrap items-center gap-2 rounded-[14px] border border-line bg-surface p-4">
+                  <p className="flex-1 text-sm">Discard this brief? Nothing was sent to production.</p>
+                  <button
+                    onClick={() =>
+                      act(async () => {
+                        const r = await declineSuggestion(s.id, "Discarded from the winners library", false);
+                        if (!r.ok) return setError(r.error);
+                        onClose();
+                      })
+                    }
+                    disabled={busy}
+                    className="h-9 rounded-brand bg-fg px-4 text-sm text-bg"
+                  >
+                    Discard
+                  </button>
+                  <button onClick={() => setDeclining(false)} className="h-9 px-3 text-sm text-muted hover:text-fg">
+                    Keep it
+                  </button>
+                </div>
+              ) : declining ? (
                 <div className="grid gap-3 rounded-[14px] border border-line bg-surface p-4">
                   <p className="text-sm font-medium">Why not? The strategist reads this before every suggestion.</p>
                   <div className="flex flex-wrap gap-1.5">
@@ -341,10 +374,10 @@ function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: () => voi
               ) : (
                 <div className="sticky bottom-0 -mx-5 flex flex-wrap items-center gap-2 border-t border-line bg-bg/95 px-5 py-3 backdrop-blur md:-mx-6 md:px-6">
                   <button onClick={approve} disabled={busy || thinking} className="h-10 rounded-brand bg-brand px-5 text-sm font-medium text-white hover:brightness-110 disabled:opacity-50">
-                    {busy ? "Making tickets…" : "Approve and send to the makers"}
+                    {busy ? "Making tickets…" : s.kind === "winner" ? "Send to production" : "Approve and send to the makers"}
                   </button>
                   <button onClick={() => setDeclining(true)} disabled={busy} className="h-10 rounded-brand border border-line px-4 text-sm text-muted hover:text-fg">
-                    Decline
+                    {s.kind === "winner" ? "Discard" : "Decline"}
                   </button>
                   <span className="ml-auto text-[11px] text-faint">Edits save as you go</span>
                 </div>
@@ -359,7 +392,7 @@ function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: () => voi
             <p className="text-sm font-medium">Talk to the strategist</p>
             <p className="text-xs text-faint">Ask why, push back, or ask for a different take. It rewrites the brief.</p>
           </div>
-          <div className="grid flex-1 content-start gap-2.5 overflow-y-auto p-4">
+          <div className="grid min-h-0 flex-1 content-start gap-2.5 overflow-y-auto overscroll-contain p-4">
             {messages.length === 0 && !thinking && (
               <div className="grid gap-1.5">
                 {["Why this and not variations of what's working?", "Make it more aggressive on the offer", "Give me three different concepts"].map((q) => (
@@ -425,5 +458,47 @@ function Counter({ value, onChange, label }: { value: number; onChange: (n: numb
       </button>
       <span className="text-xs text-faint">{label}</span>
     </span>
+  );
+}
+
+/** What's left of the client's monthly creative and what this brief takes from it. Net new only; images and carousels share a pool. */
+function AllotmentBar({ allotment: a, formats }: { allotment: OpenSuggestion["allotment"]; formats: SuggestionDraft["formats"] }) {
+  const take = {
+    images: formats.filter((f) => f.format !== "video").reduce((n, f) => n + f.new, 0),
+    videos: formats.filter((f) => f.format === "video").reduce((n, f) => n + f.new, 0),
+  };
+  if (!a || (a.images === null && a.videos === null))
+    return <p className="rounded-[12px] border border-dashed border-line px-4 py-3 text-xs text-faint">No monthly allotment set for this client, so there&apos;s nothing to check this against.</p>;
+  const pools = [
+    { label: "Images & carousels", cap: a.images, used: a.imagesUsed, take: take.images },
+    { label: "Videos", cap: a.videos, used: a.videosUsed, take: take.videos },
+  ].filter((p) => p.cap !== null && (p.cap > 0 || p.take > 0)) as { label: string; cap: number; used: number; take: number }[];
+  const over = pools.some((p) => p.used + p.take > p.cap);
+  return (
+    <div className={`grid gap-3 rounded-[14px] border p-4 ${over ? "border-bad/40 bg-bad-soft/40" : "border-line bg-surface"}`}>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-xs uppercase tracking-[0.14em] text-faint">This month&apos;s allotment</p>
+        <p className={`text-xs ${over ? "text-bad" : "text-muted"}`}>{over ? "This asks for more than is left. Trim it, use variations, or upsell." : "Variations don't count against it."}</p>
+      </div>
+      {pools.map((p) => {
+        const left = Math.max(0, p.cap - p.used);
+        const pct = (n: number) => `${Math.min(100, (n / Math.max(1, p.cap)) * 100)}%`;
+        const tooMany = p.used + p.take > p.cap;
+        return (
+          <div key={p.label} className="grid gap-1.5">
+            <div className="flex items-baseline justify-between gap-2 text-sm">
+              <span>{p.label}</span>
+              <span className="tabular text-xs text-muted">
+                {p.used} used · <span className={tooMany ? "font-medium text-bad" : "text-fg"}>this takes {p.take}</span> · {left} left of {p.cap}
+              </span>
+            </div>
+            <div className="relative h-2 overflow-hidden rounded-full bg-surface-2">
+              <div className="absolute inset-y-0 left-0 rounded-full bg-faint/60" style={{ width: pct(p.used) }} />
+              <div className={`absolute inset-y-0 rounded-full ${tooMany ? "bg-bad" : "bg-brand"}`} style={{ left: pct(p.used), width: pct(Math.min(p.take, Math.max(0, p.cap - p.used)) || (tooMany ? 0 : p.take)) }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }

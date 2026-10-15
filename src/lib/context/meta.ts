@@ -345,7 +345,7 @@ async function snapshot(admin: SupabaseClient, clientId: string, adAccountId: st
       campaign: String(latest.campaign_name ?? ""),
       adset: String(latest.adset_name ?? ""),
       headline: copyOf(c).headline,
-      text: copyOf(c).text?.slice(0, 400) ?? null,
+      text: copyOf(c).text?.slice(0, 2000) ?? null,
       thumbnail: c?.thumbnail_url ?? null,
       image: c?.image_url ?? null,
       live: creatives[id] ? creatives[id].effective_status === "ACTIVE" : undefined,
@@ -512,4 +512,49 @@ export async function debugMeta(adAccountId: string) {
   const adId = ads.data?.[0]?.id;
   if (adId) out.push(await probe("one ad's creative", VERSION, adId, { fields: "effective_status,creative.thumbnail_width(600).thumbnail_height(600){title,body,thumbnail_url,image_url,object_story_spec,asset_feed_spec,effective_object_story_id}" }));
   return { version: VERSION, appSecretProof: Boolean(process.env.META_APP_SECRET), probes: out };
+}
+
+// ─── One ad, in full, on demand (the winners library and client pages open it) ───
+
+export type AdDetail = {
+  text: string | null;
+  headline: string | null;
+  image: string | null;
+  video: { source: string | null; poster: string | null } | null;
+  preview: string | null; // Meta's own rendering of the ad (an iframe URL), when the video itself can't be played here
+};
+
+/** The ad as it runs: full copy, the full image, the video file when the page lets us read it, and Meta's preview. */
+export async function adDetail(adId: string): Promise<AdDetail> {
+  type C = {
+    title?: string;
+    body?: string;
+    image_url?: string;
+    thumbnail_url?: string;
+    video_id?: string;
+    object_story_spec?: { link_data?: { name?: string; message?: string; picture?: string }; video_data?: { title?: string; message?: string; video_id?: string; image_url?: string } };
+    asset_feed_spec?: { titles?: { text: string }[]; bodies?: { text: string }[]; videos?: { video_id: string; thumbnail_url?: string }[] };
+    effective_object_story_id?: string;
+  };
+  const ad = await graph<{ creative?: C }>(adId, {
+    fields: "creative.thumbnail_width(1080).thumbnail_height(1080){title,body,image_url,thumbnail_url,video_id,object_story_spec,asset_feed_spec,effective_object_story_id}",
+  });
+  const c = ad.creative ?? {};
+  let text = c.body ?? c.object_story_spec?.link_data?.message ?? c.object_story_spec?.video_data?.message ?? c.asset_feed_spec?.bodies?.[0]?.text ?? null;
+  if (!text && c.effective_object_story_id) text = (await graph<{ message?: string }>(c.effective_object_story_id, { fields: "message" }).catch(() => null))?.message ?? null;
+  const videoId = c.video_id ?? c.object_story_spec?.video_data?.video_id ?? c.asset_feed_spec?.videos?.[0]?.video_id ?? null;
+  const poster = c.object_story_spec?.video_data?.image_url ?? c.asset_feed_spec?.videos?.[0]?.thumbnail_url ?? c.thumbnail_url ?? null;
+  const [video, preview] = await Promise.all([
+    videoId ? graph<{ source?: string; picture?: string }>(videoId, { fields: "source,picture" }).catch(() => null) : Promise.resolve(null),
+    graph<{ data?: { body?: string }[] }>(`${adId}/previews`, { ad_format: "MOBILE_FEED_STANDARD" })
+      .then((r) => r.data?.[0]?.body?.match(/src="([^"]+)"/)?.[1]?.replace(/&amp;/g, "&") ?? null)
+      .catch(() => null),
+  ]);
+  return {
+    text,
+    headline: c.title ?? c.object_story_spec?.link_data?.name ?? c.object_story_spec?.video_data?.title ?? c.asset_feed_spec?.titles?.[0]?.text ?? null,
+    image: videoId ? null : (c.image_url ?? c.object_story_spec?.link_data?.picture ?? c.thumbnail_url ?? null),
+    video: videoId ? { source: video?.source ?? null, poster: poster ?? video?.picture ?? null } : null,
+    preview,
+  };
 }

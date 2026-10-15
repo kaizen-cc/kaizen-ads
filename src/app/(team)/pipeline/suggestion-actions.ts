@@ -34,7 +34,7 @@ export async function refreshSuggestions(): Promise<Result> {
 
 /** Edits are kept as they're made. */
 export async function saveSuggestion(id: string, draft: SuggestionDraft): Promise<Result> {
-  await lead();
+  await requireStaff(); // the suggestion's own rules decide: execs, leads, or whoever started it from a winner
   const supabase = await createClient();
   const { error } = await supabase.from("creative_suggestions").update({ draft, edited: true, updated_at: new Date().toISOString() }).eq("id", id).eq("status", "open");
   return error ? { ok: false, error: error.message } : { ok: true };
@@ -42,7 +42,7 @@ export async function saveSuggestion(id: string, draft: SuggestionDraft): Promis
 
 /** Approve: the tickets are made from the suggestion as it stands, and go straight to the makers. */
 export async function approveSuggestion(id: string, draft: SuggestionDraft): Promise<Result<{ numbers: number[] }>> {
-  const me = await lead();
+  const me = await requireStaff(); // the suggestion's own rules decide: execs, leads, or whoever started it from a winner
   const supabase = await createClient();
   const { data: s } = await supabase.from("creative_suggestions").select("client_id, status, original, signal").eq("id", id).single();
   if (!s || s.status !== "open") return { ok: false, error: "This suggestion was already decided." };
@@ -85,7 +85,7 @@ export async function approveSuggestion(id: string, draft: SuggestionDraft): Pro
 
 /** Decline, with the reason (the strategist reads it next time). Optionally remembered for the client too. */
 export async function declineSuggestion(id: string, reason: string, remember: boolean): Promise<Result> {
-  const me = await lead();
+  const me = await requireStaff(); // the suggestion's own rules decide: execs, leads, or whoever started it from a winner
   const why = reason.trim();
   if (why.length < 3) return { ok: false, error: "Say why, so it learns." };
   const supabase = await createClient();
@@ -105,7 +105,7 @@ export async function declineSuggestion(id: string, reason: string, remember: bo
 
 /** A message to the strategist about one suggestion; it answers and rewrites the suggestion if asked. */
 export async function chatSuggestion(id: string, text: string): Promise<Result<{ draft: SuggestionDraft; why: string; reply: string }>> {
-  const me = await lead();
+  const me = await requireStaff(); // the suggestion's own rules decide: execs, leads, or whoever started it from a winner
   const body = text.trim();
   if (!body) return { ok: false, error: "Write something first." };
   if (!adminConfigured()) return { ok: false, error: "The AI isn't connected here." };

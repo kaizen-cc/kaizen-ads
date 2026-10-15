@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AGENCY_SYSTEM, askJson, clientContext, contextBlock, getAgent } from "@/lib/ai";
-import { MAX_VARIATIONS } from "@/lib/allotment";
+import { MAX_VARIATIONS, toAllotment, type Allotment, type UsageRow } from "@/lib/allotment";
 
 // The strategist: watches every account for what needs new creative and suggests a full brief, with concepts, to execs
 // and leads on Home. A person approves it (tickets are made), edits it, declines it with a reason, or talks it through.
@@ -342,6 +342,7 @@ Answer the last message in reply (one to three sentences, plain). If it asks for
 
 export type OpenSuggestion = {
   id: string;
+  clientId: string;
   client: string;
   clientSlug: string;
   kind: SuggestionKind;
@@ -351,42 +352,112 @@ export type OpenSuggestion = {
   draft: SuggestionDraft;
   version: number;
   createdAt: string;
+  allotment: Allotment | null;
+  source: { thumbnail: string | null; headline: string | null; client: string } | null; // the winning ad, for one from a winner
   messages: { role: "user" | "ai"; body: string; at: string }[];
 };
 export type SuggestionsState = { open: OpenSuggestion[]; running: boolean; lastRun: string | null; decided30: { approved: number; declined: number } };
 
-/** What Home shows execs and leads. Read with their own access. */
+const OPEN_COLS = "id, client_id, kind, signal, evidence, why, draft, version, created_at, source, clients(name, slug)";
+
+/** Open suggestions as the sheet shows them: with their conversation and the client's allotment. */
+async function toOpen(db: SupabaseClient, rows: Record<string, unknown>[]): Promise<OpenSuggestion[]> {
+  const ids = rows.map((r) => r.id as string);
+  const clientIds = [...new Set(rows.map((r) => r.client_id as string))];
+  const [{ data: msgs }, { data: usage }] = await Promise.all([
+    ids.length ? db.from("suggestion_messages").select("suggestion_id, role, body, created_at").in("suggestion_id", ids).order("created_at") : Promise.resolve({ data: [] as never[] }),
+    clientIds.length ? db.from("client_allotment_usage").select("*").in("client_id", clientIds) : Promise.resolve({ data: [] as never[] }),
+  ]);
+  return rows.map((r) => {
+    const c = r.clients as { name: string; slug: string } | null;
+    const u = (usage ?? []).find((x: UsageRow) => x.client_id === r.client_id) as UsageRow | undefined;
+    return {
+      id: r.id as string,
+      clientId: r.client_id as string,
+      client: c?.name ?? "",
+      clientSlug: c?.slug ?? "",
+      kind: r.kind as SuggestionKind,
+      signal: r.signal as string,
+      evidence: (r.evidence ?? []) as string[],
+      why: r.why as string,
+      draft: r.draft as SuggestionDraft,
+      version: r.version as number,
+      createdAt: r.created_at as string,
+      allotment: u ? toAllotment(u) : null,
+      source: (r.source as OpenSuggestion["source"]) ?? null,
+      messages: (msgs ?? []).filter((m: { suggestion_id: string }) => m.suggestion_id === r.id).map((m: { role: string; body: string; created_at: string }) => ({ role: m.role as "user" | "ai", body: m.body, at: m.created_at })),
+    };
+  });
+}
+
+/** One suggestion, for the sheet (read with the viewer's access). */
+export async function loadSuggestion(db: SupabaseClient, id: string) {
+  const { data } = await db.from("creative_suggestions").select(OPEN_COLS).eq("id", id).maybeSingle();
+  return data ? (await toOpen(db, [data]))[0] : null;
+}
+
+/** What Home shows execs and leads. Read with their own access. Drafts someone started from a winner stay theirs. */
 export async function loadSuggestions(db: SupabaseClient): Promise<SuggestionsState> {
   const since30 = new Date(Date.now() - 30 * 86_400_000).toISOString();
   const [{ data: rows }, { data: runs }, { data: decided }] = await Promise.all([
-    db.from("creative_suggestions").select("id, kind, signal, evidence, why, draft, version, created_at, clients(name, slug)").eq("status", "open").order("created_at", { ascending: false }).limit(20),
+    db.from("creative_suggestions").select(OPEN_COLS).eq("status", "open").neq("kind", "winner").order("created_at", { ascending: false }).limit(20),
     db.from("suggestion_runs").select("started_at, finished_at").order("started_at", { ascending: false }).limit(1),
-    db.from("creative_suggestions").select("status").in("status", ["approved", "declined"]).gte("decided_at", since30),
+    db.from("creative_suggestions").select("status").in("status", ["approved", "declined"]).neq("kind", "winner").gte("decided_at", since30),
   ]);
-  const ids = (rows ?? []).map((r) => r.id);
-  const { data: msgs } = ids.length ? await db.from("suggestion_messages").select("suggestion_id, role, body, created_at").in("suggestion_id", ids).order("created_at") : { data: [] };
   const run = runs?.[0];
   return {
-    open: (rows ?? []).map((r) => {
-      const c = r.clients as unknown as { name: string; slug: string } | null;
-      return {
-        id: r.id,
-        client: c?.name ?? "",
-        clientSlug: c?.slug ?? "",
-        kind: r.kind as SuggestionKind,
-        signal: r.signal,
-        evidence: (r.evidence ?? []) as string[],
-        why: r.why,
-        draft: r.draft as SuggestionDraft,
-        version: r.version,
-        createdAt: r.created_at,
-        messages: (msgs ?? []).filter((m) => m.suggestion_id === r.id).map((m) => ({ role: m.role as "user" | "ai", body: m.body, at: m.created_at })),
-      };
-    }),
+    open: await toOpen(db, rows ?? []),
     running: Boolean(run && !run.finished_at && Date.now() - Date.parse(run.started_at) < 10 * 60_000),
     lastRun: run?.finished_at ?? null,
     decided30: { approved: (decided ?? []).filter((d) => d.status === "approved").length, declined: (decided ?? []).filter((d) => d.status === "declined").length },
   };
+}
+
+export type WinnerSource = { adId: string; client: string; detail: string | null; headline: string | null; text: string | null; thumbnail: string | null; ratio: number; result: string | null; costPerResult: number; usual: number };
+
+/**
+ * "Start a request from this" in the winners library: the strategist writes a full brief for the chosen client,
+ * built on what made the winning ad work. Saved as a draft only its author (and execs and leads) can see.
+ */
+export async function suggestFromWinner(admin: SupabaseClient, clientId: string, w: WinnerSource, by: string) {
+  const same = w.client;
+  const prompt = await promptFor(admin, clientId, [
+    { kind: "winner", weight: 1, line: `A winning ad from another account to build on`, facts: [`${w.ratio}x better cost per ${w.result ?? "result"} than its account's usual`] },
+  ]);
+  if (!prompt) throw new Error("Client not found");
+  const out = await askJson<Out>({
+    agent: "strategist",
+    label: "brief from a winner",
+    system: SYSTEM,
+    schema: SCHEMA,
+    prompt: `${prompt}
+
+<winning_ad>
+From another Kaizen account (${w.detail ?? "another business"}). Getting ${w.ratio}x better cost per ${w.result ?? "result"} than that account's usual ($${w.costPerResult.toFixed(2)} vs $${w.usual.toFixed(2)}).
+Headline: ${w.headline ?? "(none)"}
+Primary text: ${w.text ?? "(none)"}
+</winning_ad>
+
+Someone on the team wants a request for this client built on this winning ad. Work out why the ad works (the angle, the hook, the format, the structure, the proof) and translate that into a request that fits this client's brand, offer, audience and allotment. Don't copy it word for word and never name the other business. Write the full request: brief, angle, audience, formats and counts within what's left of the allotment, sizes, 2 to 4 concepts and hooks. suggest: true. kind: "kpi". signal: "Built on a winning ad". evidence: 2 to 4 lines on what makes the ad work and why it fits this client. why: two or three sentences. reply: "".`,
+  });
+  const draft = clean(out.draft);
+  const { data, error } = await admin
+    .from("creative_suggestions")
+    .insert({
+      client_id: clientId,
+      kind: "winner",
+      signal: `Built on a winning ad (${w.ratio}x its account's usual)`,
+      evidence: out.evidence.slice(0, 5),
+      why: out.why,
+      draft,
+      original: draft,
+      created_by: by,
+      source: { adId: w.adId, thumbnail: w.thumbnail, headline: w.headline, client: same },
+    })
+    .select("id")
+    .single();
+  if (error || !data) throw new Error(error?.message ?? "Couldn't save the brief");
+  return data.id as string;
 }
 
 /**

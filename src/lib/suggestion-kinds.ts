@@ -1,5 +1,5 @@
 // What each kind of strategist suggestion is called, for the server and the Home page alike.
-export type SuggestionKind = "fatigue" | "kpi" | "pacing" | "offer" | "unhappy" | "flop" | "lab";
+export type SuggestionKind = "fatigue" | "kpi" | "pacing" | "offer" | "unhappy" | "flop" | "lab" | "winner";
 export const KIND_LABEL: Record<SuggestionKind, string> = {
   fatigue: "Ads tiring",
   kpi: "KPI off target",
@@ -8,4 +8,5 @@ export const KIND_LABEL: Record<SuggestionKind, string> = {
   unhappy: "Client not happy",
   flop: "Angle not landing",
   lab: "From the Ads Lab",
+  winner: "From a winner",
 };

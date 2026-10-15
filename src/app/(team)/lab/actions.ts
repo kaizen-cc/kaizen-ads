@@ -24,22 +24,51 @@ const fail = (e: unknown, fallback: string) => ({ ok: false as const, error: e i
 
 // ─── Round table ───
 
-/** Says something to the table (in a new conversation when there's no thread yet); the seats answer. */
-export async function sendToTable(threadId: string | null, text: string): Promise<Result<{ threadId: string }>> {
+export type Attachment = { kind: "doc" | "transcript" | "video" | "link" | "note"; title: string; url: string; body: string };
+
+/**
+ * Says something to the table (in a new conversation when there's no thread yet), with anything shared alongside:
+ * links and videos are read first, so the seats answer with them in hand. Everything shared stays in the lab's
+ * library for every conversation after.
+ */
+export async function sendToTable(threadId: string | null, text: string, attachments: Attachment[] = []): Promise<Result<{ threadId: string }>> {
   const me = await lead();
   const body = text.trim();
-  if (!body) return { ok: false, error: "Write something first." };
+  const shared = attachments.filter((a) => a.url.trim() || a.body.trim()).slice(0, 6);
+  if (!body && !shared.length) return { ok: false, error: "Write something or share something first." };
+  for (const a of shared) if (a.url.trim() && !/^https?:\/\/\S+\.\S+/i.test(a.url.trim())) return { ok: false, error: `"${a.url}" doesn't look like a link.` };
   const supabase = await createClient();
   try {
+    const db = admin();
     let id = threadId;
     if (!id) {
       const { data, error } = await supabase.from("lab_threads").insert({ created_by: me.id }).select("id").single();
       if (error || !data) return { ok: false, error: error?.message ?? "Couldn't start the conversation." };
       id = data.id as string;
     }
-    const { error } = await supabase.from("lab_messages").insert({ thread_id: id, role: "user", author_id: me.id, body: body.slice(0, 8000) });
+    // What was shared goes into the library and is read now
+    const saved: { id: string; kind: string; title: string; url: string | null }[] = [];
+    for (const a of shared) {
+      const url = a.url.trim();
+      const { data } = await supabase
+        .from("lab_sources")
+        .insert({ kind: a.kind, title: a.title.trim().slice(0, 120) || url || "Shared in the round table", url: url || null, body: a.body.trim().slice(0, 200_000), status: "reading", added_by: me.id })
+        .select("id, kind, title, url")
+        .single();
+      if (data) saved.push(data);
+    }
+    await Promise.all(saved.map((x) => readSource(db, x.id)));
+    const { data: read } = saved.length ? await db.from("lab_sources").select("id, kind, title, url, status").in("id", saved.map((x) => x.id)) : { data: [] };
+    const lines = (read ?? []).map((x) => `[Shared ${x.kind === "video" ? "a video" : x.kind === "transcript" ? "a call transcript" : x.kind === "link" ? "a link" : "a doc"}: "${x.title}"${x.status === "failed" ? " (couldn't be read)" : ""}]`);
+    const { error } = await supabase.from("lab_messages").insert({
+      thread_id: id,
+      role: "user",
+      author_id: me.id,
+      body: [body, ...lines].filter(Boolean).join("\n").slice(0, 8000),
+      data: read?.length ? { attachments: read.map((x) => ({ id: x.id, kind: x.kind, title: x.title, url: x.url, failed: x.status === "failed" })) } : null,
+    });
     if (error) return { ok: false, error: error.message };
-    await roundTable(admin(), id);
+    await roundTable(db, id);
     revalidatePath("/lab");
     return { ok: true, threadId: id };
   } catch (e) {
@@ -55,31 +84,7 @@ export async function deleteThread(id: string): Promise<Result> {
   return error ? { ok: false, error: error.message } : { ok: true };
 }
 
-// ─── Library ───
-
-export async function addSource(input: { kind: string; title: string; url: string; body: string }): Promise<Result> {
-  const me = await lead();
-  const url = input.url.trim();
-  const body = input.body.trim();
-  if (!url && !body) return { ok: false, error: "Add a link, a file or some text." };
-  if (url && !/^https?:\/\/\S+\.\S+/i.test(url)) return { ok: false, error: "That link doesn't look right." };
-  const kind = ["doc", "transcript", "video", "link", "skill", "note"].includes(input.kind) ? input.kind : "note";
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("lab_sources")
-    .insert({ kind, title: input.title.trim().slice(0, 120) || url || "Untitled", url: url || null, body: body.slice(0, 200_000), status: "reading", added_by: me.id })
-    .select("id")
-    .single();
-  if (error || !data) return { ok: false, error: error?.message ?? "Couldn't add it." };
-  try {
-    const db = admin();
-    after(() => readSource(db, data.id).then(() => revalidatePath("/lab")));
-  } catch {
-    await supabase.from("lab_sources").update({ status: "ready" }).eq("id", data.id);
-  }
-  revalidatePath("/lab");
-  return { ok: true };
-}
+// ─── What was shared ───
 
 export async function deleteSource(id: string): Promise<Result> {
   await lead();

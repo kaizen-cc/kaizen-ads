@@ -6,10 +6,10 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
 import { METRIC_LABEL, SEATS, type Metric, type Seat } from "@/lib/lab-seats";
 import type { ClientNumbers, ProposedTest } from "@/lib/lab";
-import { addSource, createTest, decideTest, deleteSource, deleteThread, deployLearning, draftDeploy, dropTest, iterateTest, sendToTable, startTest } from "./actions";
+import { createTest, decideTest, deleteSource, deleteThread, deployLearning, draftDeploy, dropTest, iterateTest, sendToTable, startTest, type Attachment } from "./actions";
 
 export type LabClientRow = { id: string; name: string; slug: string; industry: string | null; spend30: number };
-export type LabMessage = { id: string; role: "user" | "agent"; seat: Seat | null; author: string | null; body: string; tests: ProposedTest[]; at: string };
+export type LabMessage = { id: string; role: "user" | "agent"; seat: Seat | null; author: string | null; body: string; tests: ProposedTest[]; attachments: { id: string; kind: string; title: string; url: string | null; failed?: boolean }[]; at: string };
 export type LabSource = { id: string; kind: string; title: string; url: string | null; summary: string | null; status: string; at: string; words: number };
 export type LabTest = {
   id: string;
@@ -31,7 +31,7 @@ export type LabTest = {
   deployed: { id: string; change: number | null }[];
   deployedAt: string | null;
 };
-type Tab = "table" | "tests" | "library";
+type Tab = "table" | "tests";
 
 const money = (n: number | null | undefined) => (n == null ? "—" : `$${n.toLocaleString("en-US", { maximumFractionDigits: n < 100 ? 2 : 0 })}`);
 const pct = (n: number | null) => (n == null ? "—" : `${n > 0 ? "+" : ""}${n}%`);
@@ -68,7 +68,7 @@ export function LabClient(props: {
         <div className="grid gap-2">
           <p className="text-xs uppercase tracking-[0.18em] text-faint">Execs &amp; leads</p>
           <h1 className="font-display text-3xl tracking-tight md:text-4xl">Ads Lab</h1>
-          <p className="max-w-2xl text-sm text-muted">Think it through with the whole table, test it on the right clients, and turn what wins into what every agent knows.</p>
+          <p className="max-w-2xl text-sm text-muted">Think it through with the whole table, test it on the right clients, and turn what wins into something every agent knows.</p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs">
           <Pill value={running} label="running" />
@@ -81,8 +81,7 @@ export function LabClient(props: {
         {(
           [
             ["table", "Round table"],
-            ["tests", `Tests${props.tests.length ? ` · ${props.tests.length}` : ""}`],
-            ["library", `Library${props.sources.length ? ` · ${props.sources.length}` : ""}`],
+            ["tests", `Running tests${props.tests.length ? ` · ${props.tests.length}` : ""}`],
           ] as const
         ).map(([k, l]) => (
           <button key={k} onClick={() => go(k)} className={`relative px-4 pb-3 text-sm ${tab === k ? "text-fg" : "text-muted hover:text-fg"}`}>
@@ -96,7 +95,6 @@ export function LabClient(props: {
 
       {tab === "table" && <RoundTable {...props} />}
       {tab === "tests" && <Tests tests={props.tests} clients={props.clients} />}
-      {tab === "library" && <Library sources={props.sources} />}
     </div>
   );
 }
@@ -125,12 +123,21 @@ function SeatMark({ seat, size = 30 }: { seat: Seat; size?: number }) {
 
 // ─── Round table ────────────────────────────────────────────────────────────
 
-function RoundTable({ threads, threadId, messages, tests, clients }: { threads: { id: string; title: string; updatedAt: string }[]; threadId: string | null; messages: LabMessage[]; tests: LabTest[]; clients: LabClientRow[] }) {
+const SHARE_KINDS: Record<Attachment["kind"], string> = { video: "Video", link: "Link", transcript: "Call transcript", doc: "Doc", note: "Note" };
+const isVideo = (url: string) => /youtube\.com|youtu\.be|vimeo\.com|tiktok\.com|instagram\.com\/reel|facebook\.com\/.*videos/i.test(url);
+
+function RoundTable({ threads, threadId, messages, tests, clients, sources }: { threads: { id: string; title: string; updatedAt: string }[]; threadId: string | null; messages: LabMessage[]; tests: LabTest[]; clients: LabClientRow[]; sources: LabSource[] }) {
   const router = useRouter();
   const [text, setText] = useState("");
-  const [pending, setPending] = useState<string | null>(null);
+  const [shared, setShared] = useState<Attachment[]>([]);
+  const [adding, setAdding] = useState<null | "link" | "paste">(null);
+  const [draftUrl, setDraftUrl] = useState("");
+  const [draftDoc, setDraftDoc] = useState({ title: "", body: "", kind: "doc" as Attachment["kind"] });
+  const [pending, setPending] = useState<{ text: string; shared: Attachment[] } | null>(null);
+  const [phase, setPhase] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState<ProposedTest | null>(null);
+  const [dragging, setDragging] = useState(false);
   const end = useRef<HTMLDivElement>(null);
   const testById = useMemo(() => new Map(tests.map((t) => [t.id, t])), [tests]);
 
@@ -138,49 +145,94 @@ function RoundTable({ threads, threadId, messages, tests, clients }: { threads: 
     end.current?.scrollIntoView({ block: "end" });
   }, [messages.length, pending]);
 
-  const send = async (body = text) => {
-    const msg = body.trim();
-    if (!msg || pending) return;
+  // While the table works: reading what was shared first, then talking it through
+  useEffect(() => {
+    if (!pending) return;
+    const t = setInterval(() => setPhase((p) => p + 1), 9000);
+    return () => clearInterval(t);
+  }, [pending]);
+
+  const addFiles = async (files: FileList | File[]) => {
+    const list = [...files].slice(0, 4);
+    const read = await Promise.all(
+      list.map(async (f) => ({
+        kind: (/\.(srt|vtt)$/i.test(f.name) || /transcript|call|meeting/i.test(f.name) ? "transcript" : "doc") as Attachment["kind"],
+        title: f.name.replace(/\.[a-z0-9]+$/i, ""),
+        url: "",
+        body: (await f.text()).slice(0, 200_000),
+      })),
+    );
+    setShared((s) => [...s, ...read.filter((r) => r.body.trim())]);
+  };
+
+  const send = async () => {
+    const msg = text.trim();
+    if ((!msg && !shared.length) || pending) return;
+    const out = { text: msg, shared };
     setText("");
+    setShared([]);
     setError(null);
-    setPending(msg);
-    const r = await sendToTable(threadId, msg);
+    setPhase(0);
+    setPending(out);
+    const r = await sendToTable(threadId, msg, out.shared);
     setPending(null);
     if (!r.ok) {
       setText(msg);
+      setShared(out.shared);
       return setError(r.error);
     }
     if (r.threadId !== threadId) router.push(`/lab?t=${r.threadId}`);
     else router.refresh();
   };
 
-  const STARTERS = [
-    "What's the biggest creative opportunity across our restaurant clients right now?",
-    "Read the latest call transcript in the library. What should we test from it?",
-    "Our winners keep using faces in the first frame. Is that real, and how would we test it?",
+  const reading = Boolean(pending?.shared.length) && phase < Math.max(1, pending!.shared.filter((s) => s.url).length * 2);
+  const SPARKS = [
+    { label: "Share a video", hint: "A YouTube ad breakdown, a creator, a competitor", act: () => setAdding("link") },
+    { label: "Drop in a transcript", hint: "A client call, a strategy session", act: () => setAdding("paste") },
+    { label: "Bring an idea", hint: "Something you want pressure-tested", act: () => document.getElementById("lab-input")?.focus() },
   ];
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[240px_1fr]">
-      <aside className="grid content-start gap-1">
-        <Link href="/lab" className={`mb-2 flex h-9 items-center justify-center rounded-brand border text-sm ${threadId ? "border-line text-muted hover:text-fg" : "border-brand/50 bg-brand-soft text-brand-text"}`}>
-          + New conversation
-        </Link>
-        <div className="no-scrollbar flex gap-1 overflow-x-auto lg:grid lg:overflow-visible">
-          {threads.map((t) => (
-            <Link
-              key={t.id}
-              href={`/lab?t=${t.id}`}
-              className={`group flex shrink-0 items-center justify-between gap-2 rounded-brand px-3 py-2 text-sm ${t.id === threadId ? "bg-surface-2 text-fg" : "text-muted hover:bg-surface-2/60 hover:text-fg"}`}
-            >
-              <span className="truncate">{t.title}</span>
-              <span className="text-[10px] text-faint">{ago(t.updatedAt)}</span>
-            </Link>
-          ))}
+    <div className="grid gap-4 lg:grid-cols-[250px_1fr]">
+      <aside className="grid content-start gap-5">
+        <div className="grid gap-1">
+          <Link href="/lab" className={`mb-2 flex h-9 items-center justify-center rounded-brand border text-sm ${threadId ? "border-line text-muted hover:text-fg" : "border-brand/50 bg-brand-soft text-brand-text"}`}>
+            + New conversation
+          </Link>
+          <div className="no-scrollbar flex gap-1 overflow-x-auto lg:grid lg:overflow-visible">
+            {threads.map((t) => (
+              <Link
+                key={t.id}
+                href={`/lab?t=${t.id}`}
+                className={`flex shrink-0 items-center justify-between gap-2 rounded-brand px-3 py-2 text-sm ${t.id === threadId ? "bg-surface-2 text-fg" : "text-muted hover:bg-surface-2/60 hover:text-fg"}`}
+              >
+                <span className="truncate">{t.title}</span>
+                <span className="text-[10px] text-faint">{ago(t.updatedAt)}</span>
+              </Link>
+            ))}
+          </div>
         </div>
+        {sources.length > 0 && <SharedMemory sources={sources} />}
       </aside>
 
-      <section className="flex min-h-[560px] flex-col overflow-hidden rounded-[16px] border border-line bg-surface">
+      <section
+        className={`relative flex min-h-[600px] flex-col overflow-hidden rounded-[16px] border bg-surface transition-colors ${dragging ? "border-brand" : "border-line"}`}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          if (e.dataTransfer.files.length) void addFiles(e.dataTransfer.files);
+          const url = e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain");
+          if (!e.dataTransfer.files.length && /^https?:\/\//.test(url)) setShared((s) => [...s, { kind: isVideo(url) ? "video" : "link", title: "", url: url.trim(), body: "" }]);
+        }}
+      >
+        {dragging && (
+          <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center bg-bg/80 text-sm text-brand-text backdrop-blur-sm">Drop it on the table</div>
+        )}
         <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
           <div className="flex -space-x-1.5">
             {(Object.keys(SEATS) as Seat[]).map((s) => (
@@ -189,7 +241,7 @@ function RoundTable({ threads, threadId, messages, tests, clients }: { threads: 
               </span>
             ))}
           </div>
-          <p className="hidden text-xs text-faint sm:block">Strategist · Copywriter · Creative director · Media buyer · Analyst. They read the whole library, the winners and every test.</p>
+          <p className="hidden truncate text-xs text-faint sm:block">Strategy · Copy · Creative · Media · Data, with every winner, test and thing you&apos;ve shared</p>
           {threadId && (
             <button
               onClick={async () => {
@@ -204,15 +256,20 @@ function RoundTable({ threads, threadId, messages, tests, clients }: { threads: 
           )}
         </div>
 
-        <div className="grid flex-1 content-start gap-4 overflow-y-auto p-4 md:p-6" style={{ maxHeight: "68vh" }}>
+        <div className="grid flex-1 content-start gap-4 overflow-y-auto p-4 md:p-6" style={{ maxHeight: "66vh" }}>
           {messages.length === 0 && !pending && (
-            <div className="grid gap-4 py-8 text-center">
-              <p className="font-display text-2xl">What should we figure out?</p>
-              <p className="mx-auto max-w-md text-sm text-muted">Bring an idea, a question, or something from the library. The table talks it through and proposes tests when one is ready.</p>
-              <div className="mx-auto grid w-full max-w-xl gap-2">
-                {STARTERS.map((s) => (
-                  <button key={s} onClick={() => setText(s)} className="rounded-[12px] border border-line bg-bg px-4 py-3 text-left text-sm text-muted hover:border-faint hover:text-fg">
-                    {s}
+            <div className="grid gap-6 py-6 text-center md:py-10">
+              <div className="grid gap-2">
+                <p className="font-display text-3xl tracking-tight md:text-4xl">What are we testing next?</p>
+                <p className="mx-auto max-w-lg text-sm text-muted">
+                  Bring the table a spark: an idea you can&apos;t shake, a video worth learning from, a call transcript, a brief that worked. Share it and the whole team picks it apart with you, then turns the best of it into a test.
+                </p>
+              </div>
+              <div className="mx-auto grid w-full max-w-2xl gap-2 sm:grid-cols-3">
+                {SPARKS.map((s) => (
+                  <button key={s.label} onClick={s.act} className="grid gap-1 rounded-[14px] border border-line bg-bg p-4 text-left transition-colors hover:border-faint">
+                    <span className="text-sm font-medium">{s.label}</span>
+                    <span className="text-xs text-faint">{s.hint}</span>
                   </button>
                 ))}
               </div>
@@ -221,9 +278,18 @@ function RoundTable({ threads, threadId, messages, tests, clients }: { threads: 
 
           {messages.map((m) =>
             m.role === "user" ? (
-              <div key={m.id} className="ml-auto grid max-w-[80%] gap-1">
-                <p className="text-right text-[11px] text-faint">{m.author ?? "You"}</p>
-                <p className="whitespace-pre-wrap rounded-[14px] rounded-tr-[4px] bg-fg px-4 py-2.5 text-sm text-bg">{m.body}</p>
+              <div key={m.id} className="ml-auto grid max-w-[80%] justify-items-end gap-1.5">
+                <p className="text-[11px] text-faint">{m.author ?? "You"}</p>
+                {m.attachments.length > 0 && (
+                  <div className="flex flex-wrap justify-end gap-1.5">
+                    {m.attachments.map((a) => (
+                      <SharedChip key={a.id} kind={a.kind} title={a.title} url={a.url} failed={a.failed} />
+                    ))}
+                  </div>
+                )}
+                {m.body.replace(/\n?\[Shared [^\]]+\]/g, "").trim() && (
+                  <p className="whitespace-pre-wrap rounded-[14px] rounded-tr-[4px] bg-fg px-4 py-2.5 text-sm text-bg">{m.body.replace(/\n?\[Shared [^\]]+\]/g, "").trim()}</p>
+                )}
               </div>
             ) : (
               <div key={m.id} className="grid gap-3">
@@ -245,7 +311,16 @@ function RoundTable({ threads, threadId, messages, tests, clients }: { threads: 
 
           {pending && (
             <>
-              <div className="ml-auto max-w-[80%] whitespace-pre-wrap rounded-[14px] rounded-tr-[4px] bg-fg px-4 py-2.5 text-sm text-bg">{pending}</div>
+              <div className="ml-auto grid max-w-[80%] justify-items-end gap-1.5">
+                {pending.shared.length > 0 && (
+                  <div className="flex flex-wrap justify-end gap-1.5">
+                    {pending.shared.map((a, i) => (
+                      <SharedChip key={i} kind={a.kind} title={a.title || a.url} url={a.url || null} />
+                    ))}
+                  </div>
+                )}
+                {pending.text && <p className="whitespace-pre-wrap rounded-[14px] rounded-tr-[4px] bg-fg px-4 py-2.5 text-sm text-bg">{pending.text}</p>}
+              </div>
               <div className="flex items-center gap-3 text-xs text-faint">
                 <span className="flex -space-x-1">
                   {(Object.keys(SEATS) as Seat[]).map((s, i) => (
@@ -254,7 +329,7 @@ function RoundTable({ threads, threadId, messages, tests, clients }: { threads: 
                     </span>
                   ))}
                 </span>
-                The table is talking it through…
+                {reading ? `Reading what you shared${pending.shared.some((s) => s.kind === "video") ? " (watching the video through its page and captions)" : ""}…` : "The table is talking it through…"}
               </div>
             </>
           )}
@@ -269,21 +344,117 @@ function RoundTable({ threads, threadId, messages, tests, clients }: { threads: 
           className="grid gap-2 border-t border-line p-3"
         >
           {error && <p className="px-1 text-xs text-bad">{error}</p>}
+
+          {shared.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {shared.map((a, i) => (
+                <SharedChip key={i} kind={a.kind} title={a.title || a.url} url={a.url || null} onRemove={() => setShared(shared.filter((_, j) => j !== i))} />
+              ))}
+            </div>
+          )}
+
+          {adding === "link" && (
+            <div className="flex gap-2">
+              <input
+                value={draftUrl}
+                onChange={(e) => setDraftUrl(e.target.value)}
+                autoFocus
+                placeholder="Paste a YouTube video, an article, a competitor's ad library link…"
+                className="h-10 flex-1 rounded-[10px] border border-line bg-bg px-3 text-sm outline-none placeholder:text-faint focus:border-faint"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    if (draftUrl.trim()) setShared([...shared, { kind: isVideo(draftUrl) ? "video" : "link", title: "", url: draftUrl.trim(), body: "" }]);
+                    setDraftUrl("");
+                    setAdding(null);
+                  }
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  if (draftUrl.trim()) setShared([...shared, { kind: isVideo(draftUrl) ? "video" : "link", title: "", url: draftUrl.trim(), body: "" }]);
+                  setDraftUrl("");
+                  setAdding(null);
+                }}
+                className="h-10 rounded-[10px] bg-fg px-4 text-sm text-bg"
+              >
+                Add
+              </button>
+            </div>
+          )}
+
+          {adding === "paste" && (
+            <div className="grid gap-2 rounded-[12px] border border-line bg-bg p-3">
+              <div className="flex flex-wrap gap-1.5">
+                {(["transcript", "doc", "note"] as const).map((k) => (
+                  <button key={k} type="button" onClick={() => setDraftDoc({ ...draftDoc, kind: k })} className={`h-7 rounded-full px-3 text-xs ${draftDoc.kind === k ? "bg-fg text-bg" : "border border-line text-muted"}`}>
+                    {SHARE_KINDS[k]}
+                  </button>
+                ))}
+                <input value={draftDoc.title} onChange={(e) => setDraftDoc({ ...draftDoc, title: e.target.value })} placeholder="Title (optional)" className="h-7 min-w-0 flex-1 rounded-full border border-line bg-transparent px-3 text-xs outline-none placeholder:text-faint" />
+              </div>
+              <textarea value={draftDoc.body} onChange={(e) => setDraftDoc({ ...draftDoc, body: e.target.value })} rows={6} autoFocus placeholder="Paste it here: a transcript, a brief, a Google Doc's text…" className="rounded-[10px] border border-line bg-surface px-3 py-2 text-sm outline-none placeholder:text-faint" />
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={!draftDoc.body.trim()}
+                  onClick={() => {
+                    setShared([...shared, { kind: draftDoc.kind, title: draftDoc.title, url: "", body: draftDoc.body }]);
+                    setDraftDoc({ title: "", body: "", kind: "doc" });
+                    setAdding(null);
+                  }}
+                  className="h-8 rounded-[10px] bg-fg px-3 text-xs text-bg disabled:opacity-40"
+                >
+                  Add to the message
+                </button>
+                <button type="button" onClick={() => setAdding(null)} className="h-8 px-2 text-xs text-faint">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="flex items-end gap-2">
-            <textarea
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  void send();
-                }
-              }}
-              rows={2}
-              placeholder="Bring an idea, a question, or point at something in the library…"
-              className="max-h-48 min-h-[44px] flex-1 resize-y rounded-[12px] border border-line bg-bg px-3.5 py-2.5 text-sm outline-none placeholder:text-faint focus:border-faint"
-            />
-            <button disabled={!text.trim() || Boolean(pending)} className="h-11 rounded-brand bg-brand px-5 text-sm font-medium text-white disabled:opacity-40">
+            <div className="flex flex-1 flex-col rounded-[14px] border border-line bg-bg focus-within:border-faint">
+              <textarea
+                id="lab-input"
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void send();
+                  }
+                }}
+                onPaste={(e) => {
+                  const t = e.clipboardData.getData("text");
+                  if (/^https?:\/\/\S+$/.test(t.trim()) && !text.trim()) {
+                    e.preventDefault();
+                    setShared([...shared, { kind: isVideo(t) ? "video" : "link", title: "", url: t.trim(), body: "" }]);
+                  }
+                }}
+                rows={2}
+                placeholder={shared.length ? "What should the table look at in this?" : "Share an idea, or paste a link…"}
+                className="max-h-48 min-h-[48px] resize-none bg-transparent px-3.5 pt-3 text-sm outline-none placeholder:text-faint"
+              />
+              <div className="flex flex-wrap items-center gap-1 px-2 pb-2">
+                <ToolButton onClick={() => setAdding(adding === "link" ? null : "link")} on={adding === "link"} icon="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1">
+                  Link or video
+                </ToolButton>
+                <label className="flex h-7 cursor-pointer items-center gap-1.5 rounded-full px-2.5 text-xs text-muted hover:bg-surface-2 hover:text-fg">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+                    <path d="M21 12.5 12.6 21a5 5 0 0 1-7.1-7.1L14 5.4a3.3 3.3 0 0 1 4.7 4.7l-8.4 8.4a1.7 1.7 0 0 1-2.4-2.4l7.7-7.7" />
+                  </svg>
+                  File
+                  <input type="file" multiple accept=".txt,.md,.markdown,.csv,.srt,.vtt,.json,text/plain" className="hidden" onChange={(e) => e.target.files && void addFiles(e.target.files)} />
+                </label>
+                <ToolButton onClick={() => setAdding(adding === "paste" ? null : "paste")} on={adding === "paste"} icon="M8 4h8v3H8zM6 6H5a1 1 0 0 0-1 1v13a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1h-1M8 12h8M8 16h5">
+                  Paste a transcript or doc
+                </ToolButton>
+              </div>
+            </div>
+            <button disabled={(!text.trim() && !shared.length) || Boolean(pending)} className="h-12 rounded-brand bg-brand px-5 text-sm font-medium text-white disabled:opacity-40">
               Send
             </button>
           </div>
@@ -291,6 +462,93 @@ function RoundTable({ threads, threadId, messages, tests, clients }: { threads: 
       </section>
 
       {starting && <StartDialog t={starting} clients={clients} tests={tests} threadId={threadId} onClose={() => setStarting(null)} />}
+    </div>
+  );
+}
+
+function ToolButton({ children, icon, onClick, on }: { children: React.ReactNode; icon: string; onClick: () => void; on: boolean }) {
+  return (
+    <button type="button" onClick={onClick} className={`flex h-7 items-center gap-1.5 rounded-full px-2.5 text-xs ${on ? "bg-surface-2 text-fg" : "text-muted hover:bg-surface-2 hover:text-fg"}`}>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d={icon} />
+      </svg>
+      {children}
+    </button>
+  );
+}
+
+function SharedChip({ kind, title, url, failed, onRemove }: { kind: string; title: string; url: string | null; failed?: boolean; onRemove?: () => void }) {
+  const label = SHARE_KINDS[kind as Attachment["kind"]] ?? "Shared";
+  const host = url ? url.replace(/^https?:\/\/(www\.)?/, "").split("/")[0] : null;
+  const inner = (
+    <>
+      <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-[6px] text-[10px] font-semibold ${kind === "video" ? "bg-[#ff3b30]/15 text-[#ff6b60]" : "bg-surface-2 text-muted"}`}>
+        {kind === "video" ? "▶" : kind === "link" ? "↗" : "¶"}
+      </span>
+      <span className="min-w-0">
+        <span className="block max-w-[220px] truncate text-xs">{title || host || label}</span>
+        <span className={`block text-[10px] ${failed ? "text-bad" : "text-faint"}`}>{failed ? "Couldn't read it" : host && title ? `${label} · ${host}` : label}</span>
+      </span>
+    </>
+  );
+  return (
+    <span className="flex items-center gap-2 rounded-[10px] border border-line bg-bg py-1.5 pl-1.5 pr-2.5">
+      {url && !onRemove ? (
+        <a href={url} target="_blank" rel="noreferrer" className="flex items-center gap-2">
+          {inner}
+        </a>
+      ) : (
+        inner
+      )}
+      {onRemove && (
+        <button type="button" onClick={onRemove} className="ml-1 text-faint hover:text-fg" aria-label="Remove">
+          ×
+        </button>
+      )}
+    </span>
+  );
+}
+
+/** Everything shared with the table, across conversations: it reads all of it every time. */
+function SharedMemory({ sources }: { sources: LabSource[] }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const reading = sources.some((s) => s.status === "reading");
+  useEffect(() => {
+    if (!reading) return;
+    const t = setInterval(() => router.refresh(), 6000);
+    return () => clearInterval(t);
+  }, [reading, router]);
+  const shown = open ? sources : sources.slice(0, 4);
+  return (
+    <div className="grid gap-2">
+      <p className="px-1 text-[11px] uppercase tracking-[0.14em] text-faint">The table remembers</p>
+      <div className="grid gap-1">
+        {shown.map((s) => (
+          <div key={s.id} className="group flex items-start gap-2 rounded-[10px] px-2 py-1.5 hover:bg-surface-2/60" title={s.summary ?? undefined}>
+            <span className="mt-0.5 text-[10px] text-faint">{s.kind === "video" ? "▶" : s.kind === "link" ? "↗" : "¶"}</span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-xs text-muted">{s.title}</span>
+              {s.status !== "ready" && <span className={`block text-[10px] ${s.status === "failed" ? "text-bad" : "text-brand-text"}`}>{s.status === "failed" ? "Couldn't read it" : "Reading…"}</span>}
+            </span>
+            <button
+              onClick={async () => {
+                if (!confirm(`Forget "${s.title}"? The table won't read it again.`)) return;
+                await deleteSource(s.id);
+                router.refresh();
+              }}
+              className="text-[10px] text-faint opacity-0 hover:text-bad group-hover:opacity-100"
+            >
+              Forget
+            </button>
+          </div>
+        ))}
+      </div>
+      {sources.length > 4 && (
+        <button onClick={() => setOpen(!open)} className="w-fit px-2 text-[11px] text-faint hover:text-fg">
+          {open ? "Show less" : `All ${sources.length}`}
+        </button>
+      )}
     </div>
   );
 }
@@ -727,136 +985,5 @@ function DeployDialog({ t, draft, clients, onClose }: { t: LabTest; draft: { lea
         </button>
       </div>
     </Sheet>
-  );
-}
-
-// ─── Library ────────────────────────────────────────────────────────────────
-
-const KINDS = [
-  ["note", "Note", "An idea, a rule, anything worth knowing"],
-  ["doc", "Brief or doc", "Paste it or upload a text file"],
-  ["transcript", "Call transcript", "From a client or team call"],
-  ["video", "YouTube video", "The AI watches it through its page and captions"],
-  ["link", "Article or link", "The AI reads the page"],
-  ["skill", "Skill", "A method the table should use"],
-] as const;
-const KIND_LABEL = Object.fromEntries(KINDS.map(([k, l]) => [k, l])) as Record<string, string>;
-
-function Library({ sources }: { sources: LabSource[] }) {
-  const router = useRouter();
-  const [kind, setKind] = useState<string>("note");
-  const [title, setTitle] = useState("");
-  const [url, setUrl] = useState("");
-  const [body, setBody] = useState("");
-  const [busy, act] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-  const linky = kind === "video" || kind === "link";
-  const reading = sources.some((s) => s.status === "reading");
-
-  useEffect(() => {
-    if (!reading) return;
-    const t = setInterval(() => router.refresh(), 6000);
-    return () => clearInterval(t);
-  }, [reading, router]);
-
-  const add = () =>
-    act(async () => {
-      setError(null);
-      const r = await addSource({ kind, title, url: linky ? url : "", body: linky ? "" : body });
-      if (!r.ok) return setError(r.error);
-      setTitle("");
-      setUrl("");
-      setBody("");
-      router.refresh();
-    });
-
-  return (
-    <div className="grid gap-6 lg:grid-cols-[380px_1fr]">
-      <section className="grid content-start gap-3 rounded-[16px] border border-line bg-surface p-4">
-        <p className="font-heading text-lg">Add to the library</p>
-        <div className="grid grid-cols-2 gap-1.5">
-          {KINDS.map(([k, l, hint]) => (
-            <button key={k} onClick={() => setKind(k)} title={hint} className={`rounded-[10px] border px-3 py-2 text-left text-xs ${kind === k ? "border-brand/50 bg-brand-soft text-fg" : "border-line text-muted hover:text-fg"}`}>
-              {l}
-            </button>
-          ))}
-        </div>
-        <p className="text-[11px] text-faint">{KINDS.find(([k]) => k === kind)?.[2]}</p>
-        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title (optional, the AI names it)" className="h-9 rounded-brand border border-line bg-bg px-3 text-sm outline-none placeholder:text-faint" />
-        {linky ? (
-          <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder={kind === "video" ? "https://www.youtube.com/watch?v=…" : "https://"} className="h-9 rounded-brand border border-line bg-bg px-3 text-sm outline-none placeholder:text-faint" />
-        ) : (
-          <>
-            <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={8} placeholder="Paste it here…" className="rounded-[10px] border border-line bg-bg px-3 py-2 text-sm outline-none placeholder:text-faint" />
-            <label className="w-fit cursor-pointer text-xs text-muted hover:text-fg">
-              Or upload a text file (.txt, .md, .csv, .srt, .vtt)
-              <input
-                type="file"
-                accept=".txt,.md,.markdown,.csv,.srt,.vtt,.json,text/plain"
-                className="hidden"
-                onChange={async (e) => {
-                  const f = e.target.files?.[0];
-                  if (!f) return;
-                  setBody(await f.text());
-                  if (!title) setTitle(f.name.replace(/\.[a-z0-9]+$/i, ""));
-                }}
-              />
-            </label>
-          </>
-        )}
-        {error && <p className="text-xs text-bad">{error}</p>}
-        <button onClick={add} disabled={busy || (linky ? !url.trim() : !body.trim())} className="h-10 rounded-brand bg-brand text-sm font-medium text-white disabled:opacity-40">
-          {busy ? "Adding…" : "Add"}
-        </button>
-        <p className="text-[11px] text-faint">The round table reads everything here. For a PDF or Google Doc, paste its text.</p>
-      </section>
-
-      <section className="grid content-start gap-3">
-        {sources.length === 0 ? (
-          <div className="grid place-items-center gap-2 rounded-[16px] border border-dashed border-line px-6 py-16 text-center">
-            <p className="font-medium">Nothing here yet</p>
-            <p className="max-w-sm text-sm text-muted">Briefs that worked, call transcripts, a creator&apos;s video breakdown, a framework the team swears by. The table thinks with all of it.</p>
-          </div>
-        ) : (
-          sources.map((s) => (
-            <article key={s.id} className="grid gap-2 rounded-[14px] border border-line bg-surface p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="grid min-w-0 gap-0.5">
-                  <span className="text-[11px] text-faint">
-                    {KIND_LABEL[s.kind] ?? s.kind} · {ago(s.at)} ago{s.words ? ` · ${s.words.toLocaleString("en-US")} words` : ""}
-                  </span>
-                  <p className="truncate font-medium">{s.title}</p>
-                  {s.url && (
-                    <a href={s.url} target="_blank" rel="noreferrer" className="truncate text-xs text-muted hover:text-fg">
-                      {s.url}
-                    </a>
-                  )}
-                </div>
-                <button
-                  onClick={async () => {
-                    if (!confirm("Remove this from the library?")) return;
-                    await deleteSource(s.id);
-                    router.refresh();
-                  }}
-                  className="shrink-0 text-xs text-faint hover:text-bad"
-                >
-                  Remove
-                </button>
-              </div>
-              {s.status === "reading" ? (
-                <p className="flex items-center gap-2 text-xs text-brand-text">
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" />
-                  Reading it…
-                </p>
-              ) : s.status === "failed" ? (
-                <p className="text-xs text-bad">Couldn&apos;t read it{s.summary ? `: ${s.summary}` : ""}. Paste the text instead.</p>
-              ) : (
-                s.summary && <p className="whitespace-pre-wrap text-sm text-muted">{s.summary}</p>
-              )}
-            </article>
-          ))
-        )}
-      </section>
-    </div>
   );
 }

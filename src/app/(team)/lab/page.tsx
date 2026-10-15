@@ -84,6 +84,7 @@ export default async function Lab({ searchParams }: PageProps<"/lab">) {
           author: (m.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
           body: m.body,
           tests: ((m.data as { tests?: ProposedTest[] } | null)?.tests ?? []) as ProposedTest[],
+          attachments: ((m.data as { attachments?: LabMessage["attachments"] } | null)?.attachments ?? []) as LabMessage["attachments"],
           at: m.created_at,
         }),
       )}
@@ -92,7 +93,7 @@ export default async function Lab({ searchParams }: PageProps<"/lab">) {
       )}
       tests={testRows}
       clients={clientRows}
-      tab={tab === "tests" || tab === "library" ? tab : "table"}
+      tab={tab === "tests" ? "tests" : "table"}
       aiOn={aiEnabled()}
     />
   );
