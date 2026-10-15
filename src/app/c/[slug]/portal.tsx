@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Ad } from "@/lib/copy";
-import type { PastNote, PortalData, PortalDesign, PortalFile, PortalItem, PortalRow } from "@/lib/portal";
+import type { PastNote, PortalData, PortalDesign, PortalFile, PortalItem, PortalRow, RunningAd } from "@/lib/portal";
 import { submitReview, type Pin, type PieceDecision } from "./actions";
 
 // The client portal. Home: what's waiting on them, what we're changing, what's live, what's launching. Reviewing a
@@ -22,6 +22,8 @@ const host = (url: string) => url.replace(/^https?:\/\/(www\.)?/, "").split("/")
 export function Portal({ slug, clientName, firstName, data, testing, live, demo = false }: { slug: string; clientName: string; firstName: string | null; data: PortalData; testing: boolean; live: boolean; demo?: boolean }) {
   const [queue, setQueue] = useState(data.items);
   const [open, setOpen] = useState<PortalItem | null>(null);
+  const [look, setLook] = useState<PortalItem | null>(null); // a quick look at something already decided
+  const [liveAd, setLiveAd] = useState<RunningAd | null>(null);
   const pieces = (i: PortalItem) => i.designs.filter((d) => !d.context && d.clientStatus !== "approved").length + i.ads.filter((a) => a.status !== "approved").length;
   const total = queue.reduce((n, i) => n + pieces(i), 0);
 
@@ -35,12 +37,12 @@ export function Portal({ slug, clientName, firstName, data, testing, live, demo 
       )}
 
       <main className="mx-auto grid max-w-md gap-4 px-4 pb-16 pt-4">
-        <section className="grid gap-2.5 rounded-[12px] bg-brand p-4 text-white">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-white/75">Waiting on you</p>
+        <section className={`grid gap-2.5 rounded-[12px] p-4 text-white ${queue.length ? "bg-brand" : "border border-brand/70 bg-bg"}`}>
+          <p className={`text-[11px] font-semibold uppercase tracking-[0.08em] ${queue.length ? "text-white/75" : "text-brand-text"}`}>Waiting on you</p>
           <h1 className="font-heading text-[20px] font-semibold leading-tight">
             {queue.length ? `${total} ${total === 1 ? "piece is" : "pieces are"} ready for your review` : firstName ? `You're all caught up, ${firstName}` : "You're all caught up"}
           </h1>
-          <p className="text-[12.5px] text-white/90">
+          <p className={`text-[12.5px] ${queue.length ? "text-white/90" : "text-muted"}`}>
             {queue.length ? `${queue.length} ${queue.length === 1 ? "batch" : "batches"}. Approve or ask for changes on each design and each copy.` : "When your Kaizen team sends new ads, they'll show up here."}
           </p>
           {queue.length > 0 && (
@@ -67,7 +69,7 @@ export function Portal({ slug, clientName, firstName, data, testing, live, demo 
           </section>
         )}
 
-        <Rows title="In revision" pill={data.revising.length} tone="warn" rows={data.revising} empty="Nothing in revision." />
+        <Rows title="In revision" pill={data.revising.length} tone="warn" rows={data.revising} empty="Nothing in revision." onOpen={setLook} />
 
         <section className="grid gap-2">
           <div className="flex items-baseline justify-between">
@@ -77,7 +79,7 @@ export function Portal({ slug, clientName, firstName, data, testing, live, demo 
           {data.running.ads.length ? (
             <div className="grid grid-cols-3 gap-2">
               {data.running.ads.map((a) => (
-                <div key={a.id} className="relative aspect-[4/5] overflow-hidden rounded-[8px] bg-surface-2" title={a.headline ?? a.name}>
+                <button key={a.id} onClick={() => setLiveAd(a)} className="relative aspect-[4/5] overflow-hidden rounded-[8px] bg-surface-2 text-left transition-transform hover:scale-[1.02]" title={a.headline ?? a.name}>
                   {a.thumbnail ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={a.thumbnail} alt={a.headline ?? a.name} className="absolute inset-0 h-full w-full object-cover" />
@@ -89,7 +91,7 @@ export function Portal({ slug, clientName, firstName, data, testing, live, demo 
                     Live
                   </span>
                   {a.headline && <span className="absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/75 to-transparent px-2 pb-1.5 pt-4 text-[10px] font-medium text-white">{a.headline}</span>}
-                </div>
+                </button>
               ))}
             </div>
           ) : (
@@ -97,8 +99,20 @@ export function Portal({ slug, clientName, firstName, data, testing, live, demo 
           )}
         </section>
 
-        <Rows title="Approved · launching soon" pill={data.approved.length} tone="ok" rows={data.approved} empty="Nothing waiting to launch." />
+        <Rows title="Approved · launching soon" pill={data.approved.length} tone="ok" rows={data.approved} empty="Nothing waiting to launch." onOpen={setLook} />
+        {data.launched.length > 0 && <Rows title="Launched" pill={data.launched.length} tone="ok" rows={data.launched} empty="" onOpen={setLook} />}
       </main>
+
+      {look && (
+        <Frame onClose={() => setLook(null)}>
+          <Preview item={look} clientName={clientName} onClose={() => setLook(null)} title={look.title} />
+        </Frame>
+      )}
+      {liveAd && (
+        <Frame onClose={() => setLiveAd(null)}>
+          <LivePreview ad={liveAd} clientName={clientName} onClose={() => setLiveAd(null)} />
+        </Frame>
+      )}
 
       {open && (
         <Session
@@ -136,7 +150,7 @@ function Thumb({ url }: { url: string | null }) {
   );
 }
 
-function Rows({ title, pill, tone, rows, empty }: { title: string; pill: number; tone: "ok" | "warn"; rows: PortalRow[]; empty: string }) {
+function Rows({ title, pill, tone, rows, empty, onOpen }: { title: string; pill: number; tone: "ok" | "warn"; rows: PortalRow[]; empty: string; onOpen?: (item: PortalItem) => void }) {
   return (
     <section className="grid gap-2">
       <div className="flex items-baseline justify-between">
@@ -145,13 +159,14 @@ function Rows({ title, pill, tone, rows, empty }: { title: string; pill: number;
       </div>
       {rows.length ? (
         rows.map((r) => (
-          <div key={r.id} className="flex items-center gap-2.5 rounded-[8px] border border-line bg-surface p-2.5">
+          <button key={r.id} onClick={() => onOpen?.(r.item)} className="flex items-center gap-2.5 rounded-[8px] border border-line bg-surface p-2.5 text-left transition-colors hover:border-faint">
             <Thumb url={r.thumbUrl} />
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-[13px] font-medium">{r.title}</p>
-              <p className="line-clamp-2 text-[11.5px] text-muted">{r.note}</p>
-            </div>
-          </div>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[13px] font-medium">{r.title}</span>
+              <span className="line-clamp-2 text-[11.5px] text-muted">{r.note}</span>
+            </span>
+            <span className="shrink-0 text-[11px] text-faint">View</span>
+          </button>
         ))
       ) : (
         <Empty>{empty}</Empty>
@@ -982,7 +997,7 @@ function MarkDesign({ item, design, start, initial, onCancel, onSave }: { item: 
 
 // ─── Preview: any design with any copy, as people will see it ──────────────
 
-function Preview({ item, clientName, onClose }: { item: PortalItem; clientName: string; onClose: () => void }) {
+function Preview({ item, clientName, onClose, title = "Preview" }: { item: PortalItem; clientName: string; onClose: () => void; title?: string }) {
   const [di, setDi] = useState(0);
   const [fi, setFi] = useState(0);
   const [ai, setAi] = useState(0);
@@ -997,8 +1012,8 @@ function Preview({ item, clientName, onClose }: { item: PortalItem; clientName: 
   return (
     <div className="absolute inset-0 z-40 flex flex-col bg-bg animate-[step-in_.2s_ease-out]">
       <div className="flex items-center justify-between gap-2 px-4 pb-2 pt-[max(12px,env(safe-area-inset-top))]">
-        <p className="text-[15px] font-semibold">Preview</p>
-        <button onClick={onClose} className="rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg">
+        <p className="min-w-0 truncate text-[15px] font-semibold">{title}</p>
+        <button onClick={onClose} className="shrink-0 rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg">
           Done
         </button>
       </div>
@@ -1077,6 +1092,79 @@ function Picker({ label, count, value, onChange }: { label: string; count: numbe
           {i + 1}
         </button>
       ))}
+    </div>
+  );
+}
+
+/** A phone-sized sheet over the page, for quick looks. */
+function Frame({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", on);
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", on);
+      document.body.style.overflow = "";
+    };
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-50 grid bg-bg/95 backdrop-blur sm:place-items-center sm:p-6" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="relative flex h-full w-full flex-col overflow-hidden bg-bg sm:h-[min(880px,100%)] sm:max-w-[430px] sm:rounded-[28px] sm:border sm:border-line sm:shadow-[0_20px_60px_rgba(0,0,0,0.55)]">{children}</div>
+    </div>
+  );
+}
+
+/** A live ad from their ad account, as people see it. */
+function LivePreview({ ad, clientName, onClose }: { ad: RunningAd; clientName: string; onClose: () => void }) {
+  const [more, setMore] = useState(false);
+  const text = ad.text ?? "";
+  const cut = text.length > LIMIT && !more;
+  return (
+    <div className="absolute inset-0 flex flex-col bg-bg">
+      <div className="flex items-center justify-between gap-2 px-4 pb-2 pt-[max(12px,env(safe-area-inset-top))]">
+        <p className="flex items-center gap-2 text-[15px] font-semibold">
+          <i className="h-2 w-2 rounded-full bg-[#3fb27f]" />
+          Live now
+        </p>
+        <button onClick={onClose} className="rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg">
+          Done
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-[max(16px,env(safe-area-inset-bottom))]">
+        <div className="mx-auto max-w-[400px] overflow-hidden rounded-[14px] bg-white text-[#050505]">
+          <div className="flex items-center gap-2 px-3 pt-3">
+            <span className="grid h-9 w-9 place-items-center rounded-full bg-[#1d1d1f] text-sm font-semibold text-white">{clientName.charAt(0)}</span>
+            <span className="grid leading-tight">
+              <span className="text-[13px] font-semibold">{clientName}</span>
+              <span className="text-[11px] text-[#65676b]">Sponsored · ◍</span>
+            </span>
+          </div>
+          {text && (
+            <p className="whitespace-pre-wrap px-3 py-2 text-[13px] leading-[1.35]">
+              {cut ? text.slice(0, LIMIT).trimEnd() : text}
+              {cut && (
+                <button onClick={() => setMore(true)} className="text-[#65676b]">
+                  … See more
+                </button>
+              )}
+            </p>
+          )}
+          <div className="relative w-full bg-[#e4e6eb]">
+            {ad.thumbnail ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={ad.thumbnail} alt="" className="block w-full" />
+            ) : (
+              <span className="grid aspect-[4/5] place-items-center text-xs text-[#65676b]">No preview from the ad account yet</span>
+            )}
+          </div>
+          {ad.headline && (
+            <div className="flex items-center gap-3 bg-[#f0f2f5] px-3 py-2.5">
+              <span className="min-w-0 flex-1 truncate text-[14px] font-semibold">{ad.headline}</span>
+            </div>
+          )}
+        </div>
+        <p className="mt-3 text-center text-[11px] text-faint">As it runs in your ad account right now.</p>
+      </div>
     </div>
   );
 }

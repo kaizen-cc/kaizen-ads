@@ -23,6 +23,19 @@ const ADS: Ad[] = [
   ad("long", Array.from({ length: 14 }, (_, i) => (i % 3 === 0 ? "Friday night used to mean a debate about where to order from. Then someone found the Weekly Deal, and the debate was over before it started." : i % 3 === 1 ? "Two large pizzas, made the way they've been made for twenty years, and a calzone on us. It's the kind of deal that makes the whole table quiet for a minute." : "Order online in under a minute, pick it up hot, or have it at your door in about thirty.")).join("\n\n"), "The Friday Night Deal", "Two pizzas, calzone free", "Order Now"),
 ];
 
+/** A finished ticket, for the home page's quick looks. */
+const quick = (id: string, title: string, bg: string, fg: string, l1: string, l2: string) => ({
+  id,
+  number: 1000,
+  title,
+  format: "image" as const,
+  designs: [{ id: `${id}-d`, position: 1, name: title, isVariation: false, version: 1, files: [file(`${id}-f`, "4x5", bg, fg, l1, l2)], clientStatus: "approved" as const }],
+  ads: ADS.slice(0, 2).map((ad) => ({ ad, status: "approved" as const, note: null, before: null })),
+  revised: null,
+  landingUrl: "https://crustpizza.com",
+  summary: null,
+});
+
 export const samplePortal: PortalData = {
   items: [
     {
@@ -72,12 +85,13 @@ export const samplePortal: PortalData = {
       },
     },
   ],
-  revising: [{ id: "r1", title: "Donation Program · in-store poster", note: "You asked: make the Crust & St Jude logos larger", thumbUrl: art(400, 400, "#2a9d8f", "#ffffff", "GIVE", "BACK") }],
-  approved: [{ id: "a1", title: "Spooky Monster · 2 designs", note: "Approved Oct 10 · we're setting it up", thumbUrl: art(400, 400, "#3a0ca3", "#f72585", "SPOOKY", "SLICE") }],
+  revising: [{ id: "r1", title: "Donation Program · in-store poster", note: "You asked: make the Crust & St Jude logos larger", thumbUrl: art(400, 400, "#2a9d8f", "#ffffff", "GIVE", "BACK"), item: quick("r1", "Donation Program · in-store poster", "#2a9d8f", "#ffffff", "GIVE", "BACK") }],
+  approved: [{ id: "a1", title: "Spooky Monster · 2 designs", note: "Approved Oct 10 · we're setting it up", thumbUrl: art(400, 400, "#3a0ca3", "#f72585", "SPOOKY", "SLICE"), item: quick("a1", "Spooky Monster", "#3a0ca3", "#f72585", "SPOOKY", "SLICE") }],
+  launched: [{ id: "l1", title: "Pick 2 for $12", note: "Launched Oct 8", thumbUrl: art(400, 400, "#e63946", "#ffffff", "PICK 2", "FOR $12"), item: quick("l1", "Pick 2 for $12", "#e63946", "#ffffff", "PICK 2", "FOR $12") }],
   running: {
     syncedAt: new Date(Date.now() - 12 * 60_000).toISOString(),
     ads: [
-      { id: "m1", name: "Pick 2", headline: "Pick 2 for $12", text: null, thumbnail: art(400, 500, "#e63946", "#fff", "PICK 2", "FOR $12") },
+      { id: "m1", name: "Pick 2", headline: "Pick 2 for $12", text: "Two medium pizzas, two toppings each, $12. Tonight only at every Crust.", thumbnail: art(400, 500, "#e63946", "#fff", "PICK 2", "FOR $12") },
       { id: "m2", name: "Pepperoni Roll", headline: "Pepperoni Roll", text: null, thumbnail: art(400, 500, "#f4a261", "#1d3557", "PEPPERONI", "ROLL") },
       { id: "m3", name: "Rewards", headline: "Crust Rewards", text: null, thumbnail: art(400, 500, "#264653", "#e9c46a", "REWARDS", "") },
     ],

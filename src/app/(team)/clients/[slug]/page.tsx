@@ -5,6 +5,7 @@ import { SLOTS, type TeamRole } from "@/lib/roles";
 import { freshness, nyToday } from "@/lib/dates";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { loadClientCreative } from "@/lib/client-creative";
 import { ClientView } from "./client-view";
 
 // Refreshing a briefing asks the AI to read everything new about the client
@@ -85,6 +86,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
     adminConfigured() && keys.length ? createAdminClient().from("sync_state").select("source, last_run_at").in("source", keys) : Promise.resolve({ data: [] as { source: string; last_run_at: string | null }[] }),
     supabase.from("meta_snapshots").select("fetched_at").eq("client_id", client.id).order("fetched_at", { ascending: false }).limit(1).maybeSingle(),
   ]);
+  const creative = await loadClientCreative(supabase, client.id);
   const at = (key: string) => (synced ?? []).find((r) => r.source === key)?.last_run_at ?? null;
   const connections = {
     meta: client.meta_ad_account_id ? freshness(lastMeta?.fetched_at) : null,
@@ -96,6 +98,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
   return (
     <ClientView
       connections={connections}
+      creative={creative}
       client={client}
       packageLabel={packageLabel ?? null}
       packages={packages ?? []}

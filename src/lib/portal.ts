@@ -31,12 +31,14 @@ export type PortalItem = {
   landingUrl: string | null;
   summary: { why: string; audience: string; strategy: string } | null;
 };
-export type PortalRow = { id: string; title: string; note: string; thumbUrl: string | null };
+/** A ticket on the home page (in revision, launching soon), with its creative and copy for a quick look. */
+export type PortalRow = { id: string; title: string; note: string; thumbUrl: string | null; item: PortalItem };
 export type RunningAd = { id: string; name: string; headline: string | null; text: string | null; thumbnail: string | null };
 export type PortalData = {
   items: PortalItem[];
   revising: PortalRow[];
   approved: PortalRow[];
+  launched: PortalRow[]; // launched in the last 30 days (they show in Running now once they're delivering)
   running: { ads: RunningAd[]; syncedAt: string | null };
 };
 
@@ -109,13 +111,18 @@ const cover = (designs: PortalDesign[] | undefined) => {
   return f?.thumbUrl ?? (f?.mime.startsWith("image/") ? f.url : null) ?? null;
 };
 
+/** Every design of a ticket, as a list (for previews and thumbnails). */
+export async function designsForTickets(db: SupabaseClient, requestIds: string[]) {
+  return designsFor(db, requestIds);
+}
+
 export async function loadPortal(db: SupabaseClient, clientId: string): Promise<PortalData> {
   const [{ data: tickets }, { data: snap }] = await Promise.all([
     db
       .from("requests")
-      .select("id, number, title, format, stage, stage_entered_at, landing_url, client_summary, parent_id")
+      .select("id, number, title, format, stage, stage_entered_at, launched_at, landing_url, client_summary, parent_id")
       .eq("client_id", clientId)
-      .in("stage", ["client_review", "client_revision", "copy", "copy_review", "ready_for_client", "ready_for_launch"])
+      .or(`stage.in.(client_review,client_revision,in_production,internal_review,copy,copy_review,ready_for_client,ready_for_launch),and(stage.eq.launched,launched_at.gte.${new Date(Date.now() - 30 * 86_400_000).toISOString()})`)
       .order("stage_entered_at"),
     db.from("meta_snapshots").select("fetched_at, ads").eq("client_id", clientId).order("fetched_at", { ascending: false }).limit(1).maybeSingle(),
   ]);
@@ -132,43 +139,42 @@ export async function loadPortal(db: SupabaseClient, clientId: string): Promise<
   const latest = new Map<string, NonNullable<typeof rounds>[number]>();
   for (const r of rounds ?? []) if (!latest.has(r.request_id)) latest.set(r.request_id, r);
 
-  const items: PortalItem[] = all
-    .filter((t) => t.stage === "client_review" && (designs.get(t.id)?.length || (kids ?? []).some((k) => k.parent_id === t.id)))
-    .map((t) => {
-      const r = latest.get(t.id);
-      const c = copyOf.get(t.id);
-      const status = (c?.client_status ?? []) as { status: "approved" | "changes" | null; note?: string | null }[];
-      const before = (c?.previous_ads ?? null) as Ad[] | null;
-      const own = designs.get(t.id) ?? [];
-      const context = own.length ? [] : (kids ?? []).filter((k) => k.parent_id === t.id).flatMap((k) => (designs.get(k.id) ?? []).map((d) => ({ ...d, clientStatus: "approved" as const, context: true })));
-      return {
-        id: t.id,
-        number: t.number,
-        title: t.title,
-        format: t.format,
-        designs: [...own, ...context],
-        ads:
-          c?.status === "approved"
-            ? ((c.ads ?? []) as Ad[]).map((ad, i) => ({
-                ad,
-                status: status[i]?.status ?? null,
-                note: status[i]?.status === "changes" ? (status[i]?.note ?? null) : null,
-                before: status[i]?.status === "changes" && before?.[i] ? before[i] : null,
-              }))
-            : [],
-        revised: r?.decision === "revise" && r.sent_back_at ? { round: r.round, changes: (r.changes ?? []) as { asked: string; changed: string }[] } : null,
-        landingUrl: t.landing_url ?? null,
-        summary: (t.client_summary as PortalItem["summary"]) ?? null,
-      };
-    });
+  // A ticket as the client sees it. `copy`: which copy to show (in revision, the copy they reviewed)
+  const toItem = (t: (typeof all)[number], copy: "current" | "reviewed" = "current"): PortalItem => {
+    const r = latest.get(t.id);
+    const c = copyOf.get(t.id);
+    const status = (c?.client_status ?? []) as { status: "approved" | "changes" | null; note?: string | null }[];
+    const before = (c?.previous_ads ?? null) as Ad[] | null;
+    const own = designs.get(t.id) ?? [];
+    const context = own.length ? [] : (kids ?? []).filter((k) => k.parent_id === t.id).flatMap((k) => (designs.get(k.id) ?? []).map((d) => ({ ...d, clientStatus: "approved" as const, context: true })));
+    const ads = copy === "reviewed" && before?.length ? before : c?.status === "approved" || copy === "reviewed" ? ((c?.ads ?? []) as Ad[]) : [];
+    return {
+      id: t.id,
+      number: t.number,
+      title: t.title,
+      format: t.format,
+      designs: [...own, ...context],
+      ads: ads.map((ad, i) => ({
+        ad,
+        status: status[i]?.status ?? null,
+        note: status[i]?.status === "changes" ? (status[i]?.note ?? null) : null,
+        before: copy === "current" && status[i]?.status === "changes" && before?.[i] ? before[i] : null,
+      })),
+      revised: r?.decision === "revise" && r.sent_back_at ? { round: r.round, changes: (r.changes ?? []) as { asked: string; changed: string }[] } : null,
+      landingUrl: t.landing_url ?? null,
+      summary: (t.client_summary as PortalItem["summary"]) ?? null,
+    };
+  };
+
+  const items: PortalItem[] = all.filter((t) => t.stage === "client_review" && (designs.get(t.id)?.length || (kids ?? []).some((k) => k.parent_id === t.id))).map((t) => toItem(t));
 
   const revising: PortalRow[] = all
-    .filter((t) => ["client_revision", "copy", "copy_review", "ready_for_client"].includes(t.stage))
+    .filter((t) => ["client_revision", "copy", "copy_review", "ready_for_client", "internal_review", "in_production"].includes(t.stage))
     .flatMap((t) => {
       const r = latest.get(t.id);
       if (r?.decision !== "revise" || r.sent_back_at) return [];
       const asked = r.design_note ?? r.copy_notes ?? (r.targets.includes("design") ? "changes to the design" : "changes to the copy");
-      return [{ id: t.id, title: t.title, note: `You asked: ${asked}`, thumbUrl: cover(designs.get(t.id)) }];
+      return [{ id: t.id, title: t.title, note: `You asked: ${asked}`, thumbUrl: cover(designs.get(t.id)), item: toItem(t, "reviewed") }];
     });
 
   const approved: PortalRow[] = all
@@ -178,6 +184,18 @@ export async function loadPortal(db: SupabaseClient, clientId: string): Promise<
       title: t.title,
       note: `Approved ${new Date(t.stage_entered_at).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" })} · we're setting it up`,
       thumbUrl: cover(designs.get(t.id)),
+      item: toItem(t),
+    }));
+
+  const launched: PortalRow[] = all
+    .filter((t) => t.stage === "launched")
+    .sort((a, b) => (b.launched_at ?? "").localeCompare(a.launched_at ?? ""))
+    .map((t) => ({
+      id: t.id,
+      title: t.title,
+      note: `Launched ${new Date(t.launched_at ?? t.stage_entered_at).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" })}`,
+      thumbUrl: cover(designs.get(t.id)),
+      item: toItem(t),
     }));
 
   // Live in their ad account: the ads that spent in the last sync, biggest first (no numbers shown to the client)
@@ -188,5 +206,5 @@ export async function loadPortal(db: SupabaseClient, clientId: string): Promise<
     .slice(0, 9)
     .map((a) => ({ id: a.id, name: a.name, headline: a.headline, text: a.text, thumbnail: a.image ?? a.thumbnail }));
 
-  return { items, revising, approved, running: { ads: running, syncedAt: snap?.fetched_at ?? null } };
+  return { items, revising, approved, launched, running: { ads: running, syncedAt: snap?.fetched_at ?? null } };
 }

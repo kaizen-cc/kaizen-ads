@@ -22,6 +22,8 @@ import { setPortalLive,
   setSprintPackage,
 } from "./actions";
 import { PackagePanel, type PackageOption } from "./package-panel";
+import { CreativePanel } from "./creative-panel";
+import type { ClientCreative } from "@/lib/client-creative";
 import { BrandBiblePanel, type BrandBible } from "./brand-bible-panel";
 import { untilLabel } from "@/lib/allotment";
 
@@ -49,7 +51,7 @@ export type ClientViewProps = {
     creative_package_key?: string | null;
     creative_package_until?: string | null;
     creative_package_note?: string | null;
-  };
+};
   packages: PackageOption[];
   brandBible?: BrandBible | null;
   today: string; // YYYY-MM-DD in New York
@@ -68,10 +70,11 @@ export type ClientViewProps = {
   can: { admin: boolean; contacts: boolean; allot: boolean; assign: boolean };
   demo?: boolean; // design preview: the refresh only plays its animation
   connections: { meta: Freshness | null; slackClient: Freshness | null; slackInternal: Freshness | null; drive: Freshness | null };
+  creative?: ClientCreative | null; // tickets in motion and launched, live and paused ads
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, can, demo = false, connections }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, can, demo = false, connections, creative = null }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -191,6 +194,8 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
               )}
             </BriefingPanel>
           )}
+
+          {creative && <CreativePanel data={creative} />}
 
           <BrandBiblePanel clientId={client.id} slug={client.slug} bible={brandBible} canBuild={can.assign} />
 

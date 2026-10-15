@@ -22,7 +22,7 @@ export const PHASE_LABEL: Record<Phase, string> = {
 
 // retired: no longer on the board (kept so old tickets and history still read). Ready for client went away: approved
 // work goes straight to the client's portal.
-export const STAGES: { key: Stage; label: string; short: string; phase: Phase; owner: string; next?: Stage; nextLabel?: string; retired?: boolean }[] = [
+export const STAGES: { key: Stage; label: string; short: string; phase: Phase; owner: string; next?: Stage; nextLabel?: string; retired?: boolean; offBoard?: boolean }[] = [
   { key: "requested", label: "Requested", short: "Requested", phase: "brief", owner: "Creative", next: "in_production", nextLabel: "Start production" },
   { key: "in_production", label: "In production", short: "Production", phase: "make", owner: "Creative", next: "internal_review", nextLabel: "Send to creative review" },
   { key: "internal_review", label: "Creative review", short: "Review", phase: "review", owner: "Head of Creative", next: "copy", nextLabel: "Approve creative" },
@@ -32,7 +32,8 @@ export const STAGES: { key: Stage; label: string; short: string; phase: Phase; o
   { key: "client_review", label: "With client", short: "With client", phase: "client", owner: "Client · customer success", next: "ready_for_launch", nextLabel: "Client approved" },
   { key: "client_revision", label: "Client changes", short: "Changes", phase: "make", owner: "Creative", next: "internal_review", nextLabel: "Send to creative review" },
   { key: "ready_for_launch", label: "Ready to launch", short: "To launch", phase: "launch", owner: "Media buyer", next: "launched", nextLabel: "Mark launched" },
-  { key: "launched", label: "Launched", short: "Launched", phase: "launch", owner: "" },
+  // Launched work lives on the client's page (Creative), not the board
+  { key: "launched", label: "Launched", short: "Launched", phase: "launch", owner: "", offBoard: true },
 ];
 
 /** Board order: client changes sit next to production, where the work actually happens. */
@@ -45,7 +46,6 @@ export const BOARD_ORDER: Stage[] = [
   "copy_review",
   "client_review",
   "ready_for_launch",
-  "launched",
 ];
 
 export const stageInfo = (s: Stage) => STAGES.find((x) => x.key === s)!;
