@@ -6,6 +6,7 @@ import { AiUnavailable, askJson, clientContext, COPY_CHAT_SCHEMA, COPY_CHAT_SYST
 import { requireStaff } from "@/lib/auth";
 import { blockers, type Ad } from "@/lib/copy";
 import { checkAgainstClient, draftCopy, learnFromCopy } from "@/lib/copy-draft";
+import { onReachedClient } from "@/lib/client-revision";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -133,13 +134,17 @@ export async function approveCopy(setId: string, ads: Ad[]): Promise<{ ok: true 
   if (!error && adminConfigured()) {
     const me = await requireStaff();
     const { data: set } = await supabase.from("copy_sets").select("request_id").eq("id", setId).maybeSingle();
+    const { data: now } = set ? await supabase.from("requests").select("stage").eq("id", set.request_id).maybeSingle() : { data: null };
     if (set)
       after(async () => {
+        const admin = createAdminClient();
         try {
-          await learnFromCopy(createAdminClient(), set.request_id, me.id);
+          await learnFromCopy(admin, set.request_id, me.id);
         } catch (e) {
           console.error("[copy] learning from edits failed:", e instanceof Error ? e.message : e);
         }
+        // Approved copy goes straight to the client's portal
+        if (now?.stage === "client_review") await onReachedClient(admin, set.request_id);
       });
   }
   revalidatePath("/board");

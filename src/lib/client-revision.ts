@@ -207,3 +207,17 @@ ${r.brief ?? "(no brief)"}
   await admin.from("requests").update({ client_summary: summary }).eq("id", requestId);
   return summary;
 }
+
+/** A ticket just went to the client's portal: the "why we made this" intro, and (when it's revised) what changed. */
+export async function onReachedClient(admin: SupabaseClient, requestId: string) {
+  try {
+    await writeClientSummary(admin, requestId);
+  } catch (e) {
+    console.error("[portal] client summary failed:", e instanceof Error ? e.message : e);
+  }
+  try {
+    await summarizeRevision(admin, requestId);
+  } catch (e) {
+    console.error("[portal] revision summary failed:", e instanceof Error ? e.message : e);
+  }
+}

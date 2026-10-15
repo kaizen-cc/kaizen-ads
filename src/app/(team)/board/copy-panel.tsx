@@ -83,7 +83,7 @@ export function CopyPanel({ ticket, canApprove, onMoved, demo }: { ticket: Ticke
     run(async () => {
       if (demo) {
         setOpen(false);
-        return onMoved("ready_for_client");
+        return onMoved("client_review");
       }
       const r = await approveCopy(set!.id, ads);
       if (!r.ok) {
@@ -93,7 +93,7 @@ export function CopyPanel({ ticket, canApprove, onMoved, demo }: { ticket: Ticke
       setViolations([]);
       await load();
       setOpen(false);
-      onMoved("ready_for_client");
+      onMoved("client_review");
     });
 
   if (!state) return <p className="text-xs text-faint">Loading copy…</p>;
@@ -125,7 +125,7 @@ export function CopyPanel({ ticket, canApprove, onMoved, demo }: { ticket: Ticke
                 const r = await reuseCopy(ticket.id, state.reusable!.id);
                 if (!r.ok) return setError(r.error);
                 await load();
-                onMoved("ready_for_client");
+                onMoved("client_review");
               })
             }
             className="h-9 rounded-full bg-ok px-4 text-sm font-medium text-white disabled:opacity-60"

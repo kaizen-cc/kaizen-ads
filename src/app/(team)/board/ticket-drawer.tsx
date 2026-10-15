@@ -387,7 +387,7 @@ export function TicketDrawer({
                   />
                 ) : (
                   <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-faint">
-                    <span>{uploads.uploading > 0 ? "Uploading… the next step appears when it's done." : `Upload the creative to send it to ${ticket.stage === "client_revision" ? "the client" : "creative review"}.`}</span>
+                    <span>{uploads.uploading > 0 ? "Uploading… the next step appears when it's done." : "Upload the creative to send it to creative review."}</span>
                     {back && (
                       <button disabled={pending} onClick={() => move(back.to)} className="rounded-full px-3 py-1.5 text-muted hover:text-fg disabled:opacity-60">
                         ↩ {back.label}
@@ -427,7 +427,7 @@ export function TicketDrawer({
             {["ready_for_client", "client_review", "client_revision", "ready_for_launch"].includes(ticket.stage) && (
               <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-5 py-3 text-xs">
                 <span className="text-faint">
-                  {ticket.stage === "client_review" ? "Waiting on the client in their portal." : ticket.stage === "ready_for_client" ? "Sending puts it in the client's portal." : "The client's portal shows where this stands."}
+                  {ticket.stage === "client_review" ? "Waiting on the client in their portal." : "The client's portal shows where this stands."}
                 </span>
                 <a href={`/c/${ticket.clientSlug}`} target="_blank" rel="noreferrer" className="rounded-full border border-line px-3 py-1 text-muted hover:border-faint hover:text-fg">
                   Open the client&apos;s view ↗

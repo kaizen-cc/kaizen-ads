@@ -54,7 +54,7 @@ export function ReviewPanel({
       const r = await reviewCreative(ticket.id, decision, note);
       if (!r.ok) return setError(r.error);
       setNote("");
-      onMoved(decision === "approve" ? "copy" : "in_production");
+      onMoved(r.stage as Ticket["stage"]);
     });
 
   return (

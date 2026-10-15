@@ -29,6 +29,6 @@ describe("business durations", () => {
 
 describe("stages", () => {
   it("every stage is on the board exactly once", () => {
-    expect([...BOARD_ORDER].sort()).toEqual(STAGES.map((s) => s.key).sort());
+    expect([...BOARD_ORDER].sort()).toEqual(STAGES.filter((s) => !s.retired).map((s) => s.key).sort());
   });
 });

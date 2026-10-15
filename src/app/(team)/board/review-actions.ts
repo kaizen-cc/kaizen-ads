@@ -7,6 +7,7 @@ import { stageInfo } from "@/lib/stages";
 import { draftCopy } from "@/lib/copy-draft";
 import { AiUnavailable, type CreativeNotes } from "@/lib/ai";
 import { currentCreative, runCreativeReview, startRun, type ReviewProgress } from "@/lib/creative-review";
+import { onReachedClient } from "@/lib/client-revision";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -119,22 +120,36 @@ export async function rememberComment(id: string, requestId: string): Promise<{ 
  * The Head of Creative (or an exec): approve the creative or send it back. Approving moves the ticket to Copy and has the
  * Copywriter draft the set straight away; it lands in Copy review a minute later.
  */
-export async function reviewCreative(requestId: string, decision: "approve" | "changes", note?: string): Promise<ActionResult> {
+/**
+ * Approving goes on to what the copy still needs: none yet → the AI drafts it (Copy); revised and waiting → Copy review;
+ * already approved (a design-only revision) → straight to the client. Returns where the ticket went.
+ */
+export async function reviewCreative(requestId: string, decision: "approve" | "changes", note?: string): Promise<{ ok: true; stage: string } | { ok: false; error: string }> {
   const me = await requireStaff();
   const supabase = await createClient();
   const { error } = await supabase.rpc("review_creative", { p_request: requestId, p_decision: decision, p_note: note?.trim() || null });
   if (error) return { ok: false, error: error.message };
+  const [{ data: r }, { data: copy }] = await Promise.all([
+    supabase.from("requests").select("stage").eq("id", requestId).maybeSingle(),
+    supabase.from("copy_sets").select("status").eq("request_id", requestId).maybeSingle(),
+  ]);
+  const stage = r?.stage ?? (decision === "approve" ? "copy" : "in_production");
   if (decision === "approve" && adminConfigured()) {
+    const admin = createAdminClient();
     after(async () => {
-      try {
-        await draftCopy(createAdminClient(), requestId, me.id);
-      } catch (e) {
-        console.error("[copy] draft after approval failed:", e instanceof Error ? e.message : e);
+      // A first draft only when there's no copy yet (a revision is already being amended)
+      if (stage === "copy" && (!copy || copy.status === "failed")) {
+        try {
+          await draftCopy(admin, requestId, me.id);
+        } catch (e) {
+          console.error("[copy] draft after approval failed:", e instanceof Error ? e.message : e);
+        }
       }
+      if (stage === "client_review") await onReachedClient(admin, requestId);
     });
   }
   revalidatePath("/board");
-  return { ok: true };
+  return { ok: true, stage };
 }
 
 // ─── AI review (QA before creative review) ──────────────────────────────────
