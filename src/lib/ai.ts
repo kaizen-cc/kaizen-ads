@@ -562,5 +562,25 @@ export const COPY_SCHEMA = obj({
 
 // ─── Applying a review fix ──────────────────────────────────────────────────
 
-export type DraftPatch = { title: string; angle: string; audience: string; brief: string; changed: string[]; note: string };
-export const PATCH_SCHEMA = obj({ title: str, angle: str, audience: str, brief: str, changed: strArr, note: str });
+export type DraftPatch = {
+  title: string;
+  angle: string;
+  audience: string;
+  brief: string;
+  refs: string; // reference links, one per line
+  sizes: ("1x1" | "4x5" | "9x16")[];
+  formats: { format: "image" | "video" | "carousel"; new: number; variations: number }[];
+  changed: string[];
+  note: string;
+};
+export const PATCH_SCHEMA = obj({
+  title: str,
+  angle: str,
+  audience: str,
+  brief: str,
+  refs: str,
+  sizes: { type: "array", items: { type: "string", enum: ["1x1", "4x5", "9x16"] } },
+  formats: { type: "array", items: obj({ format: { type: "string", enum: ["image", "video", "carousel"] }, new: { type: "integer" }, variations: { type: "integer" } }) },
+  changed: strArr,
+  note: str,
+});

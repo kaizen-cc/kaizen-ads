@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import type { Review, ReviewIssue } from "@/lib/ai";
 import type { RefSummary, SimilarCard } from "./actions";
+import type { Draft } from "./draft";
 import { Spark } from "./parts";
 
 export type IssueStatus = "open" | "fixed" | "dismissed";
@@ -14,7 +15,7 @@ export type Handled = {
   fixing: number[] | null; // every issue waiting for an AI fix (running or queued)
   running: number[] | null; // the ones being changed right now
   note: string | null; // what the AI couldn't do in text
-  undo: { title: string; angle: string; audience: string; brief: string; reopen: number[]; briefWas: "offer" | "used" | "kept" | "none" } | null;
+  undo: { draft: Pick<Draft, "title" | "angle" | "audience" | "brief" | "refs" | "sizes" | "formats">; reopen: number[]; briefWas: "offer" | "used" | "kept" | "none" } | null;
 };
 
 export const startHandled = (review: Review, similar: SimilarCard[], brief: string): Handled => ({
@@ -36,8 +37,8 @@ const FIELD_LABEL: Record<ReviewIssue["field"], string> = {
   brief: "Brief",
   references: "References",
 };
-// Fixes the AI can make in text; counts, sizes and attachments stay with the person
-const TEXT_FIELDS: ReviewIssue["field"][] = ["title", "angle", "audience", "brief"];
+// The AI can change any part of the request (text, references, sizes and format counts)
+const FIXABLE: ReviewIssue["field"][] = ["title", "angle", "audience", "brief", "references", "sizes", "formats"];
 const fmt = (iso: string) => new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" }).format(new Date(iso));
 
 /** One review finding: fix it with the AI, go edit it yourself, or dismiss it (dismissals are kept on the ticket). */
@@ -60,7 +61,7 @@ function IssueRow({
   onDismiss: () => void;
   onReopen: () => void;
 }) {
-  const canFix = TEXT_FIELDS.includes(x.field);
+  const canFix = FIXABLE.includes(x.field);
   if (status !== "open")
     return (
       <li className="flex min-w-0 items-center gap-3 rounded-[10px] border border-line px-4 py-2.5 text-sm animate-[step-in_.2s_ease-out]">
@@ -296,7 +297,7 @@ export function ReviewWorkspace({
               <button
                 type="button"
                 disabled={Boolean(handled.fixing)}
-                onClick={() => onFix(review.issues.map((x, i) => (handled.issues[i] === "open" && TEXT_FIELDS.includes(x.field) ? i : -1)).filter((i) => i >= 0))}
+                onClick={() => onFix(review.issues.map((x, i) => (handled.issues[i] === "open" && FIXABLE.includes(x.field) ? i : -1)).filter((i) => i >= 0))}
                 className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-fg px-4 text-xs font-medium text-bg hover:opacity-90 disabled:opacity-60"
               >
                 <Spark size={11} /> {handled.fixing ? "Changing…" : "Fix them all"}

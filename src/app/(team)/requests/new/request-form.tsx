@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { PersonAvatar } from "@/components/person-avatar";
-import type { Review, ReviewIssue, Suggestions } from "@/lib/ai";
+import type { DraftPatch, Review, ReviewIssue, Suggestions } from "@/lib/ai";
 import { draws, type Allotment } from "@/lib/allotment";
 import { FORMAT_LABEL, type Format, type Priority } from "@/lib/stages";
 import { ClientTag, FormatIcon } from "@/app/(team)/board/ticket-card";
@@ -296,8 +296,31 @@ export function RequestForm({
   };
 
   // Text changes from the review keep the review on screen (a manual edit starts a fresh review)
-  const patchText = (p: Partial<Pick<Draft, "title" | "angle" | "audience" | "brief">>) => setDraft((d) => ({ ...d, ...p }));
-  const snapshot = (reopen: number[], briefWas: Handled["brief"]) => ({ title: draft.title, angle: draft.angle, audience: draft.audience, brief: draft.brief, reopen, briefWas });
+  const patchText = (p: Partial<Pick<Draft, "title" | "angle" | "audience" | "brief" | "refs" | "sizes" | "formats">>) => setDraft((d) => ({ ...d, ...p }));
+  const pickUndo = (d: Draft) => ({ title: d.title, angle: d.angle, audience: d.audience, brief: d.brief, refs: d.refs, sizes: d.sizes, formats: d.formats });
+  const snapshot = (reopen: number[], briefWas: Handled["brief"]) => ({ draft: pickUndo(draft), reopen, briefWas });
+
+  /** An AI patch, kept inside what the form allows. */
+  const fromPatch = (base: Draft, p: DraftPatch): Draft => {
+    const formats: Draft["formats"] = {};
+    for (const f of p.formats ?? []) {
+      if (!FORMATS.includes(f.format) || formats[f.format]) continue;
+      const n = Math.max(0, Math.min(20, Math.floor(f.new || 0)));
+      const v = Math.max(0, Math.min(MAX_VARIATIONS, Math.floor(f.variations || 0)));
+      if (n + v > 0) formats[f.format] = { new: n, variations: v };
+    }
+    const sizes = (p.sizes ?? []).filter((z): z is Size => SIZES.includes(z as Size));
+    return {
+      ...base,
+      title: p.title,
+      angle: p.angle,
+      audience: p.audience,
+      brief: p.brief,
+      refs: typeof p.refs === "string" ? p.refs : base.refs,
+      sizes: sizes.length ? sizes : base.sizes,
+      formats: Object.keys(formats).length ? formats : base.formats,
+    };
+  };
 
   // AI fixes run one after another, each on top of the last, so clicking several in a row never loses a change
   const fixQueue = useRef<number[][]>([]);
@@ -317,13 +340,13 @@ export function RequestForm({
       setHandled((h) => (h ? { ...h, running: indexes, note: null } : h));
       const res = demo
         ? await new Promise<Awaited<ReturnType<typeof applyFixes>>>((r) =>
-            setTimeout(() => r({ ok: true, patch: { title: before.title, angle: before.angle, audience: before.audience, brief: `${before.brief}\n${issues.map((x) => x.fix).join("\n")}`, changed: ["brief"], note: "" } }), 1400),
+            setTimeout(() => r({ ok: true, patch: { title: before.title, angle: before.angle, audience: before.audience, brief: `${before.brief}\n${issues.map((x) => x.fix).join("\n")}`, refs: before.refs, sizes: before.sizes, formats: FORMATS.filter((f) => before.formats[f]).map((f) => ({ format: f, ...before.formats[f]! })), changed: ["brief"], note: "" } }), 1400),
           )
         : await applyFixes(before, issues);
       if (res.ok) {
-        const next = { ...draftNow.current, title: res.patch.title, angle: res.patch.angle, audience: res.patch.audience, brief: res.patch.brief };
+        const next = fromPatch(draftNow.current, res.patch);
         draftNow.current = next;
-        patchText({ title: next.title, angle: next.angle, audience: next.audience, brief: next.brief });
+        patchText(pickUndo(next));
       }
       setHandled((h) => {
         if (!h) return h;
@@ -334,7 +357,7 @@ export function RequestForm({
           running: null,
           fixing: fixing.length ? fixing : null,
           note: res.patch.note || h.note,
-          undo: { title: before.title, angle: before.angle, audience: before.audience, brief: before.brief, reopen: indexes, briefWas: h.brief },
+          undo: { draft: pickUndo(before), reopen: indexes, briefWas: h.brief },
           issues: h.issues.map((st, i) => (indexes.includes(i) ? "fixed" : st)),
         };
       });
@@ -363,7 +386,8 @@ export function RequestForm({
   const undoAi = () => {
     if (!handled?.undo) return;
     const u = handled.undo;
-    patchText({ title: u.title, angle: u.angle, audience: u.audience, brief: u.brief });
+    if (!u.draft) return setHandled({ ...handled, undo: null }); // saved by an older version of the form
+    patchText(u.draft);
     setHandled({
       ...handled,
       undo: null,
