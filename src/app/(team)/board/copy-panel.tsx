@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
-import { problems, type Ad } from "@/lib/copy";
+import { blockers, headsUp, type Ad } from "@/lib/copy";
+import type { CopyViolation } from "@/lib/ai";
 import { approveCopy, redraftCopy, reuseCopy, saveCopy, ticketCopy, type CopyState } from "./copy-actions";
 import { CopyProgress, CopyStudio } from "./copy-studio";
 import type { Ticket } from "./types";
@@ -17,6 +18,7 @@ export function CopyPanel({ ticket, canApprove, onMoved, demo }: { ticket: Ticke
   const [busy, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  const [violations, setViolations] = useState<CopyViolation[]>([]);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
@@ -48,12 +50,15 @@ export function CopyPanel({ ticket, canApprove, onMoved, demo }: { ticket: Ticke
   }, [drafting, load, demo]);
 
   const set = state?.set ?? null;
-  const issues = problems(ads);
+  const missing = blockers(ads);
+  const notes = headsUp(ads);
 
   // Save edits a moment after typing stops
   const change = (i: number, ad: Ad) => {
     const next = ads.map((a, j) => (j === i ? ad : a));
     setAds(next);
+    // An edit may fix what the client check found; it runs again on the next approve
+    if (violations.length) setViolations(violations.filter((v) => v.ad !== i + 1));
     setDirty(true);
     if (demo || !set) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -81,7 +86,11 @@ export function CopyPanel({ ticket, canApprove, onMoved, demo }: { ticket: Ticke
         return onMoved("ready_for_client");
       }
       const r = await approveCopy(set!.id, ads);
-      if (!r.ok) return setError(r.error);
+      if (!r.ok) {
+        setViolations(r.violations ?? []);
+        return setError(r.violations?.length ? null : r.error);
+      }
+      setViolations([]);
       await load();
       setOpen(false);
       onMoved("ready_for_client");
@@ -149,12 +158,14 @@ export function CopyPanel({ ticket, canApprove, onMoved, demo }: { ticket: Ticke
             </span>
             {set.status === "approved" ? (
               <span className="rounded-full bg-ok/15 px-2 py-0.5 text-ok">Approved</span>
-            ) : issues.length ? (
-              <span className="rounded-full bg-bad-soft px-2 py-0.5 text-bad">
-                {issues.length} over a limit
+            ) : missing.length ? (
+              <span className="rounded-full bg-bad-soft px-2 py-0.5 text-bad">Copy missing</span>
+            ) : notes.length ? (
+              <span className="rounded-full bg-warn-soft px-2 py-0.5 text-warn">
+                {notes.length} heads-up{notes.length === 1 ? "" : "s"}
               </span>
             ) : (
-              <span className="rounded-full bg-ok/15 px-2 py-0.5 text-ok">Within every limit</span>
+              <span className="rounded-full bg-ok/15 px-2 py-0.5 text-ok">On standard</span>
             )}
           </div>
           {hook && <p className="line-clamp-2 text-sm leading-relaxed text-muted">&ldquo;{hook}&rdquo;</p>}
@@ -172,7 +183,9 @@ export function CopyPanel({ ticket, canApprove, onMoved, demo }: { ticket: Ticke
           state={state}
           ads={ads}
           dirty={dirty}
-          issues={issues}
+          missing={missing}
+          notes={notes}
+          violations={violations}
           busy={busy}
           error={error}
           canApprove={canApprove}

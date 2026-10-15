@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Combobox } from "@/components/combobox";
 import { tintFor } from "@/lib/colors";
 import { BOARD_ORDER, PHASE_LABEL, health, stageInfo, type Format, type Health, type Phase, type Stage } from "@/lib/stages";
@@ -103,6 +103,31 @@ export function BoardClient({
 
   const open = tickets.find((x) => String(x.number) === openNumber) ?? null;
   const selectedClient = clients.find((c) => c.slug === client) ?? null;
+
+  // Getting around a board wider than the screen: a visible scrollbar, the phase labels and arrows jump along it, and
+  // dragging empty board space pans it (cards still open on click)
+  const scroller = useRef<HTMLDivElement>(null);
+  const pan = useRef<{ x: number; left: number; moved: boolean } | null>(null);
+  const [edges, setEdges] = useState({ left: false, right: true });
+  const measure = () => {
+    const el = scroller.current;
+    if (el) setEdges({ left: el.scrollLeft > 4, right: el.scrollLeft + el.clientWidth < el.scrollWidth - 4 });
+  };
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => measure());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const scrollBoard = (by: number) => {
+    const el = scroller.current;
+    el?.scrollTo({ left: el.scrollLeft + by, behavior: "smooth" });
+  };
+  const jumpTo = (phaseIndex: number) => {
+    const before = BANDS.slice(0, phaseIndex).reduce((n, b) => n + b.span, 0);
+    scroller.current?.scrollTo({ left: before * (COL + GAP), behavior: "smooth" });
+  };
 
   // Tickets move only from the buttons in the ticket (forward and back), never by dragging
   const optimisticMove = (id: string, stage: Stage) =>
@@ -209,13 +234,46 @@ export function BoardClient({
       </div>
 
       {/* Board */}
-      <div className="no-scrollbar -mx-4 overflow-x-auto px-4 pb-6 md:-mx-10 md:px-10">
+      <div className="relative min-w-0">
+      {/* Arrows at the edges when there's more board that way */}
+      {edges.left && (
+        <button onClick={() => scrollBoard(-(COL + GAP) * 3)} aria-label="Scroll the board left" className="absolute left-0 top-1/2 z-10 hidden h-10 w-10 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border border-line bg-surface/95 text-muted shadow-lg backdrop-blur hover:text-fg md:grid">
+          ‹
+        </button>
+      )}
+      {edges.right && (
+        <button onClick={() => scrollBoard((COL + GAP) * 3)} aria-label="Scroll the board right" className="absolute right-0 top-1/2 z-10 hidden h-10 w-10 -translate-y-1/2 translate-x-1/2 place-items-center rounded-full border border-line bg-surface/95 text-muted shadow-lg backdrop-blur hover:text-fg md:grid">
+          ›
+        </button>
+      )}
+      <div
+        ref={scroller}
+        onScroll={measure}
+        onPointerDown={(e) => {
+          // Pan from empty board space only; cards and buttons keep their clicks
+          if (e.button !== 0 || (e.target as HTMLElement).closest("button, a, input, select, [role=button], article")) return;
+          pan.current = { x: e.clientX, left: scroller.current!.scrollLeft, moved: false };
+          (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+        }}
+        onPointerMove={(e) => {
+          const p = pan.current;
+          if (!p) return;
+          const dx = e.clientX - p.x;
+          if (Math.abs(dx) > 3) p.moved = true;
+          scroller.current!.scrollLeft = p.left - dx;
+        }}
+        onPointerUp={() => (pan.current = null)}
+        onPointerCancel={() => (pan.current = null)}
+        className="board-scroll -mx-4 cursor-grab overflow-x-auto px-4 pb-4 active:cursor-grabbing md:-mx-10 md:px-10"
+      >
         <div style={{ width: BOARD_ORDER.length * COL + (BOARD_ORDER.length - 1) * GAP }} className="grid gap-3">
           {/* Phase bands */}
           <div className="flex gap-3">
-            {BANDS.map((b) => (
+            {BANDS.map((b, i) => (
               <div key={b.phase} style={{ width: b.span * COL + (b.span - 1) * GAP }} className="flex items-center gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">{PHASE_LABEL[b.phase]}</span>
+                <button onClick={() => jumpTo(i)} className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint transition-colors hover:text-fg" title={`Jump to ${PHASE_LABEL[b.phase]}`}>
+                  {PHASE_LABEL[b.phase]}
+                </button>
                 <span className="h-px flex-1 bg-gradient-to-r from-line to-transparent" />
               </div>
             ))}
@@ -260,6 +318,7 @@ export function BoardClient({
             })}
           </div>
         </div>
+      </div>
       </div>
 
       {tickets.length === 0 && (

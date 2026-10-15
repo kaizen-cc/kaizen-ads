@@ -1,6 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { AGENCY_SYSTEM, AiUnavailable, askJson, clientContext, contextBlock, COPY_LESSONS_SCHEMA, COPY_LESSONS_SYSTEM, COPY_SCHEMA, getAgent, type CopyLesson } from "@/lib/ai";
+import { AGENCY_SYSTEM, AiUnavailable, askJson, clientContext, contextBlock, COPY_GUARD_SCHEMA, COPY_GUARD_SYSTEM, COPY_LESSONS_SCHEMA, COPY_LESSONS_SYSTEM, COPY_SCHEMA, getAgent, type CopyLesson, type CopyViolation } from "@/lib/ai";
 import { currentCreative } from "@/lib/creative-review";
 import { CTA_BUTTONS, type Ad } from "@/lib/copy";
 import { readReferences, referencesBlock } from "@/lib/references";
@@ -172,4 +172,36 @@ export async function learnFromCopy(admin: SupabaseClient, requestId: string, ac
   const lessons = out.lessons.filter((l) => l.body.trim()).slice(0, 3);
   if (lessons.length) await admin.from("client_memory").insert(lessons.map((l) => ({ client_id: set.client_id, kind: l.kind, body: l.body.trim().slice(0, 1000), source: "copy", created_by: actorId })));
   return lessons;
+}
+
+/**
+ * Before copy is approved: does it say anything the client explicitly told us not to? Only that blocks approval.
+ * No "avoid" memory and no reviewed brand bible = nothing to check against.
+ */
+export async function checkAgainstClient(admin: SupabaseClient, clientId: string, ads: Ad[]): Promise<CopyViolation[]> {
+  const [{ data: memory }, { data: bible }] = await Promise.all([
+    admin.from("client_memory").select("body").eq("client_id", clientId).eq("status", "active").eq("kind", "avoid").limit(80),
+    admin.from("client_brand_bibles").select("read_this_first").eq("client_id", clientId).eq("status", "reviewed").maybeSingle(),
+  ]);
+  if (!memory?.length && !bible?.read_this_first) return [];
+  const out = await askJson<{ violations: CopyViolation[] }>({
+    agent: "copy",
+    label: "copy check against client",
+    system: COPY_GUARD_SYSTEM,
+    schema: COPY_GUARD_SCHEMA,
+    prompt: `<client_said_avoid>
+${(memory ?? []).map((m) => `- ${m.body}`).join("\n") || "(nothing)"}
+</client_said_avoid>
+${bible?.read_this_first ? `<brand_bible>\n${bible.read_this_first.slice(0, 6000)}\n</brand_bible>\n` : ""}
+<copy>
+${ads.map((a, i) => `Ad ${i + 1}\nprimaryText: ${a.primaryText}\nheadline: ${a.headline}\nlinkDescription: ${a.linkDescription}\ncta: ${a.cta}`).join("\n\n")}
+</copy>`,
+  });
+  // Only what's really in the copy now
+  return out.violations.filter((v) => {
+    const ad = ads[v.ad - 1];
+    if (!ad || !v.quote.trim()) return false;
+    const hay = [ad.primaryText, ad.headline, ad.linkDescription, ad.cta].join(" ").toLowerCase();
+    return hay.includes(v.quote.trim().toLowerCase());
+  });
 }

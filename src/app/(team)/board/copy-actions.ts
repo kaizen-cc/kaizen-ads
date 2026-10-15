@@ -2,10 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
-import { AiUnavailable, askJson, clientContext, COPY_CHAT_SCHEMA, COPY_CHAT_SYSTEM, type CopyLesson } from "@/lib/ai";
+import { AiUnavailable, askJson, clientContext, COPY_CHAT_SCHEMA, COPY_CHAT_SYSTEM, type CopyLesson, type CopyViolation } from "@/lib/ai";
 import { requireStaff } from "@/lib/auth";
-import { problems, type Ad } from "@/lib/copy";
-import { draftCopy, learnFromCopy } from "@/lib/copy-draft";
+import { blockers, type Ad } from "@/lib/copy";
+import { checkAgainstClient, draftCopy, learnFromCopy } from "@/lib/copy-draft";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -97,14 +97,27 @@ export async function saveCopy(setId: string, ads: Ad[]): Promise<{ ok: true } |
   return error ? { ok: false, error: error.message } : { ok: true };
 }
 
-/** Approve: saves the final edits, checks every hard limit, and moves the ticket to Ready for client. */
-export async function approveCopy(setId: string, ads: Ad[]): Promise<{ ok: true } | { ok: false; error: string }> {
+/**
+ * Approve: saves the final edits and moves the ticket to Ready for client. Being a little off the length standard doesn't
+ * stop it; missing copy does, and so does anything that goes against what the client told us (checked by the AI).
+ */
+export async function approveCopy(setId: string, ads: Ad[]): Promise<{ ok: true } | { ok: false; error: string; violations?: CopyViolation[] }> {
   await requireStaff();
-  const issues = problems(ads);
-  if (issues.length) return { ok: false, error: issues[0] };
+  const missing = blockers(ads);
+  if (missing.length) return { ok: false, error: missing[0] };
   const saved = await saveCopy(setId, ads);
   if (!saved.ok) return saved;
   const supabase = await createClient();
+  const { data: owner } = await supabase.from("copy_sets").select("client_id").eq("id", setId).maybeSingle();
+  if (owner && adminConfigured()) {
+    try {
+      const violations = await checkAgainstClient(createAdminClient(), owner.client_id, ads);
+      if (violations.length) return { ok: false, error: "This goes against what the client told us. Fix it before it's approved.", violations };
+    } catch (e) {
+      // If the check itself can't run, it doesn't hold the copy hostage
+      console.error("[copy] client check failed:", e instanceof Error ? e.message : e);
+    }
+  }
   const { error } = await supabase.rpc("approve_copy", { p_set: setId });
   if (!error && adminConfigured()) {
     const me = await requireStaff();

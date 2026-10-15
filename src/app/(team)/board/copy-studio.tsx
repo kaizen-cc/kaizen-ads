@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CTA_BUTTONS, LIMITS, meters, type Ad, type Meter } from "@/lib/copy";
 import { chatWithCopywriter, copyChat, type ChatMessage, type CopyState } from "./copy-actions";
+import type { CopyViolation } from "@/lib/ai";
 import { ticketDesigns, type Design } from "./design-actions";
 import type { Ticket } from "./types";
 
@@ -283,7 +284,9 @@ export function CopyStudio({
   state,
   ads,
   dirty,
-  issues,
+  missing,
+  notes,
+  violations,
   busy,
   error,
   canApprove,
@@ -298,7 +301,9 @@ export function CopyStudio({
   state: CopyState;
   ads: Ad[];
   dirty: boolean;
-  issues: string[];
+  missing: string[];
+  notes: string[];
+  violations: CopyViolation[];
   busy: boolean;
   error: string | null;
   canApprove: boolean;
@@ -404,7 +409,7 @@ export function CopyStudio({
         <div className="grid min-h-0 grid-cols-1 md:grid-cols-[190px_minmax(0,1fr)] lg:grid-cols-[190px_minmax(0,1fr)_380px]">
           <ol className="flex gap-1.5 overflow-x-auto border-b border-line p-3 md:grid md:content-start md:overflow-y-auto md:border-b-0 md:border-r">
             {ads.map((a, i) => {
-              const tone = worst(a);
+              const tone = violations.some((v) => v.ad === i + 1) ? "bad" : worst(a);
               return (
                 <li key={i}>
                   <button
@@ -454,18 +459,36 @@ export function CopyStudio({
         {/* Approve */}
         {set.status !== "approved" && (
           <footer className="grid gap-2.5 border-t border-line bg-surface/60 px-5 py-3.5">
-            {issues.length > 0 ? (
-              <p className="text-xs text-bad">
-                {issues[0]}
-                {issues.length > 1 && <span className="text-faint"> · and {issues.length - 1} more</span>}
+            {violations.length > 0 && (
+              <div className="grid gap-1.5 rounded-[10px] border border-bad/30 bg-bad-soft/40 px-3.5 py-2.5">
+                <p className="text-xs font-medium text-bad">Goes against what {ticket.clientName} told us. Fix before approving:</p>
+                <ul className="grid gap-1">
+                  {violations.map((v, i) => (
+                    <li key={i} className="text-xs text-fg">
+                      <button onClick={() => setPick(v.ad - 1)} className="mr-1.5 text-faint hover:text-fg">
+                        Ad {v.ad} · {v.field === "primaryText" ? "primary text" : v.field === "linkDescription" ? "link description" : v.field}
+                      </button>
+                      &ldquo;{v.quote}&rdquo; <span className="text-muted">· {v.rule}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {missing.length > 0 ? (
+              <p className="text-xs text-bad">{missing[0]}</p>
+            ) : notes.length > 0 ? (
+              <p className="text-xs text-warn">
+                Heads up: {notes[0]}
+                {notes.length > 1 && <span className="text-faint"> · and {notes.length - 1} more</span>}
+                <span className="text-faint"> · you can still approve</span>
               </p>
             ) : (
-              <p className="text-xs text-ok">Every field is within Kaizen&apos;s copy limits.</p>
+              violations.length === 0 && <p className="text-xs text-ok">On Kaizen&apos;s copy standard.</p>
             )}
             <div className="flex flex-wrap items-center gap-2">
               {canApprove && (
-                <button disabled={busy || drafting || issues.length > 0} onClick={onApprove} title={issues[0]} className="h-10 rounded-brand bg-ok px-5 text-sm font-medium text-white disabled:opacity-40">
-                  {busy ? "Saving…" : "Approve copy"}
+                <button disabled={busy || drafting || missing.length > 0} onClick={onApprove} title={missing[0]} className="h-10 rounded-brand bg-ok px-5 text-sm font-medium text-white disabled:opacity-40">
+                  {busy ? "Checking against client feedback…" : "Approve copy"}
                 </button>
               )}
               <input

@@ -670,3 +670,11 @@ export const COPY_CHAT_SYSTEM = `You are Kaizen Marketing's AI copywriter, talki
 rewrite: true when they want the set changed (or you should change it to do what they say); false when they're only asking a question or you need something clarified first.
 instructions: when rewriting, everything the rewrite must do, written as instructions to yourself: complete enough on its own (it's all the rewrite gets from this conversation). "" when not rewriting.
 lessons: only rules they state that should apply to this client's copy from now on, not just this set ("never mention delivery", "they say 'classes', not 'lessons'"). One sentence each; kind prefer or avoid. Usually none.`;
+
+export type CopyViolation = { ad: number; field: string; quote: string; rule: string };
+export const COPY_GUARD_SCHEMA = obj({
+  violations: { type: "array", items: obj({ ad: { type: "integer" }, field: str, quote: str, rule: str }) },
+});
+export const COPY_GUARD_SYSTEM = `You check ad copy right before it's approved, against what the client has explicitly told the agency: the client memory items marked "avoid" (things the client asked us not to do, or that went wrong before) and any hard rules in their brand bible.
+Flag only clear contradictions that would embarrass the agency in front of the client: a word, claim, offer or phrasing they told us not to use, said anyway. Not style preferences, not things that are merely close, not rules you infer yourself. When in doubt, don't flag.
+For each: ad (1-5), field (primaryText, headline, linkDescription or cta), quote (the exact words in the copy), rule (the client's rule it breaks, in a few words). Usually there are none.`;
