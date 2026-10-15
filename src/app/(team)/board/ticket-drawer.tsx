@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { PersonAvatar } from "@/components/person-avatar";
-import { BOARD_ORDER, FORMAT_LABEL, PHASE_LABEL, businessDuration, health, stageInfo, type Phase, type Priority, type Stage } from "@/lib/stages";
+import { FORMAT_LABEL, PHASE_LABEL, businessDuration, health, stageInfo, type Phase, type Priority, type Stage } from "@/lib/stages";
 import { assignTicket, commentTicket, moveTicket, setTicketDue, setTicketPriority, ticketHistory, type TicketEvent } from "./actions";
 import type { Design } from "./design-actions";
 import { Deliverables, type UploadState } from "./deliverables";
@@ -175,8 +175,6 @@ const DEMO_COPY = {
 const SPECIAL: Stage[] = ["internal_review", "copy", "copy_review"];
 // Making stages: the upload area takes the place of the note, and the next step appears once a file is up
 const MAKING: Stage[] = ["in_production", "client_revision"];
-// Stages a ticket can be in without a creative
-const BEFORE_CREATIVE: Stage[] = ["requested", "in_production"];
 const COPY_STAGES: Stage[] = ["copy", "copy_review", "ready_for_client", "client_review", "client_revision", "ready_for_launch", "launched"];
 
 export function TicketDrawer({
@@ -314,26 +312,6 @@ export function TicketDrawer({
               </div>
               <div className="flex items-center gap-2">
                 <TimeStamp ticket={ticket} label />
-                {ticket.stage !== "launched" && (
-                  <select
-                    aria-label="Move to any stage"
-                    value=""
-                    disabled={pending}
-                    onChange={(e) => e.target.value && move(e.target.value as Stage)}
-                    className="h-8 rounded-full border border-line bg-bg px-3 text-xs text-muted hover:border-faint hover:text-fg"
-                  >
-                    <option value="">Move to…</option>
-                    {BOARD_ORDER.filter((s) => s !== ticket.stage).map((s) => {
-                      const locked = !hasCreative && !BEFORE_CREATIVE.includes(s);
-                      return (
-                        <option key={s} value={s} disabled={locked}>
-                          {stageInfo(s).label}
-                          {locked ? " · upload first" : ""}
-                        </option>
-                      );
-                    })}
-                  </select>
-                )}
               </div>
             </div>
             {making && (

@@ -2,11 +2,10 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Combobox } from "@/components/combobox";
 import { tintFor } from "@/lib/colors";
 import { BOARD_ORDER, PHASE_LABEL, health, stageInfo, type Format, type Health, type Phase, type Stage } from "@/lib/stages";
-import { moveTicket } from "./actions";
 import { TicketCard } from "./ticket-card";
 import { TicketDrawer } from "./ticket-drawer";
 import type { ClientOption, Person, Ticket } from "./types";
@@ -45,10 +44,6 @@ export function BoardClient({
   const pathname = usePathname();
   const params = useSearchParams();
   const [tickets, setTickets] = useState(initial);
-  const [, start] = useTransition();
-  const [dragId, setDragId] = useState<string | null>(null);
-  const [overCol, setOverCol] = useState<Stage | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
 
   // Fresh data from the server replaces local (optimistic) state
   const [prevInitial, setPrevInitial] = useState(initial);
@@ -109,25 +104,9 @@ export function BoardClient({
   const open = tickets.find((x) => String(x.number) === openNumber) ?? null;
   const selectedClient = clients.find((c) => c.slug === client) ?? null;
 
+  // Tickets move only from the buttons in the ticket (forward and back), never by dragging
   const optimisticMove = (id: string, stage: Stage) =>
     setTickets((all) => all.map((x) => (x.id === id ? { ...x, stage, minutesInStage: 0, minutesOver: 0 } : x)));
-
-  const drop = (stage: Stage) => {
-    const t = tickets.find((x) => x.id === dragId);
-    setDragId(null);
-    setOverCol(null);
-    if (!t || t.stage === stage) return;
-    const prev = t.stage;
-    optimisticMove(t.id, stage);
-    start(async () => {
-      const res = demo ? ({ ok: true } as const) : await moveTicket(t.id, stage);
-      if (!res.ok) {
-        setTickets((all) => all.map((x) => (x.id === t.id ? { ...x, stage: prev } : x)));
-        setToast(res.error);
-      } else setToast(`#${t.number} moved to ${stageInfo(stage).label}`);
-      setTimeout(() => setToast(null), 2500);
-    });
-  };
 
   const filtersOn = Boolean(q || client || person || format || only);
 
@@ -253,15 +232,7 @@ export function BoardClient({
                   key={s}
                   aria-label={info.label}
                   style={{ width: COL }}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    setOverCol(s);
-                  }}
-                  onDragLeave={() => setOverCol((c) => (c === s ? null : c))}
-                  onDrop={() => drop(s)}
-                  className={`grid shrink-0 content-start gap-2 rounded-[10px] p-2 transition-colors ${
-                    overCol === s && dragId ? "bg-brand-soft ring-1 ring-brand/50" : "bg-surface/50"
-                  }`}
+                  className="grid shrink-0 content-start gap-2 rounded-[10px] bg-surface/50 p-2"
                 >
                   <header className="flex items-center gap-2 px-1.5 pb-1 pt-1">
                     <h2 className="text-sm font-medium">{info.label}</h2>
@@ -276,22 +247,12 @@ export function BoardClient({
                     <TicketCard
                       key={t.id}
                       ticket={t}
-                      dragging={dragId === t.id}
-                      onDragStart={(e) => {
-                        e.dataTransfer.effectAllowed = "move";
-                        e.dataTransfer.setData("text/plain", t.id);
-                        setDragId(t.id);
-                      }}
-                      onDragEnd={() => {
-                        setDragId(null);
-                        setOverCol(null);
-                      }}
                       onOpen={() => setParam({ t: String(t.number) })}
                     />
                   ))}
                   {list.length === 0 && (
                     <div className="grid h-20 place-items-center rounded-brand border border-dashed border-line/70 text-xs text-faint">
-                      {dragId ? "Drop here" : "—"}
+                      —
                     </div>
                   )}
                 </section>
@@ -310,11 +271,6 @@ export function BoardClient({
 
       {open && <TicketDrawer key={open.id} ticket={open} people={people} can={can} onClose={() => setParam({ t: null })} onOptimisticMove={optimisticMove} demo={demo} />}
 
-      {toast && (
-        <div role="status" className="fixed bottom-6 left-1/2 z-[60] -translate-x-1/2 rounded-full bg-fg px-4 py-2 text-sm text-bg shadow-2xl">
-          {toast}
-        </div>
-      )}
     </div>
   );
 }

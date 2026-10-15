@@ -75,7 +75,7 @@ export function TicketCard({
   return (
     <button
       type="button"
-      draggable
+      draggable={Boolean(onDragStart)}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onClick={onOpen}
