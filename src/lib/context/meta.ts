@@ -425,7 +425,7 @@ export async function syncClientMeta(admin: SupabaseClient, clientId: string, ad
 export async function collectMeta(admin: SupabaseClient, budgetMs = 700_000) {
   const deadline = Date.now() + budgetMs;
   const access = await linkAdAccounts(admin);
-  const { data: clients } = await admin.from("clients").select("id, name, meta_ad_account_id").eq("creative_package", true).not("meta_ad_account_id", "is", null);
+  const { data: clients } = await admin.from("clients").select("id, name, meta_ad_account_id").eq("creative_package", true).is("archived_at", null).not("meta_ad_account_id", "is", null);
   const synced: Record<string, unknown>[] = [];
   const errors: string[] = [];
   for (const c of clients ?? []) {

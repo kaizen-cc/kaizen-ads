@@ -9,6 +9,7 @@ import { refreshAllKpis } from "@/lib/kpi/sync";
 import { detectIndustries } from "@/lib/industry";
 import { runStrategist } from "@/lib/suggestions";
 import { runFatigue } from "@/lib/fatigue";
+import { mirrorTrack } from "@/lib/client-sync";
 import { createClient } from "@/lib/supabase/server";
 
 // Briefings take a while when many clients have news
@@ -36,6 +37,7 @@ function nyNow() {
  * - meta: every 2 hours (Meta's own numbers settle slowly)
  * - kpi: every 2 hours (campaign numbers for the KPI dashboard; no AI, so it's cheap)
  * - brief: 12pm and 6pm
+ * - clients: every hour (new, archived and upgraded clients from Kaizen Track)
  * - suggest: weekdays at 8:30am (the strategist's suggested briefs, ready for the morning)
  */
 function due(step: string | null) {
@@ -46,6 +48,7 @@ function due(step: string | null) {
   if (step === "kpi") return true; // every 2 hours (vercel.json)
   if (step === "brief") return [12, 18].includes(hour) && minute < 30;
   if (step === "suggest") return !["Sat", "Sun"].includes(weekday) && hour === 8;
+  if (step === "clients") return true;
   return false;
 }
 
@@ -106,6 +109,7 @@ export async function GET(request: Request) {
     }
     // Execs, by hand: sort every client without an industry now (&force=1 redoes the AI's own guesses)
     if (step === "industry") return Response.json({ set: await detectIndustries(admin, { force: new URL(request.url).searchParams.get("redo") === "1" }) });
+    if (step === "clients") return Response.json(await mirrorTrack(admin));
     // Execs, by hand: check every ad for fatigue now
     if (step === "fatigue") return Response.json(await runFatigue(admin));
     if (step === "suggest") return Response.json(await runStrategist(admin, null));

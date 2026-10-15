@@ -478,7 +478,7 @@ export async function loadSuggestion(db: SupabaseClient, id: string) {
 export async function loadSuggestions(db: SupabaseClient): Promise<SuggestionsState> {
   const since30 = new Date(Date.now() - 30 * 86_400_000).toISOString();
   const [{ data: rows }, { data: runs }, { data: decided }] = await Promise.all([
-    db.from("creative_suggestions").select(OPEN_COLS).eq("status", "open").not("kind", "in", "(winner,refresh)").order("created_at", { ascending: false }).limit(20),
+    db.from("creative_suggestions").select(OPEN_COLS).eq("status", "open").not("kind", "in", "(winner,refresh,onboarding)").order("created_at", { ascending: false }).limit(20),
     db.from("suggestion_runs").select("started_at, finished_at").order("started_at", { ascending: false }).limit(1),
     db.from("creative_suggestions").select("status").in("status", ["approved", "declined"]).not("kind", "in", "(winner,refresh)").gte("decided_at", since30),
   ]);
@@ -627,4 +627,100 @@ The buyer wants this ad refreshed. It worked before (it ran long enough to be ju
     .single();
   if (error || !data) throw new Error(error?.message ?? "Couldn't save the brief");
   return data.id as string;
+}
+
+/**
+ * The first round for a new (or returning) client: built from their marketing intake and what's winning for similar
+ * clients across our accounts. Replaces an earlier draft (say, one written before the intake arrived).
+ */
+export async function suggestOnboarding(admin: SupabaseClient, clientId: string) {
+  const [{ data: c }, { data: intake }] = await Promise.all([
+    admin.from("clients").select("name, industry, industry_detail, reonboarded_at").eq("id", clientId).single(),
+    admin.from("client_intakes").select("summary, answers").eq("client_id", clientId).not("summary", "is", null).order("received_at", { ascending: false }).limit(1).maybeSingle(),
+  ]);
+  if (!c) throw new Error("Client not found");
+  const { industryWinners, winnersBlock } = await import("@/lib/industry");
+  const winners = c.industry && c.industry !== "other" ? await industryWinners(admin, c.industry, clientId, 10) : [];
+  const prompt = await promptFor(admin, clientId, [
+    { kind: "onboarding", weight: 1, line: c.reonboarded_at ? "Returning client: their first round back" : "New client: their first round of creative", facts: intake ? ["The marketing intake form is in"] : ["No marketing intake form yet: work from what's known and list what to confirm"] },
+  ]);
+  if (!prompt) throw new Error("Client not found");
+  const out = await askJson<Out>({
+    agent: "strategist",
+    label: "onboarding first round",
+    system: SYSTEM,
+    schema: SCHEMA,
+    prompt: `${prompt}
+
+${winners.length ? winnersBlock(c.industry, c.industry_detail, winners) : "No winning ads in this industry across our accounts yet."}
+
+${intake ? "" : "The marketing intake form hasn't come in yet. Build from what's known, keep claims general, and put what to confirm in the brief."}
+
+This is ${c.name}'s ${c.reonboarded_at ? "first round since they came back" : "first round with Kaizen"}: the first impression, and the first read on what works for them. Write the request:
+- Start from the client: their offer, audience, voice and what they told us to avoid (marketing_intake and client memory are hard rules).
+- Lean on what's winning for similar clients: the angles, hooks and structures that are beating their accounts, translated to this client (never copied, never naming the other business). Say in why which winners shaped it.
+- Test distinct angles so the first month teaches us something: 3 to 4 concepts, each a different angle or hook, not variations of one idea.
+- Use the month's allotment well (a new client's first month should show range), with variations only where a hook test makes sense.
+- In the brief, list anything the team must confirm with the client before production (from the intake's open questions).
+suggest: true. kind: "kpi". signal: one line on what this first round sets out to learn. evidence: 2 to 4 lines from the intake and the winners. why: two or three sentences. reply: "".`,
+  });
+  const draft = clean(out.draft);
+  // One open first round per client: a newer one replaces it
+  await admin.from("creative_suggestions").update({ status: "expired", updated_at: new Date().toISOString() }).eq("client_id", clientId).eq("kind", "onboarding").eq("status", "open");
+  const { data, error } = await admin
+    .from("creative_suggestions")
+    .insert({ client_id: clientId, kind: "onboarding", signal: out.signal || "First round", evidence: out.evidence.slice(0, 5), why: out.why, draft, original: draft })
+    .select("id")
+    .single();
+  if (error || !data) throw new Error(error?.message ?? "Couldn't save the first round");
+  return data.id as string;
+}
+
+export type OnboardingCard = {
+  clientId: string;
+  name: string;
+  slug: string;
+  since: string; // enrolled, or came back
+  returning: boolean;
+  creative: boolean;
+  industry: string | null;
+  intake: { status: string; at: string; business: string | null } | null;
+  firstRound: OpenSuggestion | null; // ready for review
+  inProduction: number[]; // tickets from an approved first round
+};
+export type OnboardingState = { clients: OnboardingCard[]; unmatched: { id: string; name: string | null; at: string }[] };
+
+/** Clients being onboarded, with where each one is: intake, first round, production. For execs and leads. */
+export async function loadOnboarding(db: SupabaseClient): Promise<OnboardingState> {
+  const [{ data: clients }, { data: unmatched }] = await Promise.all([
+    db.from("clients").select("id, name, slug, created_at, reonboarded_at, creative_package, industry_detail").eq("status", "onboarding").is("archived_at", null).order("created_at", { ascending: false }).limit(20),
+    db.from("client_intakes").select("id, business_name, received_at").eq("status", "unmatched").order("received_at", { ascending: false }).limit(10),
+  ]);
+  const ids = (clients ?? []).map((c) => c.id);
+  const [{ data: intakes }, { data: rounds }] = ids.length
+    ? await Promise.all([
+        db.from("client_intakes").select("client_id, status, received_at, summary").in("client_id", ids).order("received_at", { ascending: false }),
+        db.from("creative_suggestions").select(OPEN_COLS + ", status, request_numbers").eq("kind", "onboarding").in("client_id", ids).in("status", ["open", "approved"]).order("created_at", { ascending: false }),
+      ])
+    : [{ data: [] }, { data: [] }];
+  const open = await toOpen(db, ((rounds ?? []) as unknown as Record<string, unknown>[]).filter((r) => r.status === "open"));
+  return {
+    clients: (clients ?? []).map((c) => {
+      const intake = (intakes ?? []).find((i) => i.client_id === c.id);
+      const approved = ((rounds ?? []) as unknown as { client_id: string; status: string; request_numbers: number[] }[]).find((r) => r.client_id === c.id && r.status === "approved");
+      return {
+        clientId: c.id,
+        name: c.name,
+        slug: c.slug,
+        since: c.reonboarded_at ?? c.created_at,
+        returning: Boolean(c.reonboarded_at),
+        creative: c.creative_package,
+        industry: c.industry_detail,
+        intake: intake ? { status: intake.status, at: intake.received_at, business: (intake.summary as { business?: string } | null)?.business ?? null } : null,
+        firstRound: open.find((o) => o.clientId === c.id) ?? null,
+        inProduction: approved?.request_numbers ?? [],
+      };
+    }),
+    unmatched: (unmatched ?? []).map((u) => ({ id: u.id, name: u.business_name, at: u.received_at })),
+  };
 }

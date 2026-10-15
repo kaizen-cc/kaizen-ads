@@ -72,3 +72,25 @@ export async function readEnrollment(request: Request, form: string): Promise<{ 
     .digest("hex");
   return { data, key };
 }
+
+/** Any Zapier body as plain key/values (for the intake and offboarding forms, whose questions we keep as asked). */
+export async function readRaw(request: Request): Promise<Record<string, string>> {
+  const type = request.headers.get("content-type") ?? "";
+  const raw: Record<string, unknown> = type.includes("application/json") ? ((await request.json()) as Record<string, unknown>) : Object.fromEntries((await request.formData()).entries());
+  return Object.fromEntries(
+    Object.entries(raw)
+      .map(([k, v]) => [k.trim(), (Array.isArray(v) ? v.join(", ") : v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v)).trim()] as const)
+      .filter(([k, v]) => k && v),
+  );
+}
+
+/** The first answer whose question looks like one of these (business name, client ID, …). */
+export function pickLoose(raw: Record<string, string>, keys: string[]) {
+  const byNorm = new Map(Object.entries(raw).map(([k, v]) => [norm(k), v]));
+  for (const k of keys) if (byNorm.get(k)) return byNorm.get(k)!;
+  for (const [k, v] of byNorm) if (keys.some((x) => k.includes(x))) return v;
+  return null;
+}
+
+export const stableKey = (form: string, raw: Record<string, string>) =>
+  createHash("sha256").update(JSON.stringify([form, raw.timestamp ?? raw.Timestamp ?? raw.submitted_at ?? "", raw])).digest("hex");

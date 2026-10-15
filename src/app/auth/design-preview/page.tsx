@@ -19,6 +19,7 @@ import { sampleTickets } from "./sample-tickets";
 import { KpiBoard } from "@/app/(team)/kpis/kpi-board";
 import { sampleKpis } from "./sample-kpis";
 import type { WatchRow } from "@/lib/fatigue";
+import type { OnboardingState } from "@/lib/suggestions";
 import { AgentDetail, AgentsOverview, type Agent as AiAgent, type Item as AiItem } from "@/app/(team)/settings/agents";
 
 // Local-only design check with sample data (never served in production).
@@ -87,6 +88,16 @@ const sampleFatigue: WatchRow[] = [
   { clientId: "c1", client: "Crust Pizza Co.", clientSlug: "crust-pizza-co", adId: "2", adName: "TOF | Aug_2026 | VID | Oven POV | V1", headline: "Straight from 900°", thumbnail: null, severity: "tiring", state: "open", firstFlaggedAt: "2026-10-14T12:00:00Z", requestNumbers: [],
     signals: { ctrNow: 1.41, ctrBefore: 1.62, ctrChange: -0.13, cprNow: 16.2, cprBefore: 12.8, cprChange: 0.27, accountCprChange: 0.08, freqNow: 1.6, freqBefore: 1.4, hookNow: 21.5, hookBefore: 29.8, hookChange: -0.28, spend7: 268, results7: 16, result: "purchase", daysRunning: 61 }, series: series(12.8, 0.27) },
 ];
+
+// Design preview only: clients being onboarded
+const sampleOnboarding: OnboardingState = {
+  clients: [
+    { clientId: "o1", name: "Bayou Smiles Dental", slug: "bayou-smiles-dental", since: "2026-10-13T15:00:00Z", returning: false, creative: true, industry: "Cosmetic dentistry", intake: { status: "briefed", at: "2026-10-14T14:00:00Z", business: "Family and cosmetic dentist in Baton Rouge pushing Invisalign and whitening" }, firstRound: null, inProduction: [] },
+    { clientId: "o2", name: "Gulf Coast Kayak Co.", slug: "gulf-coast-kayak", since: "2026-10-14T18:00:00Z", returning: false, creative: true, industry: "Kayak rentals", intake: null, firstRound: null, inProduction: [] },
+    { clientId: "o3", name: "Crust Pizza Co.", slug: "crust-pizza-co", since: "2026-10-10T15:00:00Z", returning: true, creative: true, industry: "Pizza restaurant", intake: { status: "briefed", at: "2026-10-11T14:00:00Z", business: "Neapolitan pizza, two locations" }, firstRound: null, inProduction: [1041, 1042] },
+  ],
+  unmatched: [{ id: "u1", name: "Lakeside Med Spa LLC", at: "2026-10-15T13:00:00Z" }],
+};
 
 export default async function DesignPreview({ searchParams }: PageProps<"/auth/design-preview">) {
   if (process.env.NODE_ENV === "production") notFound();
@@ -355,6 +366,8 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
     body = (
       <PulseView
         {...base}
+        onboarding={view === "exec-empty" ? null : sampleOnboarding}
+        clientOptions={[{ id: "c1", name: "Lakeside Med Spa" }]}
         vitals={
           empty
             ? { inMotion: 0, turnaroundDays: null, turnaroundTarget: 5, firstPassRate: null, onTimeRate: null }

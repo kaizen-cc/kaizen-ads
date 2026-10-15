@@ -184,7 +184,8 @@ export async function collectSlack(admin: SupabaseClient): Promise<CollectResult
   const { data: clients } = await admin
     .from("clients")
     .select("id, slack_channel_id, internal_slack_channel_id")
-    .eq("creative_package", true);
+    .eq("creative_package", true)
+    .is("archived_at", null);
   let saved = 0;
   const errors: string[] = [];
   for (const c of clients ?? []) {

@@ -1,6 +1,8 @@
 import { KpiPulse, type KpiPulseData, AttentionList, FlowStrip, PageHeader, PrimaryAction, Queue, SectionTitle, Stats, TeamLoad, type Alert, type Load, type PhaseKey, type PhaseStat, type QueueItem } from "./shared";
 import type { WatchRow } from "@/lib/fatigue";
 import { FatigueWatch } from "@/components/fatigue-watch";
+import type { OnboardingState } from "@/lib/suggestions";
+import { OnboardingCallout } from "./onboarding-callout";
 import type { SuggestionsState } from "@/lib/suggestions";
 import { SuggestedBriefs } from "./suggested-briefs";
 
@@ -18,6 +20,8 @@ export type LeaderData = {
   canRequest: boolean;
   kpis?: KpiPulseData | null;
   fatigue?: WatchRow[] | null;
+  onboarding?: OnboardingState | null;
+  clientOptions?: { id: string; name: string }[];
   suggestions?: SuggestionsState | null;
 };
 
@@ -31,6 +35,8 @@ export function LeaderView(d: LeaderData) {
         subtitle={`Head of ${d.department} · ${d.stats.waitingOnYou ? `${d.stats.waitingOnYou} waiting on you` : "nothing waiting on you"}`}
         action={<PrimaryAction label="New request" disabled={!d.canRequest} href="/requests/new" />}
       />
+
+      {d.onboarding && <OnboardingCallout state={d.onboarding} clients={d.clientOptions ?? []} />}
 
       <Stats
         items={[

@@ -237,7 +237,7 @@ export type KpiPulse = {
 
 /** owner: only the accounts this media buyer owns. */
 export async function loadKpiPulse(db: SupabaseClient, owner?: string): Promise<KpiPulse | null> {
-  let q = db.from("kpi_targets").select("id, label, owner_id, clients(name, slug)").eq("active", true);
+  let q = db.from("kpi_targets").select("id, label, owner_id, clients!inner(name, slug, archived_at)").eq("active", true).is("clients.archived_at", null);
   if (owner) q = q.eq("owner_id", owner);
   const [{ data: targets }, { data: snaps }] = await Promise.all([q, db.from("kpi_snapshots").select("target_id, status, deviation, windows, budget, computed_at")]);
   if (!targets?.length) return null;

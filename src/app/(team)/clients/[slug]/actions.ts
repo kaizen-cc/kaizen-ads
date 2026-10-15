@@ -218,3 +218,37 @@ export async function setClientIndustry(clientId: string, slug: string, industry
     .eq("id", clientId);
   return done(slug, error);
 }
+
+/**
+ * Execs and leads: archive a client. Everything inside stays (tickets, files, copy, memory, briefings, the Brand
+ * Bible); the client just leaves the board, Home and every list. Restore, or the client enrolling again, brings it back.
+ */
+export async function archiveClient(clientId: string, slug: string, reason: string): Promise<ActionResult> {
+  const me = await requireStaff();
+  if (!isExecOrLead(me)) return { ok: false, error: "Only execs and leads can archive a client." };
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("archive_client", { p_client: clientId, p_reason: reason });
+  revalidatePath("/pipeline");
+  revalidatePath("/board");
+  return done(slug, error);
+}
+
+export async function restoreClient(clientId: string, slug: string): Promise<ActionResult> {
+  const me = await requireStaff();
+  if (!isExecOrLead(me)) return { ok: false, error: "Only execs and leads can restore a client." };
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("restore_client", { p_client: clientId });
+  revalidatePath("/pipeline");
+  revalidatePath("/board");
+  return done(slug, error);
+}
+
+/** Onboarding is done: the client leaves the onboarding callout on Home. */
+export async function markOnboarded(clientId: string, slug: string): Promise<ActionResult> {
+  const me = await requireStaff();
+  if (!isExecOrLead(me)) return { ok: false, error: "Only execs and leads can do this." };
+  if (!adminConfigured()) return { ok: false, error: "Can't save here." };
+  const { error } = await createAdminClient().from("clients").update({ status: "active" }).eq("id", clientId).eq("status", "onboarding");
+  revalidatePath("/pipeline");
+  return done(slug, error);
+}

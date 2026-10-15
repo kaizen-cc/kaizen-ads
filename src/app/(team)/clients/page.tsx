@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { Option } from "./assign-select";
 import { type ClientCard } from "./client-grid";
 import { ClientsBrowser, type Filter } from "./clients-browser";
+import { ArchivedList } from "./archived-list";
 
 type Row = {
   id: string;
@@ -37,12 +38,13 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
     )
     .neq("status", "offboarded")
     .order("name");
-  const [{ data }, { data: staff }, { data: usage }, { data: open }, { data: snaps }] = await Promise.all([
+  const [{ data }, { data: staff }, { data: usage }, { data: open }, { data: snaps }, { data: archived }] = await Promise.all([
     req,
     supabase.from("profiles").select("id, full_name, role").eq("is_active", true).order("full_name"),
     supabase.from("client_allotment_usage").select("*"),
     supabase.from("requests").select("client_id").neq("stage", "launched"),
     supabase.from("meta_snapshots").select("client_id, fetched_at").order("fetched_at", { ascending: false }).limit(500),
+    supabase.from("clients").select("id, name, slug, archived_at, archive_reason, archive_source").not("archived_at", "is", null).order("archived_at", { ascending: false }),
   ]);
   const rows = (data ?? []) as unknown as Row[];
   // A sprint counts until its end date (the scheduled job switches it off the day after)
@@ -114,6 +116,11 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
       </header>
 
       <ClientsBrowser cards={cards} slotOptions={slotOptions} canEdit={canEdit} initialFilter={initialFilter} />
+
+      <ArchivedList
+        canRestore={canEdit}
+        clients={(archived ?? []).map((c) => ({ id: c.id, name: c.name, slug: c.slug, at: c.archived_at!, reason: c.archive_reason, source: c.archive_source }))}
+      />
     </div>
   );
 }

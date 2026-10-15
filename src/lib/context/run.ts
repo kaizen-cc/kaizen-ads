@@ -66,7 +66,7 @@ export async function collectStep(admin: SupabaseClient, step: Step, budgetMs = 
 export async function refreshAll(admin: SupabaseClient, budgetMs = 700_000, rebuild = false) {
   const deadline = Date.now() + budgetMs;
   const [{ data: list }, { data: done }] = await Promise.all([
-    admin.from("clients").select("id, name").eq("creative_package", true),
+    admin.from("clients").select("id, name").eq("creative_package", true).is("archived_at", null),
     admin.from("client_briefings").select("client_id, generated_at"),
   ]);
   // Stalest first, so anything deferred last run goes early this time

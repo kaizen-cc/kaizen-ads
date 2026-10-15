@@ -19,6 +19,7 @@ const KIND_TONE: Record<SuggestionKind, string> = {
   lab: "bg-brand-soft text-brand-text",
   winner: "bg-ok-soft text-ok",
   refresh: "bg-warn-soft text-warn",
+  onboarding: "bg-brand text-white",
 };
 const FORMAT_LABEL = { image: "Images", video: "Videos", carousel: "Carousels" } as const;
 const SIZES = ["1x1", "4x5", "9x16"] as const;

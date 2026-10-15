@@ -5,6 +5,7 @@ import { MAX_VARIATIONS, describeAllotment, toAllotment, type Allotment, type Us
 import { describeMeta } from "@/lib/context/meta";
 import { describeKpis, loadClientKpis } from "@/lib/kpi/client";
 import { describeFatigue } from "@/lib/fatigue";
+import { describeIntake, type IntakeSummary } from "@/lib/intake-format";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 
 // Claude for the request form (suggestions, pre-submit review) and the twice-daily client briefings.
@@ -248,6 +249,7 @@ export type ClientContext = {
   digest: Digest | null; // from the twice-daily briefing: Slack, email and Drive, already summarized
   meta: string | null; // the latest Meta ad performance, in readable lines
   tiring?: string; // ads the fatigue watcher flagged, in lines
+  intake?: string; // the marketing intake form, as the AI read it
   kpis?: string | null; // the KPI targets and how each account is doing against them (refreshed every 2 hours)
   brandBible: string | null; // "Read this first" from a Brand Bible the head of creative reviewed
   sinceBriefing: { source: string; at: string; author: string | null; title: string | null; body: string | null }[]; // newer than the briefing
@@ -311,6 +313,15 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
     digest: briefing?.digest && Object.keys(briefing.digest).length ? (briefing.digest as Digest) : null,
     meta: snap ? describeMeta(snap as Parameters<typeof describeMeta>[0]) : null,
     kpis: await loadClientKpis(supabase, clientId).then((k) => (k.length ? describeKpis(k) : null)),
+    intake: await supabase
+      .from("client_intakes")
+      .select("summary")
+      .eq("client_id", clientId)
+      .not("summary", "is", null)
+      .order("received_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => (data?.summary ? describeIntake(data.summary as IntakeSummary) : undefined)),
     tiring: await supabase
       .from("ad_fatigue")
       .select("ad_name, headline, severity, signals")
@@ -349,6 +360,8 @@ export function contextBlock(ctx: ClientContext, request?: { images: number; vid
   };
   const lines: string[] = [`<client name="${ctx.name}"${ctx.website ? ` website="${ctx.website}"` : ""}>`];
   if (ctx.brandBible) lines.push("<brand_bible_read_this_first>", "The client's reviewed Brand Bible. Its audience profiles, banned claims and rules are hard limits.", ctx.brandBible, "</brand_bible_read_this_first>");
+  if (ctx.intake)
+    lines.push("<marketing_intake>", "What the client told us in their marketing intake form. Their offer, audience, voice and what to avoid are hard rules.", ctx.intake, "</marketing_intake>");
   if (!on("meta")) lines.push("(Ad performance isn't part of this task.)");
   else if (ctx.meta) lines.push("<meta_ads_performance>", ctx.meta, "</meta_ads_performance>");
   else lines.push(ctx.adAccountConnected ? "Meta ad account linked, but no performance pulled yet. Don't invent metrics." : "No Meta ad account linked yet. Don't invent metrics.");

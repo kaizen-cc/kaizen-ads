@@ -24,6 +24,7 @@ import { setPortalLive,
 import { PackagePanel, type PackageOption } from "./package-panel";
 import { CreativePanel } from "./creative-panel";
 import { KpiPanel } from "./kpi-panel";
+import { ArchiveControl } from "./archive-control";
 import { FatigueWatch } from "@/components/fatigue-watch";
 import type { WatchRow } from "@/lib/fatigue";
 import type { ClientKpi } from "@/lib/kpi/client";
@@ -40,6 +41,9 @@ const row = "flex items-start justify-between gap-3 rounded-[8px] bg-surface-2/7
 export type ClientViewProps = {
   client: {
     id: string;
+    archived_at?: string | null;
+    archive_reason?: string | null;
+    archive_source?: string | null;
     name: string;
     slug: string;
     status: string;
@@ -96,7 +100,17 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
         <Link href="/clients" className="text-xs text-muted hover:text-fg">
           ← Clients
         </Link>
-        <h1 className="font-heading text-[32px] leading-tight">{client.name}</h1>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h1 className="font-heading text-[32px] leading-tight">{client.name}</h1>
+          {can.assign && !demo && !client.archived_at && <ArchiveControl clientId={client.id} slug={client.slug} name={client.name} archived={null} />}
+        </div>
+        {client.archived_at && (
+          can.assign && !demo ? (
+            <ArchiveControl clientId={client.id} slug={client.slug} name={client.name} archived={{ at: client.archived_at, reason: client.archive_reason ?? null, source: client.archive_source ?? null }} />
+          ) : (
+            <p className="rounded-[14px] border border-warn/40 bg-warn-soft/40 px-4 py-3 text-sm">This client is archived. Everything is kept; an exec or lead can restore it.</p>
+          )
+        )}
         <div className="flex flex-wrap items-center gap-2">
           {active ? (
             <span className={`${chip} bg-brand-soft text-brand-text`}>{packageLabel ? `${packageLabel} creative package` : "Creative package"}</span>

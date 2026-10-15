@@ -205,7 +205,7 @@ export async function collectDrive(admin: SupabaseClient, since: Date): Promise<
 
   // Folders directly under the root are clients: link any creative-package client that isn't linked yet, by name
   const topLevel = await listFiles(token, `'${root}' in parents and mimeType = '${FOLDER}' and trashed = false`, "id, name", driveId);
-  const { data: clients } = await admin.from("clients").select("id, name, drive_folder_id").eq("creative_package", true);
+  const { data: clients } = await admin.from("clients").select("id, name, drive_folder_id").eq("creative_package", true).is("archived_at", null);
   let matched = 0;
   for (const c of clients ?? []) {
     if (c.drive_folder_id) continue;

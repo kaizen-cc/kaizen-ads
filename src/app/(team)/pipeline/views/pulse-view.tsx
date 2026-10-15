@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { WatchRow } from "@/lib/fatigue";
 import { FatigueWatch } from "@/components/fatigue-watch";
+import type { OnboardingState } from "@/lib/suggestions";
+import { OnboardingCallout } from "./onboarding-callout";
 import type { SuggestionsState } from "@/lib/suggestions";
 import { SuggestedBriefs } from "./suggested-briefs";
 import {
@@ -38,6 +40,8 @@ export type PulseData = {
   monthElapsed: number; // 0–1, business days of the month gone
   kpis?: KpiPulseData | null;
   fatigue?: WatchRow[] | null;
+  onboarding?: OnboardingState | null;
+  clientOptions?: { id: string; name: string }[];
   suggestions?: SuggestionsState | null;
 };
 
@@ -54,6 +58,8 @@ export function PulseView(d: PulseData) {
   return (
     <div className="mx-auto grid max-w-6xl gap-10">
       <PageHeader today={d.today} title={`${d.greeting}, ${d.firstName}`} subtitle={summary} />
+
+      {d.onboarding && <OnboardingCallout state={d.onboarding} clients={d.clientOptions ?? []} />}
 
       <Stats
         items={[

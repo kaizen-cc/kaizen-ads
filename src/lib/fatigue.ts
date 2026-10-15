@@ -124,7 +124,7 @@ export function detect(clientId: string, rows: { date: string; ad_id: string; ad
  * and ads no longer flagged are marked recovered.
  */
 export async function runFatigue(admin: SupabaseClient, clientIds?: string[]) {
-  let q = admin.from("clients").select("id").eq("creative_package", true).not("meta_ad_account_id", "is", null);
+  let q = admin.from("clients").select("id").eq("creative_package", true).is("archived_at", null).not("meta_ad_account_id", "is", null);
   if (clientIds?.length) q = q.in("id", clientIds);
   const { data: clients } = await q;
   const from = ymd(Date.now() - 29 * DAY);
