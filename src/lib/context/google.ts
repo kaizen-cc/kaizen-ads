@@ -23,6 +23,13 @@ function tokenFor(subject: string, scope: string) {
   return new JWT({ email: key.client_email, key: key.private_key, scopes: [scope], subject }).getAccessToken().then((r) => r.token!);
 }
 
+/** A Drive read token as GOOGLE_DRIVE_USER, for opening reference files linked in requests. */
+export const driveToken = () => {
+  const user = process.env.GOOGLE_DRIVE_USER;
+  if (!googleConfigured() || !user) throw new Error("Google Drive isn't connected");
+  return tokenFor(user, DRIVE_SCOPE);
+};
+
 async function google<T>(token: string, url: string, params: Record<string, string> = {}): Promise<T> {
   const res = await fetch(`${url}?${new URLSearchParams(params)}`, { headers: { authorization: `Bearer ${token}` }, cache: "no-store" });
   if (!res.ok) throw new Error(`Google ${new URL(url).pathname}: ${res.status} ${(await res.text()).slice(0, 200)}`);

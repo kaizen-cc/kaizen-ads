@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import type { Review, ReviewIssue } from "@/lib/ai";
-import type { SimilarCard } from "./actions";
+import type { RefSummary, SimilarCard } from "./actions";
 import { Spark } from "./parts";
 
 export type IssueStatus = "open" | "fixed" | "dismissed";
@@ -59,9 +59,9 @@ function IssueRow({
   const canFix = TEXT_FIELDS.includes(x.field);
   if (status !== "open")
     return (
-      <li className="flex items-center gap-3 rounded-[10px] border border-line px-4 py-2.5 text-sm animate-[step-in_.2s_ease-out]">
+      <li className="flex min-w-0 items-center gap-3 rounded-[10px] border border-line px-4 py-2.5 text-sm animate-[step-in_.2s_ease-out]">
         <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full text-[10px] ${status === "fixed" ? "bg-ok text-bg" : "bg-surface-2 text-faint"}`}>{status === "fixed" ? "✓" : "–"}</span>
-        <span className="min-w-0 flex-1 truncate text-muted">{x.issue}</span>
+        <span className="line-clamp-1 min-w-0 flex-1 break-words text-muted">{x.issue}</span>
         <span className={`shrink-0 text-xs ${status === "fixed" ? "text-ok" : "text-faint"}`}>{status === "fixed" ? "Fixed" : "Dismissed · noted on the ticket"}</span>
         <button type="button" onClick={onReopen} className="shrink-0 text-xs text-faint hover:text-fg">
           Undo
@@ -107,9 +107,37 @@ function IssueRow({
  * Everything the review found, and what to do about each: fix with the AI, dismiss (logged), take the fuller brief,
  * or look at a similar ticket before making a new one.
  */
+/** Which reference links the AI actually opened, so nobody assumes it saw something it couldn't. */
+function RefsRead({ refs }: { refs: RefSummary[] }) {
+  if (!refs.length) return null;
+  const read = refs.filter((r) => r.ok).length;
+  return (
+    <div className="grid gap-2 rounded-[12px] border border-line bg-surface px-4 py-3">
+      <p className="text-xs text-muted">
+        <Spark size={10} className="mr-1.5 inline text-brand-text" />
+        Read {read} of {refs.length} reference{refs.length === 1 ? "" : "s"}
+      </p>
+      <ul className="grid gap-1">
+        {refs.map((r) => (
+          <li key={r.url} className="flex min-w-0 items-start gap-2 text-xs">
+            <span className={`mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full text-[9px] ${r.ok ? "bg-ok text-bg" : "bg-warn-soft text-warn"}`}>{r.ok ? "✓" : "!"}</span>
+            <span className="min-w-0 flex-1 break-words">
+              <a href={r.url} target="_blank" rel="noreferrer" className={r.ok ? "text-fg hover:underline" : "text-muted hover:underline"}>
+                {r.label}
+              </a>
+              {!r.ok && r.note && <span className="text-faint"> · {r.note}</span>}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function ReviewWorkspace({
   review,
   similar,
+  refs = [],
   handled,
   brief,
   onFix,
@@ -121,6 +149,7 @@ export function ReviewWorkspace({
 }: {
   review: Review;
   similar: SimilarCard[];
+  refs?: RefSummary[];
   handled: Handled;
   brief: string;
   onFix: (indexes: number[]) => void;
@@ -137,14 +166,18 @@ export function ReviewWorkspace({
 
   if (nothing)
     return (
+      <div className="grid gap-3">
+      <RefsRead refs={refs} />
       <div className="flex items-center gap-3 rounded-[10px] border border-ok/30 bg-ok-soft px-4 py-3.5 animate-[step-in_.25s_ease-out]">
         <span className="grid h-6 w-6 place-items-center rounded-full bg-ok text-xs text-bg">✓</span>
         <p className="text-sm">{review.summary || "Looks good. Sending it to the team."}</p>
       </div>
+      </div>
     );
 
   return (
-    <div className="grid gap-5 animate-[step-in_.3s_ease-out]">
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-5 animate-[step-in_.3s_ease-out]">
+      <RefsRead refs={refs} />
       {/* Already asked for? */}
       {similar.length > 0 && (
         <div className="grid gap-3 rounded-[12px] border border-warn/35 bg-warn-soft/30 p-5">
@@ -155,7 +188,7 @@ export function ReviewWorkspace({
               <p className="mt-0.5 text-sm text-muted">Check it before making another. If you need a variation or a fresh take, continue anyway.</p>
             </div>
           </div>
-          <ul className="grid gap-2">
+          <ul className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2">
             {similar.map((t) => {
               const state = handled.similar[t.number] ?? "open";
               return (
@@ -267,7 +300,7 @@ export function ReviewWorkspace({
             )}
           </div>
           {handled.note && <p className="rounded-[8px] border border-warn/30 bg-warn-soft/40 px-3 py-2 text-xs text-warn">{handled.note}</p>}
-          <ul className="grid gap-2">
+          <ul className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2">
             {review.issues.map((x, i) => (
               <IssueRow
                 key={i}

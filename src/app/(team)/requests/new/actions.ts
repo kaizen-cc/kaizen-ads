@@ -23,6 +23,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { stageInfo, type Stage } from "@/lib/stages";
 import { draws } from "@/lib/allotment";
+import { readReferences, referencesBlock } from "@/lib/references";
 import { MAX_VARIATIONS, SIZES, describeDraft, refLinks, selectedFormats, type Draft } from "./draft";
 
 type Fail = { ok: false; error: string };
@@ -49,7 +50,9 @@ export type SimilarCard = {
   overlap: "same" | "close";
   why: string;
 };
-export type ReviewResult = { ok: true; review: Review; similar: SimilarCard[] } | Fail;
+/** What the reference reader managed to open, shown under the review. */
+export type RefSummary = { url: string; label: string; kind: string; ok: boolean; note: string | null };
+export type ReviewResult = { ok: true; review: Review; similar: SimilarCard[]; refs: RefSummary[] } | Fail;
 /** What the person did with the review: issues they dismissed and similar tickets they went past. */
 export type ReviewDecisions = {
   dismissed: { severity: string; field: string; issue: string }[];
@@ -123,13 +126,15 @@ export async function suggestForRequest(draft: Draft): Promise<SuggestResult> {
   const ctx = await loadContext(draft.clientId);
   if (!ctx) return { ok: false, error: "Pick a client first." };
   try {
-    const { sources } = await getAgent("suggest");
+    const [{ sources }, refs] = await Promise.all([getAgent("suggest"), readReferences(refLinks(draft.refs))]);
     const raw = await askJson<Suggestions>({
       agent: "suggest",
       label: "suggest",
       system: AGENCY_SYSTEM,
       schema: SUGGESTIONS_SCHEMA,
+      images: refs.images,
       prompt: `${contextBlock(ctx, undefined, sources)}
+${referencesBlock(refs.reads)}
 
 <draft_so_far>
 ${describeDraft(draft, ctx.name)}
@@ -152,17 +157,19 @@ export async function reviewRequest(draft: Draft): Promise<ReviewResult> {
   const ctx = await loadContext(draft.clientId);
   if (!ctx) return { ok: false, error: "Pick a client first." };
   try {
-    const [{ sources }, recent] = await Promise.all([getAgent("review"), candidates(draft.clientId!, draft)]);
+    const [{ sources }, recent, refs] = await Promise.all([getAgent("review"), candidates(draft.clientId!, draft), readReferences(refLinks(draft.refs))]);
     const review = await askJson<Review>({
       agent: "review",
       label: "review",
       system: AGENCY_SYSTEM,
       schema: REVIEW_SCHEMA,
+      images: refs.images,
       prompt: `${contextBlock(ctx, draws(draft.formats), sources)}
 
 <request>
 ${describeDraft(draft, ctx.name)}
 </request>
+${referencesBlock(refs.reads)}
 
 <recent_tickets_that_look_similar>
 ${
@@ -182,9 +189,10 @@ issues: flag only real problems:
 - contradictions inside the request, e.g. the brief describes video but only images are picked, or sizes that don't fit the formats (warn)
 - a brief too thin for a designer to start without questions (warn)
 - claims that could get the ad rejected by Meta, e.g. personal attributes, before/after, guaranteed results (warn)
+- references: the brief contradicts what a linked page says (a different price or offer than the landing page: block), it mentions references that aren't linked, or it doesn't say what to take from a reference (warn). If a reference couldn't be read, say so only when the brief relies on it.
 Don't flag style preferences or nitpicks. "fix" is a concrete change, written so it can be applied to the request as-is.
 
-strongerBrief: the brief a designer or editor should get, rewritten and filled in from everything you know about this client (briefing, client memory, performance, angles, past requests, Brand Bible) following the brief structure skill. Keep everything the person wrote that's right; fill the gaps (audience, hook, on-image text, offer, must-include, references), resolve your own issues where the fix is in the brief, and never invent offers, prices, claims or facts. If their brief is already strong and complete, return "".
+strongerBrief: the brief a designer or editor should get, rewritten and filled in from everything you know about this client (briefing, client memory, performance, angles, past requests, Brand Bible) following the brief structure skill. Keep everything the person wrote that's right; fill the gaps (audience, hook, on-image text, offer, must-include, references), resolve your own issues where the fix is in the brief, and never invent offers, prices, claims or facts. Use what the references show: describe the reference images' layout, style and on-image text the designer should borrow, and take offers and prices from the linked pages. Say which reference each borrowed element comes from ("layout from Reference 2"). If their brief is already strong and complete, return "".
 
 similar: tickets from the list above that ask for the same thing ("same": a duplicate) or nearly the same thing ("close": same angle and idea, could be a variation). why: one short sentence. Empty when none truly match; a shared client or format alone isn't similar.
 
@@ -209,7 +217,12 @@ verdict "clear" only when there are no issues and no similar tickets. summary: o
           why: x.why,
         };
       });
-    return { ok: true, review: { ...review, issues: review.issues.slice(0, 6), strongerBrief: review.strongerBrief?.trim() ?? "", similar: review.similar ?? [] }, similar };
+    return {
+      ok: true,
+      review: { ...review, issues: review.issues.slice(0, 6), strongerBrief: review.strongerBrief?.trim() ?? "", similar: review.similar ?? [] },
+      similar,
+      refs: refs.reads.map((r) => ({ url: r.url, label: r.label, kind: r.kind, ok: r.ok, note: r.note ?? null })),
+    };
   } catch (e) {
     return { ok: false, error: e instanceof AiUnavailable ? e.message : "Couldn't review the request." };
   }
@@ -220,17 +233,19 @@ export async function applyFixes(draft: Draft, issues: { field: string; issue: s
   const ctx = await loadContext(draft.clientId);
   if (!ctx) return { ok: false, error: "Pick a client first." };
   try {
-    const { sources } = await getAgent("suggest");
+    const [{ sources }, refs] = await Promise.all([getAgent("suggest"), readReferences(refLinks(draft.refs))]);
     const patch = await askJson<DraftPatch>({
       agent: "suggest",
       label: "apply fix",
       system: AGENCY_SYSTEM,
       schema: PATCH_SCHEMA,
+      images: refs.images,
       prompt: `${contextBlock(ctx, draws(draft.formats), sources)}
 
 <request>
 ${describeDraft(draft, ctx.name)}
 </request>
+${referencesBlock(refs.reads)}
 
 <fixes_to_apply>
 ${issues.map((x, i) => `${i + 1}. [${x.field}] ${x.issue}\n   Fix: ${x.fix}`).join("\n")}

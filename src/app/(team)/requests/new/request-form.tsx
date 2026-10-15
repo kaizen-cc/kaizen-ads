@@ -7,7 +7,7 @@ import type { Review, ReviewIssue, Suggestions } from "@/lib/ai";
 import { draws, type Allotment } from "@/lib/allotment";
 import { FORMAT_LABEL, type Format, type Priority } from "@/lib/stages";
 import { ClientTag, FormatIcon } from "@/app/(team)/board/ticket-card";
-import { applyFixes, createBatch, loadBriefing, reviewRequest, suggestForRequest, type ContextSummary, type ReviewDecisions, type ReviewResult, type SimilarCard, type SuggestResult } from "./actions";
+import { applyFixes, createBatch, loadBriefing, reviewRequest, suggestForRequest, type ContextSummary, type RefSummary, type ReviewDecisions, type ReviewResult, type SimilarCard, type SuggestResult } from "./actions";
 import { ReviewWorkspace, startHandled, type Handled } from "./review-workspace";
 import { FORMATS, MAX_VARIATIONS, SIZES, emptyDraft, selectedFormats, totalFor, type Draft, type Size } from "./draft";
 import { AllotmentMeter, AspectOption, Chip, ClientSearch, Progress, Spark, Stepper, Thinking, type ClientOption } from "./parts";
@@ -28,7 +28,7 @@ type AiState =
   | { status: "loading" }
   | { status: "ready"; s: Suggestions; context: ContextSummary; prepared: boolean }
   | { status: "error"; error: string };
-type ReviewState = { status: "idle" } | { status: "running" } | { status: "done"; review: Review; similar: SimilarCard[] } | { status: "error"; error: string };
+type ReviewState = { status: "idle" } | { status: "running" } | { status: "done"; review: Review; similar: SimilarCard[]; refs: RefSummary[] } | { status: "error"; error: string };
 
 export type RequestDemo = { suggestions: Suggestions; context: ContextSummary; review: Review; similar?: SimilarCard[] };
 
@@ -212,13 +212,13 @@ export function RequestForm({
     setReview({ status: "running" });
     reveal(reviewRef, "center");
     const ask: Promise<ReviewResult> = demo
-      ? new Promise((r) => setTimeout(() => r({ ok: true, review: demo.review, similar: demo.similar ?? [] }), 3200))
+      ? new Promise((r) => setTimeout(() => r({ ok: true, review: demo.review, similar: demo.similar ?? [], refs: [] }), 3200))
       : reviewRequest(draft);
     ask.then((res) => {
       if (!res.ok) return setReview({ status: "error", error: res.error });
       const h = startHandled(res.review, res.similar, draft.brief);
       setHandled(h);
-      setReview({ status: "done", review: res.review, similar: res.similar });
+      setReview({ status: "done", review: res.review, similar: res.similar, refs: res.refs });
       reveal(reviewRef, "start");
       // Nothing to look at: straight to the team
       if (res.review.issues.length === 0 && res.similar.length === 0 && h.brief === "none") send(res.review);
@@ -648,12 +648,13 @@ export function RequestForm({
                   </div>
                 </dl>
 
-                <div ref={reviewRef} className="grid empty:hidden">
+                <div ref={reviewRef} className="grid min-w-0 grid-cols-[minmax(0,1fr)] empty:hidden">
                   {review.status === "running" && <Scanning />}
                   {review.status === "done" && handled && (
                     <ReviewWorkspace
                       review={review.review}
                       similar={review.similar}
+                      refs={review.refs}
                       handled={handled}
                       brief={draft.brief}
                       onFix={fixWithAi}

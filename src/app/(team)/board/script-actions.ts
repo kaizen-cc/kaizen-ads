@@ -2,6 +2,7 @@
 
 import { AGENCY_SYSTEM, AiUnavailable, askJson, clientContext, contextBlock, getAgent, SCRIPT_SCHEMA, type Script } from "@/lib/ai";
 import { requireStaff } from "@/lib/auth";
+import { readReferences, referencesBlock } from "@/lib/references";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -22,7 +23,7 @@ export async function writeScript(requestId: string, note?: string): Promise<{ o
   const supabase = await createClient();
   const { data: r } = await supabase
     .from("board_requests")
-    .select("id, client_id, title, format, angle_name, audience, brief, sizes, new_count, variation_count")
+    .select("id, client_id, title, format, angle_name, audience, brief, sizes, refs, new_count, variation_count")
     .eq("id", requestId)
     .maybeSingle();
   if (!r) return { ok: false, error: "Ticket not found." };
@@ -32,13 +33,15 @@ export async function writeScript(requestId: string, note?: string): Promise<{ o
   if (!ctx) return { ok: false, error: "You don't work on this client." };
 
   try {
-    const { sources } = await getAgent("scripts");
+    const [{ sources }, refs] = await Promise.all([getAgent("scripts"), readReferences(r.refs ?? [])]);
     const content = await askJson<Script>({
       agent: "scripts",
       label: `script ${ctx.name}`,
       system: AGENCY_SYSTEM,
       schema: SCRIPT_SCHEMA,
+      images: refs.images,
       prompt: `${contextBlock(ctx, undefined, sources)}
+${referencesBlock(refs.reads)}
 
 <video_ticket>
 Title: ${r.title}

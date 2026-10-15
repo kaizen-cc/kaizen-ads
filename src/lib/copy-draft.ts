@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AGENCY_SYSTEM, AiUnavailable, askJson, clientContext, contextBlock, COPY_SCHEMA, getAgent } from "@/lib/ai";
 import { CTA_BUTTONS, type Ad } from "@/lib/copy";
+import { readReferences, referencesBlock } from "@/lib/references";
 
 // The Copywriter drafts Kaizen's copy set for a ticket. Learning loop: approved sets for this client, and the pairs of
 // (AI draft → the approved final) where copy review changed something, go into every new draft as the house style to follow.
@@ -40,7 +41,7 @@ async function learning(admin: SupabaseClient, clientId: string, angleId: string
 export async function draftCopy(admin: SupabaseClient, requestId: string, actorId: string | null, note?: string) {
   const { data: r } = await admin
     .from("board_requests")
-    .select("id, client_id, angle_id, angle_name, title, format, audience, brief, sizes, stage, new_count, variation_count")
+    .select("id, client_id, angle_id, angle_name, title, format, audience, brief, sizes, refs, stage, new_count, variation_count")
     .eq("id", requestId)
     .maybeSingle();
   if (!r) throw new AiUnavailable("Ticket not found.");
@@ -57,13 +58,15 @@ export async function draftCopy(admin: SupabaseClient, requestId: string, actorI
     .upsert({ request_id: requestId, client_id: r.client_id, angle_id: r.angle_id, status: "drafting", error: null, updated_at: new Date().toISOString() }, { onConflict: "request_id" });
 
   try {
-    const { sources, model } = await getAgent("copy");
+    const [{ sources, model }, refs] = await Promise.all([getAgent("copy"), readReferences(r.refs ?? [])]);
     const out = await askJson<{ ads: Ad[]; notes: string }>({
       agent: "copy",
       label: `copy ${ctx.name}`,
       system: AGENCY_SYSTEM,
       schema: COPY_SCHEMA,
+      images: refs.images,
       prompt: `${contextBlock(ctx, undefined, sources)}
+${referencesBlock(refs.reads)}
 
 <ticket>
 Title: ${r.title}

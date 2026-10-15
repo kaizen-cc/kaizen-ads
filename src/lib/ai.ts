@@ -97,12 +97,15 @@ export async function askJson<T>({
   system,
   prompt,
   schema,
+  images = [],
 }: {
   agent: AgentKey;
   label: string; // for the timing log
   system: string;
   prompt: string;
   schema: Record<string, unknown>;
+  /** Pictures the AI should look at (reference images), sent before the text */
+  images?: { mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp"; data: string }[];
 }): Promise<T> {
   if (!aiEnabled()) throw new AiUnavailable("AI isn't connected yet.");
   const cfg = await getAgent(agent);
@@ -112,7 +115,17 @@ export async function askJson<T>({
     max_tokens: 16000,
     system: withAgent(system, cfg),
     output_config: { effort: cfg.effort, format: { type: "json_schema" as const, schema } },
-    messages: [{ role: "user" as const, content: prompt }],
+    messages: [
+      {
+        role: "user" as const,
+        content: images.length
+          ? [
+              ...images.map((im) => ({ type: "image" as const, source: { type: "base64" as const, media_type: im.mediaType, data: im.data } })),
+              { type: "text" as const, text: prompt },
+            ]
+          : prompt,
+      },
+    ],
   };
   const run = { agent_key: agent, label, model: cfg.model, effort: cfg.effort };
   try {
