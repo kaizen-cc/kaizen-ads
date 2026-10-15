@@ -1,12 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, useTransition } from "react";
+import { useCallback, useEffect, useState, useTransition } from "react";
 import { PersonAvatar } from "@/components/person-avatar";
 import { BOARD_ORDER, FORMAT_LABEL, PHASE_LABEL, businessDuration, health, stageInfo, type Phase, type Priority, type Stage } from "@/lib/stages";
 import { assignTicket, commentTicket, moveTicket, setTicketDue, setTicketPriority, ticketHistory, type TicketEvent } from "./actions";
 import type { Design } from "./design-actions";
-import { Deliverables } from "./deliverables";
+import { Deliverables, type UploadState } from "./deliverables";
 import { ScriptPanel } from "./script-panel";
 import { ReviewPanel } from "./review-panel";
 import { CopyPanel } from "./copy-panel";
@@ -17,6 +17,7 @@ const PHASES: Phase[] = ["brief", "make", "review", "client", "launch"];
 
 // "Send back" moves where the flow allows going backwards.
 const BACK: Partial<Record<Stage, { to: Stage; label: string }>> = {
+  in_production: { to: "requested", label: "Back to request" },
   internal_review: { to: "in_production", label: "Send back to creative" },
   client_review: { to: "client_revision", label: "Client asked for changes" },
   ready_for_launch: { to: "client_review", label: "Back to client" },
@@ -160,6 +161,10 @@ const DEMO_COPY = {
 
 // These stages have their own panel instead of the generic "next step" button
 const SPECIAL: Stage[] = ["internal_review", "copy", "copy_review"];
+// Making stages: the upload area takes the place of the note, and the next step appears once a file is up
+const MAKING: Stage[] = ["in_production", "client_revision"];
+// Stages a ticket can be in without a creative
+const BEFORE_CREATIVE: Stage[] = ["requested", "in_production"];
 const COPY_STAGES: Stage[] = ["copy", "copy_review", "ready_for_client", "client_review", "client_revision", "ready_for_launch", "launched"];
 
 export function TicketDrawer({
@@ -182,6 +187,10 @@ export function TicketDrawer({
   const [error, setError] = useState<string | null>(null);
   const [comment, setComment] = useState("");
   const [moveNote, setMoveNote] = useState("");
+  const [uploads, setUploads] = useState<UploadState>({ uploaded: 0, uploading: 0, loaded: false });
+  const onUploads = useCallback((u: UploadState) => setUploads(u), []);
+  const hasCreative = uploads.uploaded > 0 || demo;
+  const making = MAKING.includes(ticket.stage);
   const info = stageInfo(ticket.stage);
   const back = BACK[ticket.stage];
   const h = health(ticket.minutesOver, ticket.stage);
@@ -302,16 +311,61 @@ export function TicketDrawer({
                     className="h-8 rounded-full border border-line bg-bg px-3 text-xs text-muted hover:border-faint hover:text-fg"
                   >
                     <option value="">Move to…</option>
-                    {BOARD_ORDER.filter((s) => s !== ticket.stage).map((s) => (
-                      <option key={s} value={s}>
-                        {stageInfo(s).label}
-                      </option>
-                    ))}
+                    {BOARD_ORDER.filter((s) => s !== ticket.stage).map((s) => {
+                      const locked = !hasCreative && !BEFORE_CREATIVE.includes(s);
+                      return (
+                        <option key={s} value={s} disabled={locked}>
+                          {stageInfo(s).label}
+                          {locked ? " · upload first" : ""}
+                        </option>
+                      );
+                    })}
                   </select>
                 )}
               </div>
             </div>
-            {ticket.stage !== "launched" && !SPECIAL.includes(ticket.stage) && (
+            {making && (
+              <div className="grid gap-4 border-t border-line px-5 py-5">
+                <Deliverables ticket={ticket} demoDesigns={demo ? DEMO_DESIGNS : undefined} onState={onUploads} />
+                {hasCreative && uploads.uploading === 0 ? (
+                  <div className="grid gap-3 border-t border-line pt-4 animate-[step-in_.25s_ease-out]">
+                    <input
+                      value={moveNote}
+                      onChange={(e) => setMoveNote(e.target.value)}
+                      placeholder="Add a note for the reviewer (optional)"
+                      aria-label="Note for this move"
+                      className="h-10 rounded-brand border border-line bg-bg px-3 text-sm outline-none placeholder:text-faint focus:border-brand-text/60"
+                    />
+                    <div className="flex flex-wrap items-center gap-2">
+                      {info.next && (
+                        <button
+                          disabled={pending}
+                          onClick={() => move(info.next!)}
+                          className="h-10 rounded-brand bg-brand px-4 text-sm font-medium text-white shadow-[0_8px_24px_-10px_rgba(178,30,44,0.9)] hover:bg-brand-hover disabled:opacity-60"
+                        >
+                          {info.nextLabel} →
+                        </button>
+                      )}
+                      {back && (
+                        <button disabled={pending} onClick={() => move(back.to)} className="h-10 rounded-brand border border-line px-4 text-sm text-muted hover:border-faint hover:text-fg disabled:opacity-60">
+                          ↩ {back.label}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-faint">
+                    <span>{uploads.uploading > 0 ? "Uploading… the next step appears when it's done." : `Upload the creative to send it to ${ticket.stage === "client_revision" ? "the client" : "creative review"}.`}</span>
+                    {back && (
+                      <button disabled={pending} onClick={() => move(back.to)} className="rounded-full px-3 py-1.5 text-muted hover:text-fg disabled:opacity-60">
+                        ↩ {back.label}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+            {ticket.stage !== "launched" && !SPECIAL.includes(ticket.stage) && !making && (
               <div className="grid gap-3 border-t border-line px-5 py-4">
                 <input
                   value={moveNote}
@@ -450,7 +504,7 @@ export function TicketDrawer({
 
           {ticket.format === "video" && <ScriptPanel requestId={ticket.id} demo={demo ? null : undefined} />}
 
-          <Deliverables ticket={ticket} demoDesigns={demo ? DEMO_DESIGNS : undefined} />
+          {!making && <Deliverables ticket={ticket} demoDesigns={demo ? DEMO_DESIGNS : undefined} onState={onUploads} />}
 
           {/* Activity */}
           <section className="grid gap-4">

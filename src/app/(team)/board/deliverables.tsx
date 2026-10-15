@@ -32,7 +32,10 @@ const metaOf = (f: StagedFile, card: number | null) => ({
   card,
 });
 
-export function Deliverables({ ticket, demoDesigns }: { ticket: Ticket; demoDesigns?: Design[] }) {
+/** uploaded: designs with at least one finished file. uploading: files still on their way. */
+export type UploadState = { uploaded: number; uploading: number; loaded: boolean };
+
+export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket; demoDesigns?: Design[]; onState?: (s: UploadState) => void }) {
   const uploads = useUploads();
   const [designs, setDesigns] = useState<Design[] | null>(demoDesigns ?? null);
   const [staged, setStaged] = useState<StagedDesign[] | null>(null);
@@ -78,6 +81,12 @@ export function Deliverables({ ticket, demoDesigns }: { ticket: Ticket; demoDesi
   }, []);
 
   const pending = (uploads?.jobs ?? []).filter((j) => j.requestId === ticket.id && j.status !== "done" && j.status !== "failed");
+
+  // Tell the drawer whether there's a finished creative (it gates moving past production)
+  const uploadedCount = (designs ?? []).filter((d) => d.versions[0]?.files.length).length;
+  useEffect(() => {
+    onState?.({ uploaded: uploadedCount, uploading: pending.length, loaded: designs !== null });
+  }, [onState, uploadedCount, pending.length, designs]);
 
   const take = async (picked: Picked[]) => {
     setError(null);
