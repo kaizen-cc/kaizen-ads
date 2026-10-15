@@ -16,7 +16,7 @@ import { ClientView } from "@/app/(team)/clients/[slug]/client-view";
 import { sampleTickets } from "./sample-tickets";
 import { KpiBoard } from "@/app/(team)/kpis/kpi-board";
 import { sampleKpis } from "./sample-kpis";
-import { AgentsPanel } from "@/app/(team)/settings/agents";
+import { AgentDetail, AgentsOverview, type Agent as AiAgent, type Item as AiItem } from "@/app/(team)/settings/agents";
 
 // Local-only design check with sample data (never served in production).
 // Open /auth/design-preview?view=exec | exec-empty | leader | buyer | creative | board | team | clients | client | request | request-off
@@ -177,24 +177,48 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
         <TeamList people={people} canEdit meId="1" />
       </div>
     );
-  } else if (view === "settings") {
-    const all = { meta: true, briefing: true, recent_messages: true, memory: true, angles: true, recent_requests: true, allotment: true };
+  } else if (view === "settings" || view === "settings-agent") {
     const at = now.toISOString();
+    const stats = (runs: number, avgMs: number | null) => ({ runs, avgMs, inTokens: runs * 12000, outTokens: runs * 1400, failed: 0 });
+    const agents: AiAgent[] = [
+      { key: "suggest", label: "Brief strategist", icon: "compass", description: "Suggests the angle, audience, hook, copy direction and format mix while someone fills in a creative request.", model: "sonnet", effort: "low", instructions: "You are Kaizen's creative strategist. A media buyer is filling in a creative request and wants a sharp starting point, fast.\n\nPriorities, in order:\n1. What the numbers say.\n2. What the client asked for recently.\n3. Client memory.\n4. The allotment.", live: true, updatedAt: at, updatedBy: "Santi Lozano", stats: stats(42, 6400), recent: [{ at, label: "suggest", model: "sonnet", ms: 5900, tokens: "12,204 in · 1,402 out", ok: true, error: null }] },
+      { key: "review", label: "Request reviewer", icon: "shield", description: "Checks a finished request before it goes to the creative team: allotment, client memory, contradictions, Meta policy.", model: "opus", effort: "medium", instructions: "", live: true, updatedAt: at, updatedBy: null, stats: stats(17, 14100), recent: [] },
+      { key: "briefing", label: "Client briefer", icon: "feed", description: "Reads new Slack, email, Drive and Meta data twice a day and writes each client's briefing.", model: "haiku", effort: "low", instructions: "", live: true, updatedAt: at, updatedBy: null, stats: stats(72, 3100), recent: [] },
+      { key: "copy", label: "Copywriter", icon: "pen", description: "Writes primary text, headlines and on-image copy for approved briefs.", model: "sonnet", effort: "medium", instructions: "", live: false, updatedAt: at, updatedBy: null, stats: stats(0, null), recent: [] },
+      { key: "launcher", label: "Launcher", icon: "rocket", description: "Turns an approved ad into campaign, ad set and ad names and settings, then pushes it to Meta paused.", model: "opus", effort: "high", instructions: "", live: false, updatedAt: at, updatedBy: null, stats: stats(0, null), recent: [] },
+      { key: "fatigue", label: "Fatigue watcher", icon: "pulse", description: "Watches every ad's frequency, CTR and cost trend and flags creative that's tiring.", model: "haiku", effort: "low", instructions: "", live: false, updatedAt: at, updatedBy: null, stats: stats(0, null), recent: [] },
+    ];
+    const items: AiItem[] = [
+      { id: "k1", agentKey: "suggest", kind: "skill", title: "Brief structure that designers can run with", body: "Write every brief in this order:\n1. Goal\n2. Audience\n3. Angle\n4. Hook\n5. Body\n6. Offer and CTA", fileName: null, active: true, updatedAt: at },
+      { id: "k2", agentKey: "suggest", kind: "skill", title: "Using performance data in briefs", body: "Start from the top ads by cost per result over the last 30 days. Name the winning angle, hook and format.", fileName: null, active: true, updatedAt: at },
+      { id: "k3", agentKey: "suggest", kind: "example", title: "Nectr brief that won", body: "Angle: performance claims. Hook: the can opening in slow motion.", fileName: "nectr-brief.md", active: true, updatedAt: at },
+      { id: "k4", agentKey: null, kind: "knowledge", title: "How Kaizen works", body: "Kaizen Marketing is a paid social agency. ".repeat(40), fileName: null, active: true, updatedAt: at },
+      { id: "k5", agentKey: null, kind: "knowledge", title: "Meta ad policy guardrails", body: "Personal attributes: never imply you know something about the viewer. ".repeat(20), fileName: null, active: true, updatedAt: at },
+    ];
     body = (
       <div className="grid gap-7">
         <h1 className="font-heading text-[32px]">Settings</h1>
-        <AgentsPanel
-          agents={[
-            { key: "suggest", label: "Brief strategist", description: "Suggests the angle, audience, hook, copy direction and format mix while someone fills in a creative request.", model: "sonnet", effort: "low", instructions: "Lead with the offer in the first 3 words. Always give one UGC-style option.", sources: all, live: true, updatedAt: at, updatedBy: "Santi Lozano", stats: { runs: 42, avgMs: 6400, inTokens: 512000, outTokens: 61000, failed: 0 }, recent: [{ at, label: "suggest", model: "sonnet", ms: 5900, tokens: "12,204 in · 1,402 out", ok: true, error: null }] },
-            { key: "review", label: "Request reviewer", description: "Checks a finished request before it goes to the creative team.", model: "opus", effort: "medium", instructions: "", sources: all, live: true, updatedAt: at, updatedBy: null, stats: { runs: 17, avgMs: 14100, inTokens: 240000, outTokens: 22000, failed: 1 }, recent: [] },
-            { key: "copy", label: "Copywriter", description: "Writes primary text, headlines and on-image copy for approved briefs. Not wired in yet: set it up here first.", model: "sonnet", effort: "medium", instructions: "", sources: { ...all, recent_messages: false, allotment: false }, live: false, updatedAt: at, updatedBy: null, stats: { runs: 0, avgMs: null, inTokens: 0, outTokens: 0, failed: 0 }, recent: [] },
-          ]}
-          knowledge={[
-            { id: "k1", agentKey: "suggest", kind: "skill", title: "Hook writing framework", body: "Pattern interrupt, then the offer, then proof.".repeat(20), fileName: null, active: true },
-            { id: "k2", agentKey: "suggest", kind: "example", title: "Nectr brief that won", body: "Angle: performance claims...".repeat(30), fileName: "nectr-brief.md", active: true },
-            { id: "k3", agentKey: null, kind: "knowledge", title: "Meta ad policy cheat sheet", body: "No personal attributes...".repeat(60), fileName: null, active: true },
-          ]}
-        />
+        {view === "settings" ? (
+          <AgentsOverview agents={agents} items={items} />
+        ) : (
+          <AgentDetail
+            a={agents[0]}
+            items={items}
+            chat={[
+              { id: 1, role: "user", content: "The briefs feel too generic. Make them more specific.", changes: [], at },
+              {
+                id: 2,
+                role: "coach",
+                content: "I'd tighten the brief skill so every brief names the exact first frame and on-image words, and add a rule to the instructions that vague directions like 'show the product' aren't allowed.",
+                changes: [
+                  { op: "update_item", item_id: "k1", kind: "skill", scope: "", title: "Brief structure that designers can run with", body: "Write every brief in this order...", model: "", effort: "", reason: "Makes the hook and on-image text mandatory and concrete.", applied: true },
+                  { op: "set_instructions", item_id: "", kind: "", scope: "", title: "", body: "You are Kaizen's creative strategist...", model: "", effort: "", reason: "Adds a hard rule against vague visual directions." },
+                ],
+                at,
+              },
+            ]}
+          />
+        )}
       </div>
     );
   } else if (view === "kpis") {

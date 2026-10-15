@@ -1,337 +1,839 @@
 "use client";
 
-import { useState } from "react";
-import { ActionButton, ActionForm } from "@/components/action-form";
-import { field, label } from "@/components/ui";
-import { addKnowledge, saveAgent, setKnowledgeActive, updateKnowledge } from "./actions";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { field } from "@/components/ui";
+import { addItem, applyChange, chatWithCoach, clearChat, deleteItem, saveAgentSetup, setItemActive, updateItem, type Change, type ChatMessage } from "./actions";
 
+type Result = { ok: true } | { ok: false; error: string };
+export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue";
 export type Agent = {
-  key: "suggest" | "review" | "briefing" | "copy";
+  key: AgentKey;
   label: string;
   description: string;
+  icon: string;
   model: "opus" | "sonnet" | "haiku";
   effort: "low" | "medium" | "high";
   instructions: string;
-  sources: Record<string, boolean>;
   live: boolean;
   updatedAt: string;
   updatedBy: string | null;
   stats: { runs: number; avgMs: number | null; inTokens: number; outTokens: number; failed: number };
   recent: { at: string; label: string; model: string; ms: number | null; tokens: string; ok: boolean; error: string | null }[];
 };
-export type Knowledge = { id: string; agentKey: string | null; kind: "knowledge" | "skill" | "example"; title: string; body: string; fileName: string | null; active: boolean };
+export type Kind = "knowledge" | "skill" | "example";
+export type Item = { id: string; agentKey: string | null; kind: Kind; title: string; body: string; fileName: string | null; active: boolean; updatedAt: string };
 
 const MODELS = [
-  { key: "opus", name: "Opus", hint: "Deepest judgement. Slowest, costs the most." },
-  { key: "sonnet", name: "Sonnet", hint: "Strong and quick. The everyday choice." },
-  { key: "haiku", name: "Haiku", hint: "Fastest and cheapest. Good for summarizing." },
+  { key: "opus", name: "Opus", hint: "Deepest judgement. Slowest, costs the most.", meter: 3 },
+  { key: "sonnet", name: "Sonnet", hint: "Strong and quick. The everyday choice.", meter: 2 },
+  { key: "haiku", name: "Haiku", hint: "Fastest and cheapest. Great for gathering and summarizing.", meter: 1 },
 ] as const;
 const EFFORTS = [
-  { key: "low", name: "Low", hint: "Answers fast" },
-  { key: "medium", name: "Medium", hint: "Thinks it through" },
-  { key: "high", name: "High", hint: "Thinks hardest, slowest" },
+  { key: "low", name: "Low", hint: "Answers fast. Best when someone is waiting." },
+  { key: "medium", name: "Medium", hint: "Thinks it through. Good for checks and writing." },
+  { key: "high", name: "High", hint: "Thinks hardest. Slowest; for decisions that cost money." },
 ] as const;
-const SOURCES: { key: string; name: string; hint: string }[] = [
-  { key: "meta", name: "Meta performance", hint: "Spend, results and top ads" },
-  { key: "briefing", name: "Client briefing", hint: "Slack, email and Drive, summarized" },
-  { key: "recent_messages", name: "Newest messages", hint: "Slack and email since the briefing" },
-  { key: "memory", name: "Client memory", hint: "Avoid, prefer and notes the team saved" },
-  { key: "angles", name: "Angles and avatars", hint: "The client's active angles" },
-  { key: "recent_requests", name: "Past requests", hint: "The last 25 creative requests" },
-  { key: "allotment", name: "Allotment", hint: "What's left this month and sprint dates" },
-];
-const KINDS = {
-  knowledge: { name: "Knowledge", hint: "Reference it should know: brand rules, offers, policies", tone: "bg-surface-2 text-muted" },
-  skill: { name: "Skill", hint: "How to do something: a framework or checklist to follow", tone: "bg-brand-soft text-brand-text" },
-  example: { name: "Example", hint: "What good looks like: a brief or copy you loved", tone: "bg-ok-soft text-ok" },
-} as const;
+const KINDS: Record<Kind, { name: string; plural: string; hint: string; tone: string; dot: string }> = {
+  skill: { name: "Skill", plural: "Skills", hint: "A method to follow: a framework, checklist or procedure.", tone: "bg-brand-soft text-brand-text", dot: "bg-brand" },
+  knowledge: { name: "Knowledge", plural: "Knowledge", hint: "Facts to know: brand rules, policies, offers, how Kaizen works.", tone: "bg-surface-2 text-muted", dot: "bg-fg/50" },
+  example: { name: "Example", plural: "Examples", hint: "What good looks like: a brief or copy you loved.", tone: "bg-ok-soft text-ok", dot: "bg-ok" },
+};
 
-const fmtDate = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
+const ICONS: Record<string, string> = {
+  compass: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zm3.5-12.5-2 5-5 2 2-5z",
+  shield: "M12 3 5 6v5c0 4.5 3 8.3 7 10 4-1.7 7-5.5 7-10V6zm-3 9 2 2 4-4",
+  feed: "M4 5h16M4 10h16M4 15h10M4 20h7",
+  pen: "M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4",
+  rocket: "M5 15c-1.5 1.5-2 5-2 5s3.5-.5 5-2m-1-4 4 4m-6-6c1-4 5-9 12-9 0 7-5 11-9 12m3-7a1.5 1.5 0 1 0 0-.01",
+  pulse: "M3 12h4l2-6 4 12 2-6h6",
+  spark: "M12 3c.7 5 3 7.3 8 8v2c-5 .7-7.3 3-8 8h-.1c-.7-5-3-7.3-8-8v-2c5-.7 7.3-3 8-8z",
+};
+const TINT: Record<string, string> = { compass: "#5b8def", shield: "#b21e2c", feed: "#2fa37a", pen: "#c08a2e", rocket: "#8a63d2", pulse: "#d1495b", spark: "#888" };
 
-function Segmented<T extends string>({ name, options, value, onChange }: { name: string; options: readonly { key: T; name: string; hint: string }[]; value: T; onChange: (v: T) => void }) {
+const fmt = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
+const tokensOf = (s: string) => Math.round(s.length / 4);
+
+function AgentIcon({ icon, size = 44 }: { icon: string; size?: number }) {
+  const tint = TINT[icon] ?? TINT.spark;
   return (
-    <div className="grid gap-2">
-      <div className="grid gap-1 rounded-[10px] border border-line bg-bg p-1" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}>
-        {options.map((o) => (
-          <label key={o.key} className={`cursor-pointer rounded-[7px] px-3 py-2 text-center text-sm transition-colors ${value === o.key ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
-            <input type="radio" name={name} value={o.key} checked={value === o.key} onChange={() => onChange(o.key)} className="sr-only" />
-            {o.name}
-          </label>
-        ))}
-      </div>
-      <p className="text-xs text-faint">{options.find((o) => o.key === value)?.hint}</p>
-    </div>
+    <span className="relative grid shrink-0 place-items-center rounded-[14px]" style={{ width: size, height: size, background: `${tint}22`, color: tint, boxShadow: `inset 0 0 0 1px ${tint}33` }}>
+      <svg width={size * 0.46} height={size * 0.46} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d={ICONS[icon] ?? ICONS.spark} />
+      </svg>
+    </span>
   );
 }
 
-/** Read a dropped text file into the form, so a doc can be added as knowledge without copy and paste. */
-function FileToText({ onText }: { onText: (name: string, text: string) => void }) {
-  const [err, setErr] = useState<string | null>(null);
+// ─── Unsaved changes ─────────────────────────────────────────────────────────
+// Every editor that has changes registers itself; the banner at the bottom saves or discards them all.
+
+type Pending = { label: string; save: () => Promise<Result>; discard: () => void };
+const DirtyCtx = createContext<{ set: (id: string, p: Pending | null) => void } | null>(null);
+
+function useDirty(id: string, dirty: boolean, p: Omit<Pending, "label"> & { label: string }) {
+  const ctx = useContext(DirtyCtx);
+  const ref = useRef(p);
+  // Keep the latest save/discard (they close over the editor's current values)
+  useEffect(() => {
+    ref.current = p;
+  });
+  useEffect(() => {
+    if (!ctx) return;
+    ctx.set(id, dirty ? { label: ref.current.label, save: () => ref.current.save(), discard: () => ref.current.discard() } : null);
+    return () => ctx.set(id, null);
+  }, [ctx, id, dirty, p.label]);
+}
+
+function DirtyProvider({ children }: { children: React.ReactNode }) {
+  const [pending, setPending] = useState<Record<string, Pending>>({});
+  const [saving, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
+  const set = useCallback((id: string, p: Pending | null) => {
+    setPending((cur) => {
+      if (!p && !(id in cur)) return cur;
+      const next = { ...cur };
+      if (p) next[id] = p;
+      else delete next[id];
+      return next;
+    });
+  }, []);
+  const list = Object.values(pending);
+
+  // Leaving the page with unsaved edits asks first
+  useEffect(() => {
+    if (!list.length) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [list.length]);
+
   return (
-    <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-muted hover:text-fg">
-      <input
-        type="file"
-        accept=".txt,.md,.markdown,.csv,.json,.html,text/*"
-        className="sr-only"
-        onChange={async (e) => {
-          const f = e.target.files?.[0];
-          if (!f) return;
-          if (f.size > 500_000) return setErr("That file is over 500 KB. Paste the part that matters.");
-          setErr(null);
-          onText(f.name, await f.text());
-        }}
-      />
-      <span className="rounded-full border border-line px-3 py-1.5">Upload a text file</span>
-      <span className="text-faint">.txt, .md, .csv</span>
-      {err && <span className="text-bad">{err}</span>}
-    </label>
+    <DirtyCtx.Provider value={useMemo(() => ({ set }), [set])}>
+      {children}
+      <div className={`pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-5 transition-all duration-300 md:pl-[240px] ${list.length ? "translate-y-0 opacity-100" : "translate-y-6 opacity-0"}`}>
+        <div className="pointer-events-auto flex w-full max-w-3xl flex-wrap items-center gap-3 rounded-[16px] border border-warn/40 bg-surface/95 px-5 py-3.5 shadow-[0_20px_60px_-20px_rgba(0,0,0,0.8)] backdrop-blur">
+          <span className="relative flex h-2.5 w-2.5 shrink-0">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-warn opacity-50" />
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-warn" />
+          </span>
+          <p className="min-w-0 flex-1 text-sm">
+            <span className="font-medium">Unsaved changes</span>
+            <span className="text-muted"> · {list.map((p) => p.label).join(", ")}</span>
+            {error && <span className="block text-xs text-bad">{error}</span>}
+          </p>
+          <button onClick={() => (list.forEach((p) => p.discard()), setError(null))} disabled={saving} className="h-9 rounded-full px-4 text-sm text-muted transition-colors hover:text-fg">
+            Discard
+          </button>
+          <button
+            disabled={saving}
+            onClick={() =>
+              start(async () => {
+                setError(null);
+                for (const p of list) {
+                  const r = await p.save();
+                  if (!r.ok) return setError(`${p.label}: ${r.error}`);
+                }
+                router.refresh();
+              })
+            }
+            className="h-9 rounded-full bg-brand px-5 text-sm font-medium text-white transition-colors hover:bg-brand-hover disabled:opacity-60"
+          >
+            {saving ? "Saving…" : list.length > 1 ? `Save all ${list.length}` : "Save changes"}
+          </button>
+        </div>
+      </div>
+    </DirtyCtx.Provider>
   );
 }
 
-function KnowledgeItem({ k }: { k: Knowledge }) {
-  const [open, setOpen] = useState(false);
-  const meta = KINDS[k.kind];
+// ─── Overview ────────────────────────────────────────────────────────────────
+
+function ModelMeter({ model }: { model: Agent["model"] }) {
+  const n = MODELS.find((m) => m.key === model)?.meter ?? 1;
   return (
-    <li className={`rounded-[10px] border border-line bg-bg ${k.active ? "" : "opacity-55"}`}>
-      <div className="flex items-center gap-3 px-4 py-3">
-        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] ${meta.tone}`}>{meta.name}</span>
-        <button onClick={() => setOpen((o) => !o)} className="min-w-0 flex-1 truncate text-left text-sm hover:text-brand-text">
-          {k.title}
-          {k.fileName && <span className="text-xs text-faint"> · {k.fileName}</span>}
-        </button>
-        <span className="shrink-0 tabular text-[11px] text-faint">{Math.round(k.body.length / 4).toLocaleString()} tokens</span>
-        <ActionButton action={setKnowledgeActive.bind(null, k.id, !k.active)} label={k.active ? "Turn off" : "Turn on"} />
+    <span className="inline-flex items-end gap-0.5" aria-hidden>
+      {[1, 2, 3].map((i) => (
+        <span key={i} className={`w-1 rounded-full ${i <= n ? "bg-fg/80" : "bg-fg/15"}`} style={{ height: 4 + i * 3 }} />
+      ))}
+    </span>
+  );
+}
+
+export function AgentsOverview({ agents, items }: { agents: Agent[]; items: Item[] }) {
+  const shared = items.filter((k) => k.agentKey === null);
+  return (
+    <DirtyProvider>
+      <div className="grid gap-8">
+        <ul className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {agents.map((a) => {
+            const mine = items.filter((k) => k.agentKey === a.key && k.active);
+            const count = (kind: Kind) => mine.filter((k) => k.kind === kind).length;
+            const tint = TINT[a.icon] ?? TINT.spark;
+            return (
+              <li key={a.key}>
+                <Link
+                  href={`/settings?tab=agents&agent=${a.key}`}
+                  className="group relative grid h-full content-start gap-5 overflow-hidden rounded-[18px] border border-line bg-surface p-6 transition-all duration-200 hover:-translate-y-0.5 hover:border-faint/70 hover:shadow-[0_24px_60px_-30px_rgba(0,0,0,0.9)]"
+                >
+                  <span aria-hidden className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full opacity-[0.13] blur-2xl transition-opacity group-hover:opacity-25" style={{ background: tint }} />
+                  <div className="relative flex items-start justify-between gap-3">
+                    <AgentIcon icon={a.icon} size={48} />
+                    {a.live ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-ok-soft px-2.5 py-1 text-[11px] text-ok">
+                        <span className="relative flex h-1.5 w-1.5">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-ok opacity-60" />
+                          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-ok" />
+                        </span>
+                        Working
+                      </span>
+                    ) : (
+                      <span className="rounded-full border border-dashed border-line px-2.5 py-1 text-[11px] text-faint">Coming soon</span>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <h3 className="font-heading text-[20px] leading-snug">{a.label}</h3>
+                    <p className="mt-1.5 line-clamp-3 text-sm leading-relaxed text-muted">{a.description}</p>
+                  </div>
+                  <div className="relative mt-auto grid gap-4">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {(["skill", "knowledge", "example"] as const).map((k) =>
+                        count(k) ? (
+                          <span key={k} className={`rounded-full px-2.5 py-1 text-[11px] ${KINDS[k].tone}`}>
+                            {count(k)} {count(k) === 1 ? KINDS[k].name.toLowerCase() : KINDS[k].plural.toLowerCase()}
+                          </span>
+                        ) : null,
+                      )}
+                      {!mine.length && <span className="text-[11px] text-faint">No skills yet</span>}
+                    </div>
+                    <div className="flex items-center justify-between border-t border-line pt-4 text-xs">
+                      <span className="flex items-center gap-2 text-muted">
+                        <ModelMeter model={a.model} />
+                        <span className="capitalize text-fg">{a.model}</span>
+                        <span className="text-faint">· {a.effort} effort</span>
+                      </span>
+                      <span className="text-faint">{a.stats.runs ? `${a.stats.runs} runs this week` : "No runs yet"}</span>
+                    </div>
+                  </div>
+                  <span className="absolute bottom-6 right-6 hidden translate-x-1 text-sm text-muted opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100 xl:block" aria-hidden>
+                    →
+                  </span>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+
+        <section className="grid gap-4 rounded-[18px] border border-line bg-surface p-6">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h2 className="font-heading text-[20px]">Shared knowledge</h2>
+              <p className="mt-1 text-sm text-muted">Every agent reads these: how Kaizen works, Meta policy, formats and specs.</p>
+            </div>
+            <span className="tabular text-xs text-faint">~{shared.filter((k) => k.active).reduce((t, k) => t + tokensOf(k.body), 0).toLocaleString()} tokens</span>
+          </div>
+          <ItemList items={shared} agentKey={null} />
+        </section>
       </div>
-      {open && (
-        <ActionForm action={updateKnowledge.bind(null, k.id)} submitLabel="Save" className="grid gap-3 border-t border-line px-4 py-4">
-          <input name="title" defaultValue={k.title} className={field} />
-          <textarea name="body" defaultValue={k.body} rows={10} className={`${field} h-auto py-3 font-mono text-xs font-normal leading-relaxed`} />
-        </ActionForm>
-      )}
+    </DirtyProvider>
+  );
+}
+
+// ─── Items (skills, knowledge, examples) with a pencil to edit ─────────────
+
+function ItemCard({ item, readOnly = false }: { item: Item; readOnly?: boolean }) {
+  const [editing, setEditing] = useState(false);
+  const [kind, setKind] = useState(item.kind);
+  const [title, setTitle] = useState(item.title);
+  const [body, setBody] = useState(item.body);
+  const [busy, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
+  const dirty = editing && (kind !== item.kind || title !== item.title || body !== item.body);
+  const discard = () => {
+    setKind(item.kind);
+    setTitle(item.title);
+    setBody(item.body);
+    setEditing(false);
+  };
+  const save = async () => {
+    const r = await updateItem(item.id, { kind, title, body });
+    if (r.ok) setEditing(false);
+    return r;
+  };
+  useDirty(`item:${item.id}`, dirty, { label: `${KINDS[kind].name}: ${title || "untitled"}`, save, discard });
+  const meta = KINDS[item.kind];
+
+  if (editing)
+    return (
+      <li className="grid gap-3 rounded-[14px] border border-brand/40 bg-bg p-4 shadow-[0_0_0_4px_var(--brand-soft)]">
+        <div className="grid gap-3 sm:grid-cols-[150px_minmax(0,1fr)]">
+          <select value={kind} onChange={(e) => setKind(e.target.value as Kind)} className={field}>
+            {(Object.keys(KINDS) as Kind[]).map((k) => (
+              <option key={k} value={k}>
+                {KINDS[k].name}
+              </option>
+            ))}
+          </select>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} className={field} />
+        </div>
+        <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={Math.min(22, Math.max(8, body.split("\n").length + 2))} className={`${field} h-auto py-3 text-[13px] font-normal leading-relaxed`} />
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            disabled={busy || !dirty}
+            onClick={() =>
+              start(async () => {
+                const r = await save();
+                if (r.ok) router.refresh();
+                else setError(r.error);
+              })
+            }
+            className="h-9 rounded-full bg-brand px-4 text-sm font-medium text-white disabled:opacity-40"
+          >
+            {busy ? "Saving…" : "Save"}
+          </button>
+          <button onClick={discard} className="h-9 rounded-full px-4 text-sm text-muted hover:text-fg">
+            Cancel
+          </button>
+          <span className="tabular ml-auto text-[11px] text-faint">~{tokensOf(body).toLocaleString()} tokens</span>
+          <button
+            onClick={() => {
+              if (!confirm(`Delete "${item.title}"? This can't be undone.`)) return;
+              start(async () => {
+                const r = await deleteItem(item.id);
+                if (r.ok) router.refresh();
+                else setError(r.error);
+              });
+            }}
+            className="h-9 rounded-full px-3 text-sm text-faint hover:text-bad"
+          >
+            Delete
+          </button>
+        </div>
+        {error && <p className="text-xs text-bad">{error}</p>}
+      </li>
+    );
+
+  return (
+    <li className={`group relative grid gap-2 rounded-[14px] border border-line bg-bg p-4 transition-colors hover:border-faint/60 ${item.active ? "" : "opacity-50"}`}>
+      <div className="flex items-start gap-3">
+        <span className={`mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-[11px] ${meta.tone}`}>{meta.name}</span>
+        <p className="min-w-0 flex-1 text-sm font-medium leading-snug">
+          {item.title}
+          {item.fileName && <span className="font-normal text-faint"> · {item.fileName}</span>}
+          {!item.active && <span className="font-normal text-faint"> · off</span>}
+        </p>
+        {!readOnly && (
+          <div className="flex shrink-0 items-center gap-1">
+            <button
+              onClick={() => start(async () => void ((await setItemActive(item.id, !item.active)).ok && router.refresh()))}
+              className="rounded-full px-2.5 py-1 text-[11px] text-faint opacity-0 transition-opacity hover:text-fg group-hover:opacity-100 focus:opacity-100"
+            >
+              {item.active ? "Turn off" : "Turn on"}
+            </button>
+            <button onClick={() => setEditing(true)} aria-label={`Edit ${item.title}`} className="grid h-8 w-8 place-items-center rounded-full text-muted transition-colors hover:bg-surface-2 hover:text-fg">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4" />
+              </svg>
+            </button>
+          </div>
+        )}
+      </div>
+      <p className="line-clamp-3 whitespace-pre-line text-xs leading-relaxed text-muted">{item.body}</p>
+      <p className="tabular text-[11px] text-faint">~{tokensOf(item.body).toLocaleString()} tokens · updated {fmt(item.updatedAt)}</p>
     </li>
   );
 }
 
-function AddKnowledge({ agentKey }: { agentKey: string }) {
-  const [open, setOpen] = useState(false);
-  const [kind, setKind] = useState<keyof typeof KINDS>("knowledge");
+function NewItem({ agentKey, kind, onDone }: { agentKey: string | null; kind: Kind; onDone: () => void }) {
+  const [k, setK] = useState(kind);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
-  const [file, setFile] = useState("");
-  if (!open)
-    return (
-      <button onClick={() => setOpen(true)} className="justify-self-start text-sm text-muted underline-offset-4 hover:text-fg hover:underline">
-        + Add knowledge, a skill or an example
-      </button>
-    );
+  const [file, setFile] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, start] = useTransition();
+  const router = useRouter();
+  const save = async () => {
+    const r = await addItem({ agentKey, kind: k, title, body, fileName: file });
+    if (r.ok) onDone();
+    return r;
+  };
+  useDirty(`new:${agentKey}`, Boolean(title || body), { label: `New ${KINDS[k].name.toLowerCase()}`, save, discard: onDone });
   return (
-    <ActionForm action={addKnowledge} submitLabel="Add" resetOnSuccess className="grid gap-3 rounded-[10px] border border-line bg-bg p-4">
-      <input type="hidden" name="agent_key" value={agentKey} />
-      <input type="hidden" name="file_name" value={file} />
-      <div className="grid gap-3 sm:grid-cols-[180px_minmax(0,1fr)]">
-        <label className={label}>
-          Type
-          <select name="kind" value={kind} onChange={(e) => setKind(e.target.value as keyof typeof KINDS)} className={field}>
-            {Object.entries(KINDS).map(([k, v]) => (
-              <option key={k} value={k}>
-                {v.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className={label}>
-          Title
-          <input name="title" value={title} onChange={(e) => setTitle(e.target.value)} className={field} placeholder={kind === "skill" ? "e.g. Hook writing framework" : kind === "example" ? "e.g. Nectr brief that won" : "e.g. Meta ad policy cheat sheet"} />
-        </label>
+    <div className="grid gap-3 rounded-[14px] border border-brand/40 bg-bg p-4 shadow-[0_0_0_4px_var(--brand-soft)]">
+      <div className="grid gap-3 sm:grid-cols-[150px_minmax(0,1fr)]">
+        <select value={k} onChange={(e) => setK(e.target.value as Kind)} className={field}>
+          {(Object.keys(KINDS) as Kind[]).map((x) => (
+            <option key={x} value={x}>
+              {KINDS[x].name}
+            </option>
+          ))}
+        </select>
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={k === "skill" ? "e.g. Hook writing framework" : k === "example" ? "e.g. Nectr brief that won" : "e.g. Holiday offer calendar"} className={field} />
       </div>
-      <p className="-mt-1 text-xs text-faint">{KINDS[kind].hint}</p>
-      <textarea name="body" value={body} onChange={(e) => setBody(e.target.value)} rows={8} className={`${field} h-auto py-3 text-sm font-normal leading-relaxed`} placeholder="Paste it here, or upload a text file." />
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <FileToText
-          onText={(name, text) => {
-            setFile(name);
-            setBody(text);
-            if (!title) setTitle(name.replace(/\.[^.]+$/, ""));
-          }}
-        />
-        <button type="button" onClick={() => setOpen(false)} className="text-xs text-muted hover:text-fg">
+      <p className="-mt-1 text-xs text-faint">{KINDS[k].hint}</p>
+      <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={8} placeholder="Paste it here, or upload a text file." className={`${field} h-auto py-3 text-[13px] font-normal leading-relaxed`} />
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          disabled={busy || !title.trim() || !body.trim()}
+          onClick={() =>
+            start(async () => {
+              const r = await save();
+              if (r.ok) router.refresh();
+              else setError(r.error);
+            })
+          }
+          className="h-9 rounded-full bg-brand px-4 text-sm font-medium text-white disabled:opacity-40"
+        >
+          {busy ? "Adding…" : "Add"}
+        </button>
+        <button onClick={onDone} className="h-9 rounded-full px-4 text-sm text-muted hover:text-fg">
           Cancel
         </button>
+        <label className="ml-auto inline-flex cursor-pointer items-center gap-2 rounded-full border border-line px-3 py-1.5 text-xs text-muted hover:text-fg">
+          <input
+            type="file"
+            accept=".txt,.md,.markdown,.csv,.json,.html,text/*"
+            className="sr-only"
+            onChange={async (e) => {
+              const f = e.target.files?.[0];
+              if (!f) return;
+              if (f.size > 500_000) return setError("That file is over 500 KB. Paste the part that matters.");
+              setError(null);
+              setFile(f.name);
+              setBody(await f.text());
+              if (!title) setTitle(f.name.replace(/\.[^.]+$/, ""));
+            }}
+          />
+          Upload .txt / .md / .csv
+        </label>
       </div>
-    </ActionForm>
+      {error && <p className="text-xs text-bad">{error}</p>}
+    </div>
   );
 }
 
-function AgentCard({ a, knowledge }: { a: Agent; knowledge: Knowledge[] }) {
+function ItemList({ items, agentKey }: { items: Item[]; agentKey: string | null }) {
+  const [adding, setAdding] = useState<Kind | null>(null);
+  return (
+    <div className="grid gap-3">
+      {items.length > 0 && (
+        <ul className="grid gap-3 lg:grid-cols-2">
+          {items.map((k) => (
+            <ItemCard key={`${k.id}:${k.updatedAt}`} item={k} />
+          ))}
+        </ul>
+      )}
+      {adding ? (
+        <NewItem agentKey={agentKey} kind={adding} onDone={() => setAdding(null)} />
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {(["skill", "knowledge", "example"] as const).map((k) => (
+            <button key={k} onClick={() => setAdding(k)} className="inline-flex h-9 items-center gap-2 rounded-full border border-dashed border-line px-4 text-sm text-muted transition-colors hover:border-faint hover:text-fg">
+              <span className={`h-1.5 w-1.5 rounded-full ${KINDS[k].dot}`} />+ {KINDS[k].name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── One agent ───────────────────────────────────────────────────────────────
+
+function Setup({ a }: { a: Agent }) {
   const [model, setModel] = useState(a.model);
   const [effort, setEffort] = useState(a.effort);
-  const mine = knowledge.filter((k) => k.agentKey === a.key);
-  const tokens = knowledge.filter((k) => k.active && (k.agentKey === a.key || k.agentKey === null)).reduce((t, k) => t + k.body.length / 4, 0);
+  const [instructions, setInstructions] = useState(a.instructions);
+  const dirty = model !== a.model || effort !== a.effort || instructions !== a.instructions;
+  useDirty(`setup:${a.key}`, dirty, {
+    label: "Model and instructions",
+    save: () => saveAgentSetup(a.key, { model, effort, instructions }),
+    discard: () => {
+      setModel(a.model);
+      setEffort(a.effort);
+      setInstructions(a.instructions);
+    },
+  });
   return (
-    <section id={a.key} className="grid gap-6 rounded-[14px] border border-line bg-surface p-6">
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="font-heading text-[20px]">{a.label}</h2>
-            {a.live ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-ok-soft px-2.5 py-0.5 text-[11px] text-ok">
-                <span className="h-1.5 w-1.5 rounded-full bg-ok" />
-                In use
-              </span>
-            ) : (
-              <span className="rounded-full bg-surface-2 px-2.5 py-0.5 text-[11px] text-muted">Not wired in yet</span>
-            )}
-          </div>
-          <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted">{a.description}</p>
-        </div>
-        <dl className="grid shrink-0 grid-cols-3 gap-5 text-right">
-          <div>
-            <dt className="text-[11px] text-faint">Runs, 7 days</dt>
-            <dd className="tabular font-heading text-lg">{a.stats.runs}</dd>
-          </div>
-          <div>
-            <dt className="text-[11px] text-faint">Avg time</dt>
-            <dd className="tabular font-heading text-lg">{a.stats.avgMs == null ? "—" : `${(a.stats.avgMs / 1000).toFixed(1)}s`}</dd>
-          </div>
-          <div>
-            <dt className="text-[11px] text-faint">Tokens</dt>
-            <dd className="tabular font-heading text-lg">{a.stats.runs ? `${Math.round((a.stats.inTokens + a.stats.outTokens) / 1000)}k` : "—"}</dd>
-          </div>
-        </dl>
-      </header>
-
-      <ActionForm action={saveAgent.bind(null, a.key)} submitLabel={`Save ${a.label.toLowerCase()}`} className="grid gap-6">
-        <div className="grid gap-5 lg:grid-cols-2">
-          <div className="grid content-start gap-2">
-            <p className="text-sm font-medium">Model</p>
-            <Segmented name="model" options={MODELS} value={model} onChange={setModel} />
-          </div>
-          <div className="grid content-start gap-2">
-            <p className="text-sm font-medium">Effort</p>
-            <Segmented name="effort" options={EFFORTS} value={effort} onChange={setEffort} />
-          </div>
-        </div>
-
-        <label className={label}>
-          <span>
-            Instructions <span className="font-normal text-faint">· how this agent should think and write, on top of the built-in prompt</span>
-          </span>
-          <textarea
-            name="instructions"
-            defaultValue={a.instructions}
-            rows={6}
-            className={`${field} h-auto py-3 text-sm font-normal leading-relaxed`}
-            placeholder={
-              a.key === "suggest"
-                ? "e.g. Lead with the offer in the first 3 words. Always give one UGC-style option. Never suggest stock-photo looks for food clients."
-                : a.key === "review"
-                  ? "e.g. Block any brief that promises results. Warn when the CTA doesn't match the campaign objective."
-                  : a.key === "briefing"
-                    ? "e.g. Call out any client complaint at the top. Keep each list to 5 items."
-                    : "e.g. Primary text under 125 characters. Headlines under 40. Match the client's voice from past approved copy."
-            }
-          />
-        </label>
-
-        <fieldset className="grid gap-3">
-          <legend className="mb-3 text-sm font-medium">What it reads about the client</legend>
-          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-            {SOURCES.map((s) => (
-              <label key={s.key} className="flex cursor-pointer items-start gap-3 rounded-[10px] border border-line bg-bg px-3.5 py-3 transition-colors hover:border-faint/60">
-                <input type="checkbox" name={`source_${s.key}`} defaultChecked={a.sources[s.key] !== false} className="mt-0.5 h-4 w-4 shrink-0" />
-                <span className="grid gap-0.5">
-                  <span className="text-sm">{s.name}</span>
-                  <span className="text-[11px] leading-snug text-faint">{s.hint}</span>
+    <div className="grid gap-8">
+      <div className="grid gap-4">
+        <p className="text-sm font-medium">Brain</p>
+        <div className="grid gap-3 md:grid-cols-3">
+          {MODELS.map((m) => {
+            const on = model === m.key;
+            return (
+              <button
+                key={m.key}
+                onClick={() => setModel(m.key)}
+                className={`grid gap-2 rounded-[14px] border p-4 text-left transition-all ${on ? "border-fg/60 bg-surface-2 shadow-[0_0_0_4px_rgba(255,255,255,0.04)]" : "border-line bg-bg hover:border-faint/60"}`}
+              >
+                <span className="flex items-center justify-between">
+                  <span className="font-heading text-[17px]">{m.name}</span>
+                  <ModelMeter model={m.key} />
                 </span>
-              </label>
+                <span className="text-xs leading-relaxed text-muted">{m.hint}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="grid gap-2">
+          <div className="grid grid-cols-3 gap-1 rounded-[12px] border border-line bg-bg p-1">
+            {EFFORTS.map((e) => (
+              <button key={e.key} onClick={() => setEffort(e.key)} className={`rounded-[9px] px-3 py-2 text-sm transition-colors ${effort === e.key ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
+                {e.name} effort
+              </button>
             ))}
           </div>
-        </fieldset>
-      </ActionForm>
-
-      <div className="grid gap-3 border-t border-line pt-6">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <p className="text-sm font-medium">Knowledge, skills and examples</p>
-          <p className="text-xs text-faint">
-            Reads about <span className="tabular text-muted">{Math.round(tokens).toLocaleString()}</span> tokens of it on every call, including what all agents share
-          </p>
+          <p className="text-xs text-faint">{EFFORTS.find((e) => e.key === effort)?.hint}</p>
         </div>
-        {mine.length > 0 && (
-          <ul className="grid gap-2">
-            {mine.map((k) => (
-              <KnowledgeItem key={k.id} k={k} />
-            ))}
-          </ul>
-        )}
-        <AddKnowledge agentKey={a.key} />
       </div>
 
-      {a.recent.length > 0 && (
-        <details className="group border-t border-line pt-5">
-          <summary className="cursor-pointer list-none text-sm text-muted hover:text-fg">
-            <span className="group-open:hidden">Show recent runs</span>
-            <span className="hidden group-open:inline">Hide recent runs</span>
-            {a.stats.failed > 0 && <span className="ml-2 text-bad">{a.stats.failed} failed this week</span>}
-          </summary>
-          <ul className="mt-3 grid gap-1">
-            {a.recent.map((r, i) => (
-              <li key={i} className="grid grid-cols-[110px_minmax(0,1fr)_70px_60px_110px] items-center gap-3 rounded-[8px] px-3 py-2 text-xs odd:bg-bg">
-                <span className="tabular text-faint">{fmtDate(r.at)}</span>
-                <span className={`truncate ${r.ok ? "text-muted" : "text-bad"}`} title={r.error ?? undefined}>
-                  {r.label}
-                  {r.error && ` · ${r.error}`}
-                </span>
-                <span className="capitalize text-muted">{r.model}</span>
-                <span className="tabular text-right text-muted">{r.ms == null ? "—" : `${(r.ms / 1000).toFixed(1)}s`}</span>
-                <span className="tabular text-right text-faint">{r.tokens}</span>
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
-      <p className="-mt-3 text-[11px] text-faint">
-        Last changed {fmtDate(a.updatedAt)}
-        {a.updatedBy && ` by ${a.updatedBy}`}. Changes apply to the next call, within a minute.
-      </p>
-    </section>
+      <div className="grid gap-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <p className="text-sm font-medium">Instructions</p>
+          <p className="text-xs text-faint">How it thinks, what matters most, hard rules. ~{tokensOf(instructions).toLocaleString()} tokens</p>
+        </div>
+        <textarea
+          value={instructions}
+          onChange={(e) => setInstructions(e.target.value)}
+          rows={Math.min(26, Math.max(10, instructions.split("\n").length + 2))}
+          className={`${field} h-auto py-4 text-[13.5px] font-normal leading-relaxed`}
+        />
+      </div>
+    </div>
   );
 }
 
-/** Every AI agent in the app: its model, effort, instructions, what it reads, and what it knows. */
-export function AgentsPanel({ agents, knowledge }: { agents: Agent[]; knowledge: Knowledge[] }) {
-  const shared = knowledge.filter((k) => k.agentKey === null);
+const CHANGE_LABEL: Record<Change["op"], string> = {
+  set_instructions: "Rewrite instructions",
+  update_item: "Update",
+  add_item: "Add",
+  turn_off_item: "Turn off",
+  set_model: "Switch brain",
+};
+
+function ChangeCard({ c, onApply, items }: { c: Change; onApply: () => Promise<void>; items: Item[] }) {
+  const [open, setOpen] = useState(false);
+  const [busy, start] = useTransition();
+  const target = items.find((i) => i.id === c.item_id);
+  const title =
+    c.op === "set_model"
+      ? `${c.model ? c.model[0].toUpperCase() + c.model.slice(1) : ""}${c.effort ? ` · ${c.effort} effort` : ""}`
+      : c.op === "set_instructions"
+        ? ""
+        : c.title || target?.title || "";
   return (
-    <div className="grid gap-6">
-      <nav className="flex flex-wrap gap-1.5">
-        {agents.map((a) => (
-          <a key={a.key} href={`#${a.key}`} className="inline-flex h-9 items-center gap-2 rounded-full border border-line px-4 text-sm text-muted transition-colors hover:text-fg">
-            {a.label}
-            <span className="text-[11px] capitalize text-faint">{a.model}</span>
-          </a>
-        ))}
-        <a href="#shared" className="inline-flex h-9 items-center rounded-full border border-line px-4 text-sm text-muted transition-colors hover:text-fg">
-          Shared knowledge
-        </a>
-      </nav>
-
-      {agents.map((a) => (
-        <AgentCard key={a.key} a={a} knowledge={knowledge} />
-      ))}
-
-      <section id="shared" className="grid gap-4 rounded-[14px] border border-line bg-surface p-6">
-        <div>
-          <h2 className="font-heading text-[20px]">Shared knowledge</h2>
-          <p className="mt-1 text-sm leading-relaxed text-muted">Every agent reads these: agency-wide brand rules, Meta policy, how Kaizen likes things done.</p>
+    <div className={`grid gap-2 rounded-[12px] border p-3.5 ${c.applied ? "border-ok/40 bg-ok-soft/30" : "border-line bg-bg"}`}>
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm">
+            <span className="font-medium">{CHANGE_LABEL[c.op]}</span>
+            {c.op === "add_item" && c.kind && <span className="text-muted"> {KINDS[c.kind as Kind]?.name.toLowerCase()}</span>}
+            {title && <span className="text-muted"> · {title}</span>}
+            {c.scope === "shared" && <span className="text-faint"> (shared)</span>}
+          </p>
+          {c.reason && <p className="mt-0.5 text-xs text-faint">{c.reason}</p>}
         </div>
-        {shared.length > 0 && (
-          <ul className="grid gap-2">
-            {shared.map((k) => (
-              <KnowledgeItem key={k.id} k={k} />
-            ))}
-          </ul>
+        {c.applied ? (
+          <span className="shrink-0 text-xs text-ok">✓ Applied</span>
+        ) : (
+          <button disabled={busy} onClick={() => start(onApply)} className="h-8 shrink-0 rounded-full bg-fg px-3.5 text-xs font-medium text-bg disabled:opacity-50">
+            {busy ? "Applying…" : "Apply"}
+          </button>
         )}
-        <AddKnowledge agentKey="all" />
-      </section>
+      </div>
+      {c.body && (
+        <>
+          <button onClick={() => setOpen((o) => !o)} className="justify-self-start text-xs text-muted hover:text-fg">
+            {open ? "Hide" : "See"} the new text
+          </button>
+          {open && <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-[8px] bg-surface p-3 font-sans text-xs leading-relaxed text-muted">{c.body}</pre>}
+        </>
+      )}
     </div>
+  );
+}
+
+const STARTERS: Record<string, string[]> = {
+  suggest: ["The briefs feel too generic. Make them more specific.", "Always include one UGC-style video idea.", "What do you look at first when you suggest an angle?"],
+  review: ["You're flagging too many small things. Only real problems.", "Block anything that mentions a competitor by name.", "Walk me through how you decide block vs warn."],
+  briefing: ["Put client complaints at the very top, always.", "Performance lines need cost per result and ROAS.", "What's missing from how you write briefings?"],
+  copy: ["Camille wants headlines under 30 characters.", "Here's an example of copy we loved: …", "Our school clients need a warmer, parent-to-parent voice."],
+  launcher: ["Here's Kyle's naming convention: …", "Never put prospecting and retargeting in the same ad set.", "What do you need from us before you can launch?"],
+  fatigue: ["Frequency of 2.5 is already too high for our small accounts.", "Ignore ads with under $100 spend.", "How would you decide what to make next?"],
+};
+
+function Coach({ a, initial, items }: { a: Agent; initial: ChatMessage[]; items: Item[] }) {
+  const [messages, setMessages] = useState(initial);
+  const [text, setText] = useState("");
+  const [thinking, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
+  const end = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    end.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [messages.length, thinking]);
+
+  const send = (msg: string) => {
+    if (!msg.trim() || thinking) return;
+    setError(null);
+    setText("");
+    setMessages((m) => [...m, { id: -Date.now(), role: "user", content: msg, changes: [], at: new Date().toISOString() }]);
+    start(async () => {
+      const r = await chatWithCoach(a.key, msg);
+      if (r.ok) setMessages(r.messages);
+      else {
+        setError(r.error);
+        setText(msg);
+        setMessages((m) => m.filter((x) => x.id > 0));
+      }
+    });
+  };
+
+  return (
+    <div className="grid gap-4">
+      <div className="relative overflow-hidden rounded-[16px] border border-line bg-bg">
+        <div className="max-h-[560px] min-h-[320px] overflow-y-auto px-5 py-5">
+          {messages.length === 0 && !thinking ? (
+            <div className="grid justify-items-center gap-4 py-10 text-center">
+              <AgentIcon icon={a.icon} size={56} />
+              <div>
+                <p className="font-heading text-[18px]">Coach the {a.label.toLowerCase()}</p>
+                <p className="mx-auto mt-1 max-w-md text-sm leading-relaxed text-muted">
+                  Tell it what to do better, paste an example, or ask how it works. It finds the instruction or skill that needs to change and proposes the exact edit. You apply each one with a click.
+                </p>
+              </div>
+              <div className="flex max-w-xl flex-wrap justify-center gap-2">
+                {(STARTERS[a.key] ?? []).map((s) => (
+                  <button key={s} onClick={() => (s.endsWith("…") ? setText(s.replace("…", "")) : send(s))} className="rounded-full border border-line px-3.5 py-1.5 text-xs text-muted transition-colors hover:border-faint hover:text-fg">
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <ul className="grid gap-5">
+              {messages.map((m) =>
+                m.role === "user" ? (
+                  <li key={m.id} className="ml-auto max-w-[80%] whitespace-pre-wrap rounded-[16px] rounded-br-[6px] bg-surface-2 px-4 py-2.5 text-sm leading-relaxed">
+                    {m.content}
+                  </li>
+                ) : (
+                  <li key={m.id} className="grid max-w-[92%] gap-3">
+                    <div className="flex items-start gap-3">
+                      <AgentIcon icon={a.icon} size={28} />
+                      <p className="whitespace-pre-wrap pt-1 text-sm leading-relaxed">{m.content}</p>
+                    </div>
+                    {m.changes.length > 0 && (
+                      <div className="ml-10 grid gap-2">
+                        {m.changes.map((c, i) => (
+                          <ChangeCard
+                            key={i}
+                            c={c}
+                            items={items}
+                            onApply={async () => {
+                              const r = await applyChange(a.key, m.id, i);
+                              if (!r.ok) return setError(r.error);
+                              setMessages((all) => all.map((x) => (x.id === m.id ? { ...x, changes: x.changes.map((y, j) => (j === i ? { ...y, applied: true } : y)) } : x)));
+                              router.refresh();
+                            }}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </li>
+                ),
+              )}
+              {thinking && (
+                <li className="flex items-center gap-3">
+                  <AgentIcon icon={a.icon} size={28} />
+                  <span className="flex gap-1">
+                    {[0, 1, 2].map((i) => (
+                      <span key={i} className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted" style={{ animationDelay: `${i * 140}ms` }} />
+                    ))}
+                  </span>
+                  <span className="text-xs text-faint">Reading its playbook…</span>
+                </li>
+              )}
+            </ul>
+          )}
+          <div ref={end} />
+        </div>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            send(text);
+          }}
+          className="flex items-end gap-2 border-t border-line bg-surface p-3"
+        >
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                send(text);
+              }
+            }}
+            rows={Math.min(8, Math.max(1, text.split("\n").length))}
+            placeholder={`Give the ${a.label.toLowerCase()} feedback…`}
+            className="min-h-10 flex-1 resize-none rounded-[10px] border border-line bg-bg px-3.5 py-2.5 text-sm outline-none focus:border-brand-text/60"
+          />
+          <button disabled={thinking || !text.trim()} className="h-10 shrink-0 rounded-[10px] bg-brand px-4 text-sm font-medium text-white disabled:opacity-40">
+            Send
+          </button>
+        </form>
+      </div>
+      <div className="flex items-center justify-between text-xs">
+        {error ? <span className="text-bad">{error}</span> : <span className="text-faint">The coach runs on Opus. Nothing changes until you press Apply.</span>}
+        {messages.length > 0 && (
+          <button
+            onClick={() => {
+              if (!confirm("Clear this conversation? Applied changes stay.")) return;
+              void clearChat(a.key).then(() => setMessages([]));
+            }}
+            className="text-faint hover:text-fg"
+          >
+            Clear conversation
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const TABS = [
+  ["coach", "Coach"],
+  ["setup", "Brain & instructions"],
+  ["playbook", "Skills & knowledge"],
+  ["runs", "Runs"],
+] as const;
+
+export function AgentDetail({ a, items, chat }: { a: Agent; items: Item[]; chat: ChatMessage[] }) {
+  const [tab, setTab] = useState<(typeof TABS)[number][0]>("coach");
+  const mine = items.filter((k) => k.agentKey === a.key);
+  const shared = items.filter((k) => k.agentKey === null && k.active);
+  const tint = TINT[a.icon] ?? TINT.spark;
+  const tokens = tokensOf(a.instructions) + [...mine.filter((k) => k.active), ...shared].reduce((t, k) => t + tokensOf(k.body), 0);
+
+  return (
+    <DirtyProvider>
+      <div className="grid gap-6 pb-24">
+        <Link href="/settings?tab=agents" className="text-xs text-muted hover:text-fg">
+          ← All agents
+        </Link>
+        <header className="relative overflow-hidden rounded-[20px] border border-line bg-surface p-6 sm:p-8">
+          <span aria-hidden className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full opacity-20 blur-3xl" style={{ background: tint }} />
+          <div className="relative flex flex-wrap items-start gap-5">
+            <AgentIcon icon={a.icon} size={64} />
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="font-heading text-[28px] leading-tight">{a.label}</h2>
+                {a.live ? <span className="rounded-full bg-ok-soft px-2.5 py-1 text-[11px] text-ok">Working in the app</span> : <span className="rounded-full border border-dashed border-line px-2.5 py-1 text-[11px] text-faint">Coming soon: shape it now</span>}
+              </div>
+              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">{a.description}</p>
+            </div>
+            <dl className="grid w-full grid-cols-2 gap-x-8 gap-y-3 border-t border-line pt-5 sm:grid-cols-4">
+              {[
+                ["Brain", `${a.model[0].toUpperCase()}${a.model.slice(1)} · ${a.effort}`],
+                ["Reads", `~${tokens.toLocaleString()} tokens`],
+                ["Runs, 7 days", a.stats.runs ? String(a.stats.runs) : "—"],
+                ["Avg time", a.stats.avgMs == null ? "—" : `${(a.stats.avgMs / 1000).toFixed(1)}s`],
+              ].map(([k, v]) => (
+                <div key={k}>
+                  <dt className="text-[11px] text-faint">{k}</dt>
+                  <dd className="tabular mt-0.5 text-sm">{v}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        </header>
+
+        <nav className="flex flex-wrap gap-1.5">
+          {TABS.map(([k, name]) => (
+            <button
+              key={k}
+              onClick={() => setTab(k)}
+              className={`inline-flex h-9 items-center gap-2 rounded-full px-4 text-sm transition-colors ${tab === k ? "bg-fg text-bg" : "text-muted hover:bg-surface-2 hover:text-fg"}`}
+            >
+              {k === "coach" && (
+                <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden>
+                  <path fill="currentColor" d={ICONS.spark} />
+                </svg>
+              )}
+              {name}
+              {k === "playbook" && <span className="tabular opacity-60">{mine.length}</span>}
+            </button>
+          ))}
+        </nav>
+
+        {/* Keep every tab mounted so unsaved edits survive switching tabs */}
+        <section className={tab === "setup" ? "grid gap-6 rounded-[18px] border border-line bg-surface p-6" : "hidden"}>
+          <Setup a={a} />
+          <p className="text-[11px] text-faint">
+            Last changed {fmt(a.updatedAt)}
+            {a.updatedBy && ` by ${a.updatedBy}`}. Saved changes apply to its next run, within a minute.
+          </p>
+        </section>
+        <section className={tab === "playbook" ? "grid gap-6 rounded-[18px] border border-line bg-surface p-6" : "hidden"}>
+          <div>
+            <h3 className="font-heading text-[18px]">Skills & knowledge</h3>
+            <p className="mt-1 text-sm text-muted">What only this agent reads. Click the pencil to edit or overwrite one.</p>
+          </div>
+          <ItemList items={mine} agentKey={a.key} />
+          {shared.length > 0 && (
+            <div className="grid gap-3 border-t border-line pt-5">
+              <p className="text-xs text-faint">
+                Also reads {shared.length} shared {shared.length === 1 ? "item" : "items"} every agent uses (edit them under{" "}
+                <Link href="/settings?tab=agents" className="text-muted underline-offset-4 hover:text-fg hover:underline">
+                  Shared knowledge
+                </Link>
+                ):
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {shared.map((k) => (
+                  <span key={k.id} className={`rounded-full px-2.5 py-1 text-[11px] ${KINDS[k.kind].tone}`}>
+                    {k.title}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+        <section className={tab === "coach" ? "grid" : "hidden"}>
+          <Coach a={a} initial={chat} items={items} />
+        </section>
+        <section className={tab === "runs" ? "grid gap-3 rounded-[18px] border border-line bg-surface p-6" : "hidden"}>
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="font-heading text-[18px]">Recent runs</h3>
+            <p className="tabular text-xs text-faint">
+              {a.stats.runs} this week · {Math.round((a.stats.inTokens + a.stats.outTokens) / 1000)}k tokens
+              {a.stats.failed > 0 && <span className="text-bad"> · {a.stats.failed} failed</span>}
+            </p>
+          </div>
+          {a.recent.length ? (
+            <ul className="grid gap-1">
+              {a.recent.map((r, i) => (
+                <li key={i} className="grid grid-cols-[120px_minmax(0,1fr)_70px_60px_150px] items-center gap-3 rounded-[8px] px-3 py-2 text-xs odd:bg-bg">
+                  <span className="tabular text-faint">{fmt(r.at)}</span>
+                  <span className={`truncate ${r.ok ? "text-muted" : "text-bad"}`} title={r.error ?? undefined}>
+                    {r.label}
+                    {r.error && ` · ${r.error}`}
+                  </span>
+                  <span className="capitalize text-muted">{r.model}</span>
+                  <span className="tabular text-right text-muted">{r.ms == null ? "—" : `${(r.ms / 1000).toFixed(1)}s`}</span>
+                  <span className="tabular text-right text-faint">{r.tokens}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-faint">{a.live ? "No runs this week yet." : "It runs once it's wired into the app."}</p>
+          )}
+        </section>
+      </div>
+    </DirtyProvider>
   );
 }

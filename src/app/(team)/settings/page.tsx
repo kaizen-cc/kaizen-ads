@@ -4,7 +4,8 @@ import { daysAgoIso, freshness } from "@/lib/dates";
 import { nyParts } from "@/lib/kpi/calc";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { AgentsPanel, type Agent, type Knowledge } from "./agents";
+import type { ChatMessage, Change } from "./actions";
+import { AgentDetail, AgentsOverview, type Agent, type Item } from "./agents";
 import { DataInspector } from "./data-inspector";
 
 // Inspecting a big ad account reads a few thousand rows
@@ -22,7 +23,7 @@ const day = (offset: number) => {
   return d.toISOString().slice(0, 10);
 };
 
-async function Agents() {
+async function Agents({ open }: { open: string | null }) {
   const supabase = await createClient();
   const since = daysAgoIso(7);
   const [{ data: agents }, { data: knowledge }, { data: runs }] = await Promise.all([
@@ -39,8 +40,8 @@ async function Agents() {
       description: a.description,
       model: a.model,
       effort: a.effort,
+      icon: a.icon,
       instructions: a.instructions,
-      sources: a.sources ?? {},
       live: a.live,
       updatedAt: a.updated_at,
       updatedBy: (a.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
@@ -62,8 +63,21 @@ async function Agents() {
       })),
     };
   });
-  const items: Knowledge[] = (knowledge ?? []).map((k) => ({ id: k.id, agentKey: k.agent_key, kind: k.kind, title: k.title, body: k.body, fileName: k.file_name, active: k.active }));
-  return <AgentsPanel agents={list} knowledge={items} />;
+  const items: Item[] = (knowledge ?? []).map((k) => ({
+    id: k.id,
+    agentKey: k.agent_key,
+    kind: k.kind,
+    title: k.title,
+    body: k.body,
+    fileName: k.file_name,
+    active: k.active,
+    updatedAt: k.updated_at,
+  }));
+  const agent = list.find((a) => a.key === open);
+  if (!agent) return <AgentsOverview agents={list} items={items} />;
+  const { data: chat } = await supabase.from("ai_agent_chats").select("id, role, content, changes, created_at").eq("agent_key", agent.key).order("created_at").limit(200);
+  const messages: ChatMessage[] = (chat ?? []).map((m) => ({ id: m.id, role: m.role, content: m.content, changes: (m.changes ?? []) as Change[], at: m.created_at }));
+  return <AgentDetail key={agent.key} a={agent} items={items} chat={messages} />;
 }
 
 async function Data({ target, from, to }: { target: string | null; from: string; to: string }) {
@@ -155,7 +169,7 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
           </Link>
         ))}
       </nav>
-      {tab === "agents" && <Agents />}
+      {tab === "agents" && <Agents open={typeof sp.agent === "string" ? sp.agent : null} />}
       {tab === "data" && <Data target={typeof sp.target === "string" ? sp.target : null} from={from} to={to} />}
       {tab === "sync" && <Sync />}
     </div>

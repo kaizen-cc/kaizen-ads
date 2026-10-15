@@ -13,7 +13,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 export const MODEL_IDS = { opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5", haiku: "claude-haiku-5-5" } as const;
 export type ModelKey = keyof typeof MODEL_IDS;
 export type Effort = "low" | "medium" | "high";
-export type AgentKey = "suggest" | "review" | "briefing" | "copy";
+export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue" | "coach";
 export const SOURCE_KEYS = ["meta", "briefing", "recent_messages", "memory", "angles", "recent_requests", "allotment"] as const;
 export type Sources = Partial<Record<(typeof SOURCE_KEYS)[number], boolean>>;
 
@@ -31,6 +31,9 @@ const DEFAULTS: Record<AgentKey, Pick<AgentConfig, "model" | "effort">> = {
   review: { model: "opus", effort: "medium" }, // judgement matters
   briefing: { model: "haiku", effort: "low" }, // gathering and summarizing
   copy: { model: "sonnet", effort: "medium" },
+  launcher: { model: "opus", effort: "high" },
+  fatigue: { model: "haiku", effort: "low" },
+  coach: { model: "opus", effort: "medium" }, // edits other agents' playbooks from feedback (Settings → AI agents → Coach)
 };
 
 export const aiEnabled = () => Boolean(process.env.ANTHROPIC_API_KEY);
