@@ -165,6 +165,8 @@ const Empty = ({ children }: { children: React.ReactNode }) => <p className="rou
 type Step = { kind: "intro" } | { kind: "design"; design: PortalDesign; n: number; of: number } | { kind: "copy"; index: number; n: number; of: number } | { kind: "recap" };
 type DesignChoice = { decision: PieceDecision; note: string; pins: (Pin & { n: number })[] };
 type AdChoice = { decision: PieceDecision; note: string };
+/** Where on a design: a spot (w, h null) or a box (x, y = top-left), on one of its files. */
+type Mark = { fileIndex: number; x: number; y: number; w: number | null; h: number | null };
 
 function Session({ slug, clientName, item, demo, next, onSent, onNext, onClose }: { slug: string; clientName: string; item: PortalItem; demo: boolean; next: PortalItem | null; onSent: () => void; onNext: (i: PortalItem) => void; onClose: () => void }) {
   const designs = item.designs.filter((d) => !d.context && d.clientStatus !== "approved");
@@ -183,6 +185,9 @@ function Session({ slug, clientName, item, demo, next, onSent, onNext, onClose }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState<{ split: number | null } | null>(null);
+  const [mark, setMark] = useState<Mark | null>(null); // where they tapped the design, to start the note there
+  const recapAt = steps.length - 1;
+  const [seenRecap, setSeenRecap] = useState(false);
   const step = steps[at];
 
   useEffect(() => {
@@ -193,16 +198,21 @@ function Session({ slug, clientName, item, demo, next, onSent, onNext, onClose }
   }, []);
 
   const go = (i: number) => {
+    const to = Math.max(0, Math.min(recapAt, i));
     setEditing(false);
-    setAt(Math.max(0, Math.min(steps.length - 1, i)));
+    setMark(null);
+    if (to === recapAt) setSeenRecap(true);
+    setAt(to);
   };
+  // After the recap, changing one answer goes straight back to it
+  const after = () => go(seenRecap ? recapAt : at + 1);
   const decideDesign = (d: PortalDesign, c: DesignChoice) => {
     setDChoice((x) => ({ ...x, [d.id]: c }));
-    go(at + 1);
+    after();
   };
   const decideAd = (i: number, c: AdChoice) => {
     setAChoice((x) => ({ ...x, [i]: c }));
-    go(at + 1);
+    after();
   };
 
   // ← changes, → approve (on a piece)
@@ -228,7 +238,7 @@ function Session({ slug, clientName, item, demo, next, onSent, onNext, onClose }
     setError(null);
     const review = {
       requestId: item.id,
-      designs: designs.map((d) => ({ designId: d.id, decision: dChoice[d.id].decision, note: dChoice[d.id].note, pins: dChoice[d.id].pins.map((p) => ({ designId: p.designId, version: p.version, fileId: p.fileId, x: p.x, y: p.y, tMs: p.tMs, body: p.body })) })),
+      designs: designs.map((d) => ({ designId: d.id, decision: dChoice[d.id].decision, note: dChoice[d.id].note, pins: dChoice[d.id].pins.map((p) => ({ designId: p.designId, version: p.version, fileId: p.fileId, x: p.x, y: p.y, w: p.w ?? null, h: p.h ?? null, tMs: p.tMs, body: p.body })) })),
       ads: adIdx.map((i) => ({ index: i, decision: aChoice[i].decision, note: aChoice[i].note })),
     };
     const approvedD = review.designs.filter((d) => d.decision === "approved").length + item.designs.filter((d) => !d.context && d.clientStatus === "approved").length;
@@ -258,6 +268,11 @@ function Session({ slug, clientName, item, demo, next, onSent, onNext, onClose }
               <i key={i} className={`block h-[3px] flex-1 rounded-full ${sent || i < at ? "bg-brand" : i === at ? "bg-brand/50" : "bg-surface-3"}`} />
             ))}
           </div>
+          {!sent && seenRecap && at !== recapAt && (
+            <button onClick={() => go(recapAt)} className="rounded-full bg-brand px-2.5 py-1 text-[11.5px] font-medium text-white">
+              Back to review
+            </button>
+          )}
           {!sent && (
             <button onClick={() => setPreview(true)} className="flex items-center gap-1 rounded-full border border-line px-2.5 py-1 text-[11.5px] text-muted hover:text-fg">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3.5 w-3.5" aria-hidden>
@@ -299,12 +314,24 @@ function Session({ slug, clientName, item, demo, next, onSent, onNext, onClose }
               key={step.design.id}
               item={item}
               design={step.design}
+              start={mark}
               initial={dChoice[step.design.id]}
               onCancel={() => setEditing(false)}
               onSave={(pins, note) => decideDesign(step.design, { decision: "changes", note, pins })}
             />
           ) : (
-            <DesignStep key={step.design.id} item={item} step={step} choice={dChoice[step.design.id]} onApprove={() => decideDesign(step.design, { decision: "approved", note: "", pins: [] })} onChanges={() => setEditing(true)} />
+            <DesignStep
+              key={step.design.id}
+              item={item}
+              step={step}
+              choice={dChoice[step.design.id]}
+              onApprove={() => decideDesign(step.design, { decision: "approved", note: "", pins: [] })}
+              onChanges={() => setEditing(true)}
+              onMark={(m) => {
+                setMark(m);
+                setEditing(true);
+              }}
+            />
           )
         ) : step.kind === "copy" ? (
           <CopyStep
@@ -437,8 +464,8 @@ function Intro({ item, designs, ads, onStart }: { item: PortalItem; designs: num
   );
 }
 
-/** Drag left or right on a piece; past the line it decides. */
-function useSwipe(onApprove: () => void, onChanges: () => void) {
+/** Drag left or right on a piece; past the line it decides. A tap (no drag) reports where it landed. */
+function useSwipe(onApprove: () => void, onChanges: () => void, onTap?: (clientX: number, clientY: number) => void) {
   const [dx, setDx] = useState(0);
   const [dragging, setDragging] = useState(false);
   const start = useRef<number | null>(null);
@@ -450,12 +477,13 @@ function useSwipe(onApprove: () => void, onChanges: () => void) {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     },
     onPointerMove: (e: React.PointerEvent) => start.current !== null && setDx(e.clientX - start.current),
-    onPointerUp: () => {
+    onPointerUp: (e: React.PointerEvent) => {
       if (start.current === null) return;
       start.current = null;
       setDragging(false);
       if (dx > 110) onApprove();
       else if (dx < -110) onChanges();
+      else if (Math.abs(dx) < 6) onTap?.(e.clientX, e.clientY);
       setDx(0);
     },
     onPointerCancel: () => {
@@ -497,11 +525,17 @@ function Decide({ onApprove, onChanges }: { onApprove: () => void; onChanges: ()
   );
 }
 
-function DesignStep({ item, step, choice, onApprove, onChanges }: { item: PortalItem; step: Extract<Step, { kind: "design" }>; choice?: DesignChoice; onApprove: () => void; onChanges: () => void }) {
+function DesignStep({ item, step, choice, onApprove, onChanges, onMark }: { item: PortalItem; step: Extract<Step, { kind: "design" }>; choice?: DesignChoice; onApprove: () => void; onChanges: () => void; onMark: (m: Mark) => void }) {
   const [fi, setFi] = useState(0);
+  const frame = useRef<HTMLDivElement>(null);
   const d = step.design;
   const file = d.files[fi] ?? d.files[0];
-  const { bind, style, dx } = useSwipe(onApprove, onChanges);
+  const { bind, style, dx } = useSwipe(onApprove, onChanges, (cx, cy) => {
+    // Tapping the image opens the note box right where they tapped
+    const r = frame.current?.getBoundingClientRect();
+    if (!r || isVideo(file) || cx < r.left || cx > r.right || cy < r.top || cy > r.bottom) return;
+    onMark({ fileIndex: fi, x: (cx - r.left) / r.width, y: (cy - r.top) / r.height, w: null, h: null });
+  });
   const label = item.format === "video" ? "Video" : "Design";
   return (
     <>
@@ -519,7 +553,7 @@ function DesignStep({ item, step, choice, onApprove, onChanges }: { item: Portal
       </div>
       <div {...bind} style={style} className="relative mx-3 flex min-h-0 flex-1 touch-pan-y select-none flex-col overflow-hidden rounded-[14px] border border-line bg-surface">
         <Stamps dx={dx} />
-        <Media file={file} />
+        <Media file={file} frameRef={frame} />
         {d.files.length > 1 && (
           <div className="flex flex-wrap justify-center gap-1.5 px-3 py-2.5">
             {d.files.map((f, i) => (
@@ -530,6 +564,7 @@ function DesignStep({ item, step, choice, onApprove, onChanges }: { item: Portal
           </div>
         )}
       </div>
+      {!isVideo(file) && <p className="pt-2 text-center text-[11px] text-faint">Tap the design to comment on a spot</p>}
       <Decide onApprove={onApprove} onChanges={onChanges} />
     </>
   );
@@ -621,18 +656,24 @@ function CopyStep({
   );
 }
 
-function Media({ file, children, onTap, videoRef, onTime }: { file: PortalFile; children?: React.ReactNode; onTap?: (x: number, y: number) => void; videoRef?: React.RefObject<HTMLVideoElement | null>; onTime?: (ms: number) => void }) {
+function Media({
+  file,
+  children,
+  frameRef,
+  draw,
+  videoRef,
+  onTime,
+}: {
+  file: PortalFile;
+  children?: React.ReactNode;
+  frameRef?: React.RefObject<HTMLDivElement | null>;
+  draw?: Pick<React.HTMLAttributes<HTMLDivElement>, "onPointerDown" | "onPointerMove" | "onPointerUp" | "onPointerCancel">;
+  videoRef?: React.RefObject<HTMLVideoElement | null>;
+  onTime?: (ms: number) => void;
+}) {
   return (
     <div className="relative grid min-h-0 flex-1 place-items-center overflow-hidden bg-black">
-      <div
-        className="relative h-full max-w-full overflow-hidden"
-        style={{ aspectRatio: ratio(file.aspect) }}
-        onClick={(e) => {
-          if (!onTap) return;
-          const r = e.currentTarget.getBoundingClientRect();
-          onTap((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
-        }}
-      >
+      <div ref={frameRef} {...draw} className={`relative h-full max-w-full overflow-hidden ${draw ? "cursor-crosshair touch-none" : ""}`} style={{ aspectRatio: ratio(file.aspect) }}>
         {isVideo(file) ? (
           <video
             ref={videoRef}
@@ -649,7 +690,7 @@ function Media({ file, children, onTap, videoRef, onTime }: { file: PortalFile; 
           />
         ) : file.url ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={file.url} alt="" draggable={false} className={`h-full w-full object-contain ${onTap ? "cursor-crosshair" : ""}`} />
+          <img src={file.url} alt="" draggable={false} className="pointer-events-none h-full w-full select-none object-contain" />
         ) : (
           <span className="grid h-full w-full place-items-center text-xs text-white/60">Preview not available</span>
         )}
@@ -661,21 +702,71 @@ function Media({ file, children, onTap, videoRef, onTime }: { file: PortalFile; 
 
 // ─── Marking what to change on one design ───────────────────────────────────
 
-function MarkDesign({ item, design, initial, onCancel, onSave }: { item: PortalItem; design: PortalDesign; initial?: DesignChoice; onCancel: () => void; onSave: (pins: (Pin & { n: number })[], note: string) => void }) {
-  const [fi, setFi] = useState(0);
+type Draft = { x: number | null; y: number | null; w: number | null; h: number | null; tMs: number | null };
+
+/** A numbered marker in Kaizen red: a pin, or a box with its number on the corner. */
+function Marker({ n, x, y, w, h, live = false }: { n?: number; x: number; y: number; w: number | null; h: number | null; live?: boolean }) {
+  if (w != null && h != null)
+    return (
+      <span className={`pointer-events-none absolute z-[4] rounded-[4px] border-2 border-brand bg-brand/20 shadow-[0_0_0_1.5px_rgba(255,255,255,0.85)] ${live ? "border-dashed" : ""}`} style={{ left: `${x * 100}%`, top: `${y * 100}%`, width: `${w * 100}%`, height: `${h * 100}%` }}>
+        {n != null && <span className="absolute -left-[11px] -top-[11px] grid h-[22px] w-[22px] place-items-center rounded-full border-2 border-white bg-brand text-[11px] font-bold text-white shadow-[0_4px_12px_rgba(0,0,0,0.5)]">{n}</span>}
+      </span>
+    );
+  return (
+    <span
+      className={`pointer-events-none absolute z-[4] -ml-[12px] -mt-[12px] grid h-[24px] w-[24px] place-items-center rounded-full border-2 border-white bg-brand text-[11px] font-bold text-white shadow-[0_4px_12px_rgba(0,0,0,0.5)] ${live ? "animate-pulse" : ""}`}
+      style={{ left: `${x * 100}%`, top: `${y * 100}%` }}
+    >
+      {n}
+    </span>
+  );
+}
+
+function MarkDesign({ item, design, start, initial, onCancel, onSave }: { item: PortalItem; design: PortalDesign; start: Mark | null; initial?: DesignChoice; onCancel: () => void; onSave: (pins: (Pin & { n: number })[], note: string) => void }) {
+  const [fi, setFi] = useState(start?.fileIndex ?? 0);
   const [pins, setPins] = useState<(Pin & { n: number })[]>(initial?.decision === "changes" ? initial.pins : []);
-  const [draft, setDraft] = useState<{ x: number | null; y: number | null; tMs: number | null } | null>(null);
+  const [draft, setDraft] = useState<Draft | null>(start ? { x: start.x, y: start.y, w: start.w, h: start.h, tMs: null } : null);
+  const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null); // being drawn
   const [text, setText] = useState("");
   const [note, setNote] = useState(initial?.decision === "changes" ? initial.note : "");
   const [at, setAt] = useState(0);
   const video = useRef<HTMLVideoElement | null>(null);
+  const frame = useRef<HTMLDivElement>(null);
   const file = design.files[fi] ?? design.files[0];
   const here = pins.filter((p) => p.fileId === file.id);
+  const nextN = (pins.at(-1)?.n ?? 0) + 1;
+
+  const rel = (e: React.PointerEvent) => {
+    const r = frame.current!.getBoundingClientRect();
+    return { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) };
+  };
+  // Tap for a spot; press and drag to box an area
+  const draw = isVideo(file)
+    ? undefined
+    : {
+        onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => {
+          const p = rel(e);
+          setBox({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
+          e.currentTarget.setPointerCapture(e.pointerId);
+        },
+        onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => {
+          if (!box) return;
+          const p = rel(e);
+          setBox({ ...box, x1: p.x, y1: p.y });
+        },
+        onPointerUp: () => {
+          if (!box) return;
+          const w = Math.abs(box.x1 - box.x0);
+          const h = Math.abs(box.y1 - box.y0);
+          setDraft(w < 0.03 && h < 0.03 ? { x: box.x0, y: box.y0, w: null, h: null, tMs: null } : { x: Math.min(box.x0, box.x1), y: Math.min(box.y0, box.y1), w, h, tMs: null });
+          setBox(null);
+        },
+        onPointerCancel: () => setBox(null),
+      };
 
   const add = () => {
     if (!draft || !text.trim()) return;
-    const n = (pins.at(-1)?.n ?? 0) + 1;
-    setPins([...pins, { n, designId: design.id, version: design.version, fileId: file.id, x: draft.x, y: draft.y, tMs: draft.tMs, body: text.trim() }]);
+    setPins([...pins, { n: nextN, designId: design.id, version: design.version, fileId: file.id, x: draft.x, y: draft.y, w: draft.w, h: draft.h, tMs: draft.tMs, body: text.trim() }]);
     setDraft(null);
     setText("");
   };
@@ -685,7 +776,7 @@ function MarkDesign({ item, design, initial, onCancel, onSave }: { item: PortalI
       <div className="flex items-center justify-between gap-2 px-4 pb-2">
         <div>
           <p className="text-[15px] font-semibold">Mark what to change</p>
-          <p className="text-[11.5px] text-muted">{isVideo(file) ? "Pause where an edit is needed, then comment at that moment." : "Tap the creative where something should change."}</p>
+          <p className="text-[11.5px] text-muted">{isVideo(file) ? "Pause where an edit is needed, then comment at that moment." : "Tap a spot, or press and drag to box an area."}</p>
         </div>
         <button onClick={onCancel} className="text-xs text-muted hover:text-fg">
           Cancel
@@ -701,15 +792,10 @@ function MarkDesign({ item, design, initial, onCancel, onSave }: { item: PortalI
         </div>
       )}
       <div className="mx-3 flex min-h-[36%] flex-1 overflow-hidden rounded-[12px] border border-line">
-        <Media file={file} videoRef={video} onTime={setAt} onTap={isVideo(file) ? undefined : (x, y) => setDraft({ x, y, tMs: null })}>
-          {here.map((p) =>
-            p.x != null && p.y != null ? (
-              <span key={p.n} className="absolute z-[4] -ml-[11px] -mt-[11px] grid h-[22px] w-[22px] place-items-center rounded-full border-2 border-white bg-warn text-[11px] font-bold text-[#111]" style={{ left: `${p.x * 100}%`, top: `${p.y * 100}%` }}>
-                {p.n}
-              </span>
-            ) : null,
-          )}
-          {draft?.x != null && draft.y != null && <span className="absolute z-[4] -ml-[11px] -mt-[11px] h-[22px] w-[22px] animate-pulse rounded-full border-2 border-white bg-warn" style={{ left: `${draft.x * 100}%`, top: `${draft.y * 100}%` }} />}
+        <Media file={file} frameRef={frame} draw={draw} videoRef={video} onTime={setAt}>
+          {here.map((p) => (p.x != null && p.y != null ? <Marker key={p.n} n={p.n} x={p.x} y={p.y} w={p.w ?? null} h={p.h ?? null} /> : null))}
+          {box && <Marker x={Math.min(box.x0, box.x1)} y={Math.min(box.y0, box.y1)} w={Math.max(0.001, Math.abs(box.x1 - box.x0))} h={Math.max(0.001, Math.abs(box.y1 - box.y0))} live />}
+          {!box && draft?.x != null && draft.y != null && <Marker n={nextN} x={draft.x} y={draft.y} w={draft.w} h={draft.h} live />}
         </Media>
       </div>
       <div className="grid min-h-0 gap-2.5 overflow-y-auto px-4 pb-[max(14px,env(safe-area-inset-bottom))] pt-3">
@@ -717,26 +803,26 @@ function MarkDesign({ item, design, initial, onCancel, onSave }: { item: PortalI
           <button
             onClick={() => {
               video.current?.pause();
-              setDraft({ x: null, y: null, tMs: at });
+              setDraft({ x: null, y: null, w: null, h: null, tMs: at });
             }}
-            className="h-9 rounded-[8px] border border-warn/50 text-[12.5px] text-warn"
+            className="h-9 rounded-[8px] border border-brand/60 text-[12.5px] text-brand-text"
           >
             Comment at {clock(at)}
           </button>
         )}
         {draft && (
-          <div className="grid gap-2 rounded-[10px] border border-warn/40 bg-warn-soft/40 p-2.5">
-            <p className="text-[11.5px] text-muted">{draft.tMs != null ? `At ${clock(draft.tMs)}` : "Here"}: what should change?</p>
+          <div className="grid gap-2 rounded-[10px] border border-brand/50 bg-brand-soft/40 p-2.5">
+            <p className="text-[11.5px] text-muted">{draft.tMs != null ? `At ${clock(draft.tMs)}` : draft.w != null ? "This area" : "This spot"}: what should change?</p>
             <div className="flex gap-2">
               <input
                 autoFocus
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && add()}
-                placeholder="e.g. Make the logo bigger"
+                placeholder={draft.w != null ? "e.g. Make this whole section less busy" : "e.g. Make the logo bigger"}
                 className="h-9 min-w-0 flex-1 rounded-[6px] border border-line bg-surface px-2.5 text-[13px] outline-none focus:border-brand-text/60"
               />
-              <button onClick={add} disabled={!text.trim()} className="rounded-[6px] bg-fg px-3 text-[12.5px] font-medium text-bg disabled:opacity-40">
+              <button onClick={add} disabled={!text.trim()} className="rounded-[6px] bg-brand px-3 text-[12.5px] font-medium text-white disabled:opacity-40">
                 Add
               </button>
               <button onClick={() => (setDraft(null), setText(""))} className="px-1 text-xs text-muted">
@@ -749,9 +835,9 @@ function MarkDesign({ item, design, initial, onCancel, onSave }: { item: PortalI
           <ol className="grid gap-1.5">
             {pins.map((p) => (
               <li key={p.n} className="flex items-start gap-2 rounded-[8px] bg-surface px-2.5 py-2 text-[12.5px]">
-                <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-warn text-[10px] font-bold text-[#111]">{p.n}</span>
+                <span className={`grid h-5 w-5 shrink-0 place-items-center bg-brand text-[10px] font-bold text-white ${p.w != null ? "rounded-[4px]" : "rounded-full"}`}>{p.n}</span>
                 <span className="min-w-0 flex-1">
-                  {p.tMs != null && <span className="block text-[10.5px] text-faint">at {clock(p.tMs)}</span>}
+                  {(p.tMs != null || p.w != null) && <span className="block text-[10.5px] text-faint">{p.tMs != null ? `at ${clock(p.tMs)}` : "area"}</span>}
                   {p.body}
                 </span>
                 <button onClick={() => setPins(pins.filter((x) => x.n !== p.n))} aria-label="Remove" className="text-xs text-faint hover:text-fg">

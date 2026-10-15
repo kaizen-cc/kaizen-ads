@@ -18,6 +18,8 @@ export type ReviewComment = {
   fileId: string | null;
   x: number | null;
   y: number | null;
+  w?: number | null; // a box: x, y is its top-left corner
+  h?: number | null;
   tMs: number | null;
   body: string;
   round: "internal" | "client";
@@ -32,7 +34,7 @@ export async function ticketComments(requestId: string): Promise<ReviewComment[]
   const supabase = await createClient();
   const { data } = await supabase
     .from("review_comments")
-    .select("id, design_id, version, file_id, x, y, t_ms, body, round, remembered, resolved_at, created_at, author_name, profiles!review_comments_author_id_fkey(full_name)")
+    .select("id, design_id, version, file_id, x, y, w, h, t_ms, body, round, remembered, resolved_at, created_at, author_name, profiles!review_comments_author_id_fkey(full_name)")
     .eq("request_id", requestId)
     .order("created_at");
   return (data ?? []).map((c) => ({
@@ -42,6 +44,8 @@ export async function ticketComments(requestId: string): Promise<ReviewComment[]
     fileId: c.file_id,
     x: c.x == null ? null : Number(c.x),
     y: c.y == null ? null : Number(c.y),
+    w: c.w == null ? null : Number(c.w),
+    h: c.h == null ? null : Number(c.h),
     tMs: c.t_ms,
     body: c.body,
     round: c.round as "internal" | "client",

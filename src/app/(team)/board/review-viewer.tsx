@@ -152,8 +152,14 @@ export function ReviewViewer({
                   className="block max-h-[calc(100vh-220px)] max-w-full cursor-crosshair rounded-[8px] object-contain"
                 />
                 {pins.map((c) => (
+                  <span key={c.id} className="contents">
+                  {c.w != null && c.h != null && (
+                    <span
+                      className={`pointer-events-none absolute rounded-[4px] border-2 ${c.resolved ? "border-white/60 bg-white/10" : "border-brand bg-brand/15"} ${hover === c.id ? "bg-brand/25" : ""}`}
+                      style={{ left: `${c.x! * 100}%`, top: `${c.y! * 100}%`, width: `${c.w * 100}%`, height: `${c.h * 100}%` }}
+                    />
+                  )}
                   <span
-                    key={c.id}
                     onMouseEnter={() => setHover(c.id)}
                     onMouseLeave={() => setHover(null)}
                     className={`absolute grid h-7 w-7 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full text-xs font-semibold shadow-[0_4px_14px_rgba(0,0,0,0.5)] ring-2 ring-white transition-transform ${
@@ -162,6 +168,7 @@ export function ReviewViewer({
                     style={{ left: `${c.x! * 100}%`, top: `${c.y! * 100}%` }}
                   >
                     {number(c)}
+                  </span>
                   </span>
                 ))}
                 {draft?.x != null && draft.y != null && (

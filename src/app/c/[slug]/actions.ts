@@ -9,7 +9,8 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 // A client's decision on an ad, from the portal. Right: approved. Left: changes to the design (pins on the image or the
 // video timeline, plus a note), the copy (notes), or both. A team member can do the same from the preview to test.
 
-export type Pin = { designId: string; version: number; fileId: string | null; x: number | null; y: number | null; tMs: number | null; body: string };
+/** A note on a design: a pin (x, y), a box (x, y = top-left, w, h), or a moment in a video (tMs). */
+export type Pin = { designId: string; version: number; fileId: string | null; x: number | null; y: number | null; w?: number | null; h?: number | null; tMs: number | null; body: string };
 export type PieceDecision = "approved" | "changes";
 export type Review = {
   requestId: string;
@@ -69,6 +70,8 @@ export async function submitReview(slug: string, review: Review): Promise<{ ok: 
         file_id: p.fileId,
         x: p.x,
         y: p.y,
+        w: p.w ?? null,
+        h: p.h ?? null,
         t_ms: p.tMs,
         body: p.body.trim().slice(0, 2000),
         round: "client",

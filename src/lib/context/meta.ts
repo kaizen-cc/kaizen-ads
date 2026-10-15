@@ -185,6 +185,8 @@ export type MetaAd = MetaSummary & {
   headline: string | null;
   text: string | null;
   thumbnail: string | null;
+  image?: string | null; // the full image, for image ads
+  live?: boolean; // delivering now (effective status ACTIVE)
   rankings: { quality: string | null; engagement: string | null; conversion: string | null };
 };
 
@@ -295,16 +297,17 @@ async function snapshot(admin: SupabaseClient, clientId: string, adAccountId: st
     asset_feed_spec?: { titles?: { text: string }[]; bodies?: { text: string }[] };
     effective_object_story_id?: string;
   };
-  let creatives: Record<string, { creative?: Creative }> = {};
-  try {
-    if (top.length)
-      creatives = await graph("", {
-        ids: top.slice(0, 15).map((a) => a.id).join(","),
-        fields: "creative{title,body,thumbnail_url,object_story_spec{link_data{name,message},video_data{title,message}},asset_feed_spec{titles,bodies},effective_object_story_id}",
-      });
-  } catch {
-    creatives = {}; // nice to have: the numbers still save without it
-  }
+  // One request per ad, so one ad Meta won't describe can't blank the others. A big thumbnail (the default is 64px),
+  // the full image for image ads, and whether the ad is delivering now.
+  const creatives: Record<string, { creative?: Creative & { image_url?: string }; effective_status?: string }> = {};
+  const fields =
+    "effective_status,creative.thumbnail_width(600).thumbnail_height(600){title,body,thumbnail_url,image_url,object_story_spec,asset_feed_spec,effective_object_story_id}";
+  const looked = await Promise.allSettled(top.slice(0, 15).map((a) => graph<{ creative?: Creative & { image_url?: string }; effective_status?: string }>(a.id, { fields })));
+  looked.forEach((r, i) => {
+    if (r.status === "fulfilled") creatives[top[i].id] = r.value;
+  });
+  const failed = looked.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+  if (failed.length) console.error(`[meta] ${failed.length} of ${looked.length} ad creatives couldn't be read:`, failed[0].reason instanceof Error ? failed[0].reason.message : failed[0].reason);
   // Boosted posts keep their text on the post itself
   const posts = Object.values(creatives)
     .map((c) => c.creative)
@@ -344,6 +347,8 @@ async function snapshot(admin: SupabaseClient, clientId: string, adAccountId: st
       headline: copyOf(c).headline,
       text: copyOf(c).text?.slice(0, 400) ?? null,
       thumbnail: c?.thumbnail_url ?? null,
+      image: c?.image_url ?? null,
+      live: creatives[id] ? creatives[id].effective_status === "ACTIVE" : undefined,
       rankings: { quality: ranking(list, "quality_ranking"), engagement: ranking(list, "engagement_rate_ranking"), conversion: ranking(list, "conversion_rate_ranking") },
     };
   });
@@ -502,5 +507,9 @@ export async function debugMeta(adAccountId: string) {
   out.push(await probe("+ actions", VERSION, `${act}/insights`, { date_preset: "last_30d", fields: "spend,actions,cost_per_action_type" }));
   out.push(await probe("by ad", VERSION, `${act}/insights`, { date_preset: "last_30d", level: "ad", fields: "ad_name,spend", limit: "5" }));
   out.push(await probe("token permissions", VERSION, "me/permissions", {}));
+  // One ad's creative, the way the sync reads it
+  const ads = await fetch(`https://graph.facebook.com/${VERSION}/${act}/ads?${new URLSearchParams({ fields: "id", limit: "1", ...proof(), access_token: token })}`, { cache: "no-store" }).then((r) => r.json() as Promise<{ data?: { id: string }[] }>);
+  const adId = ads.data?.[0]?.id;
+  if (adId) out.push(await probe("one ad's creative", VERSION, adId, { fields: "effective_status,creative.thumbnail_width(600).thumbnail_height(600){title,body,thumbnail_url,image_url,object_story_spec,asset_feed_spec,effective_object_story_id}" }));
   return { version: VERSION, appSecretProof: Boolean(process.env.META_APP_SECRET), probes: out };
 }

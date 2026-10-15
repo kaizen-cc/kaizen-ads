@@ -134,12 +134,12 @@ export async function loadPortal(db: SupabaseClient, clientId: string): Promise<
     }));
 
   // Live in their ad account: the ads that spent in the last sync, biggest first (no numbers shown to the client)
-  type SnapAd = { id: string; name: string; headline: string | null; text: string | null; thumbnail: string | null; spend?: number };
+  type SnapAd = { id: string; name: string; headline: string | null; text: string | null; thumbnail: string | null; image?: string | null; live?: boolean; spend?: number };
   const running = ((snap?.ads ?? []) as SnapAd[])
-    .filter((a) => (a.spend ?? 0) > 0)
+    .filter((a) => (a.spend ?? 0) > 0 && a.live !== false)
     .sort((a, b) => (b.spend ?? 0) - (a.spend ?? 0))
     .slice(0, 9)
-    .map((a) => ({ id: a.id, name: a.name, headline: a.headline, text: a.text, thumbnail: a.thumbnail }));
+    .map((a) => ({ id: a.id, name: a.name, headline: a.headline, text: a.text, thumbnail: a.image ?? a.thumbnail }));
 
   return { items, revising, approved, running: { ads: running, syncedAt: snap?.fetched_at ?? null } };
 }

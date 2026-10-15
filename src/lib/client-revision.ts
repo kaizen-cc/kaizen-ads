@@ -119,10 +119,17 @@ export async function learnFromClient(admin: SupabaseClient, clientId: string, n
 export async function clientAsks(admin: SupabaseClient, requestId: string) {
   const [{ data: round }, { data: pins }] = await Promise.all([
     admin.from("client_rounds").select("id, round, targets, copy_notes, design_note, created_at").eq("request_id", requestId).eq("decision", "revise").is("sent_back_at", null).order("round", { ascending: false }).limit(1).maybeSingle(),
-    admin.from("review_comments").select("id, design_id, version, x, y, t_ms, body").eq("request_id", requestId).eq("round", "client").is("resolved_at", null).order("created_at"),
+    admin.from("review_comments").select("id, design_id, version, x, y, w, h, t_ms, body").eq("request_id", requestId).eq("round", "client").is("resolved_at", null).order("created_at"),
   ]);
-  const where = (p: { x: number | null; y: number | null; t_ms: number | null }) =>
-    p.t_ms != null ? `at ${clock(p.t_ms)}` : p.x != null && p.y != null ? `pinned ${Math.round(Number(p.x) * 100)}% across, ${Math.round(Number(p.y) * 100)}% down` : "";
+  const pct = (n: unknown) => Math.round(Number(n) * 100);
+  const where = (p: { x: number | null; y: number | null; w: number | null; h: number | null; t_ms: number | null }) =>
+    p.t_ms != null
+      ? `at ${clock(p.t_ms)}`
+      : p.x != null && p.y != null && p.w != null && p.h != null
+        ? `the boxed area from ${pct(p.x)}% to ${pct(Number(p.x) + Number(p.w))}% across and ${pct(p.y)}% to ${pct(Number(p.y) + Number(p.h))}% down`
+        : p.x != null && p.y != null
+          ? `pinned ${pct(p.x)}% across, ${pct(p.y)}% down`
+          : "";
   return {
     round,
     pins: (pins ?? []).map((p) => ({ id: p.id, designId: p.design_id, text: `${p.body}${where(p) ? ` (${where(p)})` : ""}` })),
