@@ -96,6 +96,16 @@ export function TicketCard({
       </div>
       <p className="line-clamp-2 text-sm font-medium leading-snug">{ticket.title}</p>
       {ticket.parentNumber && <p className="-mt-1 text-[11px] text-ok">Client-approved part of #{ticket.parentNumber}</p>}
+      {((ticket.internalRounds ?? 0) > 0 || (ticket.clientRounds ?? 0) > 0) && (
+        <p className="-mt-1 flex flex-wrap gap-1 text-[10.5px]" title="Revision rounds: sent back by the Head of Creative (internal) and by the client">
+          {(ticket.internalRounds ?? 0) > 0 && <span className="rounded-full bg-surface-2 px-1.5 py-px text-muted">{ticket.internalRounds} internal rev</span>}
+          {(ticket.clientRounds ?? 0) > 0 && (
+            <span className={`rounded-full px-1.5 py-px ${(ticket.clientRounds ?? 0) >= 2 ? "bg-warn-soft text-warn" : "bg-brand-soft text-brand-text"}`}>
+              client round {ticket.clientRounds}
+            </span>
+          )}
+        </p>
+      )}
       <div className="flex items-center justify-between gap-2">
         <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted">
           {ticket.assigneeName ? (

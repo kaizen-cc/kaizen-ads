@@ -95,6 +95,19 @@ function describe(e: TicketEvent) {
     case "comment":
       return "commented";
     case "upload":
+      if (e.data.action === "rejoined")
+        return (
+          <>
+            rejoined <span className="text-fg">#{String(e.data.from)}</span>, the client-approved part, now that both are in the same stage
+          </>
+        );
+      if (e.data.action === "counts" && e.data.auto)
+        return (
+          <>
+            counts went up to <span className="text-fg">{String(e.data.new)} new{Number(e.data.variations) ? ` + ${String(e.data.variations)} var.` : ""}</span>{" "}
+            <span className="text-faint">(more designs were added than asked for)</span>
+          </>
+        );
       if (e.data.action === "counts")
         return (
           <>
@@ -136,6 +149,12 @@ function describe(e: TicketEvent) {
           );
         case "stronger_brief":
           return <>used the AI&apos;s stronger brief</>;
+        case "client_split":
+          return (
+            <>
+              split off what the client approved on <span className="text-fg">#{String(e.data.from)}</span> to launch it first
+            </>
+          );
         case "client_approved":
           return (
             <>
@@ -304,6 +323,14 @@ export function TicketDrawer({
               </span>
               <span className="text-faint">·</span>
               <span>{counts}</span>
+              {((ticket.internalRounds ?? 0) > 0 || (ticket.clientRounds ?? 0) > 0) && (
+                <>
+                  <span className="text-faint">·</span>
+                  <span className={(ticket.clientRounds ?? 0) >= 2 ? "text-warn" : ""}>
+                    Revisions: {ticket.internalRounds ?? 0} internal, {ticket.clientRounds ?? 0} client
+                  </span>
+                </>
+              )}
               {ticket.angleName && (
                 <>
                   <span className="text-faint">·</span>

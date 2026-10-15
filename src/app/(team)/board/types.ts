@@ -31,6 +31,8 @@ export type Ticket = {
   createdAt: string;
   landingUrl?: string | null;
   parentNumber?: number | null; // split off from this ticket (the client approved part of it)
+  internalRounds?: number; // times the Head of Creative sent it back
+  clientRounds?: number; // times the client asked for changes
 };
 
 export type Person = { id: string; name: string; role: string };

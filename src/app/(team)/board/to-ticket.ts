@@ -33,6 +33,8 @@ export type BoardRow = {
   created_at: string;
   landing_url?: string | null;
   parent_number?: number | null;
+  internal_rounds?: number | null;
+  client_rounds?: number | null;
 };
 
 export const toTicket = (r: BoardRow): Ticket => ({
@@ -66,4 +68,6 @@ export const toTicket = (r: BoardRow): Ticket => ({
   createdAt: r.created_at,
   landingUrl: r.landing_url ?? null,
   parentNumber: r.parent_number ?? null,
+  internalRounds: r.internal_rounds ?? 0,
+  clientRounds: r.client_rounds ?? 0,
 });
