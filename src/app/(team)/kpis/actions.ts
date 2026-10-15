@@ -87,3 +87,26 @@ export async function pullClientKpis(clientId: string): Promise<ActionResult> {
   revalidatePath("/kpis");
   return { ok: true };
 }
+
+/** Execs: link an ad account Meta shares with us to a client (the database only lets execs edit clients). */
+export async function linkAdAccount(accountId: string, form: FormData): Promise<ActionResult> {
+  const me = await requireStaff();
+  if (!me.isExec) return { ok: false, error: "Only an exec can link ad accounts." };
+  const clientId = str(form, "client_id");
+  if (!clientId) return { ok: false, error: "Pick a client." };
+  const supabase = await createClient();
+  const { error } = await supabase.from("clients").update({ meta_ad_account_id: accountId }).eq("id", clientId);
+  if (error) return { ok: false, error: error.message };
+  const { data: existing } = await supabase.from("kpi_targets").select("id").eq("client_id", clientId).eq("platform", "meta").limit(1);
+  if (existing?.length) await supabase.from("kpi_targets").update({ ad_account_id: accountId }).eq("client_id", clientId).eq("platform", "meta").is("ad_account_id", null);
+  else await supabase.from("kpi_targets").insert({ client_id: clientId, platform: "meta", ad_account_id: accountId, conversion: "purchases", updated_by: me.id });
+  if (adminConfigured()) {
+    const admin = createAdminClient();
+    const { data: state } = await admin.from("sync_state").select("last_result").eq("source", "meta:accounts").maybeSingle();
+    const result = (state?.last_result ?? {}) as { unlinked?: { id: string }[] };
+    await admin.from("sync_state").update({ last_result: { ...result, unlinked: (result.unlinked ?? []).filter((a) => a.id !== accountId) } }).eq("source", "meta:accounts");
+    await refreshClientKpis(admin, clientId, true).catch(() => null);
+  }
+  revalidatePath("/kpis");
+  return { ok: true };
+}

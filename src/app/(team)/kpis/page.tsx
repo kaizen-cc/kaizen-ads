@@ -1,6 +1,7 @@
 import { requireStaff } from "@/lib/auth";
 import type { Agg, Pacing, Status, Trend } from "@/lib/kpi/calc";
 import { conversionFor, conversionLabel } from "@/lib/kpi/conversions";
+import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { KpiBoard, type KpiRow } from "./kpi-board";
 
@@ -77,6 +78,10 @@ export default async function Kpis() {
     })
     .sort((a, b) => a.client.localeCompare(b.client) || (a.label ?? "").localeCompare(b.label ?? ""));
 
+  // Ad accounts Meta shares with us that no client has yet (server-side bookmark; execs link them)
+  const { data: accounts } = me.isExec && adminConfigured() ? await createAdminClient().from("sync_state").select("last_result").eq("source", "meta:accounts").maybeSingle() : { data: null };
+  const unlinked = ((accounts?.last_result as { unlinked?: { id: string; name: string }[] } | null)?.unlinked ?? []).slice(0, 50);
+
   const lastSync = (snaps ?? []).map((s) => s.computed_at as string).sort().at(-1) ?? null;
   const mine = rows.some((r) => r.ownerId === me.id);
 
@@ -88,6 +93,7 @@ export default async function Kpis() {
       me={{ id: me.id, firstName: me.fullName.split(" ")[0] }}
       initialOwner={mine ? me.id : "all"}
       lastSync={lastSync}
+      unlinked={unlinked}
     />
   );
 }

@@ -1,6 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { asyncReport, metaConfigured, type InsightRow } from "@/lib/context/meta";
+import { asyncReport, linkAdAccounts, metaConfigured, type InsightRow } from "@/lib/context/meta";
 import { pool } from "@/lib/context/run";
 import { computeSnapshot, nyParts, toDays } from "./calc";
 
@@ -154,7 +154,8 @@ async function refreshTargets(admin: SupabaseClient, targets: Target[], pull: bo
         pulled = await syncMetaCampaigns(admin, account);
       } catch (e) {
         // Usually: the account isn't assigned to the CommandCenter system user yet
-        error = e instanceof Error ? e.message : String(e);
+        const msg = e instanceof Error ? e.message : String(e);
+        error = /missing permissions|does not exist/i.test(msg) ? "Meta can't see this ad account yet. Assign it to the CommandCenter system user." : msg;
       }
     }
     await computeAccount(admin, account, list, error);
@@ -163,11 +164,34 @@ async function refreshTargets(admin: SupabaseClient, targets: Target[], pull: bo
   });
 }
 
+/**
+ * New clients: once their ad account is shared with the agency and assigned to the system user, it's linked by
+ * name and gets a KPI row (no target yet) so it shows up on the dashboard for the buyer to fill in.
+ */
+export async function adoptNewAccounts(admin: SupabaseClient) {
+  let linked: string[] = [];
+  if (metaConfigured()) linked = (await linkAdAccounts(admin).catch(() => null))?.linked ?? [];
+  const [{ data: clients }, { data: targets }, { data: buyers }] = await Promise.all([
+    admin.from("clients").select("id, meta_ad_account_id").neq("status", "offboarded").not("meta_ad_account_id", "is", null),
+    admin.from("kpi_targets").select("client_id").eq("platform", "meta"),
+    admin.from("client_assignments").select("client_id, profile_id").eq("role", "meta_buyer"),
+  ]);
+  const has = new Set((targets ?? []).map((t) => t.client_id));
+  const buyer = new Map((buyers ?? []).map((b) => [b.client_id, b.profile_id]));
+  const fresh = (clients ?? [])
+    .filter((c) => !has.has(c.id))
+    .map((c) => ({ client_id: c.id, platform: "meta", ad_account_id: c.meta_ad_account_id, conversion: "purchases", owner_id: buyer.get(c.id) ?? null }));
+  if (fresh.length) await admin.from("kpi_targets").insert(fresh);
+  return { linked, added: fresh.length };
+}
+
 /** The scheduled step: pull every account with a target and recompute everything. */
 export async function refreshAllKpis(admin: SupabaseClient, budgetMs = 650_000) {
+  const adopted = await adoptNewAccounts(admin);
   const { data } = await admin.from("kpi_targets").select(TARGET_FIELDS).eq("active", true);
   const results = await refreshTargets(admin, (data ?? []) as Target[], true, Date.now() + budgetMs);
   return {
+    ...adopted,
     accounts: results?.length ?? 0,
     errors: (results ?? []).filter((r) => "error" in r && r.error).map((r) => `${r.account}: ${(r as { error: string }).error}`),
     deferred: (results ?? []).filter((r) => "deferred" in r).length,

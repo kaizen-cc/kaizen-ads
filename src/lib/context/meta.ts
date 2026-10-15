@@ -25,7 +25,8 @@ async function graph<T>(path: string, params: Record<string, string> = {}, metho
     });
     const body = (await res.json()) as T & { error?: { message: string; code: number } };
     // 1, 2: Meta busy for a moment; 4, 17, 32, 613: rate limits. Wait a little and try again
-    if (body.error && [1, 2, 4, 17, 32, 613].includes(body.error.code) && attempt < 3) {
+    const notReady = body.error?.message?.includes("not completed yet");
+    if (body.error && ([1, 2, 4, 17, 32, 613].includes(body.error.code) || notReady) && attempt < 3) {
       await new Promise((r) => setTimeout(r, 4000 * (attempt + 1)));
       continue;
     }
@@ -56,7 +57,8 @@ export async function asyncReport(act: string, params: Record<string, string>, t
   const until = Date.now() + timeoutMs;
   for (;;) {
     const job = await graph<{ async_status: string; async_percent_completion: number }>(id, { fields: "async_status,async_percent_completion" });
-    if (job.async_status === "Job Completed") break;
+    // Meta can say "completed" a moment before the results are readable
+    if (job.async_status === "Job Completed" && job.async_percent_completion === 100) break;
     if (job.async_status === "Job Failed" || job.async_status === "Job Skipped") throw new Error(`Meta report ${job.async_status.toLowerCase()}`);
     if (Date.now() > until) throw new Error("Meta report took too long");
     await new Promise((r) => setTimeout(r, 2500));
@@ -359,7 +361,10 @@ async function snapshot(admin: SupabaseClient, clientId: string, adAccountId: st
   return true;
 }
 
-/** Every ad account the system user can see, and link unlinked creative clients to theirs by name. */
+/**
+ * Every ad account the system user can see, and link clients without one to theirs by name (all current clients,
+ * not only creative ones). The list is saved so the KPI page can show accounts Meta shares that no client has yet.
+ */
 export async function linkAdAccounts(admin: SupabaseClient) {
   const accounts: { id: string; account_id: string; name: string; account_status: number }[] = [];
   let after = "";
@@ -373,25 +378,32 @@ export async function linkAdAccounts(admin: SupabaseClient) {
     after = page.paging?.next ? (page.paging.cursors?.after ?? "") : "";
   } while (after);
 
-  const { data: clients } = await admin.from("clients").select("id, name, meta_ad_account_id").eq("creative_package", true);
+  const { data: clients } = await admin.from("clients").select("id, name, meta_ad_account_id, creative_package").neq("status", "offboarded");
+  const taken = new Set((clients ?? []).map((c) => c.meta_ad_account_id).filter(Boolean));
   const linked: string[] = [];
   for (const c of clients ?? []) {
     if (c.meta_ad_account_id) continue;
     const key = compact(c.name);
     const hits = accounts.filter((a) => {
+      if (taken.has(a.account_id) || a.account_status !== 1) return false;
       const nm = compact(a.name);
       return key.length >= 4 && (nm.includes(key) || key.includes(nm));
     });
+    // Only a single clear match; anything ambiguous waits for someone to pick on the KPI page
     if (hits.length === 1) {
       await admin.from("clients").update({ meta_ad_account_id: hits[0].account_id }).eq("id", c.id);
       c.meta_ad_account_id = hits[0].account_id;
+      taken.add(hits[0].account_id);
       linked.push(`${c.name} → ${hits[0].name}`);
     }
   }
+  const unlinked = accounts.filter((a) => !taken.has(a.account_id) && a.account_status === 1).map((a) => ({ id: a.account_id, name: a.name }));
+  await admin.from("sync_state").upsert({ source: "meta:accounts", last_run_at: new Date().toISOString(), last_result: { total: accounts.length, unlinked } });
   return {
     accounts: accounts.map((a) => `${a.name} (${a.account_id})${a.account_status === 1 ? "" : " · not active"}`),
     linked,
-    creativeClientsWithoutAccount: (clients ?? []).filter((c) => !c.meta_ad_account_id).map((c) => c.name),
+    unlinked,
+    creativeClientsWithoutAccount: (clients ?? []).filter((c) => c.creative_package && !c.meta_ad_account_id).map((c) => c.name),
   };
 }
 

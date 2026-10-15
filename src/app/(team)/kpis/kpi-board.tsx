@@ -8,7 +8,7 @@ import type { Agg, Pacing, Status, Trend } from "@/lib/kpi/calc";
 import { CONVERSIONS } from "@/lib/kpi/conversions";
 import { STATUS, deviationTone, kpiValue, money } from "@/lib/kpi/format";
 import { freshness } from "@/lib/dates";
-import { addKpiTarget, archiveKpiTarget, pullClientKpis, saveKpiTarget } from "./actions";
+import { addKpiTarget, archiveKpiTarget, linkAdAccount, pullClientKpis, saveKpiTarget } from "./actions";
 import { DailyChart, Ladder, PaceBar, paceMeta } from "./kpi-charts";
 
 export type KpiRow = {
@@ -334,6 +334,45 @@ function AddKpi({ clients, buyers, platform, onDone }: { clients: { id: string; 
   );
 }
 
+/** Ad accounts Meta shares with the agency that the name match couldn't pin to a client. */
+function Unlinked({ accounts, clients }: { accounts: { id: string; name: string }[]; clients: { id: string; name: string }[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-[14px] border border-dashed border-line px-5 py-4">
+      <button onClick={() => setOpen((o) => !o)} className="flex w-full items-center justify-between gap-3 text-left text-sm">
+        <span>
+          <span className="tabular font-medium">{accounts.length}</span> ad {accounts.length === 1 ? "account" : "accounts"} shared with us that aren&apos;t linked to a client
+        </span>
+        <span className="text-xs text-muted">{open ? "Hide" : "Review"}</span>
+      </button>
+      {open && (
+        <ul className="mt-4 grid gap-2">
+          {accounts.map((a) => (
+            <li key={a.id} className="grid items-center gap-3 rounded-[10px] bg-surface px-4 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+              <span className="min-w-0">
+                <span className="block truncate text-sm">{a.name}</span>
+                <span className="tabular text-xs text-faint">act_{a.id}</span>
+              </span>
+              <ActionForm action={linkAdAccount.bind(null, a.id)} submitLabel="Link" className="flex flex-wrap items-center gap-2 [&>div]:shrink-0">
+                <select name="client_id" required defaultValue="" className={`${field} min-w-0 flex-1`}>
+                  <option value="" disabled>
+                    Whose account is this?
+                  </option>
+                  {clients.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </ActionForm>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /** The KPI dashboard: how every account is pacing toward its target and its budget. */
 export function KpiBoard({
   rows,
@@ -342,6 +381,7 @@ export function KpiBoard({
   me,
   initialOwner,
   lastSync,
+  unlinked = [],
 }: {
   rows: KpiRow[];
   buyers: Person[];
@@ -349,6 +389,7 @@ export function KpiBoard({
   me: { id: string; firstName: string };
   initialOwner: string;
   lastSync: string | null;
+  unlinked?: { id: string; name: string }[];
 }) {
   const [platform, setPlatform] = useState<"meta" | "google">("meta");
   const [owner, setOwner] = useState(initialOwner);
@@ -464,6 +505,8 @@ export function KpiBoard({
           </div>
         </div>
       </div>
+
+      {platform === "meta" && unlinked.length > 0 && <Unlinked accounts={unlinked} clients={clients} />}
 
       {adding && <AddKpi clients={clients} buyers={buyers} platform={platform} onDone={() => setAdding(false)} />}
 
