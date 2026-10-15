@@ -10,7 +10,7 @@ import { FORMAT_LABEL, type Format, type Priority } from "@/lib/stages";
 import { ClientTag, FormatIcon } from "@/app/(team)/board/ticket-card";
 import { applyFixes, createBatch, loadBriefing, reviewRequest, suggestForRequest, type ContextSummary, type RefSummary, type ReviewDecisions, type ReviewResult, type SimilarCard, type SuggestResult } from "./actions";
 import { ReviewWorkspace, startHandled, type Handled } from "./review-workspace";
-import { FORMATS, MAX_VARIATIONS, SIZES, emptyDraft, selectedFormats, totalFor, type Draft, type Size } from "./draft";
+import { FORMATS, INSPIRE_KEY, MAX_VARIATIONS, SIZES, emptyDraft, selectedFormats, totalFor, type Draft, type Size } from "./draft";
 import { AllotmentMeter, AspectOption, Chip, ClientSearch, Progress, Spark, Stepper, Thinking, type ClientOption } from "./parts";
 
 const STEPS = ["Client", "Formats", "Direction", "Brief", "Review"];
@@ -166,6 +166,18 @@ export function RequestForm({
       } else if (initialClient && aiOn) {
         const id = ++latest.current;
         fetchSuggestions(draft, false).then((r) => id === latest.current && setAi(r));
+      }
+      // Arriving from the winners library: that ad goes into the brief as a reference
+      if (!demo) {
+        let inspire: string | null = null;
+        try {
+          inspire = sessionStorage.getItem(INSPIRE_KEY);
+          sessionStorage.removeItem(INSPIRE_KEY);
+        } catch {}
+        if (inspire) {
+          const line = inspire;
+          setDraft((d) => (d.brief.includes(line) ? d : { ...d, brief: d.brief.trim() ? `${d.brief.trim()}\n\n${line}` : line }));
+        }
       }
       setLoaded(true);
     });

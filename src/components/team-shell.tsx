@@ -9,6 +9,7 @@ const NAV = [
   { href: "/pipeline", label: "Home", icon: "M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" },
   { href: "/board", label: "Board", icon: "M4 4h4v16H4zM10 4h4v10h-4zM16 4h4v13h-4z" },
   { href: "/kpis", label: "KPIs", icon: "M4 19h16M6 15l4-5 3 3 5-7" },
+  { href: "/winners", label: "Winners", icon: "M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0zM7 6H4v1a3 3 0 0 0 3 3M17 6h3v1a3 3 0 0 1-3 3" },
   { href: "/clients", label: "Clients", icon: "M4 20V8l8-5 8 5v12M9 20v-6h6v6" },
   { href: "/team", label: "Team", icon: "M16 19v-1a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v1M10 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6m10 9v-1a4 4 0 0 0-3-3.9M15 4.1a3 3 0 0 1 0 5.8" },
 ];

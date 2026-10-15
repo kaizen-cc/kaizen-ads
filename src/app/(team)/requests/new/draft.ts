@@ -62,3 +62,11 @@ export function describeDraft(d: Draft, clientName: string) {
     `References: ${refLinks(d.refs).join(" ") || "(none)"}`,
   ].join("\n");
 }
+
+/** A winning ad picked in the winners library, waiting to go into the next request's brief (session storage). */
+export const INSPIRE_KEY = "kz:inspire";
+
+/** The brief line for a winning ad: what it is and why it's worth learning from. */
+export function inspireLine(w: { detail: string | null; headline: string | null; name: string; text: string | null; ratio: number; result: string | null }) {
+  return `Reference: a winning ad for a similar business (${w.detail ?? "same industry"}): "${w.headline ?? w.name}"${w.text ? `, copy: "${w.text.slice(0, 140)}"` : ""}. It's getting ${w.ratio}x better cost per ${w.result ?? "result"} than its account's usual.`;
+}

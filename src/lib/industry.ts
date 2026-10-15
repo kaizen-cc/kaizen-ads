@@ -91,22 +91,29 @@ ${batch
 }
 
 export type Winner = {
+  id: string; // the ad's id in Meta
   client: string;
   clientId: string;
+  clientSlug: string;
+  industry: string | null;
   detail: string | null;
   name: string;
   headline: string | null;
   text: string | null;
   thumbnail: string | null;
+  live: boolean | null; // delivering in the last sync (null: not known yet)
   result: string | null;
+  results: number;
   costPerResult: number;
   usual: number; // that account's typical cost per result
   ratio: number; // usual / this ad's: 2 = half the usual cost
   spend: number;
   ctr: number;
+  syncedAt: string;
 };
 
-type SnapAd = { id: string; name: string; headline: string | null; text: string | null; thumbnail: string | null; image?: string | null; spend?: number; results?: number; result?: string | null; costPerResult?: number | null; ctr?: number };
+type SnapAd = { id: string; name: string; headline: string | null; text: string | null; thumbnail: string | null; image?: string | null; live?: boolean; spend?: number; results?: number; result?: string | null; costPerResult?: number | null; ctr?: number };
+type Peer = { id: string; name: string; slug: string; industry: string | null; industry_detail: string | null };
 
 const median = (xs: number[]) => {
   const s = xs.slice().sort((a, b) => a - b);
@@ -114,25 +121,23 @@ const median = (xs: number[]) => {
 };
 
 /**
- * The ads beating their own account the most, across the other clients in an industry: enough spend and results to
- * count, and a cost per result well under that account's typical one. Best first.
+ * The ads beating their own account: enough spend and results to count ($100, 3 results), and a cost per result at
+ * least 1.2x better than that account's typical one. Best first, at most `perClient` from one client.
  */
-export async function industryWinners(db: SupabaseClient, industry: string, excludeClientId?: string, limit = 6): Promise<Winner[]> {
-  const { data: peers } = await db.from("clients").select("id, name, industry_detail").eq("industry", industry).neq("status", "offboarded");
-  const others = (peers ?? []).filter((p) => p.id !== excludeClientId);
-  if (!others.length) return [];
+async function scoreWinners(db: SupabaseClient, peers: Peer[], opts: { perClient: number; limit: number }): Promise<Winner[]> {
+  if (!peers.length) return [];
   const { data: snaps } = await db
     .from("meta_snapshots")
     .select("client_id, ads, fetched_at")
-    .in("client_id", others.map((p) => p.id))
+    .in("client_id", peers.map((p) => p.id))
     .order("fetched_at", { ascending: false })
-    .limit(others.length * 3);
+    .limit(peers.length * 3);
   const seen = new Set<string>();
   const winners: Winner[] = [];
   for (const s of snaps ?? []) {
     if (seen.has(s.client_id)) continue;
     seen.add(s.client_id);
-    const peer = others.find((p) => p.id === s.client_id)!;
+    const peer = peers.find((p) => p.id === s.client_id)!;
     const ads = ((s.ads ?? []) as SnapAd[]).filter((a) => (a.spend ?? 0) >= 100 && (a.results ?? 0) >= 3 && a.costPerResult);
     if (ads.length < 2) continue;
     const usual = median(ads.map((a) => a.costPerResult!));
@@ -140,26 +145,43 @@ export async function industryWinners(db: SupabaseClient, industry: string, excl
       const ratio = usual / a.costPerResult!;
       if (ratio < 1.2) continue;
       winners.push({
+        id: a.id,
         client: peer.name,
         clientId: peer.id,
+        clientSlug: peer.slug,
+        industry: peer.industry,
         detail: peer.industry_detail,
         name: a.name,
         headline: a.headline,
         text: a.text,
         thumbnail: a.image ?? a.thumbnail,
+        live: a.live ?? null,
         result: a.result ?? null,
+        results: a.results ?? 0,
         costPerResult: a.costPerResult!,
         usual,
         ratio: Math.round(ratio * 10) / 10,
         spend: a.spend ?? 0,
         ctr: a.ctr ?? 0,
+        syncedAt: s.fetched_at,
       });
     }
   }
-  // Best first, and no more than two from one client so it's a spread
   winners.sort((a, b) => b.ratio - a.ratio);
   const per = new Map<string, number>();
-  return winners.filter((w) => (per.set(w.clientId, (per.get(w.clientId) ?? 0) + 1).get(w.clientId) ?? 0) <= 2).slice(0, limit);
+  return winners.filter((w) => (per.set(w.clientId, (per.get(w.clientId) ?? 0) + 1).get(w.clientId) ?? 0) <= opts.perClient).slice(0, opts.limit);
+}
+
+/** The best ads across the other clients in an industry (for a request and the AI). */
+export async function industryWinners(db: SupabaseClient, industry: string, excludeClientId?: string, limit = 6): Promise<Winner[]> {
+  const { data: peers } = await db.from("clients").select("id, name, slug, industry, industry_detail").eq("industry", industry).neq("status", "offboarded");
+  return scoreWinners(db, ((peers ?? []) as Peer[]).filter((p) => p.id !== excludeClientId), { perClient: 2, limit });
+}
+
+/** The winners library: the best ads across every client we run. */
+export async function allWinners(db: SupabaseClient): Promise<Winner[]> {
+  const { data: peers } = await db.from("clients").select("id, name, slug, industry, industry_detail").neq("status", "offboarded");
+  return scoreWinners(db, (peers ?? []) as Peer[], { perClient: 8, limit: 300 });
 }
 
 /** The winners as context for the AI. Other clients' names stay out: it's what worked, not whose it was. */

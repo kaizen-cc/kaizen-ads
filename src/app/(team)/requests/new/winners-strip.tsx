@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { industryWinnersFor, type WinnersResult } from "./actions";
+import { inspireLine } from "./draft";
 
 /**
  * What's working for other clients in the same industry: the ads beating their own account the most, from live Meta
@@ -30,7 +31,7 @@ export function WinnersStrip({ clientId, onUse }: { clientId: string; onUse: (li
       <div className="flex gap-3 overflow-x-auto pb-1">
         {data.winners.map((w) => {
           const key = `${w.clientId}:${w.name}`;
-          const line = `Reference: a winning ad for a similar business (${w.detail ?? "same industry"}): "${w.headline ?? w.name}"${w.text ? `, copy: "${w.text.slice(0, 140)}"` : ""}. It's getting ${w.ratio}x better cost per ${w.result ?? "result"} than its account's usual.`;
+          const line = inspireLine(w);
           return (
             <div key={key} className="grid w-44 shrink-0 content-start gap-2 rounded-[10px] border border-line bg-bg/50 p-2">
               <span className="relative aspect-[4/5] overflow-hidden rounded-[6px] bg-surface-2">
