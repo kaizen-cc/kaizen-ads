@@ -11,7 +11,8 @@ export type Handled = {
   issues: IssueStatus[];
   similar: Record<number, "open" | "continued">;
   brief: "offer" | "used" | "kept" | "none";
-  fixing: number[] | null; // which issues the AI is fixing right now
+  fixing: number[] | null; // every issue waiting for an AI fix (running or queued)
+  running: number[] | null; // the ones being changed right now
   note: string | null; // what the AI couldn't do in text
   undo: { title: string; angle: string; audience: string; brief: string; reopen: number[]; briefWas: "offer" | "used" | "kept" | "none" } | null;
 };
@@ -21,6 +22,7 @@ export const startHandled = (review: Review, similar: SimilarCard[], brief: stri
   similar: Object.fromEntries(similar.map((s) => [s.number, "open"])),
   brief: review.strongerBrief && review.strongerBrief.trim() !== brief.trim() ? "offer" : "none",
   fixing: null,
+  running: null,
   note: null,
   undo: null,
 });
@@ -43,6 +45,7 @@ function IssueRow({
   x,
   status,
   fixing,
+  queued,
   onFix,
   onEdit,
   onDismiss,
@@ -51,6 +54,7 @@ function IssueRow({
   x: ReviewIssue;
   status: IssueStatus;
   fixing: boolean;
+  queued: boolean;
   onFix: () => void;
   onEdit: () => void;
   onDismiss: () => void;
@@ -69,7 +73,7 @@ function IssueRow({
       </li>
     );
   return (
-    <li className={`relative grid gap-2 overflow-hidden rounded-[10px] bg-surface-2 px-4 py-3.5 ${fixing ? "ring-1 ring-brand-text/40" : ""}`}>
+    <li className={`relative grid gap-2 overflow-hidden rounded-[10px] bg-surface-2 px-4 py-3.5 ${fixing ? "ring-1 ring-brand-text/40" : queued ? "ring-1 ring-line" : ""}`}>
       {fixing && <span className="pointer-events-none absolute inset-y-0 left-0 w-1/2 bg-gradient-to-r from-transparent via-brand/15 to-transparent animate-[ai-sweep_1.6s_ease-in-out_infinite]" />}
       <div className="relative flex items-center justify-between gap-3">
         <span className="flex items-center gap-2 text-xs">
@@ -91,11 +95,11 @@ function IssueRow({
         {canFix && (
           <button
             type="button"
-            disabled={fixing}
+            disabled={fixing || queued}
             onClick={onFix}
             className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-fg px-3.5 text-xs font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-60"
           >
-            <Spark size={11} /> {fixing ? "Changing…" : "Make this change"}
+            <Spark size={11} className={fixing ? "animate-[ai-pulse_1.2s_ease-in-out_infinite]" : ""} /> {fixing ? "Changing…" : queued ? "Queued" : "Make this change"}
           </button>
         )}
       </div>
@@ -306,7 +310,8 @@ export function ReviewWorkspace({
                 key={i}
                 x={x}
                 status={handled.issues[i]}
-                fixing={Boolean(handled.fixing?.includes(i))}
+                fixing={Boolean(handled.running?.includes(i))}
+                queued={Boolean(handled.fixing?.includes(i) && !handled.running?.includes(i))}
                 onFix={() => onFix([i])}
                 onEdit={() => onEdit(x.field)}
                 onDismiss={() => onSetIssue(i, "dismissed")}

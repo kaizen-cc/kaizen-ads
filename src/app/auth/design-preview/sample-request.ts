@@ -36,6 +36,12 @@ export const sampleRequest: RequestDemo = {
       },
       {
         severity: "warn",
+        field: "audience",
+        issue: "The audience is empty, so the designer won't know who the family deal is for.",
+        fix: "Set the audience to parents within 10 miles planning a Friday night in.",
+      },
+      {
+        severity: "warn",
         field: "formats",
         issue: "The brief describes a 30s story, but the video is set to 1 net new for Reels at 10–15s.",
         fix: "Either shorten the story in the brief or add a second video.",

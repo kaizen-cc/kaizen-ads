@@ -53,6 +53,39 @@ function Field({ id, label, hint, children }: { id?: string; label: string; hint
   );
 }
 
+// A request in progress is kept in this browser, so a refresh, a crash or clicking away doesn't lose it (or the
+// AI work already done). Cancel, Start over and sending it clear it. Kept for 7 days.
+const SAVE_KEY = "kz:new-request:v1";
+const SAVE_DAYS = 7;
+type Saved = {
+  at: number;
+  draft: Draft;
+  step: number;
+  ai: AiState;
+  briefAi: { status: "idle" | "loading" } | { status: "offer"; text: string };
+  review: ReviewState;
+  handled: Handled | null;
+};
+function readSaved(key = SAVE_KEY): Saved | null {
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return null;
+    const s = JSON.parse(raw) as Saved;
+    if (!s?.draft || Date.now() - s.at > SAVE_DAYS * 86_400_000) return null;
+    return s;
+  } catch {
+    return null;
+  }
+}
+function writeSaved(s: Saved | null, key = SAVE_KEY) {
+  try {
+    if (s) window.localStorage.setItem(key, JSON.stringify(s));
+    else window.localStorage.removeItem(key);
+  } catch {
+    // Private windows or blocked storage: the form still works, it just isn't kept
+  }
+}
+
 export function RequestForm({
   clients,
   allotments,
@@ -110,13 +143,46 @@ export function RequestForm({
     fetchSuggestions(d, live).then((r) => id === latest.current && setAi(r));
   };
 
-  // Arriving with ?client= starts reading that client right away
+  // On arrival: pick up a request in progress (no new AI calls), or start reading ?client= right away
+  const [restoredAt, setRestoredAt] = useState<number | null>(null);
+  // The design preview keeps its sample request apart from a real one
+  const saveKey = demo ? `${SAVE_KEY}:preview` : SAVE_KEY;
+  const [loaded, setLoaded] = useState(false); // nothing is saved until the saved copy has been read
   useEffect(() => {
-    if (!initialClient || !aiOn) return;
-    const id = ++latest.current;
-    fetchSuggestions(draft, false).then((r) => id === latest.current && setAi(r));
+    const saved = readSaved(saveKey);
+    // Read storage after mount (the server can't), then apply it
+    void Promise.resolve().then(() => {
+      if (saved && saved.draft.clientId && (!initialClient || saved.draft.clientId === initialClient)) {
+        setDraft(saved.draft);
+        setStep(saved.step);
+        // Anything that was mid-flight comes back settled: an unfinished AI call is simply asked again
+        setAi(saved.ai.status === "loading" ? { status: "idle" } : saved.ai);
+        setBriefAi(saved.briefAi.status === "loading" ? { status: "idle" } : saved.briefAi);
+        setReview(saved.review.status === "running" ? { status: "idle" } : saved.review);
+        setHandled(saved.handled ? { ...saved.handled, fixing: null, running: null } : null);
+        setRestoredAt(saved.at);
+        if (saved.ai.status === "loading" && aiOn) suggest(saved.draft, false);
+      } else if (initialClient && aiOn) {
+        const id = ++latest.current;
+        fetchSuggestions(draft, false).then((r) => id === latest.current && setAi(r));
+      }
+      setLoaded(true);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Keep the request in progress as it changes
+  useEffect(() => {
+    if (!loaded || created) return;
+    if (!draft.clientId) return writeSaved(null, saveKey);
+    writeSaved({ at: Date.now(), draft, step, ai, briefAi, review, handled: handled ? { ...handled, fixing: null, running: null } : null }, saveKey);
+  }, [loaded, created, draft, step, ai, briefAi, review, handled, saveKey]);
+
+  const startOver = () => {
+    writeSaved(null, saveKey);
+    setRestoredAt(null);
+    reset();
+  };
 
   const set = (patch: Partial<Draft>) => {
     setDraft((d) => ({ ...d, ...patch }));
@@ -199,11 +265,15 @@ export function RequestForm({
     start(async () => {
       setError(null);
       if (demo) {
+        writeSaved(null, saveKey);
         setCreated(formats.map((_, i) => 1061 + i));
         return;
       }
       const res = await createBatch(draft, r, decisionsOf(r));
-      if (res.ok) setCreated(res.numbers);
+      if (res.ok) {
+        writeSaved(null, saveKey);
+        setCreated(res.numbers);
+      }
       else setError(res.error);
     });
 
@@ -229,29 +299,57 @@ export function RequestForm({
   const patchText = (p: Partial<Pick<Draft, "title" | "angle" | "audience" | "brief">>) => setDraft((d) => ({ ...d, ...p }));
   const snapshot = (reopen: number[], briefWas: Handled["brief"]) => ({ title: draft.title, angle: draft.angle, audience: draft.audience, brief: draft.brief, reopen, briefWas });
 
-  const fixWithAi = (indexes: number[]) => {
-    if (review.status !== "done" || !handled || indexes.length === 0) return;
-    const issues = indexes.map((i) => review.review.issues[i]);
-    setHandled({ ...handled, fixing: indexes, note: null });
-    const ask = demo
-      ? new Promise<Awaited<ReturnType<typeof applyFixes>>>((r) =>
-          setTimeout(() => r({ ok: true, patch: { title: draft.title, angle: draft.angle, audience: draft.audience, brief: `${draft.brief}\n${issues.map((x) => x.fix).join("\n")}`, changed: ["brief"], note: "" } }), 1400),
-        )
-      : applyFixes(draft, issues);
-    ask.then((res) => {
+  // AI fixes run one after another, each on top of the last, so clicking several in a row never loses a change
+  const fixQueue = useRef<number[][]>([]);
+  const fixBusy = useRef(false);
+  const draftNow = useRef(draft);
+  useEffect(() => {
+    draftNow.current = draft;
+  }, [draft]);
+
+  const runFixes = async () => {
+    if (fixBusy.current || review.status !== "done") return;
+    fixBusy.current = true;
+    while (fixQueue.current.length) {
+      const indexes = fixQueue.current.shift()!;
+      const before = draftNow.current;
+      const issues = indexes.map((i) => review.review.issues[i]);
+      setHandled((h) => (h ? { ...h, running: indexes, note: null } : h));
+      const res = demo
+        ? await new Promise<Awaited<ReturnType<typeof applyFixes>>>((r) =>
+            setTimeout(() => r({ ok: true, patch: { title: before.title, angle: before.angle, audience: before.audience, brief: `${before.brief}\n${issues.map((x) => x.fix).join("\n")}`, changed: ["brief"], note: "" } }), 1400),
+          )
+        : await applyFixes(before, issues);
+      if (res.ok) {
+        const next = { ...draftNow.current, title: res.patch.title, angle: res.patch.angle, audience: res.patch.audience, brief: res.patch.brief };
+        draftNow.current = next;
+        patchText({ title: next.title, angle: next.angle, audience: next.audience, brief: next.brief });
+      }
       setHandled((h) => {
         if (!h) return h;
-        if (!res.ok) return { ...h, fixing: null, note: res.error };
+        const fixing = (h.fixing ?? []).filter((i) => !indexes.includes(i));
+        if (!res.ok) return { ...h, running: null, fixing: fixing.length ? fixing : null, note: res.error };
         return {
           ...h,
-          fixing: null,
-          note: res.patch.note || null,
-          undo: snapshot(indexes, h.brief),
+          running: null,
+          fixing: fixing.length ? fixing : null,
+          note: res.patch.note || h.note,
+          undo: { title: before.title, angle: before.angle, audience: before.audience, brief: before.brief, reopen: indexes, briefWas: h.brief },
           issues: h.issues.map((st, i) => (indexes.includes(i) ? "fixed" : st)),
         };
       });
-      if (res.ok) patchText({ title: res.patch.title, angle: res.patch.angle, audience: res.patch.audience, brief: res.patch.brief });
-    });
+    }
+    fixBusy.current = false;
+  };
+
+  const fixWithAi = (indexes: number[]) => {
+    if (review.status !== "done" || !handled) return;
+    const waiting = new Set(handled.fixing ?? []);
+    const fresh = indexes.filter((i) => !waiting.has(i) && handled.issues[i] === "open");
+    if (!fresh.length) return;
+    fixQueue.current.push(fresh);
+    setHandled((h) => (h ? { ...h, fixing: [...(h.fixing ?? []), ...fresh] } : h));
+    void runFixes();
   };
 
   const useStrongerBrief = (choice: "used" | "kept") => {
@@ -276,6 +374,8 @@ export function RequestForm({
   };
 
   const reset = () => {
+    writeSaved(null, saveKey);
+    setHandled(null);
     latest.current++;
     setDraft(emptyDraft(null));
     setAi({ status: "idle" });
@@ -299,10 +399,26 @@ export function RequestForm({
         <div className="grid gap-6">
           <div className="flex items-center justify-between gap-3">
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">New request</p>
-            <Link href="/board" className="text-xs text-muted hover:text-fg">
+            <Link href="/board" onClick={() => writeSaved(null, saveKey)} className="text-xs text-muted hover:text-fg">
               Cancel
             </Link>
           </div>
+          {!created && restoredAt && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-[10px] border border-line bg-surface px-4 py-2.5 text-sm animate-[step-in_.25s_ease-out]">
+              <span className="text-muted">
+                Picked up where you left off
+                <span className="text-faint"> · saved {new Intl.DateTimeFormat("en-US", { weekday: "short", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }).format(new Date(restoredAt))}</span>
+              </span>
+              <span className="flex items-center gap-1">
+                <button type="button" onClick={() => setRestoredAt(null)} className="rounded-full px-3 py-1 text-xs text-muted hover:text-fg">
+                  Got it
+                </button>
+                <button type="button" onClick={startOver} className="rounded-full border border-line px-3 py-1 text-xs text-muted hover:border-faint hover:text-fg">
+                  Start over
+                </button>
+              </span>
+            </div>
+          )}
           {!created && <Progress steps={STEPS} current={step} onJump={go} />}
           {!created && <AiStrip aiOn={aiOn} ai={ai} clientName={client?.name ?? null} onRefresh={() => suggest(draft, true)} />}
         </div>
