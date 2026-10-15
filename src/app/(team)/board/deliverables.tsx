@@ -253,6 +253,8 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
     setReplacing(null);
   };
 
+  // New designs are added while it's being made; past that (in review, with the client) a design is changed with Replace
+  const canAdd = ["requested", "in_production", "client_revision"].includes(ticket.stage) || !(designs ?? []).length;
   const net = (designs ?? []).filter((d) => !d.isVariation).length;
   const vars = (designs ?? []).filter((d) => d.isVariation).length;
 
@@ -439,7 +441,7 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
             </button>
           </div>
         </div>
-      ) : (
+      ) : !canAdd ? null : (
         <div
           className={`grid place-items-center gap-2 rounded-[10px] border border-dashed px-6 py-7 text-center transition-colors ${
             over ? "border-brand-text bg-brand-soft" : "border-line"

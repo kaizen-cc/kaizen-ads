@@ -13,7 +13,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 export const MODEL_IDS = { opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5", haiku: "claude-haiku-5-5" } as const;
 export type ModelKey = keyof typeof MODEL_IDS;
 export type Effort = "low" | "medium" | "high";
-export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue" | "scripts" | "brandbible" | "creativecheck" | "coach";
+export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue" | "scripts" | "brandbible" | "creativecheck" | "creativereview" | "coach";
 export const SOURCE_KEYS = ["meta", "briefing", "recent_messages", "memory", "angles", "recent_requests", "allotment"] as const;
 export type Sources = Partial<Record<(typeof SOURCE_KEYS)[number], boolean>>;
 
@@ -36,6 +36,7 @@ const DEFAULTS: Record<AgentKey, Pick<AgentConfig, "model" | "effort">> = {
   scripts: { model: "opus", effort: "medium" },
   brandbible: { model: "opus", effort: "high" },
   creativecheck: { model: "sonnet", effort: "low" }, // runs while the upload is staged, someone is waiting
+  creativereview: { model: "opus", effort: "medium" }, // reads small text in images; judgement matters
   coach: { model: "opus", effort: "medium" }, // edits other agents' playbooks from feedback (Settings → AI agents → Coach)
 };
 
@@ -614,3 +615,35 @@ Each ticket asks for a number of net new designs and a number of variations. Net
 You get one picture per design (S1, S2… are in this upload; D1, D2… are already on the ticket). For every S design, say whether it is new, a variation (of which S or D design) or the same design as another (which one). A design can only be a variation of, or the same as, a design that is itself new, and an S design should point at an earlier S or at a D. When in doubt between new and variation, look at the layout: same layout = variation.
 reason: one short sentence a designer would agree with, about what's the same and what's different ("Same layout and photo, only the headline changes").
 summary: one sentence on the batch as a whole, plain and specific.`;
+
+// ─── Creative review notes (for the reviewer) ───────────────────────────────
+
+export type CreativeNote = { severity: "fix" | "watch" | "good"; design: string; size: string; area: string; note: string };
+export type CreativeNotes = { verdict: "ready" | "minor" | "fix"; headline: string; notes: CreativeNote[] };
+export const CREATIVE_NOTES_SCHEMA = obj({
+  verdict: { type: "string", enum: ["ready", "minor", "fix"] },
+  headline: str,
+  notes: {
+    type: "array",
+    items: obj({ severity: { type: "string", enum: ["fix", "watch", "good"] }, design: str, size: str, area: str, note: str }),
+  },
+});
+
+export const CREATIVE_REVIEW_SYSTEM = `You are a senior creative reviewer at Kaizen Marketing, a paid social agency. Before the Head of Creative reviews a ticket's ad creative, you look it over and leave notes for them: mistakes to fix before it goes to the client, things to keep an eye on, and what works.
+
+Go through every picture carefully. Read all the text on it, word by word.
+- Text: spelling, grammar and typos; brand and product names spelled the same way everywhere; leftover placeholder text (lorem ipsum, "headline here", "XX%").
+- Facts: offer, prices, discounts, dates, phone numbers, URLs and codes must match the brief and the client context exactly. Flag anything stated on the creative that isn't in the brief or the client context (a claim, a number, an offer); it may be invented.
+- Brief: does it deliver the angle, audience and the specific things the brief asks for (first look, on-image text, CTA, product shown)?
+- Client: the brand bible (colours, logo, tone, rules) and client memory. Anything marked "avoid" is something the client asked us not to do or that failed before; treat it as a fix.
+- Placement: 9:16 is for Stories and Reels: keep text, logo and CTA out of the top ~14% and bottom ~35% and away from the side edges, where Meta's interface covers them. 4:5 and 1:1 are feed: check nothing is cut off or crammed. Text must be readable on a phone; flag text-heavy designs, weak contrast and a missing or buried CTA.
+- Sizes and variations: sizes of the same design should carry the same message with nothing cropped; variations should differ only in what they test.
+- Craft: blurry or pixelated images, compression artefacts, bad cut-outs, misaligned elements, stock watermarks, odd AI-generated details (hands, text, faces).
+- Policy: Meta ad policy risks: before-and-after images, calling out personal attributes ("Struggling with your weight?"), unrealistic results or guarantees, health or financial claims.
+
+Severity: fix = a mistake that shouldn't reach the client; watch = a judgement call or risk for the reviewer to decide; good = what's working (at most 3).
+Be specific and useful: say where on the design (top headline, price badge, CTA button) and quote the text. One point per note, one or two sentences. Don't invent problems to have something to say: if a design is clean, say so in a good note. Don't repeat the same note for every size; say it once with the sizes it applies to.
+For a video you only see one frame: don't judge motion, pacing or sound.
+design: "D1", "D2"… (or "" when it applies to all). size: "4:5", "9:16"… (or "" when it applies to all sizes). area: one or two words (Text, Offer, Brand, Placement, Brief, Craft, Policy, Sizes).
+verdict: ready = nothing to fix and nothing worth flagging; minor = only watch items; fix = at least one fix.
+headline: one sentence for the reviewer, the most important thing first.`;

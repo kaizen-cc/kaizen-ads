@@ -6,7 +6,7 @@ import { BoardClient } from "./board-client";
 import { toTicket, type BoardRow } from "./to-ticket";
 
 // Writing a video script with the AI can take a minute
-export const maxDuration = 120;
+export const maxDuration = 300; // room for the AI creative review that starts when a ticket reaches review
 
 export default async function Board() {
   const me = await requireStaff();

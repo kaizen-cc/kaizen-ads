@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { requireStaff } from "@/lib/auth";
 import { draftCopy } from "@/lib/copy-draft";
+import type { CreativeNotes } from "@/lib/ai";
+import { currentCreative, markRunning, runCreativeReview } from "@/lib/creative-review";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -128,4 +130,57 @@ export async function reviewCreative(requestId: string, decision: "approve" | "c
   }
   revalidatePath("/board");
   return { ok: true };
+}
+
+// ─── The AI's notes for the reviewer ────────────────────────────────────────
+
+export type AiNotes =
+  | { status: "none" }
+  | { status: "running"; since: string }
+  | { status: "failed"; error: string }
+  | { status: "done"; notes: CreativeNotes; at: string; stale: boolean };
+
+const STUCK_MS = 6 * 60_000; // a run that hasn't finished by now died with its function
+
+/** Run the AI review in the background, after this response. */
+function startReview(requestId: string) {
+  after(async () => {
+    try {
+      await runCreativeReview(createAdminClient(), requestId);
+    } catch (e) {
+      console.error("[creative review] failed:", e instanceof Error ? e.message : e);
+    }
+  });
+}
+
+/**
+ * The AI's notes on a ticket's creative. In creative review, a missing, stuck or out-of-date look (the files changed)
+ * starts a new one and comes back as running; the panel checks again until it's done.
+ */
+export async function creativeNotes(requestId: string, opts: { rerun?: boolean } = {}): Promise<AiNotes> {
+  await requireStaff();
+  const supabase = await createClient();
+  const [{ data: row }, { data: r }] = await Promise.all([
+    supabase.from("creative_ai_reviews").select("status, content, error, signature, started_at, updated_at").eq("request_id", requestId).maybeSingle(),
+    supabase.from("requests").select("stage").eq("id", requestId).maybeSingle(),
+  ]);
+  if (!r) return { status: "failed", error: "Ticket not found." };
+  if (!adminConfigured()) return row?.status === "done" ? { status: "done", notes: row.content as CreativeNotes, at: row.updated_at, stale: false } : { status: "none" };
+
+  const admin = createAdminClient();
+  const { signature } = await currentCreative(admin, requestId);
+  const stuck = row?.status === "running" && Date.now() - Date.parse(row.started_at) > STUCK_MS;
+  const stale = Boolean(row && row.signature !== signature);
+  const reviewing = r.stage === "internal_review";
+
+  if (signature && (opts.rerun || (reviewing && (!row || stuck || (stale && row.status !== "running"))))) {
+    // Marked running first, so a second open of the ticket doesn't start another
+    const since = (await markRunning(admin, requestId)) ?? new Date().toISOString();
+    startReview(requestId);
+    return { status: "running", since };
+  }
+  if (!row) return { status: "none" };
+  if (row.status === "running") return { status: "running", since: row.started_at };
+  if (row.status === "failed") return { status: "failed", error: row.error ?? "The AI review didn't finish." };
+  return { status: "done", notes: row.content as CreativeNotes, at: row.updated_at, stale };
 }

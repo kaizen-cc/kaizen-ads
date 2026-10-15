@@ -1,6 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
+import { markRunning, runCreativeReview } from "@/lib/creative-review";
+import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { requireStaff } from "@/lib/auth";
 import type { Priority, Stage } from "@/lib/stages";
 import { createClient } from "@/lib/supabase/server";
@@ -17,6 +20,17 @@ export async function moveTicket(id: string, stage: Stage, note?: string): Promi
   await requireStaff();
   const supabase = await createClient();
   const { error } = await supabase.rpc("move_request", { p_request: id, p_stage: stage, p_note: note ?? null });
+  // Reaching creative review: the AI looks the creative over, so its notes are ready when the reviewer opens it
+  if (!error && stage === "internal_review" && adminConfigured()) {
+    await markRunning(createAdminClient(), id);
+    after(async () => {
+      try {
+        await runCreativeReview(createAdminClient(), id);
+      } catch (e) {
+        console.error("[creative review] failed:", e instanceof Error ? e.message : e);
+      }
+    });
+  }
   return done(error);
 }
 

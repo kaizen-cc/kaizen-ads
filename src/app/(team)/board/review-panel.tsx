@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { reviewCreative, ticketComments, type ReviewComment } from "./review-actions";
 import type { Ticket } from "./types";
+import { AiNotesCard } from "./ai-notes";
 
 const clock = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms / 1000) % 60)).padStart(2, "0")}`;
 
@@ -58,9 +59,11 @@ export function ReviewPanel({
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="font-heading text-[16px]">{reviewing ? "Creative review" : "Changes requested"}</h3>
         <span className="text-xs text-muted">
-          {open.length ? `${open.length} open comment${open.length === 1 ? "" : "s"}` : "No comments yet"} · open a design below to pin one
+          {open.length ? `${open.length} open comment${open.length === 1 ? "" : "s"}` : "No comments yet"} · open a design above to pin one
         </span>
       </div>
+
+      {reviewing && <AiNotesCard requestId={ticket.id} demo={demo} />}
 
       {open.length > 0 && (
         <ol className="grid gap-1.5">

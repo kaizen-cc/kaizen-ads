@@ -201,6 +201,7 @@ export function TicketDrawer({
   const onUploads = useCallback((u: UploadState) => setUploads(u), []);
   const hasCreative = uploads.uploaded > 0 || demo;
   const making = MAKING.includes(ticket.stage);
+  const filesFirst = !making && ticket.stage !== "requested";
   const info = stageInfo(ticket.stage);
   const back = BACK[ticket.stage];
   const h = health(ticket.minutesOver, ticket.stage);
@@ -385,6 +386,9 @@ export function TicketDrawer({
             {error && <p className="border-t border-line px-5 py-3 text-sm text-brand-text">{error}</p>}
           </section>
 
+          {/* Once there's creative, the files come first */}
+          {filesFirst && <Deliverables ticket={ticket} demoDesigns={demo ? DEMO_DESIGNS : undefined} onState={onUploads} />}
+
           <ReviewPanel ticket={ticket} canReview={can.review} onMoved={(st) => onOptimisticMove(ticket.id, st)} demo={demo} />
           {(COPY_STAGES.includes(ticket.stage)) && <CopyPanel ticket={ticket} canApprove={can.approveCopy} onMoved={(st) => onOptimisticMove(ticket.id, st)} demo={demo ? DEMO_COPY : undefined} />}
 
@@ -494,7 +498,7 @@ export function TicketDrawer({
 
           {ticket.format === "video" && <ScriptPanel requestId={ticket.id} demo={demo ? null : undefined} />}
 
-          {!making && <Deliverables ticket={ticket} demoDesigns={demo ? DEMO_DESIGNS : undefined} onState={onUploads} />}
+          {!making && !filesFirst && <Deliverables ticket={ticket} demoDesigns={demo ? DEMO_DESIGNS : undefined} onState={onUploads} />}
 
           {/* Activity */}
           <section className="grid gap-4">
