@@ -22,11 +22,11 @@ Where things stand on 2026-10-15 and what comes next, in order. The target is th
 
 ## Then: launch and learn (Phase 2)
 
-6. **Launcher**: approved ads are pushed to Meta **paused** through the system user. The AI suggests campaign, ad set and naming; the buyer confirms. Kyle's media-buyer logic plugs into its own agent slot.
-7. **KPIs on the client page and in the AI**: the client's KPI status, pacing and trend feed the briefing, the brief strategist and the reviewer. A brief for an off-target account knows it's off target.
-8. **Fatigue watcher**: frequency and cost trends per ad flag tiring creative, alert the buyer and open an iteration ticket. Motion's MCP can add creative-level context.
-9. **Google Ads**: apply for the Google Ads API developer token now, since approval takes days. Then pull Google numbers into the same KPI dashboard (targets are already stored).
-10. **Alerts**: a daily Slack digest per buyer listing what went off target or off pace overnight.
+4. **Launcher**: approved ads are pushed to Meta **paused** through the system user. The AI suggests campaign, ad set and naming; the buyer confirms. Kaizen's media-buying standards live in the Launcher agent's playbook.
+5. **KPIs on the client page and in the AI**: the client's KPI status, pacing and trend feed the briefing, the brief strategist and the reviewer. A brief for an off-target account knows it's off target.
+6. **Fatigue watcher**: frequency and cost trends per ad flag tiring creative, alert the buyer and open an iteration ticket. Motion's MCP can add creative-level context.
+7. **Google Ads**: apply for the Google Ads API developer token now, since approval takes days. Then pull Google numbers into the same KPI dashboard (targets are already stored).
+8. **Alerts**: a daily Slack digest per buyer listing what went off target or off pace overnight.
 
 ## Later (Phase 3)
 
