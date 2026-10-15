@@ -400,11 +400,22 @@ export type ReviewIssue = {
   issue: string;
   fix: string;
 };
-export type Review = { verdict: "clear" | "check"; summary: string; issues: ReviewIssue[] };
+export type SimilarTicket = { number: number; overlap: "same" | "close"; why: string };
+export type Review = {
+  verdict: "clear" | "check";
+  summary: string;
+  issues: ReviewIssue[];
+  /** The brief, fleshed out from everything known about the client; empty when the brief is already strong. */
+  strongerBrief: string;
+  /** Recent tickets for this client that ask for the same or nearly the same thing. */
+  similar: SimilarTicket[];
+};
 
 export const REVIEW_SCHEMA = obj({
   verdict: { type: "string", enum: ["clear", "check"] },
   summary: str,
+  strongerBrief: str,
+  similar: { type: "array", items: obj({ number: { type: "integer" }, overlap: { type: "string", enum: ["same", "close"] }, why: str }) },
   issues: {
     type: "array",
     items: obj({
@@ -535,3 +546,8 @@ export const COPY_SCHEMA = obj({
   },
   notes: str,
 });
+
+// ─── Applying a review fix ──────────────────────────────────────────────────
+
+export type DraftPatch = { title: string; angle: string; audience: string; brief: string; changed: string[]; note: string };
+export const PATCH_SCHEMA = obj({ title: str, angle: str, audience: str, brief: str, changed: strArr, note: str });

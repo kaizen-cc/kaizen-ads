@@ -24,6 +24,9 @@ export const sampleRequest: RequestDemo = {
   review: {
     verdict: "check",
     summary: "Mostly solid, but the brief mentions delivery, which the client asked us not to promote.",
+    strongerBrief:
+      "Job: Weekly Deals promo for families nearby, proof & offer.\nFirst look: the calzone cut open with the cheese pull, warm light, on a family table.\nOn-image text: \"2 pizzas in, calzone free\" · Alt: \"Friday night, sorted\".\nOffer & CTA: buy 2 pizzas, get a calzone free, this week only. Order Now.\nMust include: the new red logo. Avoid: delivery (pickup only until December), stock photos of people eating.\nLook at first: \"$8 Calzone Mondays\" 4x5, our best static this month.",
+    similar: [{ number: 1048, overlap: "close", why: "Same Weekly Deals angle and calzone offer, still in production." }],
     issues: [
       {
         severity: "block",
@@ -39,4 +42,18 @@ export const sampleRequest: RequestDemo = {
       },
     ],
   },
+  similar: [
+    {
+      number: 1048,
+      title: "Weekly Deals · $8 Calzone Mondays",
+      format: "image",
+      stage: "in_production",
+      stageLabel: "In production",
+      assignee: "Nelson",
+      createdAt: "2026-10-12T14:00:00Z",
+      brief: "Calzone cut open with the cheese pull, price top left, new red logo.",
+      overlap: "close",
+      why: "Same Weekly Deals angle and calzone offer, still in production.",
+    },
+  ],
 };

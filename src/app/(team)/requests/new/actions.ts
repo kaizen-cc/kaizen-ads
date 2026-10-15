@@ -5,6 +5,7 @@ import { requireStaff } from "@/lib/auth";
 import {
   AGENCY_SYSTEM,
   AiUnavailable,
+  PATCH_SCHEMA,
   REVIEW_SCHEMA,
   SUGGESTIONS_SCHEMA,
   SUGGEST_FIELDS,
@@ -14,10 +15,13 @@ import {
   clientContext,
   contextBlock,
   type ClientContext,
+  type DraftPatch,
   type Review,
   type Suggestions,
 } from "@/lib/ai";
+import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { stageInfo, type Stage } from "@/lib/stages";
 import { draws } from "@/lib/allotment";
 import { MAX_VARIATIONS, SIZES, describeDraft, refLinks, selectedFormats, type Draft } from "./draft";
 
@@ -32,7 +36,55 @@ export type ContextSummary = {
   briefing: { generatedAt: string; slack: number; gmail: number; drive: number } | null;
 };
 export type SuggestResult = { ok: true; suggestions: Suggestions; context: ContextSummary } | Fail;
-export type ReviewResult = { ok: true; review: Review } | Fail;
+/** A recent ticket the review thinks asks for the same thing, with enough to judge without opening it. */
+export type SimilarCard = {
+  number: number;
+  title: string;
+  format: string;
+  stage: string;
+  stageLabel: string;
+  assignee: string | null;
+  createdAt: string;
+  brief: string | null;
+  overlap: "same" | "close";
+  why: string;
+};
+export type ReviewResult = { ok: true; review: Review; similar: SimilarCard[] } | Fail;
+/** What the person did with the review: issues they dismissed and similar tickets they went past. */
+export type ReviewDecisions = {
+  dismissed: { severity: string; field: string; issue: string }[];
+  fixed: { severity: string; field: string; issue: string }[];
+  continuedPast: number[];
+  usedStrongerBrief: boolean;
+};
+
+const words = (s: string) => new Set(s.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length > 3));
+const overlapScore = (a: Set<string>, b: Set<string>) => {
+  if (!a.size || !b.size) return 0;
+  let n = 0;
+  for (const w of a) if (b.has(w)) n++;
+  return n / Math.min(a.size, b.size);
+};
+
+/** This client's tickets from the last 120 days that look closest to the draft (the AI decides which really match). */
+async function candidates(clientId: string, draft: Draft) {
+  const supabase = await createClient();
+  const since = new Date(Date.now() - 120 * 86_400_000).toISOString();
+  const { data } = await supabase
+    .from("board_requests")
+    .select("number, title, format, stage, angle_name, audience, brief, assignee_name, created_at")
+    .eq("client_id", clientId)
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(150);
+  const mine = words(`${draft.title} ${draft.angle} ${draft.audience} ${draft.brief}`);
+  return (data ?? [])
+    .map((r) => ({ r, score: overlapScore(mine, words(`${r.title} ${r.angle_name ?? ""} ${r.audience ?? ""} ${r.brief ?? ""}`)) }))
+    .filter((x) => x.score > 0.15)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 8)
+    .map((x) => x.r);
+}
 
 const clamp = (n: unknown) => Math.min(100, Math.max(0, Math.floor(Number(n) || 0)));
 
@@ -92,12 +144,15 @@ ${SUGGEST_FIELDS}`,
   }
 }
 
-/** Scrub the finished request before it goes to the team. */
+/**
+ * Scrub the finished request before it goes to the team: flag real problems, write a stronger brief from
+ * everything known about the client, and catch tickets that already ask for the same thing.
+ */
 export async function reviewRequest(draft: Draft): Promise<ReviewResult> {
   const ctx = await loadContext(draft.clientId);
   if (!ctx) return { ok: false, error: "Pick a client first." };
   try {
-    const { sources } = await getAgent("review");
+    const [{ sources }, recent] = await Promise.all([getAgent("review"), candidates(draft.clientId!, draft)]);
     const review = await askJson<Review>({
       agent: "review",
       label: "review",
@@ -109,7 +164,17 @@ export async function reviewRequest(draft: Draft): Promise<ReviewResult> {
 ${describeDraft(draft, ctx.name)}
 </request>
 
-Review this request before it goes to the creative team. Flag only real problems:
+<recent_tickets_that_look_similar>
+${
+  recent
+    .map((r) => `#${r.number} · ${r.created_at.slice(0, 10)} · ${r.format} · ${stageInfo(r.stage as Stage).label} · "${r.title}"${r.angle_name ? ` · angle: ${r.angle_name}` : ""}${r.brief ? `\n  brief: ${r.brief.replace(/\s+/g, " ").slice(0, 400)}` : ""}`)
+    .join("\n") || "None."
+}
+</recent_tickets_that_look_similar>
+
+Review this request before it goes to the creative team.
+
+issues: flag only real problems:
 - net new counts that go over what's left of the monthly allotment (block; say by how much and that it needs an upgrade or variations instead). Skip this if no allotment is set.
 - on a temporary sprint package: a due date after the sprint ends (block), or more work than fits before it ends (warn). Mention the end date.
 - anything that goes against client memory, especially "avoid" items (block)
@@ -117,18 +182,71 @@ Review this request before it goes to the creative team. Flag only real problems
 - contradictions inside the request, e.g. the brief describes video but only images are picked, or sizes that don't fit the formats (warn)
 - a brief too thin for a designer to start without questions (warn)
 - claims that could get the ad rejected by Meta, e.g. personal attributes, before/after, guaranteed results (warn)
-Don't flag style preferences or nitpicks. If nothing matters, verdict is "clear" with no issues.
-summary: one sentence for the person who wrote it. For each issue, "fix" is a concrete change they can make.`,
+Don't flag style preferences or nitpicks. "fix" is a concrete change, written so it can be applied to the request as-is.
+
+strongerBrief: the brief a designer or editor should get, rewritten and filled in from everything you know about this client (briefing, client memory, performance, angles, past requests, Brand Bible) following the brief structure skill. Keep everything the person wrote that's right; fill the gaps (audience, hook, on-image text, offer, must-include, references), resolve your own issues where the fix is in the brief, and never invent offers, prices, claims or facts. If their brief is already strong and complete, return "".
+
+similar: tickets from the list above that ask for the same thing ("same": a duplicate) or nearly the same thing ("close": same angle and idea, could be a variation). why: one short sentence. Empty when none truly match; a shared client or format alone isn't similar.
+
+verdict "clear" only when there are no issues and no similar tickets. summary: one sentence for the person who wrote it.`,
     });
-    return { ok: true, review: { ...review, issues: review.issues.slice(0, 6) } };
+    const byNumber = new Map(recent.map((r) => [r.number, r]));
+    const similar: SimilarCard[] = (review.similar ?? [])
+      .filter((x) => byNumber.has(x.number))
+      .slice(0, 3)
+      .map((x) => {
+        const r = byNumber.get(x.number)!;
+        return {
+          number: r.number,
+          title: r.title,
+          format: r.format,
+          stage: r.stage,
+          stageLabel: stageInfo(r.stage as Stage).label,
+          assignee: r.assignee_name,
+          createdAt: r.created_at,
+          brief: r.brief,
+          overlap: x.overlap,
+          why: x.why,
+        };
+      });
+    return { ok: true, review: { ...review, issues: review.issues.slice(0, 6), strongerBrief: review.strongerBrief?.trim() ?? "", similar: review.similar ?? [] }, similar };
   } catch (e) {
     return { ok: false, error: e instanceof AiUnavailable ? e.message : "Couldn't review the request." };
   }
 }
 
+/** "Make this change": the AI applies one or more review fixes to the request's text fields. */
+export async function applyFixes(draft: Draft, issues: { field: string; issue: string; fix: string }[]): Promise<{ ok: true; patch: DraftPatch } | Fail> {
+  const ctx = await loadContext(draft.clientId);
+  if (!ctx) return { ok: false, error: "Pick a client first." };
+  try {
+    const { sources } = await getAgent("suggest");
+    const patch = await askJson<DraftPatch>({
+      agent: "suggest",
+      label: "apply fix",
+      system: AGENCY_SYSTEM,
+      schema: PATCH_SCHEMA,
+      prompt: `${contextBlock(ctx, draws(draft.formats), sources)}
+
+<request>
+${describeDraft(draft, ctx.name)}
+</request>
+
+<fixes_to_apply>
+${issues.map((x, i) => `${i + 1}. [${x.field}] ${x.issue}\n   Fix: ${x.fix}`).join("\n")}
+</fixes_to_apply>
+
+Apply these fixes to the request. Return the full title, angle, audience and brief after the change (unchanged fields exactly as they are). Keep everything the person wrote that the fixes don't touch. Use only facts from the client context; never invent offers, prices, claims or references. changed: which of title, angle, audience, brief you changed. note: one short sentence on anything a fix needs that you can't do in text (e.g. counts, sizes or attaching files), or "".`,
+    });
+    return { ok: true, patch };
+  } catch (e) {
+    return { ok: false, error: e instanceof AiUnavailable ? e.message : "Couldn't apply the change." };
+  }
+}
+
 /** One ticket per selected format, routed to that format's maker. */
-export async function createBatch(draft: Draft, review: Review | null): Promise<CreateResult> {
-  await requireStaff();
+export async function createBatch(draft: Draft, review: Review | null, decisions?: ReviewDecisions): Promise<CreateResult> {
+  const me = await requireStaff();
   if (!draft.clientId) return { ok: false, error: "Pick a client." };
   if (!draft.title.trim()) return { ok: false, error: "Give the request a title." };
   const formats = selectedFormats(draft);
@@ -148,11 +266,22 @@ export async function createBatch(draft: Draft, review: Review | null): Promise<
     p_brief: draft.brief.trim() || null,
     p_refs: refLinks(draft.refs),
     p_sizes: draft.sizes.filter((s) => SIZES.includes(s)),
-    p_ai_review: review,
+    p_ai_review: review ? { ...review, decisions: decisions ?? null } : null,
   });
   if (error) return { ok: false, error: error.message };
 
-  const { data: rows } = await supabase.from("requests").select("number").eq("batch_id", batch).order("number");
+  const { data: rows } = await supabase.from("requests").select("id, number").eq("batch_id", batch).order("number");
+
+  // On each ticket's history: who went past which heads-ups and similar tickets, so it can be looked back on
+  if (decisions && adminConfigured() && rows?.length) {
+    const events = rows.flatMap((t) => [
+      ...decisions.dismissed.map((d) => ({ request_id: t.id, kind: "review", actor_id: me.id, body: d.issue, data: { action: "dismissed", severity: d.severity, field: d.field } })),
+      ...decisions.fixed.map((d) => ({ request_id: t.id, kind: "review", actor_id: me.id, body: d.issue, data: { action: "ai_fixed", severity: d.severity, field: d.field } })),
+      ...decisions.continuedPast.map((n) => ({ request_id: t.id, kind: "review", actor_id: me.id, body: null, data: { action: "continued_past_similar", ticket: String(n) } })),
+      ...(decisions.usedStrongerBrief ? [{ request_id: t.id, kind: "review", actor_id: me.id, body: null, data: { action: "stronger_brief" } }] : []),
+    ]);
+    if (events.length) await createAdminClient().from("request_events").insert(events);
+  }
   revalidatePath("/board");
   revalidatePath("/pipeline");
   return { ok: true, numbers: (rows ?? []).map((r) => r.number) };

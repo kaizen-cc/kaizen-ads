@@ -100,6 +100,33 @@ function describe(e: TicketEvent) {
       ) : (
         `uploaded ${String(e.data.designs) === "1" ? "a design" : `${e.data.designs} designs`}`
       );
+    case "review":
+      switch (e.data.action ?? e.data.decision) {
+        case "approve":
+          return <>approved the creative</>;
+        case "changes":
+          return <>sent the creative back with changes</>;
+        case "dismissed":
+          return (
+            <>
+              dismissed an AI <span className={e.data.severity === "block" ? "text-bad" : "text-warn"}>{e.data.severity === "block" ? "must fix" : "heads up"}</span> on the request
+            </>
+          );
+        case "ai_fixed":
+          return <>let the AI fix a review note on the request</>;
+        case "continued_past_similar":
+          return (
+            <>
+              went ahead although <span className="text-fg">#{e.data.ticket}</span> looked similar
+            </>
+          );
+        case "stronger_brief":
+          return <>used the AI&apos;s stronger brief</>;
+        default:
+          return "reviewed it";
+      }
+    case "copy":
+      return e.data.action === "drafted" ? "drafted the copy with the AI" : e.data.action === "redrafted" ? "rewrote the copy with the AI" : e.data.action === "reused" ? "reused approved copy" : "approved the copy";
   }
 }
 

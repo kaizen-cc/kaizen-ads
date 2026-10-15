@@ -7,7 +7,8 @@ import type { Review, ReviewIssue, Suggestions } from "@/lib/ai";
 import { draws, type Allotment } from "@/lib/allotment";
 import { FORMAT_LABEL, type Format, type Priority } from "@/lib/stages";
 import { ClientTag, FormatIcon } from "@/app/(team)/board/ticket-card";
-import { createBatch, loadBriefing, reviewRequest, suggestForRequest, type ContextSummary, type ReviewResult, type SuggestResult } from "./actions";
+import { applyFixes, createBatch, loadBriefing, reviewRequest, suggestForRequest, type ContextSummary, type ReviewDecisions, type ReviewResult, type SimilarCard, type SuggestResult } from "./actions";
+import { ReviewWorkspace, startHandled, type Handled } from "./review-workspace";
 import { FORMATS, MAX_VARIATIONS, SIZES, emptyDraft, selectedFormats, totalFor, type Draft, type Size } from "./draft";
 import { AllotmentMeter, AspectOption, Chip, ClientSearch, Progress, Spark, Stepper, Thinking, type ClientOption } from "./parts";
 
@@ -19,16 +20,6 @@ const MAKER: Record<Format, { role: string; label: string }> = {
   video: { role: "video_editor", label: "video editor" },
 };
 const FIELD_STEP: Record<ReviewIssue["field"], number> = { formats: 1, sizes: 1, title: 2, angle: 2, audience: 2, brief: 3, references: 3 };
-const FIELD_LABEL: Record<ReviewIssue["field"], string> = {
-  formats: "Formats",
-  sizes: "Sizes",
-  title: "Title",
-  angle: "Angle",
-  audience: "Audience",
-  brief: "Brief",
-  references: "References",
-};
-
 const input =
   "h-12 w-full rounded-[8px] border border-line bg-surface px-4 text-[15px] outline-none transition-colors placeholder:text-faint focus:border-brand-text/70";
 
@@ -37,9 +28,9 @@ type AiState =
   | { status: "loading" }
   | { status: "ready"; s: Suggestions; context: ContextSummary; prepared: boolean }
   | { status: "error"; error: string };
-type ReviewState = { status: "idle" } | { status: "running" } | { status: "done"; review: Review } | { status: "error"; error: string };
+type ReviewState = { status: "idle" } | { status: "running" } | { status: "done"; review: Review; similar: SimilarCard[] } | { status: "error"; error: string };
 
-export type RequestDemo = { suggestions: Suggestions; context: ContextSummary; review: Review };
+export type RequestDemo = { suggestions: Suggestions; context: ContextSummary; review: Review; similar?: SimilarCard[] };
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const countLabel = (n: number, v: number) => [n && `${n} new`, v && plural(v, "variation")].filter(Boolean).join(" + ");
@@ -84,6 +75,7 @@ export function RequestForm({
   const [ai, setAi] = useState<AiState>(initialClient && aiOn ? { status: "loading" } : { status: "idle" });
   const [briefAi, setBriefAi] = useState<{ status: "idle" | "loading" } | { status: "offer"; text: string }>({ status: "idle" });
   const [review, setReview] = useState<ReviewState>({ status: "idle" });
+  const [handled, setHandled] = useState<Handled | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<number[] | null>(null);
   const [pending, start] = useTransition();
@@ -190,6 +182,19 @@ export function RequestForm({
     });
   };
 
+  // What the person did with the review, kept on every ticket's history
+  const decisionsOf = (r: Review | null): ReviewDecisions | undefined => {
+    if (!r || !handled) return undefined;
+    const pick = (want: (st: string) => boolean) => r.issues.filter((_, i) => want(handled.issues[i])).map((x) => ({ severity: x.severity, field: x.field, issue: x.issue }));
+    return {
+      // Sending with an issue still open counts as going past it
+      dismissed: pick((st) => st === "dismissed" || st === "open"),
+      fixed: pick((st) => st === "fixed"),
+      continuedPast: Object.keys(handled.similar).map(Number),
+      usedStrongerBrief: handled.brief === "used",
+    };
+  };
+
   const send = (r: Review | null) =>
     start(async () => {
       setError(null);
@@ -197,7 +202,7 @@ export function RequestForm({
         setCreated(formats.map((_, i) => 1061 + i));
         return;
       }
-      const res = await createBatch(draft, r);
+      const res = await createBatch(draft, r, decisionsOf(r));
       if (res.ok) setCreated(res.numbers);
       else setError(res.error);
     });
@@ -206,12 +211,67 @@ export function RequestForm({
     if (!aiOn) return send(null);
     setReview({ status: "running" });
     reveal(reviewRef, "center");
-    const ask: Promise<ReviewResult> = demo ? new Promise((r) => setTimeout(() => r({ ok: true, review: demo.review }), 3200)) : reviewRequest(draft);
+    const ask: Promise<ReviewResult> = demo
+      ? new Promise((r) => setTimeout(() => r({ ok: true, review: demo.review, similar: demo.similar ?? [] }), 3200))
+      : reviewRequest(draft);
     ask.then((res) => {
       if (!res.ok) return setReview({ status: "error", error: res.error });
-      setReview({ status: "done", review: res.review });
-      reveal(reviewRef, "center");
-      if (res.review.issues.length === 0) send(res.review);
+      const h = startHandled(res.review, res.similar, draft.brief);
+      setHandled(h);
+      setReview({ status: "done", review: res.review, similar: res.similar });
+      reveal(reviewRef, "start");
+      // Nothing to look at: straight to the team
+      if (res.review.issues.length === 0 && res.similar.length === 0 && h.brief === "none") send(res.review);
+    });
+  };
+
+  // Text changes from the review keep the review on screen (a manual edit starts a fresh review)
+  const patchText = (p: Partial<Pick<Draft, "title" | "angle" | "audience" | "brief">>) => setDraft((d) => ({ ...d, ...p }));
+  const snapshot = (reopen: number[], briefWas: Handled["brief"]) => ({ title: draft.title, angle: draft.angle, audience: draft.audience, brief: draft.brief, reopen, briefWas });
+
+  const fixWithAi = (indexes: number[]) => {
+    if (review.status !== "done" || !handled || indexes.length === 0) return;
+    const issues = indexes.map((i) => review.review.issues[i]);
+    setHandled({ ...handled, fixing: indexes, note: null });
+    const ask = demo
+      ? new Promise<Awaited<ReturnType<typeof applyFixes>>>((r) =>
+          setTimeout(() => r({ ok: true, patch: { title: draft.title, angle: draft.angle, audience: draft.audience, brief: `${draft.brief}\n${issues.map((x) => x.fix).join("\n")}`, changed: ["brief"], note: "" } }), 1400),
+        )
+      : applyFixes(draft, issues);
+    ask.then((res) => {
+      setHandled((h) => {
+        if (!h) return h;
+        if (!res.ok) return { ...h, fixing: null, note: res.error };
+        return {
+          ...h,
+          fixing: null,
+          note: res.patch.note || null,
+          undo: snapshot(indexes, h.brief),
+          issues: h.issues.map((st, i) => (indexes.includes(i) ? "fixed" : st)),
+        };
+      });
+      if (res.ok) patchText({ title: res.patch.title, angle: res.patch.angle, audience: res.patch.audience, brief: res.patch.brief });
+    });
+  };
+
+  const useStrongerBrief = (choice: "used" | "kept") => {
+    if (review.status !== "done" || !handled) return;
+    if (choice === "used") {
+      setHandled({ ...handled, brief: "used", undo: snapshot([], handled.brief) });
+      patchText({ brief: review.review.strongerBrief });
+    } else setHandled({ ...handled, brief: "kept" });
+  };
+
+  const undoAi = () => {
+    if (!handled?.undo) return;
+    const u = handled.undo;
+    patchText({ title: u.title, angle: u.angle, audience: u.audience, brief: u.brief });
+    setHandled({
+      ...handled,
+      undo: null,
+      note: null,
+      brief: handled.brief === "used" && u.reopen.length === 0 ? "offer" : handled.brief,
+      issues: handled.issues.map((st, i) => (u.reopen.includes(i) ? "open" : st)),
     });
   };
 
@@ -590,7 +650,20 @@ export function RequestForm({
 
                 <div ref={reviewRef} className="grid empty:hidden">
                   {review.status === "running" && <Scanning />}
-                  {review.status === "done" && <ReviewCard review={review.review} onEdit={(f) => go(FIELD_STEP[f])} />}
+                  {review.status === "done" && handled && (
+                    <ReviewWorkspace
+                      review={review.review}
+                      similar={review.similar}
+                      handled={handled}
+                      brief={draft.brief}
+                      onFix={fixWithAi}
+                      onEdit={(f) => go(FIELD_STEP[f])}
+                      onSetIssue={(i, st) => setHandled({ ...handled, issues: handled.issues.map((x, j) => (j === i ? st : x)) })}
+                      onBrief={useStrongerBrief}
+                      onSimilar={(n, st) => setHandled({ ...handled, similar: { ...handled.similar, [n]: st } })}
+                      onUndo={undoAi}
+                    />
+                  )}
                 </div>
                 {review.status === "error" && (
                   <p className="rounded-[10px] border border-line bg-surface px-4 py-3 text-sm text-muted">
@@ -617,19 +690,30 @@ export function RequestForm({
                       Continue
                     </button>
                   )
-                ) : review.status === "done" && review.review.issues.length > 0 && !pending ? (
-                  <>
-                    <button type="button" onClick={() => send(review.review)} className="h-11 rounded-brand border border-line px-5 text-sm text-muted hover:border-faint hover:text-fg">
-                      Send anyway
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => go(FIELD_STEP[review.review.issues[0].field])}
-                      className="h-11 rounded-brand bg-brand px-6 text-sm font-medium text-white shadow-[0_8px_30px_-8px_rgba(178,30,44,0.7)] hover:bg-brand-hover"
-                    >
-                      Fix it
-                    </button>
-                  </>
+                ) : review.status === "done" && handled ? (
+                  (() => {
+                    const openItems = handled.issues.filter((x) => x === "open").length + Object.values(handled.similar).filter((x) => x === "open").length;
+                    return openItems > 0 ? (
+                      <button
+                        type="button"
+                        disabled={pending || Boolean(handled.fixing)}
+                        onClick={() => send(review.review)}
+                        className="h-11 rounded-brand border border-line px-5 text-sm text-muted hover:border-faint hover:text-fg disabled:opacity-60"
+                        title="Anything still open is noted on the tickets as dismissed"
+                      >
+                        {pending ? "Creating…" : `Send anyway · ${openItems} open`}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={pending || Boolean(handled.fixing)}
+                        onClick={() => send(review.review)}
+                        className="inline-flex h-11 items-center gap-2 rounded-brand bg-brand px-6 text-sm font-medium text-white shadow-[0_8px_30px_-8px_rgba(178,30,44,0.7)] hover:bg-brand-hover disabled:opacity-70"
+                      >
+                        {pending ? "Creating…" : `Send to the team · ${plural(formats.length, "ticket")}`}
+                      </button>
+                    );
+                  })()
                 ) : (
                   <button
                     type="button"
@@ -711,49 +795,6 @@ function Scanning() {
           <li key={l} className={`flex items-center gap-2.5 text-sm transition-opacity duration-300 ${n <= i ? "opacity-100" : "opacity-30"}`}>
             <span className={`grid h-4 w-4 place-items-center rounded-full text-[9px] ${n < i ? "bg-ok text-bg" : n === i ? "border border-brand-text" : "border border-line"}`}>{n < i ? "✓" : ""}</span>
             <span className={n === i ? "text-fg" : "text-muted"}>{l}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-function ReviewCard({ review, onEdit }: { review: Review; onEdit: (f: ReviewIssue["field"]) => void }) {
-  if (review.issues.length === 0)
-    return (
-      <div className="flex items-center gap-3 rounded-[10px] border border-ok/30 bg-ok-soft px-4 py-3.5 animate-[step-in_.25s_ease-out]">
-        <span className="grid h-6 w-6 place-items-center rounded-full bg-ok text-xs text-bg">✓</span>
-        <p className="text-sm">{review.summary || "Looks good. Sending it to the team."}</p>
-      </div>
-    );
-  const blockers = review.issues.filter((x) => x.severity === "block").length;
-  return (
-    <div className="grid gap-4 rounded-[10px] border border-line bg-surface p-5 animate-[step-in_.3s_ease-out]">
-      <div className="flex items-start gap-3">
-        <Spark size={14} className="mt-1 shrink-0 text-brand-text" />
-        <div>
-          <p className="font-medium">
-            {blockers ? `${plural(blockers, "thing")} to fix before this goes out` : `${plural(review.issues.length, "thing")} worth a second look`}
-          </p>
-          <p className="mt-0.5 text-sm text-muted">{review.summary}</p>
-        </div>
-      </div>
-      <ul className="grid gap-2">
-        {review.issues.map((x, i) => (
-          <li key={i} className="grid gap-1.5 rounded-[8px] bg-surface-2 px-4 py-3">
-            <div className="flex items-center justify-between gap-3">
-              <span className="flex items-center gap-2 text-xs">
-                <span className={`rounded-full px-2 py-0.5 font-medium ${x.severity === "block" ? "bg-bad-soft text-bad" : "bg-warn-soft text-warn"}`}>
-                  {x.severity === "block" ? "Must fix" : "Heads up"}
-                </span>
-                <span className="text-faint">{FIELD_LABEL[x.field]}</span>
-              </span>
-              <button type="button" onClick={() => onEdit(x.field)} className="text-xs text-muted hover:text-fg">
-                Edit →
-              </button>
-            </div>
-            <p className="text-sm">{x.issue}</p>
-            <p className="text-sm text-muted">{x.fix}</p>
           </li>
         ))}
       </ul>
