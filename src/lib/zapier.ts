@@ -1,7 +1,7 @@
 import "server-only";
 import { createHash, timingSafeEqual } from "node:crypto";
 
-/** Zapier must send the shared secret (ZAPIER_SECRET in Vercel, the same value Kaizen Track uses) as `x-kaizen-secret` or a Bearer token. */
+/** Zapier must send this app's secret (ZAPIER_SECRET in Vercel; its own value, not Kaizen Track's) as `x-kaizen-secret` or a Bearer token. */
 export function isZapierRequest(request: Request) {
   const secret = process.env.ZAPIER_SECRET;
   if (!secret) return false;
