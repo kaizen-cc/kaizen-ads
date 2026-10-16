@@ -43,11 +43,15 @@ export async function syncNow(job: SyncJob): Promise<{ ok: true } | { error: str
       error = e instanceof Error ? e.message : String(e);
       await reportError({ message: `Sync now (${job}): ${error}`, path: "/settings?tab=sync", kind: "server", stack: e instanceof Error ? e.stack : null });
     }
-    await admin.from("sync_state").upsert({
-      source,
-      last_run_at: new Date().toISOString(),
-      last_result: { running: false, startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - Date.parse(startedAt), by: me.fullName, error, summary: summarize(result) },
-    });
+    // Each job reports its own progress and finish; only close the run here if it didn't (or failed before starting)
+    const { data: now } = await admin.from("sync_state").select("last_result").eq("source", source).maybeSingle();
+    const cur = (now?.last_result ?? {}) as Record<string, unknown>;
+    if (cur.running || error)
+      await admin.from("sync_state").upsert({
+        source,
+        last_run_at: new Date().toISOString(),
+        last_result: { ...cur, running: false, startedAt: cur.startedAt ?? startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - Date.parse(String(cur.startedAt ?? startedAt)), by: me.fullName, error, summary: summarize(result) },
+      });
   });
   revalidatePath("/settings");
   return { ok: true };

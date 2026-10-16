@@ -5,7 +5,7 @@ import { requireStaff } from "@/lib/auth";
 import { loadPlaybook, playbookExamples } from "@/lib/playbooks";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import type { Benchmark } from "@/lib/verticals";
+import { parentNames, type Benchmark } from "@/lib/verticals";
 import { PlaybookView } from "../../playbook-view";
 import { PlaybookActions } from "./playbook-actions";
 
@@ -17,9 +17,9 @@ export default async function PlaybookPage({ params }: PageProps<"/ideas/playboo
   const { id } = await params;
   const me = await requireStaff();
   const db = adminConfigured() ? createAdminClient() : await createClient();
-  const { data: sub } = await db.from("verticals").select("id, name, benchmarks, verticals!verticals_parent_id_fkey(name)").eq("id", id).maybeSingle();
+  const { data: sub } = await db.from("verticals").select("id, name, benchmarks, parent_id").eq("id", id).maybeSingle();
   if (!sub) notFound();
-  const parent = (sub.verticals as unknown as { name: string } | null)?.name ?? null;
+  const parent = (await parentNames(db, [sub.parent_id])).get(sub.parent_id) ?? null;
   const playbook = await loadPlaybook(db, id);
   const lead = me.isExec || me.isLead;
   const back = (

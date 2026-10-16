@@ -1,4 +1,5 @@
 import "server-only";
+import { tracker, type Tracker } from "@/lib/progress";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { googleConfigured, gmailMailboxes, googleDriveToken } from "@/lib/context/google";
@@ -235,13 +236,29 @@ async function readCall(admin: SupabaseClient, id: string, clients: { id: string
  * Every 30 minutes: new calls in, matched and read. Returns what happened, for the sync log.
  */
 export async function collectCalls(admin: SupabaseClient, budgetMs = 500_000) {
+  const t = await tracker(admin, "calls", "calls");
+  try {
+    const out = await collectCallsRun(admin, budgetMs, t);
+    await t.finish({ summary: `${out.found} found, ${out.read} read${out.errors.length ? `, ${out.errors.length} errors` : ""}` });
+    return out;
+  } catch (e) {
+    await t.finish({ error: e instanceof Error ? e.message : String(e) });
+    throw e;
+  }
+}
+
+async function collectCallsRun(admin: SupabaseClient, budgetMs: number, t: Tracker) {
   const deadline = Date.now() + budgetMs;
+  t.phase("Finding new call notes in Gemini and Fireflies", 2);
   const since = await getCursor(admin, "calls", 45);
   const started = new Date();
   const errors: string[] = [];
   const found: NewCall[] = [];
+  t.on("Gemini notes in Drive");
   found.push(...(await collectGemini(since, deadline).catch((e) => (errors.push(`Gemini: ${e instanceof Error ? e.message : e}`), []))));
+  t.tick("Fireflies");
   found.push(...(await collectFireflies(since).catch((e) => (errors.push(e instanceof Error ? e.message : String(e)), []))));
+  t.tick(null);
 
   const [{ data: clients }, { data: links }] = await Promise.all([
     admin.from("clients").select("id, name").is("archived_at", null).in("status", LIVE),
@@ -265,18 +282,29 @@ export async function collectCalls(admin: SupabaseClient, budgetMs = 500_000) {
   // Every call is read, internal ones too: a team meeting can carry context for several clients.
   const { data: waiting } = await admin.from("client_calls").select("id").eq("status", "new").order("occurred_at").limit(60);
   let read = 0;
+  // Each waiting call read by the AI, then three passes over the promises
+  t.phase("Reading calls", (waiting ?? []).length + 3);
   for (const w of waiting ?? []) {
-    if (Date.now() > deadline) break;
+    if (Date.now() > deadline) {
+      t.tick(null);
+      continue;
+    }
     try {
       await readCall(admin, w.id, clients ?? []);
       read++;
+      t.tick(`Call ${read} of ${(waiting ?? []).length}`);
     } catch (e) {
       await admin.from("client_calls").update({ status: "failed", error: (e instanceof Error ? e.message : String(e)).slice(0, 300) }).eq("id", w.id);
+      t.tick(null, false);
     }
   }
+  t.phase("Re-checking promises against the full calls");
   const rechecked = await recheckCommitments(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+  t.tick("Checking which promises are covered by a request");
   const covered = await sweepCovered(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+  t.tick("Watching open promises");
   const watched = await watchCommitments(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+  t.tick(null);
   await setCursor(admin, "calls", started, { found: found.length, saved, read, waiting: Math.max(0, (waiting ?? []).length - read), errors, watched, covered, rechecked });
   return { found: found.length, saved, read, errors, watched, covered };
 }

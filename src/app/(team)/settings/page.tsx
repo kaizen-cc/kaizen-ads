@@ -250,12 +250,15 @@ async function Errors({ all }: { all: boolean }) {
 
 async function MotionCard({ notice }: { notice: string | null }) {
   const admin = createAdminClient();
-  const [{ data: m }, { count: brands }, { count: ads }, { count: matched }] = await Promise.all([
+  const [{ data: m }, { count: brands }, { count: ads }, { count: matched }, { data: runRow }] = await Promise.all([
     admin.from("motion_connection").select("access_token, connected_at, last_sync_at, last_result, error, profiles(full_name)").eq("id", 1).maybeSingle(),
     admin.from("market_brands").select("id", { count: "exact", head: true }).eq("rejected", false).not("checked_at", "is", null),
     admin.from("market_ads").select("id", { count: "exact", head: true }).neq("active", false),
     admin.from("clients").select("id", { count: "exact", head: true }).not("market_matched_at", "is", null),
+    admin.from("sync_state").select("last_result").eq("source", "run:market").maybeSingle(),
   ]);
+  const run = timedOut((runRow?.last_result ?? null) as RunState);
+  const progress = progressOf("market", run);
   const on = Boolean(m?.access_token);
   const r = (m?.last_result ?? null) as { brands?: number; pulled?: number; read?: number; brandsFound?: number; checked?: number; sorted?: number; clientsMatched?: number; errors?: string[] } | null;
   const fresh = freshness(m?.last_sync_at);
@@ -281,10 +284,11 @@ async function MotionCard({ notice }: { notice: string | null }) {
             <span className="text-bad">Not connected</span>
           )}
         </span>
+        <ProgressBar progress={progress} />
       </summary>
       <div className="grid gap-3 border-t border-line px-6 py-4">
-        {notice && (
-          <p className={`text-xs ${notice === "connected" || notice === "syncing" ? "text-ok" : "text-bad"}`}>
+        {notice && !progress && notice !== "syncing" && (
+          <p className={`text-xs ${notice === "connected" ? "text-ok" : "text-bad"}`}>
             {notice === "connected" ? "Connected. The first market sync is running now." : notice === "syncing" ? "The market sync is running. It takes a few minutes; refresh to see the result." : notice}
           </p>
         )}
@@ -327,23 +331,55 @@ async function MotionCard({ notice }: { notice: string | null }) {
 }
 
 const olderThan = (iso: string, ms: number) => Date.now() - Date.parse(iso) > ms;
-// What a job usually takes, until it has run by hand once (then its own last time is used)
-const TYPICAL_MS: Record<SyncJob, number> = { kpi: 300_000, meta: 420_000, slack: 120_000, gmail: 240_000, drive: 120_000, calls: 180_000, verticals: 300_000 };
-// Jobs that touch many sources show sources done of the total; the rest are estimated from time
-const COUNTED: SyncJob[] = ["kpi", "slack", "gmail"];
-function progressOf(job: SyncJob, run: RunState, sources: { last_run_at: string | null }[]): Progress {
+/** A run still "running" with no word from it for 15 minutes timed out (the server stopped it). */
+const timedOut = (x: RunState): RunState =>
+  x?.running && (!x.startedAt || olderThan(x.startedAt, 15 * 60_000)) ? { ...x, running: false, error: x.error ?? "It didn't finish (timed out)" } : x;
+// What a job usually takes, until it has run once with progress (then its own last time is used)
+const TYPICAL_MS: Record<string, number> = { kpi: 300_000, meta: 420_000, slack: 120_000, gmail: 240_000, drive: 120_000, calls: 180_000, verticals: 300_000, market: 600_000 };
+const span = (ms: number) => {
+  const s = Math.max(1, Math.round(ms / 1000));
+  return s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)} min` : `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`;
+};
+const clock = (ms: number) => new Date(ms).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" });
+
+/** How far a running job is: items done of the total (from the job itself), time left at its current speed, and how that compares with its last run. */
+function progressOf(job: string, run: RunState): Progress {
   if (!run?.running || !run.startedAt) return null;
-  const ms = Date.now() - Date.parse(run.startedAt);
-  const m = Math.floor(ms / 60_000);
-  const elapsed = m < 1 ? `${Math.max(1, Math.round(ms / 1000))}s` : `${m} min`;
-  if (COUNTED.includes(job) && sources.length > 1) {
-    const done = sources.filter((s) => s.last_run_at && s.last_run_at >= run.startedAt!).length;
-    return { pct: Math.min(99, Math.round((done / sources.length) * 100)), done, total: sources.length, estimated: false, elapsed };
+  const now = Date.now();
+  const elapsed = now - Date.parse(run.startedAt);
+  const total = run.total ?? 0;
+  const done = Math.min(run.done ?? 0, total || Infinity);
+  const usual = run.durationMs || TYPICAL_MS[job] || 300_000;
+  let left: number;
+  let pct: number;
+  let estimated = false;
+  if (total > 0 && done > 0) {
+    left = ((total - done) * elapsed) / done;
+    pct = Math.min(99, Math.round((done / total) * 100));
+  } else {
+    // Nothing counted yet: from how long it usually takes, easing so it never shows done before it is
+    estimated = true;
+    pct = Math.round(95 * (1 - Math.exp(-(1.6 * elapsed) / usual)));
+    left = Math.max(10_000, usual - elapsed);
   }
-  const typical = run.durationMs || TYPICAL_MS[job];
-  // Eases toward 95% so a slower run than usual never shows done before it is
-  const pct = Math.round(95 * (1 - Math.exp(-(1.6 * ms) / typical)));
-  return { pct, estimated: true, elapsed };
+  const projected = elapsed + left;
+  const pace = !run.durationMs || estimated ? null : projected < run.durationMs * 0.8 ? "faster" : projected > run.durationMs * 1.25 ? "slower" : "usual";
+  return {
+    pct,
+    done: total ? done : undefined,
+    total: total || undefined,
+    failed: run.failed ?? 0,
+    unit: run.unit ?? "items",
+    current: run.current ?? null,
+    phase: run.phase ?? null,
+    estimated,
+    elapsed: span(elapsed),
+    left: span(left),
+    finishAt: clock(now + left),
+    pace,
+    usual: run.durationMs ? span(run.durationMs) : null,
+    by: run.by ?? null,
+  };
 }
 
 async function Sync({ motion }: { motion: string | null }) {
@@ -354,16 +390,7 @@ async function Sync({ motion }: { motion: string | null }) {
     admin.from("kpi_targets").select("ad_account_id, clients(name)").eq("active", true).not("ad_account_id", "is", null),
   ]);
   const all = data ?? [];
-  // A hand run still "running" after 15 minutes timed out
-  const runs = new Map(
-    all
-      .filter((r) => r.source.startsWith("run:"))
-      .map((r) => {
-        const x = r.last_result as NonNullable<RunState>;
-        const timedOut = x.running && (!x.startedAt || olderThan(x.startedAt, 15 * 60_000));
-        return [r.source.slice(4), timedOut ? { ...x, running: false, error: x.error ?? "It didn't finish (timed out)" } : x] as const;
-      }),
-  );
+  const runs = new Map(all.filter((r) => r.source.startsWith("run:")).map((r) => [r.source.slice(4), timedOut(r.last_result as RunState)] as const));
   const rows = all.filter((r) => !r.source.startsWith("run:"));
   // KPI rows are keyed by ad account; show whose it is
   const owner = new Map((accounts ?? []).map((a) => [String(a.ad_account_id).replace(/^act_/, ""), (a.clients as unknown as { name: string } | null)?.name ?? ""]));
@@ -383,7 +410,7 @@ async function Sync({ motion }: { motion: string | null }) {
         const stale = list.filter((r) => freshness(r.last_run_at).tone !== "ok");
         const newest = list.map((r) => r.last_run_at).filter(Boolean).sort().at(-1);
         const run = runs.get(job) ?? null;
-        const progress = progressOf(job, run, list);
+        const progress = progressOf(job, run);
         const label = (source: string) => {
           const rest = source.startsWith(prefix) ? source.slice(prefix.length).replace(/^:/, "") : source;
           if (prefix === "kpi:") return owner.get(rest) ? `${owner.get(rest)} · ${rest}` : rest;

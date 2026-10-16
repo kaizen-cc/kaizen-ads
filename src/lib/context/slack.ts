@@ -1,4 +1,5 @@
 import "server-only";
+import type { Tracker } from "@/lib/progress";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { compact, getCursor, saveItems, setCursor, trimBody, type CollectResult, type ContextItem } from "./shared";
 import { LIVE } from "@/lib/live";
@@ -180,16 +181,17 @@ async function readChannel(channel: string, since: Date, clientId: string, sourc
   return items;
 }
 
-export async function collectSlack(admin: SupabaseClient): Promise<CollectResult> {
+export async function collectSlack(admin: SupabaseClient, t?: Tracker): Promise<CollectResult> {
   const access = await matchSlackChannels(admin);
   const { data: clients } = await admin
     .from("clients")
-    .select("id, slack_channel_id, internal_slack_channel_id")
+    .select("id, name, slack_channel_id, internal_slack_channel_id")
     .eq("creative_package", true)
     .is("archived_at", null)
     .in("status", LIVE);
   let saved = 0;
   const errors: string[] = [];
+  t?.total((clients ?? []).reduce((n, c) => n + (c.internal_slack_channel_id ? 1 : 0) + (c.slack_channel_id ? 1 : 0), 0));
   for (const c of clients ?? []) {
     for (const [channel, source] of [
       [c.internal_slack_channel_id, "slack_internal"],
@@ -205,8 +207,10 @@ export async function collectSlack(admin: SupabaseClient): Promise<CollectResult
         await saveItems(admin, read);
         await setCursor(admin, key, new Date(started.getTime() - 5 * 60_000), { ok: true, items: read.length });
         saved += read.length;
+        t?.tick(`${c.name} (${source === "slack_internal" ? "internal" : "client"} channel)`);
       } catch (e) {
         errors.push(e instanceof Error ? e.message : String(e)); // e.g. not_in_channel: invite the bot
+        t?.tick(`${c.name} (${source === "slack_internal" ? "internal" : "client"} channel)`, false);
       }
     }
   }

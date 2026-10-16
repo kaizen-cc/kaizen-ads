@@ -245,15 +245,16 @@ export async function researchBenchmarks(admin: SupabaseClient, max = 2) {
   const stale = new Date(Date.now() - 90 * 86_400_000).toISOString();
   const { data: subs } = await admin
     .from("verticals")
-    .select("id, name, description, conversion, parent_id, verticals!verticals_parent_id_fkey(name)")
+    .select("id, name, description, conversion, parent_id")
     .not("parent_id", "is", null)
     .eq("active", true)
     .or(`benchmarks_at.is.null,benchmarks_at.lt.${stale}`)
     .order("benchmarks_at", { ascending: true, nullsFirst: true })
     .limit(max);
   let done = 0;
+  const parents = await parentNames(admin, (subs ?? []).map((s) => s.parent_id));
   for (const s of subs ?? []) {
-    const parent = (s.verticals as unknown as { name: string } | null)?.name ?? "";
+    const parent = parents.get(s.parent_id) ?? "";
     const research = await researchWeb({
       agent: "verticals",
       label: `benchmarks ${s.name}`,
@@ -279,17 +280,48 @@ Find: typical cost per ${s.conversion ?? "result"} (and what counts as strong), 
 
 /** Hourly upkeep: a taxonomy when there's none (and weekly), new clients placed, benchmarks researched and playbooks written a few at a time. */
 export async function keepVerticals(admin: SupabaseClient) {
+  const { tracker } = await import("@/lib/progress");
+  const t = await tracker(admin, "verticals", "steps");
+  try {
+    const out = await keepVerticalsRun(admin, t);
+    await t.finish({ summary: `${out.placed} clients placed, ${out.benchmarks} benchmarks researched, ${out.playbooks} playbooks written` });
+    return out;
+  } catch (e) {
+    await t.finish({ error: e instanceof Error ? e.message : String(e) });
+    throw e;
+  }
+}
+
+async function keepVerticalsRun(admin: SupabaseClient, t: import("@/lib/progress").Tracker) {
   const start = Date.now();
+  t.total(5);
   const { data: last } = await admin.from("sync_state").select("last_run_at").eq("source", "verticals").maybeSingle();
   const weekly = !last?.last_run_at || Date.now() - Date.parse(last.last_run_at) > 7 * 86_400_000;
+  t.on(weekly ? "Working out the verticals from every paid client" : "Verticals are current");
   const built = weekly ? await buildTaxonomy(admin) : null;
+  t.tick("Placing new clients");
   const placed = await placeNewClients(admin);
+  t.tick("Researching benchmarks");
   const benchmarks = built ? 0 : await researchBenchmarks(admin, 2).catch(() => 0);
+  // The Hall of Fame before the playbooks (they're built from it); the Meta sync updates it too
+  t.tick("Updating the Hall of Fame");
+  const { updateHallOfFame } = await import("@/lib/hall-of-fame");
+  const fame = await updateHallOfFame(admin, Date.now() + 150_000).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+  t.tick("Writing playbooks");
   // Then a playbook or two, if there's time left in the run
   const { keepPlaybooks } = await import("@/lib/playbooks");
   const left = 640_000 - (Date.now() - start);
   const playbooks = left > 120_000 ? await keepPlaybooks(admin, left > 300_000 ? 3 : 1).catch(() => 0) : 0;
-  return { built, placed, benchmarks, playbooks };
+  t.tick(null);
+  return { built, placed, benchmarks, fame, playbooks };
+}
+
+/** Parent vertical names by id (a self-join PostgREST can't embed by itself). */
+export async function parentNames(db: SupabaseClient, ids: (string | null | undefined)[]) {
+  const want = [...new Set(ids.filter((x): x is string => Boolean(x)))];
+  if (!want.length) return new Map<string, string>();
+  const { data } = await db.from("verticals").select("id, name").in("id", want);
+  return new Map((data ?? []).map((v) => [v.id as string, v.name as string]));
 }
 
 /** The whole taxonomy with benchmarks, for pages. */

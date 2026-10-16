@@ -67,7 +67,7 @@ async function Verticals() {
     db.from("hall_of_fame").select("vertical_id, creative").gt("expires_at", new Date().toISOString()).not("vertical_id", "is", null).order("beat_by", { ascending: false }).limit(600),
     db
       .from("market_ads")
-      .select("media, market_brands!inner(vertical_id)")
+      .select("id, market_brands!inner(vertical_id)")
       .gte("days_active", 30)
       .neq("active", false)
       .not("market_brands.vertical_id", "is", null)
@@ -89,11 +89,8 @@ async function Verticals() {
     if (img && k.thumbs.length < 3) k.thumbs.push(img);
   }
   for (const m of market ?? []) {
-    const k = card((m.market_brands as unknown as { vertical_id: string }).vertical_id);
-    k.market++;
-    const media = (m.media ?? []) as { type: string; url: string; thumb: string | null }[];
-    const img = media.find((x) => x.type === "image")?.url ?? media[0]?.thumb;
-    if (img && k.thumbs.length < 3) k.thumbs.push(img);
+    // Market ads are counted, not pictured: the card shows our own ads
+    card((m.market_brands as unknown as { vertical_id: string }).vertical_id).market++;
   }
   for (const b of books ?? []) {
     const avatars = (b.avatars ?? []) as { name: string; angles?: unknown[] }[];

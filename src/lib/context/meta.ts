@@ -1,4 +1,5 @@
 import "server-only";
+import type { Tracker } from "@/lib/progress";
 import { createHmac } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { compact } from "./shared";
@@ -437,7 +438,7 @@ export async function syncClientMeta(admin: SupabaseClient, clientId: string, ad
  * sees every account we run): daily metrics, reach, and the snapshot. Clients we make creative for go first, then
  * whoever was synced longest ago, so a run that hits its time limit picks up where the last one stopped.
  */
-export async function collectMeta(admin: SupabaseClient, budgetMs = 700_000) {
+export async function collectMeta(admin: SupabaseClient, budgetMs = 700_000, t?: Tracker) {
   const deadline = Date.now() + budgetMs;
   const access = await linkAdAccounts(admin);
   const [{ data: all }, { data: snaps }] = await Promise.all([
@@ -451,20 +452,26 @@ export async function collectMeta(admin: SupabaseClient, budgetMs = 700_000) {
   );
   const synced: Record<string, unknown>[] = [];
   const errors: string[] = [];
+  // Each client's account, then four steps after (fatigue, refresh briefs, winners, Hall of Fame)
+  t?.phase("Pulling every ad, day by day", clients.length + 4);
   for (const c of clients ?? []) {
     if (Date.now() > deadline) {
       synced.push({ client: c.name, deferred: true }); // next run
+      t?.tick(null);
       continue;
     }
+    t?.on(c.name);
     const account = c.meta_ad_account_id!.replace(/^act_/, "");
     try {
       const daily = await syncDaily(admin, c.id, account);
       const reach = await syncReach(admin, c.id, account);
       const snap = await snapshot(admin, c.id, account);
       synced.push({ client: c.name, ...daily, reachWindows: reach, snapshot: Boolean(snap) });
+      t?.tick(c.name);
     } catch (e) {
       // Usually: the ad account isn't assigned to the system user yet
       errors.push(`${c.name}: ${e instanceof Error ? e.message : e}`);
+      t?.tick(c.name, false);
     }
   }
   return {
@@ -605,3 +612,104 @@ export async function adDetail(adId: string): Promise<AdDetail> {
     page: page ? { name: page.name ?? null, picture: page.picture?.data?.url ?? null } : null,
   };
 }
+
+type Paged<T> = { data: T[]; paging?: { next?: string } };
+const num = (v: unknown) => (v == null || v === "" ? null : Number(v));
+
+/**
+ * How an ad account is set up right now, for the audit: live campaigns (objective, budget, bidding) and ad sets
+ * (optimization, budget, learning phase, audience in short), plus the last 30 days split by placement, age and gender,
+ * and country. Live from Meta, nothing saved.
+ */
+export async function accountSetup(adAccountId: string) {
+  const act = `act_${adAccountId.replace(/^act_/, "")}`;
+  const live = JSON.stringify([{ field: "effective_status", operator: "IN", value: ["ACTIVE", "PAUSED", "IN_PROCESS", "WITH_ISSUES"] }]);
+  const [account, campaigns, adsets] = await Promise.all([
+    graph<{ name: string; currency: string; timezone_name: string; account_status: number; disable_reason?: number; spend_cap?: string; amount_spent?: string }>(act, {
+      fields: "name,currency,timezone_name,account_status,disable_reason,spend_cap,amount_spent",
+    }).catch(() => null),
+    graph<Paged<Record<string, unknown>>>(`${act}/campaigns`, {
+      fields: "name,objective,effective_status,buying_type,daily_budget,lifetime_budget,bid_strategy,special_ad_categories,created_time,updated_time",
+      filtering: live,
+      limit: "60",
+    }).catch(() => ({ data: [] })),
+    graph<Paged<Record<string, unknown>>>(`${act}/adsets`, {
+      fields: "name,campaign_id,effective_status,optimization_goal,billing_event,bid_strategy,bid_amount,daily_budget,lifetime_budget,destination_type,attribution_spec,learning_stage_info,targeting,promoted_object,created_time",
+      filtering: live,
+      limit: "120",
+    }).catch(() => ({ data: [] })),
+  ]);
+  const breakdown = (breakdowns: string) =>
+    graph<Paged<Record<string, unknown>>>(`${act}/insights`, {
+      level: "account",
+      date_preset: "last_30d",
+      breakdowns,
+      fields: "spend,impressions,inline_link_clicks,ctr,cpm,actions,action_values,frequency",
+      limit: "100",
+    })
+      .then((r) => r.data)
+      .catch(() => []);
+  const [placements, demo, countries] = await Promise.all([breakdown("publisher_platform,platform_position"), breakdown("age,gender"), breakdown("country")]);
+
+  const audience = (t: Record<string, unknown> | undefined) => {
+    if (!t) return null;
+    const geo = t.geo_locations as { countries?: string[]; regions?: { name: string }[]; cities?: { name: string; radius?: number }[]; custom_locations?: unknown[] } | undefined;
+    const ca = (t.custom_audiences as { name: string }[] | undefined)?.map((a) => a.name) ?? [];
+    const ex = (t.excluded_custom_audiences as { name: string }[] | undefined)?.map((a) => a.name) ?? [];
+    const interests = ((t.flexible_spec as { interests?: { name: string }[] }[] | undefined) ?? []).flatMap((f) => f.interests?.map((i) => i.name) ?? []);
+    const adv = (t.targeting_automation as { advantage_audience?: number } | undefined)?.advantage_audience;
+    return {
+      ages: `${t.age_min ?? 18}-${t.age_max ?? 65}`,
+      genders: (t.genders as number[] | undefined)?.map((g) => (g === 1 ? "men" : "women")).join("+") || "all",
+      geo: [geo?.countries?.join(","), geo?.regions?.map((r) => r.name).join(","), geo?.cities?.map((c) => `${c.name}${c.radius ? ` +${c.radius}mi` : ""}`).join(","), geo?.custom_locations?.length ? `${geo.custom_locations.length} pins` : ""]
+        .filter(Boolean)
+        .join(" · "),
+      custom: ca,
+      excluded: ex,
+      interests: interests.slice(0, 12),
+      advantage: adv === 1,
+      placements: t.publisher_platforms ? (t.publisher_platforms as string[]).join(",") : "automatic",
+    };
+  };
+  return {
+    account: account && {
+      name: account.name,
+      currency: account.currency,
+      timezone: account.timezone_name,
+      status: account.account_status === 1 ? "active" : `status ${account.account_status}${account.disable_reason ? ` (disable reason ${account.disable_reason})` : ""}`,
+      spendCap: num(account.spend_cap),
+    },
+    campaigns: campaigns.data.map((c) => ({
+      id: c.id as string,
+      name: c.name as string,
+      objective: c.objective as string,
+      status: c.effective_status as string,
+      cbo: c.daily_budget != null || c.lifetime_budget != null,
+      dailyBudget: num(c.daily_budget) != null ? num(c.daily_budget)! / 100 : null,
+      lifetimeBudget: num(c.lifetime_budget) != null ? num(c.lifetime_budget)! / 100 : null,
+      bidStrategy: (c.bid_strategy as string) ?? null,
+      specialCategories: (c.special_ad_categories as string[]) ?? [],
+      created: (c.created_time as string)?.slice(0, 10),
+    })),
+    adsets: adsets.data.map((a) => ({
+      id: a.id as string,
+      name: a.name as string,
+      campaignId: a.campaign_id as string,
+      status: a.effective_status as string,
+      optimization: a.optimization_goal as string,
+      event: (a.promoted_object as { custom_event_type?: string } | undefined)?.custom_event_type ?? null,
+      bidStrategy: (a.bid_strategy as string) ?? null,
+      bidAmount: num(a.bid_amount) != null ? num(a.bid_amount)! / 100 : null,
+      dailyBudget: num(a.daily_budget) != null ? num(a.daily_budget)! / 100 : null,
+      destination: (a.destination_type as string) ?? null,
+      attribution: (a.attribution_spec as { event_type: string; window_days: number }[] | undefined)?.map((x) => `${x.window_days}d ${x.event_type.toLowerCase().replace("_", " ")}`).join(", ") ?? null,
+      learning: (a.learning_stage_info as { status?: string } | undefined)?.status ?? null,
+      audience: audience(a.targeting as Record<string, unknown> | undefined),
+      created: (a.created_time as string)?.slice(0, 10),
+    })),
+    placements,
+    demo,
+    countries,
+  };
+}
+export type AccountSetup = Awaited<ReturnType<typeof accountSetup>>;

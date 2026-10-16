@@ -1,4 +1,5 @@
 import "server-only";
+import type { Tracker } from "@/lib/progress";
 import { JWT } from "google-auth-library";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { compact, saveItems, trimBody, type CollectResult, type ContextItem } from "./shared";
@@ -193,7 +194,7 @@ async function folderTree(token: string, roots: string[], driveId?: string) {
   return { parentOf, nameOf };
 }
 
-export async function collectDrive(admin: SupabaseClient, since: Date): Promise<CollectResult> {
+export async function collectDrive(admin: SupabaseClient, since: Date, t?: Tracker): Promise<CollectResult> {
   const root = process.env.GOOGLE_SHARED_DRIVE_ID;
   const user = process.env.GOOGLE_DRIVE_USER;
   if (!root || !user) return { items: [], notes: { skipped: "GOOGLE_SHARED_DRIVE_ID or GOOGLE_DRIVE_USER not set" } };
@@ -262,7 +263,9 @@ export async function collectDrive(admin: SupabaseClient, since: Date): Promise<
     }
 
   const items: ContextItem[] = [];
+  t?.phase("Filing new files under their clients", files.length);
   for (const f of files) {
+    t?.tick(f.name);
     // Walk up to the client's folder, keeping the subfolder path (e.g. "Headquarters / Photos")
     const path: string[] = [];
     let at: string | undefined = f.parents?.[0];

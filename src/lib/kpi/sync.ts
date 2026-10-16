@@ -1,4 +1,5 @@
 import "server-only";
+import { tracker, type Tracker } from "@/lib/progress";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { asyncReport, linkAdAccounts, metaConfigured, type InsightRow } from "@/lib/context/meta";
 import { pool } from "@/lib/context/run";
@@ -128,7 +129,7 @@ export async function refreshClientKpis(admin: SupabaseClient, clientId: string,
   await refreshTargets(admin, targets, pull);
 }
 
-async function refreshTargets(admin: SupabaseClient, targets: Target[], pull: boolean, deadline = Date.now() + 600_000) {
+async function refreshTargets(admin: SupabaseClient, targets: Target[], pull: boolean, deadline = Date.now() + 600_000, t?: Tracker) {
   const byAccount = new Map<string, Target[]>();
   for (const t of targets) {
     if (t.platform !== "meta" || !t.ad_account_id) {
@@ -147,9 +148,14 @@ async function refreshTargets(admin: SupabaseClient, targets: Target[], pull: bo
   const ran = new Map((state ?? []).map((s) => [s.source as string, s.last_run_at as string | null]));
   const accounts = [...byAccount.keys()].sort((a, b) => (ran.get(`kpi:${a}`) ?? "").localeCompare(ran.get(`kpi:${b}`) ?? ""));
 
+  t?.total(accounts.length);
   return pool(accounts, 4, async (account) => {
     const list = byAccount.get(account)!;
-    if (Date.now() > deadline) return { account, deferred: true };
+    if (Date.now() > deadline) {
+      t?.tick(null);
+      return { account, deferred: true };
+    }
+    t?.on(account);
     let error: string | undefined;
     let pulled: Awaited<ReturnType<typeof syncMetaCampaigns>> | null = null;
     if (pull && metaConfigured()) {
@@ -163,6 +169,7 @@ async function refreshTargets(admin: SupabaseClient, targets: Target[], pull: bo
     }
     await computeAccount(admin, account, list, error);
     await admin.from("sync_state").upsert({ source: `kpi:${account}`, last_run_at: new Date().toISOString(), last_result: { ...(pulled ?? {}), error: error ?? null } });
+    t?.tick(account, !error);
     return { account, targets: list.length, ...(pulled ?? {}), ...(error ? { error } : {}) };
   });
 }
@@ -197,6 +204,16 @@ export async function refreshAccountKpis(admin: SupabaseClient, account: string)
 
 /** The scheduled step: pull every account with a target and recompute everything. */
 export async function refreshAllKpis(admin: SupabaseClient, budgetMs = 650_000) {
+  const t = await tracker(admin, "kpi", "ad accounts");
+  try {
+    return await refreshAll(admin, budgetMs, t);
+  } catch (e) {
+    await t.finish({ error: e instanceof Error ? e.message : String(e) });
+    throw e;
+  }
+}
+
+async function refreshAll(admin: SupabaseClient, budgetMs: number, t: Tracker) {
   const adopted = await adoptNewAccounts(admin);
   const [{ data }, { data: archived }] = await Promise.all([
     admin.from("kpi_targets").select(TARGET_FIELDS).eq("active", true),
@@ -205,11 +222,13 @@ export async function refreshAllKpis(admin: SupabaseClient, budgetMs = 650_000) 
   // Live clients only: paused and archived accounts aren't pulled until they're reactivated
   const on = new Set((archived ?? []).map((c) => c.id as string));
   const live = ((data ?? []) as Target[]).filter((t) => on.has((t as unknown as { client_id: string }).client_id));
-  const results = await refreshTargets(admin, live, true, Date.now() + budgetMs);
-  return {
+  const results = await refreshTargets(admin, live, true, Date.now() + budgetMs, t);
+  const out = {
     ...adopted,
     accounts: results?.length ?? 0,
     errors: (results ?? []).filter((r) => "error" in r && r.error).map((r) => `${r.account}: ${(r as { error: string }).error}`),
     deferred: (results ?? []).filter((r) => "deferred" in r).length,
   };
+  await t.finish({ summary: `${out.accounts} accounts${out.errors.length ? `, ${out.errors.length} failed` : ""}${out.deferred ? `, ${out.deferred} left for the next run` : ""}` });
+  return out;
 }

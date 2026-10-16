@@ -520,6 +520,10 @@ export async function syncMarket(admin: SupabaseClient, budgetMs = 600_000) {
   const started = Date.now();
   const deadline = started + budgetMs;
   const { data: conn } = await admin.from("motion_connection").select("workspace, last_result").eq("id", 1).maybeSingle();
+  const { tracker } = await import("@/lib/progress");
+  const t = await tracker(admin, "market", "brands");
+  // Six steps before the brands are pulled; the brands and two reading steps are added once known
+  t.phase("Connecting to Motion", 6);
   try {
     const session = await openSession(admin);
     // The first answer from each Motion tool, kept with the result so the reading can be checked against it
@@ -538,25 +542,35 @@ export async function syncMarket(admin: SupabaseClient, budgetMs = 600_000) {
       await admin.from("motion_connection").update({ workspace: auth }).eq("id", 1);
       workspaces = workspacesOf(auth);
     }
+    t.tick("Matching client workspaces");
     const matched = await matchWorkspaces(admin, workspaces);
     const last = (conn?.last_result ?? {}) as { discoveredAt?: string };
     const { count: watched } = await admin.from("market_brands").select("id", { count: "exact", head: true });
     const discover = !watched || !last.discoveredAt || Date.now() - Date.parse(last.discoveredAt) > 7 * 86_400_000;
+    t.tick(discover ? "Finding comparable brands (weekly)" : "Brands are current");
     const brandsFound = discover ? await discoverBrands(admin, s, workspaces, started + budgetMs * 0.4) : 0;
+    t.tick("Checking new brands are the right companies");
     const checked = await checkBrands(admin).catch(() => 0);
+    t.tick("Describing brands");
     const sorted = await describeBrands(admin).catch(() => 0);
     // Each described brand into the sub-vertical it teaches
+    t.tick("Placing brands in sub-verticals");
     const { placeBrands } = await import("@/lib/verticals");
     const placedBrands = await placeBrands(admin).catch(() => 0);
+    t.tick(null);
 
     // Live ads, ten brands a call, stalest brands first
     let pulled = 0;
     let brands = 0;
     const errors: string[] = [];
     const { data: list } = await admin.from("market_brands").select("id, motion_brand_id, industry").eq("rejected", false).not("checked_at", "is", null).order("last_synced_at", { ascending: true, nullsFirst: true }).limit(300);
+    t.phase("Pulling live ads, brand by brand", (list ?? []).length + 2);
     for (let i = 0; i < (list ?? []).length; i += 5) {
-      if (Date.now() > started + budgetMs * 0.75) break;
       const batch = list!.slice(i, i + 5);
+      if (Date.now() > started + budgetMs * 0.75) {
+        batch.forEach(() => t.tick(null));
+        continue;
+      }
       try {
         const r = await s.call("get_inspo_creatives", { brandIds: batch.map((b) => b.motion_brand_id), status: "ACTIVE", sort: "NEWEST", limit: 250 });
         const entries = itemsOf(r);
@@ -578,22 +592,29 @@ export async function syncMarket(admin: SupabaseClient, budgetMs = 600_000) {
             .eq("id", b.id);
           pulled += rows.length;
           brands++;
+          t.tick(details ? (str(pick(details, "name")) ?? null) : null);
         }
       } catch (e) {
         errors.push(e instanceof Error ? e.message.slice(0, 160) : String(e));
+        batch.forEach(() => t.tick(null, false));
         if (e instanceof MotionNotConnected) throw e;
       }
     }
+    t.on("The AI reading new ads");
     const read = await readAds(admin, deadline).catch((e) => {
       errors.push(`reading: ${e instanceof Error ? e.message : e}`);
       return 0;
     });
+    t.tick("Matching brands to clients");
     const clientsMatched = await matchClients(admin, deadline + 120_000).catch(() => 0);
+    t.tick(null);
     const result = { workspaces: workspaces.length, matched, brandsFound, checked, sorted, placedBrands, clientsMatched, brands, pulled, read, errors: errors.slice(0, 8), discoveredAt: discover && brandsFound ? new Date().toISOString() : last.discoveredAt, samples };
     await admin.from("motion_connection").update({ last_sync_at: new Date().toISOString(), last_result: result, error: null }).eq("id", 1);
+    await t.finish({ summary: `${brands} brands, ${pulled} ads, ${read} read by the AI` });
     return result;
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
+    await t.finish({ error });
     await admin.from("motion_connection").update({ error, last_sync_at: new Date().toISOString() }).eq("id", 1);
     return { error };
   }

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { loadPlaybook, playbookExamples, type Playbook } from "@/lib/playbooks";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
-import type { Benchmark } from "@/lib/verticals";
+import { parentNames, type Benchmark } from "@/lib/verticals";
 import { PlaybookView, type Example } from "../../(team)/ideas/playbook-view";
 
 export const metadata: Metadata = { title: "Kaizen playbook", robots: { index: false, follow: false } };
@@ -20,7 +20,7 @@ export default async function SharedPlaybook({ params }: PageProps<"/p/[token]">
   const { data: row } = await admin.from("vertical_playbooks").select("vertical_id").eq("share_token", token).maybeSingle();
   if (!row) notFound();
   const [{ data: sub }, playbook, { data: clients }, { data: brands }] = await Promise.all([
-    admin.from("verticals").select("name, benchmarks, verticals!verticals_parent_id_fkey(name)").eq("id", row.vertical_id).single(),
+    admin.from("verticals").select("name, benchmarks, parent_id").eq("id", row.vertical_id).single(),
     loadPlaybook(admin, row.vertical_id),
     admin.from("clients").select("name"),
     admin.from("market_brands").select("name"),
@@ -41,7 +41,7 @@ export default async function SharedPlaybook({ params }: PageProps<"/p/[token]">
     <main className="min-h-screen bg-bg px-4 py-12 md:px-8 md:py-16">
       <PlaybookView
         title={sub.name}
-        parent={(sub.verticals as unknown as { name: string } | null)?.name ?? null}
+        parent={(await parentNames(admin, [sub.parent_id])).get(sub.parent_id) ?? null}
         playbook={{ ...safe, shareToken: null }}
         examples={examples}
         named={false}

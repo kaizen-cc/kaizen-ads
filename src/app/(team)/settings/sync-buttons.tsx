@@ -4,9 +4,38 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { syncNow, syncOne, type SyncJob } from "./sync-actions";
 
-export type RunState = { running: boolean; startedAt?: string; finishedAt?: string; by?: string; error?: string | null; summary?: string; durationMs?: number | null } | null;
-/** How far a running job is: counted (sources done of the total) or estimated from how long it usually takes. */
-export type Progress = { pct: number; done?: number; total?: number; estimated: boolean; elapsed: string } | null;
+export type RunState = {
+  running: boolean;
+  startedAt?: string;
+  finishedAt?: string;
+  by?: string | null;
+  error?: string | null;
+  summary?: string;
+  durationMs?: number | null;
+  unit?: string;
+  total?: number;
+  done?: number;
+  failed?: number;
+  current?: string | null;
+  phase?: string | null;
+} | null;
+/** How far a running job is, worked out on the server from what the job reports. */
+export type Progress = {
+  pct: number;
+  done?: number;
+  total?: number;
+  failed: number;
+  unit: string;
+  current: string | null;
+  phase: string | null;
+  estimated: boolean;
+  elapsed: string;
+  left: string;
+  finishAt: string;
+  pace: "faster" | "slower" | "usual" | null;
+  usual: string | null;
+  by: string | null;
+} | null;
 
 const ago = (iso: string) => {
   const m = Math.round((Date.now() - Date.parse(iso)) / 60_000);
@@ -20,12 +49,6 @@ export function SyncNowButton({ job, run, progress }: { job: SyncJob; run: RunSt
   const [error, setError] = useState<string | null>(null);
   // The page marks a run left "running" for 15+ minutes as timed out
   const running = Boolean(run?.running);
-
-  useEffect(() => {
-    if (!running) return;
-    const t = setInterval(() => router.refresh(), 8000);
-    return () => clearInterval(t);
-  }, [running, router]);
 
   const go = (e: React.MouseEvent) => {
     // Inside the card's <summary>: don't open or close it
@@ -51,7 +74,7 @@ export function SyncNowButton({ job, run, progress }: { job: SyncJob; run: RunSt
         {running || pending ? (
           <>
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ok" />
-            {running && progress ? `Syncing · ${progress.estimated ? "about " : ""}${progress.pct}%` : "Starting…"}
+            {running && progress ? `${progress.pct}%${progress.total != null ? ` · ${progress.done}/${progress.total}` : ""}` : "Starting…"}
           </>
         ) : (
           "Sync now"
@@ -61,19 +84,50 @@ export function SyncNowButton({ job, run, progress }: { job: SyncJob; run: RunSt
   );
 }
 
-/** A thin bar across the card while its job runs. */
+/** The bar across a card while its job runs: done of total, what it's on, time left and when it should finish. Refreshes itself. */
 export function ProgressBar({ progress }: { progress: Progress }) {
+  const router = useRouter();
+  const live = Boolean(progress);
+  useEffect(() => {
+    if (!live) return;
+    const t = setInterval(() => router.refresh(), 4000);
+    return () => clearInterval(t);
+  }, [live, router]);
   if (!progress) return null;
+  const p = progress;
   return (
-    <span className="grid basis-full gap-1.5">
-      <span className="block h-1 overflow-hidden rounded-full bg-line">
-        <span className="relative block h-full rounded-full bg-ok transition-[width] duration-700 ease-out" style={{ width: `${Math.max(3, progress.pct)}%` }}>
+    <span className="grid basis-full gap-2 pt-1">
+      <span className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <span className="flex items-baseline gap-2">
+          <span className="font-display text-2xl tabular tracking-tight">{p.pct}%</span>
+          {p.total != null && (
+            <span className="text-xs text-muted">
+              <span className="tabular text-fg">{p.done}</span> of <span className="tabular">{p.total}</span> {p.unit} done
+              {p.failed > 0 && <span className="text-bad"> · {p.failed} failed</span>}
+            </span>
+          )}
+        </span>
+        <span className="text-xs text-muted">
+          {p.estimated ? "About " : ""}
+          <span className="tabular text-fg">{p.left}</span> left · done around <span className="tabular text-fg">{p.finishAt}</span>
+          {p.pace === "faster" && <span className="text-ok"> · faster than last time ({p.usual})</span>}
+          {p.pace === "slower" && <span className="text-warn"> · slower than last time ({p.usual})</span>}
+        </span>
+      </span>
+      <span className="block h-1.5 overflow-hidden rounded-full bg-line">
+        <span className="relative block h-full rounded-full bg-ok transition-[width] duration-1000 ease-out" style={{ width: `${Math.max(2, p.pct)}%` }}>
           <span className="absolute inset-0 animate-pulse rounded-full bg-white/25" />
         </span>
       </span>
-      <span className="text-[11px] text-muted">
-        {progress.total != null ? `${progress.done} of ${progress.total} done` : `About ${progress.pct}%, from how long it usually takes`} · running {progress.elapsed}. It keeps going on
-        the server if you leave or refresh.
+      <span className="flex flex-wrap justify-between gap-x-4 gap-y-0.5 text-[11px] text-faint">
+        <span className="min-w-0 truncate">
+          {p.phase ? `${p.phase}` : "Working"}
+          {p.current ? <span className="text-muted"> · now: {p.current}</span> : null}
+        </span>
+        <span>
+          Running {p.elapsed}
+          {p.by ? `, started by ${p.by}` : ""} · keeps going on the server if you leave or refresh
+        </span>
       </span>
     </span>
   );

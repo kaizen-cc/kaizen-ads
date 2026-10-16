@@ -7,6 +7,7 @@ import { collectMeta, metaConfigured } from "./meta";
 import { prewriteRefreshes, runFatigue } from "@/lib/fatigue";
 import { collectSlack, slackConfigured } from "./slack";
 import { LIVE } from "@/lib/live";
+import { tracker, type Tracker } from "@/lib/progress";
 
 /** Pull what's new from one source since its cursor, save it, and move the cursor. A failure stays with that source. */
 async function collect(admin: SupabaseClient, source: string, run: (since: Date) => Promise<CollectResult>) {
@@ -46,25 +47,50 @@ export async function collectMailbox(admin: SupabaseClient, mailbox: string) {
 
 /** Pull what's new from one source. Each runs on its own schedule slot with its own time limit. */
 export async function collectStep(admin: SupabaseClient, step: Step, budgetMs = 600_000) {
+  // Live progress for Sync health, whoever started the run
+  const t = await tracker(admin, step, step === "meta" ? "ad accounts" : step === "slack" ? "channels" : step === "gmail" ? "inboxes" : "files");
+  try {
+    const out = await runStep(admin, step, budgetMs, t);
+    const failed = out.filter((x) => (x as { error?: string }).error).length;
+    const items = out.reduce((n, x) => n + Number((x as { items?: number }).items ?? 0), 0);
+    await t.finish({ summary: `${items} new items${failed ? `, ${failed} failed` : ""}` });
+    return out;
+  } catch (e) {
+    await t.finish({ error: e instanceof Error ? e.message : String(e) });
+    throw e;
+  }
+}
+
+async function runStep(admin: SupabaseClient, step: Step, budgetMs: number, t: Tracker): Promise<Record<string, unknown>[]> {
   const deadline = Date.now() + budgetMs;
   if (step === "meta") {
     if (!metaConfigured()) return [{ source: "meta", skipped: "META_SYSTEM_USER_TOKEN not set" }];
-    const out = await collect(admin, "meta", () => collectMeta(admin));
-    // Fresh daily numbers: check every ad for fatigue (no AI, just the numbers)
-    const fatigue = await runFatigue(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
-    // A refresh brief ready for each ad flagged
-    const refreshes = await prewriteRefreshes(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
-    // The read of each winning ad, ready before anyone hovers it
-    const { analyzeWinners } = await import("@/lib/winner-insight");
-    const winners = await analyzeWinners(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+    // Leave time after the pull (the function stops at about 13 minutes): the Hall of Fame first, then the rest
+    const out = await collect(admin, "meta", () => collectMeta(admin, Math.min(budgetMs * 0.65, 450_000), t));
+    const then = async <T>(label: string, run: () => Promise<T>) => {
+      t.on(label);
+      const r = await run().catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+      t.tick(null);
+      return r;
+    };
     // The Hall of Fame: ads that ran 30+ days and beat their target (or their sub-vertical's benchmark)
     const { updateHallOfFame } = await import("@/lib/hall-of-fame");
-    const hallOfFame = await updateHallOfFame(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+    const hallOfFame = await then("Updating the Hall of Fame", () => updateHallOfFame(admin, Date.now() + 150_000));
+    // Fresh daily numbers: check every ad for fatigue (no AI, just the numbers)
+    const fatigue = await then("Checking every ad for fatigue", () => runFatigue(admin));
+    // A refresh brief ready for each ad flagged
+    const refreshes = await then("Writing refresh briefs for tiring ads", () => prewriteRefreshes(admin));
+    // The read of each winning ad, ready before anyone hovers it
+    const { analyzeWinners } = await import("@/lib/winner-insight");
+    const winners = await then("Reading the winning ads", () => analyzeWinners(admin));
     return [{ ...out, fatigue, refreshes, winners, hallOfFame }];
   }
-  if (step === "slack") return slackConfigured() ? [await collect(admin, "slack", () => collectSlack(admin))] : [{ source: "slack", skipped: "not set up" }];
+  if (step === "slack") return slackConfigured() ? [await collect(admin, "slack", () => collectSlack(admin, t))] : [{ source: "slack", skipped: "not set up" }];
   if (!googleConfigured()) return [{ source: step, skipped: "Google not set up" }];
-  if (step === "drive") return [await collect(admin, "drive", (since) => collectDrive(admin, since))];
+  if (step === "drive") {
+    t.on("Listing the client folders");
+    return [await collect(admin, "drive", (since) => collectDrive(admin, since, t))];
+  }
   // Every mailbox keeps its own cursor, so someone new to the org starts with their last 30 days,
   // and a mailbox not reached before the time runs out is simply first in line next run
   const [mailboxes, contacts] = await Promise.all([gmailMailboxes(), contactMap(admin)]);
@@ -77,9 +103,17 @@ export async function collectStep(admin: SupabaseClient, step: Step, budgetMs = 
     await admin.from("sync_state").update({ last_result: { ...((s.last_result ?? {}) as object), offboarded: true, offboarded_at: new Date().toISOString() } }).eq("source", s.source);
   const last = new Map((states ?? []).map((s) => [s.source as string, (s.last_run_at as string) ?? ""]));
   mailboxes.sort((a, b) => (last.get(`gmail:${a}`) ?? "").localeCompare(last.get(`gmail:${b}`) ?? ""));
-  return pool(mailboxes, 6, async (m): Promise<Record<string, unknown>> =>
-    Date.now() > deadline ? { source: `gmail:${m}`, deferred: true } : collect(admin, `gmail:${m}`, (since) => collectGmail(m, since, contacts)),
-  );
+  t.total(mailboxes.length);
+  return pool(mailboxes, 6, async (m): Promise<Record<string, unknown>> => {
+    if (Date.now() > deadline) {
+      t.tick(null);
+      return { source: `gmail:${m}`, deferred: true };
+    }
+    t.on(m);
+    const r = await collect(admin, `gmail:${m}`, (since) => collectGmail(m, since, contacts));
+    t.tick(m, !("error" in r));
+    return r;
+  });
 }
 
 /** Step 2: refresh the briefings of clients with news, stalest first, until the time budget runs out. */

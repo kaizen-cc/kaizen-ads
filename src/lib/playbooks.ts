@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { LIVE } from "@/lib/live";
-import type { Benchmark } from "@/lib/verticals";
+import { parentNames, type Benchmark } from "@/lib/verticals";
 
 // The playbook for each sub-vertical: who buys (avatars, from our clients' go-to-market strategies and intake forms),
 // the angles that land with each (from our Hall of Fame and the market's ads live 30+ days), and the proof. Rebuilt
@@ -60,7 +60,7 @@ type MarketRow = { id: string; headline: string | null; body: string | null; ang
 
 /** Builds (or rebuilds) one sub-vertical's playbook. */
 export async function buildPlaybook(admin: SupabaseClient, subId: string) {
-  const { data: sub } = await admin.from("verticals").select("id, name, description, conversion, benchmarks, parent_id, verticals!verticals_parent_id_fkey(name)").eq("id", subId).single();
+  const { data: sub } = await admin.from("verticals").select("id, name, description, conversion, benchmarks, parent_id").eq("id", subId).single();
   if (!sub) return null;
   const { data: clients } = await admin.from("clients").select("id, industry_detail").eq("vertical_id", subId).is("archived_at", null).in("status", LIVE).eq("paid_ads", true);
   const ids = (clients ?? []).map((c) => c.id as string);
@@ -88,7 +88,7 @@ export async function buildPlaybook(admin: SupabaseClient, subId: string) {
     .filter(Boolean)
     .slice(0, 8);
   const audiences = (intakes ?? []).map((i) => (i.summary as { audience?: string; offer?: string }).audience).filter(Boolean).slice(0, 10);
-  const parent = (sub.verticals as unknown as { name: string } | null)?.name ?? "";
+  const parent = (await parentNames(admin, [sub.parent_id])).get(sub.parent_id) ?? "";
   const bm = ((sub.benchmarks ?? []) as Benchmark[]).map((b) => `${b.metric}: good ${b.good ?? "?"}${b.unit}, great ${b.great ?? "?"}${b.unit} (${b.year})`).join("; ");
 
   const out = await askJson<{ summary: string; avatars: (Omit<Avatar, "angles"> & { angles: (Omit<PlaybookAngle, "examples"> & { examples: string[] })[] })[]; watchouts: string[] }>({

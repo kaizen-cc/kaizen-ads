@@ -210,16 +210,18 @@ export type FameAd = {
 export async function loadHallOfFame(db: SupabaseClient, opts: { verticalId?: string | null } = {}): Promise<FameAd[]> {
   let q = db
     .from("hall_of_fame")
-    .select("*, clients(name, slug), verticals(name, verticals!verticals_parent_id_fkey(name))")
+    .select("*, clients(name, slug), verticals(name, parent_id)")
     .gt("expires_at", new Date().toISOString())
     .order("beat_by", { ascending: false })
     .limit(500);
   if (opts.verticalId) q = q.eq("vertical_id", opts.verticalId);
   const { data } = await q;
   const recent = new Date(Date.now() - 3 * DAY).toISOString().slice(0, 10);
+  const { parentNames } = await import("@/lib/verticals");
+  const parents = await parentNames(db, (data ?? []).map((r) => (r.verticals as unknown as { parent_id: string | null } | null)?.parent_id));
   return (data ?? []).map((r) => {
     const c = r.clients as unknown as { name: string; slug: string } | null;
-    const v = r.verticals as unknown as { name: string; verticals: { name: string } | null } | null;
+    const v = r.verticals as unknown as { name: string; parent_id: string | null } | null;
     return {
       adId: r.ad_id,
       clientId: r.client_id,
@@ -227,7 +229,7 @@ export async function loadHallOfFame(db: SupabaseClient, opts: { verticalId?: st
       clientSlug: c?.slug ?? "",
       verticalId: r.vertical_id,
       vertical: v?.name ?? null,
-      parentVertical: v?.verticals?.name ?? null,
+      parentVertical: (v?.parent_id && parents.get(v.parent_id)) || null,
       adName: r.ad_name,
       firstDate: r.first_date,
       lastDate: r.last_date,
