@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { industryLabel, industryWinners, type Winner } from "@/lib/industry";
 import { requireStaff } from "@/lib/auth";
 import {
@@ -308,6 +309,14 @@ export async function createBatch(draft: Draft, review: Review | null, decisions
       ...(decisions.usedStrongerBrief ? [{ request_id: t.id, kind: "review", actor_id: me.id, body: null, data: { action: "stronger_brief" } }] : []),
     ]);
     if (events.length) await createAdminClient().from("request_events").insert(events);
+  }
+  // A request that makes something promised on a call puts that promise in motion and clears its alert on Home
+  if (adminConfigured() && rows?.length) {
+    const clientId = draft.clientId;
+    after(async () => {
+      const { sweepCovered } = await import("@/lib/calls");
+      await sweepCovered(createAdminClient(), clientId).catch((e) => console.error("[calls] promise check failed:", e instanceof Error ? e.message : e));
+    });
   }
   revalidatePath("/board");
   revalidatePath("/pipeline");

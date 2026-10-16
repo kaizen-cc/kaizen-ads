@@ -257,9 +257,10 @@ export async function collectCalls(admin: SupabaseClient, budgetMs = 500_000) {
       await admin.from("client_calls").update({ status: "failed", error: (e instanceof Error ? e.message : String(e)).slice(0, 300) }).eq("id", w.id);
     }
   }
+  const covered = await sweepCovered(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
   const watched = await watchCommitments(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
-  await setCursor(admin, "calls", started, { found: found.length, saved, read, waiting: Math.max(0, (waiting ?? []).length - read), errors, watched });
-  return { found: found.length, saved, read, errors, watched };
+  await setCursor(admin, "calls", started, { found: found.length, saved, read, waiting: Math.max(0, (waiting ?? []).length - read), errors, watched, covered });
+  return { found: found.length, saved, read, errors, watched, covered };
 }
 
 // ─── Watch what was promised ───────────────────────────────────────────────
@@ -324,6 +325,74 @@ export async function watchCommitments(admin: SupabaseClient, max = 12) {
     }
   }
   return { checked: due.length, inMotion, briefed };
+}
+
+/**
+ * Promises still outstanding (watched, or with a brief waiting on Home) checked against requests made since: any
+ * request that makes the same thing puts the promise in motion and takes its brief off Home, however it was made.
+ * Only clients with a request newer than the last check are looked at.
+ */
+export async function sweepCovered(admin: SupabaseClient, clientId?: string) {
+  let q = admin
+    .from("call_commitments")
+    .select("id, client_id, what, suggestion_id, cover_checked_at, client_calls(occurred_at)")
+    .in("status", ["open", "briefed"])
+    .in("kind", ["creative", "copy", "offer"])
+    .limit(200);
+  if (clientId) q = q.eq("client_id", clientId);
+  const { data: open } = await q;
+  if (!open?.length) return { checked: 0, inMotion: 0 };
+  const byClient = new Map<string, typeof open>();
+  for (const c of open) byClient.set(c.client_id, [...(byClient.get(c.client_id) ?? []), c]);
+  let checked = 0;
+  let inMotion = 0;
+  for (const [client, list] of byClient) {
+    const callAt = (c: (typeof list)[number]) => (c.client_calls as unknown as { occurred_at: string }).occurred_at;
+    const since = list.reduce((m, c) => (callAt(c) < m ? callAt(c) : m), new Date().toISOString());
+    // The oldest check among them (never checked = since its call)
+    const lastCheck = list.reduce((m, c) => {
+      const at = c.cover_checked_at ?? callAt(c);
+      return at < m ? at : m;
+    }, new Date().toISOString());
+    const { data: requests } = await admin
+      .from("requests")
+      .select("number, title, brief, created_at")
+      .eq("client_id", client)
+      .gte("created_at", since)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .limit(30);
+    if (!requests?.some((r) => r.created_at > lastCheck)) continue;
+    checked += list.length;
+    const now = new Date().toISOString();
+    const out = await askJson<{ covered: { commitment: number; tickets: number[] }[] }>({
+      agent: "calls",
+      label: "commitments covered",
+      system: "You check whether promises made on a client call have been turned into creative requests since. A request covers a promise when it makes substantially the same thing.",
+      schema: COVER_SCHEMA,
+      prompt: `Promises:\n${list.map((c, i) => `${i + 1}. ${c.what}`).join("\n")}\n\nRequests made since the call:\n${requests.map((r) => `#${r.number} "${r.title}": ${(r.brief ?? "").replace(/\s+/g, " ").slice(0, 300)}`).join("\n")}\n\ncovered: each promise number that a request covers, with the ticket numbers. Leave out promises nothing covers.`,
+    });
+    const covered = new Map<string, number[]>();
+    for (const c of out.covered) {
+      const p = list[c.commitment - 1];
+      if (!p) continue;
+      // Only requests made after that promise's own call
+      const tickets = c.tickets.filter((n) => requests.some((r) => r.number === n && r.created_at >= callAt(p)));
+      if (tickets.length) covered.set(p.id, tickets);
+    }
+    for (const c of list) {
+      const tickets = covered.get(c.id);
+      if (!tickets) {
+        await admin.from("call_commitments").update({ cover_checked_at: now }).eq("id", c.id);
+        continue;
+      }
+      await admin.from("call_commitments").update({ status: "in_motion", request_numbers: tickets, cover_checked_at: now, checked_at: now }).eq("id", c.id);
+      // Its brief on Home isn't needed any more
+      if (c.suggestion_id) await admin.from("creative_suggestions").update({ status: "expired" }).eq("id", c.suggestion_id).eq("status", "open");
+      inMotion++;
+    }
+  }
+  return { checked, inMotion };
 }
 
 /**

@@ -84,6 +84,14 @@ export async function approveSuggestion(id: string, draft: SuggestionDraft): Pro
       await admin.from("call_commitments").update({ status: "in_motion", request_numbers: numbers }).eq("suggestion_id", id);
     if (s.kind === "refresh" && adId)
       await admin.from("ad_fatigue").update({ state: "refreshing", request_numbers: numbers, updated_at: new Date().toISOString() }).eq("client_id", s.client_id).eq("ad_id", adId);
+    // Any other brief that happens to make something promised on a call clears that promise too
+    if (s.kind !== "call") {
+      const clientId = s.client_id as string;
+      after(async () => {
+        const { sweepCovered } = await import("@/lib/calls");
+        await sweepCovered(createAdminClient(), clientId).catch((e) => console.error("[calls] promise check failed:", e instanceof Error ? e.message : e));
+      });
+    }
   }
   revalidatePath("/pipeline");
   revalidatePath("/board");
