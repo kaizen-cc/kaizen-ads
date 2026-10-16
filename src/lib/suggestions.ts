@@ -692,8 +692,17 @@ export type OnboardingState = { clients: OnboardingCard[]; unmatched: { id: stri
 
 /** Clients being onboarded, with where each one is: intake, first round, production. For execs and leads. */
 export async function loadOnboarding(db: SupabaseClient): Promise<OnboardingState> {
+  // Clients being onboarded, plus any client with a first round waiting (an intake can arrive after they're active)
+  const { data: waiting } = await db.from("creative_suggestions").select("client_id").eq("kind", "onboarding").eq("status", "open");
+  const waitingIds = [...new Set((waiting ?? []).map((w) => w.client_id as string))];
   const [{ data: clients }, { data: unmatched }] = await Promise.all([
-    db.from("clients").select("id, name, slug, created_at, reonboarded_at, creative_package, industry_detail").eq("status", "onboarding").is("archived_at", null).order("created_at", { ascending: false }).limit(20),
+    db
+      .from("clients")
+      .select("id, name, slug, created_at, reonboarded_at, creative_package, industry_detail")
+      .or(waitingIds.length ? `status.eq.onboarding,id.in.(${waitingIds.join(",")})` : "status.eq.onboarding")
+      .is("archived_at", null)
+      .order("created_at", { ascending: false })
+      .limit(20),
     db.from("client_intakes").select("id, business_name, received_at").eq("status", "unmatched").order("received_at", { ascending: false }).limit(10),
   ]);
   const ids = (clients ?? []).map((c) => c.id);

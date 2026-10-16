@@ -98,6 +98,9 @@ export async function processIntake(admin: SupabaseClient, intakeId: string) {
       .update({ industry: summary.industry, industry_detail: summary.industryDetail.slice(0, 80) || null, industry_source: "ai", industry_set_at: new Date().toISOString() })
       .eq("id", intake.client_id)
       .or("industry_source.is.null,industry_source.eq.ai");
+    // A first round only for a client we make creative for; for anyone else the intake is context and nothing more
+    const { data: client } = await admin.from("clients").select("creative_package").eq("id", intake.client_id).single();
+    if (!client?.creative_package) return { status: "read" };
     const { suggestOnboarding } = await import("@/lib/suggestions");
     await suggestOnboarding(admin, intake.client_id);
     await admin.from("client_intakes").update({ status: "briefed" }).eq("id", intakeId);
