@@ -6,6 +6,7 @@ import type { OpenSuggestion } from "@/lib/suggestions";
 import { SuggestionSheet } from "../pipeline/views/suggested-briefs";
 import { ClientPick, Writing, type PickClient } from "../winners/winners-library";
 import { briefFromMarket } from "./actions";
+import { ClientSearch } from "./client-search";
 import { MarketHoverCard, MarketPreview, MarketReadPanel, useMarketRead } from "./market-preview";
 
 type View = "all" | "proven" | "fresh" | "testing";
@@ -116,21 +117,29 @@ export function MarketLibrary({
 
   return (
     <div className="grid gap-6">
-      <header className="grid gap-2">
+      <header className="grid gap-3">
         <p className="text-xs uppercase tracking-[0.18em] text-faint">Market · from Motion</p>
         <h1 className="font-display text-3xl tracking-tight md:text-4xl">What&apos;s live in the market</h1>
         <p className="max-w-2xl text-sm text-muted">
-          Live Meta ads from brands in every industry we serve: the competitors our clients named, the ones we track in Motion, and standout advertisers in each niche.
-          There are no numbers for other brands&apos; ads, so time is the signal: a brand still paying for an ad after a month usually has a winner.
+          Live Meta ads from our clients&apos; competitors and the standout advertisers in every niche we serve. No numbers for other brands&apos; ads, so time is the
+          signal: still paying for it after a month usually means it works.
         </p>
         {connected && (
-          <div className="mt-2 flex flex-wrap gap-2 text-xs">
-            <Stat value={ads.length.toLocaleString("en-US")} label="live ads" />
-            <Stat value={String(brands)} label="brands watched" />
-            <Stat value={String(proven)} label="proven (30+ days)" accent />
-            <Stat value={String(fresh)} label="new this week" />
-            {lastSync && <span className="self-center text-faint">Synced {when(lastSync)}</span>}
-          </div>
+          <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-faint">
+            <span>
+              <span className="tabular text-fg">{ads.length.toLocaleString("en-US")}</span> live ads
+            </span>
+            <span>
+              <span className="tabular text-fg">{brands}</span> brands
+            </span>
+            <span>
+              <span className="tabular text-ok">{proven}</span> proven
+            </span>
+            <span>
+              <span className="tabular text-fg">{fresh}</span> new this week
+            </span>
+            {lastSync && <span>Synced {when(lastSync)}</span>}
+          </p>
         )}
       </header>
 
@@ -151,67 +160,88 @@ export function MarketLibrary({
         </div>
       ) : (
         <>
-          <div className="grid gap-3">
-            <div className="flex flex-wrap gap-1.5">
-              <Chip on={industry === null} onClick={() => setIndustry(null)}>
-                All <span className="text-faint">{ads.length}</span>
-              </Chip>
-              {counts.map(([k, n]) => (
-                <Chip key={k || "none"} on={industry === k} onClick={() => setIndustry(industry === k ? null : k)}>
-                  {label(k || null)} <span className="text-faint">{n}</span>
-                </Chip>
-              ))}
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex flex-wrap gap-1 rounded-full border border-line bg-surface p-1">
-                {VIEWS.map(([k, l, hint]) => (
-                  <button key={k} title={hint || undefined} onClick={() => setView(k)} className={`h-7 rounded-full px-3 text-xs ${view === k ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
-                    {l}
-                  </button>
-                ))}
+          <div className="sticky top-3 z-20 grid gap-3">
+            <div className="rounded-[18px] border border-line bg-surface/90 shadow-[0_10px_40px_-20px_rgba(0,0,0,0.6)] backdrop-blur-xl">
+              <div className="flex flex-wrap items-center gap-2 p-2">
+                <label className="flex h-10 min-w-[220px] flex-1 items-center gap-2.5 rounded-[12px] bg-bg/60 px-3.5 focus-within:ring-1 focus-within:ring-faint">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-faint" aria-hidden>
+                    <circle cx="11" cy="11" r="7" />
+                    <path d="m20 20-3.5-3.5" />
+                  </svg>
+                  <input
+                    value={q}
+                    onChange={(e) => setQ(e.target.value)}
+                    placeholder="Search brands, angles, hooks, copy"
+                    className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-faint"
+                  />
+                </label>
+                <ClientSearch clients={clients} value={forClient} onPick={pickClient} />
+                <Menu
+                  label={industry === null ? "All industries" : label(industry || null)}
+                  on={industry !== null}
+                  options={[[null, "All industries", ads.length] as const, ...counts.map(([k, n]) => [k, label(k || null), n] as const)]}
+                  value={industry}
+                  onPick={(v) => setIndustry(v)}
+                />
+                <Menu
+                  label={format ? `${format[0].toUpperCase()}${format.slice(1)}s` : "Any format"}
+                  on={format !== null}
+                  options={[[null, "Any format", null] as const, ...FORMATS.map((f) => [f, `${f[0].toUpperCase()}${f.slice(1)}s`, null] as const)]}
+                  value={format}
+                  onPick={(v) => setFormat(v)}
+                />
               </div>
-              <select
-                value={forId ?? ""}
-                onChange={(e) => pickClient(e.target.value || null)}
-                className={`h-9 max-w-[220px] rounded-full border px-3 text-sm ${forId ? "border-brand/60 bg-brand-soft text-fg" : "border-line bg-surface"}`}
-                aria-label="Show the market for a client"
-              >
-                <option value="">For any client</option>
-                {clients.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    For {c.name}
-                  </option>
-                ))}
-              </select>
-              <select value={format ?? ""} onChange={(e) => setFormat(e.target.value || null)} className="h-9 rounded-full border border-line bg-surface px-3 text-sm">
-                <option value="">Any format</option>
-                {FORMATS.map((f) => (
-                  <option key={f} value={f}>
-                    {f[0].toUpperCase() + f.slice(1)}s
-                  </option>
-                ))}
-              </select>
-              <input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Search brand, angle, hook, copy…"
-                className="h-9 min-w-0 flex-1 rounded-full border border-line bg-surface px-4 text-sm outline-none placeholder:text-faint focus:border-faint sm:max-w-xs"
-              />
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-3">
+                <nav className="-mb-px flex gap-1 overflow-x-auto">
+                  {VIEWS.map(([k, l, hint]) => {
+                    const n = k === "all" ? ads.length : ads.filter((a) => (k === "proven" ? a.proven : k === "fresh" ? a.fresh : a.testing)).length;
+                    return (
+                      <button
+                        key={k}
+                        title={hint || undefined}
+                        onClick={() => setView(k)}
+                        className={`flex h-10 shrink-0 items-center gap-1.5 border-b-2 px-2.5 text-[13px] transition-colors ${view === k ? "border-brand text-fg" : "border-transparent text-muted hover:text-fg"}`}
+                      >
+                        {l}
+                        <span className="tabular text-[11px] text-faint">{n}</span>
+                      </button>
+                    );
+                  })}
+                </nav>
+                <span className="tabular py-2 text-[11px] text-faint">
+                  {shown.length.toLocaleString("en-US")} {shown.length === 1 ? "ad" : "ads"}
+                </span>
+              </div>
             </div>
+
+            {(forClient || industry !== null || format || q.trim() || view !== "all") && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {forClient && <Pill onClear={() => pickClient(null)}>For {forClient.name}</Pill>}
+                {industry !== null && <Pill onClear={() => setIndustry(null)}>{label(industry || null)}</Pill>}
+                {view !== "all" && <Pill onClear={() => setView("all")}>{VIEWS.find(([k]) => k === view)?.[1]}</Pill>}
+                {format && <Pill onClear={() => setFormat(null)}>{`${format[0].toUpperCase()}${format.slice(1)}s`}</Pill>}
+                {q.trim() && <Pill onClear={() => setQ("")}>&ldquo;{q.trim()}&rdquo;</Pill>}
+                <button
+                  onClick={() => {
+                    pickClient(null);
+                    setIndustry(null);
+                    setView("all");
+                    setFormat(null);
+                    setQ("");
+                  }}
+                  className="ml-1 text-xs text-muted underline-offset-4 hover:text-fg hover:underline"
+                >
+                  Clear all
+                </button>
+              </div>
+            )}
           </div>
 
           {forClient && (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-brand/30 bg-brand-soft/40 px-4 py-3">
-              <p className="text-sm">
-                What&apos;s working for businesses like <span className="font-medium">{forClient.name}</span>
-                <span className="text-muted">
-                  {forClient.detail ? ` (${forClient.detail.toLowerCase()})` : ""}: their competitors first, then the closest ads in {label(forClient.industry).toLowerCase()}. Open one to brief them on it.
-                </span>
-              </p>
-              <button onClick={() => pickClient(null)} className="text-xs text-muted hover:text-fg">
-                Clear
-              </button>
-            </div>
+            <p className="-mt-2 text-sm text-muted">
+              What&apos;s working for businesses like <span className="text-fg">{forClient.name}</span>
+              {forClient.detail ? ` (${forClient.detail.toLowerCase()})` : ""}: their competitors first, then the closest ads. Open one to brief them on it.
+            </p>
           )}
           {shown.length === 0 ? (
             <p className="py-10 text-center text-sm text-muted">Nothing matches. Try another industry or filter.</p>
@@ -292,20 +322,54 @@ export function AdCard({ a, sub, onOpen, onHover, onLeave }: { a: MarketAd; sub:
   );
 }
 
-function Stat({ value, label, accent }: { value: string; label: string; accent?: boolean }) {
+/** A filter in use, with its own clear button. */
+function Pill({ children, onClear }: { children: React.ReactNode; onClear: () => void }) {
   return (
-    <span className={`flex items-baseline gap-1.5 rounded-full border px-3 py-1.5 ${accent ? "border-ok/40 bg-ok/10" : "border-line bg-surface"}`}>
-      <span className={`tabular text-sm font-semibold ${accent ? "text-ok" : "text-fg"}`}>{value}</span>
-      <span className="text-muted">{label}</span>
+    <span className="flex h-7 items-center gap-1 rounded-full border border-line bg-surface pl-3 pr-1 text-xs">
+      <span className="max-w-[220px] truncate">{children}</span>
+      <button onClick={onClear} aria-label="Remove this filter" className="grid h-5 w-5 place-items-center rounded-full text-faint hover:bg-surface-2 hover:text-fg">
+        ×
+      </button>
     </span>
   );
 }
 
-function Chip({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }) {
+/** A quiet dropdown: a button that opens a short list (with counts), closing on a pick or a click elsewhere. */
+function Menu<T extends string | null>({ label, on, options, value, onPick }: { label: string; on: boolean; options: readonly (readonly [T, string, number | null])[]; value: T; onPick: (v: T) => void }) {
+  const [open, setOpen] = useState(false);
   return (
-    <button onClick={onClick} className={`flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-sm ${on ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
-      {children}
-    </button>
+    <div className="relative" onBlur={(e) => !e.currentTarget.contains(e.relatedTarget as Node) && setOpen(false)}>
+      <button
+        onClick={() => setOpen(!open)}
+        className={`flex h-10 items-center gap-2 rounded-[12px] px-3.5 text-sm transition-colors ${on ? "bg-fg text-bg" : "bg-bg/60 text-muted hover:text-fg"}`}
+        aria-expanded={open}
+      >
+        <span className="max-w-[180px] truncate">{label}</span>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden className={`transition-transform ${open ? "rotate-180" : ""}`}>
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute right-0 top-12 z-30 grid max-h-[60vh] w-64 gap-0.5 overflow-y-auto rounded-[14px] border border-line bg-surface p-1.5 shadow-2xl">
+          {options.map(([k, l, n]) => (
+            <button
+              key={k ?? "any"}
+              onClick={() => {
+                onPick(k);
+                setOpen(false);
+              }}
+              className={`flex items-center justify-between gap-3 rounded-[10px] px-3 py-2 text-left text-sm hover:bg-surface-2 ${value === k ? "text-fg" : "text-muted"}`}
+            >
+              <span className="flex items-center gap-2 truncate">
+                <span className={`w-3 text-xs ${value === k ? "text-brand-text" : "text-transparent"}`}>✓</span>
+                {l}
+              </span>
+              {n !== null && <span className="tabular text-[11px] text-faint">{n}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
