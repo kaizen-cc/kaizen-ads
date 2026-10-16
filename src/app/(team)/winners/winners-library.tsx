@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import type { Winner } from "@/lib/industry";
+import type { Winner, WinnerScope } from "@/lib/industry";
 import type { Allotment } from "@/lib/allotment";
 import type { AdDetail } from "@/lib/context/meta";
 import type { OpenSuggestion } from "@/lib/suggestions";
@@ -23,7 +23,7 @@ const SORTS: [Sort, string][] = [
  * The winners library: every ad across our accounts getting a clearly better cost per result than its own account's
  * usual, from the last Meta sync. Filter by industry, open one to see it as it runs, and start a request from it.
  */
-export function WinnersLibrary({ winners, industries, clients }: { winners: Winner[]; industries: readonly (readonly [string, string])[]; clients: PickClient[] }) {
+export function WinnersLibrary({ winners, industries, clients, scope }: { winners: Winner[]; industries: readonly (readonly [string, string])[]; clients: PickClient[]; scope: WinnerScope }) {
   const [industry, setIndustry] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [liveOnly, setLiveOnly] = useState(false);
@@ -55,8 +55,14 @@ export function WinnersLibrary({ winners, industries, clients }: { winners: Winn
         <p className="text-xs uppercase tracking-[0.18em] text-faint">Winners library</p>
         <h1 className="font-display text-3xl tracking-tight md:text-4xl">What&apos;s working across our accounts</h1>
         <p className="max-w-2xl text-sm text-muted">
-          Ads getting a clearly better cost per result than their own account&apos;s usual (at least 1.2x, with $100 and 3 results behind them). Pulled from
-          the last Meta sync of every client.
+          Not every running ad: only the ones clearly beating their own account. An ad makes the list when it has at least $100 spent and 3 results, and gets
+          its result at least 1.2x cheaper than its account usually does. Ranked against its own account, so a small account&apos;s winner counts as much as a
+          big one&apos;s.
+        </p>
+        <p className="max-w-2xl text-xs text-faint">
+          This sync looked at the top {scope.ads.toLocaleString("en-US")} ads by spend across {scope.accounts} ad accounts (the top 20 in each, last 30 days).{" "}
+          {scope.eligible.toLocaleString("en-US")} had enough spend and results to judge; {winners.length} beat their account.
+          {scope.withoutData > 0 && ` ${scope.withoutData} more ${scope.withoutData === 1 ? "account is" : "accounts are"} linked to Meta but not synced at ad level yet; they fill in over the next syncs.`}
         </p>
         {winners.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-2 text-xs">

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { requireStaff } from "@/lib/auth";
 import { INDUSTRY_OPTIONS } from "@/lib/industries";
-import { allWinners } from "@/lib/industry";
+import { allWinners, type WinnerScope } from "@/lib/industry";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { toAllotment, type UsageRow } from "@/lib/allotment";
@@ -16,8 +16,9 @@ export default async function Winners() {
   await requireStaff();
   // Every account's numbers, whoever is looking: the point is learning from clients you don't work on
   const db = adminConfigured() ? createAdminClient() : await createClient();
+  const scope: WinnerScope = { accounts: 0, ads: 0, eligible: 0, withoutData: 0 };
   const [winners, { data: usage }, { data: rows }] = await Promise.all([
-    allWinners(db),
+    allWinners(db, scope),
     db.from("client_allotment_usage").select("*"),
     db.from("clients").select("id, name, industry, industry_detail").neq("status", "offboarded").order("name"),
   ]);
@@ -31,7 +32,7 @@ export default async function Winners() {
     .sort((a, b) => a.name.localeCompare(b.name));
   return (
     <div className="mx-auto max-w-6xl">
-      <WinnersLibrary winners={winners} industries={INDUSTRY_OPTIONS} clients={clients} />
+      <WinnersLibrary winners={winners} industries={INDUSTRY_OPTIONS} clients={clients} scope={scope} />
     </div>
   );
 }

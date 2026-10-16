@@ -124,7 +124,9 @@ const median = (xs: number[]) => {
  * The ads beating their own account: enough spend and results to count ($100, 3 results), and a cost per result at
  * least 1.2x better than that account's typical one. Best first, at most `perClient` from one client.
  */
-async function scoreWinners(db: SupabaseClient, peers: Peer[], opts: { perClient: number; limit: number }): Promise<Winner[]> {
+export type WinnerScope = { accounts: number; ads: number; eligible: number; withoutData: number };
+
+async function scoreWinners(db: SupabaseClient, peers: Peer[], opts: { perClient: number; limit: number; scope?: WinnerScope }): Promise<Winner[]> {
   if (!peers.length) return [];
   const { data: snaps } = await db
     .from("meta_snapshots")
@@ -139,6 +141,11 @@ async function scoreWinners(db: SupabaseClient, peers: Peer[], opts: { perClient
     seen.add(s.client_id);
     const peer = peers.find((p) => p.id === s.client_id)!;
     const ads = ((s.ads ?? []) as SnapAd[]).filter((a) => (a.spend ?? 0) >= 100 && (a.results ?? 0) >= 3 && a.costPerResult);
+    if (opts.scope) {
+      opts.scope.accounts++;
+      opts.scope.ads += ((s.ads ?? []) as SnapAd[]).length;
+      opts.scope.eligible += ads.length;
+    }
     if (ads.length < 2) continue;
     const usual = median(ads.map((a) => a.costPerResult!));
     for (const a of ads) {
@@ -178,10 +185,14 @@ export async function industryWinners(db: SupabaseClient, industry: string, excl
   return scoreWinners(db, ((peers ?? []) as Peer[]).filter((p) => p.id !== excludeClientId), { perClient: 2, limit });
 }
 
-/** The winners library: the best ads across every client we run. */
-export async function allWinners(db: SupabaseClient): Promise<Winner[]> {
-  const { data: peers } = await db.from("clients").select("id, name, slug, industry, industry_detail").neq("status", "offboarded");
-  return scoreWinners(db, (peers ?? []) as Peer[], { perClient: 8, limit: 300 });
+/** The winners library: the best ads across every client we run. Pass scope to learn what was looked at. */
+export async function allWinners(db: SupabaseClient, scope?: WinnerScope): Promise<Winner[]> {
+  const { data: peers } = await db.from("clients").select("id, name, slug, industry, industry_detail, meta_ad_account_id").neq("status", "offboarded");
+  const list = (peers ?? []) as (Peer & { meta_ad_account_id: string | null })[];
+  const winners = await scoreWinners(db, list, { perClient: 8, limit: 300, scope });
+  // Accounts linked to Meta that haven't had ad-level numbers pulled yet (they fill in over the next syncs)
+  if (scope) scope.withoutData = Math.max(0, list.filter((p) => p.meta_ad_account_id).length - scope.accounts);
+  return winners;
 }
 
 /** The winners as context for the AI. Other clients' names stay out: it's what worked, not whose it was. */

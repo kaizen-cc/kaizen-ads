@@ -421,11 +421,23 @@ export async function syncClientMeta(admin: SupabaseClient, clientId: string, ad
   return daily;
 }
 
-/** The 12pm/6pm step: link accounts, then for each creative client with one: daily metrics, reach, and the AI snapshot. */
+/**
+ * Every 2 hours: link accounts, then for every client with an ad account (creative or not, so the winners library
+ * sees every account we run): daily metrics, reach, and the snapshot. Clients we make creative for go first, then
+ * whoever was synced longest ago, so a run that hits its time limit picks up where the last one stopped.
+ */
 export async function collectMeta(admin: SupabaseClient, budgetMs = 700_000) {
   const deadline = Date.now() + budgetMs;
   const access = await linkAdAccounts(admin);
-  const { data: clients } = await admin.from("clients").select("id, name, meta_ad_account_id").eq("creative_package", true).is("archived_at", null).not("meta_ad_account_id", "is", null);
+  const [{ data: all }, { data: snaps }] = await Promise.all([
+    admin.from("clients").select("id, name, meta_ad_account_id, creative_package").is("archived_at", null).not("meta_ad_account_id", "is", null),
+    admin.from("meta_snapshots").select("client_id, fetched_at").order("fetched_at", { ascending: false }).limit(2000),
+  ]);
+  const last = new Map<string, string>();
+  for (const s of snaps ?? []) if (!last.has(s.client_id)) last.set(s.client_id, s.fetched_at);
+  const clients = (all ?? []).sort(
+    (a, b) => Number(b.creative_package) - Number(a.creative_package) || (last.get(a.id) ?? "").localeCompare(last.get(b.id) ?? ""),
+  );
   const synced: Record<string, unknown>[] = [];
   const errors: string[] = [];
   for (const c of clients ?? []) {
