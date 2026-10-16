@@ -107,9 +107,10 @@ export function FeedPreview({ view, loading = false, autoPlay = false, compact =
       </div>
 
       {text && (
-        <p className={`whitespace-pre-wrap px-3 pb-2.5 text-[14px] leading-[1.34] ${more || !long ? "" : "line-clamp-3"} `}>
-          {text}
-        </p>
+        // The clamp sits on the text itself, so padding never shows a half-cut line under it
+        <div className="px-3 pb-2.5">
+          <p className={`whitespace-pre-wrap text-[14px] leading-[1.34] ${more || !long ? "" : "line-clamp-3"}`}>{text}</p>
+        </div>
       )}
       {text && long && !more && (
         <button onClick={() => setMore(true)} className="-mt-2 mb-2 px-3 text-[14px] font-semibold text-[#65676b] hover:underline">
