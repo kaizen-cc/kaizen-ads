@@ -83,9 +83,9 @@ const creativeQueue: QueueItem[] = [
 const series = (base: number, rise: number) =>
   Array.from({ length: 28 }, (_, i) => ({ d: new Date(Date.UTC(2026, 8, 18 + i)).toISOString().slice(0, 10), spend: 40 + (i % 5) * 6, ctr: 1.9 - (i > 20 ? 0.6 : 0) - i * 0.01, cpr: base * (1 + (i > 20 ? rise : rise * 0.15) + ((i * 7) % 5) * 0.03) }));
 const sampleFatigue: WatchRow[] = [
-  { clientId: "c1", client: "Crust Pizza Co.", clientSlug: "crust-pizza-co", adId: "1", adName: "TOF | Sep_2026 | IMG | Game Day Bundle | V2", headline: "Game day? We've got the pies.", thumbnail: null, severity: "tired", state: "open", firstFlaggedAt: "2026-10-13T12:00:00Z", requestNumbers: [],
+  { clientId: "c1", briefId: "preview", client: "Crust Pizza Co.", clientSlug: "crust-pizza-co", adId: "1", adName: "TOF | Sep_2026 | IMG | Game Day Bundle | V2", headline: "Game day? We've got the pies.", thumbnail: null, severity: "tired", state: "open", firstFlaggedAt: "2026-10-13T12:00:00Z", requestNumbers: [],
     signals: { ctrNow: 1.12, ctrBefore: 1.86, ctrChange: -0.398, cprNow: 21.4, cprBefore: 13.9, cprChange: 0.54, accountCprChange: 0.08, freqNow: 1.9, freqBefore: 1.5, hookNow: null, hookBefore: null, hookChange: null, spend7: 412, results7: 19, result: "purchase", daysRunning: 46 }, series: series(13.9, 0.55) },
-  { clientId: "c1", client: "Crust Pizza Co.", clientSlug: "crust-pizza-co", adId: "2", adName: "TOF | Aug_2026 | VID | Oven POV | V1", headline: "Straight from 900°", thumbnail: null, severity: "tiring", state: "open", firstFlaggedAt: "2026-10-14T12:00:00Z", requestNumbers: [],
+  { clientId: "c1", briefId: null, client: "Crust Pizza Co.", clientSlug: "crust-pizza-co", adId: "2", adName: "TOF | Aug_2026 | VID | Oven POV | V1", headline: "Straight from 900°", thumbnail: null, severity: "tiring", state: "open", firstFlaggedAt: "2026-10-14T12:00:00Z", requestNumbers: [],
     signals: { ctrNow: 1.41, ctrBefore: 1.62, ctrChange: -0.13, cprNow: 16.2, cprBefore: 12.8, cprChange: 0.27, accountCprChange: 0.08, freqNow: 1.6, freqBefore: 1.4, hookNow: 21.5, hookBefore: 29.8, hookChange: -0.28, spend7: 268, results7: 16, result: "purchase", daysRunning: 61 }, series: series(12.8, 0.27) },
 ];
 

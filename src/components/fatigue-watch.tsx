@@ -151,8 +151,9 @@ function WatchCard({ r, showClient, onGone }: { r: WatchRow; showClient: boolean
       ) : (
         <div className="flex flex-wrap items-center gap-2">
           <button onClick={refresh} disabled={step === "writing"} className={`h-9 rounded-brand px-4 text-sm font-medium ${tired ? "bg-brand text-white" : "bg-fg text-bg"} disabled:opacity-70`}>
-            {step === "writing" ? <Writing /> : "Brief a refresh"}
+            {step === "writing" ? r.briefId ? "Opening…" : <Writing /> : r.briefId ? "Open the brief" : "Brief a refresh"}
           </button>
+          {r.briefId && step !== "writing" && <span className="text-[11px] text-ok">Brief ready</span>}
           <button onClick={() => setStep("dismiss")} disabled={step === "writing"} className="h-9 px-3 text-sm text-faint hover:text-fg">
             Dismiss
           </button>

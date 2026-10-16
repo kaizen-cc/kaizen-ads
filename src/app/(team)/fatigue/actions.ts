@@ -21,7 +21,6 @@ export async function briefRefresh(clientId: string, adId: string): Promise<{ ok
     .eq("kind", "refresh")
     .eq("status", "open")
     .eq("client_id", clientId)
-    .eq("created_by", me.id)
     .eq("source->>adId", adId)
     .limit(1);
   try {
@@ -43,6 +42,8 @@ export async function dismissFatigue(clientId: string, adId: string, reason: str
     .eq("client_id", clientId)
     .eq("ad_id", adId);
   if (error) return { ok: false, error: error.message };
+  // Its refresh brief written ahead isn't needed
+  await supabase.from("creative_suggestions").update({ status: "expired" }).eq("kind", "refresh").eq("status", "open").eq("client_id", clientId).eq("source->>adId", adId);
   revalidatePath("/pipeline");
   return { ok: true };
 }

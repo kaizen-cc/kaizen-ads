@@ -8,7 +8,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { refreshAllKpis } from "@/lib/kpi/sync";
 import { detectIndustries, refreshIndustries } from "@/lib/industry";
 import { runStrategist } from "@/lib/suggestions";
-import { runFatigue } from "@/lib/fatigue";
+import { prewriteRefreshes, runFatigue } from "@/lib/fatigue";
 import { mirrorTrack } from "@/lib/client-sync";
 import { collectCalls } from "@/lib/calls";
 import { readBackfill } from "@/lib/onboarding";
@@ -116,11 +116,17 @@ export async function GET(request: Request) {
     // Hourly: Kaizen Track's clients, then any intake forms still waiting to be read (a backfill, a short burst of forms)
     if (step === "calls") return Response.json(await collectCalls(admin));
     if (step === "clients")
-      return Response.json({ track: await mirrorTrack(admin), intakes: await readBackfill(admin, 25), industries: await refreshIndustries(admin).catch((e) => String(e)) });
+      return Response.json({
+        track: await mirrorTrack(admin),
+        intakes: await readBackfill(admin, 25),
+        industries: await refreshIndustries(admin).catch((e) => String(e)),
+        // Catch up on refresh briefs the Meta run didn't get to
+        refreshes: await prewriteRefreshes(admin, 4).catch((e) => String(e)),
+      });
     // Execs, by hand: read backfilled intake forms (context only, no first rounds)
     if (step === "intakes") return Response.json(await readBackfill(admin));
     // Execs, by hand: check every ad for fatigue now
-    if (step === "fatigue") return Response.json(await runFatigue(admin));
+    if (step === "fatigue") return Response.json({ ...(await runFatigue(admin)), refreshes: await prewriteRefreshes(admin) });
     if (step === "suggest") return Response.json(await runStrategist(admin, null));
     if (step === "slack" || step === "drive" || step === "gmail" || step === "meta") return Response.json(await collectStep(admin, step as Step));
     return Response.json({ error: "Use ?step=slack, drive, gmail, brief or check" }, { status: 400 });

@@ -585,7 +585,7 @@ The team chose this client for this test. Write the request that runs the test f
  * A refresh for one tiring ad: the strategist keeps what made it work (it was spending for a reason) and changes what
  * people are tired of. Drafted for whoever asked, like a brief from a winner.
  */
-export async function suggestRefresh(admin: SupabaseClient, clientId: string, adId: string, by: string) {
+export async function suggestRefresh(admin: SupabaseClient, clientId: string, adId: string, by: string | null) {
   const { data: f } = await admin.from("ad_fatigue").select("ad_name, campaign, adset, headline, thumbnail, severity, signals").eq("client_id", clientId).eq("ad_id", adId).single();
   if (!f) throw new Error("That ad isn't on the watch list");
   const { data: snap } = await admin.from("meta_snapshots").select("ads").eq("client_id", clientId).order("fetched_at", { ascending: false }).limit(1).maybeSingle();
@@ -607,7 +607,7 @@ Primary text: ${ad?.text ?? "(not synced)"}
 What the watcher saw: ${watch.replace(/^- /, "")}
 </tiring_ad>
 
-The buyer wants this ad refreshed. It worked before (it ran long enough to be judged against itself), so keep what made it work: the angle, the offer, the proof. Change what people have grown tired of: the visual, the hook, the first seconds of a video, the format. Usually variations and 1 to 2 net new designs on the same angle, within what's left of the allotment. Say in the brief what to keep and what to change, and why, from the numbers. suggest: true. kind: "fatigue". signal: one line on what the watcher saw. evidence: 2 to 4 facts. why: two sentences. reply: "".`,
+This ad needs a refresh. It worked before (it ran long enough to be judged against itself), so keep what made it work: the angle, the offer, the proof. Change what people have grown tired of: the visual, the hook, the first seconds of a video, the format. Usually variations and 1 to 2 net new designs on the same angle, within what's left of the allotment. Say in the brief what to keep and what to change, and why, from the numbers. suggest: true. kind: "fatigue". signal: one line on what the watcher saw. evidence: 2 to 4 facts. why: two sentences. reply: "".`,
   });
   const draft = clean(out.draft);
   const { data, error } = await admin

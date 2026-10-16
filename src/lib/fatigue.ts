@@ -179,7 +179,11 @@ export async function runFatigue(admin: SupabaseClient, clientIds?: string[]) {
       );
     const still = new Set(found.map((f) => f.adId));
     const gone = (existing ?? []).filter((e) => !still.has(e.ad_id) && e.state !== "recovered").map((e) => e.ad_id);
-    if (gone.length) await admin.from("ad_fatigue").update({ state: "recovered", updated_at: now }).eq("client_id", c.id).in("ad_id", gone);
+    if (gone.length) {
+      await admin.from("ad_fatigue").update({ state: "recovered", updated_at: now }).eq("client_id", c.id).in("ad_id", gone);
+      // Recovered: its refresh brief isn't needed
+      await admin.from("creative_suggestions").update({ status: "expired" }).eq("kind", "refresh").eq("status", "open").eq("client_id", c.id).in("source->>adId", gone);
+    }
     flagged += found.length;
   }
   return { clients: clients?.length ?? 0, flagged };
@@ -204,6 +208,37 @@ export function describeFatigue(rows: { ad_name: string; headline: string | null
     .join("\n");
 }
 
+/**
+ * A refresh brief written ahead for every ad on the watch list, so the team opens it ready to send instead of
+ * waiting on the strategist. Worst first; a few per run, and the rest next run.
+ */
+export async function prewriteRefreshes(admin: SupabaseClient, max = 6) {
+  const { data: watch } = await admin
+    .from("ad_fatigue")
+    .select("client_id, ad_id, severity, signals, clients!inner(archived_at, creative_package)")
+    .eq("state", "open")
+    .is("clients.archived_at", null)
+    .limit(300);
+  if (!watch?.length) return { waiting: 0, written: 0 };
+  const { data: written } = await admin.from("creative_suggestions").select("client_id, source").eq("kind", "refresh").eq("status", "open");
+  const have = new Set((written ?? []).map((s) => `${s.client_id}:${(s.source as { adId?: string } | null)?.adId}`));
+  const todo = watch
+    .filter((w) => !have.has(`${w.client_id}:${w.ad_id}`))
+    .sort((a, b) => Number(b.severity === "tired") - Number(a.severity === "tired") || ((b.signals as FatigueSignals).spend7 ?? 0) - ((a.signals as FatigueSignals).spend7 ?? 0));
+  const { suggestRefresh } = await import("@/lib/suggestions");
+  let done = 0;
+  const errors: string[] = [];
+  for (const w of todo.slice(0, max)) {
+    try {
+      await suggestRefresh(admin, w.client_id, w.ad_id, null);
+      done++;
+    } catch (e) {
+      errors.push(e instanceof Error ? e.message : String(e));
+    }
+  }
+  return { waiting: todo.length - done, written: done, errors };
+}
+
 export type WatchRow = {
   clientId: string;
   client: string;
@@ -218,6 +253,8 @@ export type WatchRow = {
   series: { d: string; spend: number; ctr: number; cpr: number | null }[];
   firstFlaggedAt: string;
   requestNumbers: number[];
+  /** The refresh brief written ahead (null while it's being written) */
+  briefId: string | null;
 };
 
 /** The watch list: open and being-refreshed ads, worst first. buyer: only the clients that buyer runs. */
@@ -237,6 +274,11 @@ export async function loadWatchList(db: SupabaseClient, opts: { clientId?: strin
     .in("state", ["open", "refreshing"]);
   if (ids) q = q.in("client_id", ids);
   const { data } = await q.limit(200);
+  const clientIds = [...new Set((data ?? []).map((r) => r.client_id as string))];
+  const { data: briefs } = clientIds.length
+    ? await db.from("creative_suggestions").select("id, client_id, source").eq("kind", "refresh").eq("status", "open").in("client_id", clientIds)
+    : { data: [] };
+  const briefOf = new Map((briefs ?? []).map((b) => [`${b.client_id}:${(b.source as { adId?: string } | null)?.adId}`, b.id as string]));
   return (data ?? [])
     .map((r) => {
       const c = r.clients as unknown as { name: string; slug: string } | null;
@@ -254,6 +296,7 @@ export async function loadWatchList(db: SupabaseClient, opts: { clientId?: strin
         series: (r.series ?? []) as WatchRow["series"],
         firstFlaggedAt: r.first_flagged_at,
         requestNumbers: (r.request_numbers ?? []) as number[],
+        briefId: briefOf.get(`${r.client_id}:${r.ad_id}`) ?? null,
       };
     })
     .sort((a, b) => Number(a.state === "refreshing") - Number(b.state === "refreshing") || Number(b.severity === "tired") - Number(a.severity === "tired") || b.signals.spend7 - a.signals.spend7)
