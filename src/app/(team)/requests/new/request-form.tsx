@@ -1,7 +1,6 @@
 "use client";
 
-import { WinnersStrip } from "./winners-strip";
-import { MarketStrip } from "./market-strip";
+import { IdeasPanel } from "./ideas-panel";
 import { PromisesStrip } from "./promises-strip";
 import Link from "next/link";
 import { useEffect, useRef, useState, useTransition } from "react";
@@ -248,6 +247,12 @@ export function RequestForm({
     setStep(i);
     reveal(topRef, "start");
   }
+
+  // A whole brief from a winner or a market ad: fill the form and go straight to Review
+  const applyIdea = (patch: Partial<Draft>) => {
+    set(patch);
+    go(STEPS.length - 1);
+  };
 
   const draftBrief = () => {
     if (!aiOn) return;
@@ -504,6 +509,11 @@ export function RequestForm({
                     }}
                   />
                 )}
+                {draft.clientId && !demo && (
+                  <div className="xl:hidden">
+                    <IdeasPanel clientId={draft.clientId} onBrief={applyIdea} />
+                  </div>
+                )}
                 <div className="grid gap-3 sm:grid-cols-3">
                   {FORMATS.map((f) => {
                     const on = Boolean(draft.formats[f]);
@@ -609,18 +619,6 @@ export function RequestForm({
 
             {step === 2 && (
               <div className="grid gap-8">
-                {draft.clientId && !demo && <WinnersStrip clientId={draft.clientId} onUse={(line) => set({ brief: draft.brief.trim() ? `${draft.brief.trim()}\n\n${line}` : line })} />}
-                {draft.clientId && !demo && (
-                  <MarketStrip
-                    clientId={draft.clientId}
-                    onUse={(line, link) =>
-                      set({
-                        brief: draft.brief.trim() ? `${draft.brief.trim()}\n\n${line}` : line,
-                        ...(link && !draft.refs.includes(link) ? { refs: draft.refs.trim() ? `${draft.refs.trim()}\n${link}` : link } : {}),
-                      })
-                    }
-                  />
-                )}
                 <Field id="title" label="Title">
                   <input id="title" autoFocus value={draft.title} onChange={(e) => set({ title: e.target.value })} placeholder="e.g. BFCM · Buy More, Save More" className={input} />
                   <Suggest loading={ai.status === "loading"}>
@@ -933,7 +931,13 @@ export function RequestForm({
         )}
       </div>
 
-      <AiPanel aiOn={aiOn} ai={ai} clientName={client?.name ?? null} onRefresh={() => suggest(draft, true)} />
+      <AiPanel
+        aiOn={aiOn}
+        ai={ai}
+        clientName={client?.name ?? null}
+        onRefresh={() => suggest(draft, true)}
+        extra={draft.clientId && !demo ? <IdeasPanel clientId={draft.clientId} onBrief={applyIdea} /> : null}
+      />
     </div>
   );
 }
@@ -1015,9 +1019,9 @@ function when(iso: string) {
   return day.format(d) === day.format(new Date()) ? `today ${time}` : `${new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short" }).format(d)} ${time}`;
 }
 
-function AiPanel({ aiOn, ai, clientName, onRefresh }: { aiOn: boolean; ai: AiState; clientName: string | null; onRefresh: () => void }) {
+function AiPanel({ aiOn, ai, clientName, onRefresh, extra }: { aiOn: boolean; ai: AiState; clientName: string | null; onRefresh: () => void; extra?: React.ReactNode }) {
   return (
-    <aside className="hidden xl:sticky xl:top-8 xl:block xl:self-start">
+    <aside className="hidden xl:sticky xl:top-8 xl:grid xl:max-h-[calc(100vh-4rem)] xl:gap-4 xl:self-start xl:overflow-y-auto xl:pb-4 [scrollbar-width:thin]">
       <div className="relative grid gap-4 overflow-hidden rounded-[12px] border border-line bg-surface p-5">
         <span className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-brand/20 blur-3xl" />
         <div className="relative flex items-center gap-2.5">
@@ -1072,6 +1076,7 @@ function AiPanel({ aiOn, ai, clientName, onRefresh }: { aiOn: boolean; ai: AiSta
           </p>
         )}
       </div>
+      {extra}
     </aside>
   );
 }

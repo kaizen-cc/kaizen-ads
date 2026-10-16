@@ -19,6 +19,7 @@ export type Ticket = {
   audience: string | null;
   brief: string | null;
   refs: string[];
+  origin: { kind: "winner" | "market" | "promise" | "brief"; label: string; link?: string | null; thumb?: string | null } | null; // what it's built on
   sizes: string[];
   quantity: number;
   newCount: number;

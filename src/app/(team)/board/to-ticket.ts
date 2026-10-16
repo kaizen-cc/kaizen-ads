@@ -21,6 +21,7 @@ export type BoardRow = {
   audience: string | null;
   brief: string | null;
   refs: string[] | null;
+  origin?: Ticket["origin"];
   sizes: string[] | null;
   quantity: number;
   new_count: number | null;
@@ -56,6 +57,7 @@ export const toTicket = (r: BoardRow): Ticket => ({
   audience: r.audience,
   brief: r.brief,
   refs: r.refs ?? [],
+  origin: r.origin ?? null,
   sizes: r.sizes ?? [],
   quantity: r.quantity,
   newCount: r.new_count ?? r.quantity,

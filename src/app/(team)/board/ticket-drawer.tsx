@@ -548,6 +548,25 @@ export function TicketDrawer({
                 </a>
               </p>
             )}
+            {ticket.origin && (
+              <div className="flex items-center gap-3 rounded-[12px] border border-brand/25 bg-brand-soft/30 px-3 py-2.5">
+                {ticket.origin.thumb && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={ticket.origin.thumb} alt="" className="h-11 w-11 shrink-0 rounded-[8px] object-cover" />
+                )}
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[10px] font-medium uppercase tracking-[0.14em] text-brand-text">
+                    Built on {ticket.origin.kind === "winner" ? "a winning ad" : ticket.origin.kind === "market" ? "a live ad in the market" : ticket.origin.kind === "promise" ? "a promise from a call" : "an AI brief"}
+                  </span>
+                  <span className="block truncate text-sm">{ticket.origin.label}</span>
+                </span>
+                {ticket.origin.link && (
+                  <a href={ticket.origin.link} target="_blank" rel="noreferrer" className="shrink-0 rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg">
+                    See it ↗
+                  </a>
+                )}
+              </div>
+            )}
             {ticket.brief ? (
               <p className="whitespace-pre-wrap rounded-[10px] border border-line bg-surface px-5 py-4 text-sm leading-relaxed text-muted">{ticket.brief}</p>
             ) : (

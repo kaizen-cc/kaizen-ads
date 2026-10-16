@@ -5,6 +5,7 @@ import { after } from "next/server";
 import { industryLabel, industryWinners, type Winner } from "@/lib/industry";
 import { requireStaff } from "@/lib/auth";
 import {
+  aiEnabled,
   AGENCY_SYSTEM,
   AiUnavailable,
   PATCH_SCHEMA,
@@ -315,6 +316,18 @@ export async function createBatch(draft: Draft, review: Review | null, decisions
     ]);
     if (events.length) await createAdminClient().from("request_events").insert(events);
   }
+  // Where it came from, on every ticket of the batch; the brief it was built from is done
+  if (draft.origin && adminConfigured() && rows?.length) {
+    const admin = createAdminClient();
+    const { suggestionId, ...origin } = draft.origin;
+    await admin.from("requests").update({ origin }).in("id", rows.map((r) => r.id));
+    if (suggestionId)
+      await admin
+        .from("creative_suggestions")
+        .update({ status: "approved", decided_by: me.id, decided_at: new Date().toISOString(), request_numbers: rows.map((r) => r.number) })
+        .eq("id", suggestionId)
+        .eq("status", "open");
+  }
   // A request that makes something promised on a call puts that promise in motion and clears its alert on Home
   if (adminConfigured() && rows?.length) {
     const clientId = draft.clientId;
@@ -368,10 +381,27 @@ export async function promisesFor(clientId: string): Promise<Promise_[]> {
 }
 
 /** The brief for a promise, ready to drop into the form (written now if it wasn't already). */
+/** A strategist's brief as form fields: everything the request needs, concepts and hooks folded into the brief. */
+function toPatch(d: import("@/lib/suggestions").SuggestionDraft): Partial<Draft> {
+  const concepts = d.concepts?.length ? `\n\nConcepts:\n${d.concepts.map((c, i) => `${i + 1}. ${c.name}\n   Hook: ${c.hook}\n   Visual: ${c.visual}\n   Copy: ${c.copy}`).join("\n")}` : "";
+  const hooks = d.hooks?.length ? `\n\nHooks to try:\n${d.hooks.map((h) => `- ${h}`).join("\n")}` : "";
+  return {
+    title: d.title,
+    angle: d.angle,
+    audience: d.audience,
+    brief: `${d.brief}${concepts}${hooks}`,
+    formats: Object.fromEntries(d.formats.map((f) => [f.format, { new: f.new, variations: f.variations }])),
+    sizes: d.sizes.filter((x) => SIZES.includes(x)),
+    landing: d.landing || "",
+    ...(d.refs?.length ? { refs: d.refs.join("\n") } : {}),
+  };
+}
+
+/** The brief for a promise, ready to drop into the form (written now if it wasn't already). */
 export async function promiseDraft(commitmentId: string): Promise<{ ok: true; patch: Partial<Draft> } | { ok: false; error: string }> {
   await requireStaff();
   const supabase = await createClient();
-  const { data: mine } = await supabase.from("call_commitments").select("id").eq("id", commitmentId).maybeSingle();
+  const { data: mine } = await supabase.from("call_commitments").select("id, what").eq("id", commitmentId).maybeSingle();
   if (!mine) return { ok: false, error: "That promise isn't on a client you work on." };
   if (!adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
   try {
@@ -380,24 +410,52 @@ export async function promiseDraft(commitmentId: string): Promise<{ ok: true; pa
     const id = await briefPromise(admin, commitmentId);
     if (!id) return { ok: false, error: "This one isn't paid ads or creative work, so it's been taken off the list." };
     const { data: s } = await admin.from("creative_suggestions").select("draft").eq("id", id).single();
-    const d = s?.draft as import("@/lib/suggestions").SuggestionDraft;
-    const concepts = d.concepts?.length ? `\n\nConcepts:\n${d.concepts.map((c, i) => `${i + 1}. ${c.name}\n   Hook: ${c.hook}\n   Visual: ${c.visual}\n   Copy: ${c.copy}`).join("\n")}` : "";
-    const hooks = d.hooks?.length ? `\n\nHooks to try:\n${d.hooks.map((h) => `- ${h}`).join("\n")}` : "";
-    return {
-      ok: true,
-      patch: {
-        title: d.title,
-        angle: d.angle,
-        audience: d.audience,
-        brief: `${d.brief}${concepts}${hooks}`,
-        formats: Object.fromEntries(d.formats.map((f) => [f.format, { new: f.new, variations: f.variations }])),
-        sizes: d.sizes.filter((x) => SIZES.includes(x)),
-        landing: d.landing || "",
-        ...(d.refs?.length ? { refs: d.refs.join("\n") } : {}),
-      },
-    };
+    return { ok: true, patch: { ...toPatch(s?.draft as import("@/lib/suggestions").SuggestionDraft), origin: { kind: "promise", label: `Promised on a call: ${mine.what}`.slice(0, 200), suggestionId: id } } };
   } catch (e) {
     return { ok: false, error: e instanceof AiUnavailable ? e.message : "Couldn't write the brief. Try again." };
+  }
+}
+
+/**
+ * A whole request from a winning ad or a live market ad, for this client: the strategist writes it (what makes the ad
+ * work, fitted to the client), and it comes back as form fields plus where it came from.
+ */
+export async function ideaDraft(
+  source: { kind: "winner"; winner: import("@/lib/industry").Winner } | { kind: "market"; adId: string },
+  clientId: string,
+): Promise<{ ok: true; patch: Partial<Draft> } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
+  {
+    const why = await notLive(await createClient(), clientId);
+    if (why) return { ok: false, error: why };
+  }
+  try {
+    const admin = createAdminClient();
+    const { suggestFromWinner, suggestFromMarket } = await import("@/lib/suggestions");
+    let id: string;
+    let origin: NonNullable<Draft["origin"]>;
+    if (source.kind === "winner") {
+      const w = source.winner;
+      id = await suggestFromWinner(admin, clientId, { adId: w.id, client: w.client, detail: w.detail, headline: w.headline, text: w.text, thumbnail: w.thumbnail, ratio: w.ratio, result: w.result, costPerResult: w.costPerResult, usual: w.usual }, me.id);
+      origin = { kind: "winner", label: `${w.client}'s winning ad (${w.ratio}x their usual cost per ${w.result ?? "result"})${w.headline ? `: "${w.headline}"` : ""}`.slice(0, 200), thumb: w.thumbnail, suggestionId: id };
+    } else {
+      const { loadMarketAd } = await import("@/lib/market");
+      const a = await loadMarketAd(admin, source.adId);
+      if (!a) return { ok: false, error: "That ad isn't in the market library any more." };
+      id = await suggestFromMarket(admin, clientId, source.adId, me.id);
+      origin = {
+        kind: "market",
+        label: `${a.brand}'s live ad${a.daysActive != null ? ` (running ${a.daysActive} days)` : ""}${a.angle ? `: ${a.angle}` : ""}`.slice(0, 200),
+        link: a.motionUrl ?? a.libraryUrl ?? a.landingUrl,
+        thumb: a.media.find((m) => m.type === "image")?.url ?? a.media[0]?.thumb ?? null,
+        suggestionId: id,
+      };
+    }
+    const { data: s } = await admin.from("creative_suggestions").select("draft").eq("id", id).single();
+    return { ok: true, patch: { ...toPatch(s?.draft as import("@/lib/suggestions").SuggestionDraft), origin } };
+  } catch (e) {
+    return { ok: false, error: e instanceof AiUnavailable ? e.message : "The strategist couldn't write it. Try again." };
   }
 }
 

@@ -22,6 +22,7 @@ const t = (client: string, title: string, format: Format, stage: Stage, who: str
   audience: "Families within 10 miles, retargeting site visitors",
   brief: "Three images for the $8 Calzone Mondays offer. Lead with the price, show the calzone cut open, warm lighting. Keep text on the image under 8 words.",
   refs: ["https://projects.motionapp.com/snapshot/example"],
+  origin: null,
   sizes: ["4x5", "9x16"],
   quantity: 3,
   newCount: 2,

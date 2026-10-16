@@ -20,7 +20,11 @@ export type Draft = {
   brief: string;
   refs: string;
   landing?: string; // where the ad sends people
+  origin?: Origin | null; // what it's built on (a winner, a market ad, a promise from a call)
 };
+
+/** What a request is built on, kept on its tickets so the creative team sees the idea behind it. */
+export type Origin = { kind: "winner" | "market" | "promise" | "brief"; label: string; link?: string | null; thumb?: string | null; suggestionId?: string | null };
 
 export const emptyDraft = (clientId: string | null): Draft => ({
   clientId,

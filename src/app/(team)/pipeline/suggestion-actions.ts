@@ -73,6 +73,16 @@ export async function approveSuggestion(id: string, draft: SuggestionDraft): Pro
     const admin = createAdminClient();
     const landing = draft.landing?.trim();
     if (landing && /^https?:\/\/\S+\.\S+/i.test(landing) && rows?.length) await admin.from("requests").update({ landing_url: landing.slice(0, 500) }).in("id", rows.map((r) => r.id));
+    // What it was built on, on every ticket: the winner, the market ad, the promise, or the AI's read of the account
+    const src = (s.source ?? {}) as { headline?: string | null; client?: string | null; thumbnail?: string | null };
+    const kind = s.kind === "winner" ? "winner" : s.kind === "market" ? "market" : s.kind === "call" ? "promise" : "brief";
+    const origin = {
+      kind,
+      label: (kind === "winner" ? `${src.client ?? "A client"}'s winning ad${src.headline ? `: "${src.headline}"` : ""}` : kind === "market" ? `${src.client ?? "A brand"}'s live ad${src.headline ? `: ${src.headline}` : ""}` : s.signal).slice(0, 200),
+      link: (draft.refs ?? [])[0] ?? null,
+      thumb: src.thumbnail ?? null,
+    };
+    if (rows?.length) await admin.from("requests").update({ origin }).in("id", rows.map((r) => r.id));
     await admin
       .from("creative_suggestions")
       .update({ status: "approved", draft, edited: JSON.stringify(draft) !== JSON.stringify(s.original), decided_by: me.id, decided_at: new Date().toISOString(), request_numbers: numbers })
