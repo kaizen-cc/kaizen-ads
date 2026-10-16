@@ -292,7 +292,7 @@ async function checkBrands(admin: SupabaseClient, max = 60) {
  * Every brand described on its own terms, from its name, website and a couple of its real ads: what it sells, to
  * whom, how. That's what client matching reads, so it never inherits the description of the client who named it.
  */
-async function describeBrands(admin: SupabaseClient, max = 80) {
+async function describeBrands(admin: SupabaseClient, max = 400) {
   const { data: brands } = await admin.from("market_brands").select("id, name, domain").is("described_at", null).eq("rejected", false).not("checked_at", "is", null).limit(max);
   if (!brands?.length) return 0;
   const { data: ads } = await admin.from("market_ads").select("brand_id, headline, body").in("brand_id", brands.map((b) => b.id)).limit(max * 4);
