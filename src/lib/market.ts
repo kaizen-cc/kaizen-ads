@@ -162,7 +162,6 @@ async function upsertBrand(admin: SupabaseClient, b: Obj, meta: { source: string
     client_ids: [...new Set([...((prev?.client_ids as string[]) ?? []), ...(meta.clientId ? [meta.clientId] : [])])],
     // The industry from a client who tracks or named them wins; else what the AI sorts them into
     industry: meta.industry ?? prev?.industry ?? null,
-    ...(meta.detail ? { industry_detail: meta.detail.slice(0, 80) } : {}),
     ...(meta.query ? { matched_query: meta.query.slice(0, 200) } : {}),
     // Found only by a name a client wrote: checked before it counts. Motion's tracked competitors and the AI's picks are trusted
     ...(meta.source !== "intake" ? { checked_at: new Date().toISOString(), rejected: false } : {}),
@@ -289,32 +288,128 @@ async function checkBrands(admin: SupabaseClient, max = 60) {
   return out.brands.length;
 }
 
-/** Brands without an industry (Motion's tracked competitors) get one. */
-async function sortBrands(admin: SupabaseClient) {
-  const { data: brands } = await admin.from("market_brands").select("id, name, domain, industry_detail").is("industry", null).limit(60);
+/**
+ * Every brand described on its own terms, from its name, website and a couple of its real ads: what it sells, to
+ * whom, how. That's what client matching reads, so it never inherits the description of the client who named it.
+ */
+async function describeBrands(admin: SupabaseClient, max = 80) {
+  const { data: brands } = await admin.from("market_brands").select("id, name, domain").is("described_at", null).eq("rejected", false).not("checked_at", "is", null).limit(max);
   if (!brands?.length) return 0;
-  const out = await askJson<{ brands: { n: number; industry: string; detail: string }[] }>({
-    agent: "market",
-    label: "sort market brands",
-    system: "You sort brands into industries for a paid social agency.",
-    schema: {
-      type: "object",
-      properties: {
-        brands: {
-          type: "array",
-          items: { type: "object", properties: { n: { type: "integer" }, industry: { type: "string", enum: INDUSTRIES.map(([k]) => k) }, detail: { type: "string" } }, required: ["n", "industry", "detail"], additionalProperties: false },
-        },
-      },
-      required: ["brands"],
-      additionalProperties: false,
-    },
-    prompt: `${brands.map((b, i) => `${i + 1}. ${b.name}${b.domain ? ` (${b.domain})` : ""}${b.industry_detail ? ` · ${b.industry_detail}` : ""}`).join("\n")}\n\nindustry: the closest key; detail: what they are, in a few words.`,
-  });
-  for (const r of out.brands) {
-    const b = brands[r.n - 1];
-    if (b) await admin.from("market_brands").update({ industry: r.industry, industry_detail: b.industry_detail ?? r.detail.slice(0, 80) }).eq("id", b.id);
+  const { data: ads } = await admin.from("market_ads").select("brand_id, headline, body").in("brand_id", brands.map((b) => b.id)).limit(max * 4);
+  const sample = new Map<string, string[]>();
+  for (const a of ads ?? []) {
+    const list = sample.get(a.brand_id) ?? [];
+    if (list.length < 2) list.push(`${a.headline ?? ""} ${(a.body ?? "").slice(0, 160)}`.trim());
+    sample.set(a.brand_id, list);
   }
-  return out.brands.length;
+  let done = 0;
+  for (let i = 0; i < brands.length; i += 40) {
+    const batch = brands.slice(i, i + 40);
+    const out = await askJson<{ brands: { n: number; industry: string; detail: string }[] }>({
+      agent: "market",
+      label: "describe market brands",
+      system: "You describe brands for a paid social agency's creative team: what each sells, to whom, and how (online, in store, a service, a venue). Use the website and the ads given; a well-known brand you can name from its domain. Short and specific.",
+      schema: {
+        type: "object",
+        properties: {
+          brands: {
+            type: "array",
+            items: { type: "object", properties: { n: { type: "integer" }, industry: { type: "string", enum: INDUSTRIES.map(([k]) => k) }, detail: { type: "string" } }, required: ["n", "industry", "detail"], additionalProperties: false },
+          },
+        },
+        required: ["brands"],
+        additionalProperties: false,
+      },
+      prompt: `${batch.map((b, j) => `${j + 1}. ${b.name}${b.domain ? ` (${b.domain})` : ""}${sample.get(b.id)?.length ? `\n   Ads: ${sample.get(b.id)!.join(" | ")}` : ""}`).join("\n")}\n\nindustry: the closest key. detail: under 10 words, what they sell and to whom ("Nicotine-free energy pouches sold online", "Tex-Mex restaurant chain", "Seafood delivered to home cooks").`,
+    });
+    const now = new Date().toISOString();
+    for (const r of out.brands) {
+      const b = batch[r.n - 1];
+      if (b) await admin.from("market_brands").update({ industry: r.industry, industry_detail: r.detail.slice(0, 80), described_at: now }).eq("id", b.id);
+    }
+    // Their ads follow the brand's industry
+    for (const r of out.brands) {
+      const b = batch[r.n - 1];
+      if (b) await admin.from("market_ads").update({ industry: r.industry }).eq("brand_id", b.id);
+    }
+    done += out.brands.length;
+  }
+  return done;
+}
+
+const MATCH_SCHEMA = {
+  type: "object",
+  properties: { brands: { type: "array", items: { type: "object", properties: { n: { type: "integer" }, score: { type: "integer" }, why: { type: "string" } }, required: ["n", "score", "why"], additionalProperties: false } } },
+  required: ["brands"],
+  additionalProperties: false,
+};
+
+/**
+ * Which market brands are genuinely comparable to one client, read from their client page: what they sell, to whom,
+ * how, their offers and strategy. Their tracked and named competitors always count; the rest are lookalikes from any
+ * industry (a nootropic pouch brand learns from other DTC supplement and energy brands, not seafood).
+ */
+export async function matchClient(admin: SupabaseClient, clientId: string) {
+  const [{ data: c }, { data: intake }, { data: gtm }, { data: bible }, { data: brands }] = await Promise.all([
+    admin.from("clients").select("id, name, website, industry, industry_detail").eq("id", clientId).single(),
+    admin.from("client_intakes").select("summary").eq("client_id", clientId).not("summary", "is", null).order("received_at", { ascending: false }).limit(1).maybeSingle(),
+    admin.from("client_gtm_strategies").select("read_this_first").eq("client_id", clientId).maybeSingle(),
+    admin.from("client_brand_bibles").select("read_this_first").eq("client_id", clientId).maybeSingle(),
+    admin.from("market_brands").select("id, name, domain, industry, industry_detail, client_ids").eq("rejected", false).not("checked_at", "is", null),
+  ]);
+  if (!c || !brands?.length) return 0;
+  const s = (intake?.summary ?? {}) as { business?: string; offer?: string; audience?: string; locations?: string };
+  const theirs = brands.filter((b) => ((b.client_ids as string[]) ?? []).includes(clientId));
+  const others = brands.filter((b) => !((b.client_ids as string[]) ?? []).includes(clientId));
+  const out = await askJson<{ brands: { n: number; score: number; why: string }[] }>({
+    agent: "market",
+    label: "match market brands to a client",
+    system:
+      "You pick which brands' Meta ads a paid social agency's client can learn the most from: brands that sell something comparable, to a comparable customer, in a comparable way (online vs in store, price point, subscription vs one-off, local vs national). Industry labels are broad; judge by what they actually sell. Fewer strong matches beat many weak ones.",
+    schema: MATCH_SCHEMA,
+    prompt: `The client: ${c.name}${c.website ? ` (${c.website})` : ""} · ${c.industry_detail ?? c.industry ?? "?"}
+${s.business ? `What they do: ${s.business}\n` : ""}${s.offer ? `Offer: ${s.offer}\n` : ""}${s.audience ? `Audience: ${s.audience}\n` : ""}${s.locations ? `Where: ${s.locations}\n` : ""}${gtm?.read_this_first ? `Their strategy, in short: ${gtm.read_this_first.slice(0, 1200)}\n` : ""}${bible?.read_this_first ? `Brand Bible, in short: ${bible.read_this_first.slice(0, 800)}\n` : ""}
+Brands in the market (number. name, what they sell):
+${others.map((b, i) => `${i + 1}. ${b.name}${b.domain ? ` (${b.domain})` : ""}: ${b.industry_detail ?? b.industry ?? "?"}`).join("\n")}
+
+Pick up to 25 brands this client's creative can learn from. score: 10 = sells nearly the same thing to the same customer, 7 = a close lookalike, 5 = a different product but the same customer and buying model. Leave out anything below 5. why: under 12 words, what makes it comparable.`,
+  });
+  const now = new Date().toISOString();
+  const rows = [
+    ...theirs.map((b) => ({ client_id: clientId, brand_id: b.id as string, score: 10, why: "A competitor they track or named", generated_at: now })),
+    ...out.brands
+      .filter((r) => others[r.n - 1] && r.score >= 5)
+      .map((r) => ({ client_id: clientId, brand_id: others[r.n - 1].id as string, score: Math.min(10, Math.max(1, r.score)), why: r.why.slice(0, 160), generated_at: now })),
+  ];
+  // Replaced whole: last time's picks that no longer fit go
+  await admin.from("client_market_brands").delete().eq("client_id", clientId);
+  if (rows.length) await admin.from("client_market_brands").upsert(rows, { onConflict: "client_id,brand_id" });
+  await admin.from("clients").update({ market_matched_at: now }).eq("id", clientId);
+  return rows.length;
+}
+
+/** After a sync: live clients without matches (or with ones over a week old) get them, a few per run. */
+async function matchClients(admin: SupabaseClient, deadline: number, max = 20) {
+  const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  const { data } = await admin
+    .from("clients")
+    .select("id")
+    .is("archived_at", null)
+    .in("status", LIVE)
+    .or(`market_matched_at.is.null,market_matched_at.lt.${weekAgo}`)
+    .order("market_matched_at", { ascending: true, nullsFirst: true })
+    .limit(max);
+  let done = 0;
+  for (const c of data ?? []) {
+    if (Date.now() > deadline) break;
+    try {
+      await matchClient(admin, c.id);
+      done++;
+    } catch (e) {
+      console.error("[market] match failed", c.id, e instanceof Error ? e.message : e);
+    }
+  }
+  return done;
 }
 
 const READ_SCHEMA = {
@@ -449,18 +544,18 @@ export async function syncMarket(admin: SupabaseClient, budgetMs = 600_000) {
     const discover = !watched || !last.discoveredAt || Date.now() - Date.parse(last.discoveredAt) > 7 * 86_400_000;
     const brandsFound = discover ? await discoverBrands(admin, s, workspaces, started + budgetMs * 0.4) : 0;
     const checked = await checkBrands(admin).catch(() => 0);
-    const sorted = await sortBrands(admin).catch(() => 0);
+    const sorted = await describeBrands(admin).catch(() => 0);
 
     // Live ads, ten brands a call, stalest brands first
     let pulled = 0;
     let brands = 0;
     const errors: string[] = [];
     const { data: list } = await admin.from("market_brands").select("id, motion_brand_id, industry").eq("rejected", false).not("checked_at", "is", null).order("last_synced_at", { ascending: true, nullsFirst: true }).limit(300);
-    for (let i = 0; i < (list ?? []).length; i += 10) {
+    for (let i = 0; i < (list ?? []).length; i += 5) {
       if (Date.now() > started + budgetMs * 0.75) break;
-      const batch = list!.slice(i, i + 10);
+      const batch = list!.slice(i, i + 5);
       try {
-        const r = await s.call("get_inspo_creatives", { brandIds: batch.map((b) => b.motion_brand_id), status: "ACTIVE", sort: "NEWEST", limit: 400 });
+        const r = await s.call("get_inspo_creatives", { brandIds: batch.map((b) => b.motion_brand_id), status: "ACTIVE", sort: "NEWEST", limit: 250 });
         const entries = itemsOf(r);
         for (const b of batch) {
           const entry = entries.find((e) => str(pick(e, "id", "brandId")) === b.motion_brand_id);
@@ -490,7 +585,8 @@ export async function syncMarket(admin: SupabaseClient, budgetMs = 600_000) {
       errors.push(`reading: ${e instanceof Error ? e.message : e}`);
       return 0;
     });
-    const result = { workspaces: workspaces.length, matched, brandsFound, checked, sorted, brands, pulled, read, errors: errors.slice(0, 8), discoveredAt: discover && brandsFound ? new Date().toISOString() : last.discoveredAt, samples };
+    const clientsMatched = await matchClients(admin, deadline + 120_000).catch(() => 0);
+    const result = { workspaces: workspaces.length, matched, brandsFound, checked, sorted, clientsMatched, brands, pulled, read, errors: errors.slice(0, 8), discoveredAt: discover && brandsFound ? new Date().toISOString() : last.discoveredAt, samples };
     await admin.from("motion_connection").update({ last_sync_at: new Date().toISOString(), last_result: result, error: null }).eq("id", 1);
     return result;
   } catch (e) {
@@ -533,9 +629,11 @@ export type MarketAd = {
   proven: boolean; // still running after 30 days
   fresh: boolean; // launched in the last 7 days
   testing: boolean; // the brand launched 3+ ads in the last 14 days
+  matchScore?: number; // for a client: how comparable the brand is (10 = competitor)
+  matchWhy?: string | null;
 };
 
-const COLS = "id, format, headline, body, cta, landing_url, launched_at, active, days_active, media, motion_url, library_url, page_name, rank, observation, takeaways, read_at, angle, hook, why, tags, industry, market_brands!inner(name, logo, domain, industry, industry_detail, client_ids, rejected, checked_at)";
+const COLS = "id, brand_id, format, headline, body, cta, landing_url, launched_at, active, days_active, media, motion_url, library_url, page_name, rank, observation, takeaways, read_at, angle, hook, why, tags, industry, market_brands!inner(name, logo, domain, industry, industry_detail, client_ids, rejected, checked_at)";
 
 function toAd(r: Obj, testingBrands: Set<string>): MarketAd {
   const b = r.market_brands as { name: string; logo: string | null; domain: string | null; industry: string | null; industry_detail: string | null; client_ids: string[] };
@@ -612,19 +710,66 @@ export async function loadMarketAd(db: SupabaseClient, id: string) {
 /** For the strategist: what's live in this client's market right now (their named competitors first), with links. */
 export async function marketBlock(db: SupabaseClient, clientId: string, industry: string | null, max = 6) {
   if (!industry || industry === "other") return "";
-  const ads = (await loadMarket(db, { industry, clientId, limit: 120 })).filter((a) => a.angle || a.headline || a.body);
-  const picked = [...ads.filter((a) => a.competitorOf.includes(clientId)).slice(0, 3), ...ads.filter((a) => !a.competitorOf.includes(clientId) && (a.proven || a.testing))].slice(0, max);
+  const ads = (await loadClientMarket(db, clientId, { limit: 150 })).filter((a) => a.angle || a.headline || a.body);
+  // One or two per brand, best first: competitors, then the closest lookalikes
+  const per = new Map<string, number>();
+  const picked = ads
+    .filter((a) => a.proven || a.testing || (a.matchScore ?? 0) >= 9)
+    .filter((a) => {
+      const n = per.get(a.brand) ?? 0;
+      per.set(a.brand, n + 1);
+      return n < 2;
+    })
+    .slice(0, max);
   if (!picked.length) return "";
   return `<in_the_market>
 Live Meta ads from brands in this client's market (from Motion). No performance numbers: "running N days" is the signal (brands rarely keep paying for an ad that loses). Use them as ideas, never copies, and never name another brand in the brief. When the request draws on one, put its link in draft.refs so the creative team can see it.
 ${picked
   .map(
     (a, i) =>
-      `M${i + 1}. ${a.brand}${a.competitorOf.includes(clientId) ? " (a competitor this client named)" : ""} · ${a.format ?? "ad"}${a.daysActive != null ? ` · running ${a.daysActive} days` : ""}${a.testing ? " · brand is testing a lot right now" : ""}
+      `M${i + 1}. ${a.brand}${a.detail ? ` (${a.detail})` : ""}${a.competitorOf.includes(clientId) ? " · a competitor this client tracks or named" : a.matchWhy ? ` · comparable: ${a.matchWhy}` : ""} · ${a.format ?? "ad"}${a.daysActive != null ? ` · running ${a.daysActive} days` : ""}${a.testing ? " · brand is testing a lot right now" : ""}
    ${a.angle ? `Angle: ${a.angle}. ` : ""}${a.hook ? `Hook: ${a.hook}. ` : ""}${a.why ? `Why it works: ${a.why}` : ""}
    ${a.headline ? `Headline: ${a.headline}. ` : ""}${a.body ? `Copy: ${a.body.slice(0, 240)}` : ""}
    Link: ${a.motionUrl ?? a.libraryUrl ?? a.media[0]?.url ?? a.landingUrl ?? "(none)"}`,
   )
   .join("\n")}
 </in_the_market>`;
+}
+
+/**
+ * The market for one client: ads from the brands matched to them (competitors first, then the closest lookalikes),
+ * each with why it's comparable. Works the matches out first if there are none yet; falls back to their industry.
+ */
+export async function loadClientMarket(db: SupabaseClient, clientId: string, opts: { limit?: number; compute?: SupabaseClient } = {}) {
+  let { data: matches } = await db.from("client_market_brands").select("brand_id, score, why").eq("client_id", clientId).order("score", { ascending: false });
+  if (!matches?.length && opts.compute) {
+    await matchClient(opts.compute, clientId).catch((e) => console.error("[market] match failed", e instanceof Error ? e.message : e));
+    ({ data: matches } = await db.from("client_market_brands").select("brand_id, score, why").eq("client_id", clientId).order("score", { ascending: false }));
+  }
+  if (!matches?.length) {
+    const { data: c } = await db.from("clients").select("industry").eq("id", clientId).maybeSingle();
+    return c?.industry && c.industry !== "other" ? loadMarket(db, { industry: c.industry, clientId, limit: opts.limit ?? 300 }) : [];
+  }
+  const fit = new Map(matches.map((m) => [m.brand_id as string, { score: m.score as number, why: m.why as string | null }]));
+  const { data } = await db
+    .from("market_ads")
+    .select(COLS)
+    .in("brand_id", [...fit.keys()])
+    .neq("active", false)
+    .order("days_active", { ascending: false, nullsFirst: false })
+    .limit(opts.limit ?? 400);
+  const rows = (data ?? []) as Obj[];
+  const recent = new Map<string, number>();
+  for (const r of rows) {
+    const l = r.launched_at as string | null;
+    if (l && Date.now() - Date.parse(l) < 14 * 86_400_000) recent.set(r.brand_id as string, (recent.get(r.brand_id as string) ?? 0) + 1);
+  }
+  const testing = new Set([...recent].filter(([, n]) => n >= 3).map(([k]) => k));
+  return rows
+    .map((r) => {
+      const a = toAd(r, new Set());
+      const m = fit.get(r.brand_id as string);
+      return { ...a, testing: testing.has(r.brand_id as string), matchScore: m?.score ?? 0, matchWhy: m?.why ?? null };
+    })
+    .sort((a, b) => b.matchScore - a.matchScore || Number(b.proven) - Number(a.proven) || (a.rank ?? 99) - (b.rank ?? 99) || (b.daysActive ?? 0) - (a.daysActive ?? 0));
 }

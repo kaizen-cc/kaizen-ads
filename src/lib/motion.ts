@@ -143,7 +143,7 @@ export async function openSession(admin: SupabaseClient) {
         ...(session ? { "mcp-session-id": session } : {}),
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(60_000),
+      signal: AbortSignal.timeout(120_000),
     });
   const request = async (method: string, params: object) => {
     const id = next++;

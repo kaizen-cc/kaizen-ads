@@ -221,41 +221,80 @@ async function Errors({ all }: { all: boolean }) {
 }
 
 async function MotionCard({ notice }: { notice: string | null }) {
-  const { data: m } = await createAdminClient().from("motion_connection").select("access_token, connected_at, last_sync_at, last_result, error, tools, profiles(full_name)").eq("id", 1).maybeSingle();
+  const admin = createAdminClient();
+  const [{ data: m }, { count: brands }, { count: ads }, { count: matched }] = await Promise.all([
+    admin.from("motion_connection").select("access_token, connected_at, last_sync_at, last_result, error, profiles(full_name)").eq("id", 1).maybeSingle(),
+    admin.from("market_brands").select("id", { count: "exact", head: true }).eq("rejected", false).not("checked_at", "is", null),
+    admin.from("market_ads").select("id", { count: "exact", head: true }).neq("active", false),
+    admin.from("clients").select("id", { count: "exact", head: true }).not("market_matched_at", "is", null),
+  ]);
   const on = Boolean(m?.access_token);
-  const r = (m?.last_result ?? null) as { brands?: number; pulled?: number; read?: number; brandsFound?: number; errors?: string[] } | null;
+  const r = (m?.last_result ?? null) as { brands?: number; pulled?: number; read?: number; brandsFound?: number; checked?: number; sorted?: number; clientsMatched?: number; errors?: string[] } | null;
+  const fresh = freshness(m?.last_sync_at);
+  const failing = !on || Boolean(m?.error);
+  const by = (m?.profiles as unknown as { full_name: string } | null)?.full_name;
+  const when = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
   return (
-    <section className="grid gap-3 rounded-[12px] border border-line bg-surface p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="font-heading text-[17px]">Motion</p>
-          <p className="mt-0.5 text-sm text-muted">
-            {on
-              ? `Connected${m?.connected_at ? ` ${new Date(m.connected_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}${(m?.profiles as unknown as { full_name: string } | null)?.full_name ? ` by ${(m?.profiles as unknown as { full_name: string }).full_name}` : ""} · ${((m?.tools ?? []) as unknown[]).length} tools. The Market tab pulls live ads from it every morning.`
-              : "Connect Kaizen's Motion account to fill the Market tab with live ads from every industry we serve."}
+    <details className="group rounded-[14px] border border-line bg-surface" open={Boolean(notice) || !on}>
+      <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 px-6 py-4">
+        <span className="flex items-center gap-3">
+          <span className={`h-2 w-2 rounded-full ${failing ? "bg-bad" : fresh.tone !== "ok" ? "bg-warn" : "bg-ok"}`} />
+          <span className="font-heading text-[16px]">Motion (Market)</span>
+        </span>
+        <span className="text-xs text-muted">
+          {on ? (
+            <>
+              <span className="tabular">{(brands ?? 0).toLocaleString("en-US")}</span> brands · <span className="tabular">{(ads ?? 0).toLocaleString("en-US")}</span> live ads
+              {m?.error && <span className="text-bad"> · failing</span>}
+              {!m?.error && fresh.tone !== "ok" && <span className="text-warn"> · behind</span>}
+              <span className="text-faint"> · {fresh.label.toLowerCase()}</span>
+            </>
+          ) : (
+            <span className="text-bad">Not connected</span>
+          )}
+        </span>
+      </summary>
+      <div className="grid gap-3 border-t border-line px-6 py-4">
+        {notice && (
+          <p className={`text-xs ${notice === "connected" || notice === "syncing" ? "text-ok" : "text-bad"}`}>
+            {notice === "connected" ? "Connected. The first market sync is running now." : notice === "syncing" ? "The market sync is running. It takes a few minutes; refresh to see the result." : notice}
           </p>
-        </div>
-        <span className="flex gap-2">
+        )}
+        {m?.error && <p className="text-xs text-bad">{m.error}</p>}
+        <dl className="grid gap-x-6 gap-y-1.5 text-xs sm:grid-cols-[auto_minmax(0,1fr)]">
+          <dt className="text-faint">Connection</dt>
+          <dd className="text-muted">{on ? `Kaizen's Motion account${by ? `, connected by ${by}` : ""}${m?.connected_at ? ` on ${when(m.connected_at)}` : ""}` : "Not connected"}</dd>
+          <dt className="text-faint">Last sync</dt>
+          <dd className="text-muted">
+            {m?.last_sync_at ? when(m.last_sync_at) : "Not yet"}
+            {r && ` · ${r.brands ?? 0} brands pulled, ${(r.pulled ?? 0).toLocaleString("en-US")} ads, ${r.read ?? 0} read by the AI`}
+            {r?.sorted ? `, ${r.sorted} brands described` : ""}
+            {r?.checked ? `, ${r.checked} brands checked` : ""}
+            {r?.clientsMatched ? `, ${r.clientsMatched} clients matched` : ""}
+          </dd>
+          <dt className="text-faint">Clients matched</dt>
+          <dd className="text-muted">
+            <span className="tabular">{matched ?? 0}</span> live clients have their comparable brands worked out (refreshed weekly)
+          </dd>
+          {r?.errors?.length ? (
+            <>
+              <dt className="text-faint">Hiccups</dt>
+              <dd className="text-warn">{r.errors.length} on the last run (a slow answer from Motion; those brands go first next time)</dd>
+            </>
+          ) : null}
+        </dl>
+        <div className="flex flex-wrap gap-2">
           {on && (
-            <a href="/api/motion/sync" className="grid h-9 place-items-center rounded-full bg-fg px-4 text-sm text-bg">
+            <a href="/api/motion/sync" className="grid h-8 place-items-center rounded-full bg-fg px-3.5 text-xs text-bg">
               Sync now
             </a>
           )}
-          <a href="/api/motion/connect" className={`grid h-9 place-items-center rounded-full px-4 text-sm ${on ? "border border-line text-muted hover:text-fg" : "bg-brand font-medium text-white hover:brightness-110"}`}>
+          <a href="/api/motion/connect" className={`grid h-8 place-items-center rounded-full px-3.5 text-xs ${on ? "border border-line text-muted hover:text-fg" : "bg-brand font-medium text-white hover:brightness-110"}`}>
             {on ? "Reconnect" : "Connect Motion"}
           </a>
-        </span>
+        </div>
       </div>
-      {notice && <p className={`text-xs ${notice === "connected" || notice === "syncing" ? "text-ok" : "text-bad"}`}>{notice === "connected" ? "Connected. The first market sync is running now." : notice === "syncing" ? "The market sync is running. It takes a few minutes; refresh to see the result." : notice}</p>}
-      {m?.error && <p className="text-xs text-bad">{m.error}</p>}
-      {on && m?.last_sync_at && (
-        <p className="text-xs text-faint">
-          Last sync {new Date(m.last_sync_at).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
-          {r && ` · ${r.brands ?? 0} brands checked, ${r.pulled ?? 0} ads pulled, ${r.read ?? 0} read${r.brandsFound ? `, ${r.brandsFound} brands found` : ""}`}
-          {r?.errors?.length ? ` · ${r.errors[0]}` : ""}
-        </p>
-      )}
-    </section>
+    </details>
   );
 }
 
@@ -303,7 +342,7 @@ async function Sync({ motion }: { motion: string | null }) {
           </details>
         );
       })}
-      <p className="text-xs text-faint">Behind = no successful run in the last day. Slack, email and Drive sync every 30 minutes in business hours; KPI numbers every 2 hours.</p>
+      <p className="text-xs text-faint">Behind = no successful run in the last day. Slack, email and Drive sync every 30 minutes in business hours; KPI numbers every 2 hours; Motion every morning at 8:30.</p>
     </div>
   );
 }

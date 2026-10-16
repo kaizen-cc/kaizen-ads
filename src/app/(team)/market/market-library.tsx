@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { MarketAd } from "@/lib/market";
 import type { OpenSuggestion } from "@/lib/suggestions";
 import { SuggestionSheet } from "../pipeline/views/suggested-briefs";
 import { ClientPick, Writing, type PickClient } from "../winners/winners-library";
-import { briefFromMarket } from "./actions";
+import { briefFromMarket, clientMarket } from "./actions";
 import { ClientSearch } from "./client-search";
+import { FilterMenu as Menu, FilterPill as Pill } from "@/components/filters";
 import { MarketHoverCard, MarketPreview, MarketReadPanel, useMarketRead } from "./market-preview";
 
 type View = "all" | "proven" | "fresh" | "testing";
@@ -48,15 +49,26 @@ export function MarketLibrary({
   startIndustry: string | null;
   startClient: string | null;
 }) {
-  // For a client: their industry, their tracked and named competitors first, then what's closest to how they sell
+  // For a client: the brands matched to them from their client page (competitors first, then lookalikes from any
+  // industry), so the list is what they can actually learn from, not everything in a broad industry
   const [forId, setForId] = useState<string | null>(() => clients.find((c) => c.id === startClient)?.id ?? null);
   const forClient = clients.find((c) => c.id === forId) ?? null;
-  const [industry, setIndustry] = useState<string | null>(() => clients.find((c) => c.id === startClient)?.industry ?? startIndustry);
+  const [industry, setIndustry] = useState<string | null>(() => (startClient ? null : startIndustry));
+  const [clientAds, setClientAds] = useState<{ id: string; ads: MarketAd[] } | null>(null);
   const pickClient = (id: string | null) => {
     setForId(id);
-    const c = clients.find((x) => x.id === id);
-    if (c?.industry) setIndustry(c.industry);
+    setIndustry(null);
   };
+  useEffect(() => {
+    if (!forId) return;
+    let live = true;
+    clientMarket(forId).then((list) => live && setClientAds({ id: forId, ads: list }));
+    return () => {
+      live = false;
+    };
+  }, [forId]);
+  const matching = Boolean(forId) && clientAds?.id !== forId;
+  const pool = useMemo(() => (forId ? (clientAds?.id === forId ? clientAds.ads : []) : ads), [forId, clientAds, ads]);
   const [view, setView] = useState<View>("all");
   const [format, setFormat] = useState<string | null>(null);
   const [q, setQ] = useState("");
@@ -77,40 +89,21 @@ export function MarketLibrary({
   const label = (k: string | null) => industries.find(([i]) => i === k)?.[1] ?? "Not sorted yet";
   const counts = useMemo(() => {
     const m = new Map<string, number>();
-    for (const a of ads) m.set(a.industry ?? "", (m.get(a.industry ?? "") ?? 0) + 1);
+    for (const a of pool) m.set(a.industry ?? "", (m.get(a.industry ?? "") ?? 0) + 1);
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
-  }, [ads]);
+  }, [pool]);
 
   const shown = useMemo(() => {
     const term = q.trim().toLowerCase();
-    // How close an ad is to the picked client: their competitors first, then shared words in what they sell
-    const words = new Set(
-      (forClient?.detail ?? "")
-        .toLowerCase()
-        .split(/[^a-z0-9]+/)
-        .filter((x) => x.length > 2 && !["and", "the", "for", "with", "shop", "brand", "store", "company", "services"].includes(x)),
-    );
-    const score = (a: MarketAd) => {
-      if (!forClient) return 0;
-      const hay = `${a.detail ?? ""} ${a.angle ?? ""} ${a.headline ?? ""} ${a.body ?? ""}`.toLowerCase();
-      return (
-        (a.competitorOf.includes(forClient.id) ? 1000 : 0) +
-        [...words].filter((x) => hay.includes(x)).length * 25 +
-        (a.proven ? 10 : 0) +
-        (a.testing ? 5 : 0) +
-        (a.rank === 1 ? 3 : 0)
-      );
-    };
-    return ads
+    const list = pool
       .filter((a) => industry === null || (a.industry ?? "") === industry)
       .filter((a) => view === "all" || (view === "proven" ? a.proven : view === "fresh" ? a.fresh : a.testing))
       .filter((a) => !format || a.format === format)
-      .filter((a) => !term || [a.brand, a.detail, a.headline, a.body, a.angle, a.hook, ...a.tags].some((s) => s?.toLowerCase().includes(term)))
-      .sort(
-        (a, b) =>
-          score(b) - score(a) || (view === "fresh" ? Date.parse(b.launchedAt ?? "0") - Date.parse(a.launchedAt ?? "0") : (b.daysActive ?? 0) - (a.daysActive ?? 0)),
-      );
-  }, [ads, industry, view, format, q, forClient]);
+      .filter((a) => !term || [a.brand, a.detail, a.headline, a.body, a.angle, a.hook, a.matchWhy, ...a.tags].some((s) => s?.toLowerCase().includes(term)));
+    // A client's matches keep their ranking (most comparable brands first); otherwise by time live or newest
+    if (forId) return list;
+    return list.sort((a, b) => (view === "fresh" ? Date.parse(b.launchedAt ?? "0") - Date.parse(a.launchedAt ?? "0") : (b.daysActive ?? 0) - (a.daysActive ?? 0)));
+  }, [pool, forId, industry, view, format, q]);
 
   const proven = ads.filter((a) => a.proven).length;
   const fresh = ads.filter((a) => a.fresh).length;
@@ -179,7 +172,7 @@ export function MarketLibrary({
                 <Menu
                   label={industry === null ? "All industries" : label(industry || null)}
                   on={industry !== null}
-                  options={[[null, "All industries", ads.length] as const, ...counts.map(([k, n]) => [k, label(k || null), n] as const)]}
+                  options={[[null, "All industries", pool.length] as const, ...counts.map(([k, n]) => [k, label(k || null), n] as const)]}
                   value={industry}
                   onPick={(v) => setIndustry(v)}
                 />
@@ -194,7 +187,7 @@ export function MarketLibrary({
               <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-3">
                 <nav className="-mb-px flex gap-1 overflow-x-auto">
                   {VIEWS.map(([k, l, hint]) => {
-                    const n = k === "all" ? ads.length : ads.filter((a) => (k === "proven" ? a.proven : k === "fresh" ? a.fresh : a.testing)).length;
+                    const n = k === "all" ? pool.length : pool.filter((a) => (k === "proven" ? a.proven : k === "fresh" ? a.fresh : a.testing)).length;
                     return (
                       <button
                         key={k}
@@ -239,19 +232,27 @@ export function MarketLibrary({
 
           {forClient && (
             <p className="-mt-2 text-sm text-muted">
-              What&apos;s working for businesses like <span className="text-fg">{forClient.name}</span>
-              {forClient.detail ? ` (${forClient.detail.toLowerCase()})` : ""}: their competitors first, then the closest ads. Open one to brief them on it.
+              Brands comparable to <span className="text-fg">{forClient.name}</span>
+              {forClient.detail ? ` (${forClient.detail.toLowerCase()})` : ""}, picked from their client page: their competitors first, then the closest lookalikes from
+              any industry. Open one to brief them on it.
             </p>
           )}
-          {shown.length === 0 ? (
-            <p className="py-10 text-center text-sm text-muted">Nothing matches. Try another industry or filter.</p>
+          {matching ? (
+            <div className="grid place-items-center gap-3 py-16 text-center">
+              <span className="h-1 w-40 overflow-hidden rounded-full bg-surface-2">
+                <span className="block h-full w-1/3 animate-[ai-sweep_2.4s_ease-in-out_infinite] rounded-full bg-brand" />
+              </span>
+              <p className="text-sm text-muted">Reading {forClient?.name}&apos;s page and finding the brands most like them…</p>
+            </div>
+          ) : shown.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted">{forClient ? `No live ads from brands like ${forClient.name} yet.` : "Nothing matches. Try another industry or filter."}</p>
           ) : (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
               {shown.slice(0, 240).map((a) => (
                 <AdCard
                   key={a.id}
                   a={a}
-                  sub={forClient && a.competitorOf.includes(forClient.id) ? `${forClient.name}'s competitor` : (a.detail ?? label(a.industry))}
+                  sub={forClient && a.competitorOf.includes(forClient.id) ? `${forClient.name}'s competitor` : forClient && a.matchWhy ? `${a.brand} · ${a.matchWhy}` : (a.detail ?? label(a.industry))}
                   onOpen={() => {
                     setHover(null);
                     setOpen(a);
@@ -322,56 +323,6 @@ export function AdCard({ a, sub, onOpen, onHover, onLeave }: { a: MarketAd; sub:
   );
 }
 
-/** A filter in use, with its own clear button. */
-function Pill({ children, onClear }: { children: React.ReactNode; onClear: () => void }) {
-  return (
-    <span className="flex h-7 items-center gap-1 rounded-full border border-line bg-surface pl-3 pr-1 text-xs">
-      <span className="max-w-[220px] truncate">{children}</span>
-      <button onClick={onClear} aria-label="Remove this filter" className="grid h-5 w-5 place-items-center rounded-full text-faint hover:bg-surface-2 hover:text-fg">
-        ×
-      </button>
-    </span>
-  );
-}
-
-/** A quiet dropdown: a button that opens a short list (with counts), closing on a pick or a click elsewhere. */
-function Menu<T extends string | null>({ label, on, options, value, onPick }: { label: string; on: boolean; options: readonly (readonly [T, string, number | null])[]; value: T; onPick: (v: T) => void }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="relative" onBlur={(e) => !e.currentTarget.contains(e.relatedTarget as Node) && setOpen(false)}>
-      <button
-        onClick={() => setOpen(!open)}
-        className={`flex h-10 items-center gap-2 rounded-[12px] px-3.5 text-sm transition-colors ${on ? "bg-fg text-bg" : "bg-bg/60 text-muted hover:text-fg"}`}
-        aria-expanded={open}
-      >
-        <span className="max-w-[180px] truncate">{label}</span>
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden className={`transition-transform ${open ? "rotate-180" : ""}`}>
-          <path d="m6 9 6 6 6-6" />
-        </svg>
-      </button>
-      {open && (
-        <div className="absolute right-0 top-12 z-30 grid max-h-[60vh] w-64 gap-0.5 overflow-y-auto rounded-[14px] border border-line bg-surface p-1.5 shadow-2xl">
-          {options.map(([k, l, n]) => (
-            <button
-              key={k ?? "any"}
-              onClick={() => {
-                onPick(k);
-                setOpen(false);
-              }}
-              className={`flex items-center justify-between gap-3 rounded-[10px] px-3 py-2 text-left text-sm hover:bg-surface-2 ${value === k ? "text-fg" : "text-muted"}`}
-            >
-              <span className="flex items-center gap-2 truncate">
-                <span className={`w-3 text-xs ${value === k ? "text-brand-text" : "text-transparent"}`}>✓</span>
-                {l}
-              </span>
-              {n !== null && <span className="tabular text-[11px] text-faint">{n}</span>}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 export function MarketSheet({ a, industryLabel, clients, onClose, forClient }: { a: MarketAd; industryLabel: string; clients: PickClient[]; onClose: () => void; forClient?: string }) {
   const [step, setStep] = useState<"ad" | "pick" | "writing">("ad");

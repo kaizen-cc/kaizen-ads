@@ -1,6 +1,6 @@
 import { loadClientKpis } from "@/lib/kpi/client";
 import { loadWatchList } from "@/lib/fatigue";
-import { loadMarket } from "@/lib/market";
+import { loadClientMarket } from "@/lib/market";
 import type { IntakeRecord } from "./intake-panel";
 import type { ClientCall } from "./calls-panel";
 import { notFound } from "next/navigation";
@@ -123,10 +123,11 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
       .eq("client_id", client.id)
       .order("occurred_at", { referencedTable: "client_calls", ascending: false })
       .limit(20),
-    client.industry && client.industry !== "other" ? loadMarket(supabase, { industry: client.industry, clientId: client.id, limit: 200 }) : Promise.resolve([]),
+    loadClientMarket(supabase, client.id, { limit: 200 }),
   ]);
   // In the market: the competitors this client named first, then what's proven, testing or new in their industry
-  const market = [...marketAll.filter((a) => a.competitorOf.includes(client.id)).slice(0, 4), ...marketAll.filter((a) => !a.competitorOf.includes(client.id) && (a.proven || a.testing || a.fresh))].slice(0, 8);
+  const seenBrand = new Set<string>();
+  const market = marketAll.filter((a) => (seenBrand.has(a.brand) ? false : (seenBrand.add(a.brand), true))).slice(0, 8);
   // Every call that discussed this client (client calls and internal meetings), with what was said about them
   const callIds = (callRows ?? []).map((m) => (m.client_calls as unknown as { id: string }).id);
   const { data: promised } = callIds.length

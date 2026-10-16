@@ -11,6 +11,6 @@
     { "path": "/api/cron/context?step=clients", "schedule": "50 * * * *" },
     { "path": "/api/cron/context?step=calls", "schedule": "25,55 * * * *" },
     { "path": "/api/cron/context?step=gtm", "schedule": "10 * * * *" },
-    { "path": "/api/cron/context?step=market", "schedule": "40 10,11 * * *" }
+    { "path": "/api/cron/context?step=market", "schedule": "30 12,13 * * *" }
   ]
 }

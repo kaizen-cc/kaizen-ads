@@ -28,7 +28,7 @@ export function MarketPanel({ clientId, industry, label, ads }: { clientId: stri
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {ads.slice(0, 8).map((a) => (
-          <AdCard key={a.id} a={a} sub={a.competitorOf.includes(clientId) ? "Competitor" : (a.detail ?? label)} onOpen={() => setOpen(a)} />
+          <AdCard key={a.id} a={a} sub={a.competitorOf.includes(clientId) ? "Competitor" : (a.matchWhy ?? a.detail ?? label)} onOpen={() => setOpen(a)} />
         ))}
       </div>
       {open && <MarketSheet key={open.id} a={open} industryLabel={label} clients={[]} forClient={clientId} onClose={() => setOpen(null)} />}

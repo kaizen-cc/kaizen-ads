@@ -7,6 +7,7 @@ import type { Allotment } from "@/lib/allotment";
 import type { OpenSuggestion } from "@/lib/suggestions";
 import { SuggestionSheet } from "../pipeline/views/suggested-briefs";
 import { briefFromWinner } from "./actions";
+import { FilterMenu, FilterPill } from "@/components/filters";
 import { FbPreview, InsightPanel, useAd, useInsight } from "./fb-preview";
 
 export type PickClient = { id: string; name: string; industry: string | null; detail: string | null; allotment: Allotment };
@@ -65,25 +66,35 @@ export function WinnersLibrary({ winners, industries, clients, scope }: { winner
 
   return (
     <div className="grid gap-6">
-      <header className="grid gap-2">
+      <header className="grid gap-3">
         <p className="text-xs uppercase tracking-[0.18em] text-faint">Winners library</p>
         <h1 className="font-display text-3xl tracking-tight md:text-4xl">What&apos;s working across our accounts</h1>
-        <p className="max-w-2xl text-sm text-muted">
-          Not every running ad: only the ones clearly beating their own account. An ad makes the list when it has at least $100 spent and 3 results, and gets
-          its result at least 1.2x cheaper than its account usually does. Ranked against its own account, so a small account&apos;s winner counts as much as a
-          big one&apos;s.
-        </p>
-        <p className="max-w-2xl text-xs text-faint">
-          This sync looked at the top {scope.ads.toLocaleString("en-US")} ads by spend across {scope.accounts} ad accounts (the top 20 in each, last 30 days).{" "}
-          {scope.eligible.toLocaleString("en-US")} had enough spend and results to judge; {winners.length} beat their account.
-          {scope.withoutData > 0 && ` ${scope.withoutData} more ${scope.withoutData === 1 ? "account is" : "accounts are"} linked to Meta but not synced at ad level yet; they fill in over the next syncs.`}
-        </p>
+        <p className="max-w-2xl text-sm text-muted">The ads clearly beating their own account, ranked against that account so a small client&apos;s winner counts as much as a big one&apos;s.</p>
         {winners.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-2 text-xs">
-            <Stat value={String(winners.length)} label="winning ads" />
-            <Stat value={String(clientCount)} label="clients" />
-            <Stat value={String(counts.filter(([k]) => k).length)} label="industries" />
-            {best && <Stat value={`${best.ratio}x`} label={`best: ${best.detail ?? label(best.industry)}`} accent />}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-faint">
+            <span>
+              <span className="tabular text-fg">{winners.length}</span> winning ads
+            </span>
+            <span>
+              <span className="tabular text-fg">{clientCount}</span> clients
+            </span>
+            <span>
+              <span className="tabular text-fg">{counts.filter(([k]) => k).length}</span> industries
+            </span>
+            {best && (
+              <span>
+                best <span className="tabular text-ok">{best.ratio}x</span> · {best.detail ?? label(best.industry)}
+              </span>
+            )}
+            <details className="group relative">
+              <summary className="cursor-pointer list-none underline-offset-4 hover:text-fg hover:underline">How winners are picked</summary>
+              <div className="absolute left-0 top-6 z-30 w-[360px] rounded-[14px] border border-line bg-surface p-4 text-xs leading-relaxed text-muted shadow-2xl">
+                An ad makes the list with at least $100 spent and 3 results, getting its result at least 1.2x cheaper than its account usually does. This sync looked at the
+                top {scope.ads.toLocaleString("en-US")} ads by spend across {scope.accounts} ad accounts (the top 20 in each, last 30 days);{" "}
+                {scope.eligible.toLocaleString("en-US")} had enough to judge and {winners.length} beat their account.
+                {scope.withoutData > 0 && ` ${scope.withoutData} more accounts are linked to Meta and fill in over the next syncs.`}
+              </div>
+            </details>
           </div>
         )}
       </header>
@@ -95,38 +106,73 @@ export function WinnersLibrary({ winners, industries, clients, scope }: { winner
         </div>
       ) : (
         <>
-          <div className="grid gap-3">
-            <div className="flex flex-wrap gap-1.5">
-              <Chip on={industry === null} onClick={() => setIndustry(null)}>
-                All <span className="text-faint">{winners.length}</span>
-              </Chip>
-              {counts.map(([k, n]) => (
-                <Chip key={k || "none"} on={industry === k} onClick={() => setIndustry(industry === k ? null : k)}>
-                  {label(k || null)} <span className="text-faint">{n}</span>
-                </Chip>
-              ))}
+          <div className="sticky top-3 z-20 grid gap-3">
+            <div className="rounded-[18px] border border-line bg-surface/90 shadow-[0_10px_40px_-20px_rgba(0,0,0,0.6)] backdrop-blur-xl">
+              <div className="flex flex-wrap items-center gap-2 p-2">
+                <label className="flex h-10 min-w-[220px] flex-1 items-center gap-2.5 rounded-[12px] bg-bg/60 px-3.5 focus-within:ring-1 focus-within:ring-faint">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-faint" aria-hidden>
+                    <circle cx="11" cy="11" r="7" />
+                    <path d="m20 20-3.5-3.5" />
+                  </svg>
+                  <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search clients, headlines, copy" className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-faint" />
+                </label>
+                <FilterMenu
+                  label={industry === null ? "All industries" : label(industry || null)}
+                  on={industry !== null}
+                  options={[[null, "All industries", winners.length] as const, ...counts.map(([k, n]) => [k, label(k || null), n] as const)]}
+                  value={industry}
+                  onPick={(v) => setIndustry(v)}
+                />
+                <FilterMenu
+                  label={SORTS.find(([k]) => k === sort)?.[1] ?? "Sort"}
+                  on={false}
+                  options={SORTS.map(([k, l]) => [k, l, null] as const)}
+                  value={sort}
+                  onPick={(v) => setSort(v)}
+                />
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-3">
+                <nav className="-mb-px flex gap-1">
+                  {(
+                    [
+                      [false, "All winners", winners.length],
+                      [true, "Running now", winners.filter((w) => w.live).length],
+                    ] as const
+                  ).map(([k, l, n]) => (
+                    <button
+                      key={String(k)}
+                      onClick={() => setLiveOnly(k)}
+                      className={`flex h-10 items-center gap-1.5 border-b-2 px-2.5 text-[13px] transition-colors ${liveOnly === k ? "border-brand text-fg" : "border-transparent text-muted hover:text-fg"}`}
+                    >
+                      {l}
+                      <span className="tabular text-[11px] text-faint">{n}</span>
+                    </button>
+                  ))}
+                </nav>
+                <span className="tabular py-2 text-[11px] text-faint">
+                  {shown.length} {shown.length === 1 ? "ad" : "ads"} · hover one to see it run
+                </span>
+              </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Search client, headline, copy…"
-                className="h-9 min-w-0 flex-1 rounded-full border border-line bg-surface px-4 text-sm outline-none placeholder:text-faint focus:border-faint sm:max-w-xs"
-              />
-              <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} className="h-9 rounded-full border border-line bg-surface px-3 text-sm">
-                {SORTS.map(([k, l]) => (
-                  <option key={k} value={k}>
-                    {l}
-                  </option>
-                ))}
-              </select>
-              <button
-                onClick={() => setLiveOnly(!liveOnly)}
-                className={`h-9 rounded-full border px-3.5 text-sm ${liveOnly ? "border-ok/50 bg-ok/10 text-ok" : "border-line text-muted hover:text-fg"}`}
-              >
-                Running now
-              </button>
-            </div>
+            {(industry !== null || liveOnly || q.trim() || sort !== "ratio") && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {industry !== null && <FilterPill onClear={() => setIndustry(null)}>{label(industry || null)}</FilterPill>}
+                {liveOnly && <FilterPill onClear={() => setLiveOnly(false)}>Running now</FilterPill>}
+                {sort !== "ratio" && <FilterPill onClear={() => setSort("ratio")}>{SORTS.find(([k]) => k === sort)?.[1]}</FilterPill>}
+                {q.trim() && <FilterPill onClear={() => setQ("")}>&ldquo;{q.trim()}&rdquo;</FilterPill>}
+                <button
+                  onClick={() => {
+                    setIndustry(null);
+                    setLiveOnly(false);
+                    setSort("ratio");
+                    setQ("");
+                  }}
+                  className="ml-1 text-xs text-muted underline-offset-4 hover:text-fg hover:underline"
+                >
+                  Clear all
+                </button>
+              </div>
+            )}
           </div>
 
           {shown.length === 0 ? (
@@ -191,23 +237,6 @@ export function WinnersLibrary({ winners, industries, clients, scope }: { winner
       )}
       {open && <WinnerSheet key={open.id} w={open} industryLabel={label(open.industry)} clients={clients} onClose={() => setOpen(null)} />}
     </div>
-  );
-}
-
-function Stat({ value, label, accent }: { value: string; label: string; accent?: boolean }) {
-  return (
-    <span className={`flex items-baseline gap-1.5 rounded-full border px-3 py-1.5 ${accent ? "border-ok/40 bg-ok/10" : "border-line bg-surface"}`}>
-      <span className={`tabular text-sm font-semibold ${accent ? "text-ok" : "text-fg"}`}>{value}</span>
-      <span className="text-muted">{label}</span>
-    </span>
-  );
-}
-
-function Chip({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button onClick={onClick} className={`flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-sm ${on ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
-      {children}
-    </button>
   );
 }
 

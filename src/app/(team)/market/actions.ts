@@ -51,3 +51,11 @@ export async function marketRead(adId: string): Promise<MarketRead | null> {
     return null;
   }
 }
+
+/** The market for one client: their matched brands' live ads (worked out now if they haven't been yet). */
+export async function clientMarket(clientId: string): Promise<import("@/lib/market").MarketAd[]> {
+  await requireStaff();
+  const { loadClientMarket } = await import("@/lib/market");
+  const db = adminConfigured() ? createAdminClient() : await createClient();
+  return loadClientMarket(db, clientId, { limit: 400, compute: adminConfigured() && aiEnabled() ? createAdminClient() : undefined });
+}

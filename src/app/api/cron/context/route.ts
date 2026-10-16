@@ -41,7 +41,7 @@ function nyNow() {
  * - meta: every 2 hours (Meta's own numbers settle slowly)
  * - kpi: every 2 hours (campaign numbers for the KPI dashboard; no AI, so it's cheap)
  * - brief: 12pm and 6pm
- * - market: 6am (live ads from Motion for the Market tab, ready for the morning)
+ * - market: 8:30am (live ads from Motion for the Market tab, ready for the morning)
  * - gtm: every hour (a Meta go-to-market strategy for newly onboarded clients once the intake form, call notes and website are in)
  * - calls: every 30 minutes on weekdays 8am to 7pm, every 3 hours otherwise (Gemini and Fireflies notes, promises watched)
  * - clients: every hour (new, archived and upgraded clients from Kaizen Track)
@@ -57,7 +57,7 @@ function due(step: string | null) {
   if (step === "suggest") return !["Sat", "Sun"].includes(weekday) && hour === 8;
   if (step === "clients") return true;
   if (step === "gtm") return true;
-  if (step === "market") return hour === 6;
+  if (step === "market") return hour === 8;
   if (step === "calls") return (businessHours || hour === 18) || (hour % 3 === 0 && minute < 30);
   return false;
 }
