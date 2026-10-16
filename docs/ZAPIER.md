@@ -4,7 +4,7 @@ Kaizen Ads hears about clients two ways. Zapier is instant. The hourly Track mir
 
 ## 1. Zapier (instant)
 
-Kaizen Ads has its own secret (`ZAPIER_SECRET` in the kaizen-ads Vercel project; it doesn't need to match Track's). Send it on every Kaizen Ads step as the `x-kaizen-secret` header, or as `Authorization: Bearer <secret>`. Every endpoint accepts JSON or form data. The form's own question titles work as field names. A repeated submission is processed only once.
+Kaizen Ads uses the same secret as Kaizen Track (`ZAPIER_SECRET`, set to the same value in both Vercel projects). Send it as the `x-kaizen-secret` header, or as `Authorization: Bearer <secret>`. Every endpoint accepts JSON or form data. The form's own question titles work as field names. A repeated submission is processed only once.
 
 | Form | Add a "Webhooks by Zapier → POST" step to | What happens |
 | --- | --- | --- |
@@ -14,7 +14,7 @@ Kaizen Ads has its own secret (`ZAPIER_SECRET` in the kaizen-ads Vercel project;
 | Offboarding (if there's a form; optional) | `https://ads.kaizenmarketing.agency/api/zapier/offboarding` | Client archived (nothing deleted). Send the business name or Client ID, plus a reason if there is one. |
 | New Slack channel (existing Zap) | `https://ads.kaizenmarketing.agency/api/zapier/slack-channel` | Links the channel to its client. |
 
-The easiest setup is to duplicate each Zap's Kaizen Track step, change the URL to the Kaizen Ads one, and set the header to Kaizen Ads' own secret. Track's steps stay as they are.
+The easiest setup is to duplicate each Zap's Kaizen Track step and change only the URL to the Kaizen Ads one. The headers and fields stay the same. Track's steps stay as they are.
 
 ## 2. Kaizen Track mirror (hourly)
 
