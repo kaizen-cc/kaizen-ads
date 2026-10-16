@@ -1,6 +1,7 @@
 "use client";
 
 import { WinnersStrip } from "./winners-strip";
+import { PromisesStrip } from "./promises-strip";
 import Link from "next/link";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { PersonAvatar } from "@/components/person-avatar";
@@ -8,7 +9,7 @@ import type { DraftPatch, Review, ReviewIssue, Suggestions } from "@/lib/ai";
 import { draws, type Allotment } from "@/lib/allotment";
 import { FORMAT_LABEL, type Format, type Priority } from "@/lib/stages";
 import { ClientTag, FormatIcon } from "@/app/(team)/board/ticket-card";
-import { applyFixes, createBatch, loadBriefing, reviewRequest, suggestForRequest, type ContextSummary, type RefSummary, type ReviewDecisions, type ReviewResult, type SimilarCard, type SuggestResult } from "./actions";
+import { applyFixes, createBatch, fulfilPromise, loadBriefing, reviewRequest, suggestForRequest, type ContextSummary, type RefSummary, type ReviewDecisions, type ReviewResult, type SimilarCard, type SuggestResult } from "./actions";
 import { ReviewWorkspace, startHandled, type Handled } from "./review-workspace";
 import { FORMATS, INSPIRE_KEY, MAX_VARIATIONS, SIZES, emptyDraft, selectedFormats, totalFor, type Draft, type Size } from "./draft";
 import { AllotmentMeter, AspectOption, Chip, ClientSearch, Progress, Spark, Stepper, Thinking, type ClientOption } from "./parts";
@@ -197,6 +198,9 @@ export function RequestForm({
     reset();
   };
 
+  // A promise from a call this request delivers (its brief was loaded); sending marks it in motion
+  const [promise, setPromise] = useState<{ id: string; clientId: string } | null>(null);
+
   const set = (patch: Partial<Draft>) => {
     setDraft((d) => ({ ...d, ...patch }));
     setReview({ status: "idle" });
@@ -286,6 +290,7 @@ export function RequestForm({
       if (res.ok) {
         writeSaved(null, saveKey);
         setCreated(res.numbers);
+        if (promise && promise.clientId === draft.clientId) void fulfilPromise(promise.id, res.numbers);
       }
       else setError(res.error);
     });
@@ -488,6 +493,16 @@ export function RequestForm({
 
             {step === 1 && (
               <div className="grid gap-8">
+                {draft.clientId && !demo && (
+                  <PromisesStrip
+                    clientId={draft.clientId}
+                    used={promise?.clientId === draft.clientId ? promise.id : null}
+                    onUse={(id, patch) => {
+                      set(patch);
+                      setPromise({ id, clientId: draft.clientId ?? "" });
+                    }}
+                  />
+                )}
                 <div className="grid gap-3 sm:grid-cols-3">
                   {FORMATS.map((f) => {
                     const on = Boolean(draft.formats[f]);

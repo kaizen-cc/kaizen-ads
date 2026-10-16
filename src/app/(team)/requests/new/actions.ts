@@ -324,3 +324,74 @@ export async function industryWinnersFor(clientId: string): Promise<WinnersResul
   if (!c?.industry || c.industry === "other") return { industry: null, label: null, detail: null, winners: [] };
   return { industry: c.industry, label: industryLabel(c.industry), detail: c.industry_detail, winners: await industryWinners(supabase, c.industry, clientId, 6) };
 }
+
+export type Promise_ = {
+  id: string;
+  kind: string;
+  what: string;
+  callTitle: string;
+  callAt: string;
+  internal: boolean;
+  briefed: boolean; // a brief is already written
+};
+
+/** What we promised this client on calls and haven't started (creative, copy, offers): shown when writing a request. */
+export async function promisesFor(clientId: string): Promise<Promise_[]> {
+  await requireStaff();
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("call_commitments")
+    .select("id, kind, what, status, suggestion_id, client_calls(title, occurred_at, status)")
+    .eq("client_id", clientId)
+    .in("status", ["open", "briefed"])
+    .in("kind", ["creative", "copy", "offer"])
+    .order("created_at", { ascending: false })
+    .limit(8);
+  return (data ?? []).map((c) => {
+    const call = c.client_calls as unknown as { title: string; occurred_at: string; status: string } | null;
+    return { id: c.id, kind: c.kind, what: c.what, callTitle: call?.title ?? "A call", callAt: call?.occurred_at ?? "", internal: call?.status === "internal", briefed: c.status === "briefed" && Boolean(c.suggestion_id) };
+  });
+}
+
+/** The brief for a promise, ready to drop into the form (written now if it wasn't already). */
+export async function promiseDraft(commitmentId: string): Promise<{ ok: true; patch: Partial<Draft> } | { ok: false; error: string }> {
+  await requireStaff();
+  const supabase = await createClient();
+  const { data: mine } = await supabase.from("call_commitments").select("id").eq("id", commitmentId).maybeSingle();
+  if (!mine) return { ok: false, error: "That promise isn't on a client you work on." };
+  if (!adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
+  try {
+    const admin = createAdminClient();
+    const { briefPromise } = await import("@/lib/calls");
+    const id = await briefPromise(admin, commitmentId);
+    const { data: s } = await admin.from("creative_suggestions").select("draft").eq("id", id).single();
+    const d = s?.draft as import("@/lib/suggestions").SuggestionDraft;
+    const concepts = d.concepts?.length ? `\n\nConcepts:\n${d.concepts.map((c, i) => `${i + 1}. ${c.name}\n   Hook: ${c.hook}\n   Visual: ${c.visual}\n   Copy: ${c.copy}`).join("\n")}` : "";
+    const hooks = d.hooks?.length ? `\n\nHooks to try:\n${d.hooks.map((h) => `- ${h}`).join("\n")}` : "";
+    return {
+      ok: true,
+      patch: {
+        title: d.title,
+        angle: d.angle,
+        audience: d.audience,
+        brief: `${d.brief}${concepts}${hooks}`,
+        formats: Object.fromEntries(d.formats.map((f) => [f.format, { new: f.new, variations: f.variations }])),
+        sizes: d.sizes.filter((x) => SIZES.includes(x)),
+        landing: d.landing || "",
+      },
+    };
+  } catch (e) {
+    return { ok: false, error: e instanceof AiUnavailable ? e.message : "Couldn't write the brief. Try again." };
+  }
+}
+
+/** The request made from a promise: the promise is in motion with these tickets, and its brief is used up. */
+export async function fulfilPromise(commitmentId: string, numbers: number[]) {
+  const me = await requireStaff();
+  if (!adminConfigured()) return;
+  const admin = createAdminClient();
+  const { data: c } = await admin.from("call_commitments").update({ status: "in_motion", request_numbers: numbers }).eq("id", commitmentId).select("suggestion_id").single();
+  if (c?.suggestion_id)
+    await admin.from("creative_suggestions").update({ status: "approved", decided_by: me.id, decided_at: new Date().toISOString(), request_numbers: numbers }).eq("id", c.suggestion_id).eq("status", "open");
+  revalidatePath("/pipeline");
+}

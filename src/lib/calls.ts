@@ -94,22 +94,12 @@ async function collectFireflies(since: Date): Promise<NewCall[]> {
 
 // ─── Match and read ─────────────────────────────────────────────────────────
 
-const MATCH_SCHEMA = { type: "object", properties: { clientIndex: { type: "integer" }, internal: { type: "boolean" } }, required: ["clientIndex", "internal"], additionalProperties: false };
-
-/** Which client a call was with: a client contact among the attendees, then the client's name, then the AI. */
-async function matchCall(admin: SupabaseClient, call: NewCall, clients: { id: string; name: string }[], contacts: Map<string, string>) {
+/** The client a call was with, when it's plain: a client contact among the attendees, or one client's name. */
+function matchCall(call: NewCall, clients: { id: string; name: string }[], contacts: Map<string, string>) {
   for (const a of call.attendees) if (contacts.has(a)) return contacts.get(a)!;
   const text = compact(`${call.title} ${call.notes.slice(0, 1500)}`);
   const byName = clients.filter((c) => compact(c.name).length >= 4 && text.includes(compact(c.name)));
-  if (byName.length === 1) return byName[0].id;
-  const out = await askJson<{ clientIndex: number; internal: boolean }>({
-    agent: "calls",
-    label: "match a call",
-    system: "You match a marketing agency's meeting notes to the client the meeting was with. Internal team meetings are internal.",
-    schema: MATCH_SCHEMA,
-    prompt: `Clients (number · name):\n${clients.map((c, i) => `${i + 1} · ${c.name}`).join("\n")}\n\nMeeting: "${call.title}"\nAttendees: ${call.attendees.join(", ")}\nNotes (start):\n${call.notes.slice(0, 3000)}\n\nclientIndex: the client's number, or 0 if it's internal or you can't tell. internal: true if it's an internal team meeting.`,
-  });
-  return out.clientIndex > 0 ? (clients[out.clientIndex - 1]?.id ?? null) : null;
+  return byName.length === 1 ? byName[0].id : null;
 }
 
 export type CallSummary = { summary: string; clientSaid: string[]; decisions: string[]; commitments: { kind: "creative" | "copy" | "offer" | "launch" | "strategy" | "other"; what: string; why: string; dueDays: number }[] };
@@ -117,67 +107,111 @@ export type CallSummary = { summary: string; clientSaid: string[]; decisions: st
 const READ_SCHEMA = {
   type: "object",
   properties: {
-    summary: { type: "string" },
-    clientSaid: { type: "array", items: { type: "string" } },
-    decisions: { type: "array", items: { type: "string" } },
-    commitments: {
+    internal: { type: "boolean" },
+    overview: { type: "string" },
+    clients: {
       type: "array",
       items: {
         type: "object",
         properties: {
-          kind: { type: "string", enum: ["creative", "copy", "offer", "launch", "strategy", "other"] },
-          what: { type: "string" },
-          why: { type: "string" },
-          dueDays: { type: "integer" },
+          client: { type: "integer" },
+          summary: { type: "string" },
+          clientSaid: { type: "array", items: { type: "string" } },
+          decisions: { type: "array", items: { type: "string" } },
+          commitments: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                kind: { type: "string", enum: ["creative", "copy", "offer", "launch", "strategy", "other"] },
+                what: { type: "string" },
+                why: { type: "string" },
+                dueDays: { type: "integer" },
+              },
+              required: ["kind", "what", "why", "dueDays"],
+              additionalProperties: false,
+            },
+          },
         },
-        required: ["kind", "what", "why", "dueDays"],
+        required: ["client", "summary", "clientSaid", "decisions", "commitments"],
         additionalProperties: false,
       },
     },
   },
-  required: ["summary", "clientSaid", "decisions", "commitments"],
+  required: ["internal", "overview", "clients"],
   additionalProperties: false,
 };
 
-/** The AI's read of a call; its promises become commitments to watch; it joins the client's context. */
-async function readCall(admin: SupabaseClient, id: string) {
+const READ_SYSTEM = `You read the notes of a call at Kaizen, a paid social agency, and pull out everything that matters for each client discussed. It may be a call with a client, or an internal team meeting where several clients come up. Use only what's in the notes; don't invent.
+internal: true if it's an internal Kaizen meeting (no client on the call). overview: two or three sentences on the call as a whole.
+clients: one entry for every client from the list who is discussed in any meaningful way (performance, creative, offers, problems, plans, feedback, budget, mood). client: their number. summary: what was said about them, 2 to 4 sentences. clientSaid: what the client asked for, liked, disliked or told us (on an internal call: what the team reported the client said), short lines. decisions: what was agreed about them.
+commitments: everything Kaizen said it would do or explore for that client. kind: "creative" (an ad, design, video or creative idea to make), "copy", "offer" (an offer or promotion to run), "launch" (launch or change campaigns), "strategy", or "other". what: specific enough to brief ("A reel of the new brunch menu with the bottomless mimosa offer"). why: one line of context. dueDays: business days until it should be in motion (a date mentioned, else 2).`;
+
+/**
+ * The AI's read of a call, per client discussed: each gets their own summary and promises, and it joins that
+ * client's context (the briefing and every agent read it).
+ */
+async function readCall(admin: SupabaseClient, id: string, clients: { id: string; name: string }[]) {
   const { data: call } = await admin.from("client_calls").select("id, client_id, title, occurred_at, notes, url, source, host").eq("id", id).single();
-  if (!call?.client_id) return;
-  const { data: client } = await admin.from("clients").select("name").eq("id", call.client_id).single();
-  const out = await askJson<CallSummary>({
+  if (!call) return;
+  const main = clients.find((c) => c.id === call.client_id);
+  const out = await askJson<{ internal: boolean; overview: string; clients: (CallSummary & { client: number })[] }>({
     agent: "calls",
     label: "read a call",
-    system: `You read the notes of a call between a paid social agency (Kaizen) and its client, and pull out what matters for their ads and creative. Use only what's in the notes.
-summary: 3 to 5 sentences. clientSaid: what the client asked for, liked, disliked or told us (offers, dates, changes, feedback), short lines. decisions: what was agreed.
-commitments: everything Kaizen said it would do or explore that someone should act on. kind: "creative" (an ad, design, video or creative idea to make), "copy", "offer" (an offer or promotion to run), "launch" (launch or change campaigns), "strategy", or "other". what: the thing itself, specific enough to brief ("A reel of the new brunch menu with the bottomless mimosa offer"). why: one line of context from the call. dueDays: business days until it should be in motion (a date mentioned on the call, else 2).`,
+    system: READ_SYSTEM,
     schema: READ_SCHEMA,
-    prompt: `Client: ${client?.name ?? "Unknown"}\nCall: "${call.title}" on ${call.occurred_at.slice(0, 10)}\n\n<notes>\n${call.notes}\n</notes>`,
+    prompt: `Clients (number · name):\n${clients.map((c, i) => `${i + 1} · ${c.name}`).join("\n")}\n\nCall: "${call.title}" on ${call.occurred_at.slice(0, 10)}${main ? `\nThis looks like a call with ${main.name}.` : ""}\n\n<notes>\n${call.notes}\n</notes>`,
   });
-  await admin.from("client_calls").update({ summary: out, status: "read", error: null }).eq("id", id);
-  for (const c of out.commitments.slice(0, 12)) {
-    const { data: due } = await admin.rpc("add_business_days", { p_ts: call.occurred_at, p_days: Math.max(1, Math.min(20, c.dueDays || 2)) });
-    await admin.from("call_commitments").insert({ call_id: id, client_id: call.client_id, kind: c.kind, what: c.what.slice(0, 600), why: c.why.slice(0, 400), due_at: due ?? call.occurred_at });
+  const mentions = out.clients.map((m) => ({ ...m, clientId: clients[m.client - 1]?.id })).filter((m): m is typeof m & { clientId: string } => Boolean(m.clientId));
+  const unique = [...new Map(mentions.map((m) => [m.clientId, m])).values()];
+  await admin
+    .from("client_calls")
+    .update({
+      summary: { summary: out.overview, clientSaid: [], decisions: [], commitments: [] },
+      status: out.internal || !call.client_id ? "internal" : "read",
+      // A call that turned out to be with one client is theirs
+      client_id: call.client_id ?? (!out.internal && unique.length === 1 ? unique[0].clientId : null),
+      error: null,
+    })
+    .eq("id", id);
+  // Older calls (a backfill) are context and promises to see, not briefs written today
+  const recent = Date.now() - Date.parse(call.occurred_at) < 10 * 86_400_000;
+  for (const m of unique) {
+    const summary: CallSummary = { summary: m.summary, clientSaid: m.clientSaid, decisions: m.decisions, commitments: m.commitments };
+    await admin.from("call_mentions").upsert({ call_id: id, client_id: m.clientId, summary }, { onConflict: "call_id,client_id" });
+    for (const c of m.commitments.slice(0, 12)) {
+      const { data: due } = await admin.rpc("add_business_days", { p_ts: call.occurred_at, p_days: Math.max(1, Math.min(20, c.dueDays || 2)) });
+      await admin.from("call_commitments").insert({
+        call_id: id,
+        client_id: m.clientId,
+        kind: c.kind,
+        what: c.what.slice(0, 600),
+        why: c.why.slice(0, 400),
+        due_at: due ?? call.occurred_at,
+        // Not auto-briefed: still shown on the client page and in the request form
+        ...(recent ? {} : { checked_at: new Date().toISOString() }),
+      });
+    }
+    await saveItems(admin, [
+      {
+        client_id: m.clientId,
+        source: "call",
+        external_id: `${call.source}:${id}:${m.clientId}`,
+        thread_id: null,
+        occurred_at: call.occurred_at,
+        author: call.host,
+        title: `${out.internal ? "Internal: " : ""}${call.title}`,
+        body: trimBody(
+          [m.summary, m.clientSaid.length && `Client said: ${m.clientSaid.join("; ")}`, m.decisions.length && `Decided: ${m.decisions.join("; ")}`, m.commitments.length && `We committed to: ${m.commitments.map((c) => c.what).join("; ")}`]
+            .filter(Boolean)
+            .join("\n"),
+          4000,
+        ),
+        url: call.url,
+        meta: { call_id: id, source: call.source, internal: out.internal },
+      },
+    ]);
   }
-  // Into the client's context: the briefing and every agent read it from here
-  await saveItems(admin, [
-    {
-      client_id: call.client_id,
-      source: "call",
-      external_id: `${call.source}:${id}`,
-      thread_id: null,
-      occurred_at: call.occurred_at,
-      author: call.host,
-      title: call.title,
-      body: trimBody(
-        [out.summary, out.clientSaid.length && `Client said: ${out.clientSaid.join("; ")}`, out.decisions.length && `Decided: ${out.decisions.join("; ")}`, out.commitments.length && `We committed to: ${out.commitments.map((c) => c.what).join("; ")}`]
-          .filter(Boolean)
-          .join("\n"),
-        4000,
-      ),
-      url: call.url,
-      meta: { call_id: id, source: call.source },
-    },
-  ]);
 }
 
 /**
@@ -185,7 +219,7 @@ commitments: everything Kaizen said it would do or explore that someone should a
  */
 export async function collectCalls(admin: SupabaseClient, budgetMs = 500_000) {
   const deadline = Date.now() + budgetMs;
-  const since = await getCursor(admin, "calls", 14);
+  const since = await getCursor(admin, "calls", 45);
   const started = new Date();
   const errors: string[] = [];
   const found: NewCall[] = [];
@@ -202,33 +236,30 @@ export async function collectCalls(admin: SupabaseClient, budgetMs = 500_000) {
     if (email && !contacts.has(email)) contacts.set(email, l.client_id);
   }
 
+  // Save everything found first (quick), so a run that runs out of time loses nothing
   let saved = 0;
   for (const call of found) {
-    if (Date.now() > deadline) break;
     const { data: exists } = await admin.from("client_calls").select("id").eq("source", call.source).eq("external_id", call.external_id).maybeSingle();
     if (exists) continue;
-    let clientId: string | null = null;
+    const { error } = await admin.from("client_calls").insert({ ...call, client_id: matchCall(call, clients ?? [], contacts), status: "new" });
+    if (!error) saved++;
+  }
+  // Then read as many as time allows, oldest first; the rest wait for the next run.
+  // Every call is read, internal ones too: a team meeting can carry context for several clients.
+  const { data: waiting } = await admin.from("client_calls").select("id").eq("status", "new").order("occurred_at").limit(60);
+  let read = 0;
+  for (const w of waiting ?? []) {
+    if (Date.now() > deadline) break;
     try {
-      clientId = await matchCall(admin, call, clients ?? [], contacts);
-    } catch {
-      clientId = null;
-    }
-    const { data: row } = await admin
-      .from("client_calls")
-      .insert({ ...call, client_id: clientId, status: clientId ? "new" : "internal" })
-      .select("id")
-      .single();
-    if (!row || !clientId) continue;
-    saved++;
-    try {
-      await readCall(admin, row.id);
+      await readCall(admin, w.id, clients ?? []);
+      read++;
     } catch (e) {
-      await admin.from("client_calls").update({ status: "failed", error: (e instanceof Error ? e.message : String(e)).slice(0, 300) }).eq("id", row.id);
+      await admin.from("client_calls").update({ status: "failed", error: (e instanceof Error ? e.message : String(e)).slice(0, 300) }).eq("id", w.id);
     }
   }
   const watched = await watchCommitments(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
-  await setCursor(admin, "calls", started, { found: found.length, saved, errors, watched });
-  return { found: found.length, saved, errors, watched };
+  await setCursor(admin, "calls", started, { found: found.length, saved, read, waiting: Math.max(0, (waiting ?? []).length - read), errors, watched });
+  return { found: found.length, saved, read, errors, watched };
 }
 
 // ─── Watch what was promised ───────────────────────────────────────────────
@@ -249,6 +280,7 @@ export async function watchCommitments(admin: SupabaseClient, max = 12) {
     .from("call_commitments")
     .select("id, client_id, kind, what, why, due_at, call_id, client_calls(title, occurred_at, summary)")
     .eq("status", "open")
+    .is("checked_at", null)
     .lte("due_at", new Date().toISOString())
     .order("due_at")
     .limit(max);
@@ -284,10 +316,7 @@ export async function watchCommitments(admin: SupabaseClient, max = 12) {
         continue;
       }
       try {
-        const { suggestFromCall } = await import("@/lib/suggestions");
-        const call = c.client_calls as unknown as { title: string; occurred_at: string; summary: CallSummary | null };
-        const suggestionId = await suggestFromCall(admin, clientId, { id: c.id, what: c.what, why: c.why ?? "", kind: c.kind }, call);
-        await admin.from("call_commitments").update({ status: "briefed", suggestion_id: suggestionId, checked_at: now }).eq("id", c.id);
+        await briefPromise(admin, c.id);
         briefed++;
       } catch (e) {
         console.error("[calls] couldn't brief a commitment:", e instanceof Error ? e.message : e);
@@ -295,4 +324,27 @@ export async function watchCommitments(admin: SupabaseClient, max = 12) {
     }
   }
   return { checked: due.length, inMotion, briefed };
+}
+
+/**
+ * Writes the brief for one promise from a call (or returns the one already written), from what was said about that
+ * client on the call. Used by the watcher and by the request form.
+ */
+export async function briefPromise(admin: SupabaseClient, commitmentId: string) {
+  const { data: c } = await admin
+    .from("call_commitments")
+    .select("id, client_id, kind, what, why, suggestion_id, call_id, client_calls(title, occurred_at)")
+    .eq("id", commitmentId)
+    .single();
+  if (!c) throw new Error("Promise not found");
+  if (c.suggestion_id) {
+    const { data: open } = await admin.from("creative_suggestions").select("id").eq("id", c.suggestion_id).eq("status", "open").maybeSingle();
+    if (open) return open.id as string;
+  }
+  const { data: mention } = await admin.from("call_mentions").select("summary").eq("call_id", c.call_id).eq("client_id", c.client_id).maybeSingle();
+  const call = c.client_calls as unknown as { title: string; occurred_at: string };
+  const { suggestFromCall } = await import("@/lib/suggestions");
+  const id = await suggestFromCall(admin, c.client_id, { id: c.id, what: c.what, why: c.why ?? "", kind: c.kind }, { ...call, summary: (mention?.summary as CallSummary | null) ?? null });
+  await admin.from("call_commitments").update({ status: "briefed", suggestion_id: id, checked_at: new Date().toISOString() }).eq("id", c.id);
+  return id;
 }

@@ -96,22 +96,32 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
     loadWatchList(supabase, { clientId: client.id }),
     supabase.from("client_intakes").select("received_at, status, summary, answers, error").eq("client_id", client.id).order("received_at", { ascending: false }).limit(1).maybeSingle(),
     supabase
-      .from("client_calls")
-      .select("id, source, title, occurred_at, url, status, summary, call_commitments(id, kind, what, status, request_numbers)")
+      .from("call_mentions")
+      .select("summary, client_calls!inner(id, source, title, occurred_at, url, status)")
       .eq("client_id", client.id)
-      .order("occurred_at", { ascending: false })
-      .limit(12),
+      .order("occurred_at", { referencedTable: "client_calls", ascending: false })
+      .limit(20),
   ]);
-  const calls: ClientCall[] = (callRows ?? []).map((c) => ({
-    id: c.id,
-    source: c.source as ClientCall["source"],
-    title: c.title,
-    at: c.occurred_at,
-    url: c.url,
-    status: c.status,
-    summary: (c.summary as ClientCall["summary"]) ?? null,
-    commitments: ((c.call_commitments ?? []) as { id: string; kind: string; what: string; status: string; request_numbers: number[] }[]).map((x) => ({ id: x.id, kind: x.kind, what: x.what, status: x.status, requestNumbers: x.request_numbers ?? [] })),
-  }));
+  // Every call that discussed this client (client calls and internal meetings), with what was said about them
+  const callIds = (callRows ?? []).map((m) => (m.client_calls as unknown as { id: string }).id);
+  const { data: promised } = callIds.length
+    ? await supabase.from("call_commitments").select("id, call_id, kind, what, status, request_numbers").eq("client_id", client.id).in("call_id", callIds)
+    : { data: [] };
+  const calls: ClientCall[] = (callRows ?? [])
+    .map((m) => {
+      const c = m.client_calls as unknown as { id: string; source: string; title: string; occurred_at: string; url: string | null; status: string };
+      return {
+        id: c.id,
+        source: c.source as ClientCall["source"],
+        title: c.status === "internal" ? `Internal: ${c.title}` : c.title,
+        at: c.occurred_at,
+        url: c.url,
+        status: c.status,
+        summary: (m.summary as ClientCall["summary"]) ?? null,
+        commitments: (promised ?? []).filter((x) => x.call_id === c.id).map((x) => ({ id: x.id, kind: x.kind, what: x.what, status: x.status, requestNumbers: (x.request_numbers ?? []) as number[] })),
+      };
+    })
+    .sort((a, b) => b.at.localeCompare(a.at));
   const intake: IntakeRecord | null = intakeRow
     ? { receivedAt: intakeRow.received_at, status: intakeRow.status, summary: (intakeRow.summary as IntakeRecord["summary"]) ?? null, answers: (intakeRow.answers ?? []) as IntakeRecord["answers"], error: intakeRow.error }
     : null;
