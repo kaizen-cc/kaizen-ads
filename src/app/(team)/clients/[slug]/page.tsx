@@ -62,6 +62,27 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
         reviewedBy: (bibleRow.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
       }
     : null;
+  const { data: gtmRow } = await supabase
+    .from("client_gtm_strategies")
+    .select("status, missing, version, markdown, read_this_first, open_items, quality, error, started_at, generated_at, reviewed_at, profiles!client_gtm_strategies_reviewed_by_fkey(full_name)")
+    .eq("client_id", client.id)
+    .maybeSingle();
+  const gtm = gtmRow
+    ? {
+        status: gtmRow.status,
+        missing: (gtmRow.missing ?? []) as string[],
+        version: gtmRow.version,
+        markdown: gtmRow.markdown,
+        readThisFirst: gtmRow.read_this_first,
+        openItems: (gtmRow.open_items ?? []) as { item: string; who: string }[],
+        quality: (gtmRow.quality ?? []) as { check: string; pass: boolean; note: string }[],
+        error: gtmRow.error,
+        startedAt: gtmRow.started_at,
+        generatedAt: gtmRow.generated_at,
+        reviewedAt: gtmRow.reviewed_at,
+        reviewedBy: (gtmRow.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
+      }
+    : null;
   const { data: packages } = await supabase.from("creative_packages").select("key, label, images, videos").neq("key", "custom").order("sort_order");
   const { data: allotment } = usage ? { data: null } : await supabase.from("client_allotments").select("images_per_month, videos_per_month").eq("client_id", client.id).maybeSingle();
   const images = usage?.images_per_month ?? allotment?.images_per_month ?? 0;
@@ -145,6 +166,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
       packageLabel={packageLabel ?? null}
       packages={packages ?? []}
       brandBible={brandBible}
+      gtm={gtm}
       today={nyToday()}
       team={Object.fromEntries(SLOTS.map((slot) => [slot.value, { current: currentIn(slot.value), options: optionsFor(slot.eligible) }]))}
       contacts={contacts}

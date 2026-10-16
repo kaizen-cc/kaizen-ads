@@ -16,7 +16,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 export const MODEL_IDS = { opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5", haiku: "claude-haiku-5-5" } as const;
 export type ModelKey = keyof typeof MODEL_IDS;
 export type Effort = "low" | "medium" | "high";
-export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue" | "scripts" | "brandbible" | "creativecheck" | "creativereview" | "coach" | "strategist" | "lab" | "industry" | "calls";
+export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue" | "scripts" | "brandbible" | "creativecheck" | "creativereview" | "coach" | "strategist" | "lab" | "industry" | "calls" | "gtm";
 export const SOURCE_KEYS = ["meta", "briefing", "recent_messages", "memory", "angles", "recent_requests", "allotment", "kpis"] as const;
 export type Sources = Partial<Record<(typeof SOURCE_KEYS)[number], boolean>>;
 
@@ -42,6 +42,7 @@ const DEFAULTS: Record<AgentKey, Pick<AgentConfig, "model" | "effort">> = {
   creativereview: { model: "opus", effort: "medium" }, // reads small text in images; judgement matters
   lab: { model: "opus", effort: "high" }, // the Ads Lab round table
   calls: { model: "sonnet", effort: "low" }, // reads call notes and watches what was promised
+  gtm: { model: "opus", effort: "high" }, // the Meta go-to-market strategy at onboarding (research, then the document)
   industry: { model: "sonnet", effort: "low" }, // sorts clients into industries from everything known about them
   strategist: { model: "opus", effort: "medium" }, // suggests briefs to execs and leads from the data
   coach: { model: "opus", effort: "medium" }, // edits other agents' playbooks from feedback (Settings → AI agents → Coach)
@@ -254,6 +255,7 @@ export type ClientContext = {
   intake?: string; // the marketing intake form, as the AI read it
   kpis?: string | null; // the KPI targets and how each account is doing against them (refreshed every 2 hours)
   brandBible: string | null; // "Read this first" from a Brand Bible the head of creative reviewed
+  gtm?: string | null; // the Meta go-to-market strategy's summary (reviewed, or marked as a draft)
   sinceBriefing: { source: string; at: string; author: string | null; title: string | null; body: string | null }[]; // newer than the briefing
   angles: { name: string; kind: string; description: string | null }[];
   memory: { kind: "avoid" | "prefer" | "note"; body: string; source: string }[];
@@ -299,6 +301,8 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
     .limit(40);
   return {
     brandBible: bible?.read_this_first ? `${bible.read_this_first}\n(Brand Bible ${bible.version}, reviewed by Kaizen)` : null,
+    // Loaded here, not at the top: the strategy module uses this one
+    gtm: await import("@/lib/gtm").then(({ gtmForContext }) => gtmForContext(supabase, clientId)),
     industry: c.industry,
     industryDetail: c.industry_detail,
     winners: await (async () => {
@@ -362,6 +366,8 @@ export function contextBlock(ctx: ClientContext, request?: { images: number; vid
   };
   const lines: string[] = [`<client name="${ctx.name}"${ctx.website ? ` website="${ctx.website}"` : ""}>`];
   if (ctx.brandBible) lines.push("<brand_bible_read_this_first>", "The client's reviewed Brand Bible. Its audience profiles, banned claims and rules are hard limits.", ctx.brandBible, "</brand_bible_read_this_first>");
+  if (ctx.gtm)
+    lines.push("<go_to_market_strategy>", "The client's Meta go-to-market strategy: the angles, offers, customer and KPI targets the team works from. Stay inside it unless the data says otherwise, and never treat an unconfirmed item as confirmed.", ctx.gtm, "</go_to_market_strategy>");
   if (ctx.intake)
     lines.push("<marketing_intake>", "What the client told us in their marketing intake form. Their offer, audience, voice and what to avoid are hard rules.", ctx.intake, "</marketing_intake>");
   if (!on("meta")) lines.push("(Ad performance isn't part of this task.)");

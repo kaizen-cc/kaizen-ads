@@ -1,3 +1,4 @@
+import { autoGtm } from "@/lib/gtm";
 import { isCronRequest } from "@/lib/cron";
 import { checkSetup } from "@/lib/context/check";
 import { collectStep, refreshAll, type Step } from "@/lib/context/run";
@@ -39,6 +40,7 @@ function nyNow() {
  * - meta: every 2 hours (Meta's own numbers settle slowly)
  * - kpi: every 2 hours (campaign numbers for the KPI dashboard; no AI, so it's cheap)
  * - brief: 12pm and 6pm
+ * - gtm: every hour (a Meta go-to-market strategy for newly onboarded clients once the intake form, call notes and website are in)
  * - calls: every 30 minutes on weekdays 8am to 7pm, every 3 hours otherwise (Gemini and Fireflies notes, promises watched)
  * - clients: every hour (new, archived and upgraded clients from Kaizen Track)
  * - suggest: weekdays at 8:30am (the strategist's suggested briefs, ready for the morning)
@@ -52,6 +54,7 @@ function due(step: string | null) {
   if (step === "brief") return [12, 18].includes(hour) && minute < 30;
   if (step === "suggest") return !["Sat", "Sun"].includes(weekday) && hour === 8;
   if (step === "clients") return true;
+  if (step === "gtm") return true;
   if (step === "calls") return (businessHours || hour === 18) || (hour % 3 === 0 && minute < 30);
   return false;
 }
@@ -115,6 +118,7 @@ export async function GET(request: Request) {
     if (step === "industry") return Response.json({ set: await detectIndustries(admin, { force: new URL(request.url).searchParams.get("redo") === "1" }) });
     // Hourly: Kaizen Track's clients, then any intake forms still waiting to be read (a backfill, a short burst of forms)
     if (step === "calls") return Response.json(await collectCalls(admin));
+    if (step === "gtm") return Response.json(await autoGtm(admin, 1));
     if (step === "clients")
       return Response.json({
         track: await mirrorTrack(admin),

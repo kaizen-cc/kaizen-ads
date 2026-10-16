@@ -34,6 +34,7 @@ import { IndustryChip } from "./industry-chip";
 import { INDUSTRY_OPTIONS } from "@/lib/industries";
 import type { ClientCreative } from "@/lib/client-creative";
 import { BrandBiblePanel, type BrandBible } from "./brand-bible-panel";
+import { GtmPanel, type GtmStrategy } from "./gtm-panel";
 import { untilLabel } from "@/lib/allotment";
 
 const fmt = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
@@ -69,6 +70,7 @@ export type ClientViewProps = {
 };
   packages: PackageOption[];
   brandBible?: BrandBible | null;
+  gtm?: GtmStrategy | null; // the Meta go-to-market strategy
   today: string; // YYYY-MM-DD in New York
   packageLabel: string | null;
   team: Record<string, { current: Option | null; options: Option[] }>;
@@ -93,7 +95,7 @@ export type ClientViewProps = {
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, can, demo = false, connections, creative = null, kpis = null, fatigue = null, intake, calls }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, can, demo = false, connections, creative = null, kpis = null, fatigue = null, intake, calls }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -234,6 +236,8 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
           {calls && <CallsPanel calls={calls} />}
 
           {creative && <CreativePanel data={creative} />}
+
+          {!demo && <GtmPanel clientId={client.id} slug={client.slug} gtm={gtm} canReview={can.assign} />}
 
           <BrandBiblePanel clientId={client.id} slug={client.slug} bible={brandBible} canBuild={can.assign} />
 
