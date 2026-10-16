@@ -57,7 +57,7 @@ export async function amendCopy(admin: SupabaseClient, requestId: string, notes:
       schema: COPY_AMEND_SCHEMA,
       onText,
       prompt: `<client>${ctx?.name ?? "the client"}</client>
-${ctx?.brandBible ? `<brand_bible>\n${ctx.brandBible.slice(0, 5000)}\n</brand_bible>\n` : ""}<client_memory>
+${ctx?.brandBible ? `<brand_bible>\n${ctx.brandBible.slice(0, 40000)}\n</brand_bible>\n` : ""}<client_memory>
 ${(ctx?.memory ?? []).map((m) => `- [${m.kind}] ${m.body}`).join("\n") || "(none)"}
 </client_memory>
 
@@ -193,7 +193,7 @@ export async function writeClientSummary(admin: SupabaseClient, requestId: strin
     schema: CLIENT_SUMMARY_SCHEMA,
     prompt: `<client>${ctx?.name ?? "the client"}</client>
 ${ctx?.brandBible ? `<brand_bible>
-${ctx.brandBible.slice(0, 3000)}
+${ctx.brandBible.slice(0, 40000)}
 </brand_bible>
 ` : ""}
 <request>

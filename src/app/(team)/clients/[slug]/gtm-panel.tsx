@@ -131,7 +131,7 @@ export function GtmPanel({ clientId, slug, gtm, canReview }: { clientId: string;
       {has && gtm && !building && (
         <div className="relative grid gap-4">
           <div className="rounded-[12px] border border-line bg-bg p-5">
-            <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.12em] text-faint">What every agent reads</p>
+            <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.12em] text-faint">In short · every agent reads this and the full strategy</p>
             <Markdown text={gtm.readThisFirst} />
           </div>
 

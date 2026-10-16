@@ -45,16 +45,17 @@ The prime directive, above being complete: never invent anything.
 - When something is missing, the section says so plainly and it goes in openItems. A visibly incomplete section is always better than a plausible placeholder.
 Every number, quote, competitor claim and offer carries its source in brackets: [intake], [call: <title> <date>], [website], [research: <url>], [Meta account].
 
-The document, in Markdown, in this order:
-1. Executive Summary: the client, the market opportunity, Kaizen's recommended Meta strategy in plain language (one page).
-2. Business Overview: what they sell, pricing (only as stated), revenue model, differentiators, current marketing and results, AOV, LTV, close or return rate, COGS and CAC where known, the funnel and customer journey, and an ad account assessment if there's Meta data.
-3. Ideal Customer Profile: demographics, psychographics, pain points in the customer's own words where sourced, buying triggers, objections, customer language.
-4. Competitive Landscape: 3 to 5 competitors from the intake, calls or research, their positioning, offers and Meta presence, strengths and weaknesses, and the gap Kaizen will exploit. Review mining: negative competitor reviews as angle opportunities, positive client reviews as proof, real language only.
-5. Messaging Strategy: at least 3 angles, each rooted in a specific finding: Pain Point, Outcome/Transformation, Offer/Value (only confirmed offers, else "pending offer confirmation from client"), plus social proof, comparison or urgency where warranted. For each angle: 3 headlines under 40 characters and 3 primary texts of 2 to 4 sentences (hook, problem or benefit, CTA).
-6. Meta Advertising Strategy: campaign structure (Advantage+ and campaign types, ad sets, objectives), testing sequence, budget allocation, KPI targets with sourced benchmarks or the client's own history, offer positioning, and the funnel recommendation (site, landing page or lead form).
-7. 90-Day Profitability Roadmap: Day 30, 60 and 90 milestones, breakeven CPA math shown from the client's own numbers, and "what would need to be true for this NOT to work".
-8. Swipe File: Meta Ad Library examples only if they're in the research or notes, with the angle each uses and why it works; otherwise an open item for the media buyer to pull them.
-9. Open Items / Confirmations Needed: everything unconfirmed, estimated or pending, visible, never buried.
+The document, in Markdown, follows Kaizen's GTM Strategy Template ("Meta Advertising Strategy & Roadmap"), section by section with these exact headings and fields:
+Cover: "Go-To-Market Strategy: Meta Advertising Strategy & Roadmap", the client name, prepared for (the client contact or company), prepared by (the media buyer, from the team, else "[media buyer]"), the date, status "Draft".
+## 01 Executive Summary: The Opportunity (one to two sentences: the market opportunity and why now). Kaizen's Recommended Strategy (plain language: what we're doing and why it will work). The Competitive Edge (the single clearest advantage competitors aren't using). The 60-Day Bet (why this account will be profitable within 60 days, in one sentence). At a Glance: Target CPA, Platform (Meta: Facebook / Instagram), Launch Date.
+## 02 Business Overview: What They Sell (product or service, pricing model, revenue model; prices only as stated). Key Differentiators. Current Marketing Activity (platforms, spend and results today). Profitability Snapshot: Avg. Order / Job Value, Customer LTV, Current CAC ("unknown" when it is). Funnel & Ad Account Assessment: Customer Journey / Funnel Map (ad click to conversion, friction points flagged) and Existing Ad Account Findings (what's been tested, what worked and didn't, audiences that exist; from the Meta account data when there is some).
+## 03 Ideal Customer Profile: Demographics (age, gender split, income, geography). Psychographics (values, lifestyle, aspirations, buying motivations). Pain Points (in the customer's own words). Buying Triggers. Objections (price, trust, skepticism, alternatives). Voice of Customer: real customer language, direct quotes from real reviews, testimonials or the intake form only.
+## 04 Competitive Landscape: Competitor 1, 2 and 3 (up to 5): name, positioning, strength, weakness, and their Meta presence. The Gap We're Exploiting (what competitors aren't saying or doing that Kaizen will own). Recurring Competitor Weakness (from review mining, real reviews only). Our Proof Point (from real client reviews only).
+## 05 Messaging Strategy: at least three angles, numbered, each named and rooted in a specific finding: 1 Pain Point, 2 Transformation, 3 Offer / Value (confirmed real offers only, else "pending offer confirmation from client"), plus social proof, comparison or urgency where warranted. Each with Headlines (3, under 40 characters each) and Primary Text (3, each 2 to 4 sentences: hook, problem or benefit, CTA).
+## 06 Meta Advertising Strategy: Recommended Meta Campaign Structure (campaign types including Advantage+, ad sets, objectives). Initial Testing Sequence (what's tested first, budget allocation). Benchmarks: Industry Avg. CPM, Industry Avg. CTR, Industry Avg. CPA / ROAS, each with its cited source. Profitability Scenario: The Math ("At our target CPA of $X with a $Y average order, we need a Z% conversion rate to be profitable", and why that's achievable, from the client's numbers). Offer Positioning (discount, guarantee, bundle or full price; confirmed only). Funnel Recommendation (website, GHL landing page or lead form).
+## 07 90-Day Profitability Roadmap: 30 Days (what's being tested, what data we'll have, expected CPA range). 60 Days (expected CPA confidence, what's scaling). 90 Days (target ROAS / CPA / lead volume for profitable scale). Projected Return: monthly ROI on ad spend at target CPA, from the client's own numbers only, breakeven CPA math shown. Gap Analysis: what would need to be true for this NOT to work, honest risks and the plan if they happen.
+## 08 Open Items & Confirmations Needed: Unconfirmed or Estimated Figures. Information Still Needed From Client. Research Still Pending (team side, e.g. Meta Ad Library pulls, a Motion board, swipe file examples). Then the Internal Quality Gate results.
+Where a field has no sourced answer, write what's missing in the field itself and list it under 08; never leave a template placeholder in brackets and never fill it with a guess.
 No client sign-off section.
 
 Copy rules: never use em dashes anywhere; use periods, commas or restructure. Confident and direct, professional (client-facing): no internal slang or profanity.
@@ -86,10 +87,13 @@ export async function buildGtm(admin: SupabaseClient, clientId: string, by: stri
 
   try {
     // Everything the gate asks for, in full: the intake answers and every call this client came up in
-    const [{ data: intake }, { data: mentions }] = await Promise.all([
+    const [{ data: intake }, { data: mentions }, { data: buyers }] = await Promise.all([
       admin.from("client_intakes").select("answers, received_at").eq("client_id", clientId).not("summary", "is", null).order("received_at", { ascending: false }).limit(1).single(),
       admin.from("call_mentions").select("summary, client_calls(title, occurred_at, status)").eq("client_id", clientId).limit(20),
+      admin.from("client_assignments").select("profiles(full_name)").eq("client_id", clientId).eq("role", "meta_buyer"),
     ]);
+    // "Prepared by" on the cover: the client's media buyer
+    const preparedBy = (buyers ?? []).map((b) => (b.profiles as unknown as { full_name: string } | null)?.full_name).filter(Boolean).join(" and ");
     const answers = ((intake?.answers ?? []) as { q: string; a: string }[]).filter((x) => x.a?.trim()).map((x) => `Q: ${x.q}\nA: ${x.a}`).join("\n\n");
     const calls = (mentions ?? [])
       .map((m) => {
@@ -143,7 +147,7 @@ ${calls}
 ${research || "No research came back."}
 </web_research>
 ${prev?.markdown ? `\n<current_strategy version="${prev.version}">\n${prev.markdown.slice(0, 30000)}\n</current_strategy>\nUpdate it with what's new: keep what still holds, and add a short change-log line at the end.\n` : ""}
-Write ${client.name}'s Meta Go-to-Market strategy. Today is ${today()}.`,
+Write ${client.name}'s Meta Go-to-Market strategy. Today is ${today()}. Prepared by: ${preparedBy || "[media buyer not assigned yet]"}.`,
     });
 
     const version = prev?.markdown ? bump(prev.version) : "v1.0";
@@ -215,7 +219,7 @@ export async function autoGtm(admin: SupabaseClient, max = 1) {
 
 /** The strategy as the agents read it: the summary once reviewed; a draft only as a draft. */
 export async function gtmForContext(db: SupabaseClient, clientId: string) {
-  const { data } = await db.from("client_gtm_strategies").select("status, version, read_this_first").eq("client_id", clientId).in("status", ["draft", "reviewed"]).maybeSingle();
-  if (!data?.read_this_first) return null;
-  return `${data.read_this_first}\n(Meta go-to-market strategy ${data.version}${data.status === "reviewed" ? ", reviewed by Kaizen" : ", a draft the team hasn't reviewed yet: treat anything unconfirmed as unconfirmed"})`;
+  const { data } = await db.from("client_gtm_strategies").select("status, version, read_this_first, markdown").eq("client_id", clientId).in("status", ["draft", "reviewed"]).maybeSingle();
+  if (!data?.markdown && !data?.read_this_first) return null;
+  return `${data.read_this_first ? `In short:\n${data.read_this_first}\n\n` : ""}${data.markdown ? `The full strategy:\n${data.markdown.slice(0, 40000)}` : ""}\n(Meta go-to-market strategy ${data.version}${data.status === "reviewed" ? ", reviewed by Kaizen" : ", a draft the team hasn't reviewed yet: treat anything unconfirmed as unconfirmed"})`;
 }

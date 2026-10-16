@@ -254,8 +254,8 @@ export type ClientContext = {
   tiring?: string; // ads the fatigue watcher flagged, in lines
   intake?: string; // the marketing intake form, as the AI read it
   kpis?: string | null; // the KPI targets and how each account is doing against them (refreshed every 2 hours)
-  brandBible: string | null; // "Read this first" from a Brand Bible the head of creative reviewed
-  gtm?: string | null; // the Meta go-to-market strategy's summary (reviewed, or marked as a draft)
+  brandBible: string | null; // the whole Brand Bible ("Read this first", then the full document; a draft marked as a draft)
+  gtm?: string | null; // the whole Meta go-to-market strategy (reviewed, or marked as a draft)
   sinceBriefing: { source: string; at: string; author: string | null; title: string | null; body: string | null }[]; // newer than the briefing
   angles: { name: string; kind: string; description: string | null }[];
   memory: { kind: "avoid" | "prefer" | "note"; body: string; source: string }[];
@@ -289,7 +289,8 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
       .limit(25),
   ]);
   if (!c) return null;
-  const { data: bible } = await supabase.from("client_brand_bibles").select("read_this_first, version").eq("client_id", clientId).eq("status", "reviewed").maybeSingle();
+  // The whole Brand Bible, for the most context (a draft is read as a draft)
+  const { data: bible } = await supabase.from("client_brand_bibles").select("status, markdown, read_this_first, version").eq("client_id", clientId).in("status", ["draft", "reviewed"]).maybeSingle();
   // Slack and email that came in after the briefing was written, so suggestions and the review are current
   const { data: newer } = await supabase
     .from("context_items")
@@ -300,7 +301,10 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
     .order("occurred_at", { ascending: false })
     .limit(40);
   return {
-    brandBible: bible?.read_this_first ? `${bible.read_this_first}\n(Brand Bible ${bible.version}, reviewed by Kaizen)` : null,
+    brandBible:
+      bible?.markdown || bible?.read_this_first
+        ? `${bible.read_this_first ? `Read this first:\n${bible.read_this_first}\n\n` : ""}${bible.markdown ? `The full Brand Bible:\n${bible.markdown.slice(0, 40000)}` : ""}\n(Brand Bible ${bible.version}${bible.status === "reviewed" ? ", reviewed by Kaizen" : ", a draft the Head of Creative hasn't reviewed yet"})`
+        : null,
     // Loaded here, not at the top: the strategy module uses this one
     gtm: await import("@/lib/gtm").then(({ gtmForContext }) => gtmForContext(supabase, clientId)),
     industry: c.industry,
@@ -365,7 +369,7 @@ export function contextBlock(ctx: ClientContext, request?: { images: number; vid
     recent: on("recent_requests") ? ctx.recent : [],
   };
   const lines: string[] = [`<client name="${ctx.name}"${ctx.website ? ` website="${ctx.website}"` : ""}>`];
-  if (ctx.brandBible) lines.push("<brand_bible_read_this_first>", "The client's reviewed Brand Bible. Its audience profiles, banned claims and rules are hard limits.", ctx.brandBible, "</brand_bible_read_this_first>");
+  if (ctx.brandBible) lines.push("<brand_bible>", "The client's Brand Bible. Its audience profiles, voice, banned claims and rules are hard limits.", ctx.brandBible, "</brand_bible>");
   if (ctx.gtm)
     lines.push("<go_to_market_strategy>", "The client's Meta go-to-market strategy: the angles, offers, customer and KPI targets the team works from. Stay inside it unless the data says otherwise, and never treat an unconfirmed item as confirmed.", ctx.gtm, "</go_to_market_strategy>");
   if (ctx.intake)

@@ -215,7 +215,7 @@ export async function chatWithCopywriter(requestId: string, text: string): Promi
       system: COPY_CHAT_SYSTEM,
       schema: COPY_CHAT_SCHEMA,
       prompt: `<client>${ctx?.name ?? "the client"}</client>
-${ctx?.brandBible ? `<brand_bible>\n${ctx.brandBible.slice(0, 6000)}\n</brand_bible>\n` : ""}<client_memory>
+${ctx?.brandBible ? `<brand_bible>\n${ctx.brandBible.slice(0, 40000)}\n</brand_bible>\n` : ""}<client_memory>
 ${(ctx?.memory ?? []).map((m) => `- [${m.kind}] ${m.body}`).join("\n") || "(none)"}
 </client_memory>
 
