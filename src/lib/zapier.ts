@@ -88,7 +88,9 @@ export async function readRaw(request: Request): Promise<Record<string, string>>
 export function pickLoose(raw: Record<string, string>, keys: string[]) {
   const byNorm = new Map(Object.entries(raw).map(([k, v]) => [norm(k), v]));
   for (const k of keys) if (byNorm.get(k)) return byNorm.get(k)!;
-  for (const [k, v] of byNorm) if (keys.some((x) => k.includes(x))) return v;
+  // A question that only mentions the thing ("Business address", "Business email") isn't its name
+  const aside = /address|email|phone|website|url|hours|type|goal|industry|location|social|instagram|facebook|logo|owner|contact/;
+  for (const [k, v] of byNorm) if (keys.some((x) => k.includes(x)) && !aside.test(k)) return v;
   return null;
 }
 
