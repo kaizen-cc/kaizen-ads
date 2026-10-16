@@ -1021,7 +1021,7 @@ function when(iso: string) {
 
 function AiPanel({ aiOn, ai, clientName, onRefresh, extra }: { aiOn: boolean; ai: AiState; clientName: string | null; onRefresh: () => void; extra?: React.ReactNode }) {
   return (
-    <aside className="hidden xl:sticky xl:top-8 xl:grid xl:max-h-[calc(100vh-4rem)] xl:gap-4 xl:self-start xl:overflow-y-auto xl:pb-4 [scrollbar-width:thin]">
+    <aside className="hidden min-w-0 xl:sticky xl:top-8 xl:flex xl:max-h-[calc(100vh-4rem)] xl:flex-col xl:gap-4 xl:self-start xl:overflow-y-auto xl:overflow-x-hidden xl:pb-4 [scrollbar-width:thin]">
       <div className="relative grid gap-4 overflow-hidden rounded-[12px] border border-line bg-surface p-5">
         <span className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-brand/20 blur-3xl" />
         <div className="relative flex items-center gap-2.5">
