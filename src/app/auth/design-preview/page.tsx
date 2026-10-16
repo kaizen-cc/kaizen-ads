@@ -131,6 +131,35 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
       <ClientView
         client={{ id: "c1", name: "Crust Pizza Co.", slug: "crust-pizza-co", status: "active", client_type: "traditional", website: "https://crustpizza.com", meta_ad_account_id: "526528539355910", slack_channel_id: "C078D34T7FX", internal_slack_channel_id: "C06TQ0WMCJ1", drive_folder_id: "1Rnwf-WH7tz", kaizen_id: 403, auto_approve_opt_in: false, creative_package: view !== "client-none", creative_package_key: "silver", creative_package_until: "2026-11-30", creative_package_note: "Holiday push through Black Friday" }}
         fatigue={view === "client" ? sampleFatigue : []}
+        intake={
+          view === "client"
+            ? {
+                receivedAt: "2026-10-14T14:00:00Z",
+                status: "briefed",
+                error: null,
+                summary: {
+                  business: "Neapolitan pizza restaurant with two Baton Rouge locations, dine-in, takeout and catering.",
+                  offer: "Game day bundles (2 pies + wings), catering for offices, and a new gluten-free crust.",
+                  audience: "Families and LSU fans within 10 miles; office managers ordering lunch for teams.",
+                  locations: "Baton Rouge (Perkins Rd, Bluebonnet)",
+                  goals: "More online orders on game days; 20 catering orders a month by December.",
+                  voice: "Warm, a little cheeky, local. Never corporate.",
+                  avoid: ["Don't say 'best pizza in town'", "No discounts deeper than 20%", "Don't mention the old Highland location"],
+                  proof: ["4.8 stars on Google (1,200 reviews)", "Featured in 225 Magazine 2025"],
+                  competitors: ["Rotolo's", "Fat Boy's Pizza"],
+                  assets: ["Professional photos from August shoot (Drive link)", "Logo files"],
+                  industry: "restaurant",
+                  industryDetail: "Pizza restaurant",
+                  questions: ["Is the gluten-free crust available at both locations?", "Catering minimum order?"],
+                },
+                answers: [
+                  { q: "Business name", a: "Crust Pizza Co." },
+                  { q: "What makes you different?", a: "900° wood-fired oven, dough fermented 72 hours, everything made in house." },
+                  { q: "Anything we should never say?", a: "Please don't call us the best pizza in town, everyone says that." },
+                ],
+              }
+            : null
+        }
         kpis={view === "client" ? sampleKpis.filter((k) => k.status === "off" || k.status === "good").slice(0, 2) : []}
         packageLabel="Silver"
         packages={[
