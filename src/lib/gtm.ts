@@ -191,12 +191,12 @@ function bump(v: string) {
 }
 
 /**
- * Onboarding: clients whose intake form came in during the last 60 days get a strategy as soon as the gate clears
+ * Onboarding: paid ads clients whose intake form came in during the last 60 days get a strategy as soon as the gate clears
  * (waiting until then, with what's missing on their page). One build per run; each is a few minutes of research.
  */
 export async function autoGtm(admin: SupabaseClient, max = 1) {
   const since = new Date(Date.now() - 60 * 86_400_000).toISOString();
-  const { data: intakes } = await admin.from("client_intakes").select("client_id, clients!inner(archived_at, status)").gte("received_at", since).not("client_id", "is", null).not("summary", "is", null).is("clients.archived_at", null);
+  const { data: intakes } = await admin.from("client_intakes").select("client_id, clients!inner(archived_at, status, paid_ads)").gte("received_at", since).not("client_id", "is", null).not("summary", "is", null).is("clients.archived_at", null).eq("clients.paid_ads", true);
   const ids = [...new Set((intakes ?? []).filter((i) => (LIVE as readonly string[]).includes((i.clients as unknown as { status: string }).status)).map((i) => i.client_id as string))];
   if (!ids.length) return { candidates: 0, built: 0 };
   const { data: have } = await admin.from("client_gtm_strategies").select("client_id, status, started_at").in("client_id", ids);

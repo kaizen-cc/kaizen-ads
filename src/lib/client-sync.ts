@@ -24,7 +24,16 @@ export async function mirrorTrack(admin: SupabaseClient) {
   const byKaizen = new Map(list.filter((c) => c.kaizen_id != null).map((c) => [c.kaizen_id!, c]));
   const byName = new Map(list.map((c) => [norm(c.name), c]));
 
-  const out = { linked: 0, created: [] as string[], archived: [] as string[], restored: [] as string[], packages: [] as string[], packageRemovedInTrack: [] as string[], errors: [] as string[] };
+  // The services each client buys (Facebook Ads, Creative, Email…): paid_ads follows from them
+  const { data: svc } = await track.from("client_services").select("client_id, services!inner(slug, kind)").is("ended_at", null).eq("services.kind", "sold");
+  const servicesOf = new Map<string, string[]>();
+  for (const r of svc ?? []) {
+    const slug = (r.services as unknown as { slug: string }).slug;
+    servicesOf.set(r.client_id as string, [...(servicesOf.get(r.client_id as string) ?? []), slug].sort());
+  }
+  const now = new Date().toISOString();
+
+  const out = { linked: 0, services: 0, created: [] as string[], archived: [] as string[], restored: [] as string[], packages: [] as string[], packageRemovedInTrack: [] as string[], errors: [] as string[] };
   for (const t of (theirs ?? []) as TrackClient[]) {
     if (t.is_internal) continue;
     const ext = t.external_id && /^\s*\d+\s*$/.test(t.external_id) ? Number(t.external_id) : null;
@@ -50,6 +59,8 @@ export async function mirrorTrack(admin: SupabaseClient) {
         await admin.from("clients").update({ track_client_id: t.id }).eq("id", c.id);
         out.linked++;
       }
+      await admin.from("clients").update({ services: servicesOf.get(t.id) ?? [], services_synced_at: now }).eq("id", c.id);
+      out.services++;
       if (t.status === "archived" && !c.archived_at) {
         await admin.rpc("system_archive_client", { p_client: c.id, p_reason: "Archived in Kaizen Track", p_source: "track" });
         out.archived.push(c.name);

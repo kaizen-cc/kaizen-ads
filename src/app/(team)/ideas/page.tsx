@@ -59,7 +59,7 @@ async function Verticals() {
   const db = adminConfigured() ? createAdminClient() : await createClient();
   const [verticals, { data: clients }, { data: brands }, { data: books }] = await Promise.all([
     loadVerticals(db),
-    db.from("clients").select("id, name, slug, vertical_id, vertical_why").is("archived_at", null).in("status", LIVE).order("name"),
+    db.from("clients").select("id, name, slug, vertical_id, vertical_why").is("archived_at", null).in("status", LIVE).eq("paid_ads", true).order("name"),
     db.from("market_brands").select("vertical_id").eq("rejected", false).not("vertical_id", "is", null),
     db.from("vertical_playbooks").select("vertical_id, avatars"),
   ]);

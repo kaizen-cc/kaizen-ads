@@ -38,6 +38,12 @@ export async function pool<T, R>(list: T[], size: number, fn: (x: T) => Promise<
 
 export type Step = "slack" | "drive" | "gmail" | "meta";
 
+/** One inbox now (Sync health's Retry). */
+export async function collectMailbox(admin: SupabaseClient, mailbox: string) {
+  if (!googleConfigured()) return { source: `gmail:${mailbox}`, error: "Google not set up" };
+  return collect(admin, `gmail:${mailbox}`, async (since) => collectGmail(mailbox, since, await contactMap(admin)));
+}
+
 /** Pull what's new from one source. Each runs on its own schedule slot with its own time limit. */
 export async function collectStep(admin: SupabaseClient, step: Step, budgetMs = 600_000) {
   const deadline = Date.now() + budgetMs;

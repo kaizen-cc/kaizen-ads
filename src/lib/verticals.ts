@@ -19,9 +19,9 @@ const slugify = (s: string) =>
     .replace(/(^-|-$)/g, "")
     .slice(0, 60);
 
-/** What we know about each live client, short: enough to place them. */
+/** What we know about each live paid ads client, short: enough to place them. Verticals are the paid ads team's. */
 async function clientFacts(admin: SupabaseClient, ids?: string[]) {
-  let q = admin.from("clients").select("id, name, website, industry, industry_detail").is("archived_at", null).in("status", LIVE);
+  let q = admin.from("clients").select("id, name, website, industry, industry_detail").is("archived_at", null).in("status", LIVE).eq("paid_ads", true);
   if (ids?.length) q = q.in("id", ids);
   const { data: clients } = await q;
   const list = clients ?? [];
@@ -154,7 +154,7 @@ const PLACE_SCHEMA = {
 
 /** New live clients (and any not placed yet) go into the existing sub-verticals. Hourly. */
 export async function placeNewClients(admin: SupabaseClient) {
-  const { data } = await admin.from("clients").select("id").is("archived_at", null).in("status", LIVE).is("vertical_id", null).limit(30);
+  const { data } = await admin.from("clients").select("id").is("archived_at", null).in("status", LIVE).eq("paid_ads", true).is("vertical_id", null).limit(30);
   if (!data?.length) return 0;
   const current = await currentTaxonomy(admin);
   if (!current.length) return (await buildTaxonomy(admin)).clients;

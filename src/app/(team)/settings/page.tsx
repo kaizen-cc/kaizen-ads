@@ -13,9 +13,11 @@ import { DataInspector } from "./data-inspector";
 import { AGENT_MOMENTS, momentOf } from "@/lib/agent-moments";
 import Team from "../team/page";
 import { ErrorButtons } from "./error-buttons";
+import { LastRun, RetryOne, SyncNowButton, type RunState } from "./sync-buttons";
+import type { SyncJob } from "./sync-actions";
 
-// Inspecting a big ad account reads a few thousand rows
-export const maxDuration = 60;
+// Inspecting a big ad account reads a few thousand rows; Sync now runs a whole job in the background
+export const maxDuration = 800;
 
 const TABS = [
   ["agents", "AI agents"],
@@ -123,11 +125,15 @@ async function Data({ target, from, to }: { target: string | null; from: string;
   return <DataInspector targets={targets} targetId={target} from={from} to={to} />;
 }
 
-const GROUPS: [string, string][] = [
-  ["kpi:", "KPI numbers (per ad account)"],
-  ["slack:", "Slack channels"],
-  ["gmail:", "Inboxes"],
-  ["drive:", "Drive folders"],
+// [source prefix, name, the job Sync now runs, what it does]
+const GROUPS: [string, string, SyncJob, string][] = [
+  ["kpi:", "KPI numbers (per ad account)", "kpi", "Campaign numbers for the KPI dashboard, every 2 hours"],
+  ["meta", "Meta ads (daily, per ad)", "meta", "Every ad's daily numbers, then fatigue, winners and the Hall of Fame, every 2 hours"],
+  ["slack", "Slack channels", "slack", "Every 30 minutes in business hours"],
+  ["gmail:", "Inboxes", "gmail", "Every 30 minutes in business hours"],
+  ["drive", "Drive folders", "drive", "Every 30 minutes in business hours"],
+  ["calls", "Call notes", "calls", "Gemini and Fireflies notes, read for paid ads promises, every 30 minutes in business hours"],
+  ["verticals", "Verticals and playbooks", "verticals", "Places new clients, researches benchmarks and writes playbooks, hourly"],
 ];
 
 type ErrorRow = {
@@ -320,10 +326,29 @@ async function MotionCard({ notice }: { notice: string | null }) {
   );
 }
 
+const olderThan = (iso: string, ms: number) => Date.now() - Date.parse(iso) > ms;
+
 async function Sync({ motion }: { motion: string | null }) {
   if (!adminConfigured()) return <p className="text-sm text-faint">Server key missing.</p>;
-  const { data } = await createAdminClient().from("sync_state").select("source, last_run_at, last_result").order("source");
-  const rows = data ?? [];
+  const admin = createAdminClient();
+  const [{ data }, { data: accounts }] = await Promise.all([
+    admin.from("sync_state").select("source, last_run_at, last_result").order("source"),
+    admin.from("kpi_targets").select("ad_account_id, clients(name)").eq("active", true).not("ad_account_id", "is", null),
+  ]);
+  const all = data ?? [];
+  // A hand run still "running" after 15 minutes timed out
+  const runs = new Map(
+    all
+      .filter((r) => r.source.startsWith("run:"))
+      .map((r) => {
+        const x = r.last_result as NonNullable<RunState>;
+        const timedOut = x.running && (!x.startedAt || olderThan(x.startedAt, 15 * 60_000));
+        return [r.source.slice(4), timedOut ? { ...x, running: false, error: x.error ?? "It didn't finish (timed out)" } : x] as const;
+      }),
+  );
+  const rows = all.filter((r) => !r.source.startsWith("run:"));
+  // KPI rows are keyed by ad account; show whose it is
+  const owner = new Map((accounts ?? []).map((a) => [String(a.ad_account_id).replace(/^act_/, ""), (a.clients as unknown as { name: string } | null)?.name ?? ""]));
   const errorOf = (r: (typeof rows)[number]) => {
     const res = r.last_result as { error?: string | null; errors?: string[] } | null;
     return res?.error ?? (res?.errors?.length ? res.errors.join("; ") : null);
@@ -331,40 +356,69 @@ async function Sync({ motion }: { motion: string | null }) {
   return (
     <div className="grid gap-4">
       <MotionCard notice={motion} />
-      {GROUPS.map(([prefix, name]) => {
-        const list = rows.filter((r) => r.source.startsWith(prefix));
+      {GROUPS.map(([prefix, name, job, about]) => {
+        const list = rows.filter((r) => (prefix.endsWith(":") ? r.source.startsWith(prefix) : r.source === prefix || r.source.startsWith(`${prefix}:`)));
         const failing = list.filter(errorOf);
         const stale = list.filter((r) => freshness(r.last_run_at).tone !== "ok");
         const newest = list.map((r) => r.last_run_at).filter(Boolean).sort().at(-1);
+        const run = runs.get(job) ?? null;
+        const label = (source: string) => {
+          const rest = source.startsWith(prefix) ? source.slice(prefix.length).replace(/^:/, "") : source;
+          if (prefix === "kpi:") return owner.get(rest) ? `${owner.get(rest)} · ${rest}` : rest;
+          return rest || "everything";
+        };
+        const retry = prefix === "kpi:" || prefix === "gmail:";
         return (
           <details key={prefix} className="group rounded-[14px] border border-line bg-surface">
             <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 px-6 py-4">
               <span className="flex items-center gap-3">
-                <span className={`h-2 w-2 rounded-full ${failing.length ? "bg-bad" : stale.length ? "bg-warn" : "bg-ok"}`} />
+                <span className={`h-2 w-2 rounded-full ${failing.length ? "bg-bad" : stale.length ? "bg-warn" : list.length ? "bg-ok" : "bg-line"}`} />
                 <span className="font-heading text-[16px]">{name}</span>
               </span>
-              <span className="text-xs text-muted">
-                <span className="tabular">{list.length}</span> tracked
-                {failing.length > 0 && <span className="text-bad"> · {failing.length} failing</span>}
-                {stale.length > 0 && <span className="text-warn"> · {stale.length} behind</span>}
-                {newest && <span className="text-faint"> · {freshness(newest).label.toLowerCase()}</span>}
+              <span className="flex flex-wrap items-center gap-3">
+                <span className="text-xs text-muted">
+                  {list.length > 1 && (
+                    <>
+                      <span className="tabular">{list.length}</span> tracked
+                    </>
+                  )}
+                  {failing.length > 0 && <span className="text-bad"> · {failing.length} failing</span>}
+                  {stale.length > 0 && <span className="text-warn"> · {stale.length} behind</span>}
+                  {newest ? <span className="text-faint"> · {freshness(newest).label.toLowerCase()}</span> : <span className="text-faint">Not run yet</span>}
+                </span>
+                <SyncNowButton job={job} run={run} />
               </span>
             </summary>
-            <ul className="grid gap-1 border-t border-line px-4 py-3">
-              {[...failing, ...list.filter((r) => !errorOf(r))].slice(0, 120).map((r) => (
-                <li key={r.source} className="grid grid-cols-[minmax(0,220px)_140px_minmax(0,1fr)] gap-3 rounded-[8px] px-2 py-1.5 text-xs odd:bg-bg">
-                  <code className="truncate text-muted">{r.source.slice(prefix.length)}</code>
-                  <span className="text-faint">{freshness(r.last_run_at).label}</span>
-                  <span className={`truncate ${errorOf(r) ? "text-bad" : "text-faint"}`} title={errorOf(r) ?? undefined}>
-                    {errorOf(r) ?? "OK"}
-                  </span>
-                </li>
-              ))}
-            </ul>
+            <div className="grid gap-2 border-t border-line px-4 py-3">
+              <div className="grid gap-0.5 px-2">
+                <p className="text-[11px] text-faint">{about}</p>
+                <LastRun run={run} />
+              </div>
+              <ul className="grid gap-1">
+                {[...failing, ...list.filter((r) => !errorOf(r))].slice(0, 120).map((r) => (
+                  <li
+                    key={r.source}
+                    className={`grid ${retry ? "grid-cols-[minmax(0,240px)_120px_minmax(0,1fr)_auto]" : "grid-cols-[minmax(0,240px)_120px_minmax(0,1fr)]"} items-center gap-3 rounded-[8px] px-2 py-1.5 text-xs odd:bg-bg`}
+                  >
+                    <span className="truncate text-muted" title={r.source}>
+                      {label(r.source)}
+                    </span>
+                    <span className="text-faint">{freshness(r.last_run_at).label}</span>
+                    <span className={`truncate ${errorOf(r) ? "text-bad" : "text-faint"}`} title={errorOf(r) ?? undefined}>
+                      {errorOf(r) ?? "OK"}
+                    </span>
+                    {retry && <RetryOne source={r.source} />}
+                  </li>
+                ))}
+              </ul>
+            </div>
           </details>
         );
       })}
-      <p className="text-xs text-faint">Behind = no successful run in the last day. Slack, email and Drive sync every 30 minutes in business hours; KPI numbers every 2 hours; Motion every morning at 8:30.</p>
+      <p className="text-xs text-faint">
+        Behind = no successful run in the last day. Sync now runs a job outside its schedule (it takes a few minutes; the card updates when it&apos;s done). A failing ad account or inbox
+        can be retried on its own from inside its card.
+      </p>
     </div>
   );
 }

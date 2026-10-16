@@ -56,7 +56,7 @@ async function keepImage(admin: SupabaseClient, adId: string, url: string | null
 export async function updateHallOfFame(admin: SupabaseClient, deadline = Date.now() + 240_000) {
   const since = new Date(Date.now() - 180 * DAY).toISOString().slice(0, 10);
   const [{ data: clients }, { data: targets }, { data: subs }] = await Promise.all([
-    admin.from("clients").select("id, name, vertical_id, meta_ad_account_id").is("archived_at", null).in("status", LIVE).not("meta_ad_account_id", "is", null),
+    admin.from("clients").select("id, name, vertical_id, meta_ad_account_id").is("archived_at", null).in("status", LIVE).eq("paid_ads", true).not("meta_ad_account_id", "is", null),
     admin.from("kpi_targets").select("client_id, platform, conversion, custom_action, campaign_match, target").eq("active", true).eq("platform", "meta").not("target", "is", null),
     admin.from("verticals").select("id, conversion, benchmarks").not("parent_id", "is", null),
   ]);

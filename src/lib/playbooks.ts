@@ -62,7 +62,7 @@ type MarketRow = { id: string; headline: string | null; body: string | null; ang
 export async function buildPlaybook(admin: SupabaseClient, subId: string) {
   const { data: sub } = await admin.from("verticals").select("id, name, description, conversion, benchmarks, parent_id, verticals!verticals_parent_id_fkey(name)").eq("id", subId).single();
   if (!sub) return null;
-  const { data: clients } = await admin.from("clients").select("id, industry_detail").eq("vertical_id", subId).is("archived_at", null).in("status", LIVE);
+  const { data: clients } = await admin.from("clients").select("id, industry_detail").eq("vertical_id", subId).is("archived_at", null).in("status", LIVE).eq("paid_ads", true);
   const ids = (clients ?? []).map((c) => c.id as string);
   const [{ data: gtm }, { data: intakes }, { data: fame }, { data: brands }] = await Promise.all([
     ids.length ? admin.from("client_gtm_strategies").select("client_id, markdown, read_this_first").in("client_id", ids) : Promise.resolve({ data: [] }),
@@ -154,7 +154,7 @@ export async function keepPlaybooks(admin: SupabaseClient, max = 2) {
     if (h) {
       // Only when there's something new to read
       const [{ data: clients }, { data: fame }] = await Promise.all([
-        admin.from("clients").select("id").eq("vertical_id", s.id).is("archived_at", null).in("status", LIVE),
+        admin.from("clients").select("id").eq("vertical_id", s.id).is("archived_at", null).in("status", LIVE).eq("paid_ads", true),
         admin.from("hall_of_fame").select("ad_id").eq("vertical_id", s.id).gt("expires_at", new Date().toISOString()),
       ]);
       const { data: brands } = await admin.from("market_brands").select("id").eq("vertical_id", s.id);

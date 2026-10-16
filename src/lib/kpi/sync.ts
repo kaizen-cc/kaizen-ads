@@ -188,6 +188,13 @@ export async function adoptNewAccounts(admin: SupabaseClient) {
   return { linked, added: fresh.length };
 }
 
+/** One ad account now (Sync health's Retry): pull from Meta and recompute its targets. */
+export async function refreshAccountKpis(admin: SupabaseClient, account: string) {
+  const { data } = await admin.from("kpi_targets").select(TARGET_FIELDS).eq("active", true).in("ad_account_id", [account, `act_${account}`]);
+  const [r] = await refreshTargets(admin, (data ?? []) as Target[], true);
+  return r ?? { account, error: "No active KPI target uses this ad account" };
+}
+
 /** The scheduled step: pull every account with a target and recompute everything. */
 export async function refreshAllKpis(admin: SupabaseClient, budgetMs = 650_000) {
   const adopted = await adoptNewAccounts(admin);
