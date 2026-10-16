@@ -767,8 +767,10 @@ ${s.decisions?.length ? `Decided: ${s.decisions.join("; ")}` : ""}
 ${commitment.what}${commitment.why ? `\nContext: ${commitment.why}` : ""}
 </what_we_promised>
 
-On this call Kaizen promised the above, and two business days later nothing is in production for it. Write the request that delivers exactly what was promised: use what the client said on the call (offer, dates, details, likes and dislikes) and the rest of the client context. Keep it to what was promised; don't expand it. If the call left something to confirm (a price, a date), say so in the brief. suggest: true. kind: "offer". signal: "Promised on the call <date>: <the promise, short>". evidence: 2 to 4 lines from the call. why: two sentences. reply: "".`,
+On this call Kaizen promised the above, and two business days later nothing is in production for it. Write the request that delivers exactly what was promised: use what the client said on the call (offer, dates, details, likes and dislikes) and the rest of the client context. Keep it to what was promised; don't expand it. If the call left something to confirm (a price, a date), say so in the brief. This request is for the paid ads and creative team: if what was promised isn't ad creative or ad copy for paid ads (it's an email, SMS, flow, organic post, flyer, website or other service), or this client doesn't run paid ads with us, set suggest to false and say why in skipReason. Otherwise suggest: true. kind: "offer". signal: "Promised on the call <date>: <the promise, short>". evidence: 2 to 4 lines from the call. why: two sentences. reply: "".`,
   });
+  // Not work for the ads team: no brief
+  if (!out.suggest) return { skip: out.skipReason || "Not paid ads or creative work" };
   const draft = clean(out.draft);
   const { data, error } = await admin
     .from("creative_suggestions")

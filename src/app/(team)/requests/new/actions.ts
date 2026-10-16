@@ -373,6 +373,7 @@ export async function promiseDraft(commitmentId: string): Promise<{ ok: true; pa
     const admin = createAdminClient();
     const { briefPromise } = await import("@/lib/calls");
     const id = await briefPromise(admin, commitmentId);
+    if (!id) return { ok: false, error: "This one isn't paid ads or creative work, so it's been taken off the list." };
     const { data: s } = await admin.from("creative_suggestions").select("draft").eq("id", id).single();
     const d = s?.draft as import("@/lib/suggestions").SuggestionDraft;
     const concepts = d.concepts?.length ? `\n\nConcepts:\n${d.concepts.map((c, i) => `${i + 1}. ${c.name}\n   Hook: ${c.hook}\n   Visual: ${c.visual}\n   Copy: ${c.copy}`).join("\n")}` : "";

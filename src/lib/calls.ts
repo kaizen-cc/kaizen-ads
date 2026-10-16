@@ -102,7 +102,7 @@ function matchCall(call: NewCall, clients: { id: string; name: string }[], conta
   return byName.length === 1 ? byName[0].id : null;
 }
 
-export type CallSummary = { summary: string; clientSaid: string[]; decisions: string[]; commitments: { kind: "creative" | "copy" | "offer" | "launch" | "strategy" | "other"; what: string; why: string; dueDays: number }[] };
+export type CallSummary = { summary: string; clientSaid: string[]; decisions: string[]; commitments: { kind: "creative" | "copy" | "offer" | "launch" | "strategy"; what: string; why: string; dueDays: number }[] };
 
 const READ_SCHEMA = {
   type: "object",
@@ -114,7 +114,7 @@ const READ_SCHEMA = {
       items: {
         type: "object",
         properties: {
-          client: { type: "integer" },
+          client: { type: "string" },
           summary: { type: "string" },
           clientSaid: { type: "array", items: { type: "string" } },
           decisions: { type: "array", items: { type: "string" } },
@@ -123,7 +123,7 @@ const READ_SCHEMA = {
             items: {
               type: "object",
               properties: {
-                kind: { type: "string", enum: ["creative", "copy", "offer", "launch", "strategy", "other"] },
+                kind: { type: "string", enum: ["creative", "copy", "offer", "launch", "strategy"] },
                 what: { type: "string" },
                 why: { type: "string" },
                 dueDays: { type: "integer" },
@@ -142,10 +142,12 @@ const READ_SCHEMA = {
   additionalProperties: false,
 };
 
-const READ_SYSTEM = `You read the notes of a call at Kaizen, a paid social agency, and pull out everything that matters for each client discussed. It may be a call with a client, or an internal team meeting where several clients come up. Use only what's in the notes; don't invent.
-internal: true if it's an internal Kaizen meeting (no client on the call). overview: two or three sentences on the call as a whole.
-clients: one entry for every client from the list who is discussed in any meaningful way (performance, creative, offers, problems, plans, feedback, budget, mood). client: their number. summary: what was said about them, 2 to 4 sentences. clientSaid: what the client asked for, liked, disliked or told us (on an internal call: what the team reported the client said), short lines. decisions: what was agreed about them.
-commitments: everything Kaizen said it would do or explore for that client. kind: "creative" (an ad, design, video or creative idea to make), "copy", "offer" (an offer or promotion to run), "launch" (launch or change campaigns), "strategy", or "other". what: specific enough to brief ("A reel of the new brunch menu with the bottomless mimosa offer"). why: one line of context. dueDays: business days until it should be in motion (a date mentioned, else 2).`;
+const READ_SYSTEM = `You read the notes of a call at Kaizen, a marketing agency, for the paid ads and creative team: the people who run clients' paid ads (Meta, Google, TikTok and other ad platforms) and make the ad creative and ad copy. It may be a call with a client, or an internal team meeting where several clients come up. Use only what's in the notes; don't invent.
+Kaizen also does email and SMS (Klaviyo flows and campaigns), organic social, websites and other services; those are handled elsewhere. Leave them out, except a short line when they change what the ads should do (an offer the email is running that the ads should push too, "no paid ads until January").
+internal: true if it's an internal Kaizen meeting (no client on the call). overview: two or three sentences on the call as a whole, as it matters to paid ads and creative.
+clients: one entry for every client from the list whose paid ads, ad creative, offers, results, budget, feedback or mood are discussed. client: their name exactly as written in the list. Only clients actually named or clearly meant in the notes; Kaizen's own business (hiring, tools, processes, reporting, the team, training) is not a client: leave it out. If no client from the list is discussed this way, clients is empty.
+summary: what was said about their ads and creative, 2 to 4 sentences. clientSaid: what the client asked for, liked, disliked or told us about the ads and creative (on an internal call: what the team reported the client said), short lines. decisions: what was agreed about their ads and creative.
+commitments: only what Kaizen said it would do for that client's paid ads and creative. kind: "creative" (an ad image, carousel, video or creative idea to make for the ads), "copy" (ad copy), "offer" (an offer or promotion to run in the ads), "launch" (launch or change ad campaigns, audiences or budgets), "strategy" (paid ads strategy or analysis). Not commitments: emails, SMS, flows, popups, newsletters, organic posts and scheduling, flyers, print, websites and landing pages, reports, CRM and tracking setup, admin (send a link, schedule a call, share a doc, ask the client something). what: specific enough to brief ("A reel of the new brunch menu with the bottomless mimosa offer"). why: one line of context. dueDays: business days until it should be in motion (a date mentioned, else 2).`;
 
 /**
  * The AI's read of a call, per client discussed: each gets their own summary and promises, and it joins that
@@ -155,14 +157,17 @@ async function readCall(admin: SupabaseClient, id: string, clients: { id: string
   const { data: call } = await admin.from("client_calls").select("id, client_id, title, occurred_at, notes, url, source, host").eq("id", id).single();
   if (!call) return;
   const main = clients.find((c) => c.id === call.client_id);
-  const out = await askJson<{ internal: boolean; overview: string; clients: (CallSummary & { client: number })[] }>({
+  const out = await askJson<{ internal: boolean; overview: string; clients: (CallSummary & { client: string })[] }>({
     agent: "calls",
     label: "read a call",
     system: READ_SYSTEM,
     schema: READ_SCHEMA,
-    prompt: `Clients (number · name):\n${clients.map((c, i) => `${i + 1} · ${c.name}`).join("\n")}\n\nCall: "${call.title}" on ${call.occurred_at.slice(0, 10)}${main ? `\nThis looks like a call with ${main.name}.` : ""}\n\n<notes>\n${call.notes}\n</notes>`,
+    prompt: `Clients:\n${clients.map((c) => c.name).join("\n")}\n\nCall: "${call.title}" on ${call.occurred_at.slice(0, 10)}${main ? `\nThis looks like a call with ${main.name}.` : ""}\n\n<notes>\n${call.notes}\n</notes>`,
   });
-  const mentions = out.clients.map((m) => ({ ...m, clientId: clients[m.client - 1]?.id })).filter((m): m is typeof m & { clientId: string } => Boolean(m.clientId));
+  // By name (a number let the model fall back on the first client in the list)
+  const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const byName = new Map(clients.map((c) => [key(c.name), c.id]));
+  const mentions = out.clients.map((m) => ({ ...m, clientId: byName.get(key(m.client)) })).filter((m): m is typeof m & { clientId: string } => Boolean(m.clientId));
   const unique = [...new Map(mentions.map((m) => [m.clientId, m])).values()];
   await admin
     .from("client_calls")
@@ -414,6 +419,11 @@ export async function briefPromise(admin: SupabaseClient, commitmentId: string) 
   const call = c.client_calls as unknown as { title: string; occurred_at: string };
   const { suggestFromCall } = await import("@/lib/suggestions");
   const id = await suggestFromCall(admin, c.client_id, { id: c.id, what: c.what, why: c.why ?? "", kind: c.kind }, { ...call, summary: (mention?.summary as CallSummary | null) ?? null });
+  if (typeof id !== "string") {
+    // Not work for the paid ads and creative team: off the lists, with the reason on the client page
+    await admin.from("call_commitments").update({ status: "dismissed", dismiss_reason: id.skip.slice(0, 300), checked_at: new Date().toISOString() }).eq("id", c.id);
+    return null;
+  }
   await admin.from("call_commitments").update({ status: "briefed", suggestion_id: id, checked_at: new Date().toISOString() }).eq("id", c.id);
   return id;
 }
