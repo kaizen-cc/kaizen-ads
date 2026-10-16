@@ -7,11 +7,13 @@ import { isExecOrLead, requireStaff } from "@/lib/auth";
 import { buildGtm, gtmGate } from "@/lib/gtm";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { notLive } from "@/lib/live-guard";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
 /** Anyone on the client's team: build (or update) the Meta go-to-market strategy now. Runs in the background. */
 export async function buildGtmNow(clientId: string, slug: string): Promise<ActionResult> {
+  { const why = await notLive(await createClient(), clientId); if (why) return { ok: false, error: why }; }
   const me = await requireStaff();
   if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
   const supabase = await createClient();

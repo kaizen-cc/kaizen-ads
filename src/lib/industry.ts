@@ -6,6 +6,7 @@ import { askJson } from "@/lib/ai";
 // is a strong starting point for another restaurant: the request form shows these winners and the AI reads them.
 
 import { INDUSTRIES, industryLabel, type Industry } from "@/lib/industries";
+import { LIVE } from "@/lib/live";
 export { INDUSTRIES, industryLabel, type Industry };
 
 const SCHEMA = {
@@ -62,7 +63,7 @@ async function readSite(url: string | null) {
  * alone; force redoes the AI's own. Returns how many it set.
  */
 export async function detectIndustries(admin: SupabaseClient, opts: { ids?: string[]; force?: boolean } = {}) {
-  let q = admin.from("clients").select("id, name, website, industry, industry_source").neq("status", "offboarded");
+  let q = admin.from("clients").select("id, name, website, industry, industry_source").is("archived_at", null).in("status", LIVE);
   if (opts.ids?.length) q = q.in("id", opts.ids);
   const { data: all } = await q;
   const todo = (all ?? []).filter((c) => c.industry_source !== "team" && (opts.force || !c.industry));
@@ -156,7 +157,7 @@ export async function refreshIndustries(admin: SupabaseClient, max = 24) {
   const { data } = await admin
     .from("clients")
     .select("id")
-    .neq("status", "offboarded")
+    .in("status", LIVE)
     .is("archived_at", null)
     .or("industry_source.is.null,industry_source.eq.ai")
     .lt("industry_version", 2)

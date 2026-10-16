@@ -2,6 +2,7 @@ import "server-only";
 import { JWT } from "google-auth-library";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { compact, saveItems, trimBody, type CollectResult, type ContextItem } from "./shared";
+import { LIVE } from "@/lib/live";
 
 // Reads Gmail and the client Drive folders with a Workspace service account (domain-wide delegation).
 //   GOOGLE_SERVICE_ACCOUNT_JSON  the service account's JSON key
@@ -70,9 +71,10 @@ export async function gmailMailboxes(): Promise<string[]> {
 export async function contactMap(admin: SupabaseClient) {
   const { data: links } = await admin
     .from("contact_clients")
-    .select("client_id, contacts(email), clients!inner(creative_package, archived_at)")
+    .select("client_id, contacts(email), clients!inner(creative_package, archived_at, status)")
     .eq("clients.creative_package", true)
-    .is("clients.archived_at", null);
+    .is("clients.archived_at", null)
+    .in("clients.status", LIVE);
   const map = new Map<string, string[]>();
   for (const l of links ?? []) {
     const email = (l.contacts as unknown as { email: string } | null)?.email?.toLowerCase();
@@ -209,7 +211,7 @@ export async function collectDrive(admin: SupabaseClient, since: Date): Promise<
 
   // Folders directly under the root are clients: link any creative-package client that isn't linked yet, by name
   const topLevel = await listFiles(token, `'${root}' in parents and mimeType = '${FOLDER}' and trashed = false`, "id, name", driveId);
-  const { data: clients } = await admin.from("clients").select("id, name, drive_folder_id").eq("creative_package", true).is("archived_at", null);
+  const { data: clients } = await admin.from("clients").select("id, name, drive_folder_id").eq("creative_package", true).is("archived_at", null).in("status", LIVE);
   let matched = 0;
   for (const c of clients ?? []) {
     if (c.drive_folder_id) continue;

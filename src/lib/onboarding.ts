@@ -4,6 +4,7 @@ import { askJson } from "@/lib/ai";
 import { INDUSTRIES } from "@/lib/industries";
 import { pickLoose, stableKey } from "@/lib/zapier";
 import type { IntakeSummary } from "@/lib/intake-format";
+import { isLive } from "@/lib/live";
 
 // A new client's marketing intake form: kept as they answered it, read by the AI into what the team needs (what they
 // sell, to whom, the offer, voice, what to avoid), and turned into the first round of creative, built on what's
@@ -82,8 +83,8 @@ export async function processIntake(admin: SupabaseClient, intakeId: string, opt
   const { data: intake } = await admin.from("client_intakes").select("id, client_id, answers").eq("id", intakeId).single();
   if (!intake?.client_id) return { status: "unmatched" };
   // Archived: the answers are kept for when they come back, nothing more
-  const { data: owner } = await admin.from("clients").select("archived_at").eq("id", intake.client_id).single();
-  if (owner?.archived_at) return { status: "archived" };
+  const { data: owner } = await admin.from("clients").select("archived_at, status").eq("id", intake.client_id).single();
+  if (owner && !isLive(owner)) return { status: "not live" };
   try {
     const answers = intake.answers as { q: string; a: string }[];
     const summary = await askJson<IntakeSummary>({

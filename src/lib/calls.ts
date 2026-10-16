@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { googleConfigured, gmailMailboxes, googleDriveToken } from "@/lib/context/google";
 import { compact, getCursor, saveItems, setCursor, trimBody } from "@/lib/context/shared";
+import { LIVE } from "@/lib/live";
 
 // Calls: meeting notes from Gemini (Google Meet saves "Notes by Gemini" docs in the organizer's Drive) and Fireflies
 // (its API, with FIREFLIES_API_KEY). Each call is matched to its client, read by the AI (what the client said, what
@@ -232,8 +233,8 @@ export async function collectCalls(admin: SupabaseClient, budgetMs = 500_000) {
   found.push(...(await collectFireflies(since).catch((e) => (errors.push(e instanceof Error ? e.message : String(e)), []))));
 
   const [{ data: clients }, { data: links }] = await Promise.all([
-    admin.from("clients").select("id, name").is("archived_at", null).neq("status", "offboarded"),
-    admin.from("contact_clients").select("client_id, contacts(email), clients!inner(archived_at)").is("clients.archived_at", null),
+    admin.from("clients").select("id, name").is("archived_at", null).in("status", LIVE),
+    admin.from("contact_clients").select("client_id, contacts(email), clients!inner(archived_at, status)").is("clients.archived_at", null).in("clients.status", LIVE),
   ]);
   const contacts = new Map<string, string>();
   for (const l of links ?? []) {
@@ -284,8 +285,9 @@ const COVER_SCHEMA = {
 export async function watchCommitments(admin: SupabaseClient, max = 12) {
   const { data: due } = await admin
     .from("call_commitments")
-    .select("id, client_id, kind, what, why, due_at, call_id, client_calls(title, occurred_at, summary), clients!inner(archived_at)")
+    .select("id, client_id, kind, what, why, due_at, call_id, client_calls(title, occurred_at, summary), clients!inner(archived_at, status)")
     .is("clients.archived_at", null)
+    .in("clients.status", LIVE)
     .eq("status", "open")
     .is("checked_at", null)
     .lte("due_at", new Date().toISOString())
@@ -341,8 +343,9 @@ export async function watchCommitments(admin: SupabaseClient, max = 12) {
 export async function sweepCovered(admin: SupabaseClient, clientId?: string) {
   let q = admin
     .from("call_commitments")
-    .select("id, client_id, what, suggestion_id, cover_checked_at, client_calls(occurred_at), clients!inner(archived_at)")
+    .select("id, client_id, what, suggestion_id, cover_checked_at, client_calls(occurred_at), clients!inner(archived_at, status)")
     .is("clients.archived_at", null)
+    .in("clients.status", LIVE)
     .in("status", ["open", "briefed"])
     .in("kind", ["creative", "copy", "offer"])
     .limit(200);

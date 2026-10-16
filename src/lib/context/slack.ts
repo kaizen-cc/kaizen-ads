@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { compact, getCursor, saveItems, setCursor, trimBody, type CollectResult, type ContextItem } from "./shared";
+import { LIVE } from "@/lib/live";
 
 // Reads client channels through the Kaizen OS Slack app (its bot token, set as SLACK_BOT_TOKEN).
 // The bot must be a member of a channel to read it. Needs channels:history, groups:history,
@@ -185,7 +186,8 @@ export async function collectSlack(admin: SupabaseClient): Promise<CollectResult
     .from("clients")
     .select("id, slack_channel_id, internal_slack_channel_id")
     .eq("creative_package", true)
-    .is("archived_at", null);
+    .is("archived_at", null)
+    .in("status", LIVE);
   let saved = 0;
   const errors: string[] = [];
   for (const c of clients ?? []) {

@@ -9,6 +9,7 @@ import { MAX_VARIATIONS, toAllotment, type Allotment, type UsageRow } from "@/li
 // Every decision and reason goes back into the next suggestions.
 
 import type { SuggestionKind } from "@/lib/suggestion-kinds";
+import { LIVE } from "@/lib/live";
 export { KIND_LABEL, type SuggestionKind } from "@/lib/suggestion-kinds";
 
 export type Concept = { name: string; hook: string; visual: string; copy: string };
@@ -42,7 +43,7 @@ const UNHAPPY = /\b(unhappy|not happy|disappointed|frustrat\w*|concern(ed)?|unde
 export async function gatherSignals(admin: SupabaseClient): Promise<Map<string, Signal[]>> {
   const since7 = new Date(Date.now() - 7 * 86_400_000).toISOString();
   const since30 = new Date(Date.now() - 30 * 86_400_000).toISOString();
-  const [{ data: usage }, { data: open }, { data: kpis }, { data: snaps }, { data: items }, { data: rounds }, { data: recentReqs }, { data: watched }] = await Promise.all([
+  const [{ data: allUsage }, { data: open }, { data: kpis }, { data: snaps }, { data: items }, { data: rounds }, { data: recentReqs }, { data: watched }, { data: live }] = await Promise.all([
     admin.from("client_allotment_usage").select("client_id, images_per_month, videos_per_month, images_used, videos_used"),
     admin.from("board_requests").select("client_id, stage, new_count").neq("stage", "launched"),
     admin.from("kpi_snapshots").select("client_id, status, trend, deviation, kpi_targets(label)"),
@@ -51,7 +52,11 @@ export async function gatherSignals(admin: SupabaseClient): Promise<Map<string, 
     admin.from("client_rounds").select("decision, created_at, requests(client_id)").gte("created_at", since30),
     admin.from("requests").select("client_id, created_at").gte("created_at", since7).is("deleted_at", null),
     admin.from("ad_fatigue").select("client_id, ad_name, headline, severity, signals, state").in("state", ["open", "refreshing"]),
+    admin.from("clients").select("id").is("archived_at", null).in("status", LIVE),
   ]);
+  // Paused clients get no suggestions until they're live again
+  const liveIds = new Set((live ?? []).map((c) => c.id as string));
+  const usage = (allUsage ?? []).filter((u) => liveIds.has(u.client_id as string));
 
   const creative = new Set((usage ?? []).map((u) => u.client_id as string));
   const out = new Map<string, Signal[]>();

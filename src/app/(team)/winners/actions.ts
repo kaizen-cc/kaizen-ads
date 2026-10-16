@@ -6,6 +6,7 @@ import { adDetail, metaConfigured, type AdDetail } from "@/lib/context/meta";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { loadSuggestion, suggestFromWinner, type OpenSuggestion, type WinnerSource } from "@/lib/suggestions";
+import { notLive } from "@/lib/live-guard";
 
 /** The ad in full from Meta: all its copy, the full image or the playable video, and Meta's own preview. */
 export async function winnerAd(adId: string): Promise<AdDetail | null> {
@@ -24,6 +25,7 @@ export async function winnerAd(adId: string): Promise<AdDetail | null> {
  * again opens the draft already written.
  */
 export async function briefFromWinner(w: WinnerSource, clientId: string): Promise<{ ok: true; suggestion: OpenSuggestion } | { ok: false; error: string }> {
+  { const why = await notLive(await createClient(), clientId); if (why) return { ok: false, error: why }; }
   const me = await requireStaff();
   if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
   const supabase = await createClient();

@@ -42,7 +42,7 @@ const GATE = [
  * The client's Meta go-to-market strategy: written once the intake form, call notes and website are in (the hard
  * gate), every fact sourced, open items in plain sight. Its summary joins what every agent reads for this client.
  */
-export function GtmPanel({ clientId, slug, gtm, canReview }: { clientId: string; slug: string; gtm: GtmStrategy | null; canReview: boolean }) {
+export function GtmPanel({ clientId, slug, gtm, canReview, readOnly = false }: { clientId: string; slug: string; gtm: GtmStrategy | null; canReview: boolean; readOnly?: boolean }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, start] = useTransition();
@@ -91,7 +91,7 @@ export function GtmPanel({ clientId, slug, gtm, canReview }: { clientId: string;
               : "Written at onboarding once the intake form, call notes and website are in. Every fact is sourced; nothing is invented."}
           </p>
         </div>
-        {!building && (
+        {!building && !readOnly && (
           <button onClick={build} disabled={busy} className="h-9 shrink-0 rounded-full border border-line px-4 text-sm text-muted transition-colors hover:text-fg disabled:opacity-50">
             {busy ? "Starting…" : has ? "Update" : "Build it now"}
           </button>

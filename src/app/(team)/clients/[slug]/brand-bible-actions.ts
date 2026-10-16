@@ -6,6 +6,7 @@ import { AiUnavailable, askJson, BRAND_BIBLE_SCHEMA, clientContext, contextBlock
 import { isExecOrLead, requireStaff } from "@/lib/auth";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { notLive } from "@/lib/live-guard";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -17,6 +18,7 @@ const today = () => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_Yo
  * page shows progress until it's done.
  */
 export async function buildBrandBible(clientId: string, slug: string, pasted: string): Promise<ActionResult> {
+  { const why = await notLive(await createClient(), clientId); if (why) return { ok: false, error: why }; }
   const me = await requireStaff();
   if (!isExecOrLead(me)) return { ok: false, error: "Only execs and leads can build a Brand Bible." };
   if (!adminConfigured()) return { ok: false, error: "Server key missing." };

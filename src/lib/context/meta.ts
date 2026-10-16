@@ -2,6 +2,7 @@ import "server-only";
 import { createHmac } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { compact } from "./shared";
+import { isLive, LIVE } from "@/lib/live";
 
 // Reads ad performance with the CommandCenter system user (META_SYSTEM_USER_TOKEN, ads_read).
 // Every metric is pulled per ad per day through Meta's async report jobs, which handle heavy fields
@@ -386,7 +387,7 @@ export async function linkAdAccounts(admin: SupabaseClient) {
   const { data: all } = await admin.from("clients").select("id, name, meta_ad_account_id, creative_package, status, archived_at");
   // Every client's account is taken, archived ones too (it isn't free to link to someone else)
   const taken = new Set((all ?? []).map((c) => c.meta_ad_account_id).filter(Boolean));
-  const clients = (all ?? []).filter((c) => !c.archived_at && c.status !== "offboarded");
+  const clients = (all ?? []).filter((c) => isLive(c));
   const linked: string[] = [];
   for (const c of clients) {
     if (c.meta_ad_account_id) continue;
@@ -432,7 +433,7 @@ export async function collectMeta(admin: SupabaseClient, budgetMs = 700_000) {
   const deadline = Date.now() + budgetMs;
   const access = await linkAdAccounts(admin);
   const [{ data: all }, { data: snaps }] = await Promise.all([
-    admin.from("clients").select("id, name, meta_ad_account_id, creative_package").is("archived_at", null).not("meta_ad_account_id", "is", null),
+    admin.from("clients").select("id, name, meta_ad_account_id, creative_package").is("archived_at", null).in("status", LIVE).not("meta_ad_account_id", "is", null),
     admin.from("meta_snapshots").select("client_id, fetched_at").order("fetched_at", { ascending: false }).limit(2000),
   ]);
   const last = new Map<string, string>();

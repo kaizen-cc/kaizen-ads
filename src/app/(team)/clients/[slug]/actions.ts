@@ -8,6 +8,7 @@ import { metaConfigured, syncClientMeta } from "@/lib/context/meta";
 import { runFatigue } from "@/lib/fatigue";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { notLive } from "@/lib/live-guard";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -152,6 +153,7 @@ export async function archiveMemory(slug: string, memoryId: string): Promise<Act
 
 /** Rebuild this client's briefing now instead of waiting for the next 12pm or 6pm run. */
 export async function refreshClientBriefing(clientId: string, slug: string): Promise<ActionResult> {
+  { const why = await notLive(await createClient(), clientId); if (why) return { ok: false, error: why }; }
   await requireStaff();
   // Only people who can see the client can refresh it; the write itself needs the server's rights
   const supabase = await createClient();
@@ -168,6 +170,7 @@ export async function refreshClientBriefing(clientId: string, slug: string): Pro
 
 /** Pull this client's Meta numbers now instead of waiting for the next 12pm or 6pm run. */
 export async function syncMetaNow(clientId: string, slug: string): Promise<ActionResult> {
+  { const why = await notLive(await createClient(), clientId); if (why) return { ok: false, error: why }; }
   await requireStaff();
   const supabase = await createClient();
   const { data: c } = await supabase.from("clients").select("meta_ad_account_id").eq("id", clientId).maybeSingle();

@@ -49,7 +49,7 @@ export function BriefingPanel({
   children,
 }: {
   description: React.ReactNode;
-  refresh: () => Promise<Result>;
+  refresh?: () => Promise<Result>; // none: read-only (archived or paused)
   demo?: boolean;
   children: React.ReactNode;
 }) {
@@ -71,7 +71,7 @@ export function BriefingPanel({
     // Walk the steps while the AI works; hold on the last one until it's actually done
     timer.current = setInterval(() => setAt((i) => Math.min(i + 1, p.length - 1)), STEP_MS);
     start(async () => {
-      const res = demo ? await new Promise<Result>((r) => setTimeout(() => r({ ok: true }), STEP_MS * 9)) : await refresh();
+      const res = demo ? await new Promise<Result>((r) => setTimeout(() => r({ ok: true }), STEP_MS * 9)) : await refresh!();
       if (timer.current) clearInterval(timer.current);
       if (!res.ok) {
         setError(res.error);
@@ -92,6 +92,7 @@ export function BriefingPanel({
       title="Briefing"
       description={description}
       action={
+        refresh && (
         <button
           onClick={run}
           disabled={busy}
@@ -99,6 +100,7 @@ export function BriefingPanel({
         >
           {busy ? "Refreshing…" : "Refresh now"}
         </button>
+        )
       }
     >
       {error && <p className="rounded-[8px] border border-bad/30 bg-bad-soft px-4 py-3 text-sm text-bad">Couldn&apos;t refresh: {error}</p>}

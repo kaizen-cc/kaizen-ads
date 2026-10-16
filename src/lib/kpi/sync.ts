@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { asyncReport, linkAdAccounts, metaConfigured, type InsightRow } from "@/lib/context/meta";
 import { pool } from "@/lib/context/run";
 import { computeSnapshot, nyParts, toDays } from "./calc";
+import { LIVE } from "@/lib/live";
 
 // Pulls Meta numbers per campaign per day for every ad account with a KPI target, then recomputes each target.
 // About six months is kept so the quarter comparison always has a full last quarter. After the first pull,
@@ -174,7 +175,7 @@ export async function adoptNewAccounts(admin: SupabaseClient) {
   let linked: string[] = [];
   if (metaConfigured()) linked = (await linkAdAccounts(admin).catch(() => null))?.linked ?? [];
   const [{ data: clients }, { data: targets }, { data: buyers }] = await Promise.all([
-    admin.from("clients").select("id, meta_ad_account_id").neq("status", "offboarded").not("meta_ad_account_id", "is", null),
+    admin.from("clients").select("id, meta_ad_account_id").is("archived_at", null).in("status", LIVE).not("meta_ad_account_id", "is", null),
     admin.from("kpi_targets").select("client_id").eq("platform", "meta"),
     admin.from("client_assignments").select("client_id, profile_id").eq("role", "meta_buyer"),
   ]);
@@ -192,11 +193,11 @@ export async function refreshAllKpis(admin: SupabaseClient, budgetMs = 650_000) 
   const adopted = await adoptNewAccounts(admin);
   const [{ data }, { data: archived }] = await Promise.all([
     admin.from("kpi_targets").select(TARGET_FIELDS).eq("active", true),
-    admin.from("clients").select("id").not("archived_at", "is", null),
+    admin.from("clients").select("id").is("archived_at", null).in("status", LIVE),
   ]);
-  // Archived clients' targets are paused when they're archived; this keeps a stray one from being pulled
-  const gone = new Set((archived ?? []).map((c) => c.id as string));
-  const live = ((data ?? []) as Target[]).filter((t) => !gone.has((t as unknown as { client_id: string }).client_id));
+  // Live clients only: paused and archived accounts aren't pulled until they're reactivated
+  const on = new Set((archived ?? []).map((c) => c.id as string));
+  const live = ((data ?? []) as Target[]).filter((t) => on.has((t as unknown as { client_id: string }).client_id));
   const results = await refreshTargets(admin, live, true, Date.now() + budgetMs);
   return {
     ...adopted,

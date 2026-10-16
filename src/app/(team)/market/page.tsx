@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/server";
 import { toAllotment, type UsageRow } from "@/lib/allotment";
 import type { PickClient } from "../winners/winners-library";
 import { MarketLibrary } from "./market-library";
+import { LIVE } from "@/lib/live";
 
 export const metadata: Metadata = { title: "Market" };
 
@@ -22,7 +23,7 @@ export default async function Market({ searchParams }: PageProps<"/market">) {
     loadMarket(db),
     adminConfigured() ? motionConnected(createAdminClient()) : Promise.resolve(null),
     db.from("client_allotment_usage").select("*"),
-    db.from("clients").select("id, name, industry, industry_detail").neq("status", "offboarded").order("name"),
+    db.from("clients").select("id, name, industry, industry_detail").is("archived_at", null).in("status", LIVE).order("name"),
     db.from("market_brands").select("id", { count: "exact", head: true }),
   ]);
   const clients: PickClient[] = ((usage ?? []) as UsageRow[])

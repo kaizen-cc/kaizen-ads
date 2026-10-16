@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { INDUSTRIES } from "@/lib/industries";
 import { MotionNotConnected, openSession } from "@/lib/motion";
+import { LIVE } from "@/lib/live";
 
 // The market: live ads from brands in every industry we serve, pulled from Motion's Inspo (public ad libraries, Meta).
 // Brands come from three places: the competitors tracked in Kaizen's Motion workspace, the competitors each client
@@ -159,7 +160,7 @@ async function upsertBrand(admin: SupabaseClient, b: Obj, meta: { source: string
  */
 async function discoverBrands(admin: SupabaseClient, s: Session, workspaces: Workspace[], deadline: number) {
   let found = 0;
-  const { data: clients } = await admin.from("clients").select("id, industry, industry_detail, motion_workspace_id").is("archived_at", null).neq("status", "offboarded");
+  const { data: clients } = await admin.from("clients").select("id, industry, industry_detail, motion_workspace_id").is("archived_at", null).in("status", LIVE);
   const anyWorkspace = workspaces[0]?.id;
   if (!anyWorkspace) return 0;
 
@@ -304,7 +305,17 @@ export async function syncMarket(admin: SupabaseClient, budgetMs = 600_000) {
   const deadline = started + budgetMs;
   const { data: conn } = await admin.from("motion_connection").select("workspace, last_result").eq("id", 1).maybeSingle();
   try {
-    const s = await openSession(admin);
+    const session = await openSession(admin);
+    // The first answer from each Motion tool, kept with the result so the reading can be checked against it
+    const samples: Record<string, string> = {};
+    const s = {
+      ...session,
+      call: async (name: string, args: Record<string, unknown>) => {
+        const r = await session.call(name, args);
+        if (!samples[name] && r) samples[name] = JSON.stringify(r).slice(0, 3000);
+        return r;
+      },
+    };
     let workspaces = workspacesOf(conn?.workspace);
     if (!workspaces.length) {
       const auth = await s.call("get_auth_context", {});
@@ -313,7 +324,8 @@ export async function syncMarket(admin: SupabaseClient, budgetMs = 600_000) {
     }
     const matched = await matchWorkspaces(admin, workspaces);
     const last = (conn?.last_result ?? {}) as { discoveredAt?: string };
-    const discover = !last.discoveredAt || Date.now() - Date.parse(last.discoveredAt) > 7 * 86_400_000;
+    const { count: watched } = await admin.from("market_brands").select("id", { count: "exact", head: true });
+    const discover = !watched || !last.discoveredAt || Date.now() - Date.parse(last.discoveredAt) > 7 * 86_400_000;
     const brandsFound = discover ? await discoverBrands(admin, s, workspaces, started + budgetMs * 0.4) : 0;
     const sorted = await sortBrands(admin).catch(() => 0);
 
@@ -356,7 +368,7 @@ export async function syncMarket(admin: SupabaseClient, budgetMs = 600_000) {
       errors.push(`reading: ${e instanceof Error ? e.message : e}`);
       return 0;
     });
-    const result = { workspaces: workspaces.length, matched, brandsFound, sorted, brands, pulled, read, errors: errors.slice(0, 8), discoveredAt: discover ? new Date().toISOString() : last.discoveredAt };
+    const result = { workspaces: workspaces.length, matched, brandsFound, sorted, brands, pulled, read, errors: errors.slice(0, 8), discoveredAt: discover && brandsFound ? new Date().toISOString() : last.discoveredAt, samples };
     await admin.from("motion_connection").update({ last_sync_at: new Date().toISOString(), last_result: result, error: null }).eq("id", 1);
     return result;
   } catch (e) {

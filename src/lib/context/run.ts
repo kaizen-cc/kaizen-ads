@@ -6,6 +6,7 @@ import { getCursor, saveItems, setCursor, type CollectResult } from "./shared";
 import { collectMeta, metaConfigured } from "./meta";
 import { prewriteRefreshes, runFatigue } from "@/lib/fatigue";
 import { collectSlack, slackConfigured } from "./slack";
+import { LIVE } from "@/lib/live";
 
 /** Pull what's new from one source since its cursor, save it, and move the cursor. A failure stays with that source. */
 async function collect(admin: SupabaseClient, source: string, run: (since: Date) => Promise<CollectResult>) {
@@ -68,7 +69,7 @@ export async function collectStep(admin: SupabaseClient, step: Step, budgetMs = 
 export async function refreshAll(admin: SupabaseClient, budgetMs = 700_000, rebuild = false) {
   const deadline = Date.now() + budgetMs;
   const [{ data: list }, { data: done }] = await Promise.all([
-    admin.from("clients").select("id, name").eq("creative_package", true).is("archived_at", null),
+    admin.from("clients").select("id, name").eq("creative_package", true).is("archived_at", null).in("status", LIVE),
     admin.from("client_briefings").select("client_id, generated_at"),
   ]);
   // Stalest first, so anything deferred last run goes early this time

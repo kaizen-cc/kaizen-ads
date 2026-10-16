@@ -6,6 +6,7 @@ import { CONVERSIONS } from "@/lib/kpi/conversions";
 import { refreshClientKpis } from "@/lib/kpi/sync";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { notLive } from "@/lib/live-guard";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -74,6 +75,7 @@ export async function archiveKpiTarget(id: string): Promise<ActionResult> {
 
 /** Pull fresh numbers from Meta for one client now, instead of waiting for the next 2-hour run. */
 export async function pullClientKpis(clientId: string): Promise<ActionResult> {
+  { const why = await notLive(await createClient(), clientId); if (why) return { ok: false, error: why }; }
   await requireStaff();
   const supabase = await createClient();
   const { data: visible } = await supabase.from("clients").select("id").eq("id", clientId).maybeSingle();

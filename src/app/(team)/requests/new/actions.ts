@@ -27,6 +27,7 @@ import { stageInfo, type Stage } from "@/lib/stages";
 import { draws } from "@/lib/allotment";
 import { readReferences, referencesBlock } from "@/lib/references";
 import { MAX_VARIATIONS, SIZES, describeDraft, refLinks, selectedFormats, type Draft } from "./draft";
+import { notLive } from "@/lib/live-guard";
 
 type Fail = { ok: false; error: string };
 export type CreateResult = { ok: true; numbers: number[] } | Fail;
@@ -271,6 +272,10 @@ changed: which of title, angle, audience, brief, refs, sizes, formats you change
 export async function createBatch(draft: Draft, review: Review | null, decisions?: ReviewDecisions): Promise<CreateResult> {
   const me = await requireStaff();
   if (!draft.clientId) return { ok: false, error: "Pick a client." };
+  {
+    const why = await notLive(await createClient(), draft.clientId);
+    if (why) return { ok: false, error: why };
+  }
   if (!draft.title.trim()) return { ok: false, error: "Give the request a title." };
   const formats = selectedFormats(draft);
   if (formats.length === 0) return { ok: false, error: "Pick at least one format." };

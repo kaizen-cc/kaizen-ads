@@ -38,6 +38,7 @@ import type { ClientCreative } from "@/lib/client-creative";
 import { BrandBiblePanel, type BrandBible } from "./brand-bible-panel";
 import { GtmPanel, type GtmStrategy } from "./gtm-panel";
 import { untilLabel } from "@/lib/allotment";
+import { isLive } from "@/lib/live";
 
 const fmt = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
 const chip = "inline-flex items-center rounded-full px-2.5 py-1 text-xs";
@@ -102,6 +103,8 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
+  // Archived or paused: read-only. Nothing is pulled or generated until they're live again
+  const live = isLive(client);
   return (
     <div className="mx-auto grid max-w-6xl gap-8">
       {/* Header */}
@@ -113,6 +116,11 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
           <h1 className="font-heading text-[32px] leading-tight">{client.name}</h1>
           {can.assign && !demo && !client.archived_at && <ArchiveControl clientId={client.id} slug={client.slug} name={client.name} archived={null} />}
         </div>
+        {!client.archived_at && !live && (
+          <p className="rounded-[14px] border border-warn/40 bg-warn-soft/40 px-4 py-3 text-sm">
+            This client is paused, so their page is read-only: nothing is synced, pulled or generated for them. Set their status back to active in Details to switch it all back on.
+          </p>
+        )}
         {client.archived_at && (
           can.assign && !demo ? (
             <ArchiveControl clientId={client.id} slug={client.slug} name={client.name} archived={{ at: client.archived_at, reason: client.archive_reason ?? null, source: client.archive_source ?? null }} />
@@ -149,14 +157,14 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
         <div className="grid min-w-0 gap-6">
           {kpis && <KpiPanel kpis={kpis} />}
 
-          {fatigue && fatigue.length > 0 && <FatigueWatch rows={fatigue} showClient={false} />}
+          {live && fatigue && fatigue.length > 0 && <FatigueWatch rows={fatigue} showClient={false} />}
 
-          {!demo && market.length > 0 && <MarketPanel clientId={client.id} industry={client.industry ?? null} label={client.industry_detail ?? industryLabel(client.industry) ?? "their industry"} ads={market} />}
+          {!demo && live && market.length > 0 && <MarketPanel clientId={client.id} industry={client.industry ?? null} label={client.industry_detail ?? industryLabel(client.industry) ?? "their industry"} ads={market} />}
 
           {active && (
             <BriefingPanel
               demo={demo}
-              refresh={refreshClientBriefing.bind(null, client.id, client.slug)}
+              refresh={live ? refreshClientBriefing.bind(null, client.id, client.slug) : undefined}
               description={
                 <>
                   What the AI knows from Slack, email, Drive, Meta and past requests. Refreshes at 12pm and 6pm ET.
@@ -242,9 +250,9 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
 
           {creative && <CreativePanel data={creative} />}
 
-          {!demo && <GtmPanel clientId={client.id} slug={client.slug} gtm={gtm} canReview={can.assign} />}
+          {!demo && <GtmPanel clientId={client.id} slug={client.slug} gtm={gtm} canReview={can.assign} readOnly={!live} />}
 
-          <BrandBiblePanel clientId={client.id} slug={client.slug} bible={brandBible} canBuild={can.assign} />
+          <BrandBiblePanel clientId={client.id} slug={client.slug} bible={brandBible} canBuild={can.assign && live} />
 
           <Section title="Client memory" description="What we've learned about this client. The AI reads it for suggestions and flags anything that goes against it before a request is sent.">
             {memory.length > 0 ? (
@@ -479,7 +487,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                         </span>
                       )}
                     </span>
-                    <ConnectionStatus status={connections.meta} sync={syncMetaNow.bind(null, client.id, client.slug)} demo={demo} />
+                    <ConnectionStatus status={connections.meta} sync={live ? syncMetaNow.bind(null, client.id, client.slug) : undefined} demo={demo} />
                   </label>
                   <div className="grid grid-cols-2 gap-3">
                     <label className={label}>
@@ -528,7 +536,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                 ).map(([k, st, canSync]) => (
                   <div key={k} className="grid gap-1">
                     <dt className="text-muted">{k}</dt>
-                    <dd>{st ? <ConnectionStatus status={st} sync={canSync ? syncMetaNow.bind(null, client.id, client.slug) : undefined} demo={demo} /> : <span className="text-faint">Not linked</span>}</dd>
+                    <dd>{st ? <ConnectionStatus status={st} sync={canSync && live ? syncMetaNow.bind(null, client.id, client.slug) : undefined} demo={demo} /> : <span className="text-faint">Not linked</span>}</dd>
                   </div>
                 ))}
               </dl>

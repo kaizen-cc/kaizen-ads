@@ -6,9 +6,11 @@ import { requireStaff } from "@/lib/auth";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { loadSuggestion, suggestRefresh, type OpenSuggestion } from "@/lib/suggestions";
+import { notLive } from "@/lib/live-guard";
 
 /** The strategist writes a refresh for one tiring ad. Asking again for the same ad opens the draft already written. */
 export async function briefRefresh(clientId: string, adId: string): Promise<{ ok: true; suggestion: OpenSuggestion } | { ok: false; error: string }> {
+  { const why = await notLive(await createClient(), clientId); if (why) return { ok: false, error: why }; }
   const me = await requireStaff();
   if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
   const supabase = await createClient();

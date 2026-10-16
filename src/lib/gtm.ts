@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AiUnavailable, askJson, clientContext, contextBlock, researchWeb } from "@/lib/ai";
+import { LIVE } from "@/lib/live";
 
 // The Meta go-to-market strategy (Kaizen's GTM Strategy Builder, from the Market Research Playbook, Division 1: Paid
 // Media Research, Meta only). Built once a client's intake form, call notes and website are all in; the team reviews
@@ -191,7 +192,7 @@ function bump(v: string) {
 export async function autoGtm(admin: SupabaseClient, max = 1) {
   const since = new Date(Date.now() - 60 * 86_400_000).toISOString();
   const { data: intakes } = await admin.from("client_intakes").select("client_id, clients!inner(archived_at, status)").gte("received_at", since).not("client_id", "is", null).not("summary", "is", null).is("clients.archived_at", null);
-  const ids = [...new Set((intakes ?? []).filter((i) => (i.clients as unknown as { status: string }).status !== "offboarded").map((i) => i.client_id as string))];
+  const ids = [...new Set((intakes ?? []).filter((i) => (LIVE as readonly string[]).includes((i.clients as unknown as { status: string }).status)).map((i) => i.client_id as string))];
   if (!ids.length) return { candidates: 0, built: 0 };
   const { data: have } = await admin.from("client_gtm_strategies").select("client_id, status, started_at").in("client_id", ids);
   const state = new Map((have ?? []).map((h) => [h.client_id, h]));

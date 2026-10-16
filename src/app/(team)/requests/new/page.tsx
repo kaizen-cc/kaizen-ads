@@ -3,6 +3,7 @@ import { toAllotment, type Allotment, type UsageRow } from "@/lib/allotment";
 import { requireStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { RequestForm } from "./request-form";
+import { LIVE } from "@/lib/live";
 
 // The AI review can take a little while
 export const maxDuration = 60;
@@ -12,7 +13,7 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
   const { client } = await searchParams;
   const supabase = await createClient();
   const [{ data: rows }, { data: usage }, { data: angles }, { data: assignments }] = await Promise.all([
-    supabase.from("clients").select("id, name, slug, status, creative_package").neq("status", "offboarded").order("name"),
+    supabase.from("clients").select("id, name, slug, status, creative_package").is("archived_at", null).in("status", LIVE).order("name"),
     supabase.from("client_allotment_usage").select("*"),
     supabase.from("angles").select("client_id, name").eq("status", "active").order("name"),
     supabase.from("client_assignments").select("client_id, role, profiles(full_name)"),

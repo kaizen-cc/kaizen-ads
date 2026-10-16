@@ -6,6 +6,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { toAllotment, type UsageRow } from "@/lib/allotment";
 import { WinnersLibrary, type PickClient } from "./winners-library";
+import { LIVE } from "@/lib/live";
 
 export const metadata: Metadata = { title: "Winners" };
 
@@ -20,7 +21,7 @@ export default async function Winners() {
   const [winners, { data: usage }, { data: rows }] = await Promise.all([
     allWinners(db, scope),
     db.from("client_allotment_usage").select("*"),
-    db.from("clients").select("id, name, industry, industry_detail").neq("status", "offboarded").order("name"),
+    db.from("clients").select("id, name, industry, industry_detail").is("archived_at", null).in("status", LIVE).order("name"),
   ]);
   // Who a request can be made for: clients with a creative package, and what's left of their month
   const clients: PickClient[] = ((usage ?? []) as UsageRow[])
