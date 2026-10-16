@@ -2,6 +2,8 @@ import type { Metadata, Viewport } from "next";
 import { Poppins } from "next/font/google";
 import localFont from "next/font/local";
 import "./globals.css";
+import { ErrorListener } from "@/components/error-listener";
+import { UpdateBar } from "@/components/update-bar";
 
 const poppins = Poppins({
   variable: "--font-poppins",
@@ -41,7 +43,12 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${poppins.variable} ${flexa.variable} ${osake.variable} h-full antialiased`}>
-      <body className="min-h-full font-sans">{children}</body>
+      <body className="min-h-full font-sans">
+        {children}
+        {/* A newer version is live: offer a refresh. Errors in the browser get reported. */}
+        <UpdateBar />
+        <ErrorListener />
+      </body>
     </html>
   );
 }

@@ -10,6 +10,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { ChatMessage, Change } from "./actions";
 import { AgentDetail, AgentsOverview, type Agent, type Item } from "./agents";
 import { DataInspector } from "./data-inspector";
+import { ErrorButtons } from "./error-buttons";
 
 // Inspecting a big ad account reads a few thousand rows
 export const maxDuration = 60;
@@ -18,6 +19,7 @@ const TABS = [
   ["agents", "AI agents"],
   ["data", "Raw data"],
   ["sync", "Sync health"],
+  ["errors", "Errors"],
   ["deleted", "Deleted"],
 ] as const;
 // Leads see only the deleted log; execs see everything
@@ -105,6 +107,118 @@ const GROUPS: [string, string][] = [
   ["drive:", "Drive folders"],
 ];
 
+type ErrorRow = {
+  fingerprint: string;
+  message: string;
+  path: string | null;
+  kind: string;
+  count: number;
+  people: string[];
+  sample: { stack?: string | null; digest?: string | null; userAgent?: string | null } | null;
+  first_seen: string;
+  last_seen: string;
+  resolved_at: string | null;
+  diagnosis: { summary?: string; cause?: string; impact?: string; fix?: string; handled?: string; severity?: string; dataRisk?: boolean } | null;
+  auto_resolved: boolean;
+  muted_at: string | null;
+  fix_issue_url: string | null;
+};
+
+const at = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+
+/** Every error someone hit, grouped, diagnosed and tracked: open first, with what happened and what would fix it. */
+async function Errors({ all }: { all: boolean }) {
+  if (!adminConfigured()) return <p className="text-sm text-faint">Server key missing.</p>;
+  let q = createAdminClient().from("error_events").select("*").order("last_seen", { ascending: false }).limit(100);
+  if (!all) q = q.is("resolved_at", null);
+  const { data } = await q;
+  const rows = (data ?? []) as ErrorRow[];
+  return (
+    <div className="grid gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <p className="max-w-3xl text-sm text-muted">
+          Every error someone hits in Kaizen Ads, on a page, a button or in the background. Harmless ones (a dropped connection, a tab on an old version) are explained and
+          closed automatically. Real ones get a diagnosis, and you&apos;re emailed the first time, then at most hourly while it keeps happening.
+        </p>
+        <Link href={all ? "/settings?tab=errors" : "/settings?tab=errors&show=all"} className="shrink-0 text-xs text-muted hover:text-fg">
+          {all ? "Open only" : "Include resolved"}
+        </Link>
+      </div>
+      {rows.length === 0 ? (
+        <p className="rounded-[12px] border border-dashed border-line p-10 text-center text-sm text-muted">No open errors.</p>
+      ) : (
+        <ul className="grid gap-3">
+          {rows.map((r) => (
+            <li key={r.fingerprint} className={`rounded-[12px] border border-line bg-surface p-4 ${r.resolved_at ? "opacity-60" : ""}`}>
+              <div className="flex flex-wrap items-start gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="break-words font-medium">{r.diagnosis?.summary ?? r.message}</p>
+                  {r.diagnosis?.summary && <p className="mt-0.5 break-words font-mono text-[11px] text-faint">{r.message}</p>}
+                  <p className="mt-1 text-xs text-muted">
+                    {r.path ?? "unknown page"} · {r.kind} · <span className="tabular">{r.count}×</span> · last {at(r.last_seen)} · first {at(r.first_seen)}
+                  </p>
+                  {r.people.length > 0 && <p className="mt-0.5 text-xs text-faint">Hit by {r.people.join(", ")}</p>}
+                </div>
+                <span className="flex shrink-0 flex-col items-end gap-1">
+                  {r.auto_resolved ? (
+                    <span className="rounded-full bg-ok-soft px-2 py-0.5 text-[11px] text-ok">Auto-handled</span>
+                  ) : r.muted_at ? (
+                    <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] text-faint">Muted</span>
+                  ) : r.resolved_at ? (
+                    <span className="text-xs text-faint">Resolved</span>
+                  ) : (
+                    <ErrorButtons fingerprint={r.fingerprint} fixing={Boolean(r.fix_issue_url)} />
+                  )}
+                  {r.diagnosis?.severity && !r.auto_resolved && (
+                    <span className={`text-[11px] ${r.diagnosis.severity === "high" ? "text-bad" : r.diagnosis.severity === "low" ? "text-faint" : "text-warn"}`}>
+                      {r.diagnosis.severity} severity{r.diagnosis.dataRisk ? " · data may be affected" : ""}
+                    </span>
+                  )}
+                  {r.fix_issue_url && (
+                    <a href={r.fix_issue_url} target="_blank" rel="noreferrer" className="text-[11px] text-brand-text hover:underline">
+                      Claude&apos;s fix →
+                    </a>
+                  )}
+                </span>
+              </div>
+              {r.diagnosis?.cause && (
+                <dl className="mt-3 grid gap-x-4 gap-y-1 rounded-[10px] bg-bg/60 p-3 text-xs sm:grid-cols-[auto_minmax(0,1fr)]">
+                  <dt className="text-faint">Why</dt>
+                  <dd className="text-muted">{r.diagnosis.cause}</dd>
+                  {r.diagnosis.impact && (
+                    <>
+                      <dt className="text-faint">Impact</dt>
+                      <dd className="text-muted">{r.diagnosis.impact}</dd>
+                    </>
+                  )}
+                  {r.diagnosis.fix && (
+                    <>
+                      <dt className="text-faint">What would fix it</dt>
+                      <dd className="text-muted">{r.diagnosis.fix}</dd>
+                    </>
+                  )}
+                  {r.diagnosis.handled && (
+                    <>
+                      <dt className="text-faint">What was done</dt>
+                      <dd className="text-muted">{r.diagnosis.handled}</dd>
+                    </>
+                  )}
+                </dl>
+              )}
+              {r.sample?.stack && (
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-xs text-muted hover:text-fg">Technical details</summary>
+                  <pre className="mt-2 overflow-x-auto rounded-[10px] bg-bg p-3 text-[11px] text-muted">{r.sample.stack}</pre>
+                </details>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 async function MotionCard({ notice }: { notice: string | null }) {
   const { data: m } = await createAdminClient().from("motion_connection").select("access_token, connected_at, last_sync_at, last_result, error, tools, profiles(full_name)").eq("id", 1).maybeSingle();
   const on = Boolean(m?.access_token);
@@ -120,11 +234,18 @@ async function MotionCard({ notice }: { notice: string | null }) {
               : "Connect Kaizen's Motion account to fill the Market tab with live ads from every industry we serve."}
           </p>
         </div>
-        <a href="/api/motion/connect" className={`grid h-9 place-items-center rounded-full px-4 text-sm ${on ? "border border-line text-muted hover:text-fg" : "bg-brand font-medium text-white hover:brightness-110"}`}>
-          {on ? "Reconnect" : "Connect Motion"}
-        </a>
+        <span className="flex gap-2">
+          {on && (
+            <a href="/api/motion/sync" className="grid h-9 place-items-center rounded-full bg-fg px-4 text-sm text-bg">
+              Sync now
+            </a>
+          )}
+          <a href="/api/motion/connect" className={`grid h-9 place-items-center rounded-full px-4 text-sm ${on ? "border border-line text-muted hover:text-fg" : "bg-brand font-medium text-white hover:brightness-110"}`}>
+            {on ? "Reconnect" : "Connect Motion"}
+          </a>
+        </span>
       </div>
-      {notice && <p className={`text-xs ${notice === "connected" ? "text-ok" : "text-bad"}`}>{notice === "connected" ? "Connected. The first market sync is running now." : notice}</p>}
+      {notice && <p className={`text-xs ${notice === "connected" || notice === "syncing" ? "text-ok" : "text-bad"}`}>{notice === "connected" ? "Connected. The first market sync is running now." : notice === "syncing" ? "The market sync is running. It takes a few minutes; refresh to see the result." : notice}</p>}
       {m?.error && <p className="text-xs text-bad">{m.error}</p>}
       {on && m?.last_sync_at && (
         <p className="text-xs text-faint">
@@ -249,6 +370,7 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
       {tab === "agents" && <Agents open={typeof sp.agent === "string" ? sp.agent : null} />}
       {tab === "data" && <Data target={typeof sp.target === "string" ? sp.target : null} from={from} to={to} />}
       {tab === "sync" && <Sync motion={typeof sp.motion === "string" ? sp.motion : null} />}
+      {tab === "errors" && <Errors all={sp.show === "all"} />}
       {tab === "deleted" && <Deleted />}
     </div>
   );

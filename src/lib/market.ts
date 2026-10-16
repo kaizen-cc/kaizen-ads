@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { INDUSTRIES } from "@/lib/industries";
-import { argsFor, MotionNotConnected, openSession, type MotionTool } from "@/lib/motion";
+import { MotionNotConnected, openSession } from "@/lib/motion";
 
 // The market: live ads from brands in every industry we serve, pulled from Motion's Inspo (public ad libraries, Meta).
 // Brands come from three places: the competitors tracked in Kaizen's Motion workspace, the competitors each client
@@ -84,19 +84,48 @@ function adRow(ad: Obj, brandId: string, industry: string | null) {
 }
 
 type Session = Awaited<ReturnType<typeof openSession>>;
+type Workspace = { id: string; name: string };
 
-/** A brand in Motion, by domain first (exact), else by name. */
-async function resolveBrand(s: Session, tools: MotionTool[], q: { name?: string | null; domain?: string | null }) {
-  const byDomain = tools.find((t) => t.name === "get_brand_by_domain");
-  const search = tools.find((t) => t.name === "search_brands");
-  if (q.domain && byDomain) {
-    const r = await s.call(byDomain.name, argsFor(byDomain, { "domain|url": q.domain })).catch(() => null);
-    const b = isObj(r) && pick(r, "id", "brandId") ? r : itemsOf(r)[0];
-    if (b && pick(b, "id", "brandId")) return b;
+/** Kaizen's Motion workspaces (one per client), from the sign-in's auth context. */
+function workspacesOf(auth: unknown): Workspace[] {
+  const orgs = itemsOf(isObj(auth) && isObj(auth.data) ? (auth.data as Obj).organizations : isObj(auth) ? auth.organizations : null);
+  return orgs.flatMap((o) => itemsOf(o.workspaces)).map((w) => ({ id: String(w.id), name: String(w.name ?? "") })).filter((w) => w.id);
+}
+
+// "Crust Pizza Co - bmco", "Infamous Ad Account - Active" → the business name
+const bare = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/\b(ad account|ads account|ad acct|account|active|act|llc|inc|co|the)\b/g, " ")
+    .replace(/[-–|(].*$/, "")
+    .replace(/[^a-z0-9]/g, "");
+
+/** Each client's Motion workspace, matched by name the first time (a set one is kept). */
+async function matchWorkspaces(admin: SupabaseClient, workspaces: Workspace[]) {
+  const { data: clients } = await admin.from("clients").select("id, name, motion_workspace_id").is("archived_at", null).neq("status", "offboarded");
+  let matched = 0;
+  for (const c of clients ?? []) {
+    if (c.motion_workspace_id) continue;
+    const name = bare(c.name);
+    if (name.length < 3) continue;
+    const hit = workspaces.find((w) => bare(w.name) === name) ?? workspaces.find((w) => bare(w.name).startsWith(name) || (bare(w.name).length >= 4 && name.startsWith(bare(w.name))));
+    if (hit) {
+      await admin.from("clients").update({ motion_workspace_id: hit.id }).eq("id", c.id);
+      matched++;
+    }
   }
-  if (q.name && search) {
-    const r = await s.call(search.name, argsFor(search, { "query|name|search|term": q.name, "limit": 3 })).catch(() => null);
-    const list = itemsOf(r);
+  return matched;
+}
+
+/** A brand in Motion: by its website first (exact), else by name. */
+async function resolveBrand(s: Session, workspaceId: string, q: { name?: string | null; domain?: string | null }): Promise<Obj | null> {
+  if (q.domain) {
+    const r = await s.call("get_brand_by_domain", { brandUrl: `https://${q.domain.replace(/^https?:\/\//, "").split("/")[0]}`, workspaceId }).catch(() => null);
+    const id = isObj(r) ? str(pick(r, "brandId", "id")) : null;
+    if (id) return { id, name: str(pick(r as Obj, "name", "brandName")) ?? q.name ?? q.domain, domain: q.domain, logo: isObj(r) ? pick(r, "logo") : null };
+  }
+  if (q.name) {
+    const list = itemsOf(await s.call("search_brands", { query: q.name, workspaceId }).catch(() => null));
     const exact = list.find((b) => str(pick(b, "name"))?.toLowerCase() === q.name!.toLowerCase());
     return exact ?? list[0] ?? null;
   }
@@ -104,7 +133,7 @@ async function resolveBrand(s: Session, tools: MotionTool[], q: { name?: string 
 }
 
 async function upsertBrand(admin: SupabaseClient, b: Obj, meta: { source: string; industry?: string | null; detail?: string | null; clientId?: string | null }) {
-  const motionId = str(pick(b, "id", "brandId"));
+  const motionId = str(pick(b, "brandId", "id"));
   const name = str(pick(b, "name", "brandName"));
   if (!motionId || !name) return null;
   const { data: prev } = await admin.from("market_brands").select("id, sources, client_ids, industry").eq("motion_brand_id", motionId).maybeSingle();
@@ -113,31 +142,38 @@ async function upsertBrand(admin: SupabaseClient, b: Obj, meta: { source: string
     name,
     domain: str(pick(b, "domain", "website", "url")),
     logo: str(pick(b, "logo", "logoUrl", "image")),
-    active_ads: num(pick(b, "activeAds", "activeAdCount", "adsCount")),
+    active_ads: num(pick(b, "activeAds", "activeAdCount", "activeAdsCount", "adsCount")),
     sources: [...new Set([...((prev?.sources as string[]) ?? []), meta.source])],
     client_ids: [...new Set([...((prev?.client_ids as string[]) ?? []), ...(meta.clientId ? [meta.clientId] : [])])],
-    // The industry from a client who named them wins; else what the AI sorts them into
+    // The industry from a client who tracks or named them wins; else what the AI sorts them into
     industry: meta.industry ?? prev?.industry ?? null,
-    ...(meta.detail ? { industry_detail: meta.detail } : {}),
+    ...(meta.detail ? { industry_detail: meta.detail.slice(0, 80) } : {}),
   };
   const { data } = await admin.from("market_brands").upsert(row, { onConflict: "motion_brand_id" }).select("id").single();
   return data?.id as string | undefined;
 }
 
-/** Which brands to watch: Motion's tracked competitors, clients' named competitors, and the AI's picks per niche. */
-async function discoverBrands(admin: SupabaseClient, s: Session, tools: MotionTool[], deadline: number) {
+/**
+ * Which brands to watch: each client's tracked competitors in their own Motion workspace, the competitors they named
+ * in their intake form, and strong Meta advertisers the AI picks for each niche we serve.
+ */
+async function discoverBrands(admin: SupabaseClient, s: Session, workspaces: Workspace[], deadline: number) {
   let found = 0;
-  // 1. Competitors tracked in Kaizen's Motion workspace
-  const comp = tools.find((t) => t.name === "get_workspace_competitors");
-  if (comp) {
-    for (const c of itemsOf(await s.call(comp.name, {}).catch(() => null))) {
-      if (Date.now() > deadline) return found;
-      const b = pick(c, "id", "brandId") ? c : await resolveBrand(s, tools, { name: str(pick(c, "name")), domain: str(pick(c, "domain")) });
-      if (b && (await upsertBrand(admin, b, { source: "motion", detail: str(pick(c, "category", "categories")) }))) found++;
+  const { data: clients } = await admin.from("clients").select("id, industry, industry_detail, motion_workspace_id").is("archived_at", null).neq("status", "offboarded");
+  const anyWorkspace = workspaces[0]?.id;
+  if (!anyWorkspace) return 0;
+
+  // 1. Each client's tracked competitors, from their Motion workspace
+  for (const c of clients ?? []) {
+    if (!c.motion_workspace_id) continue;
+    if (Date.now() > deadline) return found;
+    for (const comp of itemsOf(await s.call("get_workspace_competitors", { workspaceId: c.motion_workspace_id }).catch(() => null))) {
+      const b = pick(comp, "brandId", "id") ? comp : await resolveBrand(s, c.motion_workspace_id, { name: str(pick(comp, "name")), domain: str(pick(comp, "domain")) });
+      if (b && (await upsertBrand(admin, b, { source: "motion", industry: c.industry, detail: c.industry_detail, clientId: c.id }))) found++;
     }
   }
-  // 2. Competitors each client named in their intake form (filed under that client's industry)
-  const { data: clients } = await admin.from("clients").select("id, industry, industry_detail").is("archived_at", null).neq("status", "offboarded");
+
+  // 2. Competitors each client named in their intake form
   const { data: intakes } = await admin.from("client_intakes").select("client_id, summary").not("summary", "is", null).not("client_id", "is", null).order("received_at", { ascending: false });
   const seen = new Set<string>();
   for (const i of intakes ?? []) {
@@ -148,14 +184,15 @@ async function discoverBrands(admin: SupabaseClient, s: Session, tools: MotionTo
     for (const name of ((i.summary as { competitors?: string[] }).competitors ?? []).slice(0, 5)) {
       if (Date.now() > deadline) return found;
       const domain = name.match(/([a-z0-9-]+\.)+[a-z]{2,}/i)?.[0] ?? null;
-      const b = await resolveBrand(s, tools, { name: name.replace(/\(.*?\)|https?:\/\/\S+/g, "").trim(), domain });
+      const b = await resolveBrand(s, c.motion_workspace_id ?? anyWorkspace, { name: name.replace(/\(.*?\)|https?:\/\/\S+/g, "").trim(), domain });
       if (b && (await upsertBrand(admin, b, { source: "intake", industry: c.industry, detail: c.industry_detail, clientId: c.id }))) found++;
     }
   }
+
   // 3. Strong Meta advertisers in the niches we serve (the AI's picks, checked against Motion)
   const niches = new Map<string, Set<string>>();
   for (const c of clients ?? []) if (c.industry && c.industry !== "other") niches.set(c.industry, (niches.get(c.industry) ?? new Set()).add(c.industry_detail ?? ""));
-  if (niches.size) {
+  if (niches.size && Date.now() < deadline) {
     const out = await askJson<{ industries: { industry: string; brands: { name: string; domain: string }[] }[] }>({
       agent: "market",
       label: "brands to watch",
@@ -182,7 +219,7 @@ async function discoverBrands(admin: SupabaseClient, s: Session, tools: MotionTo
       if (!niches.has(ind.industry)) continue;
       for (const br of ind.brands.slice(0, 6)) {
         if (Date.now() > deadline) return found;
-        const b = await resolveBrand(s, tools, { name: br.name, domain: br.domain });
+        const b = await resolveBrand(s, anyWorkspace, { name: br.name, domain: br.domain });
         if (b && (await upsertBrand(admin, b, { source: "search", industry: ind.industry }))) found++;
       }
     }
@@ -265,46 +302,61 @@ async function readAds(admin: SupabaseClient, deadline: number) {
 export async function syncMarket(admin: SupabaseClient, budgetMs = 600_000) {
   const started = Date.now();
   const deadline = started + budgetMs;
-  const { data: conn } = await admin.from("motion_connection").select("tools, last_result").eq("id", 1).maybeSingle();
+  const { data: conn } = await admin.from("motion_connection").select("workspace, last_result").eq("id", 1).maybeSingle();
   try {
     const s = await openSession(admin);
-    const tools = ((conn?.tools as MotionTool[]) ?? []).length ? (conn!.tools as MotionTool[]) : await s.list();
+    let workspaces = workspacesOf(conn?.workspace);
+    if (!workspaces.length) {
+      const auth = await s.call("get_auth_context", {});
+      await admin.from("motion_connection").update({ workspace: auth }).eq("id", 1);
+      workspaces = workspacesOf(auth);
+    }
+    const matched = await matchWorkspaces(admin, workspaces);
     const last = (conn?.last_result ?? {}) as { discoveredAt?: string };
     const discover = !last.discoveredAt || Date.now() - Date.parse(last.discoveredAt) > 7 * 86_400_000;
-    const brandsFound = discover ? await discoverBrands(admin, s, tools, started + budgetMs * 0.35) : 0;
+    const brandsFound = discover ? await discoverBrands(admin, s, workspaces, started + budgetMs * 0.4) : 0;
     const sorted = await sortBrands(admin).catch(() => 0);
 
-    const inspo = tools.find((t) => t.name === "get_inspo_creatives");
+    // Live ads, ten brands a call, stalest brands first
     let pulled = 0;
     let brands = 0;
     const errors: string[] = [];
-    if (inspo) {
-      const { data: list } = await admin.from("market_brands").select("id, motion_brand_id, industry").order("last_synced_at", { ascending: true, nullsFirst: true }).limit(200);
-      for (const b of list ?? []) {
-        if (Date.now() > started + budgetMs * 0.75) break;
-        try {
-          const r = await s.call(inspo.name, argsFor(inspo, { "brandId|brand_id|brand": b.motion_brand_id, "status": "active", "sort": "newest", "limit|pageSize|count": 40 }));
-          const rows = itemsOf(r)
+    const { data: list } = await admin.from("market_brands").select("id, motion_brand_id, industry").order("last_synced_at", { ascending: true, nullsFirst: true }).limit(300);
+    for (let i = 0; i < (list ?? []).length; i += 10) {
+      if (Date.now() > started + budgetMs * 0.75) break;
+      const batch = list!.slice(i, i + 10);
+      try {
+        const r = await s.call("get_inspo_creatives", { brandIds: batch.map((b) => b.motion_brand_id), status: "ACTIVE", sort: "NEWEST", limit: 400 });
+        const entries = itemsOf(r);
+        for (const b of batch) {
+          const entry = entries.find((e) => str(pick(e, "id", "brandId")) === b.motion_brand_id);
+          const creatives = entry ? itemsOf(entry.creatives ?? entry) : [];
+          const rows = creatives
+            .slice(0, 60)
             .map((ad) => adRow(ad, b.id, b.industry))
             .filter((x): x is NonNullable<typeof x> => Boolean(x));
           if (rows.length) await admin.from("market_ads").upsert(rows, { onConflict: "motion_id" });
           // Not in the brand's live ads any more: no longer running
           const live = rows.map((x) => x.motion_id);
           await admin.from("market_ads").update({ active: false }).eq("brand_id", b.id).not("motion_id", "in", `(${live.map((x) => `"${x}"`).join(",") || '""'})`);
-          await admin.from("market_brands").update({ last_synced_at: new Date().toISOString() }).eq("id", b.id);
+          const details = entry && isObj(entry.brandDetails) ? (entry.brandDetails as Obj) : null;
+          await admin
+            .from("market_brands")
+            .update({ last_synced_at: new Date().toISOString(), active_ads: rows.length, ...(details && str(pick(details, "logo")) ? { logo: str(pick(details, "logo")) } : {}) })
+            .eq("id", b.id);
           pulled += rows.length;
           brands++;
-        } catch (e) {
-          errors.push(e instanceof Error ? e.message.slice(0, 160) : String(e));
-          if (e instanceof MotionNotConnected) throw e;
         }
+      } catch (e) {
+        errors.push(e instanceof Error ? e.message.slice(0, 160) : String(e));
+        if (e instanceof MotionNotConnected) throw e;
       }
     }
     const read = await readAds(admin, deadline).catch((e) => {
       errors.push(`reading: ${e instanceof Error ? e.message : e}`);
       return 0;
     });
-    const result = { brandsFound, sorted, brands, pulled, read, errors: errors.slice(0, 8), discoveredAt: discover ? new Date().toISOString() : last.discoveredAt };
+    const result = { workspaces: workspaces.length, matched, brandsFound, sorted, brands, pulled, read, errors: errors.slice(0, 8), discoveredAt: discover ? new Date().toISOString() : last.discoveredAt };
     await admin.from("motion_connection").update({ last_sync_at: new Date().toISOString(), last_result: result, error: null }).eq("id", 1);
     return result;
   } catch (e) {

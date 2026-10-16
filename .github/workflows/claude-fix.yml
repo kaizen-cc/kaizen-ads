@@ -1,0 +1,60 @@
+# "Have Claude fix it" in an error email opens an issue labelled claude-fix. Claude reads it, finds the
+# cause, and opens a pull request with the fix. Nothing goes live until someone merges that PR.
+# Needs the ANTHROPIC_API_KEY repository secret (Settings › Secrets and variables › Actions).
+name: Claude fix
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+
+concurrency:
+  group: claude-fix-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  fix:
+    if: github.event.label.name == 'claude-fix'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Vercel only deploys commits from this identity
+      - run: git config user.name "kaizen-cc" && git config user.email "santi@kaizenmarketing.agency"
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          claude_args: >-
+            --allowedTools "Read,Grep,Glob,Edit,Write,Bash(npm run *),Bash(npx tsc *),Bash(npx vitest *),Bash(npx eslint *),Bash(npx next typegen*),Bash(git *),Bash(gh pr create *),Bash(gh issue comment *)"
+          prompt: |
+            You are fixing a production error in Kaizen Ads (this repo). Issue #${{ github.event.issue.number }}:
+
+            ${{ github.event.issue.title }}
+
+            ${{ github.event.issue.body }}
+
+            1. Read AGENTS.md first (this Next.js version differs from what you know; its docs are in node_modules/next/dist/docs/).
+            2. Find the root cause in the code. If the error is not caused by our code (e.g. a network blip or a browser extension),
+               don't change anything: comment on the issue explaining why, and stop.
+            3. Make the smallest safe fix. Match the surrounding code style. Don't touch unrelated files.
+               If the database needs a change, add a new file in supabase/migrations/ and say clearly in the PR that it must be applied.
+            4. Run: npm run lint && npx next typegen && npx tsc --noEmit && npx vitest run. All must pass.
+            5. Create a branch claude/fix-${{ github.event.issue.number }}, commit, push, and open a PR with
+               `gh pr create --base main` titled "Fix: <short description>" whose body explains, in plain language for a non-technical owner:
+               What happened · Why it happened · What changed · How it was checked. End the body with "Closes #${{ github.event.issue.number }}".
+            6. Comment on the issue with the PR link.
