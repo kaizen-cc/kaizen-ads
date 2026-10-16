@@ -16,7 +16,7 @@ Kaizen Ads uses the same secret as Kaizen Track (`ZAPIER_SECRET`, set to the sam
 
 **The team on the enrollment and upsell forms** (media buyer, graphic designer, video editor, copywriter, customer success) becomes the client's assignments here, matched to people by name. A role the form names replaces whoever held it; a name that doesn't match exactly one active person is listed back in Zapier's response as `team_not_found`, never guessed. Assignments decide what people see: a media buyer's board, KPI board, client list and Home show only their clients (execs, leads, the copywriter and customer success see every client). The Meta KPI targets follow the media buyer.
 
-**Packages given as counts** ("3 Videos per Month", "10 statics + 2 videos") set exactly that allotment.
+**Packages**: a set package named plainly ("Silver", "Gold Package") works as before. Anything else ("3 Videos per Month", "Silver + 2 extra videos", "10 statics and a couple of reels") is read by the AI into monthly deliverables: the client's package becomes **Custom**, their allotment is set to exactly those counts, and what was agreed goes in the package note. Zapier's response shows how it was read (`package_read_as`).
 
 The easiest setup is to duplicate each Zap's Kaizen Track step and change only the URL to the Kaizen Ads one. The headers and fields stay the same. Track's steps stay as they are.
 

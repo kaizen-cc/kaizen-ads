@@ -3,7 +3,7 @@ import { linkNewChannel } from "@/lib/context/slack";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { after } from "next/server";
 import { welcomeBack } from "@/lib/client-sync";
-import { applyCustomPackage, applyTeam } from "@/lib/team-from-form";
+import { applyPackageText, applyTeam } from "@/lib/team-from-form";
 import { matchClient, processIntake, receiveIntake } from "@/lib/onboarding";
 import { isZapierRequest, pickLoose, readEnrollment, readRaw } from "@/lib/zapier";
 
@@ -61,9 +61,10 @@ export async function POST(request: Request, ctx: RouteContext<"/api/zapier/[for
     const back = form === "enrollment" && enrolled ? await welcomeBack(admin, enrolled) : false;
     // The team named on the form becomes the client's assignments (what each person sees follows from it)
     const team = enrolled ? await applyTeam(admin, enrolled, raw) : null;
-    // A package given as counts ("3 Videos per Month") sets exactly that allotment
-    const unknown = (result as { package_not_recognised?: string | null })?.package_not_recognised;
-    const custom = enrolled && unknown ? await applyCustomPackage(admin, enrolled, unknown) : null;
+    // Anything but a plain set package ("3 Videos per Month", "Silver + 2 extra videos") becomes Custom, with
+    // exactly those deliverables as the allotment
+    const recognised = (result as { creative_package?: string | null })?.creative_package ?? null;
+    const custom = enrolled ? await applyPackageText(admin, enrolled, data.creative_package, recognised) : null;
     // Keep the form as sent, so a question we don't read yet can be looked at later
     await admin
       .from("integration_events")
@@ -75,7 +76,7 @@ export async function POST(request: Request, ctx: RouteContext<"/api/zapier/[for
       ...(back ? { welcome_back: true } : {}),
       ...(team && Object.keys(team.assigned).length ? { team: team.assigned } : {}),
       ...(team?.unmatched.length ? { team_not_found: team.unmatched } : {}),
-      ...(custom ? { allotment: `${custom.images} images + ${custom.videos} videos`, package_not_recognised: null } : {}),
+      ...(custom ? { creative_package: "custom", allotment: `${custom.images} images + ${custom.videos} videos`, package_read_as: custom.summary, package_not_recognised: null } : {}),
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : `Zapier ${form} failed`;

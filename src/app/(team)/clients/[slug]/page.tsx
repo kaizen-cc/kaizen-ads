@@ -61,7 +61,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
         reviewedBy: (bibleRow.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
       }
     : null;
-  const { data: packages } = await supabase.from("creative_packages").select("key, label, images, videos").order("sort_order");
+  const { data: packages } = await supabase.from("creative_packages").select("key, label, images, videos").neq("key", "custom").order("sort_order");
   const { data: allotment } = usage ? { data: null } : await supabase.from("client_allotments").select("images_per_month, videos_per_month").eq("client_id", client.id).maybeSingle();
   const images = usage?.images_per_month ?? allotment?.images_per_month ?? 0;
   const videos = usage?.videos_per_month ?? allotment?.videos_per_month ?? 0;

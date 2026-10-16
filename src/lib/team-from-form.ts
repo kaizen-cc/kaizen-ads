@@ -1,5 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { aiEnabled, askJson } from "@/lib/ai";
 
 // The enrollment and upsell forms name the client's team (media buyer, designer, video editor, copywriter, customer
 // success). Those names become the client's assignments here, which is what decides who sees the client: a media
@@ -73,19 +74,71 @@ export async function applyTeam(admin: SupabaseClient, clientId: string, raw: Re
   return { assigned, unmatched };
 }
 
-/**
- * A package the form gave as counts instead of a name ("3 Videos per Month", "10 statics + 2 videos"): the client's
- * creative is switched on with exactly that allotment.
- */
-export async function applyCustomPackage(admin: SupabaseClient, clientId: string, text: string) {
+const PACKAGE_SCHEMA = {
+  type: "object",
+  properties: {
+    standard: { type: "string", description: "the set package's key when the text is exactly a set package with nothing added, else empty" },
+    images: { type: "integer" },
+    videos: { type: "integer" },
+    summary: { type: "string" },
+  },
+  required: ["standard", "images", "videos", "summary"],
+  additionalProperties: false,
+};
+
+/** Counts read straight from the text, for when the AI isn't available. */
+function countsIn(text: string) {
   const num = (re: RegExp) => {
     const m = text.match(re);
     return m ? Number(m[1]) : null;
   };
   const videos = num(/(\d+)\s*(?:videos?|reels?|ugc)/i);
   const images = num(/(\d+)\s*(?:images?|statics?|graphics?|photos?|carousels?|creatives?|designs?)/i);
-  if (videos == null && images == null) return null;
-  await admin.from("client_allotments").upsert({ client_id: clientId, images_per_month: images ?? 0, videos_per_month: videos ?? 0, updated_at: new Date().toISOString() }, { onConflict: "client_id" });
-  await admin.from("clients").update({ creative_package: true, creative_package_key: null }).eq("id", clientId);
-  return { images: images ?? 0, videos: videos ?? 0 };
+  return videos == null && images == null ? null : { images: images ?? 0, videos: videos ?? 0 };
+}
+
+/**
+ * The form's package answer, understood. A plain set package ("Silver", "Gold Package") stays as it is. Anything else
+ * ("3 Videos per Month", "Silver + 2 extra videos", "10 statics and a couple of reels") makes the client Custom with
+ * exactly those deliverables as their monthly allotment, and what was agreed in the package note.
+ */
+export async function applyPackageText(admin: SupabaseClient, clientId: string, text: string | null, recognised: string | null) {
+  const answer = text?.trim();
+  if (!answer) return null;
+  const { data: pkgs } = await admin.from("creative_packages").select("key, label, images, videos").neq("key", "custom").order("sort_order");
+  const set = pkgs ?? [];
+  // A set package named on its own (any numbers in it are that package's own counts) needs nothing more
+  const known = set.find((p) => p.key === recognised);
+  const extra = /\+|\bplus\b|extra|additional|add-?on|custom|instead|\bonly\b|\band\b|&/i.test(answer);
+  const digits = (answer.match(/\d+/g) ?? []).map(Number);
+  if (known && !extra && digits.every((d) => d === known.images || d === known.videos)) return null;
+
+  let read: { images: number; videos: number; summary: string } | null = null;
+  if (aiEnabled())
+    try {
+      const out = await askJson<{ standard: string; images: number; videos: number; summary: string }>({
+        agent: "briefing",
+        label: "package from a form",
+        system: "You read what a paid social agency sold a client for creative, from one form answer, and turn it into monthly deliverables. Carousels count as images. Be literal: never invent deliverables the text doesn't support.",
+        schema: PACKAGE_SCHEMA,
+        prompt: `The agency's set packages (per month):
+${set.map((p) => `- ${p.key} (${p.label}): ${p.images} images, ${p.videos} videos`).join("\n")}
+
+The form answer: "${answer}"
+
+standard: the set package's key if the answer is exactly one set package with nothing added or changed; otherwise "". images, videos: the monthly deliverables in total (a set package plus extras adds them up; "a couple" is 2, "a few" is 3). summary: one short line of what was agreed, e.g. "Silver plus 2 extra videos".`,
+      });
+      if (out.standard && set.some((p) => p.key === out.standard) && out.standard === recognised) return null;
+      read = { images: Math.max(0, Math.min(999, out.images)), videos: Math.max(0, Math.min(999, out.videos)), summary: out.summary.trim() || answer };
+    } catch {
+      read = null;
+    }
+  if (!read) {
+    const c = countsIn(answer);
+    if (!c) return null;
+    read = { ...c, summary: answer };
+  }
+  await admin.from("client_allotments").upsert({ client_id: clientId, images_per_month: read.images, videos_per_month: read.videos, updated_at: new Date().toISOString() }, { onConflict: "client_id" });
+  await admin.from("clients").update({ creative_package: true, creative_package_key: "custom", creative_package_note: `Custom: ${read.summary}`.slice(0, 300) }).eq("id", clientId);
+  return { images: read.images, videos: read.videos, summary: read.summary };
 }
