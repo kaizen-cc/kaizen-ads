@@ -19,8 +19,8 @@ async function runJob(job: SyncJob) {
 }
 
 /**
- * Sync health's "Sync now": runs a whole job in the background, outside its schedule, and notes it as running
- * (sync_state "run:<job>") so the card can show it until it's done.
+ * Sync health's "Sync now": runs a whole job on the server, outside its schedule (leaving or refreshing the page
+ * doesn't stop it), and notes it as running (sync_state "run:<job>") so the card can show its progress until it's done.
  */
 export async function syncNow(job: SyncJob): Promise<{ ok: true } | { error: string }> {
   const me = await requireExec();
@@ -29,10 +29,11 @@ export async function syncNow(job: SyncJob): Promise<{ ok: true } | { error: str
   const admin = createAdminClient();
   const source = `run:${job}`;
   const { data: prev } = await admin.from("sync_state").select("last_result").eq("source", source).maybeSingle();
-  const p = prev?.last_result as { running?: boolean; startedAt?: string } | null;
+  const p = prev?.last_result as { running?: boolean; startedAt?: string; durationMs?: number } | null;
   if (p?.running && p.startedAt && Date.now() - Date.parse(p.startedAt) < 14 * 60_000) return { error: "Already running" };
   const startedAt = new Date().toISOString();
-  await admin.from("sync_state").upsert({ source, last_run_at: startedAt, last_result: { running: true, startedAt, by: me.fullName } });
+  // How long the last run took, for the progress estimate on jobs that can't be counted
+  await admin.from("sync_state").upsert({ source, last_run_at: startedAt, last_result: { running: true, startedAt, by: me.fullName, durationMs: p?.durationMs ?? null } });
   after(async () => {
     let result: unknown;
     let error: string | null = null;
@@ -45,7 +46,7 @@ export async function syncNow(job: SyncJob): Promise<{ ok: true } | { error: str
     await admin.from("sync_state").upsert({
       source,
       last_run_at: new Date().toISOString(),
-      last_result: { running: false, startedAt, finishedAt: new Date().toISOString(), by: me.fullName, error, summary: summarize(result) },
+      last_result: { running: false, startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - Date.parse(startedAt), by: me.fullName, error, summary: summarize(result) },
     });
   });
   revalidatePath("/settings");

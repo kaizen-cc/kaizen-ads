@@ -13,7 +13,7 @@ import { DataInspector } from "./data-inspector";
 import { AGENT_MOMENTS, momentOf } from "@/lib/agent-moments";
 import Team from "../team/page";
 import { ErrorButtons } from "./error-buttons";
-import { LastRun, RetryOne, SyncNowButton, type RunState } from "./sync-buttons";
+import { LastRun, ProgressBar, RetryOne, SyncNowButton, type Progress, type RunState } from "./sync-buttons";
 import type { SyncJob } from "./sync-actions";
 
 // Inspecting a big ad account reads a few thousand rows; Sync now runs a whole job in the background
@@ -327,6 +327,24 @@ async function MotionCard({ notice }: { notice: string | null }) {
 }
 
 const olderThan = (iso: string, ms: number) => Date.now() - Date.parse(iso) > ms;
+// What a job usually takes, until it has run by hand once (then its own last time is used)
+const TYPICAL_MS: Record<SyncJob, number> = { kpi: 300_000, meta: 420_000, slack: 120_000, gmail: 240_000, drive: 120_000, calls: 180_000, verticals: 300_000 };
+// Jobs that touch many sources show sources done of the total; the rest are estimated from time
+const COUNTED: SyncJob[] = ["kpi", "slack", "gmail"];
+function progressOf(job: SyncJob, run: RunState, sources: { last_run_at: string | null }[]): Progress {
+  if (!run?.running || !run.startedAt) return null;
+  const ms = Date.now() - Date.parse(run.startedAt);
+  const m = Math.floor(ms / 60_000);
+  const elapsed = m < 1 ? `${Math.max(1, Math.round(ms / 1000))}s` : `${m} min`;
+  if (COUNTED.includes(job) && sources.length > 1) {
+    const done = sources.filter((s) => s.last_run_at && s.last_run_at >= run.startedAt!).length;
+    return { pct: Math.min(99, Math.round((done / sources.length) * 100)), done, total: sources.length, estimated: false, elapsed };
+  }
+  const typical = run.durationMs || TYPICAL_MS[job];
+  // Eases toward 95% so a slower run than usual never shows done before it is
+  const pct = Math.round(95 * (1 - Math.exp(-(1.6 * ms) / typical)));
+  return { pct, estimated: true, elapsed };
+}
 
 async function Sync({ motion }: { motion: string | null }) {
   if (!adminConfigured()) return <p className="text-sm text-faint">Server key missing.</p>;
@@ -365,6 +383,7 @@ async function Sync({ motion }: { motion: string | null }) {
         const stale = list.filter((r) => freshness(r.last_run_at).tone !== "ok");
         const newest = list.map((r) => r.last_run_at).filter(Boolean).sort().at(-1);
         const run = runs.get(job) ?? null;
+        const progress = progressOf(job, run, list);
         const label = (source: string) => {
           const rest = source.startsWith(prefix) ? source.slice(prefix.length).replace(/^:/, "") : source;
           if (prefix === "kpi:") return owner.get(rest) ? `${owner.get(rest)} · ${rest}` : rest;
@@ -389,8 +408,9 @@ async function Sync({ motion }: { motion: string | null }) {
                   {stale.length > 0 && <span className="text-warn"> · {stale.length} behind</span>}
                   {newest ? <span className="text-faint"> · {freshness(newest).label.toLowerCase()}</span> : <span className="text-faint">Not run yet</span>}
                 </span>
-                <SyncNowButton job={job} run={run} />
+                <SyncNowButton job={job} run={run} progress={progress} />
               </span>
+              <ProgressBar progress={progress} />
             </summary>
             <div className="grid gap-2 border-t border-line px-4 py-3">
               <div className="grid gap-0.5 px-2">

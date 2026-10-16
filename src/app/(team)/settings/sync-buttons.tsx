@@ -4,7 +4,9 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { syncNow, syncOne, type SyncJob } from "./sync-actions";
 
-export type RunState = { running: boolean; startedAt?: string; finishedAt?: string; by?: string; error?: string | null; summary?: string } | null;
+export type RunState = { running: boolean; startedAt?: string; finishedAt?: string; by?: string; error?: string | null; summary?: string; durationMs?: number | null } | null;
+/** How far a running job is: counted (sources done of the total) or estimated from how long it usually takes. */
+export type Progress = { pct: number; done?: number; total?: number; estimated: boolean; elapsed: string } | null;
 
 const ago = (iso: string) => {
   const m = Math.round((Date.now() - Date.parse(iso)) / 60_000);
@@ -12,7 +14,7 @@ const ago = (iso: string) => {
 };
 
 /** "Sync now" for a whole job. While it runs, the page refreshes itself until it's done. */
-export function SyncNowButton({ job, run }: { job: SyncJob; run: RunState }) {
+export function SyncNowButton({ job, run, progress }: { job: SyncJob; run: RunState; progress: Progress }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -49,7 +51,7 @@ export function SyncNowButton({ job, run }: { job: SyncJob; run: RunState }) {
         {running || pending ? (
           <>
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ok" />
-            Syncing{run?.startedAt && running ? ` · ${ago(run.startedAt)}` : "…"}
+            {running && progress ? `Syncing · ${progress.estimated ? "about " : ""}${progress.pct}%` : "Starting…"}
           </>
         ) : (
           "Sync now"
@@ -59,11 +61,29 @@ export function SyncNowButton({ job, run }: { job: SyncJob; run: RunState }) {
   );
 }
 
+/** A thin bar across the card while its job runs. */
+export function ProgressBar({ progress }: { progress: Progress }) {
+  if (!progress) return null;
+  return (
+    <span className="grid basis-full gap-1.5">
+      <span className="block h-1 overflow-hidden rounded-full bg-line">
+        <span className="relative block h-full rounded-full bg-ok transition-[width] duration-700 ease-out" style={{ width: `${Math.max(3, progress.pct)}%` }}>
+          <span className="absolute inset-0 animate-pulse rounded-full bg-white/25" />
+        </span>
+      </span>
+      <span className="text-[11px] text-muted">
+        {progress.total != null ? `${progress.done} of ${progress.total} done` : `About ${progress.pct}%, from how long it usually takes`} · running {progress.elapsed}. It keeps going on
+        the server if you leave or refresh.
+      </span>
+    </span>
+  );
+}
+
 /** The last hand-run of a job, under the card. */
 export function LastRun({ run }: { run: RunState }) {
   if (!run?.startedAt) return null;
   if (run.running)
-    return <p className="text-[11px] text-muted">Running now, started {ago(run.startedAt)}{run.by ? ` by ${run.by}` : ""}. This card updates when it&apos;s done.</p>;
+    return <p className="text-[11px] text-muted">Running now, started {ago(run.startedAt)}{run.by ? ` by ${run.by}` : ""}.</p>;
   return (
     <p className={`text-[11px] ${run.error ? "text-bad" : "text-muted"}`}>
       Last synced by hand {ago(run.finishedAt ?? run.startedAt)}
