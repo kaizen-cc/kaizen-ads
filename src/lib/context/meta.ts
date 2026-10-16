@@ -537,7 +537,20 @@ export type AdDetail = {
   image: string | null;
   video: { source: string | null; poster: string | null } | null;
   preview: string | null; // Meta's own rendering of the ad (an iframe URL), when the video itself can't be played here
+  cta: string | null; // the button, as Meta shows it ("Learn More", "Shop Now")
+  link: string | null; // where the ad sends people
+  page: { name: string | null; picture: string | null } | null; // the Facebook Page it runs from
 };
+
+// Meta's button types, as the button reads in the feed
+const CTA_LABEL: Record<string, string> = {
+  LEARN_MORE: "Learn more", SHOP_NOW: "Shop now", SIGN_UP: "Sign up", BOOK_TRAVEL: "Book now", BOOK_NOW: "Book now", CONTACT_US: "Contact us",
+  DOWNLOAD: "Download", GET_OFFER: "Get offer", GET_QUOTE: "Get quote", SUBSCRIBE: "Subscribe", APPLY_NOW: "Apply now", ORDER_NOW: "Order now",
+  CALL_NOW: "Call now", MESSAGE_PAGE: "Send message", WHATSAPP_MESSAGE: "Send WhatsApp message", GET_DIRECTIONS: "Get directions", WATCH_MORE: "Watch more",
+  SEE_MENU: "See menu", BUY_TICKETS: "Buy tickets", REQUEST_TIME: "Request time", GET_STARTED: "Get started", INSTALL_MOBILE_APP: "Install now",
+  LISTEN_NOW: "Listen now", DONATE_NOW: "Donate now", BUY_NOW: "Buy now", SEND_UPDATES: "Get updates", INQUIRE_NOW: "Inquire now", NO_BUTTON: "",
+};
+const ctaLabel = (t?: string) => (t ? (CTA_LABEL[t] ?? t.toLowerCase().replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase())) || null : null);
 
 /** The ad as it runs: full copy, the full image, the video file when the page lets us read it, and Meta's preview. */
 export async function adDetail(adId: string): Promise<AdDetail> {
@@ -547,23 +560,31 @@ export async function adDetail(adId: string): Promise<AdDetail> {
     image_url?: string;
     thumbnail_url?: string;
     video_id?: string;
-    object_story_spec?: { link_data?: { name?: string; message?: string; picture?: string }; video_data?: { title?: string; message?: string; video_id?: string; image_url?: string } };
-    asset_feed_spec?: { titles?: { text: string }[]; bodies?: { text: string }[]; videos?: { video_id: string; thumbnail_url?: string }[] };
+    call_to_action_type?: string;
+    object_story_spec?: {
+      page_id?: string;
+      link_data?: { name?: string; message?: string; picture?: string; link?: string; call_to_action?: { type?: string; value?: { link?: string } } };
+      video_data?: { title?: string; message?: string; video_id?: string; image_url?: string; call_to_action?: { type?: string; value?: { link?: string } } };
+    };
+    asset_feed_spec?: { titles?: { text: string }[]; bodies?: { text: string }[]; videos?: { video_id: string; thumbnail_url?: string }[]; link_urls?: { website_url?: string }[]; call_to_action_types?: string[] };
     effective_object_story_id?: string;
   };
   const ad = await graph<{ creative?: C }>(adId, {
-    fields: "creative.thumbnail_width(1080).thumbnail_height(1080){title,body,image_url,thumbnail_url,video_id,object_story_spec,asset_feed_spec,effective_object_story_id}",
+    fields: "creative.thumbnail_width(1080).thumbnail_height(1080){title,body,image_url,thumbnail_url,video_id,call_to_action_type,object_story_spec,asset_feed_spec,effective_object_story_id}",
   });
   const c = ad.creative ?? {};
   let text = c.body ?? c.object_story_spec?.link_data?.message ?? c.object_story_spec?.video_data?.message ?? c.asset_feed_spec?.bodies?.[0]?.text ?? null;
   if (!text && c.effective_object_story_id) text = (await graph<{ message?: string }>(c.effective_object_story_id, { fields: "message" }).catch(() => null))?.message ?? null;
   const videoId = c.video_id ?? c.object_story_spec?.video_data?.video_id ?? c.asset_feed_spec?.videos?.[0]?.video_id ?? null;
   const poster = c.object_story_spec?.video_data?.image_url ?? c.asset_feed_spec?.videos?.[0]?.thumbnail_url ?? c.thumbnail_url ?? null;
-  const [video, preview] = await Promise.all([
+  const spec = c.object_story_spec;
+  const pageId = spec?.page_id ?? c.effective_object_story_id?.split("_")[0] ?? null;
+  const [video, preview, page] = await Promise.all([
     videoId ? graph<{ source?: string; picture?: string }>(videoId, { fields: "source,picture" }).catch(() => null) : Promise.resolve(null),
     graph<{ data?: { body?: string }[] }>(`${adId}/previews`, { ad_format: "MOBILE_FEED_STANDARD" })
       .then((r) => r.data?.[0]?.body?.match(/src="([^"]+)"/)?.[1]?.replace(/&amp;/g, "&") ?? null)
       .catch(() => null),
+    pageId ? graph<{ name?: string; picture?: { data?: { url?: string } } }>(pageId, { fields: "name,picture.type(large)" }).catch(() => null) : Promise.resolve(null),
   ]);
   return {
     text,
@@ -571,5 +592,8 @@ export async function adDetail(adId: string): Promise<AdDetail> {
     image: videoId ? null : (c.image_url ?? c.object_story_spec?.link_data?.picture ?? c.thumbnail_url ?? null),
     video: videoId ? { source: video?.source ?? null, poster: poster ?? video?.picture ?? null } : null,
     preview,
+    cta: ctaLabel(spec?.link_data?.call_to_action?.type ?? spec?.video_data?.call_to_action?.type ?? c.call_to_action_type ?? c.asset_feed_spec?.call_to_action_types?.[0]),
+    link: spec?.link_data?.call_to_action?.value?.link ?? spec?.link_data?.link ?? spec?.video_data?.call_to_action?.value?.link ?? c.asset_feed_spec?.link_urls?.[0]?.website_url ?? null,
+    page: page ? { name: page.name ?? null, picture: page.picture?.data?.url ?? null } : null,
   };
 }

@@ -48,7 +48,10 @@ export async function collectStep(admin: SupabaseClient, step: Step, budgetMs = 
     const fatigue = await runFatigue(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
     // A refresh brief ready for each ad flagged
     const refreshes = await prewriteRefreshes(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
-    return [{ ...out, fatigue, refreshes }];
+    // The read of each winning ad, ready before anyone hovers it
+    const { analyzeWinners } = await import("@/lib/winner-insight");
+    const winners = await analyzeWinners(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+    return [{ ...out, fatigue, refreshes, winners }];
   }
   if (step === "slack") return slackConfigured() ? [await collect(admin, "slack", () => collectSlack(admin))] : [{ source: "slack", skipped: "not set up" }];
   if (!googleConfigured()) return [{ source: step, skipped: "Google not set up" }];

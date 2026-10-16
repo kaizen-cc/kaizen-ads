@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Winner, WinnerScope } from "@/lib/industry";
 import type { Allotment } from "@/lib/allotment";
-import type { AdDetail } from "@/lib/context/meta";
 import type { OpenSuggestion } from "@/lib/suggestions";
 import { SuggestionSheet } from "../pipeline/views/suggested-briefs";
-import { briefFromWinner, winnerAd } from "./actions";
+import { briefFromWinner } from "./actions";
+import { FbPreview, InsightPanel, useAd, useInsight } from "./fb-preview";
 
 export type PickClient = { id: string; name: string; industry: string | null; detail: string | null; allotment: Allotment };
 
@@ -29,6 +29,20 @@ export function WinnersLibrary({ winners, industries, clients, scope }: { winner
   const [liveOnly, setLiveOnly] = useState(false);
   const [sort, setSort] = useState<Sort>("ratio");
   const [open, setOpen] = useState<Winner | null>(null);
+  // Hovering a card (mouse only) shows the ad as it runs, with the AI's read
+  const [hover, setHover] = useState<{ w: Winner; rect: DOMRect } | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const canHover = () => typeof window !== "undefined" && window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+  const hoverIn = (w: Winner, el: HTMLElement) => {
+    if (!canHover()) return;
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setHover({ w, rect: el.getBoundingClientRect() }), hover ? 120 : 380);
+  };
+  const hoverOut = () => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setHover(null), 220);
+  };
+  const keep = () => timer.current && clearTimeout(timer.current);
 
   const label = (k: string | null) => industries.find(([i]) => i === k)?.[1] ?? "Not sorted yet";
   const counts = useMemo(() => {
@@ -122,7 +136,12 @@ export function WinnersLibrary({ winners, industries, clients, scope }: { winner
               {shown.map((w) => (
                 <button
                   key={`${w.clientId}:${w.id}`}
-                  onClick={() => setOpen(w)}
+                  onClick={() => {
+                    setHover(null);
+                    setOpen(w);
+                  }}
+                  onMouseEnter={(e) => hoverIn(w, e.currentTarget)}
+                  onMouseLeave={hoverOut}
                   className="group grid content-start gap-2.5 rounded-[14px] border border-line bg-surface p-2 text-left transition-colors hover:border-faint"
                 >
                   <span className="relative aspect-[4/5] overflow-hidden rounded-[10px] bg-surface-2">
@@ -156,6 +175,20 @@ export function WinnersLibrary({ winners, industries, clients, scope }: { winner
         </>
       )}
 
+      {hover && !open && (
+        <HoverCard
+          key={hover.w.id}
+          w={hover.w}
+          rect={hover.rect}
+          industryLabel={label(hover.w.industry)}
+          onEnter={keep}
+          onLeave={hoverOut}
+          onOpen={() => {
+            setOpen(hover.w);
+            setHover(null);
+          }}
+        />
+      )}
       {open && <WinnerSheet key={open.id} w={open} industryLabel={label(open.industry)} clients={clients} onClose={() => setOpen(null)} />}
     </div>
   );
@@ -179,19 +212,12 @@ function Chip({ on, onClick, children }: { on: boolean; onClick: () => void; chi
 }
 
 function WinnerSheet({ w, industryLabel, clients, onClose }: { w: Winner; industryLabel: string; clients: PickClient[]; onClose: () => void }) {
-  const [ad, setAd] = useState<AdDetail | null | undefined>(undefined); // undefined: still reading it from Meta
+  const ad = useAd(w.id); // undefined: still reading it from Meta
+  const insight = useInsight(w, ad);
   const [step, setStep] = useState<"ad" | "pick" | "writing">("ad");
   const [brief, setBrief] = useState<OpenSuggestion | null>(null);
   const [error, setError] = useState<string | null>(null);
   const synced = new Date(w.syncedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-
-  useEffect(() => {
-    let live = true;
-    winnerAd(w.id).then((d) => live && setAd(d));
-    return () => {
-      live = false;
-    };
-  }, [w.id]);
 
   const write = async (clientId: string) => {
     setError(null);
@@ -209,12 +235,13 @@ function WinnerSheet({ w, industryLabel, clients, onClose }: { w: Winner; indust
 
   if (brief) return <SuggestionSheet s={brief} onClose={onClose} />;
 
-  const text = ad?.text ?? w.text;
-  const headline = ad?.headline ?? w.headline;
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4 backdrop-blur-sm" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="grid max-h-[92vh] w-full max-w-[920px] gap-5 overflow-y-auto rounded-[18px] border border-line bg-bg p-4 md:grid-cols-[minmax(0,400px)_1fr] md:p-5">
-        <AdPreview ad={ad} text={text} headline={headline} fallback={w.thumbnail} />
+        <div className="grid content-start gap-2">
+          <FbPreview ad={ad} w={w} />
+          {ad === null && <p className="text-center text-[11px] text-faint">Couldn&apos;t reach Meta for the full ad, so this is the last synced version.</p>}
+        </div>
 
         {step === "ad" ? (
           <div className="grid content-start gap-4">
@@ -234,28 +261,7 @@ function WinnerSheet({ w, industryLabel, clients, onClose }: { w: Winner; indust
               </button>
             </div>
 
-            <div className="rounded-[14px] border border-ok/30 bg-ok/[0.07] p-4">
-              <p className="tabular font-display text-4xl text-ok">{w.ratio}x</p>
-              <p className="mt-1 text-sm text-muted">
-                better cost per {w.result ?? "result"} than this account usually gets: <span className="tabular text-fg">{money(w.costPerResult)}</span> against{" "}
-                <span className="tabular text-fg">{money(w.usual)}</span>.
-              </p>
-            </div>
-
-            <dl className="grid grid-cols-3 gap-2 text-center text-xs">
-              {(
-                [
-                  ["Spend", money(w.spend)],
-                  [w.result ? `${w.result[0].toUpperCase()}${w.result.slice(1)}` : "Results", w.results.toLocaleString("en-US")],
-                  ["CTR", w.ctr ? `${w.ctr}%` : "—"],
-                ] as const
-              ).map(([k, v]) => (
-                <div key={k} className="rounded-[10px] bg-surface p-2.5">
-                  <dt className="truncate text-faint">{k}</dt>
-                  <dd className="tabular text-sm text-fg">{v}</dd>
-                </div>
-              ))}
-            </dl>
+            <InsightPanel w={w} insight={insight} />
 
             <p className="text-xs text-faint">
               {w.live === true ? "Running now" : w.live === false ? "Not delivering right now" : "Delivery status not known yet"} · Meta sync of {synced}
@@ -277,49 +283,6 @@ function WinnerSheet({ w, industryLabel, clients, onClose }: { w: Winner; indust
           <Writing />
         )}
       </div>
-    </div>
-  );
-}
-
-/** The ad as it runs: Meta's own preview when it plays, else the video file, else the image, with the full copy. */
-function AdPreview({ ad, text, headline, fallback }: { ad: AdDetail | null | undefined; text: string | null; headline: string | null; fallback: string | null }) {
-  const [frame, setFrame] = useState(false); // Meta's preview, if the video file itself isn't readable
-  const video = ad?.video;
-  const canPlay = Boolean(video?.source);
-  return (
-    <div className="grid content-start gap-2">
-      <div className="overflow-hidden rounded-[12px] bg-white text-[#050505]">
-        {text && <p className="max-h-60 overflow-y-auto whitespace-pre-wrap px-3 py-2.5 text-[13px] leading-[1.35]">{text}</p>}
-        {ad === undefined ? (
-          <div className="relative aspect-[4/5] animate-pulse bg-[#e9ebee]">
-            {fallback && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={fallback} alt="" className="absolute inset-0 h-full w-full object-cover opacity-60" />
-            )}
-          </div>
-        ) : canPlay ? (
-          <video src={video!.source!} poster={video!.poster ?? fallback ?? undefined} controls playsInline className="block max-h-[70vh] w-full bg-black" />
-        ) : frame && ad?.preview ? (
-          <iframe src={ad.preview} title="Ad preview" className="block h-[620px] w-full border-0 bg-white" scrolling="no" />
-        ) : (
-          <div className="relative">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            {(ad?.image ?? video?.poster ?? fallback) && <img src={(ad?.image ?? video?.poster ?? fallback)!} alt="" className="block w-full" />}
-            {video && ad?.preview && (
-              <button onClick={() => setFrame(true)} className="absolute inset-0 grid place-items-center bg-black/25 transition-colors hover:bg-black/35" aria-label="Play the video">
-                <span className="grid h-16 w-16 place-items-center rounded-full bg-white/95 shadow-xl">
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="#050505" aria-hidden>
-                    <path d="M8 5v14l11-7z" />
-                  </svg>
-                </span>
-              </button>
-            )}
-          </div>
-        )}
-        {headline && !frame && <p className="truncate bg-[#f0f2f5] px-3 py-2.5 text-[14px] font-semibold">{headline}</p>}
-      </div>
-      {ad === null && <p className="text-center text-[11px] text-faint">Couldn&apos;t reach Meta for the full ad, so this is the last synced version.</p>}
-      {video && !canPlay && ad?.preview && !frame && <p className="text-center text-[11px] text-faint">Tap play to watch it in Meta&apos;s preview.</p>}
     </div>
   );
 }
@@ -420,6 +383,44 @@ export function Writing({ steps = WINNER_STEPS }: { steps?: string[] }) {
         ))}
       </ol>
       <p className="text-xs text-faint">Usually under a minute. You&apos;ll be able to edit it, talk it through, or send it straight to production.</p>
+    </div>
+  );
+}
+
+/**
+ * Hovering a winner (with a mouse) opens it as it runs in the feed, playing if it's a video, with the AI's read beside
+ * it. It stays open while the pointer is on the card or on it; a click opens the full view.
+ */
+function HoverCard({ w, rect, industryLabel, onEnter, onLeave, onOpen }: { w: Winner; rect: DOMRect; industryLabel: string; onEnter: () => void; onLeave: () => void; onOpen: () => void }) {
+  const ad = useAd(w.id);
+  const insight = useInsight(w, ad);
+  const width = Math.min(760, window.innerWidth - 32);
+  const right = window.innerWidth - rect.right - 16;
+  const left = right >= width ? rect.right + 12 : rect.left - 12 - width >= 16 ? rect.left - 12 - width : Math.max(16, (window.innerWidth - width) / 2);
+  const top = Math.min(Math.max(16, rect.top - 60), Math.max(16, window.innerHeight - 660));
+  return (
+    <div
+      onMouseEnter={onEnter}
+      onMouseLeave={onLeave}
+      style={{ left, top, width }}
+      className="fixed z-40 grid max-h-[calc(100vh-32px)] grid-cols-[minmax(0,340px)_1fr] gap-4 overflow-y-auto rounded-[18px] border border-line bg-bg/95 p-3.5 shadow-2xl backdrop-blur-xl"
+    >
+      <FbPreview ad={ad} w={w} autoPlay compact />
+      <div className="grid content-start gap-3 py-1 pr-1">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="truncate font-heading text-[15px]">{w.client}</p>
+            <p className="truncate text-[11px] text-faint">
+              {w.detail ?? industryLabel}
+              {w.live ? " · running now" : ""}
+            </p>
+          </div>
+          <button onClick={onOpen} className="shrink-0 rounded-full bg-brand px-3 py-1 text-xs font-medium text-white hover:brightness-110">
+            Brief a client
+          </button>
+        </div>
+        <InsightPanel w={w} insight={insight} />
+      </div>
     </div>
   );
 }
