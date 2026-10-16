@@ -29,7 +29,7 @@ export function MarketStrip({ clientId, onUse }: { clientId: string; onUse: (lin
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {data.ads.map((a) => {
           const cover = a.media.find((m) => m.type === "image")?.url ?? a.media[0]?.thumb ?? null;
-          const link = a.motionUrl ?? a.media[0]?.url ?? a.landingUrl ?? null;
+          const link = a.motionUrl ?? a.libraryUrl ?? a.media[0]?.url ?? a.landingUrl ?? null;
           const on = used.includes(a.id);
           const line = `Inspiration from the market: ${a.brand}'s ${a.format ?? "ad"}${a.daysActive != null ? ` (running ${a.daysActive} days)` : ""}${a.angle ? `, angle "${a.angle}"` : ""}${a.hook ? `, hook "${a.hook}"` : ""}. Take the idea, not the ad.`;
           return (

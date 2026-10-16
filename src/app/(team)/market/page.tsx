@@ -23,7 +23,7 @@ export default async function Market({ searchParams }: PageProps<"/market">) {
     loadMarket(db),
     adminConfigured() ? motionConnected(createAdminClient()) : Promise.resolve(null),
     db.from("client_allotment_usage").select("*"),
-    db.from("clients").select("id, name, industry, industry_detail").is("archived_at", null).in("status", LIVE).order("name"),
+    db.from("clients").select("id, name, slug, industry, industry_detail").is("archived_at", null).in("status", LIVE).order("name"),
     db.from("market_brands").select("id", { count: "exact", head: true }),
   ]);
   const clients: PickClient[] = ((usage ?? []) as UsageRow[])
@@ -33,6 +33,7 @@ export default async function Market({ searchParams }: PageProps<"/market">) {
     })
     .filter((c): c is PickClient => Boolean(c))
     .sort((a, b) => a.name.localeCompare(b.name));
+  const clientsBySlug = new Map((rows ?? []).map((r) => [(r as { slug?: string }).slug ?? "", clients.find((c) => c.id === r.id)]).filter(([, c]) => c) as [string, PickClient][]);
   return (
     <div className="mx-auto max-w-6xl">
       <MarketLibrary
@@ -45,6 +46,7 @@ export default async function Market({ searchParams }: PageProps<"/market">) {
         canConnect={me.isExec}
         openId={typeof sp.ad === "string" ? sp.ad : null}
         startIndustry={typeof sp.industry === "string" ? sp.industry : null}
+        startClient={typeof sp.client === "string" ? (clients.find((c) => c.id === sp.client) ?? clientsBySlug.get(sp.client))?.id ?? null : null}
       />
     </div>
   );

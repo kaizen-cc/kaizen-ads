@@ -846,7 +846,7 @@ export async function suggestFromMarket(admin: SupabaseClient, clientId: string,
   if (!a) throw new Error("That ad isn't in the market library any more");
   const prompt = await promptFor(admin, clientId, [{ kind: "offer", weight: 1, line: `A live ad from the market to build on (${a.brand})`, facts: [a.daysActive != null ? `Running ${a.daysActive} days` : "Run time unknown"] }]);
   if (!prompt) throw new Error("Client not found");
-  const link = a.motionUrl ?? a.media[0]?.url ?? a.landingUrl ?? null;
+  const link = a.motionUrl ?? a.libraryUrl ?? a.media[0]?.url ?? a.landingUrl ?? null;
   const out = await askJson<Out>({
     agent: "strategist",
     label: "brief from a market ad",

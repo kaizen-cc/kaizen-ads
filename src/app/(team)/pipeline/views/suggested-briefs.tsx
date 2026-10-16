@@ -332,7 +332,7 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
                     <div className="flex flex-wrap gap-1.5">
                       {(draft.refs ?? []).map((u) => (
                         <a key={u} href={u} target="_blank" rel="noreferrer" className="inline-flex max-w-full items-center gap-1.5 truncate rounded-full border border-line bg-surface px-2.5 py-1 text-[11px] text-muted hover:text-fg">
-                          <span className={`shrink-0 rounded-full px-1.5 text-[10px] ${/motionapp\.com/i.test(u) ? "bg-[#6c5ce7]/15 text-[#8b7cf6]" : "bg-surface-2 text-faint"}`}>{/motionapp\.com/i.test(u) ? "Motion" : "Link"}</span>
+                          <span className={`shrink-0 rounded-full px-1.5 text-[10px] ${/motionapp\.com|facebook\.com\/ads\/library/i.test(u) ? "bg-[#6c5ce7]/15 text-[#8b7cf6]" : "bg-surface-2 text-faint"}`}>{/motionapp\.com/i.test(u) ? "Motion" : /facebook\.com\/ads\/library/i.test(u) ? "Ad Library" : "Link"}</span>
                           <span className="truncate">{u.replace(/^https?:\/\//, "")}</span>
                         </a>
                       ))}

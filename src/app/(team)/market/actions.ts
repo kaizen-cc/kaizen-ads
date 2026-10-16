@@ -33,3 +33,21 @@ export async function briefFromMarket(adId: string, clientId: string): Promise<{
     return { ok: false, error: e instanceof AiUnavailable ? e.message : "The strategist couldn't write it. Try again." };
   }
 }
+
+export type MarketRead = { observation: string | null; why: string | null; hook: string | null; angle: string | null; takeaways: string[] };
+
+/** The AI's read of a market ad (written ahead after each sync; written now if it isn't there yet). */
+export async function marketRead(adId: string): Promise<MarketRead | null> {
+  await requireStaff();
+  const db = adminConfigured() ? createAdminClient() : await createClient();
+  const { data } = await db.from("market_ads").select("observation, why, hook, angle, takeaways, read_at").eq("id", adId).maybeSingle();
+  if (data?.why) return { observation: data.observation, why: data.why, hook: data.hook, angle: data.angle, takeaways: data.takeaways ?? [] };
+  if (!aiEnabled() || !adminConfigured()) return null;
+  try {
+    const { analyzeMarketAd } = await import("@/lib/market");
+    return await analyzeMarketAd(createAdminClient(), adId);
+  } catch (e) {
+    console.error("[market] read failed:", e instanceof Error ? e.message : e);
+    return null;
+  }
+}

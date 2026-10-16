@@ -55,18 +55,29 @@ const domainOf = (u: string | null) => {
  * The ad as it shows in the Facebook feed: the Page, the primary text (with See more), the image or the video playing
  * on its own, then the link bar with the headline and the button. The image, headline and button go where the ad goes.
  */
-export function FbPreview({ ad, w, autoPlay = false, compact = false }: { ad: AdDetail | null | undefined; w: Winner; autoPlay?: boolean; compact?: boolean }) {
+export type FeedView = {
+  pageName: string;
+  pagePicture: string | null;
+  text: string | null;
+  headline: string | null;
+  cta: string | null;
+  link: string | null;
+  media: { type: "image" | "video"; url: string; poster: string | null }[]; // one, or a carousel's cards
+  placeholder: string | null; // shown while it loads
+  preview: string | null; // Meta's own rendering, when the video file can't be played here
+};
+
+export function FeedPreview({ view, loading = false, autoPlay = false, compact = false }: { view: FeedView; loading?: boolean; autoPlay?: boolean; compact?: boolean }) {
   const [more, setMore] = useState(false);
+  const [slide, setSlide] = useState(0);
   const [muted, setMuted] = useState(true);
   const [frame, setFrame] = useState(false);
   const video = useRef<HTMLVideoElement>(null);
-  const text = ad?.text ?? w.text;
-  const headline = ad?.headline ?? w.headline;
-  const link = ad?.link ?? null;
-  const name = ad?.page?.name ?? w.client;
+  const { text, headline, link, pageName: name } = view;
   const long = (text?.length ?? 0) > 140;
-  const canPlay = Boolean(ad?.video?.source);
-  const still = ad?.image ?? ad?.video?.poster ?? w.thumbnail;
+  const m = view.media[slide] ?? view.media[0] ?? null;
+  const canPlay = m?.type === "video";
+  const still = m ? (m.type === "image" ? m.url : m.poster) : view.placeholder;
 
   const open = (e: React.MouseEvent) => {
     if (!link) return;
@@ -77,9 +88,9 @@ export function FbPreview({ ad, w, autoPlay = false, compact = false }: { ad: Ad
   return (
     <div className="overflow-hidden rounded-[12px] bg-white text-[#050505] shadow-sm">
       <div className="flex items-center gap-2 px-3 pb-2 pt-2.5">
-        {ad?.page?.picture ? (
+        {view.pagePicture ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={ad.page.picture} alt="" className="h-9 w-9 rounded-full object-cover" />
+          <img src={view.pagePicture} alt="" className="h-9 w-9 rounded-full object-cover" />
         ) : (
           <span className="grid h-9 w-9 place-items-center rounded-full bg-[#e4e6eb] text-sm font-semibold">{name[0]}</span>
         )}
@@ -107,19 +118,20 @@ export function FbPreview({ ad, w, autoPlay = false, compact = false }: { ad: Ad
       )}
 
       <div className="relative bg-black">
-        {ad === undefined ? (
+        {loading ? (
           <div className="relative aspect-[4/5] animate-pulse bg-[#e9ebee]">
-            {w.thumbnail && (
+            {view.placeholder && (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={w.thumbnail} alt="" className="absolute inset-0 h-full w-full object-cover opacity-60" />
+              <img src={view.placeholder} alt="" className="absolute inset-0 h-full w-full object-cover opacity-60" />
             )}
           </div>
         ) : canPlay ? (
           <>
             <video
               ref={video}
-              src={ad!.video!.source!}
-              poster={ad!.video!.poster ?? w.thumbnail ?? undefined}
+              key={m!.url}
+              src={m!.url}
+              poster={m!.poster ?? view.placeholder ?? undefined}
               autoPlay={autoPlay}
               muted={muted}
               loop
@@ -146,13 +158,13 @@ export function FbPreview({ ad, w, autoPlay = false, compact = false }: { ad: Ad
               </button>
             )}
           </>
-        ) : frame && ad?.preview ? (
-          <iframe src={ad.preview} title="Ad preview" className="block h-[560px] w-full border-0 bg-white" scrolling="no" />
+        ) : frame && view.preview ? (
+          <iframe src={view.preview} title="Ad preview" className="block h-[560px] w-full border-0 bg-white" scrolling="no" />
         ) : (
           <a href={link ?? undefined} onClick={open} className={`relative block ${link ? "cursor-pointer" : "cursor-default"}`}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             {still && <img src={still} alt="" className={`block w-full bg-white object-contain ${compact ? "max-h-[360px]" : "max-h-[62vh]"}`} />}
-            {ad?.video && ad.preview && (
+            {view.preview && (
               <span
                 role="button"
                 onClick={(e) => {
@@ -174,17 +186,52 @@ export function FbPreview({ ad, w, autoPlay = false, compact = false }: { ad: Ad
         )}
       </div>
 
-      {!frame && (headline || ad?.cta || link) && (
+      {view.media.length > 1 && (
+        <div className="flex items-center justify-center gap-1.5 bg-white py-2">
+          {view.media.map((_, i) => (
+            <button key={i} onClick={() => setSlide(i)} aria-label={`Card ${i + 1}`} className={`h-1.5 rounded-full transition-all ${i === slide ? "w-4 bg-[#1877f2]" : "w-1.5 bg-[#cfd3d8]"}`} />
+          ))}
+        </div>
+      )}
+      {!frame && (headline || view.cta || link) && (
         <a href={link ?? undefined} onClick={open} className={`flex items-center gap-3 bg-[#f0f2f5] px-3 py-2.5 ${link ? "cursor-pointer hover:bg-[#e8eaed]" : "cursor-default"}`}>
           <span className="min-w-0 flex-1 leading-tight">
             {domainOf(link) && <span className="block truncate text-[12px] text-[#65676b]">{domainOf(link)}</span>}
             {headline && <span className="block truncate text-[15px] font-semibold">{headline}</span>}
           </span>
-          {ad?.cta && <span className="shrink-0 rounded-md bg-[#e4e6eb] px-3 py-2 text-[14px] font-semibold">{ad.cta}</span>}
+          {view.cta && <span className="shrink-0 rounded-md bg-[#e4e6eb] px-3 py-2 text-[14px] font-semibold">{view.cta}</span>}
         </a>
       )}
       {link && <p className="truncate bg-white px-3 py-1.5 text-[11px] text-[#65676b]">Goes to {link.replace(/^https?:\/\//, "").split("?")[0]}</p>}
     </div>
+  );
+}
+
+/** A winning ad from our Meta accounts, as it runs. */
+export function FbPreview({ ad, w, autoPlay = false, compact = false }: { ad: AdDetail | null | undefined; w: Winner; autoPlay?: boolean; compact?: boolean }) {
+  const media: FeedView["media"] = ad?.video?.source
+    ? [{ type: "video", url: ad.video.source, poster: ad.video.poster ?? w.thumbnail }]
+    : (ad?.image ?? ad?.video?.poster ?? w.thumbnail)
+      ? [{ type: "image", url: (ad?.image ?? ad?.video?.poster ?? w.thumbnail)!, poster: null }]
+      : [];
+  return (
+    <FeedPreview
+      loading={ad === undefined}
+      autoPlay={autoPlay}
+      compact={compact}
+      view={{
+        pageName: ad?.page?.name ?? w.client,
+        pagePicture: ad?.page?.picture ?? null,
+        text: ad?.text ?? w.text,
+        headline: ad?.headline ?? w.headline,
+        cta: ad?.cta ?? null,
+        link: ad?.link ?? null,
+        media,
+        placeholder: w.thumbnail,
+        // The video file isn't readable from some Pages: Meta's own preview plays it instead
+        preview: ad?.video && !ad.video.source ? ad.preview : null,
+      }}
+    />
   );
 }
 

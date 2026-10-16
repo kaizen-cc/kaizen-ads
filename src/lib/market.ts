@@ -55,30 +55,44 @@ function mediaOf(ad: Obj) {
 }
 
 function adRow(ad: Obj, brandId: string, industry: string | null) {
-  const id = str(pick(ad, "id", "creativeId", "adId", "libraryId", "adArchiveId"));
+  // Motion's Inspo shape: { _id, page: { name }, creativeFile: { fileUrl, thumbnailUrl }, creativeAssetFormat, creativeDetails: {...} }
+  const d = isObj(ad.creativeDetails) ? (ad.creativeDetails as Obj) : ad;
+  const id = str(ad._id) ?? str(pick(ad, "id", "creativeId", "adId"));
   if (!id) return null;
-  const launched = str(pick(ad, "launchDate", "launchedAt", "startDate", "firstSeen", "startedAt", "createdAt"));
+  const launched = str(d.launchDate) ?? str(pick(ad, "launchDate", "launchedAt", "startDate"));
   const launchedAt = launched && !Number.isNaN(Date.parse(launched)) ? new Date(launched).toISOString() : null;
-  const status = pick(ad, "status", "isActive", "active");
+  const status = d.status ?? pick(ad, "status", "isActive", "active");
   const active = typeof status === "boolean" ? status : typeof status === "string" ? /active|running|live/i.test(status) && !/inactive/i.test(status) : null;
-  const days = num(pick(ad, "daysActive", "activeDays", "daysRunning", "runningDays")) ?? (launchedAt ? Math.max(0, Math.round((Date.now() - Date.parse(launchedAt)) / 86_400_000)) : null);
-  const motionUrl = urls(ad).find((u) => /motionapp\.com/i.test(u)) ?? null;
-  const media = mediaOf(ad);
-  const format = str(pick(ad, "format", "type", "mediaType", "creativeType"))?.toLowerCase() ?? null;
+  const days = num(d.daysActive) ?? (launchedAt ? Math.max(0, Math.round((Date.now() - Date.parse(launchedAt)) / 86_400_000)) : null);
+  const file = isObj(ad.creativeFile) ? (ad.creativeFile as Obj) : null;
+  const assetFormat = str(ad.creativeAssetFormat)?.toLowerCase() ?? str(pick(ad, "format", "type"))?.toLowerCase() ?? null;
+  const files = itemsOf(ad.creativeFiles);
+  const media = (files.length ? files : file ? [file] : [])
+    .map((f) => {
+      const url = str(f.fileUrl) ?? str(f.url);
+      if (!url) return null;
+      return { type: (assetFormat === "video" || /\.(mp4|mov|webm|m3u8)(\?|$)/i.test(url) ? "video" : "image") as "image" | "video", url, thumb: str(f.thumbnailUrl) };
+    })
+    .filter((m): m is NonNullable<typeof m> => Boolean(m));
+  const platformId = str(d.platformId);
+  const page = isObj(ad.page) ? (ad.page as Obj) : null;
   return {
     motion_id: id,
     brand_id: brandId,
     industry,
-    format: format?.includes("carousel") ? "carousel" : format?.includes("video") || media.some((m) => m.type === "video") ? "video" : format?.includes("image") || media.length ? "image" : format,
-    headline: str(pick(ad, "headline", "title")),
-    body: str(pick(ad, "copy", "body", "primaryText", "text", "adCopy")),
-    cta: str(pick(ad, "cta", "callToAction", "ctaText")),
-    landing_url: str(pick(ad, "landingPage", "landingPageUrl", "landingUrl", "link", "destinationUrl")),
+    format: files.length > 1 || assetFormat?.includes("carousel") ? "carousel" : assetFormat?.includes("video") ? "video" : media.length ? (media[0].type === "video" ? "video" : "image") : assetFormat,
+    headline: str(d.headline) ?? str(pick(ad, "headline", "title")),
+    body: str(d.primaryCopy) ?? str(pick(ad, "copy", "body", "primaryText")),
+    cta: str(d.CTA) ?? str(pick(ad, "cta", "callToAction")),
+    landing_url: str(d.landingPageUrl) ?? str(pick(ad, "landingPageUrl", "landingUrl")),
     launched_at: launchedAt,
     active,
     days_active: days,
-    media,
-    motion_url: motionUrl,
+    rank: num(d.impressionRank),
+    media: media.length ? media : mediaOf(ad),
+    page_name: page ? str(page.name) : null,
+    library_url: platformId ? `https://www.facebook.com/ads/library/?id=${platformId}` : null,
+    motion_url: urls(ad).find((u) => /motionapp\.com/i.test(u)) ?? null,
     raw: ad,
     last_seen_at: new Date().toISOString(),
   };
@@ -133,7 +147,7 @@ async function resolveBrand(s: Session, workspaceId: string, q: { name?: string 
   return null;
 }
 
-async function upsertBrand(admin: SupabaseClient, b: Obj, meta: { source: string; industry?: string | null; detail?: string | null; clientId?: string | null }) {
+async function upsertBrand(admin: SupabaseClient, b: Obj, meta: { source: string; industry?: string | null; detail?: string | null; clientId?: string | null; query?: string }) {
   const motionId = str(pick(b, "brandId", "id"));
   const name = str(pick(b, "name", "brandName"));
   if (!motionId || !name) return null;
@@ -149,6 +163,9 @@ async function upsertBrand(admin: SupabaseClient, b: Obj, meta: { source: string
     // The industry from a client who tracks or named them wins; else what the AI sorts them into
     industry: meta.industry ?? prev?.industry ?? null,
     ...(meta.detail ? { industry_detail: meta.detail.slice(0, 80) } : {}),
+    ...(meta.query ? { matched_query: meta.query.slice(0, 200) } : {}),
+    // Found only by a name a client wrote: checked before it counts. Motion's tracked competitors and the AI's picks are trusted
+    ...(meta.source !== "intake" ? { checked_at: new Date().toISOString(), rejected: false } : {}),
   };
   const { data } = await admin.from("market_brands").upsert(row, { onConflict: "motion_brand_id" }).select("id").single();
   return data?.id as string | undefined;
@@ -186,7 +203,7 @@ async function discoverBrands(admin: SupabaseClient, s: Session, workspaces: Wor
       if (Date.now() > deadline) return found;
       const domain = name.match(/([a-z0-9-]+\.)+[a-z]{2,}/i)?.[0] ?? null;
       const b = await resolveBrand(s, c.motion_workspace_id ?? anyWorkspace, { name: name.replace(/\(.*?\)|https?:\/\/\S+/g, "").trim(), domain });
-      if (b && (await upsertBrand(admin, b, { source: "intake", industry: c.industry, detail: c.industry_detail, clientId: c.id }))) found++;
+      if (b && (await upsertBrand(admin, b, { source: "intake", industry: c.industry, detail: c.industry_detail, clientId: c.id, query: name }))) found++;
     }
   }
 
@@ -228,6 +245,50 @@ async function discoverBrands(admin: SupabaseClient, s: Session, workspaces: Wor
   return found;
 }
 
+/**
+ * Brands found only by a name from a client's intake form: the AI checks each is the competitor the client meant
+ * (a local "Sweat" sauna studio isn't sweat.com). Rejected ones are hidden and not synced; Motion-tracked
+ * competitors and the AI's own picks don't need it.
+ */
+async function checkBrands(admin: SupabaseClient, max = 60) {
+  const { data: brands } = await admin.from("market_brands").select("id, name, domain, client_ids, matched_query, sources").is("checked_at", null).limit(max);
+  if (!brands?.length) return 0;
+  const ids = [...new Set(brands.flatMap((b) => (b.client_ids as string[]) ?? []))];
+  const [{ data: clients }, { data: intakes }] = await Promise.all([
+    admin.from("clients").select("id, name, industry_detail, website").in("id", ids),
+    admin.from("client_intakes").select("client_id, summary").in("client_id", ids).not("summary", "is", null),
+  ]);
+  const named = new Map((intakes ?? []).map((i) => [i.client_id as string, ((i.summary as { competitors?: string[]; locations?: string }).competitors ?? []).join("; ")]));
+  const where = new Map((intakes ?? []).map((i) => [i.client_id as string, String((i.summary as { locations?: string }).locations ?? "")]));
+  const out = await askJson<{ brands: { n: number; same: boolean; why: string }[] }>({
+    agent: "market",
+    label: "check market brands",
+    system:
+      "You check matches between the competitors a client named and brands found by searching Meta's ad library by name. A match is right only if the brand is plausibly that competitor (same kind of business, sensible location); a local business's name often matches an unrelated national or foreign brand. When unsure, it's not a match.",
+    schema: {
+      type: "object",
+      properties: { brands: { type: "array", items: { type: "object", properties: { n: { type: "integer" }, same: { type: "boolean" }, why: { type: "string" } }, required: ["n", "same", "why"], additionalProperties: false } } },
+      required: ["brands"],
+      additionalProperties: false,
+    },
+    prompt: brands
+      .map((b, i) => {
+        const c = (clients ?? []).find((x) => ((b.client_ids as string[]) ?? []).includes(x.id));
+        return `${i + 1}. Found: "${b.name}"${b.domain ? ` (${b.domain})` : ""}
+   For client: ${c?.name ?? "?"} (${c?.industry_detail ?? "?"}${c?.website ? `, ${c.website}` : ""}${c && where.get(c.id) ? `, ${where.get(c.id)}` : ""})
+   The client named as competitors: ${b.matched_query ?? (c ? named.get(c.id) : null) ?? "(unknown)"}`;
+      })
+      .join("\n\n"),
+  });
+  const now = new Date().toISOString();
+  for (const r of out.brands) {
+    const b = brands[r.n - 1];
+    if (b) await admin.from("market_brands").update({ checked_at: now, rejected: !r.same, reject_reason: r.same ? null : r.why.slice(0, 200) }).eq("id", b.id);
+  }
+  // Anything the model skipped counts as not checked yet; it comes round again next run
+  return out.brands.length;
+}
+
 /** Brands without an industry (Motion's tracked competitors) get one. */
 async function sortBrands(admin: SupabaseClient) {
   const { data: brands } = await admin.from("market_brands").select("id, name, domain, industry_detail").is("industry", null).limit(60);
@@ -256,41 +317,101 @@ async function sortBrands(admin: SupabaseClient) {
   return out.brands.length;
 }
 
-/** What each new ad is doing: its angle, its hook and why it likely works, from the copy and the format. */
+const READ_SCHEMA = {
+  type: "object",
+  properties: {
+    observation: { type: "string" },
+    why: { type: "string" },
+    hook: { type: "string" },
+    angle: { type: "string" },
+    takeaways: { type: "array", items: { type: "string" } },
+    tags: { type: "array", items: { type: "string" } },
+  },
+  required: ["observation", "why", "hook", "angle", "takeaways", "tags"],
+  additionalProperties: false,
+};
+
+const READ_SYSTEM = `You are the senior strategist at Kaizen, a paid social agency, reading a live Meta ad from another brand (from the Meta Ad Library, via Motion) for the team. There are no performance numbers for other brands' ads; the signals are how long it has run (brands rarely keep paying for a loser), its impression rank among the brand's ads (1 = the one Meta shows most), and how much the brand is testing.
+observation: what those signals say, 1 to 2 sentences (e.g. "Live 515 days and the brand's most-shown ad: this is a proven evergreen winner."). Only the signals given; never invent numbers.
+why: why this creative is most likely working, 2 to 4 sentences: the hook (first line, on-image text, first seconds), the angle, the offer or proof, the format and visual choices, how copy and image work together. Specific to this ad.
+hook and angle: a few words each.
+takeaways: 2 or 3 concrete things our clients' creative could borrow (the structure and idea, never the brand's words or offer).
+tags: 2 to 4 from: offer, social proof, ugc, founder, before-after, comparison, urgency, seasonal, education, lifestyle, product demo, testimonial, humor, problem-solution.
+Plain, direct, no hype.`;
+
+async function imageFor(url: string | null) {
+  if (!url) return [];
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    const type = res.headers.get("content-type") ?? "";
+    if (!res.ok || !/image\/(jpeg|png|webp|gif)/.test(type)) return [];
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > 4_500_000) return [];
+    return [{ mediaType: type.split(";")[0] as "image/jpeg" | "image/png" | "image/webp" | "image/gif", data: buf.toString("base64") }];
+  } catch {
+    return [];
+  }
+}
+
+/** The AI's read of one market ad, from its image (or the video's first frame), its copy and how long it has run. */
+export async function analyzeMarketAd(admin: SupabaseClient, id: string) {
+  const { data: a } = await admin.from("market_ads").select("id, brand_id, format, headline, body, cta, days_active, rank, launched_at, media, page_name, market_brands(name, industry_detail)").eq("id", id).single();
+  if (!a) return null;
+  const b = a.market_brands as unknown as { name: string; industry_detail: string | null } | null;
+  const media = (a.media ?? []) as { type: string; url: string; thumb: string | null }[];
+  const still = media.find((m) => m.type === "image")?.url ?? media[0]?.thumb ?? null;
+  const { count: recent } = await admin
+    .from("market_ads")
+    .select("id", { count: "exact", head: true })
+    .eq("brand_id", a.brand_id)
+    .gte("launched_at", new Date(Date.now() - 14 * 86_400_000).toISOString());
+  const out = await askJson<{ observation: string; why: string; hook: string; angle: string; takeaways: string[]; tags: string[] }>({
+    agent: "market",
+    label: "read a market ad",
+    system: READ_SYSTEM,
+    schema: READ_SCHEMA,
+    images: await imageFor(still),
+    prompt: `${a.page_name ?? b?.name ?? "A brand"}${b?.industry_detail ? ` (${b.industry_detail})` : ""} · ${a.format ?? "ad"}${media.length > 1 ? ` (${media.length} cards)` : ""}
+${a.days_active != null ? `Live ${a.days_active} days` : "Run time unknown"}${a.launched_at ? ` (since ${String(a.launched_at).slice(0, 10)})` : ""}${a.rank ? ` · impression rank ${a.rank} among the brand's ads` : ""} · the brand launched ${recent ?? 0} ads in the last two weeks
+Headline: ${a.headline ?? "(none)"}
+Primary text: ${a.body ?? "(none)"}
+Button: ${a.cta ?? "(none)"}
+${still ? `The ${a.format === "video" ? "video's first frame" : "image"} is attached.` : "No image available."}`,
+  });
+  const row = {
+    observation: out.observation,
+    why: out.why.slice(0, 1200),
+    hook: out.hook.slice(0, 300) || null,
+    angle: out.angle.slice(0, 120) || null,
+    takeaways: out.takeaways.slice(0, 3),
+    tags: out.tags.slice(0, 4),
+    read_at: new Date().toISOString(),
+  };
+  await admin.from("market_ads").update(row).eq("id", id);
+  return { observation: row.observation, why: row.why, hook: row.hook, angle: row.angle, takeaways: row.takeaways };
+}
+
+/** New ads get their read, most telling first: proven ones, then the brand's most-shown, then the newest. */
 async function readAds(admin: SupabaseClient, deadline: number) {
   let read = 0;
   while (Date.now() < deadline) {
-    const { data: ads } = await admin.from("market_ads").select("id, format, headline, body, cta, days_active, market_brands(name, industry_detail)").is("read_at", null).limit(25);
+    const { data: ads } = await admin
+      .from("market_ads")
+      .select("id")
+      .is("read_at", null)
+      .neq("active", false)
+      .order("days_active", { ascending: false, nullsFirst: false })
+      .order("rank", { ascending: true, nullsFirst: false })
+      .limit(6);
     if (!ads?.length) break;
-    const out = await askJson<{ ads: { n: number; angle: string; hook: string; why: string; tags: string[] }[] }>({
-      agent: "market",
-      label: "read market ads",
-      system: "You read live Meta ads from brands in the market for a paid social agency's creative team. From the copy and format only, say what each ad is doing. Short and concrete; no hype.",
-      schema: {
-        type: "object",
-        properties: {
-          ads: {
-            type: "array",
-            items: { type: "object", properties: { n: { type: "integer" }, angle: { type: "string" }, hook: { type: "string" }, why: { type: "string" }, tags: { type: "array", items: { type: "string" } } }, required: ["n", "angle", "hook", "why", "tags"], additionalProperties: false },
-          },
-        },
-        required: ["ads"],
-        additionalProperties: false,
-      },
-      prompt: `${ads
-        .map((a, i) => {
-          const b = a.market_brands as unknown as { name: string; industry_detail: string | null } | null;
-          return `${i + 1}. ${b?.name ?? "?"}${b?.industry_detail ? ` (${b.industry_detail})` : ""} · ${a.format ?? "?"}${a.days_active != null ? ` · running ${a.days_active} days` : ""}\nHeadline: ${a.headline ?? "-"}\nCopy: ${(a.body ?? "-").slice(0, 700)}\nCTA: ${a.cta ?? "-"}`;
-        })
-        .join("\n\n")}\n\nFor each: angle (the selling idea, a few words, e.g. "price anchoring against delivery apps"), hook (the opening line or idea that stops the scroll), why (one sentence on why it likely works), tags (2 to 4 from: offer, social proof, ugc, founder, before-after, comparison, urgency, seasonal, education, lifestyle, product demo, testimonial, humor, problem-solution).`,
-    });
-    const now = new Date().toISOString();
-    for (const r of out.ads) {
-      const a = ads[r.n - 1];
-      if (a) await admin.from("market_ads").update({ angle: r.angle.slice(0, 120), hook: r.hook.slice(0, 300), why: r.why.slice(0, 400), tags: r.tags.slice(0, 4), read_at: now }).eq("id", a.id);
-    }
-    // Anything the model skipped is marked read so it doesn't loop
-    await admin.from("market_ads").update({ read_at: now }).in("id", ads.map((a) => a.id)).is("read_at", null);
+    await Promise.all(
+      ads.map((x) =>
+        analyzeMarketAd(admin, x.id).catch(async () => {
+          // Can't be read (no image, the AI refused): don't try again every run
+          await admin.from("market_ads").update({ read_at: new Date().toISOString() }).eq("id", x.id);
+        }),
+      ),
+    );
     read += ads.length;
   }
   return read;
@@ -327,13 +448,14 @@ export async function syncMarket(admin: SupabaseClient, budgetMs = 600_000) {
     const { count: watched } = await admin.from("market_brands").select("id", { count: "exact", head: true });
     const discover = !watched || !last.discoveredAt || Date.now() - Date.parse(last.discoveredAt) > 7 * 86_400_000;
     const brandsFound = discover ? await discoverBrands(admin, s, workspaces, started + budgetMs * 0.4) : 0;
+    const checked = await checkBrands(admin).catch(() => 0);
     const sorted = await sortBrands(admin).catch(() => 0);
 
     // Live ads, ten brands a call, stalest brands first
     let pulled = 0;
     let brands = 0;
     const errors: string[] = [];
-    const { data: list } = await admin.from("market_brands").select("id, motion_brand_id, industry").order("last_synced_at", { ascending: true, nullsFirst: true }).limit(300);
+    const { data: list } = await admin.from("market_brands").select("id, motion_brand_id, industry").eq("rejected", false).not("checked_at", "is", null).order("last_synced_at", { ascending: true, nullsFirst: true }).limit(300);
     for (let i = 0; i < (list ?? []).length; i += 10) {
       if (Date.now() > started + budgetMs * 0.75) break;
       const batch = list!.slice(i, i + 10);
@@ -368,7 +490,7 @@ export async function syncMarket(admin: SupabaseClient, budgetMs = 600_000) {
       errors.push(`reading: ${e instanceof Error ? e.message : e}`);
       return 0;
     });
-    const result = { workspaces: workspaces.length, matched, brandsFound, sorted, brands, pulled, read, errors: errors.slice(0, 8), discoveredAt: discover && brandsFound ? new Date().toISOString() : last.discoveredAt, samples };
+    const result = { workspaces: workspaces.length, matched, brandsFound, checked, sorted, brands, pulled, read, errors: errors.slice(0, 8), discoveredAt: discover && brandsFound ? new Date().toISOString() : last.discoveredAt, samples };
     await admin.from("motion_connection").update({ last_sync_at: new Date().toISOString(), last_result: result, error: null }).eq("id", 1);
     return result;
   } catch (e) {
@@ -397,6 +519,12 @@ export type MarketAd = {
   daysActive: number | null;
   media: { type: "image" | "video"; url: string; thumb: string | null }[];
   motionUrl: string | null;
+  libraryUrl: string | null; // the ad in Meta's Ad Library
+  pageName: string | null;
+  rank: number | null; // impression rank within the brand (1 = most shown)
+  observation: string | null; // the AI's read of its run
+  takeaways: string[];
+  read: boolean;
   angle: string | null;
   hook: string | null;
   why: string | null;
@@ -407,7 +535,7 @@ export type MarketAd = {
   testing: boolean; // the brand launched 3+ ads in the last 14 days
 };
 
-const COLS = "id, format, headline, body, cta, landing_url, launched_at, active, days_active, media, motion_url, angle, hook, why, tags, industry, market_brands!inner(name, logo, domain, industry, industry_detail, client_ids)";
+const COLS = "id, format, headline, body, cta, landing_url, launched_at, active, days_active, media, motion_url, library_url, page_name, rank, observation, takeaways, read_at, angle, hook, why, tags, industry, market_brands!inner(name, logo, domain, industry, industry_detail, client_ids, rejected, checked_at)";
 
 function toAd(r: Obj, testingBrands: Set<string>): MarketAd {
   const b = r.market_brands as { name: string; logo: string | null; domain: string | null; industry: string | null; industry_detail: string | null; client_ids: string[] };
@@ -430,6 +558,12 @@ function toAd(r: Obj, testingBrands: Set<string>): MarketAd {
     daysActive: days,
     media: (r.media ?? []) as MarketAd["media"],
     motionUrl: r.motion_url as string | null,
+    libraryUrl: r.library_url as string | null,
+    pageName: r.page_name as string | null,
+    rank: r.rank as number | null,
+    observation: r.observation as string | null,
+    takeaways: (r.takeaways ?? []) as string[],
+    read: Boolean(r.read_at),
     angle: r.angle as string | null,
     hook: r.hook as string | null,
     why: r.why as string | null,
@@ -443,7 +577,14 @@ function toAd(r: Obj, testingBrands: Set<string>): MarketAd {
 
 /** Live market ads, newest-proven first. industry / clientId narrow it (a client's named competitors come first). */
 export async function loadMarket(db: SupabaseClient, opts: { industry?: string | null; clientId?: string; limit?: number } = {}) {
-  let q = db.from("market_ads").select(COLS).neq("active", false).order("days_active", { ascending: false, nullsFirst: false }).limit(opts.limit ?? 600);
+  let q = db
+    .from("market_ads")
+    .select(COLS)
+    .neq("active", false)
+    .eq("market_brands.rejected", false)
+    .not("market_brands.checked_at", "is", null)
+    .order("days_active", { ascending: false, nullsFirst: false })
+    .limit(opts.limit ?? 600);
   if (opts.industry) q = q.eq("industry", opts.industry);
   const { data } = await q;
   const rows = (data ?? []) as Obj[];
@@ -481,7 +622,7 @@ ${picked
       `M${i + 1}. ${a.brand}${a.competitorOf.includes(clientId) ? " (a competitor this client named)" : ""} · ${a.format ?? "ad"}${a.daysActive != null ? ` · running ${a.daysActive} days` : ""}${a.testing ? " · brand is testing a lot right now" : ""}
    ${a.angle ? `Angle: ${a.angle}. ` : ""}${a.hook ? `Hook: ${a.hook}. ` : ""}${a.why ? `Why it works: ${a.why}` : ""}
    ${a.headline ? `Headline: ${a.headline}. ` : ""}${a.body ? `Copy: ${a.body.slice(0, 240)}` : ""}
-   Link: ${a.motionUrl ?? a.media[0]?.url ?? a.landingUrl ?? "(none)"}`,
+   Link: ${a.motionUrl ?? a.libraryUrl ?? a.media[0]?.url ?? a.landingUrl ?? "(none)"}`,
   )
   .join("\n")}
 </in_the_market>`;
