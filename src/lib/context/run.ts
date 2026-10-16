@@ -51,7 +51,10 @@ export async function collectStep(admin: SupabaseClient, step: Step, budgetMs = 
     // The read of each winning ad, ready before anyone hovers it
     const { analyzeWinners } = await import("@/lib/winner-insight");
     const winners = await analyzeWinners(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
-    return [{ ...out, fatigue, refreshes, winners }];
+    // The Hall of Fame: ads that ran 30+ days and beat their target (or their sub-vertical's benchmark)
+    const { updateHallOfFame } = await import("@/lib/hall-of-fame");
+    const hallOfFame = await updateHallOfFame(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+    return [{ ...out, fatigue, refreshes, winners, hallOfFame }];
   }
   if (step === "slack") return slackConfigured() ? [await collect(admin, "slack", () => collectSlack(admin))] : [{ source: "slack", skipped: "not set up" }];
   if (!googleConfigured()) return [{ source: step, skipped: "Google not set up" }];

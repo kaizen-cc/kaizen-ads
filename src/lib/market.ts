@@ -628,6 +628,7 @@ export type MarketAd = {
   hook: string | null;
   why: string | null;
   tags: string[];
+  verticalId: string | null; // the sub-vertical its brand teaches
   competitorOf: string[]; // client ids who named this brand
   proven: boolean; // still running after 30 days
   fresh: boolean; // launched in the last 7 days
@@ -636,10 +637,10 @@ export type MarketAd = {
   matchWhy?: string | null;
 };
 
-const COLS = "id, brand_id, format, headline, body, cta, landing_url, launched_at, active, days_active, media, motion_url, library_url, page_name, rank, observation, takeaways, read_at, angle, hook, why, tags, industry, market_brands!inner(name, logo, domain, industry, industry_detail, client_ids, rejected, checked_at)";
+const COLS = "id, brand_id, format, headline, body, cta, landing_url, launched_at, active, days_active, media, motion_url, library_url, page_name, rank, observation, takeaways, read_at, angle, hook, why, tags, industry, market_brands!inner(name, logo, domain, industry, industry_detail, client_ids, rejected, checked_at, vertical_id)";
 
 function toAd(r: Obj, testingBrands: Set<string>): MarketAd {
-  const b = r.market_brands as { name: string; logo: string | null; domain: string | null; industry: string | null; industry_detail: string | null; client_ids: string[] };
+  const b = r.market_brands as { name: string; logo: string | null; domain: string | null; industry: string | null; industry_detail: string | null; client_ids: string[]; vertical_id: string | null };
   const launched = r.launched_at as string | null;
   const days = r.days_active as number | null;
   return {
@@ -670,6 +671,7 @@ function toAd(r: Obj, testingBrands: Set<string>): MarketAd {
     why: r.why as string | null,
     tags: (r.tags ?? []) as string[],
     competitorOf: b.client_ids ?? [],
+    verticalId: b.vertical_id ?? null,
     proven: r.active !== false && (days ?? 0) >= 30,
     fresh: Boolean(launched && Date.now() - Date.parse(launched) < 7 * 86_400_000),
     testing: testingBrands.has(b.name),

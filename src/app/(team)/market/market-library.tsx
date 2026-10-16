@@ -29,6 +29,7 @@ const when = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en
 export function MarketLibrary({
   ads,
   industries,
+  verticals = [],
   clients,
   brands,
   connected,
@@ -40,6 +41,7 @@ export function MarketLibrary({
 }: {
   ads: MarketAd[];
   industries: readonly (readonly [string, string])[];
+  verticals?: { id: string; name: string; parent: string }[];
   clients: PickClient[];
   brands: number;
   connected: boolean;
@@ -86,24 +88,30 @@ export function MarketLibrary({
     timer.current = setTimeout(() => setHover(null), 220);
   };
 
-  const label = (k: string | null) => industries.find(([i]) => i === k)?.[1] ?? "Not sorted yet";
+  // Sub-verticals once the brands are placed in them; the broad industries until then
+  const byVertical = verticals.length > 0 && ads.some((a) => a.verticalId);
+  const label = (k: string | null) => (byVertical ? (verticals.find((v) => v.id === k)?.name ?? "Not placed yet") : (industries.find(([i]) => i === k)?.[1] ?? "Not sorted yet"));
+
   const counts = useMemo(() => {
     const m = new Map<string, number>();
-    for (const a of pool) m.set(a.industry ?? "", (m.get(a.industry ?? "") ?? 0) + 1);
+    for (const a of pool) {
+      const g = byVertical ? (a.verticalId ?? "") : (a.industry ?? "");
+      m.set(g, (m.get(g) ?? 0) + 1);
+    }
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
-  }, [pool]);
+  }, [pool, byVertical]);
 
   const shown = useMemo(() => {
     const term = q.trim().toLowerCase();
     const list = pool
-      .filter((a) => industry === null || (a.industry ?? "") === industry)
+      .filter((a) => industry === null || (byVertical ? (a.verticalId ?? "") : (a.industry ?? "")) === industry)
       .filter((a) => view === "all" || (view === "proven" ? a.proven : view === "fresh" ? a.fresh : a.testing))
       .filter((a) => !format || a.format === format)
       .filter((a) => !term || [a.brand, a.detail, a.headline, a.body, a.angle, a.hook, a.matchWhy, ...a.tags].some((s) => s?.toLowerCase().includes(term)));
     // A client's matches keep their ranking (most comparable brands first); otherwise by time live or newest
     if (forId) return list;
     return list.sort((a, b) => (view === "fresh" ? Date.parse(b.launchedAt ?? "0") - Date.parse(a.launchedAt ?? "0") : (b.daysActive ?? 0) - (a.daysActive ?? 0)));
-  }, [pool, forId, industry, view, format, q]);
+  }, [pool, forId, industry, view, format, q, byVertical]);
 
   const proven = ads.filter((a) => a.proven).length;
   const fresh = ads.filter((a) => a.fresh).length;
@@ -170,9 +178,9 @@ export function MarketLibrary({
                 </label>
                 <ClientSearch clients={clients} value={forClient} onPick={pickClient} />
                 <Menu
-                  label={industry === null ? "All industries" : label(industry || null)}
+                  label={industry === null ? (byVertical ? "All verticals" : "All industries") : label(industry || null)}
                   on={industry !== null}
-                  options={[[null, "All industries", pool.length] as const, ...counts.map(([k, n]) => [k, label(k || null), n] as const)]}
+                  options={[[null, byVertical ? "All verticals" : "All industries", pool.length] as const, ...counts.map(([k, n]) => [k, label(k || null), n] as const)]}
                   value={industry}
                   onPick={(v) => setIndustry(v)}
                 />

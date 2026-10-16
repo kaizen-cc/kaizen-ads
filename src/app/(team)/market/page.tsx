@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { requireStaff } from "@/lib/auth";
 import { INDUSTRY_OPTIONS } from "@/lib/industries";
 import { loadMarket } from "@/lib/market";
+import { loadVerticals } from "@/lib/verticals";
 import { motionConnected } from "@/lib/motion";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -19,12 +20,13 @@ export default async function Market({ searchParams }: PageProps<"/market">) {
   const me = await requireStaff();
   const sp = await searchParams;
   const db = adminConfigured() ? createAdminClient() : await createClient();
-  const [ads, connection, { data: usage }, { data: rows }, { count: brands }] = await Promise.all([
+  const [ads, connection, { data: usage }, { data: rows }, { count: brands }, verticals] = await Promise.all([
     loadMarket(db),
     adminConfigured() ? motionConnected(createAdminClient()) : Promise.resolve(null),
     db.from("client_allotment_usage").select("*"),
     db.from("clients").select("id, name, slug, industry, industry_detail").is("archived_at", null).in("status", LIVE).order("name"),
     db.from("market_brands").select("id", { count: "exact", head: true }),
+    loadVerticals(db),
   ]);
   const clients: PickClient[] = ((usage ?? []) as UsageRow[])
     .map((u) => {
@@ -39,6 +41,7 @@ export default async function Market({ searchParams }: PageProps<"/market">) {
       <MarketLibrary
         ads={ads}
         industries={INDUSTRY_OPTIONS}
+        verticals={verticals.flatMap((v) => v.subs.map((s) => ({ id: s.id, name: s.name, parent: v.name })))}
         clients={clients}
         brands={brands ?? 0}
         connected={Boolean(connection)}

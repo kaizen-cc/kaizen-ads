@@ -7,6 +7,10 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { loadVerticals } from "@/lib/verticals";
 import { VerticalsView } from "./verticals-view";
+import { FameLibrary } from "./fame-library";
+import { loadHallOfFame } from "@/lib/hall-of-fame";
+import { toAllotment, type UsageRow } from "@/lib/allotment";
+import type { PickClient } from "../winners/winners-library";
 
 export const metadata: Metadata = { title: "Ideas" };
 
@@ -14,7 +18,8 @@ export const metadata: Metadata = { title: "Ideas" };
 export const maxDuration = 300;
 
 const TABS = [
-  ["winners", "Our winners", "What's beating its own account across our clients"],
+  ["fame", "Hall of Fame", "Our ads that beat their target over 30+ days, kept six months"],
+  ["winners", "Live winners", "What's beating its own account right now"],
   ["market", "In the market", "Live Meta ads from comparable brands, from Motion"],
   ["verticals", "Verticals", "The markets we serve, with their benchmarks"],
 ] as const;
@@ -22,7 +27,7 @@ const TABS = [
 /** Where ideas come from: what's working in our accounts, and what's working out in the market. */
 export default async function Ideas({ searchParams }: PageProps<"/ideas">) {
   const sp = await searchParams;
-  const tab = sp.tab === "market" ? "market" : sp.tab === "verticals" ? "verticals" : "winners";
+  const tab = sp.tab === "market" ? "market" : sp.tab === "verticals" ? "verticals" : sp.tab === "winners" ? "winners" : "fame";
   // Keep the client (and anything else) when switching tabs
   const keep = (t: string) => {
     const q = new URLSearchParams();
@@ -45,7 +50,7 @@ export default async function Ideas({ searchParams }: PageProps<"/ideas">) {
           </Link>
         ))}
       </nav>
-      {tab === "market" ? <Market {...({ searchParams, params: Promise.resolve({}) } as unknown as PageProps<"/market">)} /> : tab === "verticals" ? <Verticals /> : <Winners />}
+      {tab === "market" ? <Market {...({ searchParams, params: Promise.resolve({}) } as unknown as PageProps<"/market">)} /> : tab === "verticals" ? <Verticals /> : tab === "winners" ? <Winners /> : <Fame />}
     </div>
   );
 }
@@ -66,4 +71,22 @@ async function Verticals() {
       brands={counts}
     />
   );
+}
+
+async function Fame() {
+  const db = adminConfigured() ? createAdminClient() : await createClient();
+  const [ads, verticals, { data: usage }, { data: rows }] = await Promise.all([
+    loadHallOfFame(db),
+    loadVerticals(db),
+    db.from("client_allotment_usage").select("*"),
+    db.from("clients").select("id, name, industry, industry_detail").is("archived_at", null).in("status", LIVE).order("name"),
+  ]);
+  const clients: PickClient[] = ((usage ?? []) as UsageRow[])
+    .map((u) => {
+      const c = (rows ?? []).find((r) => r.id === u.client_id);
+      return c ? { id: c.id, name: c.name, industry: c.industry, detail: c.industry_detail, allotment: toAllotment(u) } : null;
+    })
+    .filter((c): c is PickClient => Boolean(c))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return <FameLibrary ads={ads} verticals={verticals.flatMap((v) => v.subs.map((x) => ({ id: x.id, name: x.name, parent: v.name })))} clients={clients} />;
 }
