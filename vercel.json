@@ -10,6 +10,7 @@
     { "path": "/api/cron/context?step=suggest", "schedule": "30 12,13 * * 1-5" },
     { "path": "/api/cron/context?step=clients", "schedule": "50 * * * *" },
     { "path": "/api/cron/context?step=calls", "schedule": "25,55 * * * *" },
-    { "path": "/api/cron/context?step=gtm", "schedule": "10 * * * *" }
+    { "path": "/api/cron/context?step=gtm", "schedule": "10 * * * *" },
+    { "path": "/api/cron/context?step=market", "schedule": "40 10,11 * * *" }
   ]
 }

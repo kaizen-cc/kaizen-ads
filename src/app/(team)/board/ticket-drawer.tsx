@@ -556,8 +556,9 @@ export function TicketDrawer({
             {ticket.refs.length > 0 && (
               <ul className="grid gap-1.5">
                 {ticket.refs.map((r) => (
-                  <li key={r} className="truncate text-sm">
-                    <a href={r} target="_blank" rel="noreferrer" className="text-brand-text hover:underline">
+                  <li key={r} className="flex min-w-0 items-center gap-2 text-sm">
+                    {/motionapp\.com/i.test(r) && <span className="shrink-0 rounded-full bg-[#6c5ce7]/15 px-2 py-0.5 text-[10px] font-medium text-[#8b7cf6]">Motion</span>}
+                    <a href={r} target="_blank" rel="noreferrer" className="truncate text-brand-text hover:underline">
                       {r}
                     </a>
                   </li>

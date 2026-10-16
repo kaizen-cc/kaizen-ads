@@ -272,7 +272,7 @@ function WinnerSheet({ w, industryLabel, clients, onClose }: { w: Winner; indust
             <p className="text-[11px] text-faint">Pick a client and the strategist writes the whole request from what makes this ad work. You edit it, talk it through, and send it to production right here.</p>
           </div>
         ) : step === "pick" ? (
-          <ClientPick w={w} clients={clients} error={error} onBack={() => setStep("ad")} onPick={write} />
+          <ClientPick industry={w.industry} exclude={w.clientId} clients={clients} error={error} onBack={() => setStep("ad")} onPick={write} />
         ) : (
           <Writing />
         )}
@@ -324,13 +324,27 @@ function AdPreview({ ad, text, headline, fallback }: { ad: AdDetail | null | und
   );
 }
 
-function ClientPick({ w, clients, error, onBack, onPick }: { w: Winner; clients: PickClient[]; error: string | null; onBack: () => void; onPick: (id: string) => void }) {
+export function ClientPick({
+  industry,
+  exclude,
+  clients,
+  error,
+  onBack,
+  onPick,
+}: {
+  industry: string | null;
+  exclude?: string;
+  clients: PickClient[];
+  error: string | null;
+  onBack: () => void;
+  onPick: (id: string) => void;
+}) {
   const [q, setQ] = useState("");
   const term = q.trim().toLowerCase();
   // Same industry first: that's where a winner travels best
   const list = clients
-    .filter((c) => c.id !== w.clientId && (!term || c.name.toLowerCase().includes(term) || c.detail?.toLowerCase().includes(term)))
-    .sort((a, b) => Number(b.industry === w.industry && !!w.industry) - Number(a.industry === w.industry && !!w.industry) || a.name.localeCompare(b.name));
+    .filter((c) => c.id !== exclude && (!term || c.name.toLowerCase().includes(term) || c.detail?.toLowerCase().includes(term)))
+    .sort((a, b) => Number(b.industry === industry && !!industry) - Number(a.industry === industry && !!industry) || a.name.localeCompare(b.name));
   const leftOf = (cap: number | null, used: number) => (cap === null ? null : Math.max(0, cap - used));
   return (
     <div className="grid min-h-0 content-start gap-3">
@@ -351,7 +365,7 @@ function ClientPick({ w, clients, error, onBack, onPick }: { w: Winner; clients:
           const img = leftOf(a.images, a.imagesUsed);
           const vid = leftOf(a.videos, a.videosUsed);
           const none = (img ?? 0) === 0 && (vid ?? 0) === 0;
-          const same = w.industry && c.industry === w.industry;
+          const same = industry && c.industry === industry;
           return (
             <button key={c.id} onClick={() => onPick(c.id)} className="group flex items-center gap-3 rounded-[12px] border border-line bg-surface px-3.5 py-2.5 text-left transition-colors hover:border-faint">
               <span className="min-w-0 flex-1">
@@ -384,19 +398,19 @@ function ClientPick({ w, clients, error, onBack, onPick }: { w: Winner; clients:
   );
 }
 
-const WRITING = ["Reading why this ad works", "Reading the client: brand, offer, memory, allotment", "Translating the angle and the hook", "Writing the concepts", "Fitting formats to what's left this month"];
+const WINNER_STEPS = ["Reading why this ad works", "Reading the client: brand, offer, memory, allotment", "Translating the angle and the hook", "Writing the concepts", "Fitting formats to what's left this month"];
 
-function Writing() {
+export function Writing({ steps = WINNER_STEPS }: { steps?: string[] }) {
   const [i, setI] = useState(0);
   useEffect(() => {
-    const t = setInterval(() => setI((n) => Math.min(WRITING.length - 1, n + 1)), 7000);
+    const t = setInterval(() => setI((n) => Math.min(steps.length - 1, n + 1)), 7000);
     return () => clearInterval(t);
-  }, []);
+  }, [steps.length]);
   return (
     <div className="grid content-center gap-5 py-10">
       <p className="font-heading text-xl">The strategist is writing the brief</p>
       <ol className="grid gap-2.5">
-        {WRITING.map((label, n) => (
+        {steps.map((label, n) => (
           <li key={label} className={`flex items-center gap-3 text-sm transition-colors ${n < i ? "text-muted" : n === i ? "text-fg" : "text-faint/60"}`}>
             <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border text-[10px] ${n < i ? "border-ok bg-ok text-white" : n === i ? "border-brand" : "border-line"}`}>
               {n < i ? "✓" : n === i ? <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" /> : null}

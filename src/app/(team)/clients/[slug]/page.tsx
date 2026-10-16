@@ -1,5 +1,6 @@
 import { loadClientKpis } from "@/lib/kpi/client";
 import { loadWatchList } from "@/lib/fatigue";
+import { loadMarket } from "@/lib/market";
 import type { IntakeRecord } from "./intake-panel";
 import type { ClientCall } from "./calls-panel";
 import { notFound } from "next/navigation";
@@ -111,7 +112,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
     adminConfigured() && keys.length ? createAdminClient().from("sync_state").select("source, last_run_at").in("source", keys) : Promise.resolve({ data: [] as { source: string; last_run_at: string | null }[] }),
     supabase.from("meta_snapshots").select("fetched_at").eq("client_id", client.id).order("fetched_at", { ascending: false }).limit(1).maybeSingle(),
   ]);
-  const [creative, kpis, fatigue, { data: intakeRow }, { data: callRows }] = await Promise.all([
+  const [creative, kpis, fatigue, { data: intakeRow }, { data: callRows }, marketAll] = await Promise.all([
     loadClientCreative(supabase, client.id),
     loadClientKpis(supabase, client.id),
     loadWatchList(supabase, { clientId: client.id }),
@@ -122,7 +123,10 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
       .eq("client_id", client.id)
       .order("occurred_at", { referencedTable: "client_calls", ascending: false })
       .limit(20),
+    client.industry && client.industry !== "other" ? loadMarket(supabase, { industry: client.industry, clientId: client.id, limit: 200 }) : Promise.resolve([]),
   ]);
+  // In the market: the competitors this client named first, then what's proven, testing or new in their industry
+  const market = [...marketAll.filter((a) => a.competitorOf.includes(client.id)).slice(0, 4), ...marketAll.filter((a) => !a.competitorOf.includes(client.id) && (a.proven || a.testing || a.fresh))].slice(0, 8);
   // Every call that discussed this client (client calls and internal meetings), with what was said about them
   const callIds = (callRows ?? []).map((m) => (m.client_calls as unknown as { id: string }).id);
   const { data: promised } = callIds.length
@@ -160,6 +164,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
       creative={creative}
       kpis={kpis}
       fatigue={fatigue}
+      market={market}
       intake={intake}
       calls={calls}
       client={client}

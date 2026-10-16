@@ -388,6 +388,7 @@ export async function promiseDraft(commitmentId: string): Promise<{ ok: true; pa
         formats: Object.fromEntries(d.formats.map((f) => [f.format, { new: f.new, variations: f.variations }])),
         sizes: d.sizes.filter((x) => SIZES.includes(x)),
         landing: d.landing || "",
+        ...(d.refs?.length ? { refs: d.refs.join("\n") } : {}),
       },
     };
   } catch (e) {
@@ -404,4 +405,16 @@ export async function fulfilPromise(commitmentId: string, numbers: number[]) {
   if (c?.suggestion_id)
     await admin.from("creative_suggestions").update({ status: "approved", decided_by: me.id, decided_at: new Date().toISOString(), request_numbers: numbers }).eq("id", c.suggestion_id).eq("status", "open");
   revalidatePath("/pipeline");
+}
+
+/** What's live in this client's market (Motion): their named competitors first, then proven and testing ads in their industry. */
+export async function marketFor(clientId: string): Promise<{ label: string | null; ads: import("@/lib/market").MarketAd[] }> {
+  await requireStaff();
+  const supabase = await createClient();
+  const { data: c } = await supabase.from("clients").select("industry, industry_detail").eq("id", clientId).maybeSingle();
+  if (!c?.industry || c.industry === "other") return { label: null, ads: [] };
+  const { loadMarket } = await import("@/lib/market");
+  const all = await loadMarket(supabase, { industry: c.industry, clientId, limit: 200 });
+  const ads = [...all.filter((a) => a.competitorOf.includes(clientId)).slice(0, 4), ...all.filter((a) => !a.competitorOf.includes(clientId) && (a.proven || a.testing || a.fresh))].slice(0, 8);
+  return { label: c.industry_detail ?? industryLabel(c.industry), ads };
 }

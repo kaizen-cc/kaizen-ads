@@ -62,7 +62,7 @@ export async function approveSuggestion(id: string, draft: SuggestionDraft): Pro
     p_angle: draft.angle.trim() || null,
     p_audience: draft.audience.trim() || null,
     p_brief: `${draft.brief.trim()}${concepts}${hooks}\n\n(Suggested by the AI strategist: ${s.signal})`,
-    p_refs: [],
+    p_refs: (draft.refs ?? []).filter((u) => /^https?:\/\//i.test(u)).slice(0, 20),
     p_sizes: draft.sizes,
     p_ai_review: null,
   });

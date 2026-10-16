@@ -1,6 +1,7 @@
 "use client";
 
 import { WinnersStrip } from "./winners-strip";
+import { MarketStrip } from "./market-strip";
 import { PromisesStrip } from "./promises-strip";
 import Link from "next/link";
 import { useEffect, useRef, useState, useTransition } from "react";
@@ -609,6 +610,17 @@ export function RequestForm({
             {step === 2 && (
               <div className="grid gap-8">
                 {draft.clientId && !demo && <WinnersStrip clientId={draft.clientId} onUse={(line) => set({ brief: draft.brief.trim() ? `${draft.brief.trim()}\n\n${line}` : line })} />}
+                {draft.clientId && !demo && (
+                  <MarketStrip
+                    clientId={draft.clientId}
+                    onUse={(line, link) =>
+                      set({
+                        brief: draft.brief.trim() ? `${draft.brief.trim()}\n\n${line}` : line,
+                        ...(link && !draft.refs.includes(link) ? { refs: draft.refs.trim() ? `${draft.refs.trim()}\n${link}` : link } : {}),
+                      })
+                    }
+                  />
+                )}
                 <Field id="title" label="Title">
                   <input id="title" autoFocus value={draft.title} onChange={(e) => set({ title: e.target.value })} placeholder="e.g. BFCM · Buy More, Save More" className={input} />
                   <Suggest loading={ai.status === "loading"}>

@@ -28,10 +28,12 @@ import { ArchiveControl } from "./archive-control";
 import { IntakePanel, type IntakeRecord } from "./intake-panel";
 import { CallsPanel, type ClientCall } from "./calls-panel";
 import { FatigueWatch } from "@/components/fatigue-watch";
+import type { MarketAd } from "@/lib/market";
+import { MarketPanel } from "./market-panel";
 import type { WatchRow } from "@/lib/fatigue";
 import type { ClientKpi } from "@/lib/kpi/client";
 import { IndustryChip } from "./industry-chip";
-import { INDUSTRY_OPTIONS } from "@/lib/industries";
+import { INDUSTRY_OPTIONS, industryLabel } from "@/lib/industries";
 import type { ClientCreative } from "@/lib/client-creative";
 import { BrandBiblePanel, type BrandBible } from "./brand-bible-panel";
 import { GtmPanel, type GtmStrategy } from "./gtm-panel";
@@ -90,12 +92,13 @@ export type ClientViewProps = {
   creative?: ClientCreative | null; // tickets in motion and launched, live and paused ads
   kpis?: ClientKpi[] | null; // performance vs target; null in the design preview
   fatigue?: WatchRow[] | null; // ads wearing out
+  market?: MarketAd[]; // live in this client's market (Motion)
   intake?: IntakeRecord | null; // the marketing intake form; undefined in the design preview
   calls?: ClientCall[]; // from Gemini and Fireflies notes; undefined in the design preview
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, can, demo = false, connections, creative = null, kpis = null, fatigue = null, intake, calls }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, can, demo = false, connections, creative = null, kpis = null, fatigue = null, market = [], intake, calls }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -147,6 +150,8 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
           {kpis && <KpiPanel kpis={kpis} />}
 
           {fatigue && fatigue.length > 0 && <FatigueWatch rows={fatigue} showClient={false} />}
+
+          {!demo && market.length > 0 && <MarketPanel clientId={client.id} industry={client.industry ?? null} label={client.industry_detail ?? industryLabel(client.industry) ?? "their industry"} ads={market} />}
 
           {active && (
             <BriefingPanel

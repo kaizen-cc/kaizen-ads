@@ -21,6 +21,7 @@ const KIND_TONE: Record<SuggestionKind, string> = {
   refresh: "bg-warn-soft text-warn",
   onboarding: "bg-brand text-white",
   call: "bg-warn text-black",
+  market: "bg-[#6c5ce7]/15 text-[#8b7cf6]",
 };
 const FORMAT_LABEL = { image: "Images", video: "Videos", carousel: "Carousels" } as const;
 const SIZES = ["1x1", "4x5", "9x16"] as const;
@@ -228,7 +229,7 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
               <div className="grid gap-1">
                 <p className="text-xs uppercase tracking-[0.14em] text-faint">{s.kind === "winner" ? "Built on" : s.kind === "refresh" ? "Refreshing" : s.kind === "call" ? "Promised on the call" : "What the data shows"}</p>
                 <p className="text-sm">{s.kind === "winner" && s.source ? `"${s.source.headline ?? "A winning ad"}" from ${s.source.client}` : (s.kind === "refresh" || s.kind === "call") && s.source ? `"${s.source.headline}"` : s.signal}</p>
-                {(s.kind === "winner" || s.kind === "refresh" || s.kind === "call") && <p className="text-xs text-faint">{s.signal}</p>}
+                {(s.kind === "winner" || s.kind === "refresh" || s.kind === "call" || s.kind === "market") && <p className="text-xs text-faint">{s.signal}</p>}
               </div>
             </div>
             {s.evidence.length > 0 && (
@@ -325,12 +326,34 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
               <Field label="Landing page">
                 <input value={draft.landing} onChange={(e) => edit({ landing: e.target.value })} onBlur={() => save()} placeholder="https://" className={INPUT} />
               </Field>
+              <Field label="References for the creative team">
+                <div className="grid gap-2">
+                  {(draft.refs ?? []).length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {(draft.refs ?? []).map((u) => (
+                        <a key={u} href={u} target="_blank" rel="noreferrer" className="inline-flex max-w-full items-center gap-1.5 truncate rounded-full border border-line bg-surface px-2.5 py-1 text-[11px] text-muted hover:text-fg">
+                          <span className={`shrink-0 rounded-full px-1.5 text-[10px] ${/motionapp\.com/i.test(u) ? "bg-[#6c5ce7]/15 text-[#8b7cf6]" : "bg-surface-2 text-faint"}`}>{/motionapp\.com/i.test(u) ? "Motion" : "Link"}</span>
+                          <span className="truncate">{u.replace(/^https?:\/\//, "")}</span>
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                  <textarea
+                    value={(draft.refs ?? []).join("\n")}
+                    onChange={(e) => edit({ refs: e.target.value.split(/\s+/).filter(Boolean) })}
+                    onBlur={() => save()}
+                    rows={2}
+                    placeholder="Paste a Motion board or item link, one per line"
+                    className={`${INPUT} min-h-[64px] py-2 text-xs`}
+                  />
+                </div>
+              </Field>
 
               <AllotmentBar allotment={s.allotment} formats={draft.formats} />
 
               {error && <p className="text-sm text-bad">{error}</p>}
 
-              {declining && (s.kind === "winner" || s.kind === "refresh" || s.kind === "call") ? (
+              {declining && (s.kind === "winner" || s.kind === "refresh" || s.kind === "call" || s.kind === "market") ? (
                 <div className="flex flex-wrap items-center gap-2 rounded-[14px] border border-line bg-surface p-4">
                   <p className="flex-1 text-sm">Discard this brief? Nothing was sent to production.</p>
                   <button
@@ -377,10 +400,10 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
               ) : (
                 <div className="sticky -bottom-5 z-10 -mx-5 -mb-5 flex flex-wrap items-center gap-2 border-t border-line bg-bg px-5 pb-5 pt-3 shadow-[0_-12px_24px_-12px_rgba(0,0,0,0.6)] md:-bottom-6 md:-mx-6 md:-mb-6 md:px-6 md:pb-6">
                   <button onClick={approve} disabled={busy || thinking} className="h-10 rounded-brand bg-brand px-5 text-sm font-medium text-white hover:brightness-110 disabled:opacity-50">
-                    {busy ? "Making tickets…" : s.kind === "winner" || s.kind === "refresh" || s.kind === "call" ? "Send to production" : "Approve and send to the makers"}
+                    {busy ? "Making tickets…" : s.kind === "winner" || s.kind === "refresh" || s.kind === "call" || s.kind === "market" ? "Send to production" : "Approve and send to the makers"}
                   </button>
                   <button onClick={() => setDeclining(true)} disabled={busy} className="h-10 rounded-brand border border-line px-4 text-sm text-muted hover:text-fg">
-                    {s.kind === "winner" || s.kind === "refresh" || s.kind === "call" ? "Discard" : "Decline"}
+                    {s.kind === "winner" || s.kind === "refresh" || s.kind === "call" || s.kind === "market" ? "Discard" : "Decline"}
                   </button>
                   <span className="ml-auto text-[11px] text-faint">Edits save as you go</span>
                 </div>

@@ -22,6 +22,7 @@ export type SuggestionDraft = {
   formats: { format: "image" | "video" | "carousel"; new: number; variations: number }[];
   sizes: ("1x1" | "4x5" | "9x16")[];
   landing: string;
+  refs?: string[]; // links the request builds on (a Motion item, a market ad), for the creative team
 };
 
 export type Signal = { kind: SuggestionKind; weight: number; line: string; facts: string[] };
@@ -183,8 +184,9 @@ const SCHEMA = {
         },
         sizes: { type: "array", items: { type: "string", enum: ["1x1", "4x5", "9x16"] } },
         landing: { type: "string" },
+        refs: { type: "array", items: { type: "string" } },
       },
-      required: ["title", "angle", "audience", "brief", "hooks", "concepts", "formats", "sizes", "landing"],
+      required: ["title", "angle", "audience", "brief", "hooks", "concepts", "formats", "sizes", "landing", "refs"],
       additionalProperties: false,
     },
     reply: { type: "string" },
@@ -298,8 +300,13 @@ function workloadBlock(w: Workload, clientId: string) {
 async function promptFor(admin: SupabaseClient, clientId: string, signals: Signal[], load?: Workload) {
   const [ctx, { sources }, decisions, w] = await Promise.all([clientContext(admin, clientId), getAgent("strategist"), teamDecisions(admin, clientId), load ?? workload(admin)]);
   if (!ctx) return null;
+  // What's live in this client's market right now (Motion), so a brief can build on it
+  const { marketBlock } = await import("@/lib/market");
+  const market = await marketBlock(admin, clientId, ctx.industry ?? null).catch(() => "");
   return `${contextBlock(ctx, undefined, sources)}
-
+${market ? `
+${market}
+` : ""}
 ${decisions}
 
 ${workloadBlock(w, clientId)}
@@ -322,6 +329,7 @@ const clean = (d: SuggestionDraft): SuggestionDraft => ({
   sizes: d.sizes.length ? d.sizes : ["4x5", "9x16"],
   hooks: d.hooks.slice(0, 6),
   concepts: d.concepts.slice(0, 4),
+  refs: [...new Set((d.refs ?? []).filter((u) => /^https?:\/\/\S+$/i.test(u)))].slice(0, 6),
 });
 
 /** One suggestion for one client from its signals. Returns null when the strategist decides it isn't needed. */
@@ -821,4 +829,52 @@ export async function loadCallPromises(db: SupabaseClient): Promise<CallPromise[
       };
     })
     .filter((p) => p.suggestion);
+}
+
+/**
+ * A request for one client built on a live ad from the market (Motion): why it works, translated to this client.
+ * The Motion link (or the ad itself) rides along in the references so the creative team sees the idea.
+ */
+export async function suggestFromMarket(admin: SupabaseClient, clientId: string, adId: string, by: string) {
+  const { loadMarketAd } = await import("@/lib/market");
+  const a = await loadMarketAd(admin, adId);
+  if (!a) throw new Error("That ad isn't in the market library any more");
+  const prompt = await promptFor(admin, clientId, [{ kind: "offer", weight: 1, line: `A live ad from the market to build on (${a.brand})`, facts: [a.daysActive != null ? `Running ${a.daysActive} days` : "Run time unknown"] }]);
+  if (!prompt) throw new Error("Client not found");
+  const link = a.motionUrl ?? a.media[0]?.url ?? a.landingUrl ?? null;
+  const out = await askJson<Out>({
+    agent: "strategist",
+    label: "brief from a market ad",
+    system: SYSTEM,
+    schema: SCHEMA,
+    prompt: `${prompt}
+
+<market_ad>
+${a.brand}${a.detail ? ` (${a.detail})` : ""} · ${a.format ?? "ad"}${a.daysActive != null ? ` · running ${a.daysActive} days${a.proven ? " (still paying for it after a month: a good sign it works)" : ""}` : ""}${a.testing ? " · this brand is testing a lot right now" : ""}
+${a.angle ? `Angle: ${a.angle}\n` : ""}${a.hook ? `Hook: ${a.hook}\n` : ""}${a.why ? `Why it likely works: ${a.why}\n` : ""}Headline: ${a.headline ?? "(none)"}
+Copy: ${a.body ?? "(none)"}
+CTA: ${a.cta ?? "(none)"}
+Link: ${link ?? "(none)"}
+</market_ad>
+
+Someone on the team wants a request for this client built on this live ad from the market. There are no performance numbers for it: how long it has run is the signal. Work out why it works (the angle, the hook, the format, the structure, the offer mechanics) and translate that into a request that fits this client's brand, offer, audience and allotment. Never copy it, never name the other brand in the brief, and never borrow their offer or claims. Write the full request: brief, angle, audience, formats and counts within what's left of the allotment, sizes, 2 to 4 concepts and hooks. draft.refs: ${link ? `"${link}" first, then any other market links you used` : "any market links you used"}. suggest: true. kind: "offer". signal: "Built on a live ad in the market". evidence: 2 to 4 lines on what makes the ad work and why it fits this client. why: two or three sentences. reply: "".`,
+  });
+  const draft = clean({ ...out.draft, refs: [...(link ? [link] : []), ...(out.draft.refs ?? [])] });
+  const { data, error } = await admin
+    .from("creative_suggestions")
+    .insert({
+      client_id: clientId,
+      kind: "market",
+      signal: `Built on a live ad in the market (${a.brand})`,
+      evidence: out.evidence.slice(0, 5),
+      why: out.why,
+      draft,
+      original: draft,
+      created_by: by,
+      source: { marketAdId: a.id, thumbnail: a.media[0]?.thumb ?? (a.media[0]?.type === "image" ? a.media[0].url : null), headline: a.headline ?? a.angle, client: a.brand },
+    })
+    .select("id")
+    .single();
+  if (error || !data) throw new Error(error?.message ?? "Couldn't save the brief");
+  return data.id as string;
 }

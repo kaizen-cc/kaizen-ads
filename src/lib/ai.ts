@@ -16,7 +16,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 export const MODEL_IDS = { opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5", haiku: "claude-haiku-5-5" } as const;
 export type ModelKey = keyof typeof MODEL_IDS;
 export type Effort = "low" | "medium" | "high";
-export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue" | "scripts" | "brandbible" | "creativecheck" | "creativereview" | "coach" | "strategist" | "lab" | "industry" | "calls" | "gtm";
+export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue" | "scripts" | "brandbible" | "creativecheck" | "creativereview" | "coach" | "strategist" | "lab" | "industry" | "calls" | "gtm" | "market";
 export const SOURCE_KEYS = ["meta", "briefing", "recent_messages", "memory", "angles", "recent_requests", "allotment", "kpis"] as const;
 export type Sources = Partial<Record<(typeof SOURCE_KEYS)[number], boolean>>;
 
@@ -42,6 +42,7 @@ const DEFAULTS: Record<AgentKey, Pick<AgentConfig, "model" | "effort">> = {
   creativereview: { model: "opus", effort: "medium" }, // reads small text in images; judgement matters
   lab: { model: "opus", effort: "high" }, // the Ads Lab round table
   calls: { model: "sonnet", effort: "low" }, // reads call notes and watches what was promised
+  market: { model: "sonnet", effort: "low" }, // reads the live ads Motion pulls from the market
   gtm: { model: "opus", effort: "high" }, // the Meta go-to-market strategy at onboarding (research, then the document)
   industry: { model: "sonnet", effort: "low" }, // sorts clients into industries from everything known about them
   strategist: { model: "opus", effort: "medium" }, // suggests briefs to execs and leads from the data

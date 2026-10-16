@@ -105,7 +105,39 @@ const GROUPS: [string, string][] = [
   ["drive:", "Drive folders"],
 ];
 
-async function Sync() {
+async function MotionCard({ notice }: { notice: string | null }) {
+  const { data: m } = await createAdminClient().from("motion_connection").select("access_token, connected_at, last_sync_at, last_result, error, tools, profiles(full_name)").eq("id", 1).maybeSingle();
+  const on = Boolean(m?.access_token);
+  const r = (m?.last_result ?? null) as { brands?: number; pulled?: number; read?: number; brandsFound?: number; errors?: string[] } | null;
+  return (
+    <section className="grid gap-3 rounded-[12px] border border-line bg-surface p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="font-heading text-[17px]">Motion</p>
+          <p className="mt-0.5 text-sm text-muted">
+            {on
+              ? `Connected${m?.connected_at ? ` ${new Date(m.connected_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}${(m?.profiles as unknown as { full_name: string } | null)?.full_name ? ` by ${(m?.profiles as unknown as { full_name: string }).full_name}` : ""} · ${((m?.tools ?? []) as unknown[]).length} tools. The Market tab pulls live ads from it every morning.`
+              : "Connect Kaizen's Motion account to fill the Market tab with live ads from every industry we serve."}
+          </p>
+        </div>
+        <a href="/api/motion/connect" className={`grid h-9 place-items-center rounded-full px-4 text-sm ${on ? "border border-line text-muted hover:text-fg" : "bg-brand font-medium text-white hover:brightness-110"}`}>
+          {on ? "Reconnect" : "Connect Motion"}
+        </a>
+      </div>
+      {notice && <p className={`text-xs ${notice === "connected" ? "text-ok" : "text-bad"}`}>{notice === "connected" ? "Connected. The first market sync is running now." : notice}</p>}
+      {m?.error && <p className="text-xs text-bad">{m.error}</p>}
+      {on && m?.last_sync_at && (
+        <p className="text-xs text-faint">
+          Last sync {new Date(m.last_sync_at).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+          {r && ` · ${r.brands ?? 0} brands checked, ${r.pulled ?? 0} ads pulled, ${r.read ?? 0} read${r.brandsFound ? `, ${r.brandsFound} brands found` : ""}`}
+          {r?.errors?.length ? ` · ${r.errors[0]}` : ""}
+        </p>
+      )}
+    </section>
+  );
+}
+
+async function Sync({ motion }: { motion: string | null }) {
   if (!adminConfigured()) return <p className="text-sm text-faint">Server key missing.</p>;
   const { data } = await createAdminClient().from("sync_state").select("source, last_run_at, last_result").order("source");
   const rows = data ?? [];
@@ -115,6 +147,7 @@ async function Sync() {
   };
   return (
     <div className="grid gap-4">
+      <MotionCard notice={motion} />
       {GROUPS.map(([prefix, name]) => {
         const list = rows.filter((r) => r.source.startsWith(prefix));
         const failing = list.filter(errorOf);
@@ -215,7 +248,7 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
       </nav>
       {tab === "agents" && <Agents open={typeof sp.agent === "string" ? sp.agent : null} />}
       {tab === "data" && <Data target={typeof sp.target === "string" ? sp.target : null} from={from} to={to} />}
-      {tab === "sync" && <Sync />}
+      {tab === "sync" && <Sync motion={typeof sp.motion === "string" ? sp.motion : null} />}
       {tab === "deleted" && <Deleted />}
     </div>
   );
