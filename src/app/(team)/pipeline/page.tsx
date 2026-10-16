@@ -33,7 +33,8 @@ export default async function Home() {
     // Ads wearing out: every client for execs and leads, a buyer's own clients for a buyer
     me.isExec || me.isLead ? loadWatchList(db, { limit: 8 }) : variantFor(me) === "buyer" ? loadWatchList(db, { buyerId: me.id, limit: 12 }) : Promise.resolve(null),
     // New and returning clients, first thing on the page for execs and leads
-    me.isExec || me.isLead ? loadOnboarding(db) : Promise.resolve(null),
+    // Execs and leads: every client. A buyer: their own clients (the access rules narrow it)
+    me.isExec || me.isLead || variantFor(me) === "buyer" ? loadOnboarding(db) : Promise.resolve(null),
     me.isExec || me.isLead ? db.from("clients").select("id, name").is("archived_at", null).order("name").then(({ data }) => data ?? []) : Promise.resolve([]),
   ]);
 
@@ -130,6 +131,7 @@ export default async function Home() {
       canAct={variant === "buyer"}
       kpis={kpis}
       fatigue={fatigue}
+      onboarding={onboarding}
     />
   );
 }

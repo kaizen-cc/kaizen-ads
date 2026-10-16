@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { WatchRow } from "@/lib/fatigue";
 import { FatigueWatch } from "@/components/fatigue-watch";
+import type { OnboardingState } from "@/lib/suggestions";
+import { OnboardingCallout } from "./onboarding-callout";
 import { DOT, KpiPulse, PageHeader, PrimaryAction, Queue, SectionTitle, Stats, TXT, type KpiPulseData, type QueueItem, type Tone } from "./shared";
 
 export type WorkVariant = "buyer" | "creative" | "copy" | "cs";
@@ -18,6 +20,7 @@ export type WorkData = {
   canAct: boolean;
   kpis?: KpiPulseData | null; // a media buyer's own accounts
   fatigue?: WatchRow[] | null;
+  onboarding?: OnboardingState | null;
 };
 
 const COPY: Record<WorkVariant, { action: string; fourth: string; fourthHint: string; queueTitle: string; empty: { title: string; body: string } }> = {
@@ -62,6 +65,8 @@ export function WorkView(d: WorkData) {
         subtitle={`${d.role} · ${d.stats.mine ? `${d.stats.mine} on your plate` : "your plate is clear"}`}
         action={<PrimaryAction label={c.action} disabled={!d.canAct} href={d.variant === "buyer" ? "/requests/new" : undefined} />}
       />
+
+      {d.onboarding && <OnboardingCallout state={d.onboarding} clients={[]} />}
 
       <Stats
         items={[

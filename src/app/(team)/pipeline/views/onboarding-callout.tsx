@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import type { OnboardingCard, OnboardingState, OpenSuggestion } from "@/lib/suggestions";
 import { markOnboarded } from "../../clients/[slug]/actions";
 import { matchIntake, writeFirstRound } from "../onboarding-actions";
@@ -16,8 +16,18 @@ const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: 
 export function OnboardingCallout({ state, clients }: { state: OnboardingState; clients: { id: string; name: string }[] }) {
   const [sheet, setSheet] = useState<OpenSuggestion | null>(null);
   const router = useRouter();
+  // Keeps itself current: quickly while an intake is being read, otherwise every minute (a new intake can land any time)
+  const reading = state.clients.some((c) => c.intake && ["received", "read"].includes(c.intake.status) && !c.firstRound && !c.inProduction.length);
+  useEffect(() => {
+    if (sheet) return;
+    const t = setInterval(() => router.refresh(), reading ? 8000 : 60000);
+    return () => clearInterval(t);
+  }, [reading, sheet, router]);
   if (!state.clients.length && !state.unmatched.length) return null;
-  const ready = state.clients.filter((c) => c.firstRound).length;
+  // Clients without a creative package have no first round to make: one quiet line, not a card each
+  const creative = state.clients.filter((c) => c.creative);
+  const other = state.clients.filter((c) => !c.creative);
+  const ready = creative.filter((c) => c.firstRound).length;
   return (
     <section className="relative overflow-hidden rounded-[20px] border border-brand/45 bg-[radial-gradient(120%_140%_at_0%_0%,rgba(178,30,44,0.28),rgba(178,30,44,0.06)_45%,transparent_70%)] p-5 shadow-[0_0_0_1px_rgba(178,30,44,0.15),0_20px_60px_-30px_rgba(178,30,44,0.6)] md:p-6">
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
@@ -30,7 +40,7 @@ export function OnboardingCallout({ state, clients }: { state: OnboardingState; 
             <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-brand-text">Onboarding</span>
           </span>
           <h2 className="font-display text-2xl tracking-tight md:text-3xl">
-            {state.clients.length} {state.clients.length === 1 ? "client" : "clients"} getting started
+            {creative.length} {creative.length === 1 ? "client" : "clients"} getting started
           </h2>
           <p className="text-sm text-muted">
             {ready ? `${ready} first ${ready === 1 ? "round is" : "rounds are"} written and waiting for you. ` : ""}First rounds come from their intake form and what&apos;s winning for similar clients.
@@ -39,10 +49,24 @@ export function OnboardingCallout({ state, clients }: { state: OnboardingState; 
       </div>
 
       <div className="grid gap-3 lg:grid-cols-2">
-        {state.clients.map((c) => (
+        {creative.map((c) => (
           <ClientCard key={c.clientId} c={c} onOpen={setSheet} />
         ))}
       </div>
+
+      {other.length > 0 && (
+        <p className="mt-4 text-xs text-faint">
+          Also onboarding, without a creative package:{" "}
+          {other.map((c, i) => (
+            <span key={c.clientId}>
+              {i > 0 && ", "}
+              <Link href={`/clients/${c.slug}`} className="text-muted hover:text-fg">
+                {c.name}
+              </Link>
+            </span>
+          ))}
+        </p>
+      )}
 
       {state.unmatched.length > 0 && (
         <div className="mt-4 grid gap-2 rounded-[14px] border border-warn/40 bg-bg/60 p-4">

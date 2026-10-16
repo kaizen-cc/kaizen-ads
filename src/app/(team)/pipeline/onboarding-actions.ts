@@ -15,9 +15,11 @@ async function lead() {
   return me;
 }
 
-/** Write the first round now (before the intake arrives, or again). */
+/** Write the first round now (before the intake arrives, or again). Execs, leads, and the client's own team. */
 export async function writeFirstRound(clientId: string): Promise<{ ok: true; suggestion: OpenSuggestion } | { ok: false; error: string }> {
-  await lead();
+  await requireStaff();
+  const { data: mine } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
+  if (!mine) return { ok: false, error: "You don't work on this client." };
   if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
   try {
     const id = await suggestOnboarding(createAdminClient(), clientId);

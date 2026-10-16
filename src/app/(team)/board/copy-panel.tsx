@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { blockers, headsUp, type Ad } from "@/lib/copy";
 import type { CopyViolation } from "@/lib/ai";
 import { approveCopy, redraftCopy, reuseCopy, saveCopy, ticketCopy, type CopyState } from "./copy-actions";
@@ -12,6 +13,7 @@ import type { Ticket } from "./types";
  * The Copywriter drafts as soon as the creative is approved; the copywriter is assigned when the draft is ready.
  */
 export function CopyPanel({ ticket, canApprove, onMoved, demo }: { ticket: Ticket; canApprove: boolean; onMoved: (stage: Ticket["stage"]) => void; demo?: CopyState }) {
+  const router = useRouter();
   const [state, setState] = useState<CopyState | null>(demo ?? null);
   const [ads, setAds] = useState<Ad[]>(demo?.set?.ads ?? []);
   const [dirty, setDirty] = useState(false);
@@ -41,13 +43,27 @@ export function CopyPanel({ ticket, canApprove, onMoved, demo }: { ticket: Ticke
     };
   }, [ticket.id, demo]);
 
-  // While the AI writes, check back every couple of seconds (the progress is real: ads counted as they're written)
+  // While the AI writes, check back every couple of seconds (the progress is real: ads counted as they're written).
+  // A plain fetch, so it never waits behind another action; when the copy lands the ticket refreshes too.
   const drafting = state?.set?.status === "drafting" || (!state?.set && ticket.stage === "copy" && state !== null);
   useEffect(() => {
     if (demo || !drafting) return;
-    const poll = setInterval(() => void load(), 2000);
-    return () => clearInterval(poll);
-  }, [drafting, load, demo]);
+    let live = true;
+    const poll = setInterval(async () => {
+      const res = await fetch(`/api/copy/${ticket.id}`, { cache: "no-store" }).catch(() => null);
+      if (!live || !res?.ok) return;
+      const s = (await res.json()) as CopyState;
+      setState(s);
+      if (s.set && s.set.status !== "drafting") {
+        setAds(s.set.ads);
+        router.refresh();
+      }
+    }, 2000);
+    return () => {
+      live = false;
+      clearInterval(poll);
+    };
+  }, [drafting, ticket.id, demo, router]);
 
   const set = state?.set ?? null;
   const missing = blockers(ads);

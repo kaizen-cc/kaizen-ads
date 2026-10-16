@@ -45,7 +45,8 @@ export async function amendCopy(admin: SupabaseClient, requestId: string, notes:
     shown = started;
     last = Date.now();
     const label = started === 0 ? "Working out what to change" : `Going through ad ${started} of 5`;
-    void admin.from("copy_sets").update({ progress: { written: Math.max(0, started - 1), total: 5, label } }).eq("request_id", requestId);
+    // A query builder only runs when awaited or then-ed: fire it without holding up the stream
+    admin.from("copy_sets").update({ progress: { written: Math.max(0, started - 1), total: 5, label } }).eq("request_id", requestId).then(() => undefined, () => undefined);
   };
 
   try {

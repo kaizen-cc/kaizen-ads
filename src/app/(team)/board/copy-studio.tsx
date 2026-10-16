@@ -258,7 +258,8 @@ export function CopyProgress({ progress }: { progress: { written?: number; total
   // Eases toward the next ad so the bar keeps moving between real steps
   const [creep, setCreep] = useState(0);
   useEffect(() => {
-    const t = setInterval(() => setCreep((c) => Math.min(0.85, c + 0.04)), 700);
+    // Eases ever closer to the next step without reaching it, so the bar never sits still
+    const t = setInterval(() => setCreep((c) => c + (0.95 - c) * 0.06), 700);
     return () => clearInterval(t);
   }, []);
   const [seen, setSeen] = useState(written);

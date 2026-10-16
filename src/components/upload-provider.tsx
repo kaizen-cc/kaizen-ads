@@ -113,6 +113,8 @@ export function UploadProvider({ children, demo = false }: { children: React.Rea
     [pump],
   );
 
+  const clearFinished = useCallback(() => setJobs((js) => js.filter((j) => j.status !== "done" && j.status !== "failed")), []);
+
   // Leaving the app mid-upload would stop it; ask first
   const busy = jobs.some((j) => j.status === "queued" || j.status === "uploading" || j.status === "saving");
   useEffect(() => {
@@ -125,7 +127,7 @@ export function UploadProvider({ children, demo = false }: { children: React.Rea
   return (
     <UploadContext.Provider value={{ jobs, enqueue, finished, demo }}>
       {children}
-      <UploadTray jobs={jobs} onClear={() => setJobs((js) => js.filter((j) => j.status !== "done"))} />
+      <UploadTray jobs={jobs} onClear={clearFinished} />
     </UploadContext.Provider>
   );
 }
@@ -134,12 +136,19 @@ const mb = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.max
 
 function UploadTray({ jobs, onClear }: { jobs: UploadJob[]; onClear: () => void }) {
   const [open, setOpen] = useState(true);
-  if (!jobs.length) return null;
   const active = jobs.filter((j) => j.status !== "done" && j.status !== "failed").length;
+  const failed = jobs.some((j) => j.status === "failed");
+  // Everything landed: the tray steps aside after a few seconds. A failure stays until it's closed, so it isn't missed.
+  useEffect(() => {
+    if (!jobs.length || active || failed) return;
+    const t = setTimeout(onClear, 5000);
+    return () => clearTimeout(t);
+  }, [jobs.length, active, failed, onClear]);
+  if (!jobs.length) return null;
   const sent = jobs.reduce((n, j) => n + j.sent, 0);
   const total = jobs.reduce((n, j) => n + j.total, 0);
   return (
-    <div className="fixed bottom-5 right-5 z-[60] w-[340px] overflow-hidden rounded-[12px] border border-line bg-surface shadow-2xl animate-[step-in_.25s_ease-out]">
+    <div className="fixed bottom-5 right-5 z-[60] w-[340px] overflow-hidden [&>button:first-child]:pr-10 rounded-[12px] border border-line bg-surface shadow-2xl animate-[step-in_.25s_ease-out]">
       <button onClick={() => setOpen((o) => !o)} className="flex w-full items-center gap-3 px-4 py-3 text-left">
         <span className="relative grid h-8 w-8 place-items-center">
           <svg viewBox="0 0 36 36" className="absolute inset-0 -rotate-90">
@@ -157,6 +166,11 @@ function UploadTray({ jobs, onClear }: { jobs: UploadJob[]; onClear: () => void 
         </span>
         <span className="text-xs text-faint">{open ? "Hide" : "Show"}</span>
       </button>
+      {!active && (
+        <button onClick={onClear} aria-label="Close" className="absolute right-2 top-2 grid h-6 w-6 place-items-center rounded-full text-faint hover:bg-surface-2 hover:text-fg">
+          ×
+        </button>
+      )}
       {open && (
         <div className="max-h-64 overflow-y-auto border-t border-line">
           {jobs.map((j) => (
@@ -175,7 +189,7 @@ function UploadTray({ jobs, onClear }: { jobs: UploadJob[]; onClear: () => void 
           ))}
           {!active && (
             <button onClick={onClear} className="w-full px-4 py-2 text-xs text-muted hover:text-fg">
-              Clear finished
+              {failed ? "Close" : "Clear finished"}
             </button>
           )}
         </div>

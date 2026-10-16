@@ -374,7 +374,7 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
                   </div>
                 </div>
               ) : (
-                <div className="sticky bottom-0 -mx-5 flex flex-wrap items-center gap-2 border-t border-line bg-bg/95 px-5 py-3 backdrop-blur md:-mx-6 md:px-6">
+                <div className="sticky -bottom-5 z-10 -mx-5 -mb-5 flex flex-wrap items-center gap-2 border-t border-line bg-bg px-5 pb-5 pt-3 shadow-[0_-12px_24px_-12px_rgba(0,0,0,0.6)] md:-bottom-6 md:-mx-6 md:-mb-6 md:px-6 md:pb-6">
                   <button onClick={approve} disabled={busy || thinking} className="h-10 rounded-brand bg-brand px-5 text-sm font-medium text-white hover:brightness-110 disabled:opacity-50">
                     {busy ? "Making tickets…" : s.kind === "winner" || s.kind === "refresh" ? "Send to production" : "Approve and send to the makers"}
                   </button>

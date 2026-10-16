@@ -70,7 +70,8 @@ export async function draftCopy(admin: SupabaseClient, requestId: string, actorI
     shown = started;
     last = Date.now();
     const label = started === 0 ? "Picking a formula for each ad" : `Writing ad ${started} of 5 · ${started <= 3 ? "short-form" : "long-form"}`;
-    void admin.from("copy_sets").update({ progress: { written: Math.max(0, started - 1), total: 5, label } }).eq("request_id", requestId);
+    // A query builder only runs when awaited or then-ed: fire it without holding up the stream
+    admin.from("copy_sets").update({ progress: { written: Math.max(0, started - 1), total: 5, label } }).eq("request_id", requestId).then(() => undefined, () => undefined);
   };
 
   try {

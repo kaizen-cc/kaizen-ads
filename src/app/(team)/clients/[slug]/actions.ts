@@ -243,10 +243,11 @@ export async function restoreClient(clientId: string, slug: string): Promise<Act
   return done(slug, error);
 }
 
-/** Onboarding is done: the client leaves the onboarding callout on Home. */
+/** Onboarding is done: the client leaves the onboarding callout on Home. Execs, leads, and the client's own team. */
 export async function markOnboarded(clientId: string, slug: string): Promise<ActionResult> {
-  const me = await requireStaff();
-  if (!isExecOrLead(me)) return { ok: false, error: "Only execs and leads can do this." };
+  await requireStaff();
+  const { data: mine } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
+  if (!mine) return { ok: false, error: "You don't work on this client." };
   if (!adminConfigured()) return { ok: false, error: "Can't save here." };
   const { error } = await createAdminClient().from("clients").update({ status: "active" }).eq("id", clientId).eq("status", "onboarding");
   revalidatePath("/pipeline");
