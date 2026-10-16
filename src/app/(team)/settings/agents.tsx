@@ -20,7 +20,16 @@ export type Agent = {
   updatedAt: string;
   updatedBy: string | null;
   stats: { runs: number; avgMs: number | null; inTokens: number; outTokens: number; failed: number };
-  recent: { at: string; label: string; model: string; ms: number | null; tokens: string; ok: boolean; error: string | null }[];
+  lastAt: string | null; // the last time it ran, ever
+  moments: { title: string; where: string; trigger: "auto" | "click"; when: string; runs7: number; lastAt: string | null }[];
+  recent: { at: string; moment: string | null; label: string; model: string; ms: number | null; tokens: string; ok: boolean; error: string | null }[];
+};
+
+// "3 min ago", "2 hours ago", "4 days ago"
+const ago = (iso: string | null) => {
+  if (!iso) return null;
+  const m = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60_000));
+  return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 48 * 60 ? `${Math.round(m / 60)} hour${Math.round(m / 60) === 1 ? "" : "s"} ago` : `${Math.round(m / 1440)} days ago`;
 };
 export type Kind = "knowledge" | "skill" | "example";
 export type Item = { id: string; agentKey: string | null; kind: Kind; title: string; body: string; fileName: string | null; active: boolean; updatedAt: string };
@@ -219,7 +228,10 @@ export function AgentsOverview({ agents, items }: { agents: Agent[]; items: Item
                         <span className="capitalize text-fg">{a.model}</span>
                         <span className="text-faint">· {a.effort} effort</span>
                       </span>
-                      <span className="text-faint">{a.stats.runs ? `${a.stats.runs} runs this week` : "No runs yet"}</span>
+                      <span className="text-right text-faint">
+                        {a.stats.runs ? `${a.stats.runs} runs this week` : a.lastAt ? "No runs this week" : "No runs yet"}
+                        {a.lastAt && <span className="block text-[11px]">last {ago(a.lastAt)}</span>}
+                      </span>
                     </div>
                   </div>
                   <span className="absolute bottom-6 right-6 hidden translate-x-1 text-sm text-muted opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100 xl:block" aria-hidden>
@@ -713,6 +725,7 @@ function Coach({ a, initial, items }: { a: Agent; initial: ChatMessage[]; items:
 }
 
 const TABS = [
+  ["use", "Where it's used"],
   ["coach", "Coach"],
   ["setup", "Brain & instructions"],
   ["playbook", "Skills & knowledge"],
@@ -720,7 +733,7 @@ const TABS = [
 ] as const;
 
 export function AgentDetail({ a, items, chat }: { a: Agent; items: Item[]; chat: ChatMessage[] }) {
-  const [tab, setTab] = useState<(typeof TABS)[number][0]>("coach");
+  const [tab, setTab] = useState<(typeof TABS)[number][0]>("use");
   const mine = items.filter((k) => k.agentKey === a.key);
   const shared = items.filter((k) => k.agentKey === null && k.active);
   const tint = TINT[a.icon] ?? TINT.spark;
@@ -743,11 +756,12 @@ export function AgentDetail({ a, items, chat }: { a: Agent; items: Item[]; chat:
               </div>
               <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">{a.description}</p>
             </div>
-            <dl className="grid w-full grid-cols-2 gap-x-8 gap-y-3 border-t border-line pt-5 sm:grid-cols-4">
+            <dl className="grid w-full grid-cols-2 gap-x-8 gap-y-3 border-t border-line pt-5 sm:grid-cols-5">
               {[
                 ["Brain", `${a.model[0].toUpperCase()}${a.model.slice(1)} · ${a.effort}`],
                 ["Reads", `~${tokens.toLocaleString()} tokens`],
                 ["Runs, 7 days", a.stats.runs ? String(a.stats.runs) : "—"],
+                ["Last used", ago(a.lastAt) ?? "Never"],
                 ["Avg time", a.stats.avgMs == null ? "—" : `${(a.stats.avgMs / 1000).toFixed(1)}s`],
               ].map(([k, v]) => (
                 <div key={k}>
@@ -809,6 +823,64 @@ export function AgentDetail({ a, items, chat }: { a: Agent; items: Item[]; chat:
               </div>
             </div>
           )}
+        </section>
+        <section className={tab === "use" ? "grid gap-5" : "hidden"}>
+          <div className="grid gap-3 rounded-[18px] border border-line bg-surface p-6">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h3 className="font-heading text-[18px]">Where it comes in</h3>
+              <span className="text-xs text-faint">
+                {a.moments.length} {a.moments.length === 1 ? "moment" : "moments"} in the app · last used {ago(a.lastAt) ?? "never"}
+              </span>
+            </div>
+            {a.moments.length === 0 ? (
+              <p className="text-sm text-faint">Not wired into the app yet.</p>
+            ) : (
+              <ul className="grid divide-y divide-line">
+                {a.moments.map((m) => {
+                  const idle = !m.lastAt;
+                  return (
+                    <li key={m.title} className="flex flex-wrap items-start gap-x-4 gap-y-1.5 py-3.5">
+                      <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${m.runs7 ? "bg-ok" : idle ? "bg-surface-2 ring-1 ring-line" : "bg-warn"}`} />
+                      <span className="grid min-w-0 flex-1 gap-0.5">
+                        <span className="text-sm">{m.title}</span>
+                        <span className="text-xs text-muted">
+                          {m.where} · <span className="text-faint">{m.when}</span>
+                        </span>
+                      </span>
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] ${m.trigger === "auto" ? "bg-surface-2 text-muted" : "bg-brand-soft text-brand-text"}`}>
+                        {m.trigger === "auto" ? "Automatic" : "When someone clicks"}
+                      </span>
+                      <span className="w-36 shrink-0 text-right text-xs">
+                        <span className={`block tabular ${m.runs7 ? "text-fg" : "text-faint"}`}>{m.runs7 ? `${m.runs7} this week` : "None this week"}</span>
+                        <span className="block text-[11px] text-faint">{m.lastAt ? `last ${ago(m.lastAt)}` : "not used yet"}</span>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            <p className="text-[11px] text-faint">Green: used this week. Amber: used before, not this week. Grey: not used yet, worth checking it&apos;s reachable.</p>
+          </div>
+
+          <div className="grid gap-3 rounded-[18px] border border-line bg-surface p-6">
+            <h3 className="font-heading text-[18px]">Most recent</h3>
+            {a.recent.length === 0 ? (
+              <p className="text-sm text-faint">No runs in the last month.</p>
+            ) : (
+              <ul className="grid gap-1">
+                {a.recent.slice(0, 8).map((r, i) => (
+                  <li key={i} className="flex flex-wrap items-center gap-x-3 gap-y-0.5 rounded-[10px] px-2 py-2 text-sm odd:bg-bg/50">
+                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${r.ok ? "bg-ok" : "bg-bad"}`} />
+                    <span className="min-w-0 flex-1 truncate">
+                      {r.moment ?? r.label}
+                      {r.moment && r.label && <span className="text-faint"> · {r.label}</span>}
+                    </span>
+                    <span className="shrink-0 text-xs text-faint">{ago(r.at)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </section>
         <section className={tab === "coach" ? "grid" : "hidden"}>
           <Coach a={a} initial={chat} items={items} />

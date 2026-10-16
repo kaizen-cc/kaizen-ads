@@ -10,6 +10,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { ChatMessage, Change } from "./actions";
 import { AgentDetail, AgentsOverview, type Agent, type Item } from "./agents";
 import { DataInspector } from "./data-inspector";
+import { AGENT_MOMENTS, momentOf } from "@/lib/agent-moments";
 import Team from "../team/page";
 import { ErrorButtons } from "./error-buttons";
 
@@ -36,13 +37,25 @@ const day = (offset: number) => {
 async function Agents({ open }: { open: string | null }) {
   const supabase = await createClient();
   const since = daysAgoIso(7);
-  const [{ data: agents }, { data: knowledge }, { data: runs }] = await Promise.all([
+  const [{ data: agents }, { data: knowledge }, { data: month }] = await Promise.all([
     supabase.from("ai_agents").select("*, profiles(full_name)").order("sort_order"),
     supabase.from("ai_knowledge").select("*").order("created_at"),
-    supabase.from("ai_runs").select("agent_key, label, model, ms, input_tokens, output_tokens, ok, error, created_at").gte("created_at", since).order("created_at", { ascending: false }).limit(1000),
+    supabase.from("ai_runs").select("agent_key, label, model, ms, input_tokens, output_tokens, ok, error, created_at").gte("created_at", daysAgoIso(30)).order("created_at", { ascending: false }).limit(5000),
   ]);
+  const runs = (month ?? []).filter((r) => r.created_at >= since);
+  // When each agent last ran, even if it was over a month ago
+  const lastEver = new Map<string, string>();
+  for (const r of month ?? []) if (!lastEver.has(r.agent_key)) lastEver.set(r.agent_key, r.created_at);
+  const quiet = (agents ?? []).filter((a) => !lastEver.has(a.key)).map((a) => a.key as string);
+  await Promise.all(
+    quiet.map(async (k) => {
+      const { data } = await supabase.from("ai_runs").select("created_at").eq("agent_key", k).order("created_at", { ascending: false }).limit(1).maybeSingle();
+      if (data) lastEver.set(k, data.created_at);
+    }),
+  );
   const list: Agent[] = (agents ?? []).map((a) => {
-    const mine = (runs ?? []).filter((r) => r.agent_key === a.key);
+    const mine = runs.filter((r) => r.agent_key === a.key);
+    const mineMonth = (month ?? []).filter((r) => r.agent_key === a.key);
     const timed = mine.filter((r) => r.ms != null && r.ok);
     return {
       key: a.key,
@@ -62,8 +75,15 @@ async function Agents({ open }: { open: string | null }) {
         outTokens: mine.reduce((t, r) => t + (r.output_tokens ?? 0), 0),
         failed: mine.filter((r) => !r.ok).length,
       },
-      recent: mine.slice(0, 15).map((r) => ({
+      lastAt: lastEver.get(a.key) ?? null,
+      // Every moment in the app that calls it, with how often each ran this week and when it last did
+      moments: (AGENT_MOMENTS[a.key] ?? []).map((m) => {
+        const hits = mineMonth.filter((r) => momentOf(a.key, r.label) === m);
+        return { title: m.title, where: m.where, trigger: m.trigger, when: m.when, runs7: hits.filter((r) => r.created_at >= since).length, lastAt: hits[0]?.created_at ?? null };
+      }),
+      recent: mineMonth.slice(0, 15).map((r) => ({
         at: r.created_at,
+        moment: momentOf(a.key, r.label)?.title ?? null,
         label: r.label ?? a.key,
         model: r.model ?? "",
         ms: r.ms,
