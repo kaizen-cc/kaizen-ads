@@ -1,6 +1,6 @@
 # Kaizen Ads: Roadmap
 
-Where things stand on 2026-10-15 and what comes next, in order. The target is the full request → approval → launch loop live before Black Friday / Cyber Monday. See VISION.md for every decision behind it.
+Where things stand on 2026-10-16 and what comes next, in order. The target is the full request → approval → launch loop live before Black Friday / Cyber Monday. See VISION.md for every decision behind it.
 
 ## Built
 
@@ -25,11 +25,17 @@ Where things stand on 2026-10-15 and what comes next, in order. The target is th
 - **Onboarding**: the marketing intake form is read by the AI into every agent's view of the client (and sets the industry). The Strategist writes the first round from the intake and the winning ads in the same industry. Execs and leads see new and returning clients in a red Onboarding callout at the top of Home (enrolled → intake → first round → production).
 - **Ads Lab** (execs and leads): a round table with five AI seats (strategist, copywriter, creative director, media buyer, analyst) that reads a library of notes, docs, call transcripts, YouTube videos, links and skills, plus the winners and every past test. It proposes tests and flags ones already run. A started test takes a 14-day baseline per client and reaches each client as a suggested brief on Home. Results are read from the KPI tracker; a win is deployed as a learning into the memory of every client it fits (with the effect tracked since), and a flop goes back to the table to iterate.
 
+- **Calls**: Gemini notes and Fireflies are read per client (internal meetings too), paid ads and creative only. Each client's summary, what they said and what was decided joins their context. Promises are watched: if nothing is in motion two business days later, a brief from the call lands on Home, and the request form offers it ready to send. Any request that covers a promise clears it.
+- **Go-to-market strategy**: Kaizen's Meta GTM template, built at onboarding once the intake form, call notes and website are in. Sourced, quality-gated, on the client page; every agent reads it, and the full Brand Bible.
+- **Market (Motion)**: live Meta ads by industry from each client's tracked competitors, the competitors they named and standout advertisers, marked proven, new or being tested. Brief a client on one with the Motion link in the references; the client page, the request form and the Strategist use it too.
+- **Refresh briefs written ahead** for every ad wearing out.
+- **Errors and updates**: errors are grouped, triaged (harmless ones closed automatically), diagnosed and emailed with Mark fixed / Stop alerting / Have Claude fix it; Settings has an Errors tab. Open tabs get a refresh bar when a new version is live.
+- **Archive, complete**: archiving sets aside everything tied to the client (KPI targets, briefs, promises, watch list, syncs, the Lab, intake) and is logged; the archive log on Clients shows who, when, why and what, and restoring brings it back.
+
 ## Next: close the approval loop (Phase 1, before BFCM)
 
-1. **Client portal**: the swipe-to-approve experience from the Phase 0 mockups. It shows a full ad preview, with creative and copy approved separately and revision notes captured. The first approval counts.
-2. **Notifications and chasing**: Slack posts to each client's channel, plus 24h and 48h reminders in business time. After 48h the item goes to customer success's queue; auto-approval happens only for clients who opted in.
-3. **Revisions loop**: client feedback goes back to the maker as a new version. Every revision note lands in client memory automatically.
+1. ~~Client portal~~ and ~~revisions loop~~: built (see above); each client goes live when an exec switches them on.
+2. **Notifications and chasing** (deliberately last): Slack posts to each client's channel, plus 24h and 48h reminders in business time. After 48h the item goes to customer success's queue; auto-approval happens only for clients who opted in.
 
 ## Then: launch and learn (Phase 2)
 
@@ -39,7 +45,6 @@ Where things stand on 2026-10-15 and what comes next, in order. The target is th
 
 ## Later (Phase 3)
 
-- **Go-to-market agent**: the marketing intake form for a new client becomes an angle/avatar foundation and first-round requests.
 - **Client-side requests and upgrades** in the portal, counted against the allotment.
 - **Built-in timer** that logs to Kaizen Track without double counting.
 - **PDF knowledge** in Settings (only text files today), and per-client knowledge for the agents.
