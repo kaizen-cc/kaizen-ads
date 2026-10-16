@@ -110,7 +110,8 @@ export async function GET(request: Request) {
     }
     // Execs, by hand: sort every client without an industry now (&force=1 redoes the AI's own guesses)
     if (step === "industry") return Response.json({ set: await detectIndustries(admin, { force: new URL(request.url).searchParams.get("redo") === "1" }) });
-    if (step === "clients") return Response.json(await mirrorTrack(admin));
+    // Hourly: Kaizen Track's clients, then any intake forms still waiting to be read (a backfill, a short burst of forms)
+    if (step === "clients") return Response.json({ track: await mirrorTrack(admin), intakes: await readBackfill(admin, 25) });
     // Execs, by hand: read backfilled intake forms (context only, no first rounds)
     if (step === "intakes") return Response.json(await readBackfill(admin));
     // Execs, by hand: check every ad for fatigue now
