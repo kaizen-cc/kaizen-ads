@@ -42,9 +42,9 @@ export function WinnersLibrary({ winners, industries, clients, scope }: { winner
     return winners
       .filter((w) => industry === null || (w.industry ?? "") === industry)
       .filter((w) => !liveOnly || w.live)
-      .filter((w) => !term || [w.client, w.detail, w.headline, w.text, w.name].some((s) => s?.toLowerCase().includes(term)))
+      .filter((w) => !term || [w.client, w.detail, industries.find(([i]) => i === w.industry)?.[1], w.headline, w.text, w.name].some((s) => s?.toLowerCase().includes(term)))
       .sort((a, b) => (sort === "ratio" ? b.ratio - a.ratio : sort === "spend" ? b.spend - a.spend : b.results - a.results));
-  }, [winners, industry, liveOnly, q, sort]);
+  }, [winners, industries, industry, liveOnly, q, sort]);
 
   const clientCount = new Set(winners.map((w) => w.clientId)).size;
   const best = winners[0];
