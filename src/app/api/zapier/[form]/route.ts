@@ -3,6 +3,7 @@ import { linkNewChannel } from "@/lib/context/slack";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { after } from "next/server";
 import { welcomeBack } from "@/lib/client-sync";
+import { applyCustomPackage, applyTeam } from "@/lib/team-from-form";
 import { matchClient, processIntake, receiveIntake } from "@/lib/onboarding";
 import { isZapierRequest, pickLoose, readEnrollment, readRaw } from "@/lib/zapier";
 
@@ -48,7 +49,7 @@ export async function POST(request: Request, ctx: RouteContext<"/api/zapier/[for
       return Response.json({ ok: true, archived: clientId });
     }
 
-    const { data, key } = await readEnrollment(request, form);
+    const { data, key, raw } = await readEnrollment(request, form);
     if (!data.business_name && !(form === "upsell" && data.client_id))
       return Response.json({ error: form === "upsell" ? "Client ID or name is missing" : "Business name is missing" }, { status: 400 });
     const { data: result, error } = await admin.rpc("zapier_enroll", { p_key: key, p_source: form, p_data: data });
@@ -58,7 +59,24 @@ export async function POST(request: Request, ctx: RouteContext<"/api/zapier/[for
     // An archived client enrolling again comes back with everything, as onboarding
     const enrolled = (result as { client_id?: string })?.client_id;
     const back = form === "enrollment" && enrolled ? await welcomeBack(admin, enrolled) : false;
-    return Response.json({ ok: true, ...(result as object), ...(back ? { welcome_back: true } : {}) });
+    // The team named on the form becomes the client's assignments (what each person sees follows from it)
+    const team = enrolled ? await applyTeam(admin, enrolled, raw) : null;
+    // A package given as counts ("3 Videos per Month") sets exactly that allotment
+    const unknown = (result as { package_not_recognised?: string | null })?.package_not_recognised;
+    const custom = enrolled && unknown ? await applyCustomPackage(admin, enrolled, unknown) : null;
+    // Keep the form as sent, so a question we don't read yet can be looked at later
+    await admin
+      .from("integration_events")
+      .update({ payload: { data, raw, result: { ...(result as object), team, custom_allotment: custom } } })
+      .eq("idempotency_key", key);
+    return Response.json({
+      ok: true,
+      ...(result as object),
+      ...(back ? { welcome_back: true } : {}),
+      ...(team && Object.keys(team.assigned).length ? { team: team.assigned } : {}),
+      ...(team?.unmatched.length ? { team_not_found: team.unmatched } : {}),
+      ...(custom ? { allotment: `${custom.images} images + ${custom.videos} videos`, package_not_recognised: null } : {}),
+    });
   } catch (e) {
     const message = e instanceof Error ? e.message : `Zapier ${form} failed`;
     await reportError({ message, path: `/api/zapier/${form}`, kind: "server" });

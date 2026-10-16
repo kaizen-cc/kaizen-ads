@@ -14,6 +14,10 @@ Kaizen Ads uses the same secret as Kaizen Track (`ZAPIER_SECRET`, set to the sam
 | Offboarding (if there's a form; optional) | `https://ads.kaizenmarketing.agency/api/zapier/offboarding` | Client archived (nothing deleted). Send the business name or Client ID, plus a reason if there is one. |
 | New Slack channel (existing Zap) | `https://ads.kaizenmarketing.agency/api/zapier/slack-channel` | Links the channel to its client. |
 
+**The team on the enrollment and upsell forms** (media buyer, graphic designer, video editor, copywriter, customer success) becomes the client's assignments here, matched to people by name. A role the form names replaces whoever held it; a name that doesn't match exactly one active person is listed back in Zapier's response as `team_not_found`, never guessed. Assignments decide what people see: a media buyer's board, KPI board, client list and Home show only their clients (execs, leads, the copywriter and customer success see every client). The Meta KPI targets follow the media buyer.
+
+**Packages given as counts** ("3 Videos per Month", "10 statics + 2 videos") set exactly that allotment.
+
 The easiest setup is to duplicate each Zap's Kaizen Track step and change only the URL to the Kaizen Ads one. The headers and fields stay the same. Track's steps stay as they are.
 
 ## 2. Kaizen Track mirror (hourly)

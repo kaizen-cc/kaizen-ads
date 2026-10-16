@@ -39,7 +39,7 @@ export type Enrollment = {
 };
 
 /** Read a Zapier body (JSON or form-encoded) into the fields we use, plus a key that's stable across retries. */
-export async function readEnrollment(request: Request, form: string): Promise<{ data: Enrollment; key: string }> {
+export async function readEnrollment(request: Request, form: string): Promise<{ data: Enrollment; key: string; raw: Record<string, unknown> }> {
   const type = request.headers.get("content-type") ?? "";
   let raw: Record<string, unknown> = {};
   if (type.includes("application/json")) raw = (await request.json()) as Record<string, unknown>;
@@ -70,7 +70,7 @@ export async function readEnrollment(request: Request, form: string): Promise<{ 
   const key = createHash("sha256")
     .update(JSON.stringify([form, text(pick("timestamp")) ?? JSON.stringify(raw), data.business_name.toLowerCase(), data.client_id]))
     .digest("hex");
-  return { data, key };
+  return { data, key, raw };
 }
 
 /** Any Zapier body as plain key/values (for the intake and offboarding forms, whose questions we keep as asked). */
