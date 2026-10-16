@@ -96,6 +96,8 @@ export function RequestForm({
   initialClient,
   aiOn,
   demo,
+  initialDraft = null,
+  startAtReview = false,
 }: {
   clients: ClientOption[];
   allotments: Record<string, Allotment>;
@@ -104,9 +106,13 @@ export function RequestForm({
   initialClient: string | null;
   aiOn: boolean;
   demo?: RequestDemo; // design preview: sample AI answers, no server calls
+  /** Filled in from somewhere (a deleted ticket started again) */
+  initialDraft?: Partial<Draft> | null;
+  /** Open straight on the review step (the brief as it was) */
+  startAtReview?: boolean;
 }) {
-  const [draft, setDraft] = useState<Draft>(() => emptyDraft(initialClient));
-  const [step, setStep] = useState(initialClient ? 1 : 0);
+  const [draft, setDraft] = useState<Draft>(() => ({ ...emptyDraft(initialClient), ...(initialDraft ?? {}) }));
+  const [step, setStep] = useState(startAtReview ? STEPS.length - 1 : initialClient ? 1 : 0);
   const [ai, setAi] = useState<AiState>(initialClient && aiOn ? { status: "loading" } : { status: "idle" });
   const [briefAi, setBriefAi] = useState<{ status: "idle" | "loading" } | { status: "offer"; text: string }>({ status: "idle" });
   const [review, setReview] = useState<ReviewState>({ status: "idle" });

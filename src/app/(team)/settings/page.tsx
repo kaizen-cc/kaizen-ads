@@ -1,8 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
-import { restoreTicket } from "@/app/(team)/board/actions";
-import { ActionButton } from "@/components/action-form";
 import { daysAgoIso, freshness } from "@/lib/dates";
 import { nyParts } from "@/lib/kpi/calc";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
@@ -13,6 +11,8 @@ import { DataInspector } from "./data-inspector";
 import { AGENT_MOMENTS, momentOf } from "@/lib/agent-moments";
 import Team from "../team/page";
 import { ErrorButtons } from "./error-buttons";
+import { DeletedTicketRow, type DeletedTicket } from "./deleted-ticket";
+import { STAGES } from "@/lib/stages";
 import { LastRun, ProgressBar, RetryOne, SyncNowButton, type Progress, type RunState } from "./sync-buttons";
 import type { SyncJob } from "./sync-actions";
 
@@ -488,29 +488,57 @@ async function Deleted() {
   const supabase = await createClient();
   const { data } = await supabase.rpc("deleted_requests");
   const rows = (data ?? []) as DeletedRow[];
-  const when = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" });
   if (!rows.length) return <p className="rounded-[14px] border border-dashed border-line px-6 py-10 text-center text-sm text-faint">Nothing has been deleted.</p>;
+  // The rest of each ticket (deleted tickets are hidden from normal reads; leads and execs only got this far)
+  const db = adminConfigured() ? createAdminClient() : supabase;
+  const ids = rows.map((r) => r.id);
+  const [{ data: more }, { data: events }, { data: designs }, { data: copy }] = await Promise.all([
+    db.from("requests").select("id, brief, audience, sizes, refs, landing_url, priority, origin, angles(name)").in("id", ids),
+    db.from("request_events").select("request_id, to_stage, created_at").in("request_id", ids).not("to_stage", "is", null).order("created_at"),
+    db.from("designs").select("request_id").in("request_id", ids),
+    db.from("copy_sets").select("request_id").in("request_id", ids),
+  ]);
+  const label = (k: string) => STAGES.find((s) => s.key === k)?.label ?? k.replaceAll("_", " ");
+  const tickets: DeletedTicket[] = rows.map((r) => {
+    const m = (more ?? []).find((x) => x.id === r.id);
+    const refs = (m?.refs ?? []) as unknown;
+    return {
+      id: r.id,
+      number: r.number,
+      title: r.title,
+      client: r.client_name,
+      clientSlug: r.client_slug,
+      format: r.format,
+      stage: r.stage,
+      stageLabel: label(r.stage),
+      newCount: r.new_count,
+      variations: r.variation_count,
+      deletedAt: r.deleted_at,
+      deletedBy: r.deleted_by,
+      reason: r.delete_reason,
+      createdAt: r.created_at,
+      brief: m?.brief ?? null,
+      angle: (m?.angles as unknown as { name: string } | null)?.name ?? null,
+      audience: m?.audience ?? null,
+      sizes: (m?.sizes ?? []) as string[],
+      refs: (Array.isArray(refs) ? refs : typeof refs === "string" ? refs.split(/\s+/) : []).filter((u: unknown): u is string => typeof u === "string" && /^https?:/.test(u)),
+      landing: m?.landing_url ?? null,
+      priority: m?.priority ?? null,
+      origin: (m?.origin ?? null) as DeletedTicket["origin"],
+      designs: (designs ?? []).filter((d) => d.request_id === r.id).length,
+      copy: (copy ?? []).filter((c) => c.request_id === r.id).length,
+      path: (events ?? []).filter((e) => e.request_id === r.id).map((e) => ({ to: label(e.to_stage as string), at: e.created_at as string })),
+    };
+  });
   return (
     <div className="grid gap-3">
-      <p className="text-sm text-muted">Deleted tickets are hidden everywhere and don&apos;t count toward the allotment. Restoring one puts it back where it was, with its files, copy and history.</p>
+      <p className="text-sm text-muted">
+        Deleted tickets are hidden everywhere and don&apos;t count toward the allotment. Open one to read its brief and see where it got to, then pick it back up where it left off, or
+        start it again as a new ticket with the same brief or an updated one.
+      </p>
       <ul className="grid gap-2">
-        {rows.map((r) => (
-          <li key={r.id} className="grid gap-3 rounded-[12px] border border-line bg-surface px-5 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-            <div className="grid min-w-0 gap-1">
-              <p className="truncate text-sm font-medium">
-                <span className="text-faint">#{r.number}</span> {r.title}
-              </p>
-              <p className="text-xs text-muted">
-                {r.client_name} · <span className="capitalize">{r.format}</span> · {r.new_count} new{r.variation_count ? ` + ${r.variation_count} var.` : ""} · was in {r.stage.replaceAll("_", " ")}
-              </p>
-              <p className="text-xs text-faint">
-                Deleted {when(r.deleted_at)}
-                {r.deleted_by ? ` by ${r.deleted_by}` : ""}
-                {r.delete_reason && <span className="text-muted"> · &ldquo;{r.delete_reason}&rdquo;</span>}
-              </p>
-            </div>
-            <ActionButton action={restoreTicket.bind(null, r.id)} label="Restore" confirmText={`Restore #${r.number}?`} />
-          </li>
+        {tickets.map((t) => (
+          <DeletedTicketRow key={t.id} t={t} />
         ))}
       </ul>
     </div>
