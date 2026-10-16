@@ -394,32 +394,38 @@ export function Writing({ steps = WINNER_STEPS }: { steps?: string[] }) {
 function HoverCard({ w, rect, industryLabel, onEnter, onLeave, onOpen }: { w: Winner; rect: DOMRect; industryLabel: string; onEnter: () => void; onLeave: () => void; onOpen: () => void }) {
   const ad = useAd(w.id);
   const insight = useInsight(w, ad);
-  const width = Math.min(760, window.innerWidth - 32);
-  const right = window.innerWidth - rect.right - 16;
-  const left = right >= width ? rect.right + 12 : rect.left - 12 - width >= 16 ? rect.left - 12 - width : Math.max(16, (window.innerWidth - width) / 2);
-  const top = Math.min(Math.max(16, rect.top - 60), Math.max(16, window.innerHeight - 660));
+  // Always fully on screen: a fixed height that fits the window, centred on the card, beside it when there's room
+  const width = Math.min(780, window.innerWidth - 32);
+  const height = Math.min(640, window.innerHeight - 32);
+  const left = window.innerWidth - rect.right - 16 >= width ? rect.right + 12 : rect.left - 12 - width >= 16 ? rect.left - 12 - width : Math.max(16, (window.innerWidth - width) / 2);
+  const top = Math.min(Math.max(16, rect.top + rect.height / 2 - height / 2), window.innerHeight - height - 16);
   return (
     <div
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
-      style={{ left, top, width }}
-      className="fixed z-40 grid max-h-[calc(100vh-32px)] grid-cols-[minmax(0,340px)_1fr] gap-4 overflow-y-auto rounded-[18px] border border-line bg-bg/95 p-3.5 shadow-2xl backdrop-blur-xl"
+      style={{ left, top, width, height }}
+      className="fixed z-40 grid grid-cols-[minmax(0,330px)_minmax(0,1fr)] gap-4 overflow-hidden rounded-[18px] border border-line bg-bg/95 p-3 shadow-2xl backdrop-blur-xl"
     >
-      <FbPreview ad={ad} w={w} autoPlay compact />
-      <div className="grid content-start gap-3 py-1 pr-1">
-        <div className="flex items-start justify-between gap-2">
+      {/* Each side scrolls on its own, so See more or a long read never pushes anything off screen */}
+      <div className="min-h-0 overflow-y-auto overscroll-contain rounded-[12px] [scrollbar-width:thin]">
+        <FbPreview ad={ad} w={w} autoPlay compact />
+      </div>
+      <div className="flex min-h-0 flex-col gap-3">
+        <div className="flex shrink-0 items-start justify-between gap-2 pt-1">
           <div className="min-w-0">
-            <p className="truncate font-heading text-[15px]">{w.client}</p>
+            <p className="truncate font-heading text-[15px] leading-tight">{w.client}</p>
             <p className="truncate text-[11px] text-faint">
               {w.detail ?? industryLabel}
               {w.live ? " · running now" : ""}
             </p>
           </div>
-          <button onClick={onOpen} className="shrink-0 rounded-full bg-brand px-3 py-1 text-xs font-medium text-white hover:brightness-110">
+          <button onClick={onOpen} className="shrink-0 rounded-full bg-brand px-3 py-1.5 text-xs font-medium text-white hover:brightness-110">
             Brief a client
           </button>
         </div>
-        <InsightPanel w={w} insight={insight} />
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1.5 [scrollbar-width:thin]">
+          <InsightPanel w={w} insight={insight} dense />
+        </div>
       </div>
     </div>
   );

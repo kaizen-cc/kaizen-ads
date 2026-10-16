@@ -96,7 +96,7 @@ export function FbPreview({ ad, w, autoPlay = false, compact = false }: { ad: Ad
       </div>
 
       {text && (
-        <p className={`whitespace-pre-wrap px-3 pb-2.5 text-[14px] leading-[1.34] ${more || !long ? "" : "line-clamp-3"} ${compact && !more ? "max-h-[5.4em]" : ""}`}>
+        <p className={`whitespace-pre-wrap px-3 pb-2.5 text-[14px] leading-[1.34] ${more || !long ? "" : "line-clamp-3"} `}>
           {text}
         </p>
       )}
@@ -126,7 +126,7 @@ export function FbPreview({ ad, w, autoPlay = false, compact = false }: { ad: Ad
               playsInline
               controls={!autoPlay}
               onClick={autoPlay ? open : undefined}
-              className={`block max-h-[62vh] w-full bg-black object-contain ${autoPlay && link ? "cursor-pointer" : ""}`}
+              className={`block w-full bg-black object-contain ${compact ? "max-h-[360px]" : "max-h-[62vh]"} ${autoPlay && link ? "cursor-pointer" : ""}`}
             />
             {autoPlay && (
               <button
@@ -151,7 +151,7 @@ export function FbPreview({ ad, w, autoPlay = false, compact = false }: { ad: Ad
         ) : (
           <a href={link ?? undefined} onClick={open} className={`relative block ${link ? "cursor-pointer" : "cursor-default"}`}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            {still && <img src={still} alt="" className="block max-h-[62vh] w-full bg-white object-contain" />}
+            {still && <img src={still} alt="" className={`block w-full bg-white object-contain ${compact ? "max-h-[360px]" : "max-h-[62vh]"}`} />}
             {ad?.video && ad.preview && (
               <span
                 role="button"
@@ -189,13 +189,14 @@ export function FbPreview({ ad, w, autoPlay = false, compact = false }: { ad: Ad
 }
 
 /** The AI's read: what the numbers show, and why the creative most likely works. */
-export function InsightPanel({ w, insight }: { w: Winner; insight: WinnerInsight | null | undefined }) {
+export function InsightPanel({ w, insight, dense = false }: { w: Winner; insight: WinnerInsight | null | undefined; dense?: boolean }) {
+  const body = dense ? "text-[13px] leading-[1.55]" : "text-sm leading-relaxed";
   const money = (x: number) => `$${x.toLocaleString("en-US", { maximumFractionDigits: x < 100 ? 2 : 0 })}`;
   return (
-    <div className="grid content-start gap-3">
-      <div className="flex items-baseline gap-2">
-        <span className="tabular font-display text-3xl text-ok">{w.ratio}x</span>
-        <span className="text-xs text-muted">
+    <div className={`grid content-start ${dense ? "gap-3.5" : "gap-3"}`}>
+      <div className="flex items-baseline gap-2.5 rounded-[12px] border border-ok/25 bg-ok/[0.06] px-3 py-2.5">
+        <span className={`tabular shrink-0 font-display text-ok ${dense ? "text-2xl" : "text-3xl"}`}>{w.ratio}x</span>
+        <span className="text-[11px] leading-snug text-muted">
           {money(w.costPerResult)} vs {money(w.usual)} per {w.result ?? "result"} · {w.results.toLocaleString("en-US")} on {money(w.spend)} · CTR {w.ctr}%
         </span>
       </div>
@@ -212,22 +213,32 @@ export function InsightPanel({ w, insight }: { w: Winner; insight: WinnerInsight
         <>
           <section className="grid gap-1">
             <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-faint">What the numbers show</p>
-            <p className="text-sm leading-relaxed">{insight.observation}</p>
+            <p className={body}>{insight.observation}</p>
           </section>
           <section className="grid gap-1">
             <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-faint">Why the creative works</p>
-            <p className="text-sm leading-relaxed text-muted">{insight.creative}</p>
+            <p className={`${body} text-muted`}>{insight.creative}</p>
           </section>
           {(insight.hook || insight.angle) && (
-            <div className="flex flex-wrap gap-1.5 text-[11px]">
-              {insight.hook && <span className="rounded-full border border-line px-2.5 py-1 text-muted">Hook: {insight.hook}</span>}
-              {insight.angle && <span className="rounded-full border border-line px-2.5 py-1 text-muted">Angle: {insight.angle}</span>}
-            </div>
+            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1.5 rounded-[12px] border border-line px-3 py-2.5 text-[12px] leading-snug">
+              {insight.hook && (
+                <>
+                  <dt className="text-faint">Hook</dt>
+                  <dd className="text-muted">{insight.hook}</dd>
+                </>
+              )}
+              {insight.angle && (
+                <>
+                  <dt className="text-faint">Angle</dt>
+                  <dd className="text-muted">{insight.angle}</dd>
+                </>
+              )}
+            </dl>
           )}
           {insight.takeaways.length > 0 && (
             <section className="grid gap-1 rounded-[12px] border border-ok/25 bg-ok/[0.06] p-3">
               <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-ok">Borrow this</p>
-              <ul className="grid gap-1 text-[13px] leading-snug">
+              <ul className="grid gap-1.5 text-[13px] leading-snug">
                 {insight.takeaways.map((t) => (
                   <li key={t} className="flex gap-2">
                     <span className="text-ok">→</span>
