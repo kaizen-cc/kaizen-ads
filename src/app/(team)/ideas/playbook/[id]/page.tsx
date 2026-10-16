@@ -6,7 +6,7 @@ import { loadPlaybook, playbookExamples } from "@/lib/playbooks";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { Benchmark } from "@/lib/verticals";
-import { BenchmarkStrip, PlaybookView } from "../../playbook-view";
+import { PlaybookView } from "../../playbook-view";
 import { PlaybookActions } from "./playbook-actions";
 
 export const metadata: Metadata = { title: "Playbook" };
@@ -43,14 +43,14 @@ export default async function PlaybookPage({ params }: PageProps<"/ideas/playboo
   const examples = await playbookExamples(db, playbook);
   return (
     <div className="grid gap-6">
-      <div className="mx-auto w-full max-w-5xl">{back}</div>
+      <div className="mx-auto w-full max-w-6xl">{back}</div>
       <PlaybookView
         title={sub.name}
         parent={parent}
         playbook={playbook}
         examples={examples}
         named
-        benchmarks={<BenchmarkStrip benchmarks={(sub.benchmarks ?? []) as Benchmark[]} />}
+        benchmarks={(sub.benchmarks ?? []) as Benchmark[]}
         actions={<PlaybookActions subId={id} canRebuild={lead} />}
       />
     </div>

@@ -6,7 +6,8 @@ import { LIVE } from "@/lib/live";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { loadVerticals } from "@/lib/verticals";
-import { VerticalsView } from "./verticals-view";
+import { VerticalsView, type SubCard } from "./verticals-view";
+import { requireStaff } from "@/lib/auth";
 import { FameLibrary } from "./fame-library";
 import { loadHallOfFame } from "@/lib/hall-of-fame";
 import { toAllotment, type UsageRow } from "@/lib/allotment";
@@ -56,27 +57,56 @@ export default async function Ideas({ searchParams }: PageProps<"/ideas">) {
 }
 
 async function Verticals() {
+  const me = await requireStaff();
   const db = adminConfigured() ? createAdminClient() : await createClient();
-  const [verticals, { data: clients }, { data: brands }, { data: books }] = await Promise.all([
+  const [verticals, { data: clients }, { data: brands }, { data: books }, { data: fame }, { data: market }] = await Promise.all([
     loadVerticals(db),
     db.from("clients").select("id, name, slug, vertical_id, vertical_why").is("archived_at", null).in("status", LIVE).eq("paid_ads", true).order("name"),
     db.from("market_brands").select("vertical_id").eq("rejected", false).not("vertical_id", "is", null),
-    db.from("vertical_playbooks").select("vertical_id, avatars"),
+    db.from("vertical_playbooks").select("vertical_id, summary, avatars"),
+    db.from("hall_of_fame").select("vertical_id, creative").gt("expires_at", new Date().toISOString()).not("vertical_id", "is", null).order("beat_by", { ascending: false }).limit(600),
+    db
+      .from("market_ads")
+      .select("media, market_brands!inner(vertical_id)")
+      .gte("days_active", 30)
+      .neq("active", false)
+      .not("market_brands.vertical_id", "is", null)
+      .order("days_active", { ascending: false })
+      .limit(800),
   ]);
-  const playbooks = new Map(
-    (books ?? [])
-      .map((b) => [b.vertical_id as string, (b.avatars ?? []) as { angles: unknown[] }[]] as const)
-      .filter(([, a]) => a.length)
-      .map(([id, a]) => [id, { avatars: a.length, angles: a.reduce((n, x) => n + (x.angles?.length ?? 0), 0) }]),
-  );
-  const counts = new Map<string, number>();
-  for (const b of brands ?? []) counts.set(b.vertical_id as string, (counts.get(b.vertical_id as string) ?? 0) + 1);
+  const cards = new Map<string, SubCard>();
+  const card = (id: string) => {
+    if (!cards.has(id)) cards.set(id, { clients: [], brands: 0, fame: 0, market: 0, thumbs: [], playbook: null });
+    return cards.get(id)!;
+  };
+  for (const v of verticals) for (const s of v.subs) card(s.id);
+  for (const c of clients ?? []) if (c.vertical_id) card(c.vertical_id).clients.push({ id: c.id, name: c.name, slug: c.slug, why: c.vertical_why });
+  for (const b of brands ?? []) card(b.vertical_id as string).brands++;
+  for (const f of fame ?? []) {
+    const k = card(f.vertical_id as string);
+    k.fame++;
+    const img = (f.creative as { image?: string } | null)?.image;
+    if (img && k.thumbs.length < 3) k.thumbs.push(img);
+  }
+  for (const m of market ?? []) {
+    const k = card((m.market_brands as unknown as { vertical_id: string }).vertical_id);
+    k.market++;
+    const media = (m.media ?? []) as { type: string; url: string; thumb: string | null }[];
+    const img = media.find((x) => x.type === "image")?.url ?? media[0]?.thumb;
+    if (img && k.thumbs.length < 3) k.thumbs.push(img);
+  }
+  for (const b of books ?? []) {
+    const avatars = (b.avatars ?? []) as { name: string; angles?: unknown[] }[];
+    if (avatars.length) card(b.vertical_id as string).playbook = { summary: b.summary as string, avatars: avatars.map((a) => a.name), angles: avatars.reduce((n, a) => n + (a.angles?.length ?? 0), 0) };
+  }
+  const all = [...cards.values()];
   return (
     <VerticalsView
       verticals={verticals}
-      clients={(clients ?? []).map((c) => ({ id: c.id, name: c.name, slug: c.slug, verticalId: c.vertical_id, why: c.vertical_why }))}
-      brands={counts}
-      playbooks={playbooks}
+      cards={cards}
+      unplaced={(clients ?? []).filter((c) => !c.vertical_id).map((c) => ({ id: c.id, name: c.name }))}
+      totals={{ clients: (clients ?? []).length, fame: all.reduce((n, c) => n + c.fame, 0), market: all.reduce((n, c) => n + c.market, 0), playbooks: all.filter((c) => c.playbook).length }}
+      canRebuild={me.isExec}
     />
   );
 }

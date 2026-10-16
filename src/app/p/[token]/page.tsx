@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { loadPlaybook, playbookExamples, type Playbook } from "@/lib/playbooks";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import type { Benchmark } from "@/lib/verticals";
-import { BenchmarkStrip, PlaybookView, type Example } from "../../(team)/ideas/playbook-view";
+import { PlaybookView, type Example } from "../../(team)/ideas/playbook-view";
 
 export const metadata: Metadata = { title: "Kaizen playbook", robots: { index: false, follow: false } };
 
@@ -45,7 +45,7 @@ export default async function SharedPlaybook({ params }: PageProps<"/p/[token]">
         playbook={{ ...safe, shareToken: null }}
         examples={examples}
         named={false}
-        benchmarks={<BenchmarkStrip benchmarks={(sub.benchmarks ?? []) as Benchmark[]} />}
+        benchmarks={(sub.benchmarks ?? []) as Benchmark[]}
         actions={<p className="font-heading text-sm tracking-tight text-muted">Kaizen Marketing</p>}
       />
     </main>
