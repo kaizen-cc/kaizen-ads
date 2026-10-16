@@ -59,6 +59,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
   calls: [
     { title: "Reads Gemini and Fireflies notes per client: what was said, decided and promised", where: "Client page · Calls", trigger: "auto", when: "Every 30 minutes in business hours", labels: ["read a call"] },
     { title: "Checks whether a promise has been covered by a request", where: "Overview · Promised on calls", trigger: "auto", when: "After every request, and with every call sync", labels: ["commitments covered"] },
+    { title: "Re-checks each promise against the whole call: paid ads, or another Kaizen service", where: "Overview · Promised on calls", trigger: "auto", when: "With every call sync, once per promise", labels: ["recheck call promises"] },
   ],
   gtm: [
     { title: "Researches the client for the Meta go-to-market strategy", where: "Client page · Go-to-market", trigger: "auto", when: "At onboarding once the intake, call notes and website are in, or on Build it now", labels: ["gtm research"] },

@@ -103,12 +103,13 @@ function matchCall(call: NewCall, clients: { id: string; name: string }[], conta
   return byName.length === 1 ? byName[0].id : null;
 }
 
-export type CallSummary = { summary: string; clientSaid: string[]; decisions: string[]; commitments: { kind: "creative" | "copy" | "offer" | "launch" | "strategy"; what: string; why: string; dueDays: number }[] };
+export type CallSummary = { summary: string; clientSaid: string[]; decisions: string[]; commitments: { kind: "creative" | "copy" | "offer" | "launch" | "strategy"; what: string; why: string; dueDays: number; channel?: string; evidence?: string }[] };
 
 const READ_SCHEMA = {
   type: "object",
   properties: {
     internal: { type: "boolean" },
+    team: { type: "string", enum: ["paid_ads", "organic_social", "email_sms", "mixed", "other"] },
     overview: { type: "string" },
     clients: {
       type: "array",
@@ -124,12 +125,14 @@ const READ_SCHEMA = {
             items: {
               type: "object",
               properties: {
+                channel: { type: "string", enum: ["paid_ads", "organic_social", "email_sms", "website", "other"] },
+                evidence: { type: "string" },
                 kind: { type: "string", enum: ["creative", "copy", "offer", "launch", "strategy"] },
                 what: { type: "string" },
                 why: { type: "string" },
                 dueDays: { type: "integer" },
               },
-              required: ["kind", "what", "why", "dueDays"],
+              required: ["channel", "evidence", "kind", "what", "why", "dueDays"],
               additionalProperties: false,
             },
           },
@@ -139,7 +142,7 @@ const READ_SCHEMA = {
       },
     },
   },
-  required: ["internal", "overview", "clients"],
+  required: ["internal", "team", "overview", "clients"],
   additionalProperties: false,
 };
 
@@ -148,7 +151,8 @@ Kaizen also does email and SMS (Klaviyo flows and campaigns), organic social, we
 internal: true if it's an internal Kaizen meeting (no client on the call). overview: two or three sentences on the call as a whole, as it matters to paid ads and creative.
 clients: one entry for every client from the list whose paid ads, ad creative, offers, results, budget, feedback or mood are discussed. client: their name exactly as written in the list. Only clients actually named or clearly meant in the notes; Kaizen's own business (hiring, tools, processes, reporting, the team, training) is not a client: leave it out. If no client from the list is discussed this way, clients is empty.
 summary: what was said about their ads and creative, 2 to 4 sentences. clientSaid: what the client asked for, liked, disliked or told us about the ads and creative (on an internal call: what the team reported the client said), short lines. decisions: what was agreed about their ads and creative.
-commitments: only what Kaizen said it would do for that client's paid ads and creative. kind: "creative" (an ad image, carousel, video or creative idea to make for the ads), "copy" (ad copy), "offer" (an offer or promotion to run in the ads), "launch" (launch or change ad campaigns, audiences or budgets), "strategy" (paid ads strategy or analysis). Not commitments: emails, SMS, flows, popups, newsletters, organic posts and scheduling, flyers, print, websites and landing pages, reports, CRM and tracking setup, admin (send a link, schedule a call, share a doc, ask the client something). what: specific enough to brief ("A reel of the new brunch menu with the bottomless mimosa offer"). why: one line of context. dueDays: business days until it should be in motion (a date mentioned, else 2).`;
+Work out first which Kaizen team the call belongs to (team), from who ran it, its title and what was discussed. The prompt says whether the host is on the paid ads and creative team. A call run by someone outside that team is about their own service (organic social, email and SMS, web) unless the notes plainly talk about ads, campaigns, ad sets, budgets or spend. team "mixed" when both are clearly discussed.
+commitments: only what Kaizen said it would do for that client's paid ads and creative. For each, channel: which service it's really for, and evidence: the words in the notes that tie it to paid ads (an ad, a campaign, an ad set, a budget, boosting, Meta or Google ads), quoted or closely paraphrased. Carousels, videos, reels, posts, captions, graphics and content are organic_social unless the notes tie them to ads; a promise from an organic social or email call is that channel unless it's explicitly for the ads. When it's not plainly paid ads, it isn't: channel is the other service and evidence says why. kind: "creative" (an ad image, carousel, video or creative idea to make for the ads), "copy" (ad copy), "offer" (an offer or promotion to run in the ads), "launch" (launch or change ad campaigns, audiences or budgets), "strategy" (paid ads strategy or analysis). Not commitments: emails, SMS, flows, popups, newsletters, organic posts and scheduling, flyers, print, websites and landing pages, reports, CRM and tracking setup, admin (send a link, schedule a call, share a doc, ask the client something). what: specific enough to brief ("A reel of the new brunch menu with the bottomless mimosa offer"). why: one line of context. dueDays: business days until it should be in motion (a date mentioned, else 2).`;
 
 /**
  * The AI's read of a call, per client discussed: each gets their own summary and promises, and it joins that
@@ -158,18 +162,25 @@ async function readCall(admin: SupabaseClient, id: string, clients: { id: string
   const { data: call } = await admin.from("client_calls").select("id, client_id, title, occurred_at, notes, url, source, host").eq("id", id).single();
   if (!call) return;
   const main = clients.find((c) => c.id === call.client_id);
-  const out = await askJson<{ internal: boolean; overview: string; clients: (CallSummary & { client: string })[] }>({
+  const { data: team } = await admin.from("profiles").select("email").eq("is_active", true);
+  const adsTeam = new Set((team ?? []).map((t) => String(t.email ?? "").toLowerCase()));
+  const hostOnTeam = call.host ? adsTeam.has(String(call.host).toLowerCase()) : null;
+  const out = await askJson<{ internal: boolean; team: string; overview: string; clients: (CallSummary & { client: string; commitments: (CallSummary["commitments"][number] & { channel: string; evidence: string })[] })[] }>({
     agent: "calls",
     label: "read a call",
     system: READ_SYSTEM,
     schema: READ_SCHEMA,
-    prompt: `Clients:\n${clients.map((c) => c.name).join("\n")}\n\nCall: "${call.title}" on ${call.occurred_at.slice(0, 10)}${main ? `\nThis looks like a call with ${main.name}.` : ""}\n\n<notes>\n${call.notes}\n</notes>`,
+    prompt: `Clients:\n${clients.map((c) => c.name).join("\n")}\n\nCall: "${call.title}" on ${call.occurred_at.slice(0, 10)}${main ? `\nThis looks like a call with ${main.name}.` : ""}\n${hostOnTeam === true ? "The host is on the paid ads and creative team." : hostOnTeam === false ? "The host is NOT on the paid ads and creative team (they work on another Kaizen service)." : "Who hosted it isn't known."}\n\n<notes>\n${call.notes}\n</notes>`,
   });
   // By name (a number let the model fall back on the first client in the list)
   const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
   const byName = new Map(clients.map((c) => [key(c.name), c.id]));
   const mentions = out.clients.map((m) => ({ ...m, clientId: byName.get(key(m.client)) })).filter((m): m is typeof m & { clientId: string } => Boolean(m.clientId));
-  const unique = [...new Map(mentions.map((m) => [m.clientId, m])).values()];
+  // Only promises plainly for the paid ads and creative team, with the words that prove it
+  const unique = [...new Map(mentions.map((m) => [m.clientId, m])).values()].map((m) => ({
+    ...m,
+    commitments: m.commitments.filter((c) => c.channel === "paid_ads" && (c.evidence ?? "").trim()),
+  }));
   await admin
     .from("client_calls")
     .update({
@@ -263,9 +274,10 @@ export async function collectCalls(admin: SupabaseClient, budgetMs = 500_000) {
       await admin.from("client_calls").update({ status: "failed", error: (e instanceof Error ? e.message : String(e)).slice(0, 300) }).eq("id", w.id);
     }
   }
+  const rechecked = await recheckCommitments(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
   const covered = await sweepCovered(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
   const watched = await watchCommitments(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
-  await setCursor(admin, "calls", started, { found: found.length, saved, read, waiting: Math.max(0, (waiting ?? []).length - read), errors, watched, covered });
+  await setCursor(admin, "calls", started, { found: found.length, saved, read, waiting: Math.max(0, (waiting ?? []).length - read), errors, watched, covered, rechecked });
   return { found: found.length, saved, read, errors, watched, covered };
 }
 
@@ -431,4 +443,68 @@ export async function briefPromise(admin: SupabaseClient, commitmentId: string) 
   }
   await admin.from("call_commitments").update({ status: "briefed", suggestion_id: id, checked_at: new Date().toISOString() }).eq("id", c.id);
   return id;
+}
+
+// ─── Re-check promises against the whole call ───────────────────────────────
+
+const RECHECK_SCHEMA = {
+  type: "object",
+  properties: { items: { type: "array", items: { type: "object", properties: { n: { type: "integer" }, paid: { type: "boolean" }, why: { type: "string" } }, required: ["n", "paid", "why"], additionalProperties: false } } },
+  required: ["items"],
+  additionalProperties: false,
+};
+
+/**
+ * A second look at open promises, with the whole call in front of it: is each really for the paid ads and creative
+ * team, or for organic social, email or another service? Ones that aren't are closed (with why) and their briefs
+ * come off Home. Each promise is checked once.
+ */
+export async function recheckCommitments(admin: SupabaseClient, max = 40) {
+  const { data: open } = await admin
+    .from("call_commitments")
+    .select("id, what, suggestion_id, call_id, client_calls(title, host, notes)")
+    .in("status", ["open", "briefed"])
+    .is("channel_checked_at", null)
+    .limit(max);
+  if (!open?.length) return { checked: 0, closed: 0 };
+  const { data: team } = await admin.from("profiles").select("email").eq("is_active", true);
+  const adsTeam = new Set((team ?? []).map((t) => String(t.email ?? "").toLowerCase()));
+  const byCall = new Map<string, typeof open>();
+  for (const c of open) byCall.set(c.call_id, [...(byCall.get(c.call_id) ?? []), c]);
+  let closed = 0;
+  for (const list of byCall.values()) {
+    const call = list[0].client_calls as unknown as { title: string; host: string | null; notes: string } | null;
+    if (!call) continue;
+    const onTeam = call.host ? adsTeam.has(call.host.toLowerCase()) : null;
+    const out = await askJson<{ items: { n: number; paid: boolean; why: string }[] }>({
+      agent: "calls",
+      label: "recheck call promises",
+      system:
+        "You check promises pulled from a Kaizen call. Keep only what's for the paid ads and creative team: ads on Meta, Google, TikTok and other ad platforms, the ad creative and ad copy, offers run in ads, campaign changes. Organic social (posts, carousels, reels, captions, content for the feed), email and SMS, websites and other services are not. A promise from a call run by someone outside the paid ads team is their service unless the notes plainly tie it to ads. When it's not plainly paid ads, it isn't.",
+      schema: RECHECK_SCHEMA,
+      prompt: `Call: "${call.title}". ${onTeam === true ? "The host is on the paid ads and creative team." : onTeam === false ? "The host is NOT on the paid ads and creative team." : "Who hosted it isn't known."}
+
+<notes>
+${(call.notes ?? "").slice(0, 30000)}
+</notes>
+
+Promises:
+${list.map((c, i) => `${i + 1}. ${c.what}`).join("\n")}
+
+For each: paid (true only if it's plainly for the paid ads and creative team) and why (one line).`,
+    });
+    const now = new Date().toISOString();
+    for (const r of out.items) {
+      const c = list[r.n - 1];
+      if (!c) continue;
+      if (r.paid) {
+        await admin.from("call_commitments").update({ channel_checked_at: now }).eq("id", c.id);
+        continue;
+      }
+      await admin.from("call_commitments").update({ status: "dismissed", dismiss_reason: `Not paid ads: ${r.why}`.slice(0, 300), channel_checked_at: now }).eq("id", c.id);
+      if (c.suggestion_id) await admin.from("creative_suggestions").update({ status: "expired" }).eq("id", c.suggestion_id).eq("status", "open");
+      closed++;
+    }
+  }
+  return { checked: open.length, closed };
 }
