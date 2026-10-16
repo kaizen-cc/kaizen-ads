@@ -577,17 +577,18 @@ function toAd(r: Obj, testingBrands: Set<string>): MarketAd {
 
 /** Live market ads, newest-proven first. industry / clientId narrow it (a client's named competitors come first). */
 export async function loadMarket(db: SupabaseClient, opts: { industry?: string | null; clientId?: string; limit?: number } = {}) {
-  let q = db
-    .from("market_ads")
-    .select(COLS)
-    .neq("active", false)
-    .eq("market_brands.rejected", false)
-    .not("market_brands.checked_at", "is", null)
-    .order("days_active", { ascending: false, nullsFirst: false })
-    .limit(opts.limit ?? 600);
-  if (opts.industry) q = q.eq("industry", opts.industry);
-  const { data } = await q;
-  const rows = (data ?? []) as Obj[];
+  // Half the longest-running (proven), half the newest (what brands are launching and testing now)
+  const half = Math.ceil((opts.limit ?? 900) / 2);
+  const base = () => {
+    let q = db.from("market_ads").select(COLS).neq("active", false).eq("market_brands.rejected", false).not("market_brands.checked_at", "is", null);
+    if (opts.industry) q = q.eq("industry", opts.industry);
+    return q;
+  };
+  const [{ data: longest }, { data: newest }] = await Promise.all([
+    base().order("days_active", { ascending: false, nullsFirst: false }).limit(half),
+    base().order("launched_at", { ascending: false, nullsFirst: false }).limit(half),
+  ]);
+  const rows = [...new Map([...(longest ?? []), ...(newest ?? [])].map((r) => [(r as Obj).id as string, r as Obj])).values()];
   // Brands launching 3+ ads in two weeks are testing
   const recent = new Map<string, number>();
   for (const r of rows) {
