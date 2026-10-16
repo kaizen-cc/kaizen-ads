@@ -76,7 +76,7 @@ export function WinnersLibrary({ winners, industries, clients }: { winners: Winn
       ) : (
         <>
           <div className="grid gap-3">
-            <div className="no-scrollbar -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
+            <div className="flex flex-wrap gap-1.5">
               <Chip on={industry === null} onClick={() => setIndustry(null)}>
                 All <span className="text-faint">{winners.length}</span>
               </Chip>

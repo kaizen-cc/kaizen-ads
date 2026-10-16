@@ -30,7 +30,7 @@ const SCHEMA = {
 };
 
 const SYSTEM = `You sort a marketing agency's clients into industries, from what the agency knows about each one (name, website, notes, the copy of their ads).
-industry: the closest one from the list. detail: two to four words, specific ("Pizza restaurant", "Kitchen remodeling", "Cosmetic dentistry", "Kayak rentals", "Nicotine-free pouches"). If there's too little to tell, use "other" and say what you can in detail.`;
+industry: the closest one from the list. Go by how they sell, not only what they sell: a brand that sells mainly online and ships to customers (food boxes, supplements, apparel, bedding) is "ecommerce", while a restaurant is somewhere people eat; a packaged product sold mainly through stores is "cpg". detail: two to four words, specific ("Pizza restaurant", "Kitchen remodeling", "Cosmetic dentistry", "Kayak rentals", "Nicotine-free pouches"). If there's too little to tell, use "other" and say what you can in detail.`;
 
 /**
  * The AI sorts clients into industries. Clients the team set by hand are left alone; force redoes the AI's own.
