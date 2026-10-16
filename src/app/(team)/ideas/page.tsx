@@ -21,7 +21,7 @@ const TABS = [
   ["fame", "Hall of Fame", "Our ads that beat their target over 30+ days, kept six months"],
   ["winners", "Live winners", "What's beating its own account right now"],
   ["market", "In the market", "Live Meta ads from comparable brands, from Motion"],
-  ["verticals", "Verticals", "The markets we serve, with their benchmarks"],
+  ["verticals", "Verticals", "The markets we serve: benchmarks and a playbook for each"],
 ] as const;
 
 /** Where ideas come from: what's working in our accounts, and what's working out in the market. */
@@ -57,11 +57,18 @@ export default async function Ideas({ searchParams }: PageProps<"/ideas">) {
 
 async function Verticals() {
   const db = adminConfigured() ? createAdminClient() : await createClient();
-  const [verticals, { data: clients }, { data: brands }] = await Promise.all([
+  const [verticals, { data: clients }, { data: brands }, { data: books }] = await Promise.all([
     loadVerticals(db),
     db.from("clients").select("id, name, slug, vertical_id, vertical_why").is("archived_at", null).in("status", LIVE).order("name"),
     db.from("market_brands").select("vertical_id").eq("rejected", false).not("vertical_id", "is", null),
+    db.from("vertical_playbooks").select("vertical_id, avatars"),
   ]);
+  const playbooks = new Map(
+    (books ?? [])
+      .map((b) => [b.vertical_id as string, (b.avatars ?? []) as { angles: unknown[] }[]] as const)
+      .filter(([, a]) => a.length)
+      .map(([id, a]) => [id, { avatars: a.length, angles: a.reduce((n, x) => n + (x.angles?.length ?? 0), 0) }]),
+  );
   const counts = new Map<string, number>();
   for (const b of brands ?? []) counts.set(b.vertical_id as string, (counts.get(b.vertical_id as string) ?? 0) + 1);
   return (
@@ -69,6 +76,7 @@ async function Verticals() {
       verticals={verticals}
       clients={(clients ?? []).map((c) => ({ id: c.id, name: c.name, slug: c.slug, verticalId: c.vertical_id, why: c.vertical_why }))}
       brands={counts}
+      playbooks={playbooks}
     />
   );
 }

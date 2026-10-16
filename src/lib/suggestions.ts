@@ -307,10 +307,13 @@ async function promptFor(admin: SupabaseClient, clientId: string, signals: Signa
   if (!ctx) return null;
   // What's live in this client's market right now (Motion), so a brief can build on it
   const { marketBlock } = await import("@/lib/market");
-  const market = await marketBlock(admin, clientId, ctx.industry ?? null).catch(() => "");
+  const { playbookBlock } = await import("@/lib/playbooks");
+  const [market, playbook] = await Promise.all([marketBlock(admin, clientId, ctx.industry ?? null).catch(() => ""), playbookBlock(admin, clientId).catch(() => "")]);
   return `${contextBlock(ctx, undefined, sources)}
 ${market ? `
 ${market}
+` : ""}${playbook ? `
+${playbook}
 ` : ""}
 ${decisions}
 
@@ -671,6 +674,7 @@ ${intake ? "" : "The marketing intake form hasn't come in yet. Build from what's
 
 This is ${c.name}'s ${c.reonboarded_at ? "first round since they came back" : "first round with Kaizen"}: the first impression, and the first read on what works for them. Write the request:
 - Start from the client: their offer, audience, voice and what they told us to avoid (marketing_intake and client memory are hard rules).
+- Start from the vertical playbook when there is one: its avatars and proven angles are the attack for this market.
 - Lean on what's winning for similar clients: the angles, hooks and structures that are beating their accounts, translated to this client (never copied, never naming the other business). Say in why which winners shaped it.
 - Test distinct angles so the first month teaches us something: 3 to 4 concepts, each a different angle or hook, not variations of one idea.
 - Use the month's allotment well (a new client's first month should show range), with variations only where a hook test makes sense.

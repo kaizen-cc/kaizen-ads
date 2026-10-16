@@ -277,14 +277,19 @@ Find: typical cost per ${s.conversion ?? "result"} (and what counts as strong), 
   return done;
 }
 
-/** Hourly upkeep: a taxonomy when there's none (and weekly), new clients placed, benchmarks researched a few at a time. */
+/** Hourly upkeep: a taxonomy when there's none (and weekly), new clients placed, benchmarks researched and playbooks written a few at a time. */
 export async function keepVerticals(admin: SupabaseClient) {
+  const start = Date.now();
   const { data: last } = await admin.from("sync_state").select("last_run_at").eq("source", "verticals").maybeSingle();
   const weekly = !last?.last_run_at || Date.now() - Date.parse(last.last_run_at) > 7 * 86_400_000;
   const built = weekly ? await buildTaxonomy(admin) : null;
   const placed = await placeNewClients(admin);
-  const benchmarks = await researchBenchmarks(admin, 2).catch(() => 0);
-  return { built, placed, benchmarks };
+  const benchmarks = built ? 0 : await researchBenchmarks(admin, 2).catch(() => 0);
+  // Then a playbook or two, if there's time left in the run
+  const { keepPlaybooks } = await import("@/lib/playbooks");
+  const left = 640_000 - (Date.now() - start);
+  const playbooks = left > 120_000 ? await keepPlaybooks(admin, left > 300_000 ? 3 : 1).catch(() => 0) : 0;
+  return { built, placed, benchmarks, playbooks };
 }
 
 /** The whole taxonomy with benchmarks, for pages. */

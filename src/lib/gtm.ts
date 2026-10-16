@@ -104,6 +104,8 @@ export async function buildGtm(admin: SupabaseClient, clientId: string, by: stri
       })
       .join("\n\n");
     const context = contextBlock(ctx);
+    const { playbookBlock } = await import("@/lib/playbooks");
+    const playbook = await playbookBlock(admin, clientId).catch(() => "");
 
     const research = await researchWeb({
       agent: "gtm",
@@ -147,7 +149,10 @@ ${calls}
 <web_research date="${today()}" source="research">
 ${research || "No research came back."}
 </web_research>
-${prev?.markdown ? `\n<current_strategy version="${prev.version}">\n${prev.markdown.slice(0, 30000)}\n</current_strategy>\nUpdate it with what's new: keep what still holds, and add a short change-log line at the end.\n` : ""}
+${playbook ? `
+${playbook}
+The playbook is what we've learned across this sub-vertical: use its avatars and proven angles where this client's research backs them up.
+` : ""}${prev?.markdown ? `\n<current_strategy version="${prev.version}">\n${prev.markdown.slice(0, 30000)}\n</current_strategy>\nUpdate it with what's new: keep what still holds, and add a short change-log line at the end.\n` : ""}
 Write ${client.name}'s Meta Go-to-Market strategy. Today is ${today()}. Prepared by: ${preparedBy || "[media buyer not assigned yet]"}.`,
     });
 

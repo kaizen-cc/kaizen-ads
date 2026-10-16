@@ -12,10 +12,12 @@ export function VerticalsView({
   verticals,
   clients,
   brands,
+  playbooks,
 }: {
   verticals: Vertical[];
   clients: { id: string; name: string; slug: string; verticalId: string | null; why: string | null }[];
   brands: Map<string, number>;
+  playbooks: Map<string, { avatars: number; angles: number }>;
 }) {
   if (!verticals.length)
     return (
@@ -53,6 +55,7 @@ export function VerticalsView({
                     </span>
                   </div>
                   {s.description && <p className="text-xs leading-relaxed text-muted">{s.description}</p>}
+                  <PlaybookLink id={s.id} p={playbooks.get(s.id)} />
                   {mine.length > 0 && (
                     <div className="flex flex-wrap gap-1.5">
                       {mine.map((c) => (
@@ -104,5 +107,19 @@ export function VerticalsView({
       ))}
       {unplaced.length > 0 && <p className="text-xs text-faint">Still being placed: {unplaced.map((c) => c.name).join(", ")}.</p>}
     </div>
+  );
+}
+
+function PlaybookLink({ id, p }: { id: string; p?: { avatars: number; angles: number } }) {
+  return (
+    <Link
+      href={`/ideas/playbook/${id}`}
+      className="group flex items-center justify-between gap-3 rounded-[12px] border border-line bg-bg px-3.5 py-2.5 text-sm transition-colors hover:border-fg/30"
+    >
+      <span className="font-medium">Playbook</span>
+      <span className="text-[11px] text-muted group-hover:text-fg">
+        {p ? `${p.avatars} ${p.avatars === 1 ? "avatar" : "avatars"} · ${p.angles} proven ${p.angles === 1 ? "angle" : "angles"} →` : "Being written →"}
+      </span>
+    </Link>
   );
 }
