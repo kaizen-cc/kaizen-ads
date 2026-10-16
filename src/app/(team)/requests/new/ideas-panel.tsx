@@ -39,7 +39,7 @@ export function IdeasPanel({ clientId, onBrief }: { clientId: string; onBrief: (
   const ws = (winners?.winners ?? []).slice(0, 4);
   const ms = (market?.ads ?? []).slice(0, 4);
   return (
-    <div className="grid min-w-0 gap-4">
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
       {error && <p className="rounded-[10px] border border-bad/30 bg-bad-soft px-3 py-2 text-xs text-bad">{error}</p>}
       <Widget
         title="From our winners"
@@ -80,7 +80,7 @@ export function IdeasPanel({ clientId, onBrief }: { clientId: string; onBrief: (
 
 function Widget({ title, sub, loading, empty, more, children }: { title: string; sub: string; loading: boolean; empty: string; more: string; children: React.ReactNode[] }) {
   return (
-    <section className="grid min-w-0 gap-3 rounded-[12px] border border-line bg-surface p-4">
+    <section className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3 overflow-hidden rounded-[12px] border border-line bg-surface p-4">
       <div className="flex items-baseline justify-between gap-2">
         <div className="min-w-0">
           <p className="text-sm font-medium">{title}</p>
@@ -97,7 +97,7 @@ function Widget({ title, sub, loading, empty, more, children }: { title: string;
           ))}
         </div>
       ) : children.length ? (
-        <ul className="grid min-w-0 gap-1">{children}</ul>
+        <ul className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1">{children}</ul>
       ) : (
         <p className="text-xs text-faint">{empty}</p>
       )}
@@ -107,7 +107,7 @@ function Widget({ title, sub, loading, empty, more, children }: { title: string;
 
 function Item({ thumb, video, title, meta, busy, disabled, onCreate }: { thumb: string | null; video?: string | null; title: string; meta: string; busy: boolean; disabled: boolean; onCreate: () => void }) {
   return (
-    <li className="grid min-w-0 gap-2 rounded-[10px] p-1.5 transition-colors hover:bg-surface-2/60">
+    <li className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 rounded-[10px] p-1.5 transition-colors hover:bg-surface-2/60">
       <div className="flex min-w-0 items-center gap-3">
         <span className="relative h-12 w-12 shrink-0 overflow-hidden rounded-[8px] bg-surface-2">
           {thumb ? (
@@ -117,8 +117,8 @@ function Item({ thumb, video, title, meta, busy, disabled, onCreate }: { thumb: 
             <video src={`${video}#t=0.5`} muted playsInline preload="metadata" className="absolute inset-0 h-full w-full object-cover" />
           ) : null}
         </span>
-        <span className="min-w-0 flex-1">
-          <span className="line-clamp-2 break-words text-[12.5px] leading-snug">{title}</span>
+        <span className="block min-w-0 flex-1">
+          <span className="line-clamp-2 block break-words text-[12.5px] leading-snug">{title}</span>
           <span className="block truncate text-[11px] text-faint">{meta}</span>
         </span>
       </div>
