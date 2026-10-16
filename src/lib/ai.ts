@@ -16,7 +16,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 export const MODEL_IDS = { opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5", haiku: "claude-haiku-5-5" } as const;
 export type ModelKey = keyof typeof MODEL_IDS;
 export type Effort = "low" | "medium" | "high";
-export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue" | "scripts" | "brandbible" | "creativecheck" | "creativereview" | "coach" | "strategist" | "lab";
+export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue" | "scripts" | "brandbible" | "creativecheck" | "creativereview" | "coach" | "strategist" | "lab" | "industry";
 export const SOURCE_KEYS = ["meta", "briefing", "recent_messages", "memory", "angles", "recent_requests", "allotment", "kpis"] as const;
 export type Sources = Partial<Record<(typeof SOURCE_KEYS)[number], boolean>>;
 
@@ -41,6 +41,7 @@ const DEFAULTS: Record<AgentKey, Pick<AgentConfig, "model" | "effort">> = {
   creativecheck: { model: "sonnet", effort: "low" }, // runs while the upload is staged, someone is waiting
   creativereview: { model: "opus", effort: "medium" }, // reads small text in images; judgement matters
   lab: { model: "opus", effort: "high" }, // the Ads Lab round table
+  industry: { model: "sonnet", effort: "low" }, // sorts clients into industries from everything known about them
   strategist: { model: "opus", effort: "medium" }, // suggests briefs to execs and leads from the data
   coach: { model: "opus", effort: "medium" }, // edits other agents' playbooks from feedback (Settings → AI agents → Coach)
 };

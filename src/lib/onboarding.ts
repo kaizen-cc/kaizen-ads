@@ -95,7 +95,7 @@ export async function processIntake(admin: SupabaseClient, intakeId: string, opt
     // The industry, unless the team already set it by hand
     await admin
       .from("clients")
-      .update({ industry: summary.industry, industry_detail: summary.industryDetail.slice(0, 80) || null, industry_source: "ai", industry_set_at: new Date().toISOString() })
+      .update({ industry: summary.industry, industry_detail: summary.industryDetail.slice(0, 80) || null, industry_source: "ai", industry_set_at: new Date().toISOString(), industry_version: 2 })
       .eq("id", intake.client_id)
       .or("industry_source.is.null,industry_source.eq.ai");
     // A first round only for a client we make creative for; for anyone else the intake is context and nothing more

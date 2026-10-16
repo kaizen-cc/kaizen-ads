@@ -6,7 +6,7 @@ import { inviteBotToClientChannels } from "@/lib/context/slack";
 import { reportError } from "@/lib/error-report";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { refreshAllKpis } from "@/lib/kpi/sync";
-import { detectIndustries } from "@/lib/industry";
+import { detectIndustries, refreshIndustries } from "@/lib/industry";
 import { runStrategist } from "@/lib/suggestions";
 import { runFatigue } from "@/lib/fatigue";
 import { mirrorTrack } from "@/lib/client-sync";
@@ -111,7 +111,8 @@ export async function GET(request: Request) {
     // Execs, by hand: sort every client without an industry now (&force=1 redoes the AI's own guesses)
     if (step === "industry") return Response.json({ set: await detectIndustries(admin, { force: new URL(request.url).searchParams.get("redo") === "1" }) });
     // Hourly: Kaizen Track's clients, then any intake forms still waiting to be read (a backfill, a short burst of forms)
-    if (step === "clients") return Response.json({ track: await mirrorTrack(admin), intakes: await readBackfill(admin, 25) });
+    if (step === "clients")
+      return Response.json({ track: await mirrorTrack(admin), intakes: await readBackfill(admin, 25), industries: await refreshIndustries(admin).catch((e) => String(e)) });
     // Execs, by hand: read backfilled intake forms (context only, no first rounds)
     if (step === "intakes") return Response.json(await readBackfill(admin));
     // Execs, by hand: check every ad for fatigue now

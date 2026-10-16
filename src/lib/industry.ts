@@ -29,12 +29,37 @@ const SCHEMA = {
   additionalProperties: false,
 };
 
-const SYSTEM = `You sort a marketing agency's clients into industries, from what the agency knows about each one (name, website, notes, the copy of their ads).
-industry: the closest one from the list. Go by how they sell, not only what they sell: a brand that sells mainly online and ships to customers (food boxes, supplements, apparel, bedding) is "ecommerce", while a restaurant is somewhere people eat; a packaged product sold mainly through stores is "cpg". detail: two to four words, specific ("Pizza restaurant", "Kitchen remodeling", "Cosmetic dentistry", "Kayak rentals", "Nicotine-free pouches"). If there's too little to tell, use "other" and say what you can in detail.`;
+const SYSTEM = `You sort a marketing agency's clients into industries, from everything the agency knows about each one: their marketing intake form, Brand Bible, the briefing from Slack, email and Drive, recent messages, their website and their ads.
+industry: the closest one from the list. Go by how they sell, not only what they sell: a brand that sells mainly online and ships to customers (food boxes, supplements, apparel, bedding) is "ecommerce"; a restaurant, bar or cafe is somewhere people eat and drink ("restaurant"); a packaged product sold mainly through stores is "cpg"; a venue or experience people come to (paintball, nightclub, events) is "entertainment". The intake form and the website are the strongest evidence; the name alone is the weakest.
+detail: two to four words, specific ("Pizza restaurant", "Kitchen remodeling", "Cosmetic dentistry", "Kayak rentals", "Nicotine-free pouches"). If there's genuinely too little to tell, use "other" and say what you can in detail.`;
+
+/** What a client's website says about them: title, description and the start of the visible text. */
+async function readSite(url: string | null) {
+  if (!url) return null;
+  const href = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+  try {
+    const res = await fetch(href, { signal: AbortSignal.timeout(7000), headers: { "user-agent": "Mozilla/5.0 (KaizenAds industry reader)" }, redirect: "follow" });
+    if (!res.ok) return null;
+    const html = (await res.text()).slice(0, 400_000);
+    const pick = (re: RegExp) => html.match(re)?.[1]?.replace(/\s+/g, " ").trim() ?? "";
+    const title = pick(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    const description = pick(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']*)["']/i) || pick(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']*)["']/i);
+    const text = html
+      .replace(/<(script|style|noscript|svg)[\s\S]*?<\/\1>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&[a-z#0-9]+;/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 1500);
+    return [title && `Title: ${title}`, description && `Description: ${description}`, text && `Page: ${text}`].filter(Boolean).join("\n") || null;
+  } catch {
+    return null; // slow, blocked or down: the rest of what we know still counts
+  }
+}
 
 /**
- * The AI sorts clients into industries. Clients the team set by hand are left alone; force redoes the AI's own.
- * Returns how many it set.
+ * The AI sorts clients into industries from everything the client page knows. Clients the team set by hand are left
+ * alone; force redoes the AI's own. Returns how many it set.
  */
 export async function detectIndustries(admin: SupabaseClient, opts: { ids?: string[]; force?: boolean } = {}) {
   let q = admin.from("clients").select("id, name, website, industry, industry_source").neq("status", "offboarded");
@@ -43,37 +68,73 @@ export async function detectIndustries(admin: SupabaseClient, opts: { ids?: stri
   const todo = (all ?? []).filter((c) => c.industry_source !== "team" && (opts.force || !c.industry));
   if (!todo.length) return 0;
   const ids = todo.map((c) => c.id);
-  const [{ data: briefings }, { data: bibles }, { data: snaps }] = await Promise.all([
+  const since = new Date(Date.now() - 60 * 86_400_000).toISOString();
+  const [{ data: briefings }, { data: bibles }, { data: snaps }, { data: intakes }, { data: items }] = await Promise.all([
     admin.from("client_briefings").select("client_id, digest").in("client_id", ids),
     admin.from("client_brand_bibles").select("client_id, read_this_first").in("client_id", ids),
     admin.from("meta_snapshots").select("client_id, ads, fetched_at").in("client_id", ids).order("fetched_at", { ascending: false }).limit(ids.length * 3),
+    admin.from("client_intakes").select("client_id, summary, answers, received_at").in("client_id", ids).order("received_at", { ascending: false }),
+    admin.from("context_items").select("client_id, source, title, body, occurred_at").in("client_id", ids).neq("source", "drive").gte("occurred_at", since).order("occurred_at", { ascending: false }).limit(ids.length * 10),
   ]);
-  const digest = new Map((briefings ?? []).map((b) => [b.client_id, JSON.stringify(b.digest ?? {}).slice(0, 500)]));
-  const bible = new Map((bibles ?? []).map((b) => [b.client_id, (b.read_this_first ?? "").slice(0, 400)]));
-  const adsOf = new Map<string, string>();
-  for (const s of snaps ?? []) {
-    if (adsOf.has(s.client_id)) continue;
-    const ads = (s.ads ?? []) as { name?: string; headline?: string | null; text?: string | null }[];
-    adsOf.set(s.client_id, ads.slice(0, 4).map((a) => [a.headline, a.text?.slice(0, 120), a.name].filter(Boolean).join(" | ")).join(" // ").slice(0, 600));
+
+  const first = <T extends { client_id: string }>(rows: T[] | null) => {
+    const m = new Map<string, T>();
+    for (const r of rows ?? []) if (!m.has(r.client_id)) m.set(r.client_id, r);
+    return m;
+  };
+  const intakeOf = first(intakes);
+  const bibleOf = first(bibles);
+  const briefOf = first(briefings);
+  const snapOf = first(snaps);
+  const messages = new Map<string, string[]>();
+  for (const i of items ?? []) {
+    const list = messages.get(i.client_id) ?? [];
+    if (list.length < 6) list.push(`${i.source === "gmail" ? "Email" : "Slack"}: ${[i.title, i.body].filter(Boolean).join(" · ").replace(/\s+/g, " ").slice(0, 220)}`);
+    messages.set(i.client_id, list);
+  }
+  const sites = new Map<string, string | null>();
+  for (let i = 0; i < todo.length; i += 6) {
+    const chunk = todo.slice(i, i + 6);
+    const read = await Promise.all(chunk.map((c) => readSite(c.website)));
+    chunk.forEach((c, j) => sites.set(c.id, read[j]));
   }
 
+  const block = (c: (typeof todo)[number]) => {
+    const intake = intakeOf.get(c.id);
+    const summary = intake?.summary as { business?: string; offer?: string; audience?: string } | null;
+    const answers = !summary && intake ? (intake.answers as { q: string; a: string }[]).slice(0, 6).map((x) => `${x.q}: ${x.a}`).join(" / ").slice(0, 900) : null;
+    const digest = briefOf.get(c.id)?.digest as { summary?: string; direction?: string } | null;
+    const ads = ((snapOf.get(c.id)?.ads ?? []) as { name?: string; headline?: string | null; text?: string | null }[])
+      .slice(0, 5)
+      .map((a) => [a.headline, a.text?.slice(0, 140), a.name].filter(Boolean).join(" | "))
+      .join(" // ")
+      .slice(0, 800);
+    return [
+      `<client id="${c.id}">`,
+      `Name: ${c.name}`,
+      c.website && `Website address: ${c.website}`,
+      summary && `Marketing intake: ${[summary.business, summary.offer && `Offer: ${summary.offer}`, summary.audience && `Audience: ${summary.audience}`].filter(Boolean).join(" ")}`,
+      answers && `Marketing intake (answers): ${answers}`,
+      sites.get(c.id) && `Their website:\n${sites.get(c.id)}`,
+      bibleOf.get(c.id)?.read_this_first && `Brand Bible: ${bibleOf.get(c.id)!.read_this_first!.slice(0, 1200)}`,
+      digest && `Briefing: ${[digest.summary, digest.direction].filter(Boolean).join(" ").slice(0, 900)}`,
+      messages.get(c.id)?.length && `Recent messages:\n${messages.get(c.id)!.join("\n")}`,
+      ads && `Their ads: ${ads}`,
+      "</client>",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  };
+
   let set = 0;
-  for (let i = 0; i < todo.length; i += 25) {
-    const batch = todo.slice(i, i + 25);
+  for (let i = 0; i < todo.length; i += 8) {
+    const batch = todo.slice(i, i + 8);
     const out = await askJson<{ clients: { id: string; industry: Industry; detail: string }[] }>({
-      agent: "briefing",
+      agent: "industry",
       label: "client industries",
       system: SYSTEM,
       schema: SCHEMA,
-      prompt: `Industries: ${INDUSTRIES.map(([k, l]) => `${k} (${l})`).join(", ")}
-
-${batch
-  .map((c) =>
-    [`<client id="${c.id}">`, `Name: ${c.name}`, c.website && `Website: ${c.website}`, digest.get(c.id) && `Notes: ${digest.get(c.id)}`, bible.get(c.id) && `Brand: ${bible.get(c.id)}`, adsOf.get(c.id) && `Ads: ${adsOf.get(c.id)}`, "</client>"]
-      .filter(Boolean)
-      .join("\n"),
-  )
-  .join("\n\n")}`,
+      prompt: `Industries: ${INDUSTRIES.map(([k, l]) => `${k} (${l})`).join(", ")}\n\n${batch.map(block).join("\n\n")}`,
     });
     const now = new Date().toISOString();
     for (const r of out.clients) {
@@ -81,13 +142,28 @@ ${batch
       // Never over a team-set industry
       const { error } = await admin
         .from("clients")
-        .update({ industry: r.industry, industry_detail: r.detail.trim().slice(0, 80) || null, industry_source: "ai", industry_set_at: now })
+        .update({ industry: r.industry, industry_detail: r.detail.trim().slice(0, 80) || null, industry_source: "ai", industry_set_at: now, industry_version: 2 })
         .eq("id", r.id)
         .or("industry_source.is.null,industry_source.eq.ai");
       if (!error) set++;
     }
   }
   return set;
+}
+
+/** Hourly: redo industries the first, thin method set (a batch at a time), now that there's much more to go on. */
+export async function refreshIndustries(admin: SupabaseClient, max = 24) {
+  const { data } = await admin
+    .from("clients")
+    .select("id")
+    .neq("status", "offboarded")
+    .is("archived_at", null)
+    .or("industry_source.is.null,industry_source.eq.ai")
+    .lt("industry_version", 2)
+    .order("creative_package", { ascending: false })
+    .limit(max);
+  const ids = (data ?? []).map((c) => c.id as string);
+  return ids.length ? detectIndustries(admin, { ids, force: true }) : 0;
 }
 
 export type Winner = {
