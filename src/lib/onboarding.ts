@@ -81,6 +81,9 @@ const SUMMARY_SCHEMA = {
 export async function processIntake(admin: SupabaseClient, intakeId: string, opts: { firstRound?: boolean } = {}) {
   const { data: intake } = await admin.from("client_intakes").select("id, client_id, answers").eq("id", intakeId).single();
   if (!intake?.client_id) return { status: "unmatched" };
+  // Archived: the answers are kept for when they come back, nothing more
+  const { data: owner } = await admin.from("clients").select("archived_at").eq("id", intake.client_id).single();
+  if (owner?.archived_at) return { status: "archived" };
   try {
     const answers = intake.answers as { q: string; a: string }[];
     const summary = await askJson<IntakeSummary>({

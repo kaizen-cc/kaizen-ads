@@ -270,8 +270,9 @@ export async function loadWatchList(db: SupabaseClient, opts: { clientId?: strin
   }
   let q = db
     .from("ad_fatigue")
-    .select("client_id, ad_id, ad_name, headline, thumbnail, severity, state, signals, series, first_flagged_at, request_numbers, clients(name, slug)")
-    .in("state", ["open", "refreshing"]);
+    .select("client_id, ad_id, ad_name, headline, thumbnail, severity, state, signals, series, first_flagged_at, request_numbers, clients!inner(name, slug)")
+    .in("state", ["open", "refreshing"])
+    .is("clients.archived_at", null);
   if (ids) q = q.in("client_id", ids);
   const { data } = await q.limit(200);
   const clientIds = [...new Set((data ?? []).map((r) => r.client_id as string))];

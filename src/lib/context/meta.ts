@@ -383,10 +383,12 @@ export async function linkAdAccounts(admin: SupabaseClient) {
     after = page.paging?.next ? (page.paging.cursors?.after ?? "") : "";
   } while (after);
 
-  const { data: clients } = await admin.from("clients").select("id, name, meta_ad_account_id, creative_package").neq("status", "offboarded");
-  const taken = new Set((clients ?? []).map((c) => c.meta_ad_account_id).filter(Boolean));
+  const { data: all } = await admin.from("clients").select("id, name, meta_ad_account_id, creative_package, status, archived_at");
+  // Every client's account is taken, archived ones too (it isn't free to link to someone else)
+  const taken = new Set((all ?? []).map((c) => c.meta_ad_account_id).filter(Boolean));
+  const clients = (all ?? []).filter((c) => !c.archived_at && c.status !== "offboarded");
   const linked: string[] = [];
-  for (const c of clients ?? []) {
+  for (const c of clients) {
     if (c.meta_ad_account_id) continue;
     const key = compact(c.name);
     const hits = accounts.filter((a) => {

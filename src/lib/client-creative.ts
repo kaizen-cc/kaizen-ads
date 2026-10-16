@@ -48,8 +48,8 @@ type Row = {
 export async function loadClientCreative(db: SupabaseClient, clientId: string): Promise<ClientCreative> {
   const cols = "id, number, title, format, stage, stage_entered_at, launched_at, internal_rounds, client_rounds, minutes_over";
   const [{ data: moving }, { data: launched }, { data: snap }] = await Promise.all([
-    db.from("board_requests").select(cols).eq("client_id", clientId).neq("stage", "launched").order("created_at", { ascending: false }).limit(200),
-    db.from("board_requests").select(cols).eq("client_id", clientId).eq("stage", "launched").order("launched_at", { ascending: false }).limit(60),
+    db.from("client_page_requests").select(cols).eq("client_id", clientId).neq("stage", "launched").order("created_at", { ascending: false }).limit(200),
+    db.from("client_page_requests").select(cols).eq("client_id", clientId).eq("stage", "launched").order("launched_at", { ascending: false }).limit(60),
     db.from("meta_snapshots").select("fetched_at, ads").eq("client_id", clientId).order("fetched_at", { ascending: false }).limit(1).maybeSingle(),
   ]);
   const rows = [...((moving ?? []) as Row[]), ...((launched ?? []) as Row[])];

@@ -58,7 +58,7 @@ export async function POST(request: Request, ctx: RouteContext<"/api/zapier/[for
     if ((result as { error?: string })?.error) return Response.json({ ok: false, ...(result as object) }, { status: 422 });
     // An archived client enrolling again comes back with everything, as onboarding
     const enrolled = (result as { client_id?: string })?.client_id;
-    const back = form === "enrollment" && enrolled ? await welcomeBack(admin, enrolled) : false;
+    const back = enrolled ? await welcomeBack(admin, enrolled) : false;
     // The team named on the form becomes the client's assignments (what each person sees follows from it)
     const team = enrolled ? await applyTeam(admin, enrolled, raw) : null;
     // Anything but a plain set package ("3 Videos per Month", "Silver + 2 extra videos") becomes Custom, with

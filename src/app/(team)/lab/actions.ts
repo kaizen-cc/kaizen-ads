@@ -176,7 +176,7 @@ export async function decideTest(id: string, won: boolean, note: string): Promis
   if (!won && adminConfigured())
     await createAdminClient()
       .from("client_memory")
-      .insert((t.client_ids as string[]).map((c) => ({ client_id: c, kind: "note", source: "lab", created_by: me.id, body: `Tested "${t.title}" here and it didn't win: ${note.trim()}`.slice(0, 1000) })));
+      .insert((await liveClients(supabase, t.client_ids as string[])).map((c) => ({ client_id: c, kind: "note", source: "lab", created_by: me.id, body: `Tested "${t.title}" here and it didn't win: ${note.trim()}`.slice(0, 1000) })));
   revalidatePath("/lab");
   return { ok: true };
 }
@@ -199,7 +199,7 @@ export async function deployLearning(id: string, learning: string, clientIds: st
   const supabase = await createClient();
   const { data: t } = await supabase.from("lab_tests").select("client_ids, deployed_to, deploy_baseline, status").eq("id", id).single();
   if (!t || t.status !== "won") return { ok: false, error: "Only a winning test can be deployed." };
-  const all = [...new Set([...(t.client_ids as string[]), ...clientIds])];
+  const all = await liveClients(supabase, [...new Set([...(t.client_ids as string[]), ...clientIds])]);
   const fresh = all.filter((c) => !(t.deployed_to as string[]).includes(c));
   if (!adminConfigured()) return { ok: false, error: "Can't write client memory here." };
   const db = createAdminClient();
@@ -246,4 +246,11 @@ export async function dropTest(id: string): Promise<Result> {
   const { error } = await supabase.from("lab_tests").update({ status: "dropped", updated_at: new Date().toISOString() }).eq("id", id);
   revalidatePath("/lab");
   return error ? { ok: false, error: error.message } : { ok: true };
+}
+
+/** Of these clients, the ones not archived (nothing new is written into an archived client). */
+async function liveClients(db: Awaited<ReturnType<typeof createClient>>, ids: string[]) {
+  if (!ids.length) return [];
+  const { data } = await db.from("clients").select("id").in("id", ids).is("archived_at", null);
+  return (data ?? []).map((c) => c.id as string);
 }

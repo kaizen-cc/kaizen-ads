@@ -29,8 +29,9 @@ export default async function Kpis() {
   const [{ data: targets }, { data: snaps }, { data: buyers }, { data: clients }] = await Promise.all([
     supabase
       .from("kpi_targets")
-      .select("id, client_id, platform, ad_account_id, label, conversion, custom_action, campaign_match, target, monthly_budget, budget_note, source, owner_id, owner_name, clients(name, slug, status), profiles!kpi_targets_owner_id_fkey(full_name)")
-      .eq("active", true),
+      .select("id, client_id, platform, ad_account_id, label, conversion, custom_action, campaign_match, target, monthly_budget, budget_note, source, owner_id, owner_name, clients!inner(name, slug, status), profiles!kpi_targets_owner_id_fkey(full_name)")
+      .eq("active", true)
+      .is("clients.archived_at", null),
     supabase.from("kpi_snapshots").select("*"),
     supabase.from("profiles").select("id, full_name, role").eq("is_active", true).in("role", ["media_buyer", "head_of_meta"]).order("full_name"),
     supabase.from("clients").select("id, name").neq("status", "offboarded").order("name"),

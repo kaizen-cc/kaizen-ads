@@ -233,7 +233,7 @@ export async function collectCalls(admin: SupabaseClient, budgetMs = 500_000) {
 
   const [{ data: clients }, { data: links }] = await Promise.all([
     admin.from("clients").select("id, name").is("archived_at", null).neq("status", "offboarded"),
-    admin.from("contact_clients").select("client_id, contacts(email)"),
+    admin.from("contact_clients").select("client_id, contacts(email), clients!inner(archived_at)").is("clients.archived_at", null),
   ]);
   const contacts = new Map<string, string>();
   for (const l of links ?? []) {
@@ -284,7 +284,8 @@ const COVER_SCHEMA = {
 export async function watchCommitments(admin: SupabaseClient, max = 12) {
   const { data: due } = await admin
     .from("call_commitments")
-    .select("id, client_id, kind, what, why, due_at, call_id, client_calls(title, occurred_at, summary)")
+    .select("id, client_id, kind, what, why, due_at, call_id, client_calls(title, occurred_at, summary), clients!inner(archived_at)")
+    .is("clients.archived_at", null)
     .eq("status", "open")
     .is("checked_at", null)
     .lte("due_at", new Date().toISOString())
@@ -340,7 +341,8 @@ export async function watchCommitments(admin: SupabaseClient, max = 12) {
 export async function sweepCovered(admin: SupabaseClient, clientId?: string) {
   let q = admin
     .from("call_commitments")
-    .select("id, client_id, what, suggestion_id, cover_checked_at, client_calls(occurred_at)")
+    .select("id, client_id, what, suggestion_id, cover_checked_at, client_calls(occurred_at), clients!inner(archived_at)")
+    .is("clients.archived_at", null)
     .in("status", ["open", "briefed"])
     .in("kind", ["creative", "copy", "offer"])
     .limit(200);

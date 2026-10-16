@@ -92,8 +92,9 @@ async function Data({ target, from, to }: { target: string | null; from: string;
   const supabase = await createClient();
   const { data } = await supabase
     .from("kpi_targets")
-    .select("id, platform, ad_account_id, label, conversion, custom_action, campaign_match, target, monthly_budget, clients(name)")
-    .eq("active", true);
+    .select("id, platform, ad_account_id, label, conversion, custom_action, campaign_match, target, monthly_budget, clients!inner(name)")
+    .eq("active", true)
+    .is("clients.archived_at", null);
   const targets = (data ?? [])
     .map((t) => ({ ...t, client: (t.clients as unknown as { name: string } | null)?.name ?? "Unknown", target: t.target == null ? null : Number(t.target), monthly_budget: t.monthly_budget == null ? null : Number(t.monthly_budget) }))
     .sort((a, b) => a.client.localeCompare(b.client));

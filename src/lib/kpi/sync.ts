@@ -190,8 +190,14 @@ export async function adoptNewAccounts(admin: SupabaseClient) {
 /** The scheduled step: pull every account with a target and recompute everything. */
 export async function refreshAllKpis(admin: SupabaseClient, budgetMs = 650_000) {
   const adopted = await adoptNewAccounts(admin);
-  const { data } = await admin.from("kpi_targets").select(TARGET_FIELDS).eq("active", true);
-  const results = await refreshTargets(admin, (data ?? []) as Target[], true, Date.now() + budgetMs);
+  const [{ data }, { data: archived }] = await Promise.all([
+    admin.from("kpi_targets").select(TARGET_FIELDS).eq("active", true),
+    admin.from("clients").select("id").not("archived_at", "is", null),
+  ]);
+  // Archived clients' targets are paused when they're archived; this keeps a stray one from being pulled
+  const gone = new Set((archived ?? []).map((c) => c.id as string));
+  const live = ((data ?? []) as Target[]).filter((t) => !gone.has((t as unknown as { client_id: string }).client_id));
+  const results = await refreshTargets(admin, live, true, Date.now() + budgetMs);
   return {
     ...adopted,
     accounts: results?.length ?? 0,

@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { Option } from "./assign-select";
 import { type ClientCard } from "./client-grid";
 import { ClientsBrowser, type Filter } from "./clients-browser";
-import { ArchivedList } from "./archived-list";
+import { ArchivedList, type ArchiveLog } from "./archived-list";
 
 type Row = {
   id: string;
@@ -27,7 +27,7 @@ type Row = {
 
 export default async function Clients({ searchParams }: PageProps<"/clients">) {
   const me = await requireStaff();
-  const { filter } = await searchParams;
+  const { filter, view } = await searchParams;
   const initialFilter = (["creative", "sprint", "none", "gaps"].includes(String(filter)) ? filter : "all") as Filter;
 
   const supabase = await createClient();
@@ -46,6 +46,10 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
     supabase.from("meta_snapshots").select("client_id, fetched_at").order("fetched_at", { ascending: false }).limit(500),
     supabase.from("clients").select("id, name, slug, archived_at, archive_reason, archive_source").not("archived_at", "is", null).order("archived_at", { ascending: false }),
   ]);
+  // The archive log: every archive and restore, who did it, why, and what was set aside
+  const { data: log } = archived?.length || isExecOrLead(me)
+    ? await supabase.from("client_archive_events").select("client_id, action, reason, source, set_aside, at, profiles(full_name), clients(name, slug)").order("at", { ascending: false }).limit(300)
+    : { data: [] };
   const rows = (data ?? []) as unknown as Row[];
   // A sprint counts until its end date (the scheduled job switches it off the day after)
   const today = nyToday();
@@ -113,13 +117,30 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
                 : "The clients you're on."}
           </p>
         </div>
+        {(archived?.length ?? 0) > 0 && (
+          <a href="#archived" className="text-sm text-muted hover:text-fg">
+            Archived <span className="text-faint">{archived!.length}</span> →
+          </a>
+        )}
       </header>
 
       <ClientsBrowser cards={cards} slotOptions={slotOptions} canEdit={canEdit} initialFilter={initialFilter} />
 
       <ArchivedList
         canRestore={canEdit}
+        startOpen={view === "archived"}
         clients={(archived ?? []).map((c) => ({ id: c.id, name: c.name, slug: c.slug, at: c.archived_at!, reason: c.archive_reason, source: c.archive_source }))}
+        log={(log ?? []).map((e) => ({
+          clientId: e.client_id,
+          name: (e.clients as unknown as { name: string; slug: string } | null)?.name ?? null,
+          slug: (e.clients as unknown as { name: string; slug: string } | null)?.slug ?? null,
+          action: e.action as "archived" | "restored",
+          reason: e.reason,
+          source: e.source,
+          at: e.at,
+          by: (e.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
+          setAside: (e.set_aside ?? {}) as ArchiveLog["setAside"],
+        }))}
       />
     </div>
   );

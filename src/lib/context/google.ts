@@ -70,8 +70,9 @@ export async function gmailMailboxes(): Promise<string[]> {
 export async function contactMap(admin: SupabaseClient) {
   const { data: links } = await admin
     .from("contact_clients")
-    .select("client_id, contacts(email), clients!inner(creative_package)")
-    .eq("clients.creative_package", true);
+    .select("client_id, contacts(email), clients!inner(creative_package, archived_at)")
+    .eq("clients.creative_package", true)
+    .is("clients.archived_at", null);
   const map = new Map<string, string[]>();
   for (const l of links ?? []) {
     const email = (l.contacts as unknown as { email: string } | null)?.email?.toLowerCase();

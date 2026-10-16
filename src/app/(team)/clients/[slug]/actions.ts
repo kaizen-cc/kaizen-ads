@@ -25,6 +25,8 @@ function done(slug: string, error?: { message: string } | null): ActionResult {
 /** Execs: status, IDs and channels. RLS enforces exec-only. */
 export async function saveClientDetails(clientId: string, slug: string, form: FormData): Promise<ActionResult> {
   await requireStaff();
+  const { data: was } = await (await createClient()).from("clients").select("archived_at").eq("id", clientId).maybeSingle();
+  if (was?.archived_at) return { ok: false, error: "This client is archived. Restore them first." };
   const kaizenId = str(form, "kaizen_id");
   const supabase = await createClient();
   const { error } = await supabase

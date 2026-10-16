@@ -8,7 +8,7 @@ export default async function Team() {
   const supabase = await createClient();
   const [{ data: profiles }, { data: assignments }] = await Promise.all([
     supabase.from("profiles").select("id, email, full_name, role, is_active, joined_at").order("full_name"),
-    supabase.from("client_assignments").select("profile_id, client_id"),
+    supabase.from("client_assignments").select("profile_id, client_id, clients!inner(archived_at)").is("clients.archived_at", null),
   ]);
 
   const clientsPer = new Map<string, Set<string>>();
