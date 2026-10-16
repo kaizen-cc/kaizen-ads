@@ -10,6 +10,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { ChatMessage, Change } from "./actions";
 import { AgentDetail, AgentsOverview, type Agent, type Item } from "./agents";
 import { DataInspector } from "./data-inspector";
+import Team from "../team/page";
 import { ErrorButtons } from "./error-buttons";
 
 // Inspecting a big ad account reads a few thousand rows
@@ -17,13 +18,14 @@ export const maxDuration = 60;
 
 const TABS = [
   ["agents", "AI agents"],
+  ["team", "Team"],
   ["data", "Raw data"],
   ["sync", "Sync health"],
   ["errors", "Errors"],
   ["deleted", "Deleted"],
 ] as const;
-// Leads see only the deleted log; execs see everything
-const LEAD_TABS = ["deleted"];
+// Leads see the team and the deleted log; execs see everything
+const LEAD_TABS = ["team", "deleted"];
 
 const day = (offset: number) => {
   const d = new Date(`${nyParts(new Date()).date}T12:00:00Z`);
@@ -408,6 +410,7 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
         ))}
       </nav>
       {tab === "agents" && <Agents open={typeof sp.agent === "string" ? sp.agent : null} />}
+      {tab === "team" && <Team />}
       {tab === "data" && <Data target={typeof sp.target === "string" ? sp.target : null} from={from} to={to} />}
       {tab === "sync" && <Sync motion={typeof sp.motion === "string" ? sp.motion : null} />}
       {tab === "errors" && <Errors all={sp.show === "all"} />}

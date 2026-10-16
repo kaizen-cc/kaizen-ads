@@ -22,7 +22,7 @@ export function MarketPanel({ clientId, industry, label, ads }: { clientId: stri
             Live on Meta right now{competitors ? `: ${competitors} from competitors this client named, then` : ":"} what&apos;s proven or being tested in {label.toLowerCase()}. From Motion.
           </p>
         </div>
-        <Link href={`/market?client=${clientId}${industry ? `&industry=${industry}` : ""}`} className="text-xs text-muted hover:text-fg">
+        <Link href={`/ideas?tab=market&client=${clientId}`} className="text-xs text-muted hover:text-fg">
           See the whole market →
         </Link>
       </div>

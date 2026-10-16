@@ -97,9 +97,9 @@ const sampleOnboarding: OnboardingState = {
       allotment: { images: 10, videos: 3, imagesUsed: 0, videosUsed: 0, until: null },
       draft: { title: "First round: smiles, offers and proof", angle: "Confidence you can see", audience: "Parents 30-50 within 15 miles of Baton Rouge", brief: Array.from({ length: 14 }, (_, i) => `Line ${i + 1} of the brief: what to show, what to say, and what to avoid.`).join("\n"), hooks: ["Your smile, straightened in months", "$0 consult this month"], landing: "https://bayousmiles.com/invisalign", sizes: ["4x5", "9x16"], formats: [{ format: "image", new: 4, variations: 2 }, { format: "video", new: 1, variations: 0 }],
         concepts: Array.from({ length: 4 }, (_, i) => ({ name: `Concept ${i + 1}`, hook: "A real patient's before and after", visual: "Close-up smile, natural light, the practice in the background.", copy: "Lead with the result, then the consult offer." })) },
-    }, inProduction: [] },
-    { clientId: "o2", name: "Gulf Coast Kayak Co.", slug: "gulf-coast-kayak", since: "2026-10-14T18:00:00Z", returning: false, creative: true, industry: "Kayak rentals", intake: null, firstRound: null, inProduction: [] },
-    { clientId: "o3", name: "Crust Pizza Co.", slug: "crust-pizza-co", since: "2026-10-10T15:00:00Z", returning: true, creative: true, industry: "Pizza restaurant", intake: { status: "briefed", at: "2026-10-11T14:00:00Z", business: "Neapolitan pizza, two locations" }, firstRound: null, inProduction: [1041, 1042] },
+    }, inProduction: [], writingSince: null, writeError: null },
+    { clientId: "o2", name: "Gulf Coast Kayak Co.", slug: "gulf-coast-kayak", since: "2026-10-14T18:00:00Z", returning: false, creative: true, industry: "Kayak rentals", intake: null, firstRound: null, inProduction: [], writingSince: new Date(Date.now() - 35_000).toISOString(), writeError: null },
+    { clientId: "o3", name: "Crust Pizza Co.", slug: "crust-pizza-co", since: "2026-10-10T15:00:00Z", returning: true, creative: true, industry: "Pizza restaurant", intake: { status: "briefed", at: "2026-10-11T14:00:00Z", business: "Neapolitan pizza, two locations" }, firstRound: null, inProduction: [1041, 1042], writingSince: null, writeError: null },
   ],
   unmatched: [{ id: "u1", name: "Lakeside Med Spa LLC", at: "2026-10-15T13:00:00Z" }],
 };
@@ -438,7 +438,7 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
   }
 
   return (
-    <TeamShell name={who.name} roles={who.role}>
+    <TeamShell name={who.name} roles={who.role} tier={who.role === "Executive" ? "exec" : who.role.startsWith("Head") ? "lead" : "member"}>
       {body}
     </TeamShell>
   );

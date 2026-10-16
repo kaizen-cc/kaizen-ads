@@ -700,6 +700,8 @@ export type OnboardingCard = {
   intake: { status: string; at: string; business: string | null } | null;
   firstRound: OpenSuggestion | null; // ready for review
   inProduction: number[]; // tickets from an approved first round
+  writingSince: string | null; // the strategist started writing it at
+  writeError: string | null; // why the last try failed
 };
 export type OnboardingState = { clients: OnboardingCard[]; unmatched: { id: string; name: string | null; at: string }[] };
 
@@ -711,7 +713,7 @@ export async function loadOnboarding(db: SupabaseClient): Promise<OnboardingStat
   const [{ data: clients }, { data: unmatched }] = await Promise.all([
     db
       .from("clients")
-      .select("id, name, slug, created_at, reonboarded_at, creative_package, industry_detail")
+      .select("id, name, slug, created_at, reonboarded_at, creative_package, industry_detail, first_round_started_at, first_round_error")
       .or(waitingIds.length ? `status.eq.onboarding,id.in.(${waitingIds.join(",")})` : "status.eq.onboarding")
       .is("archived_at", null)
       .order("created_at", { ascending: false })
@@ -741,6 +743,9 @@ export async function loadOnboarding(db: SupabaseClient): Promise<OnboardingStat
         intake: intake ? { status: intake.status, at: intake.received_at, business: (intake.summary as { business?: string } | null)?.business ?? null } : null,
         firstRound: open.find((o) => o.clientId === c.id) ?? null,
         inProduction: approved?.request_numbers ?? [],
+        // The strategist writing it right now (a run older than 15 minutes didn't finish), or why it failed
+        writingSince: c.first_round_started_at && Date.now() - Date.parse(c.first_round_started_at) < 15 * 60_000 ? (c.first_round_started_at as string) : null,
+        writeError: (c.first_round_error as string | null) ?? null,
       };
     }),
     unmatched: (unmatched ?? []).map((u) => ({ id: u.id, name: u.business_name, at: u.received_at })),

@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { requireStaff, type Staff } from "@/lib/auth";
 import { greetingFor, todayLabel } from "@/lib/dates";
 import { loadHome, loadKpiPulse } from "@/lib/home";
@@ -20,6 +21,8 @@ export const maxDuration = 300;
 // Each tier gets its own home, from the live tickets.
 export default async function Home() {
   const me = await requireStaff();
+  // Team members' home is Next for me; execs and leads keep the overview
+  if (!me.isExec && !me.isLead) redirect("/next");
   const now = new Date();
   const base = { greeting: greetingFor(now), firstName: me.fullName.split(" ")[0], today: todayLabel(now) };
   const db = await createClient();

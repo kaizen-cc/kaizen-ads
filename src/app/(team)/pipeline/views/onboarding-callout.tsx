@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState, useSyncExternalStore, useTransition } from "react";
 import type { OnboardingCard, OnboardingState, OpenSuggestion } from "@/lib/suggestions";
 import { markOnboarded } from "../../clients/[slug]/actions";
 import { matchIntake, writeFirstRound } from "../onboarding-actions";
@@ -90,31 +90,81 @@ export function OnboardingCallout({ state, clients }: { state: OnboardingState; 
   );
 }
 
+// What the strategist does while writing a first round, and roughly how long it takes
+const WRITE_STEPS = ["Reading their intake form and client page", "Pulling the winners in their industry", "Choosing the angles", "Writing the concepts and hooks", "Fitting it to their allotment"];
+const WRITE_SECONDS = 90;
+
+/** Business days between two moments (weekends don't count), for how long something has waited. */
+function businessDaysSince(iso: string, now: number) {
+  let days = 0;
+  const d = new Date(iso);
+  const end = new Date(now);
+  while (d < end) {
+    d.setDate(d.getDate() + 1);
+    if (d <= end && d.getDay() !== 0 && d.getDay() !== 6) days++;
+  }
+  return days;
+}
+const waited = (days: number) => (days === 0 ? "today" : days === 1 ? "1 day" : `${days} days`);
+
 function ClientCard({ c, onOpen }: { c: OnboardingCard; onOpen: (s: OpenSuggestion) => void }) {
   const router = useRouter();
   const [busy, act] = useTransition();
-  const [writing, setWriting] = useState(false);
+  const [started, setStarted] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
   const intakeIn = Boolean(c.intake && c.intake.status !== "unmatched");
-  const reading = c.intake && ["received", "read"].includes(c.intake.status) && !c.firstRound && !c.inProduction.length;
-  const failed = c.intake?.status === "failed";
+  const since = c.writingSince ?? started;
+  const writing = Boolean(since) && !c.firstRound && !c.inProduction.length;
+  const failed = !writing && !c.firstRound && Boolean(c.writeError);
+
+  // While it writes: tick the bar every second and look for the finished brief every 4
+  useEffect(() => {
+    if (!writing) return;
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    const poll = setInterval(() => router.refresh(), 4000);
+    return () => {
+      clearInterval(tick);
+      clearInterval(poll);
+    };
+  }, [writing, router]);
 
   const write = async () => {
     setError(null);
-    setWriting(true);
+    setStarted(new Date().toISOString());
     const r = await writeFirstRound(c.clientId);
-    setWriting(false);
-    if (!r.ok) return setError(r.error);
-    onOpen(r.suggestion);
+    if (!r.ok) {
+      setStarted(null);
+      return setError(r.error);
+    }
+    router.refresh();
   };
 
-  const steps: { label: string; detail: string; state: "done" | "now" | "todo" }[] = [
+  // Times depend on the clock, so they're worked out in the browser only (the server's render shows the start)
+  const inBrowser = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
+  const elapsed = since && inBrowser ? Math.max(0, (now - Date.parse(since)) / 1000) : 0;
+  const pct = writing ? Math.min(96, Math.round((elapsed / WRITE_SECONDS) * 100)) : 0;
+  const stepNow = WRITE_STEPS[Math.min(WRITE_STEPS.length - 1, Math.floor((elapsed / WRITE_SECONDS) * WRITE_STEPS.length))];
+
+  // How long each stage has taken, or has been waiting
+  const intakeWait = businessDaysSince(c.since, now);
+  const intakeTook = intakeIn ? businessDaysSince(c.since, Date.parse(c.intake!.at)) : 0;
+  const readySince = c.firstRound?.createdAt ?? null;
+  const steps: { label: string; detail: string; sub?: string; state: "done" | "now" | "todo"; late?: boolean }[] = [
     { label: c.returning ? "Came back" : "Enrolled", detail: day(c.since), state: "done" },
-    { label: "Intake form", detail: intakeIn ? `In ${day(c.intake!.at)}` : "Waiting for it", state: intakeIn ? "done" : "now" },
+    intakeIn
+      ? { label: "Intake form", detail: `In ${day(c.intake!.at)}`, sub: Date.parse(c.intake!.at) < Date.parse(c.since) ? "Before enrolling" : `Took ${waited(intakeTook)}`, state: "done" }
+      : { label: "Intake form", detail: "Waiting on the client", sub: `${waited(intakeWait)} so far`, state: "now", late: intakeWait > 2 },
     {
       label: "First round",
-      detail: c.inProduction.length ? "Approved" : c.firstRound ? "Ready for you" : reading ? "AI is writing it" : failed ? "Couldn't write it" : "Not yet",
-      state: c.inProduction.length ? "done" : c.firstRound || reading ? "now" : "todo",
+      detail: c.inProduction.length ? "Approved" : c.firstRound ? "Ready for you" : writing ? `AI is writing it · ${pct}%` : failed ? "Couldn't write it" : intakeIn ? "Ready to write" : "Not yet",
+      sub: c.firstRound && readySince ? `Waiting on you ${waited(businessDaysSince(readySince, now))}` : undefined,
+      state: c.inProduction.length ? "done" : c.firstRound || writing || failed || intakeIn ? "now" : "todo",
+      late: Boolean(c.firstRound && readySince && businessDaysSince(readySince, now) > 1),
     },
     { label: "In production", detail: c.inProduction.length ? `${c.inProduction.length} ${c.inProduction.length === 1 ? "ticket" : "tickets"}` : "—", state: c.inProduction.length ? "now" : "todo" },
   ];
@@ -137,14 +187,37 @@ function ClientCard({ c, onOpen }: { c: OnboardingCard; onOpen: (s: OpenSuggesti
       <ol className="grid grid-cols-4 gap-1.5">
         {steps.map((s, i) => (
           <li key={s.label} className="grid content-start gap-1.5">
-            <span className={`h-1 rounded-full ${s.state === "done" ? "bg-ok" : s.state === "now" ? "bg-brand" : "bg-surface-2"} ${s.state === "now" && i === 2 && !c.firstRound ? "animate-pulse" : ""}`} />
+            <span className="relative h-1 overflow-hidden rounded-full bg-surface-2">
+              {i === 2 && writing ? (
+                <span className="absolute inset-y-0 left-0 rounded-full bg-brand transition-[width] duration-1000 ease-linear" style={{ width: `${pct}%` }} />
+              ) : (
+                <span className={`absolute inset-0 rounded-full ${s.state === "done" ? "bg-ok" : s.state === "now" ? (s.late || (i === 2 && failed) ? "bg-bad" : "bg-brand") : ""}`} />
+              )}
+            </span>
             <span className={`text-[11px] font-medium ${s.state === "todo" ? "text-faint" : "text-fg"}`}>{s.label}</span>
-            <span className={`text-[10.5px] leading-snug ${s.state === "now" ? "text-brand-text" : "text-faint"}`}>{s.detail}</span>
+            <span className={`text-[10.5px] leading-snug ${s.state === "now" ? (s.late || (i === 2 && failed) ? "text-bad" : "text-brand-text") : "text-faint"}`}>{s.detail}</span>
+            {s.sub && <span className={`text-[10px] leading-snug ${s.late ? "text-bad" : "text-faint"}`}>{s.sub}</span>}
           </li>
         ))}
       </ol>
 
-      {error && <p className="text-xs text-bad">{error}</p>}
+      {writing && (
+        <div className="grid gap-1.5 rounded-[12px] border border-brand/25 bg-brand-soft/30 px-3 py-2.5">
+          <div className="flex items-center justify-between gap-3 text-xs">
+            <span className="flex items-center gap-2 text-brand-text">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" />
+              {stepNow}…
+            </span>
+            <span className="tabular text-faint">{pct}%</span>
+          </div>
+          <span className="h-1 overflow-hidden rounded-full bg-surface-2">
+            <span className="block h-full rounded-full bg-brand transition-[width] duration-1000 ease-linear" style={{ width: `${pct}%` }} />
+          </span>
+          <span className="text-[10.5px] text-faint">{elapsed > WRITE_SECONDS ? "Taking longer than usual; it keeps going and opens here when it's done." : "About a minute and a half. You can leave the page; it keeps going."}</span>
+        </div>
+      )}
+
+      {(error || failed) && <p className="text-xs text-bad">{error ?? `The last try didn't finish: ${c.writeError}`}</p>}
 
       <div className="flex flex-wrap items-center gap-2">
         {c.firstRound ? (
@@ -159,14 +232,9 @@ function ClientCard({ c, onOpen }: { c: OnboardingCard; onOpen: (s: OpenSuggesti
               </Link>
             ))}
           </span>
-        ) : reading ? (
-          <span className="flex items-center gap-2 text-xs text-brand-text">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" />
-            Reading their intake and the winners in their industry…
-          </span>
-        ) : c.creative ? (
-          <button onClick={write} disabled={writing} className="h-9 rounded-brand border border-brand/50 px-4 text-sm text-fg hover:bg-brand-soft disabled:opacity-60">
-            {writing ? "Writing the first round…" : intakeIn ? "Write the first round" : "Write it without the intake"}
+        ) : writing ? null : c.creative ? (
+          <button onClick={write} className="h-9 rounded-brand border border-brand/50 px-4 text-sm text-fg hover:bg-brand-soft">
+            {failed ? "Try again" : intakeIn ? "Write the first round" : "Write it without the intake"}
           </button>
         ) : null}
         <button

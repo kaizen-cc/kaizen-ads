@@ -1,4 +1,5 @@
 import { autoGtm } from "@/lib/gtm";
+import { writeMissingFirstRounds } from "@/lib/onboarding";
 import { syncMarket } from "@/lib/market";
 import { isCronRequest } from "@/lib/cron";
 import { checkSetup } from "@/lib/context/check";
@@ -130,6 +131,8 @@ export async function GET(request: Request) {
         industries: await refreshIndustries(admin).catch((e) => String(e)),
         // Catch up on refresh briefs the Meta run didn't get to
         refreshes: await prewriteRefreshes(admin, 4).catch((e) => String(e)),
+        // Onboarding clients whose intake is in but who have no first round yet
+        firstRounds: await writeMissingFirstRounds(admin).catch((e) => String(e)),
       });
     // Execs, by hand: read backfilled intake forms (context only, no first rounds)
     if (step === "intakes") return Response.json(await readBackfill(admin));

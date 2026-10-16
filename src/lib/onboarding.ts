@@ -106,8 +106,8 @@ export async function processIntake(admin: SupabaseClient, intakeId: string, opt
     const { data: client } = await admin.from("clients").select("creative_package").eq("id", intake.client_id).single();
     // Historic intakes (backfilled) are context only: those clients are already running
     if (!client?.creative_package || opts.firstRound === false) return { status: "read" };
-    const { suggestOnboarding } = await import("@/lib/suggestions");
-    await suggestOnboarding(admin, intake.client_id);
+    const job = await writeFirstRoundJob(admin, intake.client_id);
+    if (!job.ok) throw new Error(job.error);
     await admin.from("client_intakes").update({ status: "briefed" }).eq("id", intakeId);
     return { status: "briefed" };
   } catch (e) {
@@ -126,4 +126,48 @@ export async function readBackfill(admin: SupabaseClient, max = 40) {
     if (r.status === "read") read++;
   }
   return { read, waiting: (data ?? []).length - read };
+}
+
+/**
+ * Write a client's first round as a tracked job: the card shows it writing (with progress) from the moment it starts,
+ * ready when the brief lands, and the reason if it fails. Never throws.
+ */
+export async function writeFirstRoundJob(admin: SupabaseClient, clientId: string) {
+  await admin.from("clients").update({ first_round_started_at: new Date().toISOString(), first_round_error: null }).eq("id", clientId);
+  try {
+    const { suggestOnboarding } = await import("@/lib/suggestions");
+    const id = await suggestOnboarding(admin, clientId);
+    await admin.from("clients").update({ first_round_started_at: null }).eq("id", clientId);
+    await admin.from("client_intakes").update({ status: "briefed" }).eq("client_id", clientId).in("status", ["received", "read"]);
+    return { ok: true as const, id };
+  } catch (e) {
+    const error = e instanceof Error ? e.message : String(e);
+    await admin.from("clients").update({ first_round_started_at: null, first_round_error: error.slice(0, 300) }).eq("id", clientId);
+    return { ok: false as const, error };
+  }
+}
+
+/**
+ * Hourly: clients being onboarded whose intake is in but who have no first round yet (an intake that arrived through the
+ * backfill, or a run that died) get one written, a few at a time.
+ */
+export async function writeMissingFirstRounds(admin: SupabaseClient, max = 3) {
+  const { data: clients } = await admin
+    .from("clients")
+    .select("id, first_round_started_at")
+    .eq("status", "onboarding")
+    .eq("creative_package", true)
+    .is("archived_at", null)
+    .is("first_round_error", null);
+  const stale = (iso: string | null) => !iso || Date.now() - Date.parse(iso) > 15 * 60_000;
+  const ids = (clients ?? []).filter((c) => stale(c.first_round_started_at)).map((c) => c.id as string);
+  if (!ids.length) return 0;
+  const [{ data: intakes }, { data: rounds }] = await Promise.all([
+    admin.from("client_intakes").select("client_id").in("client_id", ids).in("status", ["read", "briefed"]).not("summary", "is", null),
+    admin.from("creative_suggestions").select("client_id").eq("kind", "onboarding").in("client_id", ids).in("status", ["open", "approved"]),
+  ]);
+  const has = new Set((rounds ?? []).map((r) => r.client_id as string));
+  const todo = [...new Set((intakes ?? []).map((i) => i.client_id as string))].filter((id) => !has.has(id)).slice(0, max);
+  for (const id of todo) await writeFirstRoundJob(admin, id);
+  return todo.length;
 }
