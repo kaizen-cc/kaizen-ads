@@ -73,6 +73,12 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Picks standout advertisers in each niche we serve", where: "Ideas · In the market", trigger: "auto", when: "Weekly, with the Motion sync", labels: ["brands to watch"] },
   ],
   winners: [{ title: "Reads each winning ad: what the numbers show and why the creative works", where: "Ideas · Our winners", trigger: "auto", when: "After each Meta sync, or the first time someone hovers a winner", labels: ["read a winner"] }],
+  verticals: [
+    { title: "Works out the verticals and sub-verticals from every client page and places each client", where: "Ideas · Verticals", trigger: "auto", when: "Weekly, and when there are none", labels: ["build verticals"] },
+    { title: "Places new clients in a sub-vertical", where: "Ideas · Verticals · Client page", trigger: "auto", when: "Hourly, for new clients", labels: ["place clients in verticals"] },
+    { title: "Places market brands in the sub-vertical they teach", where: "Ideas · In the market", trigger: "auto", when: "With each Motion sync", labels: ["place market brands"] },
+    { title: "Researches Meta benchmarks for each sub-vertical, with sources", where: "Ideas · Verticals", trigger: "auto", when: "Hourly until done, then every 90 days", labels: ["benchmarks"] },
+  ],
   coach: [{ title: "Edits another agent's playbook from your feedback", where: "Settings · AI agents · Coach", trigger: "click", when: "When someone coaches an agent", labels: ["coach"] }],
   launcher: [{ title: "Pushes approved ads to Meta, paused, with Kaizen's naming", where: "Board · Ready to launch", trigger: "click", when: "Coming with the Launcher", labels: ["launch"] }],
   fatigue: [{ title: "Flags ads wearing out from their own numbers (no AI call; the strategist writes the refresh)", where: "Overview · Client page · Next for me", trigger: "auto", when: "After every Meta sync", labels: [] }],

@@ -545,6 +545,9 @@ export async function syncMarket(admin: SupabaseClient, budgetMs = 600_000) {
     const brandsFound = discover ? await discoverBrands(admin, s, workspaces, started + budgetMs * 0.4) : 0;
     const checked = await checkBrands(admin).catch(() => 0);
     const sorted = await describeBrands(admin).catch(() => 0);
+    // Each described brand into the sub-vertical it teaches
+    const { placeBrands } = await import("@/lib/verticals");
+    const placedBrands = await placeBrands(admin).catch(() => 0);
 
     // Live ads, ten brands a call, stalest brands first
     let pulled = 0;
@@ -586,7 +589,7 @@ export async function syncMarket(admin: SupabaseClient, budgetMs = 600_000) {
       return 0;
     });
     const clientsMatched = await matchClients(admin, deadline + 120_000).catch(() => 0);
-    const result = { workspaces: workspaces.length, matched, brandsFound, checked, sorted, clientsMatched, brands, pulled, read, errors: errors.slice(0, 8), discoveredAt: discover && brandsFound ? new Date().toISOString() : last.discoveredAt, samples };
+    const result = { workspaces: workspaces.length, matched, brandsFound, checked, sorted, placedBrands, clientsMatched, brands, pulled, read, errors: errors.slice(0, 8), discoveredAt: discover && brandsFound ? new Date().toISOString() : last.discoveredAt, samples };
     await admin.from("motion_connection").update({ last_sync_at: new Date().toISOString(), last_result: result, error: null }).eq("id", 1);
     return result;
   } catch (e) {

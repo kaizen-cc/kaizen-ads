@@ -1,4 +1,5 @@
 import { autoGtm } from "@/lib/gtm";
+import { keepVerticals } from "@/lib/verticals";
 import { writeMissingFirstRounds } from "@/lib/onboarding";
 import { syncMarket } from "@/lib/market";
 import { isCronRequest } from "@/lib/cron";
@@ -43,6 +44,7 @@ function nyNow() {
  * - kpi: every 2 hours (campaign numbers for the KPI dashboard; no AI, so it's cheap)
  * - brief: 12pm and 6pm
  * - market: 8:30am (live ads from Motion for the Market tab, ready for the morning)
+ * - verticals: every hour (the taxonomy weekly, new clients placed, benchmarks researched a few at a time)
  * - gtm: every hour (a Meta go-to-market strategy for newly onboarded clients once the intake form, call notes and website are in)
  * - calls: every 30 minutes on weekdays 8am to 7pm, every 3 hours otherwise (Gemini and Fireflies notes, promises watched)
  * - clients: every hour (new, archived and upgraded clients from Kaizen Track)
@@ -58,6 +60,7 @@ function due(step: string | null) {
   if (step === "suggest") return !["Sat", "Sun"].includes(weekday) && hour === 8;
   if (step === "clients") return true;
   if (step === "gtm") return true;
+  if (step === "verticals") return true;
   if (step === "market") return hour === 8;
   if (step === "calls") return (businessHours || hour === 18) || (hour % 3 === 0 && minute < 30);
   return false;
@@ -123,6 +126,7 @@ export async function GET(request: Request) {
     // Hourly: Kaizen Track's clients, then any intake forms still waiting to be read (a backfill, a short burst of forms)
     if (step === "calls") return Response.json(await collectCalls(admin));
     if (step === "gtm") return Response.json(await autoGtm(admin, 1));
+    if (step === "verticals") return Response.json(await keepVerticals(admin));
     if (step === "market") return Response.json(await syncMarket(admin));
     if (step === "clients")
       return Response.json({

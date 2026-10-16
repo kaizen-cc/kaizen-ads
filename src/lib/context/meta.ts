@@ -193,12 +193,19 @@ export type MetaAd = MetaSummary & {
 
 // ─── Sync one ad account ────────────────────────────────────────────────────
 
-/** Daily rows since the last sync (90 days the first time, then the last 3 days, which Meta keeps revising). */
+/**
+ * Daily rows since the last sync (the last 3 days, which Meta keeps revising). The first time for an account, and
+ * once for accounts synced before, the last 180 days: the Hall of Fame looks back six months.
+ */
 async function syncDaily(admin: SupabaseClient, clientId: string, adAccountId: string) {
   const act = `act_${adAccountId}`;
-  const { data: last } = await admin.from("meta_ad_daily").select("date").eq("client_id", clientId).order("date", { ascending: false }).limit(1).maybeSingle();
+  const [{ data: last }, { data: c }] = await Promise.all([
+    admin.from("meta_ad_daily").select("date").eq("client_id", clientId).order("date", { ascending: false }).limit(1).maybeSingle(),
+    admin.from("clients").select("meta_backfilled_at").eq("id", clientId).single(),
+  ]);
   const today = new Date();
-  const since = last ? new Date(new Date(last.date).getTime() - 3 * 86_400_000) : new Date(today.getTime() - 90 * 86_400_000);
+  const backfill = !c?.meta_backfilled_at;
+  const since = !last || backfill ? new Date(today.getTime() - 180 * 86_400_000) : new Date(new Date(last.date).getTime() - 3 * 86_400_000);
   const rows = await asyncReport(act, {
     level: "ad",
     time_increment: "1",
@@ -224,6 +231,7 @@ async function syncDaily(admin: SupabaseClient, clientId: string, adAccountId: s
     const { error } = await admin.from("meta_ad_daily").upsert(records.slice(i, i + 500), { onConflict: "ad_id,date" });
     if (error) throw new Error(`Saving Meta days: ${error.message}`);
   }
+  if (backfill) await admin.from("clients").update({ meta_backfilled_at: new Date().toISOString() }).eq("id", clientId);
   return { days: new Set(records.map((r) => r.date)).size, rows: records.length, from: ymd(since) };
 }
 
