@@ -357,7 +357,10 @@ async function Sync({ motion }: { motion: string | null }) {
     <div className="grid gap-4">
       <MotionCard notice={motion} />
       {GROUPS.map(([prefix, name, job, about]) => {
-        const list = rows.filter((r) => (prefix.endsWith(":") ? r.source.startsWith(prefix) : r.source === prefix || r.source.startsWith(`${prefix}:`)));
+        const all = rows.filter((r) => (prefix.endsWith(":") ? r.source.startsWith(prefix) : r.source === prefix || r.source.startsWith(`${prefix}:`)));
+        // Offboarded teammates' inboxes: not synced any more, their email kept as history
+        const offboarded = all.filter((r) => (r.last_result as { offboarded?: boolean } | null)?.offboarded);
+        const list = all.filter((r) => !offboarded.includes(r));
         const failing = list.filter(errorOf);
         const stale = list.filter((r) => freshness(r.last_run_at).tone !== "ok");
         const newest = list.map((r) => r.last_run_at).filter(Boolean).sort().at(-1);
@@ -411,6 +414,14 @@ async function Sync({ motion }: { motion: string | null }) {
                   </li>
                 ))}
               </ul>
+              {offboarded.length > 0 && (
+                <div className="grid gap-1 px-2 pt-2">
+                  <p className="text-[11px] text-faint">
+                    Offboarded · {offboarded.length} {offboarded.length === 1 ? "inbox" : "inboxes"} no longer in Google Workspace. Not synced any more; their email stays as history.
+                  </p>
+                  <p className="text-[11px] text-faint">{offboarded.map((r) => r.source.slice(prefix.length)).join(", ")}</p>
+                </div>
+              )}
             </div>
           </details>
         );

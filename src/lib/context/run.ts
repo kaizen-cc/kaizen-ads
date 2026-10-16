@@ -68,7 +68,13 @@ export async function collectStep(admin: SupabaseClient, step: Step, budgetMs = 
   // Every mailbox keeps its own cursor, so someone new to the org starts with their last 30 days,
   // and a mailbox not reached before the time runs out is simply first in line next run
   const [mailboxes, contacts] = await Promise.all([gmailMailboxes(), contactMap(admin)]);
-  const { data: states } = await admin.from("sync_state").select("source, last_run_at").like("source", "gmail:%");
+  const { data: states } = await admin.from("sync_state").select("source, last_run_at, last_result").like("source", "gmail:%");
+  // Offboarded (suspended, archived or deleted in Google Workspace): no longer synced, their email stays as history.
+  // Marked so Sync health doesn't count them as behind; if they come back, the next sync clears it.
+  const current = new Set(mailboxes.map((m) => `gmail:${m}`));
+  const gone = (states ?? []).filter((s) => !current.has(s.source as string) && !(s.last_result as { offboarded?: boolean } | null)?.offboarded);
+  for (const s of gone)
+    await admin.from("sync_state").update({ last_result: { ...((s.last_result ?? {}) as object), offboarded: true, offboarded_at: new Date().toISOString() } }).eq("source", s.source);
   const last = new Map((states ?? []).map((s) => [s.source as string, (s.last_run_at as string) ?? ""]));
   mailboxes.sort((a, b) => (last.get(`gmail:${a}`) ?? "").localeCompare(last.get(`gmail:${b}`) ?? ""));
   return pool(mailboxes, 6, async (m): Promise<Record<string, unknown>> =>

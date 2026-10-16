@@ -12,10 +12,12 @@ export const maxDuration = 300;
 
 // POST /api/zapier/enrollment — new client form · /upsell — upsell form · /slack-channel — a client channel was just created
 // /intake — the marketing intake form (every answer, as asked) · /offboarding — a client leaving (archived, nothing deleted)
+// /employee-offboarding — a teammate leaving: they can't sign in, their inbox stops syncing (its email stays as history),
+// and the clients they were on are listed to reassign
 // Same secret as Kaizen Track; the enrollment and upsell Zaps post the same data to both apps.
 export async function POST(request: Request, ctx: RouteContext<"/api/zapier/[form]">) {
   const { form } = await ctx.params;
-  if (!["enrollment", "upsell", "slack-channel", "intake", "offboarding"].includes(form)) return Response.json({ error: "Unknown form" }, { status: 404 });
+  if (!["enrollment", "upsell", "slack-channel", "intake", "offboarding", "employee-offboarding"].includes(form)) return Response.json({ error: "Unknown form" }, { status: 404 });
   if (!isZapierRequest(request)) return Response.json({ error: "Not allowed" }, { status: 401 });
 
   try {
@@ -37,6 +39,29 @@ export async function POST(request: Request, ctx: RouteContext<"/api/zapier/[for
       // Read it and write the first round after replying (Zapier doesn't wait a minute)
       if (r.clientId && !r.duplicate) after(() => processIntake(admin, r.id));
       return Response.json({ ok: true, intake: r.id, matched: Boolean(r.clientId), duplicate: r.duplicate });
+    }
+
+    if (form === "employee-offboarding") {
+      const raw = await readRaw(request);
+      const email = Object.values(raw)
+        .map((v) => v.toLowerCase().match(/[\w.+-]+@kaizenmarketing\.agency/)?.[0])
+        .find(Boolean);
+      if (!email) return Response.json({ ok: false, error: "No @kaizenmarketing.agency email in what was sent" }, { status: 422 });
+      const { data: who } = await admin.from("profiles").select("id, full_name, is_active").eq("email", email).maybeSingle();
+      const now = new Date().toISOString();
+      // Their inbox: not synced any more, kept as history (Sync health shows it under Offboarded)
+      const { data: inbox } = await admin.from("sync_state").select("last_result").eq("source", `gmail:${email}`).maybeSingle();
+      if (inbox) await admin.from("sync_state").update({ last_result: { ...((inbox.last_result ?? {}) as object), offboarded: true, offboarded_at: now } }).eq("source", `gmail:${email}`);
+      if (!who) return Response.json({ ok: true, email, profile: "not in Kaizen Ads", inbox: Boolean(inbox) });
+      if (who.is_active) await admin.from("profiles").update({ is_active: false }).eq("id", who.id);
+      // What they were on, for a lead to hand over (assignments are kept so history still shows who did what)
+      const { data: on } = await admin.from("client_assignments").select("role, clients!inner(name, archived_at)").eq("profile_id", who.id).is("clients.archived_at", null);
+      const reassign = (on ?? []).map((a) => `${(a.clients as unknown as { name: string }).name} (${String(a.role).replaceAll("_", " ")})`);
+      await admin.from("integration_events").upsert(
+        { source: "employee-offboarding", idempotency_key: `employee-offboarding:${email}:${now.slice(0, 10)}`, payload: { raw, email, reassign }, status: "processed", processed_at: now },
+        { onConflict: "idempotency_key" },
+      );
+      return Response.json({ ok: true, email, deactivated: who.full_name, inbox: Boolean(inbox), reassign });
     }
 
     if (form === "offboarding") {
