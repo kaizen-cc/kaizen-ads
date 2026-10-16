@@ -10,6 +10,7 @@ import { detectIndustries } from "@/lib/industry";
 import { runStrategist } from "@/lib/suggestions";
 import { runFatigue } from "@/lib/fatigue";
 import { mirrorTrack } from "@/lib/client-sync";
+import { readBackfill } from "@/lib/onboarding";
 import { createClient } from "@/lib/supabase/server";
 
 // Briefings take a while when many clients have news
@@ -110,6 +111,8 @@ export async function GET(request: Request) {
     // Execs, by hand: sort every client without an industry now (&force=1 redoes the AI's own guesses)
     if (step === "industry") return Response.json({ set: await detectIndustries(admin, { force: new URL(request.url).searchParams.get("redo") === "1" }) });
     if (step === "clients") return Response.json(await mirrorTrack(admin));
+    // Execs, by hand: read backfilled intake forms (context only, no first rounds)
+    if (step === "intakes") return Response.json(await readBackfill(admin));
     // Execs, by hand: check every ad for fatigue now
     if (step === "fatigue") return Response.json(await runFatigue(admin));
     if (step === "suggest") return Response.json(await runStrategist(admin, null));

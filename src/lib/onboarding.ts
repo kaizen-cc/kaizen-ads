@@ -78,7 +78,7 @@ const SUMMARY_SCHEMA = {
  * Reads the intake into what the team and every agent need, sets the client's industry (unless the team set one),
  * and has the strategist write the first round. Safe to run again.
  */
-export async function processIntake(admin: SupabaseClient, intakeId: string) {
+export async function processIntake(admin: SupabaseClient, intakeId: string, opts: { firstRound?: boolean } = {}) {
   const { data: intake } = await admin.from("client_intakes").select("id, client_id, answers").eq("id", intakeId).single();
   if (!intake?.client_id) return { status: "unmatched" };
   try {
@@ -100,7 +100,8 @@ export async function processIntake(admin: SupabaseClient, intakeId: string) {
       .or("industry_source.is.null,industry_source.eq.ai");
     // A first round only for a client we make creative for; for anyone else the intake is context and nothing more
     const { data: client } = await admin.from("clients").select("creative_package").eq("id", intake.client_id).single();
-    if (!client?.creative_package) return { status: "read" };
+    // Historic intakes (backfilled) are context only: those clients are already running
+    if (!client?.creative_package || opts.firstRound === false) return { status: "read" };
     const { suggestOnboarding } = await import("@/lib/suggestions");
     await suggestOnboarding(admin, intake.client_id);
     await admin.from("client_intakes").update({ status: "briefed" }).eq("id", intakeId);
@@ -110,4 +111,15 @@ export async function processIntake(admin: SupabaseClient, intakeId: string) {
     await admin.from("client_intakes").update({ status: "failed", error: error.slice(0, 300) }).eq("id", intakeId);
     return { status: "failed", error };
   }
+}
+
+/** Read every intake that hasn't been read yet (a backfill of older answers): context only, no first rounds. */
+export async function readBackfill(admin: SupabaseClient, max = 40) {
+  const { data } = await admin.from("client_intakes").select("id").eq("status", "received").is("summary", null).not("client_id", "is", null).order("received_at").limit(max);
+  let read = 0;
+  for (const x of data ?? []) {
+    const r = await processIntake(admin, x.id, { firstRound: false });
+    if (r.status === "read") read++;
+  }
+  return { read, waiting: (data ?? []).length - read };
 }
