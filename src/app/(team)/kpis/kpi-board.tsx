@@ -10,6 +10,7 @@ import { STATUS, deviationTone, kpiValue, money } from "@/lib/kpi/format";
 import { freshness } from "@/lib/dates";
 import { addKpiTarget, archiveKpiTarget, linkAdAccount, pullClientKpis, saveKpiTarget } from "./actions";
 import { DailyChart, Ladder, PaceBar, paceMeta } from "./kpi-charts";
+import { AuditPanel, type AuditSummary } from "./audit-panel";
 
 export type KpiRow = {
   id: string;
@@ -43,6 +44,7 @@ export type KpiRow = {
   error: string | null;
   computedAt: string | null;
   dataThrough: string | null;
+  audit: AuditSummary;
 };
 
 type Person = { id: string; name: string };
@@ -176,6 +178,7 @@ function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
   );
   return (
     <div className="grid gap-6 border-t border-line bg-bg/40 px-5 py-6 sm:px-6">
+      {r.accountId && <AuditPanel targetId={r.id} audit={r.audit} platform={r.platform} />}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         <div className="grid content-start gap-3">
           <p className="text-xs font-medium uppercase tracking-[0.12em] text-faint">Last 30 days</p>

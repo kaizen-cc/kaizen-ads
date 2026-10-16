@@ -40,6 +40,7 @@ const make = (
     clientStatus: "active",
     platform: "meta",
     accountId: "526528539355910",
+    audit: null,
     label: null,
     conversion,
     conversionLabel: conversionLabel(conversion),

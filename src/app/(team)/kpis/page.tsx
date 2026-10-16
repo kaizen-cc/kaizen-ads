@@ -4,9 +4,10 @@ import { conversionFor, conversionLabel } from "@/lib/kpi/conversions";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { KpiBoard, type KpiRow } from "./kpi-board";
+import type { AuditSummary } from "./audit-panel";
 
-// Pulling one client's numbers from Meta on demand can take a minute
-export const maxDuration = 120;
+// Pulling one client's numbers from Meta on demand can take a minute; an audit runs a few minutes after the click
+export const maxDuration = 800;
 
 type Snap = {
   status: Status | null;
@@ -23,10 +24,12 @@ type Snap = {
   data_through: string | null;
 };
 
+const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
+
 export default async function Kpis() {
   const me = await requireStaff();
   const supabase = await createClient();
-  const [{ data: targets }, { data: snaps }, { data: buyers }, { data: clients }] = await Promise.all([
+  const [{ data: targets }, { data: snaps }, { data: buyers }, { data: clients }, { data: audits }] = await Promise.all([
     supabase
       .from("kpi_targets")
       .select("id, client_id, platform, ad_account_id, label, conversion, custom_action, campaign_match, target, monthly_budget, budget_note, source, owner_id, owner_name, clients!inner(name, slug, status), profiles!kpi_targets_owner_id_fkey(full_name)")
@@ -35,7 +38,28 @@ export default async function Kpis() {
     supabase.from("kpi_snapshots").select("*"),
     supabase.from("profiles").select("id, full_name, role").eq("is_active", true).in("role", ["media_buyer", "head_of_meta"]).order("full_name"),
     supabase.from("clients").select("id, name").neq("status", "offboarded").order("name"),
+    supabase.from("account_audits").select("id, target_id, status, progress, step, created_at, result, done, error, profiles(full_name)").order("created_at", { ascending: false }).limit(400),
   ]);
+  // The latest audit per KPI (a run left "running" 15+ minutes timed out)
+  const auditBy = new Map<string, AuditSummary>();
+  const stale = minutesAgo(15);
+  for (const a of audits ?? []) {
+    if (auditBy.has(a.target_id)) continue;
+    const res = a.result as { verdict?: NonNullable<AuditSummary>["verdict"]; actions?: unknown[] } | null;
+    const timedOut = a.status === "running" && a.created_at < stale;
+    auditBy.set(a.target_id, {
+      id: a.id,
+      status: timedOut ? "failed" : a.status,
+      progress: a.progress,
+      step: a.step,
+      createdAt: a.created_at,
+      by: (a.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
+      verdict: res?.verdict ?? null,
+      actions: res?.actions?.length ?? 0,
+      done: Object.keys((a.done ?? {}) as object).length,
+      error: timedOut ? "It didn't finish in time. Try again." : a.error,
+    });
+  }
   const snapBy = new Map((snaps ?? []).map((s) => [s.target_id as string, s as unknown as Snap]));
 
   const rows: KpiRow[] = (targets ?? [])
@@ -75,6 +99,7 @@ export default async function Kpis() {
         error: s?.error ?? (s ? null : "Not synced yet"),
         computedAt: s?.computed_at ?? null,
         dataThrough: s?.data_through ?? null,
+        audit: auditBy.get(t.id) ?? null,
       };
     })
     .sort((a, b) => a.client.localeCompare(b.client) || (a.label ?? "").localeCompare(b.label ?? ""));

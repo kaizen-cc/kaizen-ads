@@ -80,6 +80,9 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Researches Meta benchmarks for each sub-vertical, with sources", where: "Ideas · Verticals", trigger: "auto", when: "Hourly until done, then every 90 days", labels: ["benchmarks"] },
     { title: "Writes each sub-vertical's playbook: avatars, the angles that land, and the ads that prove them", where: "Ideas · Verticals · Playbook", trigger: "auto", when: "Hourly when something new comes in, or Rebuild", labels: ["playbook"] },
   ],
+  auditor: [
+    { title: "Audits one ad account: why it's where it is against target, and the plan (changes, tests, creative, budget, questions for the client)", where: "KPIs · open a client · AI account audit", trigger: "click", when: "When someone runs an audit", labels: ["audit"] },
+  ],
   coach: [{ title: "Edits another agent's playbook from your feedback", where: "Settings · AI agents · Coach", trigger: "click", when: "When someone coaches an agent", labels: ["coach"] }],
   launcher: [{ title: "Pushes approved ads to Meta, paused, with Kaizen's naming", where: "Board · Ready to launch", trigger: "click", when: "Coming with the Launcher", labels: ["launch"] }],
   fatigue: [{ title: "Flags ads wearing out from their own numbers (no AI call; the strategist writes the refresh)", where: "Overview · Client page · Next for me", trigger: "auto", when: "After every Meta sync", labels: [] }],
