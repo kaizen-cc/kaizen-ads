@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type ContextItem = {
   client_id: string;
-  source: "slack_internal" | "slack_external" | "gmail" | "drive";
+  source: "slack_internal" | "slack_external" | "gmail" | "drive" | "call";
   external_id: string;
   thread_id: string | null;
   occurred_at: string;

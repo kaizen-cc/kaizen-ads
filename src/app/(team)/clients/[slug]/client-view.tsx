@@ -26,6 +26,7 @@ import { CreativePanel } from "./creative-panel";
 import { KpiPanel } from "./kpi-panel";
 import { ArchiveControl } from "./archive-control";
 import { IntakePanel, type IntakeRecord } from "./intake-panel";
+import { CallsPanel, type ClientCall } from "./calls-panel";
 import { FatigueWatch } from "@/components/fatigue-watch";
 import type { WatchRow } from "@/lib/fatigue";
 import type { ClientKpi } from "@/lib/kpi/client";
@@ -88,10 +89,11 @@ export type ClientViewProps = {
   kpis?: ClientKpi[] | null; // performance vs target; null in the design preview
   fatigue?: WatchRow[] | null; // ads wearing out
   intake?: IntakeRecord | null; // the marketing intake form; undefined in the design preview
+  calls?: ClientCall[]; // from Gemini and Fireflies notes; undefined in the design preview
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, can, demo = false, connections, creative = null, kpis = null, fatigue = null, intake }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, can, demo = false, connections, creative = null, kpis = null, fatigue = null, intake, calls }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -228,6 +230,8 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
           )}
 
           {intake !== undefined && <IntakePanel intake={intake} />}
+
+          {calls && <CallsPanel calls={calls} />}
 
           {creative && <CreativePanel data={creative} />}
 

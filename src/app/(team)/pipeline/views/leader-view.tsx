@@ -1,7 +1,8 @@
 import { KpiPulse, type KpiPulseData, AttentionList, FlowStrip, PageHeader, PrimaryAction, Queue, SectionTitle, Stats, TeamLoad, type Alert, type Load, type PhaseKey, type PhaseStat, type QueueItem } from "./shared";
 import type { WatchRow } from "@/lib/fatigue";
 import { FatigueWatch } from "@/components/fatigue-watch";
-import type { OnboardingState } from "@/lib/suggestions";
+import type { CallPromise, OnboardingState } from "@/lib/suggestions";
+import { CallPromises } from "./call-promises";
 import { OnboardingCallout } from "./onboarding-callout";
 import type { SuggestionsState } from "@/lib/suggestions";
 import { SuggestedBriefs } from "./suggested-briefs";
@@ -21,6 +22,7 @@ export type LeaderData = {
   kpis?: KpiPulseData | null;
   fatigue?: WatchRow[] | null;
   onboarding?: OnboardingState | null;
+  callPromises?: CallPromise[] | null;
   clientOptions?: { id: string; name: string }[];
   suggestions?: SuggestionsState | null;
 };
@@ -37,6 +39,8 @@ export function LeaderView(d: LeaderData) {
       />
 
       {d.onboarding && <OnboardingCallout state={d.onboarding} clients={d.clientOptions ?? []} />}
+
+      {d.callPromises && <CallPromises promises={d.callPromises} />}
 
       <Stats
         items={[

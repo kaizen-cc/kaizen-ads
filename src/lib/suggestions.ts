@@ -478,7 +478,7 @@ export async function loadSuggestion(db: SupabaseClient, id: string) {
 export async function loadSuggestions(db: SupabaseClient): Promise<SuggestionsState> {
   const since30 = new Date(Date.now() - 30 * 86_400_000).toISOString();
   const [{ data: rows }, { data: runs }, { data: decided }] = await Promise.all([
-    db.from("creative_suggestions").select(OPEN_COLS).eq("status", "open").not("kind", "in", "(winner,refresh,onboarding)").order("created_at", { ascending: false }).limit(20),
+    db.from("creative_suggestions").select(OPEN_COLS).eq("status", "open").not("kind", "in", "(winner,refresh,onboarding,call)").order("created_at", { ascending: false }).limit(20),
     db.from("suggestion_runs").select("started_at, finished_at").order("started_at", { ascending: false }).limit(1),
     db.from("creative_suggestions").select("status").in("status", ["approved", "declined"]).not("kind", "in", "(winner,refresh)").gte("decided_at", since30),
   ]);
@@ -732,4 +732,91 @@ export async function loadOnboarding(db: SupabaseClient): Promise<OnboardingStat
     }),
     unmatched: (unmatched ?? []).map((u) => ({ id: u.id, name: u.business_name, at: u.received_at })),
   };
+}
+
+/**
+ * A promise from a client call with nothing in motion two business days later: the strategist writes the brief from
+ * the call, for the client's buyer, leads and execs to push into production.
+ */
+export async function suggestFromCall(
+  admin: SupabaseClient,
+  clientId: string,
+  commitment: { id: string; what: string; why: string; kind: string },
+  call: { title: string; occurred_at: string; summary: { summary?: string; clientSaid?: string[]; decisions?: string[] } | null },
+) {
+  const prompt = await promptFor(admin, clientId, [
+    { kind: "offer", weight: 1, line: `Promised on the call "${call.title}" (${call.occurred_at.slice(0, 10)}), not in motion yet`, facts: [commitment.what, commitment.why].filter(Boolean) },
+  ]);
+  if (!prompt) throw new Error("Client not found");
+  const s = call.summary ?? {};
+  const out = await askJson<Out>({
+    agent: "strategist",
+    label: "brief from a call",
+    system: SYSTEM,
+    schema: SCHEMA,
+    prompt: `${prompt}
+
+<the_call>
+"${call.title}" on ${call.occurred_at.slice(0, 10)}
+${s.summary ?? ""}
+${s.clientSaid?.length ? `The client said: ${s.clientSaid.join("; ")}` : ""}
+${s.decisions?.length ? `Decided: ${s.decisions.join("; ")}` : ""}
+</the_call>
+
+<what_we_promised>
+${commitment.what}${commitment.why ? `\nContext: ${commitment.why}` : ""}
+</what_we_promised>
+
+On this call Kaizen promised the above, and two business days later nothing is in production for it. Write the request that delivers exactly what was promised: use what the client said on the call (offer, dates, details, likes and dislikes) and the rest of the client context. Keep it to what was promised; don't expand it. If the call left something to confirm (a price, a date), say so in the brief. suggest: true. kind: "offer". signal: "Promised on the call <date>: <the promise, short>". evidence: 2 to 4 lines from the call. why: two sentences. reply: "".`,
+  });
+  const draft = clean(out.draft);
+  const { data, error } = await admin
+    .from("creative_suggestions")
+    .insert({
+      client_id: clientId,
+      kind: "call",
+      call_commitment_id: commitment.id,
+      signal: out.signal || `Promised on the call ${call.occurred_at.slice(0, 10)}`,
+      evidence: out.evidence.slice(0, 5),
+      why: out.why,
+      draft,
+      original: draft,
+      source: { headline: commitment.what, client: call.title, callAt: call.occurred_at },
+    })
+    .select("id")
+    .single();
+  if (error || !data) throw new Error(error?.message ?? "Couldn't save the brief");
+  return data.id as string;
+}
+
+export type CallPromise = { commitmentId: string; client: string; clientSlug: string; what: string; callTitle: string; callAt: string; dueAt: string; suggestion: OpenSuggestion | null };
+
+/** Promises from calls that turned into briefs and still wait for someone to push them. Read with the viewer's access. */
+export async function loadCallPromises(db: SupabaseClient): Promise<CallPromise[]> {
+  const { data } = await db
+    .from("call_commitments")
+    .select("id, what, due_at, suggestion_id, clients(name, slug), client_calls(title, occurred_at)")
+    .eq("status", "briefed")
+    .order("due_at")
+    .limit(20);
+  const rows = data ?? [];
+  const ids = rows.map((r) => r.suggestion_id).filter(Boolean) as string[];
+  const { data: sugg } = ids.length ? await db.from("creative_suggestions").select(OPEN_COLS).in("id", ids).eq("status", "open") : { data: [] };
+  const open = await toOpen(db, (sugg ?? []) as unknown as Record<string, unknown>[]);
+  return rows
+    .map((r) => {
+      const c = r.clients as unknown as { name: string; slug: string } | null;
+      const call = r.client_calls as unknown as { title: string; occurred_at: string } | null;
+      return {
+        commitmentId: r.id,
+        client: c?.name ?? "",
+        clientSlug: c?.slug ?? "",
+        what: r.what,
+        callTitle: call?.title ?? "A call",
+        callAt: call?.occurred_at ?? r.due_at,
+        dueAt: r.due_at,
+        suggestion: open.find((o) => o.id === r.suggestion_id) ?? null,
+      };
+    })
+    .filter((p) => p.suggestion);
 }

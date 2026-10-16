@@ -1,7 +1,8 @@
 import Link from "next/link";
 import type { WatchRow } from "@/lib/fatigue";
 import { FatigueWatch } from "@/components/fatigue-watch";
-import type { OnboardingState } from "@/lib/suggestions";
+import type { CallPromise, OnboardingState } from "@/lib/suggestions";
+import { CallPromises } from "./call-promises";
 import { OnboardingCallout } from "./onboarding-callout";
 import { DOT, KpiPulse, PageHeader, PrimaryAction, Queue, SectionTitle, Stats, TXT, type KpiPulseData, type QueueItem, type Tone } from "./shared";
 
@@ -21,6 +22,7 @@ export type WorkData = {
   kpis?: KpiPulseData | null; // a media buyer's own accounts
   fatigue?: WatchRow[] | null;
   onboarding?: OnboardingState | null;
+  callPromises?: CallPromise[] | null;
 };
 
 const COPY: Record<WorkVariant, { action: string; fourth: string; fourthHint: string; queueTitle: string; empty: { title: string; body: string } }> = {
@@ -67,6 +69,8 @@ export function WorkView(d: WorkData) {
       />
 
       {d.onboarding && <OnboardingCallout state={d.onboarding} clients={[]} />}
+
+      {d.callPromises && <CallPromises promises={d.callPromises} />}
 
       <Stats
         items={[

@@ -4,7 +4,7 @@ import { loadHome, loadKpiPulse } from "@/lib/home";
 import { roleLabel } from "@/lib/roles";
 import { businessDuration, health, stageInfo, type Stage } from "@/lib/stages";
 import { createClient } from "@/lib/supabase/server";
-import { loadOnboarding, loadSuggestions } from "@/lib/suggestions";
+import { loadCallPromises, loadOnboarding, loadSuggestions } from "@/lib/suggestions";
 import { loadWatchList } from "@/lib/fatigue";
 import { LeaderView } from "./views/leader-view";
 import { PulseView } from "./views/pulse-view";
@@ -24,7 +24,7 @@ export default async function Home() {
   const base = { greeting: greetingFor(now), firstName: me.fullName.split(" ")[0], today: todayLabel(now) };
   const db = await createClient();
   const variantNow = variantFor(me);
-  const [h, kpis, suggestions, fatigue, onboarding, clientOptions] = await Promise.all([
+  const [h, kpis, suggestions, fatigue, onboarding, clientOptions, callPromises] = await Promise.all([
     loadHome(db, me),
     // Ad accounts against target: everyone's for execs and the heads of Meta / Google, a buyer's own otherwise
     me.isExec || (me.isLead && me.role !== "head_of_creative") ? loadKpiPulse(db) : !me.isLead && variantNow === "buyer" ? loadKpiPulse(db, me.id) : Promise.resolve(null),
@@ -36,10 +36,12 @@ export default async function Home() {
     // Execs and leads: every client. A buyer: their own clients (the access rules narrow it)
     me.isExec || me.isLead || variantFor(me) === "buyer" ? loadOnboarding(db) : Promise.resolve(null),
     me.isExec || me.isLead ? db.from("clients").select("id, name").is("archived_at", null).order("name").then(({ data }) => data ?? []) : Promise.resolve([]),
+    // What we promised on calls and haven't started: everyone's for execs and leads, a buyer's own clients for a buyer
+    me.isExec || me.isLead || variantFor(me) === "buyer" ? loadCallPromises(db) : Promise.resolve(null),
   ]);
 
   if (me.isExec) {
-    return <PulseView {...base} vitals={h.vitals} attention={h.attention} phases={h.phases} clients={h.clients} team={h.team} monthElapsed={h.monthElapsed} kpis={kpis} suggestions={suggestions} fatigue={fatigue} onboarding={onboarding} clientOptions={clientOptions} />;
+    return <PulseView {...base} vitals={h.vitals} attention={h.attention} phases={h.phases} clients={h.clients} team={h.team} monthElapsed={h.monthElapsed} kpis={kpis} suggestions={suggestions} fatigue={fatigue} onboarding={onboarding} clientOptions={clientOptions} callPromises={callPromises} />;
   }
 
   if (me.isLead) {
@@ -70,6 +72,7 @@ export default async function Home() {
         fatigue={fatigue}
         onboarding={onboarding}
         clientOptions={clientOptions}
+        callPromises={callPromises}
       />
     );
   }
@@ -132,6 +135,7 @@ export default async function Home() {
       kpis={kpis}
       fatigue={fatigue}
       onboarding={onboarding}
+      callPromises={callPromises}
     />
   );
 }

@@ -79,6 +79,9 @@ export async function approveSuggestion(id: string, draft: SuggestionDraft): Pro
       .eq("id", id);
     // A refresh for a tiring ad: the watch list shows it's being replaced, with the tickets
     const adId = (s.source as { adId?: string } | null)?.adId;
+    // A promise from a call: it's in motion now, with the tickets
+    if (s.kind === "call")
+      await admin.from("call_commitments").update({ status: "in_motion", request_numbers: numbers }).eq("suggestion_id", id);
     if (s.kind === "refresh" && adId)
       await admin.from("ad_fatigue").update({ state: "refreshing", request_numbers: numbers, updated_at: new Date().toISOString() }).eq("client_id", s.client_id).eq("ad_id", adId);
   }
@@ -101,6 +104,8 @@ export async function declineSuggestion(id: string, reason: string, remember: bo
     .select("client_id, draft")
     .single();
   if (error || !s) return { ok: false, error: error?.message ?? "Already decided." };
+  if (adminConfigured())
+    await createAdminClient().from("call_commitments").update({ status: "dismissed", dismissed_by: me.id, dismiss_reason: why.slice(0, 300) }).eq("suggestion_id", id).eq("status", "briefed");
   if (remember)
     await supabase.from("client_memory").insert({ client_id: s.client_id, kind: "note", body: `Strategy: "${(s.draft as SuggestionDraft).title}" was declined: ${why}`.slice(0, 1000), source: "team", created_by: me.id });
   revalidatePath("/pipeline");

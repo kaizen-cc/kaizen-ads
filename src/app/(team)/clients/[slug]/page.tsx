@@ -1,6 +1,7 @@
 import { loadClientKpis } from "@/lib/kpi/client";
 import { loadWatchList } from "@/lib/fatigue";
 import type { IntakeRecord } from "./intake-panel";
+import type { ClientCall } from "./calls-panel";
 import { notFound } from "next/navigation";
 import type { Digest } from "@/lib/ai";
 import { isExecOrLead, requireStaff, seesAllClients } from "@/lib/auth";
@@ -89,12 +90,28 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
     adminConfigured() && keys.length ? createAdminClient().from("sync_state").select("source, last_run_at").in("source", keys) : Promise.resolve({ data: [] as { source: string; last_run_at: string | null }[] }),
     supabase.from("meta_snapshots").select("fetched_at").eq("client_id", client.id).order("fetched_at", { ascending: false }).limit(1).maybeSingle(),
   ]);
-  const [creative, kpis, fatigue, { data: intakeRow }] = await Promise.all([
+  const [creative, kpis, fatigue, { data: intakeRow }, { data: callRows }] = await Promise.all([
     loadClientCreative(supabase, client.id),
     loadClientKpis(supabase, client.id),
     loadWatchList(supabase, { clientId: client.id }),
     supabase.from("client_intakes").select("received_at, status, summary, answers, error").eq("client_id", client.id).order("received_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase
+      .from("client_calls")
+      .select("id, source, title, occurred_at, url, status, summary, call_commitments(id, kind, what, status, request_numbers)")
+      .eq("client_id", client.id)
+      .order("occurred_at", { ascending: false })
+      .limit(12),
   ]);
+  const calls: ClientCall[] = (callRows ?? []).map((c) => ({
+    id: c.id,
+    source: c.source as ClientCall["source"],
+    title: c.title,
+    at: c.occurred_at,
+    url: c.url,
+    status: c.status,
+    summary: (c.summary as ClientCall["summary"]) ?? null,
+    commitments: ((c.call_commitments ?? []) as { id: string; kind: string; what: string; status: string; request_numbers: number[] }[]).map((x) => ({ id: x.id, kind: x.kind, what: x.what, status: x.status, requestNumbers: x.request_numbers ?? [] })),
+  }));
   const intake: IntakeRecord | null = intakeRow
     ? { receivedAt: intakeRow.received_at, status: intakeRow.status, summary: (intakeRow.summary as IntakeRecord["summary"]) ?? null, answers: (intakeRow.answers ?? []) as IntakeRecord["answers"], error: intakeRow.error }
     : null;
@@ -113,6 +130,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
       kpis={kpis}
       fatigue={fatigue}
       intake={intake}
+      calls={calls}
       client={client}
       packageLabel={packageLabel ?? null}
       packages={packages ?? []}

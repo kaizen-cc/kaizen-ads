@@ -17,7 +17,7 @@ import {
 // Folds what's new in Slack, Gmail and Drive into each client's briefing, and makes the request
 // suggestions ahead of time. Clients with nothing new since the last run are skipped.
 
-const LABEL: Record<string, string> = { slack_internal: "Slack (internal)", slack_external: "Slack (with client)", gmail: "Email", drive: "Drive file" };
+const LABEL: Record<string, string> = { slack_internal: "Slack (internal)", slack_external: "Slack (with client)", gmail: "Email", drive: "Drive file", call: "Call notes" };
 
 type Item = { source: string; occurred_at: string; author: string | null; title: string | null; body: string | null; url: string | null; meta: { folder?: string } };
 
@@ -94,7 +94,7 @@ ${activity || "Nothing new in Slack or email."}
 ${unused.map((f) => `- ${f.title} (${f.occurred_at.slice(0, 10)})${(f.meta as { folder?: string })?.folder ? ` in ${(f.meta as { folder?: string }).folder}` : ""} ${f.url}`).join("\n") || "None."}
 </drive_files_last_30_days_not_used_in_a_request>
 
-Update this client's briefing for the creative team. Keep what still holds from the existing briefing (if any), fold in the new activity, and drop anything that's been resolved or contradicted. Treat what the client says in Slack or email as the strongest signal; internal Slack is the team's read on it. Only state what the sources support.
+Update this client's briefing for the creative team. Keep what still holds from the existing briefing (if any), fold in the new activity, and drop anything that's been resolved or contradicted. Treat what the client says on calls, in Slack or in email as the strongest signal (call notes say what was agreed and promised); internal Slack is the team's read on it. Only state what the sources support.
 digest:
 - summary: 2 to 3 sentences on where things stand with this client's creative right now.
 - direction: the current campaign direction in one or two sentences (offers, seasons, launches, focus), or empty if unknown.

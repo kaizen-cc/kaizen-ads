@@ -23,6 +23,9 @@ function tokenFor(subject: string, scope: string) {
   return new JWT({ email: key.client_email, key: key.private_key, scopes: [scope], subject }).getAccessToken().then((r) => r.token!);
 }
 
+/** A Drive read token as someone in the Workspace (their own Drive: Gemini meeting notes). */
+export const googleDriveToken = (user: string) => tokenFor(user, DRIVE_SCOPE);
+
 /** A Drive read token as GOOGLE_DRIVE_USER, for opening reference files linked in requests. */
 export const driveToken = () => {
   const user = process.env.GOOGLE_DRIVE_USER;
