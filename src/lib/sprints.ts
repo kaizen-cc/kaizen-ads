@@ -184,8 +184,14 @@ const CHECK_SCHEMA = {
     message: { type: "string" },
     next_check_days: { type: "integer" },
     actions: { type: "array", items: { type: "object", properties: { n: { type: "integer" }, status: { type: "string", enum: ["looks_done", "partly", "not_done"] }, note: { type: "string" } }, required: ["n", "status", "note"], additionalProperties: false } },
+    learning: {
+      type: "object",
+      properties: { kind: { type: "string", enum: ["none", "prefer", "avoid"] }, body: { type: "string" }, from: { type: "array", items: { type: "integer" } } },
+      required: ["kind", "body", "from"],
+      additionalProperties: false,
+    },
   },
-  required: ["verdict", "message", "next_check_days", "actions"],
+  required: ["verdict", "message", "next_check_days", "actions", "learning"],
   additionalProperties: false,
 };
 
@@ -198,9 +204,18 @@ verdict and message:
 - improving or worse: enough time has passed since the changes to read results. Say what moved, with numbers, and what's next on the list. Don't call a result on 1 to 2 days of data or a handful of results.
 - done: the plan's key moves are done and the KPI is at or better than target. Say so and suggest closing the sprint.
 actions: for each action on the list (by its number), whether the Meta changes show it done (looks_done, partly, not_done) with a short note. Only judge what the changes or ticks show.
+learning: the lesson for the client page, only when it's earned. kind prefer when a completed move clearly improved results with enough data to trust it (a week or more, real volume); kind avoid when a change clearly made it worse. body: one sentence written as a rule for next time ("Consolidating to one broad ad set brought cost per purchase down for this account; keep it consolidated"). from: the numbers of the actions it came from. Otherwise kind none and body empty. Never repeat a lesson already learned from the same actions.
 Never invent changes or numbers. Refer to people by role, never by name. No em dashes.`;
 
 const fmt = (k: Kpi, v: number | null) => (v == null ? "no results" : k.roas ? `${v}x ROAS` : `$${v} per ${k.label.toLowerCase().replace(/s$/, "")}`);
+
+type ActionForCheck = { status: string; done_at: string | null; source: string | null; learned: boolean | null; title: string; watch: string | null; note: string | null; answers: unknown };
+/** One action as the check reads it: status, who added it, how to judge it, and the buyer's notes and answers. */
+function actionLine(x: ActionForCheck, i: number) {
+  const qa = (x.answers ?? []) as { q: string; a: string }[];
+  const tags = [x.status, x.done_at ? `ticked ${x.done_at.slice(0, 10)}` : "", x.source === "buyer" ? "added by the buyer" : "", x.learned ? "lesson already learned" : ""].filter(Boolean).join(", ");
+  return `${i + 1}. [${tags}] ${x.title}${x.watch ? ` · judge it by: ${x.watch}` : ""}${x.note ? ` (buyer's note: ${x.note})` : ""}${qa.length ? ` (context: ${qa.map((y) => `${y.q} ${y.a}`).join("; ")})` : ""}`;
+}
 
 /** One check on one sprint: what changed, what the buyer did, and what to tell them. */
 export async function checkSprint(admin: SupabaseClient, sprintId: string) {
@@ -211,7 +226,7 @@ export async function checkSprint(admin: SupabaseClient, sprintId: string) {
   const [kpi, setupNow, { data: actions }, { data: audit }] = await Promise.all([
     kpiNow(admin, s.target_id),
     metaConfigured() && account ? accountSetup(account).catch(() => null) : Promise.resolve(null),
-    admin.from("sprint_actions").select("id, title, why, status, note, done_at, \"when\"").eq("sprint_id", sprintId).order("sort_order"),
+    admin.from("sprint_actions").select("id, title, why, status, note, done_at, \"when\", watch, answers, source, learned").eq("sprint_id", sprintId).order("sort_order"),
     s.audit_id ? admin.from("account_audits").select("result").eq("id", s.audit_id).maybeSingle() : Promise.resolve({ data: null }),
   ]);
   const changes = [...setupChanges(s.setup as AccountSetup | null, setupNow), ...(account ? await adChanges(admin, s.client_id, account, since) : [])];
@@ -220,7 +235,13 @@ export async function checkSprint(admin: SupabaseClient, sprintId: string) {
   const r = audit?.result as AuditResult | null;
   const days = Math.max(1, Math.round((Date.now() - Date.parse(s.started_at)) / DAY));
 
-  const out = await askJson<{ verdict: "no_action" | "wrong_move" | "on_track" | "improving" | "worse" | "done"; message: string; next_check_days: number; actions: { n: number; status: string; note: string }[] }>({
+  const out = await askJson<{
+    verdict: "no_action" | "wrong_move" | "on_track" | "improving" | "worse" | "done";
+    message: string;
+    next_check_days: number;
+    actions: { n: number; status: string; note: string }[];
+    learning: { kind: "none" | "prefer" | "avoid"; body: string; from: number[] };
+  }>({
     agent: "auditor",
     label: `sprint check ${(s.clients as unknown as { name: string } | null)?.name ?? ""}`,
     system: CHECK_SYSTEM,
@@ -237,7 +258,7 @@ ${r ? `${r.verdict.headline}\n${r.diagnosis}\nRoot causes: ${r.causes.map((c) =>
 </what_the_audit_found>
 
 <action_list>
-${(actions ?? []).map((x, i) => `${i + 1}. [${x.status}${x.done_at ? `, ticked ${x.done_at.slice(0, 10)}` : ""}] ${x.title}${x.note ? ` (buyer's note: ${x.note})` : ""}`).join("\n") || "(empty)"}
+${(actions ?? []).map((x, i) => actionLine(x, i)).join("\n") || "(empty)"}
 </action_list>
 
 <changes_in_meta_since_last_check>
@@ -254,6 +275,12 @@ ${ticked.map((x) => `- ${x.title}`).join("\n") || "(nothing)"}
   for (const u of out.actions) {
     const x = (actions ?? [])[u.n - 1];
     if (x) await admin.from("sprint_actions").update({ ai_note: `${u.status === "looks_done" ? "Looks done in Meta" : u.status === "partly" ? "Partly done" : "Not seen in Meta yet"}: ${u.note}`.slice(0, 400) }).eq("id", x.id);
+  }
+  // The learning loop: what worked (or backfired) goes to the client page, once per move
+  if (out.learning?.kind && out.learning.kind !== "none" && out.learning.body.trim()) {
+    await admin.from("client_memory").insert({ client_id: s.client_id, kind: out.learning.kind, source: "sprint", created_by: s.buyer_id, body: out.learning.body.replace(/\s*—\s*/g, ", ").slice(0, 1000) });
+    const ids = out.learning.from.map((n) => (actions ?? [])[n - 1]?.id).filter(Boolean) as string[];
+    if (ids.length) await admin.from("sprint_actions").update({ learned: true }).in("id", ids);
   }
   await admin.from("optimization_sprints").update({ latest: kpi, setup: setupNow ?? s.setup, last_check_at: new Date().toISOString(), next_check_at: next }).eq("id", sprintId);
   return out.verdict;
@@ -360,4 +387,111 @@ export async function writeClientReport(admin: SupabaseClient, auditId: string):
   const clean = JSON.parse(JSON.stringify(out).replace(/\s*—\s*/g, ", ")) as ClientReport;
   await admin.from("account_audits").update({ client_report: clean }).eq("id", auditId);
   return clean;
+}
+
+// ─── Moves someone adds ─────────────────────────────────────────────────────
+
+const MOVE_SCHEMA = {
+  type: "object",
+  properties: {
+    title: { type: "string" },
+    steps: { type: "array", items: { type: "string" } },
+    why: { type: "string" },
+    impact: { type: "string" },
+    watch: { type: "string" },
+    questions: { type: "array", items: { type: "string" } },
+  },
+  required: ["title", "steps", "why", "impact", "watch", "questions"],
+  additionalProperties: false,
+};
+
+const MOVE_SYSTEM = `You are Kaizen's Media Buyer agent. A buyer is adding their own move to an account's optimization sprint, in their own words. Turn it into a move the daily check can follow:
+title: short and imperative, specific to the account. steps: 2 to 5 short imperative lines (what exactly to change, where). why: how it should help, tied to what the audit found. impact: what it should move and roughly how much. watch: what the daily check should look for to judge it (which campaign or ad set, which number, after how long).
+questions: 0 to 3 short questions only where the answer changes how to judge it (which campaign, what budget, what it replaces, when it goes live). Ask nothing you can work out from the context. If the move goes against the audit or Kaizen's playbooks, keep it but say so in why, plainly.
+Use the buyer's intent; never invent numbers. Refer to people by role. No em dashes.`;
+
+type Move = { title: string; steps: string[]; why: string; impact: string; watch: string; questions: string[] };
+const noDash = (x: string) => x.replace(/\s*—\s*/g, ", ");
+
+async function sprintContext(admin: SupabaseClient, sprintId: string) {
+  const { data: s } = await admin.from("optimization_sprints").select("audit_id, baseline, latest, clients(name)").eq("id", sprintId).single();
+  const { data: audit } = s?.audit_id ? await admin.from("account_audits").select("result").eq("id", s.audit_id).maybeSingle() : { data: null };
+  const { data: actions } = await admin.from("sprint_actions").select("title, status").eq("sprint_id", sprintId).order("sort_order");
+  const r = audit?.result as AuditResult | null;
+  const k = s?.latest as Kpi | undefined;
+  return [
+    `<sprint client="${(s?.clients as unknown as { name: string } | null)?.name ?? ""}">`,
+    `KPI now: ${k ? fmt(k, k.value) : "?"} over 14 days; target ${k ? fmt(k, k.target) : "?"}.`,
+    r ? `What the audit found: ${r.verdict.headline} ${r.causes.map((c) => c.title).join("; ")}` : "",
+    `On the list already: ${(actions ?? []).map((x) => `${x.title} [${x.status}]`).join("; ") || "nothing"}`,
+    "</sprint>",
+  ].join("\n");
+}
+
+/** A move someone adds in their own words: fleshed out, with questions where the check needs more to follow it. */
+export async function addOwnMove(admin: SupabaseClient, sprintId: string, text: string, by: string) {
+  const out = await askJson<Move>({
+    agent: "auditor",
+    label: "sprint add move",
+    system: MOVE_SYSTEM,
+    schema: MOVE_SCHEMA,
+    maxTokens: 6000,
+    prompt: `${await sprintContext(admin, sprintId)}\n\n<the_buyer_adds>\n${text.trim().slice(0, 2000)}\n</the_buyer_adds>`,
+  });
+  const { data, error } = await admin
+    .from("sprint_actions")
+    .insert({
+      sprint_id: sprintId,
+      source: "buyer",
+      added_by: by,
+      title: noDash(out.title),
+      steps: out.steps.map(noDash),
+      why: noDash(out.why),
+      impact: noDash(out.impact),
+      watch: noDash(out.watch),
+      questions: out.questions.slice(0, 3),
+      note: text.trim().slice(0, 1000),
+      when: "now",
+      owner: "media_buyer",
+      sort_order: 500,
+    })
+    .select("id")
+    .single();
+  if (error || !data) throw new Error(error?.message ?? "Couldn't add it");
+  return data.id as string;
+}
+
+/** The answers to a move's questions: the move is sharpened with them, and the daily check reads them. */
+export async function answerMove(admin: SupabaseClient, actionId: string, answers: string[]) {
+  const { data: a } = await admin.from("sprint_actions").select("sprint_id, title, steps, why, impact, watch, questions, answers, note").eq("id", actionId).single();
+  if (!a) throw new Error("Move not found");
+  const qs = (a.questions ?? []) as string[];
+  const qa = [...((a.answers ?? []) as { q: string; a: string }[]), ...qs.map((q, i) => ({ q, a: (answers[i] ?? "").trim() })).filter((x) => x.a)];
+  const out = await askJson<Move>({
+    agent: "auditor",
+    label: "sprint add move",
+    system: MOVE_SYSTEM,
+    schema: MOVE_SCHEMA,
+    maxTokens: 6000,
+    prompt: [
+      await sprintContext(admin, a.sprint_id),
+      "",
+      "<the_move>",
+      a.title,
+      `Steps: ${((a.steps ?? []) as string[]).join(" / ")}`,
+      `Why: ${a.why ?? ""} · Watch: ${a.watch ?? ""}`,
+      `In the buyer's words: ${a.note ?? ""}`,
+      "</the_move>",
+      "",
+      "<the_buyer_answered>",
+      qa.map((x) => `Q: ${x.q}\nA: ${x.a}`).join("\n"),
+      "</the_buyer_answered>",
+      "",
+      "Sharpen the move with these answers. Ask again only if something essential is still missing.",
+    ].join("\n"),
+  });
+  await admin
+    .from("sprint_actions")
+    .update({ title: noDash(out.title), steps: out.steps.map(noDash), why: noDash(out.why), impact: noDash(out.impact), watch: noDash(out.watch), questions: out.questions.slice(0, 2), answers: qa })
+    .eq("id", actionId);
 }

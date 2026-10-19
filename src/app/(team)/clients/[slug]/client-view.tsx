@@ -44,6 +44,8 @@ const fmt = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "Ameri
 const chip = "inline-flex items-center rounded-full px-2.5 py-1 text-xs";
 const row = "flex items-start justify-between gap-3 rounded-[8px] bg-surface-2/70 px-4 py-3 text-sm";
 
+const MEMORY_SOURCE: Record<string, string> = { client: "Client said", team: "Team", review: "From review", copy: "From copy", lab: "Ads Lab", audit: "Account audit", sprint: "Optimization sprint" };
+
 export type ClientViewProps = {
   client: {
     id: string;
@@ -270,7 +272,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                       <span className="grid min-w-0 gap-0.5">
                         <span className="leading-relaxed">{m.body}</span>
                         <span className="text-xs text-faint">
-                          {m.source === "client" ? "Client said" : "Team"}
+                          {MEMORY_SOURCE[m.source] ?? "Team"}
                           {m.by ? ` · ${m.by}` : ""}
                         </span>
                       </span>

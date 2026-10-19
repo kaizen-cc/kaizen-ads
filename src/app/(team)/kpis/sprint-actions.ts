@@ -114,3 +114,38 @@ export async function prepareClientReport(auditId: string): Promise<R> {
     return fail(e, "Couldn't write the client version");
   }
 }
+
+/** A move added in someone's own words: the system fleshes it out and may ask a few questions about it. */
+export async function addMove(sprintId: string, text: string): Promise<R> {
+  const me = await requireStaff();
+  if (text.trim().length < 6) return { ok: false, error: "Say a bit more about the move." };
+  const supabase = await createClient();
+  const { data } = await supabase.from("optimization_sprints").select("id").eq("id", sprintId).eq("status", "active").maybeSingle();
+  if (!data) return { ok: false, error: "This sprint isn't open." };
+  if (!adminConfigured()) return { ok: false, error: "Server key missing." };
+  try {
+    const { addOwnMove } = await import("@/lib/sprints");
+    await addOwnMove(createAdminClient(), sprintId, text, me.id);
+    revalidatePath(`/kpis/sprint/${sprintId}`);
+    return { ok: true };
+  } catch (e) {
+    return fail(e, "Couldn't add the move");
+  }
+}
+
+/** Answers to the questions on a move; the move is sharpened with them. */
+export async function answerQuestions(actionId: string, answers: string[]): Promise<R> {
+  await requireStaff();
+  const supabase = await createClient();
+  const { data } = await supabase.from("sprint_actions").select("id").eq("id", actionId).maybeSingle();
+  if (!data) return { ok: false, error: "You don't work on this client." };
+  if (!adminConfigured()) return { ok: false, error: "Server key missing." };
+  try {
+    const { answerMove } = await import("@/lib/sprints");
+    await answerMove(createAdminClient(), actionId, answers);
+    revalidatePath("/kpis");
+    return { ok: true };
+  } catch (e) {
+    return fail(e, "Couldn't save the answers");
+  }
+}

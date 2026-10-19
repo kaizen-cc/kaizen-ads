@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { checkNow, closeSprint, setActionStatus, watchSprint } from "../../sprint-actions";
+import { addMove, answerQuestions, checkNow, closeSprint, setActionStatus, watchSprint } from "../../sprint-actions";
 
 export type SprintAction = {
   id: string;
@@ -18,7 +18,103 @@ export type SprintAction = {
   aiNote: string | null;
   doneAt: string | null;
   doneBy: string | null;
+  source: "audit" | "buyer";
+  addedBy: string | null;
+  watch: string | null;
+  questions: string[];
+  learned: boolean;
 };
+
+/** Questions the system still has about a move someone added, answered right on it. */
+function Questions({ a }: { a: SprintAction }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [answers, setAnswers] = useState<string[]>(a.questions.map(() => ""));
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="grid gap-2 rounded-[12px] border border-brand/30 bg-brand-soft/40 p-3">
+      <p className="text-xs font-medium">A few questions so the daily check can follow this move</p>
+      {a.questions.map((q, i) => (
+        <label key={i} className="grid gap-1 text-xs text-muted">
+          {q}
+          <input
+            value={answers[i]}
+            onChange={(e) => setAnswers(answers.map((x, j) => (j === i ? e.target.value : x)))}
+            className="h-9 rounded-[10px] border border-line bg-bg px-3 text-sm text-fg"
+          />
+        </label>
+      ))}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          disabled={pending || answers.every((x) => !x.trim())}
+          onClick={() =>
+            start(async () => {
+              const r = await answerQuestions(a.id, answers);
+              if (!r.ok) return setError(r.error);
+              router.refresh();
+            })
+          }
+          className="h-8 rounded-full bg-fg px-4 text-xs text-bg disabled:opacity-50"
+        >
+          {pending ? "Sharpening the move…" : "Answer"}
+        </button>
+        {error && <span className="text-xs text-bad">{error}</span>}
+      </div>
+    </div>
+  );
+}
+
+/** Add a move in your own words; the system fills in the steps, why and how to judge it, and asks what it needs. */
+export function AddMove({ sprintId }: { sprintId: string }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  if (!open)
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="rounded-[16px] border border-dashed border-line px-4 py-3 text-left text-sm text-muted transition-colors hover:border-fg/30 hover:text-fg">
+        + Add a move to the list
+      </button>
+    );
+  return (
+    <div className="grid gap-3 rounded-[16px] border border-line bg-surface p-4">
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={3}
+        autoFocus
+        placeholder="What are you going to do, in your own words (e.g. move $20 a day from the prevention campaign to the treatment ad set and test a new 15% off hook)"
+        className="rounded-[10px] border border-line bg-bg px-3 py-2 text-sm"
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          disabled={pending || text.trim().length < 6}
+          onClick={() =>
+            start(async () => {
+              setError(null);
+              const r = await addMove(sprintId, text);
+              if (!r.ok) return setError(r.error);
+              setText("");
+              setOpen(false);
+              router.refresh();
+            })
+          }
+          className="h-9 rounded-full bg-fg px-4 text-sm text-bg disabled:opacity-50"
+        >
+          {pending ? "Fleshing it out…" : "Add to the list"}
+        </button>
+        <button type="button" onClick={() => setOpen(false)} className="h-9 px-3 text-sm text-faint hover:text-fg">
+          Cancel
+        </button>
+        <span className="text-xs text-faint">The system adds the steps, why it should help and what the daily check will look for, and asks if it needs more.</span>
+        {error && <span className="text-xs text-bad">{error}</span>}
+      </div>
+    </div>
+  );
+}
 
 const OWNER: Record<string, string> = { media_buyer: "Media buyer", creative: "Creative team", client: "Client", strategist: "Strategist" };
 const WHEN: Record<string, string> = { now: "Today", this_week: "This week", next: "Next" };
@@ -61,6 +157,9 @@ export function ActionRow({ a, readOnly }: { a: SprintAction; readOnly: boolean 
             {a.owner && <span className="rounded-full bg-bg px-2 py-0.5 text-muted">{OWNER[a.owner] ?? a.owner}</span>}
             {a.status === "doing" && <span className="rounded-full bg-warn-soft px-2 py-0.5 text-warn">In progress</span>}
             {a.status === "skipped" && <span className="rounded-full border border-line px-2 py-0.5 text-faint">Skipped</span>}
+            {a.source === "buyer" && <span className="rounded-full bg-bg px-2 py-0.5 text-muted">Added{a.addedBy ? ` by ${a.addedBy}` : ""}</span>}
+            {a.questions.length > 0 && <span className="rounded-full bg-brand-soft px-2 py-0.5 text-brand-text">{a.questions.length} question{a.questions.length === 1 ? "" : "s"}</span>}
+            {a.learned && <span className="rounded-full bg-ok-soft px-2 py-0.5 text-ok">Lesson saved to the client page</span>}
             {done && a.doneBy && <span className="text-faint">Done by {a.doneBy}</span>}
           </span>
         </button>
@@ -79,6 +178,11 @@ export function ActionRow({ a, readOnly }: { a: SprintAction; readOnly: boolean 
         )}
       </div>
       {a.aiNote && <p className="ml-9 rounded-[10px] bg-bg/60 px-3 py-2 text-xs leading-relaxed text-muted">Last check: {a.aiNote}</p>}
+      {!readOnly && a.questions.length > 0 && a.status !== "done" && (
+        <div className="ml-9">
+          <Questions a={a} />
+        </div>
+      )}
       {open && (
         <div className="ml-9 grid gap-3">
           {a.steps.length > 0 && (
@@ -93,6 +197,7 @@ export function ActionRow({ a, readOnly }: { a: SprintAction; readOnly: boolean 
           )}
           {a.why && <p className="text-xs leading-relaxed text-muted">{a.why}</p>}
           {a.impact && <p className="text-xs text-ok">{a.impact}</p>}
+          {a.watch && <p className="text-xs text-muted">How the check judges it: {a.watch}</p>}
           {!readOnly && (
             <div className="flex flex-wrap items-center gap-2">
               <input

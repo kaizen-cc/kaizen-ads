@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { ActionRow, CheckNow, CloseSprint, WatchToggle, type SprintAction } from "./sprint-parts";
+import { ActionRow, AddMove, CheckNow, CloseSprint, WatchToggle, type SprintAction } from "./sprint-parts";
 
 export const metadata: Metadata = { title: "Optimization sprint" };
 export const maxDuration = 300;
@@ -34,7 +34,7 @@ export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id
     .maybeSingle();
   if (!s) notFound();
   const [{ data: actions }, { data: checks }, { data: watchers }] = await Promise.all([
-    supabase.from("sprint_actions").select("id, title, area, owner, \"when\", steps, why, impact, status, note, ai_note, done_at, profiles(full_name)").eq("sprint_id", id).order("sort_order"),
+    supabase.from("sprint_actions").select("id, title, area, owner, \"when\", steps, why, impact, status, note, ai_note, done_at, source, watch, questions, learned, profiles!sprint_actions_done_by_fkey(full_name), adder:profiles!sprint_actions_added_by_fkey(full_name)").eq("sprint_id", id).order("sort_order"),
     supabase.from("sprint_checks").select("id, verdict, message, changes, kpi, next_check_at, created_at").eq("sprint_id", id).order("created_at", { ascending: false }).limit(60),
     (s.watcher_ids as string[]).length ? supabase.from("profiles").select("full_name").in("id", s.watcher_ids as string[]) : Promise.resolve({ data: [] }),
   ]);
@@ -55,6 +55,11 @@ export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id
     aiNote: a.ai_note,
     doneAt: a.done_at,
     doneBy: (a.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
+    source: (a.source ?? "audit") as SprintAction["source"],
+    addedBy: (a.adder as unknown as { full_name: string } | null)?.full_name ?? null,
+    watch: a.watch,
+    questions: (a.questions ?? []) as string[],
+    learned: Boolean(a.learned),
   }));
   const counted = list.filter((a) => a.status !== "skipped");
   const done = counted.filter((a) => a.status === "done").length;
@@ -125,6 +130,7 @@ export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id
             <h2 className="font-heading text-xl">Action list</h2>
             <p className="text-xs text-faint">Tick moves off as you make them; the next check reads your notes</p>
           </div>
+          {active && <AddMove sprintId={id} />}
           {list.length ? (
             <>
               {/* Open moves first (in progress, then to do); finished ones drop to the bottom */}

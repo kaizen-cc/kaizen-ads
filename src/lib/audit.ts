@@ -30,6 +30,8 @@ export type AuditResult = {
   watchouts?: { title: string; why: string }[];
   watch: string[];
   questions: string[];
+  /** Lessons this audit added to the client page */
+  learnings?: { kind: "avoid" | "prefer" | "note"; body: string; resurfaced: boolean }[];
 };
 
 /** One milestone of the audit, as it really happens. */
@@ -45,6 +47,7 @@ const FOUND_SCHEMA = obj({
   diagnosis: S,
   causes: list(obj({ title: S, area: AREA, severity: { type: "string", enum: ["high", "medium", "low"] }, confidence: { type: "string", enum: ["high", "medium", "low"] }, evidence: list(S) })),
   tracking: list(S),
+  learnings: list(obj({ kind: { type: "string", enum: ["avoid", "prefer", "note"] }, body: S, resurfaced: { type: "boolean" } })),
 });
 const PLAN_SCHEMA = obj({
   actions: list(
@@ -77,7 +80,8 @@ This pass is "Here's what I found": why the account is where it is against its K
 verdict: status (off: well outside target; at_risk: close or sliding; on_track; winning), a headline in one line ("Cost per purchase doubled when two winning ads tired and nothing replaced them"), and a 2 or 3 sentence summary.
 diagnosis: 2 to 4 short paragraphs, first person, on why the metrics aren't hitting the KPI (or why they are). Separate cause from symptom. Use the numbers. Say what changed and when.
 causes: the root causes, most important first: area, severity, how confident you are (low when the data is thin), and evidence lines with real numbers and the names of campaigns, ad sets or ads.
-tracking: anything that looks like a tracking or attribution problem (results that don't add up, a pixel event missing, attribution windows mixed). Empty if none.`;
+tracking: anything that looks like a tracking or attribution problem (results that don't add up, a pixel event missing, attribution windows mixed). Empty if none.
+learnings: 2 to 4 lasting lessons about this account for the client page, so the team and every agent remember them next time: what keeps going wrong (kind avoid), what works for this account (kind prefer), or a fact to keep in mind (kind note). Each one sentence, written as a rule that will still be true in a month ("Prevention angles haven't converted for this account; keep budget on treatment-urgency creative"), never this week's numbers. Read the client memory you were given first: don't repeat a lesson that's already there. If a problem it already warns about has happened again, write it again with resurfaced true and say it came back ("Resurfaced: …").`;
 
 const PLAN_SYSTEM = `${BASE}
 
@@ -446,7 +450,7 @@ Today is ${new Date().toISOString().slice(0, 10)}.`;
     // 6. What I found
     await m.start("found");
     let last = 0;
-    const found = await askJson<Pick<AuditResult, "verdict" | "diagnosis" | "causes" | "tracking">>({
+    const found = await askJson<Pick<AuditResult, "verdict" | "diagnosis" | "causes" | "tracking"> & { learnings: { kind: "avoid" | "prefer" | "note"; body: string; resurfaced: boolean }[] }>({
       agent: "auditor",
       label: `audit ${client.name} · findings`,
       system: FOUND_SYSTEM,
@@ -460,6 +464,20 @@ Today is ${new Date().toISOString().slice(0, 10)}.`;
       prompt: `${context}\n\nAudit ${client.name}'s account: here's what you found.`,
     });
     await m.finish("found", found.verdict.headline);
+    // The learning loop: what this audit taught us goes into client memory, which every agent reads from now on
+    const lessons = (found.learnings ?? []).filter((l) => l.body.trim());
+    if (lessons.length) {
+      const { data: run } = await admin.from("account_audits").select("created_by").eq("id", id).single();
+      await admin.from("client_memory").insert(
+        lessons.map((l) => ({
+          client_id: a.client_id,
+          kind: l.kind,
+          source: "audit",
+          created_by: run?.created_by ?? null,
+          body: `${l.resurfaced && !/^resurfaced/i.test(l.body) ? "Resurfaced: " : ""}${l.body}`.replace(/\s*—\s*/g, ", ").slice(0, 1000),
+        })),
+      );
+    }
 
     // 7. What I'd do, and what to watch out for
     await m.start("plan");
@@ -492,7 +510,7 @@ Now write what you'd do if you were the buyer, and what you'd watch out for.`,
         status: "ready",
         step: null,
         progress: 100,
-        result: clean({ ...found, ...plan }),
+        result: clean({ ...found, ...plan, learnings: lessons }),
         inputs: { days: d.days, ads: d.ads, campaigns: setup?.campaigns.length ?? null, adsets: setup?.adsets.length ?? null, fatigue: fatigue?.length ?? 0, hallOfFame: fame?.length ?? 0, playbook: Boolean(playbook), market: Boolean(market), benchmarks: Boolean(bm), liveSetup: Boolean(setup) },
         finished_at: new Date().toISOString(),
       })

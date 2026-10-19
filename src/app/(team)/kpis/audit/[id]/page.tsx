@@ -285,6 +285,28 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
         </div>
       </Section>
 
+      {(r.learnings ?? []).length > 0 && (
+        <section className="grid gap-3 rounded-[18px] border border-line bg-surface p-6">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="font-heading text-lg">Added to the client page</h3>
+            <Link href={`/clients/${client.slug}`} className="text-xs text-muted hover:text-fg">
+              Open the client page →
+            </Link>
+          </div>
+          <p className="text-[13px] text-muted">Lessons from this audit, now in client memory: every agent and the next audit read them, so the same problems don&apos;t slip by twice.</p>
+          <ul className="grid gap-2">
+            {(r.learnings ?? []).map((l, i) => (
+              <li key={i} className="flex gap-2 text-sm leading-relaxed">
+                <span className={`mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-[10px] ${l.kind === "avoid" ? "bg-bad-soft text-bad" : l.kind === "prefer" ? "bg-ok-soft text-ok" : "bg-surface-2 text-muted"}`}>
+                  {l.resurfaced ? "Came back" : l.kind === "avoid" ? "Avoid" : l.kind === "prefer" ? "Works" : "Note"}
+                </span>
+                <span>{l.body}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <footer className="grid gap-4 border-t border-line pt-6 text-xs text-faint">
         {((a.steps ?? []) as { key: string; label: string; status: string; detail: string | null }[]).length > 0 && (
           <div className="grid gap-2">
