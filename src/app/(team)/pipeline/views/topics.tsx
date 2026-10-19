@@ -53,7 +53,7 @@ export function TopicDeck({ tiles }: { tiles: TopicTile[] }) {
   const open = useOpen();
   if (!tiles.length) return null;
   return (
-    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
+    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-[repeat(auto-fit,minmax(170px,1fr))]">
       {tiles.map((t) => {
         const tone = TONE[t.tone];
         return (
