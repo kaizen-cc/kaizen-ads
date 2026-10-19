@@ -81,6 +81,10 @@ async function moveWork(admin: SupabaseClient, clientId: string, fromId: string 
 export async function handOff(admin: SupabaseClient, clientId: string, fromId: string | null, toId: string | null, byId: string | null, via: "app" | "sheet" | "form") {
   if (!toId || toId === fromId) return null;
   const moved = await moveWork(admin, clientId, fromId, toId);
+  // No handoff for someone who hasn't signed in to Kaizen Ads yet (the team is still being onboarded): the work
+  // still moves to them, but there's nobody to read a doc
+  const { data: buyer } = await admin.from("profiles").select("auth_user_id").eq("id", toId).maybeSingle();
+  if (!buyer?.auth_user_id) return null;
   const { data } = await admin.from("account_handoffs").insert({ client_id: clientId, from_id: fromId, to_id: toId, by_id: byId, via, moved }).select("id").single();
   return (data?.id as string | undefined) ?? null;
 }

@@ -55,7 +55,15 @@ export type InsightRow = Record<string, unknown> & {
  * This is how Meta wants heavy reports (reach, many days, ad level) requested.
  */
 export async function asyncReport(act: string, params: Record<string, string>, timeoutMs = 240_000): Promise<InsightRow[]> {
-  const { report_run_id: id } = await graph<{ report_run_id: string }>(`${act}/insights`, params, "POST");
+  let id: string;
+  try {
+    ({ report_run_id: id } = await graph<{ report_run_id: string }>(`${act}/insights`, params, "POST"));
+  } catch (e) {
+    // Some accounts are shared with our system user in a way that refuses background reports but still answers a
+    // plain read (their KPIs come through). Read the same report page by page instead
+    if (!/unsupported post request|missing permissions/i.test(e instanceof Error ? e.message : "")) throw e;
+    return pagedReport(act, params);
+  }
   const until = Date.now() + timeoutMs;
   for (;;) {
     const job = await graph<{ async_status: string; async_percent_completion: number }>(id, { fields: "async_status,async_percent_completion" });
@@ -72,6 +80,19 @@ export async function asyncReport(act: string, params: Record<string, string>, t
     rows.push(...page.data);
     after = page.paging?.next ? (page.paging.cursors?.after ?? "") : "";
   } while (after);
+  return rows;
+}
+
+/** The same report read directly, a page at a time (smaller pages, so Meta answers within its time limit). */
+async function pagedReport(act: string, params: Record<string, string>): Promise<InsightRow[]> {
+  const rows: InsightRow[] = [];
+  let after = "";
+  for (let page = 0; page < 200; page++) {
+    const r = await graph<{ data: InsightRow[]; paging?: { cursors?: { after?: string }; next?: string } }>(`${act}/insights`, { ...params, limit: "200", ...(after ? { after } : {}) });
+    rows.push(...r.data);
+    after = r.paging?.next ? (r.paging.cursors?.after ?? "") : "";
+    if (!after) break;
+  }
   return rows;
 }
 
