@@ -343,6 +343,10 @@ const COVER_SCHEMA = {
 type CoverTicket = { number: number; title: string; brief: string | null; created_at: string };
 type CoverTask = { gid: string; name: string; notes: string | null; section: string | null; asana_created_at: string };
 
+// A task made the same day just before the call is often the same work (a brief written ahead of the meeting)
+const GRACE_MS = 86_400_000;
+const graced = (iso: string) => new Date(Date.parse(iso) - GRACE_MS).toISOString();
+
 /** Asana tasks for the client made since a moment (open, or completed): work in motion before the move to Kaizen Ads. */
 async function asanaSince(admin: SupabaseClient, clientId: string, since: string) {
   const { data } = await admin
@@ -350,7 +354,7 @@ async function asanaSince(admin: SupabaseClient, clientId: string, since: string
     .select("gid, name, notes, section, asana_created_at")
     .eq("client_id", clientId)
     .is("request_id", null)
-    .gte("asana_created_at", since)
+    .gte("asana_created_at", graced(since))
     .or("open.eq.true,completed_at.not.is.null")
     .order("asana_created_at", { ascending: false })
     .limit(30);
@@ -451,7 +455,7 @@ export async function sweepCovered(admin: SupabaseClient, clientId?: string) {
     const since = list.reduce((m, c) => (callAt(c) < m ? callAt(c) : m), new Date().toISOString());
     // The oldest check among them (never checked = since its call)
     const lastCheck = list.reduce((m, c) => {
-      const at = c.cover_checked_at ?? callAt(c);
+      const at = c.cover_checked_at ?? graced(callAt(c));
       return at < m ? at : m;
     }, new Date().toISOString());
     const { data: requests } = await admin
@@ -474,7 +478,7 @@ export async function sweepCovered(admin: SupabaseClient, clientId?: string) {
       if (!p) continue;
       // Only work made after that promise's own call
       const tickets = c.tickets.filter((n) => (requests ?? []).some((r) => r.number === n && r.created_at >= callAt(p)));
-      const asana = c.asana.map((n) => tasks[n - 1]).filter((t) => t && t.asana_created_at >= callAt(p)).map((t) => t.gid);
+      const asana = c.asana.map((n) => tasks[n - 1]).filter((t) => t && t.asana_created_at >= graced(callAt(p))).map((t) => t.gid);
       if (tickets.length || asana.length) covered.set(p.id, { tickets, asana });
     }
     for (const c of list) {
