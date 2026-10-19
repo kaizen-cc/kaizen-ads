@@ -31,7 +31,7 @@ const REASONS = ["Not the right time", "Already handled", "Client wouldn't go fo
  * Briefs the strategist suggests from the data, for execs and leads. Each one can be approved (tickets are made),
  * edited in place, declined with a reason (it learns), or talked through with the AI.
  */
-export function SuggestedBriefs({ state }: { state: SuggestionsState }) {
+export function SuggestedBriefs({ state, bare = false }: { state: SuggestionsState; bare?: boolean }) {
   const router = useRouter();
   const [open, setOpen] = useState<string | null>(null);
   const [starting, start] = useTransition();
@@ -72,7 +72,7 @@ export function SuggestedBriefs({ state }: { state: SuggestionsState }) {
           </span>
         }
       >
-        Suggested briefs
+        {bare ? "" : "Suggested briefs"}
       </SectionTitle>
       {note && <p className="text-xs text-bad">{note}</p>}
 

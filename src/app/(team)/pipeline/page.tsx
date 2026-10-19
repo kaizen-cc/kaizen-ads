@@ -45,7 +45,7 @@ export default async function Home() {
   ]);
 
   if (me.isExec) {
-    return <PulseView {...base} vitals={h.vitals} attention={h.attention} phases={h.phases} clients={h.clients} team={h.team} monthElapsed={h.monthElapsed} kpis={kpis} suggestions={suggestions} fatigue={fatigue} onboarding={onboarding} clientOptions={clientOptions} callPromises={callPromises} />;
+    return <PulseView {...base} vitals={h.vitals} attention={h.attention} phases={h.phases} clients={h.clients} team={h.team} monthElapsed={h.monthElapsed} kpis={kpis} suggestions={suggestions} fatigue={fatigue} onboarding={onboarding} clientOptions={clientOptions} callPromises={callPromises} handoffs={<HandoffCallout db={db} me={me.id} />} />;
   }
 
   if (me.isLead) {

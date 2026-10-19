@@ -11,13 +11,13 @@ import { SuggestionSheet } from "./suggested-briefs";
 
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "America/New_York" });
 
-export function CallPromises({ promises }: { promises: CallPromise[] }) {
+export function CallPromises({ promises, bare = false }: { promises: CallPromise[]; bare?: boolean }) {
   const router = useRouter();
   const [sheet, setSheet] = useState<OpenSuggestion | null>(null);
   if (!promises.length) return null;
   return (
     <section className="grid gap-4 rounded-[20px] border border-warn/40 bg-[radial-gradient(120%_140%_at_0%_0%,rgba(224,166,58,0.16),transparent_60%)] p-5 md:p-6">
-      <div className="grid gap-1.5">
+      <div className={bare ? "hidden" : "grid gap-1.5"}>
         <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-warn">Promised on calls</span>
         <h2 className="font-display text-2xl tracking-tight">
           {promises.length} {promises.length === 1 ? "thing we said we'd do hasn't" : "things we said we'd do haven't"} started

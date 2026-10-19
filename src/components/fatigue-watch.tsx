@@ -15,7 +15,7 @@ const money = (n: number | null) => (n == null ? "—" : `$${n.toLocaleString("e
 const pct = (x: number | null) => (x == null ? null : `${x > 0 ? "+" : "−"}${Math.round(Math.abs(x) * 100)}%`);
 const REASONS = ["Planned rotation", "Seasonal dip", "Already replaced", "Testing on purpose", "Not worth refreshing"];
 
-export function FatigueWatch({ rows, showClient = true, title = "Ads wearing out", empty }: { rows: WatchRow[]; showClient?: boolean; title?: string; empty?: string }) {
+export function FatigueWatch({ rows, showClient = true, title = "Ads wearing out", empty, bare = false }: { rows: WatchRow[]; showClient?: boolean; title?: string; empty?: string; bare?: boolean }) {
   const [hidden, setHidden] = useState<string[]>([]);
   const shown = rows.filter((r) => !hidden.includes(`${r.clientId}:${r.adId}`));
   const tired = shown.filter((r) => r.severity === "tired" && r.state === "open").length;
@@ -23,9 +23,11 @@ export function FatigueWatch({ rows, showClient = true, title = "Ads wearing out
   return (
     <section className="grid gap-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="font-heading text-xl">
-          {title} {shown.length > 0 && <span className="text-faint">{shown.length}</span>}
-        </h2>
+        {!bare && (
+          <h2 className="font-heading text-xl">
+            {title} {shown.length > 0 && <span className="text-faint">{shown.length}</span>}
+          </h2>
+        )}
         <span className="text-xs text-faint">{tired ? `${tired} ready to replace · ` : ""}each ad against its own last three weeks, after every Meta sync</span>
       </div>
       {shown.length === 0 ? (

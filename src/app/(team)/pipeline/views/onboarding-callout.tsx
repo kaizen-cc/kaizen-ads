@@ -13,7 +13,7 @@ import { SuggestionSheet } from "./suggested-briefs";
 
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" });
 
-export function OnboardingCallout({ state, clients }: { state: OnboardingState; clients: { id: string; name: string }[] }) {
+export function OnboardingCallout({ state, clients, bare = false }: { state: OnboardingState; clients: { id: string; name: string }[]; bare?: boolean }) {
   const [sheet, setSheet] = useState<OpenSuggestion | null>(null);
   const router = useRouter();
   // Keeps itself current: quickly while an intake is being read, otherwise every minute (a new intake can land any time)
@@ -30,7 +30,7 @@ export function OnboardingCallout({ state, clients }: { state: OnboardingState; 
   const ready = creative.filter((c) => c.firstRound).length;
   return (
     <section className="relative overflow-hidden rounded-[20px] border border-brand/45 bg-[radial-gradient(120%_140%_at_0%_0%,rgba(178,30,44,0.28),rgba(178,30,44,0.06)_45%,transparent_70%)] p-5 shadow-[0_0_0_1px_rgba(178,30,44,0.15),0_20px_60px_-30px_rgba(178,30,44,0.6)] md:p-6">
-      <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+      <div className={bare ? "hidden" : "mb-5 flex flex-wrap items-end justify-between gap-3"}>
         <div className="grid gap-1.5">
           <span className="flex items-center gap-2">
             <span className="relative flex h-2 w-2">
