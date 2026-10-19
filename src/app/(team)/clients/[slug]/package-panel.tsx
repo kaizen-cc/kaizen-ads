@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ActionButton, ActionForm } from "@/components/action-form";
 import { Section, field, label } from "@/components/ui";
 import { untilLabel } from "@/lib/allotment";
+import type { CreativeDb } from "@/lib/creative-db";
 
 type Result = { ok: true } | { ok: false; error: string };
 export type PackageOption = { key: string; label: string; images: number; videos: number };
@@ -18,6 +19,38 @@ const monthEnd = (day: string, ahead: number) => {
   return new Date(d.getFullYear(), d.getMonth() + 1 + ahead, 0, 12).toISOString().slice(0, 10);
 };
 const daysBetween = (a: string, b: string) => Math.round((new Date(`${b}T12:00:00`).getTime() - new Date(`${a}T12:00:00`).getTime()) / 86400000);
+
+const n = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+
+/** The client's Creative Database (finished work, ready for the client) beside the count, which follows work in motion. */
+function DbCheck({ db, imagesUsed, videosUsed }: { db: CreativeDb; imagesUsed: number; videosUsed: number }) {
+  if (db.error)
+    return (
+      <p className="text-[11px] text-faint">
+        Couldn&apos;t read the{" "}
+        <a href={db.url} target="_blank" rel="noreferrer" className="underline hover:text-fg">
+          Creative Database
+        </a>
+        : {db.error}
+      </p>
+    );
+  const ahead = db.month.newImages > imagesUsed || db.month.newVideos > videosUsed;
+  return (
+    <div className="grid gap-1 rounded-[10px] border border-line px-3 py-2 text-[11px] leading-relaxed text-muted">
+      <a href={db.url} target="_blank" rel="noreferrer" className="font-medium text-fg hover:underline">
+        Creative Database ↗
+      </a>
+      <span>
+        Delivered this month: {n(db.month.newImages, "new image", "new images")}, {n(db.month.newVideos, "new video", "new videos")}.
+      </span>
+      <span>
+        Last 45 days: {n(db.last45.newImages + db.last45.newVideos, "new creative", "new creatives")} ({db.last45.newImages} images, {db.last45.newVideos} videos),{" "}
+        {db.last45.allImages + db.last45.allVideos} with variations.
+      </span>
+      {ahead && <span className="text-warn">The database shows more delivered this month than is counted above. A request may be missing from Kaizen Ads and Asana.</span>}
+    </div>
+  );
+}
 
 function Meter({ name, cap, used }: { name: string; cap: number; used: number }) {
   return (
@@ -131,6 +164,7 @@ export function PackagePanel({
   imagesUsed,
   videosUsed,
   fromAsana,
+  creativeDb,
   packages,
   can,
   setSprint,
@@ -148,6 +182,7 @@ export function PackagePanel({
   imagesUsed: number;
   videosUsed: number;
   fromAsana?: { images: number; videos: number };
+  creativeDb?: CreativeDb | null;
   packages: PackageOption[];
   can: { exec: boolean; allot: boolean };
   setSprint: (form: FormData) => Promise<Result>;
@@ -216,6 +251,7 @@ export function PackagePanel({
             Includes {[fromAsana.images ? `${fromAsana.images} ${fromAsana.images === 1 ? "image" : "images"}` : null, fromAsana.videos ? `${fromAsana.videos} ${fromAsana.videos === 1 ? "video" : "videos"}` : null].filter(Boolean).join(" and ")} already in production in Asana
           </p>
         )}
+        {creativeDb && <DbCheck db={creativeDb} imagesUsed={imagesUsed} videosUsed={videosUsed} />}
       </div>
 
       {can.allot && !editing && (

@@ -12,7 +12,7 @@ export type ClientCall = {
   url: string | null;
   status: string;
   summary: { summary: string; clientSaid: string[]; decisions: string[] } | null;
-  commitments: { id: string; kind: string; what: string; status: string; requestNumbers: number[] }[];
+  commitments: { id: string; kind: string; what: string; status: string; requestNumbers: number[]; asana?: string[] }[];
 };
 
 // The client's calls, from Gemini and Fireflies notes: what was said, what was decided, and what we promised (with
@@ -91,6 +91,11 @@ export function CallsPanel({ calls }: { calls: ClientCall[] }) {
                                 <Link key={n} href={`/board?t=${n}`} className="rounded-full border border-line px-2 py-0.5 text-[11px] hover:border-faint">
                                   #{n}
                                 </Link>
+                              ))}
+                              {(x.asana ?? []).map((u) => (
+                                <a key={u} href={u} target="_blank" rel="noreferrer" className="rounded-full border border-line px-2 py-0.5 text-[11px] hover:border-faint">
+                                  In Asana ↗
+                                </a>
                               ))}
                               <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] ${st.tone}`}>{st.label}</span>
                             </div>

@@ -142,7 +142,10 @@ export async function syncAccountSheet(admin: SupabaseClient) {
     }
     t.on("Reading the Onboarding tab");
     const onboarding = await syncOnboarding(admin, tok, now).catch((e) => ({ onboarding: 0, onboardingUnmatched: [] as string[], onboardingError: e instanceof Error ? e.message : String(e) }));
-    await admin.from("sync_state").upsert({ source: "sheet", cursor_at: now, last_run_at: now, last_result: { ok: true, ...out, ...onboarding } });
+    t.on("Reading each client's Creative Database");
+    const { syncCreativeDatabases } = await import("@/lib/creative-db");
+    const creativeDb = await syncCreativeDatabases(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+    await admin.from("sync_state").upsert({ source: "sheet", cursor_at: now, last_run_at: now, last_result: { ok: true, ...out, ...onboarding, creativeDb } });
     await t.finish({
       summary: `${out.updated} accounts updated, ${out.unchanged} already matched${out.buyers ? `, ${out.buyers} buyers reassigned` : ""}${out.noKpi.length ? `, ${out.noKpi.length} with no KPI here` : ""}, ${onboarding.onboarding} onboarding checklists`,
     });

@@ -325,10 +325,49 @@ async function collectCallsRun(admin: SupabaseClient, budgetMs: number, t: Track
 
 const COVER_SCHEMA = {
   type: "object",
-  properties: { covered: { type: "array", items: { type: "object", properties: { commitment: { type: "integer" }, tickets: { type: "array", items: { type: "integer" } } }, required: ["commitment", "tickets"], additionalProperties: false } } },
+  properties: {
+    covered: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { commitment: { type: "integer" }, tickets: { type: "array", items: { type: "integer" } }, asana: { type: "array", items: { type: "integer" } } },
+        required: ["commitment", "tickets", "asana"],
+        additionalProperties: false,
+      },
+    },
+  },
   required: ["covered"],
   additionalProperties: false,
 };
+
+type CoverTicket = { number: number; title: string; brief: string | null; created_at: string };
+type CoverTask = { gid: string; name: string; notes: string | null; section: string | null; asana_created_at: string };
+
+/** Asana tasks for the client made since a moment (open, or completed): work in motion before the move to Kaizen Ads. */
+async function asanaSince(admin: SupabaseClient, clientId: string, since: string) {
+  const { data } = await admin
+    .from("asana_tasks")
+    .select("gid, name, notes, section, asana_created_at")
+    .eq("client_id", clientId)
+    .is("request_id", null)
+    .gte("asana_created_at", since)
+    .or("open.eq.true,completed_at.not.is.null")
+    .order("asana_created_at", { ascending: false })
+    .limit(30);
+  return (data ?? []) as CoverTask[];
+}
+
+/** Which promises a ticket in Kaizen Ads or a task in Asana since the call already covers. */
+async function coverCheck(promises: { what: string }[], requests: CoverTicket[], tasks: CoverTask[]) {
+  return askJson<{ covered: { commitment: number; tickets: number[]; asana: number[] }[] }>({
+    agent: "calls",
+    label: "commitments covered",
+    system:
+      "You check whether promises made on a client call have been turned into creative work since: a ticket in Kaizen Ads, or a task on the Asana creative board (the team is still moving over from Asana). A ticket or task covers a promise when it makes substantially the same thing.",
+    schema: COVER_SCHEMA,
+    prompt: `Promises:\n${promises.map((c, i) => `${i + 1}. ${c.what}`).join("\n")}\n\nKaizen Ads tickets made since the call:\n${requests.map((r) => `#${r.number} "${r.title}": ${(r.brief ?? "").replace(/\s+/g, " ").slice(0, 300)}`).join("\n") || "(none)"}\n\nAsana tasks made since the call:\n${tasks.map((t, i) => `A${i + 1} "${t.name}" (${t.section ?? "done"}): ${(t.notes ?? "").replace(/\s+/g, " ").slice(0, 300)}`).join("\n") || "(none)"}\n\ncovered: each promise number that work covers, with the ticket numbers (tickets) and the Asana task numbers without the A (asana). Leave out promises nothing covers.`,
+  });
+}
 
 /**
  * Commitments past their due date: if a request since the call covers it, it's in motion; if not, and it's something
@@ -353,21 +392,20 @@ export async function watchCommitments(admin: SupabaseClient, max = 12) {
   for (const [clientId, list] of byClient) {
     const since = list.reduce((m, c) => (((c.client_calls as unknown as { occurred_at: string }).occurred_at < m ? (c.client_calls as unknown as { occurred_at: string }).occurred_at : m)), new Date().toISOString());
     const { data: requests } = await admin.from("requests").select("number, title, brief, created_at").eq("client_id", clientId).gte("created_at", since).is("deleted_at", null).limit(30);
-    const covered = new Map<string, number[]>();
-    if (requests?.length) {
-      const out = await askJson<{ covered: { commitment: number; tickets: number[] }[] }>({
-        agent: "calls",
-        label: "commitments covered",
-        system: "You check whether promises made on a client call have been turned into creative requests since. A request covers a promise when it makes substantially the same thing.",
-        schema: COVER_SCHEMA,
-        prompt: `Promises:\n${list.map((c, i) => `${i + 1}. ${c.what}`).join("\n")}\n\nRequests made since the call:\n${requests.map((r) => `#${r.number} "${r.title}": ${(r.brief ?? "").replace(/\s+/g, " ").slice(0, 300)}`).join("\n")}\n\ncovered: each promise number that a request covers, with the ticket numbers. Leave out promises nothing covers.`,
-      });
-      for (const c of out.covered) if (list[c.commitment - 1]) covered.set(list[c.commitment - 1].id, c.tickets);
+    const tasks = await asanaSince(admin, clientId, since);
+    const covered = new Map<string, { tickets: number[]; asana: string[] }>();
+    if (requests?.length || tasks.length) {
+      const out = await coverCheck(list, requests ?? [], tasks);
+      for (const c of out.covered) {
+        const asana = c.asana.map((n) => tasks[n - 1]?.gid).filter((g): g is string => Boolean(g));
+        if (list[c.commitment - 1] && (c.tickets.length || asana.length)) covered.set(list[c.commitment - 1].id, { tickets: c.tickets, asana });
+      }
     }
     for (const c of list) {
       const now = new Date().toISOString();
-      if (covered.has(c.id)) {
-        await admin.from("call_commitments").update({ status: "in_motion", request_numbers: covered.get(c.id), checked_at: now }).eq("id", c.id);
+      const cover = covered.get(c.id);
+      if (cover) {
+        await admin.from("call_commitments").update({ status: "in_motion", request_numbers: cover.tickets, asana_gids: cover.asana, checked_at: now }).eq("id", c.id);
         inMotion++;
         continue;
       }
@@ -424,31 +462,28 @@ export async function sweepCovered(admin: SupabaseClient, clientId?: string) {
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(30);
-    if (!requests?.some((r) => r.created_at > lastCheck)) continue;
+    const tasks = await asanaSince(admin, client, since);
+    // Only when something new has been made since the last look
+    if (!(requests ?? []).some((r) => r.created_at > lastCheck) && !tasks.some((t) => t.asana_created_at > lastCheck)) continue;
     checked += list.length;
     const now = new Date().toISOString();
-    const out = await askJson<{ covered: { commitment: number; tickets: number[] }[] }>({
-      agent: "calls",
-      label: "commitments covered",
-      system: "You check whether promises made on a client call have been turned into creative requests since. A request covers a promise when it makes substantially the same thing.",
-      schema: COVER_SCHEMA,
-      prompt: `Promises:\n${list.map((c, i) => `${i + 1}. ${c.what}`).join("\n")}\n\nRequests made since the call:\n${requests.map((r) => `#${r.number} "${r.title}": ${(r.brief ?? "").replace(/\s+/g, " ").slice(0, 300)}`).join("\n")}\n\ncovered: each promise number that a request covers, with the ticket numbers. Leave out promises nothing covers.`,
-    });
-    const covered = new Map<string, number[]>();
+    const out = await coverCheck(list, requests ?? [], tasks);
+    const covered = new Map<string, { tickets: number[]; asana: string[] }>();
     for (const c of out.covered) {
       const p = list[c.commitment - 1];
       if (!p) continue;
-      // Only requests made after that promise's own call
-      const tickets = c.tickets.filter((n) => requests.some((r) => r.number === n && r.created_at >= callAt(p)));
-      if (tickets.length) covered.set(p.id, tickets);
+      // Only work made after that promise's own call
+      const tickets = c.tickets.filter((n) => (requests ?? []).some((r) => r.number === n && r.created_at >= callAt(p)));
+      const asana = c.asana.map((n) => tasks[n - 1]).filter((t) => t && t.asana_created_at >= callAt(p)).map((t) => t.gid);
+      if (tickets.length || asana.length) covered.set(p.id, { tickets, asana });
     }
     for (const c of list) {
-      const tickets = covered.get(c.id);
-      if (!tickets) {
+      const cover = covered.get(c.id);
+      if (!cover) {
         await admin.from("call_commitments").update({ cover_checked_at: now }).eq("id", c.id);
         continue;
       }
-      await admin.from("call_commitments").update({ status: "in_motion", request_numbers: tickets, cover_checked_at: now, checked_at: now }).eq("id", c.id);
+      await admin.from("call_commitments").update({ status: "in_motion", request_numbers: cover.tickets, asana_gids: cover.asana, cover_checked_at: now, checked_at: now }).eq("id", c.id);
       // Its brief on Home isn't needed any more
       if (c.suggestion_id) await admin.from("creative_suggestions").update({ status: "expired" }).eq("id", c.suggestion_id).eq("status", "open");
       inMotion++;

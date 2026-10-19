@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { CreativeDb } from "@/lib/creative-db";
 import { ActionButton, ActionForm } from "@/components/action-form";
 import { Section, field, label } from "@/components/ui";
 import type { Digest } from "@/lib/ai";
@@ -90,6 +91,7 @@ export type ClientViewProps = {
   imagesUsed: number;
   videosUsed: number;
   fromAsana?: { images: number; videos: number };
+  creativeDb?: CreativeDb | null;
   can: { admin: boolean; contacts: boolean; allot: boolean; assign: boolean };
   demo?: boolean; // design preview: the refresh only plays its animation
   connections: { meta: Freshness | null; slackClient: Freshness | null; slackInternal: Freshness | null; drive: Freshness | null };
@@ -102,7 +104,7 @@ export type ClientViewProps = {
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, can, demo = false, connections, creative = null, kpis = null, fatigue = null, market = [], intake, calls }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, fatigue = null, market = [], intake, calls }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -369,6 +371,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
             imagesUsed={imagesUsed}
             videosUsed={videosUsed}
             fromAsana={fromAsana}
+            creativeDb={creativeDb}
             packages={packages}
             can={{ exec: can.admin, allot: can.allot }}
             setSprint={setSprintPackage.bind(null, client.id, client.slug)}

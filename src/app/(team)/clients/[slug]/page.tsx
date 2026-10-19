@@ -1,3 +1,4 @@
+import type { CreativeDb } from "@/lib/creative-db";
 import { loadClientKpis } from "@/lib/kpi/client";
 import { loadWatchList } from "@/lib/fatigue";
 import { loadClientMarket } from "@/lib/market";
@@ -25,7 +26,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
   const { data: client } = await supabase
     .from("clients")
     .select(
-      "id, name, slug, status, client_type, archived_at, archive_reason, archive_source, portal_live, portal_live_at, industry, industry_detail, industry_source, website, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, kaizen_id, auto_approve_opt_in, creative_package, creative_package_key, creative_package_until, creative_package_note, creative_packages(label)",
+      "id, name, slug, status, client_type, archived_at, archive_reason, archive_source, portal_live, portal_live_at, industry, industry_detail, industry_source, website, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, kaizen_id, auto_approve_opt_in, creative_package, creative_package_key, creative_package_until, creative_package_note, creative_db, creative_packages(label)",
     )
     .eq("slug", slug)
     .maybeSingle();
@@ -131,8 +132,11 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
   // Every call that discussed this client (client calls and internal meetings), with what was said about them
   const callIds = (callRows ?? []).map((m) => (m.client_calls as unknown as { id: string }).id);
   const { data: promised } = callIds.length
-    ? await supabase.from("call_commitments").select("id, call_id, kind, what, status, request_numbers").eq("client_id", client.id).in("call_id", callIds)
+    ? await supabase.from("call_commitments").select("id, call_id, kind, what, status, request_numbers, asana_gids").eq("client_id", client.id).in("call_id", callIds)
     : { data: [] };
+  // Promises covered by a task in Asana link to it there
+  const gids = [...new Set((promised ?? []).flatMap((x) => (x.asana_gids ?? []) as string[]))];
+  const { data: asanaLinks } = gids.length ? await supabase.from("asana_tasks").select("gid, url").in("gid", gids) : { data: [] };
   const calls: ClientCall[] = (callRows ?? [])
     .map((m) => {
       const c = m.client_calls as unknown as { id: string; source: string; title: string; occurred_at: string; url: string | null; status: string };
@@ -144,7 +148,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
         url: c.url,
         status: c.status,
         summary: (m.summary as ClientCall["summary"]) ?? null,
-        commitments: (promised ?? []).filter((x) => x.call_id === c.id).map((x) => ({ id: x.id, kind: x.kind, what: x.what, status: x.status, requestNumbers: (x.request_numbers ?? []) as number[] })),
+        commitments: (promised ?? []).filter((x) => x.call_id === c.id).map((x) => ({ id: x.id, kind: x.kind, what: x.what, status: x.status, requestNumbers: (x.request_numbers ?? []) as number[], asana: ((x.asana_gids ?? []) as string[]).map((g) => (asanaLinks ?? []).find((a) => a.gid === g)?.url).filter((u): u is string => Boolean(u)) })),
       };
     })
     .sort((a, b) => b.at.localeCompare(a.at));
@@ -186,6 +190,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
       imagesUsed={usage?.images_used ?? 0}
       videosUsed={usage?.videos_used ?? 0}
       fromAsana={{ images: usage?.asana_images ?? 0, videos: usage?.asana_videos ?? 0 }}
+      creativeDb={(client.creative_db as CreativeDb | null) ?? null}
       can={{ admin: me.isExec, contacts: seesAllClients(me), allot: me.isExec || me.isLead, assign: isExecOrLead(me) }}
     />
   );
