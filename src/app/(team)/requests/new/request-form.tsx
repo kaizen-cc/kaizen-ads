@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { IdeasPanel } from "./ideas-panel";
 import { PromisesStrip } from "./promises-strip";
 import Link from "next/link";
@@ -111,6 +112,7 @@ export function RequestForm({
   /** Open straight on the review step (the brief as it was) */
   startAtReview?: boolean;
 }) {
+  const router = useRouter();
   const [draft, setDraft] = useState<Draft>(() => ({ ...emptyDraft(initialClient), ...(initialDraft ?? {}) }));
   const [step, setStep] = useState(startAtReview ? STEPS.length - 1 : initialClient ? 1 : 0);
   const [ai, setAi] = useState<AiState>(initialClient && aiOn ? { status: "loading" } : { status: "idle" });
@@ -304,7 +306,7 @@ export function RequestForm({
         writeSaved(null, saveKey);
         // Migrated past production: open the ticket to upload its creative
         if (draft.migration?.needsCreative && res.numbers[0]) {
-          window.location.assign(`/board?t=${res.numbers[0]}`);
+          router.push(`/board?t=${res.numbers[0]}`);
           return;
         }
         setCreated(res.numbers);
