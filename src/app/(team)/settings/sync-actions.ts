@@ -6,8 +6,8 @@ import { requireExec } from "@/lib/auth";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { reportError } from "@/lib/error-report";
 
-export type SyncJob = "kpi" | "slack" | "gmail" | "drive" | "meta" | "calls" | "verticals";
-const JOBS: SyncJob[] = ["kpi", "slack", "gmail", "drive", "meta", "calls", "verticals"];
+export type SyncJob = "kpi" | "slack" | "gmail" | "drive" | "meta" | "calls" | "verticals" | "asana";
+const JOBS: SyncJob[] = ["kpi", "slack", "gmail", "drive", "meta", "calls", "verticals", "asana"];
 
 /** Runs one job the way the schedule does. */
 async function runJob(job: SyncJob) {
@@ -15,6 +15,11 @@ async function runJob(job: SyncJob) {
   if (job === "kpi") return (await import("@/lib/kpi/sync")).refreshAllKpis(admin, 600_000);
   if (job === "calls") return (await import("@/lib/calls")).collectCalls(admin);
   if (job === "verticals") return (await import("@/lib/verticals")).keepVerticals(admin);
+  if (job === "asana") {
+    const { asanaConfigured, syncAsana } = await import("@/lib/asana");
+    if (!asanaConfigured()) throw new Error("ASANA_TOKEN isn't set in Vercel yet");
+    return syncAsana(admin);
+  }
   return (await import("@/lib/context/run")).collectStep(admin, job, 600_000);
 }
 

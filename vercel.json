@@ -52,6 +52,10 @@
     {
       "path": "/api/cron/context?step=sprints",
       "schedule": "20 * * * *"
+    },
+    {
+      "path": "/api/cron/context?step=asana",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

@@ -154,7 +154,8 @@ export function RequestForm({
   // On arrival: pick up a request in progress (no new AI calls), or start reading ?client= right away
   const [restoredAt, setRestoredAt] = useState<number | null>(null);
   // The design preview keeps its sample request apart from a real one
-  const saveKey = demo ? `${SAVE_KEY}:preview` : SAVE_KEY;
+  // A migration from Asana never picks up (or overwrites) someone's own unsent request
+  const saveKey = demo ? `${SAVE_KEY}:preview` : initialDraft?.migration ? `${SAVE_KEY}:asana:${initialDraft.migration.gid}` : SAVE_KEY;
   const [loaded, setLoaded] = useState(false); // nothing is saved until the saved copy has been read
   useEffect(() => {
     const saved = readSaved(saveKey);
@@ -473,6 +474,7 @@ export function RequestForm({
               </span>
             </div>
           )}
+          {!created && draft.migration && <MigrationPanel m={draft.migration} onChange={(m) => set({ migration: m })} />}
           {!created && <Progress steps={STEPS} current={step} onJump={go} />}
           {!created && <AiStrip aiOn={aiOn} ai={ai} clientName={client?.name ?? null} onRefresh={() => suggest(draft, true)} />}
         </div>
@@ -1153,6 +1155,37 @@ function Done({
           Request another
         </button>
       </div>
+    </div>
+  );
+}
+
+/** Moving a task over from Asana: where it lands, and what that stage needs before it can sit there. */
+function MigrationPanel({ m, onChange }: { m: import("./draft").Migration; onChange: (m: import("./draft").Migration) => void }) {
+  return (
+    <div className="grid gap-3 rounded-[12px] border border-dashed border-brand/50 bg-brand-soft/40 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm">
+          Migrating from Asana: <span className="font-medium">{m.name}</span>
+        </p>
+        <a href={m.url} target="_blank" rel="noreferrer" className="text-xs text-muted hover:text-fg">
+          Open in Asana ↗
+        </a>
+      </div>
+      <p className="text-xs text-muted">
+        Filled in from the task. Check the formats and counts, then it lands in <b className="text-fg">{m.stageLabel}</b>, where it&apos;s up to in Asana, and is worked here from now on.
+      </p>
+      {m.needsCreative && (
+        <label className="grid gap-1 text-xs text-muted">
+          The current creative (a Drive folder or file link): it&apos;s already past production
+          <input value={m.creativeLink} onChange={(e) => onChange({ ...m, creativeLink: e.target.value })} placeholder="https://drive.google.com/…" className="h-10 rounded-[10px] border border-line bg-bg px-3 text-sm text-fg" />
+        </label>
+      )}
+      {m.needsCopy && (
+        <label className="grid gap-1 text-xs text-muted">
+          The copy as it stands (it&apos;s past copy)
+          <textarea value={m.copy} onChange={(e) => onChange({ ...m, copy: e.target.value })} rows={4} className="rounded-[10px] border border-line bg-bg px-3 py-2 text-sm text-fg" />
+        </label>
+      )}
     </div>
   );
 }

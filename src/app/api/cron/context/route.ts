@@ -44,6 +44,7 @@ function nyNow() {
  * - kpi: every 2 hours (campaign numbers for the KPI dashboard; no AI, so it's cheap)
  * - brief: 12pm and 6pm
  * - market: 8:30am (live ads from Motion for the Market tab, ready for the morning)
+ * - asana: every 5 minutes, mirroring open tasks on Asana's Creative board while the team moves over
  * - sprints: every hour, checking each optimization sprint whose next check is due (daily, or the follow-up date it set)
  * - verticals: every hour (the taxonomy weekly, new clients placed, benchmarks researched a few at a time)
  * - gtm: every hour (a Meta go-to-market strategy for newly onboarded clients once the intake form, call notes and website are in)
@@ -62,7 +63,8 @@ function due(step: string | null) {
   if (step === "clients") return true;
   if (step === "gtm") return true;
   if (step === "verticals") return true;
-  if (step === "sprints") return true; // hourly; each sprint's own next check decides
+  if (step === "sprints") return true;
+  if (step === "asana") return true; // every 5 minutes (vercel.json), so the mirror keeps up with Asana // hourly; each sprint's own next check decides
 
   if (step === "market") return hour === 8;
   if (step === "calls") return (businessHours || hour === 18) || (hour % 3 === 0 && minute < 30);
@@ -130,6 +132,10 @@ export async function GET(request: Request) {
     if (step === "calls") return Response.json(await collectCalls(admin));
     if (step === "gtm") return Response.json(await autoGtm(admin, 1));
     if (step === "verticals") return Response.json(await keepVerticals(admin));
+    if (step === "asana") {
+      const { asanaConfigured, syncAsana } = await import("@/lib/asana");
+      return Response.json(asanaConfigured() ? await syncAsana(admin) : { skipped: "ASANA_TOKEN not set" });
+    }
     if (step === "sprints") return Response.json(await (await import("@/lib/sprints")).checkDueSprints(admin));
     if (step === "market") return Response.json(await syncMarket(admin));
     if (step === "clients")

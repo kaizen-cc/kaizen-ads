@@ -281,6 +281,9 @@ export async function createBatch(draft: Draft, review: Review | null, decisions
   const formats = selectedFormats(draft);
   if (formats.length === 0) return { ok: false, error: "Pick at least one format." };
   const items = formats.map((f) => ({ format: f, new: clamp(draft.formats[f]!.new), variations: clamp(draft.formats[f]!.variations) }));
+  const mig = draft.migration;
+  if (mig?.needsCreative && !/^https?:\/\/\S+/i.test(mig.creativeLink.trim())) return { ok: false, error: "Add the link to the current creative: it's already past production in Asana." };
+  if (mig?.needsCopy && mig.copy.trim().length < 10) return { ok: false, error: "Paste the copy as it stands: it's already past copy in Asana." };
   if (items.some((i) => i.variations > MAX_VARIATIONS)) return { ok: false, error: `Up to ${MAX_VARIATIONS} variations per format.` };
   if (items.some((i) => i.new + i.variations < 1)) return { ok: false, error: "Each format needs at least one creative." };
 
@@ -300,6 +303,30 @@ export async function createBatch(draft: Draft, review: Review | null, decisions
   if (error) return { ok: false, error: error.message };
 
   const { data: rows } = await supabase.from("requests").select("id, number").eq("batch_id", batch).order("number");
+
+  // Migrated from Asana: into the stage it had reached, with its creative and copy, and the mirror points here now
+  if (mig && rows?.length && adminConfigured()) {
+    const admin = createAdminClient();
+    const now = new Date().toISOString();
+    const ids = rows.map((r) => r.id);
+    const { data: cur } = await admin.from("requests").select("id, refs, brief").in("id", ids);
+    for (const r of cur ?? []) {
+      const refs = [...((r.refs ?? []) as string[]), ...(mig.creativeLink.trim() ? [mig.creativeLink.trim()] : []), mig.url].filter((x, i, a) => a.indexOf(x) === i);
+      await admin
+        .from("requests")
+        .update({
+          stage: mig.stage,
+          stage_entered_at: now,
+          refs,
+          brief: mig.copy.trim() ? `${r.brief ?? ""}\n\nCopy as it stood in Asana:\n${mig.copy.trim()}`.trim() : r.brief,
+          ...(mig.assigneeId ? { assignee_id: mig.assigneeId } : {}),
+        })
+        .eq("id", r.id);
+    }
+    if (mig.stage !== "requested")
+      await admin.from("request_events").insert(ids.map((id) => ({ request_id: id, kind: "stage", from_stage: "requested", to_stage: mig.stage, actor_id: me.id, body: "Migrated from Asana" })));
+    await admin.from("asana_tasks").update({ request_id: ids[0], migrated_at: now, migrated_by: me.id }).eq("gid", mig.gid);
+  }
 
   // Where the ads send people: on every ticket of the batch (copy and the client's preview use it)
   const landing = draft.landing?.trim();

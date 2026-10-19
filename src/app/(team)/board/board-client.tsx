@@ -7,6 +7,8 @@ import { Combobox } from "@/components/combobox";
 import { tintFor } from "@/lib/colors";
 import { BOARD_ORDER, PHASE_LABEL, health, stageInfo, type Format, type Health, type Phase, type Stage } from "@/lib/stages";
 import { TicketCard } from "./ticket-card";
+import { ShadowCard, ShadowSheet } from "./shadow";
+import type { ShadowTicket } from "@/lib/asana";
 import { TicketDrawer } from "./ticket-drawer";
 import type { ClientOption, Person, Ticket } from "./types";
 
@@ -31,6 +33,8 @@ export function BoardClient({
   canRequest,
   can = { review: false, approveCopy: false },
   demo = false,
+  shadows = [],
+  me = null,
 }: {
   tickets: Ticket[];
   clients: ClientOption[];
@@ -39,6 +43,9 @@ export function BoardClient({
   /** review: the Head of Creative or an exec (approve / send back creative). approveCopy: the copywriter or a lead. */
   can?: { review: boolean; approveCopy: boolean };
   demo?: boolean;
+  /** Open Asana tasks not migrated yet (outline cards) */
+  shadows?: ShadowTicket[];
+  me?: { id: string; lead: boolean } | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -102,6 +109,21 @@ export function BoardClient({
   }, [filtered]);
 
   const open = tickets.find((x) => String(x.number) === openNumber) ?? null;
+  const shadowId = params.get("a");
+  const openShadow = shadows.find((x) => x.gid === shadowId) ?? null;
+  const shadowsBy = useMemo(() => {
+    const t = q.trim().toLowerCase();
+    const m = new Map<Stage, ShadowTicket[]>();
+    for (const x of shadows) {
+      if (client && x.clientSlug !== client) continue;
+      if (person && x.profileId !== person) continue;
+      if (format && x.format !== format) continue;
+      if (only) continue; // turnaround health is ours; Asana tasks don't have it
+      if (t && !x.name.toLowerCase().includes(t) && !(x.clientName ?? "").toLowerCase().includes(t)) continue;
+      m.set(x.stage, [...(m.get(x.stage) ?? []), x]);
+    }
+    return m;
+  }, [shadows, q, client, person, format, only]);
   const selectedClient = clients.find((c) => c.slug === client) ?? null;
 
   // Getting around a board wider than the screen: a visible scrollbar, the phase labels and arrows jump along it, and
@@ -295,6 +317,11 @@ export function BoardClient({
                   <header className="flex items-center gap-2 px-1.5 pb-1 pt-1">
                     <h2 className="text-sm font-medium">{info.label}</h2>
                     <span className="tabular text-xs text-faint">{list.length}</span>
+                    {(shadowsBy.get(s)?.length ?? 0) > 0 && (
+                      <span className="tabular rounded-full border border-dashed border-line px-1.5 text-[10px] text-faint" title="Still in Asana">
+                        +{shadowsBy.get(s)!.length}
+                      </span>
+                    )}
                     <span className="ml-auto flex items-center gap-1">
                       {late > 0 && <span className="tabular rounded-full bg-bad-soft px-1.5 text-[10px] text-bad">{late}</span>}
                       {risk > 0 && <span className="tabular rounded-full bg-warn-soft px-1.5 text-[10px] text-warn">{risk}</span>}
@@ -308,7 +335,10 @@ export function BoardClient({
                       onOpen={() => setParam({ t: String(t.number) })}
                     />
                   ))}
-                  {list.length === 0 && (
+                  {(shadowsBy.get(s) ?? []).map((x) => (
+                    <ShadowCard key={x.gid} s={x} onOpen={() => setParam({ a: x.gid })} />
+                  ))}
+                  {list.length === 0 && !(shadowsBy.get(s) ?? []).length && (
                     <div className="grid h-20 place-items-center rounded-brand border border-dashed border-line/70 text-xs text-faint">
                       —
                     </div>
@@ -328,6 +358,7 @@ export function BoardClient({
         </div>
       )}
 
+      {openShadow && <ShadowSheet s={openShadow} canMigrate={Boolean(me && (me.lead || openShadow.profileId === me.id))} onClose={() => setParam({ a: null })} />}
       {open && <TicketDrawer key={open.id} ticket={open} people={people} can={can} onClose={() => setParam({ t: null })} onOptimisticMove={optimisticMove} demo={demo} />}
 
     </div>

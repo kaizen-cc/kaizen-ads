@@ -165,6 +165,7 @@ const GROUPS: [string, string, SyncJob, string][] = [
   ["drive", "Drive folders", "drive", "Every 30 minutes in business hours"],
   ["calls", "Call notes", "calls", "Gemini and Fireflies notes, read for paid ads promises, every 30 minutes in business hours"],
   ["verticals", "Verticals and playbooks", "verticals", "Places new clients, researches benchmarks and writes playbooks, hourly"],
+  ["asana", "Asana (mirrored tasks)", "asana", "Open tasks on Asana's Creative board, mirrored on the board as outline cards, every 5 minutes"],
 ];
 
 type ErrorRow = {
@@ -366,7 +367,7 @@ const olderThan = (iso: string, ms: number) => Date.now() - Date.parse(iso) > ms
 const timedOut = (x: RunState): RunState =>
   x?.running && (!x.startedAt || olderThan(x.startedAt, 15 * 60_000)) ? { ...x, running: false, error: x.error ?? "It didn't finish (timed out)" } : x;
 // What a job usually takes, until it has run once with progress (then its own last time is used)
-const TYPICAL_MS: Record<string, number> = { kpi: 300_000, meta: 420_000, slack: 120_000, gmail: 240_000, drive: 120_000, calls: 180_000, verticals: 300_000, market: 600_000 };
+const TYPICAL_MS: Record<string, number> = { kpi: 300_000, meta: 420_000, slack: 120_000, gmail: 240_000, drive: 120_000, calls: 180_000, verticals: 300_000, market: 600_000, asana: 60_000 };
 const span = (ms: number) => {
   const s = Math.max(1, Math.round(ms / 1000));
   return s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)} min` : `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`;

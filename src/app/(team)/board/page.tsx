@@ -1,6 +1,7 @@
 import { isExecOrLead, requireStaff } from "@/lib/auth";
 import { roleLabel, type TeamRole } from "@/lib/roles";
 import { createClient } from "@/lib/supabase/server";
+import { loadShadows } from "@/lib/asana";
 import { BoardClient } from "./board-client";
 import { toTicket, type BoardRow } from "./to-ticket";
 
@@ -22,6 +23,8 @@ export default async function Board({ searchParams }: PageProps<"/board">) {
     supabase.from("profiles").select("id, full_name, role").eq("is_active", true).order("full_name"),
   ]);
 
+  // Open Asana tasks not migrated yet: outline cards in their column while the team moves over
+  const shadows = await loadShadows(supabase).catch(() => []);
   const rows = [...(moving ?? []), ...(one && !(moving ?? []).some((r) => r.id === one.id) ? [one] : [])];
   return (
     <BoardClient
@@ -30,6 +33,8 @@ export default async function Board({ searchParams }: PageProps<"/board">) {
       people={(people ?? []).map((p) => ({ id: p.id, name: p.full_name, role: roleLabel(p.role as TeamRole) }))}
       canRequest
       can={{ review: isExecOrLead(me), approveCopy: isExecOrLead(me) || me.isCopywriter }}
+      shadows={shadows}
+      me={{ id: me.id, lead: isExecOrLead(me) }}
     />
   );
 }

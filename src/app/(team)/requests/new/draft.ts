@@ -21,7 +21,11 @@ export type Draft = {
   refs: string;
   landing?: string; // where the ad sends people
   origin?: Origin | null; // what it's built on (a winner, a market ad, a promise from a call)
+  migration?: Migration | null; // coming over from Asana: the stage it lands in and what that stage needs
 };
+
+/** An Asana task becoming a ticket: it lands in the stage it reached, with what that stage needs filled in. */
+export type Migration = { gid: string; name: string; url: string; stage: string; stageLabel: string; needsCreative: boolean; needsCopy: boolean; assigneeId: string | null; creativeLink: string; copy: string };
 
 /** What a request is built on, kept on its tickets so the creative team sees the idea behind it. */
 export type Origin = { kind: "winner" | "market" | "promise" | "brief"; label: string; link?: string | null; thumb?: string | null; suggestionId?: string | null };
