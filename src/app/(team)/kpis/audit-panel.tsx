@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { startAudit } from "./audit-actions";
+import { VERDICT } from "./verdict";
 
 export type AuditSummary = {
   id: string;
@@ -69,12 +70,6 @@ function Steps({ steps, live }: { steps: AuditStep[]; live: boolean }) {
   );
 }
 
-export const VERDICT: Record<string, { label: string; tone: string; ring: string }> = {
-  off: { label: "Off target", tone: "text-bad", ring: "border-bad/40 bg-bad-soft" },
-  at_risk: { label: "At risk", tone: "text-warn", ring: "border-warn/40 bg-warn-soft" },
-  on_track: { label: "On track", tone: "text-ok", ring: "border-ok/40 bg-ok-soft" },
-  winning: { label: "Winning", tone: "text-ok", ring: "border-ok/40 bg-ok-soft" },
-};
 
 const when = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 

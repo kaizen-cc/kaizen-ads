@@ -63,6 +63,8 @@ export default async function Kpis() {
     });
   }
   const snapBy = new Map((snaps ?? []).map((s) => [s.target_id as string, s as unknown as Snap]));
+  const { data: activity } = await supabase.from("ad_account_activity").select("ad_account_id, last_change_at, last_change, checked_at, error");
+  const activityBy = new Map((activity ?? []).map((x) => [x.ad_account_id as string, x]));
   const sprints = new Map((await loadSprints(supabase, { targetIds: (targets ?? []).map((t) => t.id) })).map((x) => [x.targetId, x.sprint]));
 
   const rows: KpiRow[] = (targets ?? [])
@@ -105,6 +107,12 @@ export default async function Kpis() {
         audit: auditBy.get(t.id) ?? null,
         extraMetrics: (t.extra_metrics ?? []) as string[],
         sprint: sprints.get(t.id) ?? null,
+        lastChange: (() => {
+          const x = t.ad_account_id ? activityBy.get(String(t.ad_account_id).replace(/^act_/, "")) : undefined;
+          if (!x) return null;
+          const c = x.last_change as { at: string; who: string | null; what: string; object: string | null } | null;
+          return { at: x.last_change_at, who: c?.who ?? null, what: c?.what ?? null, object: c?.object ?? null, checkedAt: x.checked_at, error: x.error };
+        })(),
       };
     })
     .sort((a, b) => a.client.localeCompare(b.client) || (a.label ?? "").localeCompare(b.label ?? ""));

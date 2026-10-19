@@ -713,3 +713,22 @@ export async function accountSetup(adAccountId: string) {
   };
 }
 export type AccountSetup = Awaited<ReturnType<typeof accountSetup>>;
+
+/**
+ * The ad account's activity log: the most recent changes people made (budgets, bids, status, new ads, audiences), newest
+ * first. Meta's own automatic events (ad review, billing) are left out, so it shows whether someone is working on it.
+ */
+export async function accountActivity(adAccountId: string, sinceDays = 30) {
+  const act = `act_${adAccountId.replace(/^act_/, "")}`;
+  const since = Math.floor((Date.now() - sinceDays * 86_400_000) / 1000);
+  const res = await graph<Paged<{ actor_name?: string; event_time: string; event_type: string; translated_event_type?: string; object_name?: string; object_type?: string }>>(`${act}/activities`, {
+    fields: "actor_name,event_time,event_type,translated_event_type,object_name,object_type",
+    since: String(since),
+    limit: "50",
+  });
+  const automatic = /(ad_review|billing|payment|charge|account_spending_limit_reached|first_delivery|ad_account_billing|funding|receipt|threshold)/i;
+  return res.data
+    .filter((a) => !automatic.test(a.event_type) && a.actor_name && !/^(facebook|meta)$/i.test(a.actor_name.trim()))
+    .map((a) => ({ at: a.event_time, who: a.actor_name ?? null, what: a.translated_event_type ?? a.event_type.replaceAll("_", " "), type: a.event_type, object: a.object_name ?? null, objectType: a.object_type ?? null }));
+}
+export type AccountActivity = Awaited<ReturnType<typeof accountActivity>>;

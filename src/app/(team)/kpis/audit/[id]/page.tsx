@@ -6,7 +6,7 @@ import type { AuditResult } from "@/lib/audit";
 import { conversionFor, conversionLabel } from "@/lib/kpi/conversions";
 import { kpiValue } from "@/lib/kpi/format";
 import { createClient } from "@/lib/supabase/server";
-import { VERDICT } from "../../audit-panel";
+import { VERDICT } from "../../verdict";
 import { ActionCard, RerunAudit, StartSprint } from "./audit-parts";
 
 export const metadata: Metadata = { title: "Account audit" };

@@ -1,7 +1,7 @@
 import "server-only";
 import { tracker, type Tracker } from "@/lib/progress";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { asyncReport, linkAdAccounts, metaConfigured, type InsightRow } from "@/lib/context/meta";
+import { accountActivity, asyncReport, linkAdAccounts, metaConfigured, type InsightRow } from "@/lib/context/meta";
 import { pool } from "@/lib/context/run";
 import { computeSnapshot, nyParts, toDays } from "./calc";
 import { LIVE } from "@/lib/live";
@@ -168,6 +168,8 @@ async function refreshTargets(admin: SupabaseClient, targets: Target[], pull: bo
       }
     }
     await computeAccount(admin, account, list, error);
+    // Who changed what in the account lately (Meta's activity log), so the board shows whether someone's on it
+    if (pull && metaConfigured() && !error) await saveActivity(admin, account);
     await admin.from("sync_state").upsert({ source: `kpi:${account}`, last_run_at: new Date().toISOString(), last_result: { ...(pulled ?? {}), error: error ?? null } });
     t?.tick(account, !error);
     return { account, targets: list.length, ...(pulled ?? {}), ...(error ? { error } : {}) };
@@ -193,6 +195,23 @@ export async function adoptNewAccounts(admin: SupabaseClient) {
     .map((c) => ({ client_id: c.id, platform: "meta", ad_account_id: c.meta_ad_account_id, conversion: "purchases", owner_id: buyer.get(c.id) ?? null }));
   if (fresh.length) await admin.from("kpi_targets").insert(fresh);
   return { linked, added: fresh.length };
+}
+
+/** The account's latest changes from Meta's activity log. A failure is noted, never fatal to the KPI sync. */
+async function saveActivity(admin: SupabaseClient, account: string) {
+  try {
+    const recent = await accountActivity(account);
+    await admin.from("ad_account_activity").upsert({
+      ad_account_id: account,
+      last_change_at: recent[0]?.at ?? null,
+      last_change: recent[0] ?? null,
+      recent: recent.slice(0, 20),
+      error: null,
+      checked_at: new Date().toISOString(),
+    });
+  } catch (e) {
+    await admin.from("ad_account_activity").upsert({ ad_account_id: account, error: (e instanceof Error ? e.message : String(e)).slice(0, 300), checked_at: new Date().toISOString() });
+  }
 }
 
 /** One ad account now (Sync health's Retry): pull from Meta and recompute its targets. */

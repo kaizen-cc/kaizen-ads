@@ -43,6 +43,7 @@ const make = (
     audit: null,
     extraMetrics: [],
     sprint: null,
+    lastChange: null,
     label: null,
     conversion,
     conversionLabel: conversionLabel(conversion),

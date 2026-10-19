@@ -50,6 +50,8 @@ export type KpiRow = {
   audit: AuditSummary;
   extraMetrics: string[];
   sprint: SprintSummary | null;
+  /** The latest change someone made in the ad account (Meta's activity log), when it was last read */
+  lastChange: { at: string | null; who: string | null; what: string | null; object: string | null; checkedAt: string; error: string | null } | null;
 };
 
 type Person = { id: string; name: string };
@@ -344,6 +346,14 @@ function Reported({ ex, conv, custom, onPick, onAddBox, boxes }: { ex: Explore; 
   );
 }
 
+/** "5h", "3 days": how long ago something happened, from the browser's clock. */
+function sinceText(iso: string) {
+  const h = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 3_600_000));
+  return h < 1 ? "under an hour" : h < 48 ? `${h}h` : `${Math.round(h / 24)} days`;
+}
+/** Someone changed the ad account in the last 48 hours: it's being worked on, even without a sprint. */
+const recentlyChanged = (r: KpiRow) => Boolean(r.lastChange?.at && Date.now() - Date.parse(r.lastChange.at) < 48 * 3_600_000);
+
 const SPRINT_TONE: Record<string, string> = {
   started: "bg-surface-2 text-muted",
   no_action: "bg-bad-soft text-bad",
@@ -572,9 +582,17 @@ function Row({ r, open, onToggle, buyers }: { r: KpiRow; open: boolean; onToggle
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
                 Sprint in motion · {r.sprint.buyer ?? "no buyer"} · {r.sprint.done}/{r.sprint.total}
               </span>
-            ) : (r.status === "off" || r.status === "close") && r.audit?.status !== "running" ? (
-              <span className="mt-1.5 inline-flex rounded-full border border-dashed border-bad/50 px-2 py-0.5 text-[10px] text-bad">Nobody&apos;s optimizing it yet</span>
+            ) : (r.status === "off" || r.status === "close") && r.audit?.status !== "running" && !recentlyChanged(r) ? (
+              <span className="mt-1.5 inline-flex rounded-full border border-dashed border-bad/50 px-2 py-0.5 text-[10px] text-bad">
+                Nobody&apos;s optimizing it yet{r.lastChange?.at ? ` · no changes in ${sinceText(r.lastChange.at)}` : ""}
+              </span>
             ) : null}
+            {r.lastChange?.at && (
+              <p className="mt-1 truncate text-[11px] text-faint" title={`${r.lastChange.who ?? "Someone"}: ${r.lastChange.what}${r.lastChange.object ? ` · ${r.lastChange.object}` : ""}`}>
+                Last change {sinceText(r.lastChange.at)} ago · {r.lastChange.what}
+                {r.lastChange.who ? ` by ${r.lastChange.who}` : ""}
+              </p>
+            )}
           </div>
         </div>
 
