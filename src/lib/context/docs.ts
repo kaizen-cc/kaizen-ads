@@ -19,28 +19,31 @@ const MAX_PER_RUN = 30;
 
 type File = { id: string; name: string; mimeType: string; modifiedTime: string; createdTime: string; webViewLink?: string; owners?: { emailAddress?: string; displayName?: string }[] };
 
+const LESSON = { type: "object", properties: { kind: { type: "string", enum: ["prefer", "avoid", "note"] }, body: { type: "string" } }, required: ["kind", "body"], additionalProperties: false };
 const SCHEMA = {
   type: "object",
   properties: {
-    client: { type: "string" },
     kind: { type: "string", enum: ["strategy", "plan", "audit", "report", "notes", "brief", "other"] },
-    summary: { type: "string" },
-    points: { type: "array", items: { type: "string" } },
-    lessons: {
+    clients: {
       type: "array",
-      items: { type: "object", properties: { kind: { type: "string", enum: ["prefer", "avoid", "note"] }, body: { type: "string" } }, required: ["kind", "body"], additionalProperties: false },
+      items: {
+        type: "object",
+        properties: { client: { type: "string" }, summary: { type: "string" }, points: { type: "array", items: { type: "string" } }, lessons: { type: "array", items: LESSON } },
+        required: ["client", "summary", "points", "lessons"],
+        additionalProperties: false,
+      },
     },
   },
-  required: ["client", "kind", "summary", "points", "lessons"],
+  required: ["kind", "clients"],
   additionalProperties: false,
 };
 
-const SYSTEM = `You read a document someone at Kaizen, a marketing agency, wrote in Google Drive, to decide whether it's about one of Kaizen's clients and, if so, what it tells the team about that client. Use only what's in the document; don't invent.
-client: the client it's about, written exactly as in the list, or "" when it isn't about one client from the list (Kaizen's own business: hiring, HR, training, internal processes, templates, personal documents; or several clients at once with nothing specific to one). When client is "", leave everything else empty.
+const SYSTEM = `You read a document someone at Kaizen, a marketing agency, wrote in Google Drive, to find which of Kaizen's clients it's about and what it tells the team about each. Use only what's in the document; don't invent.
 kind: strategy, plan, audit, report, notes, brief or other.
-summary: 2 to 4 sentences: what the document is and what it decides or recommends for the client.
-points: up to 8 short lines with the specifics worth knowing (goals, offers, audiences, angles, budgets, dates, what's working or not, what the client wants).
-lessons: what anyone making this client's ads, creative or copy should remember from now on: lasting preferences and dislikes (imagery, AI-generated visuals, tone, words, claims), rules, audiences, positioning, business changes. One plain sentence each, ending with where it came from ("from the Q4 strategy doc"). kind: prefer (do this), avoid (don't), note (a fact to know). 0 to 6; none when the document only restates what's obvious.`;
+clients: one entry per client from the list the document says something specific about (a doc covering several accounts gets several entries). client: the name exactly as in the list. Empty when it isn't about a client: Kaizen's own business (hiring, HR, training, internal processes), blank templates, personal documents.
+summary: 2 to 4 sentences: what the document says and decides or recommends for that client.
+points: up to 8 short lines with the specifics (goals, offers, audiences, angles, budgets, dates, results, what's working or not, what the client wants). This is where a period's numbers and results go.
+lessons: only what stays true for months and should change how their ads, creative or copy are made: lasting preferences and dislikes (imagery, AI-generated visuals, tone, words, claims), rules, positioning, audiences, products, business changes, an angle or format that has proven itself. Not a month's metrics (ROAS, CPA, CTR, spend), one-off events or dates, plans for next month, or remarks about the document itself. One plain sentence each, ending with where it came from ("from the Q4 strategy doc"). kind: prefer (do this), avoid (don't), note (a fact to know). 0 to 4 per client; most reports have 0 or 1.`;
 
 async function drive<T>(token: string, path: string, params: Record<string, string>) {
   const res = await fetch(`https://www.googleapis.com/drive/v3/${path}?${new URLSearchParams(params)}`, { headers: { authorization: `Bearer ${token}` }, cache: "no-store" });
@@ -107,39 +110,50 @@ export async function watchDocs(admin: SupabaseClient, budgetMs = 600_000) {
           t.tick(f.name);
           continue;
         }
-        const r = await askJson<{ client: string; kind: string; summary: string; points: string[]; lessons: Lesson[] }>({
+        const r = await askJson<{ kind: string; clients: { client: string; summary: string; points: string[]; lessons: Lesson[] }[] }>({
           agent: "calls",
           label: "read a doc",
           system: SYSTEM,
           schema: SCHEMA,
-          maxTokens: 3000,
+          maxTokens: 4000,
           prompt: `Clients:\n${(clients ?? []).map((c) => c.name).join("\n")}\n\nDocument: "${f.name}" (${f.mimeType === SLIDES ? "slides" : "doc"}) by ${f.owners?.[0]?.displayName ?? owner ?? "someone"}, last edited ${f.modifiedTime.slice(0, 10)}\n\n<document>\n${text.slice(0, 40_000)}\n</document>`,
         });
         out.read++;
-        const clientId = r.client ? byName.get(r.client.toLowerCase().replace(/[^a-z0-9]/g, "")) : undefined;
+        const about = [
+          ...new Map(
+            r.clients
+              .map((m) => ({ ...m, clientId: byName.get(m.client.toLowerCase().replace(/[^a-z0-9]/g, "")) }))
+              .filter((m): m is typeof m & { clientId: string } => Boolean(m.clientId))
+              .map((m) => [m.clientId, m]),
+          ).values(),
+        ];
+        // What an earlier read of this doc said is replaced by this one
+        await admin.from("context_items").delete().eq("source", "drive").like("external_id", `doc:${f.id}%`);
         // Not about a client: nothing from it is kept
-        if (!clientId) {
+        if (!about.length) {
           await admin.from("drive_docs").upsert({ ...base, status: "skipped", client_id: null, summary: null });
           out.skipped++;
           t.tick(f.name);
           continue;
         }
-        await saveItems(admin, [
-          {
-            client_id: clientId,
-            source: "drive",
-            external_id: `doc:${f.id}`,
-            thread_id: null,
-            occurred_at: f.modifiedTime,
-            author: f.owners?.[0]?.displayName ?? owner,
-            title: f.name,
-            body: trimBody([r.summary, ...r.points.map((p) => `- ${p}`)].join("\n"), 4000),
-            url: f.webViewLink ?? `https://docs.google.com/document/d/${f.id}`,
-            meta: { doc: true, kind: r.kind, mimeType: f.mimeType },
-          },
-        ]);
-        out.lessons += await rememberLessons(admin, clientId, r.lessons, "drive", f.modifiedTime);
-        await admin.from("drive_docs").upsert({ ...base, status: "read", client_id: clientId, kind: r.kind, summary: r.summary.slice(0, 2000) });
+        for (const m of about) {
+          await saveItems(admin, [
+            {
+              client_id: m.clientId,
+              source: "drive",
+              external_id: `doc:${f.id}:${m.clientId}`,
+              thread_id: null,
+              occurred_at: f.modifiedTime,
+              author: f.owners?.[0]?.displayName ?? owner,
+              title: f.name,
+              body: trimBody([m.summary, ...m.points.map((p) => `- ${p}`)].join("\n"), 4000),
+              url: f.webViewLink ?? `https://docs.google.com/document/d/${f.id}`,
+              meta: { doc: true, kind: r.kind, mimeType: f.mimeType },
+            },
+          ]);
+          out.lessons += await rememberLessons(admin, m.clientId, m.lessons, "drive", f.modifiedTime);
+        }
+        await admin.from("drive_docs").upsert({ ...base, status: "read", client_id: about[0].clientId, kind: r.kind, summary: about.map((m) => m.summary).join("\n\n").slice(0, 4000) });
         out.aboutClients++;
         t.tick(f.name);
       } catch (e) {

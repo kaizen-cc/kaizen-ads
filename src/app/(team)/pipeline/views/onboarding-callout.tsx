@@ -63,7 +63,7 @@ export function OnboardingCallout({ state, clients }: { state: OnboardingState; 
               <Link href={`/clients/${c.slug}`} className="text-muted hover:text-fg">
                 {c.name}
               </Link>
-              {c.setup && <span className="text-faint"> ({done(c.setup)}/{SETUP.length} set up)</span>}
+              {c.setup && <span className="text-faint"> ({c.setup.progress ?? `${done(c.setup)}/${SETUP.length}`})</span>}
             </span>
           ))}
         </p>
@@ -279,8 +279,8 @@ function Setup({ s }: { s: NonNullable<OnboardingCard["setup"]> }) {
       <div className="flex items-center justify-between gap-3 text-xs">
         <span className="font-medium">Account setup</span>
         <span className="tabular text-faint">
-          {n}/{SETUP.length}
-          {next ? ` · next: ${next[1].toLowerCase()}` : " · all set"}
+          {s.progress ?? `${n}/${SETUP.length}`}
+          {next ? ` · next: ${next[1].toLowerCase()}` : ""}
         </span>
       </div>
       <ul className="flex flex-wrap gap-1.5">

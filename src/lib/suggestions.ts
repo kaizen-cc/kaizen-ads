@@ -720,7 +720,8 @@ export async function loadOnboarding(db: SupabaseClient): Promise<OnboardingStat
     db
       .from("clients")
       .select("id, name, slug, created_at, reonboarded_at, creative_package, industry_detail, first_round_started_at, first_round_error, onboarding_sheet")
-      .or(waitingIds.length ? `status.eq.onboarding,id.in.(${waitingIds.join(",")})` : "status.eq.onboarding")
+      // Also active clients the Account Overview sheet's Onboarding tab says aren't fully set up yet
+      .or(["status.eq.onboarding", "and(status.eq.active,onboarding_sheet->>progress.not.ilike.*complete*)", ...(waitingIds.length ? [`id.in.(${waitingIds.join(",")})`] : [])].join(","))
       .is("archived_at", null)
       .order("created_at", { ascending: false })
       .limit(20),
