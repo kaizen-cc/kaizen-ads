@@ -1,6 +1,6 @@
 # Kaizen Ads: Roadmap
 
-Where things stand on 2026-10-16 and what comes next, in order. The target is the full request → approval → launch loop live before Black Friday / Cyber Monday. See VISION.md for every decision behind it.
+Where things stand on 2026-10-19 and what comes next, in order. The target is the full request → approval → launch loop live before Black Friday / Cyber Monday. See VISION.md for every decision behind it.
 
 ## Built
 
@@ -32,6 +32,14 @@ Where things stand on 2026-10-16 and what comes next, in order. The target is th
 - **Refresh briefs written ahead** for every ad wearing out.
 - **Errors and updates**: errors are grouped, triaged (harmless ones closed automatically), diagnosed and emailed with Mark fixed / Stop alerting / Have Claude fix it; Settings has an Errors tab. Open tabs get a refresh bar when a new version is live.
 - **Archive, complete**: archiving sets aside everything tied to the client (KPI targets, briefs, promises, watch list, syncs, the Lab, intake) and is logged; the archive log on Clients shows who, when, why and what, and restoring brings it back.
+- **Six role agents** (strategist, creative director, copywriter, media buyer, analyst, operator) with skills, on one locked strategy spine; the Ads Lab never creates agents.
+- **Account audits and optimization sprints** on the KPI board: a real audit (found / do / watch), a client PDF in our voice, trackable moves the AI checks daily, lessons into client memory and shared only with truly similar accounts.
+- **Account Overview sheet** as the source of truth for buyer, budget and KPI target (12pm and 5pm), plus the Onboarding tab's setup checklist and each client's Creative Database as a cross-check.
+- **Asana mirror**: the Creative board as outline cards every 5 minutes, migrate any task into Kaizen Ads at its stage, Asana work counted in allotments in the month it's made, Asana tasks clearing call promises.
+- **Docs across the Workspace**: new and edited Docs and Slides read for the client they're about; every team's calls kept as client context.
+- **Handoffs**: a buyer change moves the work and writes the new buyer a handoff with a chat (waits until they've joined).
+- **Overview as topics** and the **daily recap** for everyone (most critical first, jump to a topic, save for later, "taken care of by a teammate").
+- **Team notifications**: bell, critical pop-ups, email, recap reminders, per-person settings. Boards scoped to each person's clients.
 
 ## Next: close the approval loop (Phase 1, before BFCM)
 
@@ -42,7 +50,7 @@ Where things stand on 2026-10-16 and what comes next, in order. The target is th
 
 4. **Launcher**: approved ads are pushed to Meta **paused** through the system user. The AI suggests campaign, ad set and naming; the buyer confirms. Kaizen's media-buying standards live in the Launcher agent's playbook.
 7. **Google Ads**: apply for the Google Ads API developer token now, since approval takes days. Then pull Google numbers into the same KPI dashboard (targets are already stored).
-8. **Alerts**: a daily Slack digest per buyer listing what went off target or off pace overnight.
+8. ~~Alerts~~: covered by team notifications and the daily recap.
 
 ## Later (Phase 3)
 
