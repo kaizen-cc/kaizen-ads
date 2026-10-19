@@ -108,7 +108,10 @@ export function AccountChat({ id, client, initial, ready }: { id: string; client
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const end = useRef<HTMLDivElement>(null);
-  useEffect(() => end.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }), [chat, pending]);
+  // Braces: newer browsers return a promise from scrollIntoView, which React would take for a cleanup
+  useEffect(() => {
+    end.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [chat, pending]);
 
   const ask = async (text: string) => {
     if (!text.trim() || pending) return;

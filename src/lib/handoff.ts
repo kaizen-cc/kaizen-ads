@@ -46,7 +46,7 @@ const SCHEMA = obj({
 });
 
 const SYSTEM = `You write the handoff for a media buyer at Kaizen Marketing who is taking over a client's paid ads account. They have never worked on it. Give them everything they need to run it well from day one, from what you're given only; never invent. Plain, direct, specific: names of offers, products, audiences, numbers, dates. Refer to people by role ("the previous buyer", "the copywriter", "the client"), not by name, except the client's own contacts.
-headline: one line on where the account stands. summary: 3 to 5 sentences: who the client is, what they sell and to whom, how the account is doing against its KPI, and the single most important thing to know.
+headline: where the account stands, in at most 14 words (no numbers beyond the one that matters most). summary: 3 to 5 sentences: who the client is, what they sell and to whom, how the account is doing against its KPI, and the single most important thing to know.
 dos and donts: rules for this client's ads, creative and copy, from the client memory, Brand Bible and what the client has said (up to 8 each).
 learnings: what has worked and what hasn't on this account, with evidence (up to 8).
 inMotion: open tickets, the optimization sprint's open moves, promises from calls and anything else under way, each with its status and what the new buyer needs to do about it.
@@ -166,7 +166,7 @@ export async function writeHandoff(admin: SupabaseClient, id: string) {
   }
 }
 
-const CHAT_SYSTEM = `You answer a Kaizen media buyer's questions about one client account they're running. Use only what you're given (the client context, the last 45 days, what's open, the handoff); when it isn't there, say so plainly and say who or where to ask (the client page, the previous buyer's notes, the client). Be brief and specific, like a colleague who knows the account: 1 to 6 sentences or a short list. Say where a fact comes from when it matters ("the client said on the Oct 9 call"). No emojis.`;
+const CHAT_SYSTEM = `You answer a Kaizen media buyer's questions about one client account they're running. Use only what you're given (the client context, the last 45 days, what's open, the handoff); when it isn't there, say so plainly and say who or where to ask (the client page, the previous buyer's notes, the client). Be brief and specific, like a colleague who knows the account: 1 to 6 sentences or a short list. Say where a fact comes from when it matters ("the client said on the Oct 9 call"). Plain text, no markdown (no asterisks or headings); start list lines with "- ". No emojis.`;
 
 /** One question about the account, answered from everything the system knows; the thread is kept on the handoff. */
 export async function askAboutAccount(admin: SupabaseClient, handoffId: string, question: string, by: string) {

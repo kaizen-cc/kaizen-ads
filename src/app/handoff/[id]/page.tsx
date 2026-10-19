@@ -53,7 +53,7 @@ export default async function HandoffPage({ params }: PageProps<"/handoff/[id]">
               <p className="text-sm font-medium text-[#c8102e]">
                 {client.name} · {from ? `${from} → ${to}` : `for ${to}`}
               </p>
-              <h1 className="text-[28px] font-semibold leading-[1.15] tracking-tight sm:text-[32px]">{d?.headline ?? `${client.name} is yours now`}</h1>
+              <h1 className="text-[24px] font-semibold leading-[1.2] tracking-tight sm:text-[28px]">{d?.headline ?? `${client.name} is yours now`}</h1>
               {d && <p className="max-w-[62ch] text-[15px] leading-relaxed text-[#4d464f]">{d.summary}</p>}
               {movedLine.length > 0 && <p className="text-xs text-[#8a8189]">Moved to {to}: {movedLine.join(", ")}.</p>}
             </div>
