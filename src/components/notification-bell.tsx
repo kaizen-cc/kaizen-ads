@@ -44,7 +44,7 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
       const r = await myNotifications();
       // Critical ones that arrived since the last look pop up (not on the first load)
       // Only one bell pops them up (the sidebar one; the phone header shows the same list)
-      if (seen.current && placement === "side") for (const n of r.items) if (!n.read && n.priority === "critical" && !seen.current.has(n.id)) toast({ tone: "bad", title: n.title, body: n.body ?? undefined, actions: n.href ? [{ label: "Open", href: n.href, primary: true }] : undefined, ms: 9000 });
+      if (seen.current && placement === "side" && r.popups) for (const n of r.items) if (!n.read && n.priority === "critical" && !seen.current.has(n.id)) toast({ tone: "bad", title: n.title, body: n.body ?? undefined, actions: n.href ? [{ label: "Open", href: n.href, primary: true }] : undefined, ms: 9000 });
       seen.current = new Set(r.items.map((n) => n.id));
       setItems(r.items);
       setUnread(r.unread);
@@ -115,17 +115,43 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
                 <p className="font-heading text-[16px]">Notifications</p>
                 <p className="text-[11px] text-faint">What&apos;s on you, and what&apos;s new with your clients</p>
               </div>
-              {unread > 0 && (
-                <button type="button" onClick={readAll} className="text-xs text-muted hover:text-fg">
-                  Mark all read
+              <span className="flex items-center gap-3">
+                {unread > 0 && (
+                  <button type="button" onClick={readAll} className="text-xs text-muted hover:text-fg">
+                    Mark all read
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    router.push("/notifications");
+                  }}
+                  aria-label="Notification settings"
+                  className="grid h-7 w-7 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg"
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                  </svg>
                 </button>
-              )}
+              </span>
             </div>
             <div className="overflow-y-auto">
               {!items.length && (
                 <div className="grid place-items-center gap-2 px-6 py-16 text-center">
                   <span className="grid h-10 w-10 place-items-center rounded-full bg-ok-soft text-ok">✓</span>
                   <p className="text-sm text-muted">Nothing new. Work assigned to you and news on your clients show up here.</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpen(false);
+                      router.push("/notifications");
+                    }}
+                    className="text-xs text-muted underline-offset-4 hover:text-fg hover:underline"
+                  >
+                    Choose what you get
+                  </button>
                 </div>
               )}
               {[

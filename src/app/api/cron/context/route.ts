@@ -146,7 +146,7 @@ export async function GET(request: Request) {
       return Response.json(sheetConfigured() ? await syncAccountSheet(admin) : { skipped: "Google isn't connected" });
     }
     if (step === "remind") return Response.json(await (await import("@/lib/notifications")).remindRecaps(admin));
-    if (step === "notify") return Response.json(await (await import("@/lib/notifications")).emailCritical(admin));
+    if (step === "notify") return Response.json(await (await import("@/lib/notifications")).emailNotifications(admin));
     if (step === "docs") {
       const { watchDocs } = await import("@/lib/context/docs");
       return Response.json(googleConfigured() ? await watchDocs(admin) : { skipped: "Google isn't connected" });
