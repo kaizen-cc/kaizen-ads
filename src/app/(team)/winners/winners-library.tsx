@@ -420,7 +420,7 @@ export function Writing({ steps = WINNER_STEPS }: { steps?: string[] }) {
  * Hovering a winner (with a mouse) opens it as it runs in the feed, playing if it's a video, with the AI's read beside
  * it. It stays open while the pointer is on the card or on it; a click opens the full view.
  */
-function HoverCard({ w, rect, industryLabel, onEnter, onLeave, onOpen }: { w: Winner; rect: DOMRect; industryLabel: string; onEnter: () => void; onLeave: () => void; onOpen: () => void }) {
+export function HoverCard({ w, rect, industryLabel, onEnter, onLeave, onOpen }: { w: Winner; rect: DOMRect; industryLabel: string; onEnter: () => void; onLeave: () => void; onOpen: () => void }) {
   const ad = useAd(w.id);
   const insight = useInsight(w, ad);
   // Always fully on screen: a fixed height that fits the window, centred on the card, beside it when there's room

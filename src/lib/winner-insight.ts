@@ -80,9 +80,15 @@ export async function analyzeWinner(admin: SupabaseClient, w: Winner, extra: { t
     system: SYSTEM,
     schema: SCHEMA,
     images: await imageOf(extra.image ?? w.thumbnail),
-    prompt: `${w.client} (${w.detail ?? w.industry ?? "business"}) · last 30 days
-Cost per ${w.result ?? "result"}: $${w.costPerResult.toFixed(2)} vs the account's usual $${w.usual.toFixed(2)} (${w.ratio}x better)
-${w.results} ${w.result ?? "results"} on $${w.spend.toFixed(0)} spent · CTR ${w.ctr}% · ${w.live ? "running now" : "not delivering right now"}
+    prompt: `${w.client} (${w.detail ?? w.industry ?? "business"}) · ${w.fame ? `Hall of Fame: ${w.fame.days} days live` : "last 30 days"}
+${
+  w.fame
+    ? w.fame.roas
+      ? `ROAS ${w.costPerResult.toFixed(2)}x vs a ${w.usual}x ${w.fame.basis === "kpi" ? "KPI target" : "sub-vertical benchmark"} (${Math.round(w.fame.beatBy * 100)}% above it)`
+      : `Cost per ${w.result ?? "result"}: $${w.costPerResult.toFixed(2)} vs a $${w.usual.toFixed(2)} ${w.fame.basis === "kpi" ? "KPI target" : "sub-vertical benchmark"} (${Math.round(w.fame.beatBy * 100)}% under it)`
+    : `Cost per ${w.result ?? "result"}: $${w.costPerResult.toFixed(2)} vs the account's usual $${w.usual.toFixed(2)} (${w.ratio}x better)`
+}
+${w.results} ${w.result ?? "results"} on $${w.spend.toFixed(0)} spent${w.fame ? "" : ` · CTR ${w.ctr}%`} · ${w.live ? "running now" : "not delivering right now"}
 ${weeks ? `Its own weeks (oldest first):\n${weeks}` : ""}
 
 Ad name: ${w.name}

@@ -187,6 +187,8 @@ export type Winner = {
   spend: number;
   ctr: number;
   syncedAt: string;
+  /** A Hall of Fame ad: judged against its KPI target or sub-vertical benchmark over its whole run, not the account's usual */
+  fame?: { basis: "kpi" | "benchmark"; roas: boolean; days: number; beatBy: number };
 };
 
 type SnapAd = { id: string; name: string; headline: string | null; text: string | null; thumbnail: string | null; image?: string | null; live?: boolean; spend?: number; results?: number; result?: string | null; costPerResult?: number | null; ctr?: number };

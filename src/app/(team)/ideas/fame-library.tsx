@@ -1,14 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { FilterMenu, FilterPill } from "@/components/filters";
 import type { FameAd } from "@/lib/hall-of-fame";
+import type { Winner } from "@/lib/industry";
 import type { OpenSuggestion } from "@/lib/suggestions";
 import { SuggestionSheet } from "../pipeline/views/suggested-briefs";
 import { briefFromWinner } from "../winners/actions";
-import { FeedPreview } from "../winners/fb-preview";
-import { ClientPick, Writing, type PickClient } from "../winners/winners-library";
+import { FeedPreview, InsightPanel, useAd, useInsight } from "../winners/fb-preview";
+import { ClientPick, HoverCard, Writing, type PickClient } from "../winners/winners-library";
 
 type Sort = "beat" | "spend" | "days";
 const SORTS: [Sort, string][] = [
@@ -19,6 +20,30 @@ const SORTS: [Sort, string][] = [
 const money = (n: number) => `$${n.toLocaleString("en-US", { maximumFractionDigits: n < 100 ? 2 : 0 })}`;
 const result = (a: FameAd) => (a.roas ? `${a.value.toFixed(2)}x ROAS vs ${a.target}x target` : `${money(a.value)} vs ${money(a.target)} ${a.targetSource === "kpi" ? "target" : "benchmark"} per ${a.conversion.toLowerCase().replace(/s$/, "")}`);
 
+/** A Hall of Fame ad in the shape the winners' preview and the AI's read take: judged against its target over its run. */
+const toWinner = (a: FameAd): Winner => ({
+  id: a.adId,
+  client: a.client,
+  clientId: a.clientId,
+  clientSlug: a.clientSlug,
+  industry: null,
+  detail: a.vertical,
+  name: a.adName ?? "",
+  headline: a.creative.headline ?? null,
+  text: a.creative.text ?? null,
+  thumbnail: a.creative.image ?? null,
+  live: a.stillRunning,
+  result: a.conversion.toLowerCase().replace(/s$/, ""),
+  results: a.results,
+  costPerResult: a.value,
+  usual: a.target,
+  ratio: a.roas ? Math.round((a.value / a.target) * 10) / 10 : Math.round((a.target / a.value) * 10) / 10,
+  spend: a.spend,
+  ctr: 0,
+  syncedAt: a.lastDate,
+  fame: { basis: a.targetSource, roas: a.roas, days: a.daysLive, beatBy: a.beatBy },
+});
+
 /**
  * The Hall of Fame: our ads that proved themselves (30+ days live, at or beating the client's KPI target or their
  * sub-vertical's benchmark), kept six months. By vertical and sub-vertical; open one to see it and brief a client on it.
@@ -28,6 +53,20 @@ export function FameLibrary({ ads, verticals, clients }: { ads: FameAd[]; vertic
   const [sort, setSort] = useState<Sort>("beat");
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<FameAd | null>(null);
+  // Hovering a card (mouse only) shows the ad as it runs, with the AI's read of why it works, like the live winners
+  const [hover, setHover] = useState<{ a: FameAd; rect: DOMRect } | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hoverIn = (a: FameAd, el: HTMLElement) => {
+    if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setHover({ a, rect: el.getBoundingClientRect() }), hover ? 120 : 380);
+  };
+  const hoverOut = () => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setHover(null), 220);
+  };
+  const keep = () => timer.current && clearTimeout(timer.current);
+  const winners = useMemo(() => new Map(ads.map((a) => [a.adId, toWinner(a)])), [ads]);
 
   const counts = useMemo(() => {
     const m = new Map<string, number>();
@@ -114,7 +153,15 @@ export function FameLibrary({ ads, verticals, clients }: { ads: FameAd[]; vertic
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
             {shown.map((a) => (
-              <button key={a.adId} onClick={() => setOpen(a)} className="group grid content-start gap-2.5 rounded-[14px] border border-line bg-surface p-2 text-left transition-colors hover:border-faint">
+              <button
+                key={a.adId}
+                onClick={() => {
+                  setHover(null);
+                  setOpen(a);
+                }}
+                onMouseEnter={(e) => hoverIn(a, e.currentTarget)}
+                onMouseLeave={hoverOut}
+                className="group grid content-start gap-2.5 rounded-[14px] border border-line bg-surface p-2 text-left transition-colors hover:border-faint">
                 <span className="relative aspect-[4/5] overflow-hidden rounded-[10px] bg-surface-2">
                   {a.creative.image ? (
                     // eslint-disable-next-line @next/next/no-img-element
@@ -140,12 +187,28 @@ export function FameLibrary({ ads, verticals, clients }: { ads: FameAd[]; vertic
         </>
       )}
 
-      {open && <FameSheet key={open.adId} a={open} clients={clients} onClose={() => setOpen(null)} />}
+      {hover && !open && (
+        <HoverCard
+          key={hover.a.adId}
+          w={winners.get(hover.a.adId)!}
+          rect={hover.rect}
+          industryLabel={hover.a.vertical ?? "Not placed yet"}
+          onEnter={keep}
+          onLeave={hoverOut}
+          onOpen={() => {
+            setOpen(hover.a);
+            setHover(null);
+          }}
+        />
+      )}
+      {open && <FameSheet key={open.adId} a={open} w={winners.get(open.adId)!} clients={clients} onClose={() => setOpen(null)} />}
     </div>
   );
 }
 
-function FameSheet({ a, clients, onClose }: { a: FameAd; clients: PickClient[]; onClose: () => void }) {
+function FameSheet({ a, w, clients, onClose }: { a: FameAd; w: Winner; clients: PickClient[]; onClose: () => void }) {
+  const ad = useAd(a.adId);
+  const insight = useInsight(w, ad);
   const [step, setStep] = useState<"ad" | "pick" | "writing">("ad");
   const [brief, setBrief] = useState<OpenSuggestion | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -195,13 +258,7 @@ function FameSheet({ a, clients, onClose }: { a: FameAd; clients: PickClient[]; 
                 Done
               </button>
             </div>
-            <div className="rounded-[14px] border border-ok/30 bg-ok/[0.07] p-4">
-              <p className="tabular font-display text-3xl text-ok">{a.roas ? `${a.value.toFixed(2)}x` : money(a.value)}</p>
-              <p className="mt-1 text-sm text-muted">
-                {a.roas ? "ROAS" : `per ${a.conversion.toLowerCase().replace(/s$/, "")}`} over {a.daysLive} days, against a {a.roas ? `${a.target}x` : money(a.target)}{" "}
-                {a.targetSource === "kpi" ? "KPI target" : "sub-vertical benchmark"}: {Math.round(a.beatBy * 100)}% {a.roas ? "above" : "under"} it.
-              </p>
-            </div>
+            <InsightPanel w={w} insight={insight} />
             <dl className="grid grid-cols-3 gap-2 text-center text-xs">
               {(
                 [

@@ -243,10 +243,24 @@ export function InsightPanel({ w, insight, dense = false }: { w: Winner; insight
   return (
     <div className={`grid content-start ${dense ? "gap-3.5" : "gap-3"}`}>
       <div className="flex items-baseline gap-2.5 rounded-[12px] border border-ok/25 bg-ok/[0.06] px-3 py-2.5">
-        <span className={`tabular shrink-0 font-display text-ok ${dense ? "text-2xl" : "text-3xl"}`}>{w.ratio}x</span>
-        <span className="text-[11px] leading-snug text-muted">
-          {money(w.costPerResult)} vs {money(w.usual)} per {w.result ?? "result"} · {w.results.toLocaleString("en-US")} on {money(w.spend)} · CTR {w.ctr}%
-        </span>
+        {w.fame ? (
+          <>
+            <span className={`tabular shrink-0 font-display text-ok ${dense ? "text-2xl" : "text-3xl"}`}>{w.fame.roas ? `${w.costPerResult.toFixed(1)}x` : `${Math.round(w.fame.beatBy * 100)}%`}</span>
+            <span className="text-[11px] leading-snug text-muted">
+              {w.fame.roas
+                ? `ROAS vs a ${w.usual}x ${w.fame.basis === "kpi" ? "target" : "benchmark"}`
+                : `under target: ${money(w.costPerResult)} vs ${money(w.usual)} per ${w.result ?? "result"}`}{" "}
+              · {w.results.toLocaleString("en-US")} on {money(w.spend)} · {w.fame.days} days
+            </span>
+          </>
+        ) : (
+          <>
+            <span className={`tabular shrink-0 font-display text-ok ${dense ? "text-2xl" : "text-3xl"}`}>{w.ratio}x</span>
+            <span className="text-[11px] leading-snug text-muted">
+              {money(w.costPerResult)} vs {money(w.usual)} per {w.result ?? "result"} · {w.results.toLocaleString("en-US")} on {money(w.spend)} · CTR {w.ctr}%
+            </span>
+          </>
+        )}
       </div>
       {insight === undefined ? (
         <div className="grid gap-2" aria-busy>
