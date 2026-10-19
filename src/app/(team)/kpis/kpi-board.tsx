@@ -1,14 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { ActionButton, ActionForm } from "@/components/action-form";
 import { field, label } from "@/components/ui";
 import type { Agg, Pacing, Status, Trend } from "@/lib/kpi/calc";
 import { CONVERSIONS } from "@/lib/kpi/conversions";
 import { STATUS, deviationTone, kpiValue, money } from "@/lib/kpi/format";
 import { freshness } from "@/lib/dates";
-import { addKpiTarget, archiveKpiTarget, linkAdAccount, pullClientKpis, saveKpiTarget } from "./actions";
+import { addKpiTarget, archiveKpiTarget, exploreKpi, linkAdAccount, pullClientKpis, saveKpiTarget, setExtraMetrics } from "./actions";
+import type { Explore } from "@/lib/kpi/explore";
 import { DailyChart, Ladder, PaceBar, paceMeta } from "./kpi-charts";
 import { AuditPanel, type AuditSummary } from "./audit-panel";
 
@@ -45,6 +47,7 @@ export type KpiRow = {
   computedAt: string | null;
   dataThrough: string | null;
   audit: AuditSummary;
+  extraMetrics: string[];
 };
 
 type Person = { id: string; name: string };
@@ -79,8 +82,12 @@ function StatusPill({ status }: { status: Status }) {
 }
 
 /** The fields a buyer sets. Shared by edit and add. */
-function TargetFields({ row, buyers, platform }: { row?: KpiRow; buyers: Person[]; platform: "meta" | "google" }) {
-  const [conv, setConv] = useState(row?.conversion ?? (platform === "google" ? "conversions" : "purchases"));
+type Ctl = { conv: string; setConv: (v: string) => void; custom: string; setCustom: (v: string) => void; match: string; setMatch: (v: string) => void; actions: { type: string; label: string; count30: number }[] };
+
+function TargetFields({ row, buyers, platform, ctl }: { row?: KpiRow; buyers: Person[]; platform: "meta" | "google"; ctl?: Ctl }) {
+  const [ownConv, setOwnConv] = useState(row?.conversion ?? (platform === "google" ? "conversions" : "purchases"));
+  const conv = ctl?.conv ?? ownConv;
+  const setConv = ctl?.setConv ?? setOwnConv;
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <label className={label}>
@@ -127,7 +134,11 @@ function TargetFields({ row, buyers, platform }: { row?: KpiRow; buyers: Person[
         <span>
           Only campaigns containing <span className="font-normal text-faint">(optional)</span>
         </span>
-        <input name="campaign_match" defaultValue={row?.campaignMatch ?? ""} className={field} placeholder="e.g. Bridal Boudoir" />
+        {ctl ? (
+          <input name="campaign_match" value={ctl.match} onChange={(e) => ctl.setMatch(e.target.value)} className={field} placeholder="e.g. Bridal Boudoir" />
+        ) : (
+          <input name="campaign_match" defaultValue={row?.campaignMatch ?? ""} className={field} placeholder="e.g. Bridal Boudoir" />
+        )}
       </label>
       <label className={label}>
         <span>
@@ -138,7 +149,20 @@ function TargetFields({ row, buyers, platform }: { row?: KpiRow; buyers: Person[
       {conv === "custom" && (
         <label className={`${label} sm:col-span-2`}>
           Meta custom conversion
-          <input name="custom_action" defaultValue={row?.customAction ?? ""} className={`${field} tabular`} placeholder="offsite_conversion.custom.123456789" />
+          {ctl ? (
+            <>
+              <input name="custom_action" list={`actions-${row?.id}`} value={ctl.custom} onChange={(e) => ctl.setCustom(e.target.value)} className={`${field} tabular`} placeholder="offsite_conversion.custom.123456789" />
+              <datalist id={`actions-${row?.id}`}>
+                {ctl.actions.map((a) => (
+                  <option key={a.type} value={a.type}>
+                    {a.label} · {a.count30} in 30 days
+                  </option>
+                ))}
+              </datalist>
+            </>
+          ) : (
+            <input name="custom_action" defaultValue={row?.customAction ?? ""} className={`${field} tabular`} placeholder="offsite_conversion.custom.123456789" />
+          )}
         </label>
       )}
       <label className={`${label} sm:col-span-2 lg:col-span-4`}>
@@ -151,25 +175,227 @@ function TargetFields({ row, buyers, platform }: { row?: KpiRow; buyers: Person[
   );
 }
 
+const fmtMetric = (v: number | null, unit: string) =>
+  v == null ? "—" : unit === "$" ? money(v) : unit === "x" ? `${v.toFixed(2)}x` : unit === "%" ? `${v.toFixed(2)}%` : Math.round(v).toLocaleString("en-US");
+
+/** The extra metric boxes on this card, and adding one: from the list, or any action this account reports. */
+function MetricBoxes({ r, ex, onChange }: { r: KpiRow; ex: Explore | null; onChange: () => void }) {
+  const [adding, setAdding] = useState(false);
+  const [pending, start] = useTransition();
+  const [keys, setKeys] = useState(r.extraMetrics);
+  const save = (next: string[]) =>
+    start(async () => {
+      setKeys(next);
+      const res = await setExtraMetrics(r.id, next);
+      if (res.ok) onChange();
+    });
+  const shown = keys.map((k) => ex?.metrics.find((m) => m.key === k) ?? { key: k, label: ex?.catalog.find((c) => c.key === k)?.label ?? k, unit: "", d7: null, d14: null, d30: null, prev30: null });
+  return (
+    <div className="grid gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-medium uppercase tracking-[0.12em] text-faint">More metrics for this client</p>
+        <button type="button" onClick={() => setAdding(!adding)} className="rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg">
+          {adding ? "Done" : "+ Add a metric"}
+        </button>
+      </div>
+      {adding && ex && (
+        <div className="grid gap-3 rounded-[12px] border border-line bg-surface p-4">
+          <div className="flex flex-wrap gap-1.5">
+            {ex.catalog.map((m) => {
+              const on = keys.includes(m.key);
+              return (
+                <button
+                  key={m.key}
+                  type="button"
+                  disabled={pending}
+                  onClick={() => save(on ? keys.filter((k) => k !== m.key) : [...keys, m.key])}
+                  className={`rounded-full border px-3 py-1 text-xs transition-colors ${on ? "border-fg/50 bg-fg text-bg" : "border-line text-muted hover:text-fg"}`}
+                >
+                  {on ? "✓ " : "+ "}
+                  {m.label}
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-[11px] text-faint">Only this KPI card shows them; everyone else&apos;s view stays the same. Anything else the account reports can be added from &ldquo;What this account reports&rdquo; below.</p>
+        </div>
+      )}
+      {shown.length > 0 ? (
+        <div className="grid gap-px overflow-hidden rounded-[10px] border border-line bg-line sm:grid-cols-2 lg:grid-cols-4">
+          {shown.map((m) => {
+            const change = m.d30 != null && m.prev30 ? Math.round(((m.d30 - m.prev30) / m.prev30) * 100) : null;
+            return (
+              <div key={m.key} className="group relative grid gap-0.5 bg-surface px-4 py-3">
+                <span className="pr-5 text-[11px] text-faint">{m.label} · 14 days</span>
+                <span className="tabular text-sm">{fmtMetric(m.d14, m.unit)}</span>
+                <span className="tabular text-[11px] text-faint">
+                  7d {fmtMetric(m.d7, m.unit)} · 30d {fmtMetric(m.d30, m.unit)}
+                  {change != null && <span className="text-muted"> · {change > 0 ? "+" : ""}{change}% vs the 30 before</span>}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => save(keys.filter((k) => k !== m.key))}
+                  className="absolute right-2 top-2 rounded-full px-1.5 text-xs text-faint opacity-0 transition-opacity hover:text-fg group-hover:opacity-100 focus:opacity-100"
+                  aria-label={`Remove ${m.label}`}
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        !adding && <p className="text-[11px] text-faint">Add ROAS, engagement, CTR, CPM or any action this account reports, next to its KPI.</p>
+      )}
+    </div>
+  );
+}
+
+/** What the account actually reports in the last 30 days: every result type, and every action Meta sends. */
+function Reported({ ex, conv, custom, onPick, onAddBox, boxes }: { ex: Explore; conv: string; custom: string; onPick: (conversion: string, custom?: string) => void; onAddBox: (key: string) => void; boxes: string[] }) {
+  const [all, setAll] = useState(false);
+  const list = all ? ex.actions : ex.actions.slice(0, 8);
+  return (
+    <details className="group rounded-[12px] border border-line bg-surface">
+      <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm">
+        <span className="font-medium">What this account reports</span>
+        <span className="text-xs text-faint">
+          {ex.conversions.filter((c) => c.results30 > 0).length} of {ex.conversions.length} result types pulling · last 30 days <span className="group-open:hidden">· open</span>
+        </span>
+      </summary>
+      <div className="grid gap-4 border-t border-line px-4 py-4">
+        <div className="grid gap-2">
+          <p className="text-[11px] text-faint">Click one to see the numbers counted that way (not saved until you press Save).</p>
+          <div className="flex flex-wrap gap-1.5">
+            {ex.conversions.map((c) => {
+              const on = conv === c.key;
+              return (
+                <button
+                  key={c.key}
+                  type="button"
+                  onClick={() => onPick(c.key)}
+                  className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs transition-colors ${on ? "border-fg/50 bg-fg text-bg" : c.results30 > 0 ? "border-line text-fg hover:border-fg/30" : "border-dashed border-line text-faint hover:text-muted"}`}
+                >
+                  <span className={`h-1.5 w-1.5 rounded-full ${c.results30 > 0 ? "bg-ok" : "bg-faint/40"}`} />
+                  {c.label}
+                  <span className={`tabular ${on ? "" : "text-faint"}`}>{c.results30 > 0 ? c.results30.toLocaleString("en-US") : "none"}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div className="grid gap-2">
+          <p className="text-[11px] text-faint">Every action Meta reports for this account. Count any of them as the result (as a custom conversion), or add it as a box.</p>
+          <div className="overflow-x-auto rounded-[10px] border border-line">
+            <table className="w-full min-w-[560px] text-xs">
+              <tbody className="divide-y divide-line">
+                {list.map((a) => {
+                  const counted = conv === "custom" && custom === a.type;
+                  return (
+                    <tr key={a.type} className={counted ? "bg-surface-2" : ""}>
+                      <td className="px-3 py-2">
+                        <span className="block">{a.label}</span>
+                        <code className="text-[10px] text-faint">{a.type}</code>
+                      </td>
+                      <td className="tabular px-3 py-2 text-right">{a.count30.toLocaleString("en-US")}</td>
+                      <td className="tabular px-3 py-2 text-right text-faint">{a.value30 ? money(a.value30) : ""}</td>
+                      <td className="px-3 py-2 text-right">
+                        <span className="inline-flex gap-1.5">
+                          <button type="button" onClick={() => onPick("custom", a.type)} className={`rounded-full border px-2.5 py-1 ${counted ? "border-fg/40 text-fg" : "border-line text-muted hover:text-fg"}`}>
+                            {counted ? "Counting this" : "Count as result"}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={boxes.includes(`action:${a.type}`)}
+                            onClick={() => onAddBox(`action:${a.type}`)}
+                            className="rounded-full border border-line px-2.5 py-1 text-muted hover:text-fg disabled:opacity-40"
+                          >
+                            + Box
+                          </button>
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {ex.actions.length > 8 && (
+            <button type="button" onClick={() => setAll(!all)} className="justify-self-start text-xs text-muted hover:text-fg">
+              {all ? "Show fewer" : `Show all ${ex.actions.length}`}
+            </button>
+          )}
+        </div>
+      </div>
+    </details>
+  );
+}
+
 function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
+  const router = useRouter();
+  // What's being tried in the form; the numbers follow it live, before Save
+  const [conv, setConv] = useState(r.conversion);
+  const [custom, setCustom] = useState(r.customAction ?? "");
+  const [match, setMatch] = useState(r.campaignMatch ?? "");
+  const [ex, setEx] = useState<Explore | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [nonce, setNonce] = useState(0);
+  const canExplore = r.platform === "meta" && Boolean(r.accountId);
+  useEffect(() => {
+    if (!canExplore) return;
+    let live = true;
+    const t = setTimeout(async () => {
+      setLoading(true);
+      const res = await exploreKpi(r.id, { conversion: conv, custom: conv === "custom" ? custom || null : null, campaignMatch: match || null });
+      if (!live) return;
+      setLoading(false);
+      if (res.ok) {
+        setEx(res.data);
+        setErr(null);
+      } else setErr(res.error);
+    }, 350);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [r.id, conv, custom, match, canExplore, nonce]);
+
+  const previewing = conv !== r.conversion || (conv === "custom" && custom !== (r.customAction ?? "")) || match !== (r.campaignMatch ?? "");
+  const snap = previewing && ex ? ex.snapshot : null;
+  const windows = snap ? snap.windows : r.windows;
+  const months = snap ? snap.months : r.months;
+  const daily = snap ? snap.daily : r.daily;
+  const roas = Boolean(CONVERSIONS.find((c) => c.key === conv)?.roas);
+  const convLabel = conv === "custom" ? (custom ? custom.replace(/^offsite_conversion\.custom\./, "Custom ") : "Custom conversion") : (CONVERSIONS.find((c) => c.key === conv)?.label ?? conv);
+  const pick = (c: string, a?: string) => {
+    setConv(c);
+    if (a !== undefined) setCustom(a);
+  };
+  const reset = () => {
+    setConv(r.conversion);
+    setCustom(r.customAction ?? "");
+    setMatch(r.campaignMatch ?? "");
+  };
+
   const win = [
-    ["3 days", r.windows.d3],
-    ["7 days", r.windows.d7],
-    ["14 days", r.windows.d14],
-    ["30 days", r.windows.d30],
-    ["60 days", r.windows.d60],
-    ["90 days", r.windows.d90],
+    ["3 days", windows.d3],
+    ["7 days", windows.d7],
+    ["14 days", windows.d14],
+    ["30 days", windows.d30],
+    ["60 days", windows.d60],
+    ["90 days", windows.d90],
   ] as const;
-  const months = [
-    ["This month", r.months.mtd],
-    ["Last month", r.months.lastMonth],
-    ["This quarter", r.months.qtd],
-    ["Last quarter", r.months.lastQuarter],
+  const monthList = [
+    ["This month", months.mtd],
+    ["Last month", months.lastMonth],
+    ["This quarter", months.qtd],
+    ["Last quarter", months.lastQuarter],
   ] as const;
   const cell = (a: Agg | undefined) => (
     <>
-      <span className={`tabular text-sm ${r.target ? deviationTone(a?.value != null && r.target ? (r.roas ? (r.target - a.value) / r.target : (a.value - r.target) / r.target) : null) : "text-fg"}`}>
-        {kpiValue(a?.value, r.roas)}
+      <span className={`tabular text-sm ${r.target ? deviationTone(a?.value != null && r.target ? (roas ? (r.target - a.value) / r.target : (a.value - r.target) / r.target) : null) : "text-fg"}`}>
+        {kpiValue(a?.value, roas)}
       </span>
       <span className="tabular text-[11px] text-faint">
         {money(a?.spend ?? 0)} · {a?.results ?? 0} {a?.results === 1 ? "result" : "results"}
@@ -179,11 +405,26 @@ function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
   return (
     <div className="grid gap-6 border-t border-line bg-bg/40 px-5 py-6 sm:px-6">
       {r.accountId && <AuditPanel targetId={r.id} audit={r.audit} platform={r.platform} />}
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+
+      {previewing && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[12px] border border-brand/40 bg-brand-soft px-4 py-3 text-sm">
+          <span>
+            Previewing <b>{convLabel}</b>
+            {match ? ` in campaigns containing "${match}"` : ""}
+            {loading ? " · counting…" : ex?.resultType ? <span className="text-muted"> · counted as Meta&apos;s {ex.resultType}</span> : null}
+            <span className="text-muted"> · not saved yet</span>
+          </span>
+          <button type="button" onClick={reset} className="rounded-full border border-line bg-surface px-3 py-1 text-xs text-muted hover:text-fg">
+            Back to the saved view
+          </button>
+        </div>
+      )}
+
+      <div className={`grid gap-6 transition-opacity lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] ${loading && previewing ? "opacity-60" : ""}`}>
         <div className="grid content-start gap-3">
           <p className="text-xs font-medium uppercase tracking-[0.12em] text-faint">Last 30 days</p>
-          <DailyChart daily={r.daily} />
-          <p className="text-[11px] text-faint">Bars are spend, the line is {r.conversionLabel.toLowerCase()} per day.</p>
+          <DailyChart daily={daily} />
+          <p className="text-[11px] text-faint">Bars are spend, the line is {convLabel.toLowerCase()} per day.</p>
         </div>
         <div className="grid content-start gap-3">
           <p className="text-xs font-medium uppercase tracking-[0.12em] text-faint">Budget</p>
@@ -197,22 +438,42 @@ function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
         </div>
       </div>
 
-      <div className="grid gap-px overflow-hidden rounded-[10px] border border-line bg-line sm:grid-cols-3 lg:grid-cols-6">
+      <div className={`grid gap-px overflow-hidden rounded-[10px] border border-line bg-line transition-opacity sm:grid-cols-3 lg:grid-cols-6 ${loading && previewing ? "opacity-60" : ""}`}>
         {win.map(([name, a]) => (
           <div key={name} className={`grid gap-0.5 bg-surface px-4 py-3 ${name === "14 days" ? "ring-1 ring-inset ring-brand/40" : ""}`}>
-            <span className="text-[11px] text-faint">{name}{name === "14 days" && " · sets the status"}</span>
+            <span className="text-[11px] text-faint">
+              {name}
+              {name === "14 days" && " · sets the status"}
+            </span>
             {cell(a)}
           </div>
         ))}
       </div>
-      <div className="grid gap-px overflow-hidden rounded-[10px] border border-line bg-line sm:grid-cols-2 lg:grid-cols-4">
-        {months.map(([name, a]) => (
+      <div className={`grid gap-px overflow-hidden rounded-[10px] border border-line bg-line transition-opacity sm:grid-cols-2 lg:grid-cols-4 ${loading && previewing ? "opacity-60" : ""}`}>
+        {monthList.map(([name, a]) => (
           <div key={name} className="grid gap-0.5 bg-surface px-4 py-3">
             <span className="text-[11px] text-faint">{name}</span>
             {cell(a)}
           </div>
         ))}
       </div>
+
+      {canExplore && <MetricBoxes key={r.extraMetrics.join(",")} r={r} ex={ex} onChange={() => { setNonce((n) => n + 1); router.refresh(); }} />}
+      {canExplore && ex && (
+        <Reported
+          ex={ex}
+          conv={conv}
+          custom={custom}
+          onPick={pick}
+          boxes={r.extraMetrics}
+          onAddBox={async (k) => {
+            await setExtraMetrics(r.id, [...r.extraMetrics, k]);
+            setNonce((n) => n + 1);
+            router.refresh();
+          }}
+        />
+      )}
+      {err && <p className="text-xs text-bad">{err}</p>}
 
       <div className="grid gap-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -222,8 +483,8 @@ function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
             <ActionButton action={archiveKpiTarget.bind(null, r.id)} label="Remove" confirmText="Remove this KPI?" />
           </div>
         </div>
-        <ActionForm action={saveKpiTarget.bind(null, r.id, r.clientId)} submitLabel="Save" className="grid gap-4">
-          <TargetFields row={r} buyers={buyers} platform={r.platform} />
+        <ActionForm action={saveKpiTarget.bind(null, r.id, r.clientId)} submitLabel={previewing ? `Save, counting ${convLabel}` : "Save"} className="grid gap-4">
+          <TargetFields row={r} buyers={buyers} platform={r.platform} ctl={{ conv, setConv, custom, setCustom, match, setMatch, actions: ex?.actions ?? [] }} />
         </ActionForm>
       </div>
     </div>

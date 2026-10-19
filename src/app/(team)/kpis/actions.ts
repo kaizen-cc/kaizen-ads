@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { requireStaff } from "@/lib/auth";
 import { CONVERSIONS } from "@/lib/kpi/conversions";
 import { refreshClientKpis } from "@/lib/kpi/sync";
+import { exploreTarget, type Explore } from "@/lib/kpi/explore";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { notLive } from "@/lib/live-guard";
@@ -109,6 +110,33 @@ export async function linkAdAccount(accountId: string, form: FormData): Promise<
     await admin.from("sync_state").update({ last_result: { ...result, unlinked: (result.unlinked ?? []).filter((a) => a.id !== accountId) } }).eq("source", "meta:accounts");
     await refreshClientKpis(admin, clientId, true).catch(() => null);
   }
+  revalidatePath("/kpis");
+  return { ok: true };
+}
+
+/** The KPI card's explorer: numbers for a "counts as a result" before it's saved, what the account reports, and its extra metric boxes. */
+export async function exploreKpi(targetId: string, tryOut: { conversion: string; custom: string | null; campaignMatch: string | null }): Promise<{ ok: true; data: Explore } | { ok: false; error: string }> {
+  await requireStaff();
+  const supabase = await createClient();
+  const { data: t } = await supabase.from("kpi_targets").select("ad_account_id, target, monthly_budget, extra_metrics").eq("id", targetId).maybeSingle();
+  if (!t) return { ok: false, error: "You don't work on this client." };
+  if (!t.ad_account_id) return { ok: false, error: "Add the ad account first." };
+  if (!adminConfigured()) return { ok: false, error: "Server key missing." };
+  try {
+    const data = await exploreTarget(createAdminClient(), { ...t, ad_account_id: t.ad_account_id, extra_metrics: (t.extra_metrics ?? []) as string[] }, tryOut);
+    return { ok: true, data };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't read the numbers" };
+  }
+}
+
+/** The extra metric boxes on this KPI card only. */
+export async function setExtraMetrics(targetId: string, keys: string[]): Promise<ActionResult> {
+  await requireStaff();
+  const clean = [...new Set(keys.filter((k) => /^[a-z_]+$/.test(k) || /^(action|cost):[\w.]+$/.test(k)))].slice(0, 12);
+  const supabase = await createClient();
+  const { error } = await supabase.from("kpi_targets").update({ extra_metrics: clean }).eq("id", targetId);
+  if (error) return { ok: false, error: error.message };
   revalidatePath("/kpis");
   return { ok: true };
 }
