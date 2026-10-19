@@ -1026,7 +1026,15 @@ export function RolesOverview({ roles, agents, items, spine }: { roles: Role[]; 
         <section className="grid gap-4">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <h2 className="font-heading text-[20px]">The agents</h2>
-            <p className="text-xs text-faint">Six, fixed. The Coach and the Ads Lab improve their skills; they never add agents.</p>
+            <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-faint">
+              <span className="flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-ok" /> connected
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 rounded-full border border-dashed border-faint" /> not switched on yet
+              </span>
+              <span>· runs are the last 7 days · six agents, fixed</span>
+            </p>
           </div>
           <ul className="grid auto-rows-fr gap-4 md:grid-cols-2 xl:grid-cols-3">
             {roles.map((r) => {
@@ -1061,14 +1069,26 @@ export function RolesOverview({ roles, agents, items, spine }: { roles: Role[]; 
                         <li key={s.key} className="flex items-center justify-between gap-3 px-3 py-2 text-[13px]">
                           <span className="flex min-w-0 items-center gap-2">
                             <span
-                              className={`h-1.5 w-1.5 shrink-0 rounded-full ${!s.live ? "border border-dashed border-faint" : s.stats.runs ? "bg-ok" : "bg-faint/50"}`}
-                              title={!s.live ? "Not switched on yet" : s.stats.runs ? "Used this week" : "Not used this week"}
+                              className={`h-1.5 w-1.5 shrink-0 rounded-full ${s.live ? "bg-ok" : "border border-dashed border-faint"}`}
+                              title={s.live ? "Connected: it runs in the app" : "Not switched on yet"}
                             />
-                            <span className="truncate">{s.label}</span>
+                            <span className={`truncate ${s.live ? "" : "text-muted"}`}>{s.label}</span>
+                            {!s.live && <span className="shrink-0 rounded-full border border-dashed border-line px-1.5 text-[10px] text-faint">off</span>}
                           </span>
-                          <span className="flex shrink-0 items-center gap-1.5 text-[11px] capitalize text-faint">
-                            <ModelMeter model={s.model} />
-                            {s.model}
+                          <span className="flex shrink-0 items-center gap-3 text-[11px] text-faint">
+                            <span className="w-14 text-right tabular" title="Runs in the last 7 days">
+                              {s.stats.runs ? `${s.stats.runs} run${s.stats.runs === 1 ? "" : "s"}` : "—"}
+                            </span>
+                            {s.key === "fatigue" ? (
+                              <span className="w-16" title="A rule after every Meta sync; it makes no AI call">
+                                rule, no AI
+                              </span>
+                            ) : (
+                              <span className="flex w-16 items-center gap-1.5 capitalize">
+                                <ModelMeter model={s.model} />
+                                {s.model}
+                              </span>
+                            )}
                           </span>
                         </li>
                       ))}
