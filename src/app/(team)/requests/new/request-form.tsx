@@ -302,6 +302,11 @@ export function RequestForm({
       const res = await createBatch(draft, r, decisionsOf(r));
       if (res.ok) {
         writeSaved(null, saveKey);
+        // Migrated past production: open the ticket to upload its creative
+        if (draft.migration?.needsCreative && res.numbers[0]) {
+          window.location.assign(`/board?t=${res.numbers[0]}`);
+          return;
+        }
         setCreated(res.numbers);
         if (promise && promise.clientId === draft.clientId) void fulfilPromise(promise.id, res.numbers);
       }

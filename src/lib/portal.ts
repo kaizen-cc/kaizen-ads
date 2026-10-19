@@ -167,7 +167,10 @@ export async function loadPortal(db: SupabaseClient, clientId: string): Promise<
     };
   };
 
-  const items: PortalItem[] = all.filter((t) => t.stage === "client_review" && (designs.get(t.id)?.length || (kids ?? []).some((k) => k.parent_id === t.id))).map((t) => toItem(t));
+  // Only what's whole: its designs (or its split-off pieces) and its approved copy, so nothing half-moved reaches the client
+  const items: PortalItem[] = all
+    .filter((t) => t.stage === "client_review" && (designs.get(t.id)?.length || (kids ?? []).some((k) => k.parent_id === t.id)) && copyOf.get(t.id)?.status === "approved")
+    .map((t) => toItem(t));
 
   const revising: PortalRow[] = all
     .filter((t) => ["client_revision", "copy", "copy_review", "ready_for_client", "internal_review", "in_production"].includes(t.stage))

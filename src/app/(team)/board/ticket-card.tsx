@@ -96,6 +96,11 @@ export function TicketCard({
       </div>
       <p className="line-clamp-2 text-sm font-medium leading-snug">{ticket.title}</p>
       {ticket.parentNumber && <p className="-mt-1 text-[11px] text-ok">Client-approved part of #{ticket.parentNumber}</p>}
+      {ticket.migration && (
+        <p className="-mt-1 rounded-[6px] bg-warn-soft px-2 py-1 text-[11px] text-warn">
+          From Asana: {[ticket.migration.needsCreative && "upload the creative", ticket.migration.needsCopy && "add the copy"].filter(Boolean).join(" and ")}
+        </p>
+      )}
       {((ticket.internalRounds ?? 0) > 0 || (ticket.clientRounds ?? 0) > 0) && (
         <p className="-mt-1 flex flex-wrap gap-1 text-[10.5px]" title="Revision rounds: sent back by the Head of Creative (internal) and by the client">
           {(ticket.internalRounds ?? 0) > 0 && <span className="rounded-full bg-surface-2 px-1.5 py-px text-muted">{ticket.internalRounds} internal rev</span>}

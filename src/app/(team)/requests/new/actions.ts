@@ -309,7 +309,7 @@ export async function createBatch(draft: Draft, review: Review | null, decisions
     const admin = createAdminClient();
     const now = new Date().toISOString();
     const ids = rows.map((r) => r.id);
-    const { data: cur } = await admin.from("requests").select("id, refs, brief").in("id", ids);
+    const { data: cur } = await admin.from("requests").select("id, refs").in("id", ids);
     for (const r of cur ?? []) {
       const refs = [...((r.refs ?? []) as string[]), ...(mig.creativeLink.trim() ? [mig.creativeLink.trim()] : []), mig.url].filter((x, i, a) => a.indexOf(x) === i);
       await admin
@@ -318,13 +318,18 @@ export async function createBatch(draft: Draft, review: Review | null, decisions
           stage: mig.stage,
           stage_entered_at: now,
           refs,
-          brief: mig.copy.trim() ? `${r.brief ?? ""}\n\nCopy as it stood in Asana:\n${mig.copy.trim()}`.trim() : r.brief,
           ...(mig.assigneeId ? { assignee_id: mig.assigneeId } : {}),
         })
         .eq("id", r.id);
     }
     if (mig.stage !== "requested")
       await admin.from("request_events").insert(ids.map((id) => ({ request_id: id, kind: "stage", from_stage: "requested", to_stage: mig.stage, actor_id: me.id, body: "Migrated from Asana" })));
+    // The copy as it stood: split into ads word for word, approved if it was already past copy review
+    if (mig.copy.trim()) {
+      const { importCopy } = await import("@/lib/copy-import");
+      const approved = ["ready_for_client", "client_review", "client_revision", "ready_for_launch"].includes(mig.stage);
+      for (const id of ids) await importCopy(admin, id, mig.copy, approved, me.id).catch((e) => console.error("[migrate] copy:", e instanceof Error ? e.message : e));
+    }
     await admin.from("asana_tasks").update({ request_id: ids[0], migrated_at: now, migrated_by: me.id }).eq("gid", mig.gid);
   }
 

@@ -1,6 +1,8 @@
 import type { Format, Priority, Stage } from "@/lib/stages";
 
 export type Ticket = {
+  /** Moved over from Asana and still missing what its stage needs (the creative files, the copy set) */
+  migration?: { url: string | null; needsCreative: boolean; needsCopy: boolean } | null;
   id: string;
   number: number;
   clientId: string;

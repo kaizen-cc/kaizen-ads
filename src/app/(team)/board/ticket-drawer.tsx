@@ -323,6 +323,20 @@ export function TicketDrawer({
 
           <div className="grid gap-2.5">
             <h2 className="font-heading text-[26px] leading-tight">{ticket.title}</h2>
+            {ticket.migration && (
+              <div className="grid gap-1.5 rounded-[10px] border border-warn/40 bg-warn-soft px-3.5 py-3 text-sm">
+                <p className="font-medium text-warn">Finish moving this from Asana</p>
+                <ul className="grid gap-1 text-[13px] text-fg">
+                  {ticket.migration.needsCreative && <li>· Upload the creative as it stands (Deliverables, below). The client portal only shows tickets with their files here.</li>}
+                  {ticket.migration.needsCopy && <li>· Add the copy set (Copy, below): it&apos;s past copy, so the client needs to see it.</li>}
+                </ul>
+                {ticket.migration.url && (
+                  <a href={ticket.migration.url} target="_blank" rel="noreferrer" className="text-xs text-muted hover:text-fg">
+                    Open the task in Asana ↗
+                  </a>
+                )}
+              </div>
+            )}
             {ticket.parentNumber && (
               <p className="text-xs text-ok">
                 Split from #{ticket.parentNumber}: the designs and copy the client approved, ready to launch while the rest is reworked.
