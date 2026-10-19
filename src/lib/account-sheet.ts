@@ -81,6 +81,7 @@ export async function syncAccountSheet(admin: SupabaseClient) {
       return (people ?? []).find((p) => p.full_name.toLowerCase() === n || p.full_name.toLowerCase().split(" ")[0] === n.split(" ")[0]) ?? null;
     };
     const now = new Date().toISOString();
+    const handoffs: string[] = [];
     const out = { updated: 0, unchanged: 0, noKpi: [] as string[], noAccount: [] as string[], unknownBuyer: [] as string[], buyers: 0 };
 
     for (const { r, platform } of rows) {
@@ -120,6 +121,10 @@ export async function syncAccountSheet(admin: SupabaseClient) {
           await admin.from("client_assignments").delete().eq("client_id", target.client_id).eq("role", "meta_buyer");
           await admin.from("client_assignments").insert({ client_id: target.client_id, profile_id: buyer.id, role: "meta_buyer" });
           out.buyers++;
+          // The account's work moves to the new buyer, and a handoff is written for them once the sheet is read
+          const { handOff } = await import("@/lib/handoff");
+          const id = await handOff(admin, target.client_id, (cur?.[0]?.profile_id as string | undefined) ?? null, buyer.id, null, "sheet");
+          if (id) handoffs.push(id);
         }
       }
       t.tick(name);
@@ -129,6 +134,11 @@ export async function syncAccountSheet(admin: SupabaseClient) {
       const { refreshClientKpis } = await import("@/lib/kpi/sync");
       const touched = [...new Set((targets ?? []).map((x) => x.client_id))];
       for (const id of touched.slice(0, 200)) await refreshClientKpis(admin, id, false).catch(() => null);
+    }
+    if (handoffs.length) {
+      t.on(`Writing ${handoffs.length} handoff${handoffs.length === 1 ? "" : "s"} for new buyers`);
+      const { writeHandoff } = await import("@/lib/handoff");
+      for (const id of handoffs) await writeHandoff(admin, id);
     }
     t.on("Reading the Onboarding tab");
     const onboarding = await syncOnboarding(admin, tok, now).catch((e) => ({ onboarding: 0, onboardingUnmatched: [] as string[], onboardingError: e instanceof Error ? e.message : String(e) }));

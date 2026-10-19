@@ -7,6 +7,7 @@ import { businessDuration, health, stageInfo, type Stage } from "@/lib/stages";
 import { createClient } from "@/lib/supabase/server";
 import { loadCallPromises, loadOnboarding, loadSuggestions } from "@/lib/suggestions";
 import { loadWatchList } from "@/lib/fatigue";
+import { HandoffCallout } from "@/components/handoff-callout";
 import { LeaderView } from "./views/leader-view";
 import { PulseView } from "./views/pulse-view";
 import type { Tone } from "./views/shared";
@@ -76,6 +77,7 @@ export default async function Home() {
         onboarding={onboarding}
         clientOptions={clientOptions}
         callPromises={callPromises}
+        handoffs={<HandoffCallout db={db} me={me.id} />}
       />
     );
   }

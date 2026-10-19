@@ -4,6 +4,7 @@ import { requireStaff } from "@/lib/auth";
 import { greetingFor, todayLabel } from "@/lib/dates";
 import { loadNextForMe } from "@/lib/next-for-me";
 import { createClient } from "@/lib/supabase/server";
+import { HandoffCallout } from "@/components/handoff-callout";
 import { NextList } from "./next-list";
 
 export const metadata: Metadata = { title: "Next for me" };
@@ -12,7 +13,8 @@ export const metadata: Metadata = { title: "Next for me" };
 export default async function NextForMe() {
   const me = await requireStaff();
   if (me.isExec) redirect("/pipeline");
-  const data = await loadNextForMe(await createClient(), me);
+  const db = await createClient();
+  const data = await loadNextForMe(db, me);
   const now = new Date();
   const first = me.fullName.split(" ")[0];
   const n = data.now.length + data.decide.length;
@@ -25,6 +27,7 @@ export default async function NextForMe() {
         </h1>
         <p className="text-sm text-muted">{n ? `${n} ${n === 1 ? "thing needs" : "things need"} you. Here's everything that's next, in one place.` : "Here's everything that's next for you, in one place."}</p>
       </header>
+      <HandoffCallout db={db} me={me.id} />
       <NextList data={data} />
     </div>
   );

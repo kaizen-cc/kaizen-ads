@@ -64,12 +64,17 @@ export async function applyTeam(admin: SupabaseClient, clientId: string, raw: Re
       else unmatched.push(`${name} (${slot.replace("_", " ")})`);
     }
     if (!ids.length) continue;
+    const { data: before } = slot === "meta_buyer" ? await admin.from("client_assignments").select("profile_id").eq("client_id", clientId).eq("role", slot) : { data: [] };
     // The form is the source of truth for this role on this client
     await admin.from("client_assignments").delete().eq("client_id", clientId).eq("role", slot).not("profile_id", "in", `(${ids.join(",")})`);
     await admin.from("client_assignments").upsert(ids.map((id) => ({ client_id: clientId, profile_id: id, role: slot })), { onConflict: "client_id,role,profile_id" });
     assigned[slot] = ids.map((id) => people!.find((p) => p.id === id)!.full_name).join(", ");
-    // The KPI board follows the buyer: their account targets move with them
-    if (slot === "meta_buyer") await admin.from("kpi_targets").update({ owner_id: ids[0] }).eq("client_id", clientId).eq("platform", "meta");
+    // A new buyer: the account's work moves to them and they get a handoff
+    if (slot === "meta_buyer" && !(before ?? []).some((b) => b.profile_id === ids[0])) {
+      const { handOff, writeHandoff } = await import("@/lib/handoff");
+      const id = await handOff(admin, clientId, (before?.[0]?.profile_id as string | undefined) ?? null, ids[0], null, "form");
+      if (id) await writeHandoff(admin, id);
+    }
   }
   return { assigned, unmatched };
 }

@@ -28,7 +28,7 @@ export type LeaderData = {
 };
 
 /** Leaders (Head of Creative / Meta / Google): their decisions first, then their team and its problems. */
-export function LeaderView(d: LeaderData) {
+export function LeaderView(d: LeaderData & { handoffs?: React.ReactNode }) {
   return (
     <div className="mx-auto grid max-w-6xl gap-10">
       <PageHeader
@@ -37,6 +37,7 @@ export function LeaderView(d: LeaderData) {
         subtitle={`Head of ${d.department} · ${d.stats.waitingOnYou ? `${d.stats.waitingOnYou} waiting on you` : "nothing waiting on you"}`}
         action={<PrimaryAction label="New request" disabled={!d.canRequest} href="/requests/new" />}
       />
+      {d.handoffs}
 
       {d.onboarding && <OnboardingCallout state={d.onboarding} clients={d.clientOptions ?? []} />}
 
