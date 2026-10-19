@@ -23,6 +23,7 @@ export function ShadowCard({ s, onOpen }: { s: ShadowTicket; onOpen: () => void 
         {s.priority && /high|urgent/i.test(s.priority) && <span className="rounded-full bg-bad-soft px-1.5 py-0.5 text-[10px] text-bad">{s.priority}</span>}
       </span>
       <span className="line-clamp-3 text-[13px] leading-snug text-muted">{s.name}</span>
+      {s.section && s.section.trim().toLowerCase() !== stageInfo(s.stage).label.toLowerCase() && <span className="text-[10px] text-faint">Asana: {s.section}</span>}
       <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-faint">
         <span className="truncate">{s.clientName ?? (s.clientRef ? `Client ${s.clientRef}` : "Client not matched")}</span>
         {s.assignee && <span>· {s.assignee.split(" ")[0]}</span>}

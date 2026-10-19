@@ -37,7 +37,7 @@ async function all<T>(path: string, params: Record<string, string>) {
   return out;
 }
 
-/** Asana's columns → our stages. "Launched" isn't mirrored: it's done. */
+/** Asana's columns → our stages (only stages on the board). "Launched" isn't mirrored: it's done. */
 export const COLUMN_STAGE: [RegExp, Stage | null][] = [
   [/^creative brief/i, "requested"],
   [/^in progress/i, "in_production"],
@@ -45,7 +45,8 @@ export const COLUMN_STAGE: [RegExp, Stage | null][] = [
   [/^ready for copy/i, "copy"],
   [/^copy for review/i, "copy_review"],
   [/^copy/i, "copy"],
-  [/^ready for client/i, "ready_for_client"],
+  // No "Ready for client" in the new flow: approving the copy sends it to the client, so it sits with the client
+  [/^ready for client/i, "client_review"],
   [/^sent to client/i, "client_review"],
   [/^client revision/i, "client_revision"],
   [/^ready for launch/i, "ready_for_launch"],
