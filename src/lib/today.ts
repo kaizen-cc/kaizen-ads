@@ -12,8 +12,9 @@ import { loadCallPromises, loadOnboarding, loadSuggestions, type OpenSuggestion 
 // item they saw that someone else has since acted on comes back once as "taken care of", with who and what.
 
 export type Tier = "critical" | "high" | "normal";
-export type TopicKey = "promises" | "onboarding" | "accounts" | "work" | "briefs" | "ads" | "allotments";
+export type TopicKey = "mine" | "promises" | "onboarding" | "accounts" | "work" | "briefs" | "ads" | "allotments";
 export const TOPICS: Record<TopicKey, { label: string; blurb: string }> = {
+  mine: { label: "Your work", blurb: "Tickets and tasks on you" },
   promises: { label: "Promises", blurb: "What we told clients we'd do" },
   onboarding: { label: "New clients", blurb: "First impressions" },
   accounts: { label: "Accounts", blurb: "Results against target" },
@@ -61,16 +62,76 @@ const PRIORITY_BOOST: Record<string, number> = { high: 10, medium: 4, low: 0 };
 
 type Draft = Omit<TodayItem, "tier" | "state" | "carried">;
 
+/** Which topics a person's day covers. Everyone has their own work; managers see across their clients. */
+export function topicsFor(me: Staff): Set<TopicKey> {
+  const manager = me.isExec || me.isLead;
+  const t = new Set<TopicKey>(["mine"]);
+  if (manager) ["promises", "onboarding", "accounts", "work", "briefs", "ads", "allotments"].forEach((k) => t.add(k as TopicKey));
+  if (me.isBuyer) ["promises", "accounts", "ads", "allotments"].forEach((k) => t.add(k as TopicKey));
+  if (me.isCoordinator) ["promises", "onboarding", "allotments"].forEach((k) => t.add(k as TopicKey));
+  return t;
+}
+
+/** Tickets and Asana tasks on this person that are late or due today. */
+async function mine(db: SupabaseClient, me: Staff): Promise<Draft[]> {
+  const out: Draft[] = [];
+  const endOfToday = new Date(new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }) + "T23:59:59-05:00").toISOString();
+  const [{ data: tickets }, { data: tasks }] = await Promise.all([
+    db.from("board_requests").select("id, number, title, client_name, client_slug, client_id, stage, stage_due_at, minutes_over").eq("assignee_id", me.id).neq("stage", "launched").lte("stage_due_at", endOfToday).limit(30),
+    db.from("asana_tasks").select("gid, name, url, due_on, section, client_id, clients(name, slug)").eq("profile_id", me.id).eq("open", true).is("request_id", null).not("due_on", "is", null).lte("due_on", endOfToday.slice(0, 10)).limit(30),
+  ]);
+  for (const r of tickets ?? []) {
+    const late = Number(r.minutes_over ?? 0) > 0;
+    const hours = Math.round(Number(r.minutes_over ?? 0) / 60);
+    out.push({
+      key: `mine:ticket:${r.id}`,
+      topic: "mine",
+      score: late ? Math.min(90, 70 + Math.min(16, hours / 3)) : 58,
+      client: r.client_name as string,
+      clientSlug: r.client_slug as string,
+      clientId: r.client_id as string,
+      stat: late ? { value: String(Math.max(1, hours)), label: `${hours === 1 ? "hour" : "hours"} past its turnaround` } : { value: "Today", label: "due today" },
+      title: `#${r.number} ${r.title}`,
+      story: late ? "It's waiting on you and running late. The client feels this one." : "It's on you and due by the end of today.",
+      why: late ? "Late work on your plate" : "Due today",
+      evidence: [],
+      action: { label: "Open the ticket", href: `/board?t=${r.number}` },
+    });
+  }
+  for (const t of tasks ?? []) {
+    const c = t.clients as unknown as { name: string; slug: string } | null;
+    const late = String(t.due_on) < new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+    out.push({
+      key: `mine:asana:${t.gid}`,
+      topic: "mine",
+      score: late ? 72 : 56,
+      client: c?.name ?? "Asana",
+      clientSlug: c?.slug ?? "",
+      clientId: (t.client_id as string | null) ?? null,
+      stat: late ? { value: day(String(t.due_on) + "T12:00:00Z"), label: "was due (in Asana)" } : { value: "Today", label: "due today (in Asana)" },
+      title: t.name as string,
+      story: `In Asana's ${t.section ?? "board"} column, assigned to you.`,
+      why: late ? "Overdue in Asana" : "Due today",
+      evidence: [],
+      action: { label: "Open in Asana", href: (t.url as string) ?? "/board" },
+    });
+  }
+  return out;
+}
+
 /** Every item for this person right now, scored. */
 async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
-  const [promises, onboarding, suggestions, fatigue, home] = await Promise.all([
-    loadCallPromises(db).catch(() => []),
-    loadOnboarding(db).catch(() => null),
-    loadSuggestions(db).catch(() => null),
-    loadWatchList(db, { limit: 20 }).catch(() => []),
-    loadHome(db, me).catch(() => null),
+  const topics = topicsFor(me);
+  const manager = me.isExec || me.isLead;
+  const [promises, onboarding, suggestions, fatigue, home, own] = await Promise.all([
+    topics.has("promises") ? loadCallPromises(db).catch(() => []) : [],
+    topics.has("onboarding") ? loadOnboarding(db).catch(() => null) : null,
+    topics.has("briefs") ? loadSuggestions(db).catch(() => null) : null,
+    topics.has("ads") ? loadWatchList(db, manager ? { limit: 20 } : { buyerId: me.id, limit: 20 }).catch(() => []) : [],
+    topics.has("work") || topics.has("allotments") ? loadHome(db, me).catch(() => null) : null,
+    mine(db, me).catch(() => []),
   ]);
-  const out: Draft[] = [];
+  const out: Draft[] = [...own];
 
   // Promises we made on calls and haven't started: the client was told, so it's their trust on the line
   for (const p of promises) {
@@ -93,7 +154,7 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
 
   // New clients: a first round waiting on us is their first impression
   for (const c of onboarding?.clients ?? []) {
-    if (c.firstRound) {
+    if (c.firstRound && manager) {
       const waited = bizDays(c.firstRound.createdAt);
       out.push({
         key: `onboarding:${c.clientId}`,
@@ -109,7 +170,7 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
         evidence: c.firstRound.evidence.slice(0, 3),
         action: { label: "Review the first round", suggestion: c.firstRound },
       });
-    } else if (!c.intake || c.intake.status === "unmatched") {
+    } else if (manager || me.isCoordinator ? !c.intake || c.intake.status === "unmatched" : false) {
       const waited = bizDays(c.since);
       if (waited >= 3)
         out.push({
@@ -130,7 +191,9 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
   }
 
   // Accounts off target, weighted by how far off, how much is spent and how important the account is
-  const { data: targets } = await db.from("kpi_targets").select("id, label, conversion, target, monthly_budget, sheet, client_id, clients!inner(name, slug, archived_at)").eq("active", true).is("clients.archived_at", null);
+  let kq = db.from("kpi_targets").select("id, label, conversion, target, monthly_budget, sheet, client_id, clients!inner(name, slug, archived_at)").eq("active", true).is("clients.archived_at", null);
+  if (!manager) kq = kq.eq("owner_id", me.id);
+  const { data: targets } = topics.has("accounts") ? await kq : { data: [] };
   const ids = (targets ?? []).map((t) => t.id as string);
   const { data: snaps } = ids.length ? await db.from("kpi_snapshots").select("target_id, status, deviation, windows, budget").in("target_id", ids) : { data: [] };
   for (const t of targets ?? []) {
@@ -164,7 +227,7 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
   }
 
   // Work late on our side (the client isn't waiting on themselves): their experience of us
-  for (const a of home?.attention ?? []) {
+  for (const a of topics.has("work") ? (home?.attention ?? []) : []) {
     if (a.kind === "Allotment") continue; // allotments have their own topic
     const ours = a.kind === "Behind" || a.kind === "Revisions";
     out.push({
@@ -223,7 +286,7 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
 
   // Allotments: over means we're making more than they pay for; well behind means they're getting less
   const elapsed = home?.monthElapsed ?? 0;
-  for (const c of home?.clients ?? []) {
+  for (const c of topics.has("allotments") ? (home?.clients ?? []) : []) {
     if (!c.allotment) continue;
     const ratio = c.used / c.allotment;
     if (ratio > 1)

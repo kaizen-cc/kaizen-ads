@@ -45,16 +45,16 @@ function Row({ p, canEdit, isMe }: { p: Person; canEdit: boolean; isMe: boolean 
     });
 
   return (
-    <li className={`grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2 px-4 py-3 sm:grid-cols-[auto_1fr_200px_110px] ${p.isActive ? "" : "opacity-50"}`}>
-      <PersonAvatar name={p.fullName} muted={!p.isActive} />
+    <li className={`grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2 px-4 py-3 sm:grid-cols-[auto_1fr_200px_110px] ${p.isActive && p.joined ? "" : "opacity-55"}`}>
+      <PersonAvatar name={p.fullName} muted={!p.isActive || !p.joined} />
       <div className="min-w-0">
-        <p className="truncate text-sm font-medium">
+        <p className="flex items-center gap-2 truncate text-sm font-medium">
           {p.fullName} {isMe && <span className="text-xs font-normal text-faint">(you)</span>}
+          {p.isActive && (p.joined ? <span className="rounded-full bg-ok-soft px-1.5 py-px text-[10px] font-normal text-ok">Active</span> : <span className="rounded-full border border-line px-1.5 py-px text-[10px] font-normal text-faint">Not joined yet</span>)}
         </p>
         <p className="truncate text-xs text-muted">
           {p.email}
           {p.clientCount > 0 && <span className="text-faint"> · {p.clientCount} clients</span>}
-          {!p.joined && p.isActive && <span className="text-faint"> · invited</span>}
         </p>
       </div>
       <div className="col-span-2 flex items-center gap-2 sm:col-span-1">
@@ -126,12 +126,18 @@ export function TeamList({ people, canEdit, meId }: { people: Person[]; canEdit:
   const [showInactive, setShowInactive] = useState(false);
   const visible = people.filter((p) => showInactive || p.isActive);
   const inactiveCount = people.filter((p) => !p.isActive).length;
+  const joined = people.filter((p) => p.isActive && p.joined).length;
+  const waiting = people.filter((p) => p.isActive && !p.joined).length;
 
   return (
     <div className="grid gap-6">
       {canEdit && <Invite />}
+      <p className="text-xs text-muted">
+        <span className="text-ok">{joined} active</span> · {waiting} not joined yet. Someone becomes active the first time they sign in; until then they get no notifications or daily recap.
+      </p>
       {TIERS.map((t) => {
-        const group = visible.filter((p) => tierOf(p.role) === (t.value as Tier));
+        // Active (signed in) first, then those who haven't joined yet
+        const group = visible.filter((p) => tierOf(p.role) === (t.value as Tier)).sort((a, b) => Number(b.joined) - Number(a.joined) || a.fullName.localeCompare(b.fullName));
         if (!group.length) return null;
         return (
           <section key={t.value} className="grid gap-2">

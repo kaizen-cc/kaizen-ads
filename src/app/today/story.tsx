@@ -28,6 +28,7 @@ export function Story({
   counts,
   topics,
   startTopic,
+  home = "/pipeline",
   demo = false,
 }: {
   firstName: string;
@@ -37,6 +38,8 @@ export function Story({
   counts: Record<Tier, number>;
   topics: Record<TopicKey, { label: string; blurb: string }>;
   startTopic: TopicKey | null;
+  /** Where Close and the end card go: the person's home */
+  home?: string;
   /** Design preview: nothing is saved */
   demo?: boolean;
 }) {
@@ -141,7 +144,7 @@ export function Story({
             <button type="button" onClick={() => setPicker((p) => !p)} className="rounded-full border border-white/20 px-3 py-1.5 text-white/80 hover:bg-white/10">
               Jump to a topic
             </button>
-            <Link href="/pipeline" className="rounded-full border border-white/20 px-3 py-1.5 text-white/80 hover:bg-white/10">
+            <Link href={home} className="rounded-full border border-white/20 px-3 py-1.5 text-white/80 hover:bg-white/10">
               Close
             </Link>
           </span>
@@ -188,7 +191,7 @@ export function Story({
               )}
               <div className="flex flex-wrap gap-3">
                 <button type="button" onClick={() => go(1)} className="h-12 rounded-full bg-white px-7 text-[15px] font-semibold text-black hover:bg-white/90">
-                  {items.length || resolved.length ? "Start" : "Back to the Overview"}
+                  {items.length || resolved.length ? "Start" : "Back to your home"}
                 </button>
                 <span className="self-center text-xs text-white/40">→ or space to move on · S to save for later · D to dismiss</span>
               </div>
@@ -219,7 +222,7 @@ export function Story({
                 <p className="text-sm uppercase tracking-[0.24em] text-white/50">That&apos;s today</p>
                 <h2 className="font-display text-5xl leading-tight tracking-tight md:text-7xl">{acted ? `${acted} handled.` : "All caught up."}</h2>
                 <p className="text-lg text-white/70">
-                  {saved.length ? `${saved.length} saved for later. They're on your list below and on the Overview, and come back tomorrow if they're still open.` : "Nothing saved for later."}
+                  {saved.length ? `${saved.length} saved for later. They're on your list below and on your home page, and come back tomorrow if they're still open.` : "Nothing saved for later."}
                 </p>
               </div>
               {saved.length > 0 && (
@@ -241,8 +244,8 @@ export function Story({
                 </ul>
               )}
               <div className="flex flex-wrap gap-3">
-                <button type="button" onClick={() => router.push("/pipeline")} className="h-12 rounded-full bg-white px-7 text-[15px] font-semibold text-black">
-                  Back to the Overview
+                <button type="button" onClick={() => router.push(home)} className="h-12 rounded-full bg-white px-7 text-[15px] font-semibold text-black">
+                  Back to your home
                 </button>
                 <button type="button" onClick={() => setAt(0)} className="h-12 rounded-full border border-white/25 px-6 text-sm text-white/80 hover:bg-white/10">
                   From the top

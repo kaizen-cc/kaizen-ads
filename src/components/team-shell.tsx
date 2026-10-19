@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { NotificationBell } from "./notification-bell";
 import { PersonAvatar } from "@/components/person-avatar";
 
 type Tier = "exec" | "lead" | "member";
@@ -78,10 +79,13 @@ export function TeamShell({ name, roles, tier, children }: { name: string; roles
   return (
     <div className="min-h-screen md:grid md:grid-cols-[240px_1fr]">
       <aside className="pt-safe hidden border-r border-line bg-surface md:sticky md:top-0 md:flex md:h-screen md:flex-col">
-        <Link href={home} className="flex items-center gap-2 px-5 pb-6 pt-6">
-          <Image src="/kaizen-logo.png" alt="Kaizen" width={110} height={26} priority />
-          <span className="mt-1 font-display text-sm tracking-wide text-muted">ads</span>
-        </Link>
+        <div className="flex items-center justify-between gap-2 pb-6 pl-5 pr-3 pt-6">
+          <Link href={home} className="flex items-center gap-2">
+            <Image src="/kaizen-logo.png" alt="Kaizen" width={110} height={26} priority />
+            <span className="mt-1 font-display text-sm tracking-wide text-muted">ads</span>
+          </Link>
+          <NotificationBell placement="side" />
+        </div>
         <nav className="grid gap-5 px-3" aria-label="Main">
           {groups.map((g) => (
             <div key={g.title} className="grid gap-0.5">
@@ -110,7 +114,10 @@ export function TeamShell({ name, roles, tier, children }: { name: string; roles
             <Image src="/kaizen-logo.png" alt="Kaizen" width={96} height={22} />
             <span className="mt-1 font-display text-xs tracking-wide text-muted">ads</span>
           </Link>
-          <PersonAvatar name={name} size={30} />
+          <span className="flex items-center gap-1">
+            <NotificationBell placement="top" />
+            <PersonAvatar name={name} size={30} />
+          </span>
         </div>
         <nav className="no-scrollbar flex gap-1 overflow-x-auto px-3 pb-2" aria-label="Main">
           {nav.map((item) => (

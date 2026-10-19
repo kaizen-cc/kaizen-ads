@@ -46,6 +46,8 @@ function nyNow() {
  * - brief: 12pm and 6pm
  * - market: 8:30am (live ads from Motion for the Market tab, ready for the morning)
  * - sheet: 12pm and 5pm, the Account Overview sheet (buyer, budget and KPI target per account, and the team's notes)
+ * - remind: 11am and 3pm on weekdays, a nudge for anyone who hasn't been through their daily recap
+ * - notify: every 10 minutes, critical notifications still unread are emailed
  * - docs: every 30 minutes, new and edited Google Docs and Slides across the Workspace, read for the client they're about
  * - asana: every 5 minutes, mirroring open tasks on Asana's Creative board while the team moves over
  * - sprints: every hour, checking each optimization sprint whose next check is due (daily, or the follow-up date it set)
@@ -70,6 +72,8 @@ function due(step: string | null) {
   if (step === "asana") return true; // every 5 minutes (vercel.json), so the mirror keeps up with Asana
   if (step === "sheet") return [12, 17].includes(hour);
   if (step === "docs") return true; // every 30 minutes (vercel.json)
+  if (step === "remind") return !["Sat", "Sun"].includes(weekday) && [11, 15].includes(hour);
+  if (step === "notify") return true; // every 10 minutes (vercel.json): critical notifications still unread go out by email
 
   if (step === "market") return hour === 8;
   if (step === "calls") return (businessHours || hour === 18) || (hour % 3 === 0 && minute < 30);
@@ -141,6 +145,8 @@ export async function GET(request: Request) {
       const { sheetConfigured, syncAccountSheet } = await import("@/lib/account-sheet");
       return Response.json(sheetConfigured() ? await syncAccountSheet(admin) : { skipped: "Google isn't connected" });
     }
+    if (step === "remind") return Response.json(await (await import("@/lib/notifications")).remindRecaps(admin));
+    if (step === "notify") return Response.json(await (await import("@/lib/notifications")).emailCritical(admin));
     if (step === "docs") {
       const { watchDocs } = await import("@/lib/context/docs");
       return Response.json(googleConfigured() ? await watchDocs(admin) : { skipped: "Google isn't connected" });

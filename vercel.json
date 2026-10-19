@@ -34,6 +34,14 @@
       "schedule": "50 * * * *"
     },
     {
+      "path": "/api/cron/context?step=remind",
+      "schedule": "3 15,16,19,20 * * 1-5"
+    },
+    {
+      "path": "/api/cron/context?step=notify",
+      "schedule": "*/10 * * * *"
+    },
+    {
       "path": "/api/cron/context?step=docs",
       "schedule": "12,42 * * * *"
     },
