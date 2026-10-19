@@ -95,7 +95,7 @@ function monthStart(offset = 0) {
   return first.toISOString();
 }
 
-const UNITS_SYSTEM = `You count what each Asana task from Kaizen's creative board asks the design team to make, for the client's monthly creative allotment. For each task: newImages and newVideos, the net-new paid ads creatives it asks for. A carousel counts as one image. Resizes, iterations, edits, captions or optimizations of an existing ad or video, and copy-only work, are 0 (they don't draw on the allotment). Print and in-store work (mailers, postcards, flyers, signs, menus) and organic-only posts are 0. When the task names one creative ("Video 02", "Image"), that's 1. When it asks for several ("5 statics", "both videos"), count them. If it's unclear, count 1 of the format it names. note: a few words on why ("2 new videos", "resize of an existing ad", "print mailer").`;
+const UNITS_SYSTEM = `You count what each Asana task from Kaizen's creative board asks the design team to make, for the client's monthly creative allotment. For each task: newImages and newVideos, the net-new paid ads creatives it asks for. A carousel counts as one image. Resizes, iterations, edits, captions or optimizations of an existing ad or video, and copy-only work, are 0 (they don't draw on the allotment). Print and in-store work (mailers, postcards, flyers, signs, menus) and organic-only posts are 0. When the task names one creative ("Video 02", "Image"), that's 1. When it asks for several ("5 statics", "both videos"), count them. A range ("3-4 statics") counts its low end. If it's unclear, count 1 of the format it names. note: a few words on why ("2 new videos", "resize of an existing ad", "print mailer").`;
 const UNITS_SCHEMA = {
   type: "object",
   properties: {
