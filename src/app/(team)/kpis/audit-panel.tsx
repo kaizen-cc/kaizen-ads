@@ -3,12 +3,12 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
-import { startAudit } from "./audit-actions";
+import { requestAudit } from "@/components/audit-watcher";
 import { VERDICT } from "./verdict";
 
 export type AuditSummary = {
   id: string;
-  status: "running" | "ready" | "failed";
+  status: "queued" | "running" | "ready" | "failed";
   progress: number;
   step: string | null;
   createdAt: string;
@@ -71,6 +71,13 @@ function Steps({ steps, live }: { steps: AuditStep[]; live: boolean }) {
 }
 
 
+/** "3 hours", "12 minutes", "2 days": how long ago an audit ran. */
+export function agoText(iso: string) {
+  const m = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60_000));
+  return m < 1 ? "just now" : m < 60 ? `${m} minute${m === 1 ? "" : "s"} ago` : m < 48 * 60 ? `${Math.round(m / 60)} hour${Math.round(m / 60) === 1 ? "" : "s"} ago` : `${Math.round(m / 1440)} days ago`;
+}
+const ranRecently = (iso: string) => Date.now() - Date.parse(iso) < 24 * 3_600_000;
+
 const when = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
 /** The account audit on a KPI card: start one, follow it while it runs, then the verdict and the way into the full audit. */
@@ -78,6 +85,7 @@ export function AuditPanel({ targetId, audit, platform }: { targetId: string; au
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState(false);
   const running = audit?.status === "running";
   useEffect(() => {
     if (!running) return;
@@ -89,8 +97,8 @@ export function AuditPanel({ targetId, audit, platform }: { targetId: string; au
   const go = () =>
     start(async () => {
       setError(null);
-      const r = await startAudit(targetId);
-      if ("error" in r) setError(r.error);
+      const r = await requestAudit({ targetId });
+      if (r.error) setError(r.error);
       router.refresh();
     });
   const button = (label: string, primary = false) => (
@@ -115,11 +123,19 @@ export function AuditPanel({ targetId, audit, platform }: { targetId: string; au
             {audit?.status === "ready" && audit.verdict && <p className="font-heading text-lg leading-snug">{audit.verdict.headline}</p>}
             {audit?.status === "failed" && <p className="font-heading text-lg">The last audit didn&apos;t finish</p>}
             {running && <p className="font-heading text-lg">Auditing the account…</p>}
+            {audit?.status === "queued" && <p className="font-heading text-lg">Queued: waiting for a free slot</p>}
           </div>
           {!audit && button("Audit this account", true)}
           {audit?.status === "ready" && (
             <div className="flex gap-2">
-              {button("Run again")}
+              <button
+                type="button"
+                onClick={() => (ranRecently(audit.createdAt) && !confirm ? setConfirm(true) : go())}
+                disabled={pending}
+                className="h-9 shrink-0 rounded-full border border-line px-4 text-sm text-muted transition-colors hover:text-fg disabled:opacity-60"
+              >
+                {pending ? "Starting…" : "Run again"}
+              </button>
               <Link href={`/kpis/audit/${audit.id}`} className="grid h-9 place-items-center rounded-full bg-fg px-4 text-sm text-bg hover:bg-fg/90">
                 Open the audit →
               </Link>
@@ -127,6 +143,29 @@ export function AuditPanel({ targetId, audit, platform }: { targetId: string; au
           )}
           {audit?.status === "failed" && button("Try again", true)}
         </div>
+        {confirm && audit?.status === "ready" && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-[12px] border border-warn/40 bg-warn-soft px-4 py-3 text-sm">
+            <span>
+              This account was audited {agoText(audit.createdAt)}
+              {audit.by ? ` by ${audit.by}` : ""}. A new audit costs a few minutes of AI and Meta calls; the last one is probably still current.
+            </span>
+            <span className="flex gap-2">
+              <button type="button" onClick={() => setConfirm(false)} className="h-8 rounded-full border border-line bg-surface px-3 text-xs text-muted hover:text-fg">
+                Keep this one
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirm(false);
+                  go();
+                }}
+                className="h-8 rounded-full bg-fg px-3 text-xs text-bg"
+              >
+                Run a new one anyway
+              </button>
+            </span>
+          </div>
+        )}
 
         {!audit && (
           <p className="max-w-3xl text-sm leading-relaxed text-muted">
@@ -160,11 +199,29 @@ export function AuditPanel({ targetId, audit, platform }: { targetId: string; au
               <span className="rounded-full border border-line px-2.5 py-1 text-muted">
                 <span className="tabular text-fg">{audit.done}</span> of <span className="tabular">{audit.actions}</span> actions done
               </span>
-              <span className="text-faint">
-                {when(audit.createdAt)}
+              <span className="text-faint" title={when(audit.createdAt)}>
+                This audit ran {agoText(audit.createdAt)}
                 {audit.by ? ` · run by ${audit.by}` : ""}
               </span>
             </div>
+          </div>
+        )}
+        {audit?.status === "queued" && (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="max-w-2xl text-sm text-muted">Three of your audits are already running. You&apos;ll get a note when a slot opens; start this one then, or now if one has finished.</p>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() =>
+                start(async () => {
+                  await requestAudit({ auditId: audit.id });
+                  router.refresh();
+                })
+              }
+              className="h-9 rounded-full bg-fg px-4 text-sm text-bg disabled:opacity-60"
+            >
+              Start it now
+            </button>
           </div>
         )}
         {audit?.status === "failed" && (

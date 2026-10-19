@@ -3,7 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useOptimistic, useState, useTransition } from "react";
 import type { AuditResult } from "@/lib/audit";
-import { startAudit, tickAuditAction } from "../../audit-actions";
+import { tickAuditAction } from "../../audit-actions";
+import { requestAudit } from "@/components/audit-watcher";
 import { addToActionList, startSprint } from "../../sprint-actions";
 
 const OWNER: Record<string, string> = { media_buyer: "Media buyer", creative: "Creative team", client: "Client", strategist: "Strategist" };
@@ -102,9 +103,9 @@ export function RerunAudit({ targetId, quiet }: { targetId: string; quiet?: bool
         disabled={pending}
         onClick={() =>
           start(async () => {
-            const r = await startAudit(targetId);
-            if ("error" in r) return setNote(r.error);
-            setNote("Running. Follow it on the KPI board.");
+            const r = await requestAudit({ targetId });
+            if (r.error) return setNote(r.error);
+            setNote(r.status === "queued" ? "Queued until a slot frees up." : "Running. Follow it on the KPI board.");
             router.push("/kpis");
           })
         }

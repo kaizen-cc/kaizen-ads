@@ -50,7 +50,7 @@ export default async function Kpis() {
     const timedOut = a.status === "running" && a.created_at < stale;
     auditBy.set(a.target_id, {
       id: a.id,
-      status: timedOut ? "failed" : a.status,
+      status: (timedOut ? "failed" : a.status) as NonNullable<AuditSummary>["status"],
       progress: a.progress,
       step: a.step,
       createdAt: a.created_at,

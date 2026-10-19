@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson, clientContext, contextBlock } from "@/lib/ai";
 import { aggregate, pickType, type Day } from "@/lib/kpi/calc";
 import { conversionFor, conversionLabel, type Conversion } from "@/lib/kpi/conversions";
-import { accountSetup, metaConfigured, type AccountSetup } from "@/lib/context/meta";
+import { accountSetup, metaConfigured, syncClientAds, type AccountSetup } from "@/lib/context/meta";
 import type { Benchmark } from "@/lib/verticals";
 
 // The account audit: one ad account (a KPI target) scrubbed the way a senior media buyer would, against its target,
@@ -303,21 +303,39 @@ export async function runAudit(admin: SupabaseClient, id: string) {
     // 1. The numbers
     await m.start("numbers");
     const since = new Date(Date.now() - 90 * DAY).toISOString().slice(0, 10);
-    const rows: Row[] = [];
-    for (let page = 0; page < 40; page++) {
-      const { data } = await admin
-        .from("meta_ad_daily")
-        .select("date, ad_id, ad_name, adset_id, adset_name, campaign_id, campaign_name, metrics")
-        .eq("client_id", a.client_id)
-        .eq("ad_account_id", account)
-        .gte("date", since)
-        .order("date")
-        .range(page * 1000, page * 1000 + 999);
-      rows.push(...((data ?? []) as Row[]));
-      if (!data || data.length < 1000) break;
+    const readRows = async () => {
+      const out: Row[] = [];
+      for (let page = 0; page < 40; page++) {
+        const { data } = await admin
+          .from("meta_ad_daily")
+          .select("date, ad_id, ad_name, adset_id, adset_name, campaign_id, campaign_name, metrics")
+          .eq("client_id", a.client_id)
+          .eq("ad_account_id", account)
+          .gte("date", since)
+          .order("date")
+          .range(page * 1000, page * 1000 + 999);
+        out.push(...((data ?? []) as Row[]));
+        if (!data || data.length < 1000) break;
+      }
+      return out;
+    };
+    let rows = await readRows();
+    // The scheduled Meta ads sync hasn't reached this account yet: pull its ads now rather than fail
+    if (!rows.length && metaConfigured()) {
+      await m.inside(0.1);
+      await admin.from("account_audits").update({ step: "Pulling this account's ads from Meta for the first time (a minute or two)" }).eq("id", id);
+      await syncClientAds(admin, a.client_id, account).catch((e) => {
+        throw new Error(`Couldn't pull this account's ads from Meta: ${e instanceof Error ? e.message : e}`);
+      });
+      rows = await readRows();
     }
     const scoped = t.campaign_match ? rows.filter((r) => (r.campaign_name ?? "").toLowerCase().includes(String(t.campaign_match).toLowerCase())) : rows;
-    if (!scoped.length) throw new Error("No ad-level numbers for this account in the last 90 days yet. Run the Meta ads sync in Settings › Sync health, then try again.");
+    if (!scoped.length)
+      throw new Error(
+        rows.length
+          ? `No ads in campaigns containing "${t.campaign_match}" in the last 90 days. Check "Only campaigns containing" on this KPI.`
+          : "Meta returned no ads for this account in the last 90 days. Check the ad account ID on this KPI and that it's shared with Kaizen's system user.",
+      );
     const days: Day[] = scoped.map((r) => ({ date: r.date, spend: n(r.metrics.spend), actions: acts(r.metrics.actions), values: acts(r.metrics.action_values) }));
     const type = pickType(days, conv, t.custom_action);
     const today = scoped[scoped.length - 1].date;

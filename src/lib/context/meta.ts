@@ -236,6 +236,9 @@ async function syncDaily(admin: SupabaseClient, clientId: string, adAccountId: s
   return { days: new Set(records.map((r) => r.date)).size, rows: records.length, from: ymd(since) };
 }
 
+/** One account's ad-level days now (an audit that finds none pulls them instead of failing). */
+export const syncClientAds = (admin: SupabaseClient, clientId: string, adAccountId: string) => syncDaily(admin, clientId, adAccountId.replace(/^act_/, ""));
+
 /** Unique people over the last 7 and 30 days, for the account and each campaign. */
 async function syncReach(admin: SupabaseClient, clientId: string, adAccountId: string) {
   const act = `act_${adAccountId}`;

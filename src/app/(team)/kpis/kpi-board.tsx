@@ -12,7 +12,7 @@ import { freshness } from "@/lib/dates";
 import { addKpiTarget, archiveKpiTarget, exploreKpi, linkAdAccount, pullClientKpis, saveKpiTarget, setExtraMetrics } from "./actions";
 import type { Explore } from "@/lib/kpi/explore";
 import { DailyChart, Ladder, PaceBar, paceMeta } from "./kpi-charts";
-import { AuditPanel, type AuditSummary } from "./audit-panel";
+import { AuditPanel, agoText, type AuditSummary } from "./audit-panel";
 import type { SprintSummary } from "@/lib/sprints";
 
 export type KpiRow = {
@@ -587,6 +587,18 @@ function Row({ r, open, onToggle, buyers }: { r: KpiRow; open: boolean; onToggle
                 Nobody&apos;s optimizing it yet{r.lastChange?.at ? ` · no changes in ${sinceText(r.lastChange.at)}` : ""}
               </span>
             ) : null}
+            {r.audit?.status === "ready" && !r.sprint && (
+              <p className="mt-1 truncate text-[11px] text-faint">
+                Audited {agoText(r.audit.createdAt)}
+                {r.audit.by ? ` by ${r.audit.by}` : ""}
+              </p>
+            )}
+            {(r.audit?.status === "running" || r.audit?.status === "queued") && (
+              <p className="mt-1 truncate text-[11px] text-brand-text">
+                {r.audit.status === "running" ? `Audit running (${r.audit.progress}%)` : "Audit queued"}
+                {r.audit.by ? ` · ${r.audit.by}` : ""}
+              </p>
+            )}
             {r.lastChange?.at && (
               <p className="mt-1 truncate text-[11px] text-faint" title={`${r.lastChange.who ?? "Someone"}: ${r.lastChange.what}${r.lastChange.object ? ` · ${r.lastChange.object}` : ""}`}>
                 Last change {sinceText(r.lastChange.at)} ago · {r.lastChange.what}
