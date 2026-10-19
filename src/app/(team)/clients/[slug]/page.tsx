@@ -185,6 +185,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
       videos={videos}
       imagesUsed={usage?.images_used ?? 0}
       videosUsed={usage?.videos_used ?? 0}
+      fromAsana={{ images: usage?.asana_images ?? 0, videos: usage?.asana_videos ?? 0 }}
       can={{ admin: me.isExec, contacts: seesAllClients(me), allot: me.isExec || me.isLead, assign: isExecOrLead(me) }}
     />
   );

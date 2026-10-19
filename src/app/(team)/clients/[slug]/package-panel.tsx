@@ -130,6 +130,7 @@ export function PackagePanel({
   videos,
   imagesUsed,
   videosUsed,
+  fromAsana,
   packages,
   can,
   setSprint,
@@ -146,6 +147,7 @@ export function PackagePanel({
   videos: number;
   imagesUsed: number;
   videosUsed: number;
+  fromAsana?: { images: number; videos: number };
   packages: PackageOption[];
   can: { exec: boolean; allot: boolean };
   setSprint: (form: FormData) => Promise<Result>;
@@ -209,6 +211,11 @@ export function PackagePanel({
         <p className="-mb-1 text-xs font-medium uppercase tracking-[0.12em] text-faint">This month</p>
         <Meter name="Images & carousels" cap={images} used={imagesUsed} />
         <Meter name="Videos" cap={videos} used={videosUsed} />
+        {fromAsana && (fromAsana.images > 0 || fromAsana.videos > 0) && (
+          <p className="-mt-1 text-[11px] text-faint">
+            Includes {[fromAsana.images ? `${fromAsana.images} ${fromAsana.images === 1 ? "image" : "images"}` : null, fromAsana.videos ? `${fromAsana.videos} ${fromAsana.videos === 1 ? "video" : "videos"}` : null].filter(Boolean).join(" and ")} already in production in Asana
+          </p>
+        )}
       </div>
 
       {can.allot && !editing && (

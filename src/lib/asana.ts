@@ -4,7 +4,8 @@ import type { Stage } from "@/lib/stages";
 
 // Asana's Creative board, mirrored while the team moves over to Kaizen Ads. Every few minutes the open tasks are read
 // (column, assignee, due date, Client ID, priority, description) and kept as "shadow" tickets in the matching stage.
-// Moves and edits in Asana show up here; tasks completed or removed in Asana drop off. Organic social requests are
+// Moves and edits in Asana show up here; tasks completed or removed in Asana drop off the board (completed ones are
+// kept, counted against the month's allotment with what they asked for: see countUnits). Organic social requests are
 // left out (this app is paid ads and creative). Read-only: nothing is written back to Asana.
 
 export const asanaConfigured = () => Boolean(process.env.ASANA_TOKEN);
@@ -74,6 +75,7 @@ type AsanaTask = {
   name: string;
   notes: string;
   completed: boolean;
+  completed_at: string | null;
   assignee: { name: string; email?: string } | null;
   due_on: string | null;
   permalink_url: string;
@@ -86,6 +88,61 @@ type AsanaTask = {
 const PLATFORM = /(meta ads|facebook|instagram|google ads|tiktok|organic social|organic)/i;
 const FORMAT = /\b(image|video|carousel|static|reel)s?\b/i;
 
+/** The first moment of this month in New York (or of a month before/after), as an ISO string. */
+function monthStart(offset = 0) {
+  const [y, m] = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }).split("-").map(Number);
+  const first = new Date(Date.UTC(y, m - 1 + offset, 1, 5)); // 5am UTC is midnight or 1am in New York
+  return first.toISOString();
+}
+
+const UNITS_SYSTEM = `You count what each Asana task from Kaizen's creative board asks the design team to make, for the client's monthly creative allotment. For each task: newImages and newVideos, the net-new paid ads creatives it asks for. A carousel counts as one image. Resizes, iterations, edits, captions or optimizations of an existing ad or video, and copy-only work, are 0 (they don't draw on the allotment). Print and in-store work (mailers, postcards, flyers, signs, menus) and organic-only posts are 0. When the task names one creative ("Video 02", "Image"), that's 1. When it asks for several ("5 statics", "both videos"), count them. If it's unclear, count 1 of the format it names. note: a few words on why ("2 new videos", "resize of an existing ad", "print mailer").`;
+const UNITS_SCHEMA = {
+  type: "object",
+  properties: {
+    tasks: {
+      type: "array",
+      items: { type: "object", properties: { id: { type: "string" }, newImages: { type: "integer" }, newVideos: { type: "integer" }, note: { type: "string" } }, required: ["id", "newImages", "newVideos", "note"], additionalProperties: false },
+    },
+  },
+  required: ["tasks"],
+  additionalProperties: false,
+};
+
+/** Reads how many new images and videos each of this month's tasks asks for (once, and again when it's edited). */
+async function countUnits(admin: SupabaseClient, max = 60) {
+  const { createHash } = await import("node:crypto");
+  const { askJson } = await import("@/lib/ai");
+  const { data } = await admin
+    .from("asana_tasks")
+    .select("gid, name, notes, format, units_key")
+    .is("request_id", null)
+    .not("client_id", "is", null)
+    .gte("asana_created_at", monthStart())
+    .limit(400);
+  const keyOf = (t: { name: string; notes: string | null }) => createHash("sha1").update(`${t.name}\n${t.notes ?? ""}`).digest("hex");
+  const todo = (data ?? []).filter((t) => t.units_key !== keyOf(t)).slice(0, max);
+  for (let i = 0; i < todo.length; i += 15) {
+    const batch = todo.slice(i, i + 15);
+    const out = await askJson<{ tasks: { id: string; newImages: number; newVideos: number; note: string }[] }>({
+      agent: "strategist",
+      label: "asana allotment count",
+      system: UNITS_SYSTEM,
+      schema: UNITS_SCHEMA,
+      maxTokens: 4000,
+      prompt: batch.map((t) => `<task id="${t.gid}">\nTitle: ${t.name}\n${(t.notes ?? "").slice(0, 2500)}\n</task>`).join("\n\n"),
+    });
+    for (const t of batch) {
+      const r = out.tasks.find((x) => x.id === t.gid);
+      if (!r) continue;
+      await admin
+        .from("asana_tasks")
+        .update({ new_images: Math.max(0, Math.min(50, r.newImages)), new_videos: Math.max(0, Math.min(50, r.newVideos)), units_note: r.note.slice(0, 200), units_key: keyOf(t), units_read_at: new Date().toISOString() })
+        .eq("gid", t.gid);
+    }
+  }
+  return todo.length;
+}
+
 /** Reads the Asana board and updates the mirror. */
 export async function syncAsana(admin: SupabaseClient) {
   const { tracker } = await import("@/lib/progress");
@@ -94,8 +151,9 @@ export async function syncAsana(admin: SupabaseClient) {
     const project = await projectGid(admin);
     t.on("Reading the Creative board in Asana");
     const tasks = await all<AsanaTask>(`/projects/${project}/tasks`, {
-      completed_since: "now", // open tasks only
-      opt_fields: "name,notes,completed,assignee.name,assignee.email,due_on,permalink_url,created_at,modified_at,memberships.project.gid,memberships.section.name,custom_fields.name,custom_fields.display_value",
+      // Open tasks, and ones completed since last month began (they count against this month's allotment)
+      completed_since: monthStart(-1),
+      opt_fields: "name,notes,completed,completed_at,assignee.name,assignee.email,due_on,permalink_url,created_at,modified_at,memberships.project.gid,memberships.section.name,custom_fields.name,custom_fields.display_value",
     });
     t.total(tasks.length);
     const [{ data: clients }, { data: people }, { data: mirror }] = await Promise.all([
@@ -150,7 +208,8 @@ export async function syncAsana(admin: SupabaseClient) {
         moves: moves.slice(-30),
         asana_created_at: task.created_at,
         asana_modified_at: task.modified_at,
-        open: true,
+        open: !task.completed,
+        completed_at: task.completed ? (task.completed_at ?? task.modified_at) : null,
         synced_at: new Date().toISOString(),
       });
       seen.push(task.gid);
@@ -159,7 +218,9 @@ export async function syncAsana(admin: SupabaseClient) {
     // Completed or gone from the board in Asana: off the mirror (migrated ones keep their link)
     const gone = (mirror ?? []).filter((m) => !seen.includes(m.gid as string)).map((m) => m.gid as string);
     for (let i = 0; i < gone.length; i += 200) await admin.from("asana_tasks").update({ open: false, synced_at: new Date().toISOString() }).in("gid", gone.slice(i, i + 200));
-    await admin.from("sync_state").upsert({ source: "asana", cursor_at: new Date().toISOString(), last_run_at: new Date().toISOString(), last_result: { ok: true, project, tasks: seen.length, skipped, closed: gone.length } });
+    t.on("Counting new images and videos for the allotments");
+    const counted = await countUnits(admin).catch(() => 0);
+    await admin.from("sync_state").upsert({ source: "asana", cursor_at: new Date().toISOString(), last_run_at: new Date().toISOString(), last_result: { ok: true, project, tasks: seen.length, skipped, closed: gone.length, counted } });
     await t.finish({ summary: `${seen.length} open tasks mirrored${skipped ? `, ${skipped} organic left out` : ""}${gone.length ? `, ${gone.length} closed in Asana` : ""}` });
     return { project, mirrored: seen.length, skipped, closed: gone.length };
   } catch (e) {

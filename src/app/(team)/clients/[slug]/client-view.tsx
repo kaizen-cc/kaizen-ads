@@ -89,6 +89,7 @@ export type ClientViewProps = {
   videos: number;
   imagesUsed: number;
   videosUsed: number;
+  fromAsana?: { images: number; videos: number };
   can: { admin: boolean; contacts: boolean; allot: boolean; assign: boolean };
   demo?: boolean; // design preview: the refresh only plays its animation
   connections: { meta: Freshness | null; slackClient: Freshness | null; slackInternal: Freshness | null; drive: Freshness | null };
@@ -101,7 +102,7 @@ export type ClientViewProps = {
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, can, demo = false, connections, creative = null, kpis = null, fatigue = null, market = [], intake, calls }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, can, demo = false, connections, creative = null, kpis = null, fatigue = null, market = [], intake, calls }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -367,6 +368,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
             videos={videos}
             imagesUsed={imagesUsed}
             videosUsed={videosUsed}
+            fromAsana={fromAsana}
             packages={packages}
             can={{ exec: can.admin, allot: can.allot }}
             setSprint={setSprintPackage.bind(null, client.id, client.slug)}
