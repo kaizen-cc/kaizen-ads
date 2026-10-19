@@ -59,7 +59,7 @@ export async function openSprint(admin: SupabaseClient, auditId: string) {
   if (sprintId) {
     await admin
       .from("optimization_sprints")
-      .update({ audit_id: auditId, watcher_ids: [...new Set([...((open!.watcher_ids ?? []) as string[]), ...watchers])] })
+      .update({ audit_id: auditId, next_check_at: checkAt(1), watcher_ids: [...new Set([...((open!.watcher_ids ?? []) as string[]), ...watchers])] })
       .eq("id", sprintId);
   } else {
     const setup = metaConfigured() && t?.ad_account_id ? await accountSetup(t.ad_account_id).catch(() => null) : null;
@@ -72,6 +72,13 @@ export async function openSprint(admin: SupabaseClient, auditId: string) {
     sprintId = data.id as string;
   }
 
+  // A new audit replaces the plan: moves still to do from the last one go, so there's never two plans at once.
+  // Moves already done stay as the record of what was done.
+  let replaced = 0;
+  if (open) {
+    const { data: gone } = await admin.from("sprint_actions").delete().eq("sprint_id", sprintId).in("status", ["todo", "doing"]).select("id");
+    replaced = gone?.length ?? 0;
+  }
   const { data: have } = await admin.from("sprint_actions").select("title, sort_order").eq("sprint_id", sprintId);
   const titles = new Set((have ?? []).map((x) => x.title));
   let order = Math.max(0, ...(have ?? []).map((x) => x.sort_order as number)) + 1;
@@ -83,7 +90,9 @@ export async function openSprint(admin: SupabaseClient, auditId: string) {
   await admin.from("sprint_checks").insert({
     sprint_id: sprintId,
     verdict: "started",
-    message: `${open ? "The new audit added" : "Sprint started from the audit with"} ${fresh.length} ${fresh.length === 1 ? "move" : "moves"} on the action list. ${r.verdict.headline} I'll check the account tomorrow morning and every day after until it's back on target.`,
+    message: open
+      ? `A new audit replaced the plan: ${replaced} open ${replaced === 1 ? "move" : "moves"} from the last one came off and ${fresh.length} new ${fresh.length === 1 ? "one is" : "ones are"} on the list (moves already done stay). ${r.verdict.headline} I'll check the account tomorrow morning.`
+      : `Sprint started from the audit with ${fresh.length} ${fresh.length === 1 ? "move" : "moves"} on the action list. ${r.verdict.headline} I'll check the account tomorrow morning and every day after until it's back on target.`,
     kpi,
     next_check_at: checkAt(1),
   });
@@ -95,10 +104,12 @@ export async function addAuditAction(admin: SupabaseClient, auditId: string, ind
   const { data: a } = await admin.from("account_audits").select("target_id, result").eq("id", auditId).single();
   const x = (a?.result as AuditResult | null)?.actions[index];
   if (!a || !x) throw new Error("That action isn't in the audit");
-  let { data: s } = await admin.from("optimization_sprints").select("id").eq("target_id", a.target_id).eq("status", "active").maybeSingle();
+  let { data: s } = await admin.from("optimization_sprints").select("id, audit_id").eq("target_id", a.target_id).eq("status", "active").maybeSingle();
+  // An older audit's plan was replaced: its moves can't come back alongside the new plan
+  if (s && s.audit_id && s.audit_id !== auditId) throw new Error("A newer audit replaced this plan. Add moves from the latest audit instead.");
   if (!s) {
     const id = await openSprint(admin, auditId);
-    s = id ? { id } : null;
+    s = id ? { id, audit_id: auditId } : null;
   }
   if (!s) throw new Error("Couldn't open the sprint");
   const { data: dup } = await admin.from("sprint_actions").select("id").eq("sprint_id", s.id).eq("title", x.title).maybeSingle();

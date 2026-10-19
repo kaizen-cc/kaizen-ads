@@ -31,6 +31,7 @@ export function ActionRow({ a, readOnly }: { a: SprintAction; readOnly: boolean 
   const [note, setNote] = useState(a.note ?? "");
   const set = (status: SprintAction["status"], n?: string) =>
     start(async () => {
+      if (status === "done" || status === "skipped") setOpen(false);
       await setActionStatus(a.id, status, n);
       router.refresh();
     });

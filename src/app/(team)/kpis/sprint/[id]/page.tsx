@@ -125,7 +125,26 @@ export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id
             <h2 className="font-heading text-xl">Action list</h2>
             <p className="text-xs text-faint">Tick moves off as you make them; the next check reads your notes</p>
           </div>
-          {list.length ? list.map((a) => <ActionRow key={a.id} a={a} readOnly={!active} />) : <p className="text-sm text-faint">Nothing on the list yet. Add moves from the audit.</p>}
+          {list.length ? (
+            <>
+              {/* Open moves first (in progress, then to do); finished ones drop to the bottom */}
+              {[...list.filter((a) => a.status === "doing"), ...list.filter((a) => a.status === "todo")].map((a) => (
+                <ActionRow key={a.id} a={a} readOnly={!active} />
+              ))}
+              {!list.some((a) => a.status === "todo" || a.status === "doing") && <p className="rounded-[14px] border border-dashed border-line px-4 py-6 text-center text-sm text-muted">Every move is done or skipped.</p>}
+              {list.some((a) => a.status === "done" || a.status === "skipped") && (
+                <p className="mt-3 text-[11px] uppercase tracking-[0.16em] text-faint">
+                  Done · {list.filter((a) => a.status === "done").length}
+                  {list.some((a) => a.status === "skipped") ? ` · skipped ${list.filter((a) => a.status === "skipped").length}` : ""}
+                </p>
+              )}
+              {[...list.filter((a) => a.status === "done").sort((x, y) => (y.doneAt ?? "").localeCompare(x.doneAt ?? "")), ...list.filter((a) => a.status === "skipped")].map((a) => (
+                <ActionRow key={a.id} a={a} readOnly={!active} />
+              ))}
+            </>
+          ) : (
+            <p className="text-sm text-faint">Nothing on the list yet. Add moves from the audit.</p>
+          )}
         </section>
 
         <section className="grid content-start gap-3">

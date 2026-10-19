@@ -67,7 +67,9 @@ export function ActionCard({ auditId, index, action, area, done, listed }: { aud
                 Done by {done.by} · {new Date(done.at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
               </span>
             )}
-            {listed ? (
+            {listed === "replaced" ? (
+              <span className="text-[11px] text-faint">Replaced by a newer audit</span>
+            ) : listed ? (
               <span className="rounded-full bg-ok-soft px-2 py-0.5 text-[11px] text-ok">On the action list{listed === "done" ? " · done" : listed === "doing" ? " · in progress" : ""}</span>
             ) : (
               <button

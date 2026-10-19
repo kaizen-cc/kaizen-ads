@@ -48,9 +48,10 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
   const [{ data: snap }, { data: history }, { data: sprint }] = await Promise.all([
     supabase.from("kpi_snapshots").select("windows, deviation").eq("target_id", a.target_id).maybeSingle(),
     supabase.from("account_audits").select("id, created_at, status, result").eq("target_id", a.target_id).order("created_at", { ascending: false }).limit(10),
-    supabase.from("optimization_sprints").select("id, sprint_actions(title, status)").eq("target_id", a.target_id).eq("status", "active").maybeSingle(),
+    supabase.from("optimization_sprints").select("id, audit_id, sprint_actions(title, status)").eq("target_id", a.target_id).eq("status", "active").maybeSingle(),
   ]);
   // Which of this audit's moves are on the account's action list, and their status there
+  const replaced = Boolean(sprint?.audit_id && sprint.audit_id !== a.id);
   const onList = new Map(((sprint?.sprint_actions ?? []) as { title: string; status: string }[]).map((x) => [x.title, x.status]));
   const back = (
     <Link href="/kpis" className="text-sm text-muted hover:text-fg">
@@ -84,7 +85,7 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
       {/* The verdict */}
       <header className="relative isolate overflow-hidden rounded-[28px] border border-line bg-surface">
         <div aria-hidden className={`pointer-events-none absolute -right-32 -top-40 -z-10 h-[420px] w-[420px] rounded-full blur-[120px] ${r.verdict.status === "off" ? "bg-bad/25" : r.verdict.status === "at_risk" ? "bg-warn/20" : "bg-ok/20"}`} />
-        <div className="grid gap-8 px-6 py-10 md:px-12 md:py-14">
+        <div className="grid gap-6 px-6 py-8 md:px-10 md:py-10">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-xs uppercase tracking-[0.2em] text-faint">
               Account audit · {client.name}
@@ -105,9 +106,9 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
               <RerunAudit targetId={a.target_id} quiet />
             </div>
           </div>
-          <div className="grid gap-5">
-            <h1 className="max-w-4xl font-display text-3xl leading-[1.05] tracking-tight md:text-6xl">{r.verdict.headline}</h1>
-            <p className="max-w-3xl text-base leading-relaxed text-muted md:text-lg">{r.verdict.summary}</p>
+          <div className="grid gap-3">
+            <h1 className="max-w-3xl font-heading text-[22px] leading-snug md:text-[28px]">{r.verdict.headline}</h1>
+            <p className="max-w-3xl text-[15px] leading-relaxed text-muted">{r.verdict.summary}</p>
           </div>
           <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-[16px] border border-line bg-line md:grid-cols-4">
             {[
@@ -167,6 +168,14 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
       </Section>
 
       <Section n="02" title="What I'd do if I were you" sub="Tick each move off as it's done; the KPI board shows how far along the plan is.">
+        {replaced && sprint && (
+          <p className="rounded-[12px] border border-warn/40 bg-warn-soft px-4 py-3 text-sm">
+            A newer audit replaced this plan on the sprint, so its moves aren&apos;t on the action list.{" "}
+            <Link href={`/kpis/audit/${sprint.audit_id}`} className="font-medium underline-offset-4 hover:underline">
+              Open the latest audit →
+            </Link>
+          </p>
+        )}
         <div className="grid gap-6 lg:grid-cols-3">
           {WHEN.map(([key, label, hint]) => {
             const items = r.actions.map((x, i) => ({ x, i })).filter(({ x }) => x.when === key);
@@ -177,7 +186,7 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
                   <p className="text-[11px] text-faint">{items.length ? hint : "Nothing here"}</p>
                 </div>
                 {items.map(({ x, i }) => (
-                  <ActionCard key={i} auditId={a.id} index={i} action={x} area={AREA[x.area] ?? x.area} done={done[String(i)] ?? null} listed={onList.get(x.title) ?? null} />
+                  <ActionCard key={i} auditId={a.id} index={i} action={x} area={AREA[x.area] ?? x.area} done={done[String(i)] ?? null} listed={replaced ? "replaced" : (onList.get(x.title) ?? null)} />
                 ))}
               </div>
             );
@@ -234,7 +243,7 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
                     <span className="rounded-full border border-line px-2 py-0.5 text-muted">{c.format}</span>
                   </div>
                   <p className="font-heading text-lg leading-snug">{c.concept}</p>
-                  <p className="font-display text-xl leading-snug tracking-tight">
+                  <p className="font-heading text-lg leading-snug">
                     <span className="text-brand-text">&ldquo;</span>
                     {c.hook}
                     <span className="text-brand-text">&rdquo;</span>
