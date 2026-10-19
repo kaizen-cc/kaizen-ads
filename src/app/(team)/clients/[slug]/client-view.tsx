@@ -90,7 +90,7 @@ export type ClientViewProps = {
   videos: number;
   imagesUsed: number;
   videosUsed: number;
-  fromAsana?: { images: number; videos: number };
+  fromAsana?: { images: number; videos: number; waitingImages?: number; waitingVideos?: number };
   creativeDb?: CreativeDb | null;
   can: { admin: boolean; contacts: boolean; allot: boolean; assign: boolean };
   demo?: boolean; // design preview: the refresh only plays its animation

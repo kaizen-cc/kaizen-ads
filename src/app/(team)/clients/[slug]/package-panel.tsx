@@ -21,6 +21,7 @@ const monthEnd = (day: string, ahead: number) => {
 const daysBetween = (a: string, b: string) => Math.round((new Date(`${b}T12:00:00`).getTime() - new Date(`${a}T12:00:00`).getTime()) / 86400000);
 
 const n = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+const both = (images: number, videos: number) => [images ? n(images, "image", "images") : null, videos ? n(videos, "video", "videos") : null].filter(Boolean).join(" and ");
 
 /** The client's Creative Database (finished work, ready for the client) beside the count, which follows work in motion. */
 function DbCheck({ db, imagesUsed, videosUsed }: { db: CreativeDb; imagesUsed: number; videosUsed: number }) {
@@ -181,7 +182,7 @@ export function PackagePanel({
   videos: number;
   imagesUsed: number;
   videosUsed: number;
-  fromAsana?: { images: number; videos: number };
+  fromAsana?: { images: number; videos: number; waitingImages?: number; waitingVideos?: number };
   creativeDb?: CreativeDb | null;
   packages: PackageOption[];
   can: { exec: boolean; allot: boolean };
@@ -248,7 +249,12 @@ export function PackagePanel({
         <Meter name="Videos" cap={videos} used={videosUsed} />
         {fromAsana && (fromAsana.images > 0 || fromAsana.videos > 0) && (
           <p className="-mt-1 text-[11px] text-faint">
-            Includes {[fromAsana.images ? `${fromAsana.images} ${fromAsana.images === 1 ? "image" : "images"}` : null, fromAsana.videos ? `${fromAsana.videos} ${fromAsana.videos === 1 ? "video" : "videos"}` : null].filter(Boolean).join(" and ")} already in production in Asana
+            Includes {both(fromAsana.images, fromAsana.videos)} in production or delivered in Asana this month
+          </p>
+        )}
+        {fromAsana && ((fromAsana.waitingImages ?? 0) > 0 || (fromAsana.waitingVideos ?? 0) > 0) && (
+          <p className="-mt-1 text-[11px] text-warn">
+            {both(fromAsana.waitingImages ?? 0, fromAsana.waitingVideos ?? 0)} more briefed in Asana, not started yet: they count once production starts
           </p>
         )}
         {creativeDb && <DbCheck db={creativeDb} imagesUsed={imagesUsed} videosUsed={videosUsed} />}

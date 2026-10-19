@@ -15,7 +15,8 @@ export function allotmentSummary(a: Allotment | undefined) {
     return l === null ? null : l < 0 ? `${-l} ${what} over` : `${l} of ${cap} ${what} left`;
   };
   const sprint = a.until ? `Sprint until ${untilLabel(a.until)}` : null;
-  return [sprint, part(a.images, a.imagesUsed, "images"), part(a.videos, a.videosUsed, "videos")].filter(Boolean).join(" · ");
+  const waiting = a.waiting && a.waiting.images + a.waiting.videos > 0 ? `${a.waiting.images + a.waiting.videos} more briefed in Asana` : null;
+  return [sprint, part(a.images, a.imagesUsed, "images"), part(a.videos, a.videosUsed, "videos"), waiting].filter(Boolean).join(" · ");
 }
 
 /** The AI mark: a small four-point spark. */

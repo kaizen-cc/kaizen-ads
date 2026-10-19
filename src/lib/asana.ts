@@ -88,6 +88,9 @@ type AsanaTask = {
 const PLATFORM = /(meta ads|facebook|instagram|google ads|tiktok|organic social|organic)/i;
 const FORMAT = /\b(image|video|carousel|static|reel)s?\b/i;
 
+/** The first day of the month (New York) a moment falls in, as YYYY-MM-01. */
+const monthOf = (iso: string) => `${new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/New_York" }).slice(0, 7)}-01`;
+
 /** The first moment of this month in New York (or of a month before/after), as an ISO string. */
 function monthStart(offset = 0) {
   const [y, m] = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }).split("-").map(Number);
@@ -117,7 +120,7 @@ async function countUnits(admin: SupabaseClient, max = 60) {
     .select("gid, name, notes, format, units_key")
     .is("request_id", null)
     .not("client_id", "is", null)
-    .gte("asana_created_at", monthStart())
+    .or(`counted_month.eq.${monthOf(new Date().toISOString())},and(open.eq.true,counted_month.is.null)`)
     .limit(400);
   const keyOf = (t: { name: string; notes: string | null }) => createHash("sha1").update(`${t.name}\n${t.notes ?? ""}`).digest("hex");
   const todo = (data ?? []).filter((t) => t.units_key !== keyOf(t)).slice(0, max);
@@ -159,7 +162,7 @@ export async function syncAsana(admin: SupabaseClient) {
     const [{ data: clients }, { data: people }, { data: mirror }] = await Promise.all([
       admin.from("clients").select("id, name, kaizen_id").is("archived_at", null),
       admin.from("profiles").select("id, email, full_name").eq("is_active", true),
-      admin.from("asana_tasks").select("gid, section, moves, request_id"),
+      admin.from("asana_tasks").select("gid, section, moves, request_id, counted_month"),
     ]);
     const byKaizen = new Map((clients ?? []).filter((c) => c.kaizen_id != null).map((c) => [String(c.kaizen_id), c.id as string]));
     const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -188,12 +191,19 @@ export async function syncAsana(admin: SupabaseClient) {
       const prev = before.get(task.gid);
       const moves = (prev?.moves ?? []) as { from: string | null; to: string | null; at: string }[];
       if (prev && prev.section !== section) moves.push({ from: prev.section as string | null, to: section, at: new Date().toISOString() });
+      // The allotment month: set once, when it's first seen in production or delivered (a brief waiting in the Creative
+      // Brief column hasn't drawn on anything yet). Delivered: the month it was completed. In production: the month it
+      // last changed, which is now for a task that just moved, and its last real activity for one already there.
+      const stage = stageForColumn(section);
+      const inProduction = task.completed || stage !== "requested";
+      const countedMonth = (prev?.counted_month as string | null) ?? (inProduction ? monthOf(task.completed ? (task.completed_at ?? task.modified_at) : task.modified_at) : null);
       await admin.from("asana_tasks").upsert({
         gid: task.gid,
         name: task.name,
         notes: task.notes?.slice(0, 20000) ?? null,
         section,
-        stage: stageForColumn(section),
+        stage,
+        counted_month: countedMonth,
         client_id: clientId ?? null,
         client_ref: idField ? String(idField) : null,
         platform,

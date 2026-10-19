@@ -189,7 +189,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
       videos={videos}
       imagesUsed={usage?.images_used ?? 0}
       videosUsed={usage?.videos_used ?? 0}
-      fromAsana={{ images: usage?.asana_images ?? 0, videos: usage?.asana_videos ?? 0 }}
+      fromAsana={{ images: usage?.asana_images ?? 0, videos: usage?.asana_videos ?? 0, waitingImages: usage?.asana_waiting_images ?? 0, waitingVideos: usage?.asana_waiting_videos ?? 0 }}
       creativeDb={(client.creative_db as CreativeDb | null) ?? null}
       can={{ admin: me.isExec, contacts: seesAllClients(me), allot: me.isExec || me.isLead, assign: isExecOrLead(me) }}
     />
