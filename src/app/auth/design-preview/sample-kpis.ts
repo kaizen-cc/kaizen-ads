@@ -42,6 +42,7 @@ const make = (
     accountId: "526528539355910",
     audit: null,
     extraMetrics: [],
+    sprint: null,
     label: null,
     conversion,
     conversionLabel: conversionLabel(conversion),

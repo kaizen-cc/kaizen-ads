@@ -12,7 +12,7 @@ import { loadCallPromises, loadOnboarding, loadSuggestions, type OpenSuggestion 
 
 export type NextItem = {
   id: string;
-  kind: "ticket" | "review" | "launch" | "brief" | "promise" | "first_round" | "refresh" | "kpi" | "fatigue" | "intake" | "client";
+  kind: "ticket" | "review" | "launch" | "brief" | "promise" | "first_round" | "refresh" | "kpi" | "fatigue" | "intake" | "client" | "sprint";
   tone: "bad" | "warn" | "brand" | "ok";
   client: string;
   title: string;
@@ -138,8 +138,30 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
     decide.push({ id: `s-${s.id}`, kind: "brief", tone: "brand", client: s.client, title: s.draft.title, why: s.signal, when: `Suggested ${ago(s.createdAt)} ago`.replace("today ago", "today"), action: "Open the brief", suggestion: s });
   }
 
+  // ─── Optimization sprints: mine to work, or ones I started or watch ───
+  const { loadSprints } = await import("@/lib/sprints");
+  const sprints = buyerish ? await loadSprints(db, { personId: me.id }) : [];
+  const sprinting = new Set(sprints.map((x) => x.targetId));
+  for (const x of sprints) {
+    const s = x.sprint;
+    const mine = s.buyerId === me.id;
+    const urgent = s.verdict === "no_action" || s.verdict === "wrong_move" || s.verdict === "worse";
+    const item: NextItem = {
+      id: `sp-${s.id}`,
+      kind: "sprint",
+      tone: s.verdict === "no_action" || s.verdict === "worse" ? "bad" : s.verdict === "wrong_move" ? "warn" : mine ? "brand" : "ok",
+      client: x.client,
+      title: mine ? `Optimization sprint: ${s.done} of ${s.total} actions done` : `Sprint in motion with ${s.buyer ?? "no buyer"}: ${s.done} of ${s.total} done`,
+      why: s.message ?? "The account is being followed every day",
+      when: s.lastCheckAt ? `Checked ${ago(s.lastCheckAt)}`.replace("Checked today", "Checked today") : "Started today",
+      href: `/kpis/sprint/${s.id}`,
+      action: mine ? "Open my actions" : "See progress",
+    };
+    (mine && (urgent || s.done < s.total) ? now : watch).push(item);
+  }
+
   // ─── Watch: my accounts off target and ads wearing out ───
-  for (const k of kpis?.off ?? []) watch.push({ id: `k-${k.id}`, kind: "kpi", tone: "bad", client: k.client, title: `${k.label} off target`, why: k.deviation != null ? `${Math.round(Math.abs(k.deviation) * 100)}% off the target` : "Off the target", when: null, href: `/clients/${k.slug}`, action: "Open client" });
+  for (const k of (kpis?.off ?? []).filter((k) => !sprinting.has(k.id))) watch.push({ id: `k-${k.id}`, kind: "kpi", tone: "bad", client: k.client, title: `${k.label} off target`, why: k.deviation != null ? `${Math.round(Math.abs(k.deviation) * 100)}% off the target` : "Off the target", when: null, href: `/clients/${k.slug}`, action: "Open client" });
   for (const w of fatigue ?? []) {
     if (w.state !== "open") continue;
     const item: NextItem = {

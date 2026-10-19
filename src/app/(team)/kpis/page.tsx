@@ -5,6 +5,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { KpiBoard, type KpiRow } from "./kpi-board";
 import type { AuditSummary } from "./audit-panel";
+import { loadSprints } from "@/lib/sprints";
 
 // Pulling one client's numbers from Meta on demand can take a minute; an audit runs a few minutes after the click
 export const maxDuration = 800;
@@ -62,6 +63,7 @@ export default async function Kpis() {
     });
   }
   const snapBy = new Map((snaps ?? []).map((s) => [s.target_id as string, s as unknown as Snap]));
+  const sprints = new Map((await loadSprints(supabase, { targetIds: (targets ?? []).map((t) => t.id) })).map((x) => [x.targetId, x.sprint]));
 
   const rows: KpiRow[] = (targets ?? [])
     .map((t) => {
@@ -102,6 +104,7 @@ export default async function Kpis() {
         dataThrough: s?.data_through ?? null,
         audit: auditBy.get(t.id) ?? null,
         extraMetrics: (t.extra_metrics ?? []) as string[],
+        sprint: sprints.get(t.id) ?? null,
       };
     })
     .sort((a, b) => a.client.localeCompare(b.client) || (a.label ?? "").localeCompare(b.label ?? ""));

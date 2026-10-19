@@ -4,12 +4,14 @@ import { useRouter } from "next/navigation";
 import { useOptimistic, useState, useTransition } from "react";
 import type { AuditResult } from "@/lib/audit";
 import { startAudit, tickAuditAction } from "../../audit-actions";
+import { addToActionList, startSprint } from "../../sprint-actions";
 
 const OWNER: Record<string, string> = { media_buyer: "Media buyer", creative: "Creative team", client: "Client", strategist: "Strategist" };
 
 /** One action in the plan: tick it off when it's done (everyone sees who did and when). */
-export function ActionCard({ auditId, index, action, area, done }: { auditId: string; index: number; action: AuditResult["actions"][number]; area: string; done: { by: string; at: string } | null }) {
+export function ActionCard({ auditId, index, action, area, done, listed }: { auditId: string; index: number; action: AuditResult["actions"][number]; area: string; done: { by: string; at: string } | null; listed: string | null }) {
   const router = useRouter();
+  const [adding, startAdd] = useTransition();
   const [, start] = useTransition();
   const [checked, setChecked] = useOptimistic(Boolean(done));
   const [open, setOpen] = useState(false);
@@ -64,6 +66,23 @@ export function ActionCard({ auditId, index, action, area, done }: { auditId: st
                 Done by {done.by} · {new Date(done.at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
               </span>
             )}
+            {listed ? (
+              <span className="rounded-full bg-ok-soft px-2 py-0.5 text-[11px] text-ok">On the action list{listed === "done" ? " · done" : listed === "doing" ? " · in progress" : ""}</span>
+            ) : (
+              <button
+                type="button"
+                disabled={adding}
+                onClick={() =>
+                  startAdd(async () => {
+                    await addToActionList(auditId, index);
+                    router.refresh();
+                  })
+                }
+                className="rounded-full border border-line px-2.5 py-0.5 text-[11px] text-muted hover:text-fg disabled:opacity-60"
+              >
+                {adding ? "Adding…" : "+ Add to my action list"}
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -92,6 +111,32 @@ export function RerunAudit({ targetId, quiet }: { targetId: string; quiet?: bool
         className={`rounded-full px-3 py-1 text-xs disabled:opacity-60 ${quiet ? "border border-line text-muted hover:text-fg" : "bg-fg px-4 py-2 text-sm text-bg"}`}
       >
         Run a new audit
+      </button>
+    </span>
+  );
+}
+
+/** For an audit with no sprint running: follow it with the buyer. */
+export function StartSprint({ auditId }: { auditId: string }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <span className="flex items-center gap-2">
+      {error && <span className="text-[11px] text-bad">{error}</span>}
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() =>
+          start(async () => {
+            const r = await startSprint(auditId);
+            if (!r.ok) return setError(r.error);
+            router.push(`/kpis/sprint/${r.sprintId}`);
+          })
+        }
+        className="rounded-full bg-fg px-3 py-1 text-xs text-bg disabled:opacity-60"
+      >
+        {pending ? "Starting…" : "Start the sprint"}
       </button>
     </span>
   );

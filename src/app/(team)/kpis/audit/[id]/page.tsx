@@ -7,7 +7,7 @@ import { conversionFor, conversionLabel } from "@/lib/kpi/conversions";
 import { kpiValue } from "@/lib/kpi/format";
 import { createClient } from "@/lib/supabase/server";
 import { VERDICT } from "../../audit-panel";
-import { ActionCard, RerunAudit } from "./audit-parts";
+import { ActionCard, RerunAudit, StartSprint } from "./audit-parts";
 
 export const metadata: Metadata = { title: "Account audit" };
 export const maxDuration = 800;
@@ -45,10 +45,13 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
   if (!a) notFound();
   const client = a.clients as unknown as { name: string; slug: string };
   const t = a.kpi_targets as unknown as { conversion: string; custom_action: string | null; target: number | null; label: string | null };
-  const [{ data: snap }, { data: history }] = await Promise.all([
+  const [{ data: snap }, { data: history }, { data: sprint }] = await Promise.all([
     supabase.from("kpi_snapshots").select("windows, deviation").eq("target_id", a.target_id).maybeSingle(),
     supabase.from("account_audits").select("id, created_at, status, result").eq("target_id", a.target_id).order("created_at", { ascending: false }).limit(10),
+    supabase.from("optimization_sprints").select("id, sprint_actions(title, status)").eq("target_id", a.target_id).eq("status", "active").maybeSingle(),
   ]);
+  // Which of this audit's moves are on the account's action list, and their status there
+  const onList = new Map(((sprint?.sprint_actions ?? []) as { title: string; status: string }[]).map((x) => [x.title, x.status]));
   const back = (
     <Link href="/kpis" className="text-sm text-muted hover:text-fg">
       ← KPIs
@@ -89,6 +92,16 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
             </p>
             <div className="flex items-center gap-2">
               <span className={`rounded-full border px-3 py-1 text-xs font-medium ${v.ring} ${v.tone}`}>{v.label}</span>
+              <Link href={`/report/${a.id}`} className="rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg">
+                Client PDF
+              </Link>
+              {sprint ? (
+                <Link href={`/kpis/sprint/${sprint.id}`} className="rounded-full bg-fg px-3 py-1 text-xs text-bg">
+                  Open the sprint →
+                </Link>
+              ) : (
+                <StartSprint auditId={a.id} />
+              )}
               <RerunAudit targetId={a.target_id} quiet />
             </div>
           </div>
@@ -164,7 +177,7 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
                   <p className="text-[11px] text-faint">{items.length ? hint : "Nothing here"}</p>
                 </div>
                 {items.map(({ x, i }) => (
-                  <ActionCard key={i} auditId={a.id} index={i} action={x} area={AREA[x.area] ?? x.area} done={done[String(i)] ?? null} />
+                  <ActionCard key={i} auditId={a.id} index={i} action={x} area={AREA[x.area] ?? x.area} done={done[String(i)] ?? null} listed={onList.get(x.title) ?? null} />
                 ))}
               </div>
             );

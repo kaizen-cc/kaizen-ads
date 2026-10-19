@@ -17,6 +17,7 @@ const SECTIONS: { key: keyof Omit<NextForMe, "stats">; title: string; hint: stri
 const DOT: Record<NextItem["tone"], string> = { bad: "bg-bad", warn: "bg-warn", brand: "bg-brand", ok: "bg-ok" };
 
 const KIND: Record<NextItem["kind"], string> = {
+  sprint: "Sprint",
   ticket: "Ticket",
   review: "Review",
   launch: "Launch",

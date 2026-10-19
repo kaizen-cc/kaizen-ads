@@ -479,6 +479,9 @@ Now write what you'd do if you were the buyer, and what you'd watch out for.`,
         finished_at: new Date().toISOString(),
       })
       .eq("id", id);
+    // The plan becomes a sprint the system follows with the buyer
+    const { openSprint } = await import("@/lib/sprints");
+    await openSprint(admin, id).catch((e) => console.error("[audit] couldn't open the sprint:", e instanceof Error ? e.message : e));
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     await m.failRunning(message);

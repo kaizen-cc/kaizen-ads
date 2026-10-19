@@ -13,6 +13,7 @@ import { addKpiTarget, archiveKpiTarget, exploreKpi, linkAdAccount, pullClientKp
 import type { Explore } from "@/lib/kpi/explore";
 import { DailyChart, Ladder, PaceBar, paceMeta } from "./kpi-charts";
 import { AuditPanel, type AuditSummary } from "./audit-panel";
+import type { SprintSummary } from "@/lib/sprints";
 
 export type KpiRow = {
   id: string;
@@ -48,6 +49,7 @@ export type KpiRow = {
   dataThrough: string | null;
   audit: AuditSummary;
   extraMetrics: string[];
+  sprint: SprintSummary | null;
 };
 
 type Person = { id: string; name: string };
@@ -342,6 +344,41 @@ function Reported({ ex, conv, custom, onPick, onAddBox, boxes }: { ex: Explore; 
   );
 }
 
+const SPRINT_TONE: Record<string, string> = {
+  started: "bg-surface-2 text-muted",
+  no_action: "bg-bad-soft text-bad",
+  wrong_move: "bg-warn-soft text-warn",
+  on_track: "bg-ok-soft text-ok",
+  improving: "bg-ok-soft text-ok",
+  worse: "bg-bad-soft text-bad",
+  done: "bg-ok-soft text-ok",
+};
+
+/** The sprint on this account: who's on it, how far, and what the last check said. */
+function SprintStrip({ s }: { s: SprintSummary }) {
+  return (
+    <Link href={`/kpis/sprint/${s.id}`} className="group grid gap-2 rounded-[16px] border border-line bg-surface p-5 transition-colors hover:border-faint/70">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-faint">Optimization sprint in motion</p>
+        <span className="text-xs text-muted group-hover:text-fg">Open the sprint →</span>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+        <span>
+          Owned by <b>{s.buyer ?? "no buyer"}</b>
+        </span>
+        <span className="tabular text-muted">
+          {s.done} of {s.total} actions done
+        </span>
+        <span className="text-xs text-faint">Next check {new Date(s.nextCheckAt).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric" })}</span>
+      </div>
+      <div className="h-1 overflow-hidden rounded-full bg-line">
+        <div className="h-full rounded-full bg-ok" style={{ width: `${s.total ? (s.done / s.total) * 100 : 0}%` }} />
+      </div>
+      {s.message && <p className="line-clamp-2 text-[13px] leading-relaxed text-muted">{s.message}</p>}
+    </Link>
+  );
+}
+
 function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
   const router = useRouter();
   // What's being tried in the form; the numbers follow it live, before Save
@@ -415,6 +452,7 @@ function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
   );
   return (
     <div className="grid gap-6 border-t border-line bg-bg/40 px-5 py-6 sm:px-6">
+      {r.sprint && <SprintStrip s={r.sprint} />}
       {r.accountId && <AuditPanel targetId={r.id} audit={r.audit} platform={r.platform} />}
 
       {previewing && (
@@ -529,6 +567,14 @@ function Row({ r, open, onToggle, buyers }: { r: KpiRow; open: boolean; onToggle
               {r.owner && ` · ${r.owner}`}
               {r.source === "client" && " · client's target"}
             </p>
+            {r.sprint ? (
+              <span className={`mt-1.5 inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] ${SPRINT_TONE[r.sprint.verdict ?? "started"] ?? "bg-surface-2 text-muted"}`}>
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
+                Sprint in motion · {r.sprint.buyer ?? "no buyer"} · {r.sprint.done}/{r.sprint.total}
+              </span>
+            ) : (r.status === "off" || r.status === "close") && r.audit?.status !== "running" ? (
+              <span className="mt-1.5 inline-flex rounded-full border border-dashed border-bad/50 px-2 py-0.5 text-[10px] text-bad">Nobody&apos;s optimizing it yet</span>
+            ) : null}
           </div>
         </div>
 

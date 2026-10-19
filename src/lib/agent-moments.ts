@@ -81,7 +81,9 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Writes each sub-vertical's playbook: avatars, the angles that land, and the ads that prove them", where: "Ideas · Verticals · Playbook", trigger: "auto", when: "Hourly when something new comes in, or Rebuild", labels: ["playbook"] },
   ],
   auditor: [
-    { title: "Audits one ad account: why it's where it is against target, and the plan (changes, tests, creative, budget, questions for the client)", where: "KPIs · open a client · AI account audit", trigger: "click", when: "When someone runs an audit", labels: ["audit"] },
+    { title: "Audits one ad account: why it's where it is against target, and the plan (changes, tests, creative, budget, questions for the client)", where: "KPIs · open a client · AI account audit", trigger: "click", when: "When someone runs an audit", labels: ["audit ", "audit"] },
+    { title: "Checks each optimization sprint: what changed in Meta, what was ticked, and what to tell the buyer (a reminder, a wrong move, or I'll check back)", where: "KPIs · sprint page · Next for me", trigger: "auto", when: "Daily, or on the follow-up date it set", labels: ["sprint check"] },
+    { title: "Writes the client-facing version of an audit for the PDF", where: "Audit · Client PDF", trigger: "click", when: "The first time someone opens the client PDF", labels: ["audit client report"] },
   ],
   coach: [{ title: "Edits another agent's playbook from your feedback", where: "Settings · AI agents · Coach", trigger: "click", when: "When someone coaches an agent", labels: ["coach"] }],
   launcher: [{ title: "Pushes approved ads to Meta, paused, with Kaizen's naming", where: "Board · Ready to launch", trigger: "click", when: "Coming with the Launcher", labels: ["launch"] }],
