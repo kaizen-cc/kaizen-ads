@@ -37,6 +37,7 @@ export const tierOf = (r: TeamRole): Tier => ROLES.find((x) => x.value === r)?.t
 /** Per-client slots and who can fill them. */
 export const SLOTS = [
   { value: "meta_buyer", label: "Meta buyer", eligible: ["media_buyer", "head_of_meta"] as TeamRole[] },
+  { value: "google_buyer", label: "Google buyer", eligible: ["google_buyer", "head_of_google"] as TeamRole[] },
   { value: "graphic_designer", label: "Designer", eligible: ["graphic_designer", "head_of_creative"] as TeamRole[] },
   { value: "video_editor", label: "Video editor", eligible: ["video_editor", "head_of_creative"] as TeamRole[] },
 ] as const;

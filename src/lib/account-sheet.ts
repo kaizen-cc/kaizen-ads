@@ -127,6 +127,15 @@ export async function syncAccountSheet(admin: SupabaseClient) {
           if (id) handoffs.push(id);
         }
       }
+      // The Google buyer follows the Google tab the same way: it scopes their board to their accounts
+      if (platform === "google" && buyer) {
+        const { data: cur } = await admin.from("client_assignments").select("profile_id").eq("client_id", target.client_id).eq("role", "google_buyer");
+        if (!(cur ?? []).some((c) => c.profile_id === buyer.id)) {
+          await admin.from("client_assignments").delete().eq("client_id", target.client_id).eq("role", "google_buyer");
+          await admin.from("client_assignments").insert({ client_id: target.client_id, profile_id: buyer.id, role: "google_buyer" });
+          out.buyers++;
+        }
+      }
       t.tick(name);
     }
     if (out.updated || out.buyers) {
