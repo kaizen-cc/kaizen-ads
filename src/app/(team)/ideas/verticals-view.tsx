@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import Link from "next/link";
 import type { Benchmark, Vertical } from "@/lib/verticals";
 import { RebuildVerticals } from "./rebuild-verticals";
@@ -46,10 +49,26 @@ export function VerticalsView({
   totals: { clients: number; fame: number; market: number; playbooks: number };
   canRebuild: boolean;
 }) {
-  // Only sub-verticals with a paid client or market brands in them
+  const [q, setQ] = useState("");
+  const [vertical, setVertical] = useState<string | null>(null);
+  const [proven, setProven] = useState(true);
+
+  // Sub-verticals with a paid client or market brands in them
   const has = (id: string) => (cards.get(id)?.clients.length ?? 0) > 0 || (cards.get(id)?.brands ?? 0) > 0;
-  const shown = verticals.map((v) => ({ ...v, subs: v.subs.filter((s) => has(s.id)) })).filter((v) => v.subs.length);
-  if (!shown.length)
+  const all = verticals.map((v) => ({ ...v, subs: v.subs.filter((s) => has(s.id)) })).filter((v) => v.subs.length);
+  const term = q.trim().toLowerCase();
+  const matches = (v: Vertical, s: Vertical["subs"][number]) => {
+    if (!term) return true;
+    const c = cards.get(s.id);
+    return [v.name, s.name, s.description ?? "", ...(c?.clients.map((x) => x.name) ?? []), ...(c?.playbook?.avatars ?? [])].some((x) => x.toLowerCase().includes(term));
+  };
+  const shown = all
+    .filter((v) => !vertical || v.id === vertical)
+    .map((v) => ({ ...v, subs: v.subs.filter((s) => (!proven || cards.get(s.id)?.playbook) && matches(v, s)) }))
+    .filter((v) => v.subs.length);
+  const provenCount = all.reduce((n, v) => n + v.subs.filter((s) => cards.get(s.id)?.playbook).length, 0);
+
+  if (!all.length)
     return (
       <div className="mx-auto grid max-w-6xl place-items-center gap-3 rounded-[20px] border border-dashed border-line px-6 py-20 text-center">
         <p className="font-heading text-lg">Working out the verticals</p>
@@ -59,10 +78,10 @@ export function VerticalsView({
         {canRebuild && <RebuildVerticals />}
       </div>
     );
-  const subCount = shown.reduce((n, v) => n + v.subs.length, 0);
+  const subCount = all.reduce((n, v) => n + v.subs.length, 0);
 
   return (
-    <div className="mx-auto grid w-full max-w-6xl gap-12">
+    <div className="mx-auto grid w-full max-w-6xl gap-10">
       <header className="relative grid gap-8 overflow-hidden rounded-[28px] border border-line bg-surface px-6 py-10 md:px-10 md:py-12">
         <div aria-hidden className="pointer-events-none absolute -right-24 -top-32 h-[380px] w-[380px] rounded-full bg-brand/20 blur-[110px]" />
         <div aria-hidden className="pointer-events-none absolute -bottom-40 left-1/3 h-[300px] w-[300px] rounded-full bg-brand/10 blur-[120px]" />
@@ -73,16 +92,17 @@ export function VerticalsView({
           </div>
           <h1 className="font-display text-4xl tracking-tight md:text-6xl">The markets we win in</h1>
           <p className="max-w-2xl text-[15px] leading-relaxed text-muted">
-            Every paid ads client, sorted by how they sell and to whom. Each sub-vertical has a playbook: who buys, the angles that land with them, and the ads that prove it.
+            Every paid ads client, sorted by how they sell and to whom. A sub-vertical gets a playbook once we have wins of our own there: who buys, the angles that landed for us, and our ads
+            that prove it.
           </p>
         </div>
         <dl className="relative grid grid-cols-2 gap-px overflow-hidden rounded-[16px] border border-line bg-line md:grid-cols-4">
           {(
             [
-              [subCount, "sub-verticals", `across ${shown.length} verticals`],
+              [subCount, "sub-verticals", `across ${all.length} verticals`],
               [totals.clients, "paid clients", "placed by the AI"],
               [totals.fame, "Hall of Fame ads", "beat their target 30+ days"],
-              [totals.playbooks, "playbooks", `from ${totals.market.toLocaleString("en-US")} market ads live 30+ days`],
+              [provenCount, "proven playbooks", "built from our own wins"],
             ] as const
           ).map(([n, label, sub]) => (
             <div key={label} className="flex flex-col gap-1 bg-surface px-5 py-4">
@@ -92,20 +112,82 @@ export function VerticalsView({
             </div>
           ))}
         </dl>
-        <nav className="relative flex flex-wrap gap-1.5" aria-label="Verticals">
-          {shown.map((v) => (
-            <a key={v.id} href={`#v-${v.slug}`} className="rounded-full border border-line bg-bg/60 px-3 py-1.5 text-xs text-muted backdrop-blur transition-colors hover:border-fg/30 hover:text-fg">
-              {v.name} <span className="text-faint">{v.subs.length}</span>
-            </a>
-          ))}
-        </nav>
       </header>
+
+      {/* Find what applies: search a client, a sub-vertical or a buyer; narrow to an industry */}
+      <div className="sticky top-[calc(8px+env(safe-area-inset-top,0px))] z-20 grid gap-3 rounded-[18px] border border-line bg-bg/90 p-3 backdrop-blur">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[220px] flex-1">
+            <svg className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.5-3.5" strokeLinecap="round" />
+            </svg>
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search a client, a sub-vertical, an industry or a buyer"
+              aria-label="Search verticals"
+              className="h-10 w-full rounded-full border border-line bg-surface pl-9 pr-3 text-sm outline-none focus:border-brand-text"
+            />
+          </div>
+          <div className="flex rounded-full border border-line bg-surface p-0.5 text-xs">
+            <button type="button" onClick={() => setProven(true)} className={`rounded-full px-3 py-1.5 ${proven ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
+              Our proven playbooks <span className="opacity-60">{provenCount}</span>
+            </button>
+            <button type="button" onClick={() => setProven(false)} className={`rounded-full px-3 py-1.5 ${!proven ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
+              All sub-verticals <span className="opacity-60">{subCount}</span>
+            </button>
+          </div>
+          {(q || vertical) && (
+            <button
+              type="button"
+              onClick={() => {
+                setQ("");
+                setVertical(null);
+              }}
+              className="px-2 text-xs text-muted hover:text-fg"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+        <nav className="flex flex-wrap gap-1.5" aria-label="Industries">
+          {all.map((v) => {
+            const n = v.subs.filter((s) => !proven || cards.get(s.id)?.playbook).length;
+            const on = vertical === v.id;
+            return (
+              <button
+                key={v.id}
+                type="button"
+                onClick={() => setVertical(on ? null : v.id)}
+                className={`rounded-full border px-3 py-1 text-xs transition-colors ${on ? "border-fg/50 bg-fg text-bg" : n ? "border-line text-muted hover:border-fg/30 hover:text-fg" : "border-dashed border-line text-faint"}`}
+              >
+                {v.name} <span className="opacity-60">{n}</span>
+              </button>
+            );
+          })}
+        </nav>
+      </div>
+
+      {shown.length === 0 && (
+        <div className="grid place-items-center gap-2 rounded-[20px] border border-dashed border-line px-6 py-14 text-center">
+          <p className="font-heading">{proven ? "No proven playbook matches yet" : "Nothing matches"}</p>
+          <p className="max-w-md text-sm text-muted">
+            {proven ? "We don't have wins of our own there yet. See every sub-vertical to find the closest market, its clients and benchmarks." : "Try a different word, or clear the filters."}
+          </p>
+          {proven && (
+            <button type="button" onClick={() => setProven(false)} className="mt-1 rounded-full border border-line px-4 py-1.5 text-xs text-muted hover:text-fg">
+              Show all sub-verticals
+            </button>
+          )}
+        </div>
+      )}
 
       {shown.map((v) => (
         <section key={v.id} id={`v-${v.slug}`} className="grid scroll-mt-8 gap-5">
           <div className="flex flex-wrap items-end justify-between gap-3 border-b border-line pb-4">
             <div className="grid gap-1">
-              <h2 className="font-display text-2xl tracking-tight md:text-3xl">{v.name}</h2>
+              <h2 className="font-heading text-2xl">{v.name}</h2>
               {v.description && <p className="max-w-2xl text-sm text-muted">{v.description}</p>}
             </div>
             <p className="text-xs text-faint">
@@ -120,7 +202,7 @@ export function VerticalsView({
         </section>
       ))}
 
-      {unplaced.length > 0 && <p className="text-xs text-faint">Still being placed: {unplaced.map((c) => c.name).join(", ")}.</p>}
+      {unplaced.length > 0 && !proven && <p className="text-xs text-faint">Still being placed: {unplaced.map((c) => c.name).join(", ")}.</p>}
     </div>
   );
 }
@@ -178,10 +260,9 @@ function SubVerticalCard({ sub, card }: { sub: Vertical["subs"][number]; card: S
             </div>
           </>
         ) : (
-          <div className="grid gap-2" aria-label="Playbook being written">
-            <div className="h-2.5 w-11/12 animate-pulse rounded-full bg-line/70" />
-            <div className="h-2.5 w-2/3 animate-pulse rounded-full bg-line/50" />
-            <p className="line-clamp-2 text-[11px] text-faint">{sub.description ?? "The playbook is being written."}</p>
+          <div className="grid gap-1.5">
+            <p className="line-clamp-2 text-[12px] leading-relaxed text-muted">{sub.description}</p>
+            <p className="text-[11px] text-faint">{card.fame ? "Our playbook is being written from our wins here." : "No playbook yet: we don't have a win of our own here yet."}</p>
           </div>
         )}
 
@@ -214,7 +295,7 @@ function SubVerticalCard({ sub, card }: { sub: Vertical["subs"][number]; card: S
             </span>
           </div>
           <span className="flex shrink-0 items-center gap-1 text-xs font-medium transition-transform group-hover:translate-x-0.5">
-            {pb ? `${pb.angles} proven angles` : "Playbook"} <span aria-hidden>→</span>
+            {pb ? `${pb.angles} proven angles` : "Details"} <span aria-hidden>→</span>
           </span>
         </div>
       </div>

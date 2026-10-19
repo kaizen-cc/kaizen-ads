@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/server";
 import { loadVerticals } from "@/lib/verticals";
 import { VerticalsView, type SubCard } from "./verticals-view";
 import { requireStaff } from "@/lib/auth";
+import { PLAYBOOK_VERSION } from "@/lib/playbooks";
 import { FameLibrary } from "./fame-library";
 import { loadHallOfFame } from "@/lib/hall-of-fame";
 import { toAllotment, type UsageRow } from "@/lib/allotment";
@@ -63,7 +64,7 @@ async function Verticals() {
     loadVerticals(db),
     db.from("clients").select("id, name, slug, vertical_id, vertical_why").is("archived_at", null).in("status", LIVE).eq("paid_ads", true).order("name"),
     db.from("market_brands").select("vertical_id").eq("rejected", false).not("vertical_id", "is", null),
-    db.from("vertical_playbooks").select("vertical_id, summary, avatars"),
+    db.from("vertical_playbooks").select("vertical_id, summary, avatars, sources, fingerprint").like("fingerprint", `${PLAYBOOK_VERSION}:%`),
     db.from("hall_of_fame").select("vertical_id, creative").gt("expires_at", new Date().toISOString()).not("vertical_id", "is", null).order("beat_by", { ascending: false }).limit(600),
     db
       .from("market_ads")
@@ -94,7 +95,7 @@ async function Verticals() {
   }
   for (const b of books ?? []) {
     const avatars = (b.avatars ?? []) as { name: string; angles?: unknown[] }[];
-    if (avatars.length) card(b.vertical_id as string).playbook = { summary: b.summary as string, avatars: avatars.map((a) => a.name), angles: avatars.reduce((n, a) => n + (a.angles?.length ?? 0), 0) };
+    if (avatars.length && Number((b.sources as { fame?: number } | null)?.fame)) card(b.vertical_id as string).playbook = { summary: b.summary as string, avatars: avatars.map((a) => a.name), angles: avatars.reduce((n, a) => n + (a.angles?.length ?? 0), 0) };
   }
   const all = [...cards.values()];
   return (

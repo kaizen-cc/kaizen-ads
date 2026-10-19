@@ -50,7 +50,7 @@ const SCHEMA = {
 const SYSTEM = `You are Kaizen's head of strategy writing the playbook for one sub-vertical: the go-to-market attack for any new client in it. It's read by the media buyers and the creative team, and shown to prospects in sales meetings.
 Structure it the way creative should be reverse-engineered: first who buys (avatars), then the angles that land with each avatar, then the proof (real ads).
 avatars: 2 to 4 distinct buyers, built from the clients' strategies and intake forms. name: a short handle ("The Weekend Warrior Dad"); who: one or two sentences; pains, triggers (what makes them act now) and objections: short lines in the customer's language.
-angles: for each avatar, 2 to 4 angles proven by the examples: name, hook (a line that opens the ad), why it works for that avatar, and examples: the ids of the ads that prove it (F = our Hall of Fame, M = the market). Only angles the examples actually show; every angle needs at least one example.
+angles: for each avatar, 1 to 4 angles that OUR ads proved: name, hook (a line that opens the ad), why it works for that avatar, and examples: the ids of the ads that prove it. Every angle must cite at least one of our Hall of Fame ads (F); that's what makes it ours. Market ads (M) may be added only as supporting evidence for an angle an F ad already proves; never write an angle from market ads alone. An avatar with no angle our ads prove is left out.
 summary: three or four sentences on how to win this sub-vertical on Meta right now, with the benchmarks.
 watchouts: what doesn't work or to avoid (from the strategies, the flops implied, ad policy for the category).
 Never name a client, a brand or a person, anywhere: describe them ("a Texas roofing company"). No em dashes.`;
@@ -76,7 +76,11 @@ export async function buildPlaybook(admin: SupabaseClient, subId: string) {
     : { data: [] };
   const f = (fame ?? []) as unknown as FameRow[];
   const m = (market ?? []) as MarketRow[];
-  if (!f.length && !m.length && !ids.length) return null;
+  // Ours or nothing: a playbook is earned by our own wins. Without any, there isn't one (and an old one comes down)
+  if (!f.length) {
+    await admin.from("vertical_playbooks").delete().eq("vertical_id", subId);
+    return null;
+  }
 
   // Who buys: the ICP part of each client's strategy (or the summary), and their intake audience
   const icp = (gtm ?? [])
@@ -121,10 +125,20 @@ ${m.map((a, i) => `M${i + 1}. ${a.format ?? "ad"}, live ${a.days_active} days ·
     if (r.startsWith("M") && m[n]) return { kind: "market" as const, id: m[n].id };
     return null;
   };
-  const avatars: Avatar[] = out.avatars.map((a) => ({
-    ...a,
-    angles: a.angles.map((g) => ({ ...g, examples: g.examples.map(ref).filter((x): x is NonNullable<typeof x> => Boolean(x)) })).filter((g) => g.examples.length),
-  }));
+  // Only angles one of our ads proves (market ads may sit beside it), and only avatars that keep one
+  const avatars: Avatar[] = out.avatars
+    .map((a) => ({
+      ...a,
+      angles: a.angles
+        .map((g) => ({ ...g, examples: g.examples.map(ref).filter((x): x is NonNullable<typeof x> => Boolean(x)) }))
+        .filter((g) => g.examples.some((x) => x.kind === "fame"))
+        .map((g) => ({ ...g, examples: [...g.examples.filter((x) => x.kind === "fame"), ...g.examples.filter((x) => x.kind === "market")] })),
+    }))
+    .filter((a) => a.angles.length);
+  if (!avatars.length) {
+    await admin.from("vertical_playbooks").delete().eq("vertical_id", subId);
+    return null;
+  }
   const clean = (s: string) => s.replace(/\s*—\s*/g, ", ");
   const row = {
     vertical_id: subId,
@@ -139,7 +153,9 @@ ${m.map((a, i) => `M${i + 1}. ${a.format ?? "ad"}, live ${a.days_active} days ·
   return row;
 }
 
-const fingerprintOf = (clients: string[], fame: string[], market: string[]) => `${clients.length}:${[...fame].sort().slice(0, 10).join(",")}:${[...market].sort().slice(0, 10).join(",")}`;
+// "v2": playbooks built from our own wins only. Anything older is rebuilt (or taken down)
+export const PLAYBOOK_VERSION = "v2";
+const fingerprintOf = (clients: string[], fame: string[], market: string[]) => `${PLAYBOOK_VERSION}:${clients.length}:${[...fame].sort().slice(0, 10).join(",")}:${[...market].sort().slice(0, 10).join(",")}`;
 
 /** Sub-verticals whose playbook is missing, or a day old with something new to read, a couple per run. */
 export async function keepPlaybooks(admin: SupabaseClient, max = 2) {
@@ -150,8 +166,15 @@ export async function keepPlaybooks(admin: SupabaseClient, max = 2) {
   for (const s of subs ?? []) {
     if (built >= max) break;
     const h = by.get(s.id as string);
-    if (h?.generated_at && Date.now() - Date.parse(h.generated_at) < 24 * 3_600_000) continue;
-    if (h) {
+    const current = Boolean(h?.fingerprint?.startsWith(`${PLAYBOOK_VERSION}:`));
+    if (current && h?.generated_at && Date.now() - Date.parse(h.generated_at) < 24 * 3_600_000) continue;
+    // No wins of ours here: no playbook (an old one comes down) and no AI call
+    const { count: wins } = await admin.from("hall_of_fame").select("ad_id", { count: "exact", head: true }).eq("vertical_id", s.id).gt("expires_at", new Date().toISOString());
+    if (!wins) {
+      if (h) await admin.from("vertical_playbooks").delete().eq("vertical_id", s.id);
+      continue;
+    }
+    if (h && current) {
       // Only when there's something new to read
       const [{ data: clients }, { data: fame }] = await Promise.all([
         admin.from("clients").select("id").eq("vertical_id", s.id).is("archived_at", null).in("status", LIVE).eq("paid_ads", true),
@@ -170,7 +193,8 @@ export async function keepPlaybooks(admin: SupabaseClient, max = 2) {
 
 export async function loadPlaybook(db: SupabaseClient, subId: string): Promise<Playbook | null> {
   const { data } = await db.from("vertical_playbooks").select("*").eq("vertical_id", subId).maybeSingle();
-  if (!data) return null;
+  // Only playbooks built from our own wins
+  if (!data || !String(data.fingerprint ?? "").startsWith(`${PLAYBOOK_VERSION}:`) || !Number((data.sources as { fame?: number } | null)?.fame)) return null;
   return {
     verticalId: data.vertical_id,
     summary: data.summary,

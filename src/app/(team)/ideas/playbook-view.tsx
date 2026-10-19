@@ -57,7 +57,7 @@ export function PlaybookView({
             {actions}
           </div>
           <div className="grid gap-5">
-            <h1 className="max-w-4xl font-display text-4xl leading-[1.02] tracking-tight md:text-7xl">{title}</h1>
+            <h1 className="max-w-4xl font-display text-4xl leading-[1.05] tracking-tight md:text-5xl">{title}</h1>
             <p className="max-w-3xl text-base leading-relaxed text-muted md:text-lg">{playbook.summary}</p>
           </div>
           <div className="grid gap-px overflow-hidden rounded-[16px] border border-line bg-line sm:grid-cols-2 lg:grid-cols-4">
@@ -145,14 +145,15 @@ export function PlaybookView({
                   <p className="text-[10px] uppercase tracking-[0.16em] text-faint">
                     Angle {j + 1} · {g.name}
                   </p>
-                  <p className="font-display text-2xl leading-snug tracking-tight md:text-3xl">
+                  <p className="font-heading text-xl leading-snug md:text-2xl">
                     <span className="text-brand-text">&ldquo;</span>
                     {g.hook}
                     <span className="text-brand-text">&rdquo;</span>
                   </p>
                   <p className="text-sm leading-relaxed text-muted">{g.why}</p>
                   <p className="text-[11px] text-faint">
-                    Proven by {g.examples.length} {g.examples.length === 1 ? "ad" : "ads"}
+                    Proven by {g.examples.filter((x) => x.kind === "fame").length} of our ads
+                    {g.examples.some((x) => x.kind === "market") ? `, backed by ${g.examples.filter((x) => x.kind === "market").length} in the market` : ""}
                   </p>
                 </div>
                 <div className="-mx-2 flex snap-x gap-3 overflow-x-auto px-2 pb-2 [scrollbar-width:thin]">
@@ -188,7 +189,7 @@ function SectionTitle({ n, title, sub }: { n: string; title: string; sub: string
   return (
     <div className="grid gap-1 border-b border-line pb-4">
       <p className="font-display text-sm tabular text-brand-text">{n}</p>
-      <h2 className="font-display text-2xl tracking-tight md:text-3xl">{title}</h2>
+      <h2 className="font-heading text-2xl md:text-[26px]">{title}</h2>
       <p className="text-sm text-muted">{sub}</p>
     </div>
   );

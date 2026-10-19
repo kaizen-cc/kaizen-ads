@@ -32,9 +32,9 @@ export default async function PlaybookPage({ params }: PageProps<"/ideas/playboo
       <div className="mx-auto grid max-w-5xl gap-6">
         {back}
         <div className="grid place-items-center gap-3 rounded-[16px] border border-dashed border-line px-6 py-16 text-center">
-          <p className="font-medium">{sub.name}: the playbook isn&apos;t written yet</p>
+          <p className="font-medium">{sub.name}: no playbook of ours yet</p>
           <p className="max-w-md text-sm text-muted">
-            It&apos;s built from this sub-vertical&apos;s client strategies, our Hall of Fame and market ads live 30+ days. The AI writes a couple every hour as those come in.
+            Playbooks are only written from our own wins: Hall of Fame ads that ran 30+ days and beat their target in this sub-vertical. Until we have one here, there&apos;s no playbook, so nothing borrowed from other brands passes as ours.
           </p>
           {lead && <PlaybookActions subId={id} canRebuild canShare={false} />}
         </div>
