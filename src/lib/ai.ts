@@ -27,6 +27,10 @@ export type AgentConfig = {
   instructions: string;
   sources: Sources;
   knowledge: { kind: string; title: string; body: string }[];
+  /** The agent this skill belongs to (Strategist, Creative Director…) and its core, read before the skill's own playbook */
+  role: { label: string; core: string } | null;
+  /** Kaizen's strategy spine: every agent reads it first; execs edit it, the Coach can't */
+  spine: string;
 };
 
 const DEFAULTS: Record<AgentKey, Pick<AgentConfig, "model" | "effort">> = {
@@ -68,23 +72,35 @@ export const forgetAgent = (key?: AgentKey) => (key ? cache.delete(key) : cache.
 export async function getAgent(key: AgentKey): Promise<AgentConfig> {
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < 60_000) return hit.config;
-  const config: AgentConfig = { key, ...DEFAULTS[key], instructions: "", sources: {}, knowledge: [] };
+  const config: AgentConfig = { key, ...DEFAULTS[key], instructions: "", sources: {}, knowledge: [], role: null, spine: "" };
   if (adminConfigured()) {
     const admin = createAdminClient();
-    const [{ data: a }, { data: k }] = await Promise.all([
-      admin.from("ai_agents").select("model, effort, instructions, sources").eq("key", key).maybeSingle(),
+    const [{ data: a }, { data: k }, { data: spine }] = await Promise.all([
+      admin.from("ai_agents").select("model, effort, instructions, sources, ai_roles(label, core)").eq("key", key).maybeSingle(),
       admin.from("ai_knowledge").select("kind, title, body").eq("active", true).or(`agent_key.eq.${key},agent_key.is.null`).order("created_at"),
+      admin.from("ai_spine").select("body").eq("id", 1).maybeSingle(),
     ]);
     if (a) Object.assign(config, { model: a.model, effort: a.effort, instructions: a.instructions ?? "", sources: (a.sources ?? {}) as Sources });
+    config.role = (a?.ai_roles as unknown as { label: string; core: string } | null) ?? null;
+    config.spine = spine?.body ?? "";
     config.knowledge = (k ?? []).map((x) => ({ kind: x.kind, title: x.title, body: x.body }));
   }
   cache.set(key, { at: Date.now(), config });
   return config;
 }
 
-/** The agent's own instructions, skills, knowledge and examples, added after the shared system prompt. */
-export function withAgent(system: string, a: Pick<AgentConfig, "instructions" | "knowledge">) {
+/**
+ * What the call reads, in order: the task's own system prompt, Kaizen's strategy spine, the agent's core (the role
+ * this skill belongs to), the skill's own instructions, then its skills, knowledge and examples (and the shared ones).
+ */
+export function withAgent(system: string, a: Pick<AgentConfig, "instructions" | "knowledge"> & Partial<Pick<AgentConfig, "role" | "spine">>) {
   const parts = [system];
+  if (a.spine?.trim()) parts.push(`<kaizen_strategy note="the agency's non-negotiables; they win over anything below">
+${a.spine.trim()}
+</kaizen_strategy>`);
+  if (a.role?.core.trim()) parts.push(`<agent_core agent="${a.role.label}">
+${a.role.core.trim()}
+</agent_core>`);
   if (a.instructions.trim()) parts.push(`<agency_instructions>\n${a.instructions.trim()}\n</agency_instructions>`);
   for (const kind of ["skill", "knowledge", "example"] as const) {
     const items = a.knowledge.filter((k) => k.kind === kind);

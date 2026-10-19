@@ -260,7 +260,7 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
   } else if (view === "settings" || view === "settings-agent") {
     const at = now.toISOString();
     const stats = (runs: number, avgMs: number | null) => ({ runs, avgMs, inTokens: runs * 12000, outTokens: runs * 1400, failed: 0 });
-    type Sample = Omit<AiAgent, "lastAt" | "moments" | "recent"> & { recent: (Omit<AiAgent["recent"][number], "moment"> & { moment?: string | null })[] };
+    type Sample = Omit<AiAgent, "lastAt" | "moments" | "recent" | "roleKey" | "roleLabel" | "proposals"> & { recent: (Omit<AiAgent["recent"][number], "moment"> & { moment?: string | null })[] };
     const sample: Sample[] = [
       { key: "suggest", label: "Brief strategist", icon: "compass", description: "Suggests the angle, audience, hook, copy direction and format mix while someone fills in a creative request.", model: "sonnet", effort: "low", instructions: "You are Kaizen's creative strategist. A media buyer is filling in a creative request and wants a sharp starting point, fast.\n\nPriorities, in order:\n1. What the numbers say.\n2. What the client asked for recently.\n3. Client memory.\n4. The allotment.", live: true, updatedAt: at, updatedBy: "Santi Lozano", stats: stats(42, 6400), recent: [{ at, label: "suggest", model: "sonnet", ms: 5900, tokens: "12,204 in · 1,402 out", ok: true, error: null }] },
       { key: "review", label: "Request reviewer", icon: "shield", description: "Checks a finished request before it goes to the creative team: allotment, client memory, contradictions, Meta policy.", model: "opus", effort: "medium", instructions: "", live: true, updatedAt: at, updatedBy: null, stats: stats(17, 14100), recent: [] },
@@ -272,6 +272,9 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
     // What the agents page shows from the run log: when each was last used and where it comes in
     const agents: AiAgent[] = sample.map((x) => ({
       ...x,
+      roleKey: null,
+      roleLabel: null,
+      proposals: 0,
       recent: x.recent.map((r) => ({ ...r, moment: r.moment ?? AGENT_MOMENTS[x.key]?.[0]?.title ?? null })),
       lastAt: x.recent[0]?.at ?? (x.stats.runs ? at : null),
       moments: (AGENT_MOMENTS[x.key] ?? []).map((m, i) => ({ title: m.title, where: m.where, trigger: m.trigger, when: m.when, runs7: i === 0 ? x.stats.runs : 0, lastAt: i === 0 && x.stats.runs ? at : null })),

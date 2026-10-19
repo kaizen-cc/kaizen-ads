@@ -63,7 +63,7 @@ export const cprChange = (before?: ClientNumbers | null, now?: ClientNumbers | n
 
 // ─── The round table ────────────────────────────────────────────────────────
 
-const TABLE_SYSTEM = `You are the round table in Kaizen Marketing's Ads Lab: five seats who think together with the agency's execs and leads about paid social creative for Meta ads. Kaizen runs ads for many small and mid-size businesses.
+const TABLE_SYSTEM = `You are the round table in Kaizen Marketing's Ads Lab: Kaizen's six agents, who think together with the agency's execs and leads about paid social creative for Meta ads. Kaizen runs ads for many small and mid-size businesses.
 The seats:
 ${Object.entries(SEATS)
   .map(([k, s]) => `- ${k} (${s.name}): ${s.does}`)
@@ -75,7 +75,8 @@ How you work:
 - When an idea is ready to test, propose it as a test: a clear hypothesis, exactly what the creative does differently (one change, so the result can be read), the metric, what counts as a win, the target lift, and which clients fit (from the client list; pick ones with enough spend and the right industry, 2 to 5 usually).
 - Before proposing a test, check the lab's tests. If the same or a very close test is proposed, running, or already finished, don't propose it again: set duplicateOf to that test's number and say what's different if anything, or point to its result.
 - Learnings from finished tests are facts. A test that flopped is information: when asked to iterate, say why it likely flopped and propose the next test (not the same one).
-- Never name one client to another; inside the lab, client names are fine.`;
+- Never name one client to another; inside the lab, client names are fine.
+- The six seats are fixed. Never suggest creating a new agent, seat or role: what the Lab learns makes these six better.`;
 
 const TABLE_SCHEMA = {
   type: "object",
@@ -160,6 +161,19 @@ ${testList.length ? testList.map((t, i) => `#${i + 1} [${t.status}] ${t.title} �
   return { block, clients: list, tests: testList };
 }
 
+/** The table's system: each seat speaks from its agent's core, the same one it works from everywhere in the app. */
+async function tableSystem(admin: SupabaseClient) {
+  const { data } = await admin.from("ai_roles").select("key, core");
+  const cores = Object.entries(SEATS)
+    .map(([k, s]) => {
+      const core = (data ?? []).find((r) => r.key === s.role)?.core;
+      return core ? `<seat key="${k}" name="${s.name}">\n${core}\n</seat>` : "";
+    })
+    .filter(Boolean)
+    .join("\n");
+  return cores ? `${TABLE_SYSTEM}\n\nEach seat's core, how that agent thinks everywhere in the app:\n${cores}` : TABLE_SYSTEM;
+}
+
 /** The table answers the conversation so far: replies from the seats, and any tests they propose. */
 export async function roundTable(admin: SupabaseClient, threadId: string) {
   const [{ data: msgs }, ctx] = await Promise.all([admin.from("lab_messages").select("role, agent, body, created_at").eq("thread_id", threadId).order("created_at").limit(60), tableContext(admin)]);
@@ -167,7 +181,7 @@ export async function roundTable(admin: SupabaseClient, threadId: string) {
   const out = await askJson<TableOut>({
     agent: "lab",
     label: "lab round table",
-    system: TABLE_SYSTEM,
+    system: await tableSystem(admin),
     schema: TABLE_SCHEMA,
     prompt: `${ctx.block}
 
@@ -256,7 +270,7 @@ export async function proposeDeploy(admin: SupabaseClient, testId: string) {
   const out = await askJson<{ learning: string; clients: { n: number; why: string }[] }>({
     agent: "lab",
     label: "lab deploy",
-    system: TABLE_SYSTEM,
+    system: await tableSystem(admin),
     schema: DEPLOY_SCHEMA,
     prompt: `${ctx.block}
 

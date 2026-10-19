@@ -207,6 +207,30 @@ export async function deployLearning(id: string, learning: string, clientIds: st
     const { error } = await db.from("client_memory").insert(fresh.map((c) => ({ client_id: c, kind: "prefer", source: "lab", created_by: me.id, body: `Ads Lab learning: ${text}`.slice(0, 1000) })));
     if (error) return { ok: false, error: error.message };
   }
+  // The agents get better too: the learning goes to the skill it belongs to, as an edit an exec approves in its Coach
+  const { data: test } = await supabase.from("lab_tests").select("title, change").eq("id", id).single();
+  const about = `${test?.title ?? ""} ${test?.change ?? ""} ${text}`.toLowerCase();
+  const skill = /\b(video|reel|script|voice ?over|ugc|first 3 seconds)\b/.test(about) ? "scripts" : /\b(headline|primary text|copy|caption|cta|wording)\b/.test(about) ? "copy" : "strategist";
+  await db.from("ai_agent_chats").insert({
+    agent_key: skill,
+    role: "coach",
+    content: `From the Ads Lab: the test "${test?.title ?? ""}" won. I'd add what it taught us to this skill so every brief uses it, not just the clients it was deployed to.`,
+    changes: [
+      {
+        op: "add_item",
+        item_id: "",
+        kind: "knowledge",
+        scope: "agent",
+        title: `Ads Lab: ${test?.title ?? "a winning test"}`.slice(0, 120),
+        body: text,
+        model: "",
+        effort: "",
+        reason: "Proven in an Ads Lab test",
+        applied: false,
+      },
+    ],
+    created_by: me.id,
+  });
   const baseline = await clientNumbers(supabase, fresh, "d14");
   await supabase
     .from("lab_tests")

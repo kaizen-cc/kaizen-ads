@@ -118,7 +118,7 @@ const COACH_SCHEMA = {
 };
 
 const COACH_SYSTEM = `You coach the AI agents inside Kaizen Ads, the app Kaizen Marketing (a paid social agency) uses for creative requests, approvals, launches and KPIs.
-An executive is chatting with you about ONE agent. They give feedback ("the briefs are too generic", "never mention competitors", "here's how we want headlines"). Your job is to turn that feedback into precise edits to the agent's playbook, so the agent does better next time.
+An executive is chatting with you about ONE skill of one of Kaizen's six agents (Strategist, Creative Director, Copywriter, Media Buyer, Market Analyst, Account Manager). They give feedback ("the briefs are too generic", "never mention competitors", "here's how we want headlines"). Your job is to turn that feedback into precise edits to the agent's playbook, so the agent does better next time.
 
 The playbook has:
 - instructions: the agent's main guidance (one text). Edit it for rules about how the agent thinks, priorities, tone and hard rules.
@@ -137,6 +137,8 @@ How to propose changes:
 - set_model: model and effort, only when the feedback is about speed, cost or depth.
 - Leave unused fields as empty strings. reason: one short sentence on why.
 - Write every edit as a Kaizen standard, in roles (the Head of Creative, the copywriter, media buyers, customer success), never people's names. "Camille wants shorter headlines" becomes "Keep headlines under 30 characters." Client names belong only in client memory, not in a playbook.
+- You only improve this skill. Never propose a new agent or a new skill; if the feedback belongs to another skill or agent, say which one in reply.
+- Kaizen's strategy spine and the agent's core are not yours to edit. If feedback contradicts the spine, say so and propose no change.
 - If the feedback is vague, ask one clarifying question in reply and propose no changes. If it's a question about the agent, answer it from the playbook.
 reply: 1 to 3 sentences, plain and direct, saying what you'd change (the exec applies each change with a click).`;
 
@@ -146,21 +148,31 @@ export async function chatWithCoach(key: AgentKey, message: string): Promise<{ o
   if (!text) return { ok: false, error: "Write something first." };
   const supabase = await createClient();
   const [{ data: agent }, { data: items }, { data: history }] = await Promise.all([
-    supabase.from("ai_agents").select("key, label, description, model, effort, instructions, live").eq("key", key).maybeSingle(),
+    supabase.from("ai_agents").select("key, label, description, model, effort, instructions, live, ai_roles(label, core)").eq("key", key).maybeSingle(),
     supabase.from("ai_knowledge").select("id, agent_key, kind, title, body, active").or(`agent_key.eq.${key},agent_key.is.null`).order("created_at"),
     supabase.from("ai_agent_chats").select("role, content, changes").eq("agent_key", key).order("created_at", { ascending: false }).limit(16),
   ]);
   if (!agent) return { ok: false, error: "Unknown agent." };
+  const { data: spine } = await supabase.from("ai_spine").select("body").eq("id", 1).maybeSingle();
+  const role = agent.ai_roles as unknown as { label: string; core: string } | null;
 
   const playbook = [
-    `<agent key="${agent.key}" name="${agent.label}" model="${agent.model}" effort="${agent.effort}" ${agent.live ? "in use" : "not wired into the app yet"}>`,
+    `<kaizen_strategy read_only="true">
+${spine?.body ?? ""}
+</kaizen_strategy>`,
+    role ? `<agent_core agent="${role.label}" read_only="true">
+${role.core}
+</agent_core>` : "",
+    `<skill key="${agent.key}" name="${agent.label}" of="${role?.label ?? "no agent"}" model="${agent.model}" effort="${agent.effort}" ${agent.live ? "in use" : "not wired into the app yet"}>`,
     `<description>${agent.description}</description>`,
     `<instructions>\n${agent.instructions || "(empty)"}\n</instructions>`,
     ...(items ?? []).map(
       (k) => `<item id="${k.id}" kind="${k.kind}" scope="${k.agent_key ? "agent" : "shared"}" ${k.active ? "" : 'off="true" '}title="${k.title.replace(/"/g, "'")}">\n${k.body}\n</item>`,
     ),
-    "</agent>",
-  ].join("\n");
+    "</skill>",
+  ]
+    .filter(Boolean)
+    .join("\n");
   const convo = (history ?? [])
     .slice()
     .reverse()
@@ -240,5 +252,23 @@ export async function clearChat(key: AgentKey): Promise<ActionResult> {
   await requireExec();
   const supabase = await createClient();
   const { error } = await supabase.from("ai_agent_chats").delete().eq("agent_key", key);
+  return done(error);
+}
+
+/** An agent's core: what every one of its skills reads before its own playbook. */
+export async function saveRoleCore(key: string, core: string): Promise<ActionResult> {
+  const me = await requireExec();
+  const supabase = await createClient();
+  const { error } = await supabase.from("ai_roles").update({ core: core.trim().slice(0, 20000), updated_by: me.id, updated_at: new Date().toISOString() }).eq("key", key);
+  return done(error);
+}
+
+/** Kaizen's strategy spine: every agent reads it first. Execs only; the Coach never edits it. */
+export async function saveSpine(body: string): Promise<ActionResult> {
+  const me = await requireExec();
+  const text = body.trim();
+  if (text.length < 40) return { ok: false, error: "The spine can't be empty." };
+  const supabase = await createClient();
+  const { error } = await supabase.from("ai_spine").update({ body: text.slice(0, 20000), updated_by: me.id, updated_at: new Date().toISOString() }).eq("id", 1);
   return done(error);
 }
