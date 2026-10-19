@@ -6,8 +6,8 @@ import { requireExec } from "@/lib/auth";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { reportError } from "@/lib/error-report";
 
-export type SyncJob = "kpi" | "slack" | "gmail" | "drive" | "meta" | "calls" | "verticals" | "asana";
-const JOBS: SyncJob[] = ["kpi", "slack", "gmail", "drive", "meta", "calls", "verticals", "asana"];
+export type SyncJob = "kpi" | "slack" | "gmail" | "drive" | "meta" | "calls" | "verticals" | "asana" | "sheet" | "docs";
+const JOBS: SyncJob[] = ["kpi", "slack", "gmail", "drive", "meta", "calls", "verticals", "asana", "sheet", "docs"];
 
 /** Runs one job the way the schedule does. */
 async function runJob(job: SyncJob) {
@@ -15,6 +15,12 @@ async function runJob(job: SyncJob) {
   if (job === "kpi") return (await import("@/lib/kpi/sync")).refreshAllKpis(admin, 600_000);
   if (job === "calls") return (await import("@/lib/calls")).collectCalls(admin);
   if (job === "verticals") return (await import("@/lib/verticals")).keepVerticals(admin);
+  if (job === "docs") return (await import("@/lib/context/docs")).watchDocs(admin);
+  if (job === "sheet") {
+    const { sheetConfigured, syncAccountSheet } = await import("@/lib/account-sheet");
+    if (!sheetConfigured()) throw new Error("Google isn't connected");
+    return syncAccountSheet(admin);
+  }
   if (job === "asana") {
     const { asanaConfigured, syncAsana } = await import("@/lib/asana");
     if (!asanaConfigured()) throw new Error("ASANA_TOKEN isn't set in Vercel yet");

@@ -63,6 +63,7 @@ export function OnboardingCallout({ state, clients }: { state: OnboardingState; 
               <Link href={`/clients/${c.slug}`} className="text-muted hover:text-fg">
                 {c.name}
               </Link>
+              {c.setup && <span className="text-faint"> ({done(c.setup)}/{SETUP.length} set up)</span>}
             </span>
           ))}
         </p>
@@ -201,6 +202,8 @@ function ClientCard({ c, onOpen }: { c: OnboardingCard; onOpen: (s: OpenSuggesti
         ))}
       </ol>
 
+      {c.setup && <Setup s={c.setup} />}
+
       {writing && (
         <div className="grid gap-1.5 rounded-[12px] border border-brand/25 bg-brand-soft/30 px-3 py-2.5">
           <div className="flex items-center justify-between gap-3 text-xs">
@@ -252,6 +255,47 @@ function ClientCard({ c, onOpen }: { c: OnboardingCard; onOpen: (s: OpenSuggesti
         </button>
       </div>
     </article>
+  );
+}
+
+// The account managers' setup checklist from the Account Overview sheet's Onboarding tab (read at 12pm and 5pm ET)
+const SETUP: [string, string][] = [
+  ["welcome", "Welcome email"],
+  ["call", "Onboarding call"],
+  ["access", "Access"],
+  ["internal", "Internal meeting"],
+  ["intake", "Intake form"],
+  ["content", "Content"],
+  ["tracking", "Tracking"],
+  ["live", "Campaigns live"],
+];
+const done = (s: NonNullable<OnboardingCard["setup"]>) => SETUP.filter(([k]) => s.steps[k]).length;
+
+function Setup({ s }: { s: NonNullable<OnboardingCard["setup"]> }) {
+  const n = done(s);
+  const next = SETUP.find(([k]) => !s.steps[k]);
+  return (
+    <div className="grid gap-2.5 rounded-[12px] border border-line bg-surface/60 px-3 py-2.5">
+      <div className="flex items-center justify-between gap-3 text-xs">
+        <span className="font-medium">Account setup</span>
+        <span className="tabular text-faint">
+          {n}/{SETUP.length}
+          {next ? ` · next: ${next[1].toLowerCase()}` : " · all set"}
+        </span>
+      </div>
+      <ul className="flex flex-wrap gap-1.5">
+        {SETUP.map(([k, label]) => (
+          <li
+            key={k}
+            className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] ${s.steps[k] ? "bg-ok-soft text-ok" : k === next?.[0] ? "border border-brand/40 text-brand-text" : "border border-line text-faint"}`}
+          >
+            {s.steps[k] ? "✓" : "○"} {label}
+          </li>
+        ))}
+      </ul>
+      {s.notes && <p className="text-[11px] leading-snug text-muted">{s.notes}</p>}
+      <p className="text-[10px] text-faint">From the Account Overview sheet · {day(s.syncedAt)}</p>
+    </div>
   );
 }
 

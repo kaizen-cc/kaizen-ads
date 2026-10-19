@@ -33,7 +33,7 @@ export default async function Kpis() {
   const [{ data: targets }, { data: snaps }, { data: buyers }, { data: clients }, { data: audits }] = await Promise.all([
     supabase
       .from("kpi_targets")
-      .select("id, client_id, platform, ad_account_id, label, conversion, custom_action, campaign_match, target, monthly_budget, budget_note, source, owner_id, owner_name, extra_metrics, clients!inner(name, slug, status), profiles!kpi_targets_owner_id_fkey(full_name)")
+      .select("id, client_id, platform, ad_account_id, label, conversion, custom_action, campaign_match, target, monthly_budget, budget_note, source, owner_id, owner_name, extra_metrics, sheet, clients!inner(name, slug, status), profiles!kpi_targets_owner_id_fkey(full_name)")
       .eq("active", true)
       .is("clients.archived_at", null),
     supabase.from("kpi_snapshots").select("*"),
@@ -106,6 +106,7 @@ export default async function Kpis() {
         dataThrough: s?.data_through ?? null,
         audit: auditBy.get(t.id) ?? null,
         extraMetrics: (t.extra_metrics ?? []) as string[],
+        sheet: (t.sheet ?? null) as KpiRow["sheet"],
         sprint: sprints.get(t.id) ?? null,
         lastChange: (() => {
           const x = t.ad_account_id ? activityBy.get(String(t.ad_account_id).replace(/^act_/, "")) : undefined;

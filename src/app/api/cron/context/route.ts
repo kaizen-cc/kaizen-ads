@@ -17,6 +17,7 @@ import { mirrorTrack } from "@/lib/client-sync";
 import { collectCalls } from "@/lib/calls";
 import { readBackfill } from "@/lib/onboarding";
 import { createClient } from "@/lib/supabase/server";
+import { googleConfigured } from "@/lib/context/google";
 
 // Briefings take a while when many clients have news
 export const maxDuration = 800;
@@ -44,6 +45,8 @@ function nyNow() {
  * - kpi: every 2 hours (campaign numbers for the KPI dashboard; no AI, so it's cheap)
  * - brief: 12pm and 6pm
  * - market: 8:30am (live ads from Motion for the Market tab, ready for the morning)
+ * - sheet: 12pm and 5pm, the Account Overview sheet (buyer, budget and KPI target per account, and the team's notes)
+ * - docs: every 30 minutes, new and edited Google Docs and Slides across the Workspace, read for the client they're about
  * - asana: every 5 minutes, mirroring open tasks on Asana's Creative board while the team moves over
  * - sprints: every hour, checking each optimization sprint whose next check is due (daily, or the follow-up date it set)
  * - verticals: every hour (the taxonomy weekly, new clients placed, benchmarks researched a few at a time)
@@ -63,8 +66,10 @@ function due(step: string | null) {
   if (step === "clients") return true;
   if (step === "gtm") return true;
   if (step === "verticals") return true;
-  if (step === "sprints") return true;
-  if (step === "asana") return true; // every 5 minutes (vercel.json), so the mirror keeps up with Asana // hourly; each sprint's own next check decides
+  if (step === "sprints") return true; // hourly; each sprint's own next check decides
+  if (step === "asana") return true; // every 5 minutes (vercel.json), so the mirror keeps up with Asana
+  if (step === "sheet") return [12, 17].includes(hour);
+  if (step === "docs") return true; // every 30 minutes (vercel.json)
 
   if (step === "market") return hour === 8;
   if (step === "calls") return (businessHours || hour === 18) || (hour % 3 === 0 && minute < 30);
@@ -132,6 +137,14 @@ export async function GET(request: Request) {
     if (step === "calls") return Response.json(await collectCalls(admin));
     if (step === "gtm") return Response.json(await autoGtm(admin, 1));
     if (step === "verticals") return Response.json(await keepVerticals(admin));
+    if (step === "sheet") {
+      const { sheetConfigured, syncAccountSheet } = await import("@/lib/account-sheet");
+      return Response.json(sheetConfigured() ? await syncAccountSheet(admin) : { skipped: "Google isn't connected" });
+    }
+    if (step === "docs") {
+      const { watchDocs } = await import("@/lib/context/docs");
+      return Response.json(googleConfigured() ? await watchDocs(admin) : { skipped: "Google isn't connected" });
+    }
     if (step === "asana") {
       const { asanaConfigured, syncAsana } = await import("@/lib/asana");
       return Response.json(asanaConfigured() ? await syncAsana(admin) : { skipped: "ASANA_TOKEN not set" });

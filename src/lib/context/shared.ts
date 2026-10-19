@@ -43,3 +43,29 @@ export async function getCursor(admin: SupabaseClient, source: string, fallbackD
 export async function setCursor(admin: SupabaseClient, source: string, cursor: Date, result: Record<string, unknown>) {
   await admin.from("sync_state").upsert({ source, cursor_at: cursor.toISOString(), last_run_at: new Date().toISOString(), last_result: result });
 }
+
+/** Something to remember about a client: prefer (do this), avoid (don't) or note (a fact to know). */
+export type Lesson = { kind: "prefer" | "avoid" | "note"; body: string };
+
+const words = (s: string) => new Set(s.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length > 2));
+/** Mostly the same words as something already remembered: the same lesson again (a re-read, a client repeating themselves). */
+function known(body: string, memory: string[]) {
+  const a = words(body);
+  return memory.some((m) => {
+    const b = words(m);
+    const both = [...a].filter((w) => b.has(w)).length;
+    return both / Math.max(1, Math.min(a.size, b.size)) > 0.7;
+  });
+}
+
+/** Lessons from a call or a document into the client's memory, skipping ones it already holds. */
+export async function rememberLessons(admin: SupabaseClient, clientId: string, lessons: Lesson[], source: "call" | "drive", at: string) {
+  const fresh = lessons.map((l) => ({ ...l, body: l.body.trim().slice(0, 1000) })).filter((l) => l.body);
+  if (!fresh.length) return 0;
+  const { data: memory } = await admin.from("client_memory").select("body").eq("client_id", clientId).eq("status", "active").limit(200);
+  const held = (memory ?? []).map((m) => m.body as string);
+  const add: Lesson[] = [];
+  for (const l of fresh.slice(0, 6)) if (!known(l.body, [...held, ...add.map((x) => x.body)])) add.push(l);
+  if (add.length) await admin.from("client_memory").insert(add.map((l) => ({ client_id: clientId, kind: l.kind, body: l.body, source, created_at: at })));
+  return add.length;
+}

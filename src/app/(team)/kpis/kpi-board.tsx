@@ -49,6 +49,8 @@ export type KpiRow = {
   dataThrough: string | null;
   audit: AuditSummary;
   extraMetrics: string[];
+  /** From the Kaizen Account Overview sheet (the source of truth for buyer, budget and target while the team moves over) */
+  sheet: { priority?: string; problem?: string; solution?: string; buying?: string; creative?: string; copy?: string; comments?: string; syncedAt?: string } | null;
   sprint: SprintSummary | null;
   /** The latest change someone made in the ad account (Meta's activity log), when it was last read */
   lastChange: { at: string | null; who: string | null; what: string | null; object: string | null; checkedAt: string; error: string | null } | null;
@@ -364,6 +366,36 @@ const SPRINT_TONE: Record<string, string> = {
   done: "bg-ok-soft text-ok",
 };
 
+/** The team's notes on this account from the Account Overview sheet. */
+function SheetNotes({ s }: { s: NonNullable<KpiRow["sheet"]> }) {
+  const rows = (
+    [
+      ["#1 problem", s.problem],
+      ["Solution", s.solution],
+      ["Media buying update", s.buying],
+      ["Creative update", s.creative],
+      ["Copy update", s.copy],
+      ["Comments", s.comments],
+    ] as const
+  ).filter(([, v]) => v);
+  return (
+    <div className="grid gap-3 rounded-[16px] border border-line bg-surface p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-faint">From the Account Overview sheet{s.priority ? ` · ${s.priority} priority` : ""}</p>
+        {s.syncedAt && <span className="text-[11px] text-faint">Read {new Date(s.syncedAt).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>}
+      </div>
+      <dl className="grid gap-2 text-sm sm:grid-cols-2">
+        {rows.map(([k, v]) => (
+          <div key={k} className="grid gap-0.5">
+            <dt className="text-[11px] text-faint">{k}</dt>
+            <dd className="whitespace-pre-wrap leading-relaxed text-muted">{v}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
 /** The sprint on this account: who's on it, how far, and what the last check said. */
 function SprintStrip({ s }: { s: SprintSummary }) {
   return (
@@ -462,6 +494,7 @@ function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
   );
   return (
     <div className="grid gap-6 border-t border-line bg-bg/40 px-5 py-6 sm:px-6">
+      {r.sheet && (r.sheet.problem || r.sheet.solution || r.sheet.buying || r.sheet.creative || r.sheet.copy) && <SheetNotes s={r.sheet} />}
       {r.sprint && <SprintStrip s={r.sprint} />}
       {r.accountId && <AuditPanel targetId={r.id} audit={r.audit} platform={r.platform} />}
 
@@ -536,7 +569,10 @@ function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
 
       <div className="grid gap-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-xs font-medium uppercase tracking-[0.12em] text-faint">Target and budget</p>
+          <p className="text-xs font-medium uppercase tracking-[0.12em] text-faint">
+            Target and budget
+            {r.sheet && <span className="ml-2 normal-case tracking-normal text-faint">· buyer, budget and target come from the Account Overview sheet (read at 12pm and 5pm): change them there</span>}
+          </p>
           <div className="flex items-center gap-3">
             {r.platform === "meta" && r.accountId && <ActionButton action={pullClientKpis.bind(null, r.clientId)} label="Pull from Meta now" />}
             <ActionButton action={archiveKpiTarget.bind(null, r.id)} label="Remove" confirmText="Remove this KPI?" />

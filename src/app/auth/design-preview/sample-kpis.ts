@@ -42,6 +42,7 @@ const make = (
     accountId: "526528539355910",
     audit: null,
     extraMetrics: [],
+    sheet: null,
     sprint: null,
     lastChange: null,
     label: null,

@@ -159,8 +159,13 @@ const fingerprintOf = (clients: string[], fame: string[], market: string[]) => `
 
 /** Sub-verticals whose playbook is missing, or a day old with something new to read, a couple per run. */
 export async function keepPlaybooks(admin: SupabaseClient, max = 2) {
-  const { data: subs } = await admin.from("verticals").select("id").not("parent_id", "is", null).eq("active", true);
+  const { data: all } = await admin.from("verticals").select("id").not("parent_id", "is", null).eq("active", true);
   const { data: have } = await admin.from("vertical_playbooks").select("vertical_id, generated_at, fingerprint");
+  // Where we have the most wins first, so the playbooks that matter most come first
+  const { data: fameRows } = await admin.from("hall_of_fame").select("vertical_id").gt("expires_at", new Date().toISOString());
+  const winsBy = new Map<string, number>();
+  for (const f of fameRows ?? []) winsBy.set(f.vertical_id as string, (winsBy.get(f.vertical_id as string) ?? 0) + 1);
+  const subs = (all ?? []).sort((a, b) => (winsBy.get(b.id) ?? 0) - (winsBy.get(a.id) ?? 0));
   const by = new Map((have ?? []).map((h) => [h.vertical_id as string, h]));
   let built = 0;
   for (const s of subs ?? []) {
@@ -169,8 +174,7 @@ export async function keepPlaybooks(admin: SupabaseClient, max = 2) {
     const current = Boolean(h?.fingerprint?.startsWith(`${PLAYBOOK_VERSION}:`));
     if (current && h?.generated_at && Date.now() - Date.parse(h.generated_at) < 24 * 3_600_000) continue;
     // No wins of ours here: no playbook (an old one comes down) and no AI call
-    const { count: wins } = await admin.from("hall_of_fame").select("ad_id", { count: "exact", head: true }).eq("vertical_id", s.id).gt("expires_at", new Date().toISOString());
-    if (!wins) {
+    if (!winsBy.get(s.id as string)) {
       if (h) await admin.from("vertical_playbooks").delete().eq("vertical_id", s.id);
       continue;
     }

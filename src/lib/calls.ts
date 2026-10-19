@@ -3,7 +3,7 @@ import { tracker, type Tracker } from "@/lib/progress";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { googleConfigured, gmailMailboxes, googleDriveToken } from "@/lib/context/google";
-import { compact, getCursor, saveItems, setCursor, trimBody } from "@/lib/context/shared";
+import { compact, getCursor, rememberLessons, saveItems, setCursor, trimBody, type Lesson } from "@/lib/context/shared";
 import { LIVE } from "@/lib/live";
 
 // Calls: meeting notes from Gemini (Google Meet saves "Notes by Gemini" docs in the organizer's Drive) and Fireflies
@@ -121,6 +121,15 @@ const READ_SCHEMA = {
           summary: { type: "string" },
           clientSaid: { type: "array", items: { type: "string" } },
           decisions: { type: "array", items: { type: "string" } },
+          lessons: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: { kind: { type: "string", enum: ["prefer", "avoid", "note"] }, body: { type: "string" } },
+              required: ["kind", "body"],
+              additionalProperties: false,
+            },
+          },
           commitments: {
             type: "array",
             items: {
@@ -138,7 +147,7 @@ const READ_SCHEMA = {
             },
           },
         },
-        required: ["client", "summary", "clientSaid", "decisions", "commitments"],
+        required: ["client", "summary", "clientSaid", "decisions", "lessons", "commitments"],
         additionalProperties: false,
       },
     },
@@ -148,10 +157,11 @@ const READ_SCHEMA = {
 };
 
 const READ_SYSTEM = `You read the notes of a call at Kaizen, a marketing agency, for the paid ads and creative team: the people who run clients' paid ads (Meta, Google, TikTok and other ad platforms) and make the ad creative and ad copy. It may be a call with a client, or an internal team meeting where several clients come up. Use only what's in the notes; don't invent.
-Kaizen also does email and SMS (Klaviyo flows and campaigns), organic social, websites and other services; those are handled elsewhere. Leave them out, except a short line when they change what the ads should do (an offer the email is running that the ads should push too, "no paid ads until January").
-internal: true if it's an internal Kaizen meeting (no client on the call). overview: two or three sentences on the call as a whole, as it matters to paid ads and creative.
-clients: one entry for every client from the list whose paid ads, ad creative, offers, results, budget, feedback or mood are discussed. client: their name exactly as written in the list. Only clients actually named or clearly meant in the notes; Kaizen's own business (hiring, tools, processes, reporting, the team, training) is not a client: leave it out. If no client from the list is discussed this way, clients is empty.
-summary: what was said about their ads and creative, 2 to 4 sentences. clientSaid: what the client asked for, liked, disliked or told us about the ads and creative (on an internal call: what the team reported the client said), short lines. decisions: what was agreed about their ads and creative.
+Kaizen also does email and SMS (Klaviyo flows and campaigns), organic social, websites and other services, run by other teams. Their calls are read too: what a client tells any Kaizen team is part of what we know about them, and the ads team needs it (a client who told the email team they hate AI-looking images doesn't want them in their ads either). Only the promises (commitments) are limited to paid ads.
+internal: true if it's an internal Kaizen meeting (no client on the call). overview: two or three sentences on the call as a whole.
+clients: one entry for every client from the list who is discussed in any way that tells us something about them: their business, offers, results, feedback, likes and dislikes, mood, plans, any service. client: their name exactly as written in the list. Only clients actually named or clearly meant in the notes; Kaizen's own business (hiring, tools, processes, reporting, the team, training) is not a client: leave it out. If no client from the list is discussed, clients is empty.
+summary: what was said about them, 2 to 4 sentences, saying which service when it isn't paid ads ("On the email side, ..."). clientSaid: what the client asked for, liked, disliked or told us, about any service (on an internal call: what the team reported the client said), short lines. decisions: what was agreed, about any service.
+lessons: what anyone making their ads, creative or copy should remember from now on, whichever team heard it: lasting likes and dislikes about how their brand looks and sounds (imagery, AI-generated visuals, models, colors, tone, words, claims), sensitivities, rules ("never show prices"), and lasting changes to the business (a new location, a dropped product, a new audience). One plain sentence each that says where it came from when it wasn't the ads team ("Dislikes AI images that look fake or generic; raised with the email team in Oct 2026"). kind: prefer (do this), avoid (don't do this) or note (a fact to know). Not one-off tasks, scheduling or what's already a commitment. 0 to 4; usually none.
 Work out first which Kaizen team the call belongs to (team), from who ran it, its title and what was discussed. The prompt says whether the host is on the paid ads and creative team. A call run by someone outside that team is about their own service (organic social, email and SMS, web) unless the notes plainly talk about ads, campaigns, ad sets, budgets or spend. team "mixed" when both are clearly discussed.
 commitments: only what Kaizen said it would do for that client's paid ads and creative. For each, channel: which service it's really for, and evidence: the words in the notes that tie it to paid ads (an ad, a campaign, an ad set, a budget, boosting, Meta or Google ads), quoted or closely paraphrased. Carousels, videos, reels, posts, captions, graphics and content are organic_social unless the notes tie them to ads; a promise from an organic social or email call is that channel unless it's explicitly for the ads. When it's not plainly paid ads, it isn't: channel is the other service and evidence says why. kind: "creative" (an ad image, carousel, video or creative idea to make for the ads), "copy" (ad copy), "offer" (an offer or promotion to run in the ads), "launch" (launch or change ad campaigns, audiences or budgets), "strategy" (paid ads strategy or analysis). Not commitments: emails, SMS, flows, popups, newsletters, organic posts and scheduling, flyers, print, websites and landing pages, reports, CRM and tracking setup, admin (send a link, schedule a call, share a doc, ask the client something). what: specific enough to brief ("A reel of the new brunch menu with the bottomless mimosa offer"). why: one line of context. dueDays: business days until it should be in motion (a date mentioned, else 2).`;
 
@@ -166,7 +176,7 @@ async function readCall(admin: SupabaseClient, id: string, clients: { id: string
   const { data: team } = await admin.from("profiles").select("email").eq("is_active", true);
   const adsTeam = new Set((team ?? []).map((t) => String(t.email ?? "").toLowerCase()));
   const hostOnTeam = call.host ? adsTeam.has(String(call.host).toLowerCase()) : null;
-  const out = await askJson<{ internal: boolean; team: string; overview: string; clients: (CallSummary & { client: string; commitments: (CallSummary["commitments"][number] & { channel: string; evidence: string })[] })[] }>({
+  const out = await askJson<{ internal: boolean; team: string; overview: string; clients: (CallSummary & { client: string; lessons: Lesson[]; commitments: (CallSummary["commitments"][number] & { channel: string; evidence: string })[] })[] }>({
     agent: "calls",
     label: "read a call",
     system: READ_SYSTEM,
@@ -197,6 +207,8 @@ async function readCall(admin: SupabaseClient, id: string, clients: { id: string
   for (const m of unique) {
     const summary: CallSummary = { summary: m.summary, clientSaid: m.clientSaid, decisions: m.decisions, commitments: m.commitments };
     await admin.from("call_mentions").upsert({ call_id: id, client_id: m.clientId, summary }, { onConflict: "call_id,client_id" });
+    // What the client told any team, kept on their page for every agent and brief from now on
+    await rememberLessons(admin, m.clientId, m.lessons ?? [], "call", call.occurred_at);
     for (const c of m.commitments.slice(0, 12)) {
       const { data: due } = await admin.rpc("add_business_days", { p_ts: call.occurred_at, p_days: Math.max(1, Math.min(20, c.dueDays || 2)) });
       await admin.from("call_commitments").insert({

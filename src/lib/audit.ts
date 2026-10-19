@@ -299,7 +299,7 @@ export async function runAudit(admin: SupabaseClient, id: string) {
   if (!a) return;
   const m = milestones(admin, id);
   try {
-    const { data: t } = await admin.from("kpi_targets").select("ad_account_id, conversion, custom_action, campaign_match, target, monthly_budget, budget_note").eq("id", a.target_id).single();
+    const { data: t } = await admin.from("kpi_targets").select("ad_account_id, conversion, custom_action, campaign_match, target, monthly_budget, budget_note, sheet").eq("id", a.target_id).single();
     if (!t?.ad_account_id) throw new Error("No ad account on this KPI");
     const conv = conversionFor(t.conversion);
     const account = String(t.ad_account_id).replace(/^act_/, "");
@@ -426,6 +426,11 @@ Monthly budget: ${t.monthly_budget ? `$${t.monthly_budget}` : "not set"}${t.budg
 <account_numbers>
 ${d.text}
 </account_numbers>
+${t.sheet ? `
+<team_notes source="the Account Overview sheet the buyers keep">
+${Object.entries(t.sheet as Record<string, string>).filter(([k, v]) => v && !["name", "platform", "syncedAt"].includes(k)).map(([k, v]) => `${k}: ${v}`).join("\n")}
+</team_notes>
+` : ""}
 
 <live_setup>
 ${setupText(setup)}

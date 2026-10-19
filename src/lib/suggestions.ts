@@ -1,5 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { OnboardingSheet } from "@/lib/account-sheet";
 import { AGENCY_SYSTEM, askJson, clientContext, contextBlock, getAgent } from "@/lib/ai";
 import { describeFatigue } from "@/lib/fatigue";
 import { MAX_VARIATIONS, toAllotment, type Allotment, type UsageRow } from "@/lib/allotment";
@@ -706,6 +707,7 @@ export type OnboardingCard = {
   inProduction: number[]; // tickets from an approved first round
   writingSince: string | null; // the strategist started writing it at
   writeError: string | null; // why the last try failed
+  setup: OnboardingSheet | null; // the Account Overview sheet's onboarding checklist
 };
 export type OnboardingState = { clients: OnboardingCard[]; unmatched: { id: string; name: string | null; at: string }[] };
 
@@ -717,7 +719,7 @@ export async function loadOnboarding(db: SupabaseClient): Promise<OnboardingStat
   const [{ data: clients }, { data: unmatched }] = await Promise.all([
     db
       .from("clients")
-      .select("id, name, slug, created_at, reonboarded_at, creative_package, industry_detail, first_round_started_at, first_round_error")
+      .select("id, name, slug, created_at, reonboarded_at, creative_package, industry_detail, first_round_started_at, first_round_error, onboarding_sheet")
       .or(waitingIds.length ? `status.eq.onboarding,id.in.(${waitingIds.join(",")})` : "status.eq.onboarding")
       .is("archived_at", null)
       .order("created_at", { ascending: false })
@@ -750,6 +752,7 @@ export async function loadOnboarding(db: SupabaseClient): Promise<OnboardingStat
         // The strategist writing it right now (a run older than 15 minutes didn't finish), or why it failed
         writingSince: c.first_round_started_at && Date.now() - Date.parse(c.first_round_started_at) < 15 * 60_000 ? (c.first_round_started_at as string) : null,
         writeError: (c.first_round_error as string | null) ?? null,
+        setup: (c.onboarding_sheet as OnboardingSheet | null) ?? null,
       };
     }),
     unmatched: (unmatched ?? []).map((u) => ({ id: u.id, name: u.business_name, at: u.received_at })),

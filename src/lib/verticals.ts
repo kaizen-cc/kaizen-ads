@@ -311,7 +311,8 @@ async function keepVerticalsRun(admin: SupabaseClient, t: import("@/lib/progress
   // Then a playbook or two, if there's time left in the run
   const { keepPlaybooks } = await import("@/lib/playbooks");
   const left = 640_000 - (Date.now() - start);
-  const playbooks = left > 120_000 ? await keepPlaybooks(admin, left > 300_000 ? 3 : 1).catch(() => 0) : 0;
+  // About a minute each: as many as the run has time for (up to 10)
+  const playbooks = left > 90_000 ? await keepPlaybooks(admin, Math.min(10, Math.floor((left - 30_000) / 60_000))).catch(() => 0) : 0;
   t.tick(null);
   return { built, placed, benchmarks, fame, playbooks };
 }

@@ -44,7 +44,7 @@ const fmt = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "Ameri
 const chip = "inline-flex items-center rounded-full px-2.5 py-1 text-xs";
 const row = "flex items-start justify-between gap-3 rounded-[8px] bg-surface-2/70 px-4 py-3 text-sm";
 
-const MEMORY_SOURCE: Record<string, string> = { client: "Client said", team: "Team", review: "From review", copy: "From copy", lab: "Ads Lab", audit: "Account audit", sprint: "Optimization sprint", network: "From a similar account" };
+const MEMORY_SOURCE: Record<string, string> = { client: "Client said", team: "Team", review: "From review", copy: "From copy", lab: "Ads Lab", audit: "Account audit", sprint: "Optimization sprint", network: "From a similar account", call: "From a call" };
 
 export type ClientViewProps = {
   client: {
