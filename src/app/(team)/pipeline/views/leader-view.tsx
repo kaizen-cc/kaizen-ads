@@ -25,7 +25,7 @@ export type LeaderData = {
 };
 
 /** Leaders (Head of Creative / Meta / Google): their decisions first, then their accounts and their team, as topics. */
-export function LeaderView(d: LeaderData & { handoffs?: React.ReactNode }) {
+export function LeaderView(d: LeaderData & { handoffs?: React.ReactNode; recap?: React.ReactNode }) {
   const act = actTopics(d);
   const accounts = accountTopics(d);
   const reviewTile = d.review.length ? { id: "review", label: "Your review", value: d.review.length, sub: d.reviewLabel.toLowerCase(), tone: "brand" as const } : null;
@@ -42,6 +42,7 @@ export function LeaderView(d: LeaderData & { handoffs?: React.ReactNode }) {
         subtitle={`Head of ${d.department} · ${d.stats.waitingOnYou ? `${d.stats.waitingOnYou} waiting on you` : "nothing waiting on you"}`}
         action={<PrimaryAction label="New request" disabled={!d.canRequest} href="/requests/new" />}
       />
+      {d.recap}
       {d.handoffs}
 
       <TopicDeck tiles={tiles} />

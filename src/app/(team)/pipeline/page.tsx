@@ -1,4 +1,6 @@
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
+import { TodayHero, TodayHeroSkeleton } from "./views/today-hero";
 import { requireStaff, type Staff } from "@/lib/auth";
 import { greetingFor, todayLabel } from "@/lib/dates";
 import { loadHome, loadKpiPulse } from "@/lib/home";
@@ -44,8 +46,15 @@ export default async function Home() {
     me.isExec || me.isLead || variantFor(me) === "buyer" ? loadCallPromises(db) : Promise.resolve(null),
   ]);
 
+  // The daily recap's way in, streamed in after the rest of the page
+  const recap = (
+    <Suspense fallback={<TodayHeroSkeleton />}>
+      <TodayHero db={db} me={me} />
+    </Suspense>
+  );
+
   if (me.isExec) {
-    return <PulseView {...base} vitals={h.vitals} attention={h.attention} phases={h.phases} clients={h.clients} team={h.team} monthElapsed={h.monthElapsed} kpis={kpis} suggestions={suggestions} fatigue={fatigue} onboarding={onboarding} clientOptions={clientOptions} callPromises={callPromises} handoffs={<HandoffCallout db={db} me={me.id} />} />;
+    return <PulseView {...base} vitals={h.vitals} attention={h.attention} phases={h.phases} clients={h.clients} team={h.team} monthElapsed={h.monthElapsed} kpis={kpis} suggestions={suggestions} fatigue={fatigue} onboarding={onboarding} clientOptions={clientOptions} callPromises={callPromises} handoffs={<HandoffCallout db={db} me={me.id} />} recap={recap} />;
   }
 
   if (me.isLead) {
@@ -78,6 +87,7 @@ export default async function Home() {
         clientOptions={clientOptions}
         callPromises={callPromises}
         handoffs={<HandoffCallout db={db} me={me.id} />}
+        recap={recap}
       />
     );
   }

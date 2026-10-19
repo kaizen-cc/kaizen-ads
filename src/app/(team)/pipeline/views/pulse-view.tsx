@@ -27,6 +27,7 @@ export type PulseData = {
   clientOptions?: { id: string; name: string }[];
   suggestions?: SuggestionsState | null;
   handoffs?: React.ReactNode;
+  recap?: React.ReactNode;
 };
 
 /**
@@ -54,6 +55,7 @@ export function PulseView(d: PulseData) {
         title={`${d.greeting}, ${d.firstName}`}
         subtitle={tiles.length ? `${urgent ? `${urgent} ${urgent === 1 ? "topic needs" : "topics need"} you today` : "All steady today"} · open any topic to act on it` : "All clear. Nothing needs you today."}
       />
+      {d.recap}
       {d.handoffs}
 
       <TopicDeck tiles={tiles} />
