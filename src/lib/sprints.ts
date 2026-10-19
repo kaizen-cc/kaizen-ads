@@ -278,7 +278,16 @@ ${ticked.map((x) => `- ${x.title}`).join("\n") || "(nothing)"}
   }
   // The learning loop: what worked (or backfired) goes to the client page, once per move
   if (out.learning?.kind && out.learning.kind !== "none" && out.learning.body.trim()) {
-    await admin.from("client_memory").insert({ client_id: s.client_id, kind: out.learning.kind, source: "sprint", created_by: s.buyer_id, body: out.learning.body.replace(/\s*—\s*/g, ", ").slice(0, 1000) });
+    const { data: saved } = await admin
+      .from("client_memory")
+      .insert({ client_id: s.client_id, kind: out.learning.kind, source: "sprint", created_by: s.buyer_id, body: out.learning.body.replace(/\s*—\s*/g, ", ").slice(0, 1000) })
+      .select("id")
+      .single();
+    // A move that worked may help truly similar clients too (same sub-vertical, then a strict check)
+    if (saved && out.learning.kind === "prefer") {
+      const { shareLessons } = await import("@/lib/lesson-sharing");
+      await shareLessons(admin, [saved.id]);
+    }
     const ids = out.learning.from.map((n) => (actions ?? [])[n - 1]?.id).filter(Boolean) as string[];
     if (ids.length) await admin.from("sprint_actions").update({ learned: true }).in("id", ids);
   }

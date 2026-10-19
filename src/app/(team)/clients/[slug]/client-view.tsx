@@ -44,7 +44,7 @@ const fmt = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "Ameri
 const chip = "inline-flex items-center rounded-full px-2.5 py-1 text-xs";
 const row = "flex items-start justify-between gap-3 rounded-[8px] bg-surface-2/70 px-4 py-3 text-sm";
 
-const MEMORY_SOURCE: Record<string, string> = { client: "Client said", team: "Team", review: "From review", copy: "From copy", lab: "Ads Lab", audit: "Account audit", sprint: "Optimization sprint" };
+const MEMORY_SOURCE: Record<string, string> = { client: "Client said", team: "Team", review: "From review", copy: "From copy", lab: "Ads Lab", audit: "Account audit", sprint: "Optimization sprint", network: "From a similar account" };
 
 export type ClientViewProps = {
   client: {
@@ -81,7 +81,7 @@ export type ClientViewProps = {
   team: Record<string, { current: Option | null; options: Option[] }>;
   contacts: { id: string; email: string; full_name: string | null; auth_user_id: string | null }[];
   angles: { id: string; name: string; kind: string; description: string | null; status: string }[];
-  memory: { id: string; kind: string; body: string; source: string; by: string | null }[];
+  memory: { id: string; kind: string; body: string; source: string; shareReason?: string | null; by: string | null }[];
   digest: Digest | null;
   briefingAt: string | null;
   needsInvite: string[];
@@ -273,7 +273,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                         <span className="leading-relaxed">{m.body}</span>
                         <span className="text-xs text-faint">
                           {MEMORY_SOURCE[m.source] ?? "Team"}
-                          {m.by ? ` · ${m.by}` : ""}
+                          {m.source === "network" && m.shareReason ? ` · why it applies here: ${m.shareReason}` : m.by ? ` · ${m.by}` : ""}
                         </span>
                       </span>
                     </span>

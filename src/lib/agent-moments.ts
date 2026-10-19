@@ -78,6 +78,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Places new clients in a sub-vertical", where: "Ideas · Verticals · Client page", trigger: "auto", when: "Hourly, for new clients", labels: ["place clients in verticals"] },
     { title: "Places market brands in the sub-vertical they teach", where: "Ideas · In the market", trigger: "auto", when: "With each Motion sync", labels: ["place market brands"] },
     { title: "Researches Meta benchmarks for each sub-vertical, with sources", where: "Ideas · Verticals", trigger: "auto", when: "Hourly until done, then every 90 days", labels: ["benchmarks"] },
+    { title: "Decides whether a lesson that worked for one client truly applies to others in its sub-vertical (product, buyer, sales motion, price point) and shares it, reworded and unnamed", where: "Client pages · client memory", trigger: "auto", when: "When an audit or a sprint learns what works", labels: ["share lesson"] },
     { title: "Writes each sub-vertical's playbook: avatars, the angles that land, and the ads that prove them", where: "Ideas · Verticals · Playbook", trigger: "auto", when: "Hourly when something new comes in, or Rebuild", labels: ["playbook"] },
   ],
   auditor: [

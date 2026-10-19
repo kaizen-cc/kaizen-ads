@@ -468,7 +468,7 @@ Today is ${new Date().toISOString().slice(0, 10)}.`;
     const lessons = (found.learnings ?? []).filter((l) => l.body.trim());
     if (lessons.length) {
       const { data: run } = await admin.from("account_audits").select("created_by").eq("id", id).single();
-      await admin.from("client_memory").insert(
+      const { data: saved } = await admin.from("client_memory").insert(
         lessons.map((l) => ({
           client_id: a.client_id,
           kind: l.kind,
@@ -476,7 +476,13 @@ Today is ${new Date().toISOString().slice(0, 10)}.`;
           created_by: run?.created_by ?? null,
           body: `${l.resurfaced && !/^resurfaced/i.test(l.body) ? "Resurfaced: " : ""}${l.body}`.replace(/\s*—\s*/g, ", ").slice(0, 1000),
         })),
-      );
+      ).select("id, kind");
+      // What worked here may help truly similar clients (same sub-vertical, then a strict check); never what to avoid
+      const works = (saved ?? []).filter((x) => x.kind === "prefer").map((x) => x.id as string);
+      if (works.length) {
+        const { shareLessons } = await import("@/lib/lesson-sharing");
+        await shareLessons(admin, works);
+      }
     }
 
     // 7. What I'd do, and what to watch out for

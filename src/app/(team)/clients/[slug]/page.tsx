@@ -38,7 +38,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
       supabase.from("angles").select("id, name, kind, description, status").eq("client_id", client.id).order("status").order("name"),
       supabase.from("client_allotment_usage").select("*").eq("client_id", client.id).maybeSingle(),
       supabase.from("profiles").select("id, full_name, role").eq("is_active", true).order("full_name"),
-      supabase.from("client_memory").select("id, kind, body, source, created_at, profiles(full_name)").eq("client_id", client.id).eq("status", "active").order("created_at", { ascending: false }),
+      supabase.from("client_memory").select("id, kind, body, source, share_reason, created_at, profiles(full_name)").eq("client_id", client.id).eq("status", "active").order("created_at", { ascending: false }),
       supabase.from("client_briefings").select("digest, generated_at, sources").eq("client_id", client.id).maybeSingle(),
       // Execs only (RLS): which of this client's Slack channels the bot couldn't get into on the last run
       supabase.from("sync_state").select("last_result").eq("source", "slack").maybeSingle(),
@@ -177,7 +177,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
       team={Object.fromEntries(SLOTS.map((slot) => [slot.value, { current: currentIn(slot.value), options: optionsFor(slot.eligible) }]))}
       contacts={contacts}
       angles={angles ?? []}
-      memory={(memory ?? []).map((m) => ({ id: m.id, kind: m.kind, body: m.body, source: m.source, by: (m.profiles as unknown as { full_name: string } | null)?.full_name ?? null }))}
+      memory={(memory ?? []).map((m) => ({ id: m.id, kind: m.kind, body: m.body, source: m.source, shareReason: m.share_reason, by: (m.profiles as unknown as { full_name: string } | null)?.full_name ?? null }))}
       digest={digest}
       briefingAt={briefing?.generated_at ?? null}
       needsInvite={needsInvite}
