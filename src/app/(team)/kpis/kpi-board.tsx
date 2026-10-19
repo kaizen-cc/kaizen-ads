@@ -194,9 +194,11 @@ function MetricBoxes({ r, ex, onChange }: { r: KpiRow; ex: Explore | null; onCha
     <div className="grid gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs font-medium uppercase tracking-[0.12em] text-faint">More metrics for this client</p>
-        <button type="button" onClick={() => setAdding(!adding)} className="rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg">
-          {adding ? "Done" : "+ Add a metric"}
-        </button>
+        {(adding || !shown.length) && (
+          <button type="button" onClick={() => setAdding(!adding)} className="rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg">
+            {adding ? "Done" : "+ Add a metric"}
+          </button>
+        )}
       </div>
       {adding && ex && (
         <div className="grid gap-3 rounded-[12px] border border-line bg-surface p-4">
@@ -221,11 +223,11 @@ function MetricBoxes({ r, ex, onChange }: { r: KpiRow; ex: Explore | null; onCha
         </div>
       )}
       {shown.length > 0 ? (
-        <div className="grid gap-px overflow-hidden rounded-[10px] border border-line bg-line sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {shown.map((m) => {
             const change = m.d30 != null && m.prev30 ? Math.round(((m.d30 - m.prev30) / m.prev30) * 100) : null;
             return (
-              <div key={m.key} className="group relative grid gap-0.5 bg-surface px-4 py-3">
+              <div key={m.key} className="group relative grid content-start gap-0.5 rounded-[10px] border border-line bg-surface px-4 py-3">
                 <span className="pr-5 text-[11px] text-faint">{m.label} · 14 days</span>
                 <span className="tabular text-sm">{fmtMetric(m.d14, m.unit)}</span>
                 <span className="tabular text-[11px] text-faint">
@@ -243,6 +245,15 @@ function MetricBoxes({ r, ex, onChange }: { r: KpiRow; ex: Explore | null; onCha
               </div>
             );
           })}
+          {!adding && (
+            <button
+              type="button"
+              onClick={() => setAdding(true)}
+              className="grid min-h-[84px] place-items-center rounded-[10px] border border-dashed border-line text-xs text-faint transition-colors hover:border-fg/30 hover:text-fg"
+            >
+              + Add a metric
+            </button>
+          )}
         </div>
       ) : (
         !adding && <p className="text-[11px] text-faint">Add ROAS, engagement, CTR, CPM or any action this account reports, next to its KPI.</p>

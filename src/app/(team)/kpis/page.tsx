@@ -38,7 +38,7 @@ export default async function Kpis() {
     supabase.from("kpi_snapshots").select("*"),
     supabase.from("profiles").select("id, full_name, role").eq("is_active", true).in("role", ["media_buyer", "head_of_meta"]).order("full_name"),
     supabase.from("clients").select("id, name").neq("status", "offboarded").order("name"),
-    supabase.from("account_audits").select("id, target_id, status, progress, step, created_at, result, done, error, profiles(full_name)").order("created_at", { ascending: false }).limit(400),
+    supabase.from("account_audits").select("id, target_id, status, progress, step, steps, created_at, result, done, error, profiles(full_name)").order("created_at", { ascending: false }).limit(400),
   ]);
   // The latest audit per KPI (a run left "running" 15+ minutes timed out)
   const auditBy = new Map<string, AuditSummary>();
@@ -58,6 +58,7 @@ export default async function Kpis() {
       actions: res?.actions?.length ?? 0,
       done: Object.keys((a.done ?? {}) as object).length,
       error: timedOut ? "It didn't finish in time. Try again." : a.error,
+      steps: (a.steps ?? []) as NonNullable<AuditSummary>["steps"],
     });
   }
   const snapBy = new Map((snaps ?? []).map((s) => [s.target_id as string, s as unknown as Snap]));

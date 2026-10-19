@@ -16,7 +16,58 @@ export type AuditSummary = {
   actions: number;
   done: number;
   error: string | null;
+  steps: AuditStep[];
 } | null;
+export type AuditStep = { key: string; label: string; status: "pending" | "running" | "done" | "skipped" | "failed"; detail: string | null; startedAt: string | null; finishedAt: string | null };
+
+const secs = (from: string | null, to: string | null, now: number) => {
+  if (!from) return null;
+  const s = Math.max(0, Math.round(((to ? Date.parse(to) : now) - Date.parse(from)) / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+};
+
+/** The audit's real milestones: what it's done, what it found at each, and what it's on now. */
+function Steps({ steps, live }: { steps: AuditStep[]; live: boolean }) {
+  // A clock for the running step, ticking in the browser only
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => {
+    if (!live) return;
+    const tick = () => setNow(Date.now());
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, [live]);
+  if (!steps.length) return null;
+  return (
+    <ol className="grid gap-0.5">
+      {steps.map((s) => (
+        <li key={s.key} className={`grid grid-cols-[20px_minmax(0,1fr)_auto] items-start gap-3 rounded-[10px] px-2 py-2 ${s.status === "running" ? "bg-surface-2" : ""}`}>
+          <span className="mt-0.5 grid h-4 w-4 place-items-center">
+            {s.status === "done" ? (
+              <svg viewBox="0 0 16 16" className="h-4 w-4 text-ok" fill="none" stroke="currentColor" strokeWidth="2.2">
+                <path d="M3.5 8.5l3 3 6-7" />
+              </svg>
+            ) : s.status === "running" ? (
+              <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+            ) : s.status === "failed" ? (
+              <span className="text-sm leading-none text-bad">×</span>
+            ) : s.status === "skipped" ? (
+              <span className="h-px w-2.5 bg-faint" />
+            ) : (
+              <span className="h-1.5 w-1.5 rounded-full bg-faint/40" />
+            )}
+          </span>
+          <span className="grid min-w-0 gap-0.5">
+            <span className={`text-sm ${s.status === "pending" ? "text-faint" : s.status === "failed" ? "text-bad" : ""}`}>{s.label}</span>
+            {s.detail && <span className={`text-xs leading-relaxed ${s.status === "failed" ? "text-bad" : "text-muted"}`}>{s.detail}</span>}
+            {s.status === "running" && !s.detail && (s.key === "found" || s.key === "plan") && <span className="animate-pulse text-xs text-muted">Thinking it through with everything above…</span>}
+          </span>
+          <span className="tabular pt-0.5 text-[11px] text-faint">{s.status === "running" ? (now ? secs(s.startedAt, null, now) : "") : s.finishedAt ? secs(s.startedAt, s.finishedAt, Date.parse(s.finishedAt)) : ""}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
 
 export const VERDICT: Record<string, { label: string; tone: string; ring: string }> = {
   off: { label: "Off target", tone: "text-bad", ring: "border-bad/40 bg-bad-soft" },
@@ -91,9 +142,9 @@ export function AuditPanel({ targetId, audit, platform }: { targetId: string; au
         )}
 
         {running && (
-          <div className="grid gap-2">
+          <div className="grid gap-3">
             <div className="flex items-baseline justify-between gap-3 text-xs">
-              <span className="text-muted">{audit.step ?? "Working"}</span>
+              <span className="text-muted">{audit.step ?? "Starting"}</span>
               <span className="font-display text-xl tabular">{audit.progress}%</span>
             </div>
             <div className="h-1.5 overflow-hidden rounded-full bg-line">
@@ -101,7 +152,8 @@ export function AuditPanel({ targetId, audit, platform }: { targetId: string; au
                 <span className="absolute inset-0 animate-pulse rounded-full bg-white/25" />
               </div>
             </div>
-            <p className="text-[11px] text-faint">It keeps going on the server if you leave or refresh.</p>
+            <Steps steps={audit.steps} live />
+            <p className="text-[11px] text-faint">It keeps going on the server if you leave or refresh. The two writing steps take the longest.</p>
           </div>
         )}
 
@@ -120,7 +172,12 @@ export function AuditPanel({ targetId, audit, platform }: { targetId: string; au
             </div>
           </div>
         )}
-        {audit?.status === "failed" && <p className="text-sm text-bad">{audit.error}</p>}
+        {audit?.status === "failed" && (
+          <div className="grid gap-2">
+            <p className="text-sm text-bad">{audit.error}</p>
+            <Steps steps={audit.steps} live={false} />
+          </div>
+        )}
         {error && <p className="text-sm text-bad">{error}</p>}
       </div>
     </div>

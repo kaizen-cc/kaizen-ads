@@ -39,7 +39,7 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
   const supabase = await createClient();
   const { data: a } = await supabase
     .from("account_audits")
-    .select("id, target_id, client_id, status, result, done, inputs, created_at, error, profiles(full_name), clients(name, slug), kpi_targets(conversion, custom_action, target, label)")
+    .select("id, target_id, client_id, status, result, done, inputs, steps, created_at, error, profiles(full_name), clients(name, slug), kpi_targets(conversion, custom_action, target, label)")
     .eq("id", id)
     .maybeSingle();
   if (!a) notFound();
@@ -112,7 +112,7 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
         </div>
       </header>
 
-      <Section n="01" title="Why it's here">
+      <Section n="01" title="Here's what I found" sub="Why the numbers are where they are against the KPI.">
         <div className="grid gap-4 rounded-[20px] border border-line bg-surface p-6 text-[15px] leading-relaxed md:p-8">
           {r.diagnosis
             .split(/\n+/)
@@ -123,30 +123,37 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
               </p>
             ))}
         </div>
-        <div className="grid gap-3 md:grid-cols-2">
-          {r.causes.map((c, i) => (
-            <article key={i} className={`grid content-start gap-3 rounded-[16px] border border-l-4 border-line bg-surface p-5 ${SEV[c.severity]}`}>
-              <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                <span className="font-display text-sm tabular text-faint">{String(i + 1).padStart(2, "0")}</span>
-                <span className="rounded-full border border-line px-2 py-0.5 text-muted">{AREA[c.area] ?? c.area}</span>
-                <span className={c.severity === "high" ? "text-bad" : c.severity === "medium" ? "text-warn" : "text-faint"}>{c.severity} impact</span>
-                <span className="text-faint">· {c.confidence} confidence</span>
-              </div>
-              <h3 className="font-heading text-lg leading-snug">{c.title}</h3>
-              <ul className="grid gap-1.5 text-[13px] leading-relaxed text-muted">
-                {c.evidence.map((e, j) => (
-                  <li key={j} className="flex gap-2">
-                    <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-faint" />
-                    {e}
-                  </li>
-                ))}
-              </ul>
-            </article>
-          ))}
-        </div>
+        <Sub title="What's behind it" sub="The root causes, most important first, with the numbers.">
+          <div className="grid gap-3 md:grid-cols-2">
+            {r.causes.map((c, i) => (
+              <article key={i} className={`grid content-start gap-3 rounded-[16px] border border-l-4 border-line bg-surface p-5 ${SEV[c.severity]}`}>
+                <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                  <span className="font-display text-sm tabular text-faint">{String(i + 1).padStart(2, "0")}</span>
+                  <span className="rounded-full border border-line px-2 py-0.5 text-muted">{AREA[c.area] ?? c.area}</span>
+                  <span className={c.severity === "high" ? "text-bad" : c.severity === "medium" ? "text-warn" : "text-faint"}>{c.severity} impact</span>
+                  <span className="text-faint">· {c.confidence} confidence</span>
+                </div>
+                <h3 className="font-heading text-lg leading-snug">{c.title}</h3>
+                <ul className="grid gap-1.5 text-[13px] leading-relaxed text-muted">
+                  {c.evidence.map((e, j) => (
+                    <li key={j} className="flex gap-2">
+                      <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-faint" />
+                      {e}
+                    </li>
+                  ))}
+                </ul>
+              </article>
+            ))}
+          </div>
+        </Sub>
+        {r.tracking.length > 0 && (
+          <Panel title="Tracking and data to check first" tone="warn">
+            <List items={r.tracking} />
+          </Panel>
+        )}
       </Section>
 
-      <Section n="02" title="The plan" sub="Tick each one off as it's done; the KPI board shows how far along the plan is.">
+      <Section n="02" title="What I'd do if I were you" sub="Tick each move off as it's done; the KPI board shows how far along the plan is.">
         <div className="grid gap-6 lg:grid-cols-3">
           {WHEN.map(([key, label, hint]) => {
             const items = r.actions.map((x, i) => ({ x, i })).filter(({ x }) => x.when === key);
@@ -163,82 +170,91 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
             );
           })}
         </div>
+
+        <Panel title="The budget call">
+          <p className="text-sm leading-relaxed">{r.budget.call}</p>
+          {r.budget.moves.length > 0 && <List items={r.budget.moves} />}
+        </Panel>
+
+        {r.tests.length > 0 && (
+          <Sub title="Tests I'd run" sub="Each one set up to read out at this account's spend.">
+            <div className="grid gap-3 md:grid-cols-2">
+              {r.tests.map((x, i) => (
+                <article key={i} className="grid content-start gap-3 rounded-[18px] border border-line bg-surface p-6">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-faint">Test {i + 1}</p>
+                  <h3 className="font-heading text-lg leading-snug">{x.name}</h3>
+                  <p className="text-sm leading-relaxed">
+                    <span className="text-faint">If </span>
+                    {x.hypothesis}
+                  </p>
+                  <dl className="grid gap-2 text-[13px]">
+                    {(
+                      [
+                        ["Set up", x.setup],
+                        ["Measure", x.metric],
+                        ["It worked if", x.success],
+                      ] as const
+                    ).map(([k, val]) => (
+                      <div key={k} className="grid grid-cols-[96px_minmax(0,1fr)] gap-3">
+                        <dt className="text-faint">{k}</dt>
+                        <dd className="leading-relaxed text-muted">{val}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <div className="flex flex-wrap gap-2 text-[11px]">
+                    <span className="rounded-full bg-bg px-2.5 py-1 text-muted">{x.budget}</span>
+                    <span className="rounded-full bg-bg px-2.5 py-1 text-muted">{x.duration}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </Sub>
+        )}
+
+        {r.creative.length > 0 && (
+          <Sub title="Creative I'd make" sub="From the playbook's proven angles, our Hall of Fame and the Brand Bible.">
+            <div className="grid gap-3 md:grid-cols-2">
+              {r.creative.map((c, i) => (
+                <article key={i} className="grid content-start gap-3 rounded-[18px] border border-line bg-surface p-6">
+                  <div className="flex flex-wrap gap-2 text-[11px]">
+                    <span className="rounded-full border border-line px-2 py-0.5 text-muted">{c.angle}</span>
+                    <span className="rounded-full border border-line px-2 py-0.5 text-muted">{c.format}</span>
+                  </div>
+                  <p className="font-heading text-lg leading-snug">{c.concept}</p>
+                  <p className="font-display text-xl leading-snug tracking-tight">
+                    <span className="text-brand-text">&ldquo;</span>
+                    {c.hook}
+                    <span className="text-brand-text">&rdquo;</span>
+                  </p>
+                  <p className="text-sm leading-relaxed text-muted">{c.why}</p>
+                  <Link href={`/requests/new?client=${client.slug}`} className="justify-self-start text-sm font-medium hover:underline">
+                    Start a request for {client.name} →
+                  </Link>
+                </article>
+              ))}
+            </div>
+          </Sub>
+        )}
       </Section>
 
-      {r.tests.length > 0 && (
-        <Section n="03" title="Tests to run" sub="Each one set up to read out at this account's spend.">
+      <Section n="03" title="What I'd watch out for" sub="What could mislead us in these results, what the changes could break, and what to keep an eye on.">
+        {(r.watchouts ?? []).length > 0 && (
           <div className="grid gap-3 md:grid-cols-2">
-            {r.tests.map((x, i) => (
-              <article key={i} className="grid content-start gap-3 rounded-[18px] border border-line bg-surface p-6">
-                <p className="text-[10px] uppercase tracking-[0.16em] text-faint">Test {i + 1}</p>
-                <h3 className="font-heading text-lg leading-snug">{x.name}</h3>
-                <p className="text-sm leading-relaxed">
-                  <span className="text-faint">If </span>
-                  {x.hypothesis}
-                </p>
-                <dl className="grid gap-2 text-[13px]">
-                  {(
-                    [
-                      ["Set up", x.setup],
-                      ["Measure", x.metric],
-                      ["It worked if", x.success],
-                    ] as const
-                  ).map(([k, val]) => (
-                    <div key={k} className="grid grid-cols-[96px_minmax(0,1fr)] gap-3">
-                      <dt className="text-faint">{k}</dt>
-                      <dd className="leading-relaxed text-muted">{val}</dd>
-                    </div>
-                  ))}
-                </dl>
-                <div className="flex flex-wrap gap-2 text-[11px]">
-                  <span className="rounded-full bg-bg px-2.5 py-1 text-muted">{x.budget}</span>
-                  <span className="rounded-full bg-bg px-2.5 py-1 text-muted">{x.duration}</span>
-                </div>
+            {(r.watchouts ?? []).map((w, i) => (
+              <article key={i} className="grid content-start gap-2 rounded-[16px] border border-warn/30 bg-surface p-5">
+                <h3 className="flex gap-2 font-heading leading-snug">
+                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-warn" />
+                  {w.title}
+                </h3>
+                <p className="pl-3.5 text-[13px] leading-relaxed text-muted">{w.why}</p>
               </article>
             ))}
           </div>
-        </Section>
-      )}
-
-      {r.creative.length > 0 && (
-        <Section n="04" title="Creative to make" sub="From the playbook's proven angles, our Hall of Fame and the Brand Bible.">
-          <div className="grid gap-3 md:grid-cols-2">
-            {r.creative.map((c, i) => (
-              <article key={i} className="grid content-start gap-3 rounded-[18px] border border-line bg-surface p-6">
-                <div className="flex flex-wrap gap-2 text-[11px]">
-                  <span className="rounded-full border border-line px-2 py-0.5 text-muted">{c.angle}</span>
-                  <span className="rounded-full border border-line px-2 py-0.5 text-muted">{c.format}</span>
-                </div>
-                <p className="font-heading text-lg leading-snug">{c.concept}</p>
-                <p className="font-display text-xl leading-snug tracking-tight">
-                  <span className="text-brand-text">&ldquo;</span>
-                  {c.hook}
-                  <span className="text-brand-text">&rdquo;</span>
-                </p>
-                <p className="text-sm leading-relaxed text-muted">{c.why}</p>
-                <Link href={`/requests/new?client=${client.slug}`} className="justify-self-start text-sm font-medium hover:underline">
-                  Start a request for {client.name} →
-                </Link>
-              </article>
-            ))}
-          </div>
-        </Section>
-      )}
-
-      <Section n={r.creative.length ? "05" : "04"} title="Budget, tracking and the client">
+        )}
         <div className="grid gap-3 lg:grid-cols-2">
-          <Panel title="Budget call">
-            <p className="text-sm leading-relaxed">{r.budget.call}</p>
-            {r.budget.moves.length > 0 && <List items={r.budget.moves} />}
-          </Panel>
-          <Panel title="Watch over the next 7 days">
+          <Panel title="Numbers to watch over the next 7 days">
             <List items={r.watch} />
           </Panel>
-          {r.tracking.length > 0 && (
-            <Panel title="Tracking and data" tone="warn">
-              <List items={r.tracking} />
-            </Panel>
-          )}
           {r.questions.length > 0 && (
             <Panel title="Ask the client">
               <List items={r.questions} numbered />
@@ -248,6 +264,21 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
       </Section>
 
       <footer className="grid gap-4 border-t border-line pt-6 text-xs text-faint">
+        {((a.steps ?? []) as { key: string; label: string; status: string; detail: string | null }[]).length > 0 && (
+          <div className="grid gap-2">
+            <p className="text-[10px] uppercase tracking-[0.16em]">How I got here</p>
+            <ol className="grid gap-1.5">
+              {((a.steps ?? []) as { key: string; label: string; status: string; detail: string | null }[]).map((st) => (
+                <li key={st.key} className="grid gap-x-3 sm:grid-cols-[260px_minmax(0,1fr)]">
+                  <span className="text-muted">
+                    {st.status === "done" ? "✓" : st.status === "skipped" ? "–" : "×"} {st.label}
+                  </span>
+                  <span>{st.detail}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
         <p>
           Read {inputs.days ?? "?"} days and {inputs.ads ?? "?"} ads
           {inputs.liveSetup ? `, the live setup (${inputs.campaigns} campaigns, ${inputs.adsets} ad sets)` : ", (live setup not available)"}, {inputs.fatigue ?? 0} tiring ads
@@ -282,6 +313,18 @@ function Section({ n, title, sub, children }: { n: string; title: string; sub?: 
       </div>
       {children}
     </section>
+  );
+}
+
+function Sub({ title, sub, children }: { title: string; sub?: string; children: React.ReactNode }) {
+  return (
+    <div className="grid gap-3">
+      <div className="grid gap-0.5">
+        <h3 className="font-heading text-lg">{title}</h3>
+        {sub && <p className="text-[13px] text-muted">{sub}</p>}
+      </div>
+      {children}
+    </div>
   );
 }
 

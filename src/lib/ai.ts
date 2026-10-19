@@ -129,6 +129,7 @@ export async function askJson<T>({
   schema,
   images = [],
   onText,
+  maxTokens = 16000,
 }: {
   agent: AgentKey;
   label: string; // for the timing log
@@ -139,13 +140,15 @@ export async function askJson<T>({
   images?: { mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp"; data: string }[];
   /** Streams the answer and calls this with everything written so far (for real progress). */
   onText?: (soFar: string) => void;
+  /** Room for the answer (thinking counts against it). Long answers need onText, so they stream. */
+  maxTokens?: number;
 }): Promise<T> {
   if (!aiEnabled()) throw new AiUnavailable("AI isn't connected yet.");
   const cfg = await getAgent(agent);
   const started = Date.now();
   const request = {
     model: MODEL_IDS[cfg.model],
-    max_tokens: 16000,
+    max_tokens: maxTokens,
     system: withAgent(system, cfg),
     output_config: { effort: cfg.effort, format: { type: "json_schema" as const, schema } },
     messages: [
