@@ -925,44 +925,87 @@ export function AgentDetail({ a, items, chat }: { a: Agent; items: Item[]; chat:
 
 export type Role = { key: string; label: string; description: string; icon: string; core: string; updatedAt: string; updatedBy: string | null };
 
+/** A rule split into its short title (up to the first full stop or colon) and the rest. */
+function splitRule(line: string) {
+  const text = line.replace(/^\s*\d+\.\s*/, "");
+  const m = text.match(/^(.{8,90}?[.:])\s+(.*)$/);
+  return m ? { head: m[1].replace(/[.:]$/, ""), rest: m[2] } : { head: text, rest: "" };
+}
+
 function SpineEditor({ spine }: { spine: { body: string; updatedAt: string | null; updatedBy: string | null } }) {
   const [body, setBody] = useState(spine.body);
+  const [mode, setMode] = useState<"summary" | "read" | "edit">("summary");
   useDirty("spine", body !== spine.body, { label: "Kaizen strategy", save: () => saveSpine(body), discard: () => setBody(spine.body) });
-  const rules = spine.body.split("\n").filter((l) => /^\d+\./.test(l.trim()));
+  const rules = spine.body
+    .split("\n")
+    .filter((l) => /^\s*\d+\./.test(l))
+    .map(splitRule);
+  const tab = (k: typeof mode, label: string) => (
+    <button
+      type="button"
+      onClick={() => setMode(k)}
+      className={`rounded-full px-3 py-1 text-xs transition-colors ${mode === k ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}
+    >
+      {label}
+    </button>
+  );
   return (
-    <section className="relative grid gap-4 overflow-hidden rounded-[18px] border border-line bg-surface p-6">
-      <span aria-hidden className="pointer-events-none absolute -right-20 -top-24 h-56 w-56 rounded-full bg-brand/15 blur-3xl" />
-      <div className="relative flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.16em] text-faint">Every agent reads this first</p>
-          <h2 className="mt-1 font-heading text-[22px]">Kaizen strategy</h2>
-          <p className="mt-1 max-w-2xl text-sm text-muted">The non-negotiables, from Kyle and Santi. They win over anything in an agent&apos;s core or skills, and the Coach can&apos;t change them. Only execs can, here.</p>
+    <section className="grid gap-5 rounded-[18px] border border-line bg-surface p-5 sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="grid gap-1">
+          <p className="text-[11px] uppercase tracking-[0.16em] text-faint">Read first by every agent</p>
+          <h2 className="font-heading text-[20px] leading-tight">Kaizen strategy</h2>
+          <p className="max-w-xl text-[13px] text-muted">Kyle and Santi&apos;s non-negotiables. They win over any agent&apos;s core or skills. Execs edit them here; the Coach can&apos;t.</p>
         </div>
-        <span className="tabular text-xs text-faint">
-          {rules.length} rules{spine.updatedAt ? ` · changed ${fmt(spine.updatedAt)}${spine.updatedBy ? ` by ${spine.updatedBy}` : ""}` : ""}
-        </span>
+        <div className="flex items-center gap-1 rounded-full border border-line bg-bg p-0.5">
+          {tab("summary", "Rules")}
+          {tab("read", "Full text")}
+          {tab("edit", "Edit")}
+        </div>
       </div>
-      <ol className="relative grid gap-x-8 gap-y-2 md:grid-cols-2">
-        {rules.map((r, i) => {
-          const text = r.replace(/^\d+\.\s*/, "");
-          const head = text.split(/(?<=\.)\s/)[0];
-          return (
-            <li key={i} className="grid grid-cols-[26px_minmax(0,1fr)] gap-2 text-sm">
-              <span className="font-heading tabular text-brand-text">{String(i + 1).padStart(2, "0")}</span>
-              <span className="leading-snug">{head}</span>
+
+      {mode === "summary" && (
+        <ol className="grid gap-px overflow-hidden rounded-[12px] border border-line bg-line sm:grid-cols-2 lg:grid-cols-4">
+          {rules.map((r, i) => (
+            <li key={i} title={r.rest} className="flex items-start gap-3 bg-surface px-4 py-3">
+              <span className="font-heading text-xs tabular text-brand-text">{String(i + 1).padStart(2, "0")}</span>
+              <span className="text-[13px] leading-snug">{r.head}</span>
             </li>
-          );
-        })}
-      </ol>
-      <details className="relative">
-        <summary className="cursor-pointer text-xs text-muted hover:text-fg">Read or edit the full text</summary>
+          ))}
+        </ol>
+      )}
+      {mode === "read" && (
+        <ol className="grid gap-x-10 gap-y-4 md:grid-cols-2">
+          {rules.map((r, i) => (
+            <li key={i} className="grid grid-cols-[24px_minmax(0,1fr)] gap-2">
+              <span className="font-heading text-xs tabular text-brand-text">{String(i + 1).padStart(2, "0")}</span>
+              <span className="grid gap-1">
+                <span className="text-sm font-medium leading-snug">{r.head}</span>
+                {r.rest && <span className="text-[13px] leading-relaxed text-muted">{r.rest}</span>}
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
+      {mode === "edit" && (
         <textarea
           value={body}
           onChange={(e) => setBody(e.target.value)}
           rows={Math.min(30, Math.max(12, body.split("\n").length + 4))}
-          className={`${field} mt-3 h-auto py-4 text-[13.5px] font-normal leading-relaxed`}
+          className={`${field} h-auto py-4 text-[13.5px] font-normal leading-relaxed`}
         />
-      </details>
+      )}
+
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line pt-4 text-[11px] text-faint">
+        <span className="flex flex-wrap items-center gap-1.5">
+          Every AI call reads
+          <span className="rounded-full bg-brand-soft px-2 py-0.5 text-brand-text">Kaizen strategy</span>→<span className="rounded-full bg-surface-2 px-2 py-0.5 text-muted">the agent&apos;s core</span>→
+          <span className="rounded-full bg-surface-2 px-2 py-0.5 text-muted">the skill&apos;s playbook</span>→<span className="rounded-full bg-surface-2 px-2 py-0.5 text-muted">shared knowledge</span>
+        </span>
+        <span className="tabular">
+          {rules.length} rules{spine.updatedAt ? ` · changed ${fmt(spine.updatedAt)}${spine.updatedBy ? ` by ${spine.updatedBy}` : ""}` : ""}
+        </span>
+      </div>
     </section>
   );
 }
@@ -979,67 +1022,80 @@ export function RolesOverview({ roles, agents, items, spine }: { roles: Role[]; 
     <DirtyProvider>
       <div className="grid gap-8">
         <SpineEditor spine={spine} />
-        <ul className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {roles.map((r) => {
-            const skills = agents.filter((a) => a.roleKey === r.key);
-            const st = roleStats(skills);
-            const itemCount = items.filter((k) => k.active && skills.some((s) => s.key === k.agentKey)).length;
-            const tint = TINT[r.icon] ?? TINT.spark;
-            return (
-              <li key={r.key}>
-                <Link
-                  href={`/settings?tab=agents&role=${r.key}`}
-                  className="group relative grid h-full content-start gap-5 overflow-hidden rounded-[18px] border border-line bg-surface p-6 transition-all duration-200 hover:-translate-y-0.5 hover:border-faint/70 hover:shadow-[0_24px_60px_-30px_rgba(0,0,0,0.9)]"
-                >
-                  <span aria-hidden className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full opacity-[0.14] blur-2xl transition-opacity group-hover:opacity-25" style={{ background: tint }} />
-                  <div className="relative flex items-start justify-between gap-3">
-                    <AgentIcon icon={r.icon} size={48} />
-                    {st.proposals > 0 && <span className="rounded-full bg-brand-soft px-2.5 py-1 text-[11px] text-brand-text">{st.proposals} proposed {st.proposals === 1 ? "edit" : "edits"}</span>}
-                  </div>
-                  <div className="relative">
-                    <h3 className="font-heading text-[22px] leading-snug">{r.label}</h3>
-                    <p className="mt-1.5 line-clamp-3 text-sm leading-relaxed text-muted">{r.description}</p>
-                  </div>
-                  <ul className="relative grid gap-1.5">
-                    {skills.map((s) => (
-                      <li key={s.key} className="flex items-center justify-between gap-3 text-[13px]">
-                        <span className="flex min-w-0 items-center gap-2">
-                          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${s.live ? (s.stats.runs ? "bg-ok" : "bg-faint/60") : "border border-dashed border-faint"}`} />
-                          <span className="truncate">{s.label}</span>
-                        </span>
-                        <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-faint">
-                          <ModelMeter model={s.model} />
-                          <span className="capitalize">{s.model}</span>
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                  <div className="relative mt-auto flex items-center justify-between border-t border-line pt-4 text-xs">
-                    <span className="text-muted">
-                      {skills.length} skills · {itemCount} playbook items
-                    </span>
-                    <span className="text-right text-faint">
-                      {st.runs ? `${st.runs} runs this week` : "No runs this week"}
-                      {st.last && <span className="block text-[11px]">last {ago(st.last)}</span>}
-                    </span>
-                  </div>
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
 
-        <section className="grid gap-4 rounded-[18px] border border-line bg-surface p-6">
+        <section className="grid gap-4">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="font-heading text-[20px]">The agents</h2>
+            <p className="text-xs text-faint">Six, fixed. The Coach and the Ads Lab improve their skills; they never add agents.</p>
+          </div>
+          <ul className="grid auto-rows-fr gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {roles.map((r) => {
+              const skills = agents.filter((a) => a.roleKey === r.key);
+              const st = roleStats(skills);
+              const itemCount = items.filter((k) => k.active && skills.some((s) => s.key === k.agentKey)).length;
+              return (
+                <li key={r.key} className="min-w-0">
+                  <Link
+                    href={`/settings?tab=agents&role=${r.key}`}
+                    className="group flex h-full flex-col gap-4 rounded-[18px] border border-line bg-surface p-5 transition-colors hover:border-faint/70 hover:bg-surface-2/40"
+                  >
+                    <div className="flex items-center gap-3">
+                      <AgentIcon icon={r.icon} size={38} />
+                      <div className="min-w-0 flex-1">
+                        <h3 className="truncate font-heading text-[17px] leading-tight">{r.label}</h3>
+                        <p className="text-[11px] text-faint">
+                          {skills.length} skills · {itemCount} playbook items
+                        </p>
+                      </div>
+                      {st.proposals > 0 ? (
+                        <span className="shrink-0 rounded-full bg-brand-soft px-2 py-0.5 text-[10px] text-brand-text">{st.proposals} to review</span>
+                      ) : (
+                        <span className="shrink-0 text-faint transition-transform group-hover:translate-x-0.5" aria-hidden>
+                          →
+                        </span>
+                      )}
+                    </div>
+                    <p className="line-clamp-2 min-h-[2.6em] text-[13px] leading-relaxed text-muted">{r.description}</p>
+                    <ul className="grid divide-y divide-line rounded-[12px] border border-line bg-bg/40">
+                      {skills.map((s) => (
+                        <li key={s.key} className="flex items-center justify-between gap-3 px-3 py-2 text-[13px]">
+                          <span className="flex min-w-0 items-center gap-2">
+                            <span
+                              className={`h-1.5 w-1.5 shrink-0 rounded-full ${!s.live ? "border border-dashed border-faint" : s.stats.runs ? "bg-ok" : "bg-faint/50"}`}
+                              title={!s.live ? "Not switched on yet" : s.stats.runs ? "Used this week" : "Not used this week"}
+                            />
+                            <span className="truncate">{s.label}</span>
+                          </span>
+                          <span className="flex shrink-0 items-center gap-1.5 text-[11px] capitalize text-faint">
+                            <ModelMeter model={s.model} />
+                            {s.model}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="mt-auto flex items-center justify-between text-[11px] text-faint">
+                      <span>
+                        <span className="tabular text-fg">{st.runs}</span> runs this week
+                      </span>
+                      <span>{st.last ? `last used ${ago(st.last)}` : "not used yet"}</span>
+                    </div>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+
+        <section className="grid gap-4 rounded-[18px] border border-line bg-surface p-5 sm:p-6">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <h2 className="font-heading text-[20px]">Shared knowledge</h2>
-              <p className="mt-1 text-sm text-muted">Every agent reads these: how Kaizen works, Meta policy, formats and specs.</p>
+              <p className="mt-1 text-[13px] text-muted">Every agent reads these: how Kaizen works, Meta policy, formats and specs.</p>
             </div>
             <span className="tabular text-xs text-faint">~{shared.filter((k) => k.active).reduce((t, k) => t + tokensOf(k.body), 0).toLocaleString()} tokens</span>
           </div>
           <ItemList items={shared} agentKey={null} />
         </section>
-        <p className="text-center text-xs text-faint">Six agents, fixed. The Coach and the Ads Lab improve their skills; they never add new agents.</p>
       </div>
     </DirtyProvider>
   );
@@ -1049,7 +1105,6 @@ export function RoleDetail({ role, skills, items }: { role: Role; skills: Agent[
   const [core, setCore] = useState(role.core);
   useDirty(`core:${role.key}`, core !== role.core, { label: `${role.label} core`, save: () => saveRoleCore(role.key, core), discard: () => setCore(role.core) });
   const st = roleStats(skills);
-  const tint = TINT[role.icon] ?? TINT.spark;
   return (
     <DirtyProvider>
       <div className="grid gap-6 pb-24">
@@ -1057,7 +1112,6 @@ export function RoleDetail({ role, skills, items }: { role: Role; skills: Agent[
           ← All agents
         </Link>
         <header className="relative overflow-hidden rounded-[20px] border border-line bg-surface p-6 sm:p-8">
-          <span aria-hidden className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full opacity-20 blur-3xl" style={{ background: tint }} />
           <div className="relative flex flex-wrap items-start gap-5">
             <AgentIcon icon={role.icon} size={64} />
             <div className="min-w-0 flex-1">
