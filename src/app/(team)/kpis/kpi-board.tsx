@@ -102,7 +102,7 @@ function TargetFields({ row, buyers, platform, ctl }: { row?: KpiRow; buyers: Pe
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <label className={label}>
         Counts as a result
-        <select name="conversion" value={conv} onChange={(e) => setConv(e.target.value)} className={field}>
+        <select name="conversion" data-manual value={conv} onChange={(e) => setConv(e.target.value)} className={field}>
           {CONVERSIONS.filter((c) => c.platforms.includes(platform)).map((c) => (
             <option key={c.key} value={c.key}>
               {c.label}
@@ -145,7 +145,7 @@ function TargetFields({ row, buyers, platform, ctl }: { row?: KpiRow; buyers: Pe
           Only campaigns containing <span className="font-normal text-faint">(optional)</span>
         </span>
         {ctl ? (
-          <input name="campaign_match" value={ctl.match} onChange={(e) => ctl.setMatch(e.target.value)} className={field} placeholder="e.g. Bridal Boudoir" />
+          <input name="campaign_match" data-manual value={ctl.match} onChange={(e) => ctl.setMatch(e.target.value)} className={field} placeholder="e.g. Bridal Boudoir" />
         ) : (
           <input name="campaign_match" defaultValue={row?.campaignMatch ?? ""} className={field} placeholder="e.g. Bridal Boudoir" />
         )}
@@ -161,7 +161,7 @@ function TargetFields({ row, buyers, platform, ctl }: { row?: KpiRow; buyers: Pe
           Meta custom conversion
           {ctl ? (
             <>
-              <input name="custom_action" list={`actions-${row?.id}`} value={ctl.custom} onChange={(e) => ctl.setCustom(e.target.value)} className={`${field} tabular`} placeholder="offsite_conversion.custom.123456789" />
+              <input name="custom_action" data-manual list={`actions-${row?.id}`} value={ctl.custom} onChange={(e) => ctl.setCustom(e.target.value)} className={`${field} tabular`} placeholder="offsite_conversion.custom.123456789" />
               <datalist id={`actions-${row?.id}`}>
                 {ctl.actions.map((a) => (
                   <option key={a.type} value={a.type}>
@@ -692,7 +692,7 @@ function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
               <ActionButton action={archiveKpiTarget.bind(null, r.id)} label="Remove" confirmText="Remove this KPI?" />
             </div>
           </div>
-          <ActionForm action={saveKpiTarget.bind(null, r.id, r.clientId)} submitLabel={previewing ? `Save, counting ${convLabel}` : "Save"} className="grid gap-4">
+          <ActionForm action={saveKpiTarget.bind(null, r.id, r.clientId)} submitLabel={`Save, counting ${convLabel}`} autosave={!previewing} button={previewing} className="grid gap-4">
             <TargetFields row={r} buyers={buyers} platform={r.platform} ctl={{ conv, setConv, custom, setCustom, match, setMatch, actions: ex?.actions ?? [] }} />
           </ActionForm>
         </div>

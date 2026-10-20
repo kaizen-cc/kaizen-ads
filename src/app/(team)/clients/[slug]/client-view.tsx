@@ -570,7 +570,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
           </Section>
                   <Section title="Details">
             {can.admin ? (
-              <ActionForm action={saveClientDetails.bind(null, client.id, client.slug)} submitLabel="Save details" className="grid gap-5">
+              <ActionForm action={saveClientDetails.bind(null, client.id, client.slug)} submitLabel="Save details" autosave className="grid gap-5">
                 <div className="grid grid-cols-2 gap-3">
                   <label className={label}>
                     Status

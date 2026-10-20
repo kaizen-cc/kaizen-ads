@@ -261,7 +261,7 @@ export function PackagePanel({
       </div>
 
       {can.allot && !editing && (
-        <ActionForm action={saveAllotment} submitLabel="Save allotment" className="grid gap-4 border-t border-line pt-5">
+        <ActionForm action={saveAllotment} submitLabel="Save allotment" autosave className="grid gap-4 border-t border-line pt-5">
           <div className="grid grid-cols-2 gap-3">
             <label className={label}>
               Images / month
