@@ -144,8 +144,8 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
   const needsSetup = [!contacts.length, !client.slack_channel_id, !client.drive_folder_id].filter(Boolean).length;
   const sprintMoves = Object.values(sprints ?? {}).reduce((n, s) => n + Math.max(0, s.total - s.done), 0);
   const inMotion = [
-    { label: "creative in production", value: creative?.moving.length ?? 0, href: tab("overview") },
-    { label: "ads live now", value: creative?.live.length ?? 0, href: tab("overview") },
+    { label: "creative in production", value: creative?.moving.length ?? 0, href: tab("creative") },
+    { label: "ads live now", value: creative?.live.length ?? 0, href: tab("creative") },
     { label: "sprint moves open", value: sprintMoves, href: tab("overview") },
     { label: "creatives this month", value: imagesUsed + videosUsed, href: tab("creative") },
   ].filter((m) => m.value > 0);
@@ -211,21 +211,22 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
           {
             id: "overview",
             label: "Overview",
-            hint: "Performance, audits and sprints, ads wearing out, creative in motion and live, the market",
+            hint: "Performance against target, audits and sprints, change history, ads wearing out",
             content: (
               <div className="grid gap-6">
                 {kpis && <KpiPanel kpis={kpis} audits={audits} changes={changes} />}
                 {live && fatigue && fatigue.length > 0 && <FatigueWatch rows={fatigue} showClient={false} />}
-                {creative && <CreativePanel data={creative} />}
-                {!demo && live && market.length > 0 && <MarketPanel clientId={client.id} industry={client.industry ?? null} label={client.industry_detail ?? industryLabel(client.industry) ?? "their industry"} ads={market} />}
               </div>
             ),
           },
           {
             id: "creative",
             label: "Creative",
-            hint: "Assets and the shot list, the creative package and allotment, angles",
+            hint: "Creative in motion, launched and live; what's working in the market; assets and the shot list; the package and allotment; angles",
             content: (
+              <div className="grid gap-6">
+                {creative && <CreativePanel data={creative} />}
+                {!demo && live && market.length > 0 && <MarketPanel clientId={client.id} industry={client.industry ?? null} label={client.industry_detail ?? industryLabel(client.industry) ?? "their industry"} ads={market} />}
               <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
                 <div className="grid min-w-0 gap-6">
                   {assets && !demo && client.creative_package && <ShotListPanel clientId={client.id} slug={client.slug} assets={assets} latest={shotList} live={live} />}
@@ -294,6 +295,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
             saveAllotment={saveAllotment.bind(null, client.id, client.slug)}
           />
                 </div>
+              </div>
               </div>
             ),
           },
