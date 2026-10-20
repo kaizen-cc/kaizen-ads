@@ -1,8 +1,9 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-// /api/cron/ (Vercel Cron) and /api/zapier/ (Zapier) check their own secrets; /p/ is a playbook share link (secret token, no names)
-const PUBLIC_PATHS = ["/login", "/auth/", "/p/", "/api/cron/", "/api/zapier/", "/manifest.webmanifest"];
+// /api/cron/ (Vercel Cron) and /api/zapier/ (Zapier) check their own secrets; /p/ is a playbook share link (secret token, no names);
+// /r/ is a client's monthly report link (secret token, read-only)
+const PUBLIC_PATHS = ["/login", "/auth/", "/p/", "/r/", "/api/cron/", "/api/zapier/", "/manifest.webmanifest"];
 
 // Refreshes the Supabase session cookie on every request and sends signed-out
 // visitors to /login (keeping where they were headed). Real authorization is RLS.
