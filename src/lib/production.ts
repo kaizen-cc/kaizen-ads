@@ -210,7 +210,10 @@ export async function loadProduction(db: SupabaseClient, days = 30): Promise<Pro
       if (!s.holder) return;
       const card = cardFor(s.holder);
       if (!card) return;
-      const mine = card.kind === "creative" ? MAKE.includes(s.col) : s.col === "copy";
+      // A designer who works a piece straight out of the Creative Brief column (never moving it to In Progress) made it
+      // there: that span counts once it's passed on, not while it's waiting in the brief column
+      const madeFromBrief = card.kind === "creative" && s.col === "brief" && s.to != null && s.next != null && s.next !== "brief";
+      const mine = card.kind === "creative" ? MAKE.includes(s.col) || madeFromBrief : s.col === "copy";
       if (!mine) return;
       // Still on them: counts as sitting once it's been 2+ business days
       if (!s.to) {
