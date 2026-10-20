@@ -151,7 +151,7 @@ async function personName(id: string | undefined) {
 
 const permalink = (channel: string, ts: string) => `https://slack.com/archives/${channel}/p${ts.replace(".", "")}`;
 
-async function readChannel(channel: string, since: Date, clientId: string, source: ContextItem["source"]) {
+export async function readChannel(channel: string, since: Date, clientId: string, source: ContextItem["source"]) {
   const oldest = (since.getTime() / 1000).toFixed(6);
   const items: ContextItem[] = [];
   const { messages } = await slack<{ messages: SlackMessage[] }>("conversations.history", { channel, oldest, limit: "200" });

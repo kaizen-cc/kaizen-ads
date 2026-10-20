@@ -194,7 +194,8 @@ async function folderTree(token: string, roots: string[], driveId?: string) {
   return { parentOf, nameOf };
 }
 
-export async function collectDrive(admin: SupabaseClient, since: Date, t?: Tracker): Promise<CollectResult> {
+/** reread: client folders to read again in full, as if new (a client back from a pause or the archive) */
+export async function collectDrive(admin: SupabaseClient, since: Date, t?: Tracker, reread?: Set<string>): Promise<CollectResult> {
   const root = process.env.GOOGLE_SHARED_DRIVE_ID;
   const user = process.env.GOOGLE_DRIVE_USER;
   if (!root || !user) return { items: [], notes: { skipped: "GOOGLE_SHARED_DRIVE_ID or GOOGLE_DRIVE_USER not set" } };
@@ -241,10 +242,10 @@ export async function collectDrive(admin: SupabaseClient, since: Date, t?: Track
     return undefined;
   };
   const { data: seen } = await admin.from("sync_state").select("source").or("source.like.drive:%,source.like.assets:%");
-  const known = new Set((seen ?? []).filter((r) => (r.source as string).startsWith("drive:")).map((r) => (r.source as string).slice(6)));
+  const known = new Set((seen ?? []).filter((r) => (r.source as string).startsWith("drive:")).map((r) => (r.source as string).slice(6)).filter((f) => !reread?.has(f)));
   // A client folder whose assets haven't been catalogued yet is listed in full once (every photo, video and design
   // file it holds); after that only what's new is read
-  const catalogued = new Set((seen ?? []).filter((r) => (r.source as string).startsWith("assets:")).map((r) => (r.source as string).slice(7)));
+  const catalogued = new Set((seen ?? []).filter((r) => (r.source as string).startsWith("assets:")).map((r) => (r.source as string).slice(7)).filter((f) => !reread?.has(f)));
   const monthAgo = new Date(Date.now() - 30 * 86_400_000);
   const feedFrom = (top: string | undefined) => (top && known.has(top) ? since : monthAgo).toISOString();
   const groups = new Map<string, string[]>(); // since → folders

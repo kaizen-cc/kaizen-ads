@@ -25,6 +25,21 @@ export type HandoffDoc = {
   firstWeek: string[];
 };
 
+/** A client back from a pause or the archive: the buyer's brief for picking the account back up. */
+export type ComebackDoc = {
+  headline: string;
+  summary: string;
+  away: { since: string; length: string; why: string };
+  leftOff: { state: string; lastMoves: string[]; unfinished: string[] };
+  sinceThen: string[];
+  now: string;
+  dos: string[];
+  donts: string[];
+  keepInMind: string[];
+  restart: { step: string; why: string }[];
+  askClient: string[];
+};
+
 /** level: how much thinking the answer got (quick, standard, deep); researched: it searched the web for it */
 export type ChatTurn = { role: "user" | "assistant"; text: string; at: string; by?: string; level?: "quick" | "standard" | "deep"; researched?: boolean };
 
@@ -58,6 +73,31 @@ keepInMind: the major things that could go wrong or that the client is sensitive
 similar: accounts already on the new buyer's list that are similar (same market or sub-vertical), with why they're alike and what to borrow from how that account is run. Only from the list you're given; empty if none is truly similar.
 firstWeek: 3 to 6 concrete first moves for the new buyer, in order.`;
 
+const COMEBACK_SCHEMA = obj({
+  headline: S,
+  summary: S,
+  away: obj({ since: S, length: S, why: S }),
+  leftOff: obj({ state: S, lastMoves: LIST, unfinished: LIST }),
+  sinceThen: LIST,
+  now: S,
+  dos: LIST,
+  donts: LIST,
+  keepInMind: LIST,
+  restart: { type: "array", items: obj({ step: S, why: S }) },
+  askClient: LIST,
+});
+
+const COMEBACK_SYSTEM = `You write the comeback brief for a media buyer at Kaizen Marketing whose client has just come back after a pause (or after being archived). The buyer needs to pick the account back up well: where we left it, what changed while we were away, and what to do first. Use only what you're given; never invent. When something isn't in the data, say so plainly rather than guessing. Plain, direct, specific: campaigns, offers, audiences, numbers, dates. Refer to Kaizen people by role ("the previous buyer", "the copywriter"), not by name; the client's own contacts by name.
+headline: where the account stands coming back, at most 14 words. summary: 3 to 5 sentences: who the client is, why and when we stopped, how the account looked then versus now, and the single most important thing for the restart.
+away: since (the date we last worked the account, from the archive date or, failing that, the last change, ticket or message from the team), length (how long, in words), why (the reason given, or "no reason recorded").
+leftOff: state (how the account was performing against its KPI when we stopped, and what was running), lastMoves (the last changes made in the ad accounts before we stopped, newest first, up to 8, with dates), unfinished (sprint moves, tickets, promises and anything else left open).
+sinceThen: what happened while we were away, newest first: changes in the ad accounts (by anyone), spend, what the client said or sent, new files on their Drive. Empty if nothing.
+now: what the fresh sync shows today: is anything spending, which campaigns are on or off, the KPI versus target where there are numbers, anything broken (disapproved ads, a disabled account, missing tracking).
+dos and donts: the rules for this client's ads, creative and copy, from the client memory, Brand Bible and what they've said (up to 6 each).
+keepInMind: what could go wrong on the restart or what the client is sensitive about (up to 6).
+restart: 4 to 8 concrete steps to bring the account back, in order, each with why. Start with the checks (access, billing, tracking, offers still current) before spending.
+askClient: questions to confirm with the client before relaunching (offers, budget, goals, anything that may have changed). Up to 6.`;
+
 /** The account's work moves to the new buyer: its Meta KPI, open tickets they'd hold, and its optimization sprints. */
 async function moveWork(admin: SupabaseClient, clientId: string, fromId: string | null, toId: string) {
   const moved = { kpis: 0, tickets: 0, held: 0, sprints: 0 };
@@ -86,7 +126,10 @@ export async function handOff(admin: SupabaseClient, clientId: string, fromId: s
   // still moves to them, but there's nobody to read a doc
   const { data: buyer } = await admin.from("profiles").select("auth_user_id").eq("id", toId).maybeSingle();
   if (!buyer?.auth_user_id) return null;
-  const { data } = await admin.from("account_handoffs").insert({ client_id: clientId, from_id: fromId, to_id: toId, by_id: byId, via, moved }).select("id").single();
+  // A client back live in the last two weeks: the new buyer gets the comeback brief (where it was left, how to restart)
+  const { data: c } = await admin.from("clients").select("reactivated_at").eq("id", clientId).maybeSingle();
+  const kind = c?.reactivated_at && Date.now() - new Date(c.reactivated_at).getTime() < 14 * 86_400_000 ? "comeback" : "handoff";
+  const { data } = await admin.from("account_handoffs").insert({ client_id: clientId, from_id: fromId, to_id: toId, by_id: byId, via, moved, kind }).select("id").single();
   return (data?.id as string | undefined) ?? null;
 }
 
@@ -152,9 +195,10 @@ export async function accountBrief(admin: SupabaseClient, clientId: string, buye
 
 /** Writes the handoff doc. Safe to run again (a retry, or "Write it again"). */
 export async function writeHandoff(admin: SupabaseClient, id: string) {
-  const { data: h } = await admin.from("account_handoffs").select("client_id, to_id, from_id, moved").eq("id", id).single();
+  const { data: h } = await admin.from("account_handoffs").select("client_id, to_id, from_id, moved, kind").eq("id", id).single();
   if (!h) return;
   await admin.from("account_handoffs").update({ status: "writing", error: null }).eq("id", id);
+  if (h.kind === "comeback") return writeComeback(admin, id, h.client_id);
   try {
     const b = await accountBrief(admin, h.client_id, h.to_id);
     const doc = await askJson<HandoffDoc>({
@@ -170,6 +214,96 @@ export async function writeHandoff(admin: SupabaseClient, id: string) {
   } catch (e) {
     await admin.from("account_handoffs").update({ status: "failed", error: (e instanceof Error ? e.message : String(e)).slice(0, 300) }).eq("id", id);
   }
+}
+
+/** Where the account was left, what happened since, and what it looks like now (after the fresh sync). */
+async function comebackFacts(admin: SupabaseClient, clientId: string) {
+  const [{ data: c }, { data: archived }, { data: targets }] = await Promise.all([
+    admin.from("clients").select("name, meta_ad_account_id, reactivated_at").eq("id", clientId).single(),
+    admin.from("client_archive_events").select("at, reason, source, from_status").eq("client_id", clientId).eq("action", "archived").order("at", { ascending: false }).limit(1),
+    admin.from("kpi_targets").select("id, platform, label, ad_account_id, conversion, target, monthly_budget, sheet").eq("client_id", clientId).eq("active", true),
+  ]);
+  const accounts = [...new Set([c?.meta_ad_account_id, ...(targets ?? []).map((t) => t.ad_account_id)].filter(Boolean) as string[])].flatMap((a) => [a, `act_${a}`, a.replace(/^act_/, "")]);
+  const backAt: string = c?.reactivated_at ?? new Date().toISOString();
+  const stoppedAt: string = archived?.[0]?.at ?? backAt;
+  const [{ data: changes }, { data: snaps }, { data: audit }, { data: sprint }, { data: before }, { data: during }, { data: tickets }] = await Promise.all([
+    accounts.length ? admin.from("ad_account_changes").select("at, who, what, object, platform").in("ad_account_id", accounts).order("at", { ascending: false }).limit(40) : Promise.resolve({ data: [] }),
+    (targets ?? []).length ? admin.from("kpi_snapshots").select("target_id, status, windows, data_through").in("target_id", (targets ?? []).map((t) => t.id)) : Promise.resolve({ data: [] }),
+    admin.from("account_audits").select("created_at, result").eq("client_id", clientId).not("result", "is", null).order("created_at", { ascending: false }).limit(1),
+    admin.from("optimization_sprints").select("status, started_at, sprint_actions(title, status, when, why)").eq("client_id", clientId).order("started_at", { ascending: false }).limit(1),
+    admin.from("context_items").select("source, occurred_at, author, title, body").eq("client_id", clientId).lt("occurred_at", stoppedAt).order("occurred_at", { ascending: false }).limit(30),
+    archived?.[0] ? admin.from("context_items").select("source, occurred_at, author, title, body").eq("client_id", clientId).gte("occurred_at", stoppedAt).order("occurred_at", { ascending: false }).limit(40) : Promise.resolve({ data: [] }),
+    admin.from("requests").select("number, title, stage, updated_at").eq("client_id", clientId).is("deleted_at", null).order("updated_at", { ascending: false }).limit(6),
+  ]);
+  type Item = { occurred_at: string; source: string; author: string | null; title: string | null; body: string | null };
+  const snap = new Map((snaps ?? []).map((x) => [x.target_id as string, x]));
+  const line = (i: Item) => `- ${String(i.occurred_at).slice(0, 10)} [${i.source}${i.author ? `, ${i.author}` : ""}] ${i.title ?? ""}: ${(i.body ?? "").replace(/\s+/g, " ").slice(0, 400)}`;
+  const s0 = sprint?.[0];
+  return [
+    `<coming_back>Back live on ${backAt.slice(0, 10)}.${
+      archived?.[0]
+        ? ` Archived on ${String(archived[0].at).slice(0, 10)} (was ${archived[0].from_status ?? "unknown"}), reason: ${archived[0].reason ?? "none recorded"}, via ${archived[0].source ?? "the team"}.`
+        : " Was paused (no archive record): infer when work stopped from the last changes, tickets and messages."
+    }</coming_back>`,
+    `<kpi_now note="after a fresh sync today">`,
+    ...(targets ?? []).map((t) => {
+      const s = snap.get(t.id as string);
+      return `- ${t.platform}${t.label ? ` · ${t.label}` : ""} (${t.ad_account_id ?? "no account"}): counts ${t.conversion}, target ${t.target ?? "not set"}, monthly budget ${t.monthly_budget ?? "not set"}; status ${s?.status ?? "no numbers"}, data through ${s?.data_through ?? "n/a"}; windows ${JSON.stringify(s?.windows ?? {}).slice(0, 1500)}${t.sheet ? `; buyer's notes ${JSON.stringify(t.sheet).slice(0, 800)}` : ""}`;
+    }),
+    `</kpi_now>`,
+    `<ad_account_changes newest_first>`,
+    ...(changes ?? []).map((x) => `- ${String(x.at).slice(0, 10)} ${x.platform}${x.who ? ` by ${x.who}` : ""}: ${x.what}${x.object ? ` (${x.object})` : ""}`),
+    `</ad_account_changes>`,
+    `<last_audit>${audit?.[0] ? `${String(audit[0].created_at).slice(0, 10)}: ${JSON.stringify(audit[0].result ?? {}).slice(0, 3000)}` : "none"}</last_audit>`,
+    `<last_sprint>${
+      s0 ? `${s0.status}, started ${String(s0.started_at).slice(0, 10)}\n${(s0.sprint_actions as unknown as { title: string; status: string; when: string; why: string }[]).map((a) => `- [${a.status}] ${a.title} (${a.when}): ${a.why}`).join("\n")}` : "none"
+    }</last_sprint>`,
+    `<last_tickets>`,
+    ...(tickets ?? []).map((t) => `- #${t.number} ${t.title}: ${t.stage}, last touched ${String(t.updated_at).slice(0, 10)}`),
+    `</last_tickets>`,
+    `<before_we_stopped newest_first>`,
+    ...((before ?? []) as Item[]).map(line),
+    `</before_we_stopped>`,
+    `<while_away newest_first>`,
+    ...((during ?? []) as Item[]).map(line),
+    `</while_away>`,
+  ].join("\n");
+}
+
+/** Writes a comeback brief: the client context, plus where we left the account and what's changed since. */
+async function writeComeback(admin: SupabaseClient, id: string, clientId: string) {
+  try {
+    const b = await accountBrief(admin, clientId, null);
+    const facts = await comebackFacts(admin, clientId);
+    const doc = await askJson<ComebackDoc>({
+      agent: "strategist",
+      label: "comeback brief",
+      system: COMEBACK_SYSTEM,
+      schema: COMEBACK_SCHEMA,
+      maxTokens: 24000,
+      onText: () => {},
+      prompt: `${b.text}\n\n${facts}\n\nWrite the comeback brief for the media buyer picking ${b.name} back up.`,
+    });
+    await admin.from("account_handoffs").update({ status: "ready", doc, ready_at: new Date().toISOString() }).eq("id", id);
+  } catch (e) {
+    await admin.from("account_handoffs").update({ status: "failed", error: (e instanceof Error ? e.message : String(e)).slice(0, 300) }).eq("id", id);
+  }
+}
+
+/** A client back live: a comeback brief for each of their buyers (Meta and Google) who uses Kaizen Ads, once a day at most. */
+export async function startComebacks(admin: SupabaseClient, clientId: string, byId: string | null) {
+  const { data: buyers } = await admin.from("client_assignments").select("profile_id, profiles(auth_user_id)").eq("client_id", clientId).in("role", ["meta_buyer", "google_buyer"]);
+  const ids = [...new Set((buyers ?? []).filter((b) => (b.profiles as unknown as { auth_user_id: string | null } | null)?.auth_user_id).map((b) => b.profile_id as string))];
+  const since = new Date(Date.now() - 20 * 3_600_000).toISOString();
+  const made: string[] = [];
+  for (const to of ids) {
+    const { data: recent } = await admin.from("account_handoffs").select("id").eq("client_id", clientId).eq("to_id", to).eq("kind", "comeback").gte("created_at", since).limit(1);
+    if (recent?.length) continue;
+    const { data } = await admin.from("account_handoffs").insert({ client_id: clientId, to_id: to, by_id: byId, via: "reactivated", kind: "comeback" }).select("id").single();
+    if (data?.id) made.push(data.id as string);
+  }
+  await Promise.all(made.map((id) => writeHandoff(admin, id)));
+  return made.length;
 }
 
 const CHAT_SYSTEM = `You answer a Kaizen media buyer's questions about one client account they're running. Use only what you're given (the client context, the last 45 days, what's open, the handoff); when it isn't there, say so plainly and say who or where to ask (the client page, the previous buyer's notes, the client). Be brief and specific, like a colleague who knows the account: 1 to 6 sentences or a short list. Say where a fact comes from when it matters ("the client said on the Oct 9 call"). Plain text, no markdown (no asterisks or headings); start list lines with "- ". No emojis.`;

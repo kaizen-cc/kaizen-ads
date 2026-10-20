@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import { notFound } from "next/navigation";
 import { requireStaff } from "@/lib/auth";
-import type { ChatTurn, HandoffDoc } from "@/lib/handoff";
+import type { ChatTurn, ComebackDoc, HandoffDoc } from "@/lib/handoff";
 import { createClient } from "@/lib/supabase/server";
 import { AccountChat, HandoffBar, Seen, Writing } from "./handoff-parts";
 
@@ -20,7 +20,7 @@ export default async function HandoffPage({ params }: PageProps<"/handoff/[id]">
   const { data: h } = await db
     .from("account_handoffs")
     .select(
-      "id, status, doc, error, chat, created_at, to_id, seen_at, via, moved, clients(name, slug), to:profiles!account_handoffs_to_id_fkey(full_name), from:profiles!account_handoffs_from_id_fkey(full_name)",
+      "id, kind, status, doc, error, chat, created_at, to_id, seen_at, via, moved, clients(name, slug), to:profiles!account_handoffs_to_id_fkey(full_name), from:profiles!account_handoffs_from_id_fkey(full_name)",
     )
     .eq("id", id)
     .maybeSingle();
@@ -28,7 +28,9 @@ export default async function HandoffPage({ params }: PageProps<"/handoff/[id]">
   const client = h.clients as unknown as { name: string; slug: string };
   const to = (h.to as unknown as { full_name: string } | null)?.full_name ?? "the new buyer";
   const from = (h.from as unknown as { full_name: string } | null)?.full_name ?? null;
-  const d = h.doc as HandoffDoc | null;
+  const comeback = h.kind === "comeback";
+  const d = comeback ? null : (h.doc as HandoffDoc | null);
+  const cb = comeback ? (h.doc as ComebackDoc | null) : null;
   const moved = (h.moved ?? {}) as { kpis?: number; tickets?: number; held?: number; sprints?: number };
   const date = new Date(h.created_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "America/New_York" });
   const movedLine = [
@@ -47,19 +49,25 @@ export default async function HandoffPage({ params }: PageProps<"/handoff/[id]">
           <header className="grid gap-6 border-b border-[#e7e2e3] pb-8">
             <div className="flex items-center justify-between gap-4">
               <Image src="/kaizen-logo.png" alt="Kaizen Marketing" width={120} height={28} className="h-7 w-auto" />
-              <p className="text-xs uppercase tracking-[0.18em] text-[#8a8189]">Account handoff · {date}</p>
+              <p className="text-xs uppercase tracking-[0.18em] text-[#8a8189]">{comeback ? "Back live" : "Account handoff"} · {date}</p>
             </div>
             <div className="grid gap-2">
               <p className="text-sm font-medium text-[#c8102e]">
-                {client.name} · {from ? `${from} → ${to}` : `for ${to}`}
+                {client.name} · {comeback ? `picking it back up, for ${to}` : from ? `${from} → ${to}` : `for ${to}`}
               </p>
-              <h1 className="text-[24px] font-semibold leading-[1.2] tracking-tight sm:text-[28px]">{d?.headline ?? `${client.name} is yours now`}</h1>
-              {d && <p className="max-w-[62ch] text-[15px] leading-relaxed text-[#4d464f]">{d.summary}</p>}
+              <h1 className="text-[24px] font-semibold leading-[1.2] tracking-tight sm:text-[28px]">{(cb ?? d)?.headline ?? (comeback ? `${client.name} is back` : `${client.name} is yours now`)}</h1>
+              {(cb ?? d) && <p className="max-w-[62ch] text-[15px] leading-relaxed text-[#4d464f]">{(cb ?? d)!.summary}</p>}
               {movedLine.length > 0 && <p className="text-xs text-[#8a8189]">Moved to {to}: {movedLine.join(", ")}.</p>}
             </div>
           </header>
 
-          {!d ? (
+          {comeback ? (
+            cb ? (
+              <Comeback d={cb} client={client.name} />
+            ) : (
+              <Writing id={id} status={h.status} error={h.error} />
+            )
+          ) : !d ? (
             <Writing id={id} status={h.status} error={h.error} />
           ) : (
             <>
@@ -167,6 +175,90 @@ export default async function HandoffPage({ params }: PageProps<"/handoff/[id]">
     </div>
   );
 }
+
+/** The comeback brief: where we left the account, what happened while we were away, where it is now, how to restart. */
+function Comeback({ d, client }: { d: ComebackDoc; client: string }) {
+  return (
+    <>
+      <div className="grid gap-3 sm:grid-cols-3 print:grid-cols-3">
+        <Stat k="Last worked" v={d.away.since} />
+        <Stat k="Away for" v={d.away.length} />
+        <Stat k="Why we stopped" v={d.away.why} />
+      </div>
+
+      <Part n="1" title="Where we left it">
+        <p className="max-w-[66ch] text-[14px] leading-relaxed">{d.leftOff.state}</p>
+        <div className="grid gap-4 sm:grid-cols-2 print:grid-cols-2">
+          <Card title="Last moves in the account">
+            <Bullets items={d.leftOff.lastMoves} empty="No changes on record." small />
+          </Card>
+          <Card title="Left unfinished">
+            <Bullets items={d.leftOff.unfinished} empty="Nothing was left open." small />
+          </Card>
+        </div>
+      </Part>
+
+      <Part n="2" title="While we were away">
+        {d.sinceThen.length ? (
+          <ol className="grid gap-3 border-l border-[#e7e2e3] pl-5">
+            {d.sinceThen.map((x, i) => (
+              <li key={i} className="relative text-[14px] leading-relaxed break-inside-avoid">
+                <span className="absolute -left-[25px] top-2 h-2 w-2 rounded-full bg-[#c8102e]" />
+                {x}
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <Empty>Nothing on record while the account was off.</Empty>
+        )}
+      </Part>
+
+      <Part n="3" title="Where it is today">
+        <p className="max-w-[66ch] rounded-[8px] bg-[#f7f5f4] px-4 py-3 text-[14px] leading-relaxed">{d.now}</p>
+      </Part>
+
+      <Part n="4" title="Picking it back up">
+        <ol className="grid gap-3">
+          {d.restart.map((r, i) => (
+            <li key={i} className="grid grid-cols-[28px_minmax(0,1fr)] gap-3 break-inside-avoid">
+              <span className="grid h-7 w-7 place-items-center rounded-full bg-[#fbe7ea] text-xs font-semibold text-[#c8102e]">{i + 1}</span>
+              <span className="grid gap-0.5 pt-1">
+                <span className="text-[14px] font-medium leading-relaxed">{r.step}</span>
+                <span className="text-[13px] leading-relaxed text-[#4d464f]">{r.why}</span>
+              </span>
+            </li>
+          ))}
+        </ol>
+      </Part>
+
+      <Part n="5" title="Confirm with the client">
+        <Bullets items={d.askClient} empty="Nothing to confirm." />
+      </Part>
+
+      <Part n="6" title="Dos and don'ts">
+        <div className="grid gap-4 sm:grid-cols-2 print:grid-cols-2">
+          <Rules tone="do" title="Do" items={d.dos} />
+          <Rules tone="dont" title="Don't" items={d.donts} />
+        </div>
+      </Part>
+
+      <Part n="7" title="Keep in mind">
+        <Bullets items={d.keepInMind} empty="Nothing unusual." />
+      </Part>
+
+      <footer className="border-t border-[#e7e2e3] pt-6 text-[11px] text-[#8a8189]">
+        Written by Kaizen Ads after a full sync of {client}&apos;s ad accounts, Slack, email and Drive. Internal only.
+      </footer>
+    </>
+  );
+}
+
+const Stat = ({ k, v }: { k: string; v: string }) => (
+  <div className="grid content-start gap-1 rounded-[8px] border border-[#e7e2e3] px-4 py-3 break-inside-avoid">
+    <p className="text-[11px] uppercase tracking-[0.14em] text-[#8a8189]">{k}</p>
+    <p className="text-[14px] font-medium leading-snug">{v}</p>
+  </div>
+);
 
 function Part({ n, title, children }: { n: string; title: string; children: React.ReactNode }) {
   return (

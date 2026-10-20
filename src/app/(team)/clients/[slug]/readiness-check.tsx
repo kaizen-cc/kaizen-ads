@@ -115,7 +115,7 @@ export function ReadinessCheck({ clientId, slug, name, initial, team, autoOpen, 
                   <p className="text-sm text-muted">Everything the system needs is in. It&apos;s coming up now:</p>
                 </div>
                 <ul className="grid w-full max-w-sm gap-2 text-left text-sm">
-                  {["KPIs pulling from the ad accounts", "This week's and this month's reports queued, if still due", "Sprint check-ins back on", "Slack, Drive and the briefing on their next pass"].map((t) => (
+                  {["A full sync: ad accounts, Slack, email and Drive, from when we stopped", "This week's and this month's reports queued, if still due", "Sprint check-ins back on", "A comeback brief for each buyer: where we left it and how to restart"].map((t) => (
                     <li key={t} className="flex items-center gap-2.5 rounded-[10px] bg-white/[0.03] px-3 py-2">
                       <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ok" />
                       {t}

@@ -6,13 +6,16 @@ import { queueReports } from "@/lib/reports/run";
 import { linkAdAccounts, metaConfigured } from "@/lib/context/meta";
 import { sheetConfigured, syncAccountSheet } from "@/lib/account-sheet";
 import { clientReadiness } from "@/lib/readiness";
+import { hardSyncClient } from "@/lib/client-hard-sync";
+import { startComebacks } from "@/lib/handoff";
 
 // A client going live again (restored from the archive, set back to active from paused, or made active again in
-// Kaizen Track) goes straight back into the cycle instead of waiting for each scheduled run: the KPI row, fresh
-// numbers, this week's and this month's reports while they're still due, and the sprint check-ins. A client with no
-// ad account yet is looked for the way a new one is (Meta by name, the Account Overview and ops sheets). Then the
-// readiness check (src/lib/readiness.ts): anything still missing goes to whoever brought them back (or the execs). Everything else
-// (Slack, Drive, Asana, the briefing, fatigue, the market) already runs for every live client on its next pass.
+// Kaizen Track) goes straight back into the cycle instead of waiting for each scheduled run. A client with no ad
+// account yet is looked for the way a new one is (Meta by name, the Account Overview and ops sheets), then everything
+// about them is hard-synced (ad accounts, Slack, email, Drive, fatigue, the briefing), this week's and this month's
+// reports are queued while still due, and the sprint check-ins pick up. The readiness check (src/lib/readiness.ts)
+// sends anything still missing to whoever brought them back (or the execs), and each of their buyers gets a comeback
+// brief: where we left the account, what changed while we were away, and how to pick it back up.
 
 const DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -38,12 +41,19 @@ export async function backInCycle(admin: SupabaseClient, clientId: string, byId?
     }
   }
 
-  // Fresh numbers: while paused nothing was pulled, and reports only go to accounts that spent
-  try {
-    await refreshClientKpis(admin, clientId, true);
-    out.kpis = "refreshed";
-  } catch (e) {
-    out.kpis = e instanceof Error ? e.message : String(e);
+  // A hard sync of everything about them, from the day they went quiet (src/lib/client-hard-sync.ts): while away the
+  // scheduled syncs skipped them. Run again only when something new was connected (the readiness check saving an
+  // account, a channel or a folder); otherwise the numbers alone are refreshed
+  const { data: cfg } = await admin.from("clients").select("meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id").eq("id", clientId).single();
+  const { count: targetCount } = await admin.from("kpi_targets").select("id", { count: "exact", head: true }).eq("client_id", clientId).eq("active", true);
+  const stamp = JSON.stringify({ ...cfg, targets: targetCount ?? 0 });
+  const { data: last } = await admin.from("sync_state").select("last_result, last_run_at").eq("source", `comeback:${clientId}`).maybeSingle();
+  const fresh = last && (last.last_result as { stamp?: string } | null)?.stamp === stamp && Date.now() - new Date(last.last_run_at as string).getTime() < 6 * 3_600_000;
+  if (fresh) await refreshClientKpis(admin, clientId, true).catch((e) => (out.kpis = String(e)));
+  else {
+    const { data: away } = await admin.from("client_archive_events").select("at").eq("client_id", clientId).eq("action", "archived").order("at", { ascending: false }).limit(1);
+    out.sync = await hardSyncClient(admin, clientId, away?.[0]?.at ? new Date(away[0].at) : null);
+    await admin.from("sync_state").upsert({ source: `comeback:${clientId}`, last_run_at: new Date().toISOString(), cursor_at: new Date().toISOString(), last_result: { stamp, sync: out.sync } });
   }
 
   // Reports still due: this week's (Monday to Wednesday) and last month's recap (through the 5th)
@@ -76,5 +86,8 @@ export async function backInCycle(admin: SupabaseClient, clientId: string, byId?
       { onConflict: "profile_id,key", ignoreDuplicates: true },
     );
   }
+
+  // Last, on everything the sync just read: each buyer's comeback brief (a buyer assigned later gets one then)
+  out.comebacks = await startComebacks(admin, clientId, byId ?? null).catch((e) => String(e));
   return out;
 }
