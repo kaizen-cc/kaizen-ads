@@ -28,7 +28,8 @@ type Snap = {
 
 const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
 
-export default async function Kpis() {
+export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
+  const sp = await searchParams;
   const me = await requireStaff();
   const supabase = await createClient();
   const [{ data: targets }, { data: snaps }, { data: buyers }, { data: clients }, { data: audits }] = await Promise.all([
@@ -125,6 +126,15 @@ export default async function Kpis() {
 
   const lastSync = (snaps ?? []).map((s) => s.computed_at as string).sort().at(-1) ?? null;
   const mine = rows.some((r) => r.ownerId === me.id);
+  // Opened from somewhere about one account (?target=<id>, or ?client=<slug> with an optional &platform=): that card
+  // opens on its own tab, with everyone's accounts showing so it's never filtered out
+  const want = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : null);
+  const focus =
+    rows.find((r) => r.id === want("target")) ??
+    rows
+      .filter((r) => r.slug === want("client") && (!want("platform") || r.platform === want("platform")))
+      .sort((a, b) => (a.platform === b.platform ? 0 : a.platform === "meta" ? -1 : 1))[0] ??
+    null;
 
   return (
     <KpiBoard
@@ -132,7 +142,8 @@ export default async function Kpis() {
       buyers={(buyers ?? []).map((b) => ({ id: b.id, name: b.full_name }))}
       clients={clients ?? []}
       me={{ id: me.id, firstName: me.fullName.split(" ")[0] }}
-      initialOwner={mine ? me.id : "all"}
+      initialOwner={focus ? "all" : mine ? me.id : "all"}
+      focus={focus ? { id: focus.id, platform: focus.platform } : null}
       lastSync={lastSync}
       unlinked={unlinked}
       googleConnected={googleAdsConfigured()}

@@ -6,6 +6,7 @@ import { CallPromises } from "./call-promises";
 import { OnboardingCallout } from "./onboarding-callout";
 import { SuggestedBriefs } from "./suggested-briefs";
 import { AttentionList, ClientHealth, KpiPulse, type Alert, type ClientPulse, type KpiPulseData } from "./shared";
+import type { Theme } from "./themes";
 import { Topic, type TopicTile } from "./topics";
 
 // The topics execs and leads share on the Overview, each with its tile (what's in it, at a glance) and its panel
@@ -149,4 +150,67 @@ export function AllClear({ items }: { items: string[] }) {
       All clear: {items.join(", ")}.
     </p>
   );
+}
+
+/**
+ * The topics grouped into the few themes the Overview shows: clients at risk (promises, anything stuck, accounts off
+ * target), creative and growth (briefs, ads wearing out), new clients, and delivery (allotments, plus the work or the
+ * team passed in). Each theme carries its count, a one-line headline, a few points, and its topic panels.
+ */
+export function buildThemes(d: SharedTopics, extra: { first?: Theme | null; delivery?: { content: React.ReactNode; points: string[]; count: number } | null } = {}): Theme[] {
+  const built = [...actTopics(d), ...accountTopics(d)].filter((b) => b.tile && b.panel);
+  const by = (...ids: string[]) => built.filter((b) => ids.includes(b.tile!.id));
+  const sum = (bs: Built[]) => bs.reduce((n, b) => n + (Number(b.tile!.value) || 0), 0);
+  const SAY: Record<string, string> = { promises: "promises not started", attention: "stuck or late", kpis: "accounts off target", briefs: "briefs to decide", fatigue: "ads wearing out", allotments: "over allotment" };
+  const points = (bs: Built[]) => bs.filter((b) => Number(b.tile!.value)).map((b) => `${b.tile!.value} ${SAY[b.tile!.id] ?? b.tile!.label.toLowerCase()}`);
+
+  const risk = by("promises", "attention", "kpis");
+  const growth = by("briefs", "fatigue");
+  const fresh = by("onboarding");
+  const allot = by("allotments");
+  const deliveryCount = sum(allot) + (extra.delivery?.count ?? 0);
+  const themes: Theme[] = [];
+  if (extra.first) themes.push(extra.first);
+  themes.push({
+    id: "risk",
+    title: "Clients at risk",
+    tone: sum(risk) ? "bad" : "ok",
+    count: sum(risk),
+    headline: sum(risk) ? "Off-target accounts, promises not started, work that's stuck" : "Every account and promise is in hand",
+    points: points(risk),
+    content: risk.map((b) => b.panel),
+  });
+  themes.push({
+    id: "growth",
+    title: "Creative and growth",
+    tone: sum(growth) ? "brand" : "ok",
+    count: sum(growth),
+    headline: sum(growth) ? "Briefs to decide and ads that need replacing" : "Nothing waiting on a decision",
+    points: points(growth),
+    content: growth.map((b) => b.panel),
+  });
+  themes.push({
+    id: "new",
+    title: "New clients",
+    tone: sum(fresh) ? "warn" : "ok",
+    count: sum(fresh),
+    headline: sum(fresh) ? "Setup, intake and first rounds for clients getting started" : "No one onboarding right now",
+    points: fresh.map((b) => b.tile!.sub),
+    content: fresh.map((b) => b.panel),
+  });
+  themes.push({
+    id: "delivery",
+    title: "Delivery",
+    tone: deliveryCount ? "quiet" : "ok",
+    count: deliveryCount,
+    headline: deliveryCount ? "Creative allotments this month, and how the work is moving" : "Allotments on pace",
+    points: [...points(allot), ...(extra.delivery?.points ?? [])],
+    content: (
+      <>
+        {allot.map((b) => b.panel)}
+        {extra.delivery?.content}
+      </>
+    ),
+  });
+  return themes;
 }

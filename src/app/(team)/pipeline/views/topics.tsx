@@ -1,11 +1,17 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { createContext, useContext, useSyncExternalStore } from "react";
 
 // The Overview as topics: a row of tiles up top (what's going on, at a glance) and each topic below as a panel that
 // opens and closes. A tile opens its topic and brings it into view. Which topics are open is remembered per browser.
 
 export type TopicTone = "bad" | "warn" | "ok" | "brand" | "quiet";
+
+// Inside an opened theme every topic starts open (one theme is all that's on screen); closing one is remembered
+const OpenCtx = createContext(false);
+export function OpenTopics({ children }: { children: React.ReactNode }) {
+  return <OpenCtx.Provider value>{children}</OpenCtx.Provider>;
+}
 export type TopicTile = { id: string; label: string; value: number | string; sub: string; tone: TopicTone };
 
 const KEY = "kz:overview:open";
@@ -125,7 +131,9 @@ export function Topic({
   children: React.ReactNode;
 }) {
   const open = useOpen();
-  const isOpen = open === null ? defaultOpen : open.includes(id) || (defaultOpen && !open.includes(`closed:${id}`));
+  const inTheme = useContext(OpenCtx);
+  const startsOpen = defaultOpen || inTheme;
+  const isOpen = open === null ? startsOpen : open.includes(id) || (startsOpen && !open.includes(`closed:${id}`));
   const t = TONE[tone];
   return (
     <div

@@ -38,6 +38,8 @@ export type TodayItem = {
   why: string; // why it's this critical
   evidence: string[];
   action: { label: string; href?: string; suggestion?: OpenSuggestion };
+  /** The other place to look: the client page, or the account on the KPI board */
+  alt?: { label: string; href: string };
   state: "new" | "seen" | "saved"; // what this person has done with it so far
   carried: boolean; // came up on an earlier day and is still open
   image?: string | null;
@@ -222,7 +224,8 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
           : `No ${what}s in the last 7 days on ${money(Number(d7?.spend ?? 0))} spent, against a ${money(Number(t.target))} target.`,
       why: priority === "high" ? "A high-priority account, off target" : budget >= 5000 ? "A big budget, off target" : "Off its KPI target",
       evidence: [(t.sheet as { problem?: string } | null)?.problem ? `#1 problem (sheet): ${(t.sheet as { problem: string }).problem}` : "", (s.budget as { status?: string } | null)?.status === "over" ? "Spending ahead of its monthly budget" : ""].filter(Boolean).slice(0, 2),
-      action: { label: "Open the KPI board", href: `/kpis?client=${c.slug}` },
+      action: { label: "Open on the KPI board", href: `/kpis?target=${t.id}` },
+      alt: { label: "Client page", href: `/clients/${c.slug}` },
     });
   }
 
@@ -279,7 +282,8 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
       story: `${r.client}'s ad is ${r.severity === "tired" ? "worn out and ready to replace" : "starting to slip"}.${r.briefId ? " A refresh brief is written and ready." : ""}`,
       why: r.severity === "tired" ? "Results slipping on a live ad" : "Early signs of wear",
       evidence: [],
-      action: { label: "Open the client", href: `/clients/${r.clientSlug}` },
+      action: { label: "Client page", href: `/clients/${r.clientSlug}` },
+      alt: { label: "KPI board", href: `/kpis?client=${r.clientSlug}` },
       image: r.thumbnail,
     });
   }
@@ -371,6 +375,7 @@ export async function loadToday(db: SupabaseClient, me: Staff): Promise<Today> {
       const score = d.score + (s?.status === "saved" && carried ? 4 : 0);
       return { ...d, score, tier: tierOf(score), state: ((s?.status as "seen" | "saved") ?? "new") as TodayItem["state"], carried };
     })
+    .map((i) => (i.alt || !i.clientSlug || i.action.href?.startsWith(`/clients/${i.clientSlug}`) ? i : { ...i, alt: { label: "Client page", href: `/clients/${i.clientSlug}` } }))
     .sort((a, b) => b.score - a.score);
   // Seen or saved before, not acted on by this person, and gone now: someone else took care of it
   const live = new Set(drafts.map((d) => d.key));

@@ -591,7 +591,7 @@ function Row({ r, open, onToggle, buyers }: { r: KpiRow; open: boolean; onToggle
   const d14 = r.windows.d14;
   const gap = gapText(r);
   return (
-    <li className={`overflow-hidden rounded-[14px] border bg-surface transition-colors ${open ? "border-faint/70" : "border-line hover:border-faint/60"}`}>
+    <li id={`kpi-${r.id}`} className={`scroll-mt-6 overflow-hidden rounded-[14px] border bg-surface transition-colors ${open ? "border-faint/70" : "border-line hover:border-faint/60"}`}>
       <button
         onClick={onToggle}
         aria-expanded={open}
@@ -770,6 +770,7 @@ export function KpiBoard({
   lastSync,
   unlinked = [],
   googleConnected = false,
+  focus = null,
 }: {
   rows: KpiRow[];
   buyers: Person[];
@@ -780,14 +781,22 @@ export function KpiBoard({
   unlinked?: { id: string; name: string }[];
   /** Google Ads is set up (it reads through the manager account); its KPIs fill in on the next sync */
   googleConnected?: boolean;
+  /** One account to open and bring into view (from a recap card, a notification or the client page) */
+  focus?: { id: string; platform: "meta" | "google" } | null;
 }) {
-  const [platform, setPlatform] = useState<"meta" | "google">("meta");
+  const [platform, setPlatform] = useState<"meta" | "google">(focus?.platform ?? "meta");
   const [owner, setOwner] = useState(initialOwner);
   const [status, setStatus] = useState<Status | "all">("all");
   const [pace, setPace] = useState<Pacing["status"] | "all">("all");
   const [q, setQ] = useState("");
-  const [open, setOpen] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(focus?.id ?? null);
   const [adding, setAdding] = useState(false);
+  // The focused card scrolls into view once it's on screen
+  useEffect(() => {
+    if (!focus) return;
+    const t = setTimeout(() => document.getElementById(`kpi-${focus.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 250);
+    return () => clearTimeout(t);
+  }, [focus]);
 
   const owners = useMemo(() => {
     const names = new Map<string, string>();
