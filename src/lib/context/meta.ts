@@ -756,3 +756,15 @@ export async function accountActivity(adAccountId: string, sinceDays = 30) {
     .map((a) => ({ at: a.event_time, who: a.actor_name ?? null, what: a.translated_event_type ?? a.event_type.replaceAll("_", " "), type: a.event_type, object: a.object_name ?? null, objectType: a.object_type ?? null }));
 }
 export type AccountActivity = Awaited<ReturnType<typeof accountActivity>>;
+
+/** Ads' shareable preview links (the fb.me ones a client can open without an account) and their images, for reports. */
+export async function adPreviews(adIds: string[]) {
+  const out = new Map<string, { link: string | null; image: string | null; headline: string | null }>();
+  if (!adIds.length) return out;
+  const res = await graph<Record<string, { id: string; preview_shareable_link?: string; creative?: { thumbnail_url?: string; image_url?: string; title?: string } }>>("", {
+    ids: adIds.slice(0, 50).join(","),
+    fields: "preview_shareable_link,creative{thumbnail_url,image_url,title}",
+  }).catch(() => ({}) as Record<string, never>);
+  for (const [id, a] of Object.entries(res)) out.set(id, { link: a.preview_shareable_link ?? null, image: a.creative?.image_url ?? a.creative?.thumbnail_url ?? null, headline: a.creative?.title ?? null });
+  return out;
+}

@@ -16,7 +16,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 export const MODEL_IDS = { opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5", haiku: "claude-haiku-5-5" } as const;
 export type ModelKey = keyof typeof MODEL_IDS;
 export type Effort = "low" | "medium" | "high";
-export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue" | "scripts" | "brandbible" | "creativecheck" | "creativereview" | "coach" | "strategist" | "lab" | "industry" | "calls" | "gtm" | "market" | "winners" | "verticals" | "auditor" | "google_auditor" | "google_launcher";
+export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue" | "scripts" | "brandbible" | "creativecheck" | "creativereview" | "coach" | "strategist" | "lab" | "industry" | "calls" | "gtm" | "market" | "winners" | "verticals" | "auditor" | "google_auditor" | "google_launcher" | "reporter" | "google_reporter" | "report_qa";
 export const SOURCE_KEYS = ["meta", "briefing", "recent_messages", "memory", "angles", "recent_requests", "allotment", "kpis"] as const;
 export type Sources = Partial<Record<(typeof SOURCE_KEYS)[number], boolean>>;
 
@@ -55,6 +55,9 @@ const DEFAULTS: Record<AgentKey, Pick<AgentConfig, "model" | "effort">> = {
   gtm: { model: "opus", effort: "high" }, // the Meta go-to-market strategy at onboarding (research, then the document)
   industry: { model: "sonnet", effort: "low" }, // sorts clients into industries from everything known about them
   strategist: { model: "opus", effort: "medium" }, // suggests briefs to execs and leads from the data
+  reporter: { model: "opus", effort: "medium" }, // the weekly and monthly client report for a Meta account, in the buyer's voice
+  google_reporter: { model: "opus", effort: "medium" }, // the same for a Google Ads account
+  report_qa: { model: "opus", effort: "high" }, // checks every report's numbers and claims before the buyer sees it
   coach: { model: "opus", effort: "medium" }, // talking to an agent (its page) or one skill: edits its core and playbooks from feedback
 };
 
