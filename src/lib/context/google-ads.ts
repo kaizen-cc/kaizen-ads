@@ -6,9 +6,12 @@ import { JWT } from "google-auth-library";
 // manager (MCC) account. The same shape as Meta's daily rows, so the KPI board, audits, the daily recap and
 // notifications treat both alike. Read-only.
 //
+// Access belongs to the Google Cloud project that owns the sign-in (developer tokens were retired on Sep 9, 2026):
+// enable the Google Ads API in that project and apply for Explorer access (production accounts, 2,880 operations a
+// day; this uses roughly two per account every two hours) on its Google Ads API Overview page.
 // What it needs in Vercel:
-//   GOOGLE_ADS_DEVELOPER_TOKEN   from the manager account's API Center (needs Basic access to read client accounts)
 //   GOOGLE_ADS_LOGIN_CUSTOMER_ID the manager (MCC) account's ID, digits only
+//   GOOGLE_ADS_DEVELOPER_TOKEN   optional: still sent if set, ignored by Google since the sunset
 // and one way to sign in, either:
 //   GOOGLE_ADS_CLIENT_ID, GOOGLE_ADS_CLIENT_SECRET, GOOGLE_ADS_REFRESH_TOKEN   (OAuth, as a user with MCC access), or
 //   GOOGLE_ADS_USER   a Workspace user with MCC access, signed in as through the existing service account
@@ -22,11 +25,10 @@ const BACKFILL_DAYS = 200;
 const env = (k: string) => process.env[k]?.trim() || "";
 const oauth = () => Boolean(env("GOOGLE_ADS_CLIENT_ID") && env("GOOGLE_ADS_CLIENT_SECRET") && env("GOOGLE_ADS_REFRESH_TOKEN"));
 const delegated = () => Boolean(env("GOOGLE_ADS_USER") && env("GOOGLE_SERVICE_ACCOUNT_JSON"));
-export const googleAdsConfigured = () => Boolean(env("GOOGLE_ADS_DEVELOPER_TOKEN") && env("GOOGLE_ADS_LOGIN_CUSTOMER_ID") && (oauth() || delegated()));
+export const googleAdsConfigured = () => Boolean(env("GOOGLE_ADS_LOGIN_CUSTOMER_ID") && (oauth() || delegated()));
 /** What's still missing, in plain words, for Sync health and the KPI board. */
 export function googleAdsMissing(): string[] {
   const out: string[] = [];
-  if (!env("GOOGLE_ADS_DEVELOPER_TOKEN")) out.push("GOOGLE_ADS_DEVELOPER_TOKEN");
   if (!env("GOOGLE_ADS_LOGIN_CUSTOMER_ID")) out.push("GOOGLE_ADS_LOGIN_CUSTOMER_ID (the MCC's ID)");
   if (!oauth() && !delegated()) out.push("a sign-in: GOOGLE_ADS_USER, or the OAuth client ID, secret and refresh token");
   return out;
@@ -64,7 +66,7 @@ async function search(customer: string, query: string): Promise<Row[]> {
     method: "POST",
     headers: {
       Authorization: `Bearer ${await accessToken()}`,
-      "developer-token": env("GOOGLE_ADS_DEVELOPER_TOKEN"),
+      ...(env("GOOGLE_ADS_DEVELOPER_TOKEN") ? { "developer-token": env("GOOGLE_ADS_DEVELOPER_TOKEN") } : {}),
       "login-customer-id": digits(env("GOOGLE_ADS_LOGIN_CUSTOMER_ID")),
       "Content-Type": "application/json",
     },
@@ -87,7 +89,9 @@ function explain(text: string, status: number) {
     const code = detail?.errorCode ? Object.values(detail.errorCode)[0] : "";
     msg = detail?.message ?? err?.message ?? msg;
     if (code === "USER_PERMISSION_DENIED" || /permission/i.test(msg)) return "Google Ads can't see this account through our manager account. Link it to the MCC (or check the customer ID).";
-    if (code === "DEVELOPER_TOKEN_NOT_APPROVED" || /developer token is only approved for use with test accounts/i.test(msg)) return "The developer token only has test access. Apply for Basic access in the MCC's API Center.";
+    if (/test account|not approved|access level/i.test(msg) || code === "DEVELOPER_TOKEN_NOT_APPROVED") return "Our Google Cloud project only has Test access. Apply for Explorer access on the Google Ads API Overview page in Cloud Console.";
+    if (/has not been used|is disabled|SERVICE_DISABLED/i.test(msg)) return "Turn on the Google Ads API in the Google Cloud project our service account belongs to.";
+    if (/unauthorized_client|delegation/i.test(msg)) return "Add the https://www.googleapis.com/auth/adwords scope to the service account's domain-wide delegation in Google Admin.";
     if (code === "CUSTOMER_NOT_ENABLED") return "This Google Ads account isn't enabled (cancelled or suspended).";
     if (status === 404 || /unsupported|deprecated/i.test(msg)) return `Google Ads API ${VERSION} isn't available. Set GOOGLE_ADS_API_VERSION to a current version. (${msg})`;
   } catch {
