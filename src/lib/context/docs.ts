@@ -28,8 +28,8 @@ const SCHEMA = {
       type: "array",
       items: {
         type: "object",
-        properties: { client: { type: "string" }, summary: { type: "string" }, points: { type: "array", items: { type: "string" } }, lessons: { type: "array", items: LESSON } },
-        required: ["client", "summary", "points", "lessons"],
+        properties: { client: { type: "string" }, summary: { type: "string" }, points: { type: "array", items: { type: "string" } }, lessons: { type: "array", items: LESSON }, background: { type: "array", items: { type: "string" } } },
+        required: ["client", "summary", "points", "lessons", "background"],
         additionalProperties: false,
       },
     },
@@ -43,7 +43,8 @@ kind: strategy, plan, audit, report, notes, brief or other.
 clients: one entry per client from the list the document says something specific about (a doc covering several accounts gets several entries). client: the name exactly as in the list. Empty when it isn't about a client: Kaizen's own business (hiring, HR, training, internal processes), blank templates, personal documents.
 summary: 2 to 4 sentences: what the document says and decides or recommends for that client.
 points: up to 8 short lines with the specifics (goals, offers, audiences, angles, budgets, dates, results, what's working or not, what the client wants). This is where a period's numbers and results go.
-lessons: only what stays true for months and should change how their ads, creative or copy are made: lasting preferences and dislikes (imagery, AI-generated visuals, tone, words, claims), rules, positioning, audiences, products, business changes, an angle or format that has proven itself. Not a month's metrics (ROAS, CPA, CTR, spend), one-off events or dates, plans for next month, or remarks about the document itself. One plain sentence each, ending with where it came from ("from the Q4 strategy doc"). kind: prefer (do this), avoid (don't), note (a fact to know). 0 to 4 per client; most reports have 0 or 1.`;
+lessons: only what stays true for months and should change how their ads, creative or copy are made: lasting preferences and dislikes (imagery, AI-generated visuals, tone, words, claims), rules, positioning, audiences, products, business changes, an angle or format that has proven itself. Not a month's metrics (ROAS, CPA, CTR, spend), one-off events or dates, plans for next month, or remarks about the document itself. One plain sentence each, ending with where it came from ("from the Q4 strategy doc"). kind: prefer (do this), avoid (don't), note (a fact to know). 0 to 4 per client; most reports have 0 or 1.
+background: what was true at the time and is worth keeping in the client's history even if it won't stay true: a period's results and what drove them, events, launches, promotions and offers with their dates, plans for the coming weeks. One plain sentence each with its date or period and where it came from ("Ran a Día de los Muertos night on Nov 1, 2026, from the October newsletter doc"). Nothing already in lessons. 0 to 4 per client.`;
 
 async function drive<T>(token: string, path: string, params: Record<string, string>) {
   const res = await fetch(`https://www.googleapis.com/drive/v3/${path}?${new URLSearchParams(params)}`, { headers: { authorization: `Bearer ${token}` }, cache: "no-store" });
@@ -110,7 +111,7 @@ export async function watchDocs(admin: SupabaseClient, budgetMs = 600_000) {
           t.tick(f.name);
           continue;
         }
-        const r = await askJson<{ kind: string; clients: { client: string; summary: string; points: string[]; lessons: Lesson[] }[] }>({
+        const r = await askJson<{ kind: string; clients: { client: string; summary: string; points: string[]; lessons: Lesson[]; background: string[] }[] }>({
           agent: "calls",
           label: "read a doc",
           system: SYSTEM,
@@ -152,6 +153,8 @@ export async function watchDocs(admin: SupabaseClient, budgetMs = 600_000) {
             },
           ]);
           out.lessons += await rememberLessons(admin, m.clientId, m.lessons, "drive", f.modifiedTime);
+          // What was true then (results, events, promotions) is kept as dated background, not dropped
+          out.lessons += await rememberLessons(admin, m.clientId, (m.background ?? []).map((body) => ({ kind: "note" as const, body, dated: true })), "drive", f.modifiedTime);
         }
         await admin.from("drive_docs").upsert({ ...base, status: "read", client_id: about[0].clientId, kind: r.kind, summary: about.map((m) => m.summary).join("\n\n").slice(0, 4000) });
         out.aboutClients++;

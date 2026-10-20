@@ -45,7 +45,8 @@ export async function setCursor(admin: SupabaseClient, source: string, cursor: D
 }
 
 /** Something to remember about a client: prefer (do this), avoid (don't) or note (a fact to know). */
-export type Lesson = { kind: "prefer" | "avoid" | "note"; body: string };
+/** dated: true as of the source's date (a period's results, an event, a promotion), kept as background, not a rule */
+export type Lesson = { kind: "prefer" | "avoid" | "note"; body: string; dated?: boolean };
 
 const words = (s: string) => new Set(s.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length > 2));
 /** Mostly the same words as something already remembered: the same lesson again (a re-read, a client repeating themselves). */
@@ -66,6 +67,6 @@ export async function rememberLessons(admin: SupabaseClient, clientId: string, l
   const held = (memory ?? []).map((m) => m.body as string);
   const add: Lesson[] = [];
   for (const l of fresh.slice(0, 6)) if (!known(l.body, [...held, ...add.map((x) => x.body)])) add.push(l);
-  if (add.length) await admin.from("client_memory").insert(add.map((l) => ({ client_id: clientId, kind: l.kind, body: l.body, source, created_at: at })));
+  if (add.length) await admin.from("client_memory").insert(add.map((l) => ({ client_id: clientId, kind: l.kind, body: l.body, source, created_at: at, dated: l.dated ? at.slice(0, 10) : null })));
   return add.length;
 }

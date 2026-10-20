@@ -85,7 +85,7 @@ export type ClientViewProps = {
   team: Record<string, { current: Option | null; options: Option[] }>;
   contacts: { id: string; email: string; full_name: string | null; auth_user_id: string | null }[];
   angles: { id: string; name: string; kind: string; description: string | null; status: string }[];
-  memory: { id: string; kind: string; body: string; source: string; shareReason?: string | null; by: string | null }[];
+  memory: { id: string; kind: string; body: string; source: string; shareReason?: string | null; by: string | null; dated?: string | null }[];
   digest: Digest | null;
   briefingAt: string | null;
   needsInvite: string[];
@@ -267,29 +267,66 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
 
           <Section title="Client memory" description="What we've learned about this client. The AI reads it for suggestions and flags anything that goes against it before a request is sent.">
             {memory.length > 0 ? (
-              <ul className="grid gap-2">
-                {memory.map((m) => (
-                  <li key={m.id} className={row}>
-                    <span className="flex min-w-0 items-start gap-3">
-                      <span
-                        className={`mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                          m.kind === "avoid" ? "bg-bad-soft text-bad" : m.kind === "prefer" ? "bg-ok-soft text-ok" : "bg-bg text-muted"
-                        }`}
-                      >
-                        {m.kind === "avoid" ? "Avoid" : m.kind === "prefer" ? "Works" : "Note"}
-                      </span>
-                      <span className="grid min-w-0 gap-0.5">
-                        <span className="leading-relaxed">{m.body}</span>
-                        <span className="text-xs text-faint">
-                          {MEMORY_SOURCE[m.source] ?? "Team"}
-                          {m.source === "network" && m.shareReason ? ` · why it applies here: ${m.shareReason}` : m.by ? ` · ${m.by}` : ""}
+              <div className="grid gap-3">
+                <ul className="grid gap-2">
+                  {memory.filter((m) => !m.dated).map((m) => (
+                    <li key={m.id} className={row}>
+                      <span className="flex min-w-0 items-start gap-3">
+                        <span
+                          className={`mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                            m.kind === "avoid" ? "bg-bad-soft text-bad" : m.kind === "prefer" ? "bg-ok-soft text-ok" : "bg-bg text-muted"
+                          }`}
+                        >
+                          {m.kind === "avoid" ? "Avoid" : m.kind === "prefer" ? "Works" : "Note"}
+                        </span>
+                        <span className="grid min-w-0 gap-0.5">
+                          <span className="leading-relaxed">{m.body}</span>
+                          <span className="text-xs text-faint">
+                            {m.dated ? `As of ${new Date(`${m.dated}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })} · ` : ""}
+                            {MEMORY_SOURCE[m.source] ?? "Team"}
+                            {m.source === "network" && m.shareReason ? ` · why it applies here: ${m.shareReason}` : m.by ? ` · ${m.by}` : ""}
+                          </span>
                         </span>
                       </span>
-                    </span>
-                    <ActionButton action={archiveMemory.bind(null, client.slug, m.id)} label="Remove" confirmText="Remove this?" />
-                  </li>
-                ))}
-              </ul>
+                      <ActionButton action={archiveMemory.bind(null, client.slug, m.id)} label="Remove" confirmText="Remove this?" />
+                    </li>
+                  ))}
+                </ul>
+                {memory.some((m) => m.dated) && (
+                  <details className="group rounded-[12px] border border-line">
+                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm">
+                      <span>
+                        Background <span className="text-faint">· {memory.filter((m) => m.dated).length} notes true as of their date: past results, events, promotions</span>
+                      </span>
+                      <span className="text-faint transition-transform group-open:rotate-90">›</span>
+                    </summary>
+                    <ul className="grid gap-2 px-3 pb-3">
+                      {memory.filter((m) => m.dated).map((m) => (
+                        <li key={m.id} className={row}>
+                          <span className="flex min-w-0 items-start gap-3">
+                            <span
+                              className={`mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                                m.kind === "avoid" ? "bg-bad-soft text-bad" : m.kind === "prefer" ? "bg-ok-soft text-ok" : "bg-bg text-muted"
+                              }`}
+                            >
+                              {m.kind === "avoid" ? "Avoid" : m.kind === "prefer" ? "Works" : "Note"}
+                            </span>
+                            <span className="grid min-w-0 gap-0.5">
+                              <span className="leading-relaxed">{m.body}</span>
+                              <span className="text-xs text-faint">
+                                {m.dated ? `As of ${new Date(`${m.dated}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })} · ` : ""}
+                                {MEMORY_SOURCE[m.source] ?? "Team"}
+                                {m.source === "network" && m.shareReason ? ` · why it applies here: ${m.shareReason}` : m.by ? ` · ${m.by}` : ""}
+                              </span>
+                            </span>
+                          </span>
+                          <ActionButton action={archiveMemory.bind(null, client.slug, m.id)} label="Remove" confirmText="Remove this?" />
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+              </div>
             ) : (
               <p className="text-sm text-faint">Nothing yet. Add what the client loves, hates, or asked us never to do again.</p>
             )}

@@ -283,7 +283,7 @@ export type ClientContext = {
   gtm?: string | null; // the whole Meta go-to-market strategy (reviewed, or marked as a draft)
   sinceBriefing: { source: string; at: string; author: string | null; title: string | null; body: string | null }[]; // newer than the briefing
   angles: { name: string; kind: string; description: string | null }[];
-  memory: { kind: "avoid" | "prefer" | "note"; body: string; source: string }[];
+  memory: { kind: "avoid" | "prefer" | "note"; body: string; source: string; dated?: string | null }[]; // dated: true as of that day (background, not a standing rule)
   recent: {
     title: string;
     format: string;
@@ -305,7 +305,7 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
     supabase.from("client_briefings").select("digest, generated_at").eq("client_id", clientId).maybeSingle(),
     supabase.from("meta_snapshots").select("date_start, date_stop, summary, weekly, ads").eq("client_id", clientId).order("fetched_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("angles").select("name, kind, description").eq("client_id", clientId).eq("status", "active").order("name").limit(40),
-    supabase.from("client_memory").select("kind, body, source").eq("client_id", clientId).eq("status", "active").order("created_at", { ascending: false }).limit(60),
+    supabase.from("client_memory").select("kind, body, source, dated").eq("client_id", clientId).eq("status", "active").order("created_at", { ascending: false }).limit(100),
     supabase
       .from("board_requests")
       .select("title, format, angle_name, audience, brief, stage, new_count, variation_count, created_at")
@@ -429,10 +429,19 @@ export function contextBlock(ctx: ClientContext, request?: { images: number; vid
       "</newer_than_the_briefing>",
     );
   if (on("allotment")) lines.push("<allotment_this_month>", describeAllotment(ctx.allotment, request), "</allotment_this_month>");
+  // Standing rules and lessons; then what was true as of a date (a month's results, an event, a promotion), kept as
+  // background so nothing the client told us is lost, but never read as a rule for today
+  const standing = ctx.memory.filter((m) => !m.dated);
+  const history = ctx.memory.filter((m) => m.dated).slice(0, 40);
   lines.push("<client_memory>");
-  if (ctx.memory.length === 0) lines.push("Nothing recorded yet.");
-  for (const m of ctx.memory) lines.push(`- [${m.kind}${m.source !== "team" ? `, from ${m.source}` : ""}] ${m.body}`);
+  if (standing.length === 0) lines.push("Nothing recorded yet.");
+  for (const m of standing) lines.push(`- [${m.kind}${m.source !== "team" ? `, from ${m.source}` : ""}] ${m.body}`);
   lines.push("</client_memory>");
+  if (history.length) {
+    lines.push("<client_history>", "Background that was true as of the date shown: past results, events, promotions and plans. Use it for patterns and context; it is not a rule for today, and anything newer wins.");
+    for (const m of history) lines.push(`- [as of ${m.dated}${m.source !== "team" ? `, from ${m.source}` : ""}] ${m.body}`);
+    lines.push("</client_history>");
+  }
   lines.push("<angles>");
   if (ctx.angles.length === 0) lines.push("None yet.");
   for (const a of ctx.angles) lines.push(`- ${a.name} (${a.kind})${a.description ? `: ${a.description}` : ""}`);
