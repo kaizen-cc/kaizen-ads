@@ -4,6 +4,8 @@ import { askJson, clientContext, contextBlock } from "@/lib/ai";
 import { aggregate, pickType, type Day } from "@/lib/kpi/calc";
 import { conversionFor, conversionLabel, type Conversion } from "@/lib/kpi/conversions";
 import { accountSetup, metaConfigured, syncClientAds, type AccountSetup } from "@/lib/context/meta";
+import { googleAuditDetail, googleSetup, type GoogleSetup } from "@/lib/context/google-ads";
+import { accountRows, type CampaignRow } from "@/lib/kpi/sync";
 import type { Benchmark } from "@/lib/verticals";
 
 // The account audit: one ad account (a KPI target) scrubbed the way a senior media buyer would, against its target,
@@ -74,6 +76,10 @@ const BASE = `You are Kaizen Marketing's head of paid media, auditing one Meta a
 Read everything given: the target and how far off it is, 90 days of numbers by campaign, ad set and ad, the funnel, the live setup (objectives, optimization events, budgets, bidding, learning phase, audiences, placements, attribution) and its splits, the tiring ads, the client page (Brand Bible, go-to-market strategy, intake, calls, memory, what's in production), the sub-vertical playbook and benchmarks, our Hall of Fame and the market.
 Argue from this account's data, using Meta best practice as of today. Respect the client's rules (what they told us to avoid, claims never to make, special ad categories). If the data is too thin to judge something, say so instead of guessing. Refer to people by role, never by name. No em dashes.`;
 
+const GOOGLE_BASE = `You are Kaizen Marketing's head of paid media, auditing one Google Ads account for the media buyer who runs it. This is a real audit of the account and the buyer acts on it today. Speak to the buyer directly, in the first person ("I found", "I'd"), plain and specific.
+Read everything given: the target and how far off it is, 90 days of numbers by campaign, the live setup (campaign types, bidding strategies and their targets, budgets, serving status), the conversion actions and which ones count, search impression share and what's lost to budget and rank, ad groups, keywords and quality scores, search terms, devices, the client page (Brand Bible, go-to-market strategy, intake, calls, memory), the sub-vertical playbook and benchmarks, and our winners.
+Argue from this account's data, using Google Ads best practice as of today: conversion tracking first (the wrong primary conversion, like store visits or directions counted as leads, makes every number lie), then bidding and its target versus the KPI, budget-limited campaigns, wasted spend on irrelevant search terms, match types and negatives, quality score, Performance Max and its asset groups, and device and location. Respect the client's rules. If the data is too thin to judge something, say so instead of guessing. Refer to people by role, never by name. No em dashes.`;
+
 const FOUND_SYSTEM = `${BASE}
 
 This pass is "Here's what I found": why the account is where it is against its KPI target.
@@ -82,6 +88,8 @@ diagnosis: 2 to 4 short paragraphs, first person, on why the metrics aren't hitt
 causes: the root causes, most important first: area, severity, how confident you are (low when the data is thin), and evidence lines with real numbers and the names of campaigns, ad sets or ads.
 tracking: anything that looks like a tracking or attribution problem (results that don't add up, a pixel event missing, attribution windows mixed). Empty if none.
 learnings: 2 to 4 lasting lessons about this account for the client page, so the team and every agent remember them next time: what keeps going wrong (kind avoid), what works for this account (kind prefer), or a fact to keep in mind (kind note). Each one sentence, written as a rule that will still be true in a month ("Prevention angles haven't converted for this account; keep budget on treatment-urgency creative"), never this week's numbers. Read the client memory you were given first: don't repeat a lesson that's already there. If a problem it already warns about has happened again, write it again with resurfaced true and say it came back ("Resurfaced: …").`;
+
+const swapBase = (system: string) => system.replace(BASE, GOOGLE_BASE).replace(/campaigns, ad sets or ads/g, "campaigns, ad groups, keywords or search terms").replace(/which campaign or ad set/g, "which campaign, ad group or keyword").replace(/setup in Meta/g, "setup in Google Ads").replace(/a pixel event missing/g, "a conversion action counting the wrong thing");
 
 const PLAN_SYSTEM = `${BASE}
 
@@ -212,6 +220,70 @@ function digest(rows: Row[], conv: Conversion, type: string | null, today: strin
   return { text: out.join("\n"), ads: ads.length, days: new Set(rows.map((r) => r.date)).size, last14: stats(last14, conv, type), prev14: stats(prev14, conv, type) };
 }
 
+/** A Google account's 90 days by campaign and week, written for the auditor (Google's rows are per campaign, not per ad). */
+function googleDigest(rows: CampaignRow[], conv: Conversion, type: string | null, today: string) {
+  const roas = Boolean(conv.roas);
+  const since = (d: number) => new Date(Date.parse(today) - d * DAY).toISOString().slice(0, 10);
+  const inRange = (from: number, to: number) => rows.filter((r) => r.date > since(from) && r.date <= since(to));
+  const st = (rs: CampaignRow[]) => {
+    const days: Day[] = rs.map((r) => ({ date: r.date, spend: n(r.spend), actions: r.actions ?? {}, values: r.action_values ?? {}, linkClicks: n(r.link_clicks) }));
+    const agg = aggregate(days, conv, type);
+    const impressions = rs.reduce((x, r) => x + n(r.impressions), 0);
+    const clicks = rs.reduce((x, r) => x + n(r.clicks), 0);
+    const is = rs.reduce((x, r) => ({ imp: x.imp + n(r.actions?.["_is:impressions"]), el: x.el + n(r.actions?.["_is:eligible"]), lb: x.lb + n(r.actions?.["_is:lost_budget"]), lr: x.lr + n(r.actions?.["_is:lost_rank"]) }), { imp: 0, el: 0, lb: 0, lr: 0 });
+    return {
+      spend: agg.spend,
+      results: agg.results,
+      value: agg.value,
+      ctr: pct(clicks, impressions),
+      cpc: clicks ? r2(agg.spend / clicks) : null,
+      convRate: pct(agg.results, clicks),
+      is: is.el ? { share: pct(is.imp, is.el), budget: pct(is.lb, is.el), rank: pct(is.lr, is.el) } : null,
+    };
+  };
+  const line = (name: string, x: ReturnType<typeof st>, extra = "") =>
+    `${name}: $${Math.round(x.spend)} spend, ${Math.round(x.results * 10) / 10} results, ${x.value == null ? "no results" : roas ? `${x.value}x ROAS` : `$${x.value} per result`}, CTR ${x.ctr ?? "?"}%, CPC $${x.cpc ?? "?"}, conv rate ${x.convRate ?? "?"}%${x.is ? `, search impression share ${x.is.share}% (lost ${x.is.budget}% to budget, ${x.is.rank}% to rank)` : ""}${extra}`;
+  const out: string[] = ["ACCOUNT"];
+  const last14 = inRange(14, 0);
+  const prev14 = inRange(28, 14);
+  const last30 = inRange(30, 0);
+  const prev30 = inRange(60, 30);
+  out.push(line("Last 14 days", st(last14)), line("The 14 before", st(prev14)), line("Last 30 days", st(last30)), line("The 30 before", st(prev30)), line("Last 90 days", st(inRange(90, 0))));
+  out.push("\nWEEK BY WEEK (newest first)");
+  for (let w = 0; w < 12; w++) {
+    const wk = inRange((w + 1) * 7, w * 7);
+    if (wk.length) out.push(line(`Week ending ${since(w * 7)}`, st(wk)));
+  }
+  const group = (rs: CampaignRow[]) => {
+    const m = new Map<string, CampaignRow[]>();
+    for (const r of rs) m.set(r.campaign_name ?? r.campaign_id, [...(m.get(r.campaign_name ?? r.campaign_id) ?? []), r]);
+    return m;
+  };
+  const total30 = st(last30).spend || 1;
+  const prev = group(prev30);
+  out.push("\nCAMPAIGNS, last 30 days vs the 30 before");
+  for (const [name, rs] of [...group(last30)].sort((a, b) => st(b[1]).spend - st(a[1]).spend).slice(0, 20)) {
+    const x = st(rs);
+    const p = prev.get(name);
+    out.push(line(name, x, ` · ${Math.round((x.spend / total30) * 100)}% of spend${p ? ` · before: ${st(p).value ?? "no results"}` : " · new"}`));
+  }
+  // What counts as a conversion, last 30 days, by conversion action
+  const byAction = new Map<string, number>();
+  for (const r of last30) for (const [k, v] of Object.entries(r.actions ?? {})) if (k.startsWith("action:")) byAction.set(k.slice(7), (byAction.get(k.slice(7)) ?? 0) + n(v));
+  if (byAction.size) out.push(`\nCONVERSIONS BY ACTION, last 30 days: ${[...byAction].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${Math.round(v * 10) / 10}`).join("; ")}`);
+  return { text: out.join("\n"), ads: 0, days: new Set(rows.map((r) => r.date)).size, campaigns: group(last30).size, last14: st(last14), prev14: st(prev14) };
+}
+
+function googleSetupText(s: GoogleSetup | null, detail: string) {
+  if (!s) return `Live setup: couldn't read it from Google Ads.\n\n${detail}`;
+  return `LIVE SETUP IN GOOGLE ADS
+Campaigns:
+${s.campaigns.map((c) => `- ${c.name} [${c.status}${c.serving && c.serving !== "SERVING" ? `, ${c.serving.toLowerCase()}` : ""}] ${c.type.toLowerCase()}, ${c.bidding.toLowerCase().replaceAll("_", " ")}${c.targetCpa ? ` (target CPA $${c.targetCpa})` : ""}${c.targetRoas ? ` (target ROAS ${c.targetRoas})` : ""}${c.budget ? `, $${c.budget}/day` : ""}`).join("\n") || "(none)"}
+Conversion actions (enabled): ${s.conversions.map((x) => `${x.name} [${x.category.toLowerCase()}${x.primary ? ", primary" : ", secondary"}${x.counted ? ", counted in Conversions" : ""}]`).join("; ") || "(none)"}
+
+${detail}`;
+}
+
 function setupText(s: AccountSetup | null) {
   if (!s) return "Live setup: couldn't read it from Meta.";
   const camp = new Map(s.campaigns.map((c) => [c.id, c]));
@@ -250,8 +322,9 @@ const STEPS: { key: string; label: string; weight: number }[] = [
 ];
 
 /** Keeps the audit's steps and progress in step with what it's really doing, for the card to follow. */
-function milestones(admin: SupabaseClient, id: string) {
-  const steps: AuditStep[] = STEPS.map((s) => ({ key: s.key, label: s.label, status: "pending", detail: null, startedAt: null, finishedAt: null }));
+function milestones(admin: SupabaseClient, id: string, platform = "meta") {
+  const label = (s: (typeof STEPS)[number]) => (platform === "google" && s.key === "setup" ? "Checking the live setup, keywords and search terms in Google Ads" : platform === "google" && s.key === "numbers" ? "Reading 90 days of the Google Ads account" : s.label);
+  const steps: AuditStep[] = STEPS.map((s) => ({ key: s.key, label: label(s), status: "pending", detail: null, startedAt: null, finishedAt: null }));
   let partial = 0; // how far through the running step (0 to 1), for the long AI steps
   const pct = () => {
     const total = STEPS.reduce((t, s) => t + s.weight, 0);
@@ -297,6 +370,8 @@ const ago = (iso: string | null | undefined) => {
 export async function runAudit(admin: SupabaseClient, id: string) {
   const { data: a } = await admin.from("account_audits").select("id, target_id, client_id").eq("id", id).single();
   if (!a) return;
+  const { data: t0 } = await admin.from("kpi_targets").select("platform").eq("id", a.target_id).maybeSingle();
+  if (t0?.platform === "google") return runGoogleAudit(admin, id, a);
   const m = milestones(admin, id);
   try {
     const { data: t } = await admin.from("kpi_targets").select("ad_account_id, conversion, custom_action, campaign_match, target, monthly_budget, budget_note, sheet").eq("id", a.target_id).single();
@@ -355,6 +430,40 @@ export async function runAudit(admin: SupabaseClient, id: string) {
       await m.finish("setup", `${setup.campaigns.length} campaigns and ${setup.adsets.length} ad sets live or paused${learning ? ` · ${learning} still learning` : ""} · placements, age, gender and country splits`);
     } else await m.finish("setup", "Couldn't read the live setup from Meta; working from the numbers", "skipped");
 
+    await finishAudit(admin, id, a, m, {
+      platform: "meta",
+      t,
+      conv,
+      type,
+      numbersText: d.text,
+      last14: d.last14.value,
+      prev14: d.prev14.value,
+      setupBlock: setupText(setup),
+      inputs: { days: d.days, ads: d.ads, campaigns: setup?.campaigns.length ?? null, adsets: setup?.adsets.length ?? null, liveSetup: Boolean(setup) },
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    await m.failRunning(message);
+    await admin.from("account_audits").update({ status: "failed", error: message, finished_at: new Date().toISOString() }).eq("id", id);
+  }
+}
+
+type Milestones = ReturnType<typeof milestones>;
+type AuditInput = {
+  platform: "meta" | "google";
+  t: { conversion: string; custom_action: string | null; campaign_match: string | null; target: number | string | null; monthly_budget: number | string | null; budget_note: string | null; sheet: unknown };
+  conv: Conversion;
+  type: string | null;
+  numbersText: string;
+  last14: number | null;
+  prev14: number | null;
+  setupBlock: string;
+  inputs: Record<string, unknown>;
+};
+
+/** Everything after the account's own numbers and setup: the same for Meta and Google. */
+async function finishAudit(admin: SupabaseClient, id: string, a: { target_id: string; client_id: string }, m: Milestones, x: AuditInput) {
+  const { t, conv, type } = x;
     // 3. The client page
     await m.start("client");
     const [ctx, { data: client }, { data: bible }, { data: gtm }, { count: intakes }, { count: calls }, { count: memory }, { data: briefing }, { count: open }] = await Promise.all([
@@ -380,10 +489,11 @@ export async function runAudit(admin: SupabaseClient, id: string) {
     ];
     await m.finish("client", read.join(" · "));
 
-    // 4. Tiring ads
+    // 4. Tiring ads (Meta's fatigue watcher; Google isn't watched for fatigue yet)
     await m.start("fatigue");
-    const { data: fatigue } = await admin.from("ad_fatigue").select("ad_name, severity, signals").eq("client_id", a.client_id).in("state", ["open", "refreshing"]).limit(15);
-    await m.finish("fatigue", fatigue?.length ? `${fatigue.length} ${fatigue.length === 1 ? "ad" : "ads"} flagged as tiring` : "No ads flagged as tiring");
+    const { data: fatigue } = x.platform === "meta" ? await admin.from("ad_fatigue").select("ad_name, severity, signals").eq("client_id", a.client_id).in("state", ["open", "refreshing"]).limit(15) : { data: [] as { ad_name: string; severity: string; signals: unknown }[] };
+    if (x.platform === "meta") await m.finish("fatigue", fatigue?.length ? `${fatigue.length} ${fatigue.length === 1 ? "ad" : "ads"} flagged as tiring` : "No ads flagged as tiring");
+    else await m.finish("fatigue", "Ad fatigue is watched on Meta only for now", "skipped");
 
     // 5. The sub-vertical
     await m.start("vertical");
@@ -415,16 +525,16 @@ export async function runAudit(admin: SupabaseClient, id: string) {
     const label = conversionLabel(t.conversion, t.custom_action);
     const target = t.target == null ? null : Number(t.target);
     const roas = Boolean(conv.roas);
-    const gap = target && d.last14.value != null ? Math.round(((roas ? (target - d.last14.value) / target : (d.last14.value - target) / target) || 0) * 100) : null;
+    const gap = target && x.last14 != null ? Math.round(((roas ? (target - x.last14) / target : (x.last14 - target) / target) || 0) * 100) : null;
     const context = `${contextBlock(ctx)}
 
 <target>
-${client.name}: ${label}. Target: ${target == null ? "not set" : roas ? `${target}x ROAS` : `$${target} per result`}. Last 14 days: ${d.last14.value == null ? "no results" : roas ? `${d.last14.value}x` : `$${d.last14.value}`} (${gap == null ? "?" : gap > 0 ? `${gap}% worse than target` : `${-gap}% better than target`}); the 14 days before: ${d.prev14.value ?? "no results"}.
-Monthly budget: ${t.monthly_budget ? `$${t.monthly_budget}` : "not set"}${t.budget_note ? ` (${t.budget_note})` : ""}.${t.campaign_match ? ` Only campaigns containing "${t.campaign_match}" count toward this KPI.` : ""} Results are counted as Meta's "${type ?? "?"}".
+${client.name}: ${label}. Target: ${target == null ? "not set" : roas ? `${target}x ROAS` : `$${target} per result`}. Last 14 days: ${x.last14 == null ? "no results" : roas ? `${x.last14}x` : `$${x.last14}`} (${gap == null ? "?" : gap > 0 ? `${gap}% worse than target` : `${-gap}% better than target`}); the 14 days before: ${x.prev14 ?? "no results"}.
+Monthly budget: ${t.monthly_budget ? `$${t.monthly_budget}` : "not set"}${t.budget_note ? ` (${t.budget_note})` : ""}.${t.campaign_match ? ` Only campaigns containing "${t.campaign_match}" count toward this KPI.` : ""} Results are counted as ${x.platform === "google" ? "Google's" : "Meta's"} "${type ?? "?"}".
 </target>
 
-<account_numbers>
-${d.text}
+<account_numbers platform="${x.platform}">
+${x.numbersText}
 </account_numbers>
 ${t.sheet ? `
 <team_notes source="the Account Overview sheet the buyers keep">
@@ -433,7 +543,7 @@ ${Object.entries(t.sheet as Record<string, string>).filter(([k, v]) => v && !["n
 ` : ""}
 
 <live_setup>
-${setupText(setup)}
+${x.setupBlock}
 </live_setup>
 
 <ads_tiring source="our fatigue watcher">
@@ -456,9 +566,9 @@ Today is ${new Date().toISOString().slice(0, 10)}.`;
     await m.start("found");
     let last = 0;
     const found = await askJson<Pick<AuditResult, "verdict" | "diagnosis" | "causes" | "tracking"> & { learnings: { kind: "avoid" | "prefer" | "note"; body: string; resurfaced: boolean }[] }>({
-      agent: "auditor",
+      agent: x.platform === "google" ? "google_auditor" : "auditor",
       label: `audit ${client.name} · findings`,
-      system: FOUND_SYSTEM,
+      system: x.platform === "google" ? swapBase(FOUND_SYSTEM) : FOUND_SYSTEM,
       schema: FOUND_SCHEMA,
       maxTokens: 32000,
       onText: (so) => {
@@ -494,9 +604,9 @@ Today is ${new Date().toISOString().slice(0, 10)}.`;
     await m.start("plan");
     last = 0;
     const plan = await askJson<Omit<AuditResult, "verdict" | "diagnosis" | "causes" | "tracking">>({
-      agent: "auditor",
+      agent: x.platform === "google" ? "google_auditor" : "auditor",
       label: `audit ${client.name} · plan`,
-      system: PLAN_SYSTEM,
+      system: x.platform === "google" ? swapBase(PLAN_SYSTEM) : PLAN_SYSTEM,
       schema: PLAN_SCHEMA,
       maxTokens: 32000,
       onText: (so) => {
@@ -522,13 +632,50 @@ Now write what you'd do if you were the buyer, and what you'd watch out for.`,
         step: null,
         progress: 100,
         result: clean({ ...found, ...plan, learnings: lessons }),
-        inputs: { days: d.days, ads: d.ads, campaigns: setup?.campaigns.length ?? null, adsets: setup?.adsets.length ?? null, fatigue: fatigue?.length ?? 0, hallOfFame: fame?.length ?? 0, playbook: Boolean(playbook), market: Boolean(market), benchmarks: Boolean(bm), liveSetup: Boolean(setup) },
+        inputs: { ...x.inputs, platform: x.platform, fatigue: fatigue?.length ?? 0, hallOfFame: fame?.length ?? 0, playbook: Boolean(playbook), market: Boolean(market), benchmarks: Boolean(bm) },
         finished_at: new Date().toISOString(),
       })
       .eq("id", id);
     // The plan becomes a sprint the system follows with the buyer
     const { openSprint } = await import("@/lib/sprints");
     await openSprint(admin, id).catch((e) => console.error("[audit] couldn't open the sprint:", e instanceof Error ? e.message : e));
+}
+
+/** A Google Ads account: its campaign days, live setup and detail, then the same audit as Meta's. */
+async function runGoogleAudit(admin: SupabaseClient, id: string, a: { target_id: string; client_id: string }) {
+  const m = milestones(admin, id, "google");
+  try {
+    const { data: t } = await admin.from("kpi_targets").select("ad_account_id, conversion, custom_action, campaign_match, target, monthly_budget, budget_note, sheet").eq("id", a.target_id).single();
+    if (!t?.ad_account_id) throw new Error("No Google Ads customer ID on this KPI");
+    const conv = conversionFor(t.conversion);
+    const account = String(t.ad_account_id);
+
+    await m.start("numbers");
+    const since = new Date(Date.now() - 90 * DAY).toISOString().slice(0, 10);
+    const all = (await accountRows(admin, account, "google")).filter((r) => r.date >= since);
+    const rows = t.campaign_match ? all.filter((r) => (r.campaign_name ?? "").toLowerCase().includes(String(t.campaign_match).toLowerCase())) : all;
+    if (!rows.length) throw new Error(all.length ? `No campaigns containing "${t.campaign_match}" in the last 90 days.` : "No Google Ads numbers for this account yet. Pull from Google on the KPI card first.");
+    const days: Day[] = rows.map((r) => ({ date: r.date, spend: n(r.spend), actions: r.actions ?? {}, values: r.action_values ?? {} }));
+    const type = pickType(days, conv, t.custom_action);
+    const today = rows.reduce((x, r) => (r.date > x ? r.date : x), rows[0].date);
+    const d = googleDigest(rows, conv, type, today);
+    await m.finish("numbers", `${d.days} days · ${d.campaigns} campaigns · $${n0(rows.reduce((x, r) => x + n(r.spend), 0))} spent`);
+
+    await m.start("setup");
+    const [setup, detail] = await Promise.all([googleSetup(account).catch(() => null), googleAuditDetail(account).catch(() => ({ text: "", counts: { adGroups: 0, keywords: 0, searchTerms: 0 } }))]);
+    await m.finish("setup", setup ? `${setup.campaigns.length} campaigns · ${setup.conversions.length} conversion actions · ${detail.counts.keywords} keywords and ${detail.counts.searchTerms} search terms read` : "Couldn't read the live setup from Google Ads; working from the numbers", setup ? "done" : "skipped");
+
+    await finishAudit(admin, id, a, m, {
+      platform: "google",
+      t,
+      conv,
+      type,
+      numbersText: d.text,
+      last14: d.last14.value,
+      prev14: d.prev14.value,
+      setupBlock: googleSetupText(setup, detail.text),
+      inputs: { days: d.days, campaigns: d.campaigns, liveSetup: Boolean(setup), keywords: detail.counts.keywords, searchTerms: detail.counts.searchTerms },
+    });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     await m.failRunning(message);

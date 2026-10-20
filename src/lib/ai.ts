@@ -16,7 +16,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 export const MODEL_IDS = { opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5", haiku: "claude-haiku-5-5" } as const;
 export type ModelKey = keyof typeof MODEL_IDS;
 export type Effort = "low" | "medium" | "high";
-export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue" | "scripts" | "brandbible" | "creativecheck" | "creativereview" | "coach" | "strategist" | "lab" | "industry" | "calls" | "gtm" | "market" | "winners" | "verticals" | "auditor";
+export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue" | "scripts" | "brandbible" | "creativecheck" | "creativereview" | "coach" | "strategist" | "lab" | "industry" | "calls" | "gtm" | "market" | "winners" | "verticals" | "auditor" | "google_auditor" | "google_launcher";
 export const SOURCE_KEYS = ["meta", "briefing", "recent_messages", "memory", "angles", "recent_requests", "allotment", "kpis"] as const;
 export type Sources = Partial<Record<(typeof SOURCE_KEYS)[number], boolean>>;
 
@@ -36,6 +36,8 @@ export type AgentConfig = {
 const DEFAULTS: Record<AgentKey, Pick<AgentConfig, "model" | "effort">> = {
   suggest: { model: "sonnet", effort: "low" }, // someone is waiting on it
   auditor: { model: "opus", effort: "high" }, // a real audit the buyer acts on
+  google_auditor: { model: "opus", effort: "high" }, // the Google account audit and its sprint checks
+  google_launcher: { model: "opus", effort: "high" },
   review: { model: "opus", effort: "medium" }, // judgement matters
   briefing: { model: "haiku", effort: "low" }, // gathering and summarizing
   copy: { model: "sonnet", effort: "medium" },

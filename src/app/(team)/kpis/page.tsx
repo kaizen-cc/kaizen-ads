@@ -1,3 +1,4 @@
+import { googleAdsConfigured } from "@/lib/context/google-ads";
 import { requireStaff } from "@/lib/auth";
 import type { Agg, Pacing, Status, Trend } from "@/lib/kpi/calc";
 import { conversionFor, conversionLabel } from "@/lib/kpi/conversions";
@@ -109,7 +110,7 @@ export default async function Kpis() {
         sheet: (t.sheet ?? null) as KpiRow["sheet"],
         sprint: sprints.get(t.id) ?? null,
         lastChange: (() => {
-          const x = t.ad_account_id ? activityBy.get(String(t.ad_account_id).replace(/^act_/, "")) : undefined;
+          const x = t.ad_account_id ? activityBy.get(t.platform === "google" ? String(t.ad_account_id).replace(/\D/g, "") : String(t.ad_account_id).replace(/^act_/, "")) : undefined;
           if (!x) return null;
           const c = x.last_change as { at: string; who: string | null; what: string; object: string | null } | null;
           return { at: x.last_change_at, who: c?.who ?? null, what: c?.what ?? null, object: c?.object ?? null, checkedAt: x.checked_at, error: x.error };
@@ -134,6 +135,7 @@ export default async function Kpis() {
       initialOwner={mine ? me.id : "all"}
       lastSync={lastSync}
       unlinked={unlinked}
+      googleConnected={googleAdsConfigured()}
     />
   );
 }

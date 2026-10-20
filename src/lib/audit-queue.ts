@@ -38,7 +38,7 @@ export async function requestAudit(db: SupabaseClient, admin: SupabaseClient, me
 
   const { data: t } = await db.from("kpi_targets").select("client_id, ad_account_id, platform, clients(name)").eq("id", ask.targetId ?? "").maybeSingle();
   if (!t) return { error: "You don't work on this client." };
-  if (t.platform !== "meta" || !t.ad_account_id) return { error: "Audits read Meta ad accounts; this KPI has none." };
+  if (!["meta", "google"].includes(t.platform) || !t.ad_account_id) return { error: "This KPI has no ad account to audit." };
   const why = await notLive(db, t.client_id);
   if (why) return { error: why };
   const client = (t.clients as unknown as { name: string } | null)?.name ?? "";

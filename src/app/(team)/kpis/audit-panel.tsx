@@ -92,7 +92,7 @@ export function AuditPanel({ targetId, audit, platform }: { targetId: string; au
     const t = setInterval(() => router.refresh(), 4000);
     return () => clearInterval(t);
   }, [running, router]);
-  if (platform !== "meta") return null;
+  if (platform !== "meta" && platform !== "google") return null;
 
   const go = () =>
     start(async () => {
@@ -147,7 +147,7 @@ export function AuditPanel({ targetId, audit, platform }: { targetId: string; au
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-[12px] border border-warn/40 bg-warn-soft px-4 py-3 text-sm">
             <span>
               This account was audited {agoText(audit.createdAt)}
-              {audit.by ? ` by ${audit.by}` : ""}. A new audit costs a few minutes of AI and Meta calls; the last one is probably still current.
+              {audit.by ? ` by ${audit.by}` : ""}. A new audit costs a few minutes of AI and {platform === "google" ? "Google" : "Meta"} calls; the last one is probably still current.
             </span>
             <span className="flex gap-2">
               <button type="button" onClick={() => setConfirm(false)} className="h-8 rounded-full border border-line bg-surface px-3 text-xs text-muted hover:text-fg">
@@ -169,7 +169,9 @@ export function AuditPanel({ targetId, audit, platform }: { targetId: string; au
 
         {!audit && (
           <p className="max-w-3xl text-sm leading-relaxed text-muted">
-            Scrubs 90 days of the account by campaign, ad set and ad, its live setup in Meta (objectives, budgets, bidding, learning, audiences, placements), the funnel, tiring ads, the
+            {platform === "google"
+              ? "Scrubs 90 days of the Google Ads account by campaign, its live setup (bidding and targets, budgets, conversion actions), impression share, ad groups, keywords and search terms, devices, the "
+              : "Scrubs 90 days of the account by campaign, ad set and ad, its live setup in Meta (objectives, budgets, bidding, learning, audiences, placements), the funnel, tiring ads, the "}
             client&apos;s Brand Bible and strategy, the sub-vertical playbook and benchmarks, our Hall of Fame and the market. Then it writes the diagnosis and the action plan. A few
             minutes.
           </p>

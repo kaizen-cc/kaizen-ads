@@ -30,6 +30,24 @@ export const METRICS = [
   { key: "spend", label: "Spend", unit: "$" },
 ] as const;
 
+/** The Google catalog: its own keys (g_), so a box always says what it measures on that platform. */
+export const GOOGLE_METRICS = [
+  { key: "g_conversions", label: "Conversions", unit: "" },
+  { key: "g_cost_per_conversion", label: "Cost per conversion", unit: "$" },
+  { key: "g_value", label: "Conversion value", unit: "$" },
+  { key: "g_roas", label: "ROAS", unit: "x" },
+  { key: "g_conv_rate", label: "Conversion rate", unit: "%" },
+  { key: "g_clicks", label: "Clicks", unit: "" },
+  { key: "g_ctr", label: "CTR", unit: "%" },
+  { key: "g_cpc", label: "Avg. CPC", unit: "$" },
+  { key: "g_cpm", label: "CPM", unit: "$" },
+  { key: "g_impressions", label: "Impressions", unit: "" },
+  { key: "g_search_is", label: "Search impression share", unit: "%" },
+  { key: "g_lost_budget", label: "Search share lost to budget", unit: "%" },
+  { key: "g_lost_rank", label: "Search share lost to rank", unit: "%" },
+  { key: "spend", label: "Spend", unit: "$" },
+] as const;
+
 const PURCHASE = ["omni_purchase", "purchase", "offsite_conversion.fb_pixel_purchase"];
 const LEAD = ["onsite_conversion.lead_grouped", "leadgen_grouped", "offsite_conversion.fb_pixel_lead", "lead"];
 const firstOf = (days: Day[], types: string[]) => types.find((t) => days.some((d) => (d.actions[t] ?? 0) > 0)) ?? types[0];
@@ -92,7 +110,21 @@ function metricValue(key: string, a: Agg, days: Day[]): number | null {
   const lead = firstOf(days, LEAD);
   if (key.startsWith("action:")) return a.actions[key.slice(7)] ?? 0;
   if (key.startsWith("cost:")) return div(a.spend, a.actions[key.slice(5)] ?? 0);
+  const is = (k: string) => (a.actions["_is:eligible"] ? ((a.actions[k] ?? 0) / a.actions["_is:eligible"]) * 100 : null);
   switch (key) {
+    case "g_conversions": return a.actions.conversions ?? 0;
+    case "g_cost_per_conversion": return div(a.spend, a.actions.conversions ?? 0);
+    case "g_value": return a.values.conversions ?? 0;
+    case "g_roas": return div(a.values.conversions ?? 0, a.spend);
+    case "g_conv_rate": return a.clicks ? ((a.actions.conversions ?? 0) / a.clicks) * 100 : null;
+    case "g_clicks": return a.clicks;
+    case "g_ctr": return a.impressions ? (a.clicks / a.impressions) * 100 : null;
+    case "g_cpc": return div(a.spend, a.clicks);
+    case "g_cpm": return a.impressions ? (a.spend / a.impressions) * 1000 : null;
+    case "g_impressions": return a.impressions;
+    case "g_search_is": return is("_is:impressions");
+    case "g_lost_budget": return is("_is:lost_budget");
+    case "g_lost_rank": return is("_is:lost_rank");
     case "roas": return div(a.values[purchase] ?? 0, a.spend);
     case "revenue": return a.values[purchase] ?? 0;
     case "purchases": return a.actions[purchase] ?? 0;
@@ -118,7 +150,7 @@ function metricValue(key: string, a: Agg, days: Day[]): number | null {
 export function metricMeta(key: string) {
   if (key.startsWith("action:")) return { key, label: actionLabel(key.slice(7)), unit: "" };
   if (key.startsWith("cost:")) return { key, label: `Cost per ${actionLabel(key.slice(5)).toLowerCase()}`, unit: "$" };
-  return METRICS.find((m) => m.key === key) ?? { key, label: key, unit: "" };
+  return [...METRICS, ...GOOGLE_METRICS].find((m) => m.key === key) ?? { key, label: key, unit: "" };
 }
 
 const shift = (day: string, n: number) => {
@@ -164,7 +196,7 @@ export async function exploreTarget(
     return { key: c.key, label: c.label, type, results30: Math.round(days30.reduce((n, d) => n + resultsOf(d, c, type), 0) * 10) / 10 };
   });
   const actions = Object.entries(d30.actions)
-    .filter(([, v]) => v > 0)
+    .filter(([type, v]) => v > 0 && !type.startsWith("_"))
     .map(([type, count]) => ({ type, label: actionLabel(type), count30: Math.round(count), value30: Math.round(d30.values[type] ?? 0) }))
     .sort((a, b) => b.count30 - a.count30);
 
@@ -178,5 +210,5 @@ export async function exploreTarget(
     return { key, label: meta.label, unit: meta.unit, d7: at(last(7)), d14: at(last(14)), d30: at(last(30)), prev30: at(between(shift(yesterday, -59), shift(yesterday, -30))) };
   });
 
-  return { catalog: METRICS.map((x) => ({ key: x.key, label: x.label, unit: x.unit })), snapshot, resultType: pickType(days, conv, tryOut.custom), conversions, actions, metrics };
+  return { catalog: (t.platform === "google" ? GOOGLE_METRICS : METRICS).map((x) => ({ key: x.key, label: x.label, unit: x.unit })), snapshot, resultType: pickType(days, conv, tryOut.custom), conversions, actions, metrics };
 }

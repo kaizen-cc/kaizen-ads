@@ -111,6 +111,23 @@ function explain(text: string, status: number) {
 }
 
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
+
+/**
+ * Search impression share as counts that add up: the impressions the campaign could have had (eligible), and how many
+ * of those it lost to budget and to rank. Share = impressions / eligible. Only search campaigns report it.
+ */
+function shareOf(r: Row): Record<string, number> {
+  const share = Number(r.metrics?.searchImpressionShare);
+  const imp = Number(r.metrics?.impressions) || 0;
+  if (!share || !imp) return {};
+  const eligible = imp / share;
+  return {
+    "_is:impressions": imp,
+    "_is:eligible": eligible,
+    "_is:lost_budget": eligible * (Number(r.metrics?.searchBudgetLostImpressionShare) || 0),
+    "_is:lost_rank": eligible * (Number(r.metrics?.searchRankLostImpressionShare) || 0),
+  };
+}
 const num = (v: unknown) => Number(v) || 0;
 
 /** New and revised days for one Google Ads account (the last 3 days are re-read: conversions keep coming in). */
@@ -121,7 +138,7 @@ export async function syncGoogleCampaigns(admin: SupabaseClient, account: string
   const since = last ? new Date(new Date(`${last.date}T12:00:00Z`).getTime() - 3 * 86_400_000) : new Date(now.getTime() - BACKFILL_DAYS * 86_400_000);
   const range = `segments.date BETWEEN '${ymd(since)}' AND '${now.toLocaleDateString("en-CA", { timeZone: "America/New_York" })}'`;
   const [base, byAction] = await Promise.all([
-    search(id, `SELECT segments.date, campaign.id, campaign.name, campaign.advertising_channel_type, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions, metrics.conversions_value FROM campaign WHERE ${range}`),
+    search(id, `SELECT segments.date, campaign.id, campaign.name, campaign.advertising_channel_type, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions, metrics.conversions_value, metrics.search_impression_share, metrics.search_budget_lost_impression_share, metrics.search_rank_lost_impression_share FROM campaign WHERE ${range}`),
     // The same, split by conversion action, for targets that count one in particular
     search(id, `SELECT segments.date, campaign.id, segments.conversion_action_name, metrics.conversions, metrics.conversions_value FROM campaign WHERE ${range} AND metrics.conversions > 0`),
   ]);
@@ -149,7 +166,7 @@ export async function syncGoogleCampaigns(admin: SupabaseClient, account: string
       clicks,
       link_clicks: clicks,
       unique_link_clicks: clicks,
-      actions: { conversions: num(r.metrics?.conversions), ...extra.a },
+      actions: { conversions: num(r.metrics?.conversions), ...extra.a, ...shareOf(r) },
       action_values: { conversions: num(r.metrics?.conversionsValue), ...extra.v },
       updated_at: now.toISOString(),
     };
@@ -159,6 +176,122 @@ export async function syncGoogleCampaigns(admin: SupabaseClient, account: string
     if (error) throw new Error(`Saving Google campaign days: ${error.message}`);
   }
   return { from: ymd(since), rows: records.length };
+}
+
+// ─── Change history, the live setup, and an audit's detail ─────────────────
+
+const gdate = (d: Date) => d.toISOString().replace("T", " ").slice(0, 19);
+
+/**
+ * Who changed what in the account lately (Google's change history), newest first, in the same shape as Meta's activity
+ * log. Google keeps 30 days of it; changes Google made itself (automated) are left out.
+ */
+export async function googleActivity(account: string, sinceDays = 29) {
+  const to = new Date();
+  const from = new Date(Date.now() - Math.min(29, sinceDays) * 86_400_000);
+  const rows = await search(
+    account,
+    `SELECT change_event.change_date_time, change_event.user_email, change_event.client_type, change_event.change_resource_type, change_event.resource_change_operation, change_event.changed_fields, campaign.name, ad_group.name FROM change_event WHERE change_event.change_date_time >= '${gdate(from)}' AND change_event.change_date_time <= '${gdate(to)}' ORDER BY change_event.change_date_time DESC LIMIT 60`,
+  );
+  const words = (x: unknown) => String(x ?? "").toLowerCase().replaceAll("_", " ");
+  return rows
+    .filter((r) => r.changeEvent?.userEmail && !/^(google_ads_automated|internal_tool)/i.test(String(r.changeEvent?.clientType ?? "")))
+    .map((r) => {
+      const e = r.changeEvent!;
+      const fields = String(e.changedFields ?? "")
+        .split(",")
+        .map((f) => f.trim().split(".").pop())
+        .filter(Boolean)
+        .slice(0, 4)
+        .join(", ");
+      const op = words(e.resourceChangeOperation);
+      const what = `${op === "create" ? "Created" : op === "remove" ? "Removed" : "Changed"} ${words(e.changeResourceType)}${fields && op === "update" ? ` (${fields.replaceAll("_", " ")})` : ""}`;
+      return {
+        at: new Date(`${String(e.changeDateTime).replace(" ", "T")}Z`).toISOString(),
+        who: String(e.userEmail),
+        what,
+        type: String(e.changeResourceType ?? ""),
+        object: String(r.adGroup?.name ?? r.campaign?.name ?? "") || null,
+        objectType: r.adGroup?.name ? "ad group" : r.campaign?.name ? "campaign" : null,
+      };
+    });
+}
+export type GoogleActivity = Awaited<ReturnType<typeof googleActivity>>;
+
+export type GoogleSetup = {
+  campaigns: { id: string; name: string; status: string; type: string; bidding: string; targetCpa: number | null; targetRoas: number | null; budget: number | null; serving: string }[];
+  conversions: { name: string; category: string; primary: boolean; counted: boolean; status: string }[];
+};
+
+/** Campaigns as they're set up now (status, type, bidding and its target, daily budget) and the conversion actions. */
+export async function googleSetup(account: string): Promise<GoogleSetup> {
+  const [camps, convs] = await Promise.all([
+    search(account, "SELECT campaign.id, campaign.name, campaign.status, campaign.serving_status, campaign.advertising_channel_type, campaign.bidding_strategy_type, campaign.target_cpa.target_cpa_micros, campaign.maximize_conversions.target_cpa_micros, campaign.target_roas.target_roas, campaign.maximize_conversion_value.target_roas, campaign_budget.amount_micros FROM campaign WHERE campaign.status != 'REMOVED'"),
+    search(account, "SELECT conversion_action.name, conversion_action.category, conversion_action.primary_for_goal, conversion_action.include_in_conversions_metric, conversion_action.status FROM conversion_action WHERE conversion_action.status = 'ENABLED'").catch(() => []),
+  ]);
+  const micros = (v: unknown) => (v == null || v === "" ? null : Math.round(Number(v) / 10_000) / 100);
+  return {
+    campaigns: camps.map((r) => {
+      const c = r.campaign as Record<string, Record<string, unknown> | unknown>;
+      const tc = (c.targetCpa as Record<string, unknown> | undefined)?.targetCpaMicros ?? (c.maximizeConversions as Record<string, unknown> | undefined)?.targetCpaMicros;
+      const tr = (c.targetRoas as Record<string, unknown> | undefined)?.targetRoas ?? (c.maximizeConversionValue as Record<string, unknown> | undefined)?.targetRoas;
+      return {
+        id: String(c.id),
+        name: String(c.name),
+        status: String(c.status),
+        type: String(c.advertisingChannelType ?? ""),
+        bidding: String(c.biddingStrategyType ?? ""),
+        targetCpa: micros(tc),
+        targetRoas: tr == null ? null : Number(tr),
+        budget: micros(r.campaignBudget?.amountMicros),
+        serving: String(c.servingStatus ?? ""),
+      };
+    }),
+    conversions: convs.map((r) => ({
+      name: String(r.conversionAction?.name ?? ""),
+      category: String(r.conversionAction?.category ?? ""),
+      primary: Boolean(r.conversionAction?.primaryForGoal),
+      counted: Boolean(r.conversionAction?.includeInConversionsMetric),
+      status: String(r.conversionAction?.status ?? ""),
+    })),
+  };
+}
+
+/** What an audit reads beyond the daily numbers: ad groups, keywords, search terms, devices, impression share. Last 30 days. */
+export async function googleAuditDetail(account: string) {
+  const range = "segments.date DURING LAST_30_DAYS";
+  const safe = (q: string) => search(account, q).catch(() => [] as Row[]);
+  const [groups, keywords, terms, devices, share] = await Promise.all([
+    safe(`SELECT campaign.name, ad_group.name, ad_group.status, metrics.cost_micros, metrics.clicks, metrics.impressions, metrics.conversions, metrics.conversions_value FROM ad_group WHERE ${range} AND metrics.cost_micros > 0 ORDER BY metrics.cost_micros DESC LIMIT 25`),
+    safe(`SELECT ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.quality_info.quality_score, campaign.name, metrics.cost_micros, metrics.clicks, metrics.impressions, metrics.conversions FROM keyword_view WHERE ${range} AND metrics.cost_micros > 0 ORDER BY metrics.cost_micros DESC LIMIT 30`),
+    safe(`SELECT search_term_view.search_term, campaign.name, metrics.cost_micros, metrics.clicks, metrics.conversions FROM search_term_view WHERE ${range} AND metrics.cost_micros > 0 ORDER BY metrics.cost_micros DESC LIMIT 30`),
+    safe(`SELECT segments.device, metrics.cost_micros, metrics.clicks, metrics.impressions, metrics.conversions FROM campaign WHERE ${range}`),
+    safe(`SELECT campaign.name, metrics.search_impression_share, metrics.search_budget_lost_impression_share, metrics.search_rank_lost_impression_share, metrics.search_top_impression_share, metrics.cost_micros FROM campaign WHERE ${range} AND campaign.advertising_channel_type = 'SEARCH' AND metrics.cost_micros > 0`),
+  ]);
+  const $ = (r: Row) => Math.round(num(r.metrics?.costMicros) / 10_000) / 100;
+  const cpa = (r: Row) => (num(r.metrics?.conversions) ? `$${Math.round(($(r) / num(r.metrics?.conversions)) * 100) / 100}/conv` : "no conversions");
+  const pct = (v: unknown) => (v == null || v === "" ? "?" : `${Math.round(Number(v) * 100)}%`);
+  const lines: string[] = [];
+  lines.push("AD GROUPS, last 30 days (by spend)");
+  for (const r of groups) lines.push(`- ${r.campaign?.name} › ${r.adGroup?.name} [${r.adGroup?.status}]: $${$(r)}, ${num(r.metrics?.clicks)} clicks, ${Math.round(num(r.metrics?.conversions) * 10) / 10} conv, ${cpa(r)}`);
+  lines.push("\nKEYWORDS, last 30 days (by spend)");
+  for (const r of keywords)
+    lines.push(`- "${r.adGroupCriterion && (r.adGroupCriterion as { keyword?: { text?: string } }).keyword?.text}" ${String((r.adGroupCriterion as { keyword?: { matchType?: string } } | undefined)?.keyword?.matchType ?? "").toLowerCase()} (${r.campaign?.name}), QS ${(r.adGroupCriterion as { qualityInfo?: { qualityScore?: number } } | undefined)?.qualityInfo?.qualityScore ?? "?"}: $${$(r)}, ${num(r.metrics?.clicks)} clicks, ${Math.round(num(r.metrics?.conversions) * 10) / 10} conv, ${cpa(r)}`);
+  lines.push("\nSEARCH TERMS, last 30 days (by spend)");
+  for (const r of terms) lines.push(`- "${r.searchTermView?.searchTerm}" (${r.campaign?.name}): $${$(r)}, ${num(r.metrics?.clicks)} clicks, ${Math.round(num(r.metrics?.conversions) * 10) / 10} conv`);
+  const byDevice = new Map<string, { cost: number; clicks: number; conv: number }>();
+  for (const r of devices) {
+    const k = String(r.segments?.device ?? "?");
+    const d = byDevice.get(k) ?? { cost: 0, clicks: 0, conv: 0 };
+    d.cost += $(r);
+    d.clicks += num(r.metrics?.clicks);
+    d.conv += num(r.metrics?.conversions);
+    byDevice.set(k, d);
+  }
+  lines.push(`\nDEVICES, last 30 days: ${[...byDevice].map(([k, d]) => `${k.toLowerCase()} $${Math.round(d.cost)}, ${d.clicks} clicks, ${Math.round(d.conv)} conv${d.conv ? ` ($${Math.round((d.cost / d.conv) * 100) / 100}/conv)` : ""}`).join("; ") || "?"}`);
+  lines.push("\nSEARCH IMPRESSION SHARE, last 30 days");
+  for (const r of share) lines.push(`- ${r.campaign?.name}: ${pct(r.metrics?.searchImpressionShare)} share, lost ${pct(r.metrics?.searchBudgetLostImpressionShare)} to budget and ${pct(r.metrics?.searchRankLostImpressionShare)} to rank, top of page ${pct(r.metrics?.searchTopImpressionShare)} ($${$(r)})`);
+  return { text: lines.join("\n"), counts: { adGroups: groups.length, keywords: keywords.length, searchTerms: terms.length } };
 }
 
 /** Every client account under the manager account (for Settings: what we can see, and which clients have no target). */

@@ -431,7 +431,7 @@ function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
-  const canExplore = r.platform === "meta" && Boolean(r.accountId);
+  const canExplore = Boolean(r.accountId);
   useEffect(() => {
     if (!canExplore) return;
     let live = true;
@@ -574,7 +574,7 @@ function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
             {r.sheet && <span className="ml-2 normal-case tracking-normal text-faint">· buyer, budget and target come from the Account Overview sheet (read at 12pm and 5pm): change them there</span>}
           </p>
           <div className="flex items-center gap-3">
-            {r.platform === "meta" && r.accountId && <ActionButton action={pullClientKpis.bind(null, r.clientId)} label="Pull from Meta now" />}
+            {r.accountId && <ActionButton action={pullClientKpis.bind(null, r.clientId)} label={r.platform === "google" ? "Pull from Google now" : "Pull from Meta now"} />}
             <ActionButton action={archiveKpiTarget.bind(null, r.id)} label="Remove" confirmText="Remove this KPI?" />
           </div>
         </div>
@@ -769,6 +769,7 @@ export function KpiBoard({
   initialOwner,
   lastSync,
   unlinked = [],
+  googleConnected = false,
 }: {
   rows: KpiRow[];
   buyers: Person[];
@@ -777,6 +778,8 @@ export function KpiBoard({
   initialOwner: string;
   lastSync: string | null;
   unlinked?: { id: string; name: string }[];
+  /** Google Ads is set up (it reads through the manager account); its KPIs fill in on the next sync */
+  googleConnected?: boolean;
 }) {
   const [platform, setPlatform] = useState<"meta" | "google">("meta");
   const [owner, setOwner] = useState(initialOwner);
@@ -841,9 +844,9 @@ export function KpiBoard({
         </div>
       </header>
 
-      {platform === "google" && (
+      {platform === "google" && !googleConnected && (
         <p className="rounded-[12px] border border-warn/30 bg-warn-soft px-5 py-4 text-sm leading-relaxed text-warn">
-          Google Ads isn&apos;t connected yet, so these targets and budgets are saved but have no numbers. They light up once the Google Ads API is approved.
+          Google Ads isn&apos;t connected yet, so these targets and budgets are saved but have no numbers. They light up once the connection is set up in Vercel.
         </p>
       )}
 

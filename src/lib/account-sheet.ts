@@ -33,9 +33,17 @@ async function readTab(tok: string, tab: string): Promise<string[][]> {
   return body.values ?? [];
 }
 
+/** The first amount in a cell: "$3,000 / $3,000" is 3000 (not 30003000), "3.15k" is 3150. */
 const money = (v: string | undefined) => {
-  const n = Number(String(v ?? "").replace(/[^0-9.]/g, ""));
+  const m = String(v ?? "").match(/(\d[\d,]*(?:\.\d+)?)\s*([kK])?/);
+  if (!m) return null;
+  const n = Number(m[1].replace(/,/g, "")) * (m[2] ? 1000 : 1);
   return Number.isFinite(n) && n > 0 ? n : null;
+};
+/** A monthly budget: an amount under $20 is a typo or a daily figure, not a month's budget. */
+const budgetOf = (v: string | undefined) => {
+  const n = money(v);
+  return n != null && n >= 20 ? n : null;
 };
 const digits = (v: string | undefined) => String(v ?? "").replace(/\D/g, "");
 
@@ -102,7 +110,7 @@ export async function syncAccountSheet(admin: SupabaseClient) {
       const buyer = person(buyerName);
       if (buyerName && !buyer) out.unknownBuyer.push(`${buyerName} (${name})`);
       const kpi = money(r["KPI"]);
-      const budget = money(r["Budget"]);
+      const budget = budgetOf(r["Budget"]);
       const sheet = Object.fromEntries(NOTE_FIELDS.map(([k, h]) => [k, r[h] ?? ""]).filter(([, v]) => v));
       const patch: Record<string, unknown> = { sheet: { ...sheet, name, platform, syncedAt: now }, sheet_synced_at: now };
       // A ROAS KPI isn't a dollar target: the sheet's dollar KPI doesn't replace it

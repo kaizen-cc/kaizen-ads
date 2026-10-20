@@ -172,7 +172,7 @@ export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id
                   {changes.length > 0 && (
                     <details className="text-xs text-muted">
                       <summary className="cursor-pointer text-faint hover:text-fg">
-                        {changes.length} {changes.length === 1 ? "change" : "changes"} seen in Meta
+                        {changes.length} {changes.length === 1 ? "change" : "changes"} seen in the ad account
                       </summary>
                       <ul className="mt-2 grid gap-1">
                         {changes.map((x, i) => (

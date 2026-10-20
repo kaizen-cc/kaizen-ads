@@ -3,11 +3,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import type { AuditResult } from "@/lib/audit";
 import { accountSetup, metaConfigured, type AccountSetup } from "@/lib/context/meta";
+import { googleActivity, googleAdsConfigured, googleSetup, type GoogleSetup } from "@/lib/context/google-ads";
 import { conversionFor, conversionLabel } from "@/lib/kpi/conversions";
 
 // Optimization sprints: an audit's plan, followed through with the buyer. The audit opens one on its account, assigned
 // to the KPI's buyer and watched by whoever ran it. Every day (or on the follow-up date it set) the check re-reads the
-// account: what changed in Meta since last time, which actions were ticked, and how the KPI moved since the start. It
+// account: what changed in Meta or Google Ads since last time, which actions were ticked, and how the KPI moved since the start. It
 // then tells the buyer what it sees, and sets when it looks again: tomorrow when nothing's moving or a change looks
 // wrong, a few days out when the right changes are in and need time to read.
 
@@ -49,7 +50,7 @@ export async function openSprint(admin: SupabaseClient, auditId: string) {
   const { data: a } = await admin.from("account_audits").select("target_id, client_id, created_by, result").eq("id", auditId).single();
   if (!a?.result) return null;
   const r = a.result as AuditResult;
-  const { data: t } = await admin.from("kpi_targets").select("owner_id, ad_account_id").eq("id", a.target_id).single();
+  const { data: t } = await admin.from("kpi_targets").select("owner_id, ad_account_id, platform").eq("id", a.target_id).single();
   const buyer = t?.owner_id ?? a.created_by;
   const watchers = a.created_by && a.created_by !== buyer ? [a.created_by] : [];
   const kpi = await kpiNow(admin, a.target_id);
@@ -62,7 +63,7 @@ export async function openSprint(admin: SupabaseClient, auditId: string) {
       .update({ audit_id: auditId, next_check_at: checkAt(1), watcher_ids: [...new Set([...((open!.watcher_ids ?? []) as string[]), ...watchers])] })
       .eq("id", sprintId);
   } else {
-    const setup = metaConfigured() && t?.ad_account_id ? await accountSetup(t.ad_account_id).catch(() => null) : null;
+    const setup = await liveSetup(t?.platform ?? "meta", t?.ad_account_id ?? null);
     const { data, error } = await admin
       .from("optimization_sprints")
       .insert({ target_id: a.target_id, client_id: a.client_id, audit_id: auditId, buyer_id: buyer, watcher_ids: watchers, created_by: a.created_by, baseline: kpi, latest: kpi, setup, next_check_at: checkAt(1) })
@@ -117,10 +118,45 @@ export async function addAuditAction(admin: SupabaseClient, auditId: string, ind
   return s.id as string;
 }
 
-// ─── What changed in Meta ───────────────────────────────────────────────────
+// ─── What changed in the account ────────────────────────────────────────────
+
+/** The account's setup now, from Meta or Google Ads (null when it can't be read). */
+async function liveSetup(platform: string, account: string | null): Promise<AccountSetup | GoogleSetup | null> {
+  if (!account) return null;
+  if (platform === "google") return googleAdsConfigured() ? googleSetup(account).catch(() => null) : null;
+  return metaConfigured() ? accountSetup(account.replace(/^act_/, "")).catch(() => null) : null;
+}
+
+/** Google: what changed in campaigns (status, budget, bidding and its target) between two reads. */
+function googleSetupChanges(before: GoogleSetup | null, now: GoogleSetup | null) {
+  if (!before?.campaigns || !now?.campaigns) return [];
+  const out: string[] = [];
+  const bc = new Map(before.campaigns.map((c) => [c.id, c]));
+  for (const c of now.campaigns) {
+    const b = bc.get(c.id);
+    if (!b) {
+      out.push(`New campaign "${c.name}" (${c.type.toLowerCase()}, ${c.status.toLowerCase()})`);
+      continue;
+    }
+    if (b.status !== c.status) out.push(`Campaign "${c.name}" went from ${b.status.toLowerCase()} to ${c.status.toLowerCase()}`);
+    if (b.budget !== c.budget) out.push(`Campaign "${c.name}" daily budget $${b.budget ?? "?"} → $${c.budget ?? "?"}`);
+    if (b.bidding !== c.bidding) out.push(`Campaign "${c.name}" bidding ${b.bidding.toLowerCase()} → ${c.bidding.toLowerCase()}`);
+    if (b.targetCpa !== c.targetCpa) out.push(`Campaign "${c.name}" target CPA $${b.targetCpa ?? "none"} → $${c.targetCpa ?? "none"}`);
+    if (b.targetRoas !== c.targetRoas) out.push(`Campaign "${c.name}" target ROAS ${b.targetRoas ?? "none"} → ${c.targetRoas ?? "none"}`);
+  }
+  for (const b of before.campaigns) if (!now.campaigns.some((c) => c.id === b.id)) out.push(`Campaign "${b.name}" is gone (removed)`);
+  return out;
+}
+
+/** Google's own change history since the last check: who changed what (keywords, ads, negatives, settings). */
+async function googleHistory(account: string, since: string) {
+  const days = Math.min(29, Math.ceil((Date.now() - Date.parse(since)) / DAY) + 1);
+  const events = await googleActivity(account, days).catch(() => []);
+  return events.filter((e) => e.at > since).slice(0, 25).map((e) => `${e.what}${e.object ? ` on ${e.objectType ?? ""} "${e.object}"` : ""} (${e.at.slice(0, 10)})`);
+}
 
 function setupChanges(before: AccountSetup | null, now: AccountSetup | null) {
-  if (!before || !now) return [];
+  if (!before?.adsets || !now?.adsets) return [];
   const out: string[] = [];
   const money = (v: number | null) => (v == null ? "none" : `$${v}`);
   const bc = new Map(before.campaigns.map((c) => [c.id, c]));
@@ -219,17 +255,22 @@ function actionLine(x: ActionForCheck, i: number) {
 
 /** One check on one sprint: what changed, what the buyer did, and what to tell them. */
 export async function checkSprint(admin: SupabaseClient, sprintId: string) {
-  const { data: s } = await admin.from("optimization_sprints").select("*, kpi_targets(ad_account_id), clients(name)").eq("id", sprintId).single();
+  const { data: s } = await admin.from("optimization_sprints").select("*, kpi_targets(ad_account_id, platform), clients(name)").eq("id", sprintId).single();
   if (!s || s.status !== "active") return null;
-  const account = (s.kpi_targets as unknown as { ad_account_id: string | null } | null)?.ad_account_id?.replace(/^act_/, "") ?? null;
+  const kt = s.kpi_targets as unknown as { ad_account_id: string | null; platform: string } | null;
+  const google = kt?.platform === "google";
+  const where = google ? "Google Ads" : "Meta";
+  const account = google ? (kt?.ad_account_id ?? null) : (kt?.ad_account_id?.replace(/^act_/, "") ?? null);
   const since = (s.last_check_at ?? s.started_at) as string;
   const [kpi, setupNow, { data: actions }, { data: audit }] = await Promise.all([
     kpiNow(admin, s.target_id),
-    metaConfigured() && account ? accountSetup(account).catch(() => null) : Promise.resolve(null),
+    liveSetup(kt?.platform ?? "meta", account),
     admin.from("sprint_actions").select("id, title, why, status, note, done_at, \"when\", watch, answers, source, learned").eq("sprint_id", sprintId).order("sort_order"),
     s.audit_id ? admin.from("account_audits").select("result").eq("id", s.audit_id).maybeSingle() : Promise.resolve({ data: null }),
   ]);
-  const changes = [...setupChanges(s.setup as AccountSetup | null, setupNow), ...(account ? await adChanges(admin, s.client_id, account, since) : [])];
+  const changes = google
+    ? [...googleSetupChanges(s.setup as GoogleSetup | null, setupNow as GoogleSetup | null), ...(account && googleAdsConfigured() ? await googleHistory(account, since) : [])]
+    : [...setupChanges(s.setup as AccountSetup | null, setupNow as AccountSetup | null), ...(account ? await adChanges(admin, s.client_id, account, since) : [])];
   const ticked = (actions ?? []).filter((x) => x.done_at && x.done_at > since);
   const base = s.baseline as Kpi;
   const r = audit?.result as AuditResult | null;
@@ -242,9 +283,9 @@ export async function checkSprint(admin: SupabaseClient, sprintId: string) {
     actions: { n: number; status: string; note: string }[];
     learning: { kind: "none" | "prefer" | "avoid"; body: string; from: number[] };
   }>({
-    agent: "auditor",
+    agent: google ? "google_auditor" : "auditor",
     label: `sprint check ${(s.clients as unknown as { name: string } | null)?.name ?? ""}`,
-    system: CHECK_SYSTEM,
+    system: google ? CHECK_SYSTEM.replace(/\bMeta\b/g, "Google Ads").replace(/resetting learning on a winner, starving the best ad set, splitting budget thinner/, "resetting smart bidding by changing the target too far at once, cutting the budget of the campaign that converts, broadening match types without negatives") : CHECK_SYSTEM,
     schema: CHECK_SCHEMA,
     prompt: `<sprint client="${(s.clients as unknown as { name: string } | null)?.name ?? ""}" day="${days}">
 KPI: ${base.label}. Target: ${fmt(base, base.target)}.
@@ -261,9 +302,9 @@ ${r ? `${r.verdict.headline}\n${r.diagnosis}\nRoot causes: ${r.causes.map((c) =>
 ${(actions ?? []).map((x, i) => actionLine(x, i)).join("\n") || "(empty)"}
 </action_list>
 
-<changes_in_meta_since_last_check>
-${changes.length ? changes.map((c) => `- ${c}`).join("\n") : setupNow ? "(none: nothing changed in campaigns, ad sets, budgets, bidding or audiences, and no ads started or stopped)" : "(couldn't read the live setup from Meta; only ad starts and stops are known)"}
-</changes_in_meta_since_last_check>
+<changes_in_${google ? "google_ads" : "meta"}_since_last_check>
+${changes.length ? changes.map((c) => `- ${c}`).join("\n") : setupNow ? (google ? "(none: no changes in campaigns, budgets or bidding, and nothing in Google's change history)" : "(none: nothing changed in campaigns, ad sets, budgets, bidding or audiences, and no ads started or stopped)") : `(couldn't read the live setup from ${where})`}
+</changes_in_${google ? "google_ads" : "meta"}_since_last_check>
 
 <ticked_since_last_check>
 ${ticked.map((x) => `- ${x.title}`).join("\n") || "(nothing)"}
@@ -274,7 +315,7 @@ ${ticked.map((x) => `- ${x.title}`).join("\n") || "(nothing)"}
   await admin.from("sprint_checks").insert({ sprint_id: sprintId, verdict: out.verdict, message: out.message.replace(/\s*—\s*/g, ", "), changes, kpi, next_check_at: next });
   for (const u of out.actions) {
     const x = (actions ?? [])[u.n - 1];
-    if (x) await admin.from("sprint_actions").update({ ai_note: `${u.status === "looks_done" ? "Looks done in Meta" : u.status === "partly" ? "Partly done" : "Not seen in Meta yet"}: ${u.note}`.slice(0, 400) }).eq("id", x.id);
+    if (x) await admin.from("sprint_actions").update({ ai_note: `${u.status === "looks_done" ? `Looks done in ${where}` : u.status === "partly" ? "Partly done" : `Not seen in ${where} yet`}: ${u.note}`.slice(0, 400) }).eq("id", x.id);
   }
   // The learning loop: what worked (or backfired) goes to the client page, once per move
   if (out.learning?.kind && out.learning.kind !== "none" && out.learning.body.trim()) {
@@ -373,7 +414,7 @@ const CLIENT_SCHEMA = {
 const CLIENT_SYSTEM = `You turn Kaizen Marketing's internal ad account audit into the version the client reads: a short, confident, professional report from the agency, in Kaizen's voice ("we", "your account").
 headline: one line on where the account stands. summary: 2 or 3 sentences, honest about the gap to target and clear that we have a plan.
 found: 3 to 5 findings in plain language a business owner understands, with the key numbers (no jargon like "CPM" without saying what it means).
-doing: 4 to 7 things we're doing about it ("We're consolidating your campaigns so Meta's learning isn't split…"), each with when (this week, over the next two weeks…). Only the moves Kaizen does or that need the client; drop internal housekeeping. If something needs the client (the offer, the website, tracking access, stock), say clearly what we need from them.
+doing: 4 to 7 things we're doing about it ("We're consolidating your campaigns so the budget isn't split across too many places…"), each with when (this week, over the next two weeks…). Only the moves Kaizen does or that need the client; drop internal housekeeping. If something needs the client (the offer, the website, tracking access, stock), say clearly what we need from them.
 watching: 2 to 4 things we're watching and what good looks like.
 nextUpdate: when and how we'll update them.
 Never mention internal tools, agents, other clients, the Hall of Fame, the team's names, or anything that blames a person at Kaizen. Don't promise results; promise the work. No em dashes.`;

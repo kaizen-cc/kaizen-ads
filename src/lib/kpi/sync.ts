@@ -2,7 +2,7 @@ import "server-only";
 import { tracker, type Tracker } from "@/lib/progress";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { accountActivity, asyncReport, linkAdAccounts, metaConfigured, type InsightRow } from "@/lib/context/meta";
-import { digits, googleAdsConfigured, googleAdsMissing, syncGoogleCampaigns } from "@/lib/context/google-ads";
+import { digits, googleActivity, googleAdsConfigured, googleAdsMissing, syncGoogleCampaigns } from "@/lib/context/google-ads";
 import { pool } from "@/lib/context/run";
 import { computeSnapshot, nyParts, toDays } from "./calc";
 import { LIVE } from "@/lib/live";
@@ -184,7 +184,7 @@ async function refreshTargets(admin: SupabaseClient, targets: Target[], pull: bo
     }
     await computeAccount(admin, account, list, error, platform);
     // Who changed what in the account lately (Meta's activity log), so the board shows whether someone's on it
-    if (pull && platform === "meta" && metaConfigured() && !error) await saveActivity(admin, account);
+    if (pull && !error && (platform === "google" || metaConfigured())) await saveActivity(admin, account, platform);
     await admin.from("sync_state").upsert({ source: `kpi:${account}`, last_run_at: new Date().toISOString(), last_result: { ...(pulled ?? {}), error: error ?? null } });
     t?.tick(account, !error);
     return { account, platform, targets: list.length, ...(pulled ?? {}), ...(error ? { error } : {}) };
@@ -213,9 +213,9 @@ export async function adoptNewAccounts(admin: SupabaseClient) {
 }
 
 /** The account's latest changes from Meta's activity log. A failure is noted, never fatal to the KPI sync. */
-async function saveActivity(admin: SupabaseClient, account: string) {
+async function saveActivity(admin: SupabaseClient, account: string, platform = "meta") {
   try {
-    const recent = await accountActivity(account);
+    const recent = platform === "google" ? await googleActivity(account) : await accountActivity(account);
     await admin.from("ad_account_activity").upsert({
       ad_account_id: account,
       last_change_at: recent[0]?.at ?? null,
