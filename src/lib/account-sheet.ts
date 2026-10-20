@@ -90,25 +90,71 @@ export async function syncAccountSheet(admin: SupabaseClient) {
     };
     const now = new Date().toISOString();
     const handoffs: string[] = [];
-    const out = { updated: 0, unchanged: 0, noKpi: [] as string[], noAccount: [] as string[], unknownBuyer: [] as string[], buyers: 0 };
+    const out = { updated: 0, unchanged: 0, created: [] as string[], noKpi: [] as string[], noAccount: [] as string[], unknownBuyer: [] as string[], buyers: 0 };
+
+    // A row's client by its name, for rows not tied to a KPI yet (a new client with no ad account, or an account
+    // that isn't tracked here yet): an exact name first, else the one client whose name it contains or is part of
+    const { data: allClients } = await admin.from("clients").select("id, name").is("archived_at", null);
+    const nm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const clientNamed = (name: string) => {
+      const n = nm(name);
+      if (n.length < 3) return null;
+      const exact = (allClients ?? []).filter((c) => nm(c.name) === n);
+      if (exact.length === 1) return exact[0];
+      const loose = (allClients ?? []).filter((c) => nm(c.name).length >= 4 && (n.includes(nm(c.name)) || nm(c.name).includes(n)));
+      return loose.length === 1 ? loose[0] : null;
+    };
+    // The row's buyer onto the client's Meta or Google slot (a new Meta buyer takes the account's work and gets a handoff)
+    const assign = async (clientId: string, platform: "meta" | "google", buyer: { id: string }) => {
+      const slot = platform === "google" ? "google_buyer" : "meta_buyer";
+      const { data: cur } = await admin.from("client_assignments").select("profile_id").eq("client_id", clientId).eq("role", slot);
+      if ((cur ?? []).some((c) => c.profile_id === buyer.id)) return;
+      await admin.from("client_assignments").delete().eq("client_id", clientId).eq("role", slot);
+      await admin.from("client_assignments").insert({ client_id: clientId, profile_id: buyer.id, role: slot });
+      out.buyers++;
+      if (slot === "meta_buyer") {
+        const { handOff } = await import("@/lib/handoff");
+        const id = await handOff(admin, clientId, (cur?.[0]?.profile_id as string | undefined) ?? null, buyer.id, null, "sheet");
+        if (id) handoffs.push(id);
+      }
+    };
 
     for (const { r, platform } of rows) {
       const name = r["Client Name"] ?? r["Clients"] ?? "";
       const account = digits(r["Ad Account ID"]);
-      if (!account) {
-        out.noAccount.push(`${name} (${platform})`);
-        t.tick(name);
-        continue;
-      }
-      const target = (targets ?? []).find((x) => x.platform === platform && digits(x.ad_account_id ?? "") === account);
-      if (!target) {
-        out.noKpi.push(`${name} (${platform})`);
-        t.tick(name, false);
-        continue;
-      }
       const buyerName = r["Media Buyer"] ?? "";
       const buyer = person(buyerName);
       if (buyerName && !buyer) out.unknownBuyer.push(`${buyerName} (${name})`);
+      if (!account) {
+        // No ad account yet (a client just onboarded): the buyer is still theirs from today
+        const c = clientNamed(name);
+        if (c && buyer) await assign(c.id, platform, buyer);
+        out.noAccount.push(`${name} (${platform})${c ? "" : " · no client by that name"}`);
+        t.tick(name);
+        continue;
+      }
+      let target = (targets ?? []).find((x) => x.platform === platform && digits(x.ad_account_id ?? "") === account);
+      if (!target) {
+        // An ad account the sheet tracks but Kaizen Ads doesn't yet: its KPI is set up from the sheet's row
+        const c = clientNamed(name);
+        if (!c) {
+          out.noKpi.push(`${name} (${platform}) · no client by that name`);
+          t.tick(name, false);
+          continue;
+        }
+        const { data: made } = await admin
+          .from("kpi_targets")
+          .insert({ client_id: c.id, platform, ad_account_id: account, conversion: platform === "google" ? "conversions" : "purchases", target: money(r["KPI"]), monthly_budget: budgetOf(r["Budget"]), owner_id: buyer?.id ?? null })
+          .select("id, client_id, platform, ad_account_id, conversion, target, monthly_budget, owner_id, sheet")
+          .single();
+        if (!made) {
+          out.noKpi.push(`${name} (${platform})`);
+          t.tick(name, false);
+          continue;
+        }
+        target = made;
+        out.created.push(`${name} (${platform})`);
+      }
       const kpi = money(r["KPI"]);
       const budget = budgetOf(r["Budget"]);
       const fromSheet = Object.fromEntries(NOTE_FIELDS.map(([k, h]) => [k, r[h] ?? ""]).filter(([, v]) => v)) as Record<string, string>;
@@ -132,28 +178,9 @@ export async function syncAccountSheet(admin: SupabaseClient) {
       if (changed) out.updated++;
       else out.unchanged++;
 
-      // The client's Meta buyer follows the sheet: that's whose lists and views the account is on
-      if (platform === "meta" && buyer) {
-        const { data: cur } = await admin.from("client_assignments").select("profile_id").eq("client_id", target.client_id).eq("role", "meta_buyer");
-        if (!(cur ?? []).some((c) => c.profile_id === buyer.id)) {
-          await admin.from("client_assignments").delete().eq("client_id", target.client_id).eq("role", "meta_buyer");
-          await admin.from("client_assignments").insert({ client_id: target.client_id, profile_id: buyer.id, role: "meta_buyer" });
-          out.buyers++;
-          // The account's work moves to the new buyer, and a handoff is written for them once the sheet is read
-          const { handOff } = await import("@/lib/handoff");
-          const id = await handOff(admin, target.client_id, (cur?.[0]?.profile_id as string | undefined) ?? null, buyer.id, null, "sheet");
-          if (id) handoffs.push(id);
-        }
-      }
-      // The Google buyer follows the Google tab the same way: it scopes their board to their accounts
-      if (platform === "google" && buyer) {
-        const { data: cur } = await admin.from("client_assignments").select("profile_id").eq("client_id", target.client_id).eq("role", "google_buyer");
-        if (!(cur ?? []).some((c) => c.profile_id === buyer.id)) {
-          await admin.from("client_assignments").delete().eq("client_id", target.client_id).eq("role", "google_buyer");
-          await admin.from("client_assignments").insert({ client_id: target.client_id, profile_id: buyer.id, role: "google_buyer" });
-          out.buyers++;
-        }
-      }
+      // The client's Meta and Google buyers follow the sheet: that's whose lists and views the account is on (a new
+      // Meta buyer takes the account's work and gets a handoff)
+      if (buyer) await assign(target.client_id, platform, buyer);
       t.tick(name);
     }
     if (out.updated || out.buyers) {
@@ -166,6 +193,23 @@ export async function syncAccountSheet(admin: SupabaseClient) {
       t.on(`Writing ${handoffs.length} handoff${handoffs.length === 1 ? "" : "s"} for new buyers`);
       const { writeHandoff } = await import("@/lib/handoff");
       for (const id of handoffs) await writeHandoff(admin, id);
+    }
+    // Buyers the sheet names who aren't on the team: execs hear it once a day, not on every run
+    const missing = [...new Set(out.unknownBuyer.map((x) => x.replace(/\s*\(.*$/, "")))];
+    if (missing.length) {
+      const { data: execs } = await admin.from("profiles").select("id").eq("role", "executive").eq("is_active", true).not("joined_at", "is", null);
+      await admin.from("notifications").upsert(
+        (execs ?? []).map((e) => ({
+          profile_id: e.id,
+          kind: "client",
+          title: `The Account Overview sheet names ${missing.join(", ")}, not on the team in Kaizen Ads`,
+          body: `Their accounts have no buyer here until they're added on the Team page: ${out.unknownBuyer.slice(0, 8).join("; ")}${out.unknownBuyer.length > 8 ? "…" : ""}`,
+          href: "/team",
+          key: `sheet-unknown-buyers:${now.slice(0, 10)}`,
+          priority: "normal",
+        })),
+        { onConflict: "profile_id,key", ignoreDuplicates: true },
+      );
     }
     t.on("Reading the Onboarding tab");
     const onboarding = await syncOnboarding(admin, tok, now).catch((e) => ({ onboarding: 0, onboardingUnmatched: [] as string[], onboardingError: e instanceof Error ? e.message : String(e) }));
