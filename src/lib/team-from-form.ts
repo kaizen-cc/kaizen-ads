@@ -6,19 +6,22 @@ import { aiEnabled, askJson } from "@/lib/ai";
 // success). Those names become the client's assignments here, which is what decides who sees the client: a media
 // buyer's board, KPIs and Home show only the clients they're assigned to.
 
-type Slot = "meta_buyer" | "graphic_designer" | "video_editor" | "copywriter" | "coordinator";
+type Slot = "meta_buyer" | "google_buyer" | "graphic_designer" | "video_editor" | "copywriter" | "coordinator";
 
-// Which form question is which role (matched on the question's words, so the form's own titles work)
+// Which form question is which role (matched on the question's words, so the form's own titles work). The Google
+// buyer comes before the general buyer, so "Google Media Buyer" is never read as the Meta buyer.
 const QUESTION: [Slot, RegExp][] = [
   ["video_editor", /videoeditor|editor/],
   ["graphic_designer", /graphicdesigner|designer/],
   ["copywriter", /copywriter/],
   ["coordinator", /customersuccess|accountmanager|csm|coordinator/],
-  ["meta_buyer", /mediabuyer|metabuyer|buyer|adsmanager/],
+  ["google_buyer", /google.*buyer|googleads.*manager|ppc|search.*buyer/],
+  ["meta_buyer", /mediabuyer|metabuyer|facebook.*buyer|buyer|adsmanager/],
 ];
 // Who can hold each role
 const ELIGIBLE: Record<Slot, string[]> = {
   meta_buyer: ["media_buyer", "head_of_meta"],
+  google_buyer: ["google_buyer", "head_of_google", "media_buyer"],
   graphic_designer: ["graphic_designer", "head_of_creative"],
   video_editor: ["video_editor", "head_of_creative"],
   copywriter: ["copywriter"],
@@ -61,7 +64,7 @@ export async function applyTeam(admin: SupabaseClient, clientId: string, raw: Re
       const byFirst = pool.filter((p) => norm(p.full_name.split(/\s+/)[0] ?? "") === first);
       const hit = exact.length === 1 ? exact[0] : byFirst.length === 1 ? byFirst[0] : null;
       if (hit) ids.push(hit.id);
-      else unmatched.push(`${name} (${slot.replace("_", " ")})`);
+      else unmatched.push(`${name} (${slot === "google_buyer" ? "Google buyer" : slot === "meta_buyer" ? "Meta buyer" : slot.replace("_", " ")})`);
     }
     if (!ids.length) continue;
     const { data: before } = slot === "meta_buyer" ? await admin.from("client_assignments").select("profile_id").eq("client_id", clientId).eq("role", slot) : { data: [] };
@@ -77,6 +80,49 @@ export async function applyTeam(admin: SupabaseClient, clientId: string, raw: Re
     }
   }
   return { assigned, unmatched };
+}
+
+/**
+ * The client's own people named on the form (any question asking for an email that isn't a Kaizen address, with the
+ * name asked next to it) become the client's contacts: who gets the portal link and approves ads. The first is primary.
+ */
+export async function applyContacts(admin: SupabaseClient, clientId: string, raw: Record<string, unknown>) {
+  const entries = Object.entries(raw).map(([k, v]) => [k, Array.isArray(v) ? v.join(", ") : v == null ? "" : String(v)] as const);
+  const added: string[] = [];
+  for (const [q, v] of entries) {
+    const emails = v.toLowerCase().match(/[\w.+-]+@[\w-]+(\.[\w-]+)+/g) ?? [];
+    if (!emails.length || /kaizenmarketing\.agency/.test(v)) continue;
+    // The name asked alongside it: "Contact Email" → "Contact Name", else a question about the point of contact
+    const base = norm(q).replace(/email(address)?/, "");
+    const nameQ = entries.find(([k]) => norm(k) !== norm(q) && /name/.test(norm(k)) && !/business|company|brand/.test(norm(k)) && (base ? norm(k).includes(base) : /contact|pointof|decision|owner/.test(norm(k))));
+    for (const email of emails) {
+      const { data: c } = await admin.from("contacts").upsert({ email, full_name: emails.length === 1 ? (nameQ?.[1].trim() || null) : null, is_active: true }, { onConflict: "email", ignoreDuplicates: false }).select("id").single();
+      if (!c) continue;
+      const { count } = await admin.from("contact_clients").select("contact_id", { count: "exact", head: true }).eq("client_id", clientId);
+      await admin.from("contact_clients").upsert({ contact_id: c.id, client_id: clientId, is_primary: !count }, { onConflict: "contact_id,client_id", ignoreDuplicates: true });
+      added.push(email);
+    }
+  }
+  return added;
+}
+
+/** Names on the form that aren't on the team in Kaizen Ads: execs hear about it so someone adds them or assigns by hand. */
+export async function flagUnmatched(admin: SupabaseClient, clientId: string, unmatched: string[]) {
+  if (!unmatched.length) return;
+  const [{ data: c }, { data: execs }] = await Promise.all([admin.from("clients").select("name, slug").eq("id", clientId).single(), admin.from("profiles").select("id").eq("role", "executive").eq("is_active", true).not("joined_at", "is", null)]);
+  await admin.from("notifications").upsert(
+    (execs ?? []).map((e) => ({
+      profile_id: e.id,
+      kind: "client",
+      title: `${c?.name ?? "A new client"}: ${unmatched.join(", ")} ${unmatched.length === 1 ? "isn't" : "aren't"} on the team`,
+      body: "The onboarding form named them, but there's no one by that name in Kaizen Ads. Add them on the Team page, or assign the client's team by hand.",
+      href: c?.slug ? `/clients/${c.slug}` : "/team",
+      client_id: clientId,
+      key: `form-team:${clientId}:${unmatched.join("|")}`.slice(0, 300),
+      priority: "critical",
+    })),
+    { onConflict: "profile_id,key", ignoreDuplicates: true },
+  );
 }
 
 const PACKAGE_SCHEMA = {

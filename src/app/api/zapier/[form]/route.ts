@@ -3,7 +3,7 @@ import { linkNewChannel } from "@/lib/context/slack";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { after } from "next/server";
 import { welcomeBack } from "@/lib/client-sync";
-import { applyPackageText, applyTeam } from "@/lib/team-from-form";
+import { applyContacts, applyPackageText, applyTeam, flagUnmatched } from "@/lib/team-from-form";
 import { matchClient, processIntake, receiveIntake } from "@/lib/onboarding";
 import { isZapierRequest, pickLoose, readEnrollment, readRaw } from "@/lib/zapier";
 
@@ -86,6 +86,9 @@ export async function POST(request: Request, ctx: RouteContext<"/api/zapier/[for
     const back = enrolled ? await welcomeBack(admin, enrolled) : false;
     // The team named on the form becomes the client's assignments (what each person sees follows from it)
     const team = enrolled ? await applyTeam(admin, enrolled, raw) : null;
+    if (enrolled && team) await flagUnmatched(admin, enrolled, team.unmatched);
+    // The client's own people named on the form become their contacts (portal link, approvals)
+    const contacts = enrolled ? await applyContacts(admin, enrolled, raw).catch(() => [] as string[]) : [];
     // Anything but a plain set package ("3 Videos per Month", "Silver + 2 extra videos") becomes Custom, with
     // exactly those deliverables as the allotment
     const recognised = (result as { creative_package?: string | null })?.creative_package ?? null;
@@ -93,7 +96,7 @@ export async function POST(request: Request, ctx: RouteContext<"/api/zapier/[for
     // Keep the form as sent, so a question we don't read yet can be looked at later
     await admin
       .from("integration_events")
-      .update({ payload: { data, raw, result: { ...(result as object), team, custom_allotment: custom } } })
+      .update({ payload: { data, raw, result: { ...(result as object), team, contacts, custom_allotment: custom } } })
       .eq("idempotency_key", key);
     return Response.json({
       ok: true,
