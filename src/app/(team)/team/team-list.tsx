@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { PersonAvatar } from "@/components/person-avatar";
 import { ROLES, TIERS, roleLabel, tierOf, type TeamRole, type Tier } from "@/lib/roles";
-import { invitePerson, setActive, setRole } from "./actions";
+import { invitePerson, sendInvite, setActive, setRole } from "./actions";
 
 export type Person = {
   id: string;
@@ -12,6 +12,7 @@ export type Person = {
   role: TeamRole;
   isActive: boolean;
   joined: boolean;
+  invitedAt?: string | null;
   clientCount: number;
 };
 
@@ -50,7 +51,14 @@ function Row({ p, canEdit, isMe }: { p: Person; canEdit: boolean; isMe: boolean 
       <div className="min-w-0">
         <p className="flex items-center gap-2 truncate text-sm font-medium">
           {p.fullName} {isMe && <span className="text-xs font-normal text-faint">(you)</span>}
-          {p.isActive && (p.joined ? <span className="rounded-full bg-ok-soft px-1.5 py-px text-[10px] font-normal text-ok">Active</span> : <span className="rounded-full border border-line px-1.5 py-px text-[10px] font-normal text-faint">Not joined yet</span>)}
+          {p.isActive &&
+            (p.joined ? (
+              <span className="rounded-full bg-ok-soft px-1.5 py-px text-[10px] font-normal text-ok">Active</span>
+            ) : (
+              <span className="rounded-full border border-line px-1.5 py-px text-[10px] font-normal text-faint">
+                {p.invitedAt ? `Invited ${new Date(p.invitedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : "Not joined yet"}
+              </span>
+            ))}
         </p>
         <p className="truncate text-xs text-muted">
           {p.email}
@@ -76,13 +84,27 @@ function Row({ p, canEdit, isMe }: { p: Person; canEdit: boolean; isMe: boolean 
         {note ? (
           <span className={`text-xs ${note.ok ? "text-ok" : "text-brand-text"}`}>{note.text}</span>
         ) : canEdit && !isMe ? (
-          <button
-            disabled={pending}
-            onClick={() => run(() => setActive(p.id, !p.isActive))}
-            className="text-xs text-muted hover:text-fg"
-          >
-            {p.isActive ? "Deactivate" : "Reactivate"}
-          </button>
+          <span className="flex flex-col items-end gap-1">
+            {p.isActive && !p.joined && (
+              <button
+                disabled={pending}
+                onClick={() =>
+                  start(async () => {
+                    const res = await sendInvite(p.id);
+                    setNote(res.ok ? { ok: true, text: "Invite sent" } : { ok: false, text: res.error });
+                    if (res.ok) setTimeout(() => setNote(null), 2500);
+                  })
+                }
+                className="rounded-full bg-brand px-3 py-1 text-xs font-medium text-white hover:bg-brand-hover disabled:opacity-60"
+                title={p.invitedAt ? `Last sent ${new Date(p.invitedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : "Emails them a link to sign in with Google"}
+              >
+                {pending ? "Sending…" : p.invitedAt ? "Resend invite" : "Send invite"}
+              </button>
+            )}
+            <button disabled={pending} onClick={() => run(() => setActive(p.id, !p.isActive))} className="text-xs text-muted hover:text-fg">
+              {p.isActive ? "Deactivate" : "Reactivate"}
+            </button>
+          </span>
         ) : null}
       </div>
     </li>

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useUploads } from "@/components/upload-provider";
 import { aspectLabel, aspectOf, filesFromDrop, groupFiles, isMedia, probe, safeName, smallJpeg, type Picked, type StagedDesign, type StagedFile } from "@/lib/uploads/media";
 import type { CreativeCheck } from "@/lib/ai";
-import { checkCreative, setTicketCounts, startDesigns, startVersion, ticketDesigns, type Design } from "./design-actions";
+import { checkCreative, noteBriefChange, setTicketCounts, startDesigns, startVersion, ticketDesigns, type Design } from "./design-actions";
 import { FormatIcon } from "./ticket-card";
 import type { Ticket } from "./types";
 import { ReviewViewer } from "./review-viewer";
@@ -74,6 +74,7 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
   const replaceInput = useRef<HTMLInputElement>(null);
   const replaceFor = useRef<Design | null>(null);
   const [check, setCheck] = useState<CheckState>({ status: "idle" });
+  const [adjusted, setAdjusted] = useState<{ on: boolean; note: string }>({ on: false, note: "" });
   const [counts, setCounts] = useState<{ new: number; variations: number } | null>(null); // after correcting the ticket here
   const router = useRouter();
   const asked = counts ?? { new: ticket.newCount, variations: ticket.variationCount };
@@ -123,7 +124,10 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
     const files = await stage(picked);
     setReading(false);
     if (!files.length) return setError("Those files aren't images or videos.");
-    const grouped = groupFiles(files, ticket.format);
+    // Another drop adds to what's already staged (it never replaces it); the same file dropped twice counts once
+    const before = (staged ?? []).flatMap((d) => d.files);
+    const fresh = files.filter((f) => !before.some((b) => b.file.name === f.file.name && b.file.size === f.file.size));
+    const grouped = groupFiles([...before, ...fresh], ticket.format);
     setStaged(grouped);
     runCheck(grouped);
   };
@@ -216,6 +220,12 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
           ),
         );
     if (!res.ok) return setError(res.error);
+    if (adjusted.on && adjusted.note.trim() && !demo) {
+      const r = await noteBriefChange(ticket.id, adjusted.note);
+      if (!r.ok) setError(r.error);
+      window.dispatchEvent(new CustomEvent("kz:brief", { detail: ticket.id }));
+    }
+    setAdjusted({ on: false, note: "" });
     ordered.forEach((d, i) => {
       const s = res.started[i];
       const dir = `${res.prefix}/${s.designId}/v${s.version}`;
@@ -398,18 +408,45 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
               );
             })}
           </ul>
+          {/* Anything in the brief that couldn't be done as asked: said here, so the lead sees it before reviewing */}
+          <div className="grid gap-2 rounded-[8px] border border-line bg-bg/40 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm">Did you have to change anything from the brief?</p>
+              <span className="flex gap-1">
+                {([false, true] as const).map((v) => (
+                  <button key={String(v)} type="button" onClick={() => setAdjusted(v ? { on: true, note: adjusted.note } : { on: false, note: "" })} className={`h-7 rounded-full px-3 text-xs transition-colors ${adjusted.on === v ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
+                    {v ? "Yes" : "No"}
+                  </button>
+                ))}
+              </span>
+            </div>
+            {adjusted.on && (
+              <textarea
+                autoFocus
+                value={adjusted.note}
+                onChange={(e) => setAdjusted({ on: true, note: e.target.value })}
+                rows={2}
+                placeholder="What wasn't possible and what you did instead (e.g. no lifestyle photo of the product, so used the studio shot with a kitchen background)"
+                className="rounded-[8px] border border-line bg-bg px-3 py-2 text-sm outline-none placeholder:text-faint focus:border-brand-text/60"
+              />
+            )}
+          </div>
           <div className="flex items-center justify-end gap-2">
+            <button type="button" onClick={() => filesInput.current?.click()} className="mr-auto h-9 rounded-brand px-3 text-sm text-muted hover:text-fg">
+              + Add more files
+            </button>
             <button
               onClick={() => {
                 checkRun.current++;
                 setStaged(null);
                 setCheck({ status: "idle" });
+                setAdjusted({ on: false, note: "" });
               }}
               className="h-9 rounded-brand px-3 text-sm text-muted hover:text-fg"
             >
               Cancel
             </button>
-            <button onClick={upload} className="h-9 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:bg-brand-hover">
+            <button onClick={upload} disabled={adjusted.on && !adjusted.note.trim()} className="h-9 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:bg-brand-hover disabled:opacity-50">
               Upload {plural(staged.length, "design")}
             </button>
           </div>

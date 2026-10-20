@@ -6,7 +6,37 @@ import { useCallback, useEffect, useState, useTransition } from "react";
 import { PersonAvatar } from "@/components/person-avatar";
 import { FORMAT_LABEL, PHASE_LABEL, businessDuration, health, stageInfo, type Phase, type Priority, type Stage } from "@/lib/stages";
 import { assignTicket, commentTicket, deleteTicket, moveTicket, setTicketDue, setTicketPriority, ticketHistory, type TicketEvent } from "./actions";
-import type { Design } from "./design-actions";
+import { briefChanges, type BriefChange, type Design } from "./design-actions";
+
+/** What the maker had to change from the brief, said when they uploaded: right under the brief for the lead to see. */
+function BriefAdjustments({ ticketId }: { ticketId: string }) {
+  const [list, setList] = useState<BriefChange[]>([]);
+  useEffect(() => {
+    let live = true;
+    const load = () => briefChanges(ticketId).then((l) => live && setList(l));
+    load();
+    const on = (e: Event) => (e as CustomEvent).detail === ticketId && load();
+    window.addEventListener("kz:brief", on);
+    return () => {
+      live = false;
+      window.removeEventListener("kz:brief", on);
+    };
+  }, [ticketId]);
+  if (!list.length) return null;
+  return (
+    <div className="grid gap-2 rounded-[10px] border border-warn/40 bg-warn-soft/40 px-4 py-3">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-warn">Brief adjusted</p>
+      {list.map((c, i) => (
+        <div key={i} className="grid gap-0.5">
+          <p className="whitespace-pre-wrap text-sm leading-relaxed">{c.note}</p>
+          <p className="text-[11px] text-faint">
+            {c.by} · {new Date(c.at).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+}
 import { Deliverables, type UploadState } from "./deliverables";
 import { ScriptPanel } from "./script-panel";
 import { ReviewPanel } from "./review-panel";
@@ -586,6 +616,7 @@ export function TicketDrawer({
             ) : (
               <p className="text-sm text-faint">No brief written.</p>
             )}
+            {!demo && <BriefAdjustments ticketId={ticket.id} />}
             {ticket.refs.length > 0 && (
               <ul className="grid gap-1.5">
                 {ticket.refs.map((r) => (

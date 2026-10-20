@@ -19,6 +19,33 @@ export type DesignFile = {
   url: string | null; // signed, short-lived
   thumbUrl: string | null;
 };
+export type BriefChange = { at: string; by: string; note: string };
+
+/**
+ * The maker had to change something from the brief (it wasn't possible, an asset was missing…): kept on the ticket,
+ * shown under the brief, and posted as a comment so the lead hears about it. Anyone who can see the ticket (RLS).
+ */
+export async function noteBriefChange(requestId: string, note: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  const text = note.trim().slice(0, 2000);
+  if (!text) return { ok: false, error: "Say what changed." };
+  const supabase = await createClient();
+  const { data: r } = await supabase.from("requests").select("brief_changes").eq("id", requestId).maybeSingle();
+  if (!r) return { ok: false, error: "Ticket not found." };
+  const list = [...((r.brief_changes ?? []) as BriefChange[]), { at: new Date().toISOString(), by: me.fullName, note: text }];
+  const { error } = await supabase.from("requests").update({ brief_changes: list }).eq("id", requestId);
+  if (error) return { ok: false, error: error.message };
+  await supabase.rpc("comment_request", { p_request: requestId, p_body: `Adjusted the brief: ${text}` });
+  revalidatePath("/board");
+  return { ok: true };
+}
+
+export async function briefChanges(requestId: string): Promise<BriefChange[]> {
+  await requireStaff();
+  const { data } = await (await createClient()).from("requests").select("brief_changes").eq("id", requestId).maybeSingle();
+  return ((data?.brief_changes ?? []) as BriefChange[]).slice(-10);
+}
+
 export type DesignVersion = { id: string; version: number; note: string | null; by: string | null; at: string; files: DesignFile[] };
 export type Design = {
   id: string;
