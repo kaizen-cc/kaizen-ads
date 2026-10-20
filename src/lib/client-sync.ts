@@ -1,5 +1,7 @@
 import "server-only";
 import { createClient as createSupabase, type SupabaseClient } from "@supabase/supabase-js";
+import { after } from "next/server";
+import { backInCycle } from "@/lib/reactivate";
 
 // Clients stay in step with Kaizen Track. The enrollment and upsell Zaps post to both apps (instant); this hourly
 // mirror catches anything done by hand in Track: a client archived there is archived here, made active again it
@@ -32,6 +34,9 @@ export async function mirrorTrack(admin: SupabaseClient) {
     servicesOf.set(r.client_id as string, [...(servicesOf.get(r.client_id as string) ?? []), slug].sort());
   }
   const now = new Date().toISOString();
+  // Track's statuses as of the last run, to see who flipped from archived to active
+  const { data: prev } = await admin.from("sync_state").select("last_result").eq("source", "track-status").maybeSingle();
+  const seen = (prev?.last_result ?? {}) as Record<string, string>;
 
   const out = { linked: 0, services: 0, created: [] as string[], archived: [] as string[], restored: [] as string[], packages: [] as string[], packageRemovedInTrack: [] as string[], errors: [] as string[] };
   for (const t of (theirs ?? []) as TrackClient[]) {
@@ -66,10 +71,13 @@ export async function mirrorTrack(admin: SupabaseClient) {
         out.archived.push(c.name);
         continue;
       }
-      if (t.status === "active" && c.archived_at && c.archive_source === "track") {
+      // Made active again in Track: back, however they were archived here (the form, the team, Track itself). Only on
+      // the flip from archived, so a client archived here while still active in Track stays archived.
+      if (t.status === "active" && c.archived_at && (c.archive_source === "track" || seen[t.id] === "archived")) {
         await admin.rpc("system_restore_client", { p_client: c.id, p_status: "onboarding" });
         await admin.from("clients").update({ reonboarded_at: new Date().toISOString() }).eq("id", c.id);
         out.restored.push(c.name);
+        after(() => backInCycle(admin, c!.id).catch((e) => console.error("backInCycle", c!.id, e)));
         c = { ...c, archived_at: null };
       }
       if (t.status === "active" && t.creative_package && (!c.creative_package || c.creative_package_key !== t.creative_package)) {
@@ -81,6 +89,7 @@ export async function mirrorTrack(admin: SupabaseClient) {
       out.errors.push(`${t.name}: ${e instanceof Error ? e.message : e}`);
     }
   }
+  await admin.from("sync_state").upsert({ source: "track-status", cursor_at: now, last_run_at: now, last_result: Object.fromEntries(((theirs ?? []) as TrackClient[]).map((t) => [t.id, t.status])) });
   return out;
 }
 
@@ -90,5 +99,6 @@ export async function welcomeBack(admin: SupabaseClient, clientId: string) {
   if (!c?.archived_at) return false;
   await admin.rpc("system_restore_client", { p_client: clientId, p_status: "onboarding" });
   await admin.from("clients").update({ reonboarded_at: new Date().toISOString() }).eq("id", clientId);
+  after(() => backInCycle(admin, clientId).catch((e) => console.error("backInCycle", clientId, e)));
   return true;
 }

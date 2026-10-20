@@ -26,10 +26,10 @@ async function liveTargets(admin: SupabaseClient, window: "d7" | "d30") {
   return ((targets ?? []) as unknown as TargetRow[]).filter((t) => (LIVE as readonly string[]).includes(t.clients.status) && (spent.get(t.id) ?? 0) > 0);
 }
 
-/** Queues this week's (or this month's) reports that don't exist yet. Safe to run again. */
-export async function queueReports(admin: SupabaseClient, kind: "weekly" | "monthly", today = nyParts(new Date()).date) {
+/** Queues this week's (or this month's) reports that don't exist yet (one client's, with onlyClient). Safe to run again. */
+export async function queueReports(admin: SupabaseClient, kind: "weekly" | "monthly", today = nyParts(new Date()).date, onlyClient?: string) {
   const p = periodsFor(kind, today).main;
-  const targets = await liveTargets(admin, kind === "weekly" ? "d7" : "d30");
+  const targets = (await liveTargets(admin, kind === "weekly" ? "d7" : "d30")).filter((t) => !onlyClient || t.client_id === onlyClient);
   let created = 0;
   if (kind === "monthly") {
     for (const clientId of new Set(targets.map((t) => t.client_id))) {

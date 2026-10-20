@@ -1,6 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
+import { backInCycle } from "@/lib/reactivate";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
 import { detectIndustries, INDUSTRIES } from "@/lib/industry";
 import { refreshBriefing } from "@/lib/context/briefing";
@@ -28,15 +30,16 @@ function done(slug: string, error?: { message: string } | null): ActionResult {
 
 /** Execs: status, IDs and channels. RLS enforces exec-only. */
 export async function saveClientDetails(clientId: string, slug: string, form: FormData): Promise<ActionResult> {
-  await requireStaff();
-  const { data: was } = await (await createClient()).from("clients").select("archived_at").eq("id", clientId).maybeSingle();
+  const me = await requireStaff();
+  const { data: was } = await (await createClient()).from("clients").select("archived_at, status").eq("id", clientId).maybeSingle();
   if (was?.archived_at) return { ok: false, error: "This client is archived. Restore them first." };
+  const status = str(form, "status") ?? "active";
   const kaizenId = str(form, "kaizen_id");
   const supabase = await createClient();
   const { error } = await supabase
     .from("clients")
     .update({
-      status: str(form, "status") ?? "active",
+      status,
       client_type: str(form, "client_type") ?? "traditional",
       website: str(form, "website"),
       meta_ad_account_id: str(form, "meta_ad_account_id")?.replace(/^act_/, "") ?? null,
@@ -47,7 +50,17 @@ export async function saveClientDetails(clientId: string, slug: string, form: Fo
       kaizen_id: kaizenId && /^\d+$/.test(kaizenId) ? Number(kaizenId) : null,
     })
     .eq("id", clientId);
+  // Paused → active: straight back into the cycle (KPIs, reports, check-ins), not at the next scheduled run
+  if (!error && was?.status === "paused" && status !== "paused") wakeUp(clientId, me.id);
   return done(slug, error);
+}
+
+/** After the response: the client's KPIs, due reports and sprint check-ins start again. */
+function wakeUp(clientId: string, byId: string) {
+  if (!adminConfigured()) return;
+  after(() => backInCycle(createAdminClient(), clientId, byId).catch((e) => console.error("backInCycle", clientId, e)));
+  revalidatePath("/kpis");
+  revalidatePath("/reports");
 }
 
 export async function addContact(clientId: string, slug: string, form: FormData): Promise<ActionResult> {
@@ -246,6 +259,7 @@ export async function restoreClient(clientId: string, slug: string): Promise<Act
   if (!isExecOrLead(me)) return { ok: false, error: "Only execs and leads can restore a client." };
   const supabase = await createClient();
   const { error } = await supabase.rpc("restore_client", { p_client: clientId });
+  if (!error) wakeUp(clientId, me.id);
   revalidatePath("/pipeline");
   revalidatePath("/board");
   return done(slug, error);
