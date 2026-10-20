@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { markRead, myNotifications } from "@/app/(team)/notification-actions";
 import type { Notice } from "@/lib/notifications";
 import { toast } from "./toasts";
@@ -77,6 +78,14 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
       else router.push(n.href);
     }
   };
+  // Escape closes it
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
   const readAll = async () => {
     setItems((xs) => xs.map((x) => ({ ...x, read: true })));
     setUnread(0);
@@ -87,7 +96,7 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
   const earlier = items.filter((n) => !isToday(n.createdAt));
   const panel =
     placement === "side"
-      ? "fixed left-[248px] top-4 bottom-4 w-[400px]"
+      ? "fixed left-[252px] top-4 bottom-4 w-[min(400px,calc(100vw-268px))]"
       : "fixed inset-x-3 top-16 max-h-[75vh]";
 
   return (
@@ -106,10 +115,12 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
           <span className="absolute -right-0.5 -top-0.5 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-brand px-1 text-[10px] font-semibold text-white">{unread > 99 ? "99+" : unread}</span>
         )}
       </button>
-      {open && (
+      {/* Rendered at the top of the page (not inside the sidebar), so no page's own layers can cover it or take its clicks */}
+      {open &&
+        createPortal(
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className={`${panel} z-50 grid grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-[18px] border border-line bg-surface shadow-[0_30px_80px_-20px_rgba(0,0,0,0.7)]`} style={{ animation: "drawer-in .18s ease-out" }}>
+          <div className="fixed inset-0 z-[90] bg-black/30" onClick={() => setOpen(false)} aria-hidden />
+          <div role="dialog" aria-label="Notifications" className={`${panel} z-[91] grid grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-[18px] border border-line bg-surface shadow-[0_30px_80px_-20px_rgba(0,0,0,0.7)]`} style={{ animation: "drawer-in .18s ease-out" }}>
             <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
               <div>
                 <p className="font-heading text-[16px]">Notifications</p>
@@ -188,8 +199,9 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
               )}
             </div>
           </div>
-        </>
-      )}
+        </>,
+          document.body,
+        )}
     </>
   );
 }
