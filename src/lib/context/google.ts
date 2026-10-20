@@ -239,13 +239,17 @@ export async function collectDrive(admin: SupabaseClient, since: Date, t?: Track
     }
     return undefined;
   };
-  const { data: seen } = await admin.from("sync_state").select("source").like("source", "drive:%");
-  const known = new Set((seen ?? []).map((r) => (r.source as string).slice(6)));
+  const { data: seen } = await admin.from("sync_state").select("source").or("source.like.drive:%,source.like.assets:%");
+  const known = new Set((seen ?? []).filter((r) => (r.source as string).startsWith("drive:")).map((r) => (r.source as string).slice(6)));
+  // A client folder whose assets haven't been catalogued yet is listed in full once (every photo, video and design
+  // file it holds); after that only what's new is read
+  const catalogued = new Set((seen ?? []).filter((r) => (r.source as string).startsWith("assets:")).map((r) => (r.source as string).slice(7)));
   const monthAgo = new Date(Date.now() - 30 * 86_400_000);
+  const feedFrom = (top: string | undefined) => (top && known.has(top) ? since : monthAgo).toISOString();
   const groups = new Map<string, string[]>(); // since → folders
   for (const f of [...clientOfFolder.keys(), ...parentOf.keys()]) {
     const top = topOf(f);
-    const from = (top && known.has(top) ? since : monthAgo).toISOString();
+    const from = top && !catalogued.has(top) ? "2000-01-01T00:00:00Z" : feedFrom(top);
     groups.set(from, [...(groups.get(from) ?? []), f]);
   }
   const files: DriveFile[] = [];
@@ -263,6 +267,9 @@ export async function collectDrive(admin: SupabaseClient, since: Date, t?: Track
     }
 
   const items: ContextItem[] = [];
+  const assets: { file_id: string; client_id: string; name: string; mime: string; kind: string; folder: string | null; url: string; created_at: string; seen_at: string }[] = [];
+  const kindOf = (mime: string, name: string) =>
+    mime.startsWith("image/") ? "image" : mime.startsWith("video/") ? "video" : /photoshop|illustrator|figma|\.(psd|ai|fig|sketch|indd)$/i.test(`${mime} ${name}`) ? "design" : null;
   t?.phase("Filing new files under their clients", files.length);
   for (const f of files) {
     t?.tick(f.name);
@@ -270,12 +277,19 @@ export async function collectDrive(admin: SupabaseClient, since: Date, t?: Track
     const path: string[] = [];
     let at: string | undefined = f.parents?.[0];
     let clientId: string | undefined;
+    let top: string | undefined;
     for (let depth = 0; at && depth < 8 && !clientId; depth++) {
       clientId = clientOfFolder.get(at);
-      if (!clientId) path.unshift(nameOf.get(at) ?? "");
+      if (clientId) top = at;
+      else path.unshift(nameOf.get(at) ?? "");
       at = parentOf.get(at);
     }
     if (!clientId) continue;
+    const url = f.webViewLink ?? `https://drive.google.com/file/d/${f.id}/view`;
+    const kind = kindOf(f.mimeType, f.name);
+    if (kind) assets.push({ file_id: f.id, client_id: clientId, name: f.name, mime: f.mimeType, kind, folder: path.filter(Boolean).join(" / ") || null, url, created_at: f.createdTime, seen_at: new Date().toISOString() });
+    // The feed of what's new only takes files from its own window (the full catalogue run reads further back)
+    if (f.createdTime <= feedFrom(top)) continue;
     items.push({
       client_id: clientId,
       source: "drive",
@@ -291,11 +305,13 @@ export async function collectDrive(admin: SupabaseClient, since: Date, t?: Track
   }
   // Save first, then mark every client folder as read, so a failure never skips a folder's backfill
   await saveItems(admin, items);
+  for (let i = 0; i < assets.length; i += 500) await admin.from("client_assets").upsert(assets.slice(i, i + 500), { onConflict: "file_id" });
   const now = new Date().toISOString();
   await admin.from("sync_state").upsert([...clientOfFolder.keys()].map((f) => ({ source: `drive:${f}`, cursor_at: now, last_run_at: now, last_result: {} })));
+  await admin.from("sync_state").upsert([...clientOfFolder.keys()].filter((f) => !catalogued.has(f)).map((f) => ({ source: `assets:${f}`, cursor_at: now, last_run_at: now, last_result: {} })));
   return {
     items: [],
-    notes: { saved: items.length, clientFolders: clientOfFolder.size, foldersMatched: matched, noFolder: unmatched, subfolders: parentOf.size, backfilled: [...clientOfFolder.keys()].filter((f) => !known.has(f)).length },
+    notes: { saved: items.length, assets: assets.length, clientFolders: clientOfFolder.size, foldersMatched: matched, noFolder: unmatched, subfolders: parentOf.size, backfilled: [...clientOfFolder.keys()].filter((f) => !known.has(f)).length },
   };
 }
 

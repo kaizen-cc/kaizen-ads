@@ -10,6 +10,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { notLive } from "@/lib/live-guard";
 import { askAboutClient, loadClientChat } from "@/lib/client-chat";
+import { writeShotList } from "@/lib/shot-list";
 import type { ChatTurn } from "@/lib/handoff";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -280,6 +281,29 @@ export async function loadClientAi(clientId: string): Promise<ChatTurn[]> {
   const { data: c } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
   if (!c) return [];
   return loadClientChat(createAdminClient(), clientId, me.id);
+}
+
+/** Writes next month's shot list for the client (what to ask them to film and photograph). */
+export async function writeClientShotList(clientId: string, slug: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  const { data: c } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
+  if (!c) return { ok: false, error: "Client not found." };
+  try {
+    await writeShotList(createAdminClient(), clientId, me.id);
+    revalidatePath(`/clients/${slug}`);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't write it just now." };
+  }
+}
+
+/** The shot list went to the client. */
+export async function markShotListSent(id: string, slug: string) {
+  await requireStaff();
+  const { data } = await (await createClient()).from("shot_lists").select("id").eq("id", id).maybeSingle();
+  if (!data) return;
+  await createAdminClient().from("shot_lists").update({ sent_at: new Date().toISOString() }).eq("id", id);
+  revalidatePath(`/clients/${slug}`);
 }
 
 /** Starts the thread over. */

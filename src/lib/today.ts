@@ -4,6 +4,8 @@ import type { Staff } from "@/lib/auth";
 import { loadWatchList } from "@/lib/fatigue";
 import { loadHome } from "@/lib/home";
 import { loadCallPromises, loadOnboarding, loadSuggestions, type OpenSuggestion } from "@/lib/suggestions";
+import { assetsStale } from "@/lib/client-assets";
+import { LIVE } from "@/lib/live";
 
 // The daily recap: everything that needs an exec or lead today, one item at a time, most critical first. Critical
 // means it can cost us the client: a promise we made and haven't kept, a new client waiting on us, an important
@@ -274,6 +276,37 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
       action: { label: "Review the brief", suggestion: sg },
       image: sg.source?.thumbnail ?? null,
     });
+  }
+
+  // Clients with nothing new on Drive in 45 days and no shot list sent lately: ask them for fresh footage
+  if (topics.has("briefs")) {
+    const [{ data: pkg }, { data: media }, { data: sent }] = await Promise.all([
+      db.from("clients").select("id, name, slug").eq("creative_package", true).is("archived_at", null).in("status", [...LIVE]),
+      db.from("client_assets").select("client_id, created_at").in("kind", ["image", "video"]).order("created_at", { ascending: false }).limit(5000),
+      db.from("shot_lists").select("client_id, created_at").gte("created_at", new Date(Date.now() - 30 * 86_400_000).toISOString()),
+    ]);
+    const newest = new Map<string, string>();
+    for (const m of media ?? []) if (!newest.has(m.client_id)) newest.set(m.client_id, m.created_at);
+    const asked = new Set((sent ?? []).map((s) => s.client_id));
+    for (const c of pkg ?? []) {
+      const last = newest.get(c.id) ?? null;
+      if (asked.has(c.id) || !assetsStale(last)) continue;
+      const days = last ? Math.round((Date.now() - Date.parse(last)) / 86_400_000) : null;
+      out.push({
+        key: `assets:${c.id}:${new Date().toISOString().slice(0, 7)}`,
+        topic: "briefs",
+        score: 50,
+        client: c.name,
+        clientSlug: c.slug,
+        clientId: c.id,
+        stat: { value: days == null ? "None" : `${days}d`, label: days == null ? "photos or video on Drive" : "since new footage landed on Drive" },
+        title: `Ask ${c.name} for fresh footage`,
+        story: `${days == null ? "There's nothing on their Drive to make creative from." : `Nothing new has landed on their Drive in ${days} days.`} A shot list for next month tells them exactly what to film, from what's planned and what's winning.`,
+        why: "Fresh creative needs fresh footage",
+        evidence: [],
+        action: { label: "Write the shot list", href: `/clients/${c.slug}#shot-list` },
+      });
+    }
   }
 
   // Ads wearing out

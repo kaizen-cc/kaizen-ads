@@ -15,6 +15,8 @@ import { loadClientCreative } from "@/lib/client-creative";
 import { ClientView } from "./client-view";
 import { latestAudits } from "@/lib/audit-summary";
 import { changeKey, loadChanges } from "@/lib/account-changes";
+import type { ShotList } from "@/lib/shot-list";
+import { assetsStale } from "@/lib/client-assets";
 import { loadClientChat } from "@/lib/client-chat";
 import type { AuditTarget } from "./client-chat";
 
@@ -162,6 +164,18 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
   // The audits on this client's KPIs (the same ones the KPI board shows) and my thread with the AI
   const [auditBy, chatTurns] = await Promise.all([latestAudits(supabase, kpis.map((k) => k.id)), loadClientChat(supabase, client.id, me.id)]);
   const audits = Object.fromEntries(auditBy);
+  // What's on their Drive to make creative from, and the latest shot list
+  const count = (kind: string) => supabase.from("client_assets").select("file_id", { count: "exact", head: true }).eq("client_id", client.id).eq("kind", kind);
+  const [{ count: imageCount }, { count: videoCount }, { count: designs }, { data: newestAsset }, { data: shot }] = await Promise.all([
+    count("image"),
+    count("video"),
+    count("design"),
+    supabase.from("client_assets").select("created_at").eq("client_id", client.id).in("kind", ["image", "video"]).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("shot_lists").select("id, list, created_at, sent_at").eq("client_id", client.id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+  ]);
+  const newest = newestAsset?.created_at ?? null;
+  const assetGlance = { images: imageCount ?? 0, videos: videoCount ?? 0, designs: designs ?? 0, newest, stale: assetsStale(newest) };
+  const shotList = shot ? { id: shot.id, list: shot.list as ShotList, createdAt: shot.created_at, sentAt: shot.sent_at } : null;
   // Each ad account's last 30 changes
   const changeBy = await loadChanges(supabase, kpis.filter((k) => k.accountId).map((k) => changeKey(k.platform, k.accountId!)), 30);
   const changes = Object.fromEntries(kpis.filter((k) => k.accountId).map((k) => [k.id, changeBy.get(changeKey(k.platform, k.accountId!)) ?? []]));
@@ -186,6 +200,8 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
       kpis={kpis}
       audits={audits}
       changes={changes}
+      assets={assetGlance}
+      shotList={shotList}
       chat={{ initial: chatTurns, targets }}
       fatigue={fatigue}
       market={market}

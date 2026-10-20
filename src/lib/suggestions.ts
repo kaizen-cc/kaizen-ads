@@ -11,6 +11,7 @@ import { MAX_VARIATIONS, toAllotment, type Allotment, type UsageRow } from "@/li
 
 import type { SuggestionKind } from "@/lib/suggestion-kinds";
 import { LIVE } from "@/lib/live";
+import { assetsBlock, loadAssets } from "@/lib/client-assets";
 export { KIND_LABEL, type SuggestionKind } from "@/lib/suggestion-kinds";
 
 export type Concept = { name: string; hook: string; visual: string; copy: string };
@@ -25,6 +26,7 @@ export type SuggestionDraft = {
   sizes: ("1x1" | "4x5" | "9x16")[];
   landing: string;
   refs?: string[]; // links the request builds on (a Motion item, a market ad), for the creative team
+  assets?: { have: string[]; need: string[] }; // what on Drive it's made from, and what to get from the client
 };
 
 export type Signal = { kind: SuggestionKind; weight: number; line: string; facts: string[] };
@@ -191,8 +193,9 @@ const SCHEMA = {
         sizes: { type: "array", items: { type: "string", enum: ["1x1", "4x5", "9x16"] } },
         landing: { type: "string" },
         refs: { type: "array", items: { type: "string" } },
+        assets: { type: "object", properties: { have: { type: "array", items: { type: "string" } }, need: { type: "array", items: { type: "string" } } }, required: ["have", "need"], additionalProperties: false },
       },
-      required: ["title", "angle", "audience", "brief", "hooks", "concepts", "formats", "sizes", "landing", "refs"],
+      required: ["title", "angle", "audience", "brief", "hooks", "concepts", "formats", "sizes", "landing", "refs", "assets"],
       additionalProperties: false,
     },
     reply: { type: "string" },
@@ -213,7 +216,8 @@ You are the agency's strategist. You watch the accounts and, when the data says 
 - The brief is what the designer reads: 5 to 10 lines, specific.
 - The team's past decisions on your suggestions are the most important thing you read. Never suggest again what they declined for a reason that still holds; lean into what they approved.
 - Balance the team's time across clients (work_in_motion). If what's already in motion for this client answers the signal, don't add more: set suggest to false. A client with well above the average open work needs a strong reason for more; a client nobody has touched in weeks deserves the attention. When designers or editors are near capacity, keep it small (variations of what works, 1 to 2 net new) and say so in why.
-- If the signal isn't real or something is already in the works that covers it, set suggest to false and say why in skipReason (the rest can be empty).`;
+- If the signal isn't real or something is already in the works that covers it, set suggest to false and say why in skipReason (the rest can be empty).
+- Make it from what we have. Check assets_on_drive before you pick concepts: a concept that needs product photos, lifestyle shots, people or footage only works if we have them (or it's clearly stock or graphic design). assets.have: the assets on Drive each concept uses (folder or file names). assets.need: what we'd have to get from the client for it (specific shots, e.g. "15s vertical clip of the team plating a dish", "close-up product photos on white"); empty when we have everything. When a concept depends on something we don't have, either swap it for one we can make now or keep it and list the need. End the brief with one line "Assets:" saying which Drive folders to use and what's still needed.`;
 
 /** What the team decided about past suggestions, for the strategist to learn from. */
 async function teamDecisions(admin: SupabaseClient, clientId: string) {
@@ -309,8 +313,9 @@ async function promptFor(admin: SupabaseClient, clientId: string, signals: Signa
   // What's live in this client's market right now (Motion), so a brief can build on it
   const { marketBlock } = await import("@/lib/market");
   const { playbookBlock } = await import("@/lib/playbooks");
-  const [market, playbook] = await Promise.all([marketBlock(admin, clientId, ctx.industry ?? null).catch(() => ""), playbookBlock(admin, clientId).catch(() => "")]);
+  const [market, playbook, assets] = await Promise.all([marketBlock(admin, clientId, ctx.industry ?? null).catch(() => ""), playbookBlock(admin, clientId).catch(() => ""), loadAssets(admin, clientId).then(assetsBlock).catch(() => "")]);
   return `${contextBlock(ctx, undefined, sources)}
+${assets}
 ${market ? `
 ${market}
 ` : ""}${playbook ? `
@@ -339,6 +344,7 @@ const clean = (d: SuggestionDraft): SuggestionDraft => ({
   hooks: d.hooks.slice(0, 6),
   concepts: d.concepts.slice(0, 4),
   refs: [...new Set((d.refs ?? []).filter((u) => /^https?:\/\/\S+$/i.test(u)))].slice(0, 6),
+  assets: d.assets ? { have: d.assets.have.slice(0, 8), need: d.assets.need.slice(0, 8) } : undefined,
 });
 
 /** One suggestion for one client from its signals. Returns null when the strategist decides it isn't needed. */

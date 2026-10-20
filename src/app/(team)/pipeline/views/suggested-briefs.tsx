@@ -287,6 +287,8 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
                 </div>
               )}
 
+              {draft.assets && (draft.assets.have.length > 0 || draft.assets.need.length > 0) && <AssetsCheck assets={draft.assets} />}
+
               <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
                 <div className="grid gap-1.5">
                   <p className="text-xs text-faint">Formats</p>
@@ -462,6 +464,54 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
 }
 
 const INPUT = "h-9 w-full rounded-brand border border-line bg-bg px-3 text-sm outline-none placeholder:text-faint focus:border-faint";
+
+/** What the brief is made from on Drive, and what we'd need from the client (copied as a shot list to send them). */
+function AssetsCheck({ assets }: { assets: { have: string[]; need: string[] } }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="grid gap-3 rounded-[12px] border border-line bg-surface p-3 sm:grid-cols-2">
+      <div className="grid content-start gap-1.5">
+        <p className="text-xs text-faint">On Drive, to use</p>
+        {assets.have.length ? (
+          assets.have.map((a) => (
+            <p key={a} className="flex gap-1.5 text-xs text-muted">
+              <span className="text-ok">✓</span>
+              {a}
+            </p>
+          ))
+        ) : (
+          <p className="text-xs text-faint">Nothing specific: stock or graphic design.</p>
+        )}
+      </div>
+      <div className="grid content-start gap-1.5">
+        <p className="text-xs text-faint">Needed from the client</p>
+        {assets.need.length ? (
+          <>
+            {assets.need.map((a) => (
+              <p key={a} className="flex gap-1.5 text-xs">
+                <span className="text-warn">○</span>
+                {a}
+              </p>
+            ))}
+            <button
+              type="button"
+              onClick={async () => {
+                await navigator.clipboard.writeText(`To make your next ads, could you send us:\n${assets.need.map((n) => `- ${n}`).join("\n")}\n\nPhone footage is perfect: vertical, good light, a few seconds each.`);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
+              }}
+              className="justify-self-start rounded-full border border-line px-2.5 py-1 text-[11px] text-muted hover:text-fg"
+            >
+              {copied ? "Copied" : "Copy as a shot list for the client"}
+            </button>
+          </>
+        ) : (
+          <p className="text-xs text-ok">We have everything it needs.</p>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (

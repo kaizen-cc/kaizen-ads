@@ -29,6 +29,7 @@ import { ClientChat, type AuditTarget } from "./client-chat";
 import type { AuditSummary } from "../../kpis/audit-panel";
 import type { ChatTurn } from "@/lib/handoff";
 import type { AccountChange } from "@/lib/account-changes";
+import { ShotListPanel, type AssetGlance, type SavedShotList } from "./shot-list-panel";
 import { ArchiveControl } from "./archive-control";
 import { IntakePanel, type IntakeRecord } from "./intake-panel";
 import { CallsPanel, type ClientCall } from "./calls-panel";
@@ -103,6 +104,8 @@ export type ClientViewProps = {
   kpis?: ClientKpi[] | null; // performance vs target; null in the design preview
   audits?: Record<string, AuditSummary> | null; // the latest audit per KPI, shared with the KPI board
   changes?: Record<string, AccountChange[]> | null; // each KPI's ad account, its last 30 changes
+  assets?: AssetGlance | null; // what's on their Drive
+  shotList?: SavedShotList | null; // next month's shot list
   chat?: { initial: ChatTurn[]; targets: AuditTarget[] } | null; // my thread with the AI about this client
   fatigue?: WatchRow[] | null; // ads wearing out
   market?: MarketAd[]; // live in this client's market (Motion)
@@ -111,7 +114,7 @@ export type ClientViewProps = {
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, chat = null, fatigue = null, market = [], intake, calls }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, assets = null, shotList = null, chat = null, fatigue = null, market = [], intake, calls }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -171,6 +174,8 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
           {kpis && <KpiPanel kpis={kpis} audits={audits} changes={changes} />}
 
           {live && fatigue && fatigue.length > 0 && <FatigueWatch rows={fatigue} showClient={false} />}
+
+          {assets && !demo && client.creative_package && <ShotListPanel clientId={client.id} slug={client.slug} assets={assets} latest={shotList} live={live} />}
 
           {!demo && live && market.length > 0 && <MarketPanel clientId={client.id} industry={client.industry ?? null} label={client.industry_detail ?? industryLabel(client.industry) ?? "their industry"} ads={market} />}
 
