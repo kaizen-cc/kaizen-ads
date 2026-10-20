@@ -35,11 +35,11 @@ function headline(topic: TopicKey, n: number) {
     case "work":
       return `${n} ${s("piece of work is", "pieces of work are")} running late`;
     case "briefs":
-      return `${n} ${s("brief is", "briefs are")} waiting on a decision`;
+      return `${n} brief ${s("idea", "ideas")} for clients, when you have a moment`;
     case "ads":
-      return `${n} ${s("ad is", "ads are")} wearing out`;
+      return `${n} ${s("ad is", "ads are")} ready for a refresh`;
     case "allotments":
-      return `${n} ${s("client is", "clients are")} off their creative allotment`;
+      return `${n} ${s("client is", "clients are")} behind on creative`;
   }
 }
 

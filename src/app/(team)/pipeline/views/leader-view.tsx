@@ -17,7 +17,7 @@ export type LeaderData = {
   team: Load[];
   phases: Record<PhaseKey, PhaseStat>;
   canRequest: boolean;
-  kpis?: KpiPulseData | null;
+  kpis?: KpiPulseData[] | null;
   fatigue?: WatchRow[] | null;
   onboarding?: OnboardingState | null;
   callPromises?: CallPromise[] | null;

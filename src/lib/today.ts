@@ -19,9 +19,9 @@ export const TOPICS: Record<TopicKey, { label: string; blurb: string }> = {
   onboarding: { label: "New clients", blurb: "First impressions" },
   accounts: { label: "Accounts", blurb: "Results against target" },
   work: { label: "Late work", blurb: "Work running late on our side" },
-  briefs: { label: "Briefs", blurb: "Decisions the strategist needs" },
-  ads: { label: "Ads", blurb: "Ads wearing out" },
-  allotments: { label: "Allotments", blurb: "Creative this month" },
+  briefs: { label: "Ideas", blurb: "Briefs the strategist suggests" },
+  ads: { label: "Ads", blurb: "Ads ready for a refresh" },
+  allotments: { label: "Allotments", blurb: "Clients behind on creative" },
 };
 
 export type TodayItem = {
@@ -71,6 +71,9 @@ export function topicsFor(me: Staff): Set<TopicKey> {
   if (manager) ["promises", "onboarding", "accounts", "work", "briefs", "ads", "allotments"].forEach((k) => t.add(k as TopicKey));
   if (me.isBuyer) ["promises", "accounts", "ads", "allotments"].forEach((k) => t.add(k as TopicKey));
   if (me.isCoordinator) ["promises", "onboarding", "allotments"].forEach((k) => t.add(k as TopicKey));
+  // Each lead sees their own line: no ad accounts for the Head of Creative, no Meta ads wearing out for the Head of Google
+  if (me.role === "head_of_creative") t.delete("accounts");
+  if (me.role === "head_of_google") t.delete("ads");
   return t;
 }
 
@@ -193,8 +196,12 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
   }
 
   // Accounts off target, weighted by how far off, how much is spent and how important the account is
-  let kq = db.from("kpi_targets").select("id, label, conversion, target, monthly_budget, sheet, client_id, clients!inner(name, slug, archived_at)").eq("active", true).is("clients.archived_at", null);
+  // Each service line on its own, for the people on it: execs both, the Head of Meta Meta, the Head of Google Google,
+  // a buyer only the accounts they own
+  let kq = db.from("kpi_targets").select("id, label, platform, conversion, target, monthly_budget, sheet, client_id, clients!inner(name, slug, archived_at)").eq("active", true).is("clients.archived_at", null);
   if (!manager) kq = kq.eq("owner_id", me.id);
+  else if (me.role === "head_of_meta") kq = kq.eq("platform", "meta");
+  else if (me.role === "head_of_google") kq = kq.eq("platform", "google");
   const { data: targets } = topics.has("accounts") ? await kq : { data: [] };
   const ids = (targets ?? []).map((t) => t.id as string);
   const { data: snaps } = ids.length ? await db.from("kpi_snapshots").select("target_id, status, deviation, windows, budget").in("target_id", ids) : { data: [] };
@@ -217,7 +224,7 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
       clientSlug: c.slug,
       clientId: t.client_id as string,
       stat: { value: `${Math.round(dev * 100)}%`, label: roas ? "below its ROAS target" : `over target per ${what}` },
-      title: `${c.name}${t.label ? ` · ${t.label}` : ""} is ${s.status === "off" ? "off" : "close to"} target`,
+      title: `${c.name} · ${t.platform === "google" ? "Google" : "Meta"}${t.label ? ` ${t.label}` : ""} is ${s.status === "off" ? "off" : "close to"} target`,
       story:
         d7 && d7.results
           ? `Last 7 days: ${roas ? `${Number(d7.value ?? 0).toFixed(2)}x ROAS` : `${money(Number(d7.value ?? 0))} per ${what}`} against a ${roas ? `${t.target}x` : money(Number(t.target))} target, on ${money(Number(d7.spend ?? 0))} spent.`
@@ -254,14 +261,15 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
     out.push({
       key: `brief:${sg.id}`,
       topic: "briefs",
-      score: sg.kind === "fatigue" ? 62 : 55,
+      // Ideas, never alarms: they stay below the "Important" tier
+      score: sg.kind === "fatigue" ? 56 : 52,
       client: sg.client,
       clientSlug: sg.clientSlug,
       clientId: sg.clientId,
       stat: { value: String(sg.draft.formats.reduce((n, f) => n + f.new + f.variations, 0)), label: "pieces in the brief" },
       title: sg.draft.title,
       story: sg.signal,
-      why: "A brief waiting on a decision",
+      why: "An idea for this client",
       evidence: sg.evidence.slice(0, 3),
       action: { label: "Review the brief", suggestion: sg },
       image: sg.source?.thumbnail ?? null,
@@ -273,7 +281,7 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
     out.push({
       key: `fatigue:${r.clientId}:${r.adId}`,
       topic: "ads",
-      score: r.severity === "tired" ? 63 : 46,
+      score: r.severity === "tired" ? 58 : 46,
       client: r.client,
       clientSlug: r.clientSlug,
       clientId: r.clientId,
@@ -288,37 +296,22 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
     });
   }
 
-  // Allotments: over means we're making more than they pay for; well behind means they're getting less
+  // Allotments: the risk is a client getting less than they pay for (nothing made a third of the way in, or far
+  // behind). A client getting extra isn't a problem to flag.
   const elapsed = home?.monthElapsed ?? 0;
   for (const c of topics.has("allotments") ? (home?.clients ?? []) : []) {
     if (!c.allotment) continue;
-    const ratio = c.used / c.allotment;
-    if (ratio > 1)
-      out.push({
-        key: `allot-over:${c.slug}`,
-        topic: "allotments",
-        score: 64,
-        client: c.name,
-        clientSlug: c.slug,
-        clientId: null,
-        stat: { value: `${c.used}/${c.allotment}`, label: "creatives this month" },
-        title: `${c.name} is over their creative allotment`,
-        story: `${c.used} made or in production against ${c.allotment} a month, with ${Math.round(elapsed * 100)}% of the month gone. Hold new requests or talk about an upgrade.`,
-        why: "Making more than they pay for",
-        evidence: [],
-        action: { label: "Open the client", href: `/clients/${c.slug}` },
-      });
-    else if (elapsed > 0.4 && ratio < elapsed - 0.3)
+    if (c.note === "Nothing delivered yet" || c.note === "Behind on creative")
       out.push({
         key: `allot-behind:${c.slug}`,
         topic: "allotments",
-        score: 61,
+        score: c.note === "Nothing delivered yet" ? 74 : 61,
         client: c.name,
         clientSlug: c.slug,
         clientId: null,
         stat: { value: `${c.used}/${c.allotment}`, label: "creatives this month" },
-        title: `${c.name} is behind on creative`,
-        story: `${c.used} of ${c.allotment} with ${Math.round(elapsed * 100)}% of the month gone. They're paying for more than they're getting.`,
+        title: c.note === "Nothing delivered yet" ? `Nothing made for ${c.name} yet this month` : `${c.name} is behind on creative`,
+        story: `${c.used} of ${c.allotment} made with ${Math.round(elapsed * 100)}% of the month gone. They're paying for more than they're getting.`,
         why: "Under-delivering on what they pay for",
         evidence: [],
         action: { label: "New request", href: `/requests/new` },

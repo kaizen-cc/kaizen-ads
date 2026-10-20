@@ -21,7 +21,7 @@ export type PulseData = {
   clients: ClientPulse[];
   team: Load[];
   monthElapsed: number; // 0–1, business days of the month gone
-  kpis?: KpiPulseData | null;
+  kpis?: KpiPulseData[] | null;
   fatigue?: WatchRow[] | null;
   onboarding?: OnboardingState | null;
   callPromises?: CallPromise[] | null;

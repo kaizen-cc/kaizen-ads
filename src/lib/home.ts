@@ -139,19 +139,22 @@ export async function loadHome(db: SupabaseClient, me: Staff) {
       const waiting = list.filter((r) => r.stage === "client_review").length;
       const revisions = Math.round(((revisesBy.get(u.client_id) ?? 0) / Math.max(1, list.length || 1)) * 10) / 10;
       const pace = allotment ? used / allotment - monthElapsed : 0;
-      const tone: ClientPulse["tone"] = used > allotment && allotment ? "bad" : pace > 0.25 ? "warn" : revisions >= 2 ? "warn" : pace < -0.35 ? "warn" : "ok";
-      const note =
-        used > allotment && allotment
-          ? "Over the allotment"
-          : pace > 0.25
-            ? "Burning fast"
-            : pace < -0.35
-              ? "Behind on creative"
-              : revisions >= 2
-                ? "Revision-heavy"
-                : waiting
-                  ? `${waiting} with the client`
-                  : "On pace";
+      // The risk is under-delivering, not giving a client more: nothing made a third of the way into the month, or far
+      // behind where they should be by today. Being over the allotment is noted, not flagged.
+      const nothing = allotment > 0 && used === 0 && monthElapsed >= 1 / 3;
+      const behind = allotment > 0 && pace < -0.35;
+      const tone: ClientPulse["tone"] = nothing ? "bad" : behind ? "warn" : revisions >= 2 ? "warn" : "ok";
+      const note = nothing
+        ? "Nothing delivered yet"
+        : behind
+          ? "Behind on creative"
+          : revisions >= 2
+            ? "Revision-heavy"
+            : used > allotment && allotment
+              ? "Over the allotment"
+              : waiting
+                ? `${waiting} with the client`
+                : "On pace";
       return { name: list[0]?.client_name ?? "", slug: list[0]?.client_slug ?? "", clientId: u.client_id, tone, used, allotment, revisionsPerItem: revisions, waiting, note };
     })
     .filter((c) => c.allotment > 0 || c.waiting > 0)
@@ -181,8 +184,8 @@ export async function loadHome(db: SupabaseClient, me: Staff) {
     });
   for (const r of rows.filter((x) => x.client_rounds >= 2).slice(0, 3))
     attention.push({ id: `rev-${r.id}`, tone: "warn", kind: "Revisions", client: r.client_name, title: r.title, detail: `Client round ${r.client_rounds}${r.internal_rounds ? ` · ${r.internal_rounds} internal` : ""}`, owner: r.assignee_name ?? undefined, href: `/board?t=${r.number}` });
-  for (const c of clients.filter((x) => x.note === "Over the allotment" || x.note === "Burning fast").slice(0, 3))
-    attention.push({ id: `allot-${c.clientId}`, tone: c.note === "Over the allotment" ? "bad" : "warn", kind: "Allotment", client: c.name, title: c.note, detail: `${c.used} of ${c.allotment} used with ${Math.round(monthElapsed * 100)}% of the month gone`, href: `/clients/${c.slug}` });
+  for (const c of clients.filter((x) => x.note === "Nothing delivered yet" || x.note === "Behind on creative").slice(0, 6))
+    attention.push({ id: `allot-${c.clientId}`, tone: c.note === "Nothing delivered yet" ? "bad" : "warn", kind: "Allotment", client: c.name, title: c.note, detail: `${c.used} of ${c.allotment} made with ${Math.round(monthElapsed * 100)}% of the month gone`, href: `/clients/${c.slug}` });
   attention.sort((a, b) => (a.tone === b.tone ? 0 : a.tone === "bad" ? -1 : 1));
 
   // ─── Who carries what ───
@@ -226,23 +229,36 @@ export async function loadHome(db: SupabaseClient, me: Staff) {
 // ─── Ad accounts against their KPI targets (from the KPI tracker, refreshed every 2 hours) ───
 
 export type KpiPulse = {
+  platform: "meta" | "google" | "all";
   accounts: number;
   counts: Record<"excellent" | "good" | "close" | "off" | "idle" | "setup", number>;
+  /** "Needs setup", split: a new client with no ad account yet, and an account we can't read (access) */
+  setup: { noAccount: string[]; cantRead: string[] };
   spend30: number;
   off: { id: string; client: string; slug: string; label: string; deviation: number | null; status: string }[];
-  pacing: { id: string; client: string; label: string; status: "over" | "under"; pace: number }[];
+  offTotal: number;
+  /** check: the spend is so far past the budget that the budget itself is probably wrong (a typo, a daily figure) */
+  pacing: { id: string; client: string; label: string; status: "over" | "under" | "check"; pace: number; spent: number; budget: number }[];
   syncedAt: string | null;
   syncedMinutes: number | null;
 };
 
-/** owner: only the accounts this media buyer owns. */
-export async function loadKpiPulse(db: SupabaseClient, owner?: string): Promise<KpiPulse | null> {
-  let q = db.from("kpi_targets").select("id, label, owner_id, clients!inner(name, slug, archived_at)").eq("active", true).is("clients.archived_at", null);
+const PLATFORM = { meta: "Meta", google: "Google" } as const;
+
+/**
+ * The ad accounts against their targets. owner: only the accounts this buyer owns. platform: Meta or Google only;
+ * the two service lines are never added together, so a client whose Google is fine still shows its Meta off target.
+ */
+export async function loadKpiPulse(db: SupabaseClient, opts?: string | { owner?: string; platform?: "meta" | "google" }): Promise<KpiPulse | null> {
+  const { owner, platform } = typeof opts === "string" ? { owner: opts, platform: undefined } : (opts ?? {});
+  let q = db.from("kpi_targets").select("id, label, platform, ad_account_id, owner_id, clients!inner(name, slug, archived_at)").eq("active", true).is("clients.archived_at", null);
   if (owner) q = q.eq("owner_id", owner);
+  if (platform) q = q.eq("platform", platform);
   const [{ data: targets }, { data: snaps }] = await Promise.all([q, db.from("kpi_snapshots").select("target_id, status, deviation, windows, budget, computed_at")]);
   if (!targets?.length) return null;
   const snapBy = new Map((snaps ?? []).map((x) => [x.target_id as string, x]));
   const counts = { excellent: 0, good: 0, close: 0, off: 0, idle: 0, setup: 0 };
+  const setup: KpiPulse["setup"] = { noAccount: [], cantRead: [] };
   const off: KpiPulse["off"] = [];
   const pacing: KpiPulse["pacing"] = [];
   let spend30 = 0;
@@ -252,13 +268,22 @@ export async function loadKpiPulse(db: SupabaseClient, owner?: string): Promise<
     const snap = snapBy.get(t.id);
     const status = ((snap?.status as keyof typeof counts | null) ?? "setup") as keyof typeof counts;
     counts[status] = (counts[status] ?? 0) + 1;
+    const name = c?.name ?? "Unknown";
+    if (status === "setup") (t.ad_account_id ? setup.cantRead : setup.noAccount).push(name);
+    // Without a platform filter the label says which service line it is
+    const label = [platform ? null : PLATFORM[t.platform as "meta" | "google"], t.label].filter(Boolean).join(" · ");
     spend30 += Number((snap?.windows as { d30?: { spend?: number } } | null)?.d30?.spend ?? 0);
     if (snap?.computed_at && (!synced || snap.computed_at > synced)) synced = snap.computed_at;
-    if (status === "off" || status === "close") off.push({ id: t.id, client: c?.name ?? "Unknown", slug: c?.slug ?? "", label: t.label, deviation: snap?.deviation == null ? null : Number(snap.deviation), status });
-    const b = snap?.budget as { status?: string; pace?: number } | null;
-    if (b?.status === "over" || b?.status === "under") pacing.push({ id: t.id, client: c?.name ?? "Unknown", label: t.label, status: b.status, pace: b.pace ?? 1 });
+    if (status === "off" || status === "close") off.push({ id: t.id, client: name, slug: c?.slug ?? "", label, deviation: snap?.deviation == null ? null : Number(snap.deviation), status });
+    const b = snap?.budget as { status?: string; pace?: number; spent?: number; budget?: number } | null;
+    // A budget under $20 a month is a typo (a "k" lost from the sheet), not a budget
+    if ((b?.status === "over" || b?.status === "under") && Number(b.budget ?? 0) >= 20) {
+      const pace = b.pace ?? 1;
+      pacing.push({ id: t.id, client: name, label, status: pace > 3 ? "check" : b.status, pace, spent: Math.round(Number(b.spent ?? 0)), budget: Math.round(Number(b.budget ?? 0)) });
+    }
   }
   off.sort((a, b) => (b.deviation ?? 0) - (a.deviation ?? 0));
-  pacing.sort((a, b) => Math.abs(b.pace - 1) - Math.abs(a.pace - 1));
-  return { accounts: targets.length, counts, spend30: Math.round(spend30), off: off.slice(0, 6), pacing: pacing.slice(0, 5), syncedAt: synced, syncedMinutes: synced ? Math.round((Date.now() - Date.parse(synced)) / 60000) : null };
+  // Real pacing problems first; budgets that look wrong after
+  pacing.sort((a, b) => Number(a.status === "check") - Number(b.status === "check") || Math.abs(b.pace - 1) - Math.abs(a.pace - 1));
+  return { platform: platform ?? "all", accounts: targets.length, counts, setup, spend30: Math.round(spend30), off: off.slice(0, 8), offTotal: off.length, pacing: pacing.slice(0, 6), syncedAt: synced, syncedMinutes: synced ? Math.round((Date.now() - Date.parse(synced)) / 60000) : null };
 }

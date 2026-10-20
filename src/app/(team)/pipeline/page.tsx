@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import { TodayHero, TodayHeroSkeleton } from "./views/today-hero";
 import { requireStaff, type Staff } from "@/lib/auth";
 import { greetingFor, todayLabel } from "@/lib/dates";
-import { loadHome, loadKpiPulse } from "@/lib/home";
+import { loadHome, loadKpiPulse, type KpiPulse } from "@/lib/home";
 import { roleLabel } from "@/lib/roles";
 import { businessDuration, health, stageInfo, type Stage } from "@/lib/stages";
 import { createClient } from "@/lib/supabase/server";
@@ -30,14 +30,18 @@ export default async function Home() {
   const base = { greeting: greetingFor(now), firstName: me.fullName.split(" ")[0], today: todayLabel(now) };
   const db = await createClient();
   const variantNow = variantFor(me);
-  const [h, kpis, suggestions, fatigue, onboarding, clientOptions, callPromises] = await Promise.all([
+  // Ad accounts against target, each service line on its own: execs see Meta and Google, the Head of Meta only Meta,
+  // the Head of Google only Google, the Head of Creative neither; a buyer only the accounts they own
+  const lines: ("meta" | "google")[] = me.isExec ? ["meta", "google"] : me.role === "head_of_meta" ? ["meta"] : me.role === "head_of_google" ? ["google"] : [];
+  const [h, kpiLines, buyerKpis, suggestions, fatigue, onboarding, clientOptions, callPromises] = await Promise.all([
     loadHome(db, me),
-    // Ad accounts against target: everyone's for execs and the heads of Meta / Google, a buyer's own otherwise
-    me.isExec || (me.isLead && me.role !== "head_of_creative") ? loadKpiPulse(db) : !me.isLead && variantNow === "buyer" ? loadKpiPulse(db, me.id) : Promise.resolve(null),
+    Promise.all(lines.map((platform) => loadKpiPulse(db, { platform }))),
+    !me.isLead && !me.isExec && variantNow === "buyer" ? loadKpiPulse(db, me.id) : Promise.resolve(null),
     // Briefs the strategist suggests: execs and leads decide them
     me.isExec || me.isLead ? loadSuggestions(db) : Promise.resolve(null),
     // Ads wearing out: every client for execs and leads, a buyer's own clients for a buyer
-    me.isExec || me.isLead ? loadWatchList(db, { limit: 8 }) : variantFor(me) === "buyer" ? loadWatchList(db, { buyerId: me.id, limit: 12 }) : Promise.resolve(null),
+    // (Meta ads only, so not for the Head of Google)
+    me.role === "head_of_google" ? Promise.resolve(null) : me.isExec || me.isLead ? loadWatchList(db, { limit: 8 }) : variantFor(me) === "buyer" ? loadWatchList(db, { buyerId: me.id, limit: 12 }) : Promise.resolve(null),
     // New and returning clients, first thing on the page for execs and leads
     // Execs and leads: every client. A buyer: their own clients (the access rules narrow it)
     me.isExec || me.isLead || variantFor(me) === "buyer" ? loadOnboarding(db) : Promise.resolve(null),
@@ -45,6 +49,8 @@ export default async function Home() {
     // What we promised on calls and haven't started: everyone's for execs and leads, a buyer's own clients for a buyer
     me.isExec || me.isLead || variantFor(me) === "buyer" ? loadCallPromises(db) : Promise.resolve(null),
   ]);
+
+  const kpis = kpiLines.filter((k): k is KpiPulse => Boolean(k));
 
   // The daily recap's way in, streamed in after the rest of the page
   const recap = (
@@ -147,7 +153,7 @@ export default async function Home() {
       side={side}
       delivered={delivered}
       canAct={variant === "buyer"}
-      kpis={kpis}
+      kpis={buyerKpis}
       fatigue={fatigue}
       onboarding={onboarding}
       callPromises={callPromises}

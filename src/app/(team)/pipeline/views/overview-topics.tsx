@@ -16,7 +16,7 @@ export type SharedTopics = {
   onboarding?: OnboardingState | null;
   callPromises?: CallPromise[] | null;
   suggestions?: SuggestionsState | null;
-  kpis?: KpiPulseData | null;
+  kpis?: KpiPulseData[] | null; // one per service line the viewer works on (Meta, Google)
   fatigue?: WatchRow[] | null;
   attention: Alert[];
   clients?: ClientPulse[];
@@ -49,9 +49,9 @@ export function actTopics(d: SharedTopics): Built[] {
   if (d.suggestions && (briefs.length || d.suggestions.running)) {
     const clients = new Set(briefs.map((b) => b.client)).size;
     out.push({
-      tile: { id: "briefs", label: "Briefs", value: briefs.length, sub: briefs.length ? `to decide, across ${s(clients, "client")}` : "being written", tone: "brand" },
+      tile: { id: "briefs", label: "Briefs", value: briefs.length, sub: briefs.length ? `ideas across ${s(clients, "client")}` : "being written", tone: "quiet" },
       panel: (
-        <Topic key="briefs" id="briefs" title="Suggested briefs" summary={briefs.length ? `The strategist wrote ${s(briefs.length, "brief")} from what it saw in ${s(clients, "account")}: approve, edit or decline` : "The strategist is reading every account"} count={briefs.length} tone="brand">
+        <Topic key="briefs" id="briefs" title="Suggested briefs" summary={briefs.length ? `Ideas the strategist wrote from what it saw in ${s(clients, "account")}: use, edit or pass` : "The strategist is reading every account"} count={briefs.length} tone="quiet">
           <SuggestedBriefs state={d.suggestions} bare />
         </Topic>
       ),
@@ -93,14 +93,19 @@ export function actTopics(d: SharedTopics): Built[] {
 export function accountTopics(d: SharedTopics): Built[] {
   const out: Built[] = [];
 
-  if (d.kpis && d.kpis.accounts) {
-    const k = d.kpis;
+  // Each service line on its own: a client whose Google is fine still shows its Meta account off target
+  for (const k of d.kpis ?? []) {
+    if (!k.accounts) continue;
+    const name = k.platform === "google" ? "Google" : k.platform === "meta" ? "Meta" : "Ad";
+    const id = `kpis-${k.platform}`;
     const on = k.counts.excellent + k.counts.good;
+    const live = k.accounts - k.counts.setup;
+    const pacing = k.pacing.filter((p) => p.status !== "check").length;
     const tone = k.counts.off ? "bad" : k.counts.close ? "warn" : "ok";
     out.push({
-      tile: { id: "kpis", label: "Off target", value: k.counts.off, sub: `of ${k.accounts} ad accounts · ${on} on target`, tone },
+      tile: { id, label: `${name} off target`, value: k.counts.off, sub: `of ${live} ${name} accounts · ${on} on target`, tone },
       panel: (
-        <Topic key="kpis" id="kpis" title="Ad accounts against target" summary={`${k.counts.off} off target · ${k.counts.close} close · ${on} on or beating it${k.pacing.length ? ` · ${s(k.pacing.length, "budget")} off pace` : ""}`} count={k.counts.off} tone={tone}>
+        <Topic key={id} id={id} title={`${name} accounts against target`} summary={`${k.counts.off} off target · ${k.counts.close} close · ${on} on or beating it${pacing ? ` · ${s(pacing, "budget")} off pace` : ""}`} count={k.counts.off} tone={tone}>
           <KpiPulse k={k} title="" />
         </Topic>
       ),
@@ -111,9 +116,9 @@ export function accountTopics(d: SharedTopics): Built[] {
   if (fatigue.length) {
     const tired = fatigue.filter((r) => r.severity === "tired").length;
     out.push({
-      tile: { id: "fatigue", label: "Wearing out", value: fatigue.length, sub: tired ? `${tired} ready to replace` : "ads slipping", tone: tired ? "warn" : "quiet" },
+      tile: { id: "fatigue", label: "Wearing out", value: fatigue.length, sub: tired ? `${tired} ready for a refresh` : "ads slipping", tone: "quiet" },
       panel: (
-        <Topic key="fatigue" id="fatigue" title="Ads wearing out" summary={`${tired ? `${s(tired, "ad")} ready to replace · ` : ""}each against its own last three weeks`} count={fatigue.length} tone={tired ? "warn" : "quiet"}>
+        <Topic key="fatigue" id="fatigue" title="Ads due a refresh" summary={`${tired ? `${s(tired, "ad")} ready for a refresh · ` : ""}each against its own last three weeks`} count={fatigue.length} tone="quiet">
           <FatigueWatch rows={fatigue} bare />
         </Topic>
       ),
@@ -122,12 +127,13 @@ export function accountTopics(d: SharedTopics): Built[] {
 
   const clients = (d.clients ?? []).filter((c) => c.allotment > 0);
   if (clients.length) {
+    // Under-delivering is the risk; a client getting more than their allotment is only noted
+    const behind = clients.filter((c) => c.note === "Nothing delivered yet" || c.note === "Behind on creative").length;
     const over = clients.filter((c) => c.used > c.allotment).length;
-    const behind = clients.filter((c) => c.used / c.allotment < (d.monthElapsed ?? 0) - 0.25).length;
     out.push({
-      tile: { id: "allotments", label: "Allotments", value: over, sub: `over this month${behind ? ` · ${behind} behind pace` : ""}`, tone: over ? "warn" : "ok" },
+      tile: { id: "allotments", label: "Allotments", value: behind, sub: `behind on creative${over ? ` · ${over} getting extra` : ""}`, tone: behind ? "warn" : "ok" },
       panel: (
-        <Topic key="allotments" id="allotments" title="Creative allotments" summary={`${over} over · ${behind} behind where they should be by today · ${clients.length} clients with a package`} count={over || undefined} tone={over ? "warn" : "ok"}>
+        <Topic key="allotments" id="allotments" title="Creative allotments" summary={`${behind} behind where they should be by today · ${over} past their allotment · ${clients.length} clients with a package`} count={behind || undefined} tone={behind ? "warn" : "ok"}>
           <div className="grid gap-2">
             <ClientHealth clients={clients} monthElapsed={d.monthElapsed ?? 0} />
             <Link href="/clients" className="justify-self-start text-xs text-muted hover:text-fg">
@@ -161,10 +167,10 @@ export function buildThemes(d: SharedTopics, extra: { first?: Theme | null; deli
   const built = [...actTopics(d), ...accountTopics(d)].filter((b) => b.tile && b.panel);
   const by = (...ids: string[]) => built.filter((b) => ids.includes(b.tile!.id));
   const sum = (bs: Built[]) => bs.reduce((n, b) => n + (Number(b.tile!.value) || 0), 0);
-  const SAY: Record<string, string> = { promises: "promises not started", attention: "stuck or late", kpis: "accounts off target", briefs: "briefs to decide", fatigue: "ads wearing out", allotments: "over allotment" };
+  const SAY: Record<string, string> = { promises: "promises not started", attention: "stuck, late or behind", "kpis-meta": "Meta accounts off target", "kpis-google": "Google accounts off target", "kpis-all": "accounts off target", briefs: "brief ideas", fatigue: "ads due a refresh", allotments: "behind on creative" };
   const points = (bs: Built[]) => bs.filter((b) => Number(b.tile!.value)).map((b) => `${b.tile!.value} ${SAY[b.tile!.id] ?? b.tile!.label.toLowerCase()}`);
 
-  const risk = by("promises", "attention", "kpis");
+  const risk = by("promises", "attention", "kpis-meta", "kpis-google", "kpis-all");
   const growth = by("briefs", "fatigue");
   const fresh = by("onboarding");
   const allot = by("allotments");
@@ -180,12 +186,13 @@ export function buildThemes(d: SharedTopics, extra: { first?: Theme | null; deli
     points: points(risk),
     content: risk.map((b) => b.panel),
   });
+  // Suggestions, not alarms: a calm colour and plain wording
   themes.push({
     id: "growth",
-    title: "Creative and growth",
-    tone: sum(growth) ? "brand" : "ok",
+    title: "Ideas for clients",
+    tone: sum(growth) ? "quiet" : "ok",
     count: sum(growth),
-    headline: sum(growth) ? "Briefs to decide and ads that need replacing" : "Nothing waiting on a decision",
+    headline: sum(growth) ? "Briefs the strategist suggests and ads ready for a refresh, when you have a moment" : "No new ideas waiting",
     points: points(growth),
     content: growth.map((b) => b.panel),
   });

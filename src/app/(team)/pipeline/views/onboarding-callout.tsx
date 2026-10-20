@@ -24,7 +24,7 @@ export function OnboardingCallout({ state, clients, bare = false }: { state: Onb
     return () => clearInterval(t);
   }, [reading, sheet, router]);
   if (!state.clients.length && !state.unmatched.length) return null;
-  // Clients without a creative package have no first round to make: one quiet line, not a card each
+  // Clients without a creative package have no first round to make; their card is their setup
   const creative = state.clients.filter((c) => c.creative);
   const other = state.clients.filter((c) => !c.creative);
   const ready = creative.filter((c) => c.firstRound).length;
@@ -40,7 +40,7 @@ export function OnboardingCallout({ state, clients, bare = false }: { state: Onb
             <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-brand-text">Onboarding</span>
           </span>
           <h2 className="font-display text-2xl tracking-tight md:text-3xl">
-            {creative.length} {creative.length === 1 ? "client" : "clients"} getting started
+            {state.clients.length} {state.clients.length === 1 ? "client" : "clients"} getting started
           </h2>
           <p className="text-sm text-muted">
             {ready ? `${ready} first ${ready === 1 ? "round is" : "rounds are"} written and waiting for you. ` : ""}First rounds come from their intake form and what&apos;s winning for similar clients.
@@ -48,26 +48,13 @@ export function OnboardingCallout({ state, clients, bare = false }: { state: Onb
         </div>
       </div>
 
+      {/* Every client getting started has a card: the ones with a creative package first (they have a first round to
+          make), then the rest, whose card is their account setup */}
       <div className="grid gap-3 lg:grid-cols-2">
-        {creative.map((c) => (
+        {[...creative, ...other].map((c) => (
           <ClientCard key={c.clientId} c={c} onOpen={setSheet} />
         ))}
       </div>
-
-      {other.length > 0 && (
-        <p className="mt-4 text-xs text-faint">
-          Also onboarding, without a creative package:{" "}
-          {other.map((c, i) => (
-            <span key={c.clientId}>
-              {i > 0 && ", "}
-              <Link href={`/clients/${c.slug}`} className="text-muted hover:text-fg">
-                {c.name}
-              </Link>
-              {c.setup && <span className="text-faint"> ({c.setup.progress ?? `${done(c.setup)}/${SETUP.length}`})</span>}
-            </span>
-          ))}
-        </p>
-      )}
 
       {state.unmatched.length > 0 && (
         <div className="mt-4 grid gap-2 rounded-[14px] border border-warn/40 bg-bg/60 p-4">
