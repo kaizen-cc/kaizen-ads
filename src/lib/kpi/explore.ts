@@ -36,6 +36,9 @@ const firstOf = (days: Day[], types: string[]) => types.find((t) => days.some((d
 
 /** Friendlier names for Meta's action types. */
 export function actionLabel(type: string) {
+  // Google: all conversions together, or one conversion action by its name
+  if (type === "conversions") return "All conversions (Google)";
+  if (type.startsWith("action:")) return type.slice(7);
   const known: Record<string, string> = {
     omni_purchase: "Purchases (all)",
     purchase: "Purchases",
