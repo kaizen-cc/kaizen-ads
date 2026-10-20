@@ -25,7 +25,8 @@ export type HandoffDoc = {
   firstWeek: string[];
 };
 
-export type ChatTurn = { role: "user" | "assistant"; text: string; at: string; by?: string };
+/** level: how much thinking the answer got (quick, standard, deep); researched: it searched the web for it */
+export type ChatTurn = { role: "user" | "assistant"; text: string; at: string; by?: string; level?: "quick" | "standard" | "deep"; researched?: boolean };
 
 const S = { type: "string" };
 const LIST = { type: "array", items: S };

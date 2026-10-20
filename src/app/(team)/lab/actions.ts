@@ -2,7 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
-import { AiUnavailable, aiEnabled } from "@/lib/ai";
+import { AiUnavailable, aiEnabled, getAgent } from "@/lib/ai";
+import { routeMessage, type Level } from "@/lib/ai-router";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
 import { clientNumbers, proposeDeploy, readSource, tableTurn, windowSince, type ProposedTest, type Seat, type TableTurn } from "@/lib/lab";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
@@ -26,14 +27,14 @@ const fail = (e: unknown, fallback: string) => ({ ok: false as const, error: e i
 
 export type Attachment = { kind: "doc" | "transcript" | "video" | "link" | "note"; title: string; url: string; body: string };
 
-export type SentMessage = { id: string; body: string; attachments: { id: string; kind: string; title: string; url: string | null; failed?: boolean }[]; at: string };
+export type SentMessage = { id: string; body: string; attachments: { id: string; kind: string; title: string; url: string | null; failed?: boolean }[]; at: string; level?: Level; research?: boolean };
 
 /**
  * Says something to the table (in a new conversation when there's no thread yet), with anything shared alongside:
  * links and videos are read first, so the seats answer with them in hand. Everything shared stays in the lab's
  * library for every conversation after. The table answers turn by turn after this (tableSpeaks).
  */
-export async function sendToTable(threadId: string | null, text: string, attachments: Attachment[] = []): Promise<Result<{ threadId: string; message: SentMessage }>> {
+export async function sendToTable(threadId: string | null, text: string, attachments: Attachment[] = [], goDeep = false): Promise<Result<{ threadId: string; message: SentMessage }>> {
   const me = await lead();
   const body = text.trim();
   const shared = attachments.filter((a) => a.url.trim() || a.body.trim()).slice(0, 6);
@@ -63,6 +64,8 @@ export async function sendToTable(threadId: string | null, text: string, attachm
     const { data: read } = saved.length ? await db.from("lab_sources").select("id, kind, title, url, status").in("id", saved.map((x) => x.id)) : { data: [] };
     const lines = (read ?? []).map((x) => `[Shared ${x.kind === "video" ? "a video" : x.kind === "transcript" ? "a call transcript" : x.kind === "link" ? "a link" : "a doc"}: "${x.title}"${x.status === "failed" ? " (couldn't be read)" : ""}]`);
     const attached = (read ?? []).map((x) => ({ id: x.id as string, kind: x.kind as string, title: x.title as string, url: x.url as string | null, failed: x.status === "failed" }));
+    // How much this round deserves: the whole table answers it at that level (never above the Ads Lab's setting)
+    const route = await routeMessage(body || lines.join("\n"), await getAgent("lab"), goDeep);
     const { data: posted, error } = await supabase
       .from("lab_messages")
       .insert({
@@ -70,13 +73,13 @@ export async function sendToTable(threadId: string | null, text: string, attachm
         role: "user",
         author_id: me.id,
         body: [body, ...lines].filter(Boolean).join("\n").slice(0, 8000),
-        data: attached.length ? { attachments: attached } : null,
+        data: { ...(attached.length ? { attachments: attached } : {}), route },
       })
       .select("id, body, created_at")
       .single();
     if (error || !posted) return { ok: false, error: error?.message ?? "Couldn't send it." };
     await db.from("lab_threads").update({ updated_at: new Date().toISOString() }).eq("id", id);
-    return { ok: true, threadId: id, message: { id: posted.id, body: posted.body, attachments: attached, at: posted.created_at } };
+    return { ok: true, threadId: id, message: { id: posted.id, body: posted.body, attachments: attached, at: posted.created_at, level: route.level, research: route.research } };
   } catch (e) {
     return fail(e, "Couldn't send it. Try again.");
   }

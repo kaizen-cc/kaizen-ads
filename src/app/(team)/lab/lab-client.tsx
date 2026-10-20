@@ -148,6 +148,9 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources }: { 
   // Who's composing right now: a seat, or the whole table while it picks who answers
   const [typing, setTyping] = useState<Seat | "table" | null>(null);
   const [sending, setSending] = useState<null | "sending" | "reading">(null);
+  // Go deep: the whole table on its full setting, with a web search, for the next message. mood: how this round was sorted
+  const [deep, setDeep] = useState(false);
+  const [mood, setMood] = useState<{ level: "quick" | "standard" | "deep"; research: boolean } | null>(null);
   const [seen, setSeen] = useState(threadId);
   const tidRef = useRef(threadId);
   const pageThread = useRef(threadId);
@@ -253,8 +256,10 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources }: { 
     setLocal((l) => [...l, temp]);
     round.current++;
     setSending(out.some((a) => a.url) ? "reading" : "sending");
-    const r = await sendToTable(tidRef.current, msg, out);
+    const r = await sendToTable(tidRef.current, msg, out, deep);
     setSending(null);
+    setDeep(false);
+    if (r.ok) setMood(r.message.level ? { level: r.message.level, research: Boolean(r.message.research) } : null);
     if (!r.ok) {
       setLocal((l) => l.filter((m) => m.id !== temp.id));
       setText(msg);
@@ -388,7 +393,7 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources }: { 
               Reading what you shared first, so the table has it in hand…
             </p>
           )}
-          {typing && !sending && <Typing seat={typing} />}
+          {typing && !sending && <Typing seat={typing} mood={mood} />}
           {waiting && (
             <button onClick={() => tid && void talk(tid)} className="w-fit rounded-full border border-line px-3.5 py-1.5 text-xs text-muted transition-colors hover:border-faint hover:text-fg">
               Ask the table to answer
@@ -513,6 +518,16 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources }: { 
                 <ToolButton onClick={() => setAdding(adding === "paste" ? null : "paste")} on={adding === "paste"} icon="M8 4h8v3H8zM6 6H5a1 1 0 0 0-1 1v13a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1h-1M8 12h8M8 16h5">
                   Paste a transcript or doc
                 </ToolButton>
+                <button
+                  type="button"
+                  onClick={() => setDeep((d) => !d)}
+                  aria-pressed={deep}
+                  title="The whole table on its full setting, with a web search, for this message. Otherwise quick questions get quick answers and big ones the full treatment."
+                  className={`ml-auto flex h-7 items-center gap-1.5 rounded-full px-2.5 text-xs transition-colors ${deep ? "bg-brand text-white" : "text-muted hover:bg-surface-2 hover:text-fg"}`}
+                >
+                  <span aria-hidden>✦</span>
+                  Go deep
+                </button>
               </div>
             </div>
             <button disabled={(!text.trim() && !shared.length) || Boolean(sending)} className="h-12 shrink-0 rounded-brand bg-brand px-5 text-sm font-medium text-white disabled:opacity-40">
@@ -585,7 +600,8 @@ function Dots() {
 }
 
 /** A seat composing its message, or the whole table while it works out who answers. */
-function Typing({ seat }: { seat: Seat | "table" }) {
+function Typing({ seat, mood }: { seat: Seat | "table"; mood: { level: "quick" | "standard" | "deep"; research: boolean } | null }) {
+  const table = mood?.level === "deep" ? (mood.research ? "The table is checking the market and the web…" : "The table is thinking this through…") : mood?.level === "quick" ? "Quick one: the table is answering…" : "The table is reading this…";
   return (
     <div className="flex items-center gap-3 animate-[step-in_.25s_ease-out]" aria-live="polite">
       {seat === "table" ? (
@@ -606,7 +622,12 @@ function Typing({ seat }: { seat: Seat | "table" }) {
       )}
       <span className="flex items-center gap-2.5 rounded-[14px] rounded-tl-[4px] border border-line bg-bg/60 px-3.5 py-2.5 text-xs text-faint" style={seat === "table" ? undefined : { color: SEATS[seat].tint }}>
         <Dots />
-        <span className="text-faint">{seat === "table" ? "The table is reading this…" : `${SEATS[seat].name} is typing…`}</span>
+        <span className="text-faint">{seat === "table" ? table : `${SEATS[seat].name} is ${mood?.level === "deep" ? "thinking it through" : "typing"}…`}</span>
+        {mood && (
+          <span className="rounded-full border border-line px-2 py-0.5 text-[10px] text-faint">
+            {mood.level === "deep" ? `Deep${mood.research ? " · web" : ""}` : mood.level === "quick" ? "Quick" : "Considered"}
+          </span>
+        )}
       </span>
     </div>
   );

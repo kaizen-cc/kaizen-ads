@@ -1,6 +1,8 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { askJson } from "@/lib/ai";
+import { askJson, getAgent, researchWeb } from "@/lib/ai";
+import { routeMessage } from "@/lib/ai-router";
+import { marketBlock } from "@/lib/market";
 import type { AuditResult } from "@/lib/audit";
 import { accountBrief, type ChatTurn } from "@/lib/handoff";
 
@@ -50,23 +52,45 @@ export async function loadClientChat(db: SupabaseClient, clientId: string, profi
   return ((data?.turns ?? []) as ChatTurn[]).slice(-40);
 }
 
-/** One message in the person's thread about this client; the answer is saved with it. */
-export async function askAboutClient(admin: SupabaseClient, clientId: string, profileId: string, question: string) {
+/**
+ * One message in the person's thread about this client; the answer is saved with it. Sorted first: a quick question
+ * gets a fast answer, a big one the full model, the market and, when it needs current outside facts, a web search.
+ */
+export async function askAboutClient(admin: SupabaseClient, clientId: string, profileId: string, question: string, goDeep = false) {
   const q = question.trim().slice(0, 3000);
-  const [brief, audits, chat] = await Promise.all([accountBrief(admin, clientId, null), auditsText(admin, clientId), loadClientChat(admin, clientId, profileId)]);
+  const ceiling = await getAgent("strategist");
+  const [brief, audits, chat, route] = await Promise.all([accountBrief(admin, clientId, null), auditsText(admin, clientId), loadClientChat(admin, clientId, profileId), routeMessage(q, ceiling, goDeep)]);
+  // A deep question reads the client's market too, and the web when it needs what's happening now
+  let extra = "";
+  if (route.level === "deep") {
+    const { data: c } = await admin.from("clients").select("name, industry, industry_detail").eq("id", clientId).single();
+    const market = await marketBlock(admin, clientId, c?.industry ?? null, 10).catch(() => "");
+    const research = route.research
+      ? await researchWeb({
+          agent: "strategist",
+          label: "client chat research",
+          system: "You research current, verifiable facts for a paid social agency strategist: market trends, what competitors are doing, consumer behaviour, platform changes. Search, read, and return concise notes with the source of each point. No speculation.",
+          prompt: `Client: ${c?.name} (${c?.industry_detail ?? c?.industry ?? "industry unknown"}).\nThe question: ${q}\nFind what's true right now that bears on it.`,
+          maxSearches: 5,
+          maxFetches: 6,
+        }).catch(() => "")
+      : "";
+    extra = [market, research ? `<web_research>\n${research.slice(0, 20000)}\n</web_research>` : ""].filter(Boolean).join("\n\n");
+  }
   const out = await askJson<{ answer: string }>({
     agent: "strategist",
-    label: "client chat",
-    system: SYSTEM,
+    label: `client chat (${route.level})`,
+    system: SYSTEM + (route.level === "deep" ? "\nThis is a big question: think it through, use the market and research you're given (say where a point comes from), and give a clear recommendation with the reasoning; up to 12 sentences or a short structured list." : route.level === "quick" ? "\nThis is a quick question: answer it directly in 1 to 3 sentences." : ""),
     schema: { type: "object", properties: { answer: S }, required: ["answer"], additionalProperties: false },
-    maxTokens: 8000,
-    prompt: `${brief.text}\n\n${audits}\n\n<conversation>\n${chat
+    maxTokens: route.level === "deep" ? 16000 : 8000,
+    override: { model: route.model, effort: route.effort },
+    prompt: `${brief.text}\n\n${audits}${extra ? `\n\n${extra}` : ""}\n\n<conversation>\n${chat
       .slice(-14)
       .map((t) => `${t.role === "user" ? "Teammate" : "You"}: ${t.text}`)
       .join("\n")}\n</conversation>\n\nYour teammate says: ${q}`,
   });
   const now = new Date().toISOString();
-  const next: ChatTurn[] = [...chat, { role: "user" as const, text: q, at: now }, { role: "assistant" as const, text: out.answer, at: now }].slice(-60);
+  const next: ChatTurn[] = [...chat, { role: "user" as const, text: q, at: now }, { role: "assistant" as const, text: out.answer, at: now, level: route.level, researched: Boolean(extra.includes("<web_research>")) }].slice(-60);
   await admin.from("client_chats").upsert({ client_id: clientId, profile_id: profileId, turns: next, updated_at: now });
   return next;
 }

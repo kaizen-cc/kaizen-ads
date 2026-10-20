@@ -132,6 +132,8 @@ export async function askJson<T>({
   images = [],
   onText,
   maxTokens = 16000,
+  override,
+  bare = false,
 }: {
   agent: AgentKey;
   label: string; // for the timing log
@@ -144,14 +146,19 @@ export async function askJson<T>({
   onText?: (soFar: string) => void;
   /** Room for the answer (thinking counts against it). Long answers need onText, so they stream. */
   maxTokens?: number;
+  /** This one call's model and effort instead of the agent's (a chat message sorted by how much it needs) */
+  override?: { model?: ModelKey; effort?: Effort };
+  /** Only the system given, without the agent's core and playbook (a small utility call, e.g. sorting a message) */
+  bare?: boolean;
 }): Promise<T> {
   if (!aiEnabled()) throw new AiUnavailable("AI isn't connected yet.");
-  const cfg = await getAgent(agent);
+  const base = await getAgent(agent);
+  const cfg = { ...base, model: override?.model ?? base.model, effort: override?.effort ?? base.effort };
   const started = Date.now();
   const request = {
     model: MODEL_IDS[cfg.model],
     max_tokens: maxTokens,
-    system: withAgent(system, cfg),
+    system: bare ? system : withAgent(system, cfg),
     output_config: { effort: cfg.effort, format: { type: "json_schema" as const, schema } },
     messages: [
       {

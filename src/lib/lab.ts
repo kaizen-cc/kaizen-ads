@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson, researchWeb } from "@/lib/ai";
+import type { Level, Route } from "@/lib/ai-router";
 import { allWinners } from "@/lib/industry";
 import { industryLabel } from "@/lib/industries";
 
@@ -196,7 +197,7 @@ async function tableSystem(admin: SupabaseClient) {
   return cores ? `${TABLE_SYSTEM}\n\nEach seat's core, how that agent thinks everywhere in the app:\n${cores}` : TABLE_SYSTEM;
 }
 
-export type TableTurn = { id: string; seat: Seat; body: string; tests: ProposedTest[]; at: string; next: Seat | null };
+export type TableTurn = { id: string; seat: Seat; body: string; tests: ProposedTest[]; at: string; next: Seat | null; level: Level | null; researched: boolean };
 
 /**
  * One message from the table: the given seat (or the one best placed, when none is given) answers the conversation so
@@ -205,7 +206,7 @@ export type TableTurn = { id: string; seat: Seat; body: string; tests: ProposedT
  */
 export async function tableTurn(admin: SupabaseClient, threadId: string, seat: Seat | null): Promise<TableTurn | null> {
   const [{ data: msgs }, ctx, { data: thread }, system] = await Promise.all([
-    admin.from("lab_messages").select("role, agent, body, created_at").eq("thread_id", threadId).order("created_at", { ascending: false }).limit(60),
+    admin.from("lab_messages").select("id, role, agent, body, data, created_at").eq("thread_id", threadId).order("created_at", { ascending: false }).limit(60),
     tableContext(admin),
     admin.from("lab_threads").select("title").eq("id", threadId).single(),
     tableSystem(admin),
@@ -223,13 +224,32 @@ export async function tableTurn(admin: SupabaseClient, threadId: string, seat: S
   const pick = seat && seat !== lastSeat && SEATS[seat] ? seat : null;
   const firstEver = !history.some((m) => m.role === "agent");
 
+  // The round runs at the level the exec's message was sorted to; a big question that needs what's happening now gets
+  // one web search for the round, kept on the message so every seat after reads the same notes
+  const asked = lastUser >= 0 ? history[lastUser] : null;
+  const data = (asked?.data ?? {}) as { route?: Route; research?: string };
+  const route = data.route ?? null;
+  let research = data.research ?? "";
+  if (asked && route?.level === "deep" && route.research && !research) {
+    research = await researchWeb({
+      agent: "lab",
+      label: "lab round table research",
+      system: "You research current, verifiable facts for a paid social agency's leadership: market trends, consumer behaviour, what brands and competitors are doing now, platform changes. Search, read, and return concise notes with the source of each point. No speculation.",
+      prompt: `The question the agency's leadership is discussing: ${asked.body}\nFind what's true right now that bears on it.`,
+      maxSearches: 6,
+      maxFetches: 8,
+    }).catch(() => "");
+    if (research) await admin.from("lab_messages").update({ data: { ...data, research: research.slice(0, 30000) } }).eq("id", asked.id);
+  }
+
   const out = await askJson<TurnOut>({
     agent: "lab",
-    label: "lab round table",
-    system,
+    label: `lab round table (${route?.level ?? "set"})`,
+    system: route?.level === "quick" ? `${system}\n\nThis one is a quick question: one seat answers it in a sentence or two and hands back to the exec.` : system,
     schema: TURN_SCHEMA,
+    ...(route ? { override: { model: route.model, effort: route.effort } } : {}),
     prompt: `${ctx.block}
-
+${research ? `\n<web_research>\n${research.slice(0, 20000)}\n</web_research>\nSay where a point from the research comes from.\n` : ""}
 <conversation>
 ${convo}
 </conversation>
@@ -263,8 +283,9 @@ seat: the seat speaking. body: the message. next: the seat who should speak afte
     .from("lab_threads")
     .update({ updated_at: new Date().toISOString(), ...(thread?.title === "New conversation" && out.threadTitle.trim() ? { title: out.threadTitle.trim().slice(0, 80) } : {}) })
     .eq("id", threadId);
-  const next = left > 0 && out.next !== "user" && out.next !== who && SEATS[out.next] ? out.next : null;
-  return { id: saved.id as string, seat: who, body, tests, at: saved.created_at as string, next };
+  // A quick question gets one answer, then it's the exec's turn
+  const next = route?.level !== "quick" && left > 0 && out.next !== "user" && out.next !== who && SEATS[out.next] ? out.next : null;
+  return { id: saved.id as string, seat: who, body, tests, at: saved.created_at as string, next, level: route?.level ?? null, researched: Boolean(research) };
 }
 
 // ─── The library ────────────────────────────────────────────────────────────

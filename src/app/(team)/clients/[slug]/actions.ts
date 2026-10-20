@@ -263,13 +263,13 @@ export async function markOnboarded(clientId: string, slug: string): Promise<Act
 }
 
 /** The AI chat on the client page: one message in your own thread about this client. RLS decides who sees the client. */
-export async function askClientAi(clientId: string, question: string): Promise<{ ok: true; chat: ChatTurn[] } | { ok: false; error: string }> {
+export async function askClientAi(clientId: string, question: string, goDeep = false): Promise<{ ok: true; chat: ChatTurn[] } | { ok: false; error: string }> {
   const me = await requireStaff();
   if (!question.trim()) return { ok: false, error: "Ask something first." };
   const { data: c } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
   if (!c) return { ok: false, error: "Client not found." };
   try {
-    return { ok: true, chat: await askAboutClient(createAdminClient(), clientId, me.id, question) };
+    return { ok: true, chat: await askAboutClient(createAdminClient(), clientId, me.id, question, goDeep) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Couldn't answer that just now." };
   }

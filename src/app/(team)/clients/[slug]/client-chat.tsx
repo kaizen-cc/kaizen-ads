@@ -20,11 +20,20 @@ const STARTERS = [
   "What could put this client at risk?",
 ];
 
+const LEVEL = { quick: { label: "Quick answer", dot: "bg-white/40" }, standard: { label: "Considered", dot: "bg-[#9aa8ff]" }, deep: { label: "Thought it through", dot: "bg-brand" } } as const;
+
 function Bubble({ t }: { t: ChatTurn }) {
   const me = t.role === "user";
   return (
-    <div className={`grid ${me ? "justify-items-end" : ""}`}>
+    <div className={`grid gap-1 ${me ? "justify-items-end" : ""}`}>
       <p className={`max-w-[92%] whitespace-pre-wrap rounded-[14px] px-3.5 py-2.5 text-[13.5px] leading-relaxed ${me ? "bg-fg text-bg" : "border border-white/[0.06] bg-white/[0.04] text-fg"}`}>{t.text}</p>
+      {!me && t.level && (
+        <span className="flex items-center gap-1.5 px-1 text-[10px] text-white/40">
+          <span className={`h-1.5 w-1.5 rounded-full ${LEVEL[t.level].dot}`} />
+          {LEVEL[t.level].label}
+          {t.researched && " · checked the web"}
+        </span>
+      )}
     </div>
   );
 }
@@ -55,6 +64,10 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
+  // Go deep: the next answer gets the full model, the market and the web, whatever the question looks like
+  const [deep, setDeep] = useState(false);
+  const [pendingDeep, setPendingDeep] = useState(false);
+  const [slow, setSlow] = useState(false);
   const end = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
 
@@ -76,9 +89,15 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
     if (!text.trim() || pending) return;
     setError(null);
     setPending(text);
+    setPendingDeep(deep);
     setQ("");
-    const r = await askClientAi(clientId, text);
+    // Past a few seconds it's a question that earned the full treatment: say so
+    const t = setTimeout(() => setSlow(true), 7000);
+    const r = await askClientAi(clientId, text, deep);
+    clearTimeout(t);
+    setSlow(false);
     setPending(null);
+    setDeep(false);
     if (r.ok) setChat(r.chat);
     else {
       setError(r.error);
@@ -201,7 +220,7 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
               <Bubble t={{ role: "user", text: pending, at: "" }} />
               <p className="flex items-center gap-2 text-xs text-white/50">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" />
-                Reading the account…
+                {pendingDeep ? "Thinking it through · checking the market and the web…" : slow ? "A big one: thinking it through…" : "Reading the account…"}
               </p>
             </>
           )}
@@ -214,8 +233,22 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
             e.preventDefault();
             void ask(q);
           }}
-          className="relative flex items-end gap-2 border-t border-white/[0.07] p-4"
+          className="relative grid gap-2 border-t border-white/[0.07] p-4"
         >
+          <div className="flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => setDeep((d) => !d)}
+              aria-pressed={deep}
+              title="The full model, the client's market and a web search for this answer"
+              className={`inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-[11px] transition-colors ${deep ? "bg-brand text-white shadow-[0_6px_20px_-8px_rgba(200,16,46,0.9)]" : "border border-white/10 text-white/55 hover:text-white"}`}
+            >
+              <span aria-hidden>✦</span>
+              Go deep
+            </button>
+            <span className="text-[10px] text-white/35">{deep ? "Full model, the market and the web for this one" : "Quick questions get quick answers; big ones get the full treatment"}</span>
+          </div>
+          <div className="flex items-end gap-2">
           <textarea
             ref={input}
             value={q}
@@ -233,6 +266,7 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
           <button type="submit" disabled={!q.trim() || Boolean(pending)} className="h-11 rounded-full bg-fg px-5 text-sm text-bg disabled:opacity-40">
             Ask
           </button>
+          </div>
         </form>
       </aside>
     </>
