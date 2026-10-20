@@ -14,7 +14,8 @@ import { JWT } from "google-auth-library";
 //   GOOGLE_ADS_DEVELOPER_TOKEN   optional: still sent if set, ignored by Google since the sunset
 // and one way to sign in, either:
 //   GOOGLE_ADS_CLIENT_ID, GOOGLE_ADS_CLIENT_SECRET, GOOGLE_ADS_REFRESH_TOKEN   (OAuth, as a user with MCC access), or
-//   GOOGLE_ADS_USER   a Workspace user with MCC access, signed in as through the existing service account
+//   GOOGLE_ADS_USER   a Workspace user with MCC access (and any client accounts not linked to it), signed in as
+//                     through the existing service account
 //                     (add the https://www.googleapis.com/auth/adwords scope to its domain-wide delegation)
 // Optional: GOOGLE_ADS_API_VERSION (default below).
 
@@ -36,7 +37,7 @@ export function googleAdsMissing(): string[] {
 export const digits = (id: string) => id.replace(/\D/g, "");
 
 let cached: { token: string; until: number } | null = null;
-async function accessToken() {
+async function accessToken(): Promise<string> {
   if (cached && cached.until > Date.now() + 60_000) return cached.token;
   if (oauth()) {
     const res = await fetch("https://oauth2.googleapis.com/token", {
@@ -62,18 +63,27 @@ type Row = Record<string, Record<string, unknown>>;
 
 /** A GAQL query against one customer, every row (searchStream sends them all in one response). */
 async function search(customer: string, query: string): Promise<Row[]> {
-  const res = await fetch(`https://googleads.googleapis.com/${VERSION}/customers/${digits(customer)}/googleAds:searchStream`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${await accessToken()}`,
-      ...(env("GOOGLE_ADS_DEVELOPER_TOKEN") ? { "developer-token": env("GOOGLE_ADS_DEVELOPER_TOKEN") } : {}),
-      "login-customer-id": digits(env("GOOGLE_ADS_LOGIN_CUSTOMER_ID")),
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ query }),
-    cache: "no-store",
-  });
-  const text = await res.text();
+  const token = await accessToken();
+  const call = (login: string) =>
+    fetch(`https://googleads.googleapis.com/${VERSION}/customers/${digits(customer)}/googleAds:searchStream`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(env("GOOGLE_ADS_DEVELOPER_TOKEN") ? { "developer-token": env("GOOGLE_ADS_DEVELOPER_TOKEN") } : {}),
+        "login-customer-id": login,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ query }),
+      cache: "no-store",
+    });
+  const mcc = digits(env("GOOGLE_ADS_LOGIN_CUSTOMER_ID"));
+  let res = await call(mcc);
+  let text = await res.text();
+  // Not linked under our manager account, but the signed-in person was added to the account itself: read it directly
+  if (!res.ok && digits(customer) !== mcc && /PERMISSION_DENIED|permission/i.test(text)) {
+    res = await call(digits(customer));
+    text = await res.text();
+  }
   if (!res.ok) throw new Error(explain(text, res.status));
   const chunks = JSON.parse(text) as { results?: Row[] }[];
   return chunks.flatMap((c) => c.results ?? []);
