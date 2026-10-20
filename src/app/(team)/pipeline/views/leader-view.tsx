@@ -1,4 +1,5 @@
 import type { WatchRow } from "@/lib/fatigue";
+import type { Production } from "@/lib/production";
 import type { CallPromise, OnboardingState, SuggestionsState } from "@/lib/suggestions";
 import { buildThemes } from "./overview-topics";
 import { FlowStrip, PageHeader, PrimaryAction, Queue, Stats, TeamLoad, type Alert, type KpiPulseData, type Load, type PhaseKey, type PhaseStat, type QueueItem } from "./shared";
@@ -18,6 +19,7 @@ export type LeaderData = {
   phases: Record<PhaseKey, PhaseStat>;
   canRequest: boolean;
   kpis?: KpiPulseData[] | null;
+  production?: Production | null; // the Head of Creative's
   fatigue?: WatchRow[] | null;
   onboarding?: OnboardingState | null;
   callPromises?: CallPromise[] | null;
@@ -29,6 +31,7 @@ export type LeaderData = {
 export function LeaderView(d: LeaderData & { handoffs?: React.ReactNode; recap?: React.ReactNode }) {
   const working = d.stats.teamActive > 0;
   const themes = buildThemes(d, {
+    production: d.production,
     first: {
       id: "queue",
       title: "Your queue",

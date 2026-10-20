@@ -7,6 +7,8 @@ import { OnboardingCallout } from "./onboarding-callout";
 import { SuggestedBriefs } from "./suggested-briefs";
 import { AttentionList, ClientHealth, KpiPulse, type Alert, type ClientPulse, type KpiPulseData } from "./shared";
 import type { Theme } from "./themes";
+import { ProductionPanel } from "@/components/production";
+import type { Production } from "@/lib/production";
 import { Topic, type TopicTile } from "./topics";
 
 // The topics execs and leads share on the Overview, each with its tile (what's in it, at a glance) and its panel
@@ -163,7 +165,7 @@ export function AllClear({ items }: { items: string[] }) {
  * target), creative and growth (briefs, ads wearing out), new clients, and delivery (allotments, plus the work or the
  * team passed in). Each theme carries its count, a one-line headline, a few points, and its topic panels.
  */
-export function buildThemes(d: SharedTopics, extra: { first?: Theme | null; delivery?: { content: React.ReactNode; points: string[]; count: number } | null } = {}): Theme[] {
+export function buildThemes(d: SharedTopics, extra: { first?: Theme | null; delivery?: { content: React.ReactNode; points: string[]; count: number } | null; production?: Production | null } = {}): Theme[] {
   const built = [...actTopics(d), ...accountTopics(d)].filter((b) => b.tile && b.panel);
   const by = (...ids: string[]) => built.filter((b) => ids.includes(b.tile!.id));
   const sum = (bs: Built[]) => bs.reduce((n, b) => n + (Number(b.tile!.value) || 0), 0);
@@ -174,7 +176,15 @@ export function buildThemes(d: SharedTopics, extra: { first?: Theme | null; deli
   const growth = by("briefs", "fatigue");
   const fresh = by("onboarding");
   const allot = by("allotments");
-  const deliveryCount = sum(allot) + (extra.delivery?.count ?? 0);
+  // Creative production (execs and the Head of Creative): clients whose pieces take longest are what needs a look
+  const p = extra.production;
+  const deliveryCount = sum(allot) + (extra.delivery?.count ?? 0) + (p?.slow.length ?? 0);
+  const prodPoints = p ? [p.firstDraft != null ? `${p.firstDraft.toFixed(1)}d to a first draft` : "", p.revisionRate != null ? `${p.revisionRate}% sent back by clients` : "", p.slow.length ? `${s(p.slow.length, "client")} running slow` : ""].filter(Boolean) : [];
+  const prodPanel = p ? (
+    <Topic key="production" id="production" title="Creative production" summary={`${p.firstDraft == null ? "—" : `${p.firstDraft.toFixed(1)} business days`} to a first draft · ${p.revisionRate ?? "—"}% sent back · revisions back in ${p.revisionTurnaround == null ? "—" : `${p.revisionTurnaround.toFixed(1)}d`}`} count={p.slow.length || undefined} tone={p.slow.length ? "warn" : "ok"} defaultOpen>
+      <ProductionPanel p={p} showTeam />
+    </Topic>
+  ) : null;
   const themes: Theme[] = [];
   if (extra.first) themes.push(extra.first);
   themes.push({
@@ -210,10 +220,11 @@ export function buildThemes(d: SharedTopics, extra: { first?: Theme | null; deli
     title: "Delivery",
     tone: deliveryCount ? "quiet" : "ok",
     count: deliveryCount,
-    headline: deliveryCount ? "Creative allotments this month, and how the work is moving" : "Allotments on pace",
-    points: [...points(allot), ...(extra.delivery?.points ?? [])],
+    headline: p ? "How fast creative gets made, revisions, and allotments" : deliveryCount ? "Creative allotments this month, and how the work is moving" : "Allotments on pace",
+    points: [...prodPoints, ...points(allot), ...(extra.delivery?.points ?? [])],
     content: (
       <>
+        {prodPanel}
         {allot.map((b) => b.panel)}
         {extra.delivery?.content}
       </>

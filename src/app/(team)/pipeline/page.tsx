@@ -4,6 +4,7 @@ import { TodayHero, TodayHeroSkeleton } from "./views/today-hero";
 import { requireStaff, type Staff } from "@/lib/auth";
 import { greetingFor, todayLabel } from "@/lib/dates";
 import { loadHome, loadKpiPulse, type KpiPulse } from "@/lib/home";
+import { loadProduction } from "@/lib/production";
 import { roleLabel } from "@/lib/roles";
 import { businessDuration, health, stageInfo, type Stage } from "@/lib/stages";
 import { createClient } from "@/lib/supabase/server";
@@ -51,6 +52,8 @@ export default async function Home() {
   ]);
 
   const kpis = kpiLines.filter((k): k is KpiPulse => Boolean(k));
+  // How creative production is going (speed, revisions, the team): execs and the Head of Creative
+  const production = me.isExec || me.role === "head_of_creative" ? await loadProduction(db).catch(() => null) : null;
 
   // The daily recap's way in, streamed in after the rest of the page
   const recap = (
@@ -60,7 +63,7 @@ export default async function Home() {
   );
 
   if (me.isExec) {
-    return <PulseView {...base} vitals={h.vitals} attention={h.attention} phases={h.phases} clients={h.clients} team={h.team} monthElapsed={h.monthElapsed} kpis={kpis} suggestions={suggestions} fatigue={fatigue} onboarding={onboarding} clientOptions={clientOptions} callPromises={callPromises} handoffs={<HandoffCallout db={db} me={me.id} />} recap={recap} />;
+    return <PulseView {...base} vitals={h.vitals} attention={h.attention} phases={h.phases} clients={h.clients} team={h.team} monthElapsed={h.monthElapsed} kpis={kpis} production={production} suggestions={suggestions} fatigue={fatigue} onboarding={onboarding} clientOptions={clientOptions} callPromises={callPromises} handoffs={<HandoffCallout db={db} me={me.id} />} recap={recap} />;
   }
 
   if (me.isLead) {
@@ -87,6 +90,7 @@ export default async function Home() {
         phases={h.phases}
         canRequest
         kpis={kpis}
+        production={production}
         suggestions={suggestions}
         fatigue={fatigue}
         onboarding={onboarding}

@@ -1,4 +1,5 @@
 import type { WatchRow } from "@/lib/fatigue";
+import type { Production } from "@/lib/production";
 import type { CallPromise, OnboardingState, SuggestionsState } from "@/lib/suggestions";
 import { buildThemes } from "./overview-topics";
 import { FlowStrip, PageHeader, Stats, TeamLoad, type Alert, type ClientPulse, type KpiPulseData, type Load, type PhaseKey, type PhaseStat } from "./shared";
@@ -22,6 +23,7 @@ export type PulseData = {
   team: Load[];
   monthElapsed: number; // 0–1, business days of the month gone
   kpis?: KpiPulseData[] | null;
+  production?: Production | null;
   fatigue?: WatchRow[] | null;
   onboarding?: OnboardingState | null;
   callPromises?: CallPromise[] | null;
@@ -40,6 +42,7 @@ export function PulseView(d: PulseData) {
   const pct = (x: number | null) => (x == null ? "—" : `${Math.round(x)}%`);
   const working = v.inMotion > 0;
   const themes = buildThemes(d, {
+    production: d.production,
     delivery: {
       count: 0,
       points: working ? [`${v.inMotion} pieces in motion`, v.turnaroundDays == null ? "" : `${v.turnaroundDays.toFixed(1)}d turnaround`].filter(Boolean) : [],

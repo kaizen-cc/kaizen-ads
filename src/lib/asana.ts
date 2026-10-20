@@ -146,6 +146,34 @@ async function countUnits(admin: SupabaseClient, max = 60) {
   return todo.length;
 }
 
+export type HistoryEvent = { at: string; kind: "moved"; from: string | null; to: string | null; by: string | null } | { at: string; kind: "assigned"; to: string | null; by: string | null };
+
+/**
+ * Each task's history from its Asana stories: every column move and reassignment, with when and by whom. Read for
+ * tasks not read yet or changed since, a batch per sync, so the full history fills in over a few runs.
+ */
+async function readHistory(admin: SupabaseClient, max = 60) {
+  const { data } = await admin.from("asana_tasks").select("gid, asana_modified_at, history_read_at").order("asana_modified_at", { ascending: false }).limit(1000);
+  const todo = (data ?? []).filter((t) => !t.history_read_at || (t.asana_modified_at && t.asana_modified_at > t.history_read_at)).slice(0, max);
+  type Story = { created_at: string; resource_subtype: string; created_by: { name: string } | null; old_section?: { name: string } | null; new_section?: { name: string } | null; assignee?: { name: string } | null };
+  for (const t of todo) {
+    try {
+      const stories = await all<Story>(`/tasks/${t.gid}/stories`, { opt_fields: "created_at,resource_subtype,created_by.name,old_section.name,new_section.name,assignee.name" });
+      const history: HistoryEvent[] = stories.flatMap((s): HistoryEvent[] => {
+        const by = s.created_by?.name ?? null;
+        if (s.resource_subtype === "section_changed") return [{ at: s.created_at, kind: "moved", from: s.old_section?.name ?? null, to: s.new_section?.name ?? null, by }];
+        if (s.resource_subtype === "assigned") return [{ at: s.created_at, kind: "assigned", to: s.assignee?.name ?? null, by }];
+        if (s.resource_subtype === "unassigned") return [{ at: s.created_at, kind: "assigned", to: null, by }];
+        return [];
+      });
+      await admin.from("asana_tasks").update({ history: history.slice(-200), history_read_at: new Date().toISOString() }).eq("gid", t.gid);
+    } catch {
+      // A task deleted in Asana, or a hiccup: tried again next run
+    }
+  }
+  return todo.length;
+}
+
 /** Reads the Asana board and updates the mirror. */
 export async function syncAsana(admin: SupabaseClient) {
   const { tracker } = await import("@/lib/progress");
@@ -230,7 +258,9 @@ export async function syncAsana(admin: SupabaseClient) {
     for (let i = 0; i < gone.length; i += 200) await admin.from("asana_tasks").update({ open: false, synced_at: new Date().toISOString() }).in("gid", gone.slice(i, i + 200));
     t.on("Counting new images and videos for the allotments");
     const counted = await countUnits(admin).catch(() => 0);
-    await admin.from("sync_state").upsert({ source: "asana", cursor_at: new Date().toISOString(), last_run_at: new Date().toISOString(), last_result: { ok: true, project, tasks: seen.length, skipped, closed: gone.length, counted } });
+    t.on("Reading each task's history (moves and reassignments)");
+    const histories = await readHistory(admin).catch(() => 0);
+    await admin.from("sync_state").upsert({ source: "asana", cursor_at: new Date().toISOString(), last_run_at: new Date().toISOString(), last_result: { ok: true, project, tasks: seen.length, skipped, closed: gone.length, counted, histories } });
     await t.finish({ summary: `${seen.length} open tasks mirrored${skipped ? `, ${skipped} organic left out` : ""}${gone.length ? `, ${gone.length} closed in Asana` : ""}` });
     return { project, mirrored: seen.length, skipped, closed: gone.length };
   } catch (e) {

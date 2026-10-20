@@ -6,12 +6,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SuggestionSheet } from "@/app/(team)/pipeline/views/suggested-briefs";
 import type { Resolved, Tier, TodayItem, TopicKey } from "@/lib/today";
 import { acknowledge, setItem } from "./actions";
+import { ScorecardView } from "@/components/production";
+import type { Scorecard } from "@/lib/production";
 
 // The daily recap as a story, one screen per topic: "6 accounts are off target", each client in a row with the number
 // that matters. Pick a client to see its overview right there and act on it, save the whole topic for later, or deep
 // dive through them one by one. Topics play most critical first; any topic can be jumped to. Arrows or space move on.
 
-type Card = { kind: "intro" } | { kind: "resolved"; r: Resolved } | { kind: "topic"; topic: TopicKey; items: TodayItem[] } | { kind: "end" };
+type Card = { kind: "intro" } | { kind: "score" } | { kind: "resolved"; r: Resolved } | { kind: "topic"; topic: TopicKey; items: TodayItem[] } | { kind: "end" };
 type Mark = "seen" | "saved" | "done" | "dismissed";
 
 const TIER: Record<Tier, { label: string; glow: string; accent: string; chip: string }> = {
@@ -53,7 +55,10 @@ export function Story({
   startTopic,
   home = "/pipeline",
   demo = false,
+  score = null,
 }: {
+  /** Designers, editors and copywriters: their own scorecard, the second screen */
+  score?: Scorecard | null;
   firstName: string;
   greeting: string;
   items: TodayItem[];
@@ -76,9 +81,11 @@ export function Story({
   const [first, setFirst] = useState<TopicKey | null>(startTopic);
   const cards: Card[] = useMemo(() => {
     const ordered = first ? [...groups.filter((g) => g.topic === first), ...groups.filter((g) => g.topic !== first)] : groups;
-    return [{ kind: "intro" }, ...resolved.map((r) => ({ kind: "resolved" as const, r })), ...ordered.map((g) => ({ kind: "topic" as const, ...g })), { kind: "end" }];
-  }, [groups, resolved, first]);
-  const [at, setAt] = useState(startTopic ? 1 + resolved.length : 0);
+    return [{ kind: "intro" }, ...(score ? [{ kind: "score" as const }] : []), ...resolved.map((r) => ({ kind: "resolved" as const, r })), ...ordered.map((g) => ({ kind: "topic" as const, ...g })), { kind: "end" }];
+  }, [groups, resolved, first, score]);
+  // Where the topics start: after the intro, the scorecard and what teammates took care of
+  const lead = 1 + (score ? 1 : 0) + resolved.length;
+  const [at, setAt] = useState(startTopic ? lead : 0);
   const [mine, setMine] = useState<Record<string, Mark>>(() => Object.fromEntries(items.map((i) => [i.key, i.state === "new" ? "seen" : i.state])));
   const [sheet, setSheet] = useState<TodayItem | null>(null);
   const [picker, setPicker] = useState(false);
@@ -110,7 +117,7 @@ export function Story({
   };
   const jump = (topic: TopicKey) => {
     setFirst(topic);
-    setAt(1 + resolved.length);
+    setAt(lead);
     setPicker(false);
   };
 
@@ -203,6 +210,18 @@ export function Story({
                   {items.length || resolved.length ? "Start" : "Back to your home"}
                 </button>
                 <span className="self-center text-xs text-white/40">→ or space to move on</span>
+              </div>
+            </div>
+          )}
+
+          {card.kind === "score" && score && (
+            <div className="grid max-w-4xl gap-6">
+              <p className="text-sm uppercase tracking-[0.24em] text-white/50">How you&apos;re doing</p>
+              <ScorecardView s={score} own />
+              <div>
+                <button type="button" onClick={() => go(1)} className="h-11 rounded-full bg-white px-6 text-sm font-semibold text-black">
+                  Next
+                </button>
               </div>
             </div>
           )}
