@@ -24,8 +24,10 @@ function agoText(ms: number) {
   return `${d}d ago`;
 }
 
-export function ChangeLog({ changes, platform, title = "Change history", limit }: { changes: AccountChange[]; platform: "meta" | "google"; title?: string; limit: number }) {
+/** limit: how many changes it holds. collapsed: how many show until "Show all" (all of them when not set). */
+export function ChangeLog({ changes, platform, title = "Change history", limit, collapsed }: { changes: AccountChange[]; platform: "meta" | "google"; title?: string; limit: number; collapsed?: number }) {
   const [now, setNow] = useState<number | null>(null);
+  const [all, setAll] = useState(false);
   useEffect(() => {
     const t = setTimeout(() => setNow(Date.now()), 0);
     return () => clearTimeout(t);
@@ -51,7 +53,7 @@ export function ChangeLog({ changes, platform, title = "Change history", limit }
         <p className="text-sm text-muted">No changes logged yet. They show here from the next sync (every 2 hours), up to {platform === "google" ? "30" : "90"} days back.</p>
       ) : (
         <ol className="grid">
-          {list.map((c, i) => {
+          {list.slice(0, collapsed && !all ? collapsed : list.length).map((c, i) => {
             const prev = list[i + 1];
             const gap = prev ? Date.parse(c.at) - Date.parse(prev.at) : null;
             const long = gap != null && gap > 7 * 86_400_000;
@@ -76,6 +78,11 @@ export function ChangeLog({ changes, platform, title = "Change history", limit }
             );
           })}
         </ol>
+      )}
+      {collapsed != null && list.length > collapsed && (
+        <button type="button" onClick={() => setAll((a) => !a)} className="justify-self-start text-xs text-brand-text hover:underline">
+          {all ? "Show fewer" : `Show all ${list.length} changes`}
+        </button>
       )}
     </section>
   );

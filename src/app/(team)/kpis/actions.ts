@@ -130,6 +130,37 @@ export async function exploreKpi(targetId: string, tryOut: { conversion: string;
   }
 }
 
+const NOTE_KEYS = ["priority", "problem", "solution", "buying", "creative", "copy", "comments"] as const;
+export type NoteKey = (typeof NOTE_KEYS)[number];
+
+/**
+ * The account's notes (#1 problem, solution, the media buying, creative and copy updates…), edited in Kaizen Ads. An
+ * edit holds through the sheet's syncs; the sheet only takes a field back if that cell changes there afterwards. Who
+ * can edit: anyone who can edit the KPI (RLS checks it).
+ */
+export async function saveAccountNotes(targetId: string, notes: Partial<Record<NoteKey, string>>): Promise<ActionResult> {
+  const me = await requireStaff();
+  const supabase = await createClient();
+  const { data: t } = await supabase.from("kpi_targets").select("sheet").eq("id", targetId).maybeSingle();
+  if (!t) return { ok: false, error: "Account not found." };
+  const sheet = { ...((t.sheet ?? {}) as Record<string, unknown>) };
+  const edits = { ...((sheet.edits ?? {}) as Record<string, { at: string; by: string; sheetWas: string }>) };
+  const now = new Date().toISOString();
+  for (const k of NOTE_KEYS) {
+    if (!(k in notes)) continue;
+    const next = (notes[k] ?? "").trim().slice(0, 8000);
+    const was = String(sheet[k] ?? "");
+    if (next === was) continue;
+    // What the sheet said when it was first edited here: the sheet only wins again if that cell changes
+    edits[k] = { at: now, by: me.fullName, sheetWas: edits[k]?.sheetWas ?? was };
+    sheet[k] = next;
+  }
+  const { error } = await supabase.from("kpi_targets").update({ sheet: { ...sheet, edits }, updated_by: me.id, updated_at: now }).eq("id", targetId);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/kpis");
+  return { ok: true };
+}
+
 /** The extra metric boxes on this KPI card only. */
 export async function setExtraMetrics(targetId: string, keys: string[]): Promise<ActionResult> {
   await requireStaff();

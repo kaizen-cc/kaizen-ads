@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { requestAudit } from "@/components/audit-watcher";
 import type { ChatTurn } from "@/lib/handoff";
-import { askClientAi, clearClientAi } from "./actions";
+import { askClientAi, clearClientAi, loadClientAi } from "./actions";
 
 // The AI on the client page: a button in the corner that opens a drawer, so the page itself doesn't get longer. Ask a
 // question, strategize, bounce an idea off it, get a summary, or run the account audit (the same audit as on the KPI
@@ -29,10 +29,28 @@ function Bubble({ t }: { t: ChatTurn }) {
   );
 }
 
-export function ClientChat({ clientId, client, initial, targets, live }: { clientId: string; client: string; initial: ChatTurn[]; targets: AuditTarget[]; live: boolean }) {
+/**
+ * floating: the corner button on the client page (the thread comes with the page). inline: a button where it's placed
+ * (a KPI card), which loads the thread when opened. Either way it's the same thread, so a conversation started on the
+ * KPI board is there on the client page and the other way round.
+ */
+export function ClientChat({ clientId, client, initial, targets, live, variant = "floating" }: { clientId: string; client: string; initial?: ChatTurn[]; targets: AuditTarget[]; live: boolean; variant?: "floating" | "inline" }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [chat, setChat] = useState(initial);
+  const [chat, setChat] = useState<ChatTurn[]>(initial ?? []);
+  const [loaded, setLoaded] = useState(Boolean(initial));
+  useEffect(() => {
+    if (!open || loaded) return;
+    let live = true;
+    void loadClientAi(clientId).then((turns) => {
+      if (!live) return;
+      setChat(turns);
+      setLoaded(true);
+    });
+    return () => {
+      live = false;
+    };
+  }, [open, loaded, clientId]);
   const [q, setQ] = useState("");
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -77,6 +95,14 @@ export function ClientChat({ clientId, client, initial, targets, live }: { clien
 
   return (
     <>
+      {variant === "inline" ? (
+        <button type="button" onClick={() => setOpen(true)} className="inline-flex h-9 shrink-0 items-center gap-2 rounded-full border border-line px-4 text-sm text-muted transition-colors hover:border-brand/50 hover:text-fg">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" />
+          </svg>
+          Ask about {client}
+        </button>
+      ) : (
       <button
         type="button"
         onClick={() => setOpen(true)}
@@ -90,6 +116,7 @@ export function ClientChat({ clientId, client, initial, targets, live }: { clien
         </span>
         Ask about {client}
       </button>
+      )}
 
       {open && <button type="button" aria-label="Close" onClick={() => setOpen(false)} className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[2px]" />}
       <aside
@@ -156,7 +183,8 @@ export function ClientChat({ clientId, client, initial, targets, live }: { clien
         </div>
 
         <div className="relative grid content-start gap-3 overflow-y-auto px-5 py-2">
-          {!chat.length && !pending && (
+          {!loaded && <p className="animate-pulse text-xs text-white/50">Loading your conversation about {client}…</p>}
+          {loaded && !chat.length && !pending && (
             <div className="grid gap-2">
               {STARTERS.map((s) => (
                 <button key={s} type="button" onClick={() => ask(s)} className="rounded-[12px] border border-white/[0.08] px-3.5 py-2.5 text-left text-[13px] text-white/70 transition-colors hover:border-brand/50 hover:text-white">

@@ -9,7 +9,8 @@ import type { Agg, Pacing, Status, Trend } from "@/lib/kpi/calc";
 import { CONVERSIONS } from "@/lib/kpi/conversions";
 import { STATUS, deviationTone, kpiValue, money } from "@/lib/kpi/format";
 import { freshness } from "@/lib/dates";
-import { addKpiTarget, archiveKpiTarget, exploreKpi, linkAdAccount, pullClientKpis, saveKpiTarget, setExtraMetrics } from "./actions";
+import { addKpiTarget, archiveKpiTarget, exploreKpi, linkAdAccount, pullClientKpis, saveAccountNotes, saveKpiTarget, setExtraMetrics, type NoteKey } from "./actions";
+import { ClientChat } from "../clients/[slug]/client-chat";
 import type { Explore } from "@/lib/kpi/explore";
 import { DailyChart, Ladder, PaceBar, paceMeta } from "./kpi-charts";
 import { AuditPanel, agoText, type AuditSummary } from "./audit-panel";
@@ -52,7 +53,7 @@ export type KpiRow = {
   audit: AuditSummary;
   extraMetrics: string[];
   /** From the Kaizen Account Overview sheet (the source of truth for buyer, budget and target while the team moves over) */
-  sheet: { priority?: string; problem?: string; solution?: string; buying?: string; creative?: string; copy?: string; comments?: string; syncedAt?: string } | null;
+  sheet: { priority?: string; problem?: string; solution?: string; buying?: string; creative?: string; copy?: string; comments?: string; syncedAt?: string; edits?: Partial<Record<NoteKey, { at: string; by: string; sheetWas: string }>> } | null;
   sprint: SprintSummary | null;
   /** The latest change someone made in the ad account (Meta's activity log), when it was last read */
   lastChange: { at: string | null; who: string | null; what: string | null; object: string | null; checkedAt: string; error: string | null } | null;
@@ -369,33 +370,120 @@ const SPRINT_TONE: Record<string, string> = {
   done: "bg-ok-soft text-ok",
 };
 
-/** The team's notes on this account from the Account Overview sheet. */
-function SheetNotes({ s }: { s: NonNullable<KpiRow["sheet"]> }) {
-  const rows = (
-    [
-      ["#1 problem", s.problem],
-      ["Solution", s.solution],
-      ["Media buying update", s.buying],
-      ["Creative update", s.creative],
-      ["Copy update", s.copy],
-      ["Comments", s.comments],
-    ] as const
-  ).filter(([, v]) => v);
+const NOTE_FIELDS: [NoteKey, string][] = [
+  ["problem", "#1 problem"],
+  ["solution", "Solution"],
+  ["buying", "Media buying update"],
+  ["creative", "Creative update"],
+  ["copy", "Copy update"],
+  ["comments", "Comments"],
+];
+const stamp = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+
+/** One note: a few lines, with the rest a click away when it's long. */
+function Note({ label, text, edited }: { label: string; text: string; edited?: { at: string; by: string } }) {
+  const [more, setMore] = useState(false);
+  const long = text.length > 320 || text.split("\n").length > 5;
   return (
-    <div className="grid gap-3 rounded-[16px] border border-line bg-surface p-5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-faint">From the Account Overview sheet{s.priority ? ` · ${s.priority} priority` : ""}</p>
-        {s.syncedAt && <span className="text-[11px] text-faint">Read {new Date(s.syncedAt).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>}
-      </div>
-      <dl className="grid gap-2 text-sm sm:grid-cols-2">
-        {rows.map(([k, v]) => (
-          <div key={k} className="grid gap-0.5">
-            <dt className="text-[11px] text-faint">{k}</dt>
-            <dd className="whitespace-pre-wrap leading-relaxed text-muted">{v}</dd>
-          </div>
-        ))}
-      </dl>
+    <div className="grid content-start gap-1 rounded-[12px] border border-line/70 bg-bg/40 px-4 py-3">
+      <dt className="flex flex-wrap items-baseline justify-between gap-2 text-[11px] text-faint">
+        {label}
+        {edited && <span title={stamp(edited.at)}>Edited here by {edited.by}</span>}
+      </dt>
+      <dd className={`whitespace-pre-wrap text-sm leading-relaxed text-muted ${long && !more ? "line-clamp-4" : ""}`}>{text}</dd>
+      {long && (
+        <button type="button" onClick={() => setMore((m) => !m)} className="justify-self-start text-xs text-brand-text hover:underline">
+          {more ? "Show less" : "Read more"}
+        </button>
+      )}
     </div>
+  );
+}
+
+/**
+ * The account's notes: #1 problem, solution, and the media buying, creative and copy updates. They come from the
+ * Account Overview sheet while it's in use; the pencil edits them here, and an edit holds through the sheet's syncs
+ * (the sheet only takes a field back if that cell changes there).
+ */
+function AccountNotes({ r }: { r: KpiRow }) {
+  const s = r.sheet ?? {};
+  const router = useRouter();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<Partial<Record<NoteKey, string>>>({});
+  const [saving, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const filled = NOTE_FIELDS.filter(([k]) => s[k]);
+  const edit = () => {
+    setDraft(Object.fromEntries([["priority", s.priority ?? ""], ...NOTE_FIELDS.map(([k]) => [k, s[k] ?? ""])]));
+    setError(null);
+    setEditing(true);
+  };
+  const save = () =>
+    start(async () => {
+      const res = await saveAccountNotes(r.id, draft);
+      if (!res.ok) return setError(res.error);
+      setEditing(false);
+      router.refresh();
+    });
+  return (
+    <section className="grid gap-3 rounded-[16px] border border-line bg-surface p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-faint">
+          Account notes{s.priority ? ` · ${s.priority} priority` : ""}
+          {s.syncedAt && <span className="normal-case tracking-normal"> · from the Account Overview sheet, read {stamp(s.syncedAt)}</span>}
+        </p>
+        {!editing && (
+          <button type="button" onClick={edit} className="inline-flex h-8 items-center gap-1.5 rounded-full border border-line px-3 text-xs text-muted hover:text-fg" aria-label="Edit the notes">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M12 20h9" />
+              <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
+            </svg>
+            Edit
+          </button>
+        )}
+      </div>
+      {editing ? (
+        <div className="grid gap-3">
+          <label className="grid max-w-xs gap-1 text-[11px] text-faint">
+            Priority
+            <select value={draft.priority ?? ""} onChange={(e) => setDraft((d) => ({ ...d, priority: e.target.value }))} className="h-9 rounded-[10px] border border-line bg-bg px-3 text-sm text-fg">
+              <option value="">Not set</option>
+              {["High", "Medium", "Low"].map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {NOTE_FIELDS.map(([k, label]) => (
+              <label key={k} className="grid gap-1 text-[11px] text-faint">
+                {label}
+                <textarea value={draft[k] ?? ""} onChange={(e) => setDraft((d) => ({ ...d, [k]: e.target.value }))} rows={k === "buying" || k === "creative" ? 8 : 4} className="resize-y rounded-[10px] border border-line bg-bg px-3 py-2 text-sm leading-relaxed text-fg outline-none focus:border-brand/50" />
+              </label>
+            ))}
+          </div>
+          {error && <p className="text-xs text-bad">{error}</p>}
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={save} disabled={saving} className="h-9 rounded-full bg-fg px-4 text-sm text-bg disabled:opacity-60">
+              {saving ? "Saving…" : "Save notes"}
+            </button>
+            <button type="button" onClick={() => setEditing(false)} className="h-9 rounded-full border border-line px-4 text-sm text-muted hover:text-fg">
+              Cancel
+            </button>
+            {s.syncedAt && <span className="text-[11px] text-faint">Your edits hold through the sheet&apos;s syncs unless that cell changes in the sheet.</span>}
+          </div>
+        </div>
+      ) : filled.length ? (
+        <dl className="grid gap-2 sm:grid-cols-2">
+          {filled.map(([k, label]) => (
+            <Note key={k} label={label} text={String(s[k])} edited={s.edits?.[k]} />
+          ))}
+        </dl>
+      ) : (
+        <p className="text-sm text-muted">No notes yet. Add the #1 problem, the plan and this week&apos;s updates.</p>
+      )}
+    </section>
   );
 }
 
@@ -497,10 +585,23 @@ function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
   );
   return (
     <div className="grid gap-6 border-t border-line bg-bg/40 px-5 py-6 sm:px-6">
-      {r.sheet && (r.sheet.problem || r.sheet.solution || r.sheet.buying || r.sheet.creative || r.sheet.copy) && <SheetNotes s={r.sheet} />}
+      {/* First the audit and the AI to talk the account through with (the same thread as the client page) */}
+      <div className="grid gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <ClientChat
+            variant="inline"
+            clientId={r.clientId}
+            client={r.client}
+            live
+            targets={r.accountId ? [{ id: r.id, label: `${r.platform === "google" ? "Google" : "Meta"}${r.label ? ` · ${r.label}` : ""}`, status: r.audit?.status ?? "none", auditId: r.audit?.id ?? null }] : []}
+          />
+          <Link href={`/clients/${r.slug}`} className="inline-flex h-9 items-center rounded-full border border-line px-4 text-sm text-muted hover:text-fg">
+            Client page →
+          </Link>
+        </div>
+        {r.accountId && <AuditPanel targetId={r.id} audit={r.audit} platform={r.platform} />}
+      </div>
       {r.sprint && <SprintStrip s={r.sprint} />}
-      {r.accountId && <AuditPanel targetId={r.id} audit={r.audit} platform={r.platform} />}
-      {r.accountId && <ChangeLog changes={r.changes} platform={r.platform} limit={10} />}
 
       {previewing && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-[12px] border border-brand/40 bg-brand-soft px-4 py-3 text-sm">
@@ -571,21 +672,34 @@ function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
       )}
       {err && <p className="text-xs text-bad">{err}</p>}
 
-      <div className="grid gap-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-xs font-medium uppercase tracking-[0.12em] text-faint">
-            Target and budget
-            {r.sheet && <span className="ml-2 normal-case tracking-normal text-faint">· buyer, budget and target come from the Account Overview sheet (read at 12pm and 5pm): change them there</span>}
-          </p>
-          <div className="flex items-center gap-3">
-            {r.accountId && <ActionButton action={pullClientKpis.bind(null, r.clientId)} label={r.platform === "google" ? "Pull from Google now" : "Pull from Meta now"} />}
-            <ActionButton action={archiveKpiTarget.bind(null, r.id)} label="Remove" confirmText="Remove this KPI?" />
+      {/* The target's settings, folded away (open while previewing a change to what's counted, so it can be saved) */}
+      <details open={previewing || undefined} className="group rounded-[16px] border border-line bg-surface">
+        <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 px-5 py-4">
+          <span className="text-xs font-medium uppercase tracking-[0.12em] text-faint">
+            Target and budget settings
+            <span className="ml-2 normal-case tracking-normal">
+              · {kpiValue(r.target, r.roas)} target{r.budget ? ` · ${money(r.budget)} a month` : ""}
+              {r.owner ? ` · ${r.owner}` : ""}
+            </span>
+          </span>
+          <span className="text-faint transition-transform group-open:rotate-90">›</span>
+        </summary>
+        <div className="grid gap-4 border-t border-line px-5 py-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {r.sheet ? <p className="text-[11px] text-faint">Buyer, budget and target come from the Account Overview sheet (read at 12pm and 5pm): change them there.</p> : <span />}
+            <div className="flex items-center gap-3">
+              {r.accountId && <ActionButton action={pullClientKpis.bind(null, r.clientId)} label={r.platform === "google" ? "Pull from Google now" : "Pull from Meta now"} />}
+              <ActionButton action={archiveKpiTarget.bind(null, r.id)} label="Remove" confirmText="Remove this KPI?" />
+            </div>
           </div>
+          <ActionForm action={saveKpiTarget.bind(null, r.id, r.clientId)} submitLabel={previewing ? `Save, counting ${convLabel}` : "Save"} className="grid gap-4">
+            <TargetFields row={r} buyers={buyers} platform={r.platform} ctl={{ conv, setConv, custom, setCustom, match, setMatch, actions: ex?.actions ?? [] }} />
+          </ActionForm>
         </div>
-        <ActionForm action={saveKpiTarget.bind(null, r.id, r.clientId)} submitLabel={previewing ? `Save, counting ${convLabel}` : "Save"} className="grid gap-4">
-          <TargetFields row={r} buyers={buyers} platform={r.platform} ctl={{ conv, setConv, custom, setCustom, match, setMatch, actions: ex?.actions ?? [] }} />
-        </ActionForm>
-      </div>
+      </details>
+
+      <AccountNotes r={r} />
+      {r.accountId && <ChangeLog changes={r.changes} platform={r.platform} limit={10} collapsed={3} />}
     </div>
   );
 }

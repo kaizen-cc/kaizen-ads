@@ -80,7 +80,7 @@ export async function syncAccountSheet(admin: SupabaseClient) {
     t.total(rows.length);
 
     const [{ data: targets }, { data: people }] = await Promise.all([
-      admin.from("kpi_targets").select("id, client_id, platform, ad_account_id, conversion, target, monthly_budget, owner_id").eq("active", true),
+      admin.from("kpi_targets").select("id, client_id, platform, ad_account_id, conversion, target, monthly_budget, owner_id, sheet").eq("active", true),
       admin.from("profiles").select("id, full_name").eq("is_active", true),
     ]);
     const person = (name: string) => {
@@ -111,8 +111,18 @@ export async function syncAccountSheet(admin: SupabaseClient) {
       if (buyerName && !buyer) out.unknownBuyer.push(`${buyerName} (${name})`);
       const kpi = money(r["KPI"]);
       const budget = budgetOf(r["Budget"]);
-      const sheet = Object.fromEntries(NOTE_FIELDS.map(([k, h]) => [k, r[h] ?? ""]).filter(([, v]) => v));
-      const patch: Record<string, unknown> = { sheet: { ...sheet, name, platform, syncedAt: now }, sheet_synced_at: now };
+      const fromSheet = Object.fromEntries(NOTE_FIELDS.map(([k, h]) => [k, r[h] ?? ""]).filter(([, v]) => v)) as Record<string, string>;
+      // Notes edited in Kaizen Ads hold: the sheet takes a field back only when that cell has changed since the edit
+      const prev = (target.sheet ?? {}) as Record<string, unknown>;
+      const edits = { ...((prev.edits ?? {}) as Record<string, { at: string; by: string; sheetWas: string }>) };
+      const sheet: Record<string, string> = { ...fromSheet };
+      for (const [k, e] of Object.entries(edits)) {
+        if ((fromSheet[k] ?? "") === e.sheetWas) {
+          if (prev[k]) sheet[k] = String(prev[k]);
+          else delete sheet[k];
+        } else delete edits[k];
+      }
+      const patch: Record<string, unknown> = { sheet: { ...sheet, edits, name, platform, syncedAt: now }, sheet_synced_at: now };
       // A ROAS KPI isn't a dollar target: the sheet's dollar KPI doesn't replace it
       if (kpi != null && target.conversion !== "roas" && Number(target.target) !== kpi) patch.target = kpi;
       if (budget != null && Number(target.monthly_budget) !== budget) patch.monthly_budget = budget;

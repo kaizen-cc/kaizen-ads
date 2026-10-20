@@ -113,7 +113,7 @@ export function KpiPanel({ kpis, audits, changes }: { kpis: ClientKpi[]; audits?
                   <p className="text-sm text-muted">{k.status === "idle" ? "Not spending right now." : k.error ?? "Waiting for its first sync."}</p>
                 )}
                 {audits && k.accountId && <AuditPanel targetId={k.id} audit={audits[k.id] ?? null} platform={k.platform} />}
-                {changes && k.accountId && <ChangeLog changes={changes[k.id] ?? []} platform={k.platform} limit={30} />}
+                {changes && k.accountId && <ChangeLog changes={changes[k.id] ?? []} platform={k.platform} limit={30} collapsed={5} />}
               </article>
             );
           })}

@@ -9,7 +9,7 @@ import { runFatigue } from "@/lib/fatigue";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { notLive } from "@/lib/live-guard";
-import { askAboutClient } from "@/lib/client-chat";
+import { askAboutClient, loadClientChat } from "@/lib/client-chat";
 import type { ChatTurn } from "@/lib/handoff";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -272,6 +272,14 @@ export async function askClientAi(clientId: string, question: string): Promise<{
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Couldn't answer that just now." };
   }
+}
+
+/** My thread about this client, for the chat opened from elsewhere (the KPI board): the same thread as the client page. */
+export async function loadClientAi(clientId: string): Promise<ChatTurn[]> {
+  const me = await requireStaff();
+  const { data: c } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
+  if (!c) return [];
+  return loadClientChat(createAdminClient(), clientId, me.id);
 }
 
 /** Starts the thread over. */
