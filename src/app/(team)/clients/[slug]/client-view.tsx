@@ -30,6 +30,10 @@ import type { AuditSummary } from "../../kpis/audit-panel";
 import type { ChatTurn } from "@/lib/handoff";
 import type { AccountChange } from "@/lib/account-changes";
 import { ShotListPanel, type AssetGlance, type SavedShotList } from "./shot-list-panel";
+import { ClientTabs } from "./client-tabs";
+import { Glance, type Alert } from "./glance";
+import { ReportButton } from "./report-button";
+import type { SprintSummary } from "@/lib/sprints";
 import { ArchiveControl } from "./archive-control";
 import { IntakePanel, type IntakeRecord } from "./intake-panel";
 import { CallsPanel, type ClientCall } from "./calls-panel";
@@ -104,6 +108,7 @@ export type ClientViewProps = {
   kpis?: ClientKpi[] | null; // performance vs target; null in the design preview
   audits?: Record<string, AuditSummary> | null; // the latest audit per KPI, shared with the KPI board
   changes?: Record<string, AccountChange[]> | null; // each KPI's ad account, its last 30 changes
+  sprints?: Record<string, SprintSummary> | null; // the optimization sprint on each account
   assets?: AssetGlance | null; // what's on their Drive
   shotList?: SavedShotList | null; // next month's shot list
   chat?: { initial: ChatTurn[]; targets: AuditTarget[] } | null; // my thread with the AI about this client
@@ -114,12 +119,39 @@ export type ClientViewProps = {
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, assets = null, shotList = null, chat = null, fatigue = null, market = [], intake, calls }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, assets = null, shotList = null, chat = null, fatigue = null, market = [], intake, calls }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
   // Archived or paused: read-only. Nothing is pulled or generated until they're live again
   const live = isLive(client);
+
+  // The glance: what's in motion, and what needs someone (each a link to where it's handled)
+  const tab = (t: string) => `/clients/${client.slug}?tab=${t}`;
+  const openPromises = (calls ?? []).flatMap((c) => c.commitments).filter((x) => x.status === "open");
+  const tired = (fatigue ?? []).filter((f) => f.severity === "tired").length;
+  const alerts: Alert[] = [
+    ...(kpis ?? []).filter((k) => k.status === "off").map((k): Alert => ({ tone: "bad", text: `${k.platform === "google" ? "Google" : "Meta"} · ${k.label ?? k.conversionLabel} is off target${k.deviation != null ? ` (${Math.round(Math.abs(k.deviation) * 100)}% off)` : ""}`, href: `/kpis?target=${k.id}` })),
+    ...(openPromises.length ? [{ tone: "bad" as const, text: `${openPromises.length} promise${openPromises.length === 1 ? "" : "s"} from calls not started`, href: tab("knowledge") }] : []),
+    ...(tired ? [{ tone: "warn" as const, text: `${tired} ad${tired === 1 ? "" : "s"} worn out and ready for a refresh`, href: tab("overview") }] : []),
+    ...(active && images + videos > 0 && imagesUsed + videosUsed === 0 ? [{ tone: "warn" as const, text: "Nothing made against this month's creative allotment yet", href: tab("creative") }] : []),
+    ...(assets?.stale && active ? [{ tone: "info" as const, text: "No new footage on Drive in 45 days: time for a shot list", href: tab("creative") }] : []),
+    ...(!(kpis ?? []).length ? [{ tone: "warn" as const, text: "No KPI target set", href: "/kpis" }] : []),
+    ...(!contacts.length ? [{ tone: "warn" as const, text: "No client contact: nobody can approve ads", href: tab("team") }] : []),
+    ...(!client.slack_channel_id ? [{ tone: "info" as const, text: "No client Slack channel linked", href: tab("team") }] : []),
+  ];
+  const needsSetup = [!contacts.length, !client.slack_channel_id, !client.drive_folder_id].filter(Boolean).length;
+  const sprintMoves = Object.values(sprints ?? {}).reduce((n, s) => n + Math.max(0, s.total - s.done), 0);
+  const inMotion = [
+    { label: "creative in production", value: creative?.moving.length ?? 0, href: tab("overview") },
+    { label: "ads live now", value: creative?.live.length ?? 0, href: tab("overview") },
+    { label: "sprint moves open", value: sprintMoves, href: tab("overview") },
+    { label: "creatives this month", value: imagesUsed + videosUsed, href: tab("creative") },
+  ].filter((m) => m.value > 0);
+  const summary = digest?.summary ? digest.summary.split(/(?<=\.)\s+/).slice(0, 2).join(" ") : null;
+  const glance = kpis || creative ? <Glance kpis={kpis ?? []} audits={audits ?? {}} sprints={sprints ?? {}} changes={changes ?? {}} alerts={alerts} inMotion={inMotion} summary={summary} today={today} /> : null;
+  const reportAccounts = (kpis ?? []).filter((k) => k.accountId).map((k) => ({ id: k.id, label: `${k.platform === "google" ? "Google" : "Meta"}${k.label ? ` · ${k.label}` : ""}` }));
+
   return (
     <div className="mx-auto grid max-w-6xl gap-8">
       {chat && !demo && <ClientChat clientId={client.id} client={client.name} initial={chat.initial} targets={chat.targets} live={live} />}
@@ -130,7 +162,10 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
         </Link>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="font-heading text-[32px] leading-tight">{client.name}</h1>
-          {can.assign && !demo && !client.archived_at && <ArchiveControl clientId={client.id} slug={client.slug} name={client.name} archived={null} />}
+          <span className="flex items-center gap-2">
+            {!demo && live && <ReportButton accounts={reportAccounts} today={today} />}
+            {can.assign && !demo && !client.archived_at && <ArchiveControl clientId={client.id} slug={client.slug} name={client.name} archived={null} />}
+          </span>
         </div>
         {!client.archived_at && !live && (
           <p className="rounded-[14px] border border-warn/40 bg-warn-soft/40 px-4 py-3 text-sm">
@@ -168,18 +203,106 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
         </div>
       </header>
 
-      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-        {/* Main column: what the AI knows and what the team adds to it */}
-        <div className="grid min-w-0 gap-6">
-          {kpis && <KpiPanel kpis={kpis} audits={audits} changes={changes} />}
+      {glance}
 
-          {live && fatigue && fatigue.length > 0 && <FatigueWatch rows={fatigue} showClient={false} />}
-
-          {assets && !demo && client.creative_package && <ShotListPanel clientId={client.id} slug={client.slug} assets={assets} latest={shotList} live={live} />}
-
-          {!demo && live && market.length > 0 && <MarketPanel clientId={client.id} industry={client.industry ?? null} label={client.industry_detail ?? industryLabel(client.industry) ?? "their industry"} ads={market} />}
-
-          {active && (
+      <ClientTabs
+        tabs={[
+          {
+            id: "overview",
+            label: "Overview",
+            hint: "Performance, audits and sprints, ads wearing out, creative in motion and live, the market",
+            content: (
+              <div className="grid gap-6">
+                {kpis && <KpiPanel kpis={kpis} audits={audits} changes={changes} />}
+                {live && fatigue && fatigue.length > 0 && <FatigueWatch rows={fatigue} showClient={false} />}
+                {creative && <CreativePanel data={creative} />}
+                {!demo && live && market.length > 0 && <MarketPanel clientId={client.id} industry={client.industry ?? null} label={client.industry_detail ?? industryLabel(client.industry) ?? "their industry"} ads={market} />}
+              </div>
+            ),
+          },
+          {
+            id: "creative",
+            label: "Creative",
+            hint: "Assets and the shot list, the creative package and allotment, angles",
+            content: (
+              <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+                <div className="grid min-w-0 gap-6">
+                  {assets && !demo && client.creative_package && <ShotListPanel clientId={client.id} slug={client.slug} assets={assets} latest={shotList} live={live} />}
+                  <Section title="Angles & avatars" description="Copy is approved once per angle and reused for every creative on it.">
+            {angles.length > 0 ? (
+              <ul className="grid gap-2 sm:grid-cols-2">
+                {angles.map((a) => (
+                  <li key={a.id} className={`${row} ${a.status === "archived" ? "opacity-50" : ""}`}>
+                    <span className="grid min-w-0 gap-0.5">
+                      <span>
+                        {a.name} <span className="text-xs capitalize text-faint">· {a.kind}</span>
+                      </span>
+                      {a.description && <span className="text-xs leading-relaxed text-muted">{a.description}</span>}
+                    </span>
+                    <ActionButton
+                      action={setAngleStatus.bind(null, client.slug, a.id, a.status === "archived" ? "active" : "archived")}
+                      label={a.status === "archived" ? "Restore" : "Archive"}
+                    />
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-faint">No angles yet. They&apos;re also created from requests.</p>
+            )}
+            <ActionForm action={addAngle.bind(null, client.id, client.slug)} submitLabel="Add angle" resetOnSuccess className="grid gap-4 border-t border-line pt-5">
+              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_150px_minmax(0,1.4fr)]">
+                <label className={label}>
+                  Name
+                  <input name="name" required className={field} placeholder="e.g. Fresh, never frozen" />
+                </label>
+                <label className={label}>
+                  Type
+                  <select name="kind" className={field}>
+                    <option value="angle">Angle</option>
+                    <option value="avatar">Avatar</option>
+                  </select>
+                </label>
+                <label className={label}>
+                  <span>
+                    Description <span className="font-normal text-faint">(optional)</span>
+                  </span>
+                  <input name="description" className={field} />
+                </label>
+              </div>
+            </ActionForm>
+          </Section>
+                </div>
+                <div className="grid min-w-0 gap-6">
+                  <PackagePanel
+            active={active}
+            packageLabel={packageLabel}
+            packageKey={client.creative_package_key ?? null}
+            until={client.creative_package_until ?? null}
+            note={client.creative_package_note ?? null}
+            today={today}
+            images={images}
+            videos={videos}
+            imagesUsed={imagesUsed}
+            videosUsed={videosUsed}
+            fromAsana={fromAsana}
+            creativeDb={creativeDb}
+            packages={packages}
+            can={{ exec: can.admin, allot: can.allot }}
+            setSprint={setSprintPackage.bind(null, client.id, client.slug)}
+            endPackage={endCreativePackage.bind(null, client.id, client.slug)}
+            saveAllotment={saveAllotment.bind(null, client.id, client.slug)}
+          />
+                </div>
+              </div>
+            ),
+          },
+          {
+            id: "knowledge",
+            label: "Knowledge",
+            hint: "What the AI knows: the briefing, memory, Brand Bible, go-to-market, intake and calls",
+            content: (
+              <div className="grid gap-6">
+                {active && (
             <BriefingPanel
               demo={demo}
               refresh={live ? refreshClientBriefing.bind(null, client.id, client.slug) : undefined}
@@ -261,18 +384,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
               )}
             </BriefingPanel>
           )}
-
-          {intake !== undefined && <IntakePanel intake={intake} />}
-
-          {calls && <CallsPanel calls={calls} />}
-
-          {creative && <CreativePanel data={creative} />}
-
-          {!demo && <GtmPanel clientId={client.id} slug={client.slug} gtm={gtm} canReview={can.assign} readOnly={!live} />}
-
-          <BrandBiblePanel clientId={client.id} slug={client.slug} bible={brandBible} canBuild={can.assign && live} />
-
-          <Section title="Client memory" description="What we've learned about this client. The AI reads it for suggestions and flags anything that goes against it before a request is sent.">
+                <Section title="Client memory" description="What we've learned about this client. The AI reads it for suggestions and flags anything that goes against it before a request is sent.">
             {memory.length > 0 ? (
               <div className="grid gap-3">
                 <ul className="grid gap-2">
@@ -361,75 +473,22 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
               </div>
             </ActionForm>
           </Section>
-
-          <Section title="Angles & avatars" description="Copy is approved once per angle and reused for every creative on it.">
-            {angles.length > 0 ? (
-              <ul className="grid gap-2 sm:grid-cols-2">
-                {angles.map((a) => (
-                  <li key={a.id} className={`${row} ${a.status === "archived" ? "opacity-50" : ""}`}>
-                    <span className="grid min-w-0 gap-0.5">
-                      <span>
-                        {a.name} <span className="text-xs capitalize text-faint">· {a.kind}</span>
-                      </span>
-                      {a.description && <span className="text-xs leading-relaxed text-muted">{a.description}</span>}
-                    </span>
-                    <ActionButton
-                      action={setAngleStatus.bind(null, client.slug, a.id, a.status === "archived" ? "active" : "archived")}
-                      label={a.status === "archived" ? "Restore" : "Archive"}
-                    />
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-sm text-faint">No angles yet. They&apos;re also created from requests.</p>
-            )}
-            <ActionForm action={addAngle.bind(null, client.id, client.slug)} submitLabel="Add angle" resetOnSuccess className="grid gap-4 border-t border-line pt-5">
-              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_150px_minmax(0,1.4fr)]">
-                <label className={label}>
-                  Name
-                  <input name="name" required className={field} placeholder="e.g. Fresh, never frozen" />
-                </label>
-                <label className={label}>
-                  Type
-                  <select name="kind" className={field}>
-                    <option value="angle">Angle</option>
-                    <option value="avatar">Avatar</option>
-                  </select>
-                </label>
-                <label className={label}>
-                  <span>
-                    Description <span className="font-normal text-faint">(optional)</span>
-                  </span>
-                  <input name="description" className={field} />
-                </label>
+                <BrandBiblePanel clientId={client.id} slug={client.slug} bible={brandBible} canBuild={can.assign && live} />
+                {!demo && <GtmPanel clientId={client.id} slug={client.slug} gtm={gtm} canReview={can.assign} readOnly={!live} />}
+                {intake !== undefined && <IntakePanel intake={intake} />}
+                {calls && <CallsPanel calls={calls} />}
               </div>
-            </ActionForm>
-          </Section>
-        </div>
-
-        {/* Side column: who, how much, and how it's wired */}
-        <div className="grid min-w-0 gap-6">
-          <PackagePanel
-            active={active}
-            packageLabel={packageLabel}
-            packageKey={client.creative_package_key ?? null}
-            until={client.creative_package_until ?? null}
-            note={client.creative_package_note ?? null}
-            today={today}
-            images={images}
-            videos={videos}
-            imagesUsed={imagesUsed}
-            videosUsed={videosUsed}
-            fromAsana={fromAsana}
-            creativeDb={creativeDb}
-            packages={packages}
-            can={{ exec: can.admin, allot: can.allot }}
-            setSprint={setSprintPackage.bind(null, client.id, client.slug)}
-            endPackage={endCreativePackage.bind(null, client.id, client.slug)}
-            saveAllotment={saveAllotment.bind(null, client.id, client.slug)}
-          />
-
-          <Section title="Kaizen team" description="The copywriter reviews all copy and customer success handles every client.">
+            ),
+          },
+          {
+            id: "team",
+            label: "Team & setup",
+            hint: "The team, client contacts, the portal, connections",
+            count: needsSetup || null,
+            content: (
+              <div className="grid items-start gap-6 lg:grid-cols-2">
+                <div className="grid min-w-0 gap-6">
+                  <Section title="Kaizen team" description="The copywriter reviews all copy and customer success handles every client.">
             <dl className="grid gap-1">
               {SLOTS.map((slot) => (
                 <div key={slot.value} className="grid grid-cols-[100px_minmax(0,1fr)] items-center gap-3">
@@ -441,36 +500,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
               ))}
             </dl>
           </Section>
-
-          <Section title="Client portal" description="Where the client swipes through their ads to approve or ask for changes.">
-            <div className={row}>
-              <span className="grid min-w-0 gap-0.5">
-                <span className="flex items-center gap-2">
-                  <span className={`h-2 w-2 rounded-full ${client.portal_live ? "bg-ok" : "bg-faint"}`} />
-                  {client.portal_live ? "Live" : "Off"}
-                </span>
-                <span className="text-xs text-faint">
-                  {client.portal_live
-                    ? `Contacts can sign in and get notified${client.portal_live_at ? ` · live since ${new Date(client.portal_live_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}.`
-                    : "Contacts can't sign in or see anything, and nothing is sent to them. The team can test it from the preview."}
-                </span>
-              </span>
-              <span className="flex shrink-0 items-center gap-2">
-                <a href={`/c/${client.slug}`} target="_blank" rel="noreferrer" className="rounded-full border border-line px-3 py-1 text-xs text-muted hover:border-faint hover:text-fg">
-                  Preview ↗
-                </a>
-                {can.admin &&
-                  (client.portal_live ? (
-                    <ActionButton action={setPortalLive.bind(null, client.id, client.slug, false)} label="Turn off" confirmText="Turn the portal off? Contacts lose access." />
-                  ) : (
-                    <ActionButton action={setPortalLive.bind(null, client.id, client.slug, true)} label="Go live" confirmText={`Go live with ${client.name}? Their contacts can sign in and see their ads.`} />
-                  ))}
-              </span>
-            </div>
-            {contacts.length === 0 && <p className="rounded-[8px] bg-warn-soft/50 px-3 py-2 text-xs text-warn">Needs a contact: add who approves ads before going live.</p>}
-          </Section>
-
-          <Section title="Client contacts" description="They get a magic link and can approve. The first approval counts.">
+                  <Section title="Client contacts" description="They get a magic link and can approve. The first approval counts.">
             {contacts.length > 0 ? (
               <ul className="grid gap-2">
                 {contacts.map((c) => (
@@ -506,8 +536,36 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
               </ActionForm>
             )}
           </Section>
-
-          <Section title="Details">
+                </div>
+                <div className="grid min-w-0 gap-6">
+                  <Section title="Client portal" description="Where the client swipes through their ads to approve or ask for changes.">
+            <div className={row}>
+              <span className="grid min-w-0 gap-0.5">
+                <span className="flex items-center gap-2">
+                  <span className={`h-2 w-2 rounded-full ${client.portal_live ? "bg-ok" : "bg-faint"}`} />
+                  {client.portal_live ? "Live" : "Off"}
+                </span>
+                <span className="text-xs text-faint">
+                  {client.portal_live
+                    ? `Contacts can sign in and get notified${client.portal_live_at ? ` · live since ${new Date(client.portal_live_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}.`
+                    : "Contacts can't sign in or see anything, and nothing is sent to them. The team can test it from the preview."}
+                </span>
+              </span>
+              <span className="flex shrink-0 items-center gap-2">
+                <a href={`/c/${client.slug}`} target="_blank" rel="noreferrer" className="rounded-full border border-line px-3 py-1 text-xs text-muted hover:border-faint hover:text-fg">
+                  Preview ↗
+                </a>
+                {can.admin &&
+                  (client.portal_live ? (
+                    <ActionButton action={setPortalLive.bind(null, client.id, client.slug, false)} label="Turn off" confirmText="Turn the portal off? Contacts lose access." />
+                  ) : (
+                    <ActionButton action={setPortalLive.bind(null, client.id, client.slug, true)} label="Go live" confirmText={`Go live with ${client.name}? Their contacts can sign in and see their ads.`} />
+                  ))}
+              </span>
+            </div>
+            {contacts.length === 0 && <p className="rounded-[8px] bg-warn-soft/50 px-3 py-2 text-xs text-warn">Needs a contact: add who approves ads before going live.</p>}
+          </Section>
+                  <Section title="Details">
             {can.admin ? (
               <ActionForm action={saveClientDetails.bind(null, client.id, client.slug)} submitLabel="Save details" className="grid gap-5">
                 <div className="grid grid-cols-2 gap-3">
@@ -599,8 +657,12 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
               </dl>
             )}
           </Section>
-        </div>
-      </div>
+                </div>
+              </div>
+            ),
+          },
+        ]}
+      />
     </div>
   );
 }

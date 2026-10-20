@@ -74,6 +74,7 @@ function due(step: string | null) {
   if (step === "docs") return true; // every 30 minutes (vercel.json)
   if (step === "remind") return !["Sat", "Sun"].includes(weekday) && [11, 15].includes(hour);
   if (step === "notify") return true; // every 10 minutes (vercel.json): critical notifications still unread go out by email
+  if (step === "reports") return true; // every 15 minutes (vercel.json): queues on Mondays and the 1st, drafts what's queued
 
   if (step === "market") return hour === 8;
   if (step === "calls") return (businessHours || hour === 18) || (hour % 3 === 0 && minute < 30);
@@ -147,6 +148,22 @@ export async function GET(request: Request) {
     }
     if (step === "remind") return Response.json(await (await import("@/lib/notifications")).remindRecaps(admin));
     if (step === "notify") return Response.json(await (await import("@/lib/notifications")).emailNotifications(admin));
+    if (step === "reports") {
+      // Mondays from 5am: this week's reports; the 1st (and the 2nd, in case a run was missed): last month's recaps.
+      // Every run drafts what's queued; reminders go out on Monday afternoon, Tuesday morning, and the 2nd to the 5th.
+      const { queueReports, draftQueued, remindReports } = await import("@/lib/reports/run");
+      const { weekday, hour, minute } = nyNow();
+      const date = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+      const dom = Number(date.slice(8, 10));
+      const queued = {
+        weekly: weekday === "Mon" && hour >= 5 ? await queueReports(admin, "weekly", date) : 0,
+        monthly: dom <= 2 && hour >= 5 ? await queueReports(admin, "monthly", date) : 0,
+      };
+      const drafted = await draftQueued(admin, 600_000);
+      const remindNow = minute < 15 && ((weekday === "Mon" && hour === 14) || (weekday === "Tue" && hour === 10) || (dom >= 2 && dom <= 5 && hour === 10));
+      const reminded = remindNow ? await remindReports(admin, date) : 0;
+      return Response.json({ queued, drafted, reminded });
+    }
     if (step === "docs") {
       const { watchDocs } = await import("@/lib/context/docs");
       return Response.json(googleConfigured() ? await watchDocs(admin) : { skipped: "Google isn't connected" });

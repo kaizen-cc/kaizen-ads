@@ -30,7 +30,7 @@ export type TopAd = { id: string; name: string; campaign: string | null; spend: 
 
 export type ReportMetrics = {
   platform: "meta" | "google";
-  kind: "weekly" | "monthly";
+  kind: "weekly" | "monthly" | "custom";
   conversion: string; // "Leads", "Purchases"
   roasKpi: boolean;
   target: number | null;
@@ -65,8 +65,21 @@ const span = (a: string, b: string) => Math.round((Date.parse(`${b}T12:00:00Z`) 
 const fmt = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 const monthName = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
 
-/** The periods a report covers, as of a day (the day it's written; data runs through the day before). */
-export function periodsFor(kind: "weekly" | "monthly", today: string) {
+/** The periods a report covers, as of a day (the day it's written; data runs through the day before). Custom: the
+ * dates asked for, against the same number of days just before them. */
+export function periodsFor(kind: "weekly" | "monthly" | "custom", today: string, range?: { start: string; end: string }) {
+  if (kind === "custom" && range) {
+    const n = span(range.start, range.end);
+    const cEnd = shift(range.start, -1);
+    const cStart = shift(cEnd, -(n - 1));
+    const sameMonth = range.start === monthStart(range.start) && range.end.slice(0, 7) === range.start.slice(0, 7);
+    return {
+      main: { start: range.start, end: range.end, label: sameMonth && range.end === lastDay(range.start) ? monthName(range.start) : sameMonth ? `${monthName(range.start)} 1 – ${fmt(range.end)}` : `${fmt(range.start)} – ${fmt(range.end)}` },
+      compare: { start: cStart, end: cEnd, label: `${fmt(cStart)} – ${fmt(cEnd)}` },
+      mtd: null,
+      mtdCompare: null,
+    };
+  }
   const end = shift(today, -1);
   if (kind === "monthly") {
     const mEnd = monthStart(today) === today ? end : lastDay(prevMonth(today)); // last month
@@ -123,13 +136,13 @@ function period(rows: Row[], days: Day[], p: { start: string; end: string; label
 }
 
 /** Every number a report shows, for one KPI target, as of `today` (New York). */
-export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "weekly" | "monthly", today = nyParts(new Date()).date): Promise<ReportMetrics> {
+export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "weekly" | "monthly" | "custom", today = nyParts(new Date()).date, range?: { start: string; end: string }): Promise<ReportMetrics> {
   const platform = t.platform === "google" ? "google" : "meta";
   const all = ((await accountRows(admin, t.ad_account_id ?? "", platform)) as Row[]).filter((r) => !t.campaign_match || (r.campaign_name ?? "").toLowerCase().includes(t.campaign_match.toLowerCase()));
   const conv = conversionFor(t.conversion);
   const days = toDays(all);
   const type = pickType(days, conv, t.custom_action);
-  const ps = periodsFor(kind, today);
+  const ps = periodsFor(kind, today, range);
   const main = period(all, days, ps.main, conv, type);
 
   // Campaigns in the main period, biggest spend first

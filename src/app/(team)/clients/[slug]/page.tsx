@@ -17,6 +17,7 @@ import { latestAudits } from "@/lib/audit-summary";
 import { changeKey, loadChanges } from "@/lib/account-changes";
 import type { ShotList } from "@/lib/shot-list";
 import { assetsStale } from "@/lib/client-assets";
+import { loadSprints } from "@/lib/sprints";
 import { loadClientChat } from "@/lib/client-chat";
 import type { AuditTarget } from "./client-chat";
 
@@ -185,6 +186,9 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
       const a = auditBy.get(k.id);
       return { id: k.id, label: `${k.platform === "google" ? "Google" : "Meta"}${k.label ? ` · ${k.label}` : ""}`, status: a?.status ?? "none", auditId: a?.id ?? null };
     });
+  // The optimization sprint on each account, for the page's glance
+  const sprintList = await loadSprints(supabase, { targetIds: kpis.map((k) => k.id) });
+  const sprints = Object.fromEntries(sprintList.map((s) => [s.targetId, s.sprint]));
   const at = (key: string) => (synced ?? []).find((r) => r.source === key)?.last_run_at ?? null;
   const connections = {
     meta: client.meta_ad_account_id ? freshness(lastMeta?.fetched_at) : null,
@@ -200,6 +204,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
       kpis={kpis}
       audits={audits}
       changes={changes}
+      sprints={sprints}
       assets={assetGlance}
       shotList={shotList}
       chat={{ initial: chatTurns, targets }}

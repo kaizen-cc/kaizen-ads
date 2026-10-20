@@ -15,6 +15,7 @@ const I = {
   board: "M4 4h4v16H4zM10 4h4v10h-4zM16 4h4v13h-4z",
   clients: "M4 20V8l8-5 8 5v12M9 20v-6h6v6",
   kpis: "M4 19h16M6 15l4-5 3 3 5-7",
+  reports: "M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h4",
   ideas: "M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.6.5 1 1.2 1.1 2h5c.1-.8.5-1.5 1.1-2A6 6 0 0 0 12 3z",
   lab: "M9 3h6M10 3v6L4.5 18.5A1.7 1.7 0 0 0 6 21h12a1.7 1.7 0 0 0 1.5-2.5L14 9V3M7 15h10",
 };
@@ -29,6 +30,7 @@ const GROUPS: { title: string; items: Item[] }[] = [
       { href: "/board", label: "Board", icon: I.board },
       { href: "/clients", label: "Clients", icon: I.clients },
       { href: "/kpis", label: "KPIs", icon: I.kpis },
+      { href: "/reports", label: "Reports", icon: I.reports },
     ],
   },
   {

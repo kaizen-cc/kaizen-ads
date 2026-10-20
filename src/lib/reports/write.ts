@@ -22,8 +22,12 @@ const DRAFT_SCHEMA = obj({ message: S, sections: SECTIONS });
 
 const agentFor = (platform: string): AgentKey => (platform === "google" ? "google_reporter" : "reporter");
 
-function writerSystem(kind: "weekly" | "monthly", platform: string) {
+function writerSystem(kind: "weekly" | "monthly" | "custom", platform: string): string {
   const where = platform === "google" ? "Google Ads" : "Meta Ads";
+  if (kind === "custom")
+    return writerSystem("weekly", platform)
+      .replace(/a weekly (Meta Ads|Google Ads) report/, `an on-demand ${where} recap (the client asked where things stand, for the dates given)`)
+      .replace("Open with the headline numbers for the last 7 days against the week before (and where the month stands)", "Open with the headline numbers for the dates asked about against the same number of days just before");
   return `You draft a ${kind === "weekly" ? "weekly" : "monthly"} ${where} report for a client of Kaizen Marketing, a paid social agency, as the media buyer who runs the account. The buyer reads it, may edit it, and sends it as themselves, so it must sound exactly like them: match the voice, warmth, length, formatting and habits in their examples (greeting, how they introduce numbers, headers, bullets, sign-off). If there are no examples, write warm, plain and confident.
 Every report follows the same arc: what we did, what we're doing now and why, and what comes next. Its job is to show the client the work behind the numbers, not just the numbers.
 Accuracy above everything: every number you write must come from the numbers given, rounded the way the buyer rounds; never estimate, never invent a figure, an ad, a change or a plan. Comparisons say against what ("vs the week before", "vs August"). If results are down, say it plainly and say what we're doing about it; never spin. Only mention work that's in the work log, the sprint, or what the buyer added; group many small edits into what they amount to ("tightened budgets on the low-performing ad sets"). Never mention internal things: team members other than the client's own people, Kaizen Ads, AI, audits by name, allotments, internal Slack, other clients.
@@ -105,10 +109,11 @@ export async function draftReport(admin: SupabaseClient, reportId: string) {
   await admin.from("reports").update({ status: "drafting", error: null, updated_at: new Date().toISOString() }).eq("id", reportId);
   try {
     const c = await context(admin, reportId);
-    const kind = c.r.kind as "weekly" | "monthly";
+    const kind = c.r.kind as "weekly" | "monthly" | "custom";
     const today = new Date(`${c.r.period_end}T12:00:00Z`);
     today.setUTCDate(today.getUTCDate() + 1);
-    const [metrics, voice] = await Promise.all([reportMetrics(admin, c.target, kind, today.toISOString().slice(0, 10)), voiceOf(admin, c.owner, c.r.client_id)]);
+    const range = kind === "custom" ? { start: c.r.period_start as string, end: c.r.period_end as string } : undefined;
+    const [metrics, voice] = await Promise.all([reportMetrics(admin, c.target, kind, today.toISOString().slice(0, 10), range), voiceOf(admin, c.owner, c.r.client_id)]);
     const work = await workDone(admin, c.target, metrics.main.start, metrics.main.end);
     await admin.from("reports").update({ metrics, work }).eq("id", reportId);
     const out = await askJson<{ message: string; sections: Sections }>({
@@ -117,10 +122,12 @@ export async function draftReport(admin: SupabaseClient, reportId: string) {
       system: writerSystem(kind, c.r.platform),
       schema: DRAFT_SCHEMA,
       maxTokens: 12000,
-      prompt: `${sourcesBlock(c, metrics, work.text, voice)}\n\nWrite the ${kind} report.`,
+      prompt: `${sourcesBlock(c, metrics, work.text, voice)}\n\nWrite the ${kind === "custom" ? `recap for ${metrics.main.label}` : `${kind} report`}.`,
     });
-    await admin.from("reports").update({ message: out.message, sections: out.sections, status: "draft", updated_at: new Date().toISOString() }).eq("id", reportId);
+    await admin.from("reports").update({ message: out.message, sections: out.sections, updated_at: new Date().toISOString() }).eq("id", reportId);
+    // The QA runs before the buyer hears about it, so the note they get says whether there's anything to fix
     await qaReport(admin, reportId).catch(() => null);
+    await admin.from("reports").update({ status: "draft", updated_at: new Date().toISOString() }).eq("id", reportId);
   } catch (e) {
     await admin.from("reports").update({ status: "failed", error: (e instanceof Error ? e.message : String(e)).slice(0, 400), updated_at: new Date().toISOString() }).eq("id", reportId);
   }
@@ -139,7 +146,7 @@ export async function reviseReport(admin: SupabaseClient, reportId: string, ask:
   const out = await askJson<{ reply: string; message: string; sections: Sections; lesson: string }>({
     agent: agentFor(c.r.platform),
     label: "revise report",
-    system: `${writerSystem(c.r.kind as "weekly" | "monthly", c.r.platform)}\n\n${REVISE_SYSTEM}`,
+    system: `${writerSystem(c.r.kind as "weekly" | "monthly" | "custom", c.r.platform)}\n\n${REVISE_SYSTEM}`,
     schema: REVISE_SCHEMA,
     maxTokens: 12000,
     prompt: `${sourcesBlock(c, metrics, work, "")}\n\n<current_message>\n${c.r.message ?? ""}\n</current_message>\n<current_sections>\n${JSON.stringify(c.r.sections ?? {})}\n</current_sections>\n\n<conversation>\n${chat
