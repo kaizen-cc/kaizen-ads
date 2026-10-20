@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { restoreClient } from "./[slug]/actions";
 
@@ -36,6 +37,7 @@ function setAsideLine(s: ArchiveLog["setAside"]) {
  * Their client page stays readable, and restoring brings back their status and the KPI targets that were tracking.
  */
 export function ArchivedList({ clients, canRestore, log, startOpen = false }: { clients: ArchivedClient[]; canRestore: boolean; log: ArchiveLog[]; startOpen?: boolean }) {
+  const router = useRouter();
   const [open, setOpen] = useState(startOpen);
   const [busy, act] = useTransition();
   const [gone, setGone] = useState<string[]>([]);
@@ -86,7 +88,10 @@ export function ArchivedList({ clients, canRestore, log, startOpen = false }: { 
                         act(async () => {
                           setError(null);
                           const r = await restoreClient(c.id, c.slug);
-                          if (r.ok) setGone((g) => [...g, c.id]);
+                          if (r.ok) {
+                            setGone((g) => [...g, c.id]);
+                            router.push(`/clients/${c.slug}`);
+                          }
                           else setError(r.error);
                         })
                       }

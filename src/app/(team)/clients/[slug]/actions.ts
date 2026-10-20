@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { backInCycle } from "@/lib/reactivate";
+import { clientReadiness, type Readiness } from "@/lib/readiness";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
 import { detectIndustries, INDUSTRIES } from "@/lib/industry";
 import { refreshBriefing } from "@/lib/context/briefing";
@@ -34,6 +35,7 @@ export async function saveClientDetails(clientId: string, slug: string, form: Fo
   const { data: was } = await (await createClient()).from("clients").select("archived_at, status").eq("id", clientId).maybeSingle();
   if (was?.archived_at) return { ok: false, error: "This client is archived. Restore them first." };
   const status = str(form, "status") ?? "active";
+  const wokeUp = was?.status === "paused" && status !== "paused";
   const kaizenId = str(form, "kaizen_id");
   const supabase = await createClient();
   const { error } = await supabase
@@ -48,10 +50,11 @@ export async function saveClientDetails(clientId: string, slug: string, form: Fo
       // Accept a pasted folder link as well as a bare ID
       drive_folder_id: str(form, "drive_folder_id")?.match(/folders\/([\w-]+)/)?.[1] ?? str(form, "drive_folder_id"),
       kaizen_id: kaizenId && /^\d+$/.test(kaizenId) ? Number(kaizenId) : null,
+      ...(wokeUp ? { reactivated_at: new Date().toISOString(), reactivated_by: me.id } : {}),
     })
     .eq("id", clientId);
   // Paused → active: straight back into the cycle (KPIs, reports, check-ins), not at the next scheduled run
-  if (!error && was?.status === "paused" && status !== "paused") wakeUp(clientId, me.id);
+  if (!error && wokeUp) wakeUp(clientId, me.id);
   return done(slug, error);
 }
 
@@ -61,6 +64,75 @@ function wakeUp(clientId: string, byId: string) {
   after(() => backInCycle(createAdminClient(), clientId, byId).catch((e) => console.error("backInCycle", clientId, e)));
   revalidatePath("/kpis");
   revalidatePath("/reports");
+}
+
+/** The readiness check on a client that just went live again: what's missing for the system to run them. */
+export async function checkReadiness(clientId: string): Promise<Readiness | null> {
+  await requireStaff();
+  return clientReadiness(await createClient(), clientId);
+}
+
+/**
+ * Fills what the readiness check found missing, all at once (ad account IDs, targets, a contact, channels, the
+ * folder, the website), then brings everything up again: KPIs pulled, reports queued, check-ins on.
+ */
+export async function fillReadiness(clientId: string, slug: string, form: FormData): Promise<{ ok: true; readiness: Readiness } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  if (!isExecOrLead(me)) return { ok: false, error: "Only execs and leads can set a client up." };
+  const supabase = await createClient();
+  const errors: string[] = [];
+
+  const update: Record<string, string> = {};
+  const meta = str(form, "meta_ad_account_id")?.replace(/^act_/, "").replace(/\D/g, "");
+  if (meta) update.meta_ad_account_id = meta;
+  for (const k of ["slack_channel_id", "internal_slack_channel_id", "website"] as const) {
+    const v = str(form, k);
+    if (v) update[k] = v;
+  }
+  const drive = str(form, "drive_folder_id");
+  if (drive) update.drive_folder_id = drive.match(/folders\/([\w-]+)/)?.[1] ?? drive;
+  if (Object.keys(update).length) {
+    const { error } = await supabase.from("clients").update(update).eq("id", clientId);
+    if (error) errors.push(error.message);
+  }
+
+  // A Google account comes in as a KPI row (Google's customer IDs are kept as 123-456-7890)
+  const google = str(form, "google_customer_id")?.replace(/\D/g, "");
+  if (google) {
+    if (google.length !== 10) errors.push("A Google Ads customer ID has 10 digits.");
+    else {
+      const dashed = `${google.slice(0, 3)}-${google.slice(3, 6)}-${google.slice(6)}`;
+      const { data: has } = await supabase.from("kpi_targets").select("id").eq("client_id", clientId).eq("platform", "google").eq("ad_account_id", dashed).maybeSingle();
+      if (!has) {
+        const { error } = await supabase.from("kpi_targets").insert({ client_id: clientId, platform: "google", ad_account_id: dashed, conversion: "conversions", updated_by: me.id });
+        if (error) errors.push(error.message);
+      }
+    }
+  }
+
+  // Targets, one per account
+  for (const [k, v] of form.entries()) {
+    if (!k.startsWith("target:") || typeof v !== "string" || !v.trim()) continue;
+    const n = Number(v.replace(/[$,\s]/g, ""));
+    if (!Number.isFinite(n) || n <= 0) {
+      errors.push("A target is a number above zero.");
+      continue;
+    }
+    const { error } = await supabase.from("kpi_targets").update({ target: n, updated_by: me.id, updated_at: new Date().toISOString() }).eq("id", k.slice(7)).eq("client_id", clientId);
+    if (error) errors.push(error.message);
+  }
+
+  const email = str(form, "contact_email");
+  if (email) {
+    const { error } = await supabase.rpc("add_client_contact", { p_client: clientId, p_email: email, p_name: str(form, "contact_name") });
+    if (error) errors.push(error.message);
+  }
+
+  wakeUp(clientId, me.id);
+  const readiness = await clientReadiness(supabase, clientId);
+  revalidatePath(`/clients/${slug}`);
+  revalidatePath("/clients");
+  return errors.length ? { ok: false, error: errors.join(" ") } : { ok: true, readiness };
 }
 
 export async function addContact(clientId: string, slug: string, form: FormData): Promise<ActionResult> {

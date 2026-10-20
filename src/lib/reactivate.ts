@@ -5,12 +5,13 @@ import { refreshClientKpis } from "@/lib/kpi/sync";
 import { queueReports } from "@/lib/reports/run";
 import { linkAdAccounts, metaConfigured } from "@/lib/context/meta";
 import { sheetConfigured, syncAccountSheet } from "@/lib/account-sheet";
+import { clientReadiness } from "@/lib/readiness";
 
 // A client going live again (restored from the archive, set back to active from paused, or made active again in
 // Kaizen Track) goes straight back into the cycle instead of waiting for each scheduled run: the KPI row, fresh
 // numbers, this week's and this month's reports while they're still due, and the sprint check-ins. A client with no
-// ad account yet is looked for the way a new one is (Meta by name, the Account Overview and ops sheets); if none turns
-// up, whoever brought them back (or the execs) hears it, so they don't sit live with nothing tracked. Everything else
+// ad account yet is looked for the way a new one is (Meta by name, the Account Overview and ops sheets). Then the
+// readiness check (src/lib/readiness.ts): anything still missing goes to whoever brought them back (or the execs). Everything else
 // (Slack, Drive, Asana, the briefing, fatigue, the market) already runs for every live client on its next pass.
 
 const DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -55,23 +56,25 @@ export async function backInCycle(admin: SupabaseClient, clientId: string, byId?
   const { data: sprints } = await admin.from("optimization_sprints").update({ next_check_at: new Date().toISOString() }).eq("client_id", clientId).eq("status", "active").select("id");
   out.sprints = sprints?.length ?? 0;
 
-  // Still nothing to track: say so, once
-  const { count: now } = await admin.from("kpi_targets").select("id", { count: "exact", head: true }).eq("client_id", clientId).eq("active", true);
-  if (!now) {
+  // Anything still missing for the system to run them: whoever brought them back (or the execs, when Track or the
+  // enrollment form did) hears it once a day, with a link to the page where the readiness check asks for it
+  const r = await clientReadiness(admin, clientId);
+  out.missing = r.checks.filter((k) => !k.ok && k.need === "needed").map((k) => k.key);
+  if (!r.ready) {
     const { data: execs } = byId ? { data: [{ id: byId }] } : await admin.from("profiles").select("id").eq("role", "executive").eq("is_active", true).not("joined_at", "is", null);
+    const gaps = r.checks.filter((k) => !k.ok && k.need === "needed").map((k) => k.label.replace(/^An? /, "").toLowerCase());
     await admin.from("notifications").upsert(
       (execs ?? []).map((e) => ({
         profile_id: e.id,
         kind: "client",
-        title: `${c!.name} is live again, with no ad account to track`,
-        body: "No Meta account matched their name and the Account Overview sheet has no row for them, so they're off the KPI board and reports. Add their Meta or Google account ID in Details.",
-        href: `/clients/${c!.slug}?tab=team`,
-        key: `back-no-account:${clientId}:${new Date().toISOString().slice(0, 10)}`,
+        title: `${c!.name} is live again, but needs ${gaps.join(", ")}`,
+        body: "Until then part of the cycle can't run for them (the KPI board, reports, check-ins). Open their page: the readiness check asks for each one and brings everything up.",
+        href: `/clients/${c!.slug}?ready=1`,
+        key: `back-readiness:${clientId}:${new Date().toISOString().slice(0, 10)}`,
         priority: "normal",
       })),
       { onConflict: "profile_id,key", ignoreDuplicates: true },
     );
-    out.noAccount = true;
   }
   return out;
 }

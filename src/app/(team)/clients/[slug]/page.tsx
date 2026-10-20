@@ -21,12 +21,16 @@ import { loadSprints } from "@/lib/sprints";
 import { reportableTargets } from "@/lib/reports/access";
 import { loadClientChat } from "@/lib/client-chat";
 import type { AuditTarget } from "./client-chat";
+import { clientReadiness } from "@/lib/readiness";
+
+/** Went live again in the last two weeks (the readiness check stays up that long) */
+const lately = (iso: string | null) => Boolean(iso && Date.now() - new Date(iso).getTime() < 14 * 86_400_000);
 
 // Refreshing a briefing asks the AI to read everything new about the client
 export const maxDuration = 800; // Sync now on the Meta ad account, and Brand Bible builds (web research) that finish in the background
 
 
-export default async function ClientPage({ params }: PageProps<"/clients/[slug]">) {
+export default async function ClientPage({ params, searchParams }: PageProps<"/clients/[slug]">) {
   const me = await requireStaff();
   const { slug } = await params;
   const supabase = await createClient();
@@ -34,7 +38,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
   const { data: client } = await supabase
     .from("clients")
     .select(
-      "id, name, slug, status, client_type, archived_at, archive_reason, archive_source, portal_live, portal_live_at, industry, industry_detail, industry_source, website, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, kaizen_id, auto_approve_opt_in, creative_package, creative_package_key, creative_package_until, creative_package_note, creative_db, creative_packages(label)",
+      "id, name, slug, status, client_type, archived_at, archive_reason, archive_source, portal_live, portal_live_at, industry, industry_detail, industry_source, website, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, kaizen_id, auto_approve_opt_in, creative_package, creative_package_key, creative_package_until, creative_package_note, creative_db, reactivated_at, reactivated_by, creative_packages(label)",
     )
     .eq("slug", slug)
     .maybeSingle();
@@ -200,8 +204,18 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
     drive: client.drive_folder_id ? freshness(at(`drive:${client.drive_folder_id}`)) : null,
   };
 
+  // The readiness check: for two weeks after a client goes live again (or from the notification's link), execs and
+  // leads see what's still missing; it opens by itself for whoever brought them back (the execs, when Track did)
+  const asked = (await searchParams).ready === "1";
+  const live = !client.archived_at && ["active", "onboarding"].includes(client.status);
+  const readiness =
+    live && isExecOrLead(me) && (asked || lately(client.reactivated_at))
+      ? { initial: await clientReadiness(supabase, client.id), autoOpen: asked || client.reactivated_by === me.id || (!client.reactivated_by && me.isExec), stamp: client.reactivated_at ?? "asked" }
+      : null;
+
   return (
     <ClientView
+      readiness={readiness}
       connections={connections}
       creative={creative}
       kpis={kpis}

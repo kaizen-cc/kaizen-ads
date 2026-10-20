@@ -23,6 +23,8 @@ import { setPortalLive,
   setSprintPackage,
 } from "./actions";
 import { PackagePanel, type PackageOption } from "./package-panel";
+import { ReadinessCheck } from "./readiness-check";
+import type { Readiness } from "@/lib/readiness";
 import { CreativePanel } from "./creative-panel";
 import { KpiPanel } from "./kpi-panel";
 import { ClientChat, type AuditTarget } from "./client-chat";
@@ -117,10 +119,11 @@ export type ClientViewProps = {
   market?: MarketAd[]; // live in this client's market (Motion)
   intake?: IntakeRecord | null; // the marketing intake form; undefined in the design preview
   calls?: ClientCall[]; // from Gemini and Fireflies notes; undefined in the design preview
+  readiness?: { initial: Readiness; autoOpen: boolean; stamp: string } | null; // what's missing after going live again
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, chat = null, fatigue = null, market = [], intake, calls }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, chat = null, fatigue = null, market = [], intake, calls, readiness = null }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -168,6 +171,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
             {can.assign && !demo && !client.archived_at && <ArchiveControl clientId={client.id} slug={client.slug} name={client.name} archived={null} />}
           </span>
         </div>
+        {readiness && live && !demo && <ReadinessCheck clientId={client.id} slug={client.slug} name={client.name} initial={readiness.initial} team={team} autoOpen={readiness.autoOpen} stamp={readiness.stamp} />}
         {!client.archived_at && !live && (
           <p className="rounded-[14px] border border-warn/40 bg-warn-soft/40 px-4 py-3 text-sm">
             This client is paused, so their page is read-only: nothing is synced, pulled or generated for them. Set their status back to active in Details to switch it all back on.
