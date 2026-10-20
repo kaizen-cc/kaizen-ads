@@ -55,7 +55,7 @@ const DEFAULTS: Record<AgentKey, Pick<AgentConfig, "model" | "effort">> = {
   gtm: { model: "opus", effort: "high" }, // the Meta go-to-market strategy at onboarding (research, then the document)
   industry: { model: "sonnet", effort: "low" }, // sorts clients into industries from everything known about them
   strategist: { model: "opus", effort: "medium" }, // suggests briefs to execs and leads from the data
-  coach: { model: "opus", effort: "medium" }, // edits other agents' playbooks from feedback (Settings → AI agents → Coach)
+  coach: { model: "opus", effort: "medium" }, // talking to an agent (its page) or one skill: edits its core and playbooks from feedback
 };
 
 export const aiEnabled = () => Boolean(process.env.ANTHROPIC_API_KEY);

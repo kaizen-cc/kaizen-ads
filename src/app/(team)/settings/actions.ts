@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { AGENT_MOMENTS } from "@/lib/agent-moments";
 import { AiUnavailable, askJson, forgetAgent, type AgentKey } from "@/lib/ai";
 import { requireExec } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -75,7 +76,7 @@ export async function deleteItem(id: string): Promise<ActionResult> {
 // ─── Coach: chat with an agent's playbook ──────────────────────────────────
 
 export type Change = {
-  op: "set_instructions" | "update_item" | "add_item" | "turn_off_item" | "set_model";
+  op: "set_instructions" | "update_item" | "add_item" | "turn_off_item" | "set_model" | "set_core";
   item_id: string;
   kind: "" | Kind;
   scope: "" | "agent" | "shared";
@@ -84,6 +85,8 @@ export type Change = {
   model: "" | "opus" | "sonnet" | "haiku";
   effort: "" | "low" | "medium" | "high";
   reason: string;
+  /** In the agent chat: the skill key it touches, or "core" for the agent's core */
+  skill?: string;
   applied?: boolean;
 };
 export type ChatMessage = { id: number; role: "user" | "coach"; content: string; changes: Change[]; at: string };
@@ -208,6 +211,44 @@ export async function loadChat(key: AgentKey): Promise<ChatMessage[]> {
   return (data ?? []).map((m) => ({ id: m.id, role: m.role as "user" | "coach", content: m.content, changes: (m.changes ?? []) as Change[], at: m.created_at }));
 }
 
+type Db = Awaited<ReturnType<typeof createClient>>;
+
+/** Write one proposed edit to a skill's playbook. set_core edits the agent's core (only the agent chat proposes it). */
+async function writeChange(supabase: Db, me: { id: string }, key: string, c: Change, roleKey?: string): Promise<{ message: string } | null> {
+  const now = new Date().toISOString();
+  if (c.op === "set_core") {
+    if (!roleKey) return { message: "Change the core from the agent's page." };
+    return (await supabase.from("ai_roles").update({ core: c.body.trim().slice(0, 20000), updated_by: me.id, updated_at: now }).eq("key", roleKey)).error;
+  }
+  if (c.op === "set_instructions") return (await supabase.from("ai_agents").update({ instructions: c.body.trim().slice(0, 20000), updated_by: me.id, updated_at: now }).eq("key", key)).error;
+  if (c.op === "set_model") {
+    const patch: Record<string, string> = { updated_by: me.id, updated_at: now };
+    if (MODELS.includes(c.model)) patch.model = c.model;
+    if (EFFORTS.includes(c.effort)) patch.effort = c.effort;
+    return (await supabase.from("ai_agents").update(patch).eq("key", key)).error;
+  }
+  if (c.op === "update_item")
+    return (
+      await supabase
+        .from("ai_knowledge")
+        .update({ title: c.title.trim() || undefined, body: c.body.trim(), ...(c.kind ? { kind: c.kind } : {}), active: true, updated_at: now })
+        .eq("id", c.item_id)
+    ).error;
+  if (c.op === "add_item")
+    return (
+      await supabase.from("ai_knowledge").insert({
+        // The agent chat only ever writes to its own skills; the skill coach may add a shared item
+        agent_key: c.scope === "shared" && !roleKey ? null : key,
+        kind: c.kind || "skill",
+        title: c.title.trim() || "From the coach",
+        body: c.body.trim(),
+        created_by: me.id,
+      })
+    ).error;
+  if (c.op === "turn_off_item") return (await supabase.from("ai_knowledge").update({ active: false, updated_at: now }).eq("id", c.item_id)).error;
+  return null;
+}
+
 /** Apply one of the coach's proposed edits. */
 export async function applyChange(key: AgentKey, chatId: number, index: number): Promise<ActionResult> {
   const me = await requireExec();
@@ -217,31 +258,7 @@ export async function applyChange(key: AgentKey, chatId: number, index: number):
   const c = changes[index];
   if (!c) return { ok: false, error: "That change isn't there any more." };
   if (c.applied) return { ok: true };
-
-  let error: { message: string } | null = null;
-  if (c.op === "set_instructions") {
-    ({ error } = await supabase.from("ai_agents").update({ instructions: c.body.trim(), updated_by: me.id, updated_at: new Date().toISOString() }).eq("key", key));
-  } else if (c.op === "set_model") {
-    const patch: Record<string, string> = { updated_by: me.id, updated_at: new Date().toISOString() };
-    if (MODELS.includes(c.model)) patch.model = c.model;
-    if (EFFORTS.includes(c.effort)) patch.effort = c.effort;
-    ({ error } = await supabase.from("ai_agents").update(patch).eq("key", key));
-  } else if (c.op === "update_item") {
-    ({ error } = await supabase
-      .from("ai_knowledge")
-      .update({ title: c.title.trim() || undefined, body: c.body.trim(), ...(c.kind ? { kind: c.kind } : {}), active: true, updated_at: new Date().toISOString() })
-      .eq("id", c.item_id));
-  } else if (c.op === "add_item") {
-    ({ error } = await supabase.from("ai_knowledge").insert({
-      agent_key: c.scope === "shared" ? null : key,
-      kind: c.kind || "skill",
-      title: c.title.trim() || "From the coach",
-      body: c.body.trim(),
-      created_by: me.id,
-    }));
-  } else if (c.op === "turn_off_item") {
-    ({ error } = await supabase.from("ai_knowledge").update({ active: false, updated_at: new Date().toISOString() }).eq("id", c.item_id));
-  }
+  const error = await writeChange(supabase, me, key, c);
   if (error) return { ok: false, error: error.message };
   changes[index] = { ...c, applied: true };
   await supabase.from("ai_agent_chats").update({ changes }).eq("id", chatId);
@@ -252,6 +269,194 @@ export async function clearChat(key: AgentKey): Promise<ActionResult> {
   await requireExec();
   const supabase = await createClient();
   const { error } = await supabase.from("ai_agent_chats").delete().eq("agent_key", key);
+  return done(error);
+}
+
+// ─── Talk to the whole agent ───────────────────────────────────────────────
+// An exec talks to the Media Buyer (not one of its skills) like an employee. It knows its core and every skill's
+// playbook, answers how it works, and turns feedback into edits wherever they belong: the core when it's about
+// everything it does, the one skill whose work it's about, or each skill it touches. Applied on click, like the coach.
+
+export type RoleChatMessage = { id: number; role: "user" | "agent"; content: string; changes: Change[]; at: string };
+
+const ROLE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["reply", "changes"],
+  properties: {
+    reply: s,
+    changes: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["op", "skill", "item_id", "kind", "title", "body", "model", "effort", "reason"],
+        properties: {
+          op: { type: "string", enum: ["set_core", "set_instructions", "update_item", "add_item", "turn_off_item", "set_model"] },
+          skill: s,
+          item_id: s,
+          kind: { type: "string", enum: ["", "knowledge", "skill", "example"] },
+          title: s,
+          body: s,
+          model: { type: "string", enum: ["", "opus", "sonnet", "haiku"] },
+          effort: { type: "string", enum: ["", "low", "medium", "high"] },
+          reason: s,
+        },
+      },
+    },
+  },
+};
+
+const roleSystem = (label: string) => `You are the ${label}, one of the six AI agents inside Kaizen Ads, the app Kaizen Marketing (a paid social agency) uses for creative requests, approvals, launches and KPIs.
+An executive is talking to you the way they'd talk to an employee in that role: asking how you work, why you do something, or giving you feedback ("you're too wordy in briefs", "always check frequency before calling fatigue"). Speak as yourself, in the first person ("I check…", "In my briefs I…").
+
+You work through your core (what you always do, read before any of your skills) and your skills (each one a job you do somewhere in the app, with its own instructions and playbook items: skills are methods, knowledge is facts, examples are what good looks like). Kaizen's strategy sits above all of it.
+
+When they give feedback, change yourself so you do better next time:
+- Decide where it belongs. If it's about everything you do (tone, priorities, a hard rule for all your work), it goes in your core with set_core. If it's about one job, it goes in that skill: edit the instruction or item that already covers it. If it touches two or three jobs but not all, propose one change per skill. Never duplicate a rule that already lives in your core or a skill.
+- Prefer editing what exists over adding. Use add_item only when nothing covers it.
+- set_core: body is the COMPLETE new core (keep everything that still applies, change only what the feedback touches). skill "core".
+- set_instructions: skill = that skill's key; body is the COMPLETE new instructions for that skill.
+- update_item: item_id of the item, title, kind, and body as the COMPLETE new text. Never update an item marked truncated; add a short item next to it instead. skill = the item's skill key.
+- add_item: skill = the skill key it belongs to; kind, title, body.
+- turn_off_item: item_id only (and its skill), when something is wrong or outdated.
+- set_model: skill, model and effort, only when the feedback is about speed, cost or depth for that job.
+- Leave unused fields as empty strings. reason: one short sentence on why, naming the job it changes.
+- Write every edit as a Kaizen standard, in roles (the Head of Creative, the copywriter, media buyers, customer success), never people's names. Client names belong only in client memory, not in your playbook.
+- You can't create new agents or new skills, and you don't edit shared knowledge or Kaizen's strategy. If feedback contradicts the strategy, say so and propose no change. If it belongs to another agent, say which one.
+- If the feedback is vague, ask one clarifying question and propose no changes. If it's a question, answer it from your core and skills, plainly and specifically.
+
+reply: plain text, conversational, like a sharp colleague. No markdown, no asterisks, no bullet symbols, no headings, no emojis. Usually 1 to 4 sentences; longer only when they ask you to explain how you work. When you propose changes, say in a sentence what you'd change and where (the exec applies each change with a click). Refer to people by role, never by name.`;
+
+// Keep the agent's whole playbook within a sensible prompt: long items show their start and are marked truncated
+const ITEM_CAP = 6000;
+const PLAYBOOK_CAP = 90000;
+
+export async function chatWithAgent(roleKey: string, message: string): Promise<{ ok: true; messages: RoleChatMessage[] } | { ok: false; error: string }> {
+  const me = await requireExec();
+  const text = message.trim();
+  if (!text) return { ok: false, error: "Write something first." };
+  const supabase = await createClient();
+  const [{ data: role }, { data: skills }, { data: spine }, { data: history }] = await Promise.all([
+    supabase.from("ai_roles").select("key, label, description, core").eq("key", roleKey).maybeSingle(),
+    supabase.from("ai_agents").select("key, label, description, model, effort, instructions, live").eq("role_key", roleKey).order("sort_order"),
+    supabase.from("ai_spine").select("body").eq("id", 1).maybeSingle(),
+    supabase.from("ai_role_chats").select("role, content, changes").eq("role_key", roleKey).order("created_at", { ascending: false }).limit(16),
+  ]);
+  if (!role) return { ok: false, error: "Unknown agent." };
+  const keys = (skills ?? []).map((k) => k.key as string);
+  const [{ data: items }, { data: shared }] = await Promise.all([
+    keys.length ? supabase.from("ai_knowledge").select("id, agent_key, kind, title, body, active").in("agent_key", keys).order("created_at") : Promise.resolve({ data: [] as never[] }),
+    supabase.from("ai_knowledge").select("title").is("agent_key", null).eq("active", true).order("created_at"),
+  ]);
+
+  let budget = PLAYBOOK_CAP;
+  const truncated = new Set<string>();
+  const itemXml = (k: { id: string; kind: string; title: string; body: string; active: boolean }) => {
+    const room = Math.max(400, Math.min(ITEM_CAP, budget));
+    const cut = k.body.length > room;
+    if (cut) truncated.add(k.id);
+    budget -= Math.min(k.body.length, room);
+    return `<item id="${k.id}" kind="${k.kind}" ${k.active ? "" : 'off="true" '}${cut ? 'truncated="true" ' : ""}title="${k.title.replace(/"/g, "'")}">\n${cut ? `${k.body.slice(0, room)}…` : k.body}\n</item>`;
+  };
+  const playbook = [
+    `<kaizen_strategy read_only="true">\n${spine?.body ?? ""}\n</kaizen_strategy>`,
+    `<me agent="${role.label}">\n<description>${role.description}</description>\n<core>\n${role.core || "(empty)"}\n</core>\n</me>`,
+    ...(skills ?? []).map((sk) =>
+      [
+        `<skill key="${sk.key}" name="${sk.label}" model="${sk.model}" effort="${sk.effort}" ${sk.live ? "in use" : "not wired into the app yet"}>`,
+        `<description>${sk.description}</description>`,
+        (AGENT_MOMENTS[sk.key] ?? []).length ? `<where_it_runs>\n${AGENT_MOMENTS[sk.key].map((m) => `${m.title} (${m.where}; ${m.when})`).join("\n")}\n</where_it_runs>` : "",
+        `<instructions>\n${sk.instructions || "(empty)"}\n</instructions>`,
+        ...(items ?? []).filter((k) => k.agent_key === sk.key).map(itemXml),
+        "</skill>",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    ),
+    shared?.length ? `<shared_knowledge read_only="true">\n${shared.map((k) => k.title).join("\n")}\n</shared_knowledge>` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  const convo = (history ?? [])
+    .slice()
+    .reverse()
+    .map((m) => `${m.role === "user" ? "Exec" : "You"}: ${m.content}${m.role === "agent" && (m.changes as Change[]).length ? ` [proposed ${(m.changes as Change[]).map((c) => `${c.op} on ${c.skill}${c.title ? ` "${c.title}"` : ""}${c.applied ? " (applied)" : ""}`).join(", ")}]` : ""}`)
+    .join("\n");
+
+  try {
+    const out = await askJson<{ reply: string; changes: Change[] }>({
+      agent: "coach",
+      label: `agent chat ${roleKey}`,
+      system: roleSystem(role.label),
+      schema: ROLE_SCHEMA,
+      prompt: `${playbook}\n\n<conversation_so_far>\n${convo || "(new conversation)"}\n</conversation_so_far>\n\n<exec_says>\n${text}\n</exec_says>`,
+    });
+    // Only edits to this agent's own core, skills and items survive; an item edit is filed under the item's real skill
+    const owner = new Map((items ?? []).map((k) => [k.id as string, k.agent_key as string]));
+    const changes = out.changes
+      .map((c): Change | null => {
+        if (c.op === "set_core") return { ...c, skill: "core", item_id: "" };
+        if (c.op === "update_item" || c.op === "turn_off_item") {
+          const k = owner.get(c.item_id);
+          if (!k || (c.op === "update_item" && truncated.has(c.item_id))) return null;
+          return { ...c, skill: k };
+        }
+        return keys.includes(c.skill ?? "") ? c : null;
+      })
+      .filter((c): c is Change => Boolean(c))
+      .map((c) => ({ ...c, scope: "agent" as const, applied: false }));
+    // Plain words: no markdown emphasis or emojis, whatever the model does
+    const reply = out.reply.replace(/\*\*|__|(^|\s)[*#]+\s/gm, "$1").replace(/\p{Extended_Pictographic}️?/gu, "").trim();
+    const { error } = await supabase.from("ai_role_chats").insert([
+      { role_key: roleKey, role: "user", content: text.slice(0, 8000), created_by: me.id },
+      { role_key: roleKey, role: "agent", content: reply, changes, created_by: me.id },
+    ]);
+    if (error) return { ok: false, error: error.message };
+  } catch (e) {
+    return { ok: false, error: e instanceof AiUnavailable ? e.message : `The ${role.label} couldn't answer. Try again.` };
+  }
+  return { ok: true, messages: await loadRoleChat(roleKey) };
+}
+
+export async function loadRoleChat(roleKey: string): Promise<RoleChatMessage[]> {
+  await requireExec();
+  const supabase = await createClient();
+  const { data } = await supabase.from("ai_role_chats").select("id, role, content, changes, created_at").eq("role_key", roleKey).order("created_at").limit(200);
+  return (data ?? []).map((m) => ({ id: m.id, role: m.role as "user" | "agent", content: m.content, changes: (m.changes ?? []) as Change[], at: m.created_at }));
+}
+
+/** Apply one edit the agent proposed, checking it still lands on this agent's own core, skills or items. */
+export async function applyRoleChange(roleKey: string, chatId: number, index: number): Promise<ActionResult> {
+  const me = await requireExec();
+  const supabase = await createClient();
+  const { data: msg } = await supabase.from("ai_role_chats").select("changes").eq("id", chatId).eq("role_key", roleKey).maybeSingle();
+  const changes = (msg?.changes ?? []) as Change[];
+  const c = changes[index];
+  if (!c) return { ok: false, error: "That change isn't there any more." };
+  if (c.applied) return { ok: true };
+
+  let key = c.skill ?? "";
+  if (c.op === "update_item" || c.op === "turn_off_item") {
+    const { data: item } = await supabase.from("ai_knowledge").select("agent_key").eq("id", c.item_id).maybeSingle();
+    if (!item?.agent_key) return { ok: false, error: "That item isn't there any more." };
+    key = item.agent_key;
+  }
+  if (c.op !== "set_core") {
+    const { data: skill } = await supabase.from("ai_agents").select("key").eq("key", key).eq("role_key", roleKey).maybeSingle();
+    if (!skill) return { ok: false, error: "That isn't one of this agent's skills." };
+  }
+  const error = await writeChange(supabase, me, key, { ...c, scope: "agent" }, roleKey);
+  if (error) return { ok: false, error: error.message };
+  changes[index] = { ...c, applied: true };
+  await supabase.from("ai_role_chats").update({ changes }).eq("id", chatId);
+  return done();
+}
+
+export async function clearRoleChat(roleKey: string): Promise<ActionResult> {
+  await requireExec();
+  const supabase = await createClient();
+  const { error } = await supabase.from("ai_role_chats").delete().eq("role_key", roleKey);
   return done(error);
 }
 
