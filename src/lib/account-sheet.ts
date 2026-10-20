@@ -11,7 +11,7 @@ import { JWT } from "google-auth-library";
 export const SHEET_ID = process.env.ACCOUNT_SHEET_ID || "12GYdOWPTVuXVrCC9ryHa-we_8yaEjt8ZllbdMW2ANs8";
 export const sheetConfigured = () => Boolean(process.env.GOOGLE_SERVICE_ACCOUNT_JSON && process.env.GOOGLE_DRIVE_USER);
 
-async function token() {
+export async function token() {
   const key = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON!) as { client_email: string; private_key: string };
   // Read-only Drive access (already granted for the client folders) reads Sheets too
   const jwt = new JWT({ email: key.client_email, key: key.private_key, scopes: ["https://www.googleapis.com/auth/drive.readonly"], subject: process.env.GOOGLE_DRIVE_USER });
@@ -19,8 +19,8 @@ async function token() {
 }
 
 /** One tab as rows of text, as the sheet shows them (formulas already worked out). */
-async function readTab(tok: string, tab: string): Promise<string[][]> {
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(`'${tab}'`)}?valueRenderOption=FORMATTED_VALUE`, {
+export async function readTab(tok: string, tab: string, sheetId = SHEET_ID): Promise<string[][]> {
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(`'${tab}'`)}?valueRenderOption=FORMATTED_VALUE`, {
     headers: { Authorization: `Bearer ${tok}` },
     cache: "no-store",
   });
@@ -213,10 +213,13 @@ export async function syncAccountSheet(admin: SupabaseClient) {
     }
     t.on("Reading the Onboarding tab");
     const onboarding = await syncOnboarding(admin, tok, now).catch((e) => ({ onboarding: 0, onboardingUnmatched: [] as string[], onboardingError: e instanceof Error ? e.message : String(e) }));
+    t.on("Reading the Operations Database");
+    const { syncOpsSheet } = await import("@/lib/ops-sheet");
+    const ops = await syncOpsSheet(admin).catch((e) => ({ ok: false, error: e instanceof Error ? e.message : String(e) }));
     t.on("Reading each client's Creative Database");
     const { syncCreativeDatabases } = await import("@/lib/creative-db");
     const creativeDb = await syncCreativeDatabases(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
-    await admin.from("sync_state").upsert({ source: "sheet", cursor_at: now, last_run_at: now, last_result: { ok: true, ...out, ...onboarding, creativeDb } });
+    await admin.from("sync_state").upsert({ source: "sheet", cursor_at: now, last_run_at: now, last_result: { ok: true, ...out, ...onboarding, creativeDb, ops: "filled" in ops ? { filled: ops.filled.length, contacts: ops.contacts.length } : ops } });
     await t.finish({
       summary: `${out.updated} accounts updated, ${out.unchanged} already matched${out.buyers ? `, ${out.buyers} buyers reassigned` : ""}${out.noKpi.length ? `, ${out.noKpi.length} with no KPI here` : ""}, ${onboarding.onboarding} onboarding checklists`,
     });

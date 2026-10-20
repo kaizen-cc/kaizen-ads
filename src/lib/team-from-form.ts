@@ -96,7 +96,8 @@ export async function applyContacts(admin: SupabaseClient, clientId: string, raw
     const base = norm(q).replace(/email(address)?/, "");
     const nameQ = entries.find(([k]) => norm(k) !== norm(q) && /name/.test(norm(k)) && !/business|company|brand/.test(norm(k)) && (base ? norm(k).includes(base) : /contact|pointof|decision|owner/.test(norm(k))));
     for (const email of emails) {
-      const { data: c } = await admin.from("contacts").upsert({ email, full_name: emails.length === 1 ? (nameQ?.[1].trim() || null) : null, is_active: true }, { onConflict: "email", ignoreDuplicates: false }).select("id").single();
+      await admin.from("contacts").upsert({ email, full_name: emails.length === 1 ? (nameQ?.[1].trim() || null) : null, is_active: true }, { onConflict: "email", ignoreDuplicates: true });
+      const { data: c } = await admin.from("contacts").select("id").eq("email", email).maybeSingle();
       if (!c) continue;
       const { count } = await admin.from("contact_clients").select("contact_id", { count: "exact", head: true }).eq("client_id", clientId);
       await admin.from("contact_clients").upsert({ contact_id: c.id, client_id: clientId, is_primary: !count }, { onConflict: "contact_id,client_id", ignoreDuplicates: true });
