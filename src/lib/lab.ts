@@ -8,8 +8,8 @@ import { industryLabel } from "@/lib/industries";
 // chosen clients. Results are read from the KPI tracker (same numbers the team trusts), and a win becomes a
 // learning in the memory of every client it fits.
 
-import { SEATS, type Metric, type Seat } from "@/lib/lab-seats";
-export { METRIC_LABEL, SEATS, type Metric, type Seat } from "@/lib/lab-seats";
+import { SEATS, TURNS_PER_ROUND, type Metric, type Seat } from "@/lib/lab-seats";
+export { METRIC_LABEL, SEATS, TURNS_PER_ROUND, type Metric, type Seat } from "@/lib/lab-seats";
 
 export type ProposedTest = {
   title: string;
@@ -63,29 +63,49 @@ export const cprChange = (before?: ClientNumbers | null, now?: ClientNumbers | n
 
 // ─── The round table ────────────────────────────────────────────────────────
 
-const TABLE_SYSTEM = `You are the round table in Kaizen Marketing's Ads Lab: Kaizen's six agents, who think together with the agency's execs and leads about paid social creative for Meta ads. Kaizen runs ads for many small and mid-size businesses.
+// A conversation, not a report: one seat speaks per call, reading everything said so far, and names who should go
+// next (or hands it back to the exec). The page asks for the next turn as each message lands, so messages appear one
+// by one, and a round stops after a few messages (TURNS_PER_ROUND) or when the table is waiting on the exec.
+
+const TABLE_SYSTEM = `You are the round table in Kaizen Marketing's Ads Lab: Kaizen's six agents in a group chat with the agency's execs and leads, thinking together about paid social creative for Meta ads. Kaizen runs ads for many small and mid-size businesses.
 The seats:
 ${Object.entries(SEATS)
   .map(([k, s]) => `- ${k} (${s.name}): ${s.does}`)
   .join("\n")}
 
-How you work:
-- Answer the last message as a conversation between the seats. Only the seats with something real to add speak (usually 2 to 4), short and direct, building on or pushing back on each other. Disagree when it's warranted. No filler, no repeating each other, no emojis.
-- Ground everything in the library material, the winners across the accounts, and the lab's test history. Say when something is a hunch.
-- When an idea is ready to test, propose it as a test: a clear hypothesis, exactly what the creative does differently (one change, so the result can be read), the metric, what counts as a win, the target lift, and which clients fit (from the client list; pick ones with enough spend and the right industry, 2 to 5 usually).
-- Before proposing a test, check the lab's tests. If the same or a very close test is proposed, running, or already finished, don't propose it again: set duplicateOf to that test's number and say what's different if anything, or point to its result.
+You write one message at a time, as one seat. It's a live conversation, not a report.
+- Write like a sharp colleague in a chat: usually 2 to 5 sentences, never more than about 120 words. One point, made well. Plain text: no markdown, no asterisks, no headings, no bullet points (numbered questions are fine), no emojis, no sign-offs.
+- React to what was just said. When you agree, push back or build on another seat, say so and address them by their seat ("Media Buyer, I'd push back on that..."). Answer the exec directly when they've just spoken. Never restate what someone already said.
+- Speak from your seat's craft and leave the other seats' ground to them. Disagree when it's warranted; a polite echo is worse than silence.
+- Refer to people by their role (the exec, the Media Buyer), never by name.
+
+Ask before you assess:
+- Before giving an assessment, a plan or a recommendation, check what you'd need to know for it to be right. If something that would change the answer is missing (which client or vertical, the budget, the goal and the KPI that matters, the offer, what's been tried and how it did, the timeline, any constraint), ask first: 1 to 3 crisp, numbered questions, the ones that matter most, each answerable in a line. Don't guess, and don't wrap the questions in a full answer.
+- On a new conversation the first message is almost always those questions, unless the exec already gave the context. Another seat may add one question of its own only if it's essential and different; then it's the exec's turn.
+- Don't ask what the exec already answered, or what the material below already tells you (the client list, winners, tests and library). Use it, and say what you're taking from it.
+- Once the gaps are filled, or the exec says to go ahead, give your view and name any assumption you're making.
+
+Who speaks next:
+- next is the seat with the most to add right now (to answer, push back or build), or "user" when it's the exec's turn: you asked them something, or the point has landed and more talk would be filler. Never pass to yourself.
+- The table sends at most ${TURNS_PER_ROUND} messages before the exec speaks again. Fewer is fine.
+
+Tests and grounding:
+- Ground everything in the library material, the winners across the accounts and the lab's test history. Say when something is a hunch.
+- When an idea is ready to test (the gaps are filled and the table has converged), propose it as a test: a clear hypothesis, exactly what the creative does differently (one change, so the result can be read), the metric, what counts as a win, the target lift, and which clients fit (from the client list; enough spend and the right industry, 2 to 5 usually). Usually the Strategist proposes it, once.
+- Before proposing a test, check the lab's tests. If the same or a very close test is proposed, running or already finished, don't propose it again: set duplicateOf to that test's number and say what's different, if anything, or point to its result.
 - Learnings from finished tests are facts. A test that flopped is information: when asked to iterate, say why it likely flopped and propose the next test (not the same one).
 - Never name one client to another; inside the lab, client names are fine.
 - The six seats are fixed. Never suggest creating a new agent, seat or role: what the Lab learns makes these six better.`;
 
-const TABLE_SCHEMA = {
+const SEAT_KEYS = Object.keys(SEATS) as Seat[];
+
+const TURN_SCHEMA = {
   type: "object",
   properties: {
+    seat: { type: "string", enum: SEAT_KEYS },
+    body: { type: "string" },
+    next: { type: "string", enum: [...SEAT_KEYS, "user"] },
     threadTitle: { type: "string" },
-    replies: {
-      type: "array",
-      items: { type: "object", properties: { seat: { type: "string", enum: Object.keys(SEATS) }, body: { type: "string" } }, required: ["seat", "body"], additionalProperties: false },
-    },
     tests: {
       type: "array",
       items: {
@@ -106,13 +126,15 @@ const TABLE_SCHEMA = {
       },
     },
   },
-  required: ["threadTitle", "replies", "tests"],
+  required: ["seat", "body", "next", "threadTitle", "tests"],
   additionalProperties: false,
 };
 
-type TableOut = {
+type TurnOut = {
+  seat: Seat;
+  body: string;
+  next: Seat | "user";
   threadTitle: string;
-  replies: { seat: Seat; body: string }[];
   tests: { title: string; hypothesis: string; change: string; metric: Metric; success: string; targetLiftPercent: number; clients: number[]; duplicateOf: number; duplicateWhy: string }[];
 };
 
@@ -174,23 +196,51 @@ async function tableSystem(admin: SupabaseClient) {
   return cores ? `${TABLE_SYSTEM}\n\nEach seat's core, how that agent thinks everywhere in the app:\n${cores}` : TABLE_SYSTEM;
 }
 
-/** The table answers the conversation so far: replies from the seats, and any tests they propose. */
-export async function roundTable(admin: SupabaseClient, threadId: string) {
-  const [{ data: msgs }, ctx] = await Promise.all([admin.from("lab_messages").select("role, agent, body, created_at").eq("thread_id", threadId).order("created_at").limit(60), tableContext(admin)]);
-  const convo = (msgs ?? []).map((m) => (m.role === "user" ? `Exec/lead: ${m.body}` : `${SEATS[m.agent as Seat]?.name ?? "Table"}: ${m.body}`)).join("\n\n");
-  const out = await askJson<TableOut>({
+export type TableTurn = { id: string; seat: Seat; body: string; tests: ProposedTest[]; at: string; next: Seat | null };
+
+/**
+ * One message from the table: the given seat (or the one best placed, when none is given) answers the conversation so
+ * far, and it's saved at once. Null when the table already had its say since the exec last spoke; `next` is null when
+ * the seat hands back to the exec or the round is at its cap.
+ */
+export async function tableTurn(admin: SupabaseClient, threadId: string, seat: Seat | null): Promise<TableTurn | null> {
+  const [{ data: msgs }, ctx, { data: thread }, system] = await Promise.all([
+    admin.from("lab_messages").select("role, agent, body, created_at").eq("thread_id", threadId).order("created_at", { ascending: false }).limit(60),
+    tableContext(admin),
+    admin.from("lab_threads").select("title").eq("id", threadId).single(),
+    tableSystem(admin),
+  ]);
+  const history = (msgs ?? []).reverse();
+  if (!history.length) return null;
+  const convo = history.map((m) => (m.role === "user" ? `Exec: ${m.body}` : `${SEATS[m.agent as Seat]?.name ?? "Table"}: ${m.body}`)).join("\n\n");
+  const lastUser = history.map((m) => m.role).lastIndexOf("user");
+  const spoken = history.slice(lastUser + 1).map((m) => SEATS[m.agent as Seat]?.name).filter(Boolean);
+  // The round's cap is counted from the thread itself, so a refresh or a second tab can't make it run away
+  if (spoken.length >= TURNS_PER_ROUND) return null;
+  const left = TURNS_PER_ROUND - spoken.length - 1;
+  const last = history[history.length - 1];
+  const lastSeat = last.role === "agent" && SEATS[last.agent as Seat] ? (last.agent as Seat) : null;
+  const pick = seat && seat !== lastSeat && SEATS[seat] ? seat : null;
+  const firstEver = !history.some((m) => m.role === "agent");
+
+  const out = await askJson<TurnOut>({
     agent: "lab",
     label: "lab round table",
-    system: await tableSystem(admin),
-    schema: TABLE_SCHEMA,
+    system,
+    schema: TURN_SCHEMA,
     prompt: `${ctx.block}
 
 <conversation>
 ${convo}
 </conversation>
 
-Reply to the last message. threadTitle: a short title for this conversation (under 50 characters). tests: only tests ready to run, otherwise empty; clients are numbers from the client list; duplicateOf is a lab test number (#), or 0 if it's new; targetLiftPercent e.g. 15 for 15% better.`,
+${pick ? `You are the ${SEATS[pick].name} (seat "${pick}"): write the next message as them.` : `Pick the seat best placed to speak now (${lastSeat ? `not the ${SEATS[lastSeat].name} again` : "the role closest to what the exec just raised"}) and write the next message as them.`}
+${firstEver ? "This is the table's first message in a new conversation: unless the exec already gave the context you need, ask your clarifying questions rather than answering.\n" : ""}${spoken.length ? `Since the exec last spoke, ${spoken.join(", ")} ${spoken.length === 1 ? "has" : "have"} spoken. React to them; don't repeat them.` : "The exec just spoke: answer them."}
+${left > 0 ? `The table can send ${left} more ${left === 1 ? "message" : "messages"} after this one before it's the exec's turn.` : `This is the table's last message before the exec's turn, so next is "user".`}
+
+seat: the seat speaking. body: the message. next: the seat who should speak after you, or "user". threadTitle: a short title for this conversation (under 50 characters). tests: only a test that's ready to run, otherwise empty; clients are numbers from the client list; duplicateOf is a lab test number (#), or 0 if it's new; targetLiftPercent e.g. 15 for 15% better.`,
   });
+  const who: Seat = pick ?? (SEATS[out.seat] ? out.seat : "strategist");
   const tests: ProposedTest[] = out.tests.map((t) => ({
     title: t.title,
     hypothesis: t.hypothesis,
@@ -202,20 +252,19 @@ Reply to the last message. threadTitle: a short title for this conversation (und
     duplicateOf: t.duplicateOf > 0 ? (ctx.tests[t.duplicateOf - 1]?.id ?? null) : null,
     duplicateWhy: t.duplicateWhy,
   }));
-  const replies = out.replies.filter((r) => r.body.trim());
-  const rows = (replies.length ? replies : [{ seat: "strategist" as Seat, body: "Nothing to add yet. Say more?" }]).map((r, i, all) => ({
-    thread_id: threadId,
-    role: "agent",
-    agent: r.seat,
-    body: r.body.trim(),
-    data: i === all.length - 1 && tests.length ? { tests } : null,
-  }));
-  await admin.from("lab_messages").insert(rows);
-  const { data: thread } = await admin.from("lab_threads").select("title").eq("id", threadId).single();
+  const body = out.body.trim() || "Say a bit more about what you're after?";
+  const { data: saved, error } = await admin
+    .from("lab_messages")
+    .insert({ thread_id: threadId, role: "agent", agent: who, body, data: tests.length ? { tests } : null })
+    .select("id, created_at")
+    .single();
+  if (error || !saved) throw new Error(error?.message ?? "Couldn't save the message.");
   await admin
     .from("lab_threads")
-    .update({ updated_at: new Date().toISOString(), ...(thread?.title === "New conversation" && out.threadTitle ? { title: out.threadTitle.slice(0, 80) } : {}) })
+    .update({ updated_at: new Date().toISOString(), ...(thread?.title === "New conversation" && out.threadTitle.trim() ? { title: out.threadTitle.trim().slice(0, 80) } : {}) })
     .eq("id", threadId);
+  const next = left > 0 && out.next !== "user" && out.next !== who && SEATS[out.next] ? out.next : null;
+  return { id: saved.id as string, seat: who, body, tests, at: saved.created_at as string, next };
 }
 
 // ─── The library ────────────────────────────────────────────────────────────

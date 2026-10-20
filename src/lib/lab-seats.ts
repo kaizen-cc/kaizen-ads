@@ -9,6 +9,8 @@ export const SEATS = {
   account: { name: "Account Manager", role: "account_manager", tint: "#3fa7b5", does: "what the clients said, asked for and were promised; what they'll accept" },
 } as const;
 export type Seat = keyof typeof SEATS;
+/** Most messages the table sends after the exec speaks, before it's their turn again. */
+export const TURNS_PER_ROUND = 4;
 export type Metric = "cpr" | "results" | "ctr" | "roas";
 export const METRIC_LABEL: Record<Metric, string> = { cpr: "Cost per result", results: "Results", ctr: "Click-through rate", roas: "ROAS" };
 
