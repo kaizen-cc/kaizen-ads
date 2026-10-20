@@ -6,6 +6,7 @@ import type { AuditResult } from "@/lib/audit";
 import { conversionFor, conversionLabel } from "@/lib/kpi/conversions";
 import { kpiValue } from "@/lib/kpi/format";
 import { createClient } from "@/lib/supabase/server";
+import { googleAdsConfigured } from "@/lib/context/google-ads";
 import { VERDICT } from "../../verdict";
 import { ActionCard, RerunAudit, StartSprint } from "./audit-parts";
 
@@ -39,12 +40,14 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
   const supabase = await createClient();
   const { data: a } = await supabase
     .from("account_audits")
-    .select("id, target_id, client_id, status, result, done, inputs, steps, created_at, error, profiles(full_name), clients(name, slug), kpi_targets(conversion, custom_action, target, label)")
+    .select("id, target_id, client_id, status, result, done, inputs, steps, created_at, error, profiles(full_name), clients(name, slug), kpi_targets(conversion, custom_action, target, label, platform)")
     .eq("id", id)
     .maybeSingle();
   if (!a) notFound();
   const client = a.clients as unknown as { name: string; slug: string };
-  const t = a.kpi_targets as unknown as { conversion: string; custom_action: string | null; target: number | null; label: string | null };
+  const t = a.kpi_targets as unknown as { conversion: string; custom_action: string | null; target: number | null; label: string | null; platform: string };
+  // Google accounts: a buyer's action can be made in the account from here
+  const google = t.platform === "google" && googleAdsConfigured();
   const [{ data: snap }, { data: history }, { data: sprint }] = await Promise.all([
     supabase.from("kpi_snapshots").select("windows, deviation").eq("target_id", a.target_id).maybeSingle(),
     supabase.from("account_audits").select("id, created_at, status, result").eq("target_id", a.target_id).order("created_at", { ascending: false }).limit(10),
@@ -186,7 +189,7 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
                   <p className="text-[11px] text-faint">{items.length ? hint : "Nothing here"}</p>
                 </div>
                 {items.map(({ x, i }) => (
-                  <ActionCard key={i} auditId={a.id} index={i} action={x} area={AREA[x.area] ?? x.area} done={done[String(i)] ?? null} listed={replaced ? "replaced" : (onList.get(x.title) ?? null)} />
+                  <ActionCard key={i} auditId={a.id} index={i} action={x} area={AREA[x.area] ?? x.area} done={done[String(i)] ?? null} listed={replaced ? "replaced" : (onList.get(x.title) ?? null)} google={google && x.owner === "media_buyer"} />
                 ))}
               </div>
             );

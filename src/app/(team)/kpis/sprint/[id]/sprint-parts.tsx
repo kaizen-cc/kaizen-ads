@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { addMove, answerQuestions, checkNow, closeSprint, setActionStatus, watchSprint } from "../../sprint-actions";
+import { GoogleChange } from "../../google-change";
 
 export type SprintAction = {
   id: string;
@@ -120,7 +121,7 @@ const OWNER: Record<string, string> = { media_buyer: "Media buyer", creative: "C
 const WHEN: Record<string, string> = { now: "Today", this_week: "This week", next: "Next" };
 
 /** One move on the action list: tick it, mark it doing or skipped, and leave a note the next check reads. */
-export function ActionRow({ a, readOnly }: { a: SprintAction; readOnly: boolean }) {
+export function ActionRow({ a, readOnly, google = false }: { a: SprintAction; readOnly: boolean; google?: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [open, setOpen] = useState(a.status !== "done" && a.status !== "skipped");
@@ -198,6 +199,7 @@ export function ActionRow({ a, readOnly }: { a: SprintAction; readOnly: boolean 
           {a.why && <p className="text-xs leading-relaxed text-muted">{a.why}</p>}
           {a.impact && <p className="text-xs text-ok">{a.impact}</p>}
           {a.watch && <p className="text-xs text-muted">How the check judges it: {a.watch}</p>}
+          {google && !readOnly && a.owner !== "creative" && a.owner !== "client" && <GoogleChange from={{ source: "sprint", actionId: a.id }} />}
           {!readOnly && (
             <div className="flex flex-wrap items-center gap-2">
               <input

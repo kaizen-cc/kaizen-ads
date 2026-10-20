@@ -4,7 +4,8 @@ import { JWT } from "google-auth-library";
 
 // Google Ads: campaign numbers per day for every client account with a Google KPI target, read through Kaizen's
 // manager (MCC) account. The same shape as Meta's daily rows, so the KPI board, audits, the daily recap and
-// notifications treat both alike. Read-only.
+// notifications treat both alike. Reads, plus the changes someone confirms in Kaizen Ads (see ad-changes.ts): never
+// a change on its own.
 //
 // Access belongs to the Google Cloud project that owns the sign-in (developer tokens were retired on Sep 9, 2026):
 // enable the Google Ads API in that project and apply for Explorer access (production accounts, 2,880 operations a
@@ -61,11 +62,11 @@ async function accessToken(): Promise<string> {
 
 type Row = Record<string, Record<string, unknown>>;
 
-/** A GAQL query against one customer, every row (searchStream sends them all in one response). */
-async function search(customer: string, query: string): Promise<Row[]> {
+/** One call to a customer's endpoint, through our manager account, or directly when it isn't linked under it. */
+async function post(customer: string, path: string, body: unknown): Promise<string> {
   const token = await accessToken();
   const call = (login: string) =>
-    fetch(`https://googleads.googleapis.com/${VERSION}/customers/${digits(customer)}/googleAds:searchStream`, {
+    fetch(`https://googleads.googleapis.com/${VERSION}/customers/${digits(customer)}/${path}`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -73,20 +74,71 @@ async function search(customer: string, query: string): Promise<Row[]> {
         "login-customer-id": login,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ query }),
+      body: JSON.stringify(body),
       cache: "no-store",
     });
   const mcc = digits(env("GOOGLE_ADS_LOGIN_CUSTOMER_ID"));
   let res = await call(mcc);
   let text = await res.text();
-  // Not linked under our manager account, but the signed-in person was added to the account itself: read it directly
+  // Not linked under our manager account, but the signed-in person was added to the account itself: go directly
   if (!res.ok && digits(customer) !== mcc && /PERMISSION_DENIED|permission/i.test(text)) {
     res = await call(digits(customer));
     text = await res.text();
   }
   if (!res.ok) throw new Error(explain(text, res.status));
-  const chunks = JSON.parse(text) as { results?: Row[] }[];
+  return text;
+}
+
+/** A GAQL query against one customer, every row (searchStream sends them all in one response). */
+async function search(customer: string, query: string): Promise<Row[]> {
+  const chunks = JSON.parse(await post(customer, "googleAds:searchStream", { query })) as { results?: Row[] }[];
   return chunks.flatMap((c) => c.results ?? []);
+}
+
+/**
+ * A change to the account (campaigns, campaignBudgets, adGroups, campaignCriteria). validateOnly: Google checks it
+ * fully and says whether it would go through, without changing anything.
+ */
+export async function googleMutate(customer: string, service: "campaigns" | "campaignBudgets" | "adGroups" | "campaignCriteria", operations: unknown[], validateOnly: boolean) {
+  await post(customer, `${service}:mutate`, { operations, validateOnly, partialFailure: false });
+}
+
+export type WritableSetup = {
+  campaigns: { id: string; name: string; status: string; type: string; bidding: string; portfolio: boolean; targetCpa: number | null; targetRoas: number | null; budget: number | null; budgetResource: string | null; sharedBudget: boolean }[];
+  adGroups: { id: string; name: string; status: string; campaignId: string; campaign: string }[];
+  wasteTerms: { term: string; campaignId: string; campaign: string; spend: number; clicks: number }[];
+};
+
+/** What a change can touch, with the IDs it needs: campaigns (bidding, targets, budget), ad groups, and search terms spending with no conversions. */
+export async function googleWritableSetup(account: string): Promise<WritableSetup> {
+  const micros = (v: unknown) => (v == null || v === "" ? null : Math.round(Number(v) / 10_000) / 100);
+  const [camps, groups, terms] = await Promise.all([
+    search(account, "SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, campaign.bidding_strategy_type, campaign.bidding_strategy, campaign.target_cpa.target_cpa_micros, campaign.maximize_conversions.target_cpa_micros, campaign.target_roas.target_roas, campaign.maximize_conversion_value.target_roas, campaign_budget.resource_name, campaign_budget.amount_micros, campaign_budget.explicitly_shared FROM campaign WHERE campaign.status != 'REMOVED'"),
+    search(account, "SELECT ad_group.id, ad_group.name, ad_group.status, campaign.id, campaign.name FROM ad_group WHERE ad_group.status != 'REMOVED' AND campaign.status != 'REMOVED' LIMIT 300").catch(() => [] as Row[]),
+    search(account, "SELECT search_term_view.search_term, campaign.id, campaign.name, metrics.cost_micros, metrics.clicks, metrics.conversions FROM search_term_view WHERE segments.date DURING LAST_30_DAYS AND metrics.conversions = 0 AND metrics.cost_micros > 0 ORDER BY metrics.cost_micros DESC LIMIT 40").catch(() => [] as Row[]),
+  ]);
+  return {
+    campaigns: camps.map((r) => {
+      const c = r.campaign as Record<string, Record<string, unknown> | unknown>;
+      const tc = (c.targetCpa as Record<string, unknown> | undefined)?.targetCpaMicros ?? (c.maximizeConversions as Record<string, unknown> | undefined)?.targetCpaMicros;
+      const tr = (c.targetRoas as Record<string, unknown> | undefined)?.targetRoas ?? (c.maximizeConversionValue as Record<string, unknown> | undefined)?.targetRoas;
+      return {
+        id: String(c.id),
+        name: String(c.name),
+        status: String(c.status),
+        type: String(c.advertisingChannelType ?? ""),
+        bidding: String(c.biddingStrategyType ?? ""),
+        portfolio: Boolean(c.biddingStrategy),
+        targetCpa: micros(tc),
+        targetRoas: tr == null ? null : Number(tr),
+        budget: micros(r.campaignBudget?.amountMicros),
+        budgetResource: (r.campaignBudget?.resourceName as string | undefined) ?? null,
+        sharedBudget: Boolean(r.campaignBudget?.explicitlyShared),
+      };
+    }),
+    adGroups: groups.map((r) => ({ id: String(r.adGroup?.id), name: String(r.adGroup?.name), status: String(r.adGroup?.status), campaignId: String(r.campaign?.id), campaign: String(r.campaign?.name) })),
+    wasteTerms: terms.map((r) => ({ term: String(r.searchTermView?.searchTerm ?? ""), campaignId: String(r.campaign?.id), campaign: String(r.campaign?.name), spend: Math.round(num(r.metrics?.costMicros) / 10_000) / 100, clicks: num(r.metrics?.clicks) })).filter((t) => t.term),
+  };
 }
 
 /** Google's errors, in words someone can act on. */
