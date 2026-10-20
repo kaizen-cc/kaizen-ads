@@ -90,7 +90,7 @@ export async function handOff(admin: SupabaseClient, clientId: string, fromId: s
 }
 
 /** Everything the handoff and the account chat read beyond the client context: the last 45 days, what's open, peers. */
-async function gather(admin: SupabaseClient, clientId: string, buyerId: string) {
+async function gather(admin: SupabaseClient, clientId: string, buyerId: string | null) {
   const since = new Date(Date.now() - 45 * 86_400_000).toISOString();
   const [{ data: c }, { data: items }, { data: tickets }, { data: sprints }, { data: promises }, { data: gtm }, { data: mine }] = await Promise.all([
     admin.from("clients").select("name, vertical_id").eq("id", clientId).single(),
@@ -99,7 +99,7 @@ async function gather(admin: SupabaseClient, clientId: string, buyerId: string) 
     admin.from("optimization_sprints").select("id, started_at, sprint_actions(title, status, when, why)").eq("client_id", clientId).eq("status", "active").limit(2),
     admin.from("call_commitments").select("what, kind, due_at, status").eq("client_id", clientId).in("status", ["open", "briefed"]).limit(15),
     admin.from("client_gtm_strategies").select("status, version, read_this_first, open_items, generated_at, reviewed_at").eq("client_id", clientId).maybeSingle(),
-    admin.from("client_assignments").select("client_id, clients(name, status, archived_at, vertical_id)").eq("profile_id", buyerId).eq("role", "meta_buyer"),
+    buyerId ? admin.from("client_assignments").select("client_id, clients(name, status, archived_at, vertical_id)").eq("profile_id", buyerId).eq("role", "meta_buyer") : Promise.resolve({ data: [] as { client_id: string; clients: unknown }[] }),
   ]);
   // The new buyer's other live accounts, same sub-vertical first, with what we've learned on each
   const peers = (mine ?? [])
@@ -127,7 +127,7 @@ async function gather(admin: SupabaseClient, clientId: string, buyerId: string) 
     `</call_promises_open>`,
     `<gtm_status>${gtm ? `${gtm.status}, version ${gtm.version}, written ${String(gtm.generated_at ?? "").slice(0, 10)}${gtm.reviewed_at ? `, reviewed ${String(gtm.reviewed_at).slice(0, 10)}` : ", not reviewed"}${gtm.open_items ? `\nOpen items: ${JSON.stringify(gtm.open_items).slice(0, 1500)}` : ""}` : "No go-to-market strategy yet"}</gtm_status>`,
     `<this_client_sub_vertical>${vName(c?.vertical_id ?? null)}</this_client_sub_vertical>`,
-    `<new_buyers_other_accounts>`,
+    ...(buyerId ? [`<new_buyers_other_accounts>`] : []),
     ...peers.map(
       (p) =>
         `- ${p.name} (sub-vertical: ${vName(p.vertical_id)})${(peerMemory ?? [])
@@ -136,12 +136,13 @@ async function gather(admin: SupabaseClient, clientId: string, buyerId: string) 
           .map((m) => `\n    [${m.kind}] ${m.body}`)
           .join("")}`,
     ),
-    `</new_buyers_other_accounts>`,
+    ...(buyerId ? [`</new_buyers_other_accounts>`] : []),
   ];
   return { name: c?.name ?? "the client", extra: lines.join("\n") };
 }
 
-async function accountBrief(admin: SupabaseClient, clientId: string, buyerId: string) {
+/** The client context plus the last 45 days and what's open; with a buyer, also their other accounts (for a handoff). */
+export async function accountBrief(admin: SupabaseClient, clientId: string, buyerId: string | null) {
   const ctx = await clientContext(admin, clientId);
   if (!ctx) throw new Error("Client not found");
   const g = await gather(admin, clientId, buyerId);

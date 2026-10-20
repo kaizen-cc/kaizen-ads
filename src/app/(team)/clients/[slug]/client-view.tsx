@@ -25,6 +25,9 @@ import { setPortalLive,
 import { PackagePanel, type PackageOption } from "./package-panel";
 import { CreativePanel } from "./creative-panel";
 import { KpiPanel } from "./kpi-panel";
+import { ClientChat, type AuditTarget } from "./client-chat";
+import type { AuditSummary } from "../../kpis/audit-panel";
+import type { ChatTurn } from "@/lib/handoff";
 import { ArchiveControl } from "./archive-control";
 import { IntakePanel, type IntakeRecord } from "./intake-panel";
 import { CallsPanel, type ClientCall } from "./calls-panel";
@@ -97,6 +100,8 @@ export type ClientViewProps = {
   connections: { meta: Freshness | null; slackClient: Freshness | null; slackInternal: Freshness | null; drive: Freshness | null };
   creative?: ClientCreative | null; // tickets in motion and launched, live and paused ads
   kpis?: ClientKpi[] | null; // performance vs target; null in the design preview
+  audits?: Record<string, AuditSummary> | null; // the latest audit per KPI, shared with the KPI board
+  chat?: { initial: ChatTurn[]; targets: AuditTarget[] } | null; // my thread with the AI about this client
   fatigue?: WatchRow[] | null; // ads wearing out
   market?: MarketAd[]; // live in this client's market (Motion)
   intake?: IntakeRecord | null; // the marketing intake form; undefined in the design preview
@@ -104,7 +109,7 @@ export type ClientViewProps = {
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, fatigue = null, market = [], intake, calls }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, chat = null, fatigue = null, market = [], intake, calls }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -112,6 +117,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
   const live = isLive(client);
   return (
     <div className="mx-auto grid max-w-6xl gap-8">
+      {chat && !demo && <ClientChat clientId={client.id} client={client.name} initial={chat.initial} targets={chat.targets} live={live} />}
       {/* Header */}
       <header className="grid gap-3">
         <Link href="/clients" className="text-xs text-muted hover:text-fg">
@@ -160,7 +166,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         {/* Main column: what the AI knows and what the team adds to it */}
         <div className="grid min-w-0 gap-6">
-          {kpis && <KpiPanel kpis={kpis} />}
+          {kpis && <KpiPanel kpis={kpis} audits={audits} />}
 
           {live && fatigue && fatigue.length > 0 && <FatigueWatch rows={fatigue} showClient={false} />}
 

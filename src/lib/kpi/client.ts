@@ -10,6 +10,7 @@ export type ClientKpi = {
   id: string;
   label: string | null;
   platform: "meta" | "google";
+  accountId: string | null;
   conversionLabel: string;
   roas: boolean;
   target: number | null;
@@ -31,7 +32,7 @@ export type ClientKpi = {
 export async function loadClientKpis(db: SupabaseClient, clientId: string): Promise<ClientKpi[]> {
   const { data: targets } = await db
     .from("kpi_targets")
-    .select("id, label, platform, conversion, custom_action, target, monthly_budget, source, owner_name, profiles!kpi_targets_owner_id_fkey(full_name)")
+    .select("id, label, platform, ad_account_id, conversion, custom_action, target, monthly_budget, source, owner_name, profiles!kpi_targets_owner_id_fkey(full_name)")
     .eq("client_id", clientId)
     .eq("active", true);
   if (!targets?.length) return [];
@@ -43,6 +44,7 @@ export async function loadClientKpis(db: SupabaseClient, clientId: string): Prom
         id: t.id,
         label: t.label,
         platform: t.platform as "meta" | "google",
+        accountId: (t.ad_account_id as string | null) ?? null,
         conversionLabel: conversionLabel(t.conversion, t.custom_action),
         roas: Boolean(conversionFor(t.conversion).roas),
         target: t.target == null ? null : Number(t.target),

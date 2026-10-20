@@ -9,6 +9,8 @@ import { runFatigue } from "@/lib/fatigue";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { notLive } from "@/lib/live-guard";
+import { askAboutClient } from "@/lib/client-chat";
+import type { ChatTurn } from "@/lib/handoff";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -257,4 +259,23 @@ export async function markOnboarded(clientId: string, slug: string): Promise<Act
   const { error } = await createAdminClient().from("clients").update({ status: "active" }).eq("id", clientId).eq("status", "onboarding");
   revalidatePath("/pipeline");
   return done(slug, error);
+}
+
+/** The AI chat on the client page: one message in your own thread about this client. RLS decides who sees the client. */
+export async function askClientAi(clientId: string, question: string): Promise<{ ok: true; chat: ChatTurn[] } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  if (!question.trim()) return { ok: false, error: "Ask something first." };
+  const { data: c } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
+  if (!c) return { ok: false, error: "Client not found." };
+  try {
+    return { ok: true, chat: await askAboutClient(createAdminClient(), clientId, me.id, question) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't answer that just now." };
+  }
+}
+
+/** Starts the thread over. */
+export async function clearClientAi(clientId: string) {
+  const me = await requireStaff();
+  await createAdminClient().from("client_chats").delete().eq("client_id", clientId).eq("profile_id", me.id);
 }

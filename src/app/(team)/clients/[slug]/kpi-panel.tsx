@@ -3,9 +3,11 @@ import { Section } from "@/components/ui";
 import type { ClientKpi } from "@/lib/kpi/client";
 import { STATUS, kpiValue } from "@/lib/kpi/format";
 import { DailyChart, PaceBar } from "../../kpis/kpi-charts";
+import { AuditPanel, type AuditSummary } from "../../kpis/audit-panel";
 
 // How the client's ad accounts are doing against their targets, from the KPI tracker (refreshed every 2 hours).
-// The same picture every agent reads before it writes a brief, copy or a review for this client.
+// The same picture every agent reads before it writes a brief, copy or a review for this client. Each KPI carries its
+// account audit: the same audit as on the KPI board, so one started here shows there and the other way round.
 
 /** "16% above target", the way a buyer says it for a cost or for ROAS. */
 function gap(k: ClientKpi) {
@@ -21,7 +23,7 @@ const change = (x: number | null) =>
 
 const TREND = { improving: { text: "Improving", tone: "text-ok", arrow: "↘" }, steady: { text: "Steady", tone: "text-muted", arrow: "→" }, slipping: { text: "Slipping", tone: "text-bad", arrow: "↗" } } as const;
 
-export function KpiPanel({ kpis }: { kpis: ClientKpi[] }) {
+export function KpiPanel({ kpis, audits }: { kpis: ClientKpi[]; audits?: Record<string, AuditSummary> | null }) {
   const synced = kpis.map((k) => k.computedAt).filter(Boolean).sort().at(-1);
   return (
     <Section
@@ -58,7 +60,12 @@ export function KpiPanel({ kpis }: { kpis: ClientKpi[] }) {
                         {k.label ? ` · ${k.label}` : ""} · {k.conversionLabel}
                       </span>
                     </span>
-                    {k.owner && <span className="text-[11px] text-faint">Buyer: {k.owner}</span>}
+                    <span className="flex flex-wrap items-center gap-3 text-[11px] text-faint">
+                      {k.owner && <span>Buyer: {k.owner}</span>}
+                      <Link href={`/kpis?target=${k.id}`} className="text-muted hover:text-fg">
+                        Open on the KPI board →
+                      </Link>
+                    </span>
                   </div>
                   {live && (
                     <div className="text-right">
@@ -103,6 +110,7 @@ export function KpiPanel({ kpis }: { kpis: ClientKpi[] }) {
                 ) : (
                   <p className="text-sm text-muted">{k.status === "idle" ? "Not spending right now." : k.error ?? "Waiting for its first sync."}</p>
                 )}
+                {audits && k.accountId && <AuditPanel targetId={k.id} audit={audits[k.id] ?? null} platform={k.platform} />}
               </article>
             );
           })}

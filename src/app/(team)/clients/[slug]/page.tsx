@@ -13,6 +13,9 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { loadClientCreative } from "@/lib/client-creative";
 import { ClientView } from "./client-view";
+import { latestAudits } from "@/lib/audit-summary";
+import { loadClientChat } from "@/lib/client-chat";
+import type { AuditTarget } from "./client-chat";
 
 // Refreshing a briefing asks the AI to read everything new about the client
 export const maxDuration = 800; // Sync now on the Meta ad account, and Brand Bible builds (web research) that finish in the background
@@ -155,6 +158,15 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
   const intake: IntakeRecord | null = intakeRow
     ? { receivedAt: intakeRow.received_at, status: intakeRow.status, summary: (intakeRow.summary as IntakeRecord["summary"]) ?? null, answers: (intakeRow.answers ?? []) as IntakeRecord["answers"], error: intakeRow.error }
     : null;
+  // The audits on this client's KPIs (the same ones the KPI board shows) and my thread with the AI
+  const [auditBy, chatTurns] = await Promise.all([latestAudits(supabase, kpis.map((k) => k.id)), loadClientChat(supabase, client.id, me.id)]);
+  const audits = Object.fromEntries(auditBy);
+  const targets: AuditTarget[] = kpis
+    .filter((k) => k.accountId)
+    .map((k) => {
+      const a = auditBy.get(k.id);
+      return { id: k.id, label: `${k.platform === "google" ? "Google" : "Meta"}${k.label ? ` · ${k.label}` : ""}`, status: a?.status ?? "none", auditId: a?.id ?? null };
+    });
   const at = (key: string) => (synced ?? []).find((r) => r.source === key)?.last_run_at ?? null;
   const connections = {
     meta: client.meta_ad_account_id ? freshness(lastMeta?.fetched_at) : null,
@@ -168,6 +180,8 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
       connections={connections}
       creative={creative}
       kpis={kpis}
+      audits={audits}
+      chat={{ initial: chatTurns, targets }}
       fatigue={fatigue}
       market={market}
       intake={intake}
