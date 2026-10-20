@@ -25,8 +25,10 @@ export const CONVERSIONS: Conversion[] = [
   { key: "link_clicks", label: "Link Clicks", field: "unique_link_clicks", platforms: ["meta"] },
   { key: "add_to_cart", label: "Adds to Cart", types: ["omni_add_to_cart", "add_to_cart", "offsite_conversion.fb_pixel_add_to_cart"], platforms: ["meta"] },
   { key: "engagement", label: "Engagement", types: ["post_engagement"], platforms: ["meta"] },
-  { key: "custom", label: "Custom Conversion", platforms: ["meta"] },
+  { key: "custom", label: "Custom Conversion", platforms: ["meta", "google"] },
   { key: "conversions", label: "Conversions", types: ["conversions"], platforms: ["google"] },
+  { key: "google_roas", label: "ROAS", types: ["conversions"], roas: true, platforms: ["google"] },
+  { key: "google_clicks", label: "Clicks", field: "link_clicks", platforms: ["google"] },
 ];
 
 export const conversionFor = (key: string) => CONVERSIONS.find((c) => c.key === key) ?? CONVERSIONS[0];
@@ -34,6 +36,6 @@ export const conversionFor = (key: string) => CONVERSIONS.find((c) => c.key === 
 /** The label a target shows: "Purchases", or "ROAS", or the custom action when it's custom. */
 export function conversionLabel(key: string, custom?: string | null) {
   const c = conversionFor(key);
-  if (c.key === "custom" && custom) return custom.replace(/^offsite_conversion\.custom\./, "Custom ");
+  if (c.key === "custom" && custom) return custom.replace(/^offsite_conversion\.custom\./, "Custom ").replace(/^action:/, "");
   return c.label;
 }

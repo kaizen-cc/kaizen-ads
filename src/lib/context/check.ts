@@ -32,6 +32,7 @@ export async function checkSetup(admin: SupabaseClient) {
           return `Sees ${r.accounts.length} ad accounts${r.linked.length ? `; just linked ${r.linked.join(", ")}` : ""}. Creative clients without an ad account: ${r.creativeClientsWithoutAccount.length ? r.creativeClientsWithoutAccount.join(", ") : "none"}.`;
         })
       : { ok: false, detail: "META_SYSTEM_USER_TOKEN is missing" },
+    googleAds: await (await import("@/lib/context/google-ads")).checkGoogleAds(),
     drive: google.drive,
     mailboxes: google.mailboxes,
     gmail: google.gmail,

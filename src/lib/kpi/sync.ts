@@ -2,11 +2,13 @@ import "server-only";
 import { tracker, type Tracker } from "@/lib/progress";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { accountActivity, asyncReport, linkAdAccounts, metaConfigured, type InsightRow } from "@/lib/context/meta";
+import { digits, googleAdsConfigured, googleAdsMissing, syncGoogleCampaigns } from "@/lib/context/google-ads";
 import { pool } from "@/lib/context/run";
 import { computeSnapshot, nyParts, toDays } from "./calc";
 import { LIVE } from "@/lib/live";
 
-// Pulls Meta numbers per campaign per day for every ad account with a KPI target, then recomputes each target.
+// Pulls Meta and Google Ads numbers per campaign per day for every ad account with a KPI target, then recomputes
+// each target (the same math for both; Google's days live in google_campaign_daily).
 // About six months is kept so the quarter comparison always has a full last quarter. After the first pull,
 // only the last 3 days are re-read (Meta keeps revising them). No AI is involved, so running often costs nothing extra.
 
@@ -70,14 +72,15 @@ type Target = {
 export type CampaignRow = Parameters<typeof toDays>[0][number] & { campaign_id: string; impressions: number; clicks: number; updated_at: string };
 
 /** Every stored day of an account (paged: there can be thousands of campaign rows). Also used by Settings → Data. */
-export async function accountRows(admin: SupabaseClient, account: string): Promise<CampaignRow[]> {
+export async function accountRows(admin: SupabaseClient, account: string, platform: string = "meta"): Promise<CampaignRow[]> {
+  const table = platform === "google" ? "google_campaign_daily" : "meta_campaign_daily";
   const since = ymd(new Date(Date.now() - BACKFILL_DAYS * 86_400_000));
   const out: CampaignRow[] = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await admin
-      .from("meta_campaign_daily")
+      .from(table)
       .select("date, campaign_id, campaign_name, spend, impressions, clicks, actions, action_values, link_clicks, unique_link_clicks, updated_at")
-      .eq("ad_account_id", account)
+      .eq("ad_account_id", platform === "google" ? digits(account) : account)
       .gte("date", since)
       .order("date")
       .order("campaign_id")
@@ -93,8 +96,8 @@ async function saveSnapshot(admin: SupabaseClient, t: Target, fields: Record<str
 }
 
 /** Recompute the snapshots of an account's targets from what's stored. */
-export async function computeAccount(admin: SupabaseClient, account: string, targets: Target[], error?: string) {
-  const rows = await accountRows(admin, account);
+export async function computeAccount(admin: SupabaseClient, account: string, targets: Target[], error?: string, platform = "meta") {
+  const rows = await accountRows(admin, account, platform);
   const now = new Date();
   for (const t of targets) {
     const s = computeSnapshot(toDays(rows, t.campaign_match), {
@@ -115,7 +118,7 @@ export async function computeAccount(admin: SupabaseClient, account: string, tar
       trend: s.trend,
       budget: s.budget ?? {},
       daily: s.daily,
-      error: error ?? (rows.length ? null : "No data from Meta yet"),
+      error: error ?? (rows.length ? null : platform === "google" ? "No data from Google Ads yet" : "No data from Meta yet"),
     });
   }
 }
@@ -130,27 +133,33 @@ export async function refreshClientKpis(admin: SupabaseClient, clientId: string,
 }
 
 async function refreshTargets(admin: SupabaseClient, targets: Target[], pull: boolean, deadline = Date.now() + 600_000, t?: Tracker) {
+  // Keyed by platform and account ("meta:123", "google:2698564936"); Google's IDs are stored with dashes
   const byAccount = new Map<string, Target[]>();
   for (const t of targets) {
-    if (t.platform !== "meta" || !t.ad_account_id) {
-      await saveSnapshot(admin, t, {
-        status: "setup",
-        error: t.platform === "google" ? "Google Ads isn't connected yet" : "Add the ad account ID",
-      });
+    if (!t.ad_account_id || !["meta", "google"].includes(t.platform)) {
+      await saveSnapshot(admin, t, { status: "setup", error: t.platform === "google" ? "Add the Google Ads customer ID" : "Add the ad account ID" });
       continue;
     }
-    const account = t.ad_account_id.replace(/^act_/, "");
-    byAccount.set(account, [...(byAccount.get(account) ?? []), t]);
+    const account = t.platform === "google" ? digits(t.ad_account_id) : t.ad_account_id.replace(/^act_/, "");
+    if (t.platform === "google" && !googleAdsConfigured()) {
+      await saveSnapshot(admin, t, { status: "setup", error: `Google Ads isn't connected yet (missing ${googleAdsMissing().join("; ")})` });
+      continue;
+    }
+    const k = `${t.platform}:${account}`;
+    byAccount.set(k, [...(byAccount.get(k) ?? []), t]);
   }
 
   // Stalest first, so a run that runs out of time picks up where the last one stopped
   const { data: state } = await admin.from("sync_state").select("source, last_run_at").like("source", "kpi:%");
   const ran = new Map((state ?? []).map((s) => [s.source as string, s.last_run_at as string | null]));
-  const accounts = [...byAccount.keys()].sort((a, b) => (ran.get(`kpi:${a}`) ?? "").localeCompare(ran.get(`kpi:${b}`) ?? ""));
+  const accountOf = (k: string) => k.slice(k.indexOf(":") + 1);
+  const accounts = [...byAccount.keys()].sort((a, b) => (ran.get(`kpi:${accountOf(a)}`) ?? "").localeCompare(ran.get(`kpi:${accountOf(b)}`) ?? ""));
 
   t?.total(accounts.length);
-  return pool(accounts, 4, async (account) => {
-    const list = byAccount.get(account)!;
+  return pool(accounts, 4, async (k) => {
+    const list = byAccount.get(k)!;
+    const platform = k.slice(0, k.indexOf(":"));
+    const account = accountOf(k);
     if (Date.now() > deadline) {
       t?.tick(null);
       return { account, deferred: true };
@@ -158,7 +167,13 @@ async function refreshTargets(admin: SupabaseClient, targets: Target[], pull: bo
     t?.on(account);
     let error: string | undefined;
     let pulled: Awaited<ReturnType<typeof syncMetaCampaigns>> | null = null;
-    if (pull && metaConfigured()) {
+    if (pull && platform === "google") {
+      try {
+        pulled = await syncGoogleCampaigns(admin, account);
+      } catch (e) {
+        error = e instanceof Error ? e.message : String(e);
+      }
+    } else if (pull && metaConfigured()) {
       try {
         pulled = await syncMetaCampaigns(admin, account);
       } catch (e) {
@@ -167,12 +182,12 @@ async function refreshTargets(admin: SupabaseClient, targets: Target[], pull: bo
         error = /missing permissions|does not exist/i.test(msg) ? "Meta can't see this ad account yet. Assign it to the CommandCenter system user." : msg;
       }
     }
-    await computeAccount(admin, account, list, error);
+    await computeAccount(admin, account, list, error, platform);
     // Who changed what in the account lately (Meta's activity log), so the board shows whether someone's on it
-    if (pull && metaConfigured() && !error) await saveActivity(admin, account);
+    if (pull && platform === "meta" && metaConfigured() && !error) await saveActivity(admin, account);
     await admin.from("sync_state").upsert({ source: `kpi:${account}`, last_run_at: new Date().toISOString(), last_result: { ...(pulled ?? {}), error: error ?? null } });
     t?.tick(account, !error);
-    return { account, targets: list.length, ...(pulled ?? {}), ...(error ? { error } : {}) };
+    return { account, platform, targets: list.length, ...(pulled ?? {}), ...(error ? { error } : {}) };
   });
 }
 
@@ -216,7 +231,8 @@ async function saveActivity(admin: SupabaseClient, account: string) {
 
 /** One ad account now (Sync health's Retry): pull from Meta and recompute its targets. */
 export async function refreshAccountKpis(admin: SupabaseClient, account: string) {
-  const { data } = await admin.from("kpi_targets").select(TARGET_FIELDS).eq("active", true).in("ad_account_id", [account, `act_${account}`]);
+  const dashed = account.length === 10 ? `${account.slice(0, 3)}-${account.slice(3, 6)}-${account.slice(6)}` : account;
+  const { data } = await admin.from("kpi_targets").select(TARGET_FIELDS).eq("active", true).in("ad_account_id", [account, `act_${account}`, dashed]);
   const [r] = await refreshTargets(admin, (data ?? []) as Target[], true);
   return r ?? { account, error: "No active KPI target uses this ad account" };
 }

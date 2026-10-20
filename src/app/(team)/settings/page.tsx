@@ -427,7 +427,7 @@ async function Sync({ motion }: { motion: string | null }) {
   const runs = new Map(all.filter((r) => r.source.startsWith("run:")).map((r) => [r.source.slice(4), timedOut(r.last_result as RunState)] as const));
   const rows = all.filter((r) => !r.source.startsWith("run:"));
   // KPI rows are keyed by ad account; show whose it is
-  const owner = new Map((accounts ?? []).map((a) => [String(a.ad_account_id).replace(/^act_/, ""), (a.clients as unknown as { name: string } | null)?.name ?? ""]));
+  const owner = new Map((accounts ?? []).map((a) => [String(a.ad_account_id).replace(/^act_/, "").replace(/-/g, ""), (a.clients as unknown as { name: string } | null)?.name ?? ""]));
   const errorOf = (r: (typeof rows)[number]) => {
     const res = r.last_result as { error?: string | null; errors?: string[] } | null;
     return res?.error ?? (res?.errors?.length ? res.errors.join("; ") : null);

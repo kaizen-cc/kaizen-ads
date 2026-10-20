@@ -42,7 +42,7 @@ export async function DataInspector({ targets, targetId, from, to }: { targets: 
             Pick a client&apos;s KPI
           </option>
           {targets
-            .filter((x) => x.platform === "meta" && x.ad_account_id)
+            .filter((x) => x.ad_account_id)
             .map((x) => (
               <option key={x.id} value={x.id}>
                 {x.client}
@@ -71,9 +71,9 @@ export async function DataInspector({ targets, targetId, from, to }: { targets: 
     );
 
   const admin = createAdminClient();
-  const account = t.ad_account_id.replace(/^act_/, "");
+  const account = t.platform === "google" ? t.ad_account_id.replace(/\D/g, "") : t.ad_account_id.replace(/^act_/, "");
   const [all, { data: snap }, { data: state }] = await Promise.all([
-    accountRows(admin, account),
+    accountRows(admin, account, t.platform),
     admin.from("kpi_snapshots").select("windows, computed_at, error").eq("target_id", t.id).maybeSingle(),
     admin.from("sync_state").select("last_run_at, last_result").eq("source", `kpi:${account}`).maybeSingle(),
   ]);

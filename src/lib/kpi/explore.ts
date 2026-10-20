@@ -136,11 +136,11 @@ export type Explore = {
 /** Everything the KPI card's explorer shows, for one target, with the "counts as a result" being tried. */
 export async function exploreTarget(
   admin: SupabaseClient,
-  t: { ad_account_id: string; target: number | null; monthly_budget: number | null; extra_metrics: string[] },
+  t: { ad_account_id: string; platform?: string; target: number | null; monthly_budget: number | null; extra_metrics: string[] },
   tryOut: { conversion: string; custom: string | null; campaignMatch: string | null },
 ): Promise<Explore> {
   const account = t.ad_account_id.replace(/^act_/, "");
-  const all = await accountRows(admin, account);
+  const all = await accountRows(admin, account, t.platform ?? "meta");
   const m = tryOut.campaignMatch?.trim().toLowerCase();
   const rows = m ? all.filter((r) => (r.campaign_name ?? "").toLowerCase().includes(m)) : all;
   const { toDays } = await import("./calc");
@@ -156,7 +156,7 @@ export async function exploreTarget(
   const d30 = sum(last(30));
   const days30 = days.filter((d) => d.date > shift(yesterday, -30) && d.date <= yesterday);
 
-  const conversions = CONVERSIONS.filter((c) => c.platforms.includes("meta") && c.key !== "custom").map((c) => {
+  const conversions = CONVERSIONS.filter((c) => c.platforms.includes((t.platform ?? "meta") as "meta" | "google") && c.key !== "custom").map((c) => {
     const type = pickType(days30, c, null);
     return { key: c.key, label: c.label, type, results30: Math.round(days30.reduce((n, d) => n + resultsOf(d, c, type), 0) * 10) / 10 };
   });

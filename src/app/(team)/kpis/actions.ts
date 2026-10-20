@@ -118,7 +118,7 @@ export async function linkAdAccount(accountId: string, form: FormData): Promise<
 export async function exploreKpi(targetId: string, tryOut: { conversion: string; custom: string | null; campaignMatch: string | null }): Promise<{ ok: true; data: Explore } | { ok: false; error: string }> {
   await requireStaff();
   const supabase = await createClient();
-  const { data: t } = await supabase.from("kpi_targets").select("ad_account_id, target, monthly_budget, extra_metrics").eq("id", targetId).maybeSingle();
+  const { data: t } = await supabase.from("kpi_targets").select("ad_account_id, platform, target, monthly_budget, extra_metrics").eq("id", targetId).maybeSingle();
   if (!t) return { ok: false, error: "You don't work on this client." };
   if (!t.ad_account_id) return { ok: false, error: "Add the ad account first." };
   if (!adminConfigured()) return { ok: false, error: "Server key missing." };
