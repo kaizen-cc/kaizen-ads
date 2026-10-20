@@ -5,7 +5,7 @@ import { daysAgoIso, freshness } from "@/lib/dates";
 import { nyParts } from "@/lib/kpi/calc";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import type { ChatMessage, Change } from "./actions";
+import type { ChatMessage, Change, RoleChatMessage } from "./actions";
 import { AgentDetail, RoleDetail, RolesOverview, type Agent, type Item, type Role } from "./agents";
 import { DataInspector } from "./data-inspector";
 import { AGENT_MOMENTS, momentOf } from "@/lib/agent-moments";
@@ -39,14 +39,21 @@ const day = (offset: number) => {
 async function Agents({ open, role: openRole }: { open: string | null; role: string | null }) {
   const supabase = await createClient();
   const since = daysAgoIso(7);
-  const [{ data: agents }, { data: knowledge }, { data: month }, { data: roleRows }, { data: spineRow }, { data: chats }] = await Promise.all([
+  const [{ data: agents }, { data: knowledge }, { data: month }, { data: roleRows }, { data: spineRow }, { data: chats }, { data: roleChats }] = await Promise.all([
     supabase.from("ai_agents").select("*, profiles(full_name)").order("sort_order"),
     supabase.from("ai_knowledge").select("*").order("created_at"),
     supabase.from("ai_runs").select("agent_key, label, model, ms, input_tokens, output_tokens, ok, error, created_at").gte("created_at", daysAgoIso(30)).order("created_at", { ascending: false }).limit(5000),
     supabase.from("ai_roles").select("*, profiles(full_name)").order("sort_order"),
     supabase.from("ai_spine").select("body, updated_at, profiles(full_name)").eq("id", 1).maybeSingle(),
     supabase.from("ai_agent_chats").select("agent_key, changes").eq("role", "coach").gte("created_at", daysAgoIso(90)),
+    supabase.from("ai_role_chats").select("role_key, changes").eq("role", "agent").gte("created_at", daysAgoIso(90)),
   ]);
+  // Edits an agent proposed in its own chat that nobody has applied yet
+  const roleProposals = new Map<string, number>();
+  for (const c of roleChats ?? []) {
+    const open = ((c.changes ?? []) as { applied?: boolean }[]).filter((x) => !x.applied).length;
+    if (open) roleProposals.set(c.role_key, (roleProposals.get(c.role_key) ?? 0) + open);
+  }
   const roles: Role[] = (roleRows ?? []).map((r) => ({
     key: r.key,
     label: r.label,
@@ -55,6 +62,7 @@ async function Agents({ open, role: openRole }: { open: string | null; role: str
     core: r.core,
     updatedAt: r.updated_at,
     updatedBy: (r.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
+    proposals: roleProposals.get(r.key) ?? 0,
   }));
   // Edits the Coach or the Ads Lab proposed that nobody has applied yet
   const proposals = new Map<string, number>();
@@ -128,7 +136,11 @@ async function Agents({ open, role: openRole }: { open: string | null; role: str
   }));
   const agent = list.find((a) => a.key === open);
   const role = roles.find((r) => r.key === openRole);
-  if (!agent && role) return <RoleDetail role={role} skills={list.filter((a) => a.roleKey === role.key)} items={items} />;
+  if (!agent && role) {
+    const { data: talk } = await supabase.from("ai_role_chats").select("id, role, content, changes, created_at").eq("role_key", role.key).order("created_at").limit(200);
+    const chat: RoleChatMessage[] = (talk ?? []).map((m) => ({ id: m.id, role: m.role, content: m.content, changes: (m.changes ?? []) as Change[], at: m.created_at }));
+    return <RoleDetail key={role.key} role={role} skills={list.filter((a) => a.roleKey === role.key)} items={items} chat={chat} />;
+  }
   if (!agent)
     return (
       <RolesOverview

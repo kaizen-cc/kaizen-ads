@@ -4,7 +4,24 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { field } from "@/components/ui";
-import { addItem, applyChange, chatWithCoach, clearChat, deleteItem, saveAgentSetup, saveRoleCore, saveSpine, setItemActive, updateItem, type Change, type ChatMessage } from "./actions";
+import {
+  addItem,
+  applyChange,
+  applyRoleChange,
+  chatWithAgent,
+  chatWithCoach,
+  clearChat,
+  clearRoleChat,
+  deleteItem,
+  saveAgentSetup,
+  saveRoleCore,
+  saveSpine,
+  setItemActive,
+  updateItem,
+  type Change,
+  type ChatMessage,
+  type RoleChatMessage,
+} from "./actions";
 
 type Result = { ok: true } | { ok: false; error: string };
 export type AgentKey = import("@/lib/ai").AgentKey;
@@ -533,22 +550,28 @@ const CHANGE_LABEL: Record<Change["op"], string> = {
   add_item: "Add",
   turn_off_item: "Turn off",
   set_model: "Switch brain",
+  set_core: "Rewrite core",
 };
 
-function ChangeCard({ c, onApply, items }: { c: Change; onApply: () => Promise<void>; items: Item[] }) {
+function ChangeCard({ c, onApply, items, skill = null }: { c: Change; onApply: () => Promise<void>; items: Item[]; skill?: string | null }) {
   const [open, setOpen] = useState(false);
   const [busy, start] = useTransition();
   const target = items.find((i) => i.id === c.item_id);
   const title =
     c.op === "set_model"
       ? `${c.model ? c.model[0].toUpperCase() + c.model.slice(1) : ""}${c.effort ? ` · ${c.effort} effort` : ""}`
-      : c.op === "set_instructions"
+      : c.op === "set_instructions" || c.op === "set_core"
         ? ""
         : c.title || target?.title || "";
   return (
     <div className={`grid gap-2 rounded-[12px] border p-3.5 ${c.applied ? "border-ok/40 bg-ok-soft/30" : "border-line bg-bg"}`}>
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
+          {skill && (
+            <p className="mb-1.5">
+              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] ${c.skill === "core" ? "bg-brand-soft text-brand-text" : "bg-surface-2 text-muted"}`}>{skill}</span>
+            </p>
+          )}
           <p className="text-sm">
             <span className="font-medium">{CHANGE_LABEL[c.op]}</span>
             {c.op === "add_item" && c.kind && <span className="text-muted"> {KINDS[c.kind as Kind]?.name.toLowerCase()}</span>}
@@ -588,7 +611,52 @@ const STARTERS: Record<string, string[]> = {
   brandbible: ["Every bible needs a competitor ad table with links.", "Keep Read this first to half a page.", "What do you need from us before you build one?"],
 };
 
-function Coach({ a, initial, items }: { a: Agent; initial: ChatMessage[]; items: Item[] }) {
+// Feedback to the whole agent, starting points per agent
+const ROLE_STARTERS: Record<string, string[]> = {
+  strategist: ["Your briefs are too wordy. Get to the angle faster.", "Walk me through how you pick an angle for a new client.", "Always tie the angle back to the client's offer."],
+  creative_director: ["You're flagging too many small things in reviews.", "How do you decide a piece is ready for the client?", "Every video needs the hook in the first 2 seconds."],
+  copywriter: ["Keep headlines under 30 characters.", "How do you pick the voice for a new client?", "Our school clients need a warmer, parent-to-parent voice."],
+  media_buyer: ["Always check frequency before calling fatigue.", "How do you decide an ad is fatigued?", "Ignore ads with under $100 spend."],
+  google_buyer: ["How do you audit a Google account?", "Never raise a budget more than 20% in a day.", "Always check search terms before adding negatives."],
+  market_analyst: ["How do you research a new vertical?", "Benchmarks need a source and a date.", "What do you look at first in a market?"],
+  account_manager: ["Put client complaints at the very top, always.", "How do you decide a client is at risk?", "Keep briefings to what changed since last time."],
+};
+
+type ChatMsg = { id: number; role: "user" | "coach" | "agent"; content: string; changes: Change[]; at: string };
+
+/** One running conversation with an agent or one of its skills: messages, proposed edits with Apply, and the composer. */
+function ChatPanel({
+  icon,
+  heading,
+  intro,
+  starters,
+  placeholder,
+  footnote,
+  thinkingLabel,
+  initial,
+  items,
+  skillName,
+  onSend,
+  onApply,
+  onClear,
+  tall = false,
+}: {
+  icon: string;
+  heading: string;
+  intro: string;
+  starters: string[];
+  placeholder: string;
+  footnote: string;
+  thinkingLabel: string;
+  initial: ChatMsg[];
+  items: Item[];
+  /** In the agent chat: the name of the skill (or "Core") each change touches */
+  skillName?: (c: Change) => string | null;
+  onSend: (msg: string) => Promise<{ ok: true; messages: ChatMsg[] } | { ok: false; error: string }>;
+  onApply: (chatId: number, index: number) => Promise<Result>;
+  onClear: () => Promise<Result>;
+  tall?: boolean;
+}) {
   const [messages, setMessages] = useState(initial);
   const [text, setText] = useState("");
   const [thinking, start] = useTransition();
@@ -605,7 +673,7 @@ function Coach({ a, initial, items }: { a: Agent; initial: ChatMessage[]; items:
     setText("");
     setMessages((m) => [...m, { id: -Date.now(), role: "user", content: msg, changes: [], at: new Date().toISOString() }]);
     start(async () => {
-      const r = await chatWithCoach(a.key, msg);
+      const r = await onSend(msg);
       if (r.ok) setMessages(r.messages);
       else {
         setError(r.error);
@@ -618,18 +686,16 @@ function Coach({ a, initial, items }: { a: Agent; initial: ChatMessage[]; items:
   return (
     <div className="grid gap-4">
       <div className="relative overflow-hidden rounded-[16px] border border-line bg-bg">
-        <div className="max-h-[560px] min-h-[320px] overflow-y-auto px-5 py-5">
+        <div className={`${tall ? "max-h-[620px] min-h-[360px]" : "max-h-[560px] min-h-[320px]"} overflow-y-auto px-5 py-5`}>
           {messages.length === 0 && !thinking ? (
             <div className="grid justify-items-center gap-4 py-10 text-center">
-              <AgentIcon icon={a.icon} size={56} />
+              <AgentIcon icon={icon} size={56} />
               <div>
-                <p className="font-heading text-[18px]">Coach the {a.label.toLowerCase()}</p>
-                <p className="mx-auto mt-1 max-w-md text-sm leading-relaxed text-muted">
-                  Tell it what to do better, paste an example, or ask how it works. It finds the instruction or skill that needs to change and proposes the exact edit. You apply each one with a click.
-                </p>
+                <p className="font-heading text-[18px]">{heading}</p>
+                <p className="mx-auto mt-1 max-w-md text-sm leading-relaxed text-muted">{intro}</p>
               </div>
               <div className="flex max-w-xl flex-wrap justify-center gap-2">
-                {(STARTERS[a.key] ?? []).map((s) => (
+                {starters.map((s) => (
                   <button key={s} onClick={() => (s.endsWith("…") ? setText(s.replace("…", "")) : send(s))} className="rounded-full border border-line px-3.5 py-1.5 text-xs text-muted transition-colors hover:border-faint hover:text-fg">
                     {s}
                   </button>
@@ -646,7 +712,7 @@ function Coach({ a, initial, items }: { a: Agent; initial: ChatMessage[]; items:
                 ) : (
                   <li key={m.id} className="grid max-w-[92%] gap-3">
                     <div className="flex items-start gap-3">
-                      <AgentIcon icon={a.icon} size={28} />
+                      <AgentIcon icon={icon} size={28} />
                       <p className="whitespace-pre-wrap pt-1 text-sm leading-relaxed">{m.content}</p>
                     </div>
                     {m.changes.length > 0 && (
@@ -656,8 +722,9 @@ function Coach({ a, initial, items }: { a: Agent; initial: ChatMessage[]; items:
                             key={i}
                             c={c}
                             items={items}
+                            skill={skillName?.(c) ?? null}
                             onApply={async () => {
-                              const r = await applyChange(a.key, m.id, i);
+                              const r = await onApply(m.id, i);
                               if (!r.ok) return setError(r.error);
                               setMessages((all) => all.map((x) => (x.id === m.id ? { ...x, changes: x.changes.map((y, j) => (j === i ? { ...y, applied: true } : y)) } : x)));
                               router.refresh();
@@ -671,13 +738,13 @@ function Coach({ a, initial, items }: { a: Agent; initial: ChatMessage[]; items:
               )}
               {thinking && (
                 <li className="flex items-center gap-3">
-                  <AgentIcon icon={a.icon} size={28} />
+                  <AgentIcon icon={icon} size={28} />
                   <span className="flex gap-1">
                     {[0, 1, 2].map((i) => (
                       <span key={i} className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted" style={{ animationDelay: `${i * 140}ms` }} />
                     ))}
                   </span>
-                  <span className="text-xs text-faint">Reading its playbook…</span>
+                  <span className="text-xs text-faint">{thinkingLabel}</span>
                 </li>
               )}
             </ul>
@@ -701,7 +768,7 @@ function Coach({ a, initial, items }: { a: Agent; initial: ChatMessage[]; items:
               }
             }}
             rows={Math.min(8, Math.max(1, text.split("\n").length))}
-            placeholder={`Give the ${a.label.toLowerCase()} feedback…`}
+            placeholder={placeholder}
             className="min-h-10 flex-1 resize-none rounded-[10px] border border-line bg-bg px-3.5 py-2.5 text-sm outline-none focus:border-brand-text/60"
           />
           <button disabled={thinking || !text.trim()} className="h-10 shrink-0 rounded-[10px] bg-brand px-4 text-sm font-medium text-white disabled:opacity-40">
@@ -709,13 +776,13 @@ function Coach({ a, initial, items }: { a: Agent; initial: ChatMessage[]; items:
           </button>
         </form>
       </div>
-      <div className="flex items-center justify-between text-xs">
-        {error ? <span className="text-bad">{error}</span> : <span className="text-faint">The coach runs on Opus. Nothing changes until you press Apply.</span>}
+      <div className="flex items-center justify-between gap-3 text-xs">
+        {error ? <span className="text-bad">{error}</span> : <span className="text-faint">{footnote}</span>}
         {messages.length > 0 && (
           <button
             onClick={() => {
               if (!confirm("Clear this conversation? Applied changes stay.")) return;
-              void clearChat(a.key).then(() => setMessages([]));
+              void onClear().then((r) => (r.ok ? setMessages([]) : setError(r.error)));
             }}
             className="text-faint hover:text-fg"
           >
@@ -727,11 +794,31 @@ function Coach({ a, initial, items }: { a: Agent; initial: ChatMessage[]; items:
   );
 }
 
+/** Tune just this skill. The main conversation is with the whole agent, on its page. */
+function Coach({ a, initial, items }: { a: Agent; initial: ChatMessage[]; items: Item[] }) {
+  return (
+    <ChatPanel
+      icon={a.icon}
+      heading={`Tune just the ${a.label.toLowerCase()}`}
+      intro={`For feedback that's only about this one job. It finds the instruction or item that needs to change and proposes the exact edit.${a.roleLabel ? ` To talk to the whole ${a.roleLabel}, open its page.` : ""}`}
+      starters={STARTERS[a.key] ?? []}
+      placeholder={`Feedback for the ${a.label.toLowerCase()} only…`}
+      footnote="Runs on Opus. Nothing changes until you press Apply."
+      thinkingLabel="Reading its playbook…"
+      initial={initial}
+      items={items}
+      onSend={(msg) => chatWithCoach(a.key, msg)}
+      onApply={(id, i) => applyChange(a.key, id, i)}
+      onClear={() => clearChat(a.key)}
+    />
+  );
+}
+
 const TABS = [
   ["use", "Where it's used"],
-  ["coach", "Coach"],
   ["setup", "Brain & instructions"],
   ["playbook", "Skills & knowledge"],
+  ["coach", "Tune this skill"],
   ["runs", "Runs"],
 ] as const;
 
@@ -760,6 +847,17 @@ export function AgentDetail({ a, items, chat }: { a: Agent; items: Item[]; chat:
               </div>
               <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">{a.description}</p>
             </div>
+            {a.roleKey && a.roleLabel && (
+              <Link
+                href={`/settings?tab=agents&role=${a.roleKey}#talk`}
+                className="inline-flex h-9 shrink-0 items-center gap-2 rounded-full border border-line bg-bg/60 px-4 text-sm text-muted transition-colors hover:border-faint hover:text-fg"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden>
+                  <path fill="currentColor" d={ICONS.spark} />
+                </svg>
+                Talk to the {a.roleLabel}
+              </Link>
+            )}
             <dl className="grid w-full grid-cols-2 gap-x-8 gap-y-3 border-t border-line pt-5 sm:grid-cols-5">
               {[
                 ["Brain", `${a.model[0].toUpperCase()}${a.model.slice(1)} · ${a.effort}`],
@@ -923,7 +1021,16 @@ export function AgentDetail({ a, items, chat }: { a: Agent; items: Item[]; chat:
 
 // ─── The six agents ─────────────────────────────────────────────────────────
 
-export type Role = { key: string; label: string; description: string; icon: string; core: string; updatedAt: string; updatedBy: string | null };
+export type Role = {
+  key: string;
+  label: string;
+  description: string;
+  icon: string;
+  core: string;
+  updatedAt: string;
+  updatedBy: string | null;
+  proposals: number; // edits it proposed in its own chat that nobody has applied yet
+};
 
 /** A rule split into its short title (up to the first full stop or colon) and the rest. */
 function splitRule(line: string) {
@@ -1010,10 +1117,10 @@ function SpineEditor({ spine }: { spine: { body: string; updatedAt: string | nul
   );
 }
 
-const roleStats = (skills: Agent[]) => ({
+const roleStats = (role: Role, skills: Agent[]) => ({
   runs: skills.reduce((t, s) => t + s.stats.runs, 0),
   last: skills.map((s) => s.lastAt).filter((x): x is string => Boolean(x)).sort().at(-1) ?? null,
-  proposals: skills.reduce((t, s) => t + s.proposals, 0),
+  proposals: role.proposals + skills.reduce((t, s) => t + s.proposals, 0),
 });
 
 export function RolesOverview({ roles, agents, items, spine }: { roles: Role[]; agents: Agent[]; items: Item[]; spine: { body: string; updatedAt: string | null; updatedBy: string | null } }) {
@@ -1039,7 +1146,7 @@ export function RolesOverview({ roles, agents, items, spine }: { roles: Role[]; 
           <ul className="grid auto-rows-fr gap-4 md:grid-cols-2 xl:grid-cols-3">
             {roles.map((r) => {
               const skills = agents.filter((a) => a.roleKey === r.key);
-              const st = roleStats(skills);
+              const st = roleStats(r, skills);
               const itemCount = items.filter((k) => k.active && skills.some((s) => s.key === k.agentKey)).length;
               return (
                 <li key={r.key} className="min-w-0">
@@ -1121,10 +1228,69 @@ export function RolesOverview({ roles, agents, items, spine }: { roles: Role[]; 
   );
 }
 
-export function RoleDetail({ role, skills, items }: { role: Role; skills: Agent[]; items: Item[] }) {
+function CoreEditor({ role }: { role: Role }) {
   const [core, setCore] = useState(role.core);
   useDirty(`core:${role.key}`, core !== role.core, { label: `${role.label} core`, save: () => saveRoleCore(role.key, core), discard: () => setCore(role.core) });
-  const st = roleStats(skills);
+  return (
+    <section className="grid gap-3 rounded-[18px] border border-line bg-surface p-6">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div>
+          <h3 className="font-heading text-[18px]">Core</h3>
+          <p className="mt-1 text-sm text-muted">Every {role.label} skill reads this after Kaizen strategy and before its own playbook. ~{tokensOf(core).toLocaleString()} tokens</p>
+        </div>
+        <span className="text-xs text-faint">
+          Changed {fmt(role.updatedAt)}
+          {role.updatedBy && ` by ${role.updatedBy}`}
+        </span>
+      </div>
+      <textarea value={core} onChange={(e) => setCore(e.target.value)} rows={Math.min(24, Math.max(8, core.split("\n").length + 2))} className={`${field} h-auto py-4 text-[13.5px] font-normal leading-relaxed`} />
+    </section>
+  );
+}
+
+/** Talk to the whole agent like an employee: it answers from its core and every skill, and proposes edits wherever they belong. */
+function TalkToAgent({ role, skills, items, chat }: { role: Role; skills: Agent[]; items: Item[]; chat: RoleChatMessage[] }) {
+  const names = new Map(skills.map((s) => [s.key as string, s.label]));
+  return (
+    <section id="talk" className="relative grid scroll-mt-6 gap-4 overflow-hidden rounded-[20px] border border-line bg-surface p-5 sm:p-6">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h3 className="font-heading text-[20px] leading-tight">Talk to the {role.label}</h3>
+          <p className="mt-1 max-w-2xl text-sm text-muted">
+            Ask how it works or tell it what to do better, like you would a teammate. It works out whether that belongs in its core or in one of its {skills.length} skills and proposes the exact edit. You apply each one.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          <span className="rounded-full bg-brand-soft px-2.5 py-1 text-[11px] text-brand-text">Core</span>
+          {skills.map((s) => (
+            <span key={s.key} className="rounded-full bg-surface-2 px-2.5 py-1 text-[11px] text-muted">
+              {s.label}
+            </span>
+          ))}
+        </div>
+      </div>
+      <ChatPanel
+        tall
+        icon={role.icon}
+        heading={`Hi, I'm the ${role.label}`}
+        intro={`I know my core and all ${skills.length} of my skills. Ask me how I do something, or tell me what to change and I'll show you exactly where I'd change it.`}
+        starters={ROLE_STARTERS[role.key] ?? []}
+        placeholder={`Talk to the ${role.label}…`}
+        footnote="Runs on Opus. Nothing changes until you press Apply."
+        thinkingLabel="Thinking it through…"
+        initial={chat}
+        items={items}
+        skillName={(c) => (c.skill === "core" ? "Core" : names.get(c.skill ?? "") ?? null)}
+        onSend={(msg) => chatWithAgent(role.key, msg)}
+        onApply={(id, i) => applyRoleChange(role.key, id, i)}
+        onClear={() => clearRoleChat(role.key)}
+      />
+    </section>
+  );
+}
+
+export function RoleDetail({ role, skills, items, chat }: { role: Role; skills: Agent[]; items: Item[]; chat: RoleChatMessage[] }) {
+  const st = roleStats(role, skills);
   return (
     <DirtyProvider>
       <div className="grid gap-6 pb-24">
@@ -1155,19 +1321,10 @@ export function RoleDetail({ role, skills, items }: { role: Role; skills: Agent[
           </div>
         </header>
 
-        <section className="grid gap-3 rounded-[18px] border border-line bg-surface p-6">
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <div>
-              <h3 className="font-heading text-[18px]">Core</h3>
-              <p className="mt-1 text-sm text-muted">Every {role.label} skill reads this after Kaizen strategy and before its own playbook. ~{tokensOf(core).toLocaleString()} tokens</p>
-            </div>
-            <span className="text-xs text-faint">
-              Changed {fmt(role.updatedAt)}
-              {role.updatedBy && ` by ${role.updatedBy}`}
-            </span>
-          </div>
-          <textarea value={core} onChange={(e) => setCore(e.target.value)} rows={Math.min(24, Math.max(8, core.split("\n").length + 2))} className={`${field} h-auto py-4 text-[13.5px] font-normal leading-relaxed`} />
-        </section>
+        <TalkToAgent role={role} skills={skills} items={items} chat={chat} />
+
+        {/* Remounts when the core changes (an edit applied from the chat) so the editor shows the new text */}
+        <CoreEditor key={role.updatedAt} role={role} />
 
         <section className="grid gap-3">
           <h3 className="font-heading text-[18px]">Skills</h3>
