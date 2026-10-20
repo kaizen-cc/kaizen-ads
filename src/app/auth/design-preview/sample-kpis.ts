@@ -45,6 +45,11 @@ const make = (
     sheet: null,
     sprint: null,
     lastChange: null,
+    changes: [
+      { at: new Date(+NOW - 5 * 3_600_000).toISOString(), who: "Media buyer", what: "Updated ad set budget", object: "TOF | Broad", objectType: "ad set" },
+      { at: new Date(+NOW - 2 * 86_400_000).toISOString(), who: "Media buyer", what: "Created ad", object: "UGC hook v3", objectType: "ad" },
+      { at: new Date(+NOW - 11 * 86_400_000).toISOString(), who: "Media buyer", what: "Paused ad", object: "Static offer", objectType: "ad" },
+    ],
     label: null,
     conversion,
     conversionLabel: conversionLabel(conversion),

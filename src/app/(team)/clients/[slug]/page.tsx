@@ -14,6 +14,7 @@ import { createClient } from "@/lib/supabase/server";
 import { loadClientCreative } from "@/lib/client-creative";
 import { ClientView } from "./client-view";
 import { latestAudits } from "@/lib/audit-summary";
+import { changeKey, loadChanges } from "@/lib/account-changes";
 import { loadClientChat } from "@/lib/client-chat";
 import type { AuditTarget } from "./client-chat";
 
@@ -161,6 +162,9 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
   // The audits on this client's KPIs (the same ones the KPI board shows) and my thread with the AI
   const [auditBy, chatTurns] = await Promise.all([latestAudits(supabase, kpis.map((k) => k.id)), loadClientChat(supabase, client.id, me.id)]);
   const audits = Object.fromEntries(auditBy);
+  // Each ad account's last 30 changes
+  const changeBy = await loadChanges(supabase, kpis.filter((k) => k.accountId).map((k) => changeKey(k.platform, k.accountId!)), 30);
+  const changes = Object.fromEntries(kpis.filter((k) => k.accountId).map((k) => [k.id, changeBy.get(changeKey(k.platform, k.accountId!)) ?? []]));
   const targets: AuditTarget[] = kpis
     .filter((k) => k.accountId)
     .map((k) => {
@@ -181,6 +185,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
       creative={creative}
       kpis={kpis}
       audits={audits}
+      changes={changes}
       chat={{ initial: chatTurns, targets }}
       fatigue={fatigue}
       market={market}

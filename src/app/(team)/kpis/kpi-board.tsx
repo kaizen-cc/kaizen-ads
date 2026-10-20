@@ -13,6 +13,8 @@ import { addKpiTarget, archiveKpiTarget, exploreKpi, linkAdAccount, pullClientKp
 import type { Explore } from "@/lib/kpi/explore";
 import { DailyChart, Ladder, PaceBar, paceMeta } from "./kpi-charts";
 import { AuditPanel, agoText, type AuditSummary } from "./audit-panel";
+import { ChangeLog } from "@/components/change-log";
+import type { AccountChange } from "@/lib/account-changes";
 import type { SprintSummary } from "@/lib/sprints";
 
 export type KpiRow = {
@@ -54,6 +56,7 @@ export type KpiRow = {
   sprint: SprintSummary | null;
   /** The latest change someone made in the ad account (Meta's activity log), when it was last read */
   lastChange: { at: string | null; who: string | null; what: string | null; object: string | null; checkedAt: string; error: string | null } | null;
+  changes: AccountChange[]; // the last 10 changes to the ad account
 };
 
 type Person = { id: string; name: string };
@@ -497,6 +500,7 @@ function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
       {r.sheet && (r.sheet.problem || r.sheet.solution || r.sheet.buying || r.sheet.creative || r.sheet.copy) && <SheetNotes s={r.sheet} />}
       {r.sprint && <SprintStrip s={r.sprint} />}
       {r.accountId && <AuditPanel targetId={r.id} audit={r.audit} platform={r.platform} />}
+      {r.accountId && <ChangeLog changes={r.changes} platform={r.platform} limit={10} />}
 
       {previewing && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-[12px] border border-brand/40 bg-brand-soft px-4 py-3 text-sm">

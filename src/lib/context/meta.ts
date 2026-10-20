@@ -748,7 +748,7 @@ export async function accountActivity(adAccountId: string, sinceDays = 30) {
   const res = await graph<Paged<{ actor_name?: string; event_time: string; event_type: string; translated_event_type?: string; object_name?: string; object_type?: string }>>(`${act}/activities`, {
     fields: "actor_name,event_time,event_type,translated_event_type,object_name,object_type",
     since: String(since),
-    limit: "50",
+    limit: "100",
   });
   const automatic = /(ad_review|billing|payment|charge|account_spending_limit_reached|first_delivery|ad_account_billing|funding|receipt|threshold)/i;
   return res.data

@@ -215,7 +215,13 @@ export async function adoptNewAccounts(admin: SupabaseClient) {
 /** The account's latest changes from Meta's activity log. A failure is noted, never fatal to the KPI sync. */
 async function saveActivity(admin: SupabaseClient, account: string, platform = "meta") {
   try {
-    const recent = platform === "google" ? await googleActivity(account) : await accountActivity(account);
+    const recent = platform === "google" ? await googleActivity(account) : await accountActivity(account, 90);
+    // Kept as a running log (it outlives what the platforms keep); a change already logged is left as it is
+    if (recent.length)
+      await admin.from("ad_account_changes").upsert(
+        recent.map((r) => ({ key: `${account}|${r.at}|${r.what}|${r.object ?? ""}|${r.who ?? ""}`.slice(0, 500), ad_account_id: account, platform, at: r.at, who: r.who, what: r.what, object: r.object, object_type: r.objectType })),
+        { onConflict: "key", ignoreDuplicates: true },
+      );
     await admin.from("ad_account_activity").upsert({
       ad_account_id: account,
       last_change_at: recent[0]?.at ?? null,

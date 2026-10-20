@@ -4,6 +4,8 @@ import type { ClientKpi } from "@/lib/kpi/client";
 import { STATUS, kpiValue } from "@/lib/kpi/format";
 import { DailyChart, PaceBar } from "../../kpis/kpi-charts";
 import { AuditPanel, type AuditSummary } from "../../kpis/audit-panel";
+import { ChangeLog } from "@/components/change-log";
+import type { AccountChange } from "@/lib/account-changes";
 
 // How the client's ad accounts are doing against their targets, from the KPI tracker (refreshed every 2 hours).
 // The same picture every agent reads before it writes a brief, copy or a review for this client. Each KPI carries its
@@ -23,7 +25,7 @@ const change = (x: number | null) =>
 
 const TREND = { improving: { text: "Improving", tone: "text-ok", arrow: "↘" }, steady: { text: "Steady", tone: "text-muted", arrow: "→" }, slipping: { text: "Slipping", tone: "text-bad", arrow: "↗" } } as const;
 
-export function KpiPanel({ kpis, audits }: { kpis: ClientKpi[]; audits?: Record<string, AuditSummary> | null }) {
+export function KpiPanel({ kpis, audits, changes }: { kpis: ClientKpi[]; audits?: Record<string, AuditSummary> | null; changes?: Record<string, AccountChange[]> | null }) {
   const synced = kpis.map((k) => k.computedAt).filter(Boolean).sort().at(-1);
   return (
     <Section
@@ -111,6 +113,7 @@ export function KpiPanel({ kpis, audits }: { kpis: ClientKpi[]; audits?: Record<
                   <p className="text-sm text-muted">{k.status === "idle" ? "Not spending right now." : k.error ?? "Waiting for its first sync."}</p>
                 )}
                 {audits && k.accountId && <AuditPanel targetId={k.id} audit={audits[k.id] ?? null} platform={k.platform} />}
+                {changes && k.accountId && <ChangeLog changes={changes[k.id] ?? []} platform={k.platform} limit={30} />}
               </article>
             );
           })}

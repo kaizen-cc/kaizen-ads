@@ -6,6 +6,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { KpiBoard, type KpiRow } from "./kpi-board";
 import { latestAudits } from "@/lib/audit-summary";
+import { changeKey, loadChanges } from "@/lib/account-changes";
 import { loadSprints } from "@/lib/sprints";
 
 // Pulling one client's numbers from Meta on demand can take a minute; an audit runs a few minutes after the click
@@ -46,6 +47,8 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
   const { data: activity } = await supabase.from("ad_account_activity").select("ad_account_id, last_change_at, last_change, checked_at, error");
   const activityBy = new Map((activity ?? []).map((x) => [x.ad_account_id as string, x]));
   const sprints = new Map((await loadSprints(supabase, { targetIds: (targets ?? []).map((t) => t.id) })).map((x) => [x.targetId, x.sprint]));
+  // Each account's last 10 changes, for its change history
+  const changes = await loadChanges(supabase, (targets ?? []).filter((t) => t.ad_account_id).map((t) => changeKey(t.platform, String(t.ad_account_id))), 10);
 
   const rows: KpiRow[] = (targets ?? [])
     .map((t) => {
@@ -88,6 +91,7 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
         extraMetrics: (t.extra_metrics ?? []) as string[],
         sheet: (t.sheet ?? null) as KpiRow["sheet"],
         sprint: sprints.get(t.id) ?? null,
+        changes: t.ad_account_id ? (changes.get(changeKey(t.platform, String(t.ad_account_id))) ?? []) : [],
         lastChange: (() => {
           const x = t.ad_account_id ? activityBy.get(t.platform === "google" ? String(t.ad_account_id).replace(/\D/g, "") : String(t.ad_account_id).replace(/^act_/, "")) : undefined;
           if (!x) return null;
