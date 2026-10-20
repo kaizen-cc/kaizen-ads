@@ -47,7 +47,7 @@ export function LeaderView(d: LeaderData & { handoffs?: React.ReactNode; recap?:
 
       <TopicDeck tiles={tiles} />
 
-      <Compartment title="Act on today" note="Your decisions first">
+      <Compartment tone="bad" title="Act on today" note="Your decisions first">
         {d.review.length > 0 && (
           <Topic id="review" title={d.reviewLabel} summary={`${d.review.length} waiting, oldest first`} count={d.review.length} tone="brand" defaultOpen>
             <Queue items={d.review} empty={{ title: "All reviewed", body: "" }} />
@@ -57,12 +57,12 @@ export function LeaderView(d: LeaderData & { handoffs?: React.ReactNode; recap?:
       </Compartment>
 
       {accounts.some((b) => b.panel) && (
-        <Compartment title="Your accounts" note="Results, ads and creative this month">
+        <Compartment tone="warn" title="Your accounts" note="Results, ads and creative this month">
           {accounts.map((b) => b.panel)}
         </Compartment>
       )}
 
-      <Compartment title="Your team" note={`${d.department} only`}>
+      <Compartment tone="quiet" title="Your team" note={`${d.department} only`}>
         {working ? (
           <Topic
             id="team"

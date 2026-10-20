@@ -40,22 +40,25 @@ function setOpen(id: string, open: boolean, current: string[]) {
   write([...next, open ? id : `closed:${id}`]);
 }
 
-const TONE: Record<TopicTone, { dot: string; ring: string; text: string }> = {
-  bad: { dot: "bg-bad", ring: "hover:border-bad/50", text: "text-bad" },
-  warn: { dot: "bg-warn", ring: "hover:border-warn/50", text: "text-warn" },
-  ok: { dot: "bg-ok", ring: "hover:border-ok/50", text: "text-ok" },
-  brand: { dot: "bg-brand", ring: "hover:border-brand/60", text: "text-brand-text" },
-  quiet: { dot: "bg-faint", ring: "hover:border-faint", text: "text-faint" },
+// The same light as the "Your day" banner: a deep panel lit from one corner in the topic's colour
+const TONE: Record<TopicTone, { accent: string; glow: string; soft: string; rank: number }> = {
+  bad: { accent: "#ff4d5e", glow: "rgba(200,16,46,0.55)", soft: "rgba(200,16,46,0.16)", rank: 0 },
+  brand: { accent: "#ff6b78", glow: "rgba(178,30,44,0.5)", soft: "rgba(178,30,44,0.14)", rank: 1 },
+  warn: { accent: "#f2b14c", glow: "rgba(224,150,40,0.45)", soft: "rgba(224,150,40,0.12)", rank: 2 },
+  ok: { accent: "#5be3a5", glow: "rgba(40,180,120,0.4)", soft: "rgba(40,180,120,0.1)", rank: 3 },
+  quiet: { accent: "#9aa8ff", glow: "rgba(90,110,255,0.35)", soft: "rgba(90,110,255,0.1)", rank: 4 },
 };
 
-/** Today at a glance: one tile per topic that has something in it. */
+/** Today at a glance: one lit tile per topic with something in it, the most pressing first and largest. */
 export function TopicDeck({ tiles }: { tiles: TopicTile[] }) {
   const open = useOpen();
   if (!tiles.length) return null;
+  const sorted = [...tiles].sort((a, b) => TONE[a.tone].rank - TONE[b.tone].rank);
   return (
-    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-[repeat(auto-fit,minmax(170px,1fr))]">
-      {tiles.map((t) => {
+    <div className="grid grid-flow-dense grid-cols-2 gap-3 md:grid-cols-4">
+      {sorted.map((t, i) => {
         const tone = TONE[t.tone];
+        const lead = i === 0 && sorted.length > 2;
         return (
           <button
             key={t.id}
@@ -64,17 +67,21 @@ export function TopicDeck({ tiles }: { tiles: TopicTile[] }) {
               setOpen(t.id, true, open ?? []);
               requestAnimationFrame(() => document.getElementById(`topic-${t.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
             }}
-            className={`group relative grid content-between gap-3 overflow-hidden rounded-[16px] border border-line bg-surface p-4 text-left transition-colors ${tone.ring}`}
+            style={{ ["--glow" as string]: tone.glow, ["--accent" as string]: tone.accent }}
+            className={`group relative isolate grid min-h-[132px] content-between gap-4 overflow-hidden rounded-[22px] border border-white/[0.07] bg-[#0b0a0e] p-5 text-left shadow-[0_24px_60px_-34px_rgba(0,0,0,0.9)] transition duration-300 hover:-translate-y-0.5 hover:border-white/15 ${lead ? "col-span-2 md:p-6" : ""}`}
           >
-            <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.14em] text-faint">
-              <span className={`h-1.5 w-1.5 rounded-full ${tone.dot}`} />
-              {t.label}
+            <span aria-hidden className={`pointer-events-none absolute -z-10 rounded-full opacity-80 blur-[60px] transition-opacity duration-500 group-hover:opacity-100 ${lead ? "-left-16 -top-24 h-[240px] w-[240px]" : "-left-10 -top-16 h-[150px] w-[150px]"}`} style={{ background: "var(--glow)" }} />
+            <span aria-hidden className="pointer-events-none absolute inset-x-5 top-0 -z-10 h-px opacity-60" style={{ background: "linear-gradient(90deg, var(--accent), transparent)" }} />
+            <span className="flex items-center justify-between gap-2">
+              <span className="truncate text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55">{t.label}</span>
+              <span className="text-white/30 transition-transform duration-300 group-hover:translate-y-0.5 group-hover:text-white/70">↓</span>
             </span>
-            <span className="grid gap-0.5">
-              <span className={`tabular font-display text-3xl leading-none tracking-tight ${t.tone === "quiet" ? "text-muted" : ""}`}>{t.value}</span>
-              <span className="line-clamp-2 text-[11.5px] leading-snug text-muted">{t.sub}</span>
+            <span className="grid gap-1.5">
+              <span className={`tabular font-display leading-none tracking-tight ${lead ? "text-6xl md:text-7xl" : "text-5xl"}`} style={{ color: "var(--accent)" }}>
+                {t.value}
+              </span>
+              <span className={`leading-snug text-white/65 ${lead ? "max-w-[30ch] text-sm" : "line-clamp-2 text-[12px]"}`}>{t.sub}</span>
             </span>
-            <span className="absolute right-3 top-3 text-faint opacity-0 transition-opacity group-hover:opacity-100">↓</span>
           </button>
         );
       })}
@@ -82,20 +89,24 @@ export function TopicDeck({ tiles }: { tiles: TopicTile[] }) {
   );
 }
 
-/** A group of topics under one heading ("Act on today", "Your accounts", "The work"). */
-export function Compartment({ title, note, children }: { title: string; note?: string; children: React.ReactNode }) {
+/** A group of topics under one heading ("Act on today", "Your accounts", "The work"), with a line lit in its colour. */
+export function Compartment({ title, note, tone = "brand", children }: { title: string; note?: string; tone?: TopicTone; children: React.ReactNode }) {
+  const t = TONE[tone];
   return (
-    <section className="grid gap-3">
-      <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-line pb-2">
-        <h2 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-faint">{title}</h2>
-        {note && <span className="text-xs text-faint">{note}</span>}
+    <section className="grid gap-4">
+      <div className="grid gap-2.5">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <h2 className="font-display text-2xl tracking-tight md:text-[28px]">{title}</h2>
+          {note && <span className="pb-1 text-xs text-white/45">{note}</span>}
+        </div>
+        <span aria-hidden className="h-px w-full" style={{ background: `linear-gradient(90deg, ${t.accent}, ${t.soft} 35%, transparent 80%)` }} />
       </div>
-      <div className="grid gap-2.5">{children}</div>
+      <div className="grid gap-3">{children}</div>
     </section>
   );
 }
 
-/** One topic: a header that says what's in it, and the detail to act on when it's open. */
+/** One topic: a lit header that says what's in it, and the detail to act on when it's open. */
 export function Topic({
   id,
   title,
@@ -117,23 +128,36 @@ export function Topic({
   const isOpen = open === null ? defaultOpen : open.includes(id) || (defaultOpen && !open.includes(`closed:${id}`));
   const t = TONE[tone];
   return (
-    <div id={`topic-${id}`} className={`scroll-mt-6 overflow-hidden rounded-[16px] border bg-surface transition-colors ${isOpen ? "border-line" : "border-line/70 hover:border-line"}`}>
-      <button type="button" onClick={() => setOpen(id, !isOpen, open ?? [])} aria-expanded={isOpen} className="flex w-full items-center gap-3 px-4 py-3.5 text-left md:px-5">
-        <span className={`h-2 w-2 shrink-0 rounded-full ${t.dot}`} />
-        <span className="grid min-w-0 flex-1 gap-0.5">
-          <span className="flex items-baseline gap-2">
-            <span className="font-heading text-[16px]">{title}</span>
-            {count !== undefined && count !== 0 && <span className={`tabular text-xs ${t.text}`}>{count}</span>}
+    <div
+      id={`topic-${id}`}
+      style={{ ["--glow" as string]: t.glow, ["--soft" as string]: t.soft, ["--accent" as string]: t.accent }}
+      className={`group/topic relative isolate scroll-mt-6 overflow-hidden rounded-[22px] border bg-[#0b0a0e] shadow-[0_24px_60px_-40px_rgba(0,0,0,0.9)] transition-colors duration-300 ${isOpen ? "border-white/12" : "border-white/[0.06] hover:border-white/12"}`}
+    >
+      <span aria-hidden className={`pointer-events-none absolute -left-20 -top-20 -z-10 h-[220px] w-[220px] rounded-full blur-[70px] transition-opacity duration-500 ${isOpen ? "opacity-70" : "opacity-40 group-hover/topic:opacity-60"}`} style={{ background: "var(--glow)" }} />
+      <span aria-hidden className="pointer-events-none absolute inset-y-4 left-0 -z-10 w-[3px] rounded-r-full" style={{ background: "var(--accent)" }} />
+      <button type="button" onClick={() => setOpen(id, !isOpen, open ?? [])} aria-expanded={isOpen} className="flex w-full items-center gap-4 px-5 py-4 text-left md:px-6 md:py-5">
+        {count !== undefined && count !== 0 && (
+          <span className="tabular grid h-12 min-w-12 shrink-0 place-items-center rounded-[14px] px-2 font-display text-2xl leading-none" style={{ color: "var(--accent)", background: "var(--soft)" }}>
+            {count}
           </span>
-          <span className="truncate text-xs text-muted">{summary}</span>
+        )}
+        <span className="grid min-w-0 flex-1 gap-1">
+          <span className="font-heading text-[17px] leading-tight text-white md:text-lg">{title}</span>
+          <span className="truncate text-[13px] text-white/55">{summary}</span>
         </span>
-        <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full border border-line text-faint transition-transform ${isOpen ? "rotate-180" : ""}`} aria-hidden>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+        <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full border border-white/10 text-white/50 transition duration-300 group-hover/topic:border-white/25 group-hover/topic:text-white ${isOpen ? "rotate-180" : ""}`} aria-hidden>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
             <path d="m6 9 6 6 6-6" />
           </svg>
         </span>
       </button>
-      {isOpen && <div className="border-t border-line px-4 pb-5 pt-4 md:px-5 [&>section]:border-0 [&>section]:bg-transparent [&>section]:p-0 [&>section]:shadow-none">{children}</div>}
+      {isOpen && (
+        <div className="relative px-5 pb-6 pt-1 md:px-6 [&>section]:border-0 [&>section]:bg-transparent [&>section]:p-0 [&>section]:shadow-none" style={{ animation: "card-in-topic .35s cubic-bezier(.2,.8,.2,1) both" }}>
+          <style>{`@keyframes card-in-topic { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: none } }`}</style>
+          <span aria-hidden className="mb-5 block h-px w-full" style={{ background: "linear-gradient(90deg, var(--accent), transparent 70%)", opacity: 0.35 }} />
+          {children}
+        </div>
+      )}
     </div>
   );
 }

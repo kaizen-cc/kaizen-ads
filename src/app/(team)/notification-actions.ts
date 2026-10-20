@@ -4,11 +4,16 @@ import { requireStaff } from "@/lib/auth";
 import { loadNotifications, withDefaults, type NoticePrefs } from "@/lib/notifications";
 import { createClient } from "@/lib/supabase/server";
 
-/** The bell: the latest notifications, how many are unread, and whether critical ones should pop up. */
+/**
+ * The bell: the latest notifications, how many are unread, and whether critical ones should pop up. It checks every
+ * minute, so it never redirects: signed out (an expired session, the design preview) it just comes back empty, and
+ * the access rules keep each person to their own rows.
+ */
 export async function myNotifications() {
-  const me = await requireStaff();
   const db = await createClient();
-  const [list, { data: prefs }] = await Promise.all([loadNotifications(db), db.from("notification_prefs").select("settings").eq("profile_id", me.id).maybeSingle()]);
+  const { data: claims } = await db.auth.getClaims();
+  if (!claims?.claims) return { items: [], unread: 0, popups: false };
+  const [list, { data: prefs }] = await Promise.all([loadNotifications(db), db.from("notification_prefs").select("settings").maybeSingle()]);
   return { ...list, popups: withDefaults(prefs?.settings).popups };
 }
 

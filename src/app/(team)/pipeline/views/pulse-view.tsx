@@ -61,18 +61,18 @@ export function PulseView(d: PulseData) {
       <TopicDeck tiles={tiles} />
 
       {act.some((b) => b.panel) && (
-        <Compartment title="Act on today" note="Promises, decisions and anything stuck">
+        <Compartment tone="bad" title="Act on today" note="Promises, decisions and anything stuck">
           {act.map((b) => b.panel)}
         </Compartment>
       )}
 
       {accounts.some((b) => b.panel) && (
-        <Compartment title="Your accounts" note="Results, ads and creative this month">
+        <Compartment tone="warn" title="Your accounts" note="Results, ads and creative this month">
           {accounts.map((b) => b.panel)}
         </Compartment>
       )}
 
-      <Compartment title="The work" note={working ? "Requests moving through Kaizen Ads" : undefined}>
+      <Compartment tone="quiet" title="The work" note={working ? "Requests moving through Kaizen Ads" : undefined}>
         {working ? (
           <Topic id="work" title="Work in motion" summary={`${v.inMotion} pieces · turnaround ${v.turnaroundDays == null ? "—" : `${v.turnaroundDays.toFixed(1)}d`} · first-pass ${pct(v.firstPassRate)} · on time ${pct(v.onTimeRate)}`} count={v.inMotion} tone={workTile?.tone}>
             <div className="grid gap-6">
