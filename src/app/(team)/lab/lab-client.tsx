@@ -4,9 +4,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
-import { METRIC_LABEL, SEATS, type Metric, type Seat } from "@/lib/lab-seats";
+import { METRIC_LABEL, SEATS, TURNS_PER_ROUND, type Metric, type Seat } from "@/lib/lab-seats";
 import type { ClientNumbers, ProposedTest } from "@/lib/lab";
-import { createTest, decideTest, deleteSource, deleteThread, deployLearning, draftDeploy, dropTest, iterateTest, sendToTable, startTest, type Attachment } from "./actions";
+import { createTest, decideTest, deleteSource, deleteThread, deployLearning, draftDeploy, dropTest, iterateTest, sendToTable, startTest, tableSpeaks, type Attachment } from "./actions";
 
 export type LabClientRow = { id: string; name: string; slug: string; industry: string | null; spend30: number };
 export type LabMessage = { id: string; role: "user" | "agent"; seat: Seat | null; author: string | null; body: string; tests: ProposedTest[]; attachments: { id: string; kind: string; title: string; url: string | null; failed?: boolean }[]; at: string };
@@ -51,6 +51,12 @@ export function LabClient(props: {
   aiOn: boolean;
 }) {
   const [tab, setTab] = useState<Tab>(props.tab);
+  // Opening a conversation (e.g. a flop sent back to iterate) shows the table
+  const [opened, setOpened] = useState(props.threadId);
+  if (props.threadId !== opened) {
+    setOpened(props.threadId);
+    if (props.threadId) setTab("table");
+  }
   const running = props.tests.filter((t) => t.status === "running").length;
   const won = props.tests.filter((t) => t.status === "won").length;
   const deployedClients = new Set(props.tests.flatMap((t) => t.deployed.map((d) => d.id))).size;
@@ -133,24 +139,84 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources }: { 
   const [adding, setAdding] = useState<null | "link" | "paste">(null);
   const [draftUrl, setDraftUrl] = useState("");
   const [draftDoc, setDraftDoc] = useState({ title: "", body: "", kind: "doc" as Attachment["kind"] });
-  const [pending, setPending] = useState<{ text: string; shared: Attachment[] } | null>(null);
-  const [phase, setPhase] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState<ProposedTest | null>(null);
   const [dragging, setDragging] = useState(false);
+  // The conversation open here (a new one has an id before the page catches up), and what was said since the page loaded
+  const [tid, setTid] = useState(threadId);
+  const [local, setLocal] = useState<LabMessage[]>([]);
+  // Who's composing right now: a seat, or the whole table while it picks who answers
+  const [typing, setTyping] = useState<Seat | "table" | null>(null);
+  const [sending, setSending] = useState<null | "sending" | "reading">(null);
+  const [seen, setSeen] = useState(threadId);
+  const tidRef = useRef(threadId);
+  const pageThread = useRef(threadId);
+  const round = useRef(0);
   const end = useRef<HTMLDivElement>(null);
   const testById = useMemo(() => new Map(tests.map((t) => [t.id, t])), [tests]);
 
+  // Another conversation was opened: start clean (a round still talking in the old one stops after its message)
+  if (threadId !== seen) {
+    setSeen(threadId);
+    if (threadId !== tid) {
+      setTid(threadId);
+      setLocal([]);
+      setTyping(null);
+      setSending(null);
+      setError(null);
+    }
+  }
   useEffect(() => {
-    end.current?.scrollIntoView({ block: "end" });
-  }, [messages.length, pending]);
+    tidRef.current = tid;
+    pageThread.current = threadId;
+  }, [tid, threadId]);
 
-  // While the table works: reading what was shared first, then talking it through
+  const thread = useMemo(() => {
+    const ids = new Set(messages.map((m) => m.id));
+    return tid === threadId ? [...messages, ...local.filter((m) => !ids.has(m.id))] : local;
+  }, [messages, local, tid, threadId]);
+  const last = thread[thread.length - 1];
+  const waiting = Boolean(tid) && last?.role === "user" && !typing && !sending;
+
   useEffect(() => {
-    if (!pending) return;
-    const t = setInterval(() => setPhase((p) => p + 1), 9000);
-    return () => clearInterval(t);
-  }, [pending]);
+    end.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+  }, [thread.length, typing, sending]);
+
+  const add = (m: LabMessage) => setLocal((l) => [...l.filter((x) => x.id !== m.id), m].sort((a, b) => Date.parse(a.at) - Date.parse(b.at)));
+
+  /** The table talks it through, one seat at a time, each message shown as it lands, until it's the exec's turn. */
+  const talk = async (id: string) => {
+    const mine = ++round.current;
+    let seat: Seat | null = null;
+    setError(null);
+    for (let i = 0; i < TURNS_PER_ROUND; i++) {
+      setTyping(seat ?? "table");
+      const r = await tableSpeaks(id, seat);
+      if (tidRef.current !== id) return;
+      if (r.ok && r.message) add({ id: r.message.id, role: "agent", seat: r.message.seat, author: null, body: r.message.body, tests: r.message.tests, attachments: [], at: r.message.at });
+      // The exec said something meanwhile: that starts a new round, which carries on from here
+      if (round.current !== mine) return;
+      if (!r.ok) {
+        setError(r.error);
+        break;
+      }
+      if (!r.message?.next) break;
+      seat = r.message.next;
+    }
+    setTyping(null);
+    if (pageThread.current === id) router.refresh();
+    else router.replace(`/lab?t=${id}`, { scroll: false });
+  };
+
+  // Opened on a message the table hasn't answered yet (a test sent back to iterate, or a refresh mid-thought): answer it
+  useEffect(() => {
+    const m = messages[messages.length - 1];
+    if (!threadId || m?.role !== "user" || Date.now() - Date.parse(m.at) > 10 * 60_000) return;
+    const t = setTimeout(() => void talk(threadId), 0);
+    return () => clearTimeout(t);
+    // Only when a conversation opens, not on every refresh
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threadId]);
 
   const addFiles = async (files: FileList | File[]) => {
     const list = [...files].slice(0, 4);
@@ -165,58 +231,65 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources }: { 
     setShared((s) => [...s, ...read.filter((r) => r.body.trim())]);
   };
 
+  // The exec can speak at any time: what they say is saved, and a new round starts that reads everything so far
   const send = async () => {
     const msg = text.trim();
-    if ((!msg && !shared.length) || pending) return;
-    const out = { text: msg, shared };
+    if ((!msg && !shared.length) || sending) return;
+    const out = shared;
+    const temp: LabMessage = {
+      id: `sending-${Date.now()}`,
+      role: "user",
+      seat: null,
+      author: null,
+      body: msg,
+      tests: [],
+      attachments: out.map((a, i) => ({ id: String(i), kind: a.kind, title: a.title || a.url, url: a.url || null })),
+      at: new Date().toISOString(),
+    };
     setText("");
     setShared([]);
+    setAdding(null);
     setError(null);
-    setPhase(0);
-    setPending(out);
-    const r = await sendToTable(threadId, msg, out.shared);
-    setPending(null);
+    setLocal((l) => [...l, temp]);
+    round.current++;
+    setSending(out.some((a) => a.url) ? "reading" : "sending");
+    const r = await sendToTable(tidRef.current, msg, out);
+    setSending(null);
     if (!r.ok) {
+      setLocal((l) => l.filter((m) => m.id !== temp.id));
       setText(msg);
-      setShared(out.shared);
+      setShared(out);
       return setError(r.error);
     }
-    if (r.threadId !== threadId) router.push(`/lab?t=${r.threadId}`);
-    else router.refresh();
+    setLocal((l) => l.map((m) => (m.id === temp.id ? { ...temp, id: r.message.id, body: r.message.body, attachments: r.message.attachments, at: r.message.at } : m)));
+    if (r.threadId !== tidRef.current) {
+      tidRef.current = r.threadId;
+      setTid(r.threadId);
+      window.history.replaceState(null, "", `/lab?t=${r.threadId}`);
+    }
+    void talk(r.threadId);
   };
 
-  const reading = Boolean(pending?.shared.length) && phase < Math.max(1, pending!.shared.filter((s) => s.url).length * 2);
   const SPARKS = [
     { label: "Share a video", hint: "A YouTube ad breakdown, a creator, a competitor", act: () => setAdding("link") },
     { label: "Drop in a transcript", hint: "A client call, a strategy session", act: () => setAdding("paste") },
     { label: "Bring an idea", hint: "Something you want pressure-tested", act: () => document.getElementById("lab-input")?.focus() },
   ];
+  const title = threads.find((t) => t.id === tid)?.title ?? (tid ? "New conversation" : null);
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[250px_1fr]">
-      <aside className="grid content-start gap-5">
-        <div className="grid gap-1">
-          <Link href="/lab" className={`mb-2 flex h-9 items-center justify-center rounded-brand border text-sm ${threadId ? "border-line text-muted hover:text-fg" : "border-brand/50 bg-brand-soft text-brand-text"}`}>
-            + New conversation
-          </Link>
-          <div className="no-scrollbar flex gap-1 overflow-x-auto lg:grid lg:overflow-visible">
-            {threads.map((t) => (
-              <Link
-                key={t.id}
-                href={`/lab?t=${t.id}`}
-                className={`flex shrink-0 items-center justify-between gap-2 rounded-brand px-3 py-2 text-sm ${t.id === threadId ? "bg-surface-2 text-fg" : "text-muted hover:bg-surface-2/60 hover:text-fg"}`}
-              >
-                <span className="truncate">{t.title}</span>
-                <span className="text-[10px] text-faint">{ago(t.updatedAt)}</span>
-              </Link>
-            ))}
+    <div className="grid gap-4 lg:grid-cols-[272px_minmax(0,1fr)] lg:items-start">
+      <aside className="grid min-w-0 content-start gap-5 lg:sticky lg:top-6">
+        <Conversations threads={threads} active={tid} />
+        {sources.length > 0 && (
+          <div className="hidden lg:block">
+            <SharedMemory sources={sources} />
           </div>
-        </div>
-        {sources.length > 0 && <SharedMemory sources={sources} />}
+        )}
       </aside>
 
       <section
-        className={`relative flex min-h-[600px] flex-col overflow-hidden rounded-[16px] border bg-surface transition-colors ${dragging ? "border-brand" : "border-line"}`}
+        className={`relative flex h-[min(80vh,860px)] min-h-[520px] min-w-0 flex-col overflow-hidden rounded-[16px] border bg-surface transition-colors ${dragging ? "border-brand" : "border-line"}`}
         onDragOver={(e) => {
           e.preventDefault();
           setDragging(true);
@@ -233,36 +306,36 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources }: { 
         {dragging && (
           <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center bg-bg/80 text-sm text-brand-text backdrop-blur-sm">Drop it on the table</div>
         )}
-        <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
-          <div className="flex -space-x-1.5">
+        <div className="flex items-center gap-3 border-b border-line px-4 py-3">
+          <div className="flex shrink-0 -space-x-1.5">
             {(Object.keys(SEATS) as Seat[]).map((s) => (
-              <span key={s} className="rounded-full ring-2 ring-surface">
+              <span key={s} className={`rounded-full ring-2 ring-surface transition-opacity ${typing && typing !== "table" && typing !== s ? "opacity-40" : ""}`}>
                 <SeatMark seat={s} size={26} />
               </span>
             ))}
           </div>
-          <p className="hidden truncate text-xs text-faint sm:block">Strategy · Copy · Creative · Media · Data, with every winner, test and thing you&apos;ve shared</p>
-          {threadId && (
+          <p className="min-w-0 flex-1 truncate text-xs text-faint">{title ?? "Strategy, creative, copy, media, data and accounts, with every winner, test and thing you've shared"}</p>
+          {tid && (
             <button
               onClick={async () => {
                 if (!confirm("Delete this conversation? Tests started from it stay.")) return;
-                await deleteThread(threadId);
+                await deleteThread(tid);
                 router.push("/lab");
               }}
-              className="text-xs text-faint hover:text-bad"
+              className="shrink-0 text-xs text-faint hover:text-bad"
             >
               Delete
             </button>
           )}
         </div>
 
-        <div className="grid flex-1 content-start gap-4 overflow-y-auto p-4 md:p-6" style={{ maxHeight: "66vh" }}>
-          {messages.length === 0 && !pending && (
+        <div className="grid min-h-0 flex-1 content-start gap-5 overflow-y-auto p-4 md:p-6">
+          {thread.length === 0 && (
             <div className="grid gap-6 py-6 text-center md:py-10">
               <div className="grid gap-2">
                 <p className="font-display text-3xl tracking-tight md:text-4xl">What are we testing next?</p>
                 <p className="mx-auto max-w-lg text-sm text-muted">
-                  Bring the table a spark: an idea you can&apos;t shake, a video worth learning from, a call transcript, a brief that worked. Share it and the whole team picks it apart with you, then turns the best of it into a test.
+                  Bring the table a spark: an idea you can&apos;t shake, a video worth learning from, a call transcript, a brief that worked. The seats ask what they need to know, talk it through with each other and with you, then turn the best of it into a test.
                 </p>
               </div>
               <div className="mx-auto grid w-full max-w-2xl gap-2 sm:grid-cols-3">
@@ -276,9 +349,9 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources }: { 
             </div>
           )}
 
-          {messages.map((m) =>
+          {thread.map((m) =>
             m.role === "user" ? (
-              <div key={m.id} className="ml-auto grid max-w-[80%] justify-items-end gap-1.5">
+              <div key={m.id} className="ml-auto grid max-w-[85%] justify-items-end gap-1.5 animate-[step-in_.25s_ease-out] md:max-w-[75%]">
                 <p className="text-[11px] text-faint">{m.author ?? "You"}</p>
                 {m.attachments.length > 0 && (
                   <div className="flex flex-wrap justify-end gap-1.5">
@@ -288,18 +361,18 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources }: { 
                   </div>
                 )}
                 {m.body.replace(/\n?\[Shared [^\]]+\]/g, "").trim() && (
-                  <p className="whitespace-pre-wrap rounded-[14px] rounded-tr-[4px] bg-fg px-4 py-2.5 text-sm text-bg">{m.body.replace(/\n?\[Shared [^\]]+\]/g, "").trim()}</p>
+                  <p className="whitespace-pre-wrap break-words rounded-[14px] rounded-tr-[4px] bg-fg px-4 py-2.5 text-sm text-bg">{m.body.replace(/\n?\[Shared [^\]]+\]/g, "").trim()}</p>
                 )}
               </div>
             ) : (
-              <div key={m.id} className="grid gap-3">
-                <div className="flex max-w-[88%] gap-3">
+              <div key={m.id} className="grid gap-3 animate-[step-in_.3s_ease-out]">
+                <div className="flex max-w-[92%] gap-3 md:max-w-[80%]">
                   {m.seat && <SeatMark seat={m.seat} />}
-                  <div className="grid gap-1">
+                  <div className="grid min-w-0 gap-1">
                     <p className="text-[11px] font-medium" style={{ color: m.seat ? SEATS[m.seat].tint : undefined }}>
                       {m.seat ? SEATS[m.seat].name : "The table"}
                     </p>
-                    <p className="whitespace-pre-wrap text-sm leading-relaxed">{m.body}</p>
+                    <p className="whitespace-pre-wrap break-words rounded-[14px] rounded-tl-[4px] border border-line bg-bg/60 px-4 py-2.5 text-sm leading-relaxed">{m.body}</p>
                   </div>
                 </div>
                 {m.tests.map((t, i) => (
@@ -309,29 +382,17 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources }: { 
             ),
           )}
 
-          {pending && (
-            <>
-              <div className="ml-auto grid max-w-[80%] justify-items-end gap-1.5">
-                {pending.shared.length > 0 && (
-                  <div className="flex flex-wrap justify-end gap-1.5">
-                    {pending.shared.map((a, i) => (
-                      <SharedChip key={i} kind={a.kind} title={a.title || a.url} url={a.url || null} />
-                    ))}
-                  </div>
-                )}
-                {pending.text && <p className="whitespace-pre-wrap rounded-[14px] rounded-tr-[4px] bg-fg px-4 py-2.5 text-sm text-bg">{pending.text}</p>}
-              </div>
-              <div className="flex items-center gap-3 text-xs text-faint">
-                <span className="flex -space-x-1">
-                  {(Object.keys(SEATS) as Seat[]).map((s, i) => (
-                    <span key={s} className="animate-pulse rounded-full ring-2 ring-surface" style={{ animationDelay: `${i * 160}ms` }}>
-                      <SeatMark seat={s} size={22} />
-                    </span>
-                  ))}
-                </span>
-                {reading ? `Reading what you shared${pending.shared.some((s) => s.kind === "video") ? " (watching the video through its page and captions)" : ""}…` : "The table is talking it through…"}
-              </div>
-            </>
+          {sending === "reading" && (
+            <p className="flex items-center gap-2 text-xs text-faint animate-[step-in_.25s_ease-out]">
+              <Dots />
+              Reading what you shared first, so the table has it in hand…
+            </p>
+          )}
+          {typing && !sending && <Typing seat={typing} />}
+          {waiting && (
+            <button onClick={() => tid && void talk(tid)} className="w-fit rounded-full border border-line px-3.5 py-1.5 text-xs text-muted transition-colors hover:border-faint hover:text-fg">
+              Ask the table to answer
+            </button>
           )}
           <div ref={end} />
         </div>
@@ -454,14 +515,99 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources }: { 
                 </ToolButton>
               </div>
             </div>
-            <button disabled={(!text.trim() && !shared.length) || Boolean(pending)} className="h-12 rounded-brand bg-brand px-5 text-sm font-medium text-white disabled:opacity-40">
+            <button disabled={(!text.trim() && !shared.length) || Boolean(sending)} className="h-12 shrink-0 rounded-brand bg-brand px-5 text-sm font-medium text-white disabled:opacity-40">
               Send
             </button>
           </div>
         </form>
       </section>
 
-      {starting && <StartDialog t={starting} clients={clients} tests={tests} threadId={threadId} onClose={() => setStarting(null)} />}
+      {starting && <StartDialog t={starting} clients={clients} tests={tests} threadId={tid} onClose={() => setStarting(null)} />}
+    </div>
+  );
+}
+
+/** The conversations: a column beside the table on a wide screen, folded into one row above it on a phone. */
+function Conversations({ threads, active }: { threads: { id: string; title: string; updatedAt: string }[]; active: string | null }) {
+  const [open, setOpen] = useState(false);
+  const list = active && !threads.some((t) => t.id === active) ? [{ id: active, title: "New conversation", updatedAt: new Date().toISOString() }, ...threads] : threads;
+  const current = list.find((t) => t.id === active);
+  return (
+    <div className="grid min-w-0 gap-2">
+      <div className="flex items-center gap-2">
+        <button onClick={() => setOpen(!open)} className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-brand border border-line bg-surface px-3 text-left text-sm lg:hidden" aria-expanded={open}>
+          <span className="min-w-0 flex-1 truncate">{current?.title ?? "Conversations"}</span>
+          <span className="tabular shrink-0 text-[11px] text-faint">{threads.length}</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`shrink-0 text-faint transition-transform ${open ? "rotate-180" : ""}`} aria-hidden>
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+        </button>
+        <p className="hidden flex-1 px-1 text-[11px] uppercase tracking-[0.14em] text-faint lg:block">Conversations</p>
+        <Link
+          href="/lab"
+          onClick={() => setOpen(false)}
+          className={`flex h-9 shrink-0 items-center gap-1.5 rounded-brand border px-3 text-sm transition-colors lg:h-8 lg:text-xs ${active ? "border-line text-muted hover:border-faint hover:text-fg" : "border-brand/50 bg-brand-soft text-brand-text"}`}
+        >
+          <span aria-hidden>+</span> New
+        </Link>
+      </div>
+      <nav className={`${open ? "grid" : "hidden"} max-h-[50vh] gap-0.5 overflow-y-auto rounded-[12px] border border-line bg-surface p-1 lg:grid lg:max-h-[calc(80vh-120px)] lg:border-0 lg:bg-transparent lg:p-0`}>
+        {list.length === 0 && <p className="px-3 py-2 text-xs text-faint">Nothing yet. Start one at the table.</p>}
+        {list.map((t) => {
+          const on = t.id === active;
+          return (
+            <Link
+              key={t.id}
+              href={`/lab?t=${t.id}`}
+              onClick={() => setOpen(false)}
+              aria-current={on ? "page" : undefined}
+              className={`relative grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-[10px] py-2 pl-3.5 pr-3 text-sm transition-colors ${on ? "bg-surface-2 text-fg" : "text-muted hover:bg-surface-2/60 hover:text-fg"}`}
+            >
+              {on && <span className="absolute inset-y-2 left-0 w-[3px] rounded-full bg-brand" aria-hidden />}
+              <span className="truncate">{t.title}</span>
+              <span className="tabular text-[11px] text-faint">{ago(t.updatedAt)}</span>
+            </Link>
+          );
+        })}
+      </nav>
+    </div>
+  );
+}
+
+function Dots() {
+  return (
+    <span className="flex items-center gap-1" aria-hidden>
+      {[0, 1, 2].map((i) => (
+        <span key={i} className="h-1.5 w-1.5 rounded-full bg-current animate-[ai-pulse_1.2s_ease-in-out_infinite]" style={{ animationDelay: `${i * 180}ms` }} />
+      ))}
+    </span>
+  );
+}
+
+/** A seat composing its message, or the whole table while it works out who answers. */
+function Typing({ seat }: { seat: Seat | "table" }) {
+  return (
+    <div className="flex items-center gap-3 animate-[step-in_.25s_ease-out]" aria-live="polite">
+      {seat === "table" ? (
+        <span className="flex -space-x-2">
+          {(Object.keys(SEATS) as Seat[]).slice(0, 3).map((s) => (
+            <span key={s} className="rounded-full ring-2 ring-surface">
+              <SeatMark seat={s} size={26} />
+            </span>
+          ))}
+        </span>
+      ) : (
+        <span className="relative">
+          <span className="absolute -inset-1 rounded-full opacity-40 blur-md" style={{ background: SEATS[seat].tint }} aria-hidden />
+          <span className="relative block">
+            <SeatMark seat={seat} />
+          </span>
+        </span>
+      )}
+      <span className="flex items-center gap-2.5 rounded-[14px] rounded-tl-[4px] border border-line bg-bg/60 px-3.5 py-2.5 text-xs text-faint" style={seat === "table" ? undefined : { color: SEATS[seat].tint }}>
+        <Dots />
+        <span className="text-faint">{seat === "table" ? "The table is reading this…" : `${SEATS[seat].name} is typing…`}</span>
+      </span>
     </div>
   );
 }

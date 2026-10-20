@@ -51,7 +51,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Writes the brief for an Ads Lab test", where: "Ads Lab · Running tests", trigger: "auto", when: "When a test starts for a client", labels: ["lab test brief"] },
   ],
   lab: [
-    { title: "Runs the round table (strategist, copywriter, creative director, media buyer, analyst)", where: "Ads Lab · Round table", trigger: "click", when: "When someone posts to the table", labels: ["lab round table"] },
+    { title: "Speaks at the round table, one seat at a time (strategist, creative director, copywriter, media buyer, analyst, account manager)", where: "Ads Lab · Round table", trigger: "click", when: "When someone posts to the table, once per message", labels: ["lab round table"] },
     { title: "Reads a shared doc, video or link", where: "Ads Lab · Round table", trigger: "auto", when: "When someone shares a source", labels: ["lab source"] },
     { title: "Proposes which clients a winning test should be deployed to", where: "Ads Lab · Running tests", trigger: "click", when: "When a test wins", labels: ["lab deploy"] },
   ],

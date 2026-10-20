@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { AiUnavailable, aiEnabled } from "@/lib/ai";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
-import { clientNumbers, proposeDeploy, readSource, roundTable, windowSince, type ProposedTest } from "@/lib/lab";
+import { clientNumbers, proposeDeploy, readSource, tableTurn, windowSince, type ProposedTest, type Seat, type TableTurn } from "@/lib/lab";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { suggestForTest } from "@/lib/suggestions";
@@ -26,12 +26,14 @@ const fail = (e: unknown, fallback: string) => ({ ok: false as const, error: e i
 
 export type Attachment = { kind: "doc" | "transcript" | "video" | "link" | "note"; title: string; url: string; body: string };
 
+export type SentMessage = { id: string; body: string; attachments: { id: string; kind: string; title: string; url: string | null; failed?: boolean }[]; at: string };
+
 /**
  * Says something to the table (in a new conversation when there's no thread yet), with anything shared alongside:
  * links and videos are read first, so the seats answer with them in hand. Everything shared stays in the lab's
- * library for every conversation after.
+ * library for every conversation after. The table answers turn by turn after this (tableSpeaks).
  */
-export async function sendToTable(threadId: string | null, text: string, attachments: Attachment[] = []): Promise<Result<{ threadId: string }>> {
+export async function sendToTable(threadId: string | null, text: string, attachments: Attachment[] = []): Promise<Result<{ threadId: string; message: SentMessage }>> {
   const me = await lead();
   const body = text.trim();
   const shared = attachments.filter((a) => a.url.trim() || a.body.trim()).slice(0, 6);
@@ -60,17 +62,34 @@ export async function sendToTable(threadId: string | null, text: string, attachm
     await Promise.all(saved.map((x) => readSource(db, x.id)));
     const { data: read } = saved.length ? await db.from("lab_sources").select("id, kind, title, url, status").in("id", saved.map((x) => x.id)) : { data: [] };
     const lines = (read ?? []).map((x) => `[Shared ${x.kind === "video" ? "a video" : x.kind === "transcript" ? "a call transcript" : x.kind === "link" ? "a link" : "a doc"}: "${x.title}"${x.status === "failed" ? " (couldn't be read)" : ""}]`);
-    const { error } = await supabase.from("lab_messages").insert({
-      thread_id: id,
-      role: "user",
-      author_id: me.id,
-      body: [body, ...lines].filter(Boolean).join("\n").slice(0, 8000),
-      data: read?.length ? { attachments: read.map((x) => ({ id: x.id, kind: x.kind, title: x.title, url: x.url, failed: x.status === "failed" })) } : null,
-    });
-    if (error) return { ok: false, error: error.message };
-    await roundTable(db, id);
-    revalidatePath("/lab");
-    return { ok: true, threadId: id };
+    const attached = (read ?? []).map((x) => ({ id: x.id as string, kind: x.kind as string, title: x.title as string, url: x.url as string | null, failed: x.status === "failed" }));
+    const { data: posted, error } = await supabase
+      .from("lab_messages")
+      .insert({
+        thread_id: id,
+        role: "user",
+        author_id: me.id,
+        body: [body, ...lines].filter(Boolean).join("\n").slice(0, 8000),
+        data: attached.length ? { attachments: attached } : null,
+      })
+      .select("id, body, created_at")
+      .single();
+    if (error || !posted) return { ok: false, error: error?.message ?? "Couldn't send it." };
+    await db.from("lab_threads").update({ updated_at: new Date().toISOString() }).eq("id", id);
+    return { ok: true, threadId: id, message: { id: posted.id, body: posted.body, attachments: attached, at: posted.created_at } };
+  } catch (e) {
+    return fail(e, "Couldn't send it. Try again.");
+  }
+}
+
+/**
+ * The next message from the table, saved before it returns, so the page shows each seat as soon as it has spoken.
+ * `seat` is who the last speaker handed to (none: the table picks). `next` null means it's the exec's turn.
+ */
+export async function tableSpeaks(threadId: string, seat: Seat | null): Promise<Result<{ message: TableTurn | null }>> {
+  await lead();
+  try {
+    return { ok: true, message: await tableTurn(admin(), threadId, seat) };
   } catch (e) {
     return fail(e, "The table couldn't answer. Try again.");
   }
