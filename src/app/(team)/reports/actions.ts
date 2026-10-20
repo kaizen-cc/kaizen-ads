@@ -9,15 +9,18 @@ import { postWeekly, submitMonthly } from "@/lib/reports/run";
 import { draftReport, qaReport, reviseReport, type ChatTurn, type Qa, type Sections } from "@/lib/reports/write";
 import { periodsFor } from "@/lib/reports/metrics";
 import { nyParts } from "@/lib/kpi/calc";
+import { canReportOn } from "@/lib/reports/access";
 
 type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 
-/** The report, if this person may work on it: its buyer, or a lead or exec. */
+/** The report, if this person may work on it: the account's buyer, the leads of its line, or an exec. */
 async function mine(id: string) {
   const me = await requireStaff();
-  const { data } = await (await createClient()).from("reports").select("id, owner_id, status, kind").eq("id", id).maybeSingle();
+  const db = await createClient();
+  const { data } = await db.from("reports").select("id, owner_id, status, kind, client_id, platform, kpi_targets(id, client_id, platform, owner_id)").eq("id", id).maybeSingle();
   if (!data) return null;
-  if (data.owner_id !== me.id && !isExecOrLead(me)) return null;
+  const t = data.kpi_targets as unknown as { id: string; client_id: string; platform: string; owner_id: string | null } | null;
+  if (data.owner_id !== me.id && !(t && (await canReportOn(db, me, t)))) return null;
   return { me, r: data };
 }
 const done = (id: string) => {
@@ -115,8 +118,12 @@ export async function reportForRange(targetIds: string[], start: string, end: st
   const today = nyParts(new Date()).date;
   if (start >= today) return { ok: false, error: "The dates need to be in the past (data runs through yesterday)." };
   const until = end >= today ? new Date(Date.parse(`${today}T12:00:00Z`) - 86_400_000).toISOString().slice(0, 10) : end;
-  const { data: targets } = await (await createClient()).from("kpi_targets").select("id, client_id, platform, owner_id").in("id", targetIds.slice(0, 4));
-  if (!targets?.length) return { ok: false, error: "Pick an ad account." };
+  const db = await createClient();
+  const { data: found } = await db.from("kpi_targets").select("id, client_id, platform, owner_id").in("id", targetIds.slice(0, 4));
+  // Only accounts this person reports on (their own, or their line's for a lead)
+  const targets = [];
+  for (const t of found ?? []) if (await canReportOn(db, me, t)) targets.push(t);
+  if (!targets.length) return { ok: false, error: found?.length ? "You can only draft reports for the accounts you're on." : "Pick an ad account." };
   const admin = createAdminClient();
   const ids: string[] = [];
   for (const t of targets) {
@@ -142,9 +149,10 @@ export async function reportForRange(targetIds: string[], start: string, end: st
 /** A report for one account right now (outside the Monday run, or one that didn't get queued). */
 export async function draftNow(targetId: string, kind: "weekly" | "monthly"): Promise<Result<{ id: string }>> {
   const me: Staff = await requireStaff();
-  const { data: t } = await (await createClient()).from("kpi_targets").select("id, client_id, platform, owner_id").eq("id", targetId).maybeSingle();
+  const db = await createClient();
+  const { data: t } = await db.from("kpi_targets").select("id, client_id, platform, owner_id").eq("id", targetId).maybeSingle();
   if (!t) return { ok: false, error: "Account not found." };
-  if (t.owner_id !== me.id && !isExecOrLead(me)) return { ok: false, error: "Only the account's buyer or a lead can do that." };
+  if (!(await canReportOn(db, me, t))) return { ok: false, error: "Only the account's buyer or a lead can do that." };
   const p = periodsFor(kind, nyParts(new Date()).date).main;
   const admin = createAdminClient();
   let bundle: string | null = null;

@@ -7,7 +7,8 @@ import { periodsFor } from "@/lib/reports/metrics";
 import type { Qa } from "@/lib/reports/write";
 import { slackConnection } from "@/lib/slack-user";
 import { SlackConnect } from "@/components/slack-connect";
-import { DraftNow } from "./report-parts";
+import { ReportButton } from "../clients/[slug]/report-button";
+import { reportableTargets } from "@/lib/reports/access";
 
 export const metadata: Metadata = { title: "Reports" };
 export const maxDuration = 300;
@@ -35,19 +36,15 @@ export default async function ReportsPage() {
   const week = periodsFor("weekly", today).main;
   const month = periodsFor("monthly", today).main;
   const lead = isExecOrLead(me);
+  // The accounts this person reports on (their own; their line's for a lead; all for an exec): what they see and can draft
+  const accounts = await reportableTargets(db, me);
   let q = db
     .from("reports")
     .select("id, kind, platform, status, qa, posted_at, bundle_id, clients(name, slug), profiles!reports_owner_id_fkey(full_name)")
     .or(`and(kind.eq.weekly,period_start.eq.${week.start}),and(kind.eq.monthly,period_start.eq.${month.start}),and(kind.eq.custom,updated_at.gte.${twoWeeksAgo()})`)
     .order("created_at");
-  if (!lead) q = q.eq("owner_id", me.id);
-  else if (me.role === "head_of_meta") q = q.eq("platform", "meta");
-  else if (me.role === "head_of_google") q = q.eq("platform", "google");
-  const [{ data }, slack, { data: accounts }] = await Promise.all([
-    q,
-    slackConnection(me.id),
-    db.from("kpi_targets").select("id, platform, label, clients!inner(name, archived_at)").eq("active", true).eq("owner_id", me.id).not("ad_account_id", "is", null).is("clients.archived_at", null),
-  ]);
+  if (!me.isExec) q = q.in("target_id", accounts.length ? accounts.map((a) => a.id) : ["00000000-0000-0000-0000-000000000000"]);
+  const [{ data }, slack] = await Promise.all([q, slackConnection(me.id)]);
   const rows = (data ?? []) as unknown as Row[];
   const weekly = rows.filter((r) => r.kind === "weekly");
   const monthly = rows.filter((r) => r.kind === "monthly");
@@ -98,7 +95,15 @@ export default async function ReportsPage() {
             Drafted every Monday (the last 7 days and the month so far) and on the 1st (the monthly recap), in your voice, checked by the QA. Read it, tweak it or ask the AI to, then send it as you.
           </p>
         </div>
-        <SlackConnect connected={slack.connected} next="/reports" />
+        <span className="flex flex-wrap items-center gap-2">
+          <SlackConnect connected={slack.connected} next="/reports" />
+          <ReportButton
+            primary
+            label="New report"
+            today={today}
+            accounts={accounts.map((a) => ({ id: a.id, client: a.clients.name, label: `${a.platform === "google" ? "Google" : "Meta"}${a.label ? ` · ${a.label}` : ""}` }))}
+          />
+        </span>
       </header>
 
       {dom <= 7 && monthly.length > 0 && (
@@ -116,7 +121,7 @@ export default async function ReportsPage() {
           <h2 className="font-heading text-xl">This week · {week.label}</h2>
           <span className="text-xs text-faint">{open ? `${open} ready to review` : weekly.length ? "All reviewed" : "Drafted Monday morning"}</span>
         </div>
-        {weekly.length ? list(weekly) : <p className="rounded-[14px] border border-dashed border-line px-4 py-6 text-sm text-muted">Nothing drafted for this week yet. They&apos;re written Monday morning for every account that spent; you can draft one now below.</p>}
+        {weekly.length ? list(weekly) : <p className="rounded-[14px] border border-dashed border-line px-4 py-6 text-sm text-muted">Nothing drafted for this week yet. They&apos;re written Monday morning for every account that spent; for one now, use New report (Last 7 days).</p>}
       </section>
 
       {onDemand.length > 0 && (
@@ -129,12 +134,6 @@ export default async function ReportsPage() {
         </section>
       )}
 
-      {(accounts ?? []).length > 0 && (
-        <section className="grid gap-3">
-          <h2 className="font-heading text-lg">Draft one now</h2>
-          <DraftNow accounts={(accounts ?? []).map((a) => ({ id: a.id, label: `${(a.clients as unknown as { name: string }).name} · ${a.platform === "google" ? "Google" : "Meta"}${a.label ? ` · ${a.label}` : ""}` }))} />
-        </section>
-      )}
     </div>
   );
 }

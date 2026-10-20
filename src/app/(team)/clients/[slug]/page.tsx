@@ -18,6 +18,7 @@ import { changeKey, loadChanges } from "@/lib/account-changes";
 import type { ShotList } from "@/lib/shot-list";
 import { assetsStale } from "@/lib/client-assets";
 import { loadSprints } from "@/lib/sprints";
+import { reportableTargets } from "@/lib/reports/access";
 import { loadClientChat } from "@/lib/client-chat";
 import type { AuditTarget } from "./client-chat";
 
@@ -189,6 +190,8 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
   // The optimization sprint on each account, for the page's glance
   const sprintList = await loadSprints(supabase, { targetIds: kpis.map((k) => k.id) });
   const sprints = Object.fromEntries(sprintList.map((s) => [s.targetId, s.sprint]));
+  // Which of these accounts this person can draft a report for
+  const reportable = (await reportableTargets(supabase, me)).filter((t) => t.client_id === client.id).map((t) => t.id);
   const at = (key: string) => (synced ?? []).find((r) => r.source === key)?.last_run_at ?? null;
   const connections = {
     meta: client.meta_ad_account_id ? freshness(lastMeta?.fetched_at) : null,
@@ -205,6 +208,7 @@ export default async function ClientPage({ params }: PageProps<"/clients/[slug]"
       audits={audits}
       changes={changes}
       sprints={sprints}
+      reportable={reportable}
       assets={assetGlance}
       shotList={shotList}
       chat={{ initial: chatTurns, targets }}

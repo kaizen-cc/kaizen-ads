@@ -7,19 +7,23 @@ import { reportForRange } from "../../reports/actions";
 // A recap on demand, from the client page: when a client asks where things stand. The same report as the weekly and
 // monthly ones (the numbers, the work behind them, the buyer's voice, the QA, the PDF), for the dates picked.
 
-type Account = { id: string; label: string };
+/** client: set on the Reports page, where the accounts span clients (the client is picked first) */
+type Account = { id: string; label: string; client?: string };
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 
-export function ReportButton({ accounts, today }: { accounts: Account[]; today: string }) {
+export function ReportButton({ accounts: all, today, label = "Get a report", primary = false }: { accounts: Account[]; today: string; label?: string; primary?: boolean }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const clients = [...new Set(all.map((a) => a.client).filter((c): c is string => Boolean(c)))].sort((a, b) => a.localeCompare(b));
+  const [client, setClient] = useState<string>(clients[0] ?? "");
+  const accounts = clients.length ? all.filter((a) => a.client === client) : all;
   const [picked, setPicked] = useState<string[]>(accounts.map((a) => a.id));
   const [range, setRange] = useState<"mtd" | "7d" | "last" | "custom">("mtd");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  if (!accounts.length) return null;
+  if (!all.length) return null;
 
   // The dates for a choice, as of today (New York); data runs through yesterday
   const dates = () => {
@@ -47,11 +51,15 @@ export function ReportButton({ accounts, today }: { accounts: Account[]; today: 
 
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} className="inline-flex h-9 items-center gap-2 rounded-full border border-line bg-surface px-4 text-sm text-muted transition-colors hover:border-faint hover:text-fg">
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className={primary ? "inline-flex h-10 items-center gap-2 rounded-full bg-brand px-5 text-sm font-medium text-white shadow-[0_10px_30px_-12px_rgba(200,16,46,0.9)] hover:brightness-110" : "inline-flex h-9 items-center gap-2 rounded-full border border-line bg-surface px-4 text-sm text-muted transition-colors hover:border-faint hover:text-fg"}
+      >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <path d="M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h4" />
         </svg>
-        Get a report
+        {label}
       </button>
       {open && (
         <div className="fixed inset-0 z-[80] grid place-items-center bg-black/60 p-4 backdrop-blur-sm" onClick={() => setOpen(false)}>
@@ -60,6 +68,25 @@ export function ReportButton({ accounts, today }: { accounts: Account[]; today: 
               <h2 className="font-heading text-xl">A recap for the client</h2>
               <p className="text-sm text-muted">The same report as the weekly and monthly ones, for the dates you pick: drafted in the buyer&apos;s voice, checked by the QA, with its PDF. You review it before it goes anywhere.</p>
             </div>
+            {clients.length > 0 && (
+              <label className="grid gap-1.5 text-[11px] uppercase tracking-[0.14em] text-faint">
+                Client
+                <select
+                  value={client}
+                  onChange={(e) => {
+                    setClient(e.target.value);
+                    setPicked(all.filter((a) => a.client === e.target.value).map((a) => a.id));
+                  }}
+                  className="h-10 rounded-[10px] border border-line bg-bg px-3 text-sm normal-case tracking-normal text-fg"
+                >
+                  {clients.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             {accounts.length > 1 && (
               <div className="grid gap-2">
                 <p className="text-[11px] uppercase tracking-[0.14em] text-faint">Accounts</p>

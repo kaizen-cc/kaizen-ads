@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { isExecOrLead, requireStaff } from "@/lib/auth";
+import { requireStaff } from "@/lib/auth";
+import { canReportOn } from "@/lib/reports/access";
 import { createClient } from "@/lib/supabase/server";
 import type { ReportMetrics } from "@/lib/reports/metrics";
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
@@ -18,11 +19,14 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
   const db = await createClient();
   const { data: r } = await db
     .from("reports")
-    .select("id, kind, platform, status, period_start, period_end, owner_id, bundle_id, message, sections, metrics, extras, qa, chat, error, posted_at, slack_channel, clients(name, slug, slack_channel_id), profiles!reports_owner_id_fkey(full_name)")
+    .select("id, kind, platform, status, period_start, period_end, owner_id, bundle_id, message, sections, metrics, extras, qa, chat, error, posted_at, slack_channel, clients(name, slug, slack_channel_id), profiles!reports_owner_id_fkey(full_name), kpi_targets(id, client_id, platform, owner_id)")
     .eq("id", id)
     .maybeSingle();
   if (!r) notFound();
-  const canEdit = r.owner_id === me.id || isExecOrLead(me);
+  // Only the account's buyer, the leads of its line and execs see a report (a link alone doesn't open it)
+  const target = r.kpi_targets as unknown as { id: string; client_id: string; platform: string; owner_id: string | null } | null;
+  const canEdit = r.owner_id === me.id || Boolean(target && (await canReportOn(db, me, target)));
+  if (!canEdit) notFound();
   const [slack, parts] = await Promise.all([
     slackConnection(me.id),
     r.bundle_id ? db.from("reports").select("id, platform, status, profiles!reports_owner_id_fkey(full_name)").eq("bundle_id", r.bundle_id) : Promise.resolve({ data: [] }),

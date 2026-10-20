@@ -109,6 +109,7 @@ export type ClientViewProps = {
   audits?: Record<string, AuditSummary> | null; // the latest audit per KPI, shared with the KPI board
   changes?: Record<string, AccountChange[]> | null; // each KPI's ad account, its last 30 changes
   sprints?: Record<string, SprintSummary> | null; // the optimization sprint on each account
+  reportable?: string[] | null; // the accounts this person can draft reports for (their own; their line's for a lead)
   assets?: AssetGlance | null; // what's on their Drive
   shotList?: SavedShotList | null; // next month's shot list
   chat?: { initial: ChatTurn[]; targets: AuditTarget[] } | null; // my thread with the AI about this client
@@ -119,7 +120,7 @@ export type ClientViewProps = {
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, assets = null, shotList = null, chat = null, fatigue = null, market = [], intake, calls }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, chat = null, fatigue = null, market = [], intake, calls }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -150,7 +151,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
   ].filter((m) => m.value > 0);
   const summary = digest?.summary ? digest.summary.split(/(?<=\.)\s+/).slice(0, 2).join(" ") : null;
   const glance = kpis || creative ? <Glance kpis={kpis ?? []} audits={audits ?? {}} sprints={sprints ?? {}} changes={changes ?? {}} alerts={alerts} inMotion={inMotion} summary={summary} today={today} /> : null;
-  const reportAccounts = (kpis ?? []).filter((k) => k.accountId).map((k) => ({ id: k.id, label: `${k.platform === "google" ? "Google" : "Meta"}${k.label ? ` · ${k.label}` : ""}` }));
+  const reportAccounts = (kpis ?? []).filter((k) => k.accountId && (!reportable || reportable.includes(k.id))).map((k) => ({ id: k.id, label: `${k.platform === "google" ? "Google" : "Meta"}${k.label ? ` · ${k.label}` : ""}` }));
 
   return (
     <div className="mx-auto grid max-w-6xl gap-8">
