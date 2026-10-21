@@ -4,7 +4,9 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { Check, Readiness } from "@/lib/readiness";
 import { AssignSelect, type Option } from "../assign-select";
-import { checkReadiness, fillReadiness } from "./actions";
+import { checkReadiness, fillReadiness, setClientService } from "./actions";
+import { SERVICES } from "@/lib/services";
+import { ServiceIcon } from "./services-panel";
 
 // The readiness check on a client that just went live again: what the system still needs to run them (an ad account,
 // a target, a buyer, a contact, the channels), each with what stops working without it and a field to fill it right
@@ -128,43 +130,68 @@ export function ReadinessCheck({ clientId, slug, name, initial, team, autoOpen, 
               </div>
             ) : (
               <>
-                <div className="relative flex items-start gap-4">
-                  <Ring got={got} of={needed.length} size={56} />
-                  <div className="grid min-w-0 gap-1">
+                <header className="relative grid gap-4">
+                  <div className="grid gap-1.5">
                     <p className="text-[11px] uppercase tracking-[0.16em] text-brand-text">Welcome back</p>
-                    <h2 className="font-heading text-2xl leading-tight">Bring {name} back fully</h2>
-                    <p className="text-sm text-muted">
-                      {r.missing === 0 ? "Everything needed is in." : `${r.missing === 1 ? "One thing" : `${r.missing} things`} before the system can run them end to end. Fill what you have; the rest stays here for later.`}
+                    <h2 className="font-heading text-[26px] leading-tight">Bring {name} back fully</h2>
+                    <p className="max-w-[46ch] text-sm leading-relaxed text-muted">
+                      {r.missing === 0 ? "Everything needed is in." : `${r.missing === 1 ? "One thing" : `${r.missing} things`} before the system can run them end to end. Fill what you have; the rest waits here.`}
                     </p>
                   </div>
-                </div>
+                  <div className="grid gap-2">
+                    <div className="flex items-center justify-between gap-3 text-xs">
+                      <span className="shrink-0 text-muted">
+                        <span className="tabular font-medium text-fg">{got}</span> of {needed.length} ready
+                      </span>
+                      {needed.some((c) => c.ok) && (
+                        <span className="flex flex-wrap justify-end gap-1.5">
+                          {needed
+                            .filter((c) => c.ok)
+                            .map((c) => (
+                              <span key={c.key} className="inline-flex items-center gap-1 rounded-full bg-ok/10 px-2 py-0.5 text-[11px] text-ok">
+                                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                                  <path d="M5 12l5 5L19 7" />
+                                </svg>
+                                {c.label.replace(/^An? /, "").replace(/^./, (x) => x.toUpperCase())}
+                              </span>
+                            ))}
+                        </span>
+                      )}
+                    </div>
+                    <span className="h-1 overflow-hidden rounded-full bg-white/[0.07]">
+                      <span className="block h-full rounded-full bg-gradient-to-r from-brand to-[#ff5a6e] transition-[width] duration-700" style={{ width: `${needed.length ? (got / needed.length) * 100 : 100}%` }} />
+                    </span>
+                  </div>
+                </header>
 
                 <form
                   ref={form}
-                  className="relative grid gap-2"
+                  className="relative grid gap-3"
                   onSubmit={(e) => {
                     e.preventDefault();
                     submit();
                   }}
                 >
-                  {needed.map((c) => (
-                    <Row key={c.key} check={c}>
-                      <Fields check={c} r={r} clientId={clientId} team={team} onAssigned={refresh} />
-                    </Row>
-                  ))}
-                  {helps.some((c) => !c.ok) && <p className="mt-3 text-[11px] uppercase tracking-[0.14em] text-faint">Also worth adding</p>}
+                  {needed
+                    .filter((c) => !c.ok)
+                    .map((c) => (
+                      <Row key={c.key} check={c}>
+                        <Fields check={c} r={r} clientId={clientId} slug={slug} team={team} onChanged={refresh} />
+                      </Row>
+                    ))}
+                  {helps.some((c) => !c.ok) && <p className="mt-2 text-[11px] uppercase tracking-[0.14em] text-faint">Also worth adding</p>}
                   {helps
                     .filter((c) => !c.ok)
                     .map((c) => (
                       <Row key={c.key} check={c}>
-                        <Fields check={c} r={r} clientId={clientId} team={team} onAssigned={refresh} />
+                        <Fields check={c} r={r} clientId={clientId} slug={slug} team={team} onChanged={refresh} />
                       </Row>
                     ))}
                   <button type="submit" hidden />
                 </form>
 
                 {error && <p className="relative rounded-[10px] bg-bad/10 px-3 py-2 text-sm text-bad">{error}</p>}
-                <div className="relative flex items-center justify-between gap-3 border-t border-line pt-5">
+                <div className="relative -mx-7 -mb-7 flex items-center justify-between gap-3 border-t border-line bg-white/[0.015] px-7 py-5">
                   <button type="button" onClick={later} className="h-10 px-2 text-sm text-faint hover:text-fg">
                     Later
                   </button>
@@ -206,35 +233,35 @@ function Ring({ got, of, size }: { got: number; of: number; size: number }) {
 }
 
 function Row({ check, children }: { check: Check; children: React.ReactNode }) {
+  const needed = check.need === "needed";
   return (
-    <div className={`grid gap-3 rounded-[14px] border p-3.5 transition-colors ${check.ok ? "border-transparent bg-white/[0.02]" : check.need === "needed" ? "border-brand/25 bg-brand/[0.04]" : "border-line"}`}>
-      <div className="flex items-start gap-3">
-        <span className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full ${check.ok ? "bg-ok/15 text-ok" : check.need === "needed" ? "bg-brand/20 text-brand-text" : "bg-warn/15 text-warn"}`}>
-          {check.ok ? (
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <path d="M5 12l5 5L19 7" />
-            </svg>
-          ) : (
-            <span className="h-1.5 w-1.5 rounded-full bg-current" />
-          )}
+    <div className={`grid gap-3.5 rounded-[16px] border p-4 ${needed ? "border-brand/25 bg-brand/[0.035]" : "border-line bg-white/[0.015]"}`}>
+      <div className="grid grid-cols-[20px_minmax(0,1fr)] gap-3">
+        <span className={`mt-0.5 grid h-5 w-5 place-items-center rounded-full ${needed ? "bg-brand/20 text-brand-text" : "bg-warn/15 text-warn"}`}>
+          <span className="h-1.5 w-1.5 rounded-full bg-current" />
         </span>
-        <div className="grid min-w-0 gap-0.5">
-          <p className={`text-sm font-medium ${check.ok ? "text-muted" : "text-fg"}`}>{check.label}</p>
-          {!check.ok && <p className="text-xs text-faint">{check.detail ? `${check.detail}. ` : ""}{check.why}</p>}
+        <div className="grid min-w-0 gap-1">
+          <p className="text-sm font-medium leading-5 text-fg">{check.label}</p>
+          <p className="text-xs leading-relaxed text-faint">
+            {check.detail ? <span className="text-muted">{check.detail}. </span> : null}
+            {check.why}
+          </p>
         </div>
       </div>
-      {!check.ok && <div className="pl-8">{children}</div>}
+      <div className="pl-8">{children}</div>
     </div>
   );
 }
 
-function Fields({ check, r, clientId, team, onAssigned }: { check: Check; r: Readiness; clientId: string; team: Team; onAssigned: () => void }) {
+function Fields({ check, r, clientId, slug, team, onChanged }: { check: Check; r: Readiness; clientId: string; slug: string; team: Team; onChanged: () => void }) {
   switch (check.key) {
+    case "services":
+      return <ServicePick clientId={clientId} slug={slug} onChanged={onChanged} />;
     case "account":
       return (
-        <div className="grid gap-2 sm:grid-cols-2">
-          <input name="meta_ad_account_id" className={`${input} tabular`} placeholder="Meta ad account ID" inputMode="numeric" />
-          <input name="google_customer_id" className={`${input} tabular`} placeholder="Google Ads ID, 123-456-7890" />
+        <div className={`grid gap-2 ${r.platforms.meta && r.platforms.google ? "sm:grid-cols-2" : ""}`}>
+          {r.platforms.meta && <input name="meta_ad_account_id" className={`${input} tabular`} placeholder="Meta ad account ID, from Ads Manager" inputMode="numeric" />}
+          {r.platforms.google && <input name="google_customer_id" className={`${input} tabular`} placeholder="Google Ads ID, 123-456-7890" />}
         </div>
       );
     case "target": {
@@ -254,7 +281,7 @@ function Fields({ check, r, clientId, team, onAssigned }: { check: Check; r: Rea
     case "meta_buyer":
     case "google_buyer":
       return (
-        <span onChange={() => setTimeout(onAssigned, 800)}>
+        <span onChange={() => setTimeout(onChanged, 800)}>
           <AssignSelect clientId={clientId} slot={check.key} label={check.label} current={team[check.key]?.current ?? null} options={team[check.key]?.options ?? []} canEdit size="md" />
         </span>
       );
@@ -274,4 +301,41 @@ function Fields({ check, r, clientId, team, onAssigned }: { check: Check; r: Rea
     case "website":
       return <input name="website" className={input} placeholder="https://" />;
   }
+}
+
+/** Which services they buy, when nothing's on file: each tap saves; "Done" updates the list (which ad accounts to ask for). */
+function ServicePick({ clientId, slug, onChanged }: { clientId: string; slug: string; onChanged: () => void }) {
+  const [on, setOn] = useState<string[]>([]);
+  const [pending, start] = useTransition();
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {SERVICES.map((s) => {
+        const active = on.includes(s.slug);
+        return (
+          <button
+            key={s.slug}
+            type="button"
+            disabled={pending}
+            aria-pressed={active}
+            onClick={() =>
+              start(async () => {
+                setOn((o) => (active ? o.filter((x) => x !== s.slug) : [...o, s.slug]));
+                const res = await setClientService(clientId, slug, s.slug, !active);
+                if (!res.ok) setOn((o) => (active ? [...o, s.slug] : o.filter((x) => x !== s.slug)));
+              })
+            }
+            className={`inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs transition-colors ${active ? "border border-brand/50 bg-brand/15 text-fg" : "border border-line text-muted hover:text-fg"}`}
+          >
+            <ServiceIcon slug={s.slug} className="h-3.5 w-3.5" />
+            {s.short}
+          </button>
+        );
+      })}
+      {on.length > 0 && (
+        <button type="button" onClick={onChanged} disabled={pending} className="h-8 px-2 text-xs font-medium text-brand-text hover:underline disabled:opacity-50">
+          Done →
+        </button>
+      )}
+    </div>
+  );
 }

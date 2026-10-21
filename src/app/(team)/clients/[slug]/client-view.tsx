@@ -24,6 +24,7 @@ import { setPortalLive,
 } from "./actions";
 import { PackagePanel, type PackageOption } from "./package-panel";
 import { ReadinessCheck } from "./readiness-check";
+import { ServicesPanel, type Tier } from "./services-panel";
 import type { Readiness } from "@/lib/readiness";
 import { CreativePanel } from "./creative-panel";
 import { KpiPanel } from "./kpi-panel";
@@ -120,10 +121,11 @@ export type ClientViewProps = {
   intake?: IntakeRecord | null; // the marketing intake form; undefined in the design preview
   calls?: ClientCall[]; // from Gemini and Fireflies notes; undefined in the design preview
   readiness?: { initial: Readiness; autoOpen: boolean; stamp: string } | null; // what's missing after going live again
+  services?: { track: string[]; extra: string[]; tiers: Tier[]; chosen: Record<string, string> } | null; // what they buy, and the tiers
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, chat = null, fatigue = null, market = [], intake, calls, readiness = null }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -490,11 +492,25 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
           {
             id: "team",
             label: "Team & setup",
-            hint: "The team, client contacts, the portal, connections",
+            hint: "What they buy, the team, client contacts, the portal, connections",
             count: needsSetup || null,
             content: (
               <div className="grid items-start gap-6 lg:grid-cols-2">
                 <div className="grid min-w-0 gap-6">
+                  {services && (
+                    <Section title="Services" description="What they buy from Kaizen and at which tier. Kaizen Track's services come in on their own.">
+                      <ServicesPanel
+                        clientId={client.id}
+                        slug={client.slug}
+                        track={services.track}
+                        extra={services.extra}
+                        tiers={services.tiers}
+                        chosen={services.chosen}
+                        creative={{ label: active ? packageLabel : null, active, until: active && until ? untilLabel(until) : null }}
+                        canEdit={can.assign && !demo}
+                      />
+                    </Section>
+                  )}
                   <Section title="Kaizen team" description="The copywriter reviews all copy and customer success handles every client.">
             <dl className="grid gap-1">
               {SLOTS.map((slot) => (

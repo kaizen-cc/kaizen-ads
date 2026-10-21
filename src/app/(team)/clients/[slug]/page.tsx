@@ -38,7 +38,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
   const { data: client } = await supabase
     .from("clients")
     .select(
-      "id, name, slug, status, client_type, archived_at, archive_reason, archive_source, portal_live, portal_live_at, industry, industry_detail, industry_source, website, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, kaizen_id, auto_approve_opt_in, creative_package, creative_package_key, creative_package_until, creative_package_note, creative_db, reactivated_at, reactivated_by, creative_packages(label)",
+      "id, name, slug, status, client_type, archived_at, archive_reason, archive_source, portal_live, portal_live_at, industry, industry_detail, industry_source, website, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, kaizen_id, auto_approve_opt_in, creative_package, creative_package_key, creative_package_until, creative_package_note, creative_db, reactivated_at, reactivated_by, services, services_extra, creative_packages(label)",
     )
     .eq("slug", slug)
     .maybeSingle();
@@ -213,9 +213,21 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       ? { initial: await clientReadiness(supabase, client.id), autoOpen: asked || client.reactivated_by === me.id || (!client.reactivated_by && me.isExec), stamp: client.reactivated_at ?? "asked" }
       : null;
 
+  // What they buy, and each service's tier
+  const [{ data: tierList }, { data: tierPicks }] = await Promise.all([
+    supabase.from("service_tiers").select("id, service, label, includes").order("sort_order").order("created_at"),
+    supabase.from("client_service_tiers").select("service, tier_id").eq("client_id", client.id),
+  ]);
+
   return (
     <ClientView
       readiness={readiness}
+      services={{
+        track: (client.services ?? []) as string[],
+        extra: (client.services_extra ?? []) as string[],
+        tiers: tierList ?? [],
+        chosen: Object.fromEntries((tierPicks ?? []).filter((t) => t.tier_id).map((t) => [t.service as string, t.tier_id as string])),
+      }}
       connections={connections}
       creative={creative}
       kpis={kpis}

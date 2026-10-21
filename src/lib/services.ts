@@ -1,0 +1,21 @@
+// The services Kaizen sells, as Kaizen Track names them (its slugs). A client's services are Track's (clients.services,
+// mirrored hourly) plus any added here (clients.services_extra) for a client Track doesn't have right.
+
+export const SERVICES = [
+  { slug: "facebook-ads", label: "Meta Ads", short: "Meta", platform: "meta" },
+  { slug: "google-ads", label: "Google Ads", short: "Google", platform: "google" },
+  { slug: "tiktok-ads", label: "TikTok Ads", short: "TikTok", platform: null },
+  { slug: "creative", label: "Creative", short: "Creative", platform: null },
+  { slug: "email-marketing", label: "Email Marketing", short: "Email", platform: null },
+  { slug: "web-design", label: "Web Design", short: "Web", platform: null },
+  { slug: "social-media", label: "Social Media", short: "Social", platform: null },
+  { slug: "crm", label: "CRM", short: "CRM", platform: null },
+] as const;
+
+export type ServiceSlug = (typeof SERVICES)[number]["slug"];
+
+/** Everything the client buys: Track's services and those added in Kaizen Ads, in the order above. */
+export function servicesOf(c: { services?: string[] | null; services_extra?: string[] | null }): ServiceSlug[] {
+  const all = new Set([...(c.services ?? []), ...(c.services_extra ?? [])]);
+  return SERVICES.filter((s) => all.has(s.slug)).map((s) => s.slug);
+}

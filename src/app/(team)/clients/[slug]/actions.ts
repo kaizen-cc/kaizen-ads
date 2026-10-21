@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { backInCycle } from "@/lib/reactivate";
 import { clientReadiness, type Readiness } from "@/lib/readiness";
+import { SERVICES } from "@/lib/services";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
 import { detectIndustries, INDUSTRIES } from "@/lib/industry";
 import { refreshBriefing } from "@/lib/context/briefing";
@@ -133,6 +134,53 @@ export async function fillReadiness(clientId: string, slug: string, form: FormDa
   revalidatePath(`/clients/${slug}`);
   revalidatePath("/clients");
   return errors.length ? { ok: false, error: errors.join(" ") } : { ok: true, readiness };
+}
+
+/**
+ * Execs and leads: switch a service on or off for a client. Kaizen Track's services can't be switched off here (Track
+ * is where a sale is recorded, and the hourly mirror would put them back); the rest are kept beside Track's.
+ */
+export async function setClientService(clientId: string, slug: string, service: string, on: boolean): Promise<ActionResult> {
+  const me = await requireStaff();
+  if (!isExecOrLead(me)) return { ok: false, error: "Only execs and leads can change a client's services." };
+  if (!SERVICES.some((s) => s.slug === service)) return { ok: false, error: "Unknown service." };
+  if (!adminConfigured()) return { ok: false, error: "Can't save here." };
+  const admin = createAdminClient();
+  const { data: c } = await admin.from("clients").select("services, services_extra").eq("id", clientId).maybeSingle();
+  if (!c) return { ok: false, error: "Client not found." };
+  if (!on && (c.services ?? []).includes(service)) return { ok: false, error: "This one comes from Kaizen Track: end it there." };
+  const extra = new Set((c.services_extra ?? []) as string[]);
+  if (on) extra.add(service);
+  else extra.delete(service);
+  const { error } = await admin.from("clients").update({ services_extra: [...extra] }).eq("id", clientId);
+  return done(slug, error);
+}
+
+/** Execs and leads: the tier a client is on for a service (email, web, social…); null clears it. */
+export async function setServiceTier(clientId: string, slug: string, service: string, tierId: string | null): Promise<ActionResult> {
+  const me = await requireStaff();
+  if (!isExecOrLead(me)) return { ok: false, error: "Only execs and leads can set a tier." };
+  const supabase = await createClient();
+  const { error } = tierId
+    ? await supabase.from("client_service_tiers").upsert({ client_id: clientId, service, tier_id: tierId, set_by: me.id, set_at: new Date().toISOString() })
+    : await supabase.from("client_service_tiers").delete().eq("client_id", clientId).eq("service", service);
+  return done(slug, error);
+}
+
+/** Execs and leads: a new tier for a service, as it's sold (e.g. Email "Growth: 4 campaigns + 2 flows a month"). */
+export async function addServiceTier(service: string, label: string, includes: string): Promise<{ ok: true; tier: { id: string; label: string; includes: string | null } } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  if (!isExecOrLead(me)) return { ok: false, error: "Only execs and leads can add a tier." };
+  if (!label.trim()) return { ok: false, error: "Name the tier." };
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("service_tiers")
+    .insert({ service, label: label.trim().slice(0, 40), includes: includes.trim().slice(0, 200) || null, created_by: me.id })
+    .select("id, label, includes")
+    .single();
+  if (error) return { ok: false, error: error.code === "23505" ? "That tier already exists." : error.message };
+  revalidatePath("/clients", "layout");
+  return { ok: true, tier: data };
 }
 
 export async function addContact(clientId: string, slug: string, form: FormData): Promise<ActionResult> {
