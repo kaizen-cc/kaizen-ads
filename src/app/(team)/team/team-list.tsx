@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import { PersonAvatar } from "@/components/person-avatar";
 import { ROLES, TIERS, roleLabel, tierOf, type TeamRole, type Tier } from "@/lib/roles";
@@ -14,6 +15,8 @@ export type Person = {
   joined: boolean;
   invitedAt?: string | null;
   clientCount: number;
+  /** Execs only: when they were last on and how much they use Kaizen Ads */
+  usage?: { lastActive: string | null; lastSignIn: string | null; perWeek: string | null; thisWeek: string | null } | null;
 };
 
 const select = "h-10 rounded-[8px] border border-line bg-bg px-3 text-sm outline-none transition-colors hover:border-faint/60 focus:border-brand-text/70";
@@ -64,6 +67,20 @@ function Row({ p, canEdit, isMe }: { p: Person; canEdit: boolean; isMe: boolean 
           {p.email}
           {p.clientCount > 0 && <span className="text-faint"> · {p.clientCount} clients</span>}
         </p>
+        {p.usage && p.joined && (
+          <p className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] text-faint">
+            <span className="inline-flex items-center gap-1.5">
+              <span className={`h-1.5 w-1.5 rounded-full ${p.usage.lastActive === "now" ? "bg-ok" : "bg-faint/60"}`} />
+              {p.usage.lastActive ? (p.usage.lastActive === "now" ? "Active now" : `Last active ${p.usage.lastActive}`) : "No activity yet"}
+            </span>
+            {p.usage.lastSignIn && <span>· Signed in {p.usage.lastSignIn}</span>}
+            {p.usage.perWeek && <span>· ~{p.usage.perWeek} a week</span>}
+            {p.usage.thisWeek && <span>· {p.usage.thisWeek} this week</span>}
+            <Link href={`/team/${p.id}`} className="text-muted underline-offset-2 hover:text-fg hover:underline">
+              Activity →
+            </Link>
+          </p>
+        )}
       </div>
       <div className="col-span-2 flex items-center gap-2 sm:col-span-1">
         {canEdit ? (

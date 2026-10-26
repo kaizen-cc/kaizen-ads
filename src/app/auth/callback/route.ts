@@ -16,7 +16,11 @@ export async function GET(request: NextRequest) {
   if (code) {
     const supabase = await createClient();
     const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
-    if (!exchangeError) return NextResponse.redirect(`${origin}${safeNext(searchParams.get("next"))}`);
+    if (!exchangeError) {
+      // On the team's activity record (clients' sign-ins aren't: the function only logs staff)
+      await supabase.rpc("activity_log", { p_kind: "sign_in", p_path: null, p_label: "Signed in" }).then(() => null, () => null);
+      return NextResponse.redirect(`${origin}${safeNext(searchParams.get("next"))}`);
+    }
   }
 
   return NextResponse.redirect(`${origin}/login?error=failed`);

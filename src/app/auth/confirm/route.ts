@@ -13,7 +13,10 @@ export async function GET(request: NextRequest) {
   if (tokenHash) {
     const supabase = await createClient();
     const { error } = await supabase.auth.verifyOtp({ type, token_hash: tokenHash });
-    if (!error) return NextResponse.redirect(`${origin}${next}`);
+    if (!error) {
+      await supabase.rpc("activity_log", { p_kind: "sign_in", p_path: null, p_label: "Signed in with a link" }).then(() => null, () => null);
+      return NextResponse.redirect(`${origin}${next}`);
+    }
   }
   return NextResponse.redirect(`${origin}/login?error=link_expired&next=${encodeURIComponent(next)}`);
 }
