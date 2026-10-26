@@ -11,7 +11,7 @@ import { GoogleChange } from "../../google-change";
 const OWNER: Record<string, string> = { media_buyer: "Media buyer", creative: "Creative team", client: "Client", strategist: "Strategist" };
 
 /** One action in the plan: tick it off when it's done (everyone sees who did and when). */
-export function ActionCard({ auditId, index, action, area, done, listed, google = false }: { auditId: string; index: number; action: AuditResult["actions"][number]; area: string; done: { by: string; at: string } | null; listed: string | null; google?: boolean }) {
+export function ActionCard({ auditId, index, action, area, done, listed, writable = null }: { auditId: string; index: number; action: AuditResult["actions"][number]; area: string; done: { by: string; at: string } | null; listed: string | null; writable?: "google" | "meta" | null }) {
   const router = useRouter();
   const [adding, startAdd] = useTransition();
   const [, start] = useTransition();
@@ -59,7 +59,7 @@ export function ActionCard({ auditId, index, action, area, done, listed, google 
             </ol>
           )}
           {open && <p className="text-[12px] leading-relaxed text-muted">{action.why}</p>}
-          {google && !checked && <GoogleChange from={{ source: "audit", auditId, index }} />}
+          {writable && !checked && <GoogleChange platform={writable} from={{ source: "audit", auditId, index }} />}
           <div className="flex flex-wrap items-center justify-between gap-2">
             <button type="button" onClick={() => setOpen(!open)} className="text-[11px] text-faint hover:text-fg">
               {open ? "Less" : "Why"}

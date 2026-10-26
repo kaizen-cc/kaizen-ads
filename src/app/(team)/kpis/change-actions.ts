@@ -5,11 +5,13 @@ import { revalidatePath } from "next/cache";
 import { requireStaff } from "@/lib/auth";
 import { applyChange, canApply, planChange, type PlannedOp } from "@/lib/ad-changes";
 import { googleAdsConfigured } from "@/lib/context/google-ads";
+import { metaConfigured } from "@/lib/context/meta";
 import type { AuditResult } from "@/lib/audit";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
-// Turning an audit action or a sprint move into changes in the Google Ads account, then applying them on confirm.
+// Turning an audit action or a sprint move into changes in the ad account (Google Ads or Meta), then applying them on
+// confirm. Meta writes also pass the sandbox switch (src/lib/meta-write.ts).
 
 export type ChangeView = {
   id: string;
@@ -42,7 +44,7 @@ async function resolve(from: From) {
 async function view(id: string): Promise<ChangeView | null> {
   const me = await requireStaff();
   const db = await createClient();
-  const { data: c } = await db.from("ad_changes").select("id, status, ops, note, error, applied_at, applier:profiles!ad_changes_applied_by_fkey(full_name), kpi_targets(owner_id)").eq("id", id).maybeSingle();
+  const { data: c } = await db.from("ad_changes").select("id, platform, status, ops, note, error, applied_at, applier:profiles!ad_changes_applied_by_fkey(full_name), kpi_targets(owner_id)").eq("id", id).maybeSingle();
   if (!c) return null;
   return {
     id: c.id,
@@ -52,7 +54,7 @@ async function view(id: string): Promise<ChangeView | null> {
     error: c.error,
     appliedBy: (c.applier as unknown as { full_name: string } | null)?.full_name ?? null,
     appliedAt: c.applied_at,
-    canApply: canApply(me, (c.kpi_targets as unknown as { owner_id: string | null } | null)?.owner_id ?? null),
+    canApply: canApply(me, (c.kpi_targets as unknown as { owner_id: string | null } | null)?.owner_id ?? null, c.platform as string),
   };
 }
 
@@ -70,21 +72,23 @@ export async function loadChange(id: string) {
   return view(id);
 }
 
-/** Has the Google Buyer turn the action into changes, checked with Google; nothing is applied. */
+/** Has the buyer agent turn the action into changes, checked with the platform (a dry run); nothing is applied. */
 export async function planFrom(from: From): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
   const me = await requireStaff();
-  if (!googleAdsConfigured() || !adminConfigured()) return { ok: false, error: "Google Ads isn't connected." };
+  if (!adminConfigured()) return { ok: false, error: "Can't do this here." };
   const r = await resolve(from);
   if (!r) return { ok: false, error: "Couldn't find that action." };
   const admin = createAdminClient();
   const { data: t } = await admin.from("kpi_targets").select("id, client_id, platform, ad_account_id").eq("id", r.targetId).single();
-  if (!t || t.platform !== "google" || !t.ad_account_id) return { ok: false, error: "Changes can be made on Google Ads accounts only, for now." };
+  if (!t || !t.ad_account_id || !["google", "meta"].includes(t.platform)) return { ok: false, error: "This account has no ad account to change." };
+  if (t.platform === "google" && !googleAdsConfigured()) return { ok: false, error: "Google Ads isn't connected." };
+  if (t.platform === "meta" && !metaConfigured()) return { ok: false, error: "Meta isn't connected." };
   const { data: row, error } = await admin
     .from("ad_changes")
     .insert({
       target_id: t.id,
       client_id: t.client_id,
-      platform: "google",
+      platform: t.platform,
       account: String(t.ad_account_id).replace(/\D/g, ""),
       source: from.source,
       audit_id: from.source === "audit" ? from.auditId : null,
@@ -100,12 +104,12 @@ export async function planFrom(from: From): Promise<{ ok: true; id: string } | {
   return { ok: true, id: row.id };
 }
 
-/** Applies it in Google Ads. Only the account's buyer, the Head of Google and execs. pick: only these changes. */
+/** Applies it in the ad account. Only the account's buyer, the head of its platform and execs. pick: only these changes. */
 export async function applyPlanned(id: string, pick?: number[]): Promise<{ ok: true; status: string } | { ok: false; error: string }> {
   const me = await requireStaff();
   const c = await view(id);
   if (!c) return { ok: false, error: "Not found." };
-  if (!c.canApply) return { ok: false, error: "Only the account's buyer, the Head of Google or an exec can apply changes." };
+  if (!c.canApply) return { ok: false, error: "Only the account's buyer, the head of its platform or an exec can apply changes." };
   try {
     const status = await applyChange(createAdminClient(), id, me, pick);
     revalidatePath("/kpis", "layout");

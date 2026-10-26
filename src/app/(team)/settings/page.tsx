@@ -1,3 +1,5 @@
+import { MetaWriteCard } from "./meta-write-card";
+import { metaWriteSetting } from "@/lib/meta-write";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
@@ -431,6 +433,10 @@ function progressOf(job: string, run: RunState): Progress {
 async function Sync({ motion }: { motion: string | null }) {
   if (!adminConfigured()) return <p className="text-sm text-faint">Server key missing.</p>;
   const admin = createAdminClient();
+  const me = await requireStaff();
+  const { data: mw } = await admin.from("app_settings").select("updated_at, profiles(full_name)").eq("key", "meta_write").maybeSingle();
+  const write = await metaWriteSetting(admin);
+  const mwBy = (mw?.profiles as unknown as { full_name: string } | null)?.full_name;
   const [{ data }, { data: accounts }] = await Promise.all([
     admin.from("sync_state").select("source, last_run_at, last_result").order("source"),
     admin.from("kpi_targets").select("ad_account_id, clients(name)").eq("active", true).not("ad_account_id", "is", null),
@@ -446,6 +452,12 @@ async function Sync({ motion }: { motion: string | null }) {
   };
   return (
     <div className="grid gap-4">
+      <MetaWriteCard
+        sandbox={write.sandbox}
+        sandboxAccount={write.sandboxAccount}
+        canEdit={me.isExec}
+        updated={mw?.updated_at ? `${new Date(mw.updated_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })}${mwBy ? ` by ${mwBy}` : ""}` : null}
+      />
       <MotionCard notice={motion} />
       {GROUPS.map(([prefix, name, job, about]) => {
         const all = rows.filter((r) => (prefix.endsWith(":") ? r.source.startsWith(prefix) : r.source === prefix || r.source.startsWith(`${prefix}:`)));

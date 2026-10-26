@@ -19,7 +19,7 @@ type TargetRow = { id: string; client_id: string; platform: string; owner_id: st
 /** Live accounts with an owner and spend in the window (from the KPI snapshot). */
 async function liveTargets(admin: SupabaseClient, window: "d7" | "d30") {
   const [{ data: targets }, { data: snaps }] = await Promise.all([
-    admin.from("kpi_targets").select("id, client_id, platform, owner_id, ad_account_id, clients!inner(status, archived_at)").eq("active", true).not("ad_account_id", "is", null).is("clients.archived_at", null),
+    admin.from("kpi_targets").select("id, client_id, platform, owner_id, ad_account_id, clients!inner(status, archived_at, internal)").eq("active", true).not("ad_account_id", "is", null).is("clients.archived_at", null).eq("clients.internal", false),
     admin.from("kpi_snapshots").select("target_id, windows"),
   ]);
   const spent = new Map((snaps ?? []).map((s) => [s.target_id as string, Number((s.windows as Record<string, { spend?: number }> | null)?.[window]?.spend ?? 0)]));

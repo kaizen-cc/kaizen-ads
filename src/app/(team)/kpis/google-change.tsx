@@ -5,14 +5,22 @@ import { useEffect, useState, useTransition } from "react";
 import type { PlannedOp } from "@/lib/ad-changes";
 import { applyPlanned, changeFor, discardPlanned, loadChange, planFrom, type ChangeView } from "./change-actions";
 
-// "Make this change in Google Ads" on an audit action or a sprint move: the Google Buyer turns it into the exact
-// changes (from the account's live setup), Google checks each one without applying it, and someone allowed confirms.
+// "Make this change in Google Ads / Meta" on an audit action or a sprint move: the buyer agent turns it into the exact
+// changes (from the account's live setup), the platform checks each one without applying it (a dry run), and someone
+// allowed confirms. Meta writes also pass the sandbox switch in Settings.
 
 type From = { source: "audit"; auditId: string; index: number } | { source: "sprint"; actionId: string };
 
 const money = (n: number | null) => (n == null ? "not set" : `$${n.toFixed(2)}`);
 
-function Line({ op }: { op: PlannedOp }) {
+type Platform = "google" | "meta";
+/** Each platform's name and colors (Google blue; Meta blue, a touch deeper) */
+const P: Record<Platform, { name: string; full: string; head: string; border: string; panel: string; text: string; button: string; spin: string }> = {
+  google: { name: "Google", full: "Google Ads", head: "the Head of Google", border: "border-[#4285f4]/40 hover:bg-[#4285f4]/10", panel: "border-[#4285f4]/30 bg-[#4285f4]/[0.05]", text: "text-[#8ab4f8]", button: "bg-[#4285f4]", spin: "border-[#8ab4f8]" },
+  meta: { name: "Meta", full: "Meta", head: "the Head of Meta", border: "border-[#0866ff]/45 hover:bg-[#0866ff]/10", panel: "border-[#0866ff]/35 bg-[#0866ff]/[0.06]", text: "text-[#7aa7ff]", button: "bg-[#0866ff]", spin: "border-[#7aa7ff]" },
+};
+
+function Line({ op, platform }: { op: PlannedOp; platform: Platform }) {
   const [what, from, to] = (() => {
     switch (op.kind) {
       case "campaign_status":
@@ -27,6 +35,10 @@ function Line({ op }: { op: PlannedOp }) {
         return [`Target ROAS · "${op.campaign}"`, op.from == null ? "not set" : `${Math.round(op.from * 100)}%`, `${Math.round(op.to * 100)}%`];
       case "negative_keywords":
         return [`Negative keywords · "${op.campaign}"`, null, op.keywords.map((k) => (k.match === "EXACT" ? `[${k.text}]` : k.match === "PHRASE" ? `"${k.text}"` : k.text)).join(", ")];
+      case "meta_status":
+        return [`${op.level === "adset" ? "Ad set" : op.level === "ad" ? "Ad" : "Campaign"} "${op.name}"${op.parent ? ` · ${op.parent}` : ""}`, op.from === "ACTIVE" ? "on" : op.from.toLowerCase(), op.to === "PAUSED" ? "paused" : "on"];
+      case "meta_budget":
+        return [`Daily budget · ${op.level === "adset" ? "ad set" : "campaign"} "${op.name}"`, money(op.from), money(op.to)];
     }
   })();
   const state = op.result ? (op.result.ok ? "applied" : "refused") : op.check ? (op.check.ok ? "checked" : "won't go through") : null;
@@ -35,7 +47,7 @@ function Line({ op }: { op: PlannedOp }) {
     <li className="grid gap-1 rounded-[12px] border border-line bg-bg/50 px-3.5 py-2.5">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <span className="text-sm">{what}</span>
-        {state && <span className={`text-[11px] ${tone}`}>{state === "checked" ? "✓ Google says it'll go through" : state === "applied" ? "✓ Applied" : `× ${state}`}</span>}
+        {state && <span className={`text-[11px] ${tone}`}>{state === "checked" ? `✓ ${P[platform].name} says it'll go through` : state === "applied" ? "✓ Applied" : `× ${state}`}</span>}
       </div>
       <p className="text-sm">
         {from != null && (
@@ -53,7 +65,8 @@ function Line({ op }: { op: PlannedOp }) {
   );
 }
 
-export function GoogleChange({ from, disabled }: { from: From; disabled?: boolean }) {
+export function GoogleChange({ from, disabled, platform = "google" }: { from: From; disabled?: boolean; platform?: Platform }) {
+  const p = P[platform];
   const router = useRouter();
   const [c, setC] = useState<ChangeView | null>(null);
   const [open, setOpen] = useState(false);
@@ -116,9 +129,9 @@ export function GoogleChange({ from, disabled }: { from: From; disabled?: boolea
   if (!open || !c)
     return (
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" disabled={disabled || pending} onClick={plan} className="inline-flex items-center gap-1.5 rounded-full border border-[#4285f4]/40 px-2.5 py-0.5 text-[11px] text-[#8ab4f8] hover:bg-[#4285f4]/10 disabled:opacity-50">
+        <button type="button" disabled={disabled || pending} onClick={plan} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] disabled:opacity-50 ${p.border} ${p.text}`}>
           <span aria-hidden>⚡</span>
-          {pending ? "Planning…" : c?.status === "applied" ? "Applied in Google Ads · plan again" : "Make this change in Google Ads"}
+          {pending ? "Planning…" : c?.status === "applied" ? `Applied in ${p.full} · plan again` : `Make this change in ${p.full}`}
         </button>
         {c?.status === "applied" && !open && (
           <button type="button" onClick={() => setOpen(true)} className="text-[11px] text-faint hover:text-fg">
@@ -131,9 +144,9 @@ export function GoogleChange({ from, disabled }: { from: From; disabled?: boolea
 
   const ready = c.ops.filter((o) => o.check?.ok && !o.result?.ok);
   return (
-    <div className="grid gap-3 rounded-[14px] border border-[#4285f4]/30 bg-[#4285f4]/[0.05] p-4">
+    <div className={`grid gap-3 rounded-[14px] border p-4 ${p.panel}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#8ab4f8]">Change in Google Ads</p>
+        <p className={`text-[10px] font-semibold uppercase tracking-[0.16em] ${p.text}`}>Change in {p.full}</p>
         <button type="button" onClick={() => setOpen(false)} className="text-[11px] text-faint hover:text-fg">
           Hide
         </button>
@@ -141,7 +154,7 @@ export function GoogleChange({ from, disabled }: { from: From; disabled?: boolea
 
       {c.status === "planning" && (
         <p className="flex items-center gap-2 text-sm text-muted">
-          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-[#8ab4f8] border-t-transparent" />
+          <span className={`h-3.5 w-3.5 animate-spin rounded-full border-2 border-t-transparent ${p.spin}`} />
           Reading the account and working out the exact changes…
         </p>
       )}
@@ -149,7 +162,7 @@ export function GoogleChange({ from, disabled }: { from: From; disabled?: boolea
       {c.ops.length > 0 && (
         <ul className="grid gap-2">
           {c.ops.map((op, i) => (
-            <Line key={i} op={op} />
+            <Line key={i} op={op} platform={platform} />
           ))}
         </ul>
       )}
@@ -164,11 +177,11 @@ export function GoogleChange({ from, disabled }: { from: From; disabled?: boolea
       {confirm && (
         <div className="grid gap-2 rounded-[12px] border border-warn/40 bg-warn-soft px-4 py-3 text-sm">
           <p>
-            This changes the live Google Ads account right away: {ready.length} {ready.length === 1 ? "change" : "changes"}. They can be undone in Google Ads or with another change here.
+            This changes the live {p.full} account right away: {ready.length} {ready.length === 1 ? "change" : "changes"}. They can be undone in {p.full} or with another change here.
           </p>
           <div className="flex gap-2">
             <button type="button" onClick={apply} disabled={pending} className="h-8 rounded-full bg-fg px-4 text-xs text-bg disabled:opacity-60">
-              Yes, apply in Google Ads
+              Yes, apply in {p.full}
             </button>
             <button type="button" onClick={() => setConfirm(false)} className="h-8 rounded-full border border-line bg-surface px-3 text-xs text-muted hover:text-fg">
               Not yet
@@ -181,15 +194,15 @@ export function GoogleChange({ from, disabled }: { from: From; disabled?: boolea
         <div className="flex flex-wrap items-center gap-2">
           {(c.status === "ready" || c.status === "partial") && ready.length > 0 &&
             (c.canApply ? (
-              <button type="button" onClick={() => setConfirm(true)} disabled={pending} className="h-9 rounded-full bg-[#4285f4] px-4 text-sm font-medium text-white hover:brightness-110 disabled:opacity-60">
+              <button type="button" onClick={() => setConfirm(true)} disabled={pending} className={`h-9 rounded-full px-4 text-sm font-medium text-white hover:brightness-110 disabled:opacity-60 ${p.button}`}>
                 Apply {ready.length} {ready.length === 1 ? "change" : "changes"}
               </button>
             ) : (
-              <span className="text-xs text-faint">The account&apos;s buyer, the Head of Google or an exec can apply these.</span>
+              <span className="text-xs text-faint">The account&apos;s buyer, {p.head} or an exec can apply these.</span>
             ))}
           {c.status === "applying" && (
             <span className="flex items-center gap-2 text-sm text-muted">
-              <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-[#8ab4f8] border-t-transparent" />
+              <span className={`h-3.5 w-3.5 animate-spin rounded-full border-2 border-t-transparent ${p.spin}`} />
               Applying…
             </span>
           )}

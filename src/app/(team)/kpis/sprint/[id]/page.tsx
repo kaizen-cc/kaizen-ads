@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireStaff } from "@/lib/auth";
 import { googleAdsConfigured } from "@/lib/context/google-ads";
+import { metaConfigured } from "@/lib/context/meta";
 import { createClient } from "@/lib/supabase/server";
 import { ActionRow, AddMove, CheckNow, CloseSprint, WatchToggle, type SprintAction } from "./sprint-parts";
 
@@ -41,7 +42,8 @@ export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id
   ]);
   const client = s.clients as unknown as { name: string; slug: string };
   // Google accounts: a move can be made in the account from the list
-  const google = (s.kpi_targets as unknown as { platform: string } | null)?.platform === "google" && googleAdsConfigured();
+  const platform = (s.kpi_targets as unknown as { platform: string } | null)?.platform;
+  const writable = platform === "google" ? (googleAdsConfigured() ? "google" : null) : platform === "meta" ? (metaConfigured() ? "meta" : null) : null;
   const base = s.baseline as Kpi;
   const latest = s.latest as Kpi;
   const list: SprintAction[] = (actions ?? []).map((a) => ({
@@ -138,7 +140,7 @@ export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id
             <>
               {/* Open moves first (in progress, then to do); finished ones drop to the bottom */}
               {[...list.filter((a) => a.status === "doing"), ...list.filter((a) => a.status === "todo")].map((a) => (
-                <ActionRow key={a.id} a={a} readOnly={!active} google={google} />
+                <ActionRow key={a.id} a={a} readOnly={!active} writable={writable} />
               ))}
               {!list.some((a) => a.status === "todo" || a.status === "doing") && <p className="rounded-[14px] border border-dashed border-line px-4 py-6 text-center text-sm text-muted">Every move is done or skipped.</p>}
               {list.some((a) => a.status === "done" || a.status === "skipped") && (
@@ -148,7 +150,7 @@ export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id
                 </p>
               )}
               {[...list.filter((a) => a.status === "done").sort((x, y) => (y.doneAt ?? "").localeCompare(x.doneAt ?? "")), ...list.filter((a) => a.status === "skipped")].map((a) => (
-                <ActionRow key={a.id} a={a} readOnly={!active} google={google} />
+                <ActionRow key={a.id} a={a} readOnly={!active} writable={writable} />
               ))}
             </>
           ) : (

@@ -797,3 +797,6 @@ export async function adPreviews(adIds: string[]) {
   });
   return out;
 }
+
+/** For writes (src/lib/meta-write.ts), which gates every one of them through the sandbox setting */
+export { graph as metaGraph };

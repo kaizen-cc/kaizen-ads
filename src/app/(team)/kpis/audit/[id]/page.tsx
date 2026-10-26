@@ -7,6 +7,7 @@ import { conversionFor, conversionLabel } from "@/lib/kpi/conversions";
 import { kpiValue } from "@/lib/kpi/format";
 import { createClient } from "@/lib/supabase/server";
 import { googleAdsConfigured } from "@/lib/context/google-ads";
+import { metaConfigured } from "@/lib/context/meta";
 import { VERDICT } from "../../verdict";
 import { ActionCard, RerunAudit, StartSprint } from "./audit-parts";
 
@@ -47,7 +48,8 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
   const client = a.clients as unknown as { name: string; slug: string };
   const t = a.kpi_targets as unknown as { conversion: string; custom_action: string | null; target: number | null; label: string | null; platform: string };
   // Google accounts: a buyer's action can be made in the account from here
-  const google = t.platform === "google" && googleAdsConfigured();
+  // Where an action can become a change made from here: Google Ads, or Meta (behind the sandbox switch)
+  const writable = t.platform === "google" ? (googleAdsConfigured() ? "google" : null) : t.platform === "meta" ? (metaConfigured() ? "meta" : null) : null;
   const [{ data: snap }, { data: history }, { data: sprint }] = await Promise.all([
     supabase.from("kpi_snapshots").select("windows, deviation").eq("target_id", a.target_id).maybeSingle(),
     supabase.from("account_audits").select("id, created_at, status, result").eq("target_id", a.target_id).order("created_at", { ascending: false }).limit(10),
@@ -189,7 +191,7 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
                   <p className="text-[11px] text-faint">{items.length ? hint : "Nothing here"}</p>
                 </div>
                 {items.map(({ x, i }) => (
-                  <ActionCard key={i} auditId={a.id} index={i} action={x} area={AREA[x.area] ?? x.area} done={done[String(i)] ?? null} listed={replaced ? "replaced" : (onList.get(x.title) ?? null)} google={google && x.owner === "media_buyer"} />
+                  <ActionCard key={i} auditId={a.id} index={i} action={x} area={AREA[x.area] ?? x.area} done={done[String(i)] ?? null} listed={replaced ? "replaced" : (onList.get(x.title) ?? null)} writable={x.owner === "media_buyer" ? writable : null} />
                 ))}
               </div>
             );
