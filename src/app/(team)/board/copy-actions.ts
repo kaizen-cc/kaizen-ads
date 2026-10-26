@@ -265,3 +265,51 @@ export async function setLandingUrl(requestId: string, url: string): Promise<{ o
   revalidatePath("/board");
   return error ? { ok: false, error: error.message } : { ok: true };
 }
+
+// ─── Carousel cards (src/lib/carousel-cards.ts) ─────────────────────────────
+
+export type CarouselView = { designs: { id: string; position: number; name: string; thumbs: (string | null)[] }[]; cards: Record<string, { headline: string; description: string }[]> };
+
+/** The ticket's carousels with a picture of each card, and each card's headline and description. */
+export async function carouselCards(requestId: string): Promise<CarouselView | null> {
+  await requireStaff();
+  const db = await createClient();
+  const { data: visible } = await db.from("requests").select("id").eq("id", requestId).maybeSingle();
+  if (!visible || !adminConfigured()) return null;
+  const admin = createAdminClient();
+  const { carouselDesigns } = await import("@/lib/carousel-cards");
+  const [designs, { data: set }] = await Promise.all([carouselDesigns(admin, requestId), admin.from("copy_sets").select("cards").eq("request_id", requestId).maybeSingle()]);
+  const out: CarouselView["designs"] = [];
+  for (const d of designs) {
+    const paths = d.cards.map((f) => f.thumb_path).filter((x): x is string => Boolean(x));
+    const { data: signed } = paths.length ? await admin.storage.from("creative").createSignedUrls(paths, 3600) : { data: [] };
+    const url = new Map((signed ?? []).map((x) => [x.path, x.signedUrl]));
+    out.push({ id: d.id, position: d.position, name: d.name, thumbs: d.cards.map((f) => (f.thumb_path ? (url.get(f.thumb_path) ?? null) : null)) });
+  }
+  return { designs: out, cards: (set?.cards ?? {}) as CarouselView["cards"] };
+}
+
+/** Saves one carousel's card headlines and descriptions (copy review's edits). */
+export async function saveCards(requestId: string, designId: string, cards: { headline: string; description: string }[]): Promise<{ ok: true } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  const db = await createClient();
+  const { data: set } = await db.from("copy_sets").select("id, cards").eq("request_id", requestId).maybeSingle();
+  if (!set) return { ok: false, error: "No copy set yet." };
+  const next = { ...((set.cards ?? {}) as Record<string, unknown>), [designId]: cards.map((c) => ({ headline: c.headline.trim().slice(0, 60), description: c.description.trim().slice(0, 40) })) };
+  const { error } = await db.from("copy_sets").update({ cards: next, updated_by: me.id, updated_at: new Date().toISOString() }).eq("id", set.id);
+  return error ? { ok: false, error: error.message } : { ok: true };
+}
+
+/** Has the Copywriter (re)write the card headlines: every carousel on the ticket, or one. */
+export async function writeCards(requestId: string, designId?: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  await requireStaff();
+  const db = await createClient();
+  const { data: visible } = await db.from("requests").select("id").eq("id", requestId).maybeSingle();
+  if (!visible || !adminConfigured()) return { ok: false, error: "Not found." };
+  try {
+    await (await import("@/lib/carousel-cards")).draftCards(createAdminClient(), requestId, designId);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof AiUnavailable ? e.message : "The Copywriter couldn't write them just now." };
+  }
+}

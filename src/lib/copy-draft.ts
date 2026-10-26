@@ -115,6 +115,13 @@ Count characters and words before answering; these are hard limits.`,
       .update({ status: "review", ads, ai_ads: ads, notes: out.notes, model, progress: {}, version: (existing?.version ?? 0) + 1, updated_by: actorId, updated_at: new Date().toISOString(), approved_at: null, approved_by: null })
       .eq("request_id", requestId);
 
+    // Carousels: each card's headline and description too, written to the cards themselves
+    if (r.format === "carousel") {
+      await admin.from("copy_sets").update({ progress: { written: 5, total: 5, label: "Writing the carousel cards" } }).eq("request_id", requestId);
+      await (await import("@/lib/carousel-cards")).draftCards(admin, requestId).catch((e) => console.error("carousel cards", e));
+      await admin.from("copy_sets").update({ progress: {} }).eq("request_id", requestId);
+    }
+
     // Straight to copy review: copy → copy review
     if (r.stage === "copy") {
       const { data: camille } = await admin.from("profiles").select("id").eq("role", "copywriter").eq("is_active", true).order("created_at").limit(1).maybeSingle();

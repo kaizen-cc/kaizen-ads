@@ -1,5 +1,6 @@
 "use client";
 
+import { CarouselCards } from "./carousel-cards";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { blockers, headsUp, type Ad } from "@/lib/copy";
@@ -192,6 +193,7 @@ export function CopyPanel({ ticket, canApprove, onMoved, demo }: { ticket: Ticke
         </button>
       )}
       {error && !open && <p className="text-xs text-bad">{error}</p>}
+      {ticket.format === "carousel" && set && set.status !== "drafting" && !demo && <CarouselCards requestId={ticket.id} />}
 
       {open && set && (
         <CopyStudio

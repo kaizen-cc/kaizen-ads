@@ -29,8 +29,9 @@ export function adsManagerLink(account: string, adIds: string[], adsetId: string
 const campaignOf = (plan: LaunchPlan, adsetId: string) => [...plan.options.adsets, ...(plan.options.allAdsets ?? [])].find((a) => a.id === adsetId)?.campaignId ?? null;
 
 export type LaunchCheck = { key: string; label: string; level: "ok" | "warn" | "block"; detail: string };
-type Asset = { fileId: string; aspect: string; kind: "image" | "video"; hash?: string; videoId?: string; thumbUrl?: string; name: string };
-export type LaunchAd = { designId: string; designName: string; name: string; assets: Asset[]; check?: { ok: boolean; error: string | null } };
+type Asset = { fileId: string; aspect: string; kind: "image" | "video"; hash?: string; videoId?: string; thumbUrl?: string; name: string; card?: number | null };
+/** cards: a carousel's cards in order (headline and description per card, from the copy studio); its assets are the cards */
+export type LaunchAd = { designId: string; designName: string; name: string; assets: Asset[]; cards?: { headline: string; description: string }[]; check?: { ok: boolean; error: string | null } };
 type AdsetOption = { id: string; name: string; campaignId: string; campaign: string; status: string; objective: string; optimization: string | null; destination: string | null; dynamic: boolean; leadForm: boolean; pixel: string | null; event: string | null; special: string[]; recentAds: string[]; spend14: number; pages: string[]; igs: string[]; forms?: string[]; daily?: number | null; lifetime?: number | null; campaignDaily?: number | null };
 export type LaunchPlan = {
   account: string;
@@ -114,7 +115,7 @@ type Ticket = { id: string; number: number; title: string; format: string; landi
 async function loadTicket(admin: SupabaseClient, requestId: string) {
   const { data: t } = await admin.from("requests").select("id, number, title, format, landing_url, client_id, brief, clients(name, website, meta_ad_account_id, url_tags)").eq("id", requestId).single();
   const [{ data: copy }, { data: designs }, { data: kpi }] = await Promise.all([
-    admin.from("copy_sets").select("ads, status").eq("request_id", requestId).eq("status", "approved").order("updated_at", { ascending: false }).limit(1).maybeSingle(),
+    admin.from("copy_sets").select("ads, status, cards").eq("request_id", requestId).eq("status", "approved").order("updated_at", { ascending: false }).limit(1).maybeSingle(),
     admin
       .from("designs")
       .select("id, position, name, is_variation, current_version, client_status, design_versions(version, design_files(id, path, thumb_path, mime, aspect, card, original_name))")
@@ -128,7 +129,7 @@ async function loadTicket(admin: SupabaseClient, requestId: string) {
     .filter((d) => d.client_status !== "changes")
     .map((d) => ({ id: d.id, name: d.name, position: d.position, files: d.design_versions.find((v) => v.version === d.current_version)?.design_files ?? [] }))
     .filter((d) => d.files.length);
-  return { ticket: t as unknown as Ticket | null, copy: (copy?.ads ?? []) as { kind: string; headline: string; primaryText: string; linkDescription: string; cta: string }[], designs: list, conversion: (kpi?.conversion as string | undefined) ?? null, monthlyBudget: kpi?.monthly_budget != null ? Number(kpi.monthly_budget) : null };
+  return { ticket: t as unknown as Ticket | null, cardCopy: (copy?.cards ?? {}) as Record<string, { headline: string; description: string }[]>, copy: (copy?.ads ?? []) as { kind: string; headline: string; primaryText: string; linkDescription: string; cta: string }[], designs: list, conversion: (kpi?.conversion as string | undefined) ?? null, monthlyBudget: kpi?.monthly_budget != null ? Number(kpi.monthly_budget) : null };
 }
 
 /** The ad sets that can take new ads (with their recent ad names, Page and Instagram identity), the Pages and IG accounts. */
@@ -231,7 +232,7 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
   const add = (key: string, label: string, level: LaunchCheck["level"], detail: string) => checks.push({ key, label, level, detail });
   try {
     await update(admin, launchId, { status: "planning", progress: "Reading the ticket", error: null });
-    const { ticket, copy, designs, conversion, monthlyBudget } = await loadTicket(admin, l.request_id);
+    const { ticket, copy, designs, conversion, monthlyBudget, cardCopy } = await loadTicket(admin, l.request_id);
     if (!ticket) throw new Error("Ticket not found");
     const setting = await metaWriteSetting(admin);
     const clientAccount = (ticket.clients.meta_ad_account_id ?? "").replace(/\D/g, "");
@@ -256,7 +257,20 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
 
     // Designs and their sizes
     const carousel = designs.filter((d) => d.files.some((f) => f.card != null && f.card > 0));
-    if (carousel.length) add("carousel", "Carousels", "block", `${carousel.map((d) => d.name).join(", ")}: carousels aren't launched from here yet; launch those by hand.`);
+    const cardsOf = (d: (typeof designs)[number]) => d.files.filter((f) => f.card != null && f.card > 0).sort((a, b) => (a.card ?? 0) - (b.card ?? 0));
+    if (carousel.length) {
+      const sizes = carousel.map((d) => cardsOf(d).length);
+      const off = carousel.filter((d) => cardsOf(d).length < 2 || cardsOf(d).length > 10);
+      const noCopy = carousel.filter((d) => !(cardCopy[d.id] ?? []).some((c) => c.headline?.trim()));
+      if (off.length) add("carousel", "Carousels", "block", `${off.map((d) => `${d.name} (${cardsOf(d).length} cards)`).join(", ")}: Meta takes 2 to 10 cards.`);
+      else
+        add(
+          "carousel",
+          "Carousels",
+          noCopy.length ? "warn" : "ok",
+          `${carousel.length === 1 ? "A carousel" : `${carousel.length} carousels`} of ${[...new Set(sizes)].join(" / ")} cards, in the approved order (Meta's card reordering off).${noCopy.length ? ` ${noCopy.map((d) => d.name).join(", ")} has no card headlines yet: the cards go without them. Add them under the copy (Carousel cards).` : " Each card carries its own headline from the copy studio."}`,
+        );
+    }
     const singles = designs.filter((d) => !carousel.includes(d));
     if (!singles.length && !carousel.length) add("creative", "Creative", "block", "No approved creative files on this ticket.");
     const noFeed = singles.filter((d) => !d.files.some((f) => f.aspect === "4x5" || f.aspect === "1x1"));
@@ -324,7 +338,7 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
         system: PROPOSE_SYSTEM,
         schema: PROPOSE_SCHEMA,
         maxTokens: 4000,
-        prompt: `${rulesBlock}<budget>\nMonthly budget for this account: ${monthlyBudget != null ? `$${monthlyBudget}` : "not set"}. Spend across its ad sets, last 14 days: $${Math.round(acct.adsets.reduce((n, a) => n + a.spend14, 0))}.\n</budget>\n\n<ticket>\n#${ticket.number} ${ticket.title} (${ticket.format})\nClient: ${ticket.clients.name}\nKPI counted: ${conversion ?? "unknown"}\nBrief: ${brief}\n</ticket>\n\n<designs>\n${singles.map((d) => `- designId ${d.id}: "${d.name}" (${d.files.map((f) => `${f.aspect ?? "?"} ${f.mime.startsWith("video") ? "video" : "image"}`).join(", ")})`).join("\n")}\n</designs>\n\n<ad_sets>\n${acct.adsets
+        prompt: `${rulesBlock}<budget>\nMonthly budget for this account: ${monthlyBudget != null ? `$${monthlyBudget}` : "not set"}. Spend across its ad sets, last 14 days: $${Math.round(acct.adsets.reduce((n, a) => n + a.spend14, 0))}.\n</budget>\n\n<ticket>\n#${ticket.number} ${ticket.title} (${ticket.format})\nClient: ${ticket.clients.name}\nKPI counted: ${conversion ?? "unknown"}\nBrief: ${brief}\n</ticket>\n\n<designs>\n${[...singles, ...carousel].map((d) => `- designId ${d.id}: "${d.name}" (${carousel.includes(d) ? `carousel of ${cardsOf(d).length} cards` : d.files.map((f) => `${f.aspect ?? "?"} ${f.mime.startsWith("video") ? "video" : "image"}`).join(", ")})`).join("\n")}\n</designs>\n\n<ad_sets>\n${acct.adsets
           .slice(0, 60)
           .map((a) => `- id ${a.id} "${a.name}" [${a.status}] in "${a.campaign}" (${a.objective}${a.optimization ? `, optimizing ${a.optimization}` : ""}${a.leadForm ? ", instant form" : ""}${a.special.length ? `, special category ${a.special.join("/")}` : ""}), ${a.campaignDaily != null ? `campaign budget $${a.campaignDaily}/day` : a.daily != null ? `budget $${a.daily}/day` : a.lifetime != null ? `lifetime budget $${a.lifetime}` : "no budget read"}, $${a.spend14} last 14 days\n    recent ads: ${a.recentAds.length ? a.recentAds.map((n) => `"${n}"`).join("; ") : "none"}`)
           .join("\n")}\n</ad_sets>`,
@@ -420,14 +434,17 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
 
     // Media already in this account's library from an earlier check (never across accounts)
     const prev = (l.plan as LaunchPlan | null)?.account === account ? ((l.plan as LaunchPlan).ads ?? []) : [];
-    const ads: LaunchAd[] = singles.map((d) => ({
-      designId: d.id,
-      designName: d.name,
-      name: (names[d.id] || prev.find((p) => p.designId === d.id)?.name || `${d.name} | Stacked Copy`).slice(0, 250),
-      assets: d.files
-        .filter((f) => f.card == null || f.card === 0)
-        .map((f) => ({ fileId: f.id, aspect: f.aspect ?? "?", kind: f.mime.startsWith("video") ? ("video" as const) : ("image" as const), name: f.original_name, ...(prev.flatMap((p) => p.assets).find((a) => a.fileId === f.id) ?? {}) })),
-    }));
+    const asset = (f: (typeof designs)[number]["files"][number]) => ({ fileId: f.id, aspect: f.aspect ?? "?", kind: f.mime.startsWith("video") ? ("video" as const) : ("image" as const), name: f.original_name, card: f.card ?? null, ...(prev.flatMap((p) => p.assets).find((a) => a.fileId === f.id) ?? {}) });
+    const ads: LaunchAd[] = [...singles, ...carousel].map((d) => {
+      const isCarousel = carousel.includes(d);
+      return {
+        designId: d.id,
+        designName: d.name,
+        name: (names[d.id] || prev.find((p) => p.designId === d.id)?.name || `${d.name} | ${isCarousel ? "Carousel" : "Stacked Copy"}`).slice(0, 250),
+        assets: isCarousel ? cardsOf(d).map(asset) : d.files.filter((f) => f.card == null || f.card === 0).map(asset),
+        ...(isCarousel ? { cards: cardsOf(d).map((_, i) => ({ headline: cardCopy[d.id]?.[i]?.headline ?? "", description: cardCopy[d.id]?.[i]?.description ?? "" })) } : {}),
+      };
+    });
 
     const plan: LaunchPlan = {
       account,
@@ -597,7 +614,35 @@ function classicSpec(plan: LaunchPlan, ad: LaunchAd) {
   };
 }
 
-export const specFor = (plan: LaunchPlan, ad: LaunchAd, structure: NonNullable<LaunchPlan["structure"]>) => (structure === "single" ? classicSpec(plan, ad) : creativeSpec(plan, ad, structure));
+/**
+ * A carousel: one ad, its cards in the approved order (Meta's reordering and end card off), each card with its own
+ * headline and description and the same link. "text" stacks the other primary texts as Meta's text options.
+ */
+function carouselSpec(plan: LaunchPlan, ad: LaunchAd, withText: boolean) {
+  const value = plan.leadFormId ? { lead_gen_form_id: plan.leadFormId, link: plan.link } : { link: plan.link };
+  const cards = [...ad.assets].sort((a, b) => (a.card ?? 0) - (b.card ?? 0));
+  const child_attachments = cards.map((a, i) => ({
+    link: plan.link,
+    ...(ad.cards?.[i]?.headline?.trim() ? { name: ad.cards[i].headline.trim() } : {}),
+    ...(ad.cards?.[i]?.description?.trim() ? { description: ad.cards[i].description.trim() } : {}),
+    ...(a.kind === "video" ? { video_id: a.videoId, picture: a.thumbUrl } : { image_hash: a.hash }),
+    call_to_action: { type: ctaFor(plan), value },
+  }));
+  return {
+    name: ad.name.slice(0, 100),
+    object_story_spec: {
+      page_id: plan.pageId,
+      ...(plan.igId ? { instagram_user_id: plan.igId } : {}),
+      link_data: { link: plan.link, message: plan.copy.bodies[0] ?? "", child_attachments, multi_share_optimized: false, multi_share_end_card: false, call_to_action: { type: ctaFor(plan), value } },
+    },
+    ...(withText && plan.copy.bodies.length > 1 ? { asset_feed_spec: { bodies: plan.copy.bodies.map((t) => ({ text: t })), optimization_type: "DEGREES_OF_FREEDOM" } } : {}),
+    ...(plan.optOut.length ? { degrees_of_freedom_spec: { creative_features_spec: Object.fromEntries(plan.optOut.map((f) => [f, { enroll_status: "OPT_OUT" }])) } } : {}),
+    ...(plan.urlTags ? { url_tags: plan.urlTags } : {}),
+  };
+}
+
+export const specFor = (plan: LaunchPlan, ad: LaunchAd, structure: NonNullable<LaunchPlan["structure"]>) =>
+  ad.cards ? carouselSpec(plan, ad, structure !== "single") : structure === "single" ? classicSpec(plan, ad) : creativeSpec(plan, ad, structure);
 
 export const params = (spec: Record<string, unknown>) => Object.fromEntries(Object.entries(spec).map(([k, v]) => [k, typeof v === "string" ? v : JSON.stringify(v)]));
 
@@ -641,8 +686,8 @@ export async function checkCreative(admin: SupabaseClient, plan: LaunchPlan, ad:
 }
 
 async function dryRun(admin: SupabaseClient, plan: LaunchPlan) {
-  const hasVertical = plan.ads.some((a) => a.assets.some((x) => x.aspect === "9x16"));
-  const ladder: NonNullable<LaunchPlan["structure"]>[] = hasVertical && !plan.leadFormId ? ["placements+text", "placements", "text", "single"] : ["text", "single"];
+  const hasVertical = plan.ads.some((a) => !a.cards && a.assets.some((x) => x.aspect === "9x16"));
+  const ladder: NonNullable<LaunchPlan["structure"]>[] = hasVertical && !plan.leadFormId && !plan.ads.some((a) => a.cards) ? ["placements+text", "placements", "text", "single"] : ["text", "single"];
   const tryOne = (ad: LaunchAd, structure: NonNullable<LaunchPlan["structure"]>) => checkCreative(admin, plan, ad, structure);
   const first = plan.ads[0];
   if (!first) return;

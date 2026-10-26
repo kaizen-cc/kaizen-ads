@@ -259,7 +259,7 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
                     <span className="text-muted">{a.designName}</span>
                     {a.assets.map((x) => (
                       <span key={x.fileId} className="rounded-full bg-surface-2 px-2 py-px">
-                        {x.aspect} {x.kind}
+                        {x.card ? `card ${x.card}` : x.aspect} {x.kind}
                       </span>
                     ))}
                     {a.check && <span className={a.check.ok ? "text-ok" : "text-bad"}>{a.check.ok ? "✓ Meta would accept it" : `× ${a.check.error}`}</span>}
