@@ -46,7 +46,7 @@ export function ClientsBrowser({
   return (
     <>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <nav className="flex flex-wrap items-center gap-1.5">
+        <nav className="no-scrollbar -mx-4 flex w-[calc(100%+2rem)] items-center gap-1.5 overflow-x-auto px-4 md:mx-0 md:w-auto md:flex-wrap md:overflow-visible md:px-0">
           {FILTERS.map((f) => {
             const n = cards.filter(f.test).length;
             if (!n && f.key !== "all" && f.key !== filter) return null;
@@ -54,10 +54,10 @@ export function ClientsBrowser({
             const warn = f.key === "gaps";
             return (
               <span key={f.key} className="contents">
-                {warn && <span className="mx-1 h-4 w-px bg-line" />}
+                {warn && <span className="mx-1 h-4 w-px shrink-0 bg-line" />}
                 <button
                   onClick={() => pick(f.key)}
-                  className={`inline-flex h-9 items-center gap-2 rounded-full px-4 text-sm transition-colors ${
+                  className={`inline-flex h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-full px-4 text-sm transition-colors md:h-9 ${
                     on ? (warn ? "bg-warn-soft text-warn" : "bg-fg text-bg") : "text-muted hover:bg-surface-2 hover:text-fg"
                   }`}
                 >
@@ -67,7 +67,7 @@ export function ClientsBrowser({
             );
           })}
         </nav>
-        <div className="relative">
+        <div className="relative w-full md:w-auto">
           <svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-faint">
             <circle cx="11" cy="11" r="7" />
             <path d="m20 20-3.5-3.5" />
@@ -79,7 +79,7 @@ export function ClientsBrowser({
             onKeyDown={(e) => e.key === "Escape" && setQ("")}
             placeholder="Search clients"
             aria-label="Search clients"
-            className="h-10 w-72 max-w-full rounded-full border border-line bg-surface pl-10 pr-4 text-sm outline-none transition-colors hover:border-faint/60 focus:border-brand-text/70"
+            className="h-11 w-full max-w-full rounded-full md:h-10 md:w-72 border border-line bg-surface pl-10 pr-4 text-sm outline-none transition-colors hover:border-faint/60 focus:border-brand-text/70"
           />
         </div>
       </div>
@@ -88,7 +88,7 @@ export function ClientsBrowser({
         <p className="-mt-3 text-xs text-faint" aria-live="polite">
           {shown.length ? `${shown.length} of ${inFilter.length} match "${q.trim()}"` : `Nothing matches "${q.trim()}"`}
           {shown.length ? null : (
-            <button onClick={() => setQ("")} className="ml-2 text-muted underline-offset-4 hover:text-fg hover:underline">
+            <button onClick={() => setQ("")} className="ml-2 min-h-11 text-muted md:min-h-0 underline-offset-4 hover:text-fg hover:underline">
               Clear
             </button>
           )}

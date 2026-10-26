@@ -127,7 +127,7 @@ function SprintForm({ action, packages, today, until, packageKey, images, videos
               key={text}
               type="button"
               onClick={() => setDay(d)}
-              className={`h-7 rounded-full px-3 text-xs transition-colors ${day === d ? "bg-fg text-bg" : "bg-surface-2 text-muted hover:text-fg"}`}
+              className={`h-10 rounded-full px-3.5 text-xs transition-colors md:h-7 md:px-3 ${day === d ? "bg-fg text-bg" : "bg-surface-2 text-muted hover:text-fg"}`}
             >
               {text}
             </button>
@@ -209,7 +209,7 @@ export function PackagePanel({
             Creative requests are off for this client. The upsell form turns a package on{can.exec ? ", or you can start a sprint." : ". Only an exec can override it."}
           </p>
           {can.exec && !editing && (
-            <button onClick={() => setEditing(true)} className="mt-1 h-9 rounded-full bg-fg px-4 text-sm text-bg transition-opacity hover:opacity-90">
+            <button onClick={() => setEditing(true)} className="mt-1 h-11 rounded-full bg-fg px-5 text-sm text-bg transition-opacity hover:opacity-90 md:h-9 md:px-4">
               Start a sprint package
             </button>
           )}
@@ -218,7 +218,7 @@ export function PackagePanel({
           <div className="grid gap-3 border-t border-line pt-5">
             <div className="flex items-center justify-between">
               <p className="text-sm">Sprint package</p>
-              <button onClick={() => setEditing(false)} className="text-xs text-muted hover:text-fg">
+              <button onClick={() => setEditing(false)} className="min-h-11 px-1 text-xs text-muted hover:text-fg md:min-h-0 md:px-0">
                 Cancel
               </button>
             </div>
@@ -281,7 +281,7 @@ export function PackagePanel({
             <>
               <div className="flex items-center justify-between">
                 <p className="text-sm">{sprint ? "Change the sprint" : "Switch to a sprint"}</p>
-                <button onClick={() => setEditing(false)} className="text-xs text-muted hover:text-fg">
+                <button onClick={() => setEditing(false)} className="min-h-11 px-1 text-xs text-muted hover:text-fg md:min-h-0 md:px-0">
                   Cancel
                 </button>
               </div>
@@ -299,7 +299,7 @@ export function PackagePanel({
             </>
           ) : (
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <button onClick={() => setEditing(true)} className="text-sm text-muted underline-offset-4 hover:text-fg hover:underline">
+              <button onClick={() => setEditing(true)} className="min-h-11 text-left text-sm text-muted underline-offset-4 hover:text-fg hover:underline md:min-h-0">
                 {sprint ? "Extend or change sprint" : "Override with a sprint"}
               </button>
               <ActionButton action={endPackage} label="End package" confirmText="End it now?" />

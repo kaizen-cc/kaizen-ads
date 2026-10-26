@@ -64,7 +64,7 @@ export function ShotListPanel({ clientId, slug, assets, latest, live }: { client
               {latest.list.shots.map((s, i) => (
                 <li key={i} className="grid grid-cols-[22px_minmax(0,1fr)] gap-2 text-sm">
                   <span className="tabular text-faint">{i + 1}</span>
-                  <span className="grid gap-0.5">
+                  <span className="grid min-w-0 gap-0.5 [overflow-wrap:anywhere]">
                     <span>{s.what}</span>
                     <span className="text-[11px] text-faint">
                       {s.format === "video" ? "Video" : "Photo"} · {s.specs} · {s.why}
@@ -83,17 +83,17 @@ export function ShotListPanel({ clientId, slug, assets, latest, live }: { client
                   setCopied(true);
                   setTimeout(() => setCopied(false), 2000);
                 }}
-                className="h-9 rounded-full bg-fg px-4 text-sm text-bg"
+                className="h-11 rounded-full bg-fg px-5 text-sm text-bg md:h-9 md:px-4"
               >
                 {copied ? "Copied" : "Copy to send"}
               </button>
               {!latest.sentAt && (
-                <button type="button" disabled={pending} onClick={() => start(async () => markShotListSent(latest.id, slug))} className="h-9 rounded-full border border-line px-4 text-sm text-muted hover:text-fg">
+                <button type="button" disabled={pending} onClick={() => start(async () => markShotListSent(latest.id, slug))} className="h-11 rounded-full border border-line px-5 text-sm text-muted hover:text-fg md:h-9 md:px-4">
                   Mark as sent
                 </button>
               )}
               {live && (
-                <button type="button" disabled={pending} onClick={write} className="h-9 px-2 text-sm text-faint hover:text-fg disabled:opacity-60">
+                <button type="button" disabled={pending} onClick={write} className="h-11 px-2 text-sm text-faint hover:text-fg disabled:opacity-60 md:h-9">
                   {pending ? "Writing…" : "Write it again"}
                 </button>
               )}
@@ -101,7 +101,7 @@ export function ShotListPanel({ clientId, slug, assets, latest, live }: { client
           </div>
         ) : (
           live && (
-            <button type="button" disabled={pending} onClick={write} className="justify-self-start rounded-full bg-fg px-4 py-2 text-sm text-bg disabled:opacity-60">
+            <button type="button" disabled={pending} onClick={write} className="min-h-11 rounded-full bg-fg px-4 py-2 text-sm text-bg disabled:opacity-60 md:min-h-0 md:justify-self-start">
               {pending ? "Writing next month's shot list…" : "Write next month's shot list"}
             </button>
           )

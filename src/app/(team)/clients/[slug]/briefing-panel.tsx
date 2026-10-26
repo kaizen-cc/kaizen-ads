@@ -96,7 +96,7 @@ export function BriefingPanel({
         <button
           onClick={run}
           disabled={busy}
-          className="h-8 rounded-full border border-line px-3.5 text-xs text-muted transition-colors hover:border-faint hover:text-fg disabled:opacity-50"
+          className="h-11 rounded-full border border-line px-4 text-xs text-muted transition-colors hover:border-faint hover:text-fg disabled:opacity-50 md:h-8 md:px-3.5"
         >
           {busy ? "Refreshing…" : "Refresh now"}
         </button>

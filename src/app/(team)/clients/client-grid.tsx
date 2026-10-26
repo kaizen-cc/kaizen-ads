@@ -85,7 +85,7 @@ export function ClientGrid({ cards, slotOptions, canEdit }: { cards: ClientCard[
               </div>
               <Link
                 href={`/board?client=${c.slug}`}
-                className={`shrink-0 rounded-full px-2.5 py-1 text-xs tabular transition-colors ${c.inFlight ? "bg-brand-soft text-brand-text hover:bg-brand/25" : "bg-surface-2 text-faint hover:text-fg"}`}
+                className={`inline-flex min-h-9 shrink-0 items-center rounded-full px-2.5 py-1 text-xs tabular md:inline md:min-h-0 transition-colors ${c.inFlight ? "bg-brand-soft text-brand-text hover:bg-brand/25" : "bg-surface-2 text-faint hover:text-fg"}`}
                 title="Open on the board"
               >
                 {c.inFlight ? `${c.inFlight} in flight` : "Nothing in flight"}
@@ -95,7 +95,7 @@ export function ClientGrid({ cards, slotOptions, canEdit }: { cards: ClientCard[
             {c.pkg === "none" ? (
               <Link
                 href={`/clients/${c.slug}`}
-                className="relative flex items-center gap-2.5 rounded-[10px] border border-dashed border-line px-3.5 py-2.5 text-xs text-faint transition-colors hover:text-muted"
+                className="relative flex min-h-11 items-center gap-2.5 rounded-[10px] border border-dashed border-line px-3.5 py-2.5 text-xs md:min-h-0 text-faint transition-colors hover:text-muted"
               >
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden className="shrink-0">
                   <rect x="5" y="11" width="14" height="9" rx="2" />
@@ -118,7 +118,7 @@ export function ClientGrid({ cards, slotOptions, canEdit }: { cards: ClientCard[
 
             <dl className="relative grid gap-0.5 border-t border-line pt-4">
               {SLOTS.map((s) => (
-                <div key={s.value} className="grid grid-cols-[88px_minmax(0,1fr)] items-center gap-2">
+                <div key={s.value} className="grid grid-cols-[88px_minmax(0,1fr)] items-center gap-2 max-md:py-0.5">
                   <dt className="text-xs text-faint">{s.label}</dt>
                   <dd className="min-w-0">
                     <AssignSelect clientId={c.id} slot={s.value} label={s.label} current={c.assigned[s.value]} options={slotOptions[s.value]} canEdit={canEdit} />
@@ -133,11 +133,11 @@ export function ClientGrid({ cards, slotOptions, canEdit }: { cards: ClientCard[
                   {c.contacts} client contact{c.contacts === 1 ? "" : "s"}
                 </span>
               ) : (
-                <Link href={`/clients/${c.slug}`} className="text-warn hover:underline">
+                <Link href={`/clients/${c.slug}`} className="inline-flex min-h-11 items-center text-warn hover:underline md:inline md:min-h-0">
                   No client contacts yet
                 </Link>
               )}
-              <Link href={`/clients/${c.slug}`} className="text-muted opacity-0 transition-opacity hover:text-fg group-hover:opacity-100 focus:opacity-100">
+              <Link href={`/clients/${c.slug}`} className="inline-flex min-h-11 items-center text-muted transition-opacity hover:text-fg md:inline md:min-h-0 md:opacity-0 md:group-hover:opacity-100 md:focus:opacity-100">
                 Open →
               </Link>
             </div>

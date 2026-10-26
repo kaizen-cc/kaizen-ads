@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 // The client page's sections as tabs: the overview a buyer or exec reads in a few minutes first, and everything else
 // (creative, what the AI knows, the team and setup) one click away. The open tab is kept in the address (?tab=), so
@@ -32,9 +32,21 @@ export function ClientTabs({ tabs }: { tabs: ClientTab[] }) {
     window.history.pushState(null, "", u);
   };
   const current = tabs.find((t) => t.id === open) ?? tabs[0];
+  // Phones: the tabs are a row of pills that scrolls sideways; keep the open one in view
+  const strip = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const nav = strip.current;
+    const on = nav?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!nav || !on || nav.scrollWidth <= nav.clientWidth) return;
+    nav.scrollTo({ left: on.offsetLeft - (nav.clientWidth - on.offsetWidth) / 2, behavior: "smooth" });
+  }, [current?.id]);
   return (
     <div className="grid gap-6">
-      <nav className="sticky top-0 z-20 -mx-1 flex gap-1 overflow-x-auto border-b border-line bg-bg/85 px-1 backdrop-blur-md" role="tablist">
+      <nav
+        ref={strip}
+        className="no-scrollbar sticky top-[calc(3.5rem+env(safe-area-inset-top))] z-20 -mx-4 flex snap-x snap-mandatory scroll-px-4 gap-2 overflow-x-auto border-b border-line bg-bg/85 px-4 py-2 backdrop-blur-md md:top-0 md:-mx-1 md:snap-none md:gap-1 md:px-1 md:py-0"
+        role="tablist"
+      >
         {tabs.map((t) => {
           const on = t.id === current?.id;
           return (
@@ -45,11 +57,11 @@ export function ClientTabs({ tabs }: { tabs: ClientTab[] }) {
               aria-selected={on}
               onClick={() => choose(t.id)}
               title={t.hint}
-              className={`relative flex shrink-0 items-center gap-2 px-3.5 py-3 text-sm transition-colors ${on ? "text-fg" : "text-muted hover:text-fg"}`}
+              className={`relative flex h-11 shrink-0 snap-start items-center gap-2 whitespace-nowrap rounded-full px-4 text-sm transition-colors md:h-auto md:rounded-none md:bg-transparent md:px-3.5 md:py-3 ${on ? "bg-fg text-bg md:text-fg" : "bg-surface-2/70 text-muted hover:text-fg"}`}
             >
               {t.label}
               {t.count ? <span className="tabular rounded-full bg-surface-2 px-1.5 text-[11px] text-faint">{t.count}</span> : null}
-              {on && <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-brand" />}
+              {on && <span className="absolute inset-x-2 -bottom-px hidden h-0.5 rounded-full bg-brand md:block" />}
             </button>
           );
         })}

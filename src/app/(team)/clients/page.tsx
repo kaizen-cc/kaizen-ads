@@ -118,7 +118,7 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
           </p>
         </div>
         {(archived?.length ?? 0) > 0 && (
-          <a href="#archived" className="text-sm text-muted hover:text-fg">
+          <a href="#archived" className="inline-flex min-h-11 items-center text-sm text-muted hover:text-fg md:min-h-0">
             Archived <span className="text-faint">{archived!.length}</span> →
           </a>
         )}

@@ -63,8 +63,8 @@ export function Glance({
             return (
               <div key={k.id} className="grid gap-3 rounded-[18px] border border-white/[0.07] bg-white/[0.03] p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
-                  <Link href={`/kpis?target=${k.id}`} className="grid gap-1">
-                    <span className="flex items-center gap-2 text-sm">
+                  <Link href={`/kpis?target=${k.id}`} className="grid min-w-0 gap-1">
+                    <span className="flex flex-wrap items-center gap-2 text-sm">
                       <span className={`inline-flex h-6 items-center rounded-full px-2.5 text-[11px] font-medium ${s.tone}`}>{s.label}</span>
                       <span className="text-white/70">
                         {k.platform === "google" ? "Google" : "Meta"}
@@ -74,7 +74,7 @@ export function Glance({
                     {k.owner && <span className="text-[11px] text-white/40">{k.owner}</span>}
                   </Link>
                   {live && (
-                    <Link href={`/kpis?target=${k.id}`} className="text-right">
+                    <Link href={`/kpis?target=${k.id}`} className="max-md:basis-full md:text-right">
                       <span className={`tabular block font-display text-3xl leading-none ${s.text}`}>{kpiValue(k.windows.d14?.value, k.roas)}</span>
                       <span className="text-[11px] text-white/45">
                         14 days · target {kpiValue(k.target, k.roas)}
@@ -141,7 +141,7 @@ export function Glance({
               <ul className="grid gap-1.5">
                 {alerts.map((a) => (
                   <li key={a.text}>
-                    <Link href={a.href} className="flex items-start gap-2.5 rounded-[12px] px-2 py-1.5 text-[13px] text-white/80 hover:bg-white/[0.05] hover:text-white">
+                    <Link href={a.href} className="flex min-h-11 items-start gap-2.5 rounded-[12px] px-2 py-2.5 text-[13px] md:min-h-0 md:py-1.5 text-white/80 hover:bg-white/[0.05] hover:text-white">
                       <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${TONE[a.tone]}`} />
                       {a.text}
                     </Link>

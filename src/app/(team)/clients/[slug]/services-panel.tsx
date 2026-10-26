@@ -111,7 +111,7 @@ export function ServicesPanel({
                   <ServiceIcon slug={s.slug} />
                 </span>
                 <span className="grid min-w-0 flex-1 gap-0.5">
-                  <span className="flex items-center gap-2 text-sm font-medium">
+                  <span className="flex flex-wrap items-center gap-2 text-sm font-medium">
                     {s.label}
                     <span className={`rounded-full px-1.5 py-px text-[10px] font-normal ${fromTrack ? "bg-surface-2 text-faint" : "bg-warn-soft text-warn"}`}>{fromTrack ? "Track" : "Added here"}</span>
                   </span>
@@ -138,7 +138,7 @@ export function ServicesPanel({
                   )}
                 </span>
                 {canEdit && !fromTrack && (
-                  <button type="button" onClick={() => toggle(s.slug, false)} disabled={pending} className="text-xs text-faint hover:text-fg">
+                  <button type="button" onClick={() => toggle(s.slug, false)} disabled={pending} className="min-h-11 px-2 text-xs text-faint hover:text-fg md:min-h-0 md:px-0">
                     Remove
                   </button>
                 )}
@@ -158,7 +158,7 @@ export function ServicesPanel({
                 type="button"
                 disabled={pending}
                 onClick={() => toggle(s.slug, true)}
-                className="inline-flex h-8 items-center gap-1.5 rounded-full border border-dashed border-line px-3 text-xs text-faint transition-colors hover:border-faint hover:text-fg disabled:opacity-50"
+                className="inline-flex h-11 items-center gap-1.5 rounded-full border border-dashed border-line px-3.5 text-xs md:h-8 md:px-3 text-faint transition-colors hover:border-faint hover:text-fg disabled:opacity-50"
               >
                 <ServiceIcon slug={s.slug} className="h-3.5 w-3.5" />
                 {s.short}
@@ -189,8 +189,8 @@ function TierPick({ service, tiers, value, canEdit, onPick, onAdded }: { service
     return (
       <span className="grid gap-1.5 pt-1">
         <span className="flex flex-wrap gap-1.5">
-          <input autoFocus value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Tier name, e.g. Growth" className="h-8 w-36 rounded-[8px] border border-line bg-bg px-2.5 text-xs outline-none focus:border-brand/60" />
-          <input value={includes} onChange={(e) => setIncludes(e.target.value)} placeholder="What it includes" className="h-8 min-w-0 flex-1 rounded-[8px] border border-line bg-bg px-2.5 text-xs outline-none focus:border-brand/60" />
+          <input autoFocus value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Tier name, e.g. Growth" className="h-11 w-full rounded-[8px] border border-line bg-bg px-2.5 text-xs outline-none focus:border-brand/60 md:h-8 md:w-36" />
+          <input value={includes} onChange={(e) => setIncludes(e.target.value)} placeholder="What it includes" className="h-11 min-w-0 flex-1 rounded-[8px] border border-line bg-bg px-2.5 text-xs outline-none focus:border-brand/60 md:h-8" />
         </span>
         <span className="flex items-center gap-2">
           <button
@@ -206,11 +206,11 @@ function TierPick({ service, tiers, value, canEdit, onPick, onAdded }: { service
                 setIncludes("");
               })
             }
-            className="h-7 rounded-full bg-fg px-3 text-[11px] font-medium text-bg disabled:opacity-50"
+            className="h-10 rounded-full bg-fg px-4 text-[11px] font-medium text-bg disabled:opacity-50 md:h-7 md:px-3"
           >
             {pending ? "Adding…" : "Add tier"}
           </button>
-          <button type="button" onClick={() => setAdding(false)} className="text-[11px] text-faint hover:text-fg">
+          <button type="button" onClick={() => setAdding(false)} className="min-h-10 px-1 text-[11px] text-faint hover:text-fg md:min-h-0 md:px-0">
             Cancel
           </button>
           {error && <span className="text-[11px] text-bad">{error}</span>}
@@ -223,7 +223,7 @@ function TierPick({ service, tiers, value, canEdit, onPick, onAdded }: { service
       <select
         value={value ?? ""}
         onChange={(e) => (e.target.value === "__new" ? setAdding(true) : onPick(e.target.value || null))}
-        className="max-w-full cursor-pointer appearance-none truncate bg-transparent pr-5 text-xs text-muted outline-none hover:text-fg"
+        className="max-w-full cursor-pointer appearance-none truncate bg-transparent pr-5 text-xs text-muted outline-none hover:text-fg max-md:min-h-10"
       >
         <option value="">{tiers.length ? "Pick a tier" : "No tiers yet"}</option>
         {tiers.map((t) => (

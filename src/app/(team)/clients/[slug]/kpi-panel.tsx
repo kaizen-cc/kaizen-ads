@@ -32,7 +32,7 @@ export function KpiPanel({ kpis, audits, changes }: { kpis: ClientKpi[]; audits?
       title="Performance vs target"
       description="Every agent reads this before it writes for this client, so a brief for an off-target account knows it's off target."
       action={
-        <Link href="/kpis" className="text-xs text-muted hover:text-fg">
+        <Link href="/kpis" className="inline-flex min-h-11 items-center text-xs text-muted hover:text-fg md:min-h-0">
           All KPIs →
         </Link>
       }
@@ -40,7 +40,7 @@ export function KpiPanel({ kpis, audits, changes }: { kpis: ClientKpi[]; audits?
       {kpis.length === 0 ? (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-[12px] border border-dashed border-line px-4 py-4">
           <p className="text-sm text-muted">No KPI target yet. Set one and every brief, copy set and review starts from it.</p>
-          <Link href="/kpis" className="rounded-brand border border-line px-3 py-1.5 text-xs text-muted hover:text-fg">
+          <Link href="/kpis" className="rounded-brand border border-line px-3 py-3 text-xs md:py-1.5 text-muted hover:text-fg">
             Set a target
           </Link>
         </div>
@@ -54,7 +54,7 @@ export function KpiPanel({ kpis, audits, changes }: { kpis: ClientKpi[]; audits?
             return (
               <article key={k.id} className="@container grid gap-4 rounded-[14px] border border-line bg-bg/40 p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="grid gap-1">
+                  <div className="grid min-w-0 gap-1">
                     <span className="flex flex-wrap items-center gap-2">
                       <span className={`inline-flex h-6 items-center rounded-full px-2.5 text-[11px] font-medium ${s.tone}`}>{s.label}</span>
                       <span className="text-xs text-muted">
@@ -64,13 +64,13 @@ export function KpiPanel({ kpis, audits, changes }: { kpis: ClientKpi[]; audits?
                     </span>
                     <span className="flex flex-wrap items-center gap-3 text-[11px] text-faint">
                       {k.owner && <span>Buyer: {k.owner}</span>}
-                      <Link href={`/kpis?target=${k.id}`} className="text-muted hover:text-fg">
+                      <Link href={`/kpis?target=${k.id}`} className="inline-flex min-h-11 items-center text-muted hover:text-fg md:min-h-0">
                         Open on the KPI board →
                       </Link>
                     </span>
                   </div>
                   {live && (
-                    <div className="text-right">
+                    <div className="max-md:basis-full md:text-right">
                       <p className={`tabular font-display text-3xl leading-none ${s.text}`}>{kpiValue(k.windows.d14?.value, k.roas)}</p>
                       <p className="mt-1 text-[11px] text-faint">
                         last 14 days · target <span className="tabular text-muted">{kpiValue(k.target, k.roas)}</span>

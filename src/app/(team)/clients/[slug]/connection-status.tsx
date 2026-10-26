@@ -27,7 +27,7 @@ export function ConnectionStatus({ status, sync, demo = false }: { status: Fresh
               else setError(res.error);
             })
           }
-          className="text-muted underline-offset-4 hover:text-fg hover:underline"
+          className="text-muted underline-offset-4 hover:text-fg hover:underline max-md:min-h-10 max-md:px-1"
         >
           Sync now
         </button>

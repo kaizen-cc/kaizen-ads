@@ -39,7 +39,7 @@ export function CallsPanel({ calls }: { calls: ClientCall[] }) {
             const waiting = c.commitments.filter((x) => x.status === "briefed").length;
             return (
               <div key={c.id} className="rounded-[12px] border border-line bg-bg/40">
-                <button onClick={() => setOpen(isOpen ? null : c.id)} className="flex w-full items-center gap-3 px-4 py-3 text-left">
+                <button onClick={() => setOpen(isOpen ? null : c.id)} className="flex min-h-14 w-full items-center gap-3 px-4 py-3 text-left md:min-h-0">
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">{c.title}</span>
                     <span className="block text-[11px] text-faint">
@@ -88,12 +88,12 @@ export function CallsPanel({ calls }: { calls: ClientCall[] }) {
                             <div key={x.id} className="flex flex-wrap items-start gap-2 text-sm">
                               <span className="min-w-0 flex-1">{x.what}</span>
                               {x.requestNumbers.map((n) => (
-                                <Link key={n} href={`/board?t=${n}`} className="rounded-full border border-line px-2 py-0.5 text-[11px] hover:border-faint">
+                                <Link key={n} href={`/board?t=${n}`} className="rounded-full border border-line px-3 py-2 text-[11px] hover:border-faint md:px-2 md:py-0.5">
                                   #{n}
                                 </Link>
                               ))}
                               {(x.asana ?? []).map((u) => (
-                                <a key={u} href={u} target="_blank" rel="noreferrer" className="rounded-full border border-line px-2 py-0.5 text-[11px] hover:border-faint">
+                                <a key={u} href={u} target="_blank" rel="noreferrer" className="rounded-full border border-line px-3 py-2 text-[11px] hover:border-faint md:px-2 md:py-0.5">
                                   In Asana ↗
                                 </a>
                               ))}
@@ -104,7 +104,7 @@ export function CallsPanel({ calls }: { calls: ClientCall[] }) {
                       </div>
                     )}
                     {c.url && (
-                      <a href={c.url} target="_blank" rel="noreferrer" className="w-fit text-xs text-muted hover:text-fg">
+                      <a href={c.url} target="_blank" rel="noreferrer" className="inline-flex min-h-11 w-fit items-center text-xs text-muted hover:text-fg md:min-h-0">
                         Open the full notes ↗
                       </a>
                     )}

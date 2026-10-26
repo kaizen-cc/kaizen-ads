@@ -7,6 +7,7 @@ import { AssignSelect, type Option } from "../assign-select";
 import { checkReadiness, fillReadiness, setClientService } from "./actions";
 import { SERVICES } from "@/lib/services";
 import { ServiceIcon } from "./services-panel";
+import { Layer } from "./layer";
 
 // The readiness check on a client that just went live again: what the system still needs to run them (an ad account,
 // a target, a buyer, a contact, the channels), each with what stops working without it and a field to fill it right
@@ -14,7 +15,7 @@ import { ServiceIcon } from "./services-panel";
 // the client back; "Later" folds it into a bar at the top of the page until it's done.
 
 const input =
-  "h-10 w-full rounded-[10px] border border-line bg-bg px-3 text-sm text-fg outline-none transition-colors placeholder:text-faint focus:border-brand/60 focus:shadow-[0_0_0_4px_rgba(200,16,46,0.12)]";
+  "h-11 w-full min-w-0 rounded-[10px] border border-line bg-bg px-3 text-sm text-fg outline-none transition-colors placeholder:text-faint focus:border-brand/60 focus:shadow-[0_0_0_4px_rgba(200,16,46,0.12)] md:h-10";
 
 type Team = Record<string, { current: Option | null; options: Option[] }>;
 
@@ -81,7 +82,7 @@ export function ReadinessCheck({ clientId, slug, name, initial, team, autoOpen, 
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="group flex w-full items-center gap-4 rounded-[16px] border border-brand/30 bg-gradient-to-r from-brand/[0.12] via-brand/[0.04] to-transparent px-4 py-3 text-left transition-colors hover:border-brand/60"
+          className="group flex w-full flex-wrap items-center gap-x-4 gap-y-3 rounded-[16px] md:flex-nowrap border border-brand/30 bg-gradient-to-r from-brand/[0.12] via-brand/[0.04] to-transparent px-4 py-3 text-left transition-colors hover:border-brand/60"
         >
           <Ring got={got} of={needed.length} size={36} />
           <span className="min-w-0 flex-1">
@@ -93,20 +94,21 @@ export function ReadinessCheck({ clientId, slug, name, initial, team, autoOpen, 
                 .join(" · ")}
             </span>
           </span>
-          <span className="shrink-0 rounded-full bg-brand px-4 py-1.5 text-xs font-medium text-white shadow-[0_8px_20px_-10px_rgba(200,16,46,0.9)] transition-transform group-hover:translate-x-0.5">Finish setup →</span>
+          <span className="shrink-0 basis-full rounded-full bg-brand px-4 py-3 text-center text-xs font-medium md:basis-auto md:py-1.5 text-white shadow-[0_8px_20px_-10px_rgba(200,16,46,0.9)] transition-transform group-hover:translate-x-0.5">Finish setup →</span>
         </button>
       )}
 
       {open && (
-        <div className="fixed inset-0 z-[80] flex justify-center overflow-y-auto bg-black/70 p-4 backdrop-blur-md" onClick={later}>
+        <Layer>
+        <div className="fixed inset-0 z-[80] flex justify-center overflow-y-auto overscroll-contain bg-black/70 backdrop-blur-md md:p-4" onClick={later}>
           <div
-            className="relative my-auto grid h-fit w-full max-w-xl gap-6 overflow-hidden rounded-[24px] border border-line bg-surface p-7 shadow-[0_50px_120px_-30px_rgba(0,0,0,0.95)] animate-[sheet-fade_.3s_ease-out]"
+            className="relative grid min-h-full w-full gap-6 overflow-clip max-md:flex max-md:flex-col bg-surface px-5 pt-[calc(1.5rem+env(safe-area-inset-top))] shadow-[0_50px_120px_-30px_rgba(0,0,0,0.95)] animate-[sheet-fade_.3s_ease-out] md:my-auto md:h-fit md:min-h-0 md:max-w-xl md:overflow-hidden md:rounded-[24px] md:border md:border-line md:p-7"
             onClick={(e) => e.stopPropagation()}
           >
             <div aria-hidden className="pointer-events-none absolute -right-24 -top-24 h-64 w-64 rounded-full bg-brand/20 blur-[90px]" />
 
             {done ? (
-              <div className="relative grid justify-items-center gap-4 py-6 text-center">
+              <div className="relative grid justify-items-center gap-4 py-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] text-center md:pb-6">
                 <span className="grid h-16 w-16 place-items-center rounded-full bg-ok/15 text-ok shadow-[0_0_0_10px_rgba(34,197,94,0.06)]">
                   <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                     <path d="M5 12l5 5L19 7" />
@@ -124,7 +126,7 @@ export function ReadinessCheck({ clientId, slug, name, initial, team, autoOpen, 
                     </li>
                   ))}
                 </ul>
-                <button type="button" onClick={() => setOpen(false)} className="mt-2 h-10 rounded-full bg-fg px-6 text-sm font-medium text-bg">
+                <button type="button" onClick={() => setOpen(false)} className="mt-2 h-11 w-full rounded-full bg-fg px-6 text-sm font-medium text-bg md:h-10 md:w-auto">
                   Done
                 </button>
               </div>
@@ -133,7 +135,7 @@ export function ReadinessCheck({ clientId, slug, name, initial, team, autoOpen, 
                 <header className="relative grid gap-4">
                   <div className="grid gap-1.5">
                     <p className="text-[11px] uppercase tracking-[0.16em] text-brand-text">Welcome back</p>
-                    <h2 className="font-heading text-[26px] leading-tight">Bring {name} back fully</h2>
+                    <h2 className="font-heading text-[26px] leading-tight [overflow-wrap:anywhere]">Bring {name} back fully</h2>
                     <p className="max-w-[46ch] text-sm leading-relaxed text-muted">
                       {r.missing === 0 ? "Everything needed is in." : `${r.missing === 1 ? "One thing" : `${r.missing} things`} before the system can run them end to end. Fill what you have; the rest waits here.`}
                     </p>
@@ -191,8 +193,8 @@ export function ReadinessCheck({ clientId, slug, name, initial, team, autoOpen, 
                 </form>
 
                 {error && <p className="relative rounded-[10px] bg-bad/10 px-3 py-2 text-sm text-bad">{error}</p>}
-                <div className="relative -mx-7 -mb-7 flex items-center justify-between gap-3 border-t border-line bg-white/[0.015] px-7 py-5">
-                  <button type="button" onClick={later} className="h-10 px-2 text-sm text-faint hover:text-fg">
+                <div className="sticky bottom-0 -mx-5 mt-auto flex items-center justify-between gap-3 border-t border-line bg-surface/95 px-5 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 backdrop-blur-md md:relative md:-mx-7 md:-mb-7 md:mt-0 md:bg-white/[0.015] md:px-7 md:py-5 md:backdrop-blur-none">
+                  <button type="button" onClick={later} className="h-11 px-2 text-sm text-faint hover:text-fg md:h-10">
                     Later
                   </button>
                   <button
@@ -209,6 +211,7 @@ export function ReadinessCheck({ clientId, slug, name, initial, team, autoOpen, 
             )}
           </div>
         </div>
+        </Layer>
       )}
     </>
   );
@@ -248,7 +251,7 @@ function Row({ check, children }: { check: Check; children: React.ReactNode }) {
           </p>
         </div>
       </div>
-      <div className="pl-8">{children}</div>
+      <div className="md:pl-8">{children}</div>
     </div>
   );
 }
@@ -271,7 +274,7 @@ function Fields({ check, r, clientId, slug, team, onChanged }: { check: Check; r
         <div className="grid gap-2">
           {open.map((t) => (
             <label key={t.id} className="flex items-center gap-3 text-xs text-muted">
-              <span className="w-28 shrink-0 truncate">{t.platform === "google" ? "Google" : "Meta"}{t.label ? ` · ${t.label}` : ""}</span>
+              <span className="w-24 shrink-0 truncate md:w-28">{t.platform === "google" ? "Google" : "Meta"}{t.label ? ` · ${t.label}` : ""}</span>
               <input name={`target:${t.id}`} className={`${input} tabular`} placeholder="Target: cost per result (or ROAS)" inputMode="decimal" />
             </label>
           ))}
@@ -324,7 +327,7 @@ function ServicePick({ clientId, slug, onChanged }: { clientId: string; slug: st
                 if (!res.ok) setOn((o) => (active ? [...o, s.slug] : o.filter((x) => x !== s.slug)));
               })
             }
-            className={`inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs transition-colors ${active ? "border border-brand/50 bg-brand/15 text-fg" : "border border-line text-muted hover:text-fg"}`}
+            className={`inline-flex h-11 items-center gap-1.5 rounded-full px-3.5 text-xs transition-colors md:h-8 md:px-3 ${active ? "border border-brand/50 bg-brand/15 text-fg" : "border border-line text-muted hover:text-fg"}`}
           >
             <ServiceIcon slug={s.slug} className="h-3.5 w-3.5" />
             {s.short}
@@ -332,7 +335,7 @@ function ServicePick({ clientId, slug, onChanged }: { clientId: string; slug: st
         );
       })}
       {on.length > 0 && (
-        <button type="button" onClick={onChanged} disabled={pending} className="h-8 px-2 text-xs font-medium text-brand-text hover:underline disabled:opacity-50">
+        <button type="button" onClick={onChanged} disabled={pending} className="h-11 px-2 text-xs font-medium text-brand-text hover:underline disabled:opacity-50 md:h-8">
           Done →
         </button>
       )}

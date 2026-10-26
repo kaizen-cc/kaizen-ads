@@ -90,7 +90,7 @@ export function IntakePanel({ intake }: { intake: IntakeRecord | null }) {
       )}
 
       <div className="grid gap-2 border-t border-line pt-4">
-        <button onClick={() => setAll(!all)} className="flex w-fit items-center gap-2 text-sm text-muted hover:text-fg">
+        <button onClick={() => setAll(!all)} className="flex min-h-11 w-fit items-center gap-2 text-sm text-muted hover:text-fg md:min-h-0">
           <span className={`transition-transform ${all ? "rotate-90" : ""}`}>›</span>
           Their answers, as given <span className="text-faint">{intake.answers.length}</span>
         </button>
@@ -99,7 +99,7 @@ export function IntakePanel({ intake }: { intake: IntakeRecord | null }) {
             {intake.answers.map((x, i) => (
               <div key={i} className="grid gap-0.5">
                 <dt className="text-xs text-faint">{x.q}</dt>
-                <dd className="whitespace-pre-wrap text-sm">{x.a}</dd>
+                <dd className="whitespace-pre-wrap text-sm [overflow-wrap:anywhere]">{x.a}</dd>
               </div>
             ))}
           </dl>
