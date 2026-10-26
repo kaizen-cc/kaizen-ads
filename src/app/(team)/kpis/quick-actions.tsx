@@ -6,14 +6,15 @@ import { tickAuditAction } from "./audit-actions";
 import type { QuickAction } from "./audit-panel";
 import { GoogleChange } from "./google-change";
 
-// Under an audit's verdict: the moves Kaizen Ads can make in the ad account itself, one short line each. Hover for the
-// gist, click to open the whole move with the button that makes it; no need to open the full audit to act on it.
+// Under an audit's verdict: the moves Kaizen Ads can make in the ad account itself, one line each, stacked. Hover and
+// the line opens a little in place with the gist; click to open the whole move with the button that makes it. No need
+// to open the full audit to act on it.
 
 const KIND: { test: RegExp; icon: string; tone: string }[] = [
-  // Pausing, turning off
-  { test: /\b(pause|turn (it |them )?off|switch (it |them )?off|shut|kill|stop)\b/i, icon: "M10 4v16M14 4v16", tone: "text-warn bg-warn/12" },
   // Budgets
   { test: /budget|\$\d|scale|raise|lower|cut|reallocat|shift/i, icon: "M12 2v20M17 6H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6", tone: "text-ok bg-ok/12" },
+  // Pausing, turning off
+  { test: /\b(pause|turn (it |them )?off|switch (it |them )?off|shut|kill|stop)\b/i, icon: "M10 4v16M14 4v16", tone: "text-warn bg-warn/12" },
   // Turning on
   { test: /\b(turn (it |them )?on|unpause|re-?enable|launch|restart)\b/i, icon: "M6 4l14 8-14 8z", tone: "text-[#7aa7ff] bg-[#0866ff]/15" },
   // Bids and keywords (Google)
@@ -47,13 +48,13 @@ export function QuickActions({ auditId, items, platform }: { auditId: string; it
         </p>
         <span className="text-[11px] text-faint">{left ? `${left} to do` : "All done"}</span>
       </div>
-      <ul className="grid gap-2 md:grid-cols-2">
+      <ul className="grid gap-2">
         {items.map((a) => {
           const k = kindOf(a);
           const isOpen = open === a.index;
           const isDone = done[a.index];
           return (
-            <li key={a.index} className={`relative ${isOpen ? "md:col-span-2" : ""}`} onMouseEnter={() => setHover(a.index)} onMouseLeave={() => setHover((h) => (h === a.index ? null : h))}>
+            <li key={a.index} onMouseEnter={() => setHover(a.index)} onMouseLeave={() => setHover((h) => (h === a.index ? null : h))}>
               <div className={`grid rounded-[14px] border transition-colors ${isOpen ? "border-[#0866ff]/40 bg-[#0866ff]/[0.05]" : "border-line bg-bg/40 hover:border-fg/20 hover:bg-surface-2"}`}>
                 <button type="button" onClick={() => setOpen(isOpen ? null : a.index)} aria-expanded={isOpen} className="flex min-h-12 items-center gap-3 px-3 py-2 text-left">
                   <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full ${isDone ? "bg-ok/15 text-ok" : k.tone}`}>
@@ -67,6 +68,24 @@ export function QuickActions({ auditId, items, platform }: { auditId: string; it
                     <path d="M6 9l6 6 6-6" />
                   </svg>
                 </button>
+
+                {/* Hover: the gist, opening in place (computers; a tap opens the whole move) */}
+                {!isOpen && (
+                  <div className={`hidden transition-[grid-template-rows,opacity] duration-200 ease-out md:grid ${hover === a.index ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}>
+                    <div className="overflow-hidden">
+                      <div className="grid gap-1.5 px-3 pb-3 pl-[52px]">
+                        <p className="text-[13px] leading-relaxed text-ok">{a.impact}</p>
+                        {a.steps.length > 0 && (
+                          <p className="line-clamp-2 text-[12.5px] leading-relaxed text-muted">
+                            {a.steps[0]}
+                            {a.steps.length > 1 ? ` · +${a.steps.length - 1} more` : ""}
+                          </p>
+                        )}
+                        <p className="text-[11px] text-faint">Click to open it and make the change in {name}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Open: the whole move, and the button that makes it */}
                 {isOpen && (
@@ -91,24 +110,6 @@ export function QuickActions({ auditId, items, platform }: { auditId: string; it
                   </div>
                 )}
               </div>
-
-              {/* Hover: the gist, without opening anything (computers only) */}
-              {hover === a.index && !isOpen && (
-                <div className="pointer-events-none absolute left-0 right-0 top-full z-30 mt-2 hidden rounded-[14px] border border-line bg-surface-2 p-4 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.8)] md:block" style={{ animation: "fade-in-late .15s ease-out" }}>
-                  <p className="text-[13px] leading-relaxed text-ok">{a.impact}</p>
-                  {a.steps.length > 0 && (
-                    <ul className="mt-2 grid gap-1 text-[12.5px] leading-relaxed text-muted">
-                      {a.steps.slice(0, 2).map((s, i) => (
-                        <li key={i} className="line-clamp-2">
-                          · {s}
-                        </li>
-                      ))}
-                      {a.steps.length > 2 && <li className="text-faint">+ {a.steps.length - 2} more steps</li>}
-                    </ul>
-                  )}
-                  <p className="mt-2.5 text-[11px] text-faint">Click to open it and make the change in {name}</p>
-                </div>
-              )}
             </li>
           );
         })}
