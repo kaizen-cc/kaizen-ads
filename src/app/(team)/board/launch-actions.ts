@@ -3,7 +3,7 @@
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { requireStaff, type Staff } from "@/lib/auth";
-import { autoLaunch, makeSandboxCampaign, planLaunch, runLaunch, type LaunchCheck, type LaunchPlan, type Overrides } from "@/lib/launcher";
+import { autoLaunch, explainHandMove, makeSandboxCampaign, moveLaunch, planLaunch, runLaunch, type LaunchCheck, type LaunchPlan, type Overrides } from "@/lib/launcher";
 import { metaConfigured } from "@/lib/context/meta";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -23,6 +23,8 @@ export type LaunchView = {
   launchedBy: string | null;
   launchedAt: string | null;
   canLaunch: boolean;
+  moves: { at: string; from: { name: string }; to: { name: string; campaign: string }; reason: string; via?: string }[];
+  pendingMove: { from: { name: string }; to: { name: string; campaign: string } } | null;
 };
 
 /** Who can launch: the client's Meta buyer, the Head of Meta and execs. */
@@ -36,7 +38,7 @@ async function view(id: string): Promise<LaunchView | null> {
   const me = await requireStaff();
   const { data: l } = await (await createClient())
     .from("launches")
-    .select("id, client_id, status, progress, sandbox, plan, checks, result, error, launched_at, launcher:profiles!launches_launched_by_fkey(full_name)")
+    .select("id, client_id, status, progress, sandbox, plan, checks, result, error, launched_at, moves, pending_move, launcher:profiles!launches_launched_by_fkey(full_name)")
     .eq("id", id)
     .maybeSingle();
   if (!l) return null;
@@ -52,6 +54,8 @@ async function view(id: string): Promise<LaunchView | null> {
     launchedBy: (l.launcher as unknown as { full_name: string } | null)?.full_name ?? null,
     launchedAt: l.launched_at,
     canLaunch: await canLaunch(me, l.client_id),
+    moves: (l.moves ?? []) as LaunchView["moves"],
+    pendingMove: (l.pending_move ?? null) as LaunchView["pendingMove"],
   };
 }
 
@@ -140,4 +144,32 @@ export async function sandboxCampaign(id: string): Promise<{ ok: true } | { ok: 
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
   return replanLaunch(id, {});
+}
+
+/** Moves the launched ads to another ad set (or a copy of one), archiving the old ones; the reason is learned. */
+export async function moveLaunched(id: string, target: { adsetId: string; mode: "existing" | "clone"; newAdsetName?: string | null }, reason: string): Promise<{ ok: true; to: string } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  const v = await view(id);
+  if (!v) return { ok: false, error: "Not found." };
+  if (!v.canLaunch) return { ok: false, error: "Only the client's Meta buyer, the Head of Meta or an exec can move it." };
+  try {
+    const r = await moveLaunch(createAdminClient(), id, me.id, target, reason);
+    revalidatePath("/board");
+    return { ok: true, to: r.to.name };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't move it." };
+  }
+}
+
+/** Why the buyer moved it by hand in Ads Manager: learned like a move made here. */
+export async function explainMoved(id: string, reason: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  const v = await view(id);
+  if (!v) return { ok: false, error: "Not found." };
+  try {
+    await explainHandMove(createAdminClient(), id, me.id, reason);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't save it." };
+  }
 }

@@ -24,6 +24,7 @@ import { setPortalLive,
 } from "./actions";
 import { PackagePanel, type PackageOption } from "./package-panel";
 import { ReadinessCheck } from "./readiness-check";
+import { LaunchRules, type LaunchRule } from "./launch-rules";
 import { ServicesPanel, type Tier } from "./services-panel";
 import type { Readiness } from "@/lib/readiness";
 import { CreativePanel } from "./creative-panel";
@@ -122,10 +123,11 @@ export type ClientViewProps = {
   calls?: ClientCall[]; // from Gemini and Fireflies notes; undefined in the design preview
   readiness?: { initial: Readiness; autoOpen: boolean; stamp: string } | null; // what's missing after going live again
   services?: { track: string[]; extra: string[]; tiers: Tier[]; chosen: Record<string, string> } | null; // what they buy, and the tiers
+  launchRules?: LaunchRule[]; // where their new ads go, learned from their buyers' moves
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [] }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -311,6 +313,11 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
             hint: "What the AI knows: the briefing, memory, Brand Bible, go-to-market, intake and calls",
             content: (
               <div className="grid gap-6">
+                {launchRules.length > 0 && (
+                  <Section title="Where new ads go" description="Learned from the buyers moving ads the launcher placed. The launcher follows these first for this client.">
+                    <LaunchRules rules={launchRules} slug={client.slug} canEdit={!demo} />
+                  </Section>
+                )}
                 {active && (
             <BriefingPanel
               demo={demo}

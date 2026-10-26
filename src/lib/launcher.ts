@@ -163,6 +163,7 @@ const PROPOSE_SCHEMA = {
 const PROPOSE_SYSTEM = `You place a client's newly approved ads in their Meta ad account, as Kaizen's media buyer would. You're given the ticket (what was made and why), the designs to launch, and the account's ad sets with their campaign, optimization and recent ad names.
 Pick the ad set the new ads belong in: one already testing or running this kind of creative (same funnel stage, audience, offer and goal as the ticket), preferring an active ad set that spends. mode "existing" adds the ads to it. Use mode "clone" only when the ticket clearly calls for its own ad set (a new offer or angle that should be tested apart, or the best match is a "Best performers"/consolidation ad set that shouldn't take untested ads); then the ad set is copied (same targeting, pixel and optimization) and newAdsetName follows the names of the ad sets around it. Never pick an ad set for a different goal (a lead form ad set for website traffic, retargeting for cold creative).
 Name each ad so it continues the pattern of the names in that ad set (same separators, order of parts, stage and geo tags, month format, IMG or Video numbering continuing from the highest, copy code such as "Stacked Copy" since the copy goes in stacked). Use the design's own name or the ticket's angle where the pattern has a concept slot. Never put a client's name where the pattern doesn't. If the ad set has no ads yet, follow the account's other ad names.
+When this client has launch rules (from their buyers moving ads the launcher placed), they win over your own judgment: follow them, and say in reason which rule you followed.
 reason: two or three plain sentences on why this ad set and how the names follow the pattern. newAdsetName empty unless mode is clone.`;
 
 /** Plans a launch (in the background of the request that started it): see the top of this file. */
@@ -249,6 +250,9 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
     let reason = (l.plan as LaunchPlan | null)?.reason ?? "";
     if (!adsetId) {
       await update(admin, launchId, { progress: "Picking the ad set and names" });
+      // Where this client's buyers have moved ads before, and why: the rules come first
+      const rules = await clientLaunchRules(admin, ticket.client_id);
+      const rulesBlock = rules.length ? `<this_clients_launch_rules>\n${rules.map((r) => `- ${r}`).join("\n")}\n</this_clients_launch_rules>\n\n` : "";
       const brief = JSON.stringify(ticket.brief ?? {}).slice(0, 2500);
       const out = await askJson<{ adsetId: string; mode: "existing" | "clone"; newAdsetName: string; adNames: { designId: string; name: string }[]; reason: string }>({
         agent: "launcher",
@@ -256,7 +260,7 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
         system: PROPOSE_SYSTEM,
         schema: PROPOSE_SCHEMA,
         maxTokens: 4000,
-        prompt: `<ticket>\n#${ticket.number} ${ticket.title} (${ticket.format})\nClient: ${ticket.clients.name}\nKPI counted: ${conversion ?? "unknown"}\nBrief: ${brief}\n</ticket>\n\n<designs>\n${singles.map((d) => `- designId ${d.id}: "${d.name}" (${d.files.map((f) => `${f.aspect ?? "?"} ${f.mime.startsWith("video") ? "video" : "image"}`).join(", ")})`).join("\n")}\n</designs>\n\n<ad_sets>\n${acct.adsets
+        prompt: `${rulesBlock}<ticket>\n#${ticket.number} ${ticket.title} (${ticket.format})\nClient: ${ticket.clients.name}\nKPI counted: ${conversion ?? "unknown"}\nBrief: ${brief}\n</ticket>\n\n<designs>\n${singles.map((d) => `- designId ${d.id}: "${d.name}" (${d.files.map((f) => `${f.aspect ?? "?"} ${f.mime.startsWith("video") ? "video" : "image"}`).join(", ")})`).join("\n")}\n</designs>\n\n<ad_sets>\n${acct.adsets
           .slice(0, 60)
           .map((a) => `- id ${a.id} "${a.name}" [${a.status}] in "${a.campaign}" (${a.objective}${a.optimization ? `, optimizing ${a.optimization}` : ""}${a.leadForm ? ", instant form" : ""}${a.special.length ? `, special category ${a.special.join("/")}` : ""}), $${a.spend14} last 14 days\n    recent ads: ${a.recentAds.length ? a.recentAds.map((n) => `"${n}"`).join("; ") : "none"}`)
           .join("\n")}\n</ad_sets>`,
@@ -701,5 +705,161 @@ export async function launchStep(admin: SupabaseClient, budgetMs = 600_000) {
     out[r.id] = await autoLaunch(admin, r.id);
   }
   const live = await watchLaunches(admin).catch(() => 0);
-  return { launched: Object.values(out).filter((x) => x === "launched").length, handed: Object.values(out).filter((x) => x === "handed to the buyer").length, live };
+  const moved = await watchHandMoves(admin).catch(() => 0);
+  return { moved, launched: Object.values(out).filter((x) => x === "launched").length, handed: Object.values(out).filter((x) => x === "handed to the buyer").length, live };
+}
+
+// ─── Moving a launched ad, and learning where a client's ads belong ─────────────────────────────────────────
+
+/** The client's active launch rules, newest first, as the launcher reads them. */
+export async function clientLaunchRules(admin: SupabaseClient, clientId: string) {
+  const { data } = await admin.from("launch_rules").select("rule, from_adset, to_adset").eq("client_id", clientId).eq("active", true).order("created_at", { ascending: false }).limit(12);
+  type A = { name?: string; campaign?: string } | null;
+  return (data ?? []).map((r) => {
+    const f = r.from_adset as A;
+    const t = r.to_adset as A;
+    return `${r.rule}${f?.name && t?.name ? ` (a buyer moved an ad from "${f.name}" to "${t.name}"${t.campaign ? ` in "${t.campaign}"` : ""})` : ""}`;
+  });
+}
+
+type AdsetRef = { id: string; name: string; campaign: string };
+
+async function adsetRef(id: string): Promise<AdsetRef> {
+  const a = await metaGraph<{ id: string; name: string; campaign?: { name: string } }>(id, { fields: "name,campaign{name}" }).catch(() => null);
+  return { id, name: a?.name ?? id, campaign: a?.campaign?.name ?? "" };
+}
+
+/**
+ * A buyer's correction becomes knowledge: a launch rule the launcher reads first for this client, the same line in the
+ * client's memory (so every agent knows it), and, when the same kind of correction shows up across clients, a
+ * suggested edit to the launcher's playbook for an exec to approve in Settings.
+ */
+async function learnPlacement(admin: SupabaseClient, launchId: string, clientId: string, from: AdsetRef, to: AdsetRef, reason: string, by: string | null, via: "app" | "ads_manager") {
+  const rule = reason.trim().slice(0, 600);
+  if (!rule) return;
+  await admin.from("launch_rules").insert({ client_id: clientId, launch_id: launchId, rule, from_adset: from, to_adset: to, via, created_by: by });
+  await admin.from("client_memory").insert({ client_id: clientId, kind: "prefer", source: "team", created_by: by, body: `Where new ads go: ${rule} (moved from "${from.name}" to "${to.name}").`.slice(0, 1000) });
+  await suggestGeneralRule(admin).catch((e) => console.error("launch rules pattern", e));
+}
+
+/** Across clients: once a few corrections point the same way, the launcher proposes it as a Kaizen-wide rule. */
+async function suggestGeneralRule(admin: SupabaseClient) {
+  const since = new Date(Date.now() - 90 * 86_400_000).toISOString();
+  const { data: rules } = await admin.from("launch_rules").select("client_id, rule, from_adset, to_adset, clients(name)").eq("active", true).gte("created_at", since).order("created_at", { ascending: false }).limit(60);
+  if (!rules || rules.length < 3 || new Set(rules.map((r) => r.client_id)).size < 2) return;
+  // One suggestion at a time: not while the last one (two weeks) is still waiting
+  const { data: recent } = await admin.from("ai_agent_chats").select("id").eq("agent_key", "launcher").eq("role", "coach").like("content", "From launch corrections%").gte("created_at", new Date(Date.now() - 14 * 86_400_000).toISOString()).limit(1);
+  if (recent?.length) return;
+  const out = await askJson<{ general: boolean; title: string; body: string; reason: string }>({
+    agent: "launcher",
+    label: "launch rules pattern",
+    system: `You look at how Kaizen's media buyers corrected where the launcher placed new ads, across clients. If several corrections from different clients point to the same general rule (a kind of creative, offer or funnel stage that belongs in a kind of ad set), write it as one rule for the launcher's playbook. Only a real pattern across clients; a rule that fits one client stays with that client. Refer to ad sets by their role (cold prospecting, best performers, retargeting, testing), never by client or person names.`,
+    schema: { type: "object", properties: { general: { type: "boolean" }, title: { type: "string" }, body: { type: "string" }, reason: { type: "string" } }, required: ["general", "title", "body", "reason"], additionalProperties: false },
+    maxTokens: 2000,
+    prompt: rules
+      .map((r) => `- ${(r.clients as unknown as { name: string } | null)?.name ?? "a client"}: "${r.rule}" (from "${(r.from_adset as AdsetRef | null)?.name ?? "?"}" to "${(r.to_adset as AdsetRef | null)?.name ?? "?"}")`)
+      .join("\n"),
+  });
+  if (!out.general || !out.body.trim()) return;
+  await admin.from("ai_agent_chats").insert({
+    agent_key: "launcher",
+    role: "coach",
+    content: "From launch corrections: buyers across clients keep moving new ads the same way. I'd add this to the launcher's playbook so it places them right the first time.",
+    changes: [{ op: "add_item", item_id: "", kind: "knowledge", scope: "agent", title: out.title.slice(0, 120), body: out.body, model: "", effort: "", reason: out.reason }],
+  });
+}
+
+type Made = { designId: string; name: string; adId: string | null; creativeId: string | null; error: string | null };
+type Result = { adsetId: string; newAdset: string | null; ads: Made[]; link: string | null };
+
+/**
+ * Moves a launched ad to the ad set it belongs in: the same creative (nothing uploaded again) as a new paused ad there
+ * (or in a new ad set copied from the one picked), then the old ad is archived (out of the running account, kept in
+ * Meta's history). The buyer's reason is learned.
+ */
+export async function moveLaunch(admin: SupabaseClient, launchId: string, by: string, target: { adsetId: string; mode: "existing" | "clone"; newAdsetName?: string | null }, reason: string) {
+  const { data: l } = await admin.from("launches").select("client_id, plan, result, moves, status").eq("id", launchId).single();
+  const plan = l?.plan as LaunchPlan | null;
+  const result = l?.result as Result | null;
+  if (!l || !plan || !result || l.status !== "launched") throw new Error("Only a launched ad can be moved.");
+  if (!reason.trim()) throw new Error("Say why it goes there: that's what the launcher learns from.");
+  const from = await adsetRef(result.adsetId);
+  let adsetId = target.adsetId;
+  if (target.mode === "clone") {
+    const copy = await metaWrite<{ copied_adset_id?: string }>(admin, plan.account, `${target.adsetId}/copies`, { deep_copy: "false", status_option: "PAUSED" }, false);
+    if (!copy.copied_adset_id) throw new Error("Meta didn't return the new ad set");
+    adsetId = copy.copied_adset_id;
+    if (target.newAdsetName) await metaWrite(admin, plan.account, adsetId, { name: target.newAdsetName.slice(0, 250) }, false);
+  }
+  const to = await adsetRef(adsetId);
+  const ads: Made[] = [];
+  for (const a of result.ads) {
+    if (!a.adId || !a.creativeId) {
+      ads.push(a);
+      continue;
+    }
+    const made = await metaWrite<{ id: string }>(admin, plan.account, `act_${plan.account}/ads`, { name: a.name.slice(0, 250), adset_id: adsetId, creative: JSON.stringify({ creative_id: a.creativeId }), status: "PAUSED" }, false);
+    await metaWrite(admin, plan.account, a.adId, { status: "ARCHIVED" }, false).catch(() => null);
+    ads.push({ ...a, adId: made.id });
+  }
+  const ok = ads.filter((a) => a.adId);
+  await update(admin, launchId, {
+    result: { ...result, adsetId, ads, link: ok.length ? ADS_MANAGER(plan.account, ok.map((a) => a.adId).join(",")) : null },
+    moves: [...((l.moves ?? []) as unknown[]), { at: new Date().toISOString(), by, from, to, reason: reason.trim(), via: "app" }],
+    pending_move: null,
+  });
+  if (!plan.sandbox) await learnPlacement(admin, launchId, l.client_id, from, to, reason, by, "app");
+  return { to };
+}
+
+/** The buyer explains a move they made by hand in Ads Manager; it's learned the same way. */
+export async function explainHandMove(admin: SupabaseClient, launchId: string, by: string, reason: string) {
+  const { data: l } = await admin.from("launches").select("client_id, sandbox, pending_move, moves").eq("id", launchId).single();
+  const p = l?.pending_move as { from: AdsetRef; to: AdsetRef } | null;
+  if (!l || !p) throw new Error("Nothing to explain.");
+  if (!reason.trim()) throw new Error("Say why it goes there.");
+  await update(admin, launchId, { pending_move: null, moves: [...((l.moves ?? []) as unknown[]), { at: new Date().toISOString(), by, from: p.from, to: p.to, reason: reason.trim(), via: "ads_manager" }] });
+  if (!l.sandbox) await learnPlacement(admin, launchId, l.client_id, p.from, p.to, reason, by, "ads_manager");
+}
+
+/**
+ * Launched ads moved by hand in Ads Manager (their ad set isn't the one we put them in): the move is recorded and the
+ * buyer is asked why, so the launcher learns from it like a move made here.
+ */
+export async function watchHandMoves(admin: SupabaseClient) {
+  const { data } = await admin
+    .from("launches")
+    .select("id, request_id, result, pending_move, sandbox, requests!inner(number, title, buyer_id, client_id, clients(name))")
+    .eq("status", "launched")
+    .is("pending_move", null)
+    .gte("launched_at", new Date(Date.now() - 30 * 86_400_000).toISOString())
+    .limit(40);
+  let asked = 0;
+  for (const l of data ?? []) {
+    const result = l.result as Result | null;
+    const ads = (result?.ads ?? []).filter((a) => a.adId);
+    if (!result || !ads.length) continue;
+    const res = await metaGraph<Record<string, { adset_id?: string }>>("", { ids: ads.map((a) => a.adId).join(","), fields: "adset_id" }).catch(() => null);
+    const moved = ads.map((a) => res?.[a.adId!]?.adset_id).find((id) => id && id !== result.adsetId);
+    if (!moved) continue;
+    const [from, to] = await Promise.all([adsetRef(result.adsetId), adsetRef(moved)]);
+    await update(admin, l.id, { pending_move: { from, to, seen: new Date().toISOString() }, result: { ...result, adsetId: moved } });
+    const t = l.requests as unknown as { number: number; title: string; buyer_id: string | null; client_id: string; clients: { name: string } | null };
+    const buyer = t.buyer_id ?? ((await admin.from("client_assignments").select("profile_id").eq("client_id", t.client_id).eq("role", "meta_buyer").limit(1).maybeSingle()).data?.profile_id as string | undefined) ?? null;
+    if (buyer && !l.sandbox)
+      await admin.from("notifications").upsert(
+        {
+          profile_id: buyer,
+          kind: "launch",
+          title: `${t.clients?.name ?? "A client"}: you moved the ad to "${to.name}". Why there?`,
+          body: `One line on why it belongs in "${to.name}" rather than "${from.name}", and the launcher places this client's next ads there first.`,
+          href: `/board?t=${t.number}`,
+          key: `launch-moved:${l.id}:${moved}`,
+          priority: "normal",
+        },
+        { onConflict: "profile_id,key", ignoreDuplicates: true },
+      );
+    asked++;
+  }
+  return asked;
 }

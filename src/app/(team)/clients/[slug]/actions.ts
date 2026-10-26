@@ -183,6 +183,15 @@ export async function addServiceTier(service: string, label: string, includes: s
   return { ok: true, tier: data };
 }
 
+/** A launch rule on or off (execs, leads and the client's buyers). Rules are never deleted. */
+export async function setLaunchRule(id: string, slug: string, active: boolean): Promise<ActionResult> {
+  await requireStaff();
+  const { data: r } = await (await createClient()).from("launch_rules").select("id").eq("id", id).maybeSingle();
+  if (!r || !adminConfigured()) return { ok: false, error: "Not found." };
+  const { error } = await createAdminClient().from("launch_rules").update({ active }).eq("id", id);
+  return done(slug, error);
+}
+
 export async function addContact(clientId: string, slug: string, form: FormData): Promise<ActionResult> {
   await requireStaff();
   const supabase = await createClient();

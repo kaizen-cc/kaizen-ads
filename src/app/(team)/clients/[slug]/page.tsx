@@ -219,8 +219,22 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     supabase.from("client_service_tiers").select("service, tier_id").eq("client_id", client.id),
   ]);
 
+  // Where this client's new ads go, as their buyers taught the launcher
+  const { data: ruleRows } = await supabase.from("launch_rules").select("id, rule, from_adset, to_adset, via, active, created_at, profiles(full_name)").eq("client_id", client.id).order("created_at", { ascending: false }).limit(30);
+  const launchRules = (ruleRows ?? []).map((r) => ({
+    id: r.id as string,
+    rule: r.rule as string,
+    from: (r.from_adset as { name?: string } | null)?.name ?? null,
+    to: (r.to_adset as { name?: string } | null)?.name ?? null,
+    via: r.via as string,
+    by: (r.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
+    at: r.created_at as string,
+    active: r.active as boolean,
+  }));
+
   return (
     <ClientView
+      launchRules={launchRules}
       readiness={readiness}
       services={{
         track: (client.services ?? []) as string[],

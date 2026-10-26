@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { LaunchCheck } from "@/lib/launcher";
+import { LaunchMove } from "./launch-move";
 import { confirmLaunch, discardLaunch, launchFor, loadLaunch, replanLaunch, sandboxCampaign, startLaunch, type LaunchView } from "./launch-actions";
 
 // Launch to Meta, on a ticket in Ready to launch. Kaizen Ads launches it on its own when the ticket gets here (the
@@ -179,6 +180,7 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
               {l.launchedBy ? ` Launched by ${l.launchedBy}.` : ""}
             </p>
           </div>
+          <LaunchMove l={l} onDone={() => void loadLaunch(l.id).then((x) => x && setL(x))} />
         </div>
       )}
 
