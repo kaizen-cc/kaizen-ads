@@ -139,15 +139,31 @@ export function Story({
   const acted = items.filter((i) => mine[i.key] === "done").length;
   const tone = card.kind === "topic" ? TIER[card.items[0].tier] : card.kind === "resolved" ? { glow: "rgba(40,180,120,0.35)", accent: "#5be3a5" } : { glow: "rgba(200,16,46,0.35)", accent: "#ff4d5e" };
 
+  // Phones: swipe left or right to move between screens, like stories (not inside a client's overview or a field)
+  const swipe = useRef<{ x: number; y: number } | null>(null);
+  const onTouchStart = (e: React.TouchEvent) => {
+    const el = e.target as HTMLElement;
+    swipe.current = sheet || el.closest("input, textarea, [data-no-swipe]") ? null : { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  };
+  const onTouchEnd = (e: React.TouchEvent) => {
+    const s = swipe.current;
+    swipe.current = null;
+    if (!s) return;
+    const dx = e.changedTouches[0].clientX - s.x;
+    const dy = e.changedTouches[0].clientY - s.y;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) go(dx < 0 ? 1 : -1);
+  };
+
   return (
-    <div className="fixed inset-0 z-40 overflow-hidden bg-[#07060a] text-white [color-scheme:dark]">
+    // Phones: a column (progress, the screen, then back and next within thumb reach); desktop as it was
+    <div className="fixed inset-0 z-40 flex flex-col overflow-hidden bg-[#07060a] text-white [color-scheme:dark] md:block">
       <style>{`@keyframes card-in { from { opacity: 0; transform: translateY(18px) scale(.985) } to { opacity: 1; transform: none } } @keyframes glow { 0%,100% { transform: translate(-10%,-10%) scale(1) } 50% { transform: translate(6%,4%) scale(1.15) } }`}</style>
       {/* The colour of what's on screen: red for critical, amber for important, blue for the rest, green for done */}
       <div aria-hidden className="pointer-events-none absolute -left-1/4 -top-1/4 h-[90vh] w-[90vh] rounded-full blur-[140px] transition-colors duration-700" style={{ background: tone.glow, animation: "glow 14s ease-in-out infinite" }} />
       <div aria-hidden className="pointer-events-none absolute -bottom-1/3 right-0 h-[70vh] w-[70vh] rounded-full opacity-60 blur-[160px] transition-colors duration-700" style={{ background: tone.glow, animation: "glow 18s ease-in-out infinite reverse" }} />
 
       {/* Progress, and the way out */}
-      <header className="relative z-10 grid gap-3 px-4 pt-4 md:px-8 md:pt-6">
+      <header className="relative z-10 grid shrink-0 gap-3 px-4 pt-[calc(env(safe-area-inset-top)+12px)] md:px-8 md:pt-6">
         <div className="flex gap-1.5">
           {cards.map((c, n) => (
             <button key={n} type="button" aria-label={`Screen ${n + 1}`} onClick={() => setAt(n)} className="h-1 flex-1 overflow-hidden rounded-full bg-white/15">
@@ -156,12 +172,13 @@ export function Story({
           ))}
         </div>
         <div className="flex items-center justify-between gap-3 text-xs text-white/60">
-          <span>{card.kind === "topic" ? topics[card.topic].label : card.kind === "resolved" ? "Since you last looked" : "Today"}</span>
-          <span className="flex items-center gap-2">
-            <button type="button" onClick={() => setPicker((p) => !p)} className="rounded-full border border-white/20 px-3 py-1.5 text-white/80 hover:bg-white/10">
-              Jump to a topic
+          <span className="min-w-0 truncate">{card.kind === "topic" ? topics[card.topic].label : card.kind === "resolved" ? "Since you last looked" : "Today"}</span>
+          <span className="flex shrink-0 items-center gap-2">
+            <button type="button" onClick={() => setPicker((p) => !p)} className="inline-flex h-11 items-center rounded-full border border-white/20 px-4 text-white/80 hover:bg-white/10 md:h-auto md:px-3 md:py-1.5">
+              <span className="md:hidden">Topics</span>
+              <span className="hidden md:inline">Jump to a topic</span>
             </button>
-            <Link href={home} className="rounded-full border border-white/20 px-3 py-1.5 text-white/80 hover:bg-white/10">
+            <Link href={home} className="inline-flex h-11 items-center rounded-full border border-white/20 px-4 text-white/80 hover:bg-white/10 md:h-auto md:px-3 md:py-1.5">
               Close
             </Link>
           </span>
@@ -169,33 +186,33 @@ export function Story({
       </header>
 
       {picker && (
-        <div className="absolute inset-x-4 top-24 z-30 mx-auto grid max-w-2xl gap-2 rounded-[20px] border border-white/15 bg-black/80 p-4 backdrop-blur-xl md:inset-x-8">
+        <div className="absolute inset-x-4 top-[calc(env(safe-area-inset-top)+96px)] z-30 mx-auto grid max-h-[70dvh] max-w-2xl gap-2 overflow-y-auto overscroll-contain rounded-[20px] border border-white/15 bg-black/90 p-4 backdrop-blur-xl md:inset-x-8 md:top-24 md:max-h-none md:overflow-visible md:bg-black/80">
           <p className="text-xs uppercase tracking-[0.18em] text-white/50">Jump to a topic · then the rest, most critical first</p>
           <TopicChoices byTopic={byTopic} topics={topics} onPick={jump} />
         </div>
       )}
 
-      <main className="relative z-10 grid h-[calc(100%-110px)] place-items-center overflow-y-auto px-4 pb-6 md:px-8">
-        <div key={`${at}:${first}`} className="grid w-full max-w-6xl gap-8 py-8" style={{ animation: "card-in .45s cubic-bezier(.2,.8,.2,1) both" }}>
+      <main onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} className="relative z-10 grid min-h-0 flex-1 place-items-center overflow-y-auto overscroll-contain px-4 pb-6 md:h-[calc(100%-110px)] md:flex-none md:px-8">
+        <div key={`${at}:${first}`} className="grid w-full max-w-6xl gap-6 py-5 md:gap-8 md:py-8" style={{ animation: "card-in .45s cubic-bezier(.2,.8,.2,1) both" }}>
           {card.kind === "intro" && (
-            <div className="grid max-w-4xl gap-8">
+            <div className="grid max-w-4xl gap-7 md:gap-8">
               <div className="grid gap-3">
                 <p className="text-sm uppercase tracking-[0.24em] text-white/50">Your day</p>
                 <h1 className="font-display text-5xl leading-[1.02] tracking-tight md:text-7xl">
                   {greeting}, {firstName}.
                 </h1>
-                <p className="max-w-xl text-lg text-white/70">
+                <p className="max-w-xl text-[17px] leading-relaxed text-white/70 md:text-lg md:leading-normal">
                   {items.length ? `${items.length} things across your clients today, in ${groups.length} ${groups.length === 1 ? "topic" : "topics"}${counts.critical ? `. ${counts.critical} critical` : ""}. Most critical first.` : "Nothing needs you today. Every client is in good hands."}
                   {resolved.length ? ` And ${resolved.length} ${resolved.length === 1 ? "thing a teammate took" : "things teammates took"} care of since you last looked.` : ""}
                 </p>
               </div>
               <div className="grid grid-cols-3 gap-3 md:max-w-2xl">
                 {(["critical", "high", "normal"] as const).map((t) => (
-                  <div key={t} className="grid gap-1 rounded-[18px] border border-white/10 bg-white/[0.04] p-4">
-                    <span className="font-display text-5xl tabular" style={{ color: TIER[t].accent }}>
+                  <div key={t} className="grid min-w-0 gap-1 rounded-[18px] border border-white/10 bg-white/[0.04] p-3.5 md:p-4">
+                    <span className="font-display text-4xl tabular md:text-5xl" style={{ color: TIER[t].accent }}>
                       {counts[t]}
                     </span>
-                    <span className="text-xs uppercase tracking-[0.14em] text-white/60">{TIER[t].label}</span>
+                    <span className="text-[10.5px] uppercase leading-tight tracking-[0.12em] text-white/60 md:text-xs md:leading-normal md:tracking-[0.14em]">{TIER[t].label}</span>
                   </div>
                 ))}
               </div>
@@ -206,10 +223,13 @@ export function Story({
                 </div>
               )}
               <div className="flex flex-wrap gap-3">
-                <button type="button" onClick={() => (items.length || resolved.length ? go(1) : router.push(home))} className="h-12 rounded-full bg-white px-7 text-[15px] font-semibold text-black hover:bg-white/90">
+                <button type="button" onClick={() => (items.length || resolved.length ? go(1) : router.push(home))} className="h-14 w-full rounded-full bg-white px-7 text-base font-semibold text-black hover:bg-white/90 md:h-12 md:w-auto md:text-[15px]">
                   {items.length || resolved.length ? "Start" : "Back to your home"}
                 </button>
-                <span className="self-center text-xs text-white/40">→ or space to move on</span>
+                <span className="self-center text-xs text-white/40">
+                  <span className="md:hidden">Or swipe to move on</span>
+                  <span className="hidden md:inline">→ or space to move on</span>
+                </span>
               </div>
             </div>
           )}
@@ -269,7 +289,7 @@ export function Story({
                 <ul className="grid gap-2 md:max-w-2xl">
                   {saved.map((s) => (
                     <li key={s.key}>
-                      <button type="button" onClick={() => setAt(cards.findIndex((c) => c.kind === "topic" && c.topic === s.topic))} className="flex w-full items-center gap-3 rounded-[14px] border border-white/10 bg-white/[0.04] px-4 py-3 text-left hover:bg-white/[0.08]">
+                      <button type="button" onClick={() => setAt(cards.findIndex((c) => c.kind === "topic" && c.topic === s.topic))} className="flex w-full items-center gap-3 rounded-[14px] border border-white/10 bg-white/[0.04] px-4 py-3.5 text-left hover:bg-white/[0.08] active:bg-white/[0.08] md:py-3">
                         <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: TIER[s.tier].accent }} />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-sm">{s.title}</span>
@@ -284,10 +304,10 @@ export function Story({
                 </ul>
               )}
               <div className="flex flex-wrap gap-3">
-                <button type="button" onClick={() => router.push(home)} className="h-12 rounded-full bg-white px-7 text-[15px] font-semibold text-black">
+                <button type="button" onClick={() => router.push(home)} className="h-12 flex-1 rounded-full bg-white px-7 text-[15px] font-semibold text-black md:flex-none">
                   Back to your home
                 </button>
-                <button type="button" onClick={() => setAt(0)} className="h-12 rounded-full border border-white/25 px-6 text-sm text-white/80 hover:bg-white/10">
+                <button type="button" onClick={() => setAt(0)} className="h-12 flex-1 rounded-full border border-white/25 px-6 text-sm text-white/80 hover:bg-white/10 md:flex-none">
                   From the top
                 </button>
               </div>
@@ -295,6 +315,19 @@ export function Story({
           )}
         </div>
       </main>
+
+      {/* Phones: back, where you are, and next, at the bottom within thumb reach (under a client's overview when one is open) */}
+      <nav className="relative z-[5] flex shrink-0 items-center gap-3 border-t border-white/10 bg-black/40 px-4 pb-[calc(env(safe-area-inset-bottom)+10px)] pt-2.5 backdrop-blur-xl md:hidden" aria-label="Move through your recap">
+        <button type="button" aria-label="Previous" disabled={at === 0} onClick={() => go(-1)} className="grid h-12 w-12 shrink-0 place-items-center rounded-full border border-white/15 text-2xl text-white/75 active:bg-white/10 disabled:opacity-30">
+          ‹
+        </button>
+        <span className="tabular flex-1 text-center text-xs text-white/45">
+          {Math.min(at, cards.length - 1) + 1} of {cards.length}
+        </span>
+        <button type="button" onClick={() => (card.kind === "end" ? router.push(home) : go(1))} className="h-12 shrink-0 rounded-full bg-white px-8 text-[15px] font-semibold text-black active:bg-white/90">
+          {card.kind === "end" ? "Done" : "Next"}
+        </button>
+      </nav>
 
       {/* Back and forward, for a mouse */}
       <button type="button" aria-label="Previous" onClick={() => go(-1)} className="absolute left-2 top-1/2 z-20 hidden h-12 w-12 -translate-y-1/2 place-items-center rounded-full text-2xl text-white/40 hover:bg-white/10 hover:text-white md:grid">
@@ -350,6 +383,10 @@ function TopicScreen({
   const critical = list.filter((i) => i.tier === "critical").length;
   const t = TIER[list[0].tier];
   const allSaved = live.length > 0 && live.every((i) => mine[i.key] === "saved");
+  const closeOverview = () => {
+    setDive(null);
+    setSelected(null);
+  };
   const nextInDive = () => {
     if (dive == null) return;
     if (dive + 1 >= live.length) {
@@ -385,7 +422,7 @@ function TopicScreen({
                     setDive(null);
                     setSelected(on ? null : i.key);
                   }}
-                  className={`group grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-[16px] border px-4 py-3 text-left transition-colors ${on ? "border-white/40 bg-white/[0.1]" : "border-white/10 bg-white/[0.035] hover:border-white/25 hover:bg-white/[0.07]"} ${gone ? "opacity-40" : ""}`}
+                  className={`group grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-[16px] border px-4 py-3.5 text-left transition-colors md:py-3 ${on ? "border-white/40 bg-white/[0.1]" : "border-white/10 bg-white/[0.035] hover:border-white/25 hover:bg-white/[0.07]"} ${gone ? "opacity-40" : ""}`}
                   style={{ animation: `card-in .4s ${0.04 * n}s cubic-bezier(.2,.8,.2,1) both` }}
                 >
                   <span className="h-2.5 w-2.5 rounded-full" style={{ background: TIER[i.tier].accent, boxShadow: `0 0 12px ${TIER[i.tier].accent}` }} />
@@ -402,7 +439,7 @@ function TopicScreen({
                     <span className="tabular block font-display text-xl leading-none" style={{ color: TIER[i.tier].accent }}>
                       {i.stat.value}
                     </span>
-                    <span className="block max-w-[150px] truncate text-[10.5px] text-white/45">{i.stat.label}</span>
+                    <span className="block max-w-[110px] truncate text-[10.5px] text-white/45 md:max-w-[150px]">{i.stat.label}</span>
                   </span>
                 </button>
               </li>
@@ -411,12 +448,12 @@ function TopicScreen({
         </ul>
         <div className="flex flex-wrap items-center gap-2.5">
           {live.length > 0 && (
-            <button type="button" onClick={() => setDive(0)} className="inline-flex h-12 items-center rounded-full bg-white px-6 text-[15px] font-semibold text-black hover:bg-white/90">
+            <button type="button" onClick={() => setDive(0)} className="inline-flex h-12 w-full items-center justify-center rounded-full bg-white px-6 text-[15px] font-semibold text-black hover:bg-white/90 md:w-auto md:justify-start">
               Deep dive, one by one
             </button>
           )}
           {live.length > 0 && (
-            <button type="button" onClick={onSaveAll} disabled={allSaved} className={`h-12 rounded-full border px-5 text-sm ${allSaved ? "border-white bg-white/15" : "border-white/25 text-white/85 hover:bg-white/10"}`}>
+            <button type="button" onClick={onSaveAll} disabled={allSaved} className={`h-12 flex-1 rounded-full border px-5 text-sm md:flex-none ${allSaved ? "border-white bg-white/15" : "border-white/25 text-white/85 hover:bg-white/10"}`}>
               {allSaved ? "All saved ✓" : `Save ${live.length === 1 ? "it" : `all ${live.length}`} for later`}
             </button>
           )}
@@ -426,9 +463,21 @@ function TopicScreen({
         </div>
       </div>
 
-      {/* The selected client, or the next one in the deep dive */}
-      <div className="lg:sticky lg:top-4">
+      {/* The selected client, or the next one in the deep dive. Phones: a sheet from the bottom over the list */}
+      <div
+        data-no-swipe={current ? "" : undefined}
+        onClick={(e) => e.target === e.currentTarget && closeOverview()}
+        className={current ? "fixed inset-0 z-[45] flex flex-col justify-end bg-black/60 backdrop-blur-sm md:static md:z-auto md:block md:bg-transparent md:backdrop-blur-none lg:sticky lg:top-4" : "lg:sticky lg:top-4"}
+      >
         {current ? (
+          <div className="max-h-[92dvh] overflow-y-auto overscroll-contain rounded-t-[28px] bg-[#0d0c11] pb-[env(safe-area-inset-bottom)] md:max-h-none md:overflow-visible md:rounded-none md:bg-transparent md:pb-0 max-md:animate-[card-in_.3s_cubic-bezier(.2,.8,.2,1)_both]">
+            <div className="sticky top-0 z-10 flex justify-end bg-[#0d0c11]/90 px-2 pt-2 backdrop-blur md:hidden">
+              <button type="button" onClick={closeOverview} aria-label="Back to the list" className="grid h-11 w-11 place-items-center rounded-full text-white/60 active:bg-white/10">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+                  <path d="M18 6 6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
           <Overview
             key={current.key}
             i={current}
@@ -441,6 +490,7 @@ function TopicScreen({
             onAct={() => (current.action.suggestion ? onAct(current) : undefined)}
             onNext={dive != null ? nextInDive : null}
           />
+          </div>
         ) : (
           <div className="hidden min-h-[360px] place-items-center rounded-[28px] border border-dashed border-white/12 p-10 text-center lg:grid">
             <div className="grid gap-2">
@@ -459,9 +509,9 @@ function TopicScreen({
 /** One client's overview inside its topic: the number, the story, the evidence, and what to do. */
 function Overview({ i, status, dive, onChoose, onAct, onNext }: { i: TodayItem; status?: Mark; dive: { at: number; of: number } | null; onChoose: (s: "saved" | "done" | "dismissed") => void; onAct: () => void; onNext: (() => void) | null }) {
   const t = TIER[i.tier];
-  const primary = "inline-flex h-11 items-center rounded-full bg-white px-5 text-sm font-semibold text-black hover:bg-white/90";
+  const primary = "inline-flex h-12 w-full items-center justify-center rounded-full bg-white px-5 text-[15px] font-semibold text-black hover:bg-white/90 md:h-11 md:w-auto md:justify-start md:text-sm";
   return (
-    <div className="relative grid gap-5 overflow-hidden rounded-[28px] border border-white/12 bg-black/40 p-6 backdrop-blur-xl md:p-8" style={{ animation: "card-in .35s cubic-bezier(.2,.8,.2,1) both" }}>
+    <div className="relative grid gap-5 overflow-hidden rounded-[28px] border border-white/12 bg-black/40 p-5 pt-3 backdrop-blur-xl md:p-8" style={{ animation: "card-in .35s cubic-bezier(.2,.8,.2,1) both" }}>
       <span aria-hidden className="pointer-events-none absolute -right-20 -top-24 h-[240px] w-[240px] rounded-full blur-[80px]" style={{ background: t.glow }} />
       <div className="relative flex flex-wrap items-center gap-2">
         <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${t.chip}`}>{t.label}</span>
@@ -498,11 +548,11 @@ function Overview({ i, status, dive, onChoose, onAct, onNext }: { i: TodayItem; 
           </a>
         )}
         {i.alt && (
-          <a href={i.alt.href} target="_blank" rel="noreferrer" className="inline-flex h-11 items-center rounded-full border border-white/25 px-4 text-sm text-white/85 hover:bg-white/10">
+          <a href={i.alt.href} target="_blank" rel="noreferrer" className="inline-flex h-11 w-full items-center justify-center rounded-full border border-white/25 px-4 text-sm text-white/85 hover:bg-white/10 md:w-auto md:justify-start">
             {i.alt.label} ↗
           </a>
         )}
-        <button type="button" onClick={() => onChoose("saved")} className={`h-11 rounded-full border px-4 text-sm ${status === "saved" ? "border-white bg-white/15" : "border-white/25 text-white/85 hover:bg-white/10"}`}>
+        <button type="button" onClick={() => onChoose("saved")} className={`h-11 flex-1 rounded-full border px-4 text-sm md:flex-none ${status === "saved" ? "border-white bg-white/15" : "border-white/25 text-white/85 hover:bg-white/10"}`}>
           {status === "saved" ? "Saved ✓" : "Save for later"}
         </button>
         <button type="button" onClick={() => onChoose("dismissed")} className="h-11 rounded-full px-3 text-sm text-white/50 hover:text-white">
@@ -520,9 +570,9 @@ function Overview({ i, status, dive, onChoose, onAct, onNext }: { i: TodayItem; 
 
 function TopicChoices({ byTopic, topics, onPick }: { byTopic: [TopicKey, { n: number; critical: number }][]; topics: Record<TopicKey, { label: string; blurb: string }>; onPick: (t: TopicKey) => void }) {
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="grid gap-2 md:flex md:flex-wrap">
       {byTopic.map(([t, c]) => (
-        <button key={t} type="button" onClick={() => onPick(t)} className="group grid gap-0.5 rounded-[14px] border border-white/15 bg-white/[0.05] px-4 py-2.5 text-left transition-colors hover:border-white/40 hover:bg-white/10">
+        <button key={t} type="button" onClick={() => onPick(t)} className="group grid gap-0.5 rounded-[14px] border border-white/15 bg-white/[0.05] px-4 py-3 text-left transition-colors hover:border-white/40 hover:bg-white/10 active:bg-white/10 md:py-2.5">
           <span className="flex items-center gap-2 text-sm font-medium">
             {c.critical > 0 && <span className="h-1.5 w-1.5 rounded-full bg-[#ff4d5e]" />}
             {topics[t].label}

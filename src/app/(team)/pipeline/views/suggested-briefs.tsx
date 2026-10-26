@@ -66,7 +66,7 @@ export function SuggestedBriefs({ state, bare = false }: { state: SuggestionsSta
                 {state.decided30.approved} approved · {state.decided30.declined} declined in 30 days
               </span>
             )}
-            <button onClick={refresh} disabled={running} className="rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg disabled:opacity-60">
+            <button onClick={refresh} disabled={running} className="rounded-full border border-line px-4 py-2.5 text-xs text-muted hover:text-fg disabled:opacity-60 md:px-3 md:py-1">
               {running ? "Looking across accounts…" : "Look again"}
             </button>
           </span>
@@ -195,11 +195,12 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-3 backdrop-blur-sm md:p-6" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="grid max-h-[94vh] w-full max-w-[1120px] overflow-y-auto overscroll-contain rounded-[18px] md:h-[92vh] md:grid-rows-[minmax(0,1fr)] md:overflow-hidden border border-line bg-bg md:grid-cols-[1fr_360px]">
+    // Phones: the whole screen, scrolling as one, with the title bar and the actions pinned; desktop: a centred panel
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-0 backdrop-blur-sm md:p-6" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="grid h-[100dvh] w-full max-w-[1120px] overflow-y-auto overscroll-contain border-line bg-bg md:h-[92vh] md:max-h-[94vh] md:grid-cols-[1fr_360px] md:grid-rows-[minmax(0,1fr)] md:overflow-hidden md:rounded-[18px] md:border">
         {/* The suggestion */}
         <div className="grid min-h-0 content-start gap-5 overscroll-contain p-5 md:overflow-y-auto md:p-6">
-          <div className="flex items-start justify-between gap-3">
+          <div className="sticky top-0 z-20 -mx-5 -mt-5 flex items-start justify-between gap-3 border-b border-line bg-bg/95 px-5 pb-3 pt-[calc(env(safe-area-inset-top)+12px)] backdrop-blur md:static md:z-auto md:m-0 md:border-0 md:bg-transparent md:p-0 md:backdrop-blur-none">
             <div className="grid min-w-0 flex-1 gap-1.5">
               <span className="flex flex-wrap items-center gap-2">
                 <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${KIND_TONE[s.kind]}`}>{KIND_LABEL[s.kind]}</span>
@@ -215,7 +216,7 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
                 aria-label="Title"
               />
             </div>
-            <button onClick={onClose} className="shrink-0 rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg">
+            <button onClick={onClose} className="h-11 shrink-0 rounded-full border border-line px-4 text-xs text-muted hover:text-fg md:h-auto md:px-3 md:py-1">
               Close
             </button>
           </div>
@@ -250,7 +251,7 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
               <p className="font-heading text-lg text-ok">Approved. It&apos;s with the makers.</p>
               <p className="flex flex-wrap gap-2 text-sm">
                 {done.map((n) => (
-                  <Link key={n} href={`/board?t=${n}`} className="rounded-full border border-line px-3 py-1 hover:border-faint">
+                  <Link key={n} href={`/board?t=${n}`} className="rounded-full border border-line px-4 py-2.5 hover:border-faint md:px-3 md:py-1">
                     #{n}
                   </Link>
                 ))}
@@ -260,10 +261,10 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
             <>
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="Angle">
-                  <input value={draft.angle} onChange={(e) => edit({ angle: e.target.value })} onBlur={() => save()} className={INPUT} />
+                  <input value={draft.angle} onChange={(e) => edit({ angle: e.target.value })} onBlur={() => save()} className={FIELD} />
                 </Field>
                 <Field label="Audience">
-                  <input value={draft.audience} onChange={(e) => edit({ audience: e.target.value })} onBlur={() => save()} className={INPUT} />
+                  <input value={draft.audience} onChange={(e) => edit({ audience: e.target.value })} onBlur={() => save()} className={FIELD} />
                 </Field>
               </div>
               <Field label="Brief for the designer">
@@ -295,8 +296,8 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
                   {(["image", "carousel", "video"] as const).map((f) => {
                     const row = draft.formats.find((x) => x.format === f) ?? { new: 0, variations: 0 };
                     return (
-                      <div key={f} className={`flex items-center gap-3 text-sm ${row.new + row.variations ? "" : "opacity-50"}`}>
-                        <span className="w-20">{FORMAT_LABEL[f]}</span>
+                      <div key={f} className={`flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm md:flex-nowrap md:gap-3 ${row.new + row.variations ? "" : "opacity-50"}`}>
+                        <span className="w-full md:w-20">{FORMAT_LABEL[f]}</span>
                         <Counter value={row.new} onChange={(n) => setCount(f, "new", n)} label="new" />
                         <Counter value={row.variations} onChange={(n) => setCount(f, "variations", n)} label="variations" />
                       </div>
@@ -316,7 +317,7 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
                             setDraft(next);
                             save(next);
                           }}
-                          className={`h-8 rounded-full px-3 text-xs ${on ? "bg-fg text-bg" : "border border-line text-muted"}`}
+                          className={`h-11 rounded-full px-4 text-xs md:h-8 md:px-3 ${on ? "bg-fg text-bg" : "border border-line text-muted"}`}
                         >
                           {z.replace("x", ":")}
                         </button>
@@ -326,7 +327,7 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
                 </div>
               </div>
               <Field label="Landing page">
-                <input value={draft.landing} onChange={(e) => edit({ landing: e.target.value })} onBlur={() => save()} placeholder="https://" className={INPUT} />
+                <input value={draft.landing} onChange={(e) => edit({ landing: e.target.value })} onBlur={() => save()} placeholder="https://" className={FIELD} />
               </Field>
               <Field label="References for the creative team">
                 <div className="grid gap-2">
@@ -367,11 +368,11 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
                       })
                     }
                     disabled={busy}
-                    className="h-9 rounded-brand bg-fg px-4 text-sm text-bg"
+                    className="h-11 flex-1 rounded-brand bg-fg px-4 text-sm text-bg md:h-9 md:flex-none"
                   >
                     Discard
                   </button>
-                  <button onClick={() => setDeclining(false)} className="h-9 px-3 text-sm text-muted hover:text-fg">
+                  <button onClick={() => setDeclining(false)} className="h-11 px-3 text-sm text-muted hover:text-fg md:h-9">
                     Keep it
                   </button>
                 </div>
@@ -380,34 +381,34 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
                   <p className="text-sm font-medium">Why not? The strategist reads this before every suggestion.</p>
                   <div className="flex flex-wrap gap-1.5">
                     {REASONS.map((r) => (
-                      <button key={r} onClick={() => setReason(r)} className={`h-8 rounded-full px-3 text-xs ${reason === r ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
+                      <button key={r} onClick={() => setReason(r)} className={`h-10 rounded-full px-3 text-xs md:h-8 ${reason === r ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
                         {r}
                       </button>
                     ))}
                   </div>
                   <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} placeholder="Say more, so it learns" className={`${INPUT} h-auto py-2`} />
-                  <label className="flex items-center gap-2 text-xs text-muted">
+                  <label className="flex min-h-11 items-center gap-2 text-xs text-muted md:min-h-0">
                     <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
                     Also remember this in {s.client}&apos;s memory (every agent reads it)
                   </label>
                   <div className="flex gap-2">
-                    <button onClick={decline} disabled={busy || reason.trim().length < 3} className="h-9 rounded-brand bg-fg px-4 text-sm font-medium text-bg disabled:opacity-40">
+                    <button onClick={decline} disabled={busy || reason.trim().length < 3} className="h-11 flex-1 rounded-brand bg-fg px-4 text-sm font-medium text-bg disabled:opacity-40 md:h-9 md:flex-none">
                       {busy ? "Declining…" : "Decline"}
                     </button>
-                    <button onClick={() => setDeclining(false)} className="h-9 rounded-brand px-3 text-sm text-muted hover:text-fg">
+                    <button onClick={() => setDeclining(false)} className="h-11 rounded-brand px-3 text-sm text-muted hover:text-fg md:h-9">
                       Back
                     </button>
                   </div>
                 </div>
               ) : (
-                <div className="sticky -bottom-5 z-10 -mx-5 -mb-5 flex flex-wrap items-center gap-2 border-t border-line bg-bg px-5 pb-5 pt-3 shadow-[0_-12px_24px_-12px_rgba(0,0,0,0.6)] md:-bottom-6 md:-mx-6 md:-mb-6 md:px-6 md:pb-6">
-                  <button onClick={approve} disabled={busy || thinking} className="h-10 rounded-brand bg-brand px-5 text-sm font-medium text-white hover:brightness-110 disabled:opacity-50">
+                <div className="sticky bottom-0 z-10 -mx-5 -mb-5 flex flex-wrap items-center gap-2 border-t border-line bg-bg px-5 pb-[calc(env(safe-area-inset-bottom)+12px)] pt-3 shadow-[0_-12px_24px_-12px_rgba(0,0,0,0.6)] md:-bottom-6 md:-mx-6 md:-mb-6 md:px-6 md:pb-6">
+                  <button onClick={approve} disabled={busy || thinking} className="h-12 flex-1 rounded-brand bg-brand px-5 text-sm font-medium text-white hover:brightness-110 disabled:opacity-50 md:h-10 md:flex-none">
                     {busy ? "Making tickets…" : s.kind === "winner" || s.kind === "refresh" || s.kind === "call" || s.kind === "market" ? "Send to production" : "Approve and send to the makers"}
                   </button>
-                  <button onClick={() => setDeclining(true)} disabled={busy} className="h-10 rounded-brand border border-line px-4 text-sm text-muted hover:text-fg">
+                  <button onClick={() => setDeclining(true)} disabled={busy} className="h-12 rounded-brand border border-line px-4 text-sm text-muted hover:text-fg md:h-10">
                     {s.kind === "winner" || s.kind === "refresh" || s.kind === "call" || s.kind === "market" ? "Discard" : "Decline"}
                   </button>
-                  <span className="ml-auto text-[11px] text-faint">Edits save as you go</span>
+                  <span className="hidden text-[11px] text-faint md:ml-auto md:inline">Edits save as you go</span>
                 </div>
               )}
             </>
@@ -424,7 +425,7 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
             {messages.length === 0 && !thinking && (
               <div className="grid gap-1.5">
                 {["Why this and not variations of what's working?", "Make it more aggressive on the offer", "Give me three different concepts"].map((q) => (
-                  <button key={q} onClick={() => setText(q)} className="rounded-[10px] border border-line px-3 py-2 text-left text-xs text-muted hover:text-fg">
+                  <button key={q} onClick={() => setText(q)} className="rounded-[10px] border border-line px-3 py-3 text-left text-sm text-muted hover:text-fg md:py-2 md:text-xs">
                     {q}
                   </button>
                 ))}
@@ -448,10 +449,10 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
                 e.preventDefault();
                 void send();
               }}
-              className="flex gap-2 border-t border-line p-3"
+              className="flex gap-2 border-t border-line p-3 pb-[calc(env(safe-area-inset-bottom)+12px)] md:pb-3"
             >
-              <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Message the strategist" className={`${INPUT} flex-1`} />
-              <button disabled={thinking || !text.trim()} className="h-9 rounded-brand bg-fg px-3 text-sm text-bg disabled:opacity-40">
+              <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Message the strategist" className={`${FIELD} flex-1`} />
+              <button disabled={thinking || !text.trim()} className="h-11 rounded-brand bg-fg px-4 text-sm text-bg disabled:opacity-40 md:h-9 md:px-3">
                 Send
               </button>
             </form>
@@ -463,7 +464,10 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
   );
 }
 
-const INPUT = "h-9 w-full rounded-brand border border-line bg-bg px-3 text-sm outline-none placeholder:text-faint focus:border-faint";
+const FIELD_BASE = "w-full rounded-brand border border-line bg-bg px-3 text-sm outline-none placeholder:text-faint focus:border-faint";
+const INPUT = `h-9 ${FIELD_BASE}`;
+// One-line fields: finger-sized on phones
+const FIELD = `h-11 md:h-9 ${FIELD_BASE}`;
 
 /** What the brief is made from on Drive, and what we'd need from the client (copied as a shot list to send them). */
 function AssetsCheck({ assets }: { assets: { have: string[]; need: string[] } }) {
@@ -500,7 +504,7 @@ function AssetsCheck({ assets }: { assets: { have: string[]; need: string[] } })
                 setCopied(true);
                 setTimeout(() => setCopied(false), 2000);
               }}
-              className="justify-self-start rounded-full border border-line px-2.5 py-1 text-[11px] text-muted hover:text-fg"
+              className="justify-self-start rounded-full border border-line px-3 py-2.5 text-[11px] text-muted hover:text-fg md:px-2.5 md:py-1"
             >
               {copied ? "Copied" : "Copy as a shot list for the client"}
             </button>
@@ -525,11 +529,11 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function Counter({ value, onChange, label }: { value: number; onChange: (n: number) => void; label: string }) {
   return (
     <span className="flex items-center gap-1.5">
-      <button onClick={() => onChange(value - 1)} className="grid h-7 w-7 place-items-center rounded-full border border-line text-muted hover:text-fg" aria-label={`Fewer ${label}`}>
+      <button onClick={() => onChange(value - 1)} className="grid h-10 w-10 place-items-center rounded-full border border-line text-muted hover:text-fg md:h-7 md:w-7" aria-label={`Fewer ${label}`}>
         −
       </button>
       <span className="tabular w-5 text-center">{value}</span>
-      <button onClick={() => onChange(value + 1)} className="grid h-7 w-7 place-items-center rounded-full border border-line text-muted hover:text-fg" aria-label={`More ${label}`}>
+      <button onClick={() => onChange(value + 1)} className="grid h-10 w-10 place-items-center rounded-full border border-line text-muted hover:text-fg md:h-7 md:w-7" aria-label={`More ${label}`}>
         +
       </button>
       <span className="text-xs text-faint">{label}</span>
@@ -562,7 +566,7 @@ function AllotmentBar({ allotment: a, formats }: { allotment: OpenSuggestion["al
         const tooMany = p.used + p.take > p.cap;
         return (
           <div key={p.label} className="grid gap-1.5">
-            <div className="flex items-baseline justify-between gap-2 text-sm">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5 text-sm md:flex-nowrap md:gap-2">
               <span>{p.label}</span>
               <span className="tabular text-xs text-muted">
                 {p.used} used · <span className={tooMany ? "font-medium text-bad" : "text-fg"}>this takes {p.take}</span> · {left} left of {p.cap}

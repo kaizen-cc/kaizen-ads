@@ -33,7 +33,7 @@ function ToastCard({ t, onClose }: { t: Required<Pick<Toast, "id">> & Toast; onC
       role="status"
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      className="pointer-events-auto grid w-[340px] max-w-[calc(100vw-32px)] animate-[step-in_.25s_ease] gap-2 rounded-[14px] border border-line bg-surface p-4 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.75)]"
+      className="pointer-events-auto grid w-full max-w-[calc(100vw-32px)] md:w-[340px] animate-[step-in_.25s_ease] gap-2 rounded-[14px] border border-line bg-surface p-4 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.75)]"
     >
       <div className="flex items-start gap-2.5">
         <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${DOT[t.tone ?? "info"]}`} />
@@ -41,7 +41,7 @@ function ToastCard({ t, onClose }: { t: Required<Pick<Toast, "id">> & Toast; onC
           <p className="text-sm font-medium leading-snug">{t.title}</p>
           {t.body && <p className="text-xs leading-relaxed text-muted">{t.body}</p>}
         </div>
-        <button type="button" onClick={onClose} className="-mr-1 -mt-1 rounded-full px-1.5 text-faint hover:text-fg" aria-label="Dismiss">
+        <button type="button" onClick={onClose} className="-mr-3 -mt-3 grid h-11 w-11 shrink-0 place-items-center rounded-full text-faint hover:text-fg md:-mr-1 md:-mt-1 md:block md:h-auto md:w-auto md:px-1.5" aria-label="Dismiss">
           ×
         </button>
       </div>
@@ -49,7 +49,7 @@ function ToastCard({ t, onClose }: { t: Required<Pick<Toast, "id">> & Toast; onC
         <div className="grid gap-1.5 pl-[18px]">
           {t.actions.map((a) =>
             a.href ? (
-              <Link key={a.label} href={a.href} onClick={onClose} className={`rounded-full px-3 py-1.5 text-center text-xs ${a.primary ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
+              <Link key={a.label} href={a.href} onClick={onClose} className={`rounded-full px-3 py-3 text-center text-sm md:py-1.5 md:text-xs ${a.primary ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
                 {a.label}
               </Link>
             ) : (
@@ -62,7 +62,7 @@ function ToastCard({ t, onClose }: { t: Required<Pick<Toast, "id">> & Toast; onC
                   await a.run?.();
                   onClose();
                 }}
-                className={`rounded-full px-3 py-1.5 text-xs disabled:opacity-60 ${a.primary ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}
+                className={`rounded-full px-3 py-3 text-sm disabled:opacity-60 md:py-1.5 md:text-xs ${a.primary ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}
               >
                 {busy === a.label ? "Starting…" : a.label}
               </button>
@@ -87,7 +87,11 @@ export function Toaster() {
   }, []);
   const close = useCallback((id: string) => setList((l) => l.filter((x) => x.id !== id)), []);
   return (
-    <div className="pointer-events-none fixed z-[60] grid justify-items-end gap-2" style={{ right: "max(16px, env(safe-area-inset-right, 0px))", bottom: "calc(16px + env(safe-area-inset-bottom, 0px))" }} aria-live="polite">
+    // Phones: above the bottom tab bar, full width; desktop: bottom-right
+    <div
+      className="pointer-events-none fixed bottom-[calc(76px+env(safe-area-inset-bottom,0px))] left-4 right-[max(16px,env(safe-area-inset-right,0px))] z-[60] grid justify-items-stretch gap-2 md:bottom-[calc(16px+env(safe-area-inset-bottom,0px))] md:left-auto md:justify-items-end"
+      aria-live="polite"
+    >
       {list.map((t) => (
         <ToastCard key={t.id} t={t} onClose={() => close(t.id)} />
       ))}

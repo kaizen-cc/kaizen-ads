@@ -38,7 +38,7 @@ export function CallPromises({ promises, bare = false }: { promises: CallPromise
               <p className="text-xs text-warn">Nothing in production since. It was due {day(p.dueAt)}.</p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <button onClick={() => setSheet(p.suggestion)} className="h-9 rounded-brand bg-fg px-4 text-sm font-medium text-bg">
+              <button onClick={() => setSheet(p.suggestion)} className="h-11 w-full rounded-brand bg-fg px-4 text-sm font-medium text-bg md:h-9 md:w-auto">
                 Review the brief
               </button>
             </div>

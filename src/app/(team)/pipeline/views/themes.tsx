@@ -55,20 +55,21 @@ export function Themes({ themes }: { themes: Theme[] }) {
       <section className="grid gap-6" style={{ animation: "card-in-topic .35s cubic-bezier(.2,.8,.2,1) both" }}>
         <style>{`@keyframes card-in-topic { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: none } }`}</style>
         <div className="flex flex-wrap items-center gap-3">
-          <button type="button" onClick={() => choose(null)} className="grid h-10 w-10 place-items-center rounded-full border border-white/12 text-white/60 transition-colors hover:border-white/30 hover:text-white" aria-label="All themes">
+          <button type="button" onClick={() => choose(null)} className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-white/12 text-white/60 transition-colors hover:border-white/30 hover:text-white md:h-10 md:w-10" aria-label="All themes">
             ←
           </button>
-          <div className="grid">
+          <div className="grid min-w-0 flex-1 md:flex-none">
             <h2 className="font-display text-3xl tracking-tight md:text-4xl">
               <span style={{ color: t.accent }}>{current.count}</span> {current.title}
             </h2>
             <p className="text-sm text-white/55">{current.headline}</p>
           </div>
-          <nav className="ml-auto flex flex-wrap gap-1.5">
+          {/* Phones: the other themes as a strip that scrolls sideways, edge to edge */}
+          <nav className="no-scrollbar -mx-4 flex w-[calc(100%+2rem)] gap-1.5 overflow-x-auto px-4 md:mx-0 md:ml-auto md:w-auto md:flex-wrap md:overflow-visible md:px-0">
             {themes
               .filter((x) => x.id !== current.id)
               .map((x) => (
-                <button key={x.id} type="button" onClick={() => choose(x.id)} className="rounded-full border border-white/10 px-3 py-1.5 text-xs text-white/60 hover:border-white/25 hover:text-white">
+                <button key={x.id} type="button" onClick={() => choose(x.id)} className="min-h-11 shrink-0 whitespace-nowrap rounded-full border border-white/10 px-4 py-1.5 text-sm text-white/60 hover:border-white/25 hover:text-white md:min-h-0 md:shrink md:whitespace-normal md:px-3 md:text-xs">
                   {x.title} <span className="tabular" style={{ color: TONE[x.tone].accent }}>{x.count}</span>
                 </button>
               ))}
@@ -93,7 +94,7 @@ export function Themes({ themes }: { themes: Theme[] }) {
             type="button"
             onClick={() => choose(x.id)}
             style={{ ["--glow" as string]: calm ? TONE.ok.glow : t.glow, ["--accent" as string]: calm ? TONE.ok.accent : t.accent, animation: `card-in-topic .45s ${0.06 * i}s cubic-bezier(.2,.8,.2,1) both` }}
-            className="group relative isolate grid min-h-[210px] content-between gap-5 overflow-hidden rounded-[26px] border border-white/[0.07] bg-[#0b0a0e] p-6 text-left shadow-[0_30px_70px_-40px_rgba(0,0,0,0.9)] transition duration-300 hover:-translate-y-0.5 hover:border-white/15 md:p-7"
+            className="group relative isolate grid min-h-[180px] content-between gap-5 overflow-hidden rounded-[26px] border border-white/[0.07] bg-[#0b0a0e] p-6 text-left md:min-h-[210px] shadow-[0_30px_70px_-40px_rgba(0,0,0,0.9)] transition duration-300 hover:-translate-y-0.5 hover:border-white/15 md:p-7"
           >
             <style>{`@keyframes card-in-topic { from { opacity: 0; transform: translateY(10px) } to { opacity: 1; transform: none } }`}</style>
             <span aria-hidden className={`pointer-events-none absolute -left-16 -top-24 -z-10 h-[260px] w-[260px] rounded-full blur-[80px] transition-opacity duration-500 group-hover:opacity-100 ${calm ? "opacity-40" : "opacity-80"}`} style={{ background: "var(--glow)" }} />
@@ -104,10 +105,10 @@ export function Themes({ themes }: { themes: Theme[] }) {
             </span>
             <span className="grid gap-3">
               <span className="flex items-end gap-3">
-                <span className="tabular font-display text-7xl leading-none tracking-tight" style={{ color: "var(--accent)" }}>
+                <span className="tabular font-display text-6xl leading-none tracking-tight md:text-7xl" style={{ color: "var(--accent)" }}>
                   {calm ? "✓" : x.count}
                 </span>
-                <span className="pb-1.5 text-[15px] leading-snug text-white/80">{x.headline}</span>
+                <span className="min-w-0 pb-1.5 text-[15px] leading-snug text-white/80">{x.headline}</span>
               </span>
               {x.points.length > 0 && (
                 <span className="flex flex-wrap gap-1.5">

@@ -97,7 +97,9 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
   const panel =
     placement === "side"
       ? "fixed left-[252px] top-4 bottom-4 w-[min(400px,calc(100vw-268px))]"
-      : "fixed inset-x-3 top-16 max-h-[75vh]";
+      : // Phones (the top bar's bell): a full-screen sheet, clear of the notch and home indicator
+        "fixed inset-0 pt-safe pb-safe";
+  const sheet = placement === "top";
 
   return (
     <>
@@ -105,7 +107,7 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-label={unread ? `${unread} new notifications` : "Notifications"}
-        className="relative grid h-9 w-9 place-items-center rounded-full text-muted transition-colors hover:bg-surface-2 hover:text-fg"
+        className={`relative grid place-items-center rounded-full text-muted transition-colors hover:bg-surface-2 hover:text-fg ${placement === "top" ? "h-11 w-11" : "h-9 w-9"}`}
       >
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
@@ -120,15 +122,15 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
         createPortal(
         <>
           <div className="fixed inset-0 z-[90] bg-black/30" onClick={() => setOpen(false)} aria-hidden />
-          <div role="dialog" aria-label="Notifications" className={`${panel} z-[91] grid grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-[18px] border border-line bg-surface shadow-[0_30px_80px_-20px_rgba(0,0,0,0.7)]`} style={{ animation: "drawer-in .18s ease-out" }}>
-            <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
-              <div>
+          <div role="dialog" aria-label="Notifications" className={`${panel} z-[91] grid grid-rows-[auto_minmax(0,1fr)] overflow-hidden border-line bg-surface ${sheet ? "" : "rounded-[18px] border shadow-[0_30px_80px_-20px_rgba(0,0,0,0.7)]"}`} style={{ animation: "drawer-in .18s ease-out" }}>
+            <div className={`flex items-center justify-between gap-3 border-b border-line px-4 ${sheet ? "py-2" : "py-3"}`}>
+              <div className="min-w-0">
                 <p className="font-heading text-[16px]">Notifications</p>
                 <p className="text-[11px] text-faint">What&apos;s on you, and what&apos;s new with your clients</p>
               </div>
-              <span className="flex items-center gap-3">
+              <span className={`flex shrink-0 items-center ${sheet ? "gap-1" : "gap-3"}`}>
                 {unread > 0 && (
-                  <button type="button" onClick={readAll} className="text-xs text-muted hover:text-fg">
+                  <button type="button" onClick={readAll} className={`text-xs text-muted hover:text-fg ${sheet ? "min-h-11 px-2" : ""}`}>
                     Mark all read
                   </button>
                 )}
@@ -139,16 +141,23 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
                     router.push("/notifications");
                   }}
                   aria-label="Notification settings"
-                  className="grid h-7 w-7 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg"
+                  className={`grid place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg ${sheet ? "h-11 w-11" : "h-7 w-7"}`}
                 >
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                     <circle cx="12" cy="12" r="3" />
                     <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
                   </svg>
                 </button>
+                {sheet && (
+                  <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="grid h-11 w-11 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+                      <path d="M18 6 6 18M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
               </span>
             </div>
-            <div className="overflow-y-auto">
+            <div className="overflow-y-auto overscroll-contain">
               {!items.length && (
                 <div className="grid place-items-center gap-2 px-6 py-16 text-center">
                   <span className="grid h-10 w-10 place-items-center rounded-full bg-ok-soft text-ok">✓</span>
@@ -159,7 +168,7 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
                       setOpen(false);
                       router.push("/notifications");
                     }}
-                    className="text-xs text-muted underline-offset-4 hover:text-fg hover:underline"
+                    className={`text-xs text-muted underline-offset-4 hover:text-fg hover:underline ${sheet ? "min-h-11 px-3" : ""}`}
                   >
                     Choose what you get
                   </button>
@@ -175,7 +184,7 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
                     <ul>
                       {(list as Notice[]).map((n) => (
                         <li key={n.id}>
-                          <button type="button" onClick={() => void go(n)} className={`flex w-full gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-2 ${n.read ? "opacity-60" : ""}`}>
+                          <button type="button" onClick={() => void go(n)} className={`flex w-full gap-3 px-4 text-left transition-colors hover:bg-surface-2 ${sheet ? "py-3.5 active:bg-surface-2" : "py-3"} ${n.read ? "opacity-60" : ""}`}>
                             <span className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full ${n.priority === "critical" && !n.read ? "bg-brand/20 text-brand-text" : "bg-surface-2 text-muted"}`}>
                               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                                 <path d={KIND_ICON[n.kind] ?? KIND_ICON.ticket} />
@@ -183,10 +192,10 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
                             </span>
                             <span className="grid min-w-0 flex-1 gap-0.5">
                               <span className="flex items-start justify-between gap-2">
-                                <span className={`text-[13.5px] leading-snug ${n.read ? "" : "font-medium"}`}>{n.title}</span>
+                                <span className={`min-w-0 break-words leading-snug ${sheet ? "text-[15px]" : "text-[13.5px]"} ${n.read ? "" : "font-medium"}`}>{n.title}</span>
                                 <span className="shrink-0 pt-0.5 text-[10.5px] text-faint">{ago(n.createdAt)}</span>
                               </span>
-                              {n.body && <span className="line-clamp-2 text-xs text-muted">{n.body}</span>}
+                              {n.body && <span className={`line-clamp-2 text-muted ${sheet ? "text-[13px]" : "text-xs"}`}>{n.body}</span>}
                               {n.actor && <span className="text-[10.5px] text-faint">by {n.actor}</span>}
                             </span>
                             {!n.read && <span className={`mt-2 h-2 w-2 shrink-0 rounded-full ${n.priority === "critical" ? "bg-brand" : "bg-fg/40"}`} />}
