@@ -171,17 +171,27 @@ async function Data({ target, from, to }: { target: string | null; from: string;
 }
 
 // [source prefix, name, the job Sync now runs, what it does]
-const GROUPS: [string, string, SyncJob, string][] = [
-  ["kpi:", "KPI numbers (per ad account)", "kpi", "Campaign numbers for the KPI dashboard, every 2 hours"],
-  ["meta", "Meta ads (daily, per ad)", "meta", "Every ad's daily numbers, then fatigue, winners and the Hall of Fame, every 2 hours"],
-  ["slack", "Slack channels", "slack", "Every 30 minutes in business hours"],
-  ["gmail:", "Inboxes", "gmail", "Every 30 minutes in business hours"],
-  ["drive", "Drive folders", "drive", "Every 30 minutes in business hours"],
-  ["calls", "Call notes", "calls", "Gemini and Fireflies notes from every team: what clients said goes on their page, paid ads promises go to Home. Every 30 minutes in business hours"],
-  ["docs", "Docs across the Workspace", "docs", "New and edited Google Docs and Slides in everyone's Drive, read for the client they're about, every 30 minutes"],
-  ["verticals", "Verticals and playbooks", "verticals", "Places new clients, researches benchmarks and writes playbooks, hourly"],
-  ["sheet", "Account Overview sheet", "sheet", "Buyer, budget and KPI target for every account, and the team's notes, at 12pm and 5pm"],
-  ["asana", "Asana (mirrored tasks)", "asana", "Open tasks on Asana's Creative board, mirrored on the board as outline cards, every 5 minutes"],
+/** prefix, name, job, what it does, category, how often (short) */
+const GROUPS: [string, string, SyncJob, string, string, string][] = [
+  ["kpi:", "KPI numbers", "kpi", "Campaign numbers for the KPI dashboard, per ad account, every 2 hours", "ads", "Per ad account · every 2 hours"],
+  ["meta", "Meta ads", "meta", "Every ad's daily numbers, then fatigue, winners and the Hall of Fame, every 2 hours", "ads", "Daily, per ad · every 2 hours"],
+  ["slack", "Slack channels", "slack", "Client and internal channels, every 30 minutes in business hours", "talk", "Every 30 min · business hours"],
+  ["gmail:", "Inboxes", "gmail", "Mail with client contacts in every team inbox, every 30 minutes in business hours", "talk", "Every 30 min · business hours"],
+  ["calls", "Call notes", "calls", "Gemini and Fireflies notes from every team: what clients said goes on their page, paid ads promises go to Home. Every 30 minutes in business hours", "talk", "Every 30 min · business hours"],
+  ["drive", "Drive folders", "drive", "Each client's Drive folder: new files and the asset catalogue, every 30 minutes in business hours", "files", "Every 30 min · business hours"],
+  ["docs", "Workspace docs", "docs", "New and edited Google Docs and Slides in everyone's Drive, read for the client they're about, every 30 minutes", "files", "Every 30 min"],
+  ["sheet", "Account Overview sheet", "sheet", "Buyer, budget and KPI target for every account, and the team's notes, at 12pm and 5pm", "ops", "12pm and 5pm"],
+  ["asana", "Asana", "asana", "Open tasks on Asana's Creative board, mirrored on the board as outline cards, every 5 minutes", "ops", "Every 5 min"],
+  ["verticals", "Verticals and playbooks", "verticals", "Places new clients, researches benchmarks and writes playbooks, hourly", "ai", "Hourly"],
+];
+
+/** The sections of Sync health, by what the data is */
+const CATEGORIES = [
+  { key: "ads", label: "Ad platforms", about: "Numbers and ads from Meta and Google, and the market from Motion" },
+  { key: "talk", label: "Conversations", about: "What clients and the team say: Slack, email and calls" },
+  { key: "files", label: "Files and docs", about: "Client folders, assets and the docs written about them" },
+  { key: "ops", label: "Operations", about: "Who runs what, and the work still in Asana" },
+  { key: "ai", label: "AI knowledge", about: "What the agents learn across clients" },
 ];
 
 type ErrorRow = {
@@ -441,99 +451,185 @@ async function Sync({ motion }: { motion: string | null }) {
     admin.from("sync_state").select("source, last_run_at, last_result").order("source"),
     admin.from("kpi_targets").select("ad_account_id, clients(name)").eq("active", true).not("ad_account_id", "is", null),
   ]);
-  const all = data ?? [];
-  const runs = new Map(all.filter((r) => r.source.startsWith("run:")).map((r) => [r.source.slice(4), timedOut(r.last_result as RunState)] as const));
-  const rows = all.filter((r) => !r.source.startsWith("run:"));
+  const everything = data ?? [];
+  const runs = new Map(everything.filter((r) => r.source.startsWith("run:")).map((r) => [r.source.slice(4), timedOut(r.last_result as RunState)] as const));
+  const rows = everything.filter((r) => !r.source.startsWith("run:"));
   // KPI rows are keyed by ad account; show whose it is
   const owner = new Map((accounts ?? []).map((a) => [String(a.ad_account_id).replace(/^act_/, "").replace(/-/g, ""), (a.clients as unknown as { name: string } | null)?.name ?? ""]));
   const errorOf = (r: (typeof rows)[number]) => {
     const res = r.last_result as { error?: string | null; errors?: string[] } | null;
     return res?.error ?? (res?.errors?.length ? res.errors.join("; ") : null);
   };
-  return (
-    <div className="grid gap-4">
-      <MetaWriteCard
-        sandbox={write.sandbox}
-        sandboxAccount={write.sandboxAccount}
-        canEdit={me.isExec}
-        updated={mw?.updated_at ? `${new Date(mw.updated_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })}${mwBy ? ` by ${mwBy}` : ""}` : null}
-      />
-      <MotionCard notice={motion} />
-      {GROUPS.map(([prefix, name, job, about]) => {
-        const all = rows.filter((r) => (prefix.endsWith(":") ? r.source.startsWith(prefix) : r.source === prefix || r.source.startsWith(`${prefix}:`)));
-        // Offboarded teammates' inboxes: not synced any more, their email kept as history
-        const offboarded = all.filter((r) => (r.last_result as { offboarded?: boolean } | null)?.offboarded);
-        const list = all.filter((r) => !offboarded.includes(r));
-        const failing = list.filter(errorOf);
-        const stale = list.filter((r) => freshness(r.last_run_at).tone !== "ok");
-        const newest = list.map((r) => r.last_run_at).filter(Boolean).sort().at(-1);
-        const run = runs.get(job) ?? null;
-        const progress = progressOf(job, run);
-        const label = (source: string) => {
-          const rest = source.startsWith(prefix) ? source.slice(prefix.length).replace(/^:/, "") : source;
-          if (prefix === "kpi:") return owner.get(rest) ? `${owner.get(rest)} · ${rest}` : rest;
-          return rest || "everything";
-        };
-        const retry = prefix === "kpi:" || prefix === "gmail:";
-        return (
-          <details key={prefix} className="group rounded-[14px] border border-line bg-surface">
-            <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 px-6 py-4">
-              <span className="flex items-center gap-3">
-                <span className={`h-2 w-2 rounded-full ${failing.length ? "bg-bad" : stale.length ? "bg-warn" : list.length ? "bg-ok" : "bg-line"}`} />
-                <span className="font-heading text-[16px]">{name}</span>
-              </span>
-              <span className="flex flex-wrap items-center gap-3">
-                <span className="text-xs text-muted">
-                  {list.length > 1 && (
-                    <>
-                      <span className="tabular">{list.length}</span> tracked
-                    </>
-                  )}
-                  {failing.length > 0 && <span className="text-bad"> · {failing.length} failing</span>}
-                  {stale.length > 0 && <span className="text-warn"> · {stale.length} behind</span>}
-                  {newest ? <span className="text-faint"> · {freshness(newest).label.toLowerCase()}</span> : <span className="text-faint">Not run yet</span>}
+
+  // Each sync, worked out once: its sources, what's failing or behind, and its state
+  const syncs = GROUPS.map(([prefix, name, job, about, category, cadence]) => {
+    const all = rows.filter((r) => (prefix.endsWith(":") ? r.source.startsWith(prefix) : r.source === prefix || r.source.startsWith(`${prefix}:`)));
+    // Offboarded teammates' inboxes: not synced any more, their email kept as history
+    const offboarded = all.filter((r) => (r.last_result as { offboarded?: boolean } | null)?.offboarded);
+    const list = all.filter((r) => !offboarded.includes(r));
+    const failing = list.filter(errorOf);
+    const stale = list.filter((r) => !errorOf(r) && freshness(r.last_run_at).tone !== "ok");
+    const newest = list.map((r) => r.last_run_at).filter(Boolean).sort().at(-1);
+    const run = runs.get(job) ?? null;
+    const label = (source: string) => {
+      const rest = source.startsWith(prefix) ? source.slice(prefix.length).replace(/^:/, "") : source;
+      if (prefix === "kpi:") return owner.get(rest) ? `${owner.get(rest)} · ${rest}` : rest;
+      return rest || "everything";
+    };
+    const state: "failing" | "behind" | "ok" | "idle" = failing.length ? "failing" : stale.length ? "behind" : list.length ? "ok" : "idle";
+    return { prefix, name, job, about, category, cadence, list, failing, stale, offboarded, newest, run, progress: progressOf(job, run), label, state, retry: prefix === "kpi:" || prefix === "gmail:" };
+  });
+  const attention = syncs.filter((s) => s.state === "failing" || s.state === "behind");
+  const healthy = syncs.filter((s) => s.state === "ok").length;
+  const failingN = syncs.filter((s) => s.state === "failing").length;
+  const behindN = syncs.filter((s) => s.state === "behind").length;
+  const latest = syncs.map((s) => s.newest).filter(Boolean).sort().at(-1);
+  const DOT = { failing: "bg-bad", behind: "bg-warn", ok: "bg-ok", idle: "bg-line" } as const;
+
+  const tile = (s: (typeof syncs)[number]) => (
+    <details key={s.prefix} className="group min-w-0 rounded-[16px] border border-line bg-surface transition-colors open:border-faint/50 hover:border-faint/40">
+      <summary className="grid cursor-pointer list-none gap-3 p-4">
+        <span className="flex items-start justify-between gap-3">
+          <span className="grid min-w-0 gap-0.5">
+            <span className="flex items-center gap-2">
+              <span className={`h-2 w-2 shrink-0 rounded-full ${DOT[s.state]}`} />
+              <span className="truncate font-heading text-[15px]">{s.name}</span>
+            </span>
+            <span className="pl-4 text-[11px] text-faint">{s.cadence}</span>
+          </span>
+          <SyncNowButton job={s.job} run={s.run} progress={s.progress} />
+        </span>
+        <span className="flex flex-wrap items-center gap-1.5 pl-4 text-[11px]">
+          {s.list.length > 1 && <span className="rounded-full bg-surface-2 px-2 py-0.5 tabular text-muted">{s.list.length} tracked</span>}
+          {s.failing.length > 0 && <span className="rounded-full bg-bad/10 px-2 py-0.5 text-bad">{s.failing.length} failing</span>}
+          {s.stale.length > 0 && <span className="rounded-full bg-warn/10 px-2 py-0.5 text-warn">{s.stale.length} behind</span>}
+          <span className="text-faint">{s.newest ? freshness(s.newest).label.toLowerCase() : "not run yet"}</span>
+          <span className="ml-auto text-faint transition-transform group-open:rotate-180" aria-hidden>
+            ⌄
+          </span>
+        </span>
+        <ProgressBar progress={s.progress} />
+      </summary>
+      <div className="grid gap-2 border-t border-line px-3 py-3">
+        <div className="grid gap-0.5 px-1">
+          <p className="text-[11px] text-faint">{s.about}</p>
+          <LastRun run={s.run} />
+        </div>
+        <ul className="grid max-h-80 gap-0.5 overflow-y-auto [scrollbar-width:thin]">
+          {[...s.failing, ...s.list.filter((r) => !errorOf(r))].slice(0, 150).map((r) => (
+            <li key={r.source} className={`grid ${s.retry ? "grid-cols-[minmax(0,1fr)_88px_auto]" : "grid-cols-[minmax(0,1fr)_88px]"} items-center gap-2 rounded-[8px] px-2 py-1.5 text-xs odd:bg-bg`}>
+              <span className="grid min-w-0">
+                <span className="truncate text-muted" title={r.source}>
+                  {s.label(r.source)}
                 </span>
-                <SyncNowButton job={job} run={run} progress={progress} />
+                {errorOf(r) && (
+                  <span className="truncate text-[11px] text-bad" title={errorOf(r) ?? undefined}>
+                    {errorOf(r)}
+                  </span>
+                )}
               </span>
-              <ProgressBar progress={progress} />
-            </summary>
-            <div className="grid gap-2 border-t border-line px-4 py-3">
-              <div className="grid gap-0.5 px-2">
-                <p className="text-[11px] text-faint">{about}</p>
-                <LastRun run={run} />
+              <span className="text-right text-faint">{freshness(r.last_run_at).label}</span>
+              {s.retry && <RetryOne source={r.source} />}
+            </li>
+          ))}
+        </ul>
+        {s.offboarded.length > 0 && (
+          <p className="px-1 text-[11px] text-faint">
+            Offboarded · {s.offboarded.length} {s.offboarded.length === 1 ? "inbox" : "inboxes"} no longer in Google Workspace, not synced any more (their email stays as history): {s.offboarded.map((r) => r.source.slice(s.prefix.length)).join(", ")}
+          </p>
+        )}
+      </div>
+    </details>
+  );
+
+  return (
+    <div className="grid gap-10">
+      {/* The state of it all, at a glance */}
+      <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+        <div className={`relative grid content-between gap-5 overflow-hidden rounded-[20px] border p-6 ${failingN ? "border-bad/30" : behindN ? "border-warn/30" : "border-ok/30"} bg-surface`}>
+          <div aria-hidden className={`pointer-events-none absolute -left-20 -top-24 h-56 w-56 rounded-full blur-[80px] ${failingN ? "bg-bad/20" : behindN ? "bg-warn/15" : "bg-ok/15"}`} />
+          <div className="relative grid gap-1">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">Sync health</p>
+            <p className="font-heading text-2xl leading-tight">{attention.length ? `${attention.length} ${attention.length === 1 ? "sync needs" : "syncs need"} attention` : "Everything's syncing"}</p>
+            <p className="text-sm text-muted">{latest ? `Last activity ${freshness(latest).label.toLowerCase()}.` : "Nothing has run yet."} Each source runs on its own schedule; Sync now runs one right away.</p>
+          </div>
+          <div className="relative grid grid-cols-3 gap-2">
+            {(
+              [
+                ["Healthy", healthy, "text-ok"],
+                ["Behind", behindN, "text-warn"],
+                ["Failing", failingN, "text-bad"],
+              ] as const
+            ).map(([k, n, tone]) => (
+              <div key={k} className="grid gap-0.5 rounded-[12px] bg-bg/60 px-3 py-2.5">
+                <span className={`tabular font-heading text-2xl ${n ? tone : "text-faint"}`}>{n}</span>
+                <span className="text-[11px] text-faint">{k}</span>
               </div>
-              <ul className="grid gap-1">
-                {[...failing, ...list.filter((r) => !errorOf(r))].slice(0, 120).map((r) => (
-                  <li
-                    key={r.source}
-                    className={`grid ${retry ? "grid-cols-[minmax(0,240px)_120px_minmax(0,1fr)_auto]" : "grid-cols-[minmax(0,240px)_120px_minmax(0,1fr)]"} items-center gap-3 rounded-[8px] px-2 py-1.5 text-xs odd:bg-bg`}
-                  >
-                    <span className="truncate text-muted" title={r.source}>
-                      {label(r.source)}
-                    </span>
-                    <span className="text-faint">{freshness(r.last_run_at).label}</span>
-                    <span className={`truncate ${errorOf(r) ? "text-bad" : "text-faint"}`} title={errorOf(r) ?? undefined}>
-                      {errorOf(r) ?? "OK"}
-                    </span>
-                    {retry && <RetryOne source={r.source} />}
-                  </li>
-                ))}
-              </ul>
-              {offboarded.length > 0 && (
-                <div className="grid gap-1 px-2 pt-2">
-                  <p className="text-[11px] text-faint">
-                    Offboarded · {offboarded.length} {offboarded.length === 1 ? "inbox" : "inboxes"} no longer in Google Workspace. Not synced any more; their email stays as history.
-                  </p>
-                  <p className="text-[11px] text-faint">{offboarded.map((r) => r.source.slice(prefix.length)).join(", ")}</p>
+            ))}
+          </div>
+        </div>
+        <MetaWriteCard
+          sandbox={write.sandbox}
+          sandboxAccount={write.sandboxAccount}
+          canEdit={me.isExec}
+          updated={mw?.updated_at ? `${new Date(mw.updated_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })}${mwBy ? ` by ${mwBy}` : ""}` : null}
+        />
+      </section>
+
+      {/* What needs someone, first */}
+      {attention.length > 0 && (
+        <section className="grid gap-3">
+          <h2 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">Needs attention</h2>
+          <ul className="grid divide-y divide-line overflow-hidden rounded-[16px] border border-line bg-surface">
+            {attention.map((s) => (
+              <li key={s.prefix} className="flex flex-wrap items-center gap-3 px-4 py-3">
+                <span className={`h-2 w-2 shrink-0 rounded-full ${DOT[s.state]}`} />
+                <span className="grid min-w-0 flex-1 gap-0.5">
+                  <span className="text-sm font-medium">{s.name}</span>
+                  <span className="truncate text-xs text-muted" title={s.failing.map(errorOf).filter(Boolean).join(" · ")}>
+                    {s.failing.length
+                      ? `${s.failing.length} failing: ${s.failing
+                          .slice(0, 2)
+                          .map((r) => `${s.label(r.source)} (${(errorOf(r) ?? "").slice(0, 80)})`)
+                          .join(" · ")}`
+                      : `${s.stale.length} ${s.stale.length === 1 ? "hasn't" : "haven't"} synced in a day: ${s.stale
+                          .slice(0, 3)
+                          .map((r) => s.label(r.source))
+                          .join(", ")}`}
+                  </span>
+                </span>
+                <SyncNowButton job={s.job} run={s.run} progress={s.progress} />
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {/* Every sync, by what it brings in */}
+      {CATEGORIES.map((c) => {
+        const mine = syncs.filter((s) => s.category === c.key);
+        if (!mine.length && c.key !== "ads") return null;
+        return (
+          <section key={c.key} className="grid gap-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="font-heading text-lg">{c.label}</h2>
+              <p className="text-xs text-faint">{c.about}</p>
+            </div>
+            <div className="grid items-start gap-3 md:grid-cols-2">
+              {mine.map(tile)}
+              {c.key === "ads" && (
+                <div className="md:col-span-2">
+                  <MotionCard notice={motion} />
                 </div>
               )}
             </div>
-          </details>
+          </section>
         );
       })}
+
       <p className="text-xs text-faint">
-        Behind = no successful run in the last day. Sync now runs a job outside its schedule (it takes a few minutes; the card updates when it&apos;s done). A failing ad account or inbox
-        can be retried on its own from inside its card.
+        Behind: no successful run in the last day. Sync now runs a job outside its schedule (a few minutes; the tile updates when it&apos;s done). A failing ad account or inbox can be
+        retried on its own from inside its tile.
       </p>
     </div>
   );
