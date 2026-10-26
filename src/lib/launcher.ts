@@ -48,6 +48,8 @@ export type LaunchPlan = {
   ads: LaunchAd[];
   structure: "placements+text" | "placements" | "text" | "single" | null;
   optOut: string[];
+  /** The enhancements Meta knows on this account's API version (the ones it accepted switching off at launch) */
+  known?: string[];
   reason: string;
   /** allAdsets: every ad set to move a launched ad to, when it's more than where ads land (the sandbox) */
   options: { adsets: AdsetOption[]; pages: { id: string; name: string }[]; igs: { id: string; name: string }[]; allAdsets?: AdsetOption[] };
@@ -59,7 +61,7 @@ export type Overrides = Partial<Pick<LaunchPlan, "adsetId" | "mode" | "newAdsetN
 export type Budget = { level: "adset" | "campaign" | "lifetime" | null; current: number | null; suggested: number | null; value: number | null; why: string };
 
 // Meta's CTA buttons, from the labels the copy uses
-const CTA: Record<string, string> = {
+export const CTA: Record<string, string> = {
   "shop now": "SHOP_NOW", "learn more": "LEARN_MORE", "sign up": "SIGN_UP", "book now": "BOOK_TRAVEL", "book": "BOOK_TRAVEL", "contact us": "CONTACT_US", "get offer": "GET_OFFER",
   "get quote": "GET_QUOTE", "apply now": "APPLY_NOW", "download": "DOWNLOAD", "order now": "ORDER_NOW", "subscribe": "SUBSCRIBE", "call now": "CALL_NOW", "send message": "MESSAGE_PAGE",
   "message": "MESSAGE_PAGE", "watch more": "WATCH_MORE", "see menu": "SEE_MENU", "get directions": "GET_DIRECTIONS", "request time": "REQUEST_TIME", "schedule": "BOOK_NOW", "book now ": "BOOK_NOW",
@@ -68,12 +70,12 @@ const CTA: Record<string, string> = {
 const ctaOf = (label: string | undefined) => CTA[(label ?? "").trim().toLowerCase()] ?? "LEARN_MORE";
 
 // Advantage+ creative enhancements to switch off; any Meta doesn't know on this API version is dropped and retried
-const ENHANCEMENTS = [
+export const ENHANCEMENTS = [
   "image_touchups", "image_brightness_and_contrast", "text_optimizations", "enhance_cta", "image_templates", "image_uncrop", "adapt_to_placement",
   "video_auto_crop", "inline_comment", "description_automation", "add_text_overlay", "image_animation", "music", "text_translation", "site_extensions", "product_extensions",
 ];
 
-async function update(admin: SupabaseClient, id: string, patch: Record<string, unknown>) {
+export async function update(admin: SupabaseClient, id: string, patch: Record<string, unknown>) {
   await admin.from("launches").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
 }
 
@@ -508,9 +510,9 @@ function classicSpec(plan: LaunchPlan, ad: LaunchAd) {
   };
 }
 
-const specFor = (plan: LaunchPlan, ad: LaunchAd, structure: NonNullable<LaunchPlan["structure"]>) => (structure === "single" ? classicSpec(plan, ad) : creativeSpec(plan, ad, structure));
+export const specFor = (plan: LaunchPlan, ad: LaunchAd, structure: NonNullable<LaunchPlan["structure"]>) => (structure === "single" ? classicSpec(plan, ad) : creativeSpec(plan, ad, structure));
 
-const params = (spec: Record<string, unknown>) => Object.fromEntries(Object.entries(spec).map(([k, v]) => [k, typeof v === "string" ? v : JSON.stringify(v)]));
+export const params = (spec: Record<string, unknown>) => Object.fromEntries(Object.entries(spec).map(([k, v]) => [k, typeof v === "string" ? v : JSON.stringify(v)]));
 
 /**
  * Meta's dry run of each creative. The structure is settled on the first ad (the richest Meta accepts), and any
@@ -532,25 +534,29 @@ export function accessHelp(m: string) {
   return "The system user needs Manage campaigns on this ad account (Business Manager → Settings → Ad accounts → Assign people).";
 }
 
+/** Meta's dry run of one creative (null: it would accept it). An enhancement switch Meta doesn't know is dropped from
+ *  plan.optOut and the check tried again. */
+export async function checkCreative(admin: SupabaseClient, plan: LaunchPlan, ad: LaunchAd, structure: NonNullable<LaunchPlan["structure"]>) {
+  for (let i = 0; i < 12; i++) {
+    try {
+      await metaWrite(admin, plan.account, `act_${plan.account}/adcreatives`, params(specFor(plan, ad, structure)), true);
+      return null;
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      // An enhancement Meta doesn't recognize: drop it and check again; the whole switch block as a last resort
+      const named = plan.optOut.find((f) => m.includes(f));
+      if (named) plan.optOut = plan.optOut.filter((f) => f !== named);
+      else if (plan.optOut.length && /creative_features_spec|degrees_of_freedom|enroll_status|creative feature/i.test(m)) plan.optOut = [];
+      else return m;
+    }
+  }
+  return "Meta kept refusing the enhancement switches";
+}
+
 async function dryRun(admin: SupabaseClient, plan: LaunchPlan) {
   const hasVertical = plan.ads.some((a) => a.assets.some((x) => x.aspect === "9x16"));
   const ladder: NonNullable<LaunchPlan["structure"]>[] = hasVertical ? ["placements+text", "placements", "text", "single"] : ["text", "single"];
-  const tryOne = async (ad: LaunchAd, structure: NonNullable<LaunchPlan["structure"]>) => {
-    for (let i = 0; i < 12; i++) {
-      try {
-        await metaWrite(admin, plan.account, `act_${plan.account}/adcreatives`, params(specFor(plan, ad, structure)), true);
-        return null;
-      } catch (e) {
-        const m = e instanceof Error ? e.message : String(e);
-        // An enhancement Meta doesn't recognize: drop it and check again; the whole switch block as a last resort
-        const named = plan.optOut.find((f) => m.includes(f));
-        if (named) plan.optOut = plan.optOut.filter((f) => f !== named);
-        else if (plan.optOut.length && /creative_features_spec|degrees_of_freedom|enroll_status|creative feature/i.test(m)) plan.optOut = [];
-        else return m;
-      }
-    }
-    return "Meta kept refusing the enhancement switches";
-  };
+  const tryOne = (ad: LaunchAd, structure: NonNullable<LaunchPlan["structure"]>) => checkCreative(admin, plan, ad, structure);
   const first = plan.ads[0];
   if (!first) return;
   for (const s of ladder) {
@@ -793,9 +799,9 @@ export async function clientLaunchRules(admin: SupabaseClient, clientId: string)
   });
 }
 
-type AdsetRef = { id: string; name: string; campaign: string; campaignId?: string | null };
+export type AdsetRef = { id: string; name: string; campaign: string; campaignId?: string | null };
 
-async function adsetRef(id: string): Promise<AdsetRef> {
+export async function adsetRef(id: string): Promise<AdsetRef> {
   const a = await metaGraph<{ id: string; name: string; campaign?: { id: string; name: string } }>(id, { fields: "name,campaign{id,name}" }).catch(() => null);
   return { id, name: a?.name ?? id, campaign: a?.campaign?.name ?? "", campaignId: a?.campaign?.id ?? null };
 }
@@ -814,7 +820,7 @@ async function learnPlacement(admin: SupabaseClient, launchId: string, clientId:
 }
 
 /** Across clients: once a few corrections point the same way, the launcher proposes it as a Kaizen-wide rule. */
-async function suggestGeneralRule(admin: SupabaseClient) {
+export async function suggestGeneralRule(admin: SupabaseClient) {
   const since = new Date(Date.now() - 90 * 86_400_000).toISOString();
   const { data: rules } = await admin.from("launch_rules").select("client_id, rule, from_adset, to_adset, clients(name)").eq("active", true).gte("created_at", since).order("created_at", { ascending: false }).limit(60);
   if (!rules || rules.length < 3 || new Set(rules.map((r) => r.client_id)).size < 2) return;
@@ -840,8 +846,8 @@ async function suggestGeneralRule(admin: SupabaseClient) {
   });
 }
 
-type Made = { designId: string; name: string; adId: string | null; creativeId: string | null; error: string | null };
-type Result = { adsetId: string; newAdset: string | null; ads: Made[]; link: string | null };
+export type Made = { designId: string; name: string; adId: string | null; creativeId: string | null; error: string | null };
+export type Result = { adsetId: string; newAdset: string | null; ads: Made[]; link: string | null };
 
 /**
  * Moves a launched ad to the ad set it belongs in: the same creative (nothing uploaded again) as a new paused ad there
@@ -916,7 +922,7 @@ export async function moveLaunch(admin: SupabaseClient, launchId: string, by: st
 }
 
 /** Where a sandbox test's lessons go: the internal sandbox client, so a test never teaches a real client's placements. */
-async function sandboxClient(admin: SupabaseClient, fallback: string) {
+export async function sandboxClient(admin: SupabaseClient, fallback: string) {
   const s = await metaWriteSetting(admin);
   const { data } = await admin.from("clients").select("id").eq("internal", true).eq("meta_ad_account_id", s.sandboxAccount).limit(1).maybeSingle();
   return (data?.id as string | undefined) ?? fallback;

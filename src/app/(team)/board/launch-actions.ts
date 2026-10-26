@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { requireStaff, type Staff } from "@/lib/auth";
 import { adsManagerLink, type MoveTarget, autoLaunch, explainHandMove, makeSandboxCampaign, moveLaunch, planLaunch, runLaunch, type LaunchCheck, type LaunchPlan, type Overrides } from "@/lib/launcher";
 import { metaConfigured } from "@/lib/context/meta";
+import { delivery, editLaunch, setDelivery, type AdEdit, type Delivery } from "@/lib/launch-manage";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -25,6 +26,7 @@ export type LaunchView = {
   canLaunch: boolean;
   moves: { at: string; from: { name: string }; to: { name: string; campaign: string }; reason: string; via?: string }[];
   pendingMove: { from: { name: string }; to: { name: string; campaign: string } } | null;
+  edits: { at: string; changes: string[]; reason: string | null }[];
 };
 
 /** The Ads Manager link, always in its current form (the ads' editor, scoped to their campaign and ad set). */
@@ -49,7 +51,7 @@ async function view(id: string): Promise<LaunchView | null> {
   const me = await requireStaff();
   const { data: l } = await (await createClient())
     .from("launches")
-    .select("id, client_id, status, progress, sandbox, plan, checks, result, error, launched_at, moves, pending_move, launcher:profiles!launches_launched_by_fkey(full_name)")
+    .select("id, client_id, status, progress, sandbox, plan, checks, result, error, launched_at, moves, pending_move, edits, launcher:profiles!launches_launched_by_fkey(full_name)")
     .eq("id", id)
     .maybeSingle();
   if (!l) return null;
@@ -67,6 +69,7 @@ async function view(id: string): Promise<LaunchView | null> {
     canLaunch: await canLaunch(me, l.client_id),
     moves: (l.moves ?? []) as LaunchView["moves"],
     pendingMove: (l.pending_move ?? null) as LaunchView["pendingMove"],
+    edits: (l.edits ?? []) as LaunchView["edits"],
   };
 }
 
@@ -182,5 +185,43 @@ export async function explainMoved(id: string, reason: string): Promise<{ ok: tr
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Couldn't save it." };
+  }
+}
+
+// ─── Running the launched ads from here (src/lib/launch-manage.ts) ───────────────────────────────────────────
+
+/** What Meta shows for the launched ads right now: on or paused, in review, refused; their ad set and campaign. */
+export async function launchDelivery(id: string): Promise<Delivery | null> {
+  const v = await view(id);
+  if (!v?.result || v.status !== "launched") return null;
+  return delivery(v.result as Parameters<typeof delivery>[0]).catch(() => null);
+}
+
+/** Turns the ads (or their ad set, or campaign) on, or pauses them. */
+export async function switchDelivery(id: string, target: "ads" | "adset" | "campaign", on: boolean): Promise<{ ok: true; delivery: Delivery } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  const v = await view(id);
+  if (!v) return { ok: false, error: "Not found." };
+  if (!v.canLaunch) return { ok: false, error: "Only the client's Meta buyer, the Head of Meta or an exec can turn ads on or off." };
+  try {
+    const d = await setDelivery(createAdminClient(), id, me.id, target, on);
+    revalidatePath("/board");
+    return { ok: true, delivery: d };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Meta refused it." };
+  }
+}
+
+/** Saves the buyer's edit to the launched ads in Meta; the reason, when given, is learned. */
+export async function editLaunched(id: string, edit: AdEdit, reason: string): Promise<{ ok: true; changes: string[] } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  const v = await view(id);
+  if (!v) return { ok: false, error: "Not found." };
+  if (!v.canLaunch) return { ok: false, error: "Only the client's Meta buyer, the Head of Meta or an exec can edit the ads." };
+  try {
+    const r = await editLaunch(createAdminClient(), id, me.id, edit, reason);
+    return { ok: true, changes: r.changes };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Meta refused it." };
   }
 }

@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { LaunchCheck } from "@/lib/launcher";
+import { LaunchManage } from "./launch-manage";
 import { LaunchMove } from "./launch-move";
 import { confirmLaunch, discardLaunch, launchFor, loadLaunch, replanLaunch, sandboxCampaign, startLaunch, type LaunchView } from "./launch-actions";
 
@@ -136,7 +137,7 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
           </p>
           <p className="font-heading text-lg">
             {l.status === "launched"
-              ? "Launched, paused: turn it on"
+              ? "Launched to Meta"
               : l.status === "launching"
                 ? "Creating the ads…"
                 : l.status === "planning"
@@ -162,25 +163,11 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
 
       {l.status === "launched" && l.result && (
         <div className="relative grid gap-3">
-          <ul className="grid gap-1.5">
-            {l.result.ads.map((a) => (
-              <li key={a.designId} className="flex items-center justify-between gap-3 rounded-[12px] border border-line bg-bg/40 px-3.5 py-2.5 text-sm max-md:flex-wrap max-md:gap-y-1">
-                <span className="truncate max-md:min-w-0">{a.name}</span>
-                <span className={`shrink-0 text-xs max-md:shrink ${a.adId ? "text-ok" : "text-bad"}`}>{a.adId ? "✓ created, paused" : `× ${a.error}`}</span>
-              </li>
-            ))}
-          </ul>
-          <div className="flex flex-wrap items-center gap-3">
-            {l.result.link && (
-              <a href={l.result.link} target="_blank" rel="noreferrer" className="h-10 content-center rounded-full bg-[#0866ff] px-5 text-sm font-medium text-white hover:brightness-110 max-md:grid max-md:h-12 max-md:w-full max-md:place-items-center">
-                Open in Ads Manager ↗
-              </a>
-            )}
-            <p className="text-xs text-faint">
-              {l.sandbox ? "A test in Kaizen's account: the ticket stays in Ready to launch." : "QA them in Ads Manager and turn them on there: this ticket moves to Launched by itself once Meta shows them on."}
-              {l.launchedBy ? ` Launched by ${l.launchedBy}.` : ""}
-            </p>
-          </div>
+          <LaunchManage l={l} onDone={() => void loadLaunch(l.id).then((x) => x && setL(x))} />
+          <p className="text-xs text-faint">
+            {l.sandbox ? "A test in Kaizen's account: the ticket stays in Ready to launch." : "Turning the ads on (here or in Ads Manager) moves this ticket to Launched."}
+            {l.launchedBy ? ` Launched by ${l.launchedBy}.` : ""}
+          </p>
           <LaunchMove l={l} onDone={() => void loadLaunch(l.id).then((x) => x && setL(x))} />
         </div>
       )}
