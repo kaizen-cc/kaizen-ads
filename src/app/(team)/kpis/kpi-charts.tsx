@@ -114,7 +114,7 @@ export function DailyChart({ daily, height = 120 }: { daily: { d: string; spend:
   return (
     <>
       <div className="md:hidden">
-        <DailySvg daily={daily} height={140} width={340} every={7} tidy />
+        <DailySvg daily={daily} height={140} width={340} every={7} />
       </div>
       <div className="hidden md:block">
         <DailySvg daily={daily} height={height} width={600} every={5} />
@@ -123,7 +123,7 @@ export function DailyChart({ daily, height = 120 }: { daily: { d: string; spend:
   );
 }
 
-function DailySvg({ daily, height, width, every, tidy = false }: { daily: { d: string; spend: number; results: number }[]; height: number; width: number; every: number; tidy?: boolean }) {
+function DailySvg({ daily, height, width, every }: { daily: { d: string; spend: number; results: number }[]; height: number; width: number; every: number }) {
   const maxSpend = Math.max(...daily.map((d) => d.spend), 1);
   const maxRes = Math.max(...daily.map((d) => d.results), 1);
   const bw = width / daily.length;
@@ -140,7 +140,8 @@ function DailySvg({ daily, height, width, every, tidy = false }: { daily: { d: s
         );
       })}
       <polyline points={daily.map((d, i) => `${i * bw + bw / 2},${y(d.results)}`).join(" ")} fill="none" stroke="var(--fg)" strokeWidth="1.5" strokeLinejoin="round" opacity="0.8" />
-      {daily.map((d, i) => ((i % every === 0 && (!tidy || daily.length - 1 - i >= every / 2)) || i === daily.length - 1 ? (
+      {/* Every few days, and always the last day; a date too close to the last one is left out so they never overlap */}
+      {daily.map((d, i) => ((i % every === 0 && daily.length - 1 - i >= every / 2) || i === daily.length - 1 ? (
         <text key={d.d} x={i * bw + bw / 2} y={height - 3} textAnchor={i === 0 ? "start" : i === daily.length - 1 ? "end" : "middle"} fontSize="10" fill="var(--fg-faint)">
           {new Date(`${d.d}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
         </text>
