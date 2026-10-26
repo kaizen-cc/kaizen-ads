@@ -256,7 +256,7 @@ fixes: one short line per change you made (empty when it already met the standar
  * changed after.
  */
 async function writeBrief(admin: SupabaseClient, clientId: string, opts: Parameters<typeof askJson<Out>>[0]): Promise<Out> {
-  const out = await writeBrief(admin, clientId, { ...opts, system: `${opts.system}\n\n${BRIEF_STANDARD}` });
+  const out = await askJson<Out>({ ...opts, system: `${opts.system}\n\n${BRIEF_STANDARD}` });
   if (!out.suggest || !out.draft?.brief) return out;
   try {
     const ctx = await clientContext(admin, clientId);
