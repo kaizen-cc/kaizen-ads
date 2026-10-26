@@ -757,14 +757,43 @@ export async function accountActivity(adAccountId: string, sinceDays = 30) {
 }
 export type AccountActivity = Awaited<ReturnType<typeof accountActivity>>;
 
-/** Ads' shareable preview links (the fb.me ones a client can open without an account) and their images, for reports. */
+/**
+ * Ads' images and shareable preview links (the fb.me ones a client can open without an account), for reports. One
+ * request per ad, and the preview link apart from the creative: asking for everything at once let one field Meta
+ * refuses (the preview link needs a permission the system user may not have) blank every ad's image.
+ */
 export async function adPreviews(adIds: string[]) {
+  type C = {
+    title?: string;
+    thumbnail_url?: string;
+    image_url?: string;
+    object_story_spec?: { link_data?: { picture?: string; name?: string }; video_data?: { image_url?: string; title?: string } };
+    asset_feed_spec?: { videos?: { thumbnail_url?: string }[]; images?: { url?: string }[]; titles?: { text: string }[] };
+  };
   const out = new Map<string, { link: string | null; image: string | null; headline: string | null }>();
-  if (!adIds.length) return out;
-  const res = await graph<Record<string, { id: string; preview_shareable_link?: string; creative?: { thumbnail_url?: string; image_url?: string; title?: string } }>>("", {
-    ids: adIds.slice(0, 50).join(","),
-    fields: "preview_shareable_link,creative{thumbnail_url,image_url,title}",
-  }).catch(() => ({}) as Record<string, never>);
-  for (const [id, a] of Object.entries(res)) out.set(id, { link: a.preview_shareable_link ?? null, image: a.creative?.image_url ?? a.creative?.thumbnail_url ?? null, headline: a.creative?.title ?? null });
+  const ids = adIds.slice(0, 20);
+  if (!ids.length) return out;
+  const fields = "creative.thumbnail_width(600).thumbnail_height(600){title,thumbnail_url,image_url,object_story_spec,asset_feed_spec}";
+  const [creatives, links] = await Promise.all([
+    Promise.allSettled(ids.map((id) => graph<{ creative?: C }>(id, { fields }))),
+    Promise.allSettled(ids.map((id) => graph<{ preview_shareable_link?: string }>(id, { fields: "preview_shareable_link" }))),
+  ]);
+  const failed = creatives.filter((r) => r.status === "rejected").length;
+  if (failed) console.error(`[meta] adPreviews: ${failed} of ${ids.length} creatives couldn't be read`, (creatives.find((r) => r.status === "rejected") as PromiseRejectedResult | undefined)?.reason);
+  ids.forEach((id, i) => {
+    const c = creatives[i].status === "fulfilled" ? (creatives[i] as PromiseFulfilledResult<{ creative?: C }>).value.creative : undefined;
+    const link = links[i].status === "fulfilled" ? ((links[i] as PromiseFulfilledResult<{ preview_shareable_link?: string }>).value.preview_shareable_link ?? null) : null;
+    // The picture by ad type: an image ad's full image, a link ad's picture, a video's poster, a dynamic ad's first asset
+    const image =
+      c?.image_url ??
+      c?.object_story_spec?.link_data?.picture ??
+      c?.object_story_spec?.video_data?.image_url ??
+      c?.asset_feed_spec?.images?.[0]?.url ??
+      c?.asset_feed_spec?.videos?.[0]?.thumbnail_url ??
+      c?.thumbnail_url ??
+      null;
+    const headline = c?.title ?? c?.object_story_spec?.link_data?.name ?? c?.object_story_spec?.video_data?.title ?? c?.asset_feed_spec?.titles?.[0]?.text ?? null;
+    if (c || link) out.set(id, { link, image, headline });
+  });
   return out;
 }

@@ -305,7 +305,12 @@ function MonthlyPart({ input, part, images }: { input: ReportPdfInput; part: Rep
 
 /** The report as a PDF. Weekly: one part. Monthly: one or two parts (Meta, Google) after a cover page. */
 export async function renderReportPdf(input: ReportPdfInput): Promise<Uint8Array> {
-  const images = await Promise.all(input.parts.map((p) => (p.platform === "meta" ? Promise.all(p.metrics.topAds.slice(0, 3).map((a) => adImage(a.image))) : Promise.resolve([]))));
+  // Meta's image links are signed and expire within days, so each PDF asks for fresh ones; the saved link is the fallback
+  const ids = input.parts.flatMap((p) => (p.platform === "meta" ? p.metrics.topAds.slice(0, 3).map((a) => a.id) : []));
+  const { adPreviews, metaConfigured } = await import("@/lib/context/meta");
+  const fresh = ids.length && metaConfigured() ? await adPreviews(ids).catch(() => new Map<string, { image: string | null }>()) : new Map<string, { image: string | null }>();
+  const imageOf = async (a: { id: string; image: string | null }) => (await adImage(fresh.get(a.id)?.image ?? null)) ?? (await adImage(a.image));
+  const images = await Promise.all(input.parts.map((p) => (p.platform === "meta" ? Promise.all(p.metrics.topAds.slice(0, 3).map(imageOf)) : Promise.resolve([]))));
   const title = `${input.client} · ${input.kind === "weekly" ? "Weekly report" : "Monthly recap"} · ${input.periodLabel}`;
   const doc = (
     <Document title={title} author="Kaizen Marketing" creator="Kaizen Marketing" producer="Kaizen Marketing">

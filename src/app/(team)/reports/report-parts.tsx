@@ -1,5 +1,7 @@
 "use client";
 
+import { AdImage } from "@/app/r/[token]/ad-image";
+
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
@@ -57,7 +59,7 @@ function Tile({ label, now, before, fmt, lowerIsBetter }: { label: string; now: 
   );
 }
 
-function Numbers({ m }: { m: ReportMetrics }) {
+function Numbers({ m, reportId }: { m: ReportMetrics; reportId: string }) {
   const tiles = (a: Period, b: Period) => (
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
       <Tile label="Spend" now={a.spend} before={b.spend} fmt={money} />
@@ -89,12 +91,9 @@ function Numbers({ m }: { m: ReportMetrics }) {
           <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-faint">Top ads</p>
           {m.topAds.map((a) => (
             <div key={a.id} className="flex items-center gap-3 rounded-[12px] border border-line p-2">
-              {a.image ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={a.image} alt="" className="h-12 w-12 shrink-0 rounded-[8px] object-cover" />
-              ) : (
-                <span className="h-12 w-12 shrink-0 rounded-[8px] bg-surface-2" />
-              )}
+              <span className="relative h-12 w-12 shrink-0 overflow-hidden rounded-[8px] bg-surface-2">
+                <AdImage src={`/api/reports/${reportId}/ad/${a.id}`} />
+              </span>
               <span className="grid min-w-0 gap-0.5">
                 <span className="truncate text-sm">{a.name}</span>
                 <span className="text-[11px] text-faint">
@@ -418,7 +417,7 @@ export function ReportEditor({ report, client, canEdit, slackConnected, bundle, 
             {report.metrics && (
               <section className="grid gap-3 rounded-[16px] border border-line bg-surface p-4">
                 <h2 className="font-heading text-[15px]">The numbers</h2>
-                <Numbers m={report.metrics} />
+                <Numbers m={report.metrics} reportId={report.id} />
               </section>
             )}
             {editable && (

@@ -69,7 +69,7 @@ export default async function MonthlyRecap({ params }: PageProps<"/r/[token]">) 
       </section>
 
       {ready ? (
-        parts.map((p) => <PlatformSection key={p.platform} part={p} />)
+        parts.map((p) => <PlatformSection key={p.platform} part={p} token={token} />)
       ) : (
         <section className="mx-auto max-w-5xl px-4 pb-24 sm:px-8">
           <div className="rounded-xl border border-line bg-surface px-6 py-12 text-center sm:px-12">
@@ -86,7 +86,7 @@ export default async function MonthlyRecap({ params }: PageProps<"/r/[token]">) 
   );
 }
 
-function PlatformSection({ part }: { part: ReportPart }) {
+function PlatformSection({ part, token }: { part: ReportPart; token: string }) {
   const m = part.metrics;
   const s = part.sections;
   const one = singular(m.conversion);
@@ -152,7 +152,7 @@ function PlatformSection({ part }: { part: ReportPart }) {
             {ads.map((a) => (
               <article key={a.id} className="overflow-hidden rounded-xl border border-line bg-surface">
                 <div className="relative aspect-square bg-surface-2">
-                  <AdImage src={a.image} />
+                  <AdImage src={`/r/${token}/ad/${a.id}`} />
                 </div>
                 <div className="p-4">
                   <p className="line-clamp-2 text-sm font-medium">{a.name}</p>
