@@ -1,11 +1,15 @@
 import Link from "next/link";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
-import { loadToday, TOPICS, type TodayItem, type TopicKey } from "@/lib/today";
+import { TOPICS, type TodayItem, type TopicKey } from "@/lib/today";
+import { buildSnapshot, readSnapshot } from "@/lib/today-snapshot";
+import { TodayLive } from "./today-live";
+import { TodayLoading } from "./today-loading";
 import { HoverCard } from "@/components/hover-card";
 
 // The way into the daily recap, at the top of the Overview: today in three numbers, a start button, a jump into any
-// topic, and the person's list (what they saved for later). Streams in after the rest of the page.
+// topic, and the person's list (what they saved for later). Built once a day (with its loading moment), then shown
+// from the saved version at once and kept current in the background (src/lib/today-snapshot.ts).
 
 const TIER_DOT: Record<string, string> = { critical: "bg-[#ff4d5e]", high: "bg-[#f2b14c]", normal: "bg-[#9aa8ff]" };
 
@@ -74,7 +78,9 @@ function List({ title, items, more }: { title: string; items: TodayItem[]; more:
 }
 
 export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
-  const t = await loadToday(db, me);
+  const snap = (await readSnapshot(db, me)) ?? (await buildSnapshot(db, me, null));
+  const t = snap.today;
+  const delta = snap.delta;
   const saved = t.items.filter((i) => i.state === "saved");
   const topics = [...new Set(t.items.map((i) => i.topic))] as TopicKey[];
   const criticalBy = (k: TopicKey) => t.items.filter((i) => i.topic === k && i.tier === "critical").length;
@@ -85,7 +91,17 @@ export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
       <div aria-hidden className="pointer-events-none absolute -bottom-40 right-0 h-[300px] w-[300px] rounded-full bg-[rgba(224,150,40,0.18)] blur-[120px]" />
       <div className="relative flex flex-wrap items-end justify-between gap-5">
         <div className="grid gap-2">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/50">Your day</p>
+          <p className="flex flex-wrap items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-white/50">
+            Your day
+            {delta && (delta.handled > 0 || delta.added > 0) && (
+              <span className="rounded-full bg-white/[0.07] px-2 py-0.5 text-[10.5px] font-medium normal-case tracking-normal text-white/65">
+                Updated {new Date(delta.at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })}
+                {delta.handled > 0 && <span className="text-[#5be3a5]"> · {delta.handled} handled</span>}
+                {delta.added > 0 && <span className="text-[#f2b14c]"> · {delta.added} new</span>}
+              </span>
+            )}
+            <TodayLive shown={snap.computedAt} />
+          </p>
           <p className="font-display text-3xl leading-tight tracking-tight text-white md:text-4xl">
             {t.items.length ? (
               <>
@@ -206,5 +222,5 @@ export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
 }
 
 export function TodayHeroSkeleton() {
-  return <div className="h-[170px] animate-pulse rounded-[24px] border border-line bg-[#0b0a0e]" />;
+  return <TodayLoading />;
 }

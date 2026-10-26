@@ -3,7 +3,8 @@ import { requireStaff } from "@/lib/auth";
 import { greetingFor } from "@/lib/dates";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { loadToday, TOPICS } from "@/lib/today";
+import { TOPICS } from "@/lib/today";
+import { buildSnapshot } from "@/lib/today-snapshot";
 import { loadProduction } from "@/lib/production";
 import { Story } from "./story";
 
@@ -17,7 +18,7 @@ export default async function TodayPage({ searchParams }: PageProps<"/today">) {
   const db = await createClient();
   // Designers, editors and copywriters see their own scorecard; it's worked out across the whole board (their pieces
   // can move to clients they don't hold), and only their own card is passed on
-  const [today, production] = await Promise.all([loadToday(db, me), (me.isCreative || me.isCopywriter) && adminConfigured() ? loadProduction(createAdminClient()).catch(() => null) : Promise.resolve(null)]);
+  const [today, production] = await Promise.all([buildSnapshot(db, me).then((s) => s.today), (me.isCreative || me.isCopywriter) && adminConfigured() ? loadProduction(createAdminClient()).catch(() => null) : Promise.resolve(null)]);
   const score = production?.team.find((s) => s.profileId === me.id) ?? null;
   // Been through today's recap: no reminder this afternoon
   if (adminConfigured()) await createAdminClient().from("profiles").update({ recap_seen_on: new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }) }).eq("id", me.id);

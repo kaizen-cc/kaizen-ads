@@ -212,3 +212,13 @@ body {
 .board-scroll::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.28);
 }
+
+/* Something that should appear only if the wait is real (a loading screen): hidden, then faded in */
+@keyframes fade-in-late {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
