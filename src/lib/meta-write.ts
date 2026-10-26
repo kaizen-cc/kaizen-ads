@@ -52,7 +52,7 @@ export async function writeAccess(admin: SupabaseClient, account: string): Promi
   const blocked = await writeBlocked(admin, account);
   if (blocked) return { ok: false, detail: blocked };
   try {
-    await metaWrite(admin, account, `act_${bare(account)}/campaigns`, { name: "Kaizen Ads access check", objective: "OUTCOME_TRAFFIC", status: "PAUSED", special_ad_categories: "[]" }, true);
+    await metaWrite(admin, account, `act_${bare(account)}/campaigns`, { name: "Kaizen Ads access check", objective: "OUTCOME_TRAFFIC", status: "PAUSED", special_ad_categories: "[]", is_adset_budget_sharing_enabled: "false" }, true);
     return { ok: true, detail: "Kaizen Ads can create and change ads here (checked with Meta, nothing was created)." };
   } catch (e) {
     const m = e instanceof Error ? e.message : String(e);
