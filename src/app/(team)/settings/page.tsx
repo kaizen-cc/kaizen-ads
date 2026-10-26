@@ -547,8 +547,8 @@ async function Sync({ motion }: { motion: string | null }) {
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-8 md:gap-10">
       {/* The state of it all, at a glance */}
-      <section className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
-        <div className={`relative grid content-between gap-5 overflow-hidden rounded-[20px] border p-5 md:p-6 ${failingN ? "border-bad/30" : behindN ? "border-warn/30" : "border-ok/30"} bg-surface`}>
+      <section className="grid grid-cols-[minmax(0,1fr)] items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+        <div className={`relative grid content-start gap-5 overflow-hidden rounded-[20px] border p-5 md:p-6 ${failingN ? "border-bad/30" : behindN ? "border-warn/30" : "border-ok/30"} bg-surface`}>
           <div aria-hidden className={`pointer-events-none absolute -left-20 -top-24 h-56 w-56 rounded-full blur-[80px] ${failingN ? "bg-bad/20" : behindN ? "bg-warn/15" : "bg-ok/15"}`} />
           <div className="relative grid gap-1">
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">Sync health</p>
@@ -570,19 +570,22 @@ async function Sync({ motion }: { motion: string | null }) {
             ))}
           </div>
         </div>
-        <MetaWriteCard
-          sandbox={write.sandbox}
-          sandboxAccount={write.sandboxAccount}
-          urlTags={write.urlTags ?? null}
-          defaultTags={DEFAULT_URL_TAGS}
-          canEdit={me.isExec}
-          updated={mw?.updated_at ? `${new Date(mw.updated_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })}${mwBy ? ` by ${mwBy}` : ""}` : null}
-        />
-        <GoogleWriteCard
-          enabled={(gw?.value as { enabled?: boolean } | null)?.enabled === true}
-          canEdit={me.isExec}
-          updated={gw?.updated_at ? `${new Date(gw.updated_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })}${gwBy ? ` by ${gwBy}` : ""}` : null}
-        />
+        {/* Writing to the ad platforms: Meta, then Google, stacked */}
+        <div className="grid min-w-0 content-start gap-4">
+          <MetaWriteCard
+            sandbox={write.sandbox}
+            sandboxAccount={write.sandboxAccount}
+            urlTags={write.urlTags ?? null}
+            defaultTags={DEFAULT_URL_TAGS}
+            canEdit={me.isExec}
+            updated={mw?.updated_at ? `${new Date(mw.updated_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })}${mwBy ? ` by ${mwBy}` : ""}` : null}
+          />
+          <GoogleWriteCard
+            enabled={(gw?.value as { enabled?: boolean } | null)?.enabled === true}
+            canEdit={me.isExec}
+            updated={gw?.updated_at ? `${new Date(gw.updated_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })}${gwBy ? ` by ${gwBy}` : ""}` : null}
+          />
+        </div>
       </section>
 
       {/* What needs someone, first */}
