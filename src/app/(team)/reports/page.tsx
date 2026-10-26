@@ -63,9 +63,9 @@ export default async function ReportsPage() {
           const alert = flags.filter((f) => f.severity === "alert").length;
           return (
             <li key={r.id}>
-              <Link href={`/reports/${r.id}`} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-[14px] border border-line bg-surface px-4 py-3.5 transition-colors hover:border-faint/70">
+              <Link href={`/reports/${r.id}`} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-[14px] border border-line bg-surface px-4 py-3.5 transition-colors hover:border-faint/70 active:bg-surface-2 max-md:gap-3">
                 <span className="grid min-w-0 gap-0.5">
-                  <span className="truncate font-heading text-[15px]">
+                  <span className="truncate font-heading text-[15px] max-md:whitespace-normal max-md:[overflow-wrap:anywhere]">
                     {r.clients.name} <span className="text-muted">· {r.platform === "google" ? "Google" : "Meta"}</span>
                   </span>
                   <span className={`text-xs ${s.tone}`}>
@@ -73,7 +73,7 @@ export default async function ReportsPage() {
                     {lead && r.profiles?.full_name ? <span className="text-faint"> · {r.profiles.full_name}</span> : null}
                   </span>
                 </span>
-                <span className="flex items-center gap-1.5">
+                <span className="flex items-center gap-1.5 max-md:max-w-[9.5rem] max-md:flex-wrap max-md:justify-end">
                   {fix > 0 && <span className="rounded-full bg-bad-soft px-2 py-0.5 text-[11px] text-bad">{fix} to fix</span>}
                   {alert > 0 && <span className="rounded-full bg-warn-soft px-2 py-0.5 text-[11px] text-warn">{alert} alert{alert === 1 ? "" : "s"}</span>}
                   {r.status === "draft" && !fix && !alert && <span className="rounded-full bg-ok-soft px-2 py-0.5 text-[11px] text-ok">QA clean</span>}
@@ -90,12 +90,12 @@ export default async function ReportsPage() {
     <div className="mx-auto grid max-w-5xl gap-8">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div className="grid gap-1">
-          <h1 className="font-heading text-[32px] leading-tight">Reports</h1>
+          <h1 className="font-heading text-[32px] leading-tight max-md:text-[28px]">Reports</h1>
           <p className="max-w-2xl text-sm text-muted">
             Drafted every Monday (the last 7 days and the month so far) and on the 1st (the monthly recap), in your voice, checked by the QA. Read it, tweak it or ask the AI to, then send it as you.
           </p>
         </div>
-        <span className="flex flex-wrap items-center gap-2">
+        <span className="flex flex-wrap items-center gap-2 max-md:w-full">
           <SlackConnect connected={slack.connected} next="/reports" />
           <ReportButton
             primary

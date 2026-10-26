@@ -24,18 +24,18 @@ export default async function ClientReportPage({ params }: PageProps<"/report/[i
   const date = new Date(a.created_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "America/New_York" });
 
   return (
-    <div className="min-h-screen bg-[#f4f2f1] px-4 py-8 text-[#17131a] print:bg-white print:p-0 [color-scheme:light]">
+    <div className="min-h-screen bg-[#f4f2f1] px-4 py-8 pt-[max(2rem,env(safe-area-inset-top))] pb-[max(2rem,env(safe-area-inset-bottom))] text-[#17131a] print:bg-white print:p-0 [color-scheme:light]">
       <style>{`@page { size: letter; margin: 0.6in; } @media print { .no-print { display: none !important } }`}</style>
       <PrintBar auditId={id} ready={Boolean(r)} />
-      <article className="mx-auto grid max-w-[8.5in] gap-10 rounded-[6px] bg-white px-10 py-12 shadow-[0_30px_80px_-40px_rgba(0,0,0,0.35)] print:max-w-none print:rounded-none print:p-0 print:shadow-none">
+      <article className="mx-auto grid min-w-0 max-w-[8.5in] gap-10 rounded-[6px] bg-white px-5 py-8 [overflow-wrap:anywhere] sm:px-10 sm:py-12 shadow-[0_30px_80px_-40px_rgba(0,0,0,0.35)] print:max-w-none print:rounded-none print:p-0 print:shadow-none">
         <header className="grid gap-6 border-b border-[#e7e2e3] pb-8">
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
             <Image src="/kaizen-logo.png" alt="Kaizen Marketing" width={120} height={28} className="h-7 w-auto" />
             <p className="text-xs uppercase tracking-[0.18em] text-[#8a8189]">Account review · {date}</p>
           </div>
           <div className="grid gap-2">
             <p className="text-sm font-medium text-[#c8102e]">{client}</p>
-            <h1 className="text-[32px] font-semibold leading-[1.1] tracking-tight">{r?.headline ?? "Your account review"}</h1>
+            <h1 className="text-[26px] font-semibold sm:text-[32px] leading-[1.1] tracking-tight">{r?.headline ?? "Your account review"}</h1>
             {r && <p className="max-w-[60ch] text-[15px] leading-relaxed text-[#4d464f]">{r.summary}</p>}
           </div>
         </header>

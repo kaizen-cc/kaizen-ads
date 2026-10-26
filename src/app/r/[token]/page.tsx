@@ -43,11 +43,11 @@ export default async function MonthlyRecap({ params }: PageProps<"/r/[token]">) 
   const parts = bundle.input.parts;
 
   return (
-    <div style={LIGHT} className="min-h-screen bg-bg text-fg">
-      <header className="mx-auto flex max-w-5xl items-center justify-between px-4 pt-6 sm:px-8 sm:pt-8 print:pt-0">
+    <div style={LIGHT} className="min-h-screen overflow-x-clip bg-bg pb-[env(safe-area-inset-bottom)] text-fg">
+      <header className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 pt-[max(1.5rem,env(safe-area-inset-top))] sm:px-8 sm:pt-8 print:pt-0">
         <p className="font-heading text-[13px] tracking-[0.18em] text-fg">KAIZEN MARKETING</p>
         {ready && (
-          <a href={`/r/${token}/pdf`} className="rounded-brand bg-brand px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-hover print:hidden">
+          <a href={`/r/${token}/pdf`} className="shrink-0 rounded-brand bg-brand px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-hover active:bg-brand-hover max-md:inline-flex max-md:min-h-11 max-md:items-center print:hidden">
             Download PDF
           </a>
         )}
@@ -56,11 +56,11 @@ export default async function MonthlyRecap({ params }: PageProps<"/r/[token]">) 
       <section className="mx-auto max-w-5xl px-4 pt-14 pb-10 sm:px-8 sm:pt-20 sm:pb-14">
         <div className="mb-6 h-[3px] w-10 bg-brand" />
         <p className="text-sm text-muted">Monthly recap · {bundle.periodLabel}</p>
-        <h1 className="mt-2 font-heading text-4xl leading-[1.05] tracking-tight sm:text-6xl">{bundle.client}</h1>
+        <h1 className="mt-2 font-heading text-4xl leading-[1.05] tracking-tight [overflow-wrap:anywhere] sm:text-6xl">{bundle.client}</h1>
         {ready && parts.length > 1 && (
-          <nav className="mt-8 flex gap-2 print:hidden">
+          <nav className="mt-8 flex flex-wrap gap-2 print:hidden">
             {parts.map((p) => (
-              <a key={p.platform} href={`#${p.platform}`} className="rounded-full border border-line bg-surface px-4 py-1.5 text-sm text-fg transition-colors hover:border-fg">
+              <a key={p.platform} href={`#${p.platform}`} className="rounded-full border border-line bg-surface px-4 py-1.5 text-sm text-fg transition-colors hover:border-fg active:border-fg max-md:inline-flex max-md:min-h-11 max-md:items-center max-md:px-5">
                 {platformName(p.platform)}
               </a>
             ))}
@@ -109,7 +109,7 @@ function PlatformSection({ part, token }: { part: ReportPart; token: string }) {
       </div>
 
       <div className="mt-8 max-w-3xl">
-        <p className="font-heading text-xl leading-snug tracking-tight sm:text-2xl">{s.headline}</p>
+        <p className="font-heading text-xl leading-snug tracking-tight [overflow-wrap:anywhere] sm:text-2xl">{s.headline}</p>
         {s.summary && <p className="mt-4 text-[15px] leading-relaxed text-muted">{s.summary}</p>}
       </div>
 
@@ -120,7 +120,25 @@ function PlatformSection({ part, token }: { part: ReportPart; token: string }) {
       </div>
 
       <Block title="Key metrics">
-        <div className="overflow-x-auto">
+        {/* Phones: one card per metric */}
+        <div className="grid gap-2 md:hidden print:hidden">
+          {kpiRows(m).map((r) => (
+            <div key={r.label} className="grid gap-1.5 rounded-xl border border-line bg-surface px-4 py-3">
+              <div className="flex items-baseline justify-between gap-3">
+                <p className="min-w-0 text-sm font-medium [overflow-wrap:anywhere]">{r.label}</p>
+                <p className="shrink-0 text-base font-medium tabular-nums">{r.now}</p>
+              </div>
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-[13px] tabular-nums">
+                <span className="text-muted">
+                  {m.compare.label}: {r.before}
+                </span>
+                <span className={`font-medium ${toneClass(r.delta)}`}>{r.delta?.text ?? "–"}</span>
+              </div>
+              {r.target && r.target !== "–" && <p className="text-[12px] text-faint tabular-nums">Target: {r.target}</p>}
+            </div>
+          ))}
+        </div>
+        <div className="hidden overflow-x-auto md:block print:block">
           <table className="w-full min-w-[520px] text-sm">
             <thead>
               <tr className="border-b border-fg text-left text-[11px] tracking-[0.08em] text-muted uppercase">
@@ -155,7 +173,7 @@ function PlatformSection({ part, token }: { part: ReportPart; token: string }) {
                   <AdImage src={`/r/${token}/ad/${a.id}`} />
                 </div>
                 <div className="p-4">
-                  <p className="line-clamp-2 text-sm font-medium">{a.name}</p>
+                  <p className="line-clamp-2 text-sm font-medium [overflow-wrap:anywhere]">{a.name}</p>
                   <p className="mt-2 text-[13px] text-muted tabular-nums">
                     {count(a.results)} {m.conversion.toLowerCase()} · {money(a.costPerResult)} per {one}
                   </p>
@@ -163,7 +181,7 @@ function PlatformSection({ part, token }: { part: ReportPart; token: string }) {
                     {money(a.spend)} spent{a.ctr != null ? ` · ${percent(a.ctr)} CTR` : ""}
                   </p>
                   {a.link && (
-                    <a href={a.link} target="_blank" rel="noopener noreferrer" className="mt-3 inline-block text-sm font-medium text-brand hover:underline">
+                    <a href={a.link} target="_blank" rel="noopener noreferrer" className="mt-3 inline-block text-sm font-medium text-brand hover:underline max-md:inline-flex max-md:min-h-11 max-md:items-center">
                       View ad
                     </a>
                   )}
@@ -176,7 +194,35 @@ function PlatformSection({ part, token }: { part: ReportPart; token: string }) {
 
       {m.campaigns.length > 0 && (
         <Block title="Campaigns">
-          <div className="overflow-x-auto">
+          {/* Phones: one card per campaign */}
+          <div className="grid gap-2 md:hidden print:hidden">
+            {m.campaigns.slice(0, 8).map((c) => (
+              <div key={c.name} className="grid gap-2 rounded-xl border border-line bg-surface px-4 py-3">
+                <p className="text-sm font-medium [overflow-wrap:anywhere]">{c.name}</p>
+                <dl className={`grid gap-2 text-[13px] tabular-nums ${roas ? "grid-cols-4" : "grid-cols-3"}`}>
+                  <div className="min-w-0">
+                    <dt className="text-[10px] tracking-[0.08em] text-faint uppercase">Spend</dt>
+                    <dd className="truncate">{money(c.spend)}</dd>
+                  </div>
+                  <div className="min-w-0">
+                    <dt className="truncate text-[10px] tracking-[0.08em] text-faint uppercase">{m.conversion}</dt>
+                    <dd className="truncate">{count(c.results)}</dd>
+                  </div>
+                  <div className="min-w-0">
+                    <dt className="truncate text-[10px] tracking-[0.08em] text-faint uppercase">Per {one}</dt>
+                    <dd className="truncate">{money(c.costPerResult)}</dd>
+                  </div>
+                  {roas && (
+                    <div className="min-w-0">
+                      <dt className="text-[10px] tracking-[0.08em] text-faint uppercase">ROAS</dt>
+                      <dd className="truncate">{multiple(c.roas)}</dd>
+                    </div>
+                  )}
+                </dl>
+              </div>
+            ))}
+          </div>
+          <div className="hidden overflow-x-auto md:block print:block">
             <table className="w-full min-w-[520px] text-sm">
               <thead>
                 <tr className="border-b border-fg text-left text-[11px] tracking-[0.08em] text-muted uppercase">
@@ -212,7 +258,7 @@ function PlatformSection({ part, token }: { part: ReportPart; token: string }) {
                 {g.items.map((x, i) => (
                   <li key={i} className="flex gap-3 text-[15px] leading-relaxed text-fg/85">
                     <span className="mt-[0.6em] h-1.5 w-1.5 shrink-0 rounded-full bg-brand" />
-                    <span>{x}</span>
+                    <span className="min-w-0 [overflow-wrap:anywhere]">{x}</span>
                   </li>
                 ))}
               </ul>
@@ -244,9 +290,9 @@ function TileCard({ tile, now, before }: { tile: Tile; now: string; before: stri
   const max = Math.max(tile.now ?? 0, tile.before ?? 0);
   const w = (x: number | null) => (max > 0 && x != null ? `${Math.max(2, (x / max) * 100)}%` : "0%");
   return (
-    <div className="flex flex-col rounded-xl border border-line bg-surface p-4 sm:p-5">
+    <div className="flex min-w-0 flex-col rounded-xl border border-line bg-surface p-4 sm:p-5">
       <p className="text-[11px] tracking-[0.08em] text-muted uppercase">{tile.label}</p>
-      <p className="mt-2 font-heading text-2xl tracking-tight tabular-nums sm:text-3xl">{tile.value}</p>
+      <p className="mt-2 font-heading text-[22px] tracking-tight tabular-nums [overflow-wrap:anywhere] sm:text-3xl">{tile.value}</p>
       {tile.sub && <p className="mt-1 text-[13px] text-muted">{tile.sub}</p>}
       <p className={`mt-3 text-[13px] font-medium ${toneClass(tile.delta)}`}>{tile.delta ? `${tile.delta.text} vs ${before}` : "No comparison"}</p>
       {max > 0 && (

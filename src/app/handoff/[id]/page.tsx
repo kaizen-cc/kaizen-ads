@@ -40,14 +40,14 @@ export default async function HandoffPage({ params }: PageProps<"/handoff/[id]">
   ].filter(Boolean);
 
   return (
-    <div className="min-h-screen bg-[#f4f2f1] px-4 py-8 text-[#17131a] print:bg-white print:p-0 [color-scheme:light]">
+    <div className="min-h-screen bg-[#f4f2f1] px-4 py-8 pt-[max(2rem,env(safe-area-inset-top))] text-[#17131a] print:bg-white print:p-0 [color-scheme:light]">
       <style>{`@page { size: letter; margin: 0.6in; } @media print { .no-print { display: none !important } }`}</style>
       {me.id === h.to_id && !h.seen_at && h.status === "ready" && <Seen id={id} />}
       <HandoffBar id={id} slug={client.slug} ready={h.status === "ready"} />
       <div className="mx-auto grid max-w-[1240px] items-start gap-6 lg:grid-cols-[minmax(0,8.5in)_minmax(320px,1fr)] print:block">
-        <article className="grid gap-10 rounded-[6px] bg-white px-6 py-10 shadow-[0_30px_80px_-40px_rgba(0,0,0,0.35)] sm:px-10 sm:py-12 print:rounded-none print:p-0 print:shadow-none">
+        <article className="grid min-w-0 gap-10 rounded-[6px] bg-white px-5 py-8 [overflow-wrap:anywhere] shadow-[0_30px_80px_-40px_rgba(0,0,0,0.35)] sm:px-10 sm:py-12 print:rounded-none print:p-0 print:shadow-none">
           <header className="grid gap-6 border-b border-[#e7e2e3] pb-8">
-            <div className="flex items-center justify-between gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
               <Image src="/kaizen-logo.png" alt="Kaizen Marketing" width={120} height={28} className="h-7 w-auto" />
               <p className="text-xs uppercase tracking-[0.18em] text-[#8a8189]">{comeback ? "Back live" : "Account handoff"} · {date}</p>
             </div>
@@ -172,6 +172,8 @@ export default async function HandoffPage({ params }: PageProps<"/handoff/[id]">
 
         <AccountChat id={id} client={client.name} initial={(h.chat ?? []) as ChatTurn[]} ready={h.status === "ready"} />
       </div>
+      {/* Phones: room under the doc for the floating chat button */}
+      <div className="no-print h-20 md:hidden" aria-hidden />
     </div>
   );
 }

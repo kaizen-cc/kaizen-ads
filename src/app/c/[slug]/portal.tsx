@@ -18,6 +18,10 @@ const ratio = (a: string | null) => (a === "1x1" ? "1 / 1" : a === "9x16" ? "9 /
 const wOverH = (f: PortalFile) => (f.width && f.height ? f.width / f.height : f.aspect === "1x1" ? 1 : f.aspect === "9x16" ? 9 / 16 : f.aspect === "16x9" ? 16 / 9 : 4 / 5);
 const isVideo = (f: PortalFile) => f.mime.startsWith("video/");
 const host = (url: string) => url.replace(/^https?:\/\/(www\.)?/, "").split("/")[0];
+/** Phones: a small control keeps its look but takes a finger-sized tap (an invisible area around it). */
+const HIT = "relative max-md:after:absolute max-md:after:-inset-x-1 max-md:after:-inset-y-2 max-md:after:content-['']";
+/** Phones: size and card chips big enough to tap. */
+const CHIP = "max-md:px-3.5 max-md:py-1.5 max-md:text-[12px]";
 
 export function Portal({ slug, clientName, firstName, data, testing, live, demo = false }: { slug: string; clientName: string; firstName: string | null; data: PortalData; testing: boolean; live: boolean; demo?: boolean }) {
   const [queue, setQueue] = useState(data.items);
@@ -36,7 +40,7 @@ export function Portal({ slug, clientName, firstName, data, testing, live, demo 
         </div>
       )}
 
-      <main className="mx-auto grid max-w-md gap-4 px-4 pb-16 pt-4">
+      <main className="mx-auto grid max-w-md gap-4 px-4 pb-[max(4rem,calc(env(safe-area-inset-bottom)+2rem))] pt-4">
         <section className={`grid gap-2.5 rounded-[12px] p-4 text-white ${queue.length ? "bg-brand" : "border border-brand/70 bg-bg"}`}>
           <p className={`text-[11px] font-semibold uppercase tracking-[0.08em] ${queue.length ? "text-white/75" : "text-brand-text"}`}>Waiting on you</p>
           <h1 className="font-heading text-[20px] font-semibold leading-tight">
@@ -46,7 +50,7 @@ export function Portal({ slug, clientName, firstName, data, testing, live, demo 
             {queue.length ? `${queue.length} ${queue.length === 1 ? "batch" : "batches"}. Approve or ask for changes on each design and each copy.` : "When your Kaizen team sends new ads, they'll show up here."}
           </p>
           {queue.length > 0 && (
-            <button onClick={() => setOpen(queue[0])} className="justify-self-start rounded-[5px] bg-white px-3.5 py-2 text-[13px] font-semibold text-[#7f1420]">
+            <button onClick={() => setOpen(queue[0])} className="justify-self-start rounded-[5px] bg-white px-3.5 py-2 text-[13px] font-semibold text-[#7f1420] active:scale-[0.98] max-md:h-12 max-md:w-full max-md:text-[15px]">
               Start reviewing →
             </button>
           )}
@@ -55,7 +59,7 @@ export function Portal({ slug, clientName, firstName, data, testing, live, demo 
         {queue.length > 1 && (
           <section className="grid gap-2">
             {queue.map((i) => (
-              <button key={i.id} onClick={() => setOpen(i)} className="flex items-center gap-2.5 rounded-[8px] border border-line bg-surface p-2.5 text-left hover:border-faint">
+              <button key={i.id} onClick={() => setOpen(i)} className="flex items-center gap-2.5 rounded-[8px] border border-line bg-surface p-2.5 text-left hover:border-faint active:bg-surface-2">
                 <Thumb url={cover(i)} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13px] font-medium">{i.title}</span>
@@ -79,7 +83,7 @@ export function Portal({ slug, clientName, firstName, data, testing, live, demo 
           {data.running.ads.length ? (
             <div className="grid grid-cols-3 gap-2">
               {data.running.ads.map((a) => (
-                <button key={a.id} onClick={() => setLiveAd(a)} className="relative aspect-[4/5] overflow-hidden rounded-[8px] bg-surface-2 text-left transition-transform hover:scale-[1.02]" title={a.headline ?? a.name}>
+                <button key={a.id} onClick={() => setLiveAd(a)} className="relative aspect-[4/5] overflow-hidden rounded-[8px] bg-surface-2 text-left transition-transform hover:scale-[1.02] active:scale-[0.97]" title={a.headline ?? a.name}>
                   {a.thumbnail ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={a.thumbnail} alt={a.headline ?? a.name} className="absolute inset-0 h-full w-full object-cover" />
@@ -159,7 +163,7 @@ function Rows({ title, pill, tone, rows, empty, onOpen }: { title: string; pill:
       </div>
       {rows.length ? (
         rows.map((r) => (
-          <button key={r.id} onClick={() => onOpen?.(r.item)} className="flex items-center gap-2.5 rounded-[8px] border border-line bg-surface p-2.5 text-left transition-colors hover:border-faint">
+          <button key={r.id} onClick={() => onOpen?.(r.item)} className="flex items-center gap-2.5 rounded-[8px] border border-line bg-surface p-2.5 text-left transition-colors hover:border-faint active:bg-surface-2">
             <Thumb url={r.thumbUrl} />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[13px] font-medium">{r.title}</span>
@@ -277,7 +281,7 @@ function Session({ slug, clientName, item, demo, next, onSent, onNext, onClose }
       <div className="relative flex h-full w-full flex-col overflow-hidden bg-bg sm:h-[min(880px,100%)] sm:max-w-[430px] sm:rounded-[28px] sm:border sm:border-line sm:shadow-[0_20px_60px_rgba(0,0,0,0.55)]">
         {/* Top: close or back, progress, preview */}
         <div className="flex items-center gap-2 px-3 pb-2 pt-[max(12px,env(safe-area-inset-top))]">
-          <button onClick={sent ? onClose : at > 0 ? () => go(at - 1) : onClose} aria-label={at > 0 && !sent ? "Back" : "Close"} className="grid h-8 w-8 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg">
+          <button onClick={sent ? onClose : at > 0 ? () => go(at - 1) : onClose} aria-label={at > 0 && !sent ? "Back" : "Close"} className="grid h-8 w-8 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg active:bg-surface-2 max-md:-ml-1 max-md:h-11 max-md:w-11 max-md:text-lg">
             {at > 0 && !sent ? "←" : "✕"}
           </button>
           <div className="flex flex-1 gap-[3px]">
@@ -286,12 +290,12 @@ function Session({ slug, clientName, item, demo, next, onSent, onNext, onClose }
             ))}
           </div>
           {!sent && seenRecap && at !== recapAt && (
-            <button onClick={() => go(recapAt)} className="rounded-full bg-brand px-2.5 py-1 text-[11.5px] font-medium text-white">
+            <button onClick={() => go(recapAt)} className={`rounded-full bg-brand px-2.5 py-1 text-[11.5px] font-medium text-white max-md:py-1.5 max-md:text-[12.5px] ${HIT}`}>
               Back to review
             </button>
           )}
           {!sent && (
-            <button onClick={() => setPreview(true)} className="flex items-center gap-1 rounded-full border border-line px-2.5 py-1 text-[11.5px] text-muted hover:text-fg">
+            <button onClick={() => setPreview(true)} className={`flex items-center gap-1 rounded-full border border-line px-2.5 py-1 text-[11.5px] text-muted hover:text-fg max-md:py-1.5 max-md:text-[12.5px] ${HIT}`}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3.5 w-3.5" aria-hidden>
                 <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12zm10 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" />
               </svg>
@@ -313,11 +317,11 @@ function Session({ slug, clientName, item, demo, next, onSent, onNext, onClose }
                     : `We're working on the ${changes} change${changes === 1 ? "" : "s"} you asked for and will send ${changes === 1 ? "it" : "them"} back to you.`}
               </p>
               {next ? (
-                <button onClick={() => onNext(next)} className="mt-3 rounded-[5px] bg-brand px-4 py-2 text-sm font-medium text-white">
+                <button onClick={() => onNext(next)} className="mt-3 rounded-[5px] bg-brand px-4 py-2 text-sm font-medium text-white max-md:min-h-12 max-md:px-5 max-md:text-[15px]">
                   Next: {next.title} →
                 </button>
               ) : (
-                <button onClick={onClose} className="mt-3 rounded-[5px] bg-brand px-4 py-2 text-sm font-medium text-white">
+                <button onClick={onClose} className="mt-3 rounded-[5px] bg-brand px-4 py-2 text-sm font-medium text-white max-md:min-h-12 max-md:px-5 max-md:text-[15px]">
                   Back to home
                 </button>
               )}
@@ -374,7 +378,7 @@ function Session({ slug, clientName, item, demo, next, onSent, onNext, onClose }
             {designs.map((d, i) => {
               const c = dChoice[d.id];
               return (
-                <button key={d.id} onClick={() => go(1 + i)} className="flex items-center gap-2.5 rounded-[8px] border border-line bg-surface p-2.5 text-left">
+                <button key={d.id} onClick={() => go(1 + i)} className="flex items-center gap-2.5 rounded-[8px] border border-line bg-surface p-2.5 text-left active:bg-surface-2">
                   <Thumb url={d.files[0]?.thumbUrl ?? (d.files[0] && !isVideo(d.files[0]) ? d.files[0].url : null)} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[13px] font-medium">
@@ -389,7 +393,7 @@ function Session({ slug, clientName, item, demo, next, onSent, onNext, onClose }
             {adIdx.map((ai, i) => {
               const c = aChoice[ai];
               return (
-                <button key={ai} onClick={() => go(1 + designs.length + i)} className="flex items-center gap-2.5 rounded-[8px] border border-line bg-surface p-2.5 text-left">
+                <button key={ai} onClick={() => go(1 + designs.length + i)} className="flex items-center gap-2.5 rounded-[8px] border border-line bg-surface p-2.5 text-left active:bg-surface-2">
                   <span className="grid h-11 w-11 shrink-0 place-items-center rounded-[6px] bg-surface-2 text-[11px] font-semibold text-muted">Aa</span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[13px] font-medium">Copy {i + 1}</span>
@@ -402,10 +406,12 @@ function Session({ slug, clientName, item, demo, next, onSent, onNext, onClose }
             {changes > 0 && approvals > 0 && (
               <p className="rounded-[8px] bg-surface px-3 py-2 text-[11.5px] text-muted">What you approve can go live first, while we work on the rest. Approved pieces won&apos;t be changed.</p>
             )}
-            {error && <p className="text-xs text-bad">{error}</p>}
-            <button disabled={busy || !allDecided} onClick={send} className="h-11 rounded-[5px] bg-brand text-sm font-medium text-white disabled:opacity-40">
-              {busy ? "Sending…" : allDecided ? "Send to Kaizen" : "Decide on every piece first"}
-            </button>
+            <div className="grid gap-3 max-md:sticky max-md:bottom-0 max-md:-mx-4 max-md:bg-gradient-to-t max-md:from-bg max-md:from-75% max-md:to-transparent max-md:px-4 max-md:pt-4">
+              {error && <p className="text-xs text-bad">{error}</p>}
+              <button disabled={busy || !allDecided} onClick={send} className="h-11 rounded-[5px] bg-brand text-sm font-medium text-white disabled:opacity-40 max-md:h-12 max-md:text-[15px]">
+                {busy ? "Sending…" : allDecided ? "Send to Kaizen" : "Decide on every piece first"}
+              </button>
+            </div>
           </div>
         )}
 
@@ -469,7 +475,7 @@ function Intro({ item, designs, ads, onStart }: { item: PortalItem; designs: num
       )}
 
       {item.revised && (
-        <button onClick={() => setAbout(!about)} className="flex items-center justify-between rounded-[10px] border border-line bg-surface px-3.5 py-2.5 text-left text-[12.5px]">
+        <button onClick={() => setAbout(!about)} className="flex items-center justify-between gap-2 rounded-[10px] border border-line bg-surface px-3.5 py-2.5 text-left text-[12.5px] max-md:min-h-12">
           <span className="text-muted">About these ads: why, who it&apos;s for, the strategy</span>
           <span className="text-faint">{about ? "▴" : "▾"}</span>
         </button>
@@ -486,7 +492,7 @@ function Intro({ item, designs, ads, onStart }: { item: PortalItem; designs: num
             ).map(([k, v]) => (
               <div key={k} className="grid gap-1 rounded-[10px] border border-line bg-surface p-3.5">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-faint">{k}</p>
-                <p className="text-[13.5px] leading-relaxed">{v}</p>
+                <p className="text-[13.5px] leading-relaxed [overflow-wrap:anywhere]">{v}</p>
               </div>
             ))}
           </div>
@@ -494,8 +500,8 @@ function Intro({ item, designs, ads, onStart }: { item: PortalItem; designs: num
           <p className="rounded-[10px] border border-line bg-surface p-3.5 text-[13px] text-muted">Your Kaizen team made these ads for you. Look at each design and each copy, and approve it or tell us what to change.</p>
         ))}
       {item.landingUrl && (
-        <a href={item.landingUrl} target="_blank" rel="noreferrer" className="flex items-center justify-between gap-2 rounded-[10px] border border-line bg-surface px-3.5 py-2.5 text-[12.5px]">
-          <span className="text-muted">Where the ads send people</span>
+        <a href={item.landingUrl} target="_blank" rel="noreferrer" className="flex items-center justify-between gap-2 rounded-[10px] border border-line bg-surface px-3.5 py-2.5 text-[12.5px] max-md:min-h-12">
+          <span className="shrink-0 text-muted">Where the ads send people</span>
           <span className="truncate text-brand-text">{host(item.landingUrl)} ↗</span>
         </a>
       )}
@@ -505,7 +511,7 @@ function Intro({ item, designs, ads, onStart }: { item: PortalItem; designs: num
           {designs && ads ? " and " : ""}
           {ads ? `${ads} cop${ads === 1 ? "y" : "ies"}` : ""}, one at a time.
         </p>
-        <button onClick={onStart} className="h-11 rounded-[5px] bg-brand text-sm font-medium text-white">
+        <button onClick={onStart} className="h-11 rounded-[5px] bg-brand text-sm font-medium text-white active:brightness-110 max-md:h-12 max-md:text-[15px]">
           {item.revised ? "See the changes →" : "Start →"}
         </button>
       </div>
@@ -562,14 +568,17 @@ function Decide({ onApprove, onChanges }: { onApprove: () => void; onChanges: ()
   return (
     <>
       <div className="flex items-center justify-center gap-[18px] pb-1 pt-3">
-        <button onClick={onChanges} aria-label="Ask for changes" className="grid h-[54px] w-[54px] place-items-center rounded-full border border-line bg-surface text-[20px] font-semibold text-warn">
+        <button onClick={onChanges} aria-label="Ask for changes" className="grid h-[54px] w-[54px] place-items-center rounded-full border border-line bg-surface text-[20px] font-semibold text-warn transition-transform active:scale-90">
           ✎
         </button>
-        <button onClick={onApprove} aria-label="Approve" className="grid h-[62px] w-[62px] place-items-center rounded-full bg-ok text-[24px] font-semibold text-white shadow-[0_10px_30px_-10px_rgba(63,178,127,0.9)]">
+        <button onClick={onApprove} aria-label="Approve" className="grid h-[62px] w-[62px] place-items-center rounded-full bg-ok text-[24px] font-semibold text-white shadow-[0_10px_30px_-10px_rgba(63,178,127,0.9)] transition-transform active:scale-90">
           ✓
         </button>
       </div>
-      <p className="pb-[max(10px,env(safe-area-inset-bottom))] text-center text-[10.5px] text-faint">← changes · → approve</p>
+      <p className="pb-[max(10px,env(safe-area-inset-bottom))] text-center text-[10.5px] text-faint">
+        <span className="md:hidden">Swipe left for changes · right to approve</span>
+        <span className="max-md:hidden">← changes · → approve</span>
+      </p>
     </>
   );
 }
@@ -582,7 +591,7 @@ function Toggle({ before, onChange, now, then }: { before: boolean; onChange: (b
         [false, now],
         [true, then],
       ].map(([b, label]) => (
-        <button key={String(b)} onClick={() => onChange(b as boolean)} className={`rounded-full px-2.5 py-1 ${before === b ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
+        <button key={String(b)} onClick={() => onChange(b as boolean)} className={`rounded-full px-2.5 py-1 max-md:px-3 max-md:py-1.5 max-md:text-[12px] ${HIT} ${before === b ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
           {label as string}
         </button>
       ))}
@@ -597,13 +606,13 @@ function YouAsked({ notes, onShow }: { notes: { body: string; where?: string; ch
       <div className="flex items-center justify-between gap-2">
         <p className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-brand-text">What you asked · what we changed</p>
         {onShow && (
-          <button onClick={onShow} className="shrink-0 text-[11px] text-muted underline-offset-2 hover:text-fg hover:underline">
+          <button onClick={onShow} className={`shrink-0 text-[11px] text-muted underline-offset-2 hover:text-fg hover:underline max-md:text-[12px] max-md:underline ${HIT}`}>
             See the old version
           </button>
         )}
       </div>
       {notes.map((n, i) => (
-        <div key={i} className="grid gap-1 text-[12.5px] leading-snug">
+        <div key={i} className="grid gap-1 text-[12.5px] leading-snug [overflow-wrap:anywhere]">
           <p className="text-muted">
             You asked: {n.body}
             {n.where && <span className="text-[11px] text-faint"> · {n.where}</span>}
@@ -671,7 +680,7 @@ function DesignStep({ item, step, choice, onApprove, onChanges, onMark }: { item
         {d.files.length > 1 && (
           <div className="flex flex-wrap justify-center gap-1.5 px-3 py-2.5">
             {d.files.map((f, i) => (
-              <button key={f.id} aria-pressed={i === fi} onClick={() => setFi(i)} className={`rounded-full border px-2.5 py-0.5 text-[10.5px] ${i === fi ? "border-fg bg-fg text-bg" : "border-line text-muted"}`}>
+              <button key={f.id} aria-pressed={i === fi} onClick={() => setFi(i)} className={`rounded-full border px-2.5 py-0.5 text-[10.5px] ${CHIP} ${i === fi ? "border-fg bg-fg text-bg" : "border-line text-muted"}`}>
                 {item.format === "carousel" ? `Card ${i + 1}` : sizeLabel(f.aspect)}
               </button>
             ))}
@@ -738,16 +747,16 @@ function CopyStep({
           )}
           {showBefore && <p className="mb-2 inline-block rounded-full bg-surface-3 px-2.5 py-0.5 text-[11px] text-muted">Before · what you commented on</p>}
           <p className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-faint">Primary text</p>
-          <p className="whitespace-pre-wrap text-[13.5px] leading-[1.55]">{ad.primaryText}</p>
+          <p className="whitespace-pre-wrap text-[13.5px] leading-[1.55] [overflow-wrap:anywhere] max-md:text-[15px]">{ad.primaryText}</p>
           <div className="mt-4 grid gap-3 border-t border-line pt-3.5">
             <div>
               <p className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-faint">Headline</p>
-              <p className="text-[14px] font-semibold">{ad.headline}</p>
+              <p className="text-[14px] font-semibold [overflow-wrap:anywhere]">{ad.headline}</p>
             </div>
             {ad.linkDescription && (
               <div>
                 <p className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-faint">Link description</p>
-                <p className="text-[13px]">{ad.linkDescription}</p>
+                <p className="text-[13px] [overflow-wrap:anywhere]">{ad.linkDescription}</p>
               </div>
             )}
             <div>
@@ -769,10 +778,10 @@ function CopyStep({
           />
           <p className="text-[11px] text-muted">We change only what you ask. If you&apos;d like it rewritten from scratch, just say so.</p>
           <div className="flex gap-2">
-            <button onClick={onCancel} className="h-10 rounded-[5px] px-3 text-sm text-muted">
+            <button onClick={onCancel} className="h-10 rounded-[5px] px-3 text-sm text-muted max-md:h-12 max-md:px-4">
               Cancel
             </button>
-            <button disabled={!note.trim()} onClick={() => onSave(note.trim())} className="h-10 flex-1 rounded-[5px] bg-brand text-sm font-medium text-white disabled:opacity-40">
+            <button disabled={!note.trim()} onClick={() => onSave(note.trim())} className="h-10 flex-1 rounded-[5px] bg-brand text-sm font-medium text-white disabled:opacity-40 max-md:h-12 max-md:text-[15px]">
               Save and continue
             </button>
           </div>
@@ -843,12 +852,12 @@ function Marker({ n, x, y, w, h, live = false }: { n?: number; x: number; y: num
   if (w != null && h != null)
     return (
       <span className={`pointer-events-none absolute z-[4] rounded-[4px] border-2 border-brand bg-brand/20 shadow-[0_0_0_1.5px_rgba(255,255,255,0.85)] ${live ? "border-dashed" : ""}`} style={{ left: `${x * 100}%`, top: `${y * 100}%`, width: `${w * 100}%`, height: `${h * 100}%` }}>
-        {n != null && <span className="absolute -left-[11px] -top-[11px] grid h-[22px] w-[22px] place-items-center rounded-full border-2 border-white bg-brand text-[11px] font-bold text-white shadow-[0_4px_12px_rgba(0,0,0,0.5)]">{n}</span>}
+        {n != null && <span className="absolute -left-[11px] -top-[11px] grid h-[22px] w-[22px] place-items-center rounded-full border-2 border-white bg-brand text-[11px] font-bold text-white shadow-[0_4px_12px_rgba(0,0,0,0.5)] max-md:-left-[13px] max-md:-top-[13px] max-md:h-[26px] max-md:w-[26px] max-md:text-[12px]">{n}</span>}
       </span>
     );
   return (
     <span
-      className={`pointer-events-none absolute z-[4] -ml-[12px] -mt-[12px] grid h-[24px] w-[24px] place-items-center rounded-full border-2 border-white bg-brand text-[11px] font-bold text-white shadow-[0_4px_12px_rgba(0,0,0,0.5)] ${live ? "animate-pulse" : ""}`}
+      className={`pointer-events-none absolute z-[4] -ml-[12px] -mt-[12px] grid h-[24px] w-[24px] place-items-center rounded-full border-2 border-white bg-brand text-[11px] font-bold text-white shadow-[0_4px_12px_rgba(0,0,0,0.5)] max-md:-ml-[14px] max-md:-mt-[14px] max-md:h-[28px] max-md:w-[28px] max-md:text-[12.5px] ${live ? "animate-pulse" : ""}`}
       style={{ left: `${x * 100}%`, top: `${y * 100}%` }}
     >
       {n}
@@ -908,18 +917,18 @@ function MarkDesign({ item, design, start, initial, onCancel, onSave }: { item: 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center justify-between gap-2 px-4 pb-2">
-        <div>
+        <div className="min-w-0">
           <p className="text-[15px] font-semibold">Mark what to change</p>
           <p className="text-[11.5px] text-muted">{isVideo(file) ? "Pause where an edit is needed, then comment at that moment." : "Tap a spot, or press and drag to box an area."}</p>
         </div>
-        <button onClick={onCancel} className="text-xs text-muted hover:text-fg">
+        <button onClick={onCancel} className="shrink-0 text-xs text-muted hover:text-fg max-md:-mr-2 max-md:h-11 max-md:px-2 max-md:text-[13px]">
           Cancel
         </button>
       </div>
       {design.files.length > 1 && (
         <div className="flex flex-wrap gap-1.5 px-4 pb-2">
           {design.files.map((f, i) => (
-            <button key={f.id} onClick={() => (setFi(i), setDraft(null))} className={`rounded-full border px-2.5 py-0.5 text-[10.5px] ${i === fi ? "border-fg bg-fg text-bg" : "border-line text-muted"}`}>
+            <button key={f.id} onClick={() => (setFi(i), setDraft(null))} className={`rounded-full border px-2.5 py-0.5 text-[10.5px] ${CHIP} ${i === fi ? "border-fg bg-fg text-bg" : "border-line text-muted"}`}>
               {item.format === "carousel" ? `Card ${i + 1}` : sizeLabel(f.aspect)}
             </button>
           ))}
@@ -939,7 +948,7 @@ function MarkDesign({ item, design, start, initial, onCancel, onSave }: { item: 
               video.current?.pause();
               setDraft({ x: null, y: null, w: null, h: null, tMs: at });
             }}
-            className="h-9 rounded-[8px] border border-brand/60 text-[12.5px] text-brand-text"
+            className="h-9 rounded-[8px] border border-brand/60 text-[12.5px] text-brand-text active:bg-brand-soft max-md:h-12 max-md:text-[14px]"
           >
             Comment at {clock(at)}
           </button>
@@ -954,12 +963,13 @@ function MarkDesign({ item, design, start, initial, onCancel, onSave }: { item: 
                 onChange={(e) => setText(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && add()}
                 placeholder={draft.w != null ? "e.g. Make this whole section less busy" : "e.g. Make the logo bigger"}
-                className="h-9 min-w-0 flex-1 rounded-[6px] border border-line bg-surface px-2.5 text-[13px] outline-none focus:border-brand-text/60"
+                enterKeyHint="done"
+                className="h-9 min-w-0 flex-1 rounded-[6px] border border-line bg-surface px-2.5 text-[13px] outline-none focus:border-brand-text/60 max-md:h-11"
               />
-              <button onClick={add} disabled={!text.trim()} className="rounded-[6px] bg-brand px-3 text-[12.5px] font-medium text-white disabled:opacity-40">
+              <button onClick={add} disabled={!text.trim()} className="rounded-[6px] bg-brand px-3 text-[12.5px] font-medium text-white disabled:opacity-40 max-md:px-4 max-md:text-[14px]">
                 Add
               </button>
-              <button onClick={() => (setDraft(null), setText(""))} className="px-1 text-xs text-muted">
+              <button onClick={() => (setDraft(null), setText(""))} aria-label="Discard this note" className="px-1 text-xs text-muted max-md:-mr-1 max-md:w-9 max-md:text-[14px]">
                 ✕
               </button>
             </div>
@@ -972,9 +982,9 @@ function MarkDesign({ item, design, start, initial, onCancel, onSave }: { item: 
                 <span className={`grid h-5 w-5 shrink-0 place-items-center bg-brand text-[10px] font-bold text-white ${p.w != null ? "rounded-[4px]" : "rounded-full"}`}>{p.n}</span>
                 <span className="min-w-0 flex-1">
                   {(p.tMs != null || p.w != null) && <span className="block text-[10.5px] text-faint">{p.tMs != null ? `at ${clock(p.tMs)}` : "area"}</span>}
-                  {p.body}
+                  <span className="[overflow-wrap:anywhere]">{p.body}</span>
                 </span>
-                <button onClick={() => setPins(pins.filter((x) => x.n !== p.n))} aria-label="Remove" className="text-xs text-faint hover:text-fg">
+                <button onClick={() => setPins(pins.filter((x) => x.n !== p.n))} aria-label="Remove" className={`text-xs text-faint hover:text-fg max-md:-my-1 max-md:px-1.5 max-md:text-[14px] ${HIT}`}>
                   ✕
                 </button>
               </li>
@@ -987,7 +997,7 @@ function MarkDesign({ item, design, start, initial, onCancel, onSave }: { item: 
           placeholder={`Anything else about this ${item.format === "video" ? "video" : "design"}? (optional)`}
           className="min-h-[56px] w-full resize-none rounded-[8px] border border-line bg-surface p-2.5 text-[13px] outline-none placeholder:text-faint focus:border-brand-text/60"
         />
-        <button disabled={!pins.length && !note.trim()} onClick={() => onSave(pins, note.trim())} className="h-10 rounded-[5px] bg-brand text-sm font-medium text-white disabled:opacity-40">
+        <button disabled={!pins.length && !note.trim()} onClick={() => onSave(pins, note.trim())} className="h-10 shrink-0 rounded-[5px] bg-brand text-sm font-medium text-white disabled:opacity-40 max-md:h-12 max-md:text-[15px]">
           Save and continue
         </button>
       </div>
@@ -1013,7 +1023,7 @@ function Preview({ item, clientName, onClose, title = "Preview" }: { item: Porta
     <div className="absolute inset-0 z-40 flex flex-col bg-bg animate-[step-in_.2s_ease-out]">
       <div className="flex items-center justify-between gap-2 px-4 pb-2 pt-[max(12px,env(safe-area-inset-top))]">
         <p className="min-w-0 truncate text-[15px] font-semibold">{title}</p>
-        <button onClick={onClose} className="shrink-0 rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg">
+        <button onClick={onClose} className={`shrink-0 rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg max-md:px-4 max-md:py-1.5 max-md:text-[13px] ${HIT}`}>
           Done
         </button>
       </div>
@@ -1023,7 +1033,7 @@ function Preview({ item, clientName, onClose, title = "Preview" }: { item: Porta
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="w-12 text-[11px] text-faint">{item.format === "carousel" ? "Card" : "Size"}</span>
             {design.files.map((f, i) => (
-              <button key={f.id} onClick={() => setFi(i)} className={`rounded-full border px-2.5 py-0.5 text-[10.5px] ${i === fi ? "border-fg bg-fg text-bg" : "border-line text-muted"}`}>
+              <button key={f.id} onClick={() => setFi(i)} className={`rounded-full border px-2.5 py-0.5 text-[10.5px] ${CHIP} ${i === fi ? "border-fg bg-fg text-bg" : "border-line text-muted"}`}>
                 {item.format === "carousel" ? i + 1 : sizeLabel(f.aspect)}
               </button>
             ))}
@@ -1088,7 +1098,7 @@ function Picker({ label, count, value, onChange }: { label: string; count: numbe
     <div className="flex flex-wrap items-center gap-1.5">
       <span className="w-12 text-[11px] text-faint">{label}</span>
       {Array.from({ length: count }, (_, i) => (
-        <button key={i} onClick={() => onChange(i)} className={`rounded-full border px-2.5 py-0.5 text-[10.5px] ${i === value ? "border-brand-text bg-brand-soft text-fg" : "border-line text-muted"}`}>
+        <button key={i} onClick={() => onChange(i)} className={`rounded-full border px-2.5 py-0.5 text-[10.5px] ${CHIP} ${i === value ? "border-brand-text bg-brand-soft text-fg" : "border-line text-muted"}`}>
           {i + 1}
         </button>
       ))}
@@ -1126,7 +1136,7 @@ function LivePreview({ ad, clientName, onClose }: { ad: RunningAd; clientName: s
           <i className="h-2 w-2 rounded-full bg-[#3fb27f]" />
           Live now
         </p>
-        <button onClick={onClose} className="rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg">
+        <button onClick={onClose} className={`rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg max-md:px-4 max-md:py-1.5 max-md:text-[13px] ${HIT}`}>
           Done
         </button>
       </div>

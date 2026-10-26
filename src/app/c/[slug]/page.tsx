@@ -36,12 +36,12 @@ export default async function ClientHome({ params }: PageProps<"/c/[slug]">) {
           <BrandSwitcher current={{ name: client.name, slug: client.slug }} brands={brands} />
           <span className="flex shrink-0 items-center gap-3">
             {viewer.kind === "staff" ? (
-              <Link href={`/clients/${client.slug}`} className="text-xs text-muted hover:text-fg">
+              <Link href={`/clients/${client.slug}`} className="text-xs text-muted hover:text-fg max-md:inline-flex max-md:min-h-11 max-md:items-center">
                 Back to the client
               </Link>
             ) : (
               <form action="/auth/signout" method="post">
-                <button className="text-xs text-muted hover:text-fg">Sign out</button>
+                <button className="text-xs text-muted hover:text-fg max-md:min-h-11">Sign out</button>
               </form>
             )}
             <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[11px] text-muted">Kaizen</span>

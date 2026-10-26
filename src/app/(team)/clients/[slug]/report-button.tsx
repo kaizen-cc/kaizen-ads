@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { createPortal } from "react-dom";
 import { reportForRange } from "../../reports/actions";
 
 // A recap on demand, from the client page: when a client asks where things stand. The same report as the weekly and
@@ -54,100 +55,104 @@ export function ReportButton({ accounts: all, today, label = "Get a report", pri
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className={primary ? "inline-flex h-10 items-center gap-2 rounded-full bg-brand px-5 text-sm font-medium text-white shadow-[0_10px_30px_-12px_rgba(200,16,46,0.9)] hover:brightness-110" : "inline-flex h-9 items-center gap-2 rounded-full border border-line bg-surface px-4 text-sm text-muted transition-colors hover:border-faint hover:text-fg"}
+        className={primary ? "inline-flex h-10 items-center gap-2 rounded-full bg-brand px-5 text-sm font-medium text-white shadow-[0_10px_30px_-12px_rgba(200,16,46,0.9)] hover:brightness-110 max-md:h-11 max-md:flex-1 max-md:justify-center" : "inline-flex h-9 items-center gap-2 rounded-full border border-line bg-surface px-4 text-sm text-muted transition-colors hover:border-faint hover:text-fg max-md:h-11"}
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <path d="M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h4" />
         </svg>
         {label}
       </button>
-      {open && (
-        <div className="fixed inset-0 z-[80] grid place-items-center bg-black/60 p-4 backdrop-blur-sm" onClick={() => setOpen(false)}>
-          <div className="grid w-full max-w-md gap-5 rounded-[22px] border border-line bg-surface p-6 shadow-[0_40px_100px_-30px_rgba(0,0,0,0.9)]" onClick={(e) => e.stopPropagation()}>
-            <div className="grid gap-1">
-              <h2 className="font-heading text-xl">A recap for the client</h2>
-              <p className="text-sm text-muted">The same report as the weekly and monthly ones, for the dates you pick: drafted in the buyer&apos;s voice, checked by the QA, with its PDF. You review it before it goes anywhere.</p>
-            </div>
-            {clients.length > 0 && (
-              <ClientSearch
-                clients={clients}
-                all={all}
-                value={client}
-                onPick={(c) => {
-                  setClient(c);
-                  setPicked(all.filter((a) => a.client === c).map((a) => a.id));
-                }}
-              />
-            )}
-            {accounts.length > 1 && (
-              <div className="grid gap-2">
-                <p className="text-[11px] uppercase tracking-[0.14em] text-faint">Accounts</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {accounts.map((a) => {
-                    const on = picked.includes(a.id);
-                    return (
-                      <button
-                        key={a.id}
-                        type="button"
-                        aria-pressed={on}
-                        onClick={() => setPicked((p) => (on ? p.filter((x) => x !== a.id) : [...p, a.id]))}
-                        className={`inline-flex h-8 items-center gap-2 rounded-full px-3 text-xs transition-all ${on ? "border border-brand/50 bg-brand/15 text-fg" : "border border-line text-faint hover:text-muted"}`}
-                      >
-                        <span className={`grid h-3.5 w-3.5 place-items-center rounded-full border ${on ? "border-brand bg-brand" : "border-faint"}`}>
-                          {on && (
-                            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                              <path d="M5 12l5 5L19 7" />
-                            </svg>
-                          )}
-                        </span>
-                        {a.label}
-                      </button>
-                    );
-                  })}
-                </div>
+      {open &&
+        // On the body, so on a phone it sits over the app's top bar and tab bar; there it's a bottom sheet
+        createPortal(
+          <div className="fixed inset-0 z-[80] grid place-items-center bg-black/60 p-4 backdrop-blur-sm max-md:place-items-end max-md:p-0 max-md:animate-[sheet-fade_.2s_ease-out]" onClick={() => setOpen(false)}>
+            <div className="grid w-full max-w-md gap-5 rounded-[22px] border border-line bg-surface p-6 shadow-[0_40px_100px_-30px_rgba(0,0,0,0.9)] max-md:max-h-[92dvh] max-md:max-w-none max-md:overflow-y-auto max-md:overscroll-contain max-md:rounded-b-none max-md:border-x-0 max-md:border-b-0 max-md:px-5 max-md:pb-0 max-md:pt-3 max-md:animate-[sheet-up_.25s_ease-out]" onClick={(e) => e.stopPropagation()}>
+              <span className="mx-auto h-1 w-10 rounded-full bg-line md:hidden" aria-hidden />
+              <div className="grid gap-1">
+                <h2 className="font-heading text-xl">A recap for the client</h2>
+                <p className="text-sm text-muted">The same report as the weekly and monthly ones, for the dates you pick: drafted in the buyer&apos;s voice, checked by the QA, with its PDF. You review it before it goes anywhere.</p>
               </div>
-            )}
-            <div className="grid gap-2">
-              <p className="text-[11px] uppercase tracking-[0.14em] text-faint">Dates</p>
-              <div className="flex flex-wrap gap-1.5">
-                {(
-                  [
-                    ["mtd", "Month to date"],
-                    ["7d", "Last 7 days"],
-                    ["last", "Last month"],
-                    ["custom", "Custom"],
-                  ] as const
-                ).map(([k, l]) => (
-                  <button key={k} type="button" onClick={() => setRange(k)} className={`h-8 rounded-full px-3 text-xs transition-colors ${range === k ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
-                    {l}
-                  </button>
-                ))}
-              </div>
-              {range === "custom" && (
-                <div className="grid grid-cols-2 gap-2">
-                  <label className="grid gap-1 text-[11px] text-faint">
-                    From
-                    <input type="date" value={from} max={today} onChange={(e) => setFrom(e.target.value)} className="h-9 rounded-[10px] border border-line bg-bg px-2 text-sm text-fg [color-scheme:dark]" />
-                  </label>
-                  <label className="grid gap-1 text-[11px] text-faint">
-                    To
-                    <input type="date" value={to} max={today} onChange={(e) => setTo(e.target.value)} className="h-9 rounded-[10px] border border-line bg-bg px-2 text-sm text-fg [color-scheme:dark]" />
-                  </label>
+              {clients.length > 0 && (
+                <ClientSearch
+                  clients={clients}
+                  all={all}
+                  value={client}
+                  onPick={(c) => {
+                    setClient(c);
+                    setPicked(all.filter((a) => a.client === c).map((a) => a.id));
+                  }}
+                />
+              )}
+              {accounts.length > 1 && (
+                <div className="grid gap-2">
+                  <p className="text-[11px] uppercase tracking-[0.14em] text-faint">Accounts</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {accounts.map((a) => {
+                      const on = picked.includes(a.id);
+                      return (
+                        <button
+                          key={a.id}
+                          type="button"
+                          aria-pressed={on}
+                          onClick={() => setPicked((p) => (on ? p.filter((x) => x !== a.id) : [...p, a.id]))}
+                          className={`inline-flex h-8 items-center gap-2 rounded-full px-3 text-xs transition-all max-md:h-10 max-md:px-3.5 max-md:text-[13px] ${on ? "border border-brand/50 bg-brand/15 text-fg" : "border border-line text-faint hover:text-muted"}`}
+                        >
+                          <span className={`grid h-3.5 w-3.5 place-items-center rounded-full border ${on ? "border-brand bg-brand" : "border-faint"}`}>
+                            {on && (
+                              <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                                <path d="M5 12l5 5L19 7" />
+                              </svg>
+                            )}
+                          </span>
+                          {a.label}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
+              <div className="grid gap-2">
+                <p className="text-[11px] uppercase tracking-[0.14em] text-faint">Dates</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {(
+                    [
+                      ["mtd", "Month to date"],
+                      ["7d", "Last 7 days"],
+                      ["last", "Last month"],
+                      ["custom", "Custom"],
+                    ] as const
+                  ).map(([k, l]) => (
+                    <button key={k} type="button" onClick={() => setRange(k)} className={`h-8 rounded-full px-3 text-xs transition-colors max-md:h-10 max-md:px-3.5 max-md:text-[13px] ${range === k ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+                {range === "custom" && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="grid gap-1 text-[11px] text-faint">
+                      From
+                      <input type="date" value={from} max={today} onChange={(e) => setFrom(e.target.value)} className="h-9 min-w-0 rounded-[10px] border border-line bg-bg px-2 text-sm text-fg [color-scheme:dark] max-md:h-11" />
+                    </label>
+                    <label className="grid gap-1 text-[11px] text-faint">
+                      To
+                      <input type="date" value={to} max={today} onChange={(e) => setTo(e.target.value)} className="h-9 min-w-0 rounded-[10px] border border-line bg-bg px-2 text-sm text-fg [color-scheme:dark] max-md:h-11" />
+                    </label>
+                  </div>
+                )}
+              </div>
+              {error && <p className="text-sm text-bad">{error}</p>}
+              <div className="flex items-center justify-end gap-2 max-md:sticky max-md:bottom-0 max-md:-mx-5 max-md:border-t max-md:border-line max-md:bg-surface max-md:px-5 max-md:pb-[max(12px,env(safe-area-inset-bottom))] max-md:pt-3">
+                <button type="button" onClick={() => setOpen(false)} className="h-9 px-3 text-sm text-faint hover:text-fg max-md:h-12 max-md:px-4">
+                  Cancel
+                </button>
+                <button type="button" disabled={pending || !picked.length || (range === "custom" && (!from || !to))} onClick={go} className="h-10 rounded-full bg-brand px-5 text-sm font-medium text-white disabled:opacity-50 max-md:h-12 max-md:flex-1 max-md:text-[15px]">
+                  {pending ? "Starting…" : "Draft the recap"}
+                </button>
+              </div>
             </div>
-            {error && <p className="text-sm text-bad">{error}</p>}
-            <div className="flex items-center justify-end gap-2">
-              <button type="button" onClick={() => setOpen(false)} className="h-9 px-3 text-sm text-faint hover:text-fg">
-                Cancel
-              </button>
-              <button type="button" disabled={pending || !picked.length || (range === "custom" && (!from || !to))} onClick={go} className="h-10 rounded-full bg-brand px-5 text-sm font-medium text-white disabled:opacity-50">
-                {pending ? "Starting…" : "Draft the recap"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </>
   );
 }
@@ -228,7 +233,7 @@ function ClientSearch({ clients, all, value, onPick }: { clients: string[]; all:
             <p className="truncate text-sm font-medium text-fg">{value}</p>
             <p className="truncate text-xs text-faint">{platforms(value).join(" · ")}</p>
           </div>
-          <button type="button" onClick={() => setEditing(true)} className="h-8 rounded-full border border-line px-3 text-xs text-muted transition-colors hover:border-faint hover:text-fg">
+          <button type="button" onClick={() => setEditing(true)} className="h-8 shrink-0 rounded-full border border-line px-3 text-xs text-muted transition-colors hover:border-faint hover:text-fg max-md:h-10 max-md:px-4">
             Change
           </button>
         </div>
@@ -275,7 +280,7 @@ function ClientSearch({ clients, all, value, onPick }: { clients: string[]; all:
             className="h-full min-w-0 flex-1 bg-transparent text-sm text-fg outline-none placeholder:text-faint"
           />
           {value && (
-            <button type="button" onClick={() => setEditing(false)} className="text-xs text-faint hover:text-fg">
+            <button type="button" onClick={() => setEditing(false)} className="text-xs text-faint hover:text-fg max-md:-mr-2 max-md:h-11 max-md:px-2">
               Cancel
             </button>
           )}
@@ -296,7 +301,7 @@ function ClientSearch({ clients, all, value, onPick }: { clients: string[]; all:
                   data-i={i}
                   onMouseEnter={() => setActive(i)}
                   onClick={() => pick(c)}
-                  className={`flex w-full items-center gap-3 rounded-[10px] px-2.5 py-2 text-left transition-colors ${i === active ? "bg-white/[0.06]" : ""}`}
+                  className={`flex w-full items-center gap-3 rounded-[10px] px-2.5 py-2 text-left transition-colors max-md:min-h-12 ${i === active ? "bg-white/[0.06]" : ""}`}
                 >
                   <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-[9px] text-[11px] font-medium transition-colors ${i === active ? "bg-brand text-white" : "bg-white/[0.06] text-muted"}`}>{initials(c)}</span>
                   <span className="min-w-0 flex-1">
