@@ -1,5 +1,6 @@
 "use client";
 
+import { inPlatform } from "@/lib/in-platform";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { addMove, answerQuestions, checkNow, closeSprint, setActionStatus, watchSprint } from "../../sprint-actions";
@@ -199,7 +200,7 @@ export function ActionRow({ a, readOnly, writable = null }: { a: SprintAction; r
           {a.why && <p className="text-xs leading-relaxed text-muted">{a.why}</p>}
           {a.impact && <p className="text-xs text-ok">{a.impact}</p>}
           {a.watch && <p className="text-xs text-muted">How the check judges it: {a.watch}</p>}
-          {writable && !readOnly && a.owner !== "creative" && a.owner !== "client" && <GoogleChange platform={writable} from={{ source: "sprint", actionId: a.id }} />}
+          {writable && !readOnly && inPlatform(a, writable) && <GoogleChange platform={writable} from={{ source: "sprint", actionId: a.id }} />}
           {!readOnly && (
             <div className="flex flex-wrap items-center gap-2">
               <input

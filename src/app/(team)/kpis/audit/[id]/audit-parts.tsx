@@ -1,5 +1,6 @@
 "use client";
 
+import { inPlatform } from "@/lib/in-platform";
 import { useRouter } from "next/navigation";
 import { useOptimistic, useState, useTransition } from "react";
 import type { AuditResult } from "@/lib/audit";
@@ -59,7 +60,7 @@ export function ActionCard({ auditId, index, action, area, done, listed, writabl
             </ol>
           )}
           {open && <p className="text-[12px] leading-relaxed text-muted">{action.why}</p>}
-          {writable && !checked && <GoogleChange platform={writable} from={{ source: "audit", auditId, index }} />}
+          {writable && !checked && inPlatform(action, writable) && <GoogleChange platform={writable} from={{ source: "audit", auditId, index }} />}
           <div className="flex flex-wrap items-center justify-between gap-2">
             <button type="button" onClick={() => setOpen(!open)} className="-my-2 py-2 pr-3 text-[11px] text-faint hover:text-fg md:my-0 md:py-0 md:pr-0">
               {open ? "Less" : "Why"}

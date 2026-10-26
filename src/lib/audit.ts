@@ -24,7 +24,7 @@ export type AuditResult = {
   causes: { title: string; area: Area; severity: "high" | "medium" | "low"; confidence: "high" | "medium" | "low"; evidence: string[] }[];
   tracking: string[];
   /** What I'd do if I were you */
-  actions: { title: string; area: Area; owner: "media_buyer" | "creative" | "client" | "strategist"; when: "now" | "this_week" | "next"; steps: string[]; why: string; impact: string; effort: "low" | "medium" | "high" }[];
+  actions: { title: string; area: Area; owner: "media_buyer" | "creative" | "client" | "strategist"; when: "now" | "this_week" | "next"; steps: string[]; why: string; impact: string; effort: "low" | "medium" | "high"; inPlatform?: boolean }[];
   tests: { name: string; hypothesis: string; setup: string; metric: string; success: string; budget: string; duration: string }[];
   creative: { concept: string; angle: string; hook: string; format: string; why: string }[];
   budget: { call: string; moves: string[] };
@@ -62,6 +62,7 @@ const PLAN_SCHEMA = obj({
       why: S,
       impact: S,
       effort: { type: "string", enum: ["low", "medium", "high"] },
+      inPlatform: { type: "boolean" },
     }),
   ),
   tests: list(obj({ name: S, hypothesis: S, setup: S, metric: S, success: S, budget: S, duration: S })),
@@ -94,7 +95,7 @@ const swapBase = (system: string) => system.replace(BASE, GOOGLE_BASE).replace(/
 const PLAN_SYSTEM = `${BASE}
 
 This pass is "Here's what I'd do if I were you" and "what I'd watch out for", built on the findings you're given.
-actions: 5 to 10 concrete moves, most important first, specific enough to do without asking: which campaign or ad set, what to change it to, what to turn off, how much budget to move. owner: media_buyer, creative (the creative team), client (only the client can fix it: offer, site, stock, tracking access) or strategist. when: now (today), this_week or next. steps as short imperative lines. why with the evidence. impact: what it should move and roughly how much. Never vague ("optimize targeting"): name the thing.
+actions: 5 to 10 concrete moves, most important first, specific enough to do without asking: which campaign or ad set, what to change it to, what to turn off, how much budget to move. owner: media_buyer, creative (the creative team), client (only the client can fix it: offer, site, stock, tracking access) or strategist. when: now (today), this_week or next. steps as short imperative lines. why with the evidence. impact: what it should move and roughly how much. Never vague ("optimize targeting"): name the thing. inPlatform: true only when the action includes switching campaigns, ad sets or ads on or off, or changing daily budgets (on Google also target CPA / ROAS and negative keywords): changes Kaizen Ads can make in the ad account for the buyer. false for tracking, reporting, the site, the offer, creative, copy, naming, audiences or anything done outside the ad account.
 tests: 2 to 4 tests: hypothesis, setup in Meta, the metric, what success looks like with a number, a budget and duration that can read out at this account's spend.
 creative: 2 to 4 creative directions only if creative is part of the problem, built from the playbook's proven angles, our Hall of Fame and the Brand Bible (never copy a competitor). Empty otherwise.
 budget: the call on budget and pacing (hold, cut, scale, reallocate) and the specific moves.
