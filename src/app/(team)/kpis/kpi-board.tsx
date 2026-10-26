@@ -205,7 +205,7 @@ function MetricBoxes({ r, ex, onChange }: { r: KpiRow; ex: Explore | null; onCha
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs font-medium uppercase tracking-[0.12em] text-faint">More metrics for this client</p>
         {(adding || !shown.length) && (
-          <button type="button" onClick={() => setAdding(!adding)} className="rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg">
+          <button type="button" onClick={() => setAdding(!adding)} className="rounded-full border border-line px-3 py-2 text-xs text-muted hover:text-fg md:py-1">
             {adding ? "Done" : "+ Add a metric"}
           </button>
         )}
@@ -221,7 +221,7 @@ function MetricBoxes({ r, ex, onChange }: { r: KpiRow; ex: Explore | null; onCha
                   type="button"
                   disabled={pending}
                   onClick={() => save(on ? keys.filter((k) => k !== m.key) : [...keys, m.key])}
-                  className={`rounded-full border px-3 py-1 text-xs transition-colors ${on ? "border-fg/50 bg-fg text-bg" : "border-line text-muted hover:text-fg"}`}
+                  className={`rounded-full border px-3 py-2 text-xs transition-colors md:py-1 ${on ? "border-fg/50 bg-fg text-bg" : "border-line text-muted hover:text-fg"}`}
                 >
                   {on ? "✓ " : "+ "}
                   {m.label}
@@ -233,12 +233,12 @@ function MetricBoxes({ r, ex, onChange }: { r: KpiRow; ex: Explore | null; onCha
         </div>
       )}
       {shown.length > 0 ? (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           {shown.map((m) => {
             const change = m.d30 != null && m.prev30 ? Math.round(((m.d30 - m.prev30) / m.prev30) * 100) : null;
             return (
-              <div key={m.key} className="group relative grid content-start gap-0.5 rounded-[10px] border border-line bg-surface px-4 py-3">
-                <span className="pr-5 text-[11px] text-faint">{m.label} · 14 days</span>
+              <div key={m.key} className="group relative grid min-w-0 content-start gap-0.5 rounded-[10px] border border-line bg-surface px-3 py-3 md:px-4">
+                <span className="pr-7 text-[11px] text-faint md:pr-5">{m.label} · 14 days</span>
                 <span className="tabular text-sm">{fmtMetric(m.d14, m.unit)}</span>
                 <span className="tabular text-[11px] text-faint">
                   7d {fmtMetric(m.d7, m.unit)} · 30d {fmtMetric(m.d30, m.unit)}
@@ -247,7 +247,7 @@ function MetricBoxes({ r, ex, onChange }: { r: KpiRow; ex: Explore | null; onCha
                 <button
                   type="button"
                   onClick={() => save(keys.filter((k) => k !== m.key))}
-                  className="absolute right-2 top-2 rounded-full px-1.5 text-xs text-faint opacity-0 transition-opacity hover:text-fg group-hover:opacity-100 focus:opacity-100"
+                  className="absolute right-0.5 top-0.5 grid h-9 w-9 place-items-center rounded-full text-sm text-faint transition-opacity hover:text-fg focus:opacity-100 md:right-2 md:top-2 md:block md:h-auto md:w-auto md:px-1.5 md:text-xs md:opacity-0 md:group-hover:opacity-100"
                   aria-label={`Remove ${m.label}`}
                 >
                   ×
@@ -278,7 +278,7 @@ function Reported({ ex, conv, custom, onPick, onAddBox, boxes }: { ex: Explore; 
   const list = all ? ex.actions : ex.actions.slice(0, 8);
   return (
     <details className="group rounded-[12px] border border-line bg-surface">
-      <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm">
+      <summary className="flex min-h-[44px] cursor-pointer list-none flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm">
         <span className="font-medium">What this account reports</span>
         <span className="text-xs text-faint">
           {ex.conversions.filter((c) => c.results30 > 0).length} of {ex.conversions.length} result types pulling · last 30 days <span className="group-open:hidden">· open</span>
@@ -295,7 +295,7 @@ function Reported({ ex, conv, custom, onPick, onAddBox, boxes }: { ex: Explore; 
                   key={c.key}
                   type="button"
                   onClick={() => onPick(c.key)}
-                  className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs transition-colors ${on ? "border-fg/50 bg-fg text-bg" : c.results30 > 0 ? "border-line text-fg hover:border-fg/30" : "border-dashed border-line text-faint hover:text-muted"}`}
+                  className={`flex items-center gap-2 rounded-full border px-3 py-2.5 text-xs transition-colors md:py-1.5 ${on ? "border-fg/50 bg-fg text-bg" : c.results30 > 0 ? "border-line text-fg hover:border-fg/30" : "border-dashed border-line text-faint hover:text-muted"}`}
                 >
                   <span className={`h-1.5 w-1.5 rounded-full ${c.results30 > 0 ? "bg-ok" : "bg-faint/40"}`} />
                   {c.label}
@@ -307,7 +307,35 @@ function Reported({ ex, conv, custom, onPick, onAddBox, boxes }: { ex: Explore; 
         </div>
         <div className="grid gap-2">
           <p className="text-[11px] text-faint">Every action Meta reports for this account. Count any of them as the result (as a custom conversion), or add it as a box.</p>
-          <div className="overflow-x-auto rounded-[10px] border border-line">
+          {/* Phones: each action as a card, its two buttons full-width underneath */}
+          <ul className="grid gap-2 md:hidden">
+            {list.map((a) => {
+              const counted = conv === "custom" && custom === a.type;
+              return (
+                <li key={a.type} className={`grid gap-2.5 rounded-[10px] border border-line px-3 py-3 text-xs ${counted ? "bg-surface-2" : ""}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="grid min-w-0 gap-0.5">
+                      <span>{a.label}</span>
+                      <code className="break-all text-[10px] text-faint">{a.type}</code>
+                    </span>
+                    <span className="grid shrink-0 justify-items-end gap-0.5">
+                      <span className="tabular">{a.count30.toLocaleString("en-US")}</span>
+                      {a.value30 ? <span className="tabular text-faint">{money(a.value30)}</span> : null}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button type="button" onClick={() => onPick("custom", a.type)} className={`h-10 rounded-full border px-3 ${counted ? "border-fg/40 text-fg" : "border-line text-muted"}`}>
+                      {counted ? "Counting this" : "Count as result"}
+                    </button>
+                    <button type="button" disabled={boxes.includes(`action:${a.type}`)} onClick={() => onAddBox(`action:${a.type}`)} className="h-10 rounded-full border border-line px-3 text-muted disabled:opacity-40">
+                      + Box
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="hidden overflow-x-auto rounded-[10px] border border-line md:block">
             <table className="w-full min-w-[560px] text-xs">
               <tbody className="divide-y divide-line">
                 {list.map((a) => {
@@ -342,7 +370,7 @@ function Reported({ ex, conv, custom, onPick, onAddBox, boxes }: { ex: Explore; 
             </table>
           </div>
           {ex.actions.length > 8 && (
-            <button type="button" onClick={() => setAll(!all)} className="justify-self-start text-xs text-muted hover:text-fg">
+            <button type="button" onClick={() => setAll(!all)} className="justify-self-start py-2 text-xs text-muted hover:text-fg md:py-0">
               {all ? "Show fewer" : `Show all ${ex.actions.length}`}
             </button>
           )}
@@ -392,7 +420,7 @@ function Note({ label, text, edited }: { label: string; text: string; edited?: {
       </dt>
       <dd className={`whitespace-pre-wrap text-sm leading-relaxed text-muted ${long && !more ? "line-clamp-4" : ""}`}>{text}</dd>
       {long && (
-        <button type="button" onClick={() => setMore((m) => !m)} className="justify-self-start text-xs text-brand-text hover:underline">
+        <button type="button" onClick={() => setMore((m) => !m)} className="justify-self-start py-2 text-xs text-brand-text hover:underline md:py-0">
           {more ? "Show less" : "Read more"}
         </button>
       )}
@@ -426,14 +454,14 @@ function AccountNotes({ r }: { r: KpiRow }) {
       router.refresh();
     });
   return (
-    <section className="grid gap-3 rounded-[16px] border border-line bg-surface p-5">
+    <section className="grid gap-3 rounded-[16px] border border-line bg-surface p-4 md:p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-faint">
+        <p className="min-w-0 text-[10px] font-medium uppercase tracking-[0.16em] text-faint">
           Account notes{s.priority ? ` · ${s.priority} priority` : ""}
           {s.syncedAt && <span className="normal-case tracking-normal"> · from the Account Overview sheet, read {stamp(s.syncedAt)}</span>}
         </p>
         {!editing && (
-          <button type="button" onClick={edit} className="inline-flex h-8 items-center gap-1.5 rounded-full border border-line px-3 text-xs text-muted hover:text-fg" aria-label="Edit the notes">
+          <button type="button" onClick={edit} className="inline-flex h-10 items-center gap-1.5 rounded-full border border-line px-4 text-xs text-muted hover:text-fg md:h-8 md:px-3" aria-label="Edit the notes">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
               <path d="M12 20h9" />
               <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
@@ -446,7 +474,7 @@ function AccountNotes({ r }: { r: KpiRow }) {
         <div className="grid gap-3">
           <label className="grid max-w-xs gap-1 text-[11px] text-faint">
             Priority
-            <select value={draft.priority ?? ""} onChange={(e) => setDraft((d) => ({ ...d, priority: e.target.value }))} className="h-9 rounded-[10px] border border-line bg-bg px-3 text-sm text-fg">
+            <select value={draft.priority ?? ""} onChange={(e) => setDraft((d) => ({ ...d, priority: e.target.value }))} className="h-11 rounded-[10px] border border-line bg-bg px-3 text-sm text-fg md:h-9">
               <option value="">Not set</option>
               {["High", "Medium", "Low"].map((p) => (
                 <option key={p} value={p}>
@@ -464,14 +492,15 @@ function AccountNotes({ r }: { r: KpiRow }) {
             ))}
           </div>
           {error && <p className="text-xs text-bad">{error}</p>}
-          <div className="flex items-center gap-2">
-            <button type="button" onClick={save} disabled={saving} className="h-9 rounded-full bg-fg px-4 text-sm text-bg disabled:opacity-60">
+          {/* On phones Save stays in reach above the tab bar while the six fields scroll */}
+          <div className="sticky bottom-[calc(58px+env(safe-area-inset-bottom))] z-10 -mx-4 -mb-4 flex flex-wrap items-center gap-2 rounded-b-[16px] border-t border-line bg-surface/95 px-4 py-3 backdrop-blur md:static md:z-auto md:mx-0 md:mb-0 md:rounded-none md:border-0 md:bg-transparent md:p-0 md:backdrop-blur-none">
+            <button type="button" onClick={save} disabled={saving} className="h-11 flex-1 rounded-full bg-fg px-4 text-sm text-bg disabled:opacity-60 md:h-9 md:flex-none">
               {saving ? "Saving…" : "Save notes"}
             </button>
-            <button type="button" onClick={() => setEditing(false)} className="h-9 rounded-full border border-line px-4 text-sm text-muted hover:text-fg">
+            <button type="button" onClick={() => setEditing(false)} className="h-11 rounded-full border border-line px-4 text-sm text-muted hover:text-fg md:h-9">
               Cancel
             </button>
-            {s.syncedAt && <span className="text-[11px] text-faint">Your edits hold through the sheet&apos;s syncs unless that cell changes in the sheet.</span>}
+            {s.syncedAt && <span className="hidden text-[11px] text-faint md:inline">Your edits hold through the sheet&apos;s syncs unless that cell changes in the sheet.</span>}
           </div>
         </div>
       ) : filled.length ? (
@@ -490,7 +519,7 @@ function AccountNotes({ r }: { r: KpiRow }) {
 /** The sprint on this account: who's on it, how far, and what the last check said. */
 function SprintStrip({ s }: { s: SprintSummary }) {
   return (
-    <Link href={`/kpis/sprint/${s.id}`} className="group grid gap-2 rounded-[16px] border border-line bg-surface p-5 transition-colors hover:border-faint/70">
+    <Link href={`/kpis/sprint/${s.id}`} className="group grid gap-2 rounded-[16px] border border-line bg-surface p-4 transition-colors hover:border-faint/70 md:p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-faint">Optimization sprint in motion</p>
         <span className="text-xs text-muted group-hover:text-fg">Open the sprint →</span>
@@ -584,7 +613,7 @@ function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
     </>
   );
   return (
-    <div className="grid gap-6 border-t border-line bg-bg/40 px-5 py-6 sm:px-6">
+    <div className="grid gap-5 border-t border-line bg-bg/40 px-4 py-5 sm:px-6 md:gap-6 md:py-6">
       {/* First the audit and the AI to talk the account through with (the same thread as the client page) */}
       <div className="grid gap-3">
         <div className="flex flex-wrap items-center justify-end gap-2">
@@ -595,7 +624,7 @@ function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
             live
             targets={r.accountId ? [{ id: r.id, label: `${r.platform === "google" ? "Google" : "Meta"}${r.label ? ` · ${r.label}` : ""}`, status: r.audit?.status ?? "none", auditId: r.audit?.id ?? null }] : []}
           />
-          <Link href={`/clients/${r.slug}`} className="inline-flex h-9 items-center rounded-full border border-line px-4 text-sm text-muted hover:text-fg">
+          <Link href={`/clients/${r.slug}`} className="inline-flex h-11 items-center rounded-full border border-line px-4 text-sm text-muted hover:text-fg md:h-9">
             Client page →
           </Link>
         </div>
@@ -611,7 +640,7 @@ function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
             {loading ? " · counting…" : ex?.resultType ? <span className="text-muted"> · counted as Meta&apos;s {ex.resultType}</span> : null}
             <span className="text-muted"> · not saved yet</span>
           </span>
-          <button type="button" onClick={reset} className="rounded-full border border-line bg-surface px-3 py-1 text-xs text-muted hover:text-fg">
+          <button type="button" onClick={reset} className="rounded-full border border-line bg-surface px-3 py-2.5 text-xs text-muted hover:text-fg md:py-1">
             Back to the saved view
           </button>
         </div>
@@ -635,9 +664,9 @@ function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
         </div>
       </div>
 
-      <div className={`grid gap-px overflow-hidden rounded-[10px] border border-line bg-line transition-opacity sm:grid-cols-3 lg:grid-cols-6 ${loading && previewing ? "opacity-60" : ""}`}>
+      <div className={`grid gap-px overflow-hidden rounded-[10px] border border-line bg-line transition-opacity grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 ${loading && previewing ? "opacity-60" : ""}`}>
         {win.map(([name, a]) => (
-          <div key={name} className={`grid gap-0.5 bg-surface px-4 py-3 ${name === "14 days" ? "ring-1 ring-inset ring-brand/40" : ""}`}>
+          <div key={name} className={`grid min-w-0 gap-0.5 bg-surface px-3 py-3 md:px-4 ${name === "14 days" ? "ring-1 ring-inset ring-brand/40" : ""}`}>
             <span className="text-[11px] text-faint">
               {name}
               {name === "14 days" && " · sets the status"}
@@ -646,9 +675,9 @@ function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
           </div>
         ))}
       </div>
-      <div className={`grid gap-px overflow-hidden rounded-[10px] border border-line bg-line transition-opacity sm:grid-cols-2 lg:grid-cols-4 ${loading && previewing ? "opacity-60" : ""}`}>
+      <div className={`grid gap-px overflow-hidden rounded-[10px] border border-line bg-line transition-opacity grid-cols-2 lg:grid-cols-4 ${loading && previewing ? "opacity-60" : ""}`}>
         {monthList.map(([name, a]) => (
-          <div key={name} className="grid gap-0.5 bg-surface px-4 py-3">
+          <div key={name} className="grid min-w-0 gap-0.5 bg-surface px-3 py-3 md:px-4">
             <span className="text-[11px] text-faint">{name}</span>
             {cell(a)}
           </div>
@@ -674,8 +703,8 @@ function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
 
       {/* The target's settings, folded away (open while previewing a change to what's counted, so it can be saved) */}
       <details open={previewing || undefined} className="group rounded-[16px] border border-line bg-surface">
-        <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 px-5 py-4">
-          <span className="text-xs font-medium uppercase tracking-[0.12em] text-faint">
+        <summary className="flex cursor-pointer list-none flex-nowrap items-center justify-between gap-3 px-4 py-4 md:flex-wrap md:px-5">
+          <span className="min-w-0 text-xs font-medium uppercase tracking-[0.12em] text-faint">
             Target and budget settings
             <span className="ml-2 normal-case tracking-normal">
               · {kpiValue(r.target, r.roas)} target{r.budget ? ` · ${money(r.budget)} a month` : ""}
@@ -684,10 +713,10 @@ function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
           </span>
           <span className="text-faint transition-transform group-open:rotate-90">›</span>
         </summary>
-        <div className="grid gap-4 border-t border-line px-5 py-5">
+        <div className="grid gap-4 border-t border-line px-4 py-5 md:px-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             {r.sheet ? <p className="text-[11px] text-faint">Buyer, budget and target come from the Account Overview sheet (read at 12pm and 5pm): change them there.</p> : <span />}
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3 md:flex-nowrap">
               {r.accountId && <ActionButton action={pullClientKpis.bind(null, r.clientId)} label={r.platform === "google" ? "Pull from Google now" : "Pull from Meta now"} />}
               <ActionButton action={archiveKpiTarget.bind(null, r.id)} label="Remove" confirmText="Remove this KPI?" />
             </div>
@@ -709,14 +738,14 @@ function Row({ r, open, onToggle, buyers }: { r: KpiRow; open: boolean; onToggle
   const d14 = r.windows.d14;
   const gap = gapText(r);
   return (
-    <li id={`kpi-${r.id}`} className={`scroll-mt-6 overflow-hidden rounded-[14px] border bg-surface transition-colors ${open ? "border-faint/70" : "border-line hover:border-faint/60"}`}>
+    <li id={`kpi-${r.id}`} className={`scroll-mt-20 overflow-hidden rounded-[14px] md:scroll-mt-6 border bg-surface transition-colors ${open ? "border-faint/70" : "border-line hover:border-faint/60"}`}>
       <button
         onClick={onToggle}
         aria-expanded={open}
-        className="grid w-full items-center gap-x-6 gap-y-4 px-5 py-4 text-left sm:px-6 md:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)_172px] xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_172px_minmax(168px,0.8fr)_minmax(0,1fr)]"
+        className="grid w-full grid-cols-2 items-center gap-x-4 gap-y-4 px-4 py-4 text-left sm:px-6 md:gap-x-6 md:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)_172px] xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_172px_minmax(168px,0.8fr)_minmax(0,1fr)]"
       >
         {/* Who and what */}
-        <div className="flex min-w-0 items-center gap-3">
+        <div className="col-span-2 flex min-w-0 items-center gap-3 md:col-span-1">
           <span className="relative flex h-2.5 w-2.5 shrink-0">
             {r.status === "off" && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-bad opacity-40" />}
             <span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${s.dot}`} />
@@ -754,7 +783,7 @@ function Row({ r, open, onToggle, buyers }: { r: KpiRow; open: boolean; onToggle
               </p>
             )}
             {r.lastChange?.at && (
-              <p className="mt-1 truncate text-[11px] text-faint" title={`${r.lastChange.who ?? "Someone"}: ${r.lastChange.what}${r.lastChange.object ? ` · ${r.lastChange.object}` : ""}`}>
+              <p className="mt-1 line-clamp-2 text-[11px] text-faint md:line-clamp-none md:truncate" title={`${r.lastChange.who ?? "Someone"}: ${r.lastChange.what}${r.lastChange.object ? ` · ${r.lastChange.object}` : ""}`}>
                 Last change {sinceText(r.lastChange.at)} ago · {r.lastChange.what}
                 {r.lastChange.who ? ` by ${r.lastChange.who}` : ""}
               </p>
@@ -771,7 +800,7 @@ function Row({ r, open, onToggle, buyers }: { r: KpiRow; open: boolean; onToggle
             </>
           ) : (
             <>
-              <div className="flex items-baseline gap-2">
+              <div className="flex flex-wrap items-baseline gap-x-2 md:flex-nowrap">
                 <span className={`tabular font-heading text-[22px] leading-none ${s.text}`}>{kpiValue(d14?.value, r.roas)}</span>
                 <span className="tabular text-xs text-faint">/ {kpiValue(r.target, r.roas)}</span>
               </div>
@@ -811,10 +840,10 @@ function Row({ r, open, onToggle, buyers }: { r: KpiRow; open: boolean; onToggle
 
 function AddKpi({ clients, buyers, platform, onDone }: { clients: { id: string; name: string }[]; buyers: Person[]; platform: "meta" | "google"; onDone: () => void }) {
   return (
-    <div className="grid gap-4 rounded-[14px] border border-line bg-surface p-5 sm:p-6">
+    <div className="grid gap-4 rounded-[14px] border border-line bg-surface p-4 sm:p-6">
       <div className="flex items-center justify-between">
         <p className="font-heading text-[17px]">New {platform === "google" ? "Google Ads" : "Meta"} KPI</p>
-        <button onClick={onDone} className="text-xs text-muted hover:text-fg">
+        <button onClick={onDone} className="-mr-2 h-10 px-2 text-xs text-muted hover:text-fg md:mr-0 md:h-auto md:px-0">
           Close
         </button>
       </div>
@@ -843,15 +872,15 @@ function AddKpi({ clients, buyers, platform, onDone }: { clients: { id: string; 
 function Unlinked({ accounts, clients }: { accounts: { id: string; name: string }[]; clients: { id: string; name: string }[] }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="rounded-[14px] border border-dashed border-line px-5 py-4">
-      <button onClick={() => setOpen((o) => !o)} className="flex w-full items-center justify-between gap-3 text-left text-sm">
+    <div className="rounded-[14px] border border-dashed border-line px-4 py-2 md:px-5 md:py-4">
+      <button onClick={() => setOpen((o) => !o)} className="flex min-h-[44px] w-full items-center justify-between gap-3 text-left text-sm md:min-h-0">
         <span>
           <span className="tabular font-medium">{accounts.length}</span> ad {accounts.length === 1 ? "account" : "accounts"} shared with us that aren&apos;t linked to a client
         </span>
-        <span className="text-xs text-muted">{open ? "Hide" : "Review"}</span>
+        <span className="shrink-0 text-xs text-muted">{open ? "Hide" : "Review"}</span>
       </button>
       {open && (
-        <ul className="mt-4 grid gap-2">
+        <ul className="mb-2 mt-2 grid gap-2 md:mb-0 md:mt-4">
           {accounts.map((a) => (
             <li key={a.id} className="grid items-center gap-3 rounded-[10px] bg-surface px-4 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
               <span className="min-w-0">
@@ -949,8 +978,8 @@ export function KpiBoard({
             </span>
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="inline-flex rounded-full border border-line bg-surface p-1">
+        <div className="flex w-full items-center gap-2 md:w-auto">
+          <div className="flex flex-1 rounded-full border border-line bg-surface p-1 md:inline-flex md:flex-none">
             {(["meta", "google"] as const).map((p) => (
               <button
                 key={p}
@@ -959,13 +988,13 @@ export function KpiBoard({
                   setOwner("all");
                   setOpen(null);
                 }}
-                className={`h-8 rounded-full px-4 text-sm transition-colors ${platform === p ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}
+                className={`h-10 flex-1 rounded-full px-3 text-sm transition-colors md:h-8 md:flex-none md:px-4 ${platform === p ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}
               >
                 {p === "meta" ? "Meta" : "Google Ads"} <span className="tabular opacity-60">{rows.filter((r) => r.platform === p).length}</span>
               </button>
             ))}
           </div>
-          <button onClick={() => setAdding((a) => !a)} className="h-10 rounded-[8px] bg-brand px-4 text-sm font-medium text-white transition-colors hover:bg-brand-hover">
+          <button onClick={() => setAdding((a) => !a)} className="h-12 shrink-0 rounded-[8px] bg-brand px-4 text-sm font-medium text-white transition-colors hover:bg-brand-hover md:h-10">
             Add KPI
           </button>
         </div>
@@ -978,7 +1007,7 @@ export function KpiBoard({
       )}
 
       {/* Where things stand */}
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[repeat(4,minmax(0,1fr))_minmax(0,1.6fr)]">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-[repeat(4,minmax(0,1fr))_minmax(0,1.6fr)]">
         {TILES.map((t) => {
           const on = status === t;
           const n = count(t);
@@ -986,7 +1015,7 @@ export function KpiBoard({
             <button
               key={t}
               onClick={() => setStatus(on ? "all" : t)}
-              className={`group relative grid gap-1 overflow-hidden rounded-[14px] border p-4 text-left transition-colors ${on ? "border-fg/40 bg-surface" : "border-line bg-surface hover:border-faint/60"}`}
+              className={`group relative grid min-w-0 content-start gap-1 overflow-hidden rounded-[14px] border p-3.5 text-left md:content-normal md:p-4 transition-colors ${on ? "border-fg/40 bg-surface" : "border-line bg-surface hover:border-faint/60"}`}
             >
               <span aria-hidden className={`absolute inset-x-0 top-0 h-0.5 ${STATUS[t].dot}`} />
               <span className="text-xs text-muted">{STATUS[t].label}</span>
@@ -997,8 +1026,8 @@ export function KpiBoard({
             </button>
           );
         })}
-        <div className="grid content-start gap-3 rounded-[14px] border border-line bg-surface p-4 sm:col-span-2 xl:col-span-1">
-          <div className="flex items-baseline justify-between gap-3">
+        <div className="col-span-2 grid content-start gap-3 rounded-[14px] border border-line bg-surface p-4 xl:col-span-1">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 md:flex-nowrap">
             <span className="text-xs text-muted">Spend this month</span>
             <span className="tabular text-xs text-faint">
               lands at <span className="text-fg">{money(Math.round(projected))}</span> of {money(Math.round(budget))}
@@ -1013,7 +1042,7 @@ export function KpiBoard({
                 <button
                   key={p}
                   onClick={() => setPace(pace === p ? "all" : p)}
-                  className={`inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-xs transition-colors ${pace === p ? "bg-fg text-bg" : m.chip}`}
+                  className={`inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-xs transition-colors md:h-7 ${pace === p ? "bg-fg text-bg" : m.chip}`}
                 >
                   <span className="tabular">{n}</span> {m.label.toLowerCase()}
                 </button>
@@ -1029,12 +1058,13 @@ export function KpiBoard({
 
       {/* Filters */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <nav className="flex flex-wrap items-center gap-1.5">
+        {/* Phones: the buyers scroll sideways in one strip instead of stacking rows */}
+        <nav className="no-scrollbar -mx-4 flex w-[calc(100%+2rem)] items-center gap-1.5 overflow-x-auto px-4 md:mx-0 md:w-auto md:flex-wrap md:overflow-visible md:px-0">
           {[["all", "Everyone"] as const, ...(owners.some(([id]) => id === me.id) ? ([[me.id, `Mine`]] as const) : []), ...owners.filter(([id]) => id !== me.id)].map(([id, name]) => (
             <button
               key={id}
               onClick={() => setOwner(id)}
-              className={`inline-flex h-9 items-center rounded-full px-4 text-sm transition-colors ${owner === id ? "bg-fg text-bg" : "text-muted hover:bg-surface-2 hover:text-fg"}`}
+              className={`inline-flex h-10 shrink-0 items-center whitespace-nowrap rounded-full px-4 text-sm transition-colors md:h-9 md:shrink md:whitespace-normal ${owner === id ? "bg-fg text-bg" : "text-muted hover:bg-surface-2 hover:text-fg"}`}
             >
               {name}
             </button>
@@ -1047,7 +1077,7 @@ export function KpiBoard({
           onKeyDown={(e) => e.key === "Escape" && setQ("")}
           placeholder="Search clients"
           aria-label="Search clients"
-          className="h-10 w-64 max-w-full rounded-full border border-line bg-surface px-4 text-sm outline-none transition-colors hover:border-faint/60 focus:border-brand-text/70"
+          className="h-11 w-full max-w-full rounded-full border border-line bg-surface px-4 text-sm outline-none md:h-10 md:w-64 transition-colors hover:border-faint/60 focus:border-brand-text/70"
         />
       </div>
 
@@ -1056,7 +1086,7 @@ export function KpiBoard({
           Showing {shown.length} {status !== "all" && <span className={STATUS[status].text}>{STATUS[status].label.toLowerCase()}</span>}
           {status !== "all" && pace !== "all" && " and "}
           {pace !== "all" && <span>{paceMeta({ status: pace } as Pacing).label.toLowerCase()}</span>}
-          <button onClick={() => (setStatus("all"), setPace("all"))} className="ml-2 text-muted underline-offset-4 hover:text-fg hover:underline">
+          <button onClick={() => (setStatus("all"), setPace("all"))} className="ml-2 py-2 text-muted underline-offset-4 hover:text-fg hover:underline md:py-0">
             Show all
           </button>
         </p>

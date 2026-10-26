@@ -24,7 +24,7 @@ export function ActionCard({ auditId, index, action, area, done, listed, writabl
       router.refresh();
     });
   return (
-    <article className={`grid content-start gap-3 rounded-[16px] border p-5 transition-colors ${checked ? "border-ok/30 bg-ok-soft/40" : "border-line bg-surface"}`}>
+    <article className={`grid min-w-0 content-start gap-3 rounded-[16px] border p-4 transition-colors md:p-5 ${checked ? "border-ok/30 bg-ok-soft/40" : "border-line bg-surface"}`}>
       <div className="grid grid-cols-[22px_minmax(0,1fr)] gap-3">
         <button
           type="button"
@@ -32,7 +32,7 @@ export function ActionCard({ auditId, index, action, area, done, listed, writabl
           aria-checked={checked}
           aria-label={checked ? "Mark as not done" : "Mark as done"}
           onClick={toggle}
-          className={`mt-0.5 grid h-[22px] w-[22px] place-items-center rounded-full border transition-colors ${checked ? "border-ok bg-ok text-bg" : "border-faint hover:border-fg"}`}
+          className={`relative mt-0.5 grid h-[22px] w-[22px] place-items-center rounded-full border transition-colors max-md:after:absolute max-md:after:-inset-3 ${checked ? "border-ok bg-ok text-bg" : "border-faint hover:border-fg"}`}
         >
           {checked && (
             <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -40,7 +40,7 @@ export function ActionCard({ auditId, index, action, area, done, listed, writabl
             </svg>
           )}
         </button>
-        <div className="grid gap-2">
+        <div className="grid min-w-0 gap-2">
           <p className={`font-heading leading-snug ${checked ? "text-muted line-through decoration-faint" : ""}`}>{action.title}</p>
           <div className="flex flex-wrap gap-1.5 text-[11px]">
             <span className="rounded-full bg-bg px-2 py-0.5 text-fg">{OWNER[action.owner] ?? action.owner}</span>
@@ -61,7 +61,7 @@ export function ActionCard({ auditId, index, action, area, done, listed, writabl
           {open && <p className="text-[12px] leading-relaxed text-muted">{action.why}</p>}
           {writable && !checked && <GoogleChange platform={writable} from={{ source: "audit", auditId, index }} />}
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <button type="button" onClick={() => setOpen(!open)} className="text-[11px] text-faint hover:text-fg">
+            <button type="button" onClick={() => setOpen(!open)} className="-my-2 py-2 pr-3 text-[11px] text-faint hover:text-fg md:my-0 md:py-0 md:pr-0">
               {open ? "Less" : "Why"}
             </button>
             {done && checked && (
@@ -83,7 +83,7 @@ export function ActionCard({ auditId, index, action, area, done, listed, writabl
                     router.refresh();
                   })
                 }
-                className="rounded-full border border-line px-2.5 py-0.5 text-[11px] text-muted hover:text-fg disabled:opacity-60"
+                className="rounded-full border border-line px-3 py-2 text-[11px] text-muted hover:text-fg disabled:opacity-60 md:px-2.5 md:py-0.5"
               >
                 {adding ? "Adding…" : "+ Add to my action list"}
               </button>
@@ -100,7 +100,7 @@ export function RerunAudit({ targetId, quiet }: { targetId: string; quiet?: bool
   const [pending, start] = useTransition();
   const [note, setNote] = useState<string | null>(null);
   return (
-    <span className="flex items-center gap-2">
+    <span className="flex flex-wrap items-center gap-2 md:flex-nowrap">
       {note && <span className="text-[11px] text-muted">{note}</span>}
       <button
         type="button"
@@ -113,7 +113,7 @@ export function RerunAudit({ targetId, quiet }: { targetId: string; quiet?: bool
             router.push("/kpis");
           })
         }
-        className={`rounded-full px-3 py-1 text-xs disabled:opacity-60 ${quiet ? "border border-line text-muted hover:text-fg" : "bg-fg px-4 py-2 text-sm text-bg"}`}
+        className={`rounded-full px-3 py-2.5 text-xs disabled:opacity-60 md:py-1 ${quiet ? "border border-line text-muted hover:text-fg" : "bg-fg px-4 py-3 text-sm text-bg md:py-2"}`}
       >
         Run a new audit
       </button>
@@ -127,7 +127,7 @@ export function StartSprint({ auditId }: { auditId: string }) {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   return (
-    <span className="flex items-center gap-2">
+    <span className="flex flex-wrap items-center gap-2 md:flex-nowrap">
       {error && <span className="text-[11px] text-bad">{error}</span>}
       <button
         type="button"
@@ -139,7 +139,7 @@ export function StartSprint({ auditId }: { auditId: string }) {
             router.push(`/kpis/sprint/${r.sprintId}`);
           })
         }
-        className="rounded-full bg-fg px-3 py-1 text-xs text-bg disabled:opacity-60"
+        className="rounded-full bg-fg px-3 py-2.5 text-xs text-bg disabled:opacity-60 md:py-1"
       >
         {pending ? "Starting…" : "Start the sprint"}
       </button>

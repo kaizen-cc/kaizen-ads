@@ -46,10 +46,10 @@ function Line({ op, platform }: { op: PlannedOp; platform: Platform }) {
   return (
     <li className="grid gap-1 rounded-[12px] border border-line bg-bg/50 px-3.5 py-2.5">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <span className="text-sm">{what}</span>
+        <span className="min-w-0 break-words text-sm">{what}</span>
         {state && <span className={`text-[11px] ${tone}`}>{state === "checked" ? `✓ ${P[platform].name} says it'll go through` : state === "applied" ? "✓ Applied" : `× ${state}`}</span>}
       </div>
-      <p className="text-sm">
+      <p className="break-words text-sm">
         {from != null && (
           <>
             <span className="text-faint line-through decoration-faint/60">{from}</span>
@@ -129,12 +129,12 @@ export function GoogleChange({ from, disabled, platform = "google" }: { from: Fr
   if (!open || !c)
     return (
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" disabled={disabled || pending} onClick={plan} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] disabled:opacity-50 ${p.border} ${p.text}`}>
+        <button type="button" disabled={disabled || pending} onClick={plan} className={`inline-flex min-h-[40px] items-center gap-1.5 rounded-full border px-3 py-2 text-left text-xs disabled:opacity-50 md:min-h-0 md:px-2.5 md:py-0.5 md:text-[11px] ${p.border} ${p.text}`}>
           <span aria-hidden>⚡</span>
           {pending ? "Planning…" : c?.status === "applied" ? `Applied in ${p.full} · plan again` : `Make this change in ${p.full}`}
         </button>
         {c?.status === "applied" && !open && (
-          <button type="button" onClick={() => setOpen(true)} className="text-[11px] text-faint hover:text-fg">
+          <button type="button" onClick={() => setOpen(true)} className="py-2 text-[11px] text-faint hover:text-fg md:py-0">
             See what was applied
           </button>
         )}
@@ -144,10 +144,10 @@ export function GoogleChange({ from, disabled, platform = "google" }: { from: Fr
 
   const ready = c.ops.filter((o) => o.check?.ok && !o.result?.ok);
   return (
-    <div className={`grid gap-3 rounded-[14px] border p-4 ${p.panel}`}>
+    <div className={`grid min-w-0 gap-3 rounded-[14px] border p-3.5 md:p-4 ${p.panel}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className={`text-[10px] font-semibold uppercase tracking-[0.16em] ${p.text}`}>Change in {p.full}</p>
-        <button type="button" onClick={() => setOpen(false)} className="text-[11px] text-faint hover:text-fg">
+        <button type="button" onClick={() => setOpen(false)} className="-my-2 py-2 pl-3 text-[11px] text-faint hover:text-fg md:my-0 md:py-0 md:pl-0">
           Hide
         </button>
       </div>
@@ -179,11 +179,11 @@ export function GoogleChange({ from, disabled, platform = "google" }: { from: Fr
           <p>
             This changes the live {p.full} account right away: {ready.length} {ready.length === 1 ? "change" : "changes"}. They can be undone in {p.full} or with another change here.
           </p>
-          <div className="flex gap-2">
-            <button type="button" onClick={apply} disabled={pending} className="h-8 rounded-full bg-fg px-4 text-xs text-bg disabled:opacity-60">
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={apply} disabled={pending} className="h-11 flex-1 rounded-full bg-fg px-4 text-xs text-bg disabled:opacity-60 md:h-8 md:flex-none">
               Yes, apply in {p.full}
             </button>
-            <button type="button" onClick={() => setConfirm(false)} className="h-8 rounded-full border border-line bg-surface px-3 text-xs text-muted hover:text-fg">
+            <button type="button" onClick={() => setConfirm(false)} className="h-11 rounded-full border border-line bg-surface px-4 text-xs text-muted hover:text-fg md:h-8 md:px-3">
               Not yet
             </button>
           </div>
@@ -194,7 +194,7 @@ export function GoogleChange({ from, disabled, platform = "google" }: { from: Fr
         <div className="flex flex-wrap items-center gap-2">
           {(c.status === "ready" || c.status === "partial") && ready.length > 0 &&
             (c.canApply ? (
-              <button type="button" onClick={() => setConfirm(true)} disabled={pending} className={`h-9 rounded-full px-4 text-sm font-medium text-white hover:brightness-110 disabled:opacity-60 ${p.button}`}>
+              <button type="button" onClick={() => setConfirm(true)} disabled={pending} className={`h-11 w-full rounded-full px-4 text-sm font-medium text-white hover:brightness-110 disabled:opacity-60 sm:w-auto md:h-9 ${p.button}`}>
                 Apply {ready.length} {ready.length === 1 ? "change" : "changes"}
               </button>
             ) : (
@@ -207,12 +207,12 @@ export function GoogleChange({ from, disabled, platform = "google" }: { from: Fr
             </span>
           )}
           {!busy && (
-            <button type="button" onClick={plan} disabled={pending || disabled} className="h-9 rounded-full border border-line px-4 text-sm text-muted hover:text-fg disabled:opacity-60">
+            <button type="button" onClick={plan} disabled={pending || disabled} className="h-11 rounded-full border border-line px-4 text-sm text-muted hover:text-fg disabled:opacity-60 md:h-9">
               Plan it again
             </button>
           )}
           {["ready", "nothing", "failed"].includes(c.status) && (
-            <button type="button" onClick={discard} disabled={pending} className="h-9 px-2 text-sm text-faint hover:text-fg">
+            <button type="button" onClick={discard} disabled={pending} className="h-11 px-3 text-sm text-faint hover:text-fg md:h-9 md:px-2">
               Discard
             </button>
           )}

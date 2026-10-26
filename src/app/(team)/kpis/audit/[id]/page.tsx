@@ -59,7 +59,7 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
   const replaced = Boolean(sprint?.audit_id && sprint.audit_id !== a.id);
   const onList = new Map(((sprint?.sprint_actions ?? []) as { title: string; status: string }[]).map((x) => [x.title, x.status]));
   const back = (
-    <Link href="/kpis" className="text-sm text-muted hover:text-fg">
+    <Link href="/kpis" className="-my-2 justify-self-start py-2 text-sm text-muted hover:text-fg md:my-0 md:py-0">
       ← KPIs
     </Link>
   );
@@ -84,25 +84,25 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
   const deviation = snap?.deviation == null ? null : Math.round(Number(snap.deviation) * 100);
 
   return (
-    <div className="mx-auto grid w-full max-w-6xl gap-14 pb-16">
+    <div className="mx-auto grid w-full min-w-0 max-w-6xl gap-10 pb-16 md:gap-14">
       {back}
 
       {/* The verdict */}
       <header className="relative isolate overflow-hidden rounded-[28px] border border-line bg-surface">
         <div aria-hidden className={`pointer-events-none absolute -right-32 -top-40 -z-10 h-[420px] w-[420px] rounded-full blur-[120px] ${r.verdict.status === "off" ? "bg-bad/25" : r.verdict.status === "at_risk" ? "bg-warn/20" : "bg-ok/20"}`} />
-        <div className="grid gap-6 px-6 py-8 md:px-10 md:py-10">
+        <div className="grid gap-6 px-5 py-6 md:px-10 md:py-10">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-xs uppercase tracking-[0.2em] text-faint">
               Account audit · {client.name}
               {t.label ? ` · ${t.label}` : ""} · {when(a.created_at)}
             </p>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2 md:flex-nowrap">
               <span className={`rounded-full border px-3 py-1 text-xs font-medium ${v.ring} ${v.tone}`}>{v.label}</span>
-              <Link href={`/report/${a.id}`} className="rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg">
+              <Link href={`/report/${a.id}`} className="rounded-full border border-line px-3 py-2.5 text-xs text-muted hover:text-fg md:py-1">
                 Client PDF
               </Link>
               {sprint ? (
-                <Link href={`/kpis/sprint/${sprint.id}`} className="rounded-full bg-fg px-3 py-1 text-xs text-bg">
+                <Link href={`/kpis/sprint/${sprint.id}`} className="rounded-full bg-fg px-3 py-2.5 text-xs text-bg md:py-1">
                   Open the sprint →
                 </Link>
               ) : (
@@ -122,8 +122,8 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
               [String(r.causes.length), "Root causes found"],
               [`${Object.keys(done).length}/${r.actions.length}`, "Actions done"],
             ].map(([n, label]) => (
-              <div key={label} className="flex flex-col gap-1 bg-surface/90 px-5 py-4">
-                <dd className="font-display text-3xl tabular tracking-tight">{n}</dd>
+              <div key={label} className="flex min-w-0 flex-col gap-1 bg-surface/90 px-4 py-4 md:px-5">
+                <dd className="font-display text-2xl tabular tracking-tight md:text-3xl">{n}</dd>
                 <dt className="text-xs text-muted">{label}</dt>
               </div>
             ))}
@@ -132,7 +132,7 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
       </header>
 
       <Section n="01" title="Here's what I found" sub="Why the numbers are where they are against the KPI.">
-        <div className="grid gap-4 rounded-[20px] border border-line bg-surface p-6 text-[15px] leading-relaxed md:p-8">
+        <div className="grid gap-4 rounded-[20px] border border-line bg-surface p-5 text-[15px] leading-relaxed md:p-8">
           {r.diagnosis
             .split(/\n+/)
             .filter(Boolean)
@@ -207,7 +207,7 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
           <Sub title="Tests I'd run" sub="Each one set up to read out at this account's spend.">
             <div className="grid gap-3 md:grid-cols-2">
               {r.tests.map((x, i) => (
-                <article key={i} className="grid content-start gap-3 rounded-[18px] border border-line bg-surface p-6">
+                <article key={i} className="grid min-w-0 content-start gap-3 rounded-[18px] border border-line bg-surface p-5 md:p-6">
                   <p className="text-[10px] uppercase tracking-[0.16em] text-faint">Test {i + 1}</p>
                   <h3 className="font-heading text-lg leading-snug">{x.name}</h3>
                   <p className="text-sm leading-relaxed">
@@ -222,7 +222,7 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
                         ["It worked if", x.success],
                       ] as const
                     ).map(([k, val]) => (
-                      <div key={k} className="grid grid-cols-[96px_minmax(0,1fr)] gap-3">
+                      <div key={k} className="grid grid-cols-[84px_minmax(0,1fr)] gap-3 md:grid-cols-[96px_minmax(0,1fr)]">
                         <dt className="text-faint">{k}</dt>
                         <dd className="leading-relaxed text-muted">{val}</dd>
                       </div>
@@ -242,7 +242,7 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
           <Sub title="Creative I'd make" sub="From the playbook's proven angles, our Hall of Fame and the Brand Bible.">
             <div className="grid gap-3 md:grid-cols-2">
               {r.creative.map((c, i) => (
-                <article key={i} className="grid content-start gap-3 rounded-[18px] border border-line bg-surface p-6">
+                <article key={i} className="grid min-w-0 content-start gap-3 rounded-[18px] border border-line bg-surface p-5 md:p-6">
                   <div className="flex flex-wrap gap-2 text-[11px]">
                     <span className="rounded-full border border-line px-2 py-0.5 text-muted">{c.angle}</span>
                     <span className="rounded-full border border-line px-2 py-0.5 text-muted">{c.format}</span>
@@ -254,7 +254,7 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
                     <span className="text-brand-text">&rdquo;</span>
                   </p>
                   <p className="text-sm leading-relaxed text-muted">{c.why}</p>
-                  <Link href={`/requests/new?client=${client.slug}`} className="justify-self-start text-sm font-medium hover:underline">
+                  <Link href={`/requests/new?client=${client.slug}`} className="-my-2 justify-self-start py-2 text-sm font-medium hover:underline md:my-0 md:py-0">
                     Start a request for {client.name} →
                   </Link>
                 </article>
@@ -291,7 +291,7 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
       </Section>
 
       {(r.learnings ?? []).length > 0 && (
-        <section className="grid gap-3 rounded-[18px] border border-line bg-surface p-6">
+        <section className="grid gap-3 rounded-[18px] border border-line bg-surface p-5 md:p-6">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <h3 className="font-heading text-lg">Added to the client page</h3>
             <Link href={`/clients/${client.slug}`} className="text-xs text-muted hover:text-fg">
@@ -336,12 +336,12 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
           {(a.profiles as unknown as { full_name: string } | null)?.full_name ?? "the team"}.
         </p>
         {(history ?? []).length > 1 && (
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2 md:items-stretch">
             <span>Earlier audits:</span>
             {(history ?? [])
               .filter((h) => h.id !== a.id)
               .map((h) => (
-                <Link key={h.id} href={`/kpis/audit/${h.id}`} className="rounded-full border border-line px-2.5 py-0.5 text-muted hover:text-fg">
+                <Link key={h.id} href={`/kpis/audit/${h.id}`} className="rounded-full border border-line px-3 py-2 text-muted hover:text-fg md:px-2.5 md:py-0.5">
                   {new Date(h.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })} · {h.status === "ready" ? (VERDICT[(h.result as AuditResult | null)?.verdict.status ?? ""]?.label ?? "ready") : h.status}
                 </Link>
               ))}
@@ -379,7 +379,7 @@ function Sub({ title, sub, children }: { title: string; sub?: string; children: 
 
 function Panel({ title, tone, children }: { title: string; tone?: "warn"; children: React.ReactNode }) {
   return (
-    <div className={`grid content-start gap-3 rounded-[18px] border p-6 ${tone === "warn" ? "border-warn/30 bg-warn-soft" : "border-line bg-surface"}`}>
+    <div className={`grid min-w-0 content-start gap-3 rounded-[18px] border p-5 md:p-6 ${tone === "warn" ? "border-warn/30 bg-warn-soft" : "border-line bg-surface"}`}>
       <p className="text-[10px] uppercase tracking-[0.16em] text-faint">{title}</p>
       {children}
     </div>
