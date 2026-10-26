@@ -9,7 +9,7 @@ export function FilterPill({ children, onClear }: { children: React.ReactNode; o
   return (
     <span className="flex h-7 items-center gap-1 rounded-full border border-line bg-surface pl-3 pr-1 text-xs">
       <span className="max-w-[220px] truncate">{children}</span>
-      <button onClick={onClear} aria-label="Remove this filter" className="grid h-5 w-5 place-items-center rounded-full text-faint hover:bg-surface-2 hover:text-fg">
+      <button onClick={onClear} aria-label="Remove this filter" className="grid h-5 w-5 place-items-center rounded-full text-faint hover:bg-surface-2 hover:text-fg max-md:h-8 max-md:w-8">
         ×
       </button>
     </span>
@@ -32,7 +32,10 @@ export function FilterMenu<T extends string | null>({ label, on, options, value,
         </svg>
       </button>
       {open && (
-        <div className="absolute right-0 top-12 z-30 grid max-h-[60vh] w-64 gap-0.5 overflow-y-auto rounded-[14px] border border-line bg-surface p-1.5 shadow-2xl">
+        <>
+        {/* Phones: a bottom sheet over a dimmed page (tapping outside closes it, as the menu loses focus) */}
+        <div aria-hidden onClick={() => setOpen(false)} className="fixed inset-0 z-[59] bg-black/50 md:hidden" />
+        <div className="absolute right-0 top-12 z-30 grid max-h-[60vh] w-64 gap-0.5 overflow-y-auto rounded-[14px] border border-line bg-surface p-1.5 shadow-2xl max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:top-auto max-md:z-[60] max-md:max-h-[70dvh] max-md:w-auto max-md:rounded-b-none max-md:border-x-0 max-md:border-b-0 max-md:p-2 max-md:pb-[calc(12px+env(safe-area-inset-bottom))]">
           {options.map(([k, l, n]) => (
             <button
               key={k ?? "any"}
@@ -40,7 +43,7 @@ export function FilterMenu<T extends string | null>({ label, on, options, value,
                 onPick(k);
                 setOpen(false);
               }}
-              className={`flex items-center justify-between gap-3 rounded-[10px] px-3 py-2 text-left text-sm hover:bg-surface-2 ${value === k ? "text-fg" : "text-muted"}`}
+              className={`flex items-center justify-between gap-3 rounded-[10px] px-3 py-2 text-left text-sm hover:bg-surface-2 max-md:min-h-12 max-md:text-[15px] ${value === k ? "text-fg" : "text-muted"}`}
             >
               <span className="flex items-center gap-2 truncate">
                 <span className={`w-3 text-xs ${value === k ? "text-brand-text" : "text-transparent"}`}>✓</span>
@@ -50,6 +53,7 @@ export function FilterMenu<T extends string | null>({ label, on, options, value,
             </button>
           ))}
         </div>
+        </>
       )}
     </div>
   );
