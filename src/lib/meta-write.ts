@@ -48,9 +48,26 @@ export async function ownerAccount(objectId: string): Promise<string | null> {
  * Can Kaizen Ads write to this account? A dry run of creating a paused campaign there: Meta checks the token's
  * permission (ads_management), the system user's role on the account, and the account's state, and creates nothing.
  */
+// What the system user's token must carry: ads for the account, and the Page permissions Meta needs to create the
+// hidden Page post behind every ad with text options or per-placement sizes
+const NEEDED = ["ads_management", "ads_read", "business_management", "pages_manage_ads", "pages_read_engagement", "pages_show_list"];
+
+/** The permissions the token was generated with, and the ones the launcher needs that it's missing. */
+export async function tokenScopes() {
+  const r = await metaGraph<{ data: { permission: string; status: string }[] }>("me/permissions", {}).catch(() => null);
+  const granted = (r?.data ?? []).filter((p) => p.status === "granted").map((p) => p.permission);
+  return { granted, missing: r ? NEEDED.filter((n) => !granted.includes(n)) : [] };
+}
+
 export async function writeAccess(admin: SupabaseClient, account: string): Promise<{ ok: boolean; detail: string }> {
   const blocked = await writeBlocked(admin, account);
   if (blocked) return { ok: false, detail: blocked };
+  const scopes = await tokenScopes();
+  if (scopes.missing.length)
+    return {
+      ok: false,
+      detail: `The system user's token is missing ${scopes.missing.join(", ")}. Generate a new token for the system user in Business Manager (Users → System users → Generate new token) with those permissions ticked, then replace META_SYSTEM_USER_TOKEN in Vercel. It has now: ${scopes.granted.join(", ") || "nothing readable"}.`,
+    };
   try {
     await metaWrite(admin, account, `act_${bare(account)}/campaigns`, { name: "Kaizen Ads access check", objective: "OUTCOME_TRAFFIC", status: "PAUSED", special_ad_categories: "[]", is_adset_budget_sharing_enabled: "false" }, true);
     return { ok: true, detail: "Kaizen Ads can create and change ads here (checked with Meta, nothing was created)." };

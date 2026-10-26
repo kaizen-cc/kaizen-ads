@@ -241,7 +241,8 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
     }
 
     // The ad set and names: the buyer's picks, else the Media Buyer's proposal
-    let adsetId = overrides.adsetId ?? "";
+    // A pick that's no longer on offer (the ad set was paused away, or the sandbox narrowed the list): pick again
+    let adsetId = overrides.adsetId && acct.adsets.some((a) => a.id === overrides.adsetId) ? overrides.adsetId : "";
     let mode: "existing" | "clone" = overrides.mode ?? "existing";
     let newAdsetName = overrides.newAdsetName ?? null;
     let names: Record<string, string> = overrides.names ?? {};
@@ -266,7 +267,8 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
       names = Object.fromEntries(out.adNames.map((n) => [n.designId, n.name]));
       reason = out.reason;
     }
-    const adset = acct.adsets.find((a) => a.id === adsetId)!;
+    const adset = acct.adsets.find((a) => a.id === adsetId) ?? acct.adsets[0];
+    adsetId = adset.id;
 
     // The ad set can take these ads?
     if (adset.leadForm) add("adset", "Ad set", "block", `"${adset.name}" sends people to an instant form; ads with a lead form aren't launched from here yet.`);
@@ -452,6 +454,8 @@ export const accessError = (m: string) => /permission|not authorized|advertiser 
 /** In plain words: what someone has to do in Business Manager for this error */
 export function accessHelp(m: string) {
   const page = m.match(/Page (\d{6,})/)?.[1];
+  if (/application does not have permission/i.test(m))
+    return `Meta says the app's token can't post as the Page${page ? ` ${page}` : ""}: the system user's token needs pages_manage_ads, pages_read_engagement and pages_show_list. Settings → Sync health → Check write access shows what the token has and what to do.`;
   if (/page/i.test(m) && /permission|role/i.test(m))
     return `The system user needs the Advertise permission ("Create ads") on the Facebook Page${page ? ` ${page}` : ""}: Business Manager → Settings → Pages → the Page → Assign people → the system user.`;
   if (/disabled|unsettled/i.test(m)) return "The ad account isn't active (billing or a restriction): check it in Business Manager.";
