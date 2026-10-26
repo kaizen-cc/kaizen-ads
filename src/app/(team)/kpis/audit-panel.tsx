@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { requestAudit } from "@/components/audit-watcher";
+import { QuickActions } from "./quick-actions";
 import { VERDICT } from "./verdict";
 
 export type AuditSummary = {
@@ -18,7 +19,11 @@ export type AuditSummary = {
   done: number;
   error: string | null;
   steps: AuditStep[];
+  /** The moves Kaizen Ads can make in the ad account itself (pause, turn on, budgets; bids and negatives on Google) */
+  quick?: QuickAction[];
+  platform?: "meta" | "google";
 } | null;
+export type QuickAction = { index: number; label: string; title: string; area: string; when: string; effort: string; impact: string; steps: string[]; why: string; done: boolean };
 export type AuditStep = { key: string; label: string; status: "pending" | "running" | "done" | "skipped" | "failed"; detail: string | null; startedAt: string | null; finishedAt: string | null };
 
 const secs = (from: string | null, to: string | null, now: number) => {
@@ -206,6 +211,7 @@ export function AuditPanel({ targetId, audit, platform }: { targetId: string; au
                 {audit.by ? ` · run by ${audit.by}` : ""}
               </span>
             </div>
+            {audit.quick && audit.quick.length > 0 && <QuickActions auditId={audit.id} items={audit.quick} platform={audit.platform ?? (platform === "google" ? "google" : "meta")} />}
           </div>
         )}
         {audit?.status === "queued" && (
