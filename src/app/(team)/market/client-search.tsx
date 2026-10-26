@@ -30,7 +30,7 @@ export function ClientSearch({ clients, value, onPick }: { clients: PickClient[]
 
   if (value)
     return (
-      <span className="flex h-10 max-w-[260px] items-center gap-2 rounded-[12px] bg-brand-soft pl-3.5 pr-1.5 text-sm">
+      <span className="flex h-10 w-full items-center justify-between gap-2 rounded-[12px] bg-brand-soft pl-3.5 pr-1.5 text-sm md:w-auto md:max-w-[260px] md:justify-start">
         <span className="truncate">For {value.name}</span>
         <button
           onClick={() => {
@@ -38,7 +38,7 @@ export function ClientSearch({ clients, value, onPick }: { clients: PickClient[]
             setTimeout(() => input.current?.focus(), 0);
           }}
           aria-label="Clear the client"
-          className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-muted hover:bg-bg/40 hover:text-fg"
+          className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-muted hover:bg-bg/40 hover:text-fg md:h-6 md:w-6"
         >
           ×
         </button>
@@ -46,7 +46,7 @@ export function ClientSearch({ clients, value, onPick }: { clients: PickClient[]
     );
 
   return (
-    <div className="relative">
+    <div className="relative w-full md:w-auto">
       <input
         ref={input}
         value={q}
@@ -76,10 +76,10 @@ export function ClientSearch({ clients, value, onPick }: { clients: PickClient[]
         aria-expanded={open && matches.length > 0}
         aria-controls="client-search-list"
         aria-autocomplete="list"
-        className="h-10 w-[210px] rounded-[12px] bg-bg/60 px-3.5 text-sm outline-none placeholder:text-faint focus:ring-1 focus:ring-faint"
+        className="h-10 w-full rounded-[12px] md:w-[210px] bg-bg/60 px-3.5 text-sm outline-none placeholder:text-faint focus:ring-1 focus:ring-faint"
       />
       {open && term.length >= 2 && (
-        <ul id="client-search-list" role="listbox" className="absolute left-0 top-11 z-30 grid w-[280px] gap-0.5 rounded-[14px] border border-line bg-surface p-1.5 shadow-2xl">
+        <ul id="client-search-list" role="listbox" className="absolute left-0 top-11 z-30 grid w-full gap-0.5 md:w-[280px] rounded-[14px] border border-line bg-surface p-1.5 shadow-2xl">
           {matches.length === 0 ? (
             <li className="px-3 py-2 text-sm text-faint">No client matches &ldquo;{q.trim()}&rdquo;</li>
           ) : (
@@ -89,7 +89,7 @@ export function ClientSearch({ clients, value, onPick }: { clients: PickClient[]
                   onMouseDown={(e) => e.preventDefault()}
                   onMouseEnter={() => setAt(i)}
                   onClick={() => choose(c)}
-                  className={`grid w-full gap-0.5 rounded-[10px] px-3 py-2 text-left ${i === at ? "bg-surface-2" : ""}`}
+                  className={`grid min-h-11 w-full gap-0.5 rounded-[10px] px-3 py-2 text-left md:min-h-0 ${i === at ? "bg-surface-2" : ""}`}
                 >
                   <span className="truncate text-sm">{c.name}</span>
                   {c.detail && <span className="truncate text-[11px] text-faint">{c.detail}</span>}

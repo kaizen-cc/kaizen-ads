@@ -9,7 +9,7 @@ import type { OpenSuggestion } from "@/lib/suggestions";
 import { SuggestionSheet } from "../pipeline/views/suggested-briefs";
 import { briefFromWinner } from "../winners/actions";
 import { FeedPreview, InsightPanel, useAd, useInsight } from "../winners/fb-preview";
-import { ClientPick, HoverCard, Writing, type PickClient } from "../winners/winners-library";
+import { ClientPick, HoverCard, SHEET_BACKDROP, SHEET_PANEL, SheetAction, SheetBar, Writing, type PickClient } from "../winners/winners-library";
 
 type Sort = "beat" | "spend" | "days";
 const SORTS: [Sort, string][] = [
@@ -114,7 +114,8 @@ export function FameLibrary({ ads, verticals, clients }: { ads: FameAd[]; vertic
         </div>
       ) : (
         <>
-          <div className="sticky top-3 z-20 grid gap-3">
+          {/* Phones: it scrolls away with the page (the app bar is pinned there); wider screens keep it pinned */}
+          <div className="relative z-20 grid gap-3 md:sticky md:top-3">
             <div className="flex flex-wrap items-center gap-2 rounded-[18px] border border-line bg-surface/90 p-2 shadow-[0_10px_40px_-20px_rgba(0,0,0,0.6)] backdrop-blur-xl">
               <label className="flex h-10 min-w-[220px] flex-1 items-center gap-2.5 rounded-[12px] bg-bg/60 px-3.5 focus-within:ring-1 focus-within:ring-faint">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-faint" aria-hidden>
@@ -123,14 +124,19 @@ export function FameLibrary({ ads, verticals, clients }: { ads: FameAd[]; vertic
                 </svg>
                 <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search clients, verticals, headlines, copy" className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-faint" />
               </label>
-              <FilterMenu
-                label={vertical ? label(vertical) : "All verticals"}
-                on={vertical !== null}
-                options={[[null, "All verticals", ads.length] as const, ...verticals.filter((v) => counts.has(v.id)).map((v) => [v.id, `${v.parent} · ${v.name}`, counts.get(v.id) ?? 0] as const)]}
-                value={vertical}
-                onPick={(v) => setVertical(v)}
-              />
-              <FilterMenu label={SORTS.find(([k]) => k === sort)?.[1] ?? "Sort"} on={false} options={SORTS.map(([k, l]) => [k, l, null] as const)} value={sort} onPick={(v) => setSort(v)} />
+              {/* Phones: each menu gets the full row, so its list opens on screen */}
+              <div className="w-full md:contents">
+                <FilterMenu
+                  label={vertical ? label(vertical) : "All verticals"}
+                  on={vertical !== null}
+                  options={[[null, "All verticals", ads.length] as const, ...verticals.filter((v) => counts.has(v.id)).map((v) => [v.id, `${v.parent} · ${v.name}`, counts.get(v.id) ?? 0] as const)]}
+                  value={vertical}
+                  onPick={(v) => setVertical(v)}
+                />
+              </div>
+              <div className="w-full md:contents">
+                <FilterMenu label={SORTS.find(([k]) => k === sort)?.[1] ?? "Sort"} on={false} options={SORTS.map(([k, l]) => [k, l, null] as const)} value={sort} onPick={(v) => setSort(v)} />
+              </div>
             </div>
             {(vertical || q.trim() || sort !== "beat") && (
               <div className="flex flex-wrap items-center gap-1.5">
@@ -143,7 +149,7 @@ export function FameLibrary({ ads, verticals, clients }: { ads: FameAd[]; vertic
                     setSort("beat");
                     setQ("");
                   }}
-                  className="ml-1 text-xs text-muted underline-offset-4 hover:text-fg hover:underline"
+                  className="ml-1 py-2 text-xs text-muted underline-offset-4 hover:text-fg hover:underline md:py-0"
                 >
                   Clear all
                 </button>
@@ -161,7 +167,7 @@ export function FameLibrary({ ads, verticals, clients }: { ads: FameAd[]; vertic
                 }}
                 onMouseEnter={(e) => hoverIn(a, e.currentTarget)}
                 onMouseLeave={hoverOut}
-                className="group grid content-start gap-2.5 rounded-[14px] border border-line bg-surface p-2 text-left transition-colors hover:border-faint">
+                className="group grid min-w-0 content-start gap-2.5 rounded-[14px] border border-line bg-surface p-2 text-left transition-all hover:border-faint active:scale-[0.98] md:active:scale-100">
                 <span className="relative aspect-[4/5] overflow-hidden rounded-[10px] bg-surface-2">
                   {a.creative.image ? (
                     // eslint-disable-next-line @next/next/no-img-element
@@ -228,23 +234,27 @@ function FameSheet({ a, w, clients, onClose }: { a: FameAd; w: Winner; clients: 
   if (brief) return <SuggestionSheet s={brief} onClose={onClose} />;
   const c = a.creative;
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4 backdrop-blur-sm" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="grid max-h-[92vh] w-full max-w-[920px] gap-5 overflow-y-auto rounded-[18px] border border-line bg-bg p-4 md:grid-cols-[minmax(0,380px)_1fr] md:p-5">
-        <FeedPreview
-          view={{
-            pageName: c.page ?? a.client,
-            pagePicture: null,
-            text: c.text ?? null,
-            headline: c.headline ?? null,
-            cta: c.cta ?? null,
-            link: c.link ?? null,
-            media: c.video ? [{ type: "video", url: c.video, poster: c.image ?? null }] : c.image ? [{ type: "image", url: c.image, poster: null }] : [],
-            placeholder: c.image ?? null,
-            preview: c.preview ?? null,
-          }}
-        />
+    <div className={SHEET_BACKDROP} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className={`${SHEET_PANEL} md:grid-cols-[minmax(0,380px)_1fr]`}>
+        <SheetBar title={a.client} onClose={onClose} />
+        {/* Phones: once a client is being picked, the ad steps aside so the list is right there */}
+        <div className={step === "ad" ? "contents" : "hidden md:contents"}>
+          <FeedPreview
+            view={{
+              pageName: c.page ?? a.client,
+              pagePicture: null,
+              text: c.text ?? null,
+              headline: c.headline ?? null,
+              cta: c.cta ?? null,
+              link: c.link ?? null,
+              media: c.video ? [{ type: "video", url: c.video, poster: c.image ?? null }] : c.image ? [{ type: "image", url: c.image, poster: null }] : [],
+              placeholder: c.image ?? null,
+              preview: c.preview ?? null,
+            }}
+          />
+        </div>
         {step === "ad" ? (
-          <div className="grid content-start gap-4">
+          <div className="grid min-w-0 content-start gap-4">
             <div className="flex items-start justify-between gap-3">
               <div className="grid min-w-0 gap-1">
                 <p className="text-xs text-faint">
@@ -254,7 +264,7 @@ function FameSheet({ a, w, clients, onClose }: { a: FameAd; w: Winner; clients: 
                 <p className="font-display text-xl leading-tight">{a.client}</p>
                 <p className="truncate text-xs text-faint">{a.adName}</p>
               </div>
-              <button onClick={onClose} className="shrink-0 rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg">
+              <button onClick={onClose} className="hidden shrink-0 rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg md:block">
                 Done
               </button>
             </div>
@@ -274,10 +284,10 @@ function FameSheet({ a, w, clients, onClose }: { a: FameAd; w: Winner; clients: 
               ))}
             </dl>
             <div className="flex flex-wrap gap-2">
-              <button onClick={() => setStep("pick")} className="h-10 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:brightness-110">
+              <button onClick={() => setStep("pick")} className="hidden h-10 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:brightness-110 md:block">
                 Brief a client on this
               </button>
-              <Link href={`/clients/${a.clientSlug}`} className="grid h-10 place-items-center rounded-brand border border-line px-4 text-sm text-muted hover:text-fg">
+              <Link href={`/clients/${a.clientSlug}`} className="grid h-11 place-items-center rounded-brand border border-line px-4 text-sm text-muted hover:text-fg md:h-10">
                 Open {a.client}
               </Link>
             </div>
@@ -288,6 +298,7 @@ function FameSheet({ a, w, clients, onClose }: { a: FameAd; w: Winner; clients: 
         ) : (
           <Writing />
         )}
+        {step === "ad" && <SheetAction onClick={() => setStep("pick")}>Brief a client on this</SheetAction>}
       </div>
     </div>
   );

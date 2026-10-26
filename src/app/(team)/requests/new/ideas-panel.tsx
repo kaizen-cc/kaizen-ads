@@ -90,7 +90,7 @@ function Widget({ title, sub, loading, empty, more, children }: { title: string;
           <p className="text-sm font-medium">{title}</p>
           <p className="truncate text-[11px] text-faint">{sub}</p>
         </div>
-        <Link href={more} className="shrink-0 text-[11px] text-muted hover:text-fg">
+        <Link href={more} className="-my-2 shrink-0 py-2 pl-2 text-[11px] text-muted hover:text-fg md:my-0 md:py-0 md:pl-0">
           More →
         </Link>
       </div>
@@ -130,7 +130,7 @@ function Item({ thumb, video, title, meta, busy, disabled, onCreate, label }: { 
         type="button"
         onClick={onCreate}
         disabled={disabled}
-        className={`h-8 rounded-full text-xs font-medium transition-colors ${busy ? "bg-brand-soft text-brand-text" : "border border-line text-muted hover:border-brand/50 hover:text-fg disabled:opacity-50"}`}
+        className={`h-10 rounded-full text-xs font-medium transition-colors md:h-8 ${busy ? "bg-brand-soft text-brand-text" : "border border-line text-muted hover:border-brand/50 hover:text-fg disabled:opacity-50"}`}
       >
         {busy ? <AiProgressButton label={label} fallbackMs={70_000} /> : "Create brief"}
       </button>

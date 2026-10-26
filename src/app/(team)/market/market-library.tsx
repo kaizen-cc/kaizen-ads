@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { MarketAd } from "@/lib/market";
 import type { OpenSuggestion } from "@/lib/suggestions";
 import { SuggestionSheet } from "../pipeline/views/suggested-briefs";
-import { ClientPick, Writing, type PickClient } from "../winners/winners-library";
+import { ClientPick, SHEET_BACKDROP, SHEET_PANEL, SheetAction, SheetBar, Writing, type PickClient } from "../winners/winners-library";
 import { briefFromMarket, clientMarket } from "./actions";
 import { ClientSearch } from "./client-search";
 import { FilterMenu as Menu, FilterPill as Pill } from "@/components/filters";
@@ -161,7 +161,8 @@ export function MarketLibrary({
         </div>
       ) : (
         <>
-          <div className="sticky top-3 z-20 grid gap-3">
+          {/* Phones: it scrolls away with the page (the app bar is pinned there); wider screens keep it pinned */}
+          <div className="relative z-20 grid gap-3 md:sticky md:top-3">
             <div className="rounded-[18px] border border-line bg-surface/90 shadow-[0_10px_40px_-20px_rgba(0,0,0,0.6)] backdrop-blur-xl">
               <div className="flex flex-wrap items-center gap-2 p-2">
                 <label className="flex h-10 min-w-[220px] flex-1 items-center gap-2.5 rounded-[12px] bg-bg/60 px-3.5 focus-within:ring-1 focus-within:ring-faint">
@@ -177,20 +178,25 @@ export function MarketLibrary({
                   />
                 </label>
                 <ClientSearch clients={clients} value={forClient} onPick={pickClient} />
-                <Menu
-                  label={industry === null ? (byVertical ? "All verticals" : "All industries") : label(industry || null)}
-                  on={industry !== null}
-                  options={[[null, byVertical ? "All verticals" : "All industries", pool.length] as const, ...counts.map(([k, n]) => [k, label(k || null), n] as const)]}
-                  value={industry}
-                  onPick={(v) => setIndustry(v)}
-                />
-                <Menu
-                  label={format ? `${format[0].toUpperCase()}${format.slice(1)}s` : "Any format"}
-                  on={format !== null}
-                  options={[[null, "Any format", null] as const, ...FORMATS.map((f) => [f, `${f[0].toUpperCase()}${f.slice(1)}s`, null] as const)]}
-                  value={format}
-                  onPick={(v) => setFormat(v)}
-                />
+                {/* Phones: each menu gets the full row, so its list opens on screen */}
+                <div className="w-full md:contents">
+                  <Menu
+                    label={industry === null ? (byVertical ? "All verticals" : "All industries") : label(industry || null)}
+                    on={industry !== null}
+                    options={[[null, byVertical ? "All verticals" : "All industries", pool.length] as const, ...counts.map(([k, n]) => [k, label(k || null), n] as const)]}
+                    value={industry}
+                    onPick={(v) => setIndustry(v)}
+                  />
+                </div>
+                <div className="w-full md:contents">
+                  <Menu
+                    label={format ? `${format[0].toUpperCase()}${format.slice(1)}s` : "Any format"}
+                    on={format !== null}
+                    options={[[null, "Any format", null] as const, ...FORMATS.map((f) => [f, `${f[0].toUpperCase()}${f.slice(1)}s`, null] as const)]}
+                    value={format}
+                    onPick={(v) => setFormat(v)}
+                  />
+                </div>
               </div>
               <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-3">
                 <nav className="-mb-px flex gap-1 overflow-x-auto">
@@ -230,7 +236,7 @@ export function MarketLibrary({
                     setFormat(null);
                     setQ("");
                   }}
-                  className="ml-1 text-xs text-muted underline-offset-4 hover:text-fg hover:underline"
+                  className="ml-1 py-2 text-xs text-muted underline-offset-4 hover:text-fg hover:underline md:py-0"
                 >
                   Clear all
                 </button>
@@ -297,7 +303,7 @@ export function AdCard({ a, sub, onOpen, onHover, onLeave }: { a: MarketAd; sub:
   const cover = a.media.find((m) => m.type === "image")?.url ?? a.media[0]?.thumb ?? null;
   const video = !cover && a.media.find((m) => m.type === "video");
   return (
-    <button onClick={onOpen} onMouseEnter={onHover ? (e) => onHover(e.currentTarget) : undefined} onMouseLeave={onLeave} className="group grid content-start gap-2.5 rounded-[14px] border border-line bg-surface p-2 text-left transition-colors hover:border-faint">
+    <button onClick={onOpen} onMouseEnter={onHover ? (e) => onHover(e.currentTarget) : undefined} onMouseLeave={onLeave} className="group grid min-w-0 content-start gap-2.5 rounded-[14px] border border-line bg-surface p-2 text-left transition-all hover:border-faint active:scale-[0.98] md:active:scale-100">
       <span className="relative aspect-[4/5] overflow-hidden rounded-[10px] bg-surface-2">
         {cover ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -352,14 +358,16 @@ export function MarketSheet({ a, industryLabel, clients, onClose, forClient }: {
   if (brief) return <SuggestionSheet s={brief} onClose={onClose} />;
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4 backdrop-blur-sm" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="grid max-h-[92vh] w-full max-w-[920px] gap-5 overflow-y-auto rounded-[18px] border border-line bg-bg p-4 md:grid-cols-[minmax(0,400px)_1fr] md:p-5">
-        <div className="grid content-start gap-2">
+    <div className={SHEET_BACKDROP} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className={`${SHEET_PANEL} md:grid-cols-[minmax(0,400px)_1fr]`}>
+        <SheetBar title={a.pageName ?? a.brand} onClose={onClose} />
+        {/* Phones: once a client is being picked, the ad steps aside so the list is right there */}
+        <div className={`grid content-start gap-2 ${step === "ad" ? "" : "hidden md:grid"}`}>
           <MarketPreview a={a} />
         </div>
 
         {step === "ad" ? (
-          <div className="grid content-start gap-4">
+          <div className="grid min-w-0 content-start gap-4">
             <div className="flex items-start justify-between gap-3">
               <div className="grid min-w-0 gap-1">
                 <p className="text-xs text-faint">
@@ -372,7 +380,7 @@ export function MarketSheet({ a, industryLabel, clients, onClose, forClient }: {
                   {a.brandDomain && ` · ${a.brandDomain}`}
                 </p>
               </div>
-              <button onClick={onClose} className="shrink-0 rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg">
+              <button onClick={onClose} className="hidden shrink-0 rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg md:block">
                 Done
               </button>
             </div>
@@ -382,22 +390,22 @@ export function MarketSheet({ a, industryLabel, clients, onClose, forClient }: {
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => (forClient ? write(forClient) : setStep("pick"))}
-                className="h-10 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:brightness-110"
+                className="hidden h-10 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:brightness-110 md:block"
               >
                 {forClient ? "Brief this client on it" : "Brief a client on this"}
               </button>
               {a.motionUrl && (
-                <a href={a.motionUrl} target="_blank" rel="noreferrer" className="grid h-10 place-items-center rounded-brand border border-line px-4 text-sm text-muted hover:text-fg">
+                <a href={a.motionUrl} target="_blank" rel="noreferrer" className="grid h-11 place-items-center rounded-brand border border-line px-4 text-sm text-muted hover:text-fg md:h-10">
                   Open in Motion ↗
                 </a>
               )}
               {a.libraryUrl && (
-                <a href={a.libraryUrl} target="_blank" rel="noreferrer" className="grid h-10 place-items-center rounded-brand border border-line px-4 text-sm text-muted hover:text-fg">
+                <a href={a.libraryUrl} target="_blank" rel="noreferrer" className="grid h-11 place-items-center rounded-brand border border-line px-4 text-sm text-muted hover:text-fg md:h-10">
                   Ad Library ↗
                 </a>
               )}
               {a.landingUrl && (
-                <a href={a.landingUrl} target="_blank" rel="noreferrer" className="grid h-10 place-items-center rounded-brand border border-line px-4 text-sm text-muted hover:text-fg">
+                <a href={a.landingUrl} target="_blank" rel="noreferrer" className="grid h-11 place-items-center rounded-brand border border-line px-4 text-sm text-muted hover:text-fg md:h-10">
                   Landing page ↗
                 </a>
               )}
@@ -413,6 +421,7 @@ export function MarketSheet({ a, industryLabel, clients, onClose, forClient }: {
         ) : (
           <Writing steps={WRITING} label="brief from a market ad+brief self-review" />
         )}
+        {step === "ad" && <SheetAction onClick={() => (forClient ? write(forClient) : setStep("pick"))}>{forClient ? "Brief this client on it" : "Brief a client on this"}</SheetAction>}
       </div>
     </div>
   );

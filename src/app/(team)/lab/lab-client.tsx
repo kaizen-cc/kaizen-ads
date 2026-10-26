@@ -90,7 +90,7 @@ export function LabClient(props: {
             ["tests", `Running tests${props.tests.length ? ` · ${props.tests.length}` : ""}`],
           ] as const
         ).map(([k, l]) => (
-          <button key={k} onClick={() => go(k)} className={`relative px-4 pb-3 text-sm ${tab === k ? "text-fg" : "text-muted hover:text-fg"}`}>
+          <button key={k} onClick={() => go(k)} className={`relative px-4 pb-3 pt-3 text-sm md:pt-0 ${tab === k ? "text-fg" : "text-muted hover:text-fg"}`}>
             {l}
             {tab === k && <span className="absolute inset-x-3 -bottom-px h-0.5 rounded-full bg-brand" />}
           </button>
@@ -294,7 +294,7 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources }: { 
       </aside>
 
       <section
-        className={`relative flex h-[min(80vh,860px)] min-h-[520px] min-w-0 flex-col overflow-hidden rounded-[16px] border bg-surface transition-colors ${dragging ? "border-brand" : "border-line"}`}
+        className={`relative flex h-[calc(100dvh_-_148px_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))] min-h-[420px] min-w-0 flex-col md:h-[min(80vh,860px)] md:min-h-[520px] overflow-hidden rounded-[16px] border bg-surface transition-colors ${dragging ? "border-brand" : "border-line"}`}
         onDragOver={(e) => {
           e.preventDefault();
           setDragging(true);
@@ -327,7 +327,7 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources }: { 
                 await deleteThread(tid);
                 router.push("/lab");
               }}
-              className="shrink-0 text-xs text-faint hover:text-bad"
+              className="-my-2 shrink-0 py-2 pl-2 text-xs text-faint hover:text-bad md:my-0 md:py-0 md:pl-0"
             >
               Delete
             </button>
@@ -395,7 +395,7 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources }: { 
           )}
           {typing && !sending && <Typing seat={typing} mood={mood} />}
           {waiting && (
-            <button onClick={() => tid && void talk(tid)} className="w-fit rounded-full border border-line px-3.5 py-1.5 text-xs text-muted transition-colors hover:border-faint hover:text-fg">
+            <button onClick={() => tid && void talk(tid)} className="w-fit rounded-full border border-line px-3.5 py-2.5 text-xs text-muted transition-colors md:py-1.5 hover:border-faint hover:text-fg">
               Ask the table to answer
             </button>
           )}
@@ -454,11 +454,11 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources }: { 
             <div className="grid gap-2 rounded-[12px] border border-line bg-bg p-3">
               <div className="flex flex-wrap gap-1.5">
                 {(["transcript", "doc", "note"] as const).map((k) => (
-                  <button key={k} type="button" onClick={() => setDraftDoc({ ...draftDoc, kind: k })} className={`h-7 rounded-full px-3 text-xs ${draftDoc.kind === k ? "bg-fg text-bg" : "border border-line text-muted"}`}>
+                  <button key={k} type="button" onClick={() => setDraftDoc({ ...draftDoc, kind: k })} className={`h-9 rounded-full px-3 text-xs md:h-7 ${draftDoc.kind === k ? "bg-fg text-bg" : "border border-line text-muted"}`}>
                     {SHARE_KINDS[k]}
                   </button>
                 ))}
-                <input value={draftDoc.title} onChange={(e) => setDraftDoc({ ...draftDoc, title: e.target.value })} placeholder="Title (optional)" className="h-7 min-w-0 flex-1 rounded-full border border-line bg-transparent px-3 text-xs outline-none placeholder:text-faint" />
+                <input value={draftDoc.title} onChange={(e) => setDraftDoc({ ...draftDoc, title: e.target.value })} placeholder="Title (optional)" className="h-9 min-w-0 flex-1 md:h-7 rounded-full border border-line bg-transparent px-3 text-xs outline-none placeholder:text-faint" />
               </div>
               <textarea value={draftDoc.body} onChange={(e) => setDraftDoc({ ...draftDoc, body: e.target.value })} rows={6} autoFocus placeholder="Paste it here: a transcript, a brief, a Google Doc's text…" className="rounded-[10px] border border-line bg-surface px-3 py-2 text-sm outline-none placeholder:text-faint" />
               <div className="flex gap-2">
@@ -470,11 +470,11 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources }: { 
                     setDraftDoc({ title: "", body: "", kind: "doc" });
                     setAdding(null);
                   }}
-                  className="h-8 rounded-[10px] bg-fg px-3 text-xs text-bg disabled:opacity-40"
+                  className="h-10 rounded-[10px] bg-fg px-3 text-xs text-bg disabled:opacity-40 md:h-8"
                 >
                   Add to the message
                 </button>
-                <button type="button" onClick={() => setAdding(null)} className="h-8 px-2 text-xs text-faint">
+                <button type="button" onClick={() => setAdding(null)} className="h-10 px-2 text-xs text-faint md:h-8">
                   Cancel
                 </button>
               </div>
@@ -508,7 +508,7 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources }: { 
                 <ToolButton onClick={() => setAdding(adding === "link" ? null : "link")} on={adding === "link"} icon="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1">
                   Link or video
                 </ToolButton>
-                <label className="flex h-7 cursor-pointer items-center gap-1.5 rounded-full px-2.5 text-xs text-muted hover:bg-surface-2 hover:text-fg">
+                <label className="flex h-9 cursor-pointer items-center gap-1.5 rounded-full px-2.5 text-xs text-muted hover:bg-surface-2 hover:text-fg md:h-7">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
                     <path d="M21 12.5 12.6 21a5 5 0 0 1-7.1-7.1L14 5.4a3.3 3.3 0 0 1 4.7 4.7l-8.4 8.4a1.7 1.7 0 0 1-2.4-2.4l7.7-7.7" />
                   </svg>
@@ -516,21 +516,22 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources }: { 
                   <input type="file" multiple accept=".txt,.md,.markdown,.csv,.srt,.vtt,.json,text/plain" className="hidden" onChange={(e) => e.target.files && void addFiles(e.target.files)} />
                 </label>
                 <ToolButton onClick={() => setAdding(adding === "paste" ? null : "paste")} on={adding === "paste"} icon="M8 4h8v3H8zM6 6H5a1 1 0 0 0-1 1v13a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1h-1M8 12h8M8 16h5">
-                  Paste a transcript or doc
+                  <span className="md:hidden">Paste</span>
+                  <span className="hidden md:inline">Paste a transcript or doc</span>
                 </ToolButton>
                 <button
                   type="button"
                   onClick={() => setDeep((d) => !d)}
                   aria-pressed={deep}
                   title="The whole table on its full setting, with a web search, for this message. Otherwise quick questions get quick answers and big ones the full treatment."
-                  className={`ml-auto flex h-7 items-center gap-1.5 rounded-full px-2.5 text-xs transition-colors ${deep ? "bg-brand text-white" : "text-muted hover:bg-surface-2 hover:text-fg"}`}
+                  className={`ml-auto flex h-9 items-center gap-1.5 rounded-full px-2.5 text-xs transition-colors md:h-7 ${deep ? "bg-brand text-white" : "text-muted hover:bg-surface-2 hover:text-fg"}`}
                 >
                   <span aria-hidden>✦</span>
                   Go deep
                 </button>
               </div>
             </div>
-            <button disabled={(!text.trim() && !shared.length) || Boolean(sending)} className="h-12 shrink-0 rounded-brand bg-brand px-5 text-sm font-medium text-white disabled:opacity-40">
+            <button disabled={(!text.trim() && !shared.length) || Boolean(sending)} className="h-12 shrink-0 rounded-brand bg-brand px-4 text-sm font-medium text-white disabled:opacity-40 md:px-5">
               Send
             </button>
           </div>
@@ -550,7 +551,7 @@ function Conversations({ threads, active }: { threads: { id: string; title: stri
   return (
     <div className="grid min-w-0 gap-2">
       <div className="flex items-center gap-2">
-        <button onClick={() => setOpen(!open)} className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-brand border border-line bg-surface px-3 text-left text-sm lg:hidden" aria-expanded={open}>
+        <button onClick={() => setOpen(!open)} className="flex h-11 min-w-0 flex-1 items-center gap-2 rounded-brand border border-line bg-surface px-3 text-left text-sm md:h-9 lg:hidden" aria-expanded={open}>
           <span className="min-w-0 flex-1 truncate">{current?.title ?? "Conversations"}</span>
           <span className="tabular shrink-0 text-[11px] text-faint">{threads.length}</span>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`shrink-0 text-faint transition-transform ${open ? "rotate-180" : ""}`} aria-hidden>
@@ -561,7 +562,7 @@ function Conversations({ threads, active }: { threads: { id: string; title: stri
         <Link
           href="/lab"
           onClick={() => setOpen(false)}
-          className={`flex h-9 shrink-0 items-center gap-1.5 rounded-brand border px-3 text-sm transition-colors lg:h-8 lg:text-xs ${active ? "border-line text-muted hover:border-faint hover:text-fg" : "border-brand/50 bg-brand-soft text-brand-text"}`}
+          className={`flex h-11 shrink-0 items-center gap-1.5 rounded-brand border px-3 text-sm transition-colors md:h-9 lg:h-8 lg:text-xs ${active ? "border-line text-muted hover:border-faint hover:text-fg" : "border-brand/50 bg-brand-soft text-brand-text"}`}
         >
           <span aria-hidden>+</span> New
         </Link>
@@ -576,7 +577,7 @@ function Conversations({ threads, active }: { threads: { id: string; title: stri
               href={`/lab?t=${t.id}`}
               onClick={() => setOpen(false)}
               aria-current={on ? "page" : undefined}
-              className={`relative grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-[10px] py-2 pl-3.5 pr-3 text-sm transition-colors ${on ? "bg-surface-2 text-fg" : "text-muted hover:bg-surface-2/60 hover:text-fg"}`}
+              className={`relative grid min-h-11 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-[10px] py-2 pl-3.5 md:min-h-0 pr-3 text-sm transition-colors ${on ? "bg-surface-2 text-fg" : "text-muted hover:bg-surface-2/60 hover:text-fg"}`}
             >
               {on && <span className="absolute inset-y-2 left-0 w-[3px] rounded-full bg-brand" aria-hidden />}
               <span className="truncate">{t.title}</span>
@@ -635,7 +636,7 @@ function Typing({ seat, mood }: { seat: Seat | "table"; mood: { level: "quick" |
 
 function ToolButton({ children, icon, onClick, on }: { children: React.ReactNode; icon: string; onClick: () => void; on: boolean }) {
   return (
-    <button type="button" onClick={onClick} className={`flex h-7 items-center gap-1.5 rounded-full px-2.5 text-xs ${on ? "bg-surface-2 text-fg" : "text-muted hover:bg-surface-2 hover:text-fg"}`}>
+    <button type="button" onClick={onClick} className={`flex h-9 items-center gap-1.5 rounded-full px-2.5 text-xs md:h-7 ${on ? "bg-surface-2 text-fg" : "text-muted hover:bg-surface-2 hover:text-fg"}`}>
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
         <path d={icon} />
       </svg>
@@ -723,7 +724,7 @@ function SharedMemory({ sources }: { sources: LabSource[] }) {
 function ProposalCard({ t, clients, duplicate, onStart }: { t: ProposedTest; clients: LabClientRow[]; duplicate: LabTest | null; onStart: () => void }) {
   const names = t.clientIds.map((id) => clients.find((c) => c.id === id)?.name).filter(Boolean);
   return (
-    <div className="ml-10 grid gap-3 rounded-[14px] border border-brand/30 bg-[linear-gradient(135deg,rgba(178,30,44,0.10),transparent_60%)] p-4">
+    <div className="grid gap-3 rounded-[14px] border border-brand/30 md:ml-10 bg-[linear-gradient(135deg,rgba(178,30,44,0.10),transparent_60%)] p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-[11px] uppercase tracking-[0.14em] text-brand-text">Proposed test</span>
         <span className="text-xs text-faint">
@@ -744,7 +745,7 @@ function ProposalCard({ t, clients, duplicate, onStart }: { t: ProposedTest; cli
         </div>
       ) : null}
       <div className="flex flex-wrap gap-2">
-        <button onClick={onStart} className="h-9 rounded-brand bg-fg px-4 text-sm font-medium text-bg">
+        <button onClick={onStart} className="h-11 rounded-brand bg-fg px-4 text-sm font-medium text-bg md:h-9">
           {duplicate ? "Run it anyway…" : "Set up the test…"}
         </button>
       </div>
@@ -765,7 +766,7 @@ function ClientPicker({ clients, chosen, setChosen, tests, exclude }: { clients:
     .sort((a, b) => Number(chosen.includes(b.id)) - Number(chosen.includes(a.id)) || b.spend30 - a.spend30);
   return (
     <div className="grid gap-2">
-      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a client or industry" className="h-9 rounded-brand border border-line bg-bg px-3 text-sm outline-none placeholder:text-faint" />
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a client or industry" className="h-11 md:h-9 rounded-brand border border-line bg-bg px-3 text-sm outline-none placeholder:text-faint" />
       <div className="grid max-h-64 gap-0.5 overflow-y-auto rounded-[10px] border border-line p-1">
         {list.map((c) => {
           const on = chosen.includes(c.id);
@@ -788,14 +789,22 @@ function ClientPicker({ clients, chosen, setChosen, tests, exclude }: { clients:
   );
 }
 
+/** A dialog on wider screens; a bottom sheet on a phone, its last child (the actions) pinned at the bottom. */
 function Sheet({ children, onClose, wide }: { children: React.ReactNode; onClose: () => void; wide?: boolean }) {
   return createPortal(
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4 backdrop-blur-sm" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`grid max-h-[92vh] w-full gap-4 overflow-y-auto rounded-[18px] border border-line bg-bg p-5 ${wide ? "max-w-[720px]" : "max-w-[560px]"}`}>{children}</div>
+    <div className="fixed inset-0 z-50 grid items-end bg-black/70 backdrop-blur-sm md:place-items-center md:p-4" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div
+        className={`grid max-h-[92dvh] w-full gap-4 overflow-y-auto overscroll-contain rounded-t-[20px] border-t border-line bg-bg px-5 pt-5 animate-[sheet-up_.28s_cubic-bezier(.2,.8,.2,1)] md:max-h-[92vh] md:animate-none md:rounded-[18px] md:border md:p-5 ${wide ? "md:max-w-[720px]" : "md:max-w-[560px]"}`}
+      >
+        {children}
+      </div>
     </div>,
     document.body,
   );
 }
+
+/** The dialog's buttons: pinned to the bottom of the sheet on a phone, clear of the home indicator. */
+const SHEET_ACTIONS = "sticky bottom-0 -mx-5 flex flex-wrap gap-2 border-t border-line bg-bg/95 px-5 pb-[calc(12px+env(safe-area-inset-bottom))] pt-3 backdrop-blur-xl md:static md:mx-0 md:border-0 md:bg-transparent md:p-0 md:backdrop-blur-none";
 
 function StartDialog({ t, clients, tests, threadId, onClose, existing }: { t: ProposedTest; clients: LabClientRow[]; tests: LabTest[]; threadId: string | null; onClose: () => void; existing?: string }) {
   const router = useRouter();
@@ -822,7 +831,7 @@ function StartDialog({ t, clients, tests, threadId, onClose, existing }: { t: Pr
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <span className="text-faint">Read it after</span>
         {[7, 14, 21, 30].map((d) => (
-          <button key={d} onClick={() => setDays(d)} className={`h-8 rounded-full px-3 text-xs ${days === d ? "bg-fg text-bg" : "border border-line text-muted"}`}>
+          <button key={d} onClick={() => setDays(d)} className={`h-10 rounded-full px-3 text-xs md:h-8 ${days === d ? "bg-fg text-bg" : "border border-line text-muted"}`}>
             {d} days
           </button>
         ))}
@@ -831,16 +840,16 @@ function StartDialog({ t, clients, tests, threadId, onClose, existing }: { t: Pr
         Starting takes each client&apos;s last 14 days as the baseline. The strategist writes each client&apos;s brief for the test as a suggestion on Home, so a person approves it before anything is made.
       </p>
       {error && <p className="text-sm text-bad">{error}</p>}
-      <div className="flex flex-wrap gap-2">
-        <button onClick={() => go(true)} disabled={busy || !chosen.length} className="h-10 rounded-brand bg-brand px-5 text-sm font-medium text-white disabled:opacity-40">
+      <div className={SHEET_ACTIONS}>
+        <button onClick={() => go(true)} disabled={busy || !chosen.length} className="h-11 rounded-brand bg-brand px-5 text-sm font-medium text-white disabled:opacity-40 md:h-10">
           {busy ? "Starting…" : `Start on ${chosen.length} ${chosen.length === 1 ? "client" : "clients"}`}
         </button>
         {!existing && (
-          <button onClick={() => go(false)} disabled={busy} className="h-10 rounded-brand border border-line px-4 text-sm text-muted hover:text-fg">
+          <button onClick={() => go(false)} disabled={busy} className="h-11 rounded-brand border border-line px-4 text-sm text-muted hover:text-fg md:h-10">
             Keep as an idea
           </button>
         )}
-        <button onClick={onClose} className="h-10 px-3 text-sm text-faint hover:text-fg">
+        <button onClick={onClose} className="h-11 px-3 text-sm text-faint hover:text-fg md:h-10">
           Cancel
         </button>
       </div>
@@ -871,7 +880,7 @@ function Tests({ tests, clients }: { tests: LabTest[]; clients: LabClientRow[] }
         if (!list.length) return null;
         return (
           <section key={status} className="grid gap-3">
-            <div className="flex items-baseline justify-between gap-2">
+            <div className="flex flex-wrap items-baseline justify-between gap-2 md:flex-nowrap">
               <h2 className="font-heading text-xl">
                 {title} <span className="text-faint">{list.length}</span>
               </h2>
@@ -1025,10 +1034,10 @@ function TestCard({ t, clients, tests }: { t: LabTest; clients: LabClientRow[]; 
             className="rounded-[10px] border border-line bg-bg px-3 py-2 text-sm outline-none placeholder:text-faint"
           />
           <div className="flex gap-2">
-            <button onClick={() => run(() => decideTest(t.id, calling === "won", note), () => setCalling(null))} disabled={busy} className="h-9 rounded-brand bg-fg px-4 text-sm text-bg disabled:opacity-50">
+            <button onClick={() => run(() => decideTest(t.id, calling === "won", note), () => setCalling(null))} disabled={busy} className="h-11 md:h-9 rounded-brand bg-fg px-4 text-sm text-bg disabled:opacity-50">
               {busy ? "Saving…" : calling === "won" ? "Call it a win" : "Call it a flop"}
             </button>
-            <button onClick={() => setCalling(null)} className="h-9 px-3 text-sm text-faint">
+            <button onClick={() => setCalling(null)} className="h-11 md:h-9 px-3 text-sm text-faint">
               Back
             </button>
           </div>
@@ -1037,36 +1046,36 @@ function TestCard({ t, clients, tests }: { t: LabTest; clients: LabClientRow[]; 
         <div className="flex flex-wrap gap-2 pt-1">
           {t.status === "proposed" && (
             <>
-              <button onClick={() => setStarting(true)} className="h-9 rounded-brand bg-fg px-4 text-sm text-bg">
+              <button onClick={() => setStarting(true)} className="h-11 md:h-9 rounded-brand bg-fg px-4 text-sm text-bg">
                 Start…
               </button>
-              <button onClick={() => run(() => dropTest(t.id))} disabled={busy} className="h-9 px-3 text-sm text-faint hover:text-bad">
+              <button onClick={() => run(() => dropTest(t.id))} disabled={busy} className="h-11 md:h-9 px-3 text-sm text-faint hover:text-bad">
                 Drop
               </button>
             </>
           )}
           {t.status === "running" && (
             <>
-              <button onClick={() => setCalling("won")} className="h-9 rounded-brand border border-ok/50 px-4 text-sm text-ok hover:bg-ok/10">
+              <button onClick={() => setCalling("won")} className="h-11 md:h-9 rounded-brand border border-ok/50 px-4 text-sm text-ok hover:bg-ok/10">
                 It won
               </button>
-              <button onClick={() => setCalling("lost")} className="h-9 rounded-brand border border-line px-4 text-sm text-muted hover:text-fg">
+              <button onClick={() => setCalling("lost")} className="h-11 md:h-9 rounded-brand border border-line px-4 text-sm text-muted hover:text-fg">
                 It flopped
               </button>
             </>
           )}
           {t.status === "won" && (
-            <button onClick={() => run(async () => { const r = await draftDeploy(t.id); if (r.ok) setDeploy({ learning: r.learning, clients: r.clients }); return r; })} disabled={busy} className="h-9 rounded-brand bg-ok px-4 text-sm font-medium text-white disabled:opacity-60">
+            <button onClick={() => run(async () => { const r = await draftDeploy(t.id); if (r.ok) setDeploy({ learning: r.learning, clients: r.clients }); return r; })} disabled={busy} className="h-11 md:h-9 rounded-brand bg-ok px-4 text-sm font-medium text-white disabled:opacity-60">
               {busy ? "Finding where it fits…" : t.deployed.length ? "Deploy to more clients" : "Deploy the learning"}
             </button>
           )}
           {t.status === "lost" && (
-            <button onClick={() => act(async () => { const r = await iterateTest(t.id); if (!r.ok) return setError(r.error); router.push(`/lab?t=${r.threadId}`); })} disabled={busy} className="h-9 rounded-brand bg-fg px-4 text-sm text-bg disabled:opacity-60">
+            <button onClick={() => act(async () => { const r = await iterateTest(t.id); if (!r.ok) return setError(r.error); router.push(`/lab?t=${r.threadId}`); })} disabled={busy} className="h-11 md:h-9 rounded-brand bg-fg px-4 text-sm text-bg disabled:opacity-60">
               {busy ? "The table is thinking…" : "Iterate with the table"}
             </button>
           )}
           {t.threadId && (
-            <Link href={`/lab?t=${t.threadId}`} className="grid h-9 place-items-center px-3 text-sm text-faint hover:text-fg">
+            <Link href={`/lab?t=${t.threadId}`} className="grid h-11 md:h-9 place-items-center px-3 text-sm text-faint hover:text-fg">
               Conversation
             </Link>
           )}
@@ -1131,7 +1140,7 @@ function DeployDialog({ t, draft, clients, onClose }: { t: LabTest; draft: { lea
         )}
       </div>
       {error && <p className="text-sm text-bad">{error}</p>}
-      <div className="flex gap-2">
+      <div className={SHEET_ACTIONS}>
         <button
           onClick={() =>
             act(async () => {
@@ -1143,11 +1152,11 @@ function DeployDialog({ t, draft, clients, onClose }: { t: LabTest; draft: { lea
             })
           }
           disabled={busy}
-          className="h-10 rounded-brand bg-ok px-5 text-sm font-medium text-white disabled:opacity-50"
+          className="h-11 rounded-brand bg-ok px-5 text-sm font-medium text-white disabled:opacity-50 md:h-10"
         >
           {busy ? "Deploying…" : `Deploy to ${new Set([...chosen, ...t.clients.map((c) => c.id)]).size} clients`}
         </button>
-        <button onClick={onClose} className="h-10 px-3 text-sm text-faint hover:text-fg">
+        <button onClick={onClose} className="h-11 px-3 text-sm text-faint hover:text-fg md:h-10">
           Cancel
         </button>
       </div>

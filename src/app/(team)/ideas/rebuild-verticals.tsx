@@ -18,7 +18,7 @@ export function RebuildVerticals() {
             setNote("error" in r ? r.error : "Rebuilding from paid clients, about 2 minutes. Refresh to see it.");
           })
         }
-        className="rounded-full border border-line bg-bg/60 px-3 py-1.5 text-xs text-muted backdrop-blur hover:text-fg disabled:opacity-60"
+        className="rounded-full border border-line bg-bg/60 px-3 py-2.5 text-xs text-muted backdrop-blur hover:text-fg disabled:opacity-60 md:py-1.5"
       >
         Rebuild verticals
       </button>

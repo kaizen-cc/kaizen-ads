@@ -115,7 +115,8 @@ export function VerticalsView({
       </header>
 
       {/* Find what applies: search a client, a sub-vertical or a buyer; narrow to an industry */}
-      <div className="sticky top-[calc(8px+env(safe-area-inset-top,0px))] z-20 grid gap-3 rounded-[18px] border border-line bg-bg/90 p-3 backdrop-blur">
+      {/* Phones: it scrolls away with the page (the app bar is pinned there); wider screens keep it pinned */}
+      <div className="relative z-20 grid gap-3 rounded-[18px] border border-line bg-bg/90 p-3 backdrop-blur md:sticky md:top-[calc(8px+env(safe-area-inset-top,0px))]">
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-[220px] flex-1">
             <svg className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
@@ -130,11 +131,11 @@ export function VerticalsView({
               className="h-10 w-full rounded-full border border-line bg-surface pl-9 pr-3 text-sm outline-none focus:border-brand-text"
             />
           </div>
-          <div className="flex rounded-full border border-line bg-surface p-0.5 text-xs">
-            <button type="button" onClick={() => setProven(true)} className={`rounded-full px-3 py-1.5 ${proven ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
+          <div className="flex w-full rounded-full border border-line bg-surface p-0.5 text-xs md:w-auto">
+            <button type="button" onClick={() => setProven(true)} className={`flex-1 rounded-full px-3 py-2.5 md:flex-none md:py-1.5 ${proven ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
               Our proven playbooks <span className="opacity-60">{provenCount}</span>
             </button>
-            <button type="button" onClick={() => setProven(false)} className={`rounded-full px-3 py-1.5 ${!proven ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
+            <button type="button" onClick={() => setProven(false)} className={`flex-1 rounded-full px-3 py-2.5 md:flex-none md:py-1.5 ${!proven ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
               All sub-verticals <span className="opacity-60">{subCount}</span>
             </button>
           </div>
@@ -145,13 +146,14 @@ export function VerticalsView({
                 setQ("");
                 setVertical(null);
               }}
-              className="px-2 text-xs text-muted hover:text-fg"
+              className="px-2 py-2 text-xs text-muted hover:text-fg md:py-0"
             >
               Clear
             </button>
           )}
         </div>
-        <nav className="flex flex-wrap gap-1.5" aria-label="Industries">
+        {/* Phones: one row that swipes sideways instead of a wall of chips */}
+        <nav className="no-scrollbar -mx-3 flex gap-1.5 overflow-x-auto px-3 md:mx-0 md:flex-wrap md:overflow-visible md:px-0" aria-label="Industries">
           {all.map((v) => {
             const n = v.subs.filter((s) => !proven || cards.get(s.id)?.playbook).length;
             const on = vertical === v.id;
@@ -160,7 +162,7 @@ export function VerticalsView({
                 key={v.id}
                 type="button"
                 onClick={() => setVertical(on ? null : v.id)}
-                className={`rounded-full border px-3 py-1 text-xs transition-colors ${on ? "border-fg/50 bg-fg text-bg" : n ? "border-line text-muted hover:border-fg/30 hover:text-fg" : "border-dashed border-line text-faint"}`}
+                className={`shrink-0 whitespace-nowrap rounded-full border px-3 py-2 text-xs transition-colors md:shrink md:whitespace-normal md:py-1 ${on ? "border-fg/50 bg-fg text-bg" : n ? "border-line text-muted hover:border-fg/30 hover:text-fg" : "border-dashed border-line text-faint"}`}
               >
                 {v.name} <span className="opacity-60">{n}</span>
               </button>
@@ -176,7 +178,7 @@ export function VerticalsView({
             {proven ? "We don't have wins of our own there yet. See every sub-vertical to find the closest market, its clients and benchmarks." : "Try a different word, or clear the filters."}
           </p>
           {proven && (
-            <button type="button" onClick={() => setProven(false)} className="mt-1 rounded-full border border-line px-4 py-1.5 text-xs text-muted hover:text-fg">
+            <button type="button" onClick={() => setProven(false)} className="mt-1 rounded-full border border-line px-4 py-2.5 text-xs text-muted hover:text-fg md:py-1.5">
               Show all sub-verticals
             </button>
           )}

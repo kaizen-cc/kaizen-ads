@@ -39,14 +39,15 @@ export default async function Ideas({ searchParams }: PageProps<"/ideas">) {
   };
   return (
     <div className="grid gap-6">
-      <nav className="mx-auto flex w-full max-w-6xl gap-1 rounded-full border border-line bg-surface p-1 sm:w-fit" aria-label="Ideas">
+      {/* Phones: the four tabs as a two-by-two segmented control, every label whole */}
+      <nav className="mx-auto grid w-full max-w-6xl grid-cols-2 gap-1 rounded-[18px] border border-line bg-surface p-1 sm:flex sm:w-fit sm:rounded-full" aria-label="Ideas">
         {TABS.map(([k, label, hint]) => (
           <Link
             key={k}
             href={keep(k)}
             title={hint}
             aria-current={tab === k ? "page" : undefined}
-            className={`flex-1 rounded-full px-4 py-2 text-center text-sm transition-colors sm:flex-none ${tab === k ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}
+            className={`flex-1 whitespace-nowrap rounded-[14px] px-3 py-2.5 text-center text-sm transition-colors sm:flex-none sm:rounded-full sm:px-4 sm:py-2 ${tab === k ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}
           >
             {label}
           </Link>
