@@ -42,6 +42,13 @@ export type LaunchPlan = {
   igId: string | null;
   link: string | null;
   urlTags: string | null;
+  /** A new ad set's optimization: the pixel (dataset) and conversion event it optimizes for. An existing ad set keeps its own. */
+  pixelId?: string | null;
+  event?: string | null;
+  /** The event the client's KPI counts, as Meta's event (the Media Buyer's suggestion for a new ad set) */
+  suggestedEvent?: string | null;
+  /** The dataset each ad reports its website events to (the ad's tracking) */
+  trackingPixel?: string | null;
   budget?: Budget;
   cta: string;
   copy: { bodies: string[]; titles: string[]; descriptions: string[] };
@@ -52,10 +59,30 @@ export type LaunchPlan = {
   known?: string[];
   reason: string;
   /** allAdsets: every ad set to move a launched ad to, when it's more than where ads land (the sandbox) */
-  options: { adsets: AdsetOption[]; pages: { id: string; name: string }[]; igs: { id: string; name: string }[]; allAdsets?: AdsetOption[] };
+  options: { adsets: AdsetOption[]; pages: { id: string; name: string }[]; igs: { id: string; name: string }[]; pixels?: Pixel[]; allAdsets?: AdsetOption[] };
   attempts: { structure: string; error: string | null }[];
 };
-export type Overrides = Partial<Pick<LaunchPlan, "adsetId" | "mode" | "newAdsetName" | "pageId" | "igId" | "link">> & { names?: Record<string, string>; dailyBudget?: number | null };
+/** A pixel (Meta calls them datasets) the account can use, and when it last saw an event */
+export type Pixel = { id: string; name: string; lastFired: string | null };
+/** The event a KPI's conversion name means */
+function eventFor(conversion: string | null) {
+  const c = (conversion ?? "").toLowerCase();
+  if (/purchase|sale|order|revenue|roas/.test(c)) return "PURCHASE";
+  if (/regist|sign ?up/.test(c)) return "COMPLETE_REGISTRATION";
+  if (/book|schedul|appointment|consult/.test(c)) return "SCHEDULE";
+  if (/call|contact/.test(c)) return "CONTACT";
+  if (/applic/.test(c)) return "SUBMIT_APPLICATION";
+  if (/subscri/.test(c)) return "SUBSCRIBE";
+  if (/trial/.test(c)) return "START_TRIAL";
+  if (/cart/.test(c)) return "ADD_TO_CART";
+  if (/checkout/.test(c)) return "INITIATED_CHECKOUT";
+  if (/lead|form|quote|enquir|inquir/.test(c)) return "LEAD";
+  return null;
+}
+/** The ad's tracking: its website events reported to this dataset */
+export const trackingSpecs = (pixel: string) => JSON.stringify([{ "action.type": ["offsite_conversion"], fb_pixel: [pixel] }]);
+
+export type Overrides = Partial<Pick<LaunchPlan, "adsetId" | "mode" | "newAdsetName" | "pageId" | "igId" | "link" | "pixelId" | "event" | "trackingPixel" | "urlTags">> & { names?: Record<string, string>; dailyBudget?: number | null };
 /** level: where the budget lives (the ad set, the campaign for CBO, a lifetime budget that's left alone). value: the
  *  daily budget the launch sets (null: unchanged). suggested: the Media Buyer's, with why. Dollars. */
 export type Budget = { level: "adset" | "campaign" | "lifetime" | null; current: number | null; suggested: number | null; value: number | null; why: string };
@@ -79,11 +106,11 @@ export async function update(admin: SupabaseClient, id: string, patch: Record<st
   await admin.from("launches").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
 }
 
-type Ticket = { id: string; number: number; title: string; format: string; landing_url: string | null; client_id: string; brief: unknown; clients: { name: string; website: string | null; meta_ad_account_id: string | null } };
+type Ticket = { id: string; number: number; title: string; format: string; landing_url: string | null; client_id: string; brief: unknown; clients: { name: string; website: string | null; meta_ad_account_id: string | null; url_tags: string | null } };
 
 /** The ticket, its approved copy and its designs' current files (only those the client didn't send back). */
 async function loadTicket(admin: SupabaseClient, requestId: string) {
-  const { data: t } = await admin.from("requests").select("id, number, title, format, landing_url, client_id, brief, clients(name, website, meta_ad_account_id)").eq("id", requestId).single();
+  const { data: t } = await admin.from("requests").select("id, number, title, format, landing_url, client_id, brief, clients(name, website, meta_ad_account_id, url_tags)").eq("id", requestId).single();
   const [{ data: copy }, { data: designs }, { data: kpi }] = await Promise.all([
     admin.from("copy_sets").select("ads, status").eq("request_id", requestId).eq("status", "approved").order("updated_at", { ascending: false }).limit(1).maybeSingle(),
     admin
@@ -107,7 +134,7 @@ async function readAccount(admin: SupabaseClient, account: string) {
   const act = `act_${account}`;
   const live = JSON.stringify([{ field: "effective_status", operator: "IN", value: ["ACTIVE", "PAUSED", "CAMPAIGN_PAUSED", "ADSET_PAUSED", "IN_PROCESS", "WITH_ISSUES"] }]);
   type P<T> = { data: T[] };
-  const [camps, sets, ads, pages, igs] = await Promise.all([
+  const [camps, sets, ads, pages, igs, pixels] = await Promise.all([
     metaGraph<P<{ id: string; name: string; objective: string; special_ad_categories?: string[]; daily_budget?: string }>>(`${act}/campaigns`, { fields: "name,objective,special_ad_categories,daily_budget", filtering: live, limit: "100" }),
     metaGraph<P<{ id: string; name: string; campaign_id: string; status: string; optimization_goal?: string; destination_type?: string; is_dynamic_creative?: boolean; promoted_object?: { pixel_id?: string; custom_event_type?: string; page_id?: string }; daily_budget?: string; lifetime_budget?: string }>>(`${act}/adsets`, {
       fields: "name,campaign_id,status,optimization_goal,destination_type,is_dynamic_creative,promoted_object,daily_budget,lifetime_budget",
@@ -121,6 +148,7 @@ async function readAccount(admin: SupabaseClient, account: string) {
     }),
     metaGraph<P<{ id: string; name: string }>>(`${act}/promote_pages`, { fields: "name", limit: "100" }).catch(() => ({ data: [] })),
     metaGraph<P<{ id: string; username?: string }>>(`${act}/instagram_accounts`, { fields: "username", limit: "100" }).catch(() => ({ data: [] })),
+    metaGraph<P<{ id: string; name: string; last_fired_time?: string; is_unavailable?: boolean }>>(`${act}/adspixels`, { fields: "name,last_fired_time,is_unavailable", limit: "50" }).catch(() => ({ data: [] })),
   ]);
   const since = new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10);
   const { data: days } = await admin.from("meta_ad_daily").select("adset_id, metrics").in("ad_account_id", [account, act]).gte("date", since);
@@ -156,7 +184,12 @@ async function readAccount(admin: SupabaseClient, account: string) {
       };
     })
     .sort((a, b) => b.spend14 - a.spend14 || Number(b.status === "ACTIVE") - Number(a.status === "ACTIVE"));
-  return { adsets, pages: pages.data.map((p) => ({ id: p.id, name: p.name })), igs: igs.data.map((i) => ({ id: i.id, name: i.username ?? i.id })) };
+  return {
+    adsets,
+    pages: pages.data.map((p) => ({ id: p.id, name: p.name })),
+    igs: igs.data.map((i) => ({ id: i.id, name: i.username ?? i.id })),
+    pixels: pixels.data.filter((x) => !x.is_unavailable).map((x): Pixel => ({ id: x.id, name: x.name, lastFired: x.last_fired_time ?? null })).sort((a, b) => (b.lastFired ?? "").localeCompare(a.lastFired ?? "")),
+  };
 }
 
 const mostCommon = (xs: string[]) => {
@@ -263,7 +296,7 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
     }
     if (!acct.adsets.length) {
       add("adset", "Ad set", "block", sandbox ? "The sandbox account has no campaign or ad set yet: create a paused test campaign below." : "The account has no campaign or ad set to add ads to; set one up in Ads Manager first.");
-      await update(admin, launchId, { status: "blocked", progress: null, checks, plan: { account, sandbox, options: { adsets: [], pages: acct.pages, igs: acct.igs } } });
+      await update(admin, launchId, { status: "blocked", progress: null, checks, plan: { account, sandbox, options: { adsets: [], pages: acct.pages, igs: acct.igs, pixels: acct.pixels } } });
       return;
     }
 
@@ -311,7 +344,33 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
       add("adset", "Ad set", "block", `"${adset.campaign}" is a ${adset.objective} campaign; the launcher handles sales, leads (website), traffic, engagement and awareness.`);
     else add("adset", "Ad set", "ok", mode === "clone" ? `A new ad set, "${newAdsetName}", copied from "${adset.name}" (same targeting, pixel and optimization), paused, in "${adset.campaign}".` : `"${adset.name}" in "${adset.campaign}"${adset.status !== "ACTIVE" ? " (paused)" : ""}.`);
     if (adset.special.length) add("special", "Special ad category", "warn", `"${adset.campaign}" runs under ${adset.special.join(", ").toLowerCase()}: Meta reviews the copy and targeting against those rules.`);
-    if (adset.pixel) add("pixel", "Pixel and event", conversion && adset.event && !new RegExp(conversion.replace(/s$/, ""), "i").test(adset.event) ? "warn" : "ok", `Optimizing for ${adset.event ?? adset.optimization ?? "?"} on pixel ${adset.pixel}${conversion ? `; the KPI counts ${conversion}` : ""}.`);
+    // Tracking: what the ad set optimizes for (a new ad set can be set; an existing one keeps its own), the dataset each
+    // ad reports website events to, and the UTM parameters on its link
+    const prevPlan = l.plan as LaunchPlan | null;
+    const pixelName = (id: string | null | undefined) => (id ? (acct.pixels.find((x) => x.id === id)?.name ?? id) : "none");
+    const suggestedEvent = eventFor(conversion);
+    const pixelId = mode === "clone" ? (overrides.pixelId !== undefined ? overrides.pixelId : (prevPlan?.pixelId ?? adset.pixel)) : adset.pixel;
+    const event = mode === "clone" ? (overrides.event !== undefined ? overrides.event : (prevPlan?.event ?? adset.event)) : adset.event;
+    const trackingPixel = overrides.trackingPixel !== undefined ? overrides.trackingPixel : (prevPlan?.trackingPixel ?? pixelId ?? acct.pixels[0]?.id ?? null);
+    const urlTags = overrides.urlTags !== undefined ? overrides.urlTags?.trim() || null : (prevPlan?.urlTags ?? ticket.clients.url_tags ?? setting.urlTags ?? null);
+    const fired = (id: string | null | undefined) => acct.pixels.find((x) => x.id === id)?.lastFired ?? null;
+    const stale = (id: string | null | undefined) => {
+      const f = fired(id);
+      return f ? Math.floor((Date.now() - Date.parse(f)) / 86_400_000) : null;
+    };
+    if (pixelId) {
+      const off = conversion && event && suggestedEvent && suggestedEvent !== event;
+      const days = stale(pixelId);
+      add(
+        "pixel",
+        "Optimization",
+        off || (days != null && days > 3) ? "warn" : "ok",
+        `${mode === "clone" ? "The new ad set optimizes" : `"${adset.name}" optimizes`} for ${(event ?? adset.optimization ?? "?").replace(/_/g, " ").toLowerCase()} on ${pixelName(pixelId)}.${off ? ` The KPI counts ${conversion} (${suggestedEvent.replace(/_/g, " ").toLowerCase()}).` : ""}${days != null && days > 3 ? ` That dataset hasn't seen an event in ${days} days: check the pixel on the site.` : ""}`,
+      );
+    } else if (adset.destination === "WEBSITE" || ["OUTCOME_SALES", "OUTCOME_LEADS", "CONVERSIONS"].includes(adset.objective)) add("pixel", "Optimization", "warn", `"${adset.name}" doesn't optimize for a pixel event.`);
+    if (trackingPixel) add("tracking", "Website events", "ok", `Each ad reports to ${pixelName(trackingPixel)}.`);
+    else add("tracking", "Website events", acct.pixels.length ? "warn" : "ok", acct.pixels.length ? "No dataset picked for the ads' website events: Meta uses its default." : "This account has no pixel or dataset.");
+    add("utm", "UTM parameters", urlTags ? "ok" : "warn", urlTags ? `${urlTags}${ticket.clients.url_tags ? ` (${ticket.clients.name}'s own)` : ""}` : "None: site analytics won't see which ad a visit came from.");
 
     // Budget: where it lives, what it is, what the Media Buyer suggests, what will be set. A new ad set gets one on its
     // own; an existing ad set's budget only changes when the buyer sets it (it may be carrying other ads)
@@ -360,7 +419,11 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
       pageId,
       igId,
       link,
-      urlTags: setting.urlTags ?? null,
+      urlTags,
+      pixelId: mode === "clone" ? pixelId : null,
+      event: mode === "clone" ? event : null,
+      suggestedEvent,
+      trackingPixel,
       budget,
       cta,
       copy: { bodies, titles, descriptions },
@@ -368,7 +431,7 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
       structure: null,
       optOut: [...ENHANCEMENTS],
       reason,
-      options: { adsets: acct.adsets, pages: acct.pages, igs: acct.igs, ...(everyAdset ? { allAdsets: everyAdset } : {}) },
+      options: { adsets: acct.adsets, pages: acct.pages, igs: acct.igs, pixels: acct.pixels, ...(everyAdset ? { allAdsets: everyAdset } : {}) },
       attempts: [],
     };
 
@@ -602,6 +665,13 @@ export async function runLaunch(admin: SupabaseClient, launchId: string) {
       adsetId = copy.copied_adset_id;
       if (plan.newAdsetName) await metaWrite(admin, plan.account, adsetId, { name: plan.newAdsetName.slice(0, 250) }, false);
     }
+    // A new ad set set to optimize differently from the one it was copied from: its pixel and event
+    let pixelNote: string | null = null;
+    const from = plan.options.adsets.find((a) => a.id === plan.adsetId);
+    if (plan.mode === "clone" && plan.pixelId && (plan.pixelId !== from?.pixel || plan.event !== from?.event))
+      await metaWrite(admin, plan.account, adsetId, { promoted_object: JSON.stringify({ pixel_id: plan.pixelId, ...(plan.event ? { custom_event_type: plan.event } : {}) }) }, false).catch(
+        (e) => (pixelNote = `Optimization not changed (Meta: ${e instanceof Error ? e.message : String(e)})`),
+      );
     // The budget the plan settled on, set where it lives; a refusal here doesn't stop the ads
     let budgetNote: string | null = null;
     const b = plan.budget;
@@ -613,7 +683,7 @@ export async function runLaunch(admin: SupabaseClient, launchId: string) {
     for (const ad of plan.ads) {
       try {
         const c = await metaWrite<{ id: string }>(admin, plan.account, `act_${plan.account}/adcreatives`, params(specFor(plan, ad, plan.structure ?? "single")), false);
-        const a = await metaWrite<{ id: string }>(admin, plan.account, `act_${plan.account}/ads`, { name: ad.name.slice(0, 250), adset_id: adsetId, creative: JSON.stringify({ creative_id: c.id }), status: "PAUSED" }, false);
+        const a = await createAd(admin, plan, { name: ad.name.slice(0, 250), adset_id: adsetId, creative: JSON.stringify({ creative_id: c.id }), status: "PAUSED" });
         made.push({ designId: ad.designId, name: ad.name, adId: a.id, creativeId: c.id, error: null });
       } catch (e) {
         made.push({ designId: ad.designId, name: ad.name, adId: null, creativeId: null, error: e instanceof Error ? e.message : String(e) });
@@ -626,13 +696,25 @@ export async function runLaunch(admin: SupabaseClient, launchId: string) {
       progress: null,
       result,
       launched_at: ok.length ? new Date().toISOString() : null,
-      error: [ok.length === made.length ? null : made.filter((m) => m.error).map((m) => `${m.name}: ${m.error}`).join(" · "), budgetNote].filter(Boolean).join(" · ").slice(0, 500) || null,
+      error: [ok.length === made.length ? null : made.filter((m) => m.error).map((m) => `${m.name}: ${m.error}`).join(" · "), budgetNote, pixelNote].filter(Boolean).join(" · ").slice(0, 500) || null,
     });
     return { ok: ok.length, total: made.length, result, sandbox: plan.sandbox };
   } catch (e) {
     await update(admin, launchId, { status: "failed", progress: null, error: (e instanceof Error ? e.message : String(e)).slice(0, 500) });
     throw e;
   }
+}
+
+/** An ad, reporting its website events to the plan's dataset; if Meta won't take the tracking, the ad is made without it. */
+async function createAd(admin: SupabaseClient, plan: LaunchPlan, fields: Record<string, string>) {
+  if (plan.trackingPixel) {
+    try {
+      return await metaWrite<{ id: string }>(admin, plan.account, `act_${plan.account}/ads`, { ...fields, tracking_specs: trackingSpecs(plan.trackingPixel) }, false);
+    } catch (e) {
+      if (!/tracking/i.test(e instanceof Error ? e.message : String(e))) throw e;
+    }
+  }
+  return metaWrite<{ id: string }>(admin, plan.account, `act_${plan.account}/ads`, fields, false);
 }
 
 /** Sandbox only: a paused traffic campaign and ad set in Kaizen's own account, so there's somewhere to test launches. */
@@ -907,7 +989,7 @@ export async function moveLaunch(admin: SupabaseClient, launchId: string, by: st
       ads.push(a);
       continue;
     }
-    const made = await metaWrite<{ id: string }>(admin, plan.account, `act_${plan.account}/ads`, { name: a.name.slice(0, 250), adset_id: adsetId, creative: JSON.stringify({ creative_id: a.creativeId }), status: "PAUSED" }, false);
+    const made = await createAd(admin, plan, { name: a.name.slice(0, 250), adset_id: adsetId, creative: JSON.stringify({ creative_id: a.creativeId }), status: "PAUSED" });
     await metaWrite(admin, plan.account, a.adId, { status: "ARCHIVED" }, false).catch(() => null);
     ads.push({ ...a, adId: made.id });
   }

@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { metaGraph } from "@/lib/context/meta";
 import { metaWrite } from "@/lib/meta-write";
-import { CTA, ENHANCEMENTS, checkCreative, params, sandboxClient, specFor, suggestGeneralRule, update, type LaunchPlan, type Result } from "@/lib/launcher";
+import { CTA, ENHANCEMENTS, checkCreative, params, sandboxClient, specFor, suggestGeneralRule, trackingSpecs, update, type LaunchPlan, type Result } from "@/lib/launcher";
 
 // Running a launched ad from Kaizen Ads instead of Ads Manager: what Meta shows for it now (each ad, its ad set and
 // campaign, on or paused, in review, refused), turning it on or pausing it, and editing what the launcher decided
@@ -14,7 +14,7 @@ import { CTA, ENHANCEMENTS, checkCreative, params, sandboxClient, specFor, sugge
 
 export type Delivery = {
   ads: { adId: string; designId: string; name: string; status: string; effective: string; issue: string | null }[];
-  adset: { id: string; name: string; status: string; effective: string; daily: number | null; lifetime: number | null } | null;
+  adset: { id: string; name: string; status: string; effective: string; daily: number | null; lifetime: number | null; pixel: string | null; event: string | null; optimization: string | null } | null;
   campaign: { id: string; name: string; status: string; effective: string; daily: number | null; lifetime: number | null } | null;
   /** Where the daily budget lives: the ad set, the campaign (shared by its ad sets) or a lifetime budget left alone */
   budget: "adset" | "campaign" | "lifetime" | null;
@@ -26,10 +26,10 @@ const money = (v?: string) => (v && Number(v) > 0 ? Number(v) / 100 : null);
 export async function delivery(result: Result): Promise<Delivery> {
   const made = result.ads.filter((a) => a.adId);
   type AdRow = { name: string; status: string; effective_status: string; issues_info?: { error_summary?: string; error_message?: string }[]; ad_review_feedback?: { global?: Record<string, string> } };
-  type SetRow = { name: string; status: string; effective_status: string; daily_budget?: string; lifetime_budget?: string; campaign?: { id: string; name: string; status: string; effective_status: string; daily_budget?: string; lifetime_budget?: string } };
+  type SetRow = { name: string; status: string; effective_status: string; daily_budget?: string; lifetime_budget?: string; optimization_goal?: string; promoted_object?: { pixel_id?: string; custom_event_type?: string }; campaign?: { id: string; name: string; status: string; effective_status: string; daily_budget?: string; lifetime_budget?: string } };
   const [ads, set] = await Promise.all([
     made.length ? metaGraph<Record<string, AdRow>>("", { ids: made.map((a) => a.adId).join(","), fields: "name,status,effective_status,issues_info,ad_review_feedback" }).catch(() => ({}) as Record<string, AdRow>) : Promise.resolve({} as Record<string, AdRow>),
-    metaGraph<SetRow>(result.adsetId, { fields: "name,status,effective_status,daily_budget,lifetime_budget,campaign{id,name,status,effective_status,daily_budget,lifetime_budget}" }).catch(() => null),
+    metaGraph<SetRow>(result.adsetId, { fields: "name,status,effective_status,daily_budget,lifetime_budget,optimization_goal,promoted_object,campaign{id,name,status,effective_status,daily_budget,lifetime_budget}" }).catch(() => null),
   ]);
   const c = set?.campaign;
   return {
@@ -38,7 +38,7 @@ export async function delivery(result: Result): Promise<Delivery> {
       const review = r?.ad_review_feedback?.global ? Object.values(r.ad_review_feedback.global)[0] : null;
       return { adId: a.adId!, designId: a.designId, name: r?.name ?? a.name, status: r?.status ?? "UNKNOWN", effective: r?.effective_status ?? "UNKNOWN", issue: review ?? r?.issues_info?.[0]?.error_message ?? r?.issues_info?.[0]?.error_summary ?? null };
     }),
-    adset: set ? { id: result.adsetId, name: set.name, status: set.status, effective: set.effective_status, daily: money(set.daily_budget), lifetime: money(set.lifetime_budget) } : null,
+    adset: set ? { id: result.adsetId, name: set.name, status: set.status, effective: set.effective_status, daily: money(set.daily_budget), lifetime: money(set.lifetime_budget), pixel: set.promoted_object?.pixel_id ?? null, event: set.promoted_object?.custom_event_type ?? null, optimization: set.optimization_goal ?? null } : null,
     campaign: c ? { id: c.id, name: c.name, status: c.status, effective: c.effective_status, daily: money(c.daily_budget), lifetime: money(c.lifetime_budget) } : null,
     budget: c?.daily_budget && Number(c.daily_budget) > 0 ? "campaign" : set?.daily_budget && Number(set.daily_budget) > 0 ? "adset" : set?.lifetime_budget || c?.lifetime_budget ? "lifetime" : null,
   };
@@ -90,6 +90,8 @@ export type AdEdit = {
   igId?: string | null;
   /** Advantage+ enhancements switched off */
   optOut?: string[];
+  /** The dataset the ads report website events to (null: Meta's default) */
+  trackingPixel?: string | null;
   /** Dollars a day, set where the budget lives */
   dailyBudget?: number | null;
 };
@@ -147,6 +149,12 @@ export async function editLaunch(admin: SupabaseClient, launchId: string, by: st
       changes.push("Advantage+ enhancements");
     }
   }
+  const tracking = edit.trackingPixel !== undefined && (edit.trackingPixel || null) !== (plan.trackingPixel ?? null);
+  if (tracking && !edit.trackingPixel) throw new Error("Pick a dataset: an ad's tracking can be switched to another one, not cleared.");
+  if (tracking) {
+    next.trackingPixel = edit.trackingPixel || null;
+    changes.push(next.trackingPixel ? `website events → ${plan.options.pixels?.find((x) => x.id === next.trackingPixel)?.name ?? next.trackingPixel}` : "website events → Meta's default");
+  }
   const creative = !same({ c: next.copy, a: next.cta, l: next.link, u: next.urlTags, p: next.pageId, i: next.igId, o: next.optOut }, { c: plan.copy, a: plan.cta, l: plan.link, u: plan.urlTags, p: plan.pageId, i: plan.igId, o: plan.optOut });
 
   const result: Result = JSON.parse(JSON.stringify(l.result));
@@ -170,6 +178,14 @@ export async function editLaunch(admin: SupabaseClient, launchId: string, by: st
   // Check every new creative with Meta first: a refusal changes nothing
   const made = result.ads.filter((a) => a.adId);
   const named = (designId: string, fallback: string) => (edit.names?.[designId]?.trim() || fallback).slice(0, 250);
+  if (tracking && next.trackingPixel)
+    for (const m of made) {
+      try {
+        await metaWrite(admin, plan.account, m.adId!, { tracking_specs: trackingSpecs(next.trackingPixel) }, true);
+      } catch (e) {
+        throw new Error(`Meta wouldn't take that dataset for ${m.name}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
   if (creative) {
     for (const m of made) {
       const ad = next.ads.find((a) => a.designId === m.designId);
@@ -189,6 +205,7 @@ export async function editLaunch(admin: SupabaseClient, launchId: string, by: st
       patch.creative = JSON.stringify({ creative_id: c.id });
       m.creativeId = c.id;
     }
+    if (tracking && next.trackingPixel) patch.tracking_specs = trackingSpecs(next.trackingPixel);
     if (Object.keys(patch).length) await metaWrite(admin, plan.account, m.adId!, patch, false);
     m.name = name;
     const pa = next.ads.find((a) => a.designId === m.designId);

@@ -1,12 +1,26 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { checkMetaWrite, setMetaSandbox } from "./meta-write-actions";
+import { checkMetaWrite, setMetaSandbox, setUrlTags } from "./meta-write-actions";
+
+// Meta's auto-fill tags: each ad's own values, filled in by Meta when someone clicks
+const TAGS: [string, string][] = [
+  ["{{site_source_name}}", "Source (fb, ig, msg, an)"],
+  ["{{placement}}", "Placement"],
+  ["{{campaign.name}}", "Campaign name"],
+  ["{{campaign.id}}", "Campaign ID"],
+  ["{{adset.name}}", "Ad set name"],
+  ["{{adset.id}}", "Ad set ID"],
+  ["{{ad.name}}", "Ad name"],
+  ["{{ad.id}}", "Ad ID"],
+];
 
 // Writing to Meta: the sandbox switch (on until an exec turns it off, after confirming) and a one-click check that
 // Kaizen Ads can write to an account, which is a dry run with Meta that creates nothing.
 
-export function MetaWriteCard({ sandbox, sandboxAccount, canEdit, updated }: { sandbox: boolean; sandboxAccount: string; canEdit: boolean; updated: string | null }) {
+export function MetaWriteCard({ sandbox, sandboxAccount, canEdit, updated, urlTags, defaultTags }: { sandbox: boolean; sandboxAccount: string; canEdit: boolean; updated: string | null; urlTags: string | null; defaultTags: string }) {
+  const [tags, setTags] = useState(urlTags ?? "");
+  const [tagsSaved, setTagsSaved] = useState(urlTags ?? "");
   const [on, setOn] = useState(sandbox);
   const [confirm, setConfirm] = useState(false);
   const [account, setAccount] = useState(sandboxAccount);
@@ -62,6 +76,54 @@ export function MetaWriteCard({ sandbox, sandboxAccount, canEdit, updated }: { s
               Back to sandbox
             </button>
           ))}
+      </div>
+
+      <div className="grid gap-2 border-t border-line pt-4">
+        <p className="text-[11px] uppercase tracking-[0.14em] text-faint">UTM parameters on every launched ad</p>
+        <textarea
+          value={tags}
+          readOnly={!canEdit}
+          rows={2}
+          onChange={(e) => setTags(e.target.value)}
+          className="w-full resize-y rounded-[10px] border border-line bg-bg px-3 py-2.5 font-mono text-[12.5px] leading-relaxed text-fg outline-none [overflow-wrap:anywhere] focus:border-brand/60"
+        />
+        {canEdit && (
+          <>
+            <div className="flex flex-wrap gap-1.5">
+              {TAGS.map(([t, name]) => (
+                <button key={t} type="button" onClick={() => setTags((x) => x + t)} title={t} className="rounded-full border border-line px-2.5 py-1 text-[11px] text-muted hover:text-fg max-md:min-h-9">
+                  + {name}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {tags.trim() !== tagsSaved && (
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() =>
+                    start(async () => {
+                      setError(null);
+                      const r = await setUrlTags(tags);
+                      if (!r.ok) return setError(r.error);
+                      setTags(r.tags);
+                      setTagsSaved(r.tags);
+                    })
+                  }
+                  className="h-11 rounded-full bg-fg px-4 text-sm font-medium text-bg disabled:opacity-60 md:h-9"
+                >
+                  Save
+                </button>
+              )}
+              {tags.trim() !== defaultTags && (
+                <button type="button" onClick={() => setTags(defaultTags)} className="h-11 px-2 text-xs text-faint hover:text-fg md:h-9">
+                  Back to Meta&apos;s auto-fill tags
+                </button>
+              )}
+            </div>
+          </>
+        )}
+        <p className="text-[11px] text-faint">Added to every ad the launcher creates; Meta fills in the {"{{…}}"} tags with each ad&apos;s own source, campaign, ad set and ad. A client can have their own on their page (Team &amp; setup → Connections).</p>
       </div>
 
       {canEdit && (

@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { LaunchCheck } from "@/lib/launcher";
+import { EVENTS, eventLabel, firedAgo } from "@/lib/meta-events";
 import { LaunchManage } from "./launch-manage";
 import { LaunchMove } from "./launch-move";
 import { confirmLaunch, discardLaunch, launchFor, loadLaunch, replanLaunch, sandboxCampaign, startLaunch, type LaunchView } from "./launch-actions";
@@ -27,7 +28,7 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
   const [confirm, setConfirm] = useState(false);
   const [pending, start] = useTransition();
   // The buyer's edits, sent with "Check again"
-  const [edits, setEdits] = useState<{ adsetId?: string; mode?: "existing" | "clone"; newAdsetName?: string; pageId?: string; igId?: string | null; link?: string; dailyBudget?: number | null; names: Record<string, string> }>({ names: {} });
+  const [edits, setEdits] = useState<{ adsetId?: string; mode?: "existing" | "clone"; newAdsetName?: string; pageId?: string; igId?: string | null; link?: string; dailyBudget?: number | null; pixelId?: string | null; event?: string | null; trackingPixel?: string | null; urlTags?: string; names: Record<string, string> }>({ names: {} });
   const busy = l?.status === "planning" || l?.status === "launching";
 
   useEffect(() => {
@@ -75,6 +76,10 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
         igId: edits.igId !== undefined ? edits.igId : (p?.igId ?? null),
         link: edits.link ?? p?.link ?? undefined,
         dailyBudget: edits.dailyBudget !== undefined ? edits.dailyBudget : (p?.budget?.value ?? null),
+        pixelId: edits.pixelId !== undefined ? edits.pixelId : (p?.pixelId ?? undefined),
+        event: edits.event !== undefined ? edits.event : (p?.event ?? undefined),
+        trackingPixel: edits.trackingPixel !== undefined ? edits.trackingPixel : (p?.trackingPixel ?? null),
+        urlTags: edits.urlTags !== undefined ? edits.urlTags : (p?.urlTags ?? null),
         names: { ...Object.fromEntries((p?.ads ?? []).map((a) => [a.designId, a.name])), ...edits.names },
       });
       if (!r.ok) return setError(r.error);
@@ -122,7 +127,7 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
   const p = l.plan;
   const adset = p?.options.adsets.find((a) => a.id === (edits.adsetId ?? p.adsetId));
   const mode = edits.mode ?? p?.mode ?? "existing";
-  const dirty = Boolean(edits.adsetId || edits.mode || edits.newAdsetName !== undefined || edits.pageId || edits.igId !== undefined || edits.link !== undefined || edits.dailyBudget !== undefined || Object.keys(edits.names).length);
+  const dirty = Boolean(edits.adsetId || edits.mode || edits.newAdsetName !== undefined || edits.pageId || edits.igId !== undefined || edits.link !== undefined || edits.dailyBudget !== undefined || edits.pixelId !== undefined || edits.event !== undefined || edits.trackingPixel !== undefined || edits.urlTags !== undefined || Object.keys(edits.names).length);
   const blocks = l.checks.filter((c) => c.level === "block");
   const noAdset = l.checks.some((c) => c.key === "adset" && c.level === "block" && !p?.options.adsets.length);
 
@@ -292,8 +297,65 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
           <label className="grid gap-1 text-[11px] uppercase tracking-[0.14em] text-faint">
             Link
             <input value={edits.link ?? p.link ?? ""} onChange={(e) => setEdits((x) => ({ ...x, link: e.target.value }))} placeholder="https://" className={`${field} normal-case tracking-normal`} />
-            {p.urlTags && <span className="normal-case tracking-normal text-faint">+ {p.urlTags}</span>}
           </label>
+
+          {/* Tracking: what a new ad set optimizes for, where each ad reports website events, the UTMs on its link */}
+          <div className="grid gap-3 rounded-[14px] border border-line bg-bg/30 p-3.5">
+            <p className="text-[11px] uppercase tracking-[0.14em] text-faint">Tracking</p>
+            {mode === "clone" ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="grid gap-1 text-[11px] text-faint">
+                  New ad set optimizes on
+                  <select value={(edits.pixelId !== undefined ? edits.pixelId : (p.pixelId ?? adset?.pixel)) ?? ""} onChange={(e) => setEdits((x) => ({ ...x, pixelId: e.target.value || null }))} className={field}>
+                    <option value="">No pixel</option>
+                    {(p.options.pixels ?? []).map((x) => (
+                      <option key={x.id} value={x.id}>
+                        {x.name} · {firedAgo(x.lastFired)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1 text-[11px] text-faint">
+                  For the event
+                  <select value={(edits.event !== undefined ? edits.event : (p.event ?? adset?.event)) ?? ""} onChange={(e) => setEdits((x) => ({ ...x, event: e.target.value || null }))} className={field}>
+                    <option value="">As the copied ad set</option>
+                    {EVENTS.map((x) => (
+                      <option key={x} value={x}>
+                        {eventLabel(x)}
+                        {x === p.suggestedEvent ? " (the KPI's)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            ) : (
+              <p className="text-sm text-muted">
+                {adset?.pixel ? (
+                  <>
+                    Optimizes for {eventLabel(adset.event ?? adset.optimization ?? "?")} on {(p.options.pixels ?? []).find((x) => x.id === adset.pixel)?.name ?? adset.pixel}
+                    <span className="text-faint">, the ad set&apos;s own (pick &ldquo;New ad set&rdquo; to set a different one)</span>
+                  </>
+                ) : (
+                  <span className="text-faint">This ad set doesn&apos;t optimize for a pixel event.</span>
+                )}
+              </p>
+            )}
+            <label className="grid gap-1 text-[11px] text-faint">
+              Each ad reports website events to
+              <select value={(edits.trackingPixel !== undefined ? edits.trackingPixel : p.trackingPixel) ?? ""} onChange={(e) => setEdits((x) => ({ ...x, trackingPixel: e.target.value || null }))} className={field}>
+                <option value="">Meta&apos;s default</option>
+                {(p.options.pixels ?? []).map((x) => (
+                  <option key={x.id} value={x.id}>
+                    {x.name} · {firedAgo(x.lastFired)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="grid gap-1 text-[11px] text-faint">
+              UTM parameters
+              <input value={edits.urlTags ?? p.urlTags ?? ""} onChange={(e) => setEdits((x) => ({ ...x, urlTags: e.target.value }))} placeholder="None" className={`${field} font-mono text-[12px]`} />
+            </label>
+          </div>
         </div>
       )}
 

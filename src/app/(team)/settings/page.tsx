@@ -1,5 +1,5 @@
 import { MetaWriteCard } from "./meta-write-card";
-import { metaWriteSetting } from "@/lib/meta-write";
+import { DEFAULT_URL_TAGS, metaWriteSetting } from "@/lib/meta-write";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
@@ -571,6 +571,8 @@ async function Sync({ motion }: { motion: string | null }) {
         <MetaWriteCard
           sandbox={write.sandbox}
           sandboxAccount={write.sandboxAccount}
+          urlTags={write.urlTags ?? null}
+          defaultTags={DEFAULT_URL_TAGS}
           canEdit={me.isExec}
           updated={mw?.updated_at ? `${new Date(mw.updated_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })}${mwBy ? ` by ${mwBy}` : ""}` : null}
         />

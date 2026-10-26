@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, useTransition } from "react";
 import type { Delivery } from "@/lib/launch-manage";
+import { eventLabel, firedAgo } from "@/lib/meta-events";
 import { editLaunched, launchDelivery, switchDelivery, type LaunchView } from "./launch-actions";
 
 // The launched ads, run from Kaizen Ads: what Meta shows for them now, turning them on (or pausing them), and editing
@@ -115,6 +116,7 @@ export function LaunchManage({ l, onDone }: { l: LaunchView; onDone: () => void 
     pageId: p.pageId ?? "",
     igId: p.igId,
     optOut: [...p.optOut],
+    trackingPixel: p.trackingPixel ?? "",
     budget: "" as string,
     reason: "",
   });
@@ -148,6 +150,7 @@ export function LaunchManage({ l, onDone }: { l: LaunchView; onDone: () => void 
           pageId: f.pageId || undefined,
           igId: f.igId,
           optOut: f.optOut,
+          trackingPixel: f.trackingPixel || null,
           dailyBudget: budget,
         },
         f.reason,
@@ -190,6 +193,11 @@ export function LaunchManage({ l, onDone }: { l: LaunchView; onDone: () => void 
                   <span className="text-faint">{name as string}</span>
                   <span className="min-w-0 truncate text-muted">{o.name}</span>
                   {daily != null && <span className="tabular text-muted">· {money(daily)}/day</span>}
+                  {key === "adset" && d.adset?.pixel && (
+                    <span className="text-muted">
+                      · optimizes for {eventLabel(d.adset.event ?? d.adset.optimization ?? "?")} on {p.options.pixels?.find((x) => x.id === d.adset!.pixel)?.name ?? d.adset.pixel}
+                    </span>
+                  )}
                   <Pill s={o.status === "ACTIVE" ? "ACTIVE" : "PAUSED"} />
                   {o.status !== "ACTIVE" && !l.sandbox && l.canLaunch && (
                     <button type="button" onClick={() => setAsk({ target: key as "adset" | "campaign", on: true })} className="text-[#7aa7ff] hover:underline max-md:min-h-11 max-md:px-1">
@@ -336,6 +344,19 @@ export function LaunchManage({ l, onDone }: { l: LaunchView; onDone: () => void 
               </label>
             </div>
           )}
+
+          <label className={`grid gap-1 ${label}`}>
+            Website events dataset
+            <select value={f.trackingPixel} onChange={(e) => set("trackingPixel", e.target.value)} className={`${field} h-10 normal-case tracking-normal max-md:h-11`}>
+              <option value="">Meta&apos;s default</option>
+              {(p.options.pixels ?? []).map((x) => (
+                <option key={x.id} value={x.id}>
+                  {x.name} · {firedAgo(x.lastFired)}
+                </option>
+              ))}
+            </select>
+            <span className="normal-case tracking-normal text-faint">What the ad set optimizes for stays as it is; Meta doesn&apos;t let that change once an ad set has run.</span>
+          </label>
 
           {known.length > 0 && (
             <div className="grid gap-2">

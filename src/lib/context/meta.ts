@@ -645,12 +645,13 @@ const num = (v: unknown) => (v == null || v === "" ? null : Number(v));
 /**
  * How an ad account is set up right now, for the audit: live campaigns (objective, budget, bidding) and ad sets
  * (optimization, budget, learning phase, audience in short), plus the last 30 days split by placement, age and gender,
- * and country. Live from Meta, nothing saved.
+ * and country, and the tracking: the account's pixels (datasets) and which live ads have UTM parameters and a dataset.
+ * Live from Meta, nothing saved.
  */
 export async function accountSetup(adAccountId: string) {
   const act = `act_${adAccountId.replace(/^act_/, "")}`;
   const live = JSON.stringify([{ field: "effective_status", operator: "IN", value: ["ACTIVE", "PAUSED", "IN_PROCESS", "WITH_ISSUES"] }]);
-  const [account, campaigns, adsets] = await Promise.all([
+  const [account, campaigns, adsets, liveAds, pixels] = await Promise.all([
     graph<{ name: string; currency: string; timezone_name: string; account_status: number; disable_reason?: number; spend_cap?: string; amount_spent?: string }>(act, {
       fields: "name,currency,timezone_name,account_status,disable_reason,spend_cap,amount_spent",
     }).catch(() => null),
@@ -664,7 +665,21 @@ export async function accountSetup(adAccountId: string) {
       filtering: live,
       limit: "120",
     }).catch(() => ({ data: [] })),
+    graph<Paged<{ name: string; tracking_specs?: { fb_pixel?: string[] }[]; creative?: { url_tags?: string; asset_feed_spec?: { link_urls?: { website_url?: string }[] }; object_story_spec?: { link_data?: { link?: string }; video_data?: { call_to_action?: { value?: { link?: string } } } } } }>>(`${act}/ads`, {
+      fields: "name,tracking_specs,creative{url_tags,asset_feed_spec{link_urls},object_story_spec{link_data{link},video_data{call_to_action}}}",
+      filtering: JSON.stringify([{ field: "effective_status", operator: "IN", value: ["ACTIVE"] }]),
+      limit: "200",
+    }).catch(() => ({ data: [] })),
+    graph<Paged<{ id: string; name: string; last_fired_time?: string }>>(`${act}/adspixels`, { fields: "name,last_fired_time", limit: "50" }).catch(() => ({ data: [] })),
   ]);
+  // Tracking on the live ads: UTMs either in the ad's URL parameters or already in its link
+  const linkOf = (a: (typeof liveAds.data)[number]) => a.creative?.object_story_spec?.link_data?.link ?? a.creative?.object_story_spec?.video_data?.call_to_action?.value?.link ?? a.creative?.asset_feed_spec?.link_urls?.[0]?.website_url ?? "";
+  const tracking = {
+    liveAds: liveAds.data.length,
+    noUtm: liveAds.data.filter((a) => !/utm_/i.test(a.creative?.url_tags ?? "") && !/utm_/i.test(linkOf(a))).map((a) => a.name),
+    noDataset: liveAds.data.filter((a) => !a.tracking_specs?.some((t) => t.fb_pixel?.length)).length,
+    pixels: pixels.data.map((p) => ({ id: p.id, name: p.name, lastFired: p.last_fired_time ?? null })),
+  };
   const breakdown = (breakdowns: string) =>
     graph<Paged<Record<string, unknown>>>(`${act}/insights`, {
       level: "account",
@@ -724,6 +739,7 @@ export async function accountSetup(adAccountId: string) {
       status: a.effective_status as string,
       optimization: a.optimization_goal as string,
       event: (a.promoted_object as { custom_event_type?: string } | undefined)?.custom_event_type ?? null,
+      pixel: (a.promoted_object as { pixel_id?: string } | undefined)?.pixel_id ?? null,
       bidStrategy: (a.bid_strategy as string) ?? null,
       bidAmount: num(a.bid_amount) != null ? num(a.bid_amount)! / 100 : null,
       dailyBudget: num(a.daily_budget) != null ? num(a.daily_budget)! / 100 : null,
@@ -736,6 +752,7 @@ export async function accountSetup(adAccountId: string) {
     placements,
     demo,
     countries,
+    tracking,
   };
 }
 export type AccountSetup = Awaited<ReturnType<typeof accountSetup>>;

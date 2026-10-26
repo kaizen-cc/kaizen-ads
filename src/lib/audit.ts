@@ -308,7 +308,22 @@ ${
 }
 Placements, last 30 days: ${brk(s.placements, (r) => `${r.publisher_platform}/${r.platform_position}`) || "?"}
 Age and gender, last 30 days: ${brk(s.demo, (r) => `${r.gender} ${r.age}`) || "?"}
-Countries, last 30 days: ${brk(s.countries, (r) => String(r.country)) || "?"}`;
+Countries, last 30 days: ${brk(s.countries, (r) => String(r.country)) || "?"}
+${trackingText(s)}`;
+}
+
+/** The tracking the audit checks: datasets and when they last saw an event, and live ads missing UTMs or a dataset */
+function trackingText(s: AccountSetup) {
+  const t = s.tracking;
+  if (!t) return "";
+  const pixelName = new Map(t.pixels.map((p) => [p.id, p.name]));
+  const days = (iso: string | null) => (iso ? `${Math.floor((Date.now() - Date.parse(iso)) / 86_400_000)} days ago` : "never");
+  const used = [...new Set(s.adsets.map((a) => a.pixel).filter(Boolean))] as string[];
+  return `Tracking:
+- Pixels / datasets: ${t.pixels.map((p) => `${p.name} (last event ${days(p.lastFired)})`).join("; ") || "none on this account"}
+- Ad sets optimize on: ${used.map((id) => pixelName.get(id) ?? id).join(", ") || "no pixel"}
+- Live ads without UTM parameters: ${t.noUtm.length} of ${t.liveAds}${t.noUtm.length ? ` (${t.noUtm.slice(0, 8).join("; ")}${t.noUtm.length > 8 ? "; …" : ""})` : ""}
+- Live ads not reporting website events to a dataset: ${t.noDataset} of ${t.liveAds}`;
 }
 
 const STEPS: { key: string; label: string; weight: number }[] = [

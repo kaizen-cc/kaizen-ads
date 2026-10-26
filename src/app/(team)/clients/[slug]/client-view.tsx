@@ -77,6 +77,7 @@ export type ClientViewProps = {
     portal_live_at?: string | null;
     website: string | null;
     meta_ad_account_id: string | null;
+    url_tags?: string | null;
     slack_channel_id: string | null;
     internal_slack_channel_id: string | null;
     drive_folder_id: string | null;
@@ -633,6 +634,12 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                       )}
                     </span>
                     <ConnectionStatus status={connections.meta} sync={live ? syncMetaNow.bind(null, client.id, client.slug) : undefined} demo={demo} />
+                  </label>
+                  <label className={label}>
+                    <span>
+                      UTM parameters <span className="font-normal text-faint">(only if this client uses their own)</span>
+                    </span>
+                    <input name="url_tags" defaultValue={client.url_tags ?? ""} className={`${field} font-mono text-[12.5px]`} placeholder="Empty: Kaizen's template from Settings" />
                   </label>
                   <div className="grid gap-3 md:grid-cols-2">
                     <label className={label}>

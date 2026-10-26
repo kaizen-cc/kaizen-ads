@@ -46,6 +46,7 @@ export async function saveClientDetails(clientId: string, slug: string, form: Fo
       client_type: str(form, "client_type") ?? "traditional",
       website: str(form, "website"),
       meta_ad_account_id: str(form, "meta_ad_account_id")?.replace(/^act_/, "") ?? null,
+      url_tags: str(form, "url_tags")?.replace(/^\?/, "").replace(/\s+/g, "") || null,
       slack_channel_id: str(form, "slack_channel_id"),
       internal_slack_channel_id: str(form, "internal_slack_channel_id"),
       // Accept a pasted folder link as well as a bare ID
