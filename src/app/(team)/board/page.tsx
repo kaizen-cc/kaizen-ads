@@ -6,7 +6,7 @@ import { BoardClient } from "./board-client";
 import { toTicket, type BoardRow } from "./to-ticket";
 
 // Writing a video script with the AI can take a minute
-export const maxDuration = 300; // room for the AI creative review that starts when a ticket reaches review
+export const maxDuration = 800; // room for the AI creative review that starts at review, and for planning a launch (video uploads to Meta)
 
 export default async function Board({ searchParams }: PageProps<"/board">) {
   const me = await requireStaff();
@@ -47,7 +47,7 @@ export default async function Board({ searchParams }: PageProps<"/board">) {
       clients={clients ?? []}
       people={(people ?? []).map((p) => ({ id: p.id, name: p.full_name, role: roleLabel(p.role as TeamRole) }))}
       canRequest
-      can={{ review: isExecOrLead(me), approveCopy: isExecOrLead(me) || me.isCopywriter }}
+      can={{ review: isExecOrLead(me), approveCopy: isExecOrLead(me) || me.isCopywriter, exec: me.isExec }}
       shadows={shadows}
       me={{ id: me.id, lead: isExecOrLead(me) }}
     />

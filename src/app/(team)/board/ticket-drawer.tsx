@@ -42,6 +42,7 @@ import { ScriptPanel } from "./script-panel";
 import { ReviewPanel } from "./review-panel";
 import { AiGate } from "./ai-review";
 import { CopyPanel } from "./copy-panel";
+import { LaunchPanel } from "./launch-panel";
 import { ClientTag, FormatIcon, TimeStamp } from "./ticket-card";
 import type { Person, Ticket } from "./types";
 
@@ -260,7 +261,7 @@ export function TicketDrawer({
 }: {
   ticket: Ticket;
   people: Person[];
-  can?: { review: boolean; approveCopy: boolean };
+  can?: { review: boolean; approveCopy: boolean; exec?: boolean };
   onClose: () => void;
   onOptimisticMove: (id: string, stage: Stage) => void;
   demo?: boolean; // design preview: sample history, no server calls
@@ -491,6 +492,9 @@ export function TicketDrawer({
             )}
             {error && <p className="border-t border-line px-5 py-3 text-sm text-brand-text">{error}</p>}
           </section>
+
+          {/* Ready to launch: the launcher (and, once launched from here, what it made) */}
+          {!demo && (ticket.stage === "ready_for_launch" || ticket.stage === "launched") && <LaunchPanel requestId={ticket.id} isExec={Boolean(can.exec)} launched={ticket.stage === "launched"} />}
 
           {/* Once there's creative, the files come first */}
           {filesFirst && <Deliverables ticket={ticket} demoDesigns={demo ? DEMO_DESIGNS : undefined} onState={onUploads} />}

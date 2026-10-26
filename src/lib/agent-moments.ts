@@ -87,7 +87,10 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Writes the client-facing version of an audit for the PDF", where: "Audit · Client PDF", trigger: "click", when: "The first time someone opens the client PDF", labels: ["audit client report"] },
   ],
   coach: [{ title: "Edits another agent's playbook from your feedback", where: "Settings · AI agents · Coach", trigger: "click", when: "When someone coaches an agent", labels: ["coach"] }],
-  launcher: [{ title: "Pushes approved ads to Meta, paused, with Kaizen's naming", where: "Board · Ready to launch", trigger: "click", when: "Coming with the Launcher", labels: ["launch"] }],
+  launcher: [
+    { title: "Places approved ads in the right ad set (or a copy of one) and names them to match it, then pushes them to Meta paused", where: "Board · Ready to launch · Launch to Meta", trigger: "click", when: "When the buyer plans a launch", labels: ["place a launch"] },
+    { title: "Turns an audit action or sprint move into exact Meta changes (pause or turn on, daily budgets), dry-run with Meta first", where: "KPIs · audit · sprint", trigger: "click", when: "Make this change in Meta", labels: ["plan a Meta change"] },
+  ],
   fatigue: [{ title: "Flags ads wearing out from their own numbers (no AI call; the strategist writes the refresh)", where: "Overview · Client page · Next for me", trigger: "auto", when: "After every Meta sync", labels: [] }],
 };
 

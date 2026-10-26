@@ -25,14 +25,16 @@ async function graph<T>(path: string, params: Record<string, string> = {}, metho
       ...(method === "POST" ? { body: query } : {}),
       cache: "no-store",
     });
-    const body = (await res.json()) as T & { error?: { message: string; code: number } };
+    const body = (await res.json()) as T & { error?: { message: string; code: number; error_user_title?: string; error_user_msg?: string } };
     // 1, 2: Meta busy for a moment; 4, 17, 32, 613: rate limits. Wait a little and try again
     const notReady = body.error?.message?.includes("not completed yet");
     if (body.error && ([1, 2, 4, 17, 32, 613].includes(body.error.code) || notReady) && attempt < 3) {
       await new Promise((r) => setTimeout(r, 4000 * (attempt + 1)));
       continue;
     }
-    if (body.error) throw new Error(`Meta (${path.split("/").pop() || "ads"}): ${body.error.message}`);
+    // Meta's own explanation (error_user_msg) says what's actually wrong; "Invalid parameter" alone doesn't
+    if (body.error)
+      throw new Error(`Meta (${path.split("/").pop() || "ads"}): ${body.error.message}${body.error.error_user_title ? ` · ${body.error.error_user_title}` : ""}${body.error.error_user_msg ? `: ${body.error.error_user_msg}` : ""}`);
     return body;
   }
   throw new Error("Meta: rate limited");

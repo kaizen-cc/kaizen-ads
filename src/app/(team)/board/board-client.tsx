@@ -41,7 +41,7 @@ export function BoardClient({
   people: Person[];
   canRequest: boolean;
   /** review: the Head of Creative or an exec (approve / send back creative). approveCopy: the copywriter or a lead. */
-  can?: { review: boolean; approveCopy: boolean };
+  can?: { review: boolean; approveCopy: boolean; exec?: boolean };
   demo?: boolean;
   /** Open Asana tasks not migrated yet (outline cards) */
   shadows?: ShadowTicket[];

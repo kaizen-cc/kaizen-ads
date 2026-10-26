@@ -7,7 +7,8 @@ import { metaConfigured, metaGraph } from "@/lib/context/meta";
 // - the sandbox: while it's on (Settings), only Kaizen's own ad account can be written to; client accounts are refused
 // - validate first: each write can be sent to Meta as a dry run (validate_only), which checks it in full and changes nothing
 
-export type MetaWriteSetting = { sandbox: boolean; sandboxAccount: string };
+/** urlTags: Kaizen's UTM template, added to every launched ad's link (e.g. utm_source=facebook&utm_medium=paid) */
+export type MetaWriteSetting = { sandbox: boolean; sandboxAccount: string; urlTags?: string | null };
 
 const bare = (a: string) => a.replace(/^act_/, "").replace(/\D/g, "");
 
@@ -15,7 +16,7 @@ export async function metaWriteSetting(admin: SupabaseClient): Promise<MetaWrite
   const { data } = await admin.from("app_settings").select("value").eq("key", "meta_write").maybeSingle();
   const v = (data?.value ?? {}) as Partial<MetaWriteSetting>;
   // Missing or unreadable: the safe side
-  return { sandbox: v.sandbox !== false, sandboxAccount: bare(v.sandboxAccount ?? "795029519154776") };
+  return { sandbox: v.sandbox !== false, sandboxAccount: bare(v.sandboxAccount ?? "795029519154776"), urlTags: v.urlTags?.trim() || null };
 }
 
 /** Why this account can't be written to right now, or null when it can. */
