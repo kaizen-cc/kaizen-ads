@@ -75,6 +75,7 @@ function due(step: string | null) {
   if (step === "remind") return !["Sat", "Sun"].includes(weekday) && [11, 15].includes(hour);
   if (step === "notify") return true; // every 10 minutes (vercel.json): critical notifications still unread go out by email
   if (step === "reports") return true; // every 15 minutes (vercel.json): queues on Mondays and the 1st, drafts what's queued
+  if (step === "audits") return hour >= 6 && hour <= 21; // hourly (vercel.json): accounts in the red get audited
   if (step === "launches") return true; // every 5 minutes (vercel.json): launch what reached Ready to launch, complete what was turned on
 
   if (step === "market") return hour === 8;
@@ -175,6 +176,7 @@ export async function GET(request: Request) {
     }
     if (step === "sprints") return Response.json(await (await import("@/lib/sprints")).checkDueSprints(admin));
     if (step === "launches") return Response.json(await (await import("@/lib/launcher")).launchStep(admin));
+    if (step === "audits") return Response.json(await (await import("@/lib/auto-audits")).autoAudits(admin));
     if (step === "market") return Response.json(await syncMarket(admin));
     if (step === "clients")
       return Response.json({

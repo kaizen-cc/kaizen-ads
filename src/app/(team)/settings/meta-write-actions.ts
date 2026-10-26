@@ -31,6 +31,15 @@ export async function setUrlTags(tags: string): Promise<{ ok: true; tags: string
   return error ? { ok: false, error: error.message } : { ok: true, tags: clean || DEFAULT_URL_TAGS };
 }
 
+/** Execs: let confirmed changes go into Google Ads (off: Google still checks them, nothing is applied). */
+export async function setGoogleWrites(on: boolean): Promise<{ ok: true } | { ok: false; error: string }> {
+  const me = await requireExec();
+  if (!adminConfigured()) return { ok: false, error: "Can't save here." };
+  const { error } = await createAdminClient().from("app_settings").upsert({ key: "google_write", value: { enabled: on }, updated_by: me.id, updated_at: new Date().toISOString() });
+  revalidatePath("/settings");
+  return error ? { ok: false, error: error.message } : { ok: true };
+}
+
 /** Execs: can Kaizen Ads write to this ad account? A dry run with Meta; nothing is created. */
 export async function checkMetaWrite(account: string): Promise<{ ok: boolean; detail: string }> {
   await requireExec();

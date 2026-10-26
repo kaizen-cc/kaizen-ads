@@ -347,9 +347,16 @@ async function planMetaChange(admin: SupabaseClient, changeId: string, account: 
  * Applies the planned changes (the ones that passed the check, or the ones picked), in order, each on its own so one
  * refusal doesn't stop the rest. The sprint move it came from gets a note and moves to done or doing.
  */
+/** Whether changes may be applied in Google Ads (Settings → Sync health; off until an exec switches it on). */
+export async function googleWritesOn(admin: SupabaseClient) {
+  const { data } = await admin.from("app_settings").select("value").eq("key", "google_write").maybeSingle();
+  return (data?.value as { enabled?: boolean } | null)?.enabled === true;
+}
+
 export async function applyChange(admin: SupabaseClient, changeId: string, me: Staff, pick?: number[]) {
   const { data: ch } = await admin.from("ad_changes").select("account, platform, ops, sprint_action_id, status").eq("id", changeId).single();
   if (!ch || !["ready", "partial", "failed"].includes(ch.status)) throw new Error("Nothing to apply.");
+  if (ch.platform === "google" && !(await googleWritesOn(admin))) throw new Error("Changes in Google Ads are switched off. An exec turns them on in Settings → Sync health; Google's check above already ran.");
   await admin.from("ad_changes").update({ status: "applying", updated_at: new Date().toISOString() }).eq("id", changeId);
   const ops = (ch.ops ?? []) as PlannedOp[];
   const out: PlannedOp[] = [];

@@ -8,7 +8,7 @@ import { inPlatform } from "@/lib/in-platform";
 type Raw = { title: string; short?: string; area: string; owner: string; when: string; effort: string; impact: string; steps?: string[]; why: string; inPlatform?: boolean };
 
 export async function latestAudits(db: SupabaseClient, targetIds?: string[]) {
-  let q = db.from("account_audits").select("id, target_id, status, progress, step, steps, created_at, result, done, error, profiles(full_name), kpi_targets(platform)").order("created_at", { ascending: false });
+  let q = db.from("account_audits").select("id, target_id, status, progress, step, steps, created_at, result, done, error, auto, profiles(full_name), kpi_targets(platform)").order("created_at", { ascending: false });
   q = targetIds ? q.in("target_id", targetIds.length ? targetIds : ["00000000-0000-0000-0000-000000000000"]).limit(100) : q.limit(400);
   const { data: audits } = await q;
   // A run left "running" 15+ minutes timed out
@@ -31,7 +31,7 @@ export async function latestAudits(db: SupabaseClient, targetIds?: string[]) {
       progress: a.progress,
       step: a.step,
       createdAt: a.created_at,
-      by: (a.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
+      by: a.auto ? "Kaizen Ads (the account is off target)" : ((a.profiles as unknown as { full_name: string } | null)?.full_name ?? null),
       verdict: res?.verdict ?? null,
       actions: res?.actions?.length ?? 0,
       done: Object.keys(done).length,

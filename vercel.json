@@ -18,6 +18,10 @@
       "schedule": "20 * * * *"
     },
     {
+      "path": "/api/cron/context?step=audits",
+      "schedule": "35 * * * *"
+    },
+    {
       "path": "/api/cron/context?step=kpi",
       "schedule": "45 */2 * * *"
     },

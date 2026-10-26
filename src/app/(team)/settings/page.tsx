@@ -1,4 +1,4 @@
-import { MetaWriteCard } from "./meta-write-card";
+import { GoogleWriteCard, MetaWriteCard } from "./meta-write-card";
 import { DEFAULT_URL_TAGS, metaWriteSetting } from "@/lib/meta-write";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -446,6 +446,8 @@ async function Sync({ motion }: { motion: string | null }) {
   const me = await requireStaff();
   const { data: mw } = await admin.from("app_settings").select("updated_at, profiles(full_name)").eq("key", "meta_write").maybeSingle();
   const write = await metaWriteSetting(admin);
+  const { data: gw } = await admin.from("app_settings").select("value, updated_at, profiles(full_name)").eq("key", "google_write").maybeSingle();
+  const gwBy = (gw?.profiles as unknown as { full_name: string } | null)?.full_name;
   const mwBy = (mw?.profiles as unknown as { full_name: string } | null)?.full_name;
   const [{ data }, { data: accounts }] = await Promise.all([
     admin.from("sync_state").select("source, last_run_at, last_result").order("source"),
@@ -575,6 +577,11 @@ async function Sync({ motion }: { motion: string | null }) {
           defaultTags={DEFAULT_URL_TAGS}
           canEdit={me.isExec}
           updated={mw?.updated_at ? `${new Date(mw.updated_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })}${mwBy ? ` by ${mwBy}` : ""}` : null}
+        />
+        <GoogleWriteCard
+          enabled={(gw?.value as { enabled?: boolean } | null)?.enabled === true}
+          canEdit={me.isExec}
+          updated={gw?.updated_at ? `${new Date(gw.updated_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })}${gwBy ? ` by ${gwBy}` : ""}` : null}
         />
       </section>
 
