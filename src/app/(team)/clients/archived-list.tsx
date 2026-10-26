@@ -47,7 +47,7 @@ export function ArchivedList({ clients, canRestore, log, startOpen = false }: { 
   const names = new Map(clients.map((c) => [c.id, c]));
   return (
     <section id="archived" className="grid scroll-mt-24 gap-3">
-      <button onClick={() => setOpen(!open)} className="flex w-fit items-center gap-2 text-sm text-muted hover:text-fg">
+      <button onClick={() => setOpen(!open)} className="flex min-h-11 w-fit items-center gap-2 text-sm text-muted hover:text-fg md:min-h-0">
         <span className={`transition-transform ${open ? "rotate-90" : ""}`}>›</span>
         Archived clients <span className="text-faint">{list.length}</span>
       </button>
@@ -65,7 +65,7 @@ export function ArchivedList({ clients, canRestore, log, startOpen = false }: { 
               const history = log.filter((e) => e.clientId === c.id).length;
               return (
                 <div key={c.id} className="flex flex-wrap items-center gap-3 rounded-[12px] border border-line bg-surface px-4 py-3">
-                  <Link href={`/clients/${c.slug}`} className="min-w-0 flex-1">
+                  <Link href={`/clients/${c.slug}`} className="min-w-0 flex-1 max-md:basis-full">
                     <span className="block truncate text-sm font-medium">{c.name}</span>
                     <span className="block truncate text-[11px] text-muted">
                       Archived {day(c.at)}
@@ -79,7 +79,7 @@ export function ArchivedList({ clients, canRestore, log, startOpen = false }: { 
                       </span>
                     )}
                   </Link>
-                  <Link href={`/clients/${c.slug}`} className="h-8 content-center rounded-brand px-3 text-xs text-muted hover:text-fg">
+                  <Link href={`/clients/${c.slug}`} className="h-11 flex-1 content-center rounded-brand border border-line px-3 text-center text-xs text-muted hover:text-fg md:h-8 md:flex-none md:border-0 md:text-left">
                     Open page
                   </Link>
                   {canRestore && (
@@ -96,7 +96,7 @@ export function ArchivedList({ clients, canRestore, log, startOpen = false }: { 
                         })
                       }
                       disabled={busy}
-                      className="h-8 rounded-brand border border-line px-3 text-xs text-muted hover:text-fg disabled:opacity-50"
+                      className="h-11 flex-1 rounded-brand border border-line px-3 text-xs text-muted hover:text-fg disabled:opacity-50 md:h-8 md:flex-none"
                     >
                       Restore
                     </button>
@@ -109,7 +109,7 @@ export function ArchivedList({ clients, canRestore, log, startOpen = false }: { 
 
           {log.length > 0 && (
             <details className="rounded-[12px] border border-line bg-surface">
-              <summary className="cursor-pointer list-none px-4 py-3 text-sm text-muted hover:text-fg">Archive log · {log.length}</summary>
+              <summary className="cursor-pointer list-none px-4 py-3.5 text-sm md:py-3 text-muted hover:text-fg">Archive log · {log.length}</summary>
               <ul className="grid divide-y divide-line border-t border-line">
                 {log.map((e, i) => {
                   const c = e.slug ? { name: e.name ?? "A client", slug: e.slug } : names.get(e.clientId);

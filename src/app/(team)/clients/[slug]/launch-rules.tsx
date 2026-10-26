@@ -21,14 +21,14 @@ export function LaunchRules({ rules, slug, canEdit }: { rules: LaunchRule[]; slu
       {list.map((r) => (
         <li key={r.id} className={`grid gap-1 rounded-[12px] border border-line px-4 py-3 ${r.active ? "" : "opacity-50"}`}>
           <div className="flex items-start justify-between gap-3">
-            <p className="text-sm">{r.rule}</p>
+            <p className="min-w-0 text-sm [overflow-wrap:anywhere]">{r.rule}</p>
             {canEdit && (
-              <button type="button" disabled={pending} onClick={() => toggle(r)} className="shrink-0 text-xs text-faint hover:text-fg">
+              <button type="button" disabled={pending} onClick={() => toggle(r)} className="-my-3 -mr-2 min-h-11 shrink-0 px-2 text-xs text-faint hover:text-fg md:m-0 md:min-h-0 md:px-0">
                 {r.active ? "Turn off" : "Turn on"}
               </button>
             )}
           </div>
-          <p className="text-[11px] text-faint">
+          <p className="text-[11px] text-faint [overflow-wrap:anywhere]">
             {r.from && r.to ? `Moved from "${r.from}" to "${r.to}"${r.via === "ads_manager" ? " in Ads Manager" : ""}` : "From a move"}
             {r.by ? ` by ${r.by}` : ""} · {new Date(r.at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
             {!r.active && " · turned off"}

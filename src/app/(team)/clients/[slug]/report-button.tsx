@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { reportForRange } from "../../reports/actions";
+import { Layer } from "./layer";
 
 // A recap on demand, from the client page: when a client asks where things stand. The same report as the weekly and
 // monthly ones (the numbers, the work behind them, the buyer's voice, the QA, the PDF), for the dates picked.
@@ -54,7 +55,7 @@ export function ReportButton({ accounts: all, today, label = "Get a report", pri
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className={primary ? "inline-flex h-10 items-center gap-2 rounded-full bg-brand px-5 text-sm font-medium text-white shadow-[0_10px_30px_-12px_rgba(200,16,46,0.9)] hover:brightness-110" : "inline-flex h-9 items-center gap-2 rounded-full border border-line bg-surface px-4 text-sm text-muted transition-colors hover:border-faint hover:text-fg"}
+        className={primary ? "inline-flex h-11 items-center gap-2 rounded-full bg-brand px-5 text-sm font-medium text-white shadow-[0_10px_30px_-12px_rgba(200,16,46,0.9)] hover:brightness-110 md:h-10" : "inline-flex h-11 items-center gap-2 rounded-full border border-line bg-surface px-4 text-sm text-muted transition-colors hover:border-faint hover:text-fg md:h-9"}
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <path d="M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h4" />
@@ -62,8 +63,13 @@ export function ReportButton({ accounts: all, today, label = "Get a report", pri
         {label}
       </button>
       {open && (
-        <div className="fixed inset-0 z-[80] grid place-items-center bg-black/60 p-4 backdrop-blur-sm" onClick={() => setOpen(false)}>
-          <div className="grid w-full max-w-md gap-5 rounded-[22px] border border-line bg-surface p-6 shadow-[0_40px_100px_-30px_rgba(0,0,0,0.9)]" onClick={(e) => e.stopPropagation()}>
+        <Layer>
+        <div className="fixed inset-0 z-[80] grid items-end bg-black/60 backdrop-blur-sm md:place-items-center md:p-4" onClick={() => setOpen(false)}>
+          <div
+            className="grid max-h-[92dvh] w-full gap-5 overflow-y-auto overscroll-contain rounded-t-[22px] border border-b-0 border-line bg-surface p-5 pb-0 pt-3 shadow-[0_40px_100px_-30px_rgba(0,0,0,0.9)] md:max-h-none md:max-w-md md:overflow-visible md:rounded-[22px] md:border-b md:p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <span aria-hidden className="mx-auto -mb-2 h-1 w-10 rounded-full bg-white/15 md:hidden" />
             <div className="grid gap-1">
               <h2 className="font-heading text-xl">A recap for the client</h2>
               <p className="text-sm text-muted">The same report as the weekly and monthly ones, for the dates you pick: drafted in the buyer&apos;s voice, checked by the QA, with its PDF. You review it before it goes anywhere.</p>
@@ -91,7 +97,7 @@ export function ReportButton({ accounts: all, today, label = "Get a report", pri
                         type="button"
                         aria-pressed={on}
                         onClick={() => setPicked((p) => (on ? p.filter((x) => x !== a.id) : [...p, a.id]))}
-                        className={`inline-flex h-8 items-center gap-2 rounded-full px-3 text-xs transition-all ${on ? "border border-brand/50 bg-brand/15 text-fg" : "border border-line text-faint hover:text-muted"}`}
+                        className={`inline-flex h-11 items-center gap-2 rounded-full px-3.5 text-xs transition-all md:h-8 md:px-3 ${on ? "border border-brand/50 bg-brand/15 text-fg" : "border border-line text-faint hover:text-muted"}`}
                       >
                         <span className={`grid h-3.5 w-3.5 place-items-center rounded-full border ${on ? "border-brand bg-brand" : "border-faint"}`}>
                           {on && (
@@ -118,7 +124,7 @@ export function ReportButton({ accounts: all, today, label = "Get a report", pri
                     ["custom", "Custom"],
                   ] as const
                 ).map(([k, l]) => (
-                  <button key={k} type="button" onClick={() => setRange(k)} className={`h-8 rounded-full px-3 text-xs transition-colors ${range === k ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
+                  <button key={k} type="button" onClick={() => setRange(k)} className={`h-11 rounded-full px-3.5 text-xs transition-colors md:h-8 md:px-3 ${range === k ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
                     {l}
                   </button>
                 ))}
@@ -127,26 +133,27 @@ export function ReportButton({ accounts: all, today, label = "Get a report", pri
                 <div className="grid grid-cols-2 gap-2">
                   <label className="grid gap-1 text-[11px] text-faint">
                     From
-                    <input type="date" value={from} max={today} onChange={(e) => setFrom(e.target.value)} className="h-9 rounded-[10px] border border-line bg-bg px-2 text-sm text-fg [color-scheme:dark]" />
+                    <input type="date" value={from} max={today} onChange={(e) => setFrom(e.target.value)} className="h-11 min-w-0 rounded-[10px] border border-line bg-bg px-2 text-sm text-fg [color-scheme:dark] md:h-9" />
                   </label>
                   <label className="grid gap-1 text-[11px] text-faint">
                     To
-                    <input type="date" value={to} max={today} onChange={(e) => setTo(e.target.value)} className="h-9 rounded-[10px] border border-line bg-bg px-2 text-sm text-fg [color-scheme:dark]" />
+                    <input type="date" value={to} max={today} onChange={(e) => setTo(e.target.value)} className="h-11 min-w-0 rounded-[10px] border border-line bg-bg px-2 text-sm text-fg [color-scheme:dark] md:h-9" />
                   </label>
                 </div>
               )}
             </div>
             {error && <p className="text-sm text-bad">{error}</p>}
-            <div className="flex items-center justify-end gap-2">
-              <button type="button" onClick={() => setOpen(false)} className="h-9 px-3 text-sm text-faint hover:text-fg">
+            <div className="sticky bottom-0 -mx-5 flex items-center justify-end gap-2 border-t border-line bg-surface px-5 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 md:static md:mx-0 md:border-0 md:bg-transparent md:p-0">
+              <button type="button" onClick={() => setOpen(false)} className="h-11 px-3 text-sm text-faint hover:text-fg md:h-9">
                 Cancel
               </button>
-              <button type="button" disabled={pending || !picked.length || (range === "custom" && (!from || !to))} onClick={go} className="h-10 rounded-full bg-brand px-5 text-sm font-medium text-white disabled:opacity-50">
+              <button type="button" disabled={pending || !picked.length || (range === "custom" && (!from || !to))} onClick={go} className="h-11 flex-1 rounded-full bg-brand px-5 text-sm font-medium text-white disabled:opacity-50 md:h-10 md:flex-none">
                 {pending ? "Starting…" : "Draft the recap"}
               </button>
             </div>
           </div>
         </div>
+        </Layer>
       )}
     </>
   );
@@ -228,7 +235,7 @@ function ClientSearch({ clients, all, value, onPick }: { clients: string[]; all:
             <p className="truncate text-sm font-medium text-fg">{value}</p>
             <p className="truncate text-xs text-faint">{platforms(value).join(" · ")}</p>
           </div>
-          <button type="button" onClick={() => setEditing(true)} className="h-8 rounded-full border border-line px-3 text-xs text-muted transition-colors hover:border-faint hover:text-fg">
+          <button type="button" onClick={() => setEditing(true)} className="h-10 shrink-0 rounded-full border border-line px-3.5 text-xs text-muted transition-colors hover:border-faint hover:text-fg md:h-8 md:px-3">
             Change
           </button>
         </div>
@@ -275,7 +282,7 @@ function ClientSearch({ clients, all, value, onPick }: { clients: string[]; all:
             className="h-full min-w-0 flex-1 bg-transparent text-sm text-fg outline-none placeholder:text-faint"
           />
           {value && (
-            <button type="button" onClick={() => setEditing(false)} className="text-xs text-faint hover:text-fg">
+            <button type="button" onClick={() => setEditing(false)} className="min-h-11 text-xs text-faint hover:text-fg md:min-h-0">
               Cancel
             </button>
           )}
@@ -296,7 +303,7 @@ function ClientSearch({ clients, all, value, onPick }: { clients: string[]; all:
                   data-i={i}
                   onMouseEnter={() => setActive(i)}
                   onClick={() => pick(c)}
-                  className={`flex w-full items-center gap-3 rounded-[10px] px-2.5 py-2 text-left transition-colors ${i === active ? "bg-white/[0.06]" : ""}`}
+                  className={`flex min-h-12 w-full items-center gap-3 rounded-[10px] px-2.5 py-2 text-left md:min-h-0 transition-colors ${i === active ? "bg-white/[0.06]" : ""}`}
                 >
                   <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-[9px] text-[11px] font-medium transition-colors ${i === active ? "bg-brand text-white" : "bg-white/[0.06] text-muted"}`}>{initials(c)}</span>
                   <span className="min-w-0 flex-1">

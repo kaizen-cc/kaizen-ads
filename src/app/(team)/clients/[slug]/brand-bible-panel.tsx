@@ -70,7 +70,7 @@ export function BrandBiblePanel({ clientId, slug, bible, canBuild }: { clientId:
   const has = bible && bible.markdown;
 
   return (
-    <section className="relative grid gap-5 overflow-hidden rounded-[12px] border border-line bg-surface p-6">
+    <section className="relative grid gap-5 overflow-hidden rounded-[12px] border border-line bg-surface p-5 md:p-6">
       <span aria-hidden className="pointer-events-none absolute -right-20 -top-20 h-56 w-56 rounded-full bg-[#5b8def] opacity-[0.08] blur-3xl" />
       <div className="relative flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
@@ -87,7 +87,7 @@ export function BrandBiblePanel({ clientId, slug, bible, canBuild }: { clientId:
           </p>
         </div>
         {canBuild && !building && !composing && (
-          <button onClick={() => setComposing(true)} className="h-9 shrink-0 rounded-full border border-line px-4 text-sm text-muted transition-colors hover:text-fg">
+          <button onClick={() => setComposing(true)} className="h-11 shrink-0 rounded-full border border-line px-4 text-sm md:h-9 text-muted transition-colors hover:text-fg">
             {has ? "Update" : "Build Brand Bible"}
           </button>
         )}
@@ -109,13 +109,13 @@ export function BrandBiblePanel({ clientId, slug, bible, canBuild }: { clientId:
             onChange={(e) => setPasted(e.target.value)}
             rows={6}
             placeholder="Optional. The website, reviews, competitors, Slack, email, Drive and client memory are read automatically."
-            className="rounded-[10px] border border-line bg-surface px-3.5 py-3 text-sm leading-relaxed outline-none focus:border-brand-text/60"
+            className="min-w-0 rounded-[10px] border border-line bg-surface px-3.5 py-3 text-sm leading-relaxed outline-none focus:border-brand-text/60"
           />
           <div className="flex flex-wrap items-center gap-2">
-            <button disabled={busy} onClick={build} className="h-9 rounded-full bg-brand px-4 text-sm font-medium text-white transition-colors hover:bg-brand-hover disabled:opacity-50">
+            <button disabled={busy} onClick={build} className="h-11 rounded-full bg-brand px-4 text-sm font-medium text-white transition-colors hover:bg-brand-hover disabled:opacity-50 md:h-9">
               {busy ? "Starting…" : has ? "Update the Brand Bible" : "Build it"}
             </button>
-            <button onClick={() => setComposing(false)} className="h-9 rounded-full px-3 text-sm text-muted hover:text-fg">
+            <button onClick={() => setComposing(false)} className="h-11 rounded-full px-3 text-sm text-muted hover:text-fg md:h-9">
               Cancel
             </button>
             <span className="text-xs text-faint">Runs on Opus with web research. A few minutes.</span>
@@ -127,7 +127,7 @@ export function BrandBiblePanel({ clientId, slug, bible, canBuild }: { clientId:
 
       {has && !building && (
         <div className="relative grid gap-4">
-          <div className="rounded-[12px] border border-line bg-bg p-5">
+          <div className="min-w-0 rounded-[12px] border border-line bg-bg p-4 [overflow-wrap:anywhere] md:p-5">
             <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.12em] text-faint">Read this first</p>
             <Markdown text={bible.readThisFirst} />
           </div>
@@ -160,7 +160,7 @@ export function BrandBiblePanel({ clientId, slug, bible, canBuild }: { clientId:
           )}
 
           <div className="flex flex-wrap items-center gap-2">
-            <button onClick={() => setOpen((o) => !o)} className="h-9 rounded-full bg-fg px-4 text-sm text-bg">
+            <button onClick={() => setOpen((o) => !o)} className="h-11 rounded-full bg-fg px-4 text-sm text-bg md:h-9">
               {open ? "Hide the full Brand Bible" : "Open the full Brand Bible"}
             </button>
             {canBuild && bible.status === "draft" && (
@@ -173,7 +173,7 @@ export function BrandBiblePanel({ clientId, slug, bible, canBuild }: { clientId:
                     else setError(r.error);
                   })
                 }
-                className="h-9 rounded-full bg-ok px-4 text-sm font-medium text-white disabled:opacity-50"
+                className="h-11 rounded-full bg-ok px-4 text-sm font-medium text-white disabled:opacity-50 md:h-9"
               >
                 Mark reviewed
               </button>
@@ -181,7 +181,7 @@ export function BrandBiblePanel({ clientId, slug, bible, canBuild }: { clientId:
             {bible.status === "reviewed" && bible.reviewedBy && <span className="text-xs text-faint">Reviewed by {bible.reviewedBy}{bible.reviewedAt && ` on ${fmt(bible.reviewedAt)}`}</span>}
           </div>
           {open && (
-            <div className="max-h-[900px] overflow-y-auto rounded-[12px] border border-line bg-bg p-6">
+            <div className="max-h-[900px] min-w-0 overflow-y-auto rounded-[12px] border border-line bg-bg p-4 [overflow-wrap:anywhere] md:p-6">
               <Markdown text={bible.markdown} />
             </div>
           )}

@@ -165,12 +165,12 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
       {chat && !demo && <ClientChat clientId={client.id} client={client.name} initial={chat.initial} targets={chat.targets} live={live} />}
       {/* Header */}
       <header className="grid gap-3">
-        <Link href="/clients" className="text-xs text-muted hover:text-fg">
+        <Link href="/clients" className="inline-flex min-h-11 w-fit items-center text-xs text-muted hover:text-fg md:min-h-0">
           ← Clients
         </Link>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="font-heading text-[32px] leading-tight">{client.name}</h1>
-          <span className="flex items-center gap-2">
+          <h1 className="min-w-0 font-heading text-[28px] leading-tight [overflow-wrap:anywhere] md:text-[32px]">{client.name}</h1>
+          <span className="flex flex-wrap items-center gap-2">
             {!demo && live && <ReportButton accounts={reportAccounts} today={today} />}
             {can.assign && !demo && !client.archived_at && <ArchiveControl clientId={client.id} slug={client.slug} name={client.name} archived={null} />}
           </span>
@@ -206,7 +206,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
           {client.client_type === "whitelabel" && <span className={`${chip} bg-surface-2 text-muted`}>White label</span>}
           {client.auto_approve_opt_in && <span className={`${chip} bg-ok-soft text-ok`}>Opted into auto-approval</span>}
           {client.kaizen_id && <span className={`${chip} tabular bg-surface-2 text-faint`}>ID {client.kaizen_id}</span>}
-          <span className="ml-1 text-xs text-faint">
+          <span className="ml-1 min-w-0 text-xs text-faint [overflow-wrap:anywhere]">
             Portal <span className="text-muted">ads.kaizenmarketing.agency/c/{client.slug}</span>
           </span>
         </div>
@@ -429,7 +429,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                 </ul>
                 {memory.some((m) => m.dated) && (
                   <details className="group rounded-[12px] border border-line">
-                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm">
+                    <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm">
                       <span>
                         Background <span className="text-faint">· {memory.filter((m) => m.dated).length} notes true as of their date: past results, events, promotions</span>
                       </span>
@@ -569,7 +569,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                 </div>
                 <div className="grid min-w-0 gap-6">
                   <Section title="Client portal" description="Where the client swipes through their ads to approve or ask for changes.">
-            <div className={row}>
+            <div className={`${row} max-md:flex-wrap`}>
               <span className="grid min-w-0 gap-0.5">
                 <span className="flex items-center gap-2">
                   <span className={`h-2 w-2 rounded-full ${client.portal_live ? "bg-ok" : "bg-faint"}`} />
@@ -582,7 +582,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                 </span>
               </span>
               <span className="flex shrink-0 items-center gap-2">
-                <a href={`/c/${client.slug}`} target="_blank" rel="noreferrer" className="rounded-full border border-line px-3 py-1 text-xs text-muted hover:border-faint hover:text-fg">
+                <a href={`/c/${client.slug}`} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center rounded-full border border-line px-4 py-1 text-xs text-muted hover:border-faint hover:text-fg md:min-h-0 md:px-3">
                   Preview ↗
                 </a>
                 {can.admin &&
@@ -634,7 +634,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                     </span>
                     <ConnectionStatus status={connections.meta} sync={live ? syncMetaNow.bind(null, client.id, client.slug) : undefined} demo={demo} />
                   </label>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid gap-3 md:grid-cols-2">
                     <label className={label}>
                       Client Slack channel
                       <input name="slack_channel_id" defaultValue={client.slack_channel_id ?? ""} className={field} placeholder="Linked automatically" />

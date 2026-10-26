@@ -75,7 +75,7 @@ export function GtmPanel({ clientId, slug, gtm, canReview, readOnly = false }: {
   const missing = gtm?.status === "waiting" ? gtm.missing : [];
 
   return (
-    <section className="relative grid gap-5 overflow-hidden rounded-[12px] border border-line bg-surface p-6">
+    <section className="relative grid gap-5 overflow-hidden rounded-[12px] border border-line bg-surface p-5 md:p-6">
       <span aria-hidden className="pointer-events-none absolute -left-20 -top-24 h-56 w-56 rounded-full bg-brand opacity-[0.08] blur-3xl" />
       <div className="relative flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
@@ -92,7 +92,7 @@ export function GtmPanel({ clientId, slug, gtm, canReview, readOnly = false }: {
           </p>
         </div>
         {!building && !readOnly && (
-          <button onClick={build} disabled={busy} className="h-9 shrink-0 rounded-full border border-line px-4 text-sm text-muted transition-colors hover:text-fg disabled:opacity-50">
+          <button onClick={build} disabled={busy} className="h-11 shrink-0 rounded-full border border-line px-4 text-sm md:h-9 text-muted transition-colors hover:text-fg disabled:opacity-50">
             {busy ? "Starting…" : has ? "Update" : "Build it now"}
           </button>
         )}
@@ -130,7 +130,7 @@ export function GtmPanel({ clientId, slug, gtm, canReview, readOnly = false }: {
 
       {has && gtm && !building && (
         <div className="relative grid gap-4">
-          <div className="rounded-[12px] border border-line bg-bg p-5">
+          <div className="min-w-0 rounded-[12px] border border-line bg-bg p-4 [overflow-wrap:anywhere] md:p-5">
             <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.12em] text-faint">In short · every agent reads this and the full strategy</p>
             <Markdown text={gtm.readThisFirst} />
           </div>
@@ -169,7 +169,7 @@ export function GtmPanel({ clientId, slug, gtm, canReview, readOnly = false }: {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <button onClick={() => setOpen((o) => !o)} className="h-9 rounded-full bg-fg px-4 text-sm text-bg">
+            <button onClick={() => setOpen((o) => !o)} className="h-11 rounded-full bg-fg px-4 text-sm text-bg md:h-9">
               {open ? "Hide the strategy" : "Open the full strategy"}
             </button>
             {canReview && gtm.status === "draft" && (
@@ -182,7 +182,7 @@ export function GtmPanel({ clientId, slug, gtm, canReview, readOnly = false }: {
                     else setError(r.error);
                   })
                 }
-                className="h-9 rounded-full bg-ok px-4 text-sm font-medium text-white disabled:opacity-50"
+                className="h-11 rounded-full bg-ok px-4 text-sm font-medium text-white disabled:opacity-50 md:h-9"
               >
                 Mark reviewed
               </button>
@@ -190,7 +190,7 @@ export function GtmPanel({ clientId, slug, gtm, canReview, readOnly = false }: {
             {gtm.status === "reviewed" && gtm.reviewedBy && <span className="text-xs text-faint">Reviewed by {gtm.reviewedBy}{gtm.reviewedAt && ` on ${fmt(gtm.reviewedAt)}`}</span>}
           </div>
           {open && (
-            <div className="max-h-[900px] overflow-y-auto rounded-[12px] border border-line bg-bg p-6">
+            <div className="max-h-[900px] min-w-0 overflow-y-auto rounded-[12px] border border-line bg-bg p-4 [overflow-wrap:anywhere] md:p-6">
               <Markdown text={gtm.markdown} />
             </div>
           )}

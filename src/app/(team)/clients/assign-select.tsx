@@ -59,7 +59,7 @@ export function AssignSelect({
           });
         }}
         className={`w-full truncate rounded-[8px] border bg-transparent outline-none transition-colors focus:border-brand-text ${
-          size === "md" ? "h-10 px-3 text-sm" : "h-8 px-2 text-sm"
+          size === "md" ? "h-11 px-3 text-sm md:h-10" : "h-11 px-2 text-sm md:h-8"
         } ${state === "saved" ? "border-ok" : state === "error" ? "border-brand-text" : "border-transparent hover:border-line"} ${value ? "text-fg" : "text-faint"}`}
         title={error ?? undefined}
       >

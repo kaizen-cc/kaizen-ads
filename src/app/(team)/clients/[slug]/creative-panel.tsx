@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import type { ClientCreative, CreativeRow, MetaRow } from "@/lib/client-creative";
+import { Layer } from "./layer";
 
 // The client's creative, in one place: what's in motion (and where), what we've launched, and what's live or paused
 // in their ad account. Tickets open on the board.
@@ -33,9 +34,9 @@ export function CreativePanel({ data }: { data: ClientCreative }) {
           <h2 className="font-heading text-[18px]">Creative</h2>
           <p className="text-sm text-muted">Every ticket for this client and where it stands, what we&apos;ve launched, and what&apos;s running in their ad account.</p>
         </div>
-        <div className="flex flex-wrap gap-1 rounded-full border border-line p-0.5 text-xs">
+        <div className="no-scrollbar flex max-w-full gap-1 overflow-x-auto rounded-full border border-line p-0.5 text-xs md:flex-wrap md:overflow-visible">
           {tabs.map(([k, label, n]) => (
-            <button key={k} onClick={() => setTab(k)} className={`rounded-full px-3 py-1.5 ${tab === k ? "bg-surface-2 text-fg" : "text-muted hover:text-fg"}`}>
+            <button key={k} onClick={() => setTab(k)} className={`min-h-10 shrink-0 whitespace-nowrap rounded-full px-3.5 py-1.5 md:min-h-0 md:px-3 ${tab === k ? "bg-surface-2 text-fg" : "text-muted hover:text-fg"}`}>
               {label} <span className="tabular text-faint">{n}</span>
             </button>
           ))}
@@ -125,11 +126,12 @@ function Ads({ ads, paused, onOpen }: { ads: MetaRow[]; paused: boolean; onOpen:
 
 function AdSheet({ ad, onClose }: { ad: MetaRow; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4 backdrop-blur-sm" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="grid max-h-[90vh] w-full max-w-[420px] gap-3 overflow-y-auto rounded-[16px] border border-line bg-bg p-4">
+    <Layer>
+    <div className="fixed inset-0 z-50 grid items-end bg-black/70 backdrop-blur-sm md:place-items-center md:p-4" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="grid max-h-[92dvh] w-full gap-3 overflow-y-auto overscroll-contain rounded-t-[20px] border border-b-0 border-line bg-bg p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] md:max-h-[90vh] md:max-w-[420px] md:rounded-[16px] md:border-b md:pb-4">
         <div className="flex items-center justify-between gap-2">
           <p className="min-w-0 truncate text-sm font-medium">{ad.name}</p>
-          <button onClick={onClose} className="rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg">
+          <button onClick={onClose} className="h-11 shrink-0 rounded-full border border-line px-4 text-xs text-muted hover:text-fg md:h-auto md:px-3 md:py-1">
             Done
           </button>
         </div>
@@ -160,5 +162,6 @@ function AdSheet({ ad, onClose }: { ad: MetaRow; onClose: () => void }) {
         <p className="text-center text-[11px] text-faint">Numbers from the last Meta sync window.</p>
       </div>
     </div>
+    </Layer>
   );
 }

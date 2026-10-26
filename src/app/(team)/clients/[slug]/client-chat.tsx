@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { requestAudit } from "@/components/audit-watcher";
 import type { ChatTurn } from "@/lib/handoff";
 import { askClientAi, clearClientAi, loadClientAi } from "./actions";
+import { Layer } from "./layer";
 
 // The AI on the client page: a button in the corner that opens a drawer, so the page itself doesn't get longer. Ask a
 // question, strategize, bounce an idea off it, get a summary, or run the account audit (the same audit as on the KPI
@@ -70,6 +71,7 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
   const [slow, setSlow] = useState(false);
   const end = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
+  const panel = useRef<HTMLElement>(null);
 
   // Braces: newer browsers return a promise from scrollIntoView, which React would take for a cleanup
   useEffect(() => {
@@ -83,6 +85,24 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  // Phones: the drawer fills the visible area, so the box stays right above the keyboard when it opens
+  useEffect(() => {
+    const v = window.visualViewport;
+    const el = panel.current;
+    if (!open || !v || !el) return;
+    const fit = () => {
+      el.style.setProperty("--vvh", `${v.height}px`);
+      el.style.setProperty("--vvt", `${v.offsetTop}px`);
+    };
+    fit();
+    v.addEventListener("resize", fit);
+    v.addEventListener("scroll", fit);
+    return () => {
+      v.removeEventListener("resize", fit);
+      v.removeEventListener("scroll", fit);
+    };
   }, [open]);
 
   const ask = async (text: string) => {
@@ -125,7 +145,7 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className={`fixed bottom-6 right-6 z-40 flex items-center gap-2.5 rounded-full border border-white/10 bg-[#141117] py-2.5 pl-3 pr-5 text-sm shadow-[0_20px_50px_-15px_rgba(200,16,46,0.55)] transition duration-300 hover:-translate-y-0.5 hover:border-white/25 ${open ? "pointer-events-none opacity-0" : ""}`}
+        className={`fixed bottom-[calc(76px+env(safe-area-inset-bottom))] right-4 z-40 flex max-w-[calc(100vw-2rem)] items-center gap-2.5 rounded-full md:bottom-6 md:right-6 md:max-w-none border border-white/10 bg-[#141117] py-2.5 pl-3 pr-5 text-sm shadow-[0_20px_50px_-15px_rgba(200,16,46,0.55)] transition duration-300 hover:-translate-y-0.5 hover:border-white/25 ${open ? "pointer-events-none opacity-0" : ""}`}
       >
         <span className="relative grid h-8 w-8 place-items-center rounded-full bg-brand text-white">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -133,20 +153,22 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
           </svg>
           <span aria-hidden className="absolute inset-0 animate-ping rounded-full bg-brand/40 [animation-duration:2.6s]" />
         </span>
-        Ask about {client}
+        <span className="min-w-0 truncate">Ask about {client}</span>
       </button>
       )}
 
+      <Layer>
       {open && <button type="button" aria-label="Close" onClick={() => setOpen(false)} className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[2px]" />}
       <aside
+        ref={panel}
         aria-hidden={!open}
-        className={`fixed inset-y-0 right-0 z-50 grid w-full max-w-[460px] grid-rows-[auto_auto_minmax(0,1fr)_auto] overflow-hidden border-l border-white/[0.07] bg-[#0b0a0e] shadow-[-30px_0_80px_-30px_rgba(0,0,0,0.9)] transition-transform duration-300 ease-out ${open ? "translate-x-0" : "pointer-events-none translate-x-full"}`}
+        className={`fixed right-0 top-[var(--vvt,0px)] z-50 grid h-[var(--vvh,100dvh)] w-full grid-rows-[auto_auto_minmax(0,1fr)_auto] overflow-hidden bg-[#0b0a0e] shadow-[-30px_0_80px_-30px_rgba(0,0,0,0.9)] transition-transform duration-300 ease-out md:inset-y-0 md:h-auto md:max-w-[460px] md:border-l md:border-white/[0.07] ${open ? "translate-x-0 translate-y-0" : "pointer-events-none translate-y-full md:translate-x-full md:translate-y-0"}`}
       >
         <span aria-hidden className="pointer-events-none absolute -left-24 -top-28 h-72 w-72 rounded-full bg-[rgba(200,16,46,0.35)] blur-[90px]" />
-        <header className="relative flex items-start justify-between gap-3 px-5 pb-3 pt-5">
-          <div className="grid gap-1">
+        <header className="relative flex items-start justify-between gap-3 px-4 pb-3 pt-[calc(1rem+env(safe-area-inset-top))] md:px-5 md:pt-5">
+          <div className="grid min-w-0 gap-1">
             <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-white/50">Account strategist</p>
-            <h2 className="font-display text-2xl leading-tight tracking-tight">{client}</h2>
+            <h2 className="font-display text-2xl leading-tight tracking-tight [overflow-wrap:anywhere]">{client}</h2>
             <p className="text-xs text-white/50">Questions, strategy, ideas, a summary. It reads everything Kaizen Ads knows about the account, including the latest audit.</p>
           </div>
           <span className="flex shrink-0 gap-1.5">
@@ -157,19 +179,19 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
                   await clearClientAi(clientId);
                   setChat([]);
                 }}
-                className="h-8 rounded-full border border-white/10 px-3 text-xs text-white/55 hover:text-white"
+                className="h-11 rounded-full border border-white/10 px-3.5 text-xs text-white/55 hover:text-white md:h-8 md:px-3"
               >
                 New chat
               </button>
             )}
-            <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="grid h-8 w-8 place-items-center rounded-full border border-white/10 text-white/55 hover:text-white">
+            <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="grid h-11 w-11 place-items-center rounded-full border border-white/10 text-lg text-white/55 hover:text-white md:h-8 md:w-8 md:text-base">
               ×
             </button>
           </span>
         </header>
 
         {/* The account audit, the same one as on the KPI board */}
-        <div className="relative mx-5 mb-3 grid gap-2 rounded-[14px] border border-white/[0.07] bg-white/[0.03] p-3">
+        <div className="relative mx-4 mb-3 grid gap-2 rounded-[14px] md:mx-5 border border-white/[0.07] bg-white/[0.03] p-3">
           {targets.length === 0 ? (
             <p className="text-xs text-white/50">An audit needs a KPI with an ad account. Set one on the KPI board.</p>
           ) : (
@@ -183,7 +205,7 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
                 </span>
                 <span className="flex shrink-0 gap-1.5">
                   {t.auditId && t.status === "ready" && (
-                    <Link href={`/kpis/audit/${t.auditId}`} className="grid h-8 place-items-center rounded-full border border-white/10 px-3 text-xs text-white/65 hover:text-white">
+                    <Link href={`/kpis/audit/${t.auditId}`} className="grid h-10 place-items-center rounded-full border border-white/10 px-3 text-xs text-white/65 hover:text-white md:h-8">
                       Open
                     </Link>
                   )}
@@ -191,7 +213,7 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
                     type="button"
                     disabled={!live || starting === t.id || t.status === "running" || t.status === "queued"}
                     onClick={() => audit(t)}
-                    className="h-8 rounded-full bg-fg px-3 text-xs text-bg disabled:opacity-40"
+                    className="h-10 rounded-full bg-fg px-3 text-xs text-bg disabled:opacity-40 md:h-8"
                   >
                     {starting === t.id ? "Starting…" : t.status === "none" ? "Run an audit" : "Run again"}
                   </button>
@@ -201,12 +223,12 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
           )}
         </div>
 
-        <div className="relative grid content-start gap-3 overflow-y-auto px-5 py-2">
+        <div className="relative grid content-start gap-3 overflow-y-auto overscroll-contain px-4 py-2 md:px-5">
           {!loaded && <p className="animate-pulse text-xs text-white/50">Loading your conversation about {client}…</p>}
           {loaded && !chat.length && !pending && (
             <div className="grid gap-2">
               {STARTERS.map((s) => (
-                <button key={s} type="button" onClick={() => ask(s)} className="rounded-[12px] border border-white/[0.08] px-3.5 py-2.5 text-left text-[13px] text-white/70 transition-colors hover:border-brand/50 hover:text-white">
+                <button key={s} type="button" onClick={() => ask(s)} className="min-h-11 rounded-[12px] border border-white/[0.08] px-3.5 py-2.5 text-left text-[13px] md:min-h-0 text-white/70 transition-colors hover:border-brand/50 hover:text-white">
                   {s}
                 </button>
               ))}
@@ -233,7 +255,7 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
             e.preventDefault();
             void ask(q);
           }}
-          className="relative grid gap-2 border-t border-white/[0.07] p-4"
+          className="relative grid gap-2 border-t border-white/[0.07] px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 md:p-4"
         >
           <div className="flex items-center justify-between gap-2">
             <button
@@ -241,12 +263,12 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
               onClick={() => setDeep((d) => !d)}
               aria-pressed={deep}
               title="The full model, the client's market and a web search for this answer"
-              className={`inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-[11px] transition-colors ${deep ? "bg-brand text-white shadow-[0_6px_20px_-8px_rgba(200,16,46,0.9)]" : "border border-white/10 text-white/55 hover:text-white"}`}
+              className={`inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[11px] transition-colors md:h-7 md:px-3 ${deep ? "bg-brand text-white shadow-[0_6px_20px_-8px_rgba(200,16,46,0.9)]" : "border border-white/10 text-white/55 hover:text-white"}`}
             >
               <span aria-hidden>✦</span>
               Go deep
             </button>
-            <span className="text-[10px] text-white/35">{deep ? "Full model, the market and the web for this one" : "Quick questions get quick answers; big ones get the full treatment"}</span>
+            <span className="min-w-0 text-right text-[10px] text-white/35 md:text-left">{deep ? "Full model, the market and the web for this one" : "Quick questions get quick answers; big ones get the full treatment"}</span>
           </div>
           <div className="flex items-end gap-2">
           <textarea
@@ -261,14 +283,15 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
             }}
             rows={2}
             placeholder="Ask, strategize, think out loud…"
-            className="min-h-[46px] flex-1 resize-none rounded-[12px] border border-white/10 bg-white/[0.03] px-3 py-2.5 text-[13.5px] outline-none placeholder:text-white/35 focus:border-brand/50"
+            className="min-h-[46px] min-w-0 flex-1 resize-none rounded-[12px] border border-white/10 bg-white/[0.03] px-3 py-2.5 text-[13.5px] outline-none placeholder:text-white/35 focus:border-brand/50"
           />
-          <button type="submit" disabled={!q.trim() || Boolean(pending)} className="h-11 rounded-full bg-fg px-5 text-sm text-bg disabled:opacity-40">
+          <button type="submit" disabled={!q.trim() || Boolean(pending)} className="h-11 shrink-0 rounded-full bg-fg px-5 text-sm text-bg disabled:opacity-40">
             Ask
           </button>
           </div>
         </form>
       </aside>
+      </Layer>
     </>
   );
 }

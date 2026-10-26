@@ -14,7 +14,7 @@ export function MarketPanel({ clientId, industry, label, ads }: { clientId: stri
   if (!ads.length) return null;
   const competitors = ads.filter((a) => a.competitorOf.includes(clientId)).length;
   return (
-    <section className="grid gap-4 rounded-[12px] border border-line bg-surface p-6">
+    <section className="grid gap-4 rounded-[12px] border border-line bg-surface p-5 md:p-6">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <h2 className="font-heading text-[17px]">In the market</h2>
@@ -22,7 +22,7 @@ export function MarketPanel({ clientId, industry, label, ads }: { clientId: stri
             Live on Meta right now{competitors ? `: ${competitors} from competitors this client named, then` : ":"} what&apos;s proven or being tested in {label.toLowerCase()}. From Motion.
           </p>
         </div>
-        <Link href={`/ideas?tab=market&client=${clientId}`} className="text-xs text-muted hover:text-fg">
+        <Link href={`/ideas?tab=market&client=${clientId}`} className="inline-flex min-h-11 items-center text-xs text-muted hover:text-fg md:min-h-0">
           See the whole market →
         </Link>
       </div>
