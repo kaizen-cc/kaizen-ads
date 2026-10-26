@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { createPortal } from "react-dom";
 import { field } from "@/components/ui";
 import {
   addItem,
@@ -147,18 +148,21 @@ function DirtyProvider({ children }: { children: React.ReactNode }) {
   return (
     <DirtyCtx.Provider value={useMemo(() => ({ set }), [set])}>
       {children}
-      <div className={`pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-5 transition-all duration-300 md:pl-[240px] ${list.length ? "translate-y-0 opacity-100" : "translate-y-6 opacity-0"}`}>
-        <div className="pointer-events-auto flex w-full max-w-3xl flex-wrap items-center gap-3 rounded-[16px] border border-warn/40 bg-surface/95 px-5 py-3.5 shadow-[0_20px_60px_-20px_rgba(0,0,0,0.8)] backdrop-blur">
+      {/* Phones: it sits just above the tab bar */}
+      <div
+        className={`pointer-events-none fixed inset-x-0 bottom-[calc(58px+env(safe-area-inset-bottom))] z-40 flex justify-center px-3 pb-3 transition-all duration-300 md:bottom-0 md:px-4 md:pb-5 md:pl-[240px] ${list.length ? "translate-y-0 opacity-100" : "invisible translate-y-6 opacity-0 md:visible"}`}
+      >
+        <div className="pointer-events-auto flex w-full max-w-3xl flex-wrap items-center gap-x-3 gap-y-2 rounded-[16px] border border-warn/40 bg-surface/95 px-4 py-3 shadow-[0_20px_60px_-20px_rgba(0,0,0,0.8)] backdrop-blur md:px-5 md:py-3.5">
           <span className="relative flex h-2.5 w-2.5 shrink-0">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-warn opacity-50" />
             <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-warn" />
           </span>
           <p className="min-w-0 flex-1 text-sm">
             <span className="font-medium">Unsaved changes</span>
-            <span className="text-muted"> · {list.map((p) => p.label).join(", ")}</span>
+            <span className="text-muted max-md:line-clamp-2 max-md:[overflow-wrap:anywhere]"> · {list.map((p) => p.label).join(", ")}</span>
             {error && <span className="block text-xs text-bad">{error}</span>}
           </p>
-          <button onClick={() => (list.forEach((p) => p.discard()), setError(null))} disabled={saving} className="h-9 rounded-full px-4 text-sm text-muted transition-colors hover:text-fg">
+          <button onClick={() => (list.forEach((p) => p.discard()), setError(null))} disabled={saving} className="h-11 flex-1 rounded-full border border-line px-4 text-sm text-muted transition-colors hover:text-fg md:h-9 md:flex-none md:border-0">
             Discard
           </button>
           <button
@@ -173,7 +177,7 @@ function DirtyProvider({ children }: { children: React.ReactNode }) {
                 router.refresh();
               })
             }
-            className="h-9 rounded-full bg-brand px-5 text-sm font-medium text-white transition-colors hover:bg-brand-hover disabled:opacity-60"
+            className="h-11 flex-[2] rounded-full bg-brand px-5 text-sm font-medium text-white transition-colors hover:bg-brand-hover disabled:opacity-60 md:h-9 md:flex-none"
           >
             {saving ? "Saving…" : list.length > 1 ? `Save all ${list.length}` : "Save changes"}
           </button>
@@ -210,7 +214,7 @@ export function AgentsOverview({ agents, items }: { agents: Agent[]; items: Item
               <li key={a.key}>
                 <Link
                   href={`/settings?tab=agents&agent=${a.key}`}
-                  className="group relative grid h-full content-start gap-5 overflow-hidden rounded-[18px] border border-line bg-surface p-6 transition-all duration-200 hover:-translate-y-0.5 hover:border-faint/70 hover:shadow-[0_24px_60px_-30px_rgba(0,0,0,0.9)]"
+                  className="group relative grid h-full content-start gap-5 overflow-hidden rounded-[18px] border border-line bg-surface p-5 transition-all active:bg-surface-2/40 md:p-6 duration-200 hover:-translate-y-0.5 hover:border-faint/70 hover:shadow-[0_24px_60px_-30px_rgba(0,0,0,0.9)]"
                 >
                   <span aria-hidden className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full opacity-[0.13] blur-2xl transition-opacity group-hover:opacity-25" style={{ background: tint }} />
                   <div className="relative flex items-start justify-between gap-3">
@@ -263,7 +267,7 @@ export function AgentsOverview({ agents, items }: { agents: Agent[]; items: Item
           })}
         </ul>
 
-        <section className="grid gap-4 rounded-[18px] border border-line bg-surface p-6">
+        <section className="grid gap-4 rounded-[18px] border border-line bg-surface p-4 md:p-6">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <h2 className="font-heading text-[20px]">Shared knowledge</h2>
@@ -327,11 +331,11 @@ function ItemCard({ item, readOnly = false }: { item: Item; readOnly?: boolean }
                 else setError(r.error);
               })
             }
-            className="h-9 rounded-full bg-brand px-4 text-sm font-medium text-white disabled:opacity-40"
+            className="h-11 rounded-full bg-brand px-5 md:h-9 md:px-4 text-sm font-medium text-white disabled:opacity-40"
           >
             {busy ? "Saving…" : "Save"}
           </button>
-          <button onClick={discard} className="h-9 rounded-full px-4 text-sm text-muted hover:text-fg">
+          <button onClick={discard} className="h-11 rounded-full px-4 text-sm md:h-9 text-muted hover:text-fg">
             Cancel
           </button>
           <span className="tabular ml-auto text-[11px] text-faint">~{tokensOf(body).toLocaleString()} tokens</span>
@@ -344,7 +348,7 @@ function ItemCard({ item, readOnly = false }: { item: Item; readOnly?: boolean }
                 else setError(r.error);
               });
             }}
-            className="h-9 rounded-full px-3 text-sm text-faint hover:text-bad"
+            className="h-11 rounded-full px-3 text-sm md:h-9 text-faint hover:text-bad"
           >
             Delete
           </button>
@@ -366,11 +370,11 @@ function ItemCard({ item, readOnly = false }: { item: Item; readOnly?: boolean }
           <div className="flex shrink-0 items-center gap-1">
             <button
               onClick={() => start(async () => void ((await setItemActive(item.id, !item.active)).ok && router.refresh()))}
-              className="rounded-full px-2.5 py-1 text-[11px] text-faint opacity-0 transition-opacity hover:text-fg group-hover:opacity-100 focus:opacity-100"
+              className="inline-flex h-11 items-center rounded-full px-2.5 text-[11px] text-faint transition-opacity hover:text-fg active:bg-surface-2 md:h-auto md:py-1 md:opacity-0 md:group-hover:opacity-100 md:focus:opacity-100"
             >
               {item.active ? "Turn off" : "Turn on"}
             </button>
-            <button onClick={() => setEditing(true)} aria-label={`Edit ${item.title}`} className="grid h-8 w-8 place-items-center rounded-full text-muted transition-colors hover:bg-surface-2 hover:text-fg">
+            <button onClick={() => setEditing(true)} aria-label={`Edit ${item.title}`} className="grid h-11 w-11 place-items-center active:bg-surface-2 md:h-8 md:w-8 rounded-full text-muted transition-colors hover:bg-surface-2 hover:text-fg">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                 <path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4" />
               </svg>
@@ -422,14 +426,14 @@ function NewItem({ agentKey, kind, onDone }: { agentKey: string | null; kind: Ki
               else setError(r.error);
             })
           }
-          className="h-9 rounded-full bg-brand px-4 text-sm font-medium text-white disabled:opacity-40"
+          className="h-11 rounded-full bg-brand px-5 md:h-9 md:px-4 text-sm font-medium text-white disabled:opacity-40"
         >
           {busy ? "Adding…" : "Add"}
         </button>
-        <button onClick={onDone} className="h-9 rounded-full px-4 text-sm text-muted hover:text-fg">
+        <button onClick={onDone} className="h-11 rounded-full px-4 text-sm md:h-9 text-muted hover:text-fg">
           Cancel
         </button>
-        <label className="ml-auto inline-flex cursor-pointer items-center gap-2 rounded-full border border-line px-3 py-1.5 text-xs text-muted hover:text-fg">
+        <label className="inline-flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-full border border-line px-3 py-1.5 text-xs sm:ml-auto sm:w-auto md:min-h-0 text-muted hover:text-fg">
           <input
             type="file"
             accept=".txt,.md,.markdown,.csv,.json,.html,text/*"
@@ -468,7 +472,7 @@ function ItemList({ items, agentKey }: { items: Item[]; agentKey: string | null 
       ) : (
         <div className="flex flex-wrap gap-2">
           {(["skill", "knowledge", "example"] as const).map((k) => (
-            <button key={k} onClick={() => setAdding(k)} className="inline-flex h-9 items-center gap-2 rounded-full border border-dashed border-line px-4 text-sm text-muted transition-colors hover:border-faint hover:text-fg">
+            <button key={k} onClick={() => setAdding(k)} className="inline-flex h-11 items-center gap-2 md:h-9 rounded-full border border-dashed border-line px-4 text-sm text-muted transition-colors hover:border-faint hover:text-fg">
               <span className={`h-1.5 w-1.5 rounded-full ${KINDS[k].dot}`} />+ {KINDS[k].name}
             </button>
           ))}
@@ -519,8 +523,9 @@ function Setup({ a }: { a: Agent }) {
         <div className="grid gap-2">
           <div className="grid grid-cols-3 gap-1 rounded-[12px] border border-line bg-bg p-1">
             {EFFORTS.map((e) => (
-              <button key={e.key} onClick={() => setEffort(e.key)} className={`rounded-[9px] px-3 py-2 text-sm transition-colors ${effort === e.key ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
-                {e.name} effort
+              <button key={e.key} onClick={() => setEffort(e.key)} className={`min-h-11 rounded-[9px] px-2 py-2 text-sm transition-colors md:min-h-0 md:px-3 ${effort === e.key ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
+                {e.name}
+                <span className="hidden sm:inline"> effort</span>
               </button>
             ))}
           </div>
@@ -572,7 +577,7 @@ function ChangeCard({ c, onApply, items, skill = null }: { c: Change; onApply: (
               <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] ${c.skill === "core" ? "bg-brand-soft text-brand-text" : "bg-surface-2 text-muted"}`}>{skill}</span>
             </p>
           )}
-          <p className="text-sm">
+          <p className="text-sm [overflow-wrap:anywhere]">
             <span className="font-medium">{CHANGE_LABEL[c.op]}</span>
             {c.op === "add_item" && c.kind && <span className="text-muted"> {KINDS[c.kind as Kind]?.name.toLowerCase()}</span>}
             {title && <span className="text-muted"> · {title}</span>}
@@ -583,14 +588,14 @@ function ChangeCard({ c, onApply, items, skill = null }: { c: Change; onApply: (
         {c.applied ? (
           <span className="shrink-0 text-xs text-ok">✓ Applied</span>
         ) : (
-          <button disabled={busy} onClick={() => start(onApply)} className="h-8 shrink-0 rounded-full bg-fg px-3.5 text-xs font-medium text-bg disabled:opacity-50">
+          <button disabled={busy} onClick={() => start(onApply)} className="h-11 shrink-0 rounded-full bg-fg px-4 text-xs font-medium text-bg disabled:opacity-50 md:h-8 md:px-3.5">
             {busy ? "Applying…" : "Apply"}
           </button>
         )}
       </div>
       {c.body && (
         <>
-          <button onClick={() => setOpen((o) => !o)} className="justify-self-start text-xs text-muted hover:text-fg">
+          <button onClick={() => setOpen((o) => !o)} className="min-h-11 justify-self-start text-xs text-muted hover:text-fg md:min-h-0">
             {open ? "Hide" : "See"} the new text
           </button>
           {open && <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-[8px] bg-surface p-3 font-sans text-xs leading-relaxed text-muted">{c.body}</pre>}
@@ -663,9 +668,28 @@ function ChatPanel({
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
   const end = useRef<HTMLDivElement>(null);
+  // Phones: the conversation opens full-screen over the app, the composer pinned at the bottom
+  const [full, setFull] = useState(false);
   useEffect(() => {
     end.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }, [messages.length, thinking]);
+  }, [messages.length, thinking, full]);
+  useEffect(() => {
+    if (!full) return;
+    const wide = window.matchMedia("(min-width: 768px)");
+    const close = () => wide.matches && setFull(false);
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setFull(false);
+    const was = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    wide.addEventListener("change", close);
+    window.addEventListener("keydown", esc);
+    return () => {
+      document.body.style.overflow = was;
+      wide.removeEventListener("change", close);
+      window.removeEventListener("keydown", esc);
+    };
+  }, [full]);
+  const pendingEdits = messages.reduce((t, m) => t + m.changes.filter((c) => !c.applied).length, 0);
+  const last = [...messages].reverse().find((m) => m.content.trim());
 
   const send = (msg: string) => {
     if (!msg.trim() || thinking) return;
@@ -683,10 +707,35 @@ function ChatPanel({
     });
   };
 
-  return (
-    <div className="grid gap-4">
-      <div className="relative overflow-hidden rounded-[16px] border border-line bg-bg">
-        <div className={`${tall ? "max-h-[620px] min-h-[360px]" : "max-h-[560px] min-h-[320px]"} overflow-y-auto px-5 py-5`}>
+  const panel = (
+    <div
+      role={full ? "dialog" : undefined}
+      aria-modal={full || undefined}
+      aria-label={full ? heading : undefined}
+      className={
+        full
+          ? "fixed inset-0 z-[70] flex flex-col bg-bg pt-safe animate-[sheet-up_.28s_cubic-bezier(.2,.8,.2,1)]"
+          : "relative overflow-hidden rounded-[16px] border border-line bg-bg"
+      }
+    >
+      {full && (
+        <div className="flex shrink-0 items-center gap-3 border-b border-line bg-surface/95 px-3 py-2 backdrop-blur">
+          <button type="button" onClick={() => setFull(false)} aria-label="Close the conversation" className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-muted active:bg-surface-2">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="m15 18-6-6 6-6" />
+            </svg>
+          </button>
+          <AgentIcon icon={icon} size={32} />
+          <p className="min-w-0 flex-1 truncate font-heading text-[16px]">{heading}</p>
+        </div>
+      )}
+      <div
+        className={
+          full
+            ? "min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5"
+            : `${tall ? "max-h-[620px] min-h-[360px]" : "max-h-[560px] min-h-[320px]"} overflow-y-auto px-5 py-5`
+        }
+      >
           {messages.length === 0 && !thinking ? (
             <div className="grid justify-items-center gap-4 py-10 text-center">
               <AgentIcon icon={icon} size={56} />
@@ -696,7 +745,11 @@ function ChatPanel({
               </div>
               <div className="flex max-w-xl flex-wrap justify-center gap-2">
                 {starters.map((s) => (
-                  <button key={s} onClick={() => (s.endsWith("…") ? setText(s.replace("…", "")) : send(s))} className="rounded-full border border-line px-3.5 py-1.5 text-xs text-muted transition-colors hover:border-faint hover:text-fg">
+                  <button
+                    key={s}
+                    onClick={() => (s.endsWith("…") ? setText(s.replace("…", "")) : send(s))}
+                    className="min-h-11 rounded-full border border-line px-3.5 py-2 text-xs text-muted transition-colors hover:border-faint hover:text-fg active:bg-surface-2 md:min-h-0 md:py-1.5"
+                  >
                     {s}
                   </button>
                 ))}
@@ -706,17 +759,17 @@ function ChatPanel({
             <ul className="grid gap-5">
               {messages.map((m) =>
                 m.role === "user" ? (
-                  <li key={m.id} className="ml-auto max-w-[80%] whitespace-pre-wrap rounded-[16px] rounded-br-[6px] bg-surface-2 px-4 py-2.5 text-sm leading-relaxed">
+                  <li key={m.id} className="ml-auto max-w-[85%] whitespace-pre-wrap rounded-[16px] rounded-br-[6px] bg-surface-2 px-4 py-2.5 text-sm leading-relaxed [overflow-wrap:anywhere] md:max-w-[80%]">
                     {m.content}
                   </li>
                 ) : (
-                  <li key={m.id} className="grid max-w-[92%] gap-3">
+                  <li key={m.id} className="grid min-w-0 gap-3 md:max-w-[92%]">
                     <div className="flex items-start gap-3">
                       <AgentIcon icon={icon} size={28} />
-                      <p className="whitespace-pre-wrap pt-1 text-sm leading-relaxed">{m.content}</p>
+                      <p className="min-w-0 whitespace-pre-wrap pt-1 text-sm leading-relaxed [overflow-wrap:anywhere]">{m.content}</p>
                     </div>
                     {m.changes.length > 0 && (
-                      <div className="ml-10 grid gap-2">
+                      <div className="grid gap-2 md:ml-10">
                         {m.changes.map((c, i) => (
                           <ChangeCard
                             key={i}
@@ -750,41 +803,68 @@ function ChatPanel({
             </ul>
           )}
           <div ref={end} />
-        </div>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            send(text);
-          }}
-          className="flex items-end gap-2 border-t border-line bg-surface p-3"
-        >
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                send(text);
-              }
-            }}
-            rows={Math.min(8, Math.max(1, text.split("\n").length))}
-            placeholder={placeholder}
-            className="min-h-10 flex-1 resize-none rounded-[10px] border border-line bg-bg px-3.5 py-2.5 text-sm outline-none focus:border-brand-text/60"
-          />
-          <button disabled={thinking || !text.trim()} className="h-10 shrink-0 rounded-[10px] bg-brand px-4 text-sm font-medium text-white disabled:opacity-40">
-            Send
-          </button>
-        </form>
       </div>
-      <div className="flex items-center justify-between gap-3 text-xs">
-        {error ? <span className="text-bad">{error}</span> : <span className="text-faint">{footnote}</span>}
+      {full && error && <p className="shrink-0 border-t border-line bg-bad-soft px-4 py-2 text-xs text-bad">{error}</p>}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          send(text);
+        }}
+        className={`flex shrink-0 items-end gap-2 border-t border-line bg-surface p-3 ${full ? "pb-[max(12px,env(safe-area-inset-bottom))]" : ""}`}
+      >
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              send(text);
+            }
+          }}
+          rows={Math.min(8, Math.max(1, text.split("\n").length))}
+          placeholder={placeholder}
+          className="min-h-11 min-w-0 flex-1 resize-none rounded-[10px] border border-line bg-bg px-3.5 py-2.5 text-sm outline-none focus:border-brand-text/60 md:min-h-10"
+        />
+        <button disabled={thinking || !text.trim()} className="h-11 shrink-0 rounded-[10px] bg-brand px-4 text-sm font-medium text-white disabled:opacity-40 md:h-10">
+          Send
+        </button>
+      </form>
+    </div>
+  );
+
+  return (
+    <div className="grid gap-4">
+      {/* Phones: a card that opens the conversation full-screen */}
+      <button
+        type="button"
+        onClick={() => setFull(true)}
+        className="flex min-h-[72px] w-full items-center gap-3 rounded-[16px] border border-line bg-bg p-4 text-left transition-colors active:bg-surface-2 md:hidden"
+      >
+        <AgentIcon icon={icon} size={40} />
+        <span className="grid min-w-0 flex-1 gap-0.5">
+          <span className="truncate text-sm font-medium">{messages.length ? "Open the conversation" : heading}</span>
+          <span className="line-clamp-2 text-xs leading-relaxed text-muted [overflow-wrap:anywhere]">
+            {thinking ? thinkingLabel : last ? `${last.role === "user" ? "You: " : ""}${last.content}` : placeholder}
+          </span>
+        </span>
+        {pendingEdits > 0 ? (
+          <span className="shrink-0 rounded-full bg-brand-soft px-2 py-0.5 text-[10px] text-brand-text">{pendingEdits} to apply</span>
+        ) : (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-faint" aria-hidden>
+            <path d="m9 18 6-6-6-6" />
+          </svg>
+        )}
+      </button>
+      {full ? createPortal(panel, document.body) : <div className="hidden md:block">{panel}</div>}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
+        {error ? <span className="min-w-0 text-bad [overflow-wrap:anywhere]">{error}</span> : <span className="text-faint">{footnote}</span>}
         {messages.length > 0 && (
           <button
             onClick={() => {
               if (!confirm("Clear this conversation? Applied changes stay.")) return;
               void onClear().then((r) => (r.ok ? setMessages([]) : setError(r.error)));
             }}
-            className="text-faint hover:text-fg"
+            className="min-h-11 text-faint hover:text-fg md:min-h-0"
           >
             Clear conversation
           </button>
@@ -832,17 +912,17 @@ export function AgentDetail({ a, items, chat }: { a: Agent; items: Item[]; chat:
   return (
     <DirtyProvider>
       <div className="grid gap-6 pb-24">
-        <Link href={a.roleKey ? `/settings?tab=agents&role=${a.roleKey}` : "/settings?tab=agents"} className="text-xs text-muted hover:text-fg">
+        <Link href={a.roleKey ? `/settings?tab=agents&role=${a.roleKey}` : "/settings?tab=agents"} className="inline-flex min-h-11 items-center text-xs text-muted hover:text-fg md:min-h-0">
           ← {a.roleLabel ?? "All agents"}
         </Link>
-        <header className="relative overflow-hidden rounded-[20px] border border-line bg-surface p-6 sm:p-8">
+        <header className="relative overflow-hidden rounded-[20px] border border-line bg-surface p-5 sm:p-8">
           <span aria-hidden className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full opacity-20 blur-3xl" style={{ background: tint }} />
           <div className="relative flex flex-wrap items-start gap-5">
             <AgentIcon icon={a.icon} size={64} />
             <div className="min-w-0 flex-1">
               {a.roleLabel && <p className="text-[11px] uppercase tracking-[0.16em] text-faint">Skill of the {a.roleLabel}</p>}
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="font-heading text-[28px] leading-tight">{a.label}</h2>
+                <h2 className="font-heading text-[24px] leading-tight [overflow-wrap:anywhere] md:text-[28px]">{a.label}</h2>
                 {a.live ? <span className="rounded-full bg-ok-soft px-2.5 py-1 text-[11px] text-ok">Working in the app</span> : <span className="rounded-full border border-dashed border-line px-2.5 py-1 text-[11px] text-faint">Coming soon: shape it now</span>}
               </div>
               <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">{a.description}</p>
@@ -850,7 +930,7 @@ export function AgentDetail({ a, items, chat }: { a: Agent; items: Item[]; chat:
             {a.roleKey && a.roleLabel && (
               <Link
                 href={`/settings?tab=agents&role=${a.roleKey}#talk`}
-                className="inline-flex h-9 shrink-0 items-center gap-2 rounded-full border border-line bg-bg/60 px-4 text-sm text-muted transition-colors hover:border-faint hover:text-fg"
+                className="inline-flex h-11 w-full shrink-0 items-center justify-center gap-2 active:bg-surface-2 md:h-9 md:w-auto md:justify-start rounded-full border border-line bg-bg/60 px-4 text-sm text-muted transition-colors hover:border-faint hover:text-fg"
               >
                 <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden>
                   <path fill="currentColor" d={ICONS.spark} />
@@ -875,12 +955,12 @@ export function AgentDetail({ a, items, chat }: { a: Agent; items: Item[]; chat:
           </div>
         </header>
 
-        <nav className="flex flex-wrap gap-1.5">
+        <nav className="no-scrollbar -mx-4 flex snap-x snap-mandatory scroll-px-4 gap-1.5 overflow-x-auto px-4 md:mx-0 md:snap-none md:flex-wrap md:overflow-visible md:px-0">
           {TABS.map(([k, name]) => (
             <button
               key={k}
               onClick={() => setTab(k)}
-              className={`inline-flex h-9 items-center gap-2 rounded-full px-4 text-sm transition-colors ${tab === k ? "bg-fg text-bg" : "text-muted hover:bg-surface-2 hover:text-fg"}`}
+              className={`inline-flex h-11 shrink-0 snap-start items-center gap-2 whitespace-nowrap rounded-full px-4 text-sm transition-colors md:h-9 ${tab === k ? "bg-fg text-bg" : "bg-surface text-muted hover:bg-surface-2 hover:text-fg active:bg-surface-2 md:bg-transparent"}`}
             >
               {k === "coach" && (
                 <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden>
@@ -894,14 +974,14 @@ export function AgentDetail({ a, items, chat }: { a: Agent; items: Item[]; chat:
         </nav>
 
         {/* Keep every tab mounted so unsaved edits survive switching tabs */}
-        <section className={tab === "setup" ? "grid gap-6 rounded-[18px] border border-line bg-surface p-6" : "hidden"}>
+        <section className={tab === "setup" ? "grid gap-6 rounded-[18px] border border-line bg-surface p-4 md:p-6" : "hidden"}>
           <Setup a={a} />
           <p className="text-[11px] text-faint">
             Last changed {fmt(a.updatedAt)}
             {a.updatedBy && ` by ${a.updatedBy}`}. Saved changes apply to its next run, within a minute.
           </p>
         </section>
-        <section className={tab === "playbook" ? "grid gap-6 rounded-[18px] border border-line bg-surface p-6" : "hidden"}>
+        <section className={tab === "playbook" ? "grid gap-6 rounded-[18px] border border-line bg-surface p-4 md:p-6" : "hidden"}>
           <div>
             <h3 className="font-heading text-[18px]">Skills & knowledge</h3>
             <p className="mt-1 text-sm text-muted">What only this agent reads. Click the pencil to edit or overwrite one.</p>
@@ -927,7 +1007,7 @@ export function AgentDetail({ a, items, chat }: { a: Agent; items: Item[]; chat:
           )}
         </section>
         <section className={tab === "use" ? "grid gap-5" : "hidden"}>
-          <div className="grid gap-3 rounded-[18px] border border-line bg-surface p-6">
+          <div className="grid gap-3 rounded-[18px] border border-line bg-surface p-4 md:p-6">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <h3 className="font-heading text-[18px]">Where it comes in</h3>
               <span className="text-xs text-faint">
@@ -952,7 +1032,7 @@ export function AgentDetail({ a, items, chat }: { a: Agent; items: Item[]; chat:
                       <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] ${m.trigger === "auto" ? "bg-surface-2 text-muted" : "bg-brand-soft text-brand-text"}`}>
                         {m.trigger === "auto" ? "Automatic" : "When someone clicks"}
                       </span>
-                      <span className="w-36 shrink-0 text-right text-xs">
+                      <span className="w-full pl-6 text-xs md:w-36 md:shrink-0 md:pl-0 md:text-right">
                         <span className={`block tabular ${m.runs7 ? "text-fg" : "text-faint"}`}>{m.runs7 ? `${m.runs7} this week` : "None this week"}</span>
                         <span className="block text-[11px] text-faint">{m.lastAt ? `last ${ago(m.lastAt)}` : "not used yet"}</span>
                       </span>
@@ -964,7 +1044,7 @@ export function AgentDetail({ a, items, chat }: { a: Agent; items: Item[]; chat:
             <p className="text-[11px] text-faint">Green: used this week. Amber: used before, not this week. Grey: not used yet, worth checking it&apos;s reachable.</p>
           </div>
 
-          <div className="grid gap-3 rounded-[18px] border border-line bg-surface p-6">
+          <div className="grid gap-3 rounded-[18px] border border-line bg-surface p-4 md:p-6">
             <h3 className="font-heading text-[18px]">Most recent</h3>
             {a.recent.length === 0 ? (
               <p className="text-sm text-faint">No runs in the last month.</p>
@@ -987,7 +1067,7 @@ export function AgentDetail({ a, items, chat }: { a: Agent; items: Item[]; chat:
         <section className={tab === "coach" ? "grid" : "hidden"}>
           <Coach a={a} initial={chat} items={items} />
         </section>
-        <section className={tab === "runs" ? "grid gap-3 rounded-[18px] border border-line bg-surface p-6" : "hidden"}>
+        <section className={tab === "runs" ? "grid gap-3 rounded-[18px] border border-line bg-surface p-4 md:p-6" : "hidden"}>
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <h3 className="font-heading text-[18px]">Recent runs</h3>
             <p className="tabular text-xs text-faint">
@@ -998,9 +1078,9 @@ export function AgentDetail({ a, items, chat }: { a: Agent; items: Item[]; chat:
           {a.recent.length ? (
             <ul className="grid gap-1">
               {a.recent.map((r, i) => (
-                <li key={i} className="grid grid-cols-[120px_minmax(0,1fr)_70px_60px_150px] items-center gap-3 rounded-[8px] px-3 py-2 text-xs odd:bg-bg">
+                <li key={i} className="flex flex-wrap items-center gap-x-3 gap-y-0.5 md:grid md:grid-cols-[120px_minmax(0,1fr)_70px_60px_150px] md:gap-3 rounded-[8px] px-3 py-2 text-xs odd:bg-bg">
                   <span className="tabular text-faint">{fmt(r.at)}</span>
-                  <span className={`truncate ${r.ok ? "text-muted" : "text-bad"}`} title={r.error ?? undefined}>
+                  <span className={`order-first basis-full truncate md:order-none md:basis-auto ${r.ok ? "text-muted" : "text-bad"}`} title={r.error ?? undefined}>
                     {r.label}
                     {r.error && ` · ${r.error}`}
                   </span>
@@ -1051,20 +1131,20 @@ function SpineEditor({ spine }: { spine: { body: string; updatedAt: string | nul
     <button
       type="button"
       onClick={() => setMode(k)}
-      className={`rounded-full px-3 py-1 text-xs transition-colors ${mode === k ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}
+      className={`h-10 flex-1 rounded-full px-3 text-xs transition-colors md:h-auto md:flex-none md:py-1 ${mode === k ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}
     >
       {label}
     </button>
   );
   return (
-    <section className="grid gap-5 rounded-[18px] border border-line bg-surface p-5 sm:p-6">
+    <section className="grid gap-5 rounded-[18px] border border-line bg-surface p-4 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="grid gap-1">
           <p className="text-[11px] uppercase tracking-[0.16em] text-faint">Read first by every agent</p>
           <h2 className="font-heading text-[20px] leading-tight">Kaizen strategy</h2>
           <p className="max-w-xl text-[13px] text-muted">Kyle and Santi&apos;s non-negotiables. They win over any agent&apos;s core or skills. Execs edit them here; the Coach can&apos;t.</p>
         </div>
-        <div className="flex items-center gap-1 rounded-full border border-line bg-bg p-0.5">
+        <div className="flex w-full items-center gap-1 rounded-full border border-line bg-bg p-0.5 md:w-auto">
           {tab("summary", "Rules")}
           {tab("read", "Full text")}
           {tab("edit", "Edit")}
@@ -1150,7 +1230,7 @@ export function RolesOverview({ roles, agents, items, spine }: { roles: Role[]; 
                 <li key={r.key} className="min-w-0">
                   <Link
                     href={`/settings?tab=agents&role=${r.key}`}
-                    className="group flex h-full flex-col gap-4 rounded-[18px] border border-line bg-surface p-5 transition-colors hover:border-faint/70 hover:bg-surface-2/40"
+                    className="group flex h-full flex-col gap-4 rounded-[18px] border border-line bg-surface p-5 transition-colors hover:border-faint/70 hover:bg-surface-2/40 active:bg-surface-2/60"
                   >
                     <div className="flex items-center gap-3">
                       <AgentIcon icon={r.icon} size={38} />
@@ -1213,7 +1293,7 @@ export function RolesOverview({ roles, agents, items, spine }: { roles: Role[]; 
 
         <SpineEditor spine={spine} />
 
-        <section className="grid gap-4 rounded-[18px] border border-line bg-surface p-5 sm:p-6">
+        <section className="grid gap-4 rounded-[18px] border border-line bg-surface p-4 sm:p-6">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <h2 className="font-heading text-[20px]">Shared knowledge</h2>
@@ -1232,7 +1312,7 @@ function CoreEditor({ role }: { role: Role }) {
   const [core, setCore] = useState(role.core);
   useDirty(`core:${role.key}`, core !== role.core, { label: `${role.label} core`, save: () => saveRoleCore(role.key, core), discard: () => setCore(role.core) });
   return (
-    <section className="grid gap-3 rounded-[18px] border border-line bg-surface p-6">
+    <section className="grid gap-3 rounded-[18px] border border-line bg-surface p-4 md:p-6">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <h3 className="font-heading text-[18px]">Core</h3>
@@ -1252,7 +1332,7 @@ function CoreEditor({ role }: { role: Role }) {
 function TalkToAgent({ role, skills, items, chat }: { role: Role; skills: Agent[]; items: Item[]; chat: RoleChatMessage[] }) {
   const names = new Map(skills.map((s) => [s.key as string, s.label]));
   return (
-    <section id="talk" className="relative grid scroll-mt-6 gap-4 overflow-hidden rounded-[20px] border border-line bg-surface p-5 sm:p-6">
+    <section id="talk" className="relative grid scroll-mt-6 gap-4 overflow-hidden rounded-[20px] border border-line bg-surface p-4 sm:p-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h3 className="font-heading text-[20px] leading-tight">Talk to the {role.label}</h3>
@@ -1294,15 +1374,15 @@ export function RoleDetail({ role, skills, items, chat }: { role: Role; skills: 
   return (
     <DirtyProvider>
       <div className="grid gap-6 pb-24">
-        <Link href="/settings?tab=agents" className="text-xs text-muted hover:text-fg">
+        <Link href="/settings?tab=agents" className="inline-flex min-h-11 items-center text-xs text-muted hover:text-fg md:min-h-0">
           ← All agents
         </Link>
-        <header className="relative overflow-hidden rounded-[20px] border border-line bg-surface p-6 sm:p-8">
+        <header className="relative overflow-hidden rounded-[20px] border border-line bg-surface p-5 sm:p-8">
           <div className="relative flex flex-wrap items-start gap-5">
             <AgentIcon icon={role.icon} size={64} />
             <div className="min-w-0 flex-1">
               <p className="text-[11px] uppercase tracking-[0.16em] text-faint">Agent</p>
-              <h2 className="font-heading text-[30px] leading-tight">{role.label}</h2>
+              <h2 className="font-heading text-[26px] leading-tight [overflow-wrap:anywhere] md:text-[30px]">{role.label}</h2>
               <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">{role.description}</p>
             </div>
             <dl className="grid w-full grid-cols-2 gap-x-8 gap-y-3 border-t border-line pt-5 sm:grid-cols-4">
@@ -1335,7 +1415,7 @@ export function RoleDetail({ role, skills, items, chat }: { role: Role; skills: 
                 <li key={s.key}>
                   <Link
                     href={`/settings?tab=agents&agent=${s.key}`}
-                    className="group grid h-full content-start gap-3 rounded-[16px] border border-line bg-surface p-5 transition-colors hover:border-faint/70"
+                    className="group grid h-full content-start gap-3 rounded-[16px] border border-line bg-surface p-4 transition-colors hover:border-faint/70 active:bg-surface-2/40 md:p-5"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">

@@ -24,10 +24,10 @@ export function EmailForm({ next }: { next?: string }) {
       <div className="rounded-brand border border-line bg-surface-2 p-4 text-sm">
         <p className="font-medium">Check your inbox</p>
         <p className="mt-1 text-muted">
-          If <span className="text-fg">{sentTo}</span> is on file with Kaizen, a sign-in link is on its way. It works
+          If <span className="text-fg [overflow-wrap:anywhere]">{sentTo}</span> is on file with Kaizen, a sign-in link is on its way. It works
           once and expires in 1 hour.
         </p>
-        <button onClick={() => setSentTo(null)} className="mt-3 text-sm text-brand-text hover:underline">
+        <button onClick={() => setSentTo(null)} className="mt-2 min-h-11 text-sm text-brand-text hover:underline md:mt-3 md:min-h-0">
           Use a different email
         </button>
       </div>
@@ -47,13 +47,13 @@ export function EmailForm({ next }: { next?: string }) {
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         placeholder="you@yourbrand.com"
-        className="h-11 rounded-brand border border-line bg-bg px-3 text-sm outline-none focus:border-brand-text"
+        className="h-12 rounded-brand border border-line bg-bg px-3 text-sm outline-none focus:border-brand-text md:h-11"
       />
       {error && <p className="text-sm text-brand-text">{error}</p>}
       <button
         type="submit"
         disabled={pending}
-        className="h-11 rounded-brand bg-brand text-sm font-medium text-white transition-colors hover:bg-brand-hover disabled:opacity-60"
+        className="h-12 rounded-brand bg-brand text-sm font-medium text-white transition-colors hover:bg-brand-hover active:brightness-110 disabled:opacity-60 md:h-11"
       >
         {pending ? "Sending…" : "Email me a sign-in link"}
       </button>

@@ -34,7 +34,7 @@ export default async function Team() {
   }));
 
   return (
-    <div className="grid max-w-4xl gap-6">
+    <div className="grid min-w-0 max-w-4xl grid-cols-[minmax(0,1fr)] gap-6">
       <div>
         <h1 className="font-heading text-2xl">Team</h1>
         <p className="mt-1 text-sm text-muted">

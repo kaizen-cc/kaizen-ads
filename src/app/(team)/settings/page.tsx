@@ -221,32 +221,32 @@ async function Errors({ all }: { all: boolean }) {
   const { data } = await q;
   const rows = (data ?? []) as ErrorRow[];
   return (
-    <div className="grid gap-4">
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <p className="max-w-3xl text-sm text-muted">
           Every error someone hits in Kaizen Ads, on a page, a button or in the background. Harmless ones (a dropped connection, a tab on an old version) are explained and
           closed automatically. Real ones get a diagnosis, and you&apos;re emailed the first time, then at most hourly while it keeps happening.
         </p>
-        <Link href={all ? "/settings?tab=errors" : "/settings?tab=errors&show=all"} className="shrink-0 text-xs text-muted hover:text-fg">
+        <Link href={all ? "/settings?tab=errors" : "/settings?tab=errors&show=all"} className="inline-flex h-11 shrink-0 items-center rounded-full border border-line px-4 text-xs text-muted hover:text-fg md:h-auto md:rounded-none md:border-0 md:px-0">
           {all ? "Open only" : "Include resolved"}
         </Link>
       </div>
       {rows.length === 0 ? (
         <p className="rounded-[12px] border border-dashed border-line p-10 text-center text-sm text-muted">No open errors.</p>
       ) : (
-        <ul className="grid gap-3">
+        <ul className="grid grid-cols-[minmax(0,1fr)] gap-3">
           {rows.map((r) => (
-            <li key={r.fingerprint} className={`rounded-[12px] border border-line bg-surface p-4 ${r.resolved_at ? "opacity-60" : ""}`}>
+            <li key={r.fingerprint} className={`min-w-0 rounded-[12px] border border-line bg-surface p-4 ${r.resolved_at ? "opacity-60" : ""}`}>
               <div className="flex flex-wrap items-start gap-3">
                 <div className="min-w-0 flex-1">
                   <p className="break-words font-medium">{r.diagnosis?.summary ?? r.message}</p>
                   {r.diagnosis?.summary && <p className="mt-0.5 break-words font-mono text-[11px] text-faint">{r.message}</p>}
-                  <p className="mt-1 text-xs text-muted">
+                  <p className="mt-1 text-xs text-muted [overflow-wrap:anywhere]">
                     {r.path ?? "unknown page"} · {r.kind} · <span className="tabular">{r.count}×</span> · last {at(r.last_seen)} · first {at(r.first_seen)}
                   </p>
                   {r.people.length > 0 && <p className="mt-0.5 text-xs text-faint">Hit by {r.people.join(", ")}</p>}
                 </div>
-                <span className="flex shrink-0 flex-col items-end gap-1">
+                <span className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 md:w-auto md:shrink-0 md:flex-col md:flex-nowrap md:items-end md:gap-1">
                   {r.auto_resolved ? (
                     <span className="rounded-full bg-ok-soft px-2 py-0.5 text-[11px] text-ok">Auto-handled</span>
                   ) : r.muted_at ? (
@@ -262,7 +262,7 @@ async function Errors({ all }: { all: boolean }) {
                     </span>
                   )}
                   {r.fix_issue_url && (
-                    <a href={r.fix_issue_url} target="_blank" rel="noreferrer" className="text-[11px] text-brand-text hover:underline">
+                    <a href={r.fix_issue_url} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center text-[11px] text-brand-text hover:underline md:min-h-0">
                       Claude&apos;s fix →
                     </a>
                   )}
@@ -271,7 +271,7 @@ async function Errors({ all }: { all: boolean }) {
               {r.diagnosis?.cause && (
                 <dl className="mt-3 grid gap-x-4 gap-y-1 rounded-[10px] bg-bg/60 p-3 text-xs sm:grid-cols-[auto_minmax(0,1fr)]">
                   <dt className="text-faint">Why</dt>
-                  <dd className="text-muted">{r.diagnosis.cause}</dd>
+                  <dd className="mb-1.5 text-muted sm:mb-0">{r.diagnosis.cause}</dd>
                   {r.diagnosis.impact && (
                     <>
                       <dt className="text-faint">Impact</dt>
@@ -294,7 +294,7 @@ async function Errors({ all }: { all: boolean }) {
               )}
               {r.sample?.stack && (
                 <details className="mt-2">
-                  <summary className="cursor-pointer text-xs text-muted hover:text-fg">Technical details</summary>
+                  <summary className="cursor-pointer py-3 text-xs text-muted hover:text-fg md:py-0">Technical details</summary>
                   <pre className="mt-2 overflow-x-auto rounded-[10px] bg-bg p-3 text-[11px] text-muted">{r.sample.stack}</pre>
                 </details>
               )}
@@ -325,7 +325,7 @@ async function MotionCard({ notice }: { notice: string | null }) {
   const when = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
   return (
     <details className="group rounded-[14px] border border-line bg-surface" open={Boolean(notice) || !on}>
-      <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 px-6 py-4">
+      <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 px-4 py-4 md:px-6">
         <span className="flex items-center gap-3">
           <span className={`h-2 w-2 rounded-full ${failing ? "bg-bad" : fresh.tone !== "ok" ? "bg-warn" : "bg-ok"}`} />
           <span className="font-heading text-[16px]">Motion (Market)</span>
@@ -344,7 +344,7 @@ async function MotionCard({ notice }: { notice: string | null }) {
         </span>
         <ProgressBar progress={progress} />
       </summary>
-      <div className="grid gap-3 border-t border-line px-6 py-4">
+      <div className="grid gap-3 border-t border-line px-4 py-4 md:px-6">
         {notice && !progress && notice !== "syncing" && (
           <p className={`text-xs ${notice === "connected" ? "text-ok" : "text-bad"}`}>
             {notice === "connected" ? "Connected. The first market sync is running now." : notice === "syncing" ? "The market sync is running. It takes a few minutes; refresh to see the result." : notice}
@@ -375,11 +375,11 @@ async function MotionCard({ notice }: { notice: string | null }) {
         </dl>
         <div className="flex flex-wrap gap-2">
           {on && (
-            <a href="/api/motion/sync" className="grid h-8 place-items-center rounded-full bg-fg px-3.5 text-xs text-bg">
+            <a href="/api/motion/sync" className="grid h-11 place-items-center rounded-full bg-fg px-4 text-xs text-bg md:h-8 md:px-3.5">
               Sync now
             </a>
           )}
-          <a href="/api/motion/connect" className={`grid h-8 place-items-center rounded-full px-3.5 text-xs ${on ? "border border-line text-muted hover:text-fg" : "bg-brand font-medium text-white hover:brightness-110"}`}>
+          <a href="/api/motion/connect" className={`grid h-11 place-items-center rounded-full px-4 text-xs md:h-8 md:px-3.5 ${on ? "border border-line text-muted hover:text-fg" : "bg-brand font-medium text-white hover:brightness-110"}`}>
             {on ? "Reconnect" : "Connect Motion"}
           </a>
         </div>
@@ -517,7 +517,7 @@ async function Sync({ motion }: { motion: string | null }) {
         </div>
         <ul className="grid max-h-80 gap-0.5 overflow-y-auto [scrollbar-width:thin]">
           {[...s.failing, ...s.list.filter((r) => !errorOf(r))].slice(0, 150).map((r) => (
-            <li key={r.source} className={`grid ${s.retry ? "grid-cols-[minmax(0,1fr)_88px_auto]" : "grid-cols-[minmax(0,1fr)_88px]"} items-center gap-2 rounded-[8px] px-2 py-1.5 text-xs odd:bg-bg`}>
+            <li key={r.source} className={`grid ${s.retry ? "grid-cols-[minmax(0,1fr)_auto_auto] md:grid-cols-[minmax(0,1fr)_88px_auto]" : "grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(0,1fr)_88px]"} items-center gap-2 rounded-[8px] px-2 py-1.5 text-xs odd:bg-bg`}>
               <span className="grid min-w-0">
                 <span className="truncate text-muted" title={r.source}>
                   {s.label(r.source)}
@@ -534,7 +534,7 @@ async function Sync({ motion }: { motion: string | null }) {
           ))}
         </ul>
         {s.offboarded.length > 0 && (
-          <p className="px-1 text-[11px] text-faint">
+          <p className="px-1 text-[11px] text-faint [overflow-wrap:anywhere]">
             Offboarded · {s.offboarded.length} {s.offboarded.length === 1 ? "inbox" : "inboxes"} no longer in Google Workspace, not synced any more (their email stays as history): {s.offboarded.map((r) => r.source.slice(s.prefix.length)).join(", ")}
           </p>
         )}
@@ -543,14 +543,14 @@ async function Sync({ motion }: { motion: string | null }) {
   );
 
   return (
-    <div className="grid gap-10">
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-8 md:gap-10">
       {/* The state of it all, at a glance */}
-      <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
-        <div className={`relative grid content-between gap-5 overflow-hidden rounded-[20px] border p-6 ${failingN ? "border-bad/30" : behindN ? "border-warn/30" : "border-ok/30"} bg-surface`}>
+      <section className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+        <div className={`relative grid content-between gap-5 overflow-hidden rounded-[20px] border p-5 md:p-6 ${failingN ? "border-bad/30" : behindN ? "border-warn/30" : "border-ok/30"} bg-surface`}>
           <div aria-hidden className={`pointer-events-none absolute -left-20 -top-24 h-56 w-56 rounded-full blur-[80px] ${failingN ? "bg-bad/20" : behindN ? "bg-warn/15" : "bg-ok/15"}`} />
           <div className="relative grid gap-1">
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">Sync health</p>
-            <p className="font-heading text-2xl leading-tight">{attention.length ? `${attention.length} ${attention.length === 1 ? "sync needs" : "syncs need"} attention` : "Everything's syncing"}</p>
+            <p className="font-heading text-xl leading-tight md:text-2xl">{attention.length ? `${attention.length} ${attention.length === 1 ? "sync needs" : "syncs need"} attention` : "Everything's syncing"}</p>
             <p className="text-sm text-muted">{latest ? `Last activity ${freshness(latest).label.toLowerCase()}.` : "Nothing has run yet."} Each source runs on its own schedule; Sync now runs one right away.</p>
           </div>
           <div className="relative grid grid-cols-3 gap-2">
@@ -582,11 +582,11 @@ async function Sync({ motion }: { motion: string | null }) {
           <h2 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">Needs attention</h2>
           <ul className="grid divide-y divide-line overflow-hidden rounded-[16px] border border-line bg-surface">
             {attention.map((s) => (
-              <li key={s.prefix} className="flex flex-wrap items-center gap-3 px-4 py-3">
+              <li key={s.prefix} className="flex flex-wrap items-center gap-3 px-4 py-3.5 md:py-3">
                 <span className={`h-2 w-2 shrink-0 rounded-full ${DOT[s.state]}`} />
                 <span className="grid min-w-0 flex-1 gap-0.5">
                   <span className="text-sm font-medium">{s.name}</span>
-                  <span className="truncate text-xs text-muted" title={s.failing.map(errorOf).filter(Boolean).join(" · ")}>
+                  <span className="text-xs text-muted max-md:line-clamp-2 max-md:[overflow-wrap:anywhere] md:truncate" title={s.failing.map(errorOf).filter(Boolean).join(" · ")}>
                     {s.failing.length
                       ? `${s.failing.length} failing: ${s.failing
                           .slice(0, 2)
@@ -615,7 +615,7 @@ async function Sync({ motion }: { motion: string | null }) {
               <h2 className="font-heading text-lg">{c.label}</h2>
               <p className="text-xs text-faint">{c.about}</p>
             </div>
-            <div className="grid items-start gap-3 md:grid-cols-2">
+            <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-3 md:grid-cols-2">
               {mine.map(tile)}
               {c.key === "ads" && (
                 <div className="md:col-span-2">
@@ -685,12 +685,12 @@ async function Deleted() {
     };
   });
   return (
-    <div className="grid gap-3">
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-3">
       <p className="text-sm text-muted">
         Deleted tickets are hidden everywhere and don&apos;t count toward the allotment. Open one to read its brief and see where it got to, then pick it back up where it left off, or
         start it again as a new ticket with the same brief or an updated one.
       </p>
-      <ul className="grid gap-2">
+      <ul className="grid grid-cols-[minmax(0,1fr)] gap-2">
         {tickets.map((t) => (
           <DeletedTicketRow key={t.id} t={t} />
         ))}
@@ -711,14 +711,20 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
   const to = valid(sp.to) ? (sp.to as string) : day(0);
 
   return (
-    <div className="grid gap-7">
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-5 md:gap-7">
       <header>
-        <h1 className="font-heading text-[32px] leading-tight">Settings</h1>
+        <h1 className="font-heading text-[26px] leading-tight md:text-[32px]">Settings</h1>
         <p className="mt-1.5 text-sm text-muted">Tune the AI agents and look under the hood at the data behind every number.</p>
       </header>
-      <nav className="flex flex-wrap gap-1.5">
+      {/* Phones: one row of pills that scrolls sideways and snaps; desktop: the row wraps as before */}
+      <nav className="no-scrollbar -mx-4 flex snap-x snap-mandatory scroll-px-4 gap-1.5 overflow-x-auto px-4 md:mx-0 md:snap-none md:flex-wrap md:overflow-visible md:px-0">
         {tabs.map(([k, name]) => (
-          <Link key={k} href={`/settings?tab=${k}`} className={`inline-flex h-9 items-center rounded-full px-4 text-sm transition-colors ${tab === k ? "bg-fg text-bg" : "text-muted hover:bg-surface-2 hover:text-fg"}`}>
+          <Link
+            key={k}
+            href={`/settings?tab=${k}`}
+            aria-current={tab === k ? "page" : undefined}
+            className={`inline-flex h-11 shrink-0 snap-start items-center whitespace-nowrap rounded-full px-4 text-sm transition-colors md:h-9 ${tab === k ? "bg-fg text-bg" : "bg-surface text-muted hover:bg-surface-2 hover:text-fg active:bg-surface-2 md:bg-transparent"}`}
+          >
             {name}
           </Link>
         ))}

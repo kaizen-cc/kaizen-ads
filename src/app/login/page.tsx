@@ -17,9 +17,9 @@ export default async function Login({ searchParams }: PageProps<"/login">) {
   const nextPath = typeof next === "string" ? safeNext(next, "") || undefined : undefined;
 
   return (
-    <main className="grid min-h-screen place-items-center px-4 py-10">
-      <div className="w-full max-w-sm rounded-brand border border-line bg-surface p-8">
-        <div className="mb-8 flex items-center gap-2">
+    <main className="grid min-h-screen place-items-center px-4 pb-[max(2.5rem,env(safe-area-inset-bottom))] pt-[max(2.5rem,env(safe-area-inset-top))] max-md:min-h-[100dvh]">
+      <div className="w-full max-w-sm rounded-brand border border-line bg-surface p-6 sm:p-8">
+        <div className="mb-7 flex items-center gap-2 sm:mb-8">
           <Image src="/kaizen-logo.png" alt="Kaizen" width={120} height={28} priority />
           <span className="mt-1 font-display text-sm tracking-wide text-muted">ads</span>
         </div>

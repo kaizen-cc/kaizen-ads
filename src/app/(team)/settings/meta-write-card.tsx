@@ -24,7 +24,7 @@ export function MetaWriteCard({ sandbox, sandboxAccount, canEdit, updated }: { s
     });
 
   return (
-    <section className={`grid gap-4 rounded-[18px] border p-5 ${on ? "border-ok/30 bg-ok/[0.04]" : "border-warn/40 bg-warn-soft/30"}`}>
+    <section className={`grid min-w-0 gap-4 rounded-[18px] border p-4 md:p-5 ${on ? "border-ok/30 bg-ok/[0.04]" : "border-warn/40 bg-warn-soft/30"}`}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="grid max-w-[60ch] gap-1">
           <p className="flex items-center gap-2 font-heading text-lg">
@@ -41,24 +41,24 @@ export function MetaWriteCard({ sandbox, sandboxAccount, canEdit, updated }: { s
         {canEdit &&
           (on ? (
             confirm ? (
-              <span className="grid max-w-xs gap-2 rounded-[12px] border border-warn/40 bg-surface p-3 text-xs">
+              <span className="grid w-full gap-2 rounded-[12px] border border-warn/40 bg-surface p-3 text-xs md:w-auto md:max-w-xs">
                 <span>Switch to live? Approved changes and launches will reach client ad accounts.</span>
                 <span className="flex gap-2">
-                  <button type="button" disabled={pending} onClick={() => flip(false)} className="h-8 rounded-full bg-warn px-3 font-medium text-bg disabled:opacity-60">
+                  <button type="button" disabled={pending} onClick={() => flip(false)} className="h-11 flex-1 rounded-full bg-warn px-3 font-medium text-bg disabled:opacity-60 md:h-8 md:flex-none">
                     Yes, go live
                   </button>
-                  <button type="button" onClick={() => setConfirm(false)} className="h-8 px-2 text-muted hover:text-fg">
+                  <button type="button" onClick={() => setConfirm(false)} className="h-11 px-3 text-muted hover:text-fg md:h-8 md:px-2">
                     Not yet
                   </button>
                 </span>
               </span>
             ) : (
-              <button type="button" onClick={() => setConfirm(true)} className="h-9 rounded-full border border-line bg-surface px-4 text-sm text-muted hover:text-fg">
+              <button type="button" onClick={() => setConfirm(true)} className="h-11 w-full rounded-full border border-line bg-surface px-4 text-sm text-muted hover:text-fg md:h-9 md:w-auto">
                 Switch to live…
               </button>
             )
           ) : (
-            <button type="button" disabled={pending} onClick={() => flip(true)} className="h-9 rounded-full bg-fg px-4 text-sm font-medium text-bg disabled:opacity-60">
+            <button type="button" disabled={pending} onClick={() => flip(true)} className="h-11 w-full rounded-full bg-fg px-4 text-sm font-medium text-bg disabled:opacity-60 md:h-9 md:w-auto">
               Back to sandbox
             </button>
           ))}
@@ -68,7 +68,7 @@ export function MetaWriteCard({ sandbox, sandboxAccount, canEdit, updated }: { s
         <div className="grid gap-2 border-t border-line pt-4">
           <p className="text-[11px] uppercase tracking-[0.14em] text-faint">Check write access</p>
           <div className="flex flex-wrap items-center gap-2">
-            <input value={account} onChange={(e) => setAccount(e.target.value)} placeholder="Ad account ID" className="tabular h-9 w-56 rounded-[10px] border border-line bg-bg px-3 text-sm outline-none focus:border-brand/60" />
+            <input value={account} onChange={(e) => setAccount(e.target.value)} placeholder="Ad account ID" className="tabular h-11 w-full min-w-0 flex-1 rounded-[10px] md:h-9 md:w-56 md:flex-none border border-line bg-bg px-3 text-sm outline-none focus:border-brand/60" />
             <button
               type="button"
               disabled={pending}
@@ -78,7 +78,7 @@ export function MetaWriteCard({ sandbox, sandboxAccount, canEdit, updated }: { s
                   setResult(await checkMetaWrite(account));
                 })
               }
-              className="h-9 rounded-full border border-line px-4 text-sm text-muted hover:text-fg disabled:opacity-60"
+              className="h-11 shrink-0 rounded-full border border-line px-4 text-sm text-muted hover:text-fg disabled:opacity-60 md:h-9"
             >
               {pending ? "Checking with Meta…" : "Check"}
             </button>
