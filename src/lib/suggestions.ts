@@ -219,6 +219,64 @@ You are the agency's strategist. You watch the accounts and, when the data says 
 - If the signal isn't real or something is already in the works that covers it, set suggest to false and say why in skipReason (the rest can be empty).
 - Make it from what we have. Check assets_on_drive before you pick concepts: a concept that needs product photos, lifestyle shots, people or footage only works if we have them (or it's clearly stock or graphic design). assets.have: the assets on Drive each concept uses (folder or file names). assets.need: what we'd have to get from the client for it (specific shots, e.g. "15s vertical clip of the team plating a dish", "close-up product photos on white"); empty when we have everything. When a concept depends on something we don't have, either swap it for one we can make now or keep it and list the need. End the brief with one line "Assets:" saying which Drive folders to use and what's still needed.`;
 
+// ─── One quality bar: the request review's standard, written to and then checked before anyone sees the brief ───
+
+/**
+ * What the request review holds every brief to, given to the writer up front, so a brief the AI writes isn't flagged
+ * by the AI that reviews it. The same points the review checks (src/app/(team)/requests/new/actions.ts).
+ */
+export const BRIEF_STANDARD = `THE BRIEF STANDARD (the request review checks every brief against this; meet it as you write):
+- Every concept is ready to design without questions: its actual on-image line (the words on the creative, not a description of them) and, when the request has variations, the specific headlines or lines each variation tests, belonging to that concept only (never reuse another concept's line).
+- Client memory is a hard rule. Nothing goes against an "avoid" item, and no line comes close to a claim the client asked us not to make (no implying it, no comparing our way around it). When in doubt, leave the claim out.
+- Only facts from the context: no invented prices, offers, dates, numbers or claims; anything not confirmed is marked to confirm.
+- No contradictions inside the request: the brief, concepts, formats and sizes all describe the same work.
+- Nothing Meta would reject: personal attributes, before and after, guaranteed results, health or financial claims.
+- References: say what to take from each one; nothing that disagrees with the landing page.`;
+
+const REPAIR_SCHEMA = {
+  type: "object",
+  properties: {
+    fixes: { type: "array", items: { type: "string" } },
+    draft: (SCHEMA.properties as { draft: unknown }).draft,
+  },
+  required: ["fixes", "draft"],
+  additionalProperties: false,
+};
+
+const REPAIR_SYSTEM = `${AGENCY_SYSTEM}
+
+You are the agency's request reviewer. A strategist has just written a creative request; before anyone on the team sees it, check it against the standard below and the client context, and return it corrected.
+${BRIEF_STANDARD}
+Fix only real problems, in place: write the missing on-image lines and variation headlines from the brief's own direction and the client's voice, take out or reword anything against client memory, resolve contradictions. Keep everything that's right exactly as it is: the idea, the concepts, the counts, the formats, the evidence. Never add facts, prices, offers or claims, and don't restyle what's fine.
+fixes: one short line per change you made (empty when it already met the standard). draft: the full request, corrected.`;
+
+/**
+ * Every brief the strategist writes goes through this: written to the review's standard, then reviewed and repaired
+ * by the reviewer before it's saved or shown, so the review at submit only has something to say about what a person
+ * changed after.
+ */
+async function writeBrief(admin: SupabaseClient, clientId: string, opts: Parameters<typeof askJson<Out>>[0]): Promise<Out> {
+  const out = await writeBrief(admin, clientId, { ...opts, system: `${opts.system}\n\n${BRIEF_STANDARD}` });
+  if (!out.suggest || !out.draft?.brief) return out;
+  try {
+    const ctx = await clientContext(admin, clientId);
+    if (!ctx) return out;
+    const r = await askJson<{ fixes: string[]; draft: SuggestionDraft }>({
+      agent: "review",
+      label: "brief self-review",
+      system: REPAIR_SYSTEM,
+      schema: REPAIR_SCHEMA,
+      maxTokens: 12000,
+      prompt: `${contextBlock(ctx)}\n\n<request>\n${JSON.stringify(out.draft, null, 1)}\n</request>\n\nCheck it against the standard and the client context, and return it corrected.`,
+    });
+    if (r.fixes.length && r.draft?.brief) return { ...out, draft: r.draft };
+  } catch (e) {
+    // The review is a second pass: if it can't run, the strategist's brief still goes out (the submit review catches it)
+    console.error("brief self-review", clientId, e instanceof Error ? e.message : e);
+  }
+  return out;
+}
+
 /** What the team decided about past suggestions, for the strategist to learn from. */
 async function teamDecisions(admin: SupabaseClient, clientId: string) {
   const { data } = await admin
@@ -351,7 +409,7 @@ const clean = (d: SuggestionDraft): SuggestionDraft => ({
 async function suggestFor(admin: SupabaseClient, clientId: string, signals: Signal[], load?: Workload) {
   const prompt = await promptFor(admin, clientId, signals, load);
   if (!prompt) return null;
-  const out = await askJson<Out>({
+  const out = await writeBrief(admin, clientId, {
     agent: "strategist",
     label: "suggested brief",
     system: SYSTEM,
@@ -418,7 +476,7 @@ export async function regenerate(admin: SupabaseClient, id: string) {
   const { data: msgs } = await admin.from("suggestion_messages").select("role, body").eq("suggestion_id", id).order("created_at");
   const prompt = await promptFor(admin, s.client_id, [{ kind: s.kind, weight: 1, line: s.signal, facts: (s.evidence ?? []) as string[] }]);
   if (!prompt) throw new Error("Client not found");
-  const out = await askJson<Out>({
+  const out = await writeBrief(admin, s.client_id, {
     agent: "strategist",
     label: "suggested brief chat",
     system: SYSTEM,
@@ -526,7 +584,7 @@ export async function suggestFromWinner(admin: SupabaseClient, clientId: string,
     { kind: "winner", weight: 1, line: `A winning ad from another account to build on`, facts: [`${w.ratio}x better cost per ${w.result ?? "result"} than its account's usual`] },
   ]);
   if (!prompt) throw new Error("Client not found");
-  const out = await askJson<Out>({
+  const out = await writeBrief(admin, clientId, {
     agent: "strategist",
     label: "brief from a winner",
     system: SYSTEM,
@@ -572,7 +630,7 @@ export async function suggestForTest(
 ) {
   const prompt = await promptFor(admin, clientId, [{ kind: "lab", weight: 1, line: `Ads Lab test: ${test.title}`, facts: [test.hypothesis, `What changes: ${test.change}`, `A win: ${test.success}`] }]);
   if (!prompt) return false;
-  const out = await askJson<Out>({
+  const out = await writeBrief(admin, clientId, {
     agent: "strategist",
     label: "lab test brief",
     system: SYSTEM,
@@ -616,7 +674,7 @@ export async function suggestRefresh(admin: SupabaseClient, clientId: string, ad
   const watch = describeFatigue([f] as Parameters<typeof describeFatigue>[0]);
   const prompt = await promptFor(admin, clientId, [{ kind: "fatigue", weight: 1, line: `"${f.headline ?? f.ad_name}" is ${f.severity === "tired" ? "tired" : "tiring"}`, facts: [watch] }]);
   if (!prompt) throw new Error("Client not found");
-  const out = await askJson<Out>({
+  const out = await writeBrief(admin, clientId, {
     agent: "strategist",
     label: "refresh a tiring ad",
     system: SYSTEM,
@@ -668,7 +726,7 @@ export async function suggestOnboarding(admin: SupabaseClient, clientId: string)
     { kind: "onboarding", weight: 1, line: c.reonboarded_at ? "Returning client: their first round back" : "New client: their first round of creative", facts: intake ? ["The marketing intake form is in"] : ["No marketing intake form yet: work from what's known and list what to confirm"] },
   ]);
   if (!prompt) throw new Error("Client not found");
-  const out = await askJson<Out>({
+  const out = await writeBrief(admin, clientId, {
     agent: "strategist",
     label: "onboarding first round",
     system: SYSTEM,
@@ -781,7 +839,7 @@ export async function suggestFromCall(
   ]);
   if (!prompt) throw new Error("Client not found");
   const s = call.summary ?? {};
-  const out = await askJson<Out>({
+  const out = await writeBrief(admin, clientId, {
     agent: "strategist",
     label: "brief from a call",
     system: SYSTEM,
@@ -866,7 +924,7 @@ export async function suggestFromMarket(admin: SupabaseClient, clientId: string,
   const prompt = await promptFor(admin, clientId, [{ kind: "offer", weight: 1, line: `A live ad from the market to build on (${a.brand})`, facts: [a.daysActive != null ? `Running ${a.daysActive} days` : "Run time unknown"] }]);
   if (!prompt) throw new Error("Client not found");
   const link = a.motionUrl ?? a.libraryUrl ?? a.media[0]?.url ?? a.landingUrl ?? null;
-  const out = await askJson<Out>({
+  const out = await writeBrief(admin, clientId, {
     agent: "strategist",
     label: "brief from a market ad",
     system: SYSTEM,

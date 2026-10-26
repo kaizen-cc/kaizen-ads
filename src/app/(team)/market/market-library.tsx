@@ -411,7 +411,7 @@ export function MarketSheet({ a, industryLabel, clients, onClose, forClient }: {
         ) : step === "pick" ? (
           <ClientPick industry={a.industry} clients={clients} error={error} onBack={() => setStep("ad")} onPick={write} />
         ) : (
-          <Writing steps={WRITING} label="brief from a market ad" />
+          <Writing steps={WRITING} label="brief from a market ad+brief self-review" />
         )}
       </div>
     </div>

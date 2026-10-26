@@ -59,7 +59,7 @@ export function IdeasPanel({ clientId, onBrief }: { clientId: string; onBrief: (
             busy={busy === `w-${w.id}`}
             disabled={Boolean(busy)}
             onCreate={() => create(`w-${w.id}`, { kind: "winner", winner: w })}
-            label="brief from a winner"
+            label="brief from a winner+brief self-review"
           />
         ))}
       </Widget>
@@ -74,7 +74,7 @@ export function IdeasPanel({ clientId, onBrief }: { clientId: string; onBrief: (
             busy={busy === `m-${a.id}`}
             disabled={Boolean(busy)}
             onCreate={() => create(`m-${a.id}`, { kind: "market", adId: a.id })}
-            label="brief from a market ad"
+            label="brief from a market ad+brief self-review"
           />
         ))}
       </Widget>
@@ -132,7 +132,7 @@ function Item({ thumb, video, title, meta, busy, disabled, onCreate, label }: { 
         disabled={disabled}
         className={`h-8 rounded-full text-xs font-medium transition-colors ${busy ? "bg-brand-soft text-brand-text" : "border border-line text-muted hover:border-brand/50 hover:text-fg disabled:opacity-50"}`}
       >
-        {busy ? <AiProgressButton label={label} /> : "Create brief"}
+        {busy ? <AiProgressButton label={label} fallbackMs={70_000} /> : "Create brief"}
       </button>
     </li>
   );

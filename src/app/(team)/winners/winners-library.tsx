@@ -395,11 +395,11 @@ export function ClientPick({
 const WINNER_STEPS = ["Reading why this ad works", "Reading the client: brand, offer, memory, allotment", "Translating the angle and the hook", "Writing the concepts", "Fitting formats to what's left this month"];
 
 /** While the strategist writes a brief from an ad: a real progress bar, timed from how long these briefs take. */
-export function Writing({ steps = WINNER_STEPS, label = "brief from a winner" }: { steps?: string[]; label?: string }) {
+export function Writing({ steps = WINNER_STEPS, label = "brief from a winner+brief self-review" }: { steps?: string[]; label?: string }) {
   return (
     <AiProgress
       label={label}
-      fallbackMs={40_000}
+      fallbackMs={70_000}
       title="The strategist is writing the brief"
       steps={steps}
       note="You can edit it when it's ready, talk it through, or send it straight to production."

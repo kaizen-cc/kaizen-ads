@@ -8,8 +8,18 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 
 const cache = new Map<string, { ms: number; at: number }>();
 
+/** label can name several jobs that run one after the other ("a+b"): their times add up. */
 export async function aiEta(label: string, fallbackMs: number): Promise<number> {
   await requireStaff();
+  if (label.includes("+")) {
+    const parts = label.split("+").map((l) => l.trim()).filter(Boolean);
+    const each = await Promise.all(parts.map((l) => one(l, Math.round(fallbackMs / parts.length))));
+    return each.reduce((a, b) => a + b, 0);
+  }
+  return one(label, fallbackMs);
+}
+
+async function one(label: string, fallbackMs: number): Promise<number> {
   const hit = cache.get(label);
   if (hit && Date.now() - hit.at < 10 * 60_000) return hit.ms;
   if (!adminConfigured()) return fallbackMs;
