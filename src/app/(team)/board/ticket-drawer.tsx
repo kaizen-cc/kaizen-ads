@@ -411,8 +411,9 @@ export function TicketDrawer({
           </div>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="grid content-start gap-9 px-7 py-7">
+        {/* One column, as wide as the drawer: a long link or file name wraps instead of pushing everything off the side */}
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-9 px-7 py-7 [overflow-wrap:anywhere]">
           {/* Where it is and what happens next */}
           <section className="overflow-hidden rounded-[10px] border border-line bg-surface">
             <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
