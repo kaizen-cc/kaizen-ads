@@ -3,7 +3,7 @@
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { requireStaff, type Staff } from "@/lib/auth";
-import { makeSandboxCampaign, planLaunch, runLaunch, type LaunchCheck, type LaunchPlan, type Overrides } from "@/lib/launcher";
+import { autoLaunch, makeSandboxCampaign, planLaunch, runLaunch, type LaunchCheck, type LaunchPlan, type Overrides } from "@/lib/launcher";
 import { metaConfigured } from "@/lib/context/meta";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -75,9 +75,12 @@ export async function startLaunch(requestId: string): Promise<{ ok: true; id: st
   if (r.stage !== "ready_for_launch") return { ok: false, error: "Only tickets in Ready to launch can be launched." };
   if (!(await canLaunch(me, r.client_id))) return { ok: false, error: "Only the client's Meta buyer, the Head of Meta or an exec can launch." };
   const admin = createAdminClient();
-  const { data: l, error } = await admin.from("launches").insert({ request_id: r.id, client_id: r.client_id, account: "", created_by: me.id }).select("id").single();
+  // The same as the automatic launch, started now: plan, and when it all checks out, create the ads paused
+  const { data: had } = await admin.from("launches").select("id").eq("request_id", r.id).neq("status", "discarded").limit(1);
+  if (had?.length) return { ok: true, id: had[0].id as string };
+  const { data: l, error } = await admin.from("launches").insert({ request_id: r.id, client_id: r.client_id, account: "", created_by: me.id, auto: true }).select("id").single();
   if (error || !l) return { ok: false, error: error?.message ?? "Couldn't start it." };
-  after(() => planLaunch(admin, l.id));
+  after(() => autoLaunch(admin, r.id, l.id));
   return { ok: true, id: l.id };
 }
 

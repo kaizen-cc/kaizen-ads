@@ -317,9 +317,13 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
     await update(admin, launchId, { progress: "Checking each ad with Meta", plan });
     await dryRun(admin, plan);
     const failed = plan.ads.filter((a) => !a.check?.ok);
-    if (plan.structure === "placements") add("structure", "Copy", "warn", "Meta wouldn't take the stacked copy together with placement sizes here, so each ad carries the first primary text and headline only. Add the other text options in Ads Manager if you want them.");
-    if (plan.structure === "text") add("structure", "Sizes", "warn", "Meta wouldn't take the per-placement sizes here, so each ad uses its feed size everywhere (with the stacked copy).");
-    if (plan.structure === "single") add("structure", "Copy and sizes", "warn", "Meta only took a classic single ad here: the feed size with the first primary text and headline. Add the other text options and the 9x16 in Ads Manager.");
+    const refused = failed.find((a) => a.check?.error && accessError(a.check.error));
+    if (refused) add("access", "Permission", "block", accessHelp(refused.check!.error!));
+    if (refused) {
+      // nothing about the ad's structure is known yet
+    } else if (plan.structure === "placements") add("structure", "Copy", "warn", "Meta wouldn't take the stacked copy together with placement sizes here, so each ad carries the first primary text and headline only. Add the other text options in Ads Manager if you want them.");
+    else if (plan.structure === "text") add("structure", "Sizes", "warn", "Meta wouldn't take the per-placement sizes here, so each ad uses its feed size everywhere (with the stacked copy).");
+    else if (plan.structure === "single") add("structure", "Copy and sizes", "warn", "Meta only took a classic single ad here: the feed size with the first primary text and headline. Add the other text options and the 9x16 in Ads Manager.");
     add(
       "enhancements",
       "Advantage+ enhancements",
@@ -432,6 +436,18 @@ const params = (spec: Record<string, unknown>) => Object.fromEntries(Object.entr
  * Meta's dry run of each creative. The structure is settled on the first ad (the richest Meta accepts), and any
  * enhancement switch Meta doesn't know on this API version is dropped and the check tried again.
  */
+/** Meta refusing the asker rather than the ad: a missing permission, a Page role, an account problem */
+export const accessError = (m: string) => /permission|not authorized|advertiser role|page role|\(#10\)|\(#200\)|\(#2\d\d\)|\(#190\)|disabled|unsettled/i.test(m);
+
+/** In plain words: what someone has to do in Business Manager for this error */
+export function accessHelp(m: string) {
+  const page = m.match(/Page (\d{6,})/)?.[1];
+  if (/page/i.test(m) && /permission|role/i.test(m))
+    return `The system user needs the Advertise permission ("Create ads") on the Facebook Page${page ? ` ${page}` : ""}: Business Manager → Settings → Pages → the Page → Assign people → the system user.`;
+  if (/disabled|unsettled/i.test(m)) return "The ad account isn't active (billing or a restriction): check it in Business Manager.";
+  return "The system user needs Manage campaigns on this ad account (Business Manager → Settings → Ad accounts → Assign people).";
+}
+
 async function dryRun(admin: SupabaseClient, plan: LaunchPlan) {
   const hasVertical = plan.ads.some((a) => a.assets.some((x) => x.aspect === "9x16"));
   const ladder: NonNullable<LaunchPlan["structure"]>[] = hasVertical ? ["placements+text", "placements", "text", "single"] : ["text", "single"];
@@ -459,6 +475,14 @@ async function dryRun(admin: SupabaseClient, plan: LaunchPlan) {
     if (!err) {
       plan.structure = s;
       break;
+    }
+    // Refused for who's asking (a permission, the Page, the account), not for how the ad is built: a simpler ad
+    // won't change that, so stop here and say what's missing
+    if (accessError(err)) {
+      plan.structure = s;
+      first.check = { ok: false, error: err };
+      for (const ad of plan.ads.slice(1)) ad.check = { ok: false, error: "Not checked: Meta refused access (see above)." };
+      return;
     }
   }
   if (!plan.structure) {
@@ -532,4 +556,132 @@ export async function makeSandboxCampaign(admin: SupabaseClient) {
     targeting: JSON.stringify({ geo_locations: { countries: ["US"] }, age_min: 18, age_max: 65 }),
   }, false);
   return c.id;
+}
+
+// ─── Automatic: launched when the ticket reaches Ready to launch, completed when the ad is turned on ───────────
+
+type TicketRow = { id: string; number: number; title: string; client_id: string; buyer_id: string | null; stage: string; clients: { name: string } | null };
+
+/** Whose the launch is: the ticket's buyer, else the client's Meta buyer. */
+async function buyerOf(admin: SupabaseClient, t: TicketRow) {
+  if (t.buyer_id) return t.buyer_id;
+  const { data } = await admin.from("client_assignments").select("profile_id").eq("client_id", t.client_id).eq("role", "meta_buyer").limit(1).maybeSingle();
+  return (data?.profile_id as string | undefined) ?? null;
+}
+
+/** A note on the ticket from Kaizen Ads, the ticket handed to the buyer, and a notification to them. */
+async function handTo(admin: SupabaseClient, t: TicketRow, buyer: string | null, note: string, n: { title: string; body: string; priority: "critical" | "normal"; key: string }) {
+  await admin.from("request_events").insert({ request_id: t.id, kind: "comment", actor_id: null, body: note.slice(0, 2000) });
+  if (!buyer) return;
+  await admin.from("requests").update({ assignee_id: buyer }).eq("id", t.id);
+  await admin
+    .from("notifications")
+    .upsert({ profile_id: buyer, kind: "launch", title: n.title.slice(0, 200), body: n.body.slice(0, 500), href: `/board?t=${t.number}`, key: n.key, priority: n.priority }, { onConflict: "profile_id,key", ignoreDuplicates: true });
+}
+
+/**
+ * A ticket that just reached Ready to launch: plan it, and when every check passes create the ads paused and hand the
+ * ticket to the buyer with the link to turn them on. When anything stops it, the buyer gets the ticket with the reason,
+ * and the Launch panel on it is where they finish it by hand. Runs once per ticket (a launch that exists is left be).
+ */
+export async function autoLaunch(admin: SupabaseClient, requestId: string, launchId?: string) {
+  const { data: t } = await admin.from("requests").select("id, number, title, client_id, buyer_id, stage, clients(name)").eq("id", requestId).is("deleted_at", null).maybeSingle();
+  const ticket = t as unknown as TicketRow | null;
+  if (!ticket || ticket.stage !== "ready_for_launch") return "not ready";
+  // launchId: "Start it now" made the row already; otherwise only a ticket with no launch yet
+  let l: { id: string } | null = launchId ? { id: launchId } : null;
+  if (!l) {
+    const { data: had } = await admin.from("launches").select("id").eq("request_id", requestId).limit(1);
+    if (had?.length) return "already";
+    l = (await admin.from("launches").insert({ request_id: requestId, client_id: ticket.client_id, account: "", auto: true }).select("id").single()).data;
+  }
+  if (!l) return "couldn't start";
+  await planLaunch(admin, l.id);
+  const client = ticket.clients?.name ?? "the client";
+  const buyer = await buyerOf(admin, ticket);
+  const { data: planned } = await admin.from("launches").select("status, checks, error, sandbox").eq("id", l.id).single();
+
+  if (planned?.status === "ready") {
+    try {
+      const r = await runLaunch(admin, l.id);
+      const names = r.result.ads.filter((a) => a.adId).map((a) => a.name);
+      if (r.ok) {
+        const where = r.sandbox ? "in Kaizen's sandbox account (a test)" : `in ${client}'s ad account`;
+        await handTo(
+          admin,
+          ticket,
+          buyer,
+          `Launched automatically, paused, ${where}: ${names.join("; ")}.${r.ok < r.total ? ` ${r.total - r.ok} didn't go through; see the Launch panel.` : ""} Check ${r.ok === 1 ? "it" : "them"} in Ads Manager${r.result.link ? ` (${r.result.link})` : ""} and turn ${r.ok === 1 ? "it" : "them"} on there.${r.sandbox ? " While the sandbox is on, the real launch is done by hand." : " This ticket moves to Launched by itself once Meta shows it on."}`,
+          {
+            title: `${client}: ${r.ok} ${r.ok === 1 ? "ad" : "ads"} ready to turn on${r.sandbox ? " (sandbox test)" : ""}`,
+            body: `Created paused from #${ticket.number} ${ticket.title}. Check ${r.ok === 1 ? "it" : "them"} in Ads Manager and turn ${r.ok === 1 ? "it" : "them"} on.`,
+            priority: "normal",
+            key: `launch:${l.id}`,
+          },
+        );
+        return "launched";
+      }
+    } catch {
+      // falls through to the hand-off below with the launch's error
+    }
+  }
+
+  // Stopped: the buyer gets it, with why
+  const { data: after } = await admin.from("launches").select("checks, error").eq("id", l.id).single();
+  const reasons = [...((after?.checks ?? []) as LaunchCheck[]).filter((c) => c.level === "block").map((c) => `${c.label}: ${c.detail}`), ...(after?.error ? [after.error] : [])];
+  await handTo(admin, ticket, buyer, `Couldn't launch this automatically. ${reasons.join(" · ").slice(0, 1500) || "Meta refused it."} Fix that, then launch it from the Launch panel on this ticket.`, {
+    title: `${client}: launch needs you`,
+    body: `#${ticket.number} couldn't go to Meta automatically: ${(reasons[0] ?? "Meta refused it").slice(0, 300)}`,
+    priority: "critical",
+    key: `launch-failed:${l.id}`,
+  });
+  return "handed to the buyer";
+}
+
+/**
+ * The ads launched (paused) whose ticket still waits in Ready to launch: once Meta shows one turned on, the ticket
+ * moves to Launched by itself. Sandbox tests never complete a ticket.
+ */
+export async function watchLaunches(admin: SupabaseClient) {
+  const { data } = await admin
+    .from("launches")
+    .select("id, request_id, result, requests!inner(stage)")
+    .eq("status", "launched")
+    .eq("sandbox", false)
+    .is("live_at", null)
+    .eq("requests.stage", "ready_for_launch")
+    .limit(40);
+  let moved = 0;
+  for (const l of data ?? []) {
+    const ads = ((l.result as { ads?: { adId: string | null; name: string }[] } | null)?.ads ?? []).filter((a) => a.adId);
+    if (!ads.length) continue;
+    const res = await metaGraph<Record<string, { status?: string; effective_status?: string }>>("", { ids: ads.map((a) => a.adId).join(","), fields: "status,effective_status" }).catch(() => null);
+    if (!res) continue;
+    const on = ads.filter((a) => res[a.adId!]?.status === "ACTIVE");
+    if (!on.length) continue;
+    await admin.rpc("system_move_request", { p_request: l.request_id, p_stage: "launched", p_note: `Turned on in Meta: ${on.map((a) => a.name).join("; ")}`.slice(0, 1000) });
+    await admin.from("launches").update({ live_at: new Date().toISOString() }).eq("id", l.id);
+    moved++;
+  }
+  return moved;
+}
+
+/** The scheduled step: launch what's waiting (a few per run), then complete what's been turned on. */
+export async function launchStep(admin: SupabaseClient, budgetMs = 600_000) {
+  const until = Date.now() + budgetMs;
+  const { data: waiting } = await admin
+    .from("requests")
+    .select("id")
+    .eq("stage", "ready_for_launch")
+    .is("deleted_at", null)
+    .gte("stage_entered_at", new Date(Date.now() - 7 * 86_400_000).toISOString())
+    .order("stage_entered_at")
+    .limit(10);
+  const out: Record<string, string> = {};
+  for (const r of waiting ?? []) {
+    if (Date.now() > until - 240_000) break;
+    out[r.id] = await autoLaunch(admin, r.id);
+  }
+  const live = await watchLaunches(admin).catch(() => 0);
+  return { launched: Object.values(out).filter((x) => x === "launched").length, handed: Object.values(out).filter((x) => x === "handed to the buyer").length, live };
 }

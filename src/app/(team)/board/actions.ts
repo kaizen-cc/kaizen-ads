@@ -24,6 +24,13 @@ export async function moveTicket(id: string, stage: Stage, note?: string): Promi
   if (!error && stage === "client_review" && adminConfigured()) {
     after(() => onReachedClient(createAdminClient(), id));
   }
+  // Ready to launch: Kaizen Ads launches it (paused) now, rather than at the next scheduled pass
+  if (!error && stage === "ready_for_launch" && adminConfigured()) {
+    after(async () => {
+      const { autoLaunch } = await import("@/lib/launcher");
+      await autoLaunch(createAdminClient(), id).catch((e) => console.error("autoLaunch", id, e));
+    });
+  }
   return done(error);
 }
 

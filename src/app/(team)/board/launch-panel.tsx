@@ -5,8 +5,10 @@ import { useRouter } from "next/navigation";
 import type { LaunchCheck } from "@/lib/launcher";
 import { confirmLaunch, discardLaunch, launchFor, loadLaunch, replanLaunch, sandboxCampaign, startLaunch, type LaunchView } from "./launch-actions";
 
-// Launch to Meta, on a ticket in Ready to launch: the Media Buyer proposes where the ads go and what they're called,
-// Kaizen's checks and Meta's dry run run on it, the buyer adjusts anything, and only then creates them, paused.
+// Launch to Meta, on a ticket in Ready to launch. Kaizen Ads launches it on its own when the ticket gets here (the
+// Media Buyer picks the ad set and names, Kaizen's checks and Meta's dry run, then the ads are created paused) and
+// hands the ticket to the buyer to turn them on; the ticket completes itself once Meta shows them on. This panel shows
+// how that went, and when something stopped it, it's where the buyer adjusts and launches by hand.
 
 const field = "h-10 w-full rounded-[10px] border border-line bg-bg px-3 text-sm text-fg outline-none transition-colors focus:border-[#0866ff]/60";
 const TONE: Record<LaunchCheck["level"], { dot: string; text: string; icon: string }> = {
@@ -97,14 +99,17 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
         <div aria-hidden className="pointer-events-none absolute -right-16 -top-20 h-48 w-48 rounded-full bg-[#0866ff]/20 blur-[70px]" />
         <div className="relative grid gap-1">
           <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#7aa7ff]">Launch to Meta</p>
-          <p className="font-heading text-lg">Ready to go live, paused</p>
+          <p className="flex items-center gap-2.5 font-heading text-lg">
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#7aa7ff] border-t-transparent" />
+            Launching automatically
+          </p>
           <p className="max-w-[56ch] text-sm text-muted">
-            The Media Buyer picks the ad set and names each ad to match it. Kaizen&apos;s checks and a dry run with Meta follow. You review and adjust anything, then the ads are created paused for you to QA and turn on.
+            Kaizen Ads picks up tickets in Ready to launch within five minutes: it places the ads, names them, runs the checks and Meta&apos;s dry run, and creates them paused. The ticket then comes to the buyer with the link to turn them on.
           </p>
         </div>
         <div className="relative flex flex-wrap items-center gap-3">
-          <button type="button" onClick={plan} disabled={pending} className="h-10 rounded-full bg-[#0866ff] px-5 text-sm font-medium text-white shadow-[0_10px_30px_-12px_rgba(8,102,255,0.9)] hover:brightness-110 disabled:opacity-60">
-            {pending ? "Starting…" : "Plan the launch"}
+          <button type="button" onClick={plan} disabled={pending} className="text-xs text-faint underline-offset-2 hover:text-fg hover:underline disabled:opacity-60">
+            {pending ? "Starting…" : "Start it now"}
           </button>
           {error && <span className="text-sm text-bad">{error}</span>}
         </div>
@@ -128,7 +133,15 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
             {l.sandbox && <span className="rounded-full bg-warn/15 px-2 py-0.5 text-[10px] font-medium normal-case tracking-normal text-warn">Sandbox test</span>}
           </p>
           <p className="font-heading text-lg">
-            {l.status === "launched" ? "Launched, paused" : l.status === "launching" ? "Creating the ads…" : l.status === "planning" ? "Planning…" : l.status === "failed" ? "Something went wrong" : blocks.length ? "Not ready yet" : "Ready to launch"}
+            {l.status === "launched"
+              ? "Launched, paused: turn it on"
+              : l.status === "launching"
+                ? "Creating the ads…"
+                : l.status === "planning"
+                  ? "Planning the launch…"
+                  : l.status === "failed" || blocks.length
+                    ? "Couldn't launch automatically"
+                    : "Ready to launch"}
           </p>
         </div>
         {!busy && l.status !== "launched" && (
@@ -162,7 +175,7 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
               </a>
             )}
             <p className="text-xs text-faint">
-              {l.sandbox ? "A test in Kaizen's account: the ticket stays in Ready to launch." : "QA them in Ads Manager and turn them on there."}
+              {l.sandbox ? "A test in Kaizen's account: the ticket stays in Ready to launch." : "QA them in Ads Manager and turn them on there: this ticket moves to Launched by itself once Meta shows them on."}
               {l.launchedBy ? ` Launched by ${l.launchedBy}.` : ""}
             </p>
           </div>

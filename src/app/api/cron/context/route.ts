@@ -75,6 +75,7 @@ function due(step: string | null) {
   if (step === "remind") return !["Sat", "Sun"].includes(weekday) && [11, 15].includes(hour);
   if (step === "notify") return true; // every 10 minutes (vercel.json): critical notifications still unread go out by email
   if (step === "reports") return true; // every 15 minutes (vercel.json): queues on Mondays and the 1st, drafts what's queued
+  if (step === "launches") return true; // every 5 minutes (vercel.json): launch what reached Ready to launch, complete what was turned on
 
   if (step === "market") return hour === 8;
   if (step === "calls") return (businessHours || hour === 18) || (hour % 3 === 0 && minute < 30);
@@ -173,6 +174,7 @@ export async function GET(request: Request) {
       return Response.json(asanaConfigured() ? await syncAsana(admin) : { skipped: "ASANA_TOKEN not set" });
     }
     if (step === "sprints") return Response.json(await (await import("@/lib/sprints")).checkDueSprints(admin));
+    if (step === "launches") return Response.json(await (await import("@/lib/launcher")).launchStep(admin));
     if (step === "market") return Response.json(await syncMarket(admin));
     if (step === "clients")
       return Response.json({
