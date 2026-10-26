@@ -8,13 +8,13 @@ import { prepareClientReport } from "@/app/(team)/kpis/sprint-actions";
 export function PrintBar({ auditId, ready }: { auditId: string; ready: boolean }) {
   return (
     <div className="no-print mx-auto mb-6 flex max-w-[8.5in] flex-wrap items-center justify-between gap-3 text-sm">
-      <Link href={`/kpis/audit/${auditId}`} className="text-[#4d464f] hover:text-[#17131a]">
+      <Link href={`/kpis/audit/${auditId}`} className="text-[#4d464f] hover:text-[#17131a] max-md:inline-flex max-md:min-h-11 max-md:items-center">
         ← Back to the internal audit
       </Link>
       {ready && (
-        <span className="flex items-center gap-3">
+        <span className="flex flex-wrap items-center gap-3">
           <span className="text-xs text-[#8a8189]">Choose &ldquo;Save as PDF&rdquo; in the print window</span>
-          <button type="button" onClick={() => window.print()} className="h-10 rounded-full bg-[#c8102e] px-5 font-medium text-white hover:brightness-110">
+          <button type="button" onClick={() => window.print()} className="h-10 rounded-full bg-[#c8102e] px-5 font-medium text-white hover:brightness-110 max-md:h-11">
             Download PDF
           </button>
         </span>

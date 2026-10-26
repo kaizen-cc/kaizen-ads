@@ -11,10 +11,10 @@ export default function AppError({ error, retry }: { error: Error & { digest?: s
   }, [error]);
 
   return (
-    <div className="mx-auto mt-16 flex max-w-md flex-col items-center gap-3 rounded-brand border border-line bg-surface p-8 text-center">
+    <div className="mx-4 mt-16 flex max-w-md sm:mx-auto flex-col items-center gap-3 rounded-brand border border-line bg-surface p-8 text-center">
       <p className="font-heading text-lg">Something went wrong on this page</p>
       <p className="text-sm text-muted">We&apos;ve been notified automatically. Your work is safe.</p>
-      <button onClick={() => retry()} className="mt-2 h-9 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:bg-brand-hover">
+      <button onClick={() => retry()} className="mt-2 h-9 max-md:h-11 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:bg-brand-hover">
         Try again
       </button>
     </div>

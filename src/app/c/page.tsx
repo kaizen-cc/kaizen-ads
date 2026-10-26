@@ -11,7 +11,7 @@ export default async function BrandPicker() {
   if (viewer.brands.length === 1) redirect(`/c/${viewer.brands[0].slug}`);
 
   return (
-    <main className="pt-safe mx-auto grid max-w-md gap-6 px-4 py-10">
+    <main className="mx-auto grid max-w-md gap-6 px-4 py-10 pt-[max(2.5rem,env(safe-area-inset-top))] pb-[max(2.5rem,env(safe-area-inset-bottom))]">
       <div className="flex items-center gap-2">
         <Image src="/kaizen-logo.png" alt="Kaizen" width={100} height={24} />
         <span className="mt-0.5 font-display text-xs tracking-wide text-muted">ads</span>
@@ -28,9 +28,9 @@ export default async function BrandPicker() {
         <ul className="grid gap-2">
           {viewer.brands.map((b) => (
             <li key={b.slug}>
-              <Link href={`/c/${b.slug}`} className="flex items-center gap-3 rounded-brand border border-line bg-surface p-4 hover:border-faint">
+              <Link href={`/c/${b.slug}`} className="flex items-center gap-3 rounded-brand border border-line bg-surface p-4 hover:border-faint active:bg-surface-2">
                 <BrandAvatar name={b.name} size={36} />
-                <span className="font-medium">{b.name}</span>
+                <span className="min-w-0 font-medium [overflow-wrap:anywhere]">{b.name}</span>
                 <span className="ml-auto text-muted">→</span>
               </Link>
             </li>
@@ -38,7 +38,7 @@ export default async function BrandPicker() {
         </ul>
       )}
       <form action="/auth/signout" method="post">
-        <button className="text-xs text-muted hover:text-fg">Sign out</button>
+        <button className="text-xs text-muted hover:text-fg max-md:min-h-11">Sign out</button>
       </form>
     </main>
   );

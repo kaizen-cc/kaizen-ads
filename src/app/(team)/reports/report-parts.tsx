@@ -5,6 +5,7 @@ import { AdImage } from "@/app/r/[token]/ad-image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
+import { createPortal } from "react-dom";
 import type { Period, ReportMetrics } from "@/lib/reports/metrics";
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
 import { SlackConnect } from "@/components/slack-connect";
@@ -49,9 +50,9 @@ const SEV = {
 function Tile({ label, now, before, fmt, lowerIsBetter }: { label: string; now: number | null; before: number | null; fmt: (x: number | null) => string; lowerIsBetter?: boolean }) {
   const c = change(now, before, lowerIsBetter);
   return (
-    <div className="grid gap-0.5 rounded-[12px] bg-surface-2/60 px-3 py-2.5">
-      <span className="text-[11px] text-faint">{label}</span>
-      <span className="tabular text-lg leading-tight">{fmt(now)}</span>
+    <div className="grid min-w-0 gap-0.5 rounded-[12px] bg-surface-2/60 px-3 py-2.5">
+      <span className="text-[11px] text-faint [overflow-wrap:anywhere]">{label}</span>
+      <span className="tabular text-lg leading-tight [overflow-wrap:anywhere]">{fmt(now)}</span>
       <span className="text-[11px] text-faint">
         {c ? <span className={c.tone}>{c.text}</span> : "—"} <span>vs {fmt(before)}</span>
       </span>
@@ -101,7 +102,7 @@ function Numbers({ m, reportId }: { m: ReportMetrics; reportId: string }) {
                 </span>
               </span>
               {a.link && (
-                <a href={a.link} target="_blank" rel="noreferrer" className="ml-auto shrink-0 rounded-full border border-line px-2.5 py-1 text-[11px] text-muted hover:text-fg">
+                <a href={a.link} target="_blank" rel="noreferrer" className="ml-auto shrink-0 rounded-full border border-line px-2.5 py-1 text-[11px] text-muted hover:text-fg max-md:px-3 max-md:py-2 max-md:text-xs">
                   Preview ↗
                 </a>
               )}
@@ -113,7 +114,7 @@ function Numbers({ m, reportId }: { m: ReportMetrics; reportId: string }) {
         <div className="grid gap-1.5">
           <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-faint">Campaigns</p>
           {m.campaigns.slice(0, 6).map((c) => (
-            <div key={c.name} className="flex items-baseline justify-between gap-3 text-xs">
+            <div key={c.name} className="flex items-baseline justify-between gap-3 text-xs max-md:flex-wrap max-md:gap-y-0.5">
               <span className="min-w-0 truncate text-muted">{c.name}</span>
               <span className="tabular shrink-0 text-faint">
                 {money(c.spend)} · {c.results} · {money(c.costPerResult)}
@@ -147,6 +148,7 @@ export function ReportEditor({ report, client, canEdit, slackConnected, bundle, 
   const [pending, start] = useTransition();
   const [asking, setAsking] = useState(false);
   const [confirm, setConfirm] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false); // phones: the AI chat, full-screen
   const busy = report.status === "queued" || report.status === "drafting";
   const sent = report.status === "posted";
   const editable = canEdit && !sent && !busy;
@@ -167,7 +169,17 @@ export function ReportEditor({ report, client, canEdit, slackConnected, bundle, 
   }, [busy, router]);
   useEffect(() => {
     chatEnd.current?.scrollIntoView({ block: "nearest" });
-  }, [chat]);
+  }, [chat, chatOpen, asking]);
+  useEffect(() => {
+    if (!chatOpen) return;
+    const on = (e: KeyboardEvent) => e.key === "Escape" && setChatOpen(false);
+    window.addEventListener("keydown", on);
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", on);
+      document.body.style.overflow = "";
+    };
+  }, [chatOpen]);
 
   const dirty = message !== report.message || extras !== report.extras || JSON.stringify(sections) !== JSON.stringify(report.sections);
   const save = () =>
@@ -204,6 +216,52 @@ export function ReportEditor({ report, client, canEdit, slackConnected, bundle, 
       router.refresh();
     });
 
+  /** The AI chat: inline in the side column (from md up), or full-screen over everything on a phone. */
+  const chatPanel = (full: boolean) => (
+    <section
+      className={
+        full
+          ? "fixed inset-0 z-[70] flex flex-col gap-3 bg-bg px-4 pb-[max(12px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))] animate-[sheet-up_.25s_ease-out] md:hidden"
+          : "grid gap-3 rounded-[16px] border border-line bg-surface p-4 max-md:hidden"
+      }
+      role={full ? "dialog" : undefined}
+      aria-modal={full || undefined}
+      aria-label={full ? "Ask the AI to tweak it" : undefined}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="font-heading text-[15px]">Ask the AI to tweak it</h2>
+        {full && (
+          <button type="button" onClick={() => setChatOpen(false)} aria-label="Close the chat" className="-mr-2 grid h-11 w-11 place-items-center rounded-full text-lg text-muted active:bg-surface-2">
+            ✕
+          </button>
+        )}
+      </div>
+      <div className={`grid gap-2 overflow-y-auto ${full ? "min-h-0 flex-1 content-start overscroll-contain" : "max-h-72"}`}>
+        {chat.length === 0 && <p className="text-xs text-faint">&ldquo;Add lead quality&rdquo;, &ldquo;shorter, they skim&rdquo;, &ldquo;lead with the sales&rdquo;. What this client always wants is remembered for next time.</p>}
+        {chat.map((t, i) => (
+          <p key={i} className={`whitespace-pre-wrap rounded-[12px] px-3 py-2 text-[13px] [overflow-wrap:anywhere] ${full ? "max-w-[88%] text-sm" : ""} ${t.role === "user" ? "justify-self-end bg-fg text-bg" : "bg-surface-2 text-fg"}`}>
+            {t.text}
+          </p>
+        ))}
+        {asking && <p className="animate-pulse text-xs text-faint">Rewriting and checking it again…</p>}
+        <div ref={full === chatOpen ? chatEnd : undefined} />
+      </div>
+      {full && note && <p className={`text-xs ${note.ok ? "text-ok" : "text-bad"}`}>{note.text}</p>}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void tweak(ask);
+        }}
+        className="flex gap-2"
+      >
+        <input value={ask} onChange={(e) => setAsk(e.target.value)} enterKeyHint="send" placeholder="What should change?" className={`min-w-0 flex-1 rounded-full border border-line bg-bg text-sm outline-none focus:border-faint ${full ? "h-11 px-4" : "h-9 px-3"}`} />
+        <button type="submit" disabled={!ask.trim() || asking} className={`rounded-full bg-fg text-sm text-bg disabled:opacity-40 ${full ? "h-11 px-5" : "h-9 px-4"}`}>
+          Ask
+        </button>
+      </form>
+    </section>
+  );
+
   const flags = qa?.flags ?? [];
   const fixes = flags.filter((f) => f.severity === "fix").length;
   const title = `${client.name} · ${report.platform === "google" ? "Google" : "Meta"} · ${report.kind === "weekly" ? "Weekly report" : report.kind === "custom" ? "Recap" : "Monthly recap"}`;
@@ -212,7 +270,7 @@ export function ReportEditor({ report, client, canEdit, slackConnected, bundle, 
     <div className="grid gap-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div className="grid gap-1">
-          <h1 className="font-heading text-[28px] leading-tight">{title}</h1>
+          <h1 className="font-heading text-[28px] leading-tight [overflow-wrap:anywhere] max-md:text-[24px]">{title}</h1>
           <p className="text-sm text-muted">
             {report.metrics?.main.label ?? `${report.periodStart} – ${report.periodEnd}`}
             {report.owner ? ` · ${report.owner}` : ""}
@@ -221,17 +279,17 @@ export function ReportEditor({ report, client, canEdit, slackConnected, bundle, 
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {report.metrics && (
-            <a href={`/api/reports/${report.id}/pdf`} target="_blank" rel="noreferrer" className="h-9 rounded-full border border-line px-4 text-sm leading-9 text-muted hover:text-fg">
+            <a href={`/api/reports/${report.id}/pdf`} target="_blank" rel="noreferrer" className="h-9 rounded-full border border-line px-4 text-sm leading-9 text-muted hover:text-fg max-md:h-11 max-md:leading-[44px]">
               See the PDF ↗
             </a>
           )}
           {editable && (
-            <button type="button" disabled={pending} onClick={() => start(async () => void (await redraft(report.id), router.refresh()))} className="h-9 rounded-full border border-line px-4 text-sm text-muted hover:text-fg">
+            <button type="button" disabled={pending} onClick={() => start(async () => void (await redraft(report.id), router.refresh()))} className="h-9 rounded-full border border-line px-4 text-sm text-muted hover:text-fg max-md:h-11">
               Write it again
             </button>
           )}
           {editable && report.kind !== "monthly" && (
-            <button type="button" disabled={pending} onClick={() => start(async () => void (await skipReport(report.id), router.refresh()))} className="h-9 px-2 text-sm text-faint hover:text-fg">
+            <button type="button" disabled={pending} onClick={() => start(async () => void (await skipReport(report.id), router.refresh()))} className="h-9 px-2 text-sm text-faint hover:text-fg max-md:h-11">
               {report.kind === "custom" ? "Not needed" : "Skip this week"}
             </button>
           )}
@@ -261,7 +319,7 @@ export function ReportEditor({ report, client, canEdit, slackConnected, bundle, 
                       if (dirty) await saveReport(report.id, { message, extras, ...(sections ? { sections } : {}) });
                       const r = await checkAgain(report.id);
                       if (r.ok) setQa(r.qa);
-                    })} className="rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg">
+                    })} className="rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg max-md:min-h-10 max-md:px-4">
                       {pending ? "Checking…" : "Check again"}
                     </button>
                   )}
@@ -269,7 +327,7 @@ export function ReportEditor({ report, client, canEdit, slackConnected, bundle, 
                 {flags.length > 0 && (
                   <ul className="grid gap-2">
                     {flags.map((f, i) => (
-                      <li key={i} className={`grid gap-1 rounded-[12px] border bg-surface px-3 py-2.5 ${SEV[f.severity].ring}`}>
+                      <li key={i} className={`grid min-w-0 gap-1 rounded-[12px] border bg-surface px-3 py-2.5 [overflow-wrap:anywhere] ${SEV[f.severity].ring}`}>
                         <span className="flex flex-wrap items-center gap-2 text-sm">
                           <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${SEV[f.severity].chip}`}>{SEV[f.severity].label}</span>
                           {f.issue}
@@ -279,7 +337,7 @@ export function ReportEditor({ report, client, canEdit, slackConnected, bundle, 
                           <span className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
                             {f.suggestion}
                             {editable && f.severity !== "alert" && (
-                              <button type="button" onClick={() => tweak(`Fix this: ${f.issue} ${f.suggestion}`)} className="rounded-full border border-line px-2.5 py-0.5 text-[11px] text-muted hover:text-fg">
+                              <button type="button" onClick={() => tweak(`Fix this: ${f.issue} ${f.suggestion}`)} className="rounded-full border border-line px-2.5 py-0.5 text-[11px] text-muted hover:text-fg active:bg-surface-2 max-md:min-h-10 max-md:px-4 max-md:text-xs">
                                 Fix it for me
                               </button>
                             )}
@@ -293,7 +351,7 @@ export function ReportEditor({ report, client, canEdit, slackConnected, bundle, 
             )}
 
             <section className="grid gap-2">
-              <div className="flex items-baseline justify-between gap-2">
+              <div className="flex items-baseline justify-between gap-2 max-md:flex-wrap">
                 <h2 className="font-heading text-lg">{report.kind !== "monthly" ? "The Slack message" : "Your note with the recap"}</h2>
                 <span className="text-[11px] text-faint">In your voice, from your recaps in client channels</span>
               </div>
@@ -309,7 +367,7 @@ export function ReportEditor({ report, client, canEdit, slackConnected, bundle, 
 
             {sections && (
               <details className="group rounded-[16px] border border-line bg-surface" open={report.kind === "monthly"}>
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm max-md:min-h-12">
                   <span>
                     {report.kind !== "monthly" ? "The PDF's write-up" : "The recap's write-up"} <span className="text-faint">· what we did, what we&apos;re doing, what&apos;s next</span>
                   </span>
@@ -318,7 +376,7 @@ export function ReportEditor({ report, client, canEdit, slackConnected, bundle, 
                 <div className="grid gap-3 border-t border-line px-4 py-4">
                   <label className="grid gap-1 text-[11px] text-faint">
                     Headline
-                    <input value={sections.headline} disabled={!editable} onChange={(e) => setSections({ ...sections, headline: e.target.value })} className="h-9 rounded-[10px] border border-line bg-bg px-3 text-sm text-fg" />
+                    <input value={sections.headline} disabled={!editable} onChange={(e) => setSections({ ...sections, headline: e.target.value })} className="h-9 rounded-[10px] border border-line bg-bg px-3 text-sm text-fg max-md:h-11" />
                   </label>
                   <label className="grid gap-1 text-[11px] text-faint">
                     Summary
@@ -339,15 +397,15 @@ export function ReportEditor({ report, client, canEdit, slackConnected, bundle, 
               <p className="text-[11px] text-faint">Sales from the CRM (who, how much, which ad they came from), other channels like TikTok, lead quality, context from the client.</p>
               <textarea value={extras} disabled={!editable} onChange={(e) => setExtras(e.target.value)} rows={3} placeholder="e.g. 2 sales from Go HighLevel: Julia D. $3,280 and Abby L. $3,520, both from the Schedule | Wedding DJ campaign" className="rounded-[10px] border border-line bg-bg px-3 py-2 text-sm outline-none placeholder:text-faint focus:border-faint" />
               {editable && extras.trim() && extras !== report.extras && (
-                <button type="button" disabled={asking} onClick={() => tweak(`Work in what I added (outside the ad account): ${extras}`)} className="justify-self-start rounded-full bg-fg px-4 py-1.5 text-xs text-bg disabled:opacity-60">
+                <button type="button" disabled={asking} onClick={() => tweak(`Work in what I added (outside the ad account): ${extras}`)} className="justify-self-start rounded-full bg-fg px-4 py-1.5 text-xs text-bg disabled:opacity-60 max-md:min-h-11 max-md:px-5 max-md:text-sm">
                   Work it into the report
                 </button>
               )}
             </section>
 
             {editable && dirty && (
-              <div className="flex items-center gap-3">
-                <button type="button" disabled={pending} onClick={save} className="h-9 rounded-full border border-line px-4 text-sm text-muted hover:text-fg">
+              <div className="flex flex-wrap items-center gap-3">
+                <button type="button" disabled={pending} onClick={save} className="h-9 rounded-full border border-line px-4 text-sm text-muted hover:text-fg max-md:h-11">
                   Save my edits
                 </button>
                 <span className="text-[11px] text-faint">Then Check again so the QA reads your version.</span>
@@ -393,17 +451,17 @@ export function ReportEditor({ report, client, canEdit, slackConnected, bundle, 
                 </div>
               ) : confirm ? (
                 <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <span>{report.kind !== "monthly" ? `Post this to ${client.name}'s channel as you, with the PDF?` : "Submit your part? It goes to the client once every buyer on the account has submitted."}</span>
-                  <button type="button" disabled={pending} onClick={send} className="h-9 rounded-full bg-brand px-4 text-sm font-medium text-white">
+                  <span className="max-md:w-full">{report.kind !== "monthly" ? `Post this to ${client.name}'s channel as you, with the PDF?` : "Submit your part? It goes to the client once every buyer on the account has submitted."}</span>
+                  <button type="button" disabled={pending} onClick={send} className="h-9 rounded-full bg-brand px-4 text-sm font-medium text-white max-md:h-12 max-md:flex-1 max-md:px-5">
                     {pending ? "Sending…" : "Yes, send it"}
                   </button>
-                  <button type="button" onClick={() => setConfirm(false)} className="h-9 px-2 text-sm text-faint">
+                  <button type="button" onClick={() => setConfirm(false)} className="h-9 px-2 text-sm text-faint max-md:h-12 max-md:px-4">
                     Not yet
                   </button>
                 </div>
               ) : (
                 <div className="flex flex-wrap items-center gap-3">
-                  <button type="button" disabled={pending || busy} onClick={() => setConfirm(true)} className="h-10 rounded-full bg-brand px-5 text-sm font-medium text-white shadow-[0_10px_30px_-12px_rgba(200,16,46,0.9)] disabled:opacity-60">
+                  <button type="button" disabled={pending || busy} onClick={() => setConfirm(true)} className="h-10 rounded-full bg-brand px-5 text-sm font-medium text-white shadow-[0_10px_30px_-12px_rgba(200,16,46,0.9)] disabled:opacity-60 max-md:h-12 max-md:w-full max-md:text-[15px]">
                     {report.kind !== "monthly" ? "Post to Slack as me" : report.status === "submitted" ? "Submitted" : "Submit my part"}
                   </button>
                   {fixes > 0 && <span className="text-xs text-bad">The QA still has {fixes} thing{fixes === 1 ? "" : "s"} to fix.</span>}
@@ -420,35 +478,27 @@ export function ReportEditor({ report, client, canEdit, slackConnected, bundle, 
                 <Numbers m={report.metrics} reportId={report.id} />
               </section>
             )}
-            {editable && (
-              <section className="grid gap-3 rounded-[16px] border border-line bg-surface p-4">
-                <h2 className="font-heading text-[15px]">Ask the AI to tweak it</h2>
-                <div className="grid max-h-72 gap-2 overflow-y-auto">
-                  {chat.length === 0 && <p className="text-xs text-faint">&ldquo;Add lead quality&rdquo;, &ldquo;shorter, they skim&rdquo;, &ldquo;lead with the sales&rdquo;. What this client always wants is remembered for next time.</p>}
-                  {chat.map((t, i) => (
-                    <p key={i} className={`whitespace-pre-wrap rounded-[12px] px-3 py-2 text-[13px] ${t.role === "user" ? "justify-self-end bg-fg text-bg" : "bg-surface-2 text-fg"}`}>
-                      {t.text}
-                    </p>
-                  ))}
-                  {asking && <p className="animate-pulse text-xs text-faint">Rewriting and checking it again…</p>}
-                  <div ref={chatEnd} />
-                </div>
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    void tweak(ask);
-                  }}
-                  className="flex gap-2"
-                >
-                  <input value={ask} onChange={(e) => setAsk(e.target.value)} placeholder="What should change?" className="h-9 min-w-0 flex-1 rounded-full border border-line bg-bg px-3 text-sm outline-none focus:border-faint" />
-                  <button type="submit" disabled={!ask.trim() || asking} className="h-9 rounded-full bg-fg px-4 text-sm text-bg disabled:opacity-40">
-                    Ask
-                  </button>
-                </form>
-              </section>
-            )}
+            {editable && chatPanel(false)}
           </aside>
         </div>
+      )}
+
+      {/* Phones: the AI chat opens full-screen from a floating button above the tab bar */}
+      {editable && !busy && (
+        <>
+          <div className="h-14 md:hidden" aria-hidden />
+          {!chatOpen && (
+            <button
+              type="button"
+              onClick={() => setChatOpen(true)}
+              className="fixed bottom-[calc(58px+env(safe-area-inset-bottom)+14px)] right-4 z-20 flex h-12 items-center gap-2 rounded-full bg-fg px-5 text-sm font-medium text-bg shadow-[0_16px_40px_-12px_rgba(0,0,0,0.8)] active:scale-[0.97] md:hidden"
+            >
+              {asking ? <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-bg border-t-transparent" /> : <span aria-hidden>✦</span>}
+              {asking ? "Rewriting…" : "Ask the AI"}
+            </button>
+          )}
+          {chatOpen && typeof document !== "undefined" && createPortal(chatPanel(true), document.body)}
+        </>
       )}
     </div>
   );
@@ -468,17 +518,17 @@ export function DraftNow({ accounts }: { accounts: { id: string; label: string }
     });
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <select value={pick} onChange={(e) => setPick(e.target.value)} className="h-9 rounded-full border border-line bg-bg px-3 text-sm">
+      <select value={pick} onChange={(e) => setPick(e.target.value)} className="h-9 rounded-full border border-line bg-bg px-3 text-sm max-md:h-11 max-md:w-full">
         {accounts.map((a) => (
           <option key={a.id} value={a.id}>
             {a.label}
           </option>
         ))}
       </select>
-      <button type="button" disabled={pending || !pick} onClick={() => go("weekly")} className="h-9 rounded-full bg-fg px-4 text-sm text-bg disabled:opacity-60">
+      <button type="button" disabled={pending || !pick} onClick={() => go("weekly")} className="h-9 rounded-full bg-fg px-4 text-sm text-bg disabled:opacity-60 max-md:h-11 max-md:flex-1">
         Weekly report
       </button>
-      <button type="button" disabled={pending || !pick} onClick={() => go("monthly")} className="h-9 rounded-full border border-line px-4 text-sm text-muted hover:text-fg disabled:opacity-60">
+      <button type="button" disabled={pending || !pick} onClick={() => go("monthly")} className="h-9 rounded-full border border-line px-4 text-sm text-muted hover:text-fg disabled:opacity-60 max-md:h-11 max-md:flex-1">
         Last month&apos;s recap
       </button>
       {error && <span className="text-xs text-bad">{error}</span>}
