@@ -449,11 +449,13 @@ const params = (spec: Record<string, unknown>) => Object.fromEntries(Object.entr
  * enhancement switch Meta doesn't know on this API version is dropped and the check tried again.
  */
 /** Meta refusing the asker rather than the ad: a missing permission, a Page role, an account problem */
-export const accessError = (m: string) => /permission|not authorized|advertiser role|page role|\(#10\)|\(#200\)|\(#2\d\d\)|\(#190\)|disabled|unsettled/i.test(m);
+export const accessError = (m: string) => /permission|not authorized|advertiser role|page role|development mode|must be in public|\(#10\)|\(#200\)|\(#2\d\d\)|\(#190\)|disabled|unsettled/i.test(m);
 
 /** In plain words: what someone has to do in Business Manager for this error */
 export function accessHelp(m: string) {
   const page = m.match(/Page (\d{6,})/)?.[1];
+  if (/development mode|must be in public/i.test(m))
+    return "The Meta app Kaizen Ads uses is in Development mode, and Meta only lets a Live app create ad posts. In developers.facebook.com → the app: add a Privacy Policy URL, category and icon under App settings → Basic, then switch App Mode to Live.";
   if (/application does not have permission/i.test(m))
     return `Meta says the app's token can't post as the Page${page ? ` ${page}` : ""}: the system user's token needs pages_manage_ads, pages_read_engagement and pages_show_list. Settings → Sync health → Check write access shows what the token has and what to do.`;
   if (/page/i.test(m) && /permission|role/i.test(m))
