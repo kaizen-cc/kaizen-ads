@@ -1,5 +1,7 @@
 "use client";
 
+import { AiProgressButton } from "@/components/ai-progress";
+
 import { useEffect, useState } from "react";
 import type { Draft } from "./draft";
 import { promiseDraft, promisesFor, type Promise_ } from "./actions";
@@ -57,9 +59,9 @@ export function PromisesStrip({ clientId, used, onUse }: { clientId: string; use
                 type="button"
                 onClick={() => use(p)}
                 disabled={Boolean(loading) || on}
-                className={`h-8 shrink-0 rounded-full px-3.5 text-xs font-medium ${on ? "text-ok" : "bg-fg text-bg disabled:opacity-60"}`}
+                className={`h-8 shrink-0 rounded-full text-xs font-medium ${on ? "px-3.5 text-ok" : loading === p.id && !p.briefed ? "w-72 bg-brand-soft text-brand-text" : "bg-fg px-3.5 text-bg disabled:opacity-60"}`}
               >
-                {on ? "Loaded into this request" : loading === p.id ? (p.briefed ? "Loading…" : "Writing the brief…") : "Use this"}
+                {on ? "Loaded into this request" : loading === p.id ? (p.briefed ? "Loading…" : <AiProgressButton label="brief from a call" />) : "Use this"}
               </button>
             </div>
           );

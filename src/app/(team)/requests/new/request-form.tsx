@@ -1,5 +1,7 @@
 "use client";
 
+import { AiProgress, AiProgressButton } from "@/components/ai-progress";
+
 import { useRouter } from "next/navigation";
 import { IdeasPanel } from "./ideas-panel";
 import { PromisesStrip } from "./promises-strip";
@@ -714,10 +716,16 @@ export function RequestForm({
                         type="button"
                         onClick={draftBrief}
                         disabled={briefAi.status === "loading"}
-                        className="inline-flex items-center gap-1.5 rounded-full border border-brand-text/30 px-3 py-1 text-xs text-fg hover:bg-brand-soft disabled:opacity-60"
+                        className={`inline-flex items-center gap-1.5 rounded-full border border-brand-text/30 text-xs text-fg hover:bg-brand-soft disabled:opacity-80 ${briefAi.status === "loading" ? "h-7 w-64 p-0" : "px-3 py-1"}`}
                       >
-                        <Spark size={10} className={`text-brand-text ${briefAi.status === "loading" ? "animate-[ai-pulse_1s_ease-in-out_infinite]" : ""}`} />
-                        {briefAi.status === "loading" ? "Writing…" : draft.brief.trim() ? "Rewrite with AI" : "Draft with AI"}
+                        {briefAi.status === "loading" ? (
+                          <AiProgressButton label="suggest" fallbackMs={20_000} text="Writing" />
+                        ) : (
+                          <>
+                            <Spark size={10} className="text-brand-text" />
+                            {draft.brief.trim() ? "Rewrite with AI" : "Draft with AI"}
+                          </>
+                        )}
                       </button>
                     )
                   }
@@ -991,26 +999,14 @@ function Watchouts({ items }: { items: string[] }) {
 
 const SCAN_LINES = ["Reading the client’s feedback history", "Checking the campaign direction", "Matching formats, sizes and brief", "Looking for anything Meta would reject"];
 
+/** While the AI reviews the request: the steps, a percentage and the time left (timed from its recent reviews). */
 function Scanning() {
-  const [i, setI] = useState(0);
-  useEffect(() => {
-    const t = setInterval(() => setI((x) => Math.min(x + 1, SCAN_LINES.length - 1)), 900);
-    return () => clearInterval(t);
-  }, []);
   return (
     <div className="relative overflow-hidden rounded-[10px] border border-brand-text/25 bg-surface p-5" role="status">
       <span className="pointer-events-none absolute inset-y-0 left-0 w-1/2 bg-gradient-to-r from-transparent via-brand/15 to-transparent animate-[ai-sweep_1.8s_ease-in-out_infinite]" />
-      <p className="relative flex items-center gap-2 text-sm font-medium">
-        <Spark className="text-brand-text animate-[ai-pulse_1.2s_ease-in-out_infinite]" /> Reviewing the request
-      </p>
-      <ul className="relative mt-4 grid gap-2.5">
-        {SCAN_LINES.map((l, n) => (
-          <li key={l} className={`flex items-center gap-2.5 text-sm transition-opacity duration-300 ${n <= i ? "opacity-100" : "opacity-30"}`}>
-            <span className={`grid h-4 w-4 place-items-center rounded-full text-[9px] ${n < i ? "bg-ok text-bg" : n === i ? "border border-brand-text" : "border border-line"}`}>{n < i ? "✓" : ""}</span>
-            <span className={n === i ? "text-fg" : "text-muted"}>{l}</span>
-          </li>
-        ))}
-      </ul>
+      <div className="relative">
+        <AiProgress size="sm" label="review" fallbackMs={25_000} title="Reviewing the request" steps={SCAN_LINES} />
+      </div>
     </div>
   );
 }

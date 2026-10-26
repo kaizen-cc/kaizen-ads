@@ -1,7 +1,9 @@
 "use client";
 
+import { AiProgress } from "@/components/ai-progress";
+
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { Winner, WinnerScope } from "@/lib/industry";
 import type { Allotment } from "@/lib/allotment";
 import type { OpenSuggestion } from "@/lib/suggestions";
@@ -392,27 +394,16 @@ export function ClientPick({
 
 const WINNER_STEPS = ["Reading why this ad works", "Reading the client: brand, offer, memory, allotment", "Translating the angle and the hook", "Writing the concepts", "Fitting formats to what's left this month"];
 
-export function Writing({ steps = WINNER_STEPS }: { steps?: string[] }) {
-  const [i, setI] = useState(0);
-  useEffect(() => {
-    const t = setInterval(() => setI((n) => Math.min(steps.length - 1, n + 1)), 7000);
-    return () => clearInterval(t);
-  }, [steps.length]);
+/** While the strategist writes a brief from an ad: a real progress bar, timed from how long these briefs take. */
+export function Writing({ steps = WINNER_STEPS, label = "brief from a winner" }: { steps?: string[]; label?: string }) {
   return (
-    <div className="grid content-center gap-5 py-10">
-      <p className="font-heading text-xl">The strategist is writing the brief</p>
-      <ol className="grid gap-2.5">
-        {steps.map((label, n) => (
-          <li key={label} className={`flex items-center gap-3 text-sm transition-colors ${n < i ? "text-muted" : n === i ? "text-fg" : "text-faint/60"}`}>
-            <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border text-[10px] ${n < i ? "border-ok bg-ok text-white" : n === i ? "border-brand" : "border-line"}`}>
-              {n < i ? "✓" : n === i ? <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" /> : null}
-            </span>
-            {label}
-          </li>
-        ))}
-      </ol>
-      <p className="text-xs text-faint">Usually under a minute. You&apos;ll be able to edit it, talk it through, or send it straight to production.</p>
-    </div>
+    <AiProgress
+      label={label}
+      fallbackMs={40_000}
+      title="The strategist is writing the brief"
+      steps={steps}
+      note="You can edit it when it's ready, talk it through, or send it straight to production."
+    />
   );
 }
 

@@ -1,5 +1,7 @@
 "use client";
 
+import { AiProgressButton } from "@/components/ai-progress";
+
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { Winner } from "@/lib/industry";
@@ -57,6 +59,7 @@ export function IdeasPanel({ clientId, onBrief }: { clientId: string; onBrief: (
             busy={busy === `w-${w.id}`}
             disabled={Boolean(busy)}
             onCreate={() => create(`w-${w.id}`, { kind: "winner", winner: w })}
+            label="brief from a winner"
           />
         ))}
       </Widget>
@@ -71,6 +74,7 @@ export function IdeasPanel({ clientId, onBrief }: { clientId: string; onBrief: (
             busy={busy === `m-${a.id}`}
             disabled={Boolean(busy)}
             onCreate={() => create(`m-${a.id}`, { kind: "market", adId: a.id })}
+            label="brief from a market ad"
           />
         ))}
       </Widget>
@@ -105,7 +109,7 @@ function Widget({ title, sub, loading, empty, more, children }: { title: string;
   );
 }
 
-function Item({ thumb, video, title, meta, busy, disabled, onCreate }: { thumb: string | null; video?: string | null; title: string; meta: string; busy: boolean; disabled: boolean; onCreate: () => void }) {
+function Item({ thumb, video, title, meta, busy, disabled, onCreate, label }: { thumb: string | null; video?: string | null; title: string; meta: string; busy: boolean; disabled: boolean; onCreate: () => void; label: string }) {
   return (
     <li className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 rounded-[10px] p-1.5 transition-colors hover:bg-surface-2/60">
       <div className="flex min-w-0 items-center gap-3">
@@ -128,7 +132,7 @@ function Item({ thumb, video, title, meta, busy, disabled, onCreate }: { thumb: 
         disabled={disabled}
         className={`h-8 rounded-full text-xs font-medium transition-colors ${busy ? "bg-brand-soft text-brand-text" : "border border-line text-muted hover:border-brand/50 hover:text-fg disabled:opacity-50"}`}
       >
-        {busy ? "Writing the brief… about a minute" : "Create brief"}
+        {busy ? <AiProgressButton label={label} /> : "Create brief"}
       </button>
     </li>
   );

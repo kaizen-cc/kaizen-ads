@@ -222,3 +222,13 @@ body {
     opacity: 1;
   }
 }
+
+/* A light sweep across a progress bar while it fills */
+@keyframes shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
