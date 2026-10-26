@@ -232,3 +232,22 @@ body {
     transform: translateX(100%);
   }
 }
+
+/* The phone menu slides in from the left */
+@keyframes drawer-left {
+  from {
+    transform: translateX(-100%);
+  }
+}
+
+/* Phones: fields at 16px so iOS doesn't zoom the page when one is tapped; no grey flash on taps */
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+@media (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
