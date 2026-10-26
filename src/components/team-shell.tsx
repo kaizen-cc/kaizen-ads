@@ -100,7 +100,9 @@ export function TeamShell({ name, roles, tier, children }: { name: string; roles
   };
 
   return (
-    <div className="min-h-screen md:grid md:grid-cols-[240px_1fr]">
+    <div className="relative min-h-screen md:grid md:grid-cols-[240px_1fr]">
+      {/* A faint brand glow behind the top of every page (first, so everything after it paints above) */}
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-80 bg-[radial-gradient(60%_100%_at_15%_0%,rgba(178,30,44,0.16),transparent_70%)] md:left-[240px]" />
       <aside className="pt-safe hidden border-r border-line bg-surface md:sticky md:top-0 md:flex md:h-screen md:flex-col">
         <div className="flex items-center justify-between gap-2 pb-6 pl-5 pr-3 pt-6">
           <Link href={home} className="flex items-center gap-2">
@@ -234,11 +236,9 @@ export function TeamShell({ name, roles, tier, children }: { name: string; roles
         </div>
       </nav>
 
-      {/* A faint brand glow behind the top of every page */}
-      <main className="relative isolate min-w-0 overflow-x-clip px-4 pb-[calc(88px+env(safe-area-inset-bottom))] pt-6 md:px-10 md:py-8">
-        <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-80 bg-[radial-gradient(60%_100%_at_15%_0%,rgba(178,30,44,0.16),transparent_70%)]" />
-        {children}
-      </main>
+      {/* No stacking context of its own (no isolate, no z-index): a page's drawers and sheets (z-50) then rise above the
+          top bar and tab bar instead of being trapped under them */}
+      <main className="relative min-w-0 overflow-x-clip px-4 pb-[calc(88px+env(safe-area-inset-bottom))] pt-6 md:px-10 md:py-8">{children}</main>
     </div>
   );
 }
