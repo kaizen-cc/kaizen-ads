@@ -88,9 +88,9 @@ export function WinnersLibrary({ winners, industries, clients, scope }: { winner
                 best <span className="tabular text-ok">{best.ratio}x</span> · {best.detail ?? label(best.industry)}
               </span>
             )}
-            <details className="group relative">
-              <summary className="cursor-pointer list-none underline-offset-4 hover:text-fg hover:underline">How winners are picked</summary>
-              <div className="absolute left-0 top-6 z-30 w-[360px] rounded-[14px] border border-line bg-surface p-4 text-xs leading-relaxed text-muted shadow-2xl">
+            <details className="group relative open:basis-full md:open:basis-auto">
+              <summary className="-my-2 cursor-pointer list-none py-2 underline-offset-4 hover:text-fg hover:underline md:my-0 md:py-0">How winners are picked</summary>
+              <div className="mt-2 rounded-[14px] md:absolute md:left-0 md:top-6 md:z-30 md:mt-0 md:w-[360px] border border-line bg-surface p-4 text-xs leading-relaxed text-muted shadow-2xl">
                 An ad makes the list with at least $100 spent and 3 results, getting its result at least 1.2x cheaper than its account usually does. This sync looked at the
                 top {scope.ads.toLocaleString("en-US")} ads by spend across {scope.accounts} ad accounts (the top 20 in each, last 30 days);{" "}
                 {scope.eligible.toLocaleString("en-US")} had enough to judge and {winners.length} beat their account.
@@ -108,7 +108,8 @@ export function WinnersLibrary({ winners, industries, clients, scope }: { winner
         </div>
       ) : (
         <>
-          <div className="sticky top-3 z-20 grid gap-3">
+          {/* Phones: it scrolls away with the page (the app bar is pinned there); wider screens keep it pinned */}
+          <div className="relative z-20 grid gap-3 md:sticky md:top-3">
             <div className="rounded-[18px] border border-line bg-surface/90 shadow-[0_10px_40px_-20px_rgba(0,0,0,0.6)] backdrop-blur-xl">
               <div className="flex flex-wrap items-center gap-2 p-2">
                 <label className="flex h-10 min-w-[220px] flex-1 items-center gap-2.5 rounded-[12px] bg-bg/60 px-3.5 focus-within:ring-1 focus-within:ring-faint">
@@ -118,20 +119,25 @@ export function WinnersLibrary({ winners, industries, clients, scope }: { winner
                   </svg>
                   <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search clients, headlines, copy" className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-faint" />
                 </label>
-                <FilterMenu
-                  label={industry === null ? "All industries" : label(industry || null)}
-                  on={industry !== null}
-                  options={[[null, "All industries", winners.length] as const, ...counts.map(([k, n]) => [k, label(k || null), n] as const)]}
-                  value={industry}
-                  onPick={(v) => setIndustry(v)}
-                />
-                <FilterMenu
-                  label={SORTS.find(([k]) => k === sort)?.[1] ?? "Sort"}
-                  on={false}
-                  options={SORTS.map(([k, l]) => [k, l, null] as const)}
-                  value={sort}
-                  onPick={(v) => setSort(v)}
-                />
+                {/* Phones: each menu gets the full row, so its list opens on screen */}
+                <div className="w-full md:contents">
+                  <FilterMenu
+                    label={industry === null ? "All industries" : label(industry || null)}
+                    on={industry !== null}
+                    options={[[null, "All industries", winners.length] as const, ...counts.map(([k, n]) => [k, label(k || null), n] as const)]}
+                    value={industry}
+                    onPick={(v) => setIndustry(v)}
+                  />
+                </div>
+                <div className="w-full md:contents">
+                  <FilterMenu
+                    label={SORTS.find(([k]) => k === sort)?.[1] ?? "Sort"}
+                    on={false}
+                    options={SORTS.map(([k, l]) => [k, l, null] as const)}
+                    value={sort}
+                    onPick={(v) => setSort(v)}
+                  />
+                </div>
               </div>
               <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-3">
                 <nav className="-mb-px flex gap-1">
@@ -152,7 +158,8 @@ export function WinnersLibrary({ winners, industries, clients, scope }: { winner
                   ))}
                 </nav>
                 <span className="tabular py-2 text-[11px] text-faint">
-                  {shown.length} {shown.length === 1 ? "ad" : "ads"} · hover one to see it run
+                  {shown.length} {shown.length === 1 ? "ad" : "ads"} · <span className="md:hidden">tap</span>
+                  <span className="hidden md:inline">hover</span> one to see it run
                 </span>
               </div>
             </div>
@@ -169,7 +176,7 @@ export function WinnersLibrary({ winners, industries, clients, scope }: { winner
                     setSort("ratio");
                     setQ("");
                   }}
-                  className="ml-1 text-xs text-muted underline-offset-4 hover:text-fg hover:underline"
+                  className="ml-1 py-2 text-xs text-muted underline-offset-4 hover:text-fg hover:underline md:py-0"
                 >
                   Clear all
                 </button>
@@ -190,7 +197,7 @@ export function WinnersLibrary({ winners, industries, clients, scope }: { winner
                   }}
                   onMouseEnter={(e) => hoverIn(w, e.currentTarget)}
                   onMouseLeave={hoverOut}
-                  className="group grid content-start gap-2.5 rounded-[14px] border border-line bg-surface p-2 text-left transition-colors hover:border-faint"
+                  className="group grid min-w-0 content-start gap-2.5 rounded-[14px] border border-line bg-surface p-2 text-left transition-all hover:border-faint active:scale-[0.98] md:active:scale-100"
                 >
                   <span className="relative aspect-[4/5] overflow-hidden rounded-[10px] bg-surface-2">
                     {w.thumbnail ? (
@@ -242,6 +249,35 @@ export function WinnersLibrary({ winners, industries, clients, scope }: { winner
   );
 }
 
+// The full view of an ad (winners, Hall of Fame, market): a centred dialog on wider screens, the whole screen on a
+// phone, with Close pinned at the top and the main action pinned at the bottom
+export const SHEET_BACKDROP = "fixed inset-0 z-50 grid bg-black/70 backdrop-blur-sm md:place-items-center md:p-4";
+export const SHEET_PANEL =
+  "grid w-full min-w-0 content-start gap-5 overflow-y-auto overscroll-contain bg-bg px-4 pb-[calc(16px+env(safe-area-inset-bottom))] animate-[sheet-up_.28s_cubic-bezier(.2,.8,.2,1)] md:max-h-[92vh] md:max-w-[920px] md:animate-none md:rounded-[18px] md:border md:border-line md:p-5";
+
+/** Phones: the sheet's title and Close, pinned at the top under the notch. */
+export function SheetBar({ title, onClose }: { title: string; onClose: () => void }) {
+  return (
+    <div className="sticky top-0 z-10 -mx-4 flex items-center gap-3 border-b border-line bg-bg/95 pb-1 pl-4 pr-2 pt-[calc(4px+env(safe-area-inset-top))] backdrop-blur-xl md:hidden">
+      <p className="min-w-0 flex-1 truncate font-heading text-[15px]">{title}</p>
+      <button onClick={onClose} className="h-11 shrink-0 rounded-full px-3 text-sm text-muted active:bg-surface-2">
+        Close
+      </button>
+    </div>
+  );
+}
+
+/** Phones: the sheet's main action, pinned at the bottom within thumb reach. */
+export function SheetAction({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+  return (
+    <div className="sticky bottom-0 z-10 -mx-4 -mb-[calc(16px+env(safe-area-inset-bottom))] border-t border-line bg-bg/95 px-4 pb-[calc(12px+env(safe-area-inset-bottom))] pt-3 backdrop-blur-xl md:hidden">
+      <button onClick={onClick} className="h-12 w-full rounded-brand bg-brand text-sm font-medium text-white active:brightness-110">
+        {children}
+      </button>
+    </div>
+  );
+}
+
 function WinnerSheet({ w, industryLabel, clients, onClose }: { w: Winner; industryLabel: string; clients: PickClient[]; onClose: () => void }) {
   const ad = useAd(w.id); // undefined: still reading it from Meta
   const insight = useInsight(w, ad);
@@ -267,15 +303,17 @@ function WinnerSheet({ w, industryLabel, clients, onClose }: { w: Winner; indust
   if (brief) return <SuggestionSheet s={brief} onClose={onClose} />;
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4 backdrop-blur-sm" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="grid max-h-[92vh] w-full max-w-[920px] gap-5 overflow-y-auto rounded-[18px] border border-line bg-bg p-4 md:grid-cols-[minmax(0,400px)_1fr] md:p-5">
-        <div className="grid content-start gap-2">
+    <div className={SHEET_BACKDROP} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className={`${SHEET_PANEL} md:grid-cols-[minmax(0,400px)_1fr]`}>
+        <SheetBar title={w.client} onClose={onClose} />
+        {/* Phones: once a client is being picked, the ad steps aside so the list is right there */}
+        <div className={`grid content-start gap-2 ${step === "ad" ? "" : "hidden md:grid"}`}>
           <FbPreview ad={ad} w={w} />
           {ad === null && <p className="text-center text-[11px] text-faint">Couldn&apos;t reach Meta for the full ad, so this is the last synced version.</p>}
         </div>
 
         {step === "ad" ? (
-          <div className="grid content-start gap-4">
+          <div className="grid min-w-0 content-start gap-4">
             <div className="flex items-start justify-between gap-3">
               <div className="grid min-w-0 gap-1">
                 <p className="text-xs text-faint">
@@ -287,7 +325,7 @@ function WinnerSheet({ w, industryLabel, clients, onClose }: { w: Winner; indust
                   {w.name}
                 </p>
               </div>
-              <button onClick={onClose} className="shrink-0 rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg">
+              <button onClick={onClose} className="hidden shrink-0 rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg md:block">
                 Done
               </button>
             </div>
@@ -299,10 +337,10 @@ function WinnerSheet({ w, industryLabel, clients, onClose }: { w: Winner; indust
             </p>
 
             <div className="flex flex-wrap gap-2">
-              <button onClick={() => setStep("pick")} className="h-10 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:brightness-110">
+              <button onClick={() => setStep("pick")} className="hidden h-10 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:brightness-110 md:block">
                 Brief a client on this
               </button>
-              <Link href={`/clients/${w.clientSlug}`} className="grid h-10 place-items-center rounded-brand border border-line px-4 text-sm text-muted hover:text-fg">
+              <Link href={`/clients/${w.clientSlug}`} className="grid h-11 place-items-center rounded-brand border border-line px-4 text-sm text-muted hover:text-fg md:h-10">
                 Open {w.client}
               </Link>
             </div>
@@ -313,6 +351,7 @@ function WinnerSheet({ w, industryLabel, clients, onClose }: { w: Winner; indust
         ) : (
           <Writing />
         )}
+        {step === "ad" && <SheetAction onClick={() => setStep("pick")}>Brief a client on this</SheetAction>}
       </div>
     </div>
   );
@@ -347,13 +386,14 @@ export function ClientPick({
           <p className="font-heading text-lg">Which client is this for?</p>
           <p className="text-xs text-faint">Same industry first. What&apos;s left of their month shows on each.</p>
         </div>
-        <button onClick={onBack} className="rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg">
+        <button onClick={onBack} className="shrink-0 rounded-full border border-line px-3.5 py-2.5 text-xs text-muted hover:text-fg md:px-3 md:py-1">
           Back
         </button>
       </div>
-      <input value={q} onChange={(e) => setQ(e.target.value)} autoFocus placeholder="Find a client" className="h-10 rounded-brand border border-line bg-surface px-3 text-sm outline-none placeholder:text-faint focus:border-faint" />
+      <input value={q} onChange={(e) => setQ(e.target.value)} autoFocus placeholder="Find a client" className="h-11 rounded-brand border border-line bg-surface px-3 text-sm outline-none placeholder:text-faint focus:border-faint md:h-10" />
       {error && <p className="text-sm text-bad">{error}</p>}
-      <div className="grid max-h-[56vh] gap-1 overflow-y-auto pr-1">
+      {/* Phones: the list scrolls with the sheet rather than in a box of its own */}
+      <div className="grid gap-1 md:max-h-[56vh] md:overflow-y-auto md:pr-1">
         {list.map((c) => {
           const a = c.allotment;
           const img = leftOf(a.images, a.imagesUsed);
@@ -361,7 +401,7 @@ export function ClientPick({
           const none = (img ?? 0) === 0 && (vid ?? 0) === 0;
           const same = industry && c.industry === industry;
           return (
-            <button key={c.id} onClick={() => onPick(c.id)} className="group flex items-center gap-3 rounded-[12px] border border-line bg-surface px-3.5 py-2.5 text-left transition-colors hover:border-faint">
+            <button key={c.id} onClick={() => onPick(c.id)} className="group flex min-h-14 items-center gap-3 rounded-[12px] border border-line bg-surface px-3.5 py-2.5 text-left transition-colors hover:border-faint active:bg-surface-2 md:min-h-0 md:active:bg-surface">
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-2">
                   <span className="truncate text-sm font-medium">{c.name}</span>

@@ -87,7 +87,8 @@ export function PlaybookView({
       {/* Who buys */}
       <section className="grid gap-6">
         <SectionTitle n="01" title="Who buys" sub="Pick an avatar to see the angles that land with them." />
-        <div role="tablist" aria-label="Avatars" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {/* Phones: the avatars swipe sideways, so the angles below stay close */}
+        <div role="tablist" aria-label="Avatars" className="no-scrollbar -mx-4 flex snap-x gap-3 overflow-x-auto px-4 sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 lg:grid-cols-4">
           {playbook.avatars.map((a, i) => (
             <button
               key={i}
@@ -95,7 +96,7 @@ export function PlaybookView({
               type="button"
               aria-selected={i === pick}
               onClick={() => setPick(i)}
-              className={`group grid content-start gap-2 rounded-[18px] border p-5 text-left transition-all duration-300 ${
+              className={`group grid w-[78%] shrink-0 snap-start content-start gap-2 rounded-[18px] border p-5 text-left transition-all duration-300 sm:w-auto ${
                 i === pick ? "border-brand/60 bg-brand-soft shadow-[0_0_0_1px_var(--brand)_inset]" : "border-line bg-surface hover:-translate-y-0.5 hover:border-fg/20"
               }`}
             >
@@ -140,7 +141,7 @@ export function PlaybookView({
           <SectionTitle n="02" title={`What lands with ${avatar.name}`} sub="Each angle with the hook that opens it, why it works, and the ads that prove it." />
           <div className="grid gap-5">
             {avatar.angles.map((g, j) => (
-              <article key={j} className="grid gap-6 overflow-hidden rounded-[22px] border border-line bg-surface p-6 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] md:p-8">
+              <article key={j} className="grid min-w-0 gap-6 overflow-hidden rounded-[22px] border border-line bg-surface p-5 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] md:p-8">
                 <div className="grid content-start gap-4">
                   <p className="text-[10px] uppercase tracking-[0.16em] text-faint">
                     Angle {j + 1} · {g.name}

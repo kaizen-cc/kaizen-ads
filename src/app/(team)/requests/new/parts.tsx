@@ -31,7 +31,7 @@ export function Spark({ size = 12, className = "" }: { size?: number; className?
 /** Five segments that fill as you go. Finished steps are clickable. */
 export function Progress({ steps, current, onJump }: { steps: string[]; current: number; onJump: (i: number) => void }) {
   return (
-    <nav aria-label="Request steps" className="grid gap-2.5">
+    <nav aria-label="Request steps" className="grid gap-0.5 md:gap-2.5">
       <div className="flex items-baseline justify-between text-xs">
         <span className="text-faint">
           Step <span className="tabular text-fg">{current + 1}</span> of {steps.length}
@@ -46,7 +46,7 @@ export function Progress({ steps, current, onJump }: { steps: string[]; current:
               disabled={i >= current}
               onClick={() => onJump(i)}
               aria-current={i === current ? "step" : undefined}
-              className="group grid w-full gap-2 text-left disabled:cursor-default"
+              className="group grid w-full gap-2 py-2 text-left disabled:cursor-default md:py-0"
             >
               <span className="relative h-1 overflow-hidden rounded-full bg-surface-2">
                 <span
@@ -167,7 +167,7 @@ export function ClientSearch({ clients, allotments, onPick }: { clients: ClientO
                   type="button"
                   onMouseEnter={() => setActive(idx)}
                   onClick={() => pick(c)}
-                  className={`flex w-full items-center gap-3 rounded-[8px] px-3 py-2.5 text-left transition-colors ${idx === active ? "bg-surface-2" : "hover:bg-surface"}`}
+                  className={`flex min-h-14 w-full items-center gap-3 rounded-[8px] px-3 py-2.5 text-left transition-colors active:bg-surface-2 md:min-h-0 ${idx === active ? "bg-surface-2" : "hover:bg-surface"}`}
                 >
                   <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[7px] text-xs font-semibold" style={{ background: `${tint}26`, color: tint }}>
                     {c.name.replace(/[^A-Za-z0-9]/g, "").slice(0, 1).toUpperCase()}
@@ -193,8 +193,8 @@ export function Stepper({ label, value, onChange, min = 0, max = 100 }: { label:
   return (
     <div className="grid gap-1.5">
       <span className="text-[11px] text-faint">{label}</span>
-      <div className="flex h-10 items-center rounded-brand border border-line bg-bg">
-        <button type="button" aria-label={`Fewer ${label.toLowerCase()}`} onClick={() => set(value - 1)} disabled={value <= min} className="grid h-full w-9 place-items-center text-muted hover:text-fg disabled:opacity-30">
+      <div className="flex h-11 items-center rounded-brand border border-line bg-bg md:h-10">
+        <button type="button" aria-label={`Fewer ${label.toLowerCase()}`} onClick={() => set(value - 1)} disabled={value <= min} className="grid h-full w-11 place-items-center text-muted hover:text-fg active:bg-surface-2 disabled:opacity-30 md:w-9 md:active:bg-transparent">
           −
         </button>
         <input
@@ -202,9 +202,9 @@ export function Stepper({ label, value, onChange, min = 0, max = 100 }: { label:
           aria-label={label}
           value={value}
           onChange={(e) => set(Number(e.target.value.replace(/\D/g, "")) || 0)}
-          className="tabular h-full w-10 bg-transparent text-center text-sm outline-none"
+          className="tabular h-full w-8 bg-transparent text-center text-sm outline-none md:w-10"
         />
-        <button type="button" aria-label={`More ${label.toLowerCase()}`} onClick={() => set(value + 1)} disabled={value >= max} className="grid h-full w-9 place-items-center text-muted hover:text-fg disabled:opacity-30">
+        <button type="button" aria-label={`More ${label.toLowerCase()}`} onClick={() => set(value + 1)} disabled={value >= max} className="grid h-full w-11 place-items-center text-muted hover:text-fg active:bg-surface-2 disabled:opacity-30 md:w-9 md:active:bg-transparent">
           +
         </button>
       </div>
@@ -252,7 +252,7 @@ export function Chip({ children, onClick, title, ai = false, on = false }: { chi
       type="button"
       title={title}
       onClick={onClick}
-      className={`inline-flex max-w-full items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors ${
+      className={`inline-flex min-h-10 max-w-full items-center gap-1.5 rounded-full border px-3.5 py-2 text-[13px] transition-colors md:min-h-0 md:px-3 md:py-1.5 md:text-xs ${
         on
           ? "border-brand-text/60 bg-brand-soft text-fg"
           : ai

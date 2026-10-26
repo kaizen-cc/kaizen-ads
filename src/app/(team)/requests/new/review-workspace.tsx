@@ -67,8 +67,16 @@ function IssueRow({
       <li className="flex min-w-0 items-center gap-3 rounded-[10px] border border-line px-4 py-2.5 text-sm animate-[step-in_.2s_ease-out]">
         <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full text-[10px] ${status === "fixed" ? "bg-ok text-bg" : "bg-surface-2 text-faint"}`}>{status === "fixed" ? "✓" : "–"}</span>
         <span className="line-clamp-1 min-w-0 flex-1 break-words text-muted">{x.issue}</span>
-        <span className={`shrink-0 text-xs ${status === "fixed" ? "text-ok" : "text-faint"}`}>{status === "fixed" ? "Fixed" : "Dismissed · noted on the ticket"}</span>
-        <button type="button" onClick={onReopen} className="shrink-0 text-xs text-faint hover:text-fg">
+        <span className={`shrink-0 text-xs ${status === "fixed" ? "text-ok" : "text-faint"}`}>
+          {status === "fixed" ? (
+            "Fixed"
+          ) : (
+            <>
+              Dismissed<span className="hidden md:inline"> · noted on the ticket</span>
+            </>
+          )}
+        </span>
+        <button type="button" onClick={onReopen} className="-my-2 shrink-0 py-2 text-xs text-faint hover:text-fg md:my-0 md:py-0">
           Undo
         </button>
       </li>
@@ -76,16 +84,16 @@ function IssueRow({
   return (
     <li className={`relative grid gap-2 overflow-hidden rounded-[10px] bg-surface-2 px-4 py-3.5 ${fixing ? "ring-1 ring-brand-text/40" : queued ? "ring-1 ring-line" : ""}`}>
       {fixing && <span className="pointer-events-none absolute inset-y-0 left-0 w-1/2 bg-gradient-to-r from-transparent via-brand/15 to-transparent animate-[ai-sweep_1.6s_ease-in-out_infinite]" />}
-      <div className="relative flex items-center justify-between gap-3">
+      <div className="relative flex flex-wrap items-center justify-between gap-x-3 gap-y-1 md:flex-nowrap md:gap-3">
         <span className="flex items-center gap-2 text-xs">
           <span className={`rounded-full px-2 py-0.5 font-medium ${x.severity === "block" ? "bg-bad-soft text-bad" : "bg-warn-soft text-warn"}`}>{x.severity === "block" ? "Must fix" : "Heads up"}</span>
           <span className="text-faint">{FIELD_LABEL[x.field]}</span>
         </span>
-        <span className="flex items-center gap-1">
-          <button type="button" onClick={onEdit} className="rounded-full px-2.5 py-1 text-xs text-muted hover:bg-surface hover:text-fg">
+        <span className="-mr-2 flex items-center gap-1 md:mr-0">
+          <button type="button" onClick={onEdit} className="rounded-full px-2.5 py-2.5 text-xs text-muted hover:bg-surface hover:text-fg active:bg-surface md:py-1">
             Edit myself
           </button>
-          <button type="button" onClick={onDismiss} className="rounded-full px-2.5 py-1 text-xs text-muted hover:bg-surface hover:text-fg" title="Dismiss. It's noted on the ticket's history with your name.">
+          <button type="button" onClick={onDismiss} className="rounded-full px-2.5 py-2.5 text-xs text-muted hover:bg-surface hover:text-fg active:bg-surface md:py-1" title="Dismiss. It's noted on the ticket's history with your name.">
             Dismiss
           </button>
         </span>
@@ -98,7 +106,7 @@ function IssueRow({
             type="button"
             disabled={fixing || queued}
             onClick={onFix}
-            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-fg px-3.5 text-xs font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-60"
+            className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full bg-fg px-3.5 text-xs font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-60 md:h-8"
           >
             <Spark size={11} className={fixing ? "animate-[ai-pulse_1.2s_ease-in-out_infinite]" : ""} /> {fixing ? "Changing…" : queued ? "Queued" : "Make this change"}
           </button>
@@ -222,7 +230,7 @@ export function ReviewWorkspace({
                         Continuing anyway · undo
                       </button>
                     ) : (
-                      <button type="button" onClick={() => onSimilar(t.number, "continued")} className="h-8 rounded-full border border-line px-3.5 text-xs text-muted hover:border-faint hover:text-fg">
+                      <button type="button" onClick={() => onSimilar(t.number, "continued")} className="h-10 rounded-full border border-line px-3.5 text-xs text-muted hover:border-faint hover:text-fg md:h-8">
                         Continue anyway
                       </button>
                     )}
@@ -251,19 +259,19 @@ export function ReviewWorkspace({
             </div>
             {handled.brief === "offer" ? (
               <div className="flex gap-2">
-                <button type="button" onClick={() => onBrief("kept")} className="h-9 rounded-full px-3 text-xs text-muted hover:text-fg">
+                <button type="button" onClick={() => onBrief("kept")} className="h-10 rounded-full px-3 text-xs text-muted hover:text-fg md:h-9">
                   Keep mine
                 </button>
-                <button type="button" onClick={() => onBrief("used")} className="inline-flex h-9 items-center gap-1.5 rounded-full bg-brand px-4 text-xs font-medium text-white hover:bg-brand-hover">
+                <button type="button" onClick={() => onBrief("used")} className="inline-flex h-10 items-center gap-1.5 rounded-full bg-brand px-4 md:h-9 text-xs font-medium text-white hover:bg-brand-hover">
                   <Spark size={11} /> Use this brief
                 </button>
               </div>
             ) : handled.brief === "used" ? (
-              <button type="button" onClick={onUndo} className="h-9 rounded-full px-3 text-xs text-muted hover:text-fg">
+              <button type="button" onClick={onUndo} className="h-10 rounded-full px-3 text-xs text-muted hover:text-fg md:h-9">
                 Undo
               </button>
             ) : (
-              <button type="button" onClick={() => onBrief("used")} className="h-9 rounded-full px-3 text-xs text-muted hover:text-fg">
+              <button type="button" onClick={() => onBrief("used")} className="h-10 rounded-full px-3 text-xs text-muted hover:text-fg md:h-9">
                 Use it after all
               </button>
             )}
@@ -298,7 +306,7 @@ export function ReviewWorkspace({
                 type="button"
                 disabled={Boolean(handled.fixing)}
                 onClick={() => onFix(review.issues.map((x, i) => (handled.issues[i] === "open" && FIXABLE.includes(x.field) ? i : -1)).filter((i) => i >= 0))}
-                className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-fg px-4 text-xs font-medium text-bg hover:opacity-90 disabled:opacity-60"
+                className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full bg-fg px-4 md:h-9 text-xs font-medium text-bg hover:opacity-90 disabled:opacity-60"
               >
                 <Spark size={11} /> {handled.fixing ? "Changing…" : "Fix them all"}
               </button>

@@ -190,7 +190,7 @@ export function FeedPreview({ view, loading = false, autoPlay = false, compact =
       {view.media.length > 1 && (
         <div className="flex items-center justify-center gap-1.5 bg-white py-2">
           {view.media.map((_, i) => (
-            <button key={i} onClick={() => setSlide(i)} aria-label={`Card ${i + 1}`} className={`h-1.5 rounded-full transition-all ${i === slide ? "w-4 bg-[#1877f2]" : "w-1.5 bg-[#cfd3d8]"}`} />
+            <button key={i} onClick={() => setSlide(i)} aria-label={`Card ${i + 1}`} className={`relative h-1.5 rounded-full transition-all before:absolute before:-inset-x-1 before:-inset-y-3 before:content-[''] ${i === slide ? "w-4 bg-[#1877f2]" : "w-1.5 bg-[#cfd3d8]"}`} />
           ))}
         </div>
       )}

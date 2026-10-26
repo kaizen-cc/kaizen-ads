@@ -26,12 +26,12 @@ export function PlaybookActions({ subId, canRebuild, canShare = true }: { subId:
     <div className="grid justify-items-end gap-1.5">
       <div className="flex gap-2">
         {canRebuild && (
-          <button type="button" onClick={rebuild} disabled={pending} className="rounded-full border border-line px-4 py-2 text-sm text-muted hover:text-fg disabled:opacity-50">
+          <button type="button" onClick={rebuild} disabled={pending} className="min-h-11 rounded-full border border-line px-4 py-2 text-sm text-muted hover:text-fg disabled:opacity-50 md:min-h-0">
             {canShare ? "Rebuild" : "Write it now"}
           </button>
         )}
         {canShare && (
-          <button type="button" onClick={share} disabled={pending} className="rounded-full bg-fg px-4 py-2 text-sm text-bg disabled:opacity-50">
+          <button type="button" onClick={share} disabled={pending} className="min-h-11 rounded-full bg-fg px-4 py-2 text-sm text-bg disabled:opacity-50 md:min-h-0">
             Share for sales
           </button>
         )}

@@ -23,7 +23,7 @@ export default async function PlaybookPage({ params }: PageProps<"/ideas/playboo
   const playbook = await loadPlaybook(db, id);
   const lead = me.isExec || me.isLead;
   const back = (
-    <Link href="/ideas?tab=verticals" className="text-sm text-muted hover:text-fg">
+    <Link href="/ideas?tab=verticals" className="-my-2 inline-block py-2 text-sm text-muted hover:text-fg md:my-0 md:py-0">
       ← Verticals
     </Link>
   );

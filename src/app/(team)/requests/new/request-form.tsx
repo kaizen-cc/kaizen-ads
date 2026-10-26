@@ -123,6 +123,8 @@ export function RequestForm({
   const [handled, setHandled] = useState<Handled | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<number[] | null>(null);
+  // Phones: the winners and market ideas open as a bottom sheet instead of pushing the form down
+  const [ideasOpen, setIdeasOpen] = useState(false);
   const [pending, start] = useTransition();
   const latest = useRef(0); // ignore suggestions that come back after the client changed
   const topRef = useRef<HTMLDivElement>(null);
@@ -463,7 +465,7 @@ export function RequestForm({
         <div className="grid gap-6">
           <div className="flex items-center justify-between gap-3">
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">New request</p>
-            <Link href="/board" onClick={() => writeSaved(null, saveKey)} className="text-xs text-muted hover:text-fg">
+            <Link href="/board" onClick={() => writeSaved(null, saveKey)} className="-m-3 p-3 text-xs text-muted hover:text-fg md:m-0 md:p-0">
               Cancel
             </Link>
           </div>
@@ -474,10 +476,10 @@ export function RequestForm({
                 <span className="text-faint"> · saved {new Intl.DateTimeFormat("en-US", { weekday: "short", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }).format(new Date(restoredAt))}</span>
               </span>
               <span className="flex items-center gap-1">
-                <button type="button" onClick={() => setRestoredAt(null)} className="rounded-full px-3 py-1 text-xs text-muted hover:text-fg">
+                <button type="button" onClick={() => setRestoredAt(null)} className="rounded-full px-3 py-2 text-xs text-muted hover:text-fg md:py-1">
                   Got it
                 </button>
-                <button type="button" onClick={startOver} className="rounded-full border border-line px-3 py-1 text-xs text-muted hover:border-faint hover:text-fg">
+                <button type="button" onClick={startOver} className="rounded-full border border-line px-3 py-2 text-xs text-muted hover:border-faint hover:text-fg md:py-1">
                   Start over
                 </button>
               </span>
@@ -503,7 +505,7 @@ export function RequestForm({
               {client && step > 0 && (
                 <div className="mb-2 flex items-center gap-2">
                   <ClientTag name={client.name} />
-                  <button type="button" onClick={() => go(0)} className="text-xs text-faint hover:text-fg">
+                  <button type="button" onClick={() => go(0)} className="-my-2 px-1 py-2 text-xs text-faint hover:text-fg md:my-0 md:px-0 md:py-0">
                     Change
                   </button>
                 </div>
@@ -527,9 +529,48 @@ export function RequestForm({
                   />
                 )}
                 {draft.clientId && !demo && (
-                  <div className="xl:hidden">
-                    <IdeasPanel clientId={draft.clientId} onBrief={applyIdea} />
-                  </div>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setIdeasOpen(true)}
+                      className="flex min-h-12 items-center gap-3 rounded-[10px] border border-line bg-surface px-4 py-3 text-left active:bg-surface-2 md:hidden"
+                    >
+                      <Spark size={14} className="shrink-0 text-brand-text" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-medium">Start from an idea</span>
+                        <span className="block truncate text-xs text-faint">Our winners and the market, written up as a brief</span>
+                      </span>
+                      <span aria-hidden className="text-faint">
+                        →
+                      </span>
+                    </button>
+                    {/* One panel, loaded once: a section from tablet up to the wide layout, a bottom sheet on phones */}
+                    <div
+                      className={`${ideasOpen ? "fixed inset-0 z-50 flex flex-col justify-end" : "hidden"} md:static md:z-auto md:block xl:hidden`}
+                      role={ideasOpen ? "dialog" : undefined}
+                      aria-modal={ideasOpen || undefined}
+                      aria-label={ideasOpen ? "Start from an idea" : undefined}
+                    >
+                      <button type="button" aria-label="Close" onClick={() => setIdeasOpen(false)} className="absolute inset-0 bg-black/70 backdrop-blur-sm animate-[sheet-fade_.2s_ease-out] md:hidden" />
+                      <div className="relative grid max-h-[88dvh] min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-t-[20px] border-t border-line bg-bg animate-[sheet-up_.28s_cubic-bezier(.2,.8,.2,1)] md:block md:max-h-none md:animate-none md:overflow-visible md:rounded-none md:border-0 md:bg-transparent">
+                        <div className="flex items-center justify-between gap-3 border-b border-line py-1 pl-4 pr-2 md:hidden">
+                          <p className="text-sm font-medium">Start from an idea</p>
+                          <button type="button" onClick={() => setIdeasOpen(false)} className="h-11 rounded-full px-3 text-sm text-muted active:bg-surface-2">
+                            Done
+                          </button>
+                        </div>
+                        <div className="min-h-0 overflow-y-auto overscroll-contain px-4 pb-[calc(16px+env(safe-area-inset-bottom))] pt-4 md:overflow-visible md:p-0">
+                          <IdeasPanel
+                            clientId={draft.clientId}
+                            onBrief={(patch) => {
+                              setIdeasOpen(false);
+                              applyIdea(patch);
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </>
                 )}
                 <div className="grid gap-3 sm:grid-cols-3">
                   {FORMATS.map((f) => {
@@ -577,7 +618,7 @@ export function RequestForm({
                       <p className="flex items-center gap-1.5 text-xs text-muted">
                         <Spark size={11} className="text-brand-text" /> Suggested for this client
                       </p>
-                      <button type="button" onClick={() => applyMix(s)} className="h-8 shrink-0 rounded-full border border-brand-text/40 px-3 text-xs text-fg hover:bg-brand-soft">
+                      <button type="button" onClick={() => applyMix(s)} className="h-10 shrink-0 rounded-full border border-brand-text/40 px-3 text-xs text-fg hover:bg-brand-soft md:h-8">
                         Use this mix
                       </button>
                     </div>
@@ -603,15 +644,15 @@ export function RequestForm({
                         const c = draft.formats[f]!;
                         return (
                           <div key={f} className="grid gap-3 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end sm:gap-6">
-                            <span className="flex items-center gap-2 text-sm sm:h-10">
+                            <span className="flex items-center gap-2 text-sm sm:h-11 md:h-10">
                               <FormatIcon format={f} size={16} /> {FORMAT_LABEL[f]}
                             </span>
-                            <div className="grid grid-cols-[auto_auto_minmax(40px,1fr)] items-end gap-3">
+                            <div className="grid grid-cols-[auto_auto_minmax(40px,1fr)] items-end gap-2 md:gap-3">
                               <Stepper label="Net new" value={c.new} onChange={(n) => setCount(f, "new", n)} />
                               <Stepper label="Variations" value={c.variations} max={MAX_VARIATIONS} onChange={(n) => setCount(f, "variations", n)} />
                               <span className="grid justify-items-end gap-1.5">
                                 <span className="text-[11px] text-faint">Total</span>
-                                <span className={`tabular grid h-10 place-items-center text-lg ${c.new + c.variations === 0 ? "text-bad" : ""}`}>{c.new + c.variations}</span>
+                                <span className={`tabular grid h-11 place-items-center text-lg md:h-10 ${c.new + c.variations === 0 ? "text-bad" : ""}`}>{c.new + c.variations}</span>
                               </span>
                             </div>
                           </div>
@@ -746,13 +787,13 @@ export function RequestForm({
                       </p>
                       <p className="whitespace-pre-wrap text-sm leading-relaxed">{briefAi.text}</p>
                       <div className="flex flex-wrap gap-2">
-                        <button type="button" onClick={() => (set({ brief: briefAi.text }), setBriefAi({ status: "idle" }))} className="h-8 rounded-full bg-fg px-3 text-xs text-bg">
+                        <button type="button" onClick={() => (set({ brief: briefAi.text }), setBriefAi({ status: "idle" }))} className="h-10 rounded-full bg-fg px-3 text-xs text-bg md:h-8">
                           Replace mine
                         </button>
-                        <button type="button" onClick={() => (set({ brief: `${draft.brief.trim()}\n\n${briefAi.text}` }), setBriefAi({ status: "idle" }))} className="h-8 rounded-full border border-line px-3 text-xs hover:border-faint">
+                        <button type="button" onClick={() => (set({ brief: `${draft.brief.trim()}\n\n${briefAi.text}` }), setBriefAi({ status: "idle" }))} className="h-10 rounded-full border border-line px-3 text-xs hover:border-faint md:h-8">
                           Add below mine
                         </button>
-                        <button type="button" onClick={() => setBriefAi({ status: "idle" })} className="h-8 px-2 text-xs text-faint hover:text-fg">
+                        <button type="button" onClick={() => setBriefAi({ status: "idle" })} className="h-10 px-2 text-xs text-faint hover:text-fg md:h-8">
                           Dismiss
                         </button>
                       </div>
@@ -844,7 +885,7 @@ export function RequestForm({
                     <div key={k as string} className="group min-w-0">
                       <dt className="flex items-center gap-2 text-xs text-faint">
                         {k}
-                        <button type="button" onClick={() => go(to as number)} className="opacity-0 transition-opacity hover:text-fg group-hover:opacity-100 focus:opacity-100">
+                        <button type="button" onClick={() => go(to as number)} className="-my-2 px-2 py-2 text-muted transition-opacity hover:text-fg md:my-0 md:px-0 md:py-0 md:text-inherit md:opacity-0 md:group-hover:opacity-100 md:focus:opacity-100">
                           Edit
                         </button>
                       </dt>
@@ -854,7 +895,7 @@ export function RequestForm({
                   <div className="group sm:col-span-2">
                     <dt className="flex items-center gap-2 text-xs text-faint">
                       Brief
-                      <button type="button" onClick={() => go(3)} className="opacity-0 transition-opacity hover:text-fg group-hover:opacity-100 focus:opacity-100">
+                      <button type="button" onClick={() => go(3)} className="-my-2 px-2 py-2 text-muted transition-opacity hover:text-fg md:my-0 md:px-0 md:py-0 md:text-inherit md:opacity-0 md:group-hover:opacity-100 md:focus:opacity-100">
                         Edit
                       </button>
                     </dt>
@@ -889,19 +930,22 @@ export function RequestForm({
             )}
 
             {/* Footer */}
-            <div className={`flex flex-wrap items-center justify-between gap-3 border-t border-line pt-6 ${step === 0 ? "hidden" : ""}`}>
+            {/* Phones: Back and Continue stay under the thumb, just above the tab bar */}
+            <div
+              className={`sticky bottom-[calc(59px+env(safe-area-inset-bottom))] z-20 -mx-4 flex flex-wrap items-center justify-between gap-3 border-t border-line bg-bg/95 px-4 py-3 backdrop-blur-xl md:static md:z-auto md:mx-0 md:bg-transparent md:px-0 md:pb-0 md:pt-6 md:backdrop-blur-none ${step === 0 ? "hidden" : ""}`}
+            >
               <div>
                 {step > 0 && (
-                  <button type="button" onClick={() => go(step - 1)} className="h-11 rounded-brand px-4 text-sm text-muted hover:bg-surface hover:text-fg">
+                  <button type="button" onClick={() => go(step - 1)} className="-ml-3 h-12 rounded-brand px-3 text-sm text-muted hover:bg-surface hover:text-fg md:ml-0 md:h-11 md:px-4">
                     ← Back
                   </button>
                 )}
               </div>
-              <div className="flex flex-wrap items-center justify-end gap-3">
-                {(error || (blocked && step > 0)) && <span className={`text-sm ${error ? "text-brand-text" : "text-faint"}`}>{error ?? blocked}</span>}
+              <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-x-3 gap-y-1 md:flex-none md:gap-3">
+                {(error || (blocked && step > 0)) && <span className={`text-right text-xs md:text-left md:text-sm ${error ? "text-brand-text" : "text-faint"}`}>{error ?? blocked}</span>}
                 {step < 4 ? (
                   step > 0 && (
-                    <button disabled={Boolean(blocked)} className="h-11 rounded-brand bg-brand px-6 text-sm font-medium text-white shadow-[0_8px_30px_-8px_rgba(178,30,44,0.7)] transition-colors hover:bg-brand-hover disabled:bg-surface-2 disabled:text-faint disabled:shadow-none">
+                    <button disabled={Boolean(blocked)} className="h-12 rounded-brand md:h-11 bg-brand px-6 text-sm font-medium text-white shadow-[0_8px_30px_-8px_rgba(178,30,44,0.7)] transition-colors hover:bg-brand-hover disabled:bg-surface-2 disabled:text-faint disabled:shadow-none">
                       Continue
                     </button>
                   )
@@ -913,7 +957,7 @@ export function RequestForm({
                         type="button"
                         disabled={pending || Boolean(handled.fixing)}
                         onClick={() => send(review.review)}
-                        className="h-11 rounded-brand border border-line px-5 text-sm text-muted hover:border-faint hover:text-fg disabled:opacity-60"
+                        className="h-12 rounded-brand md:h-11 border border-line px-5 text-sm text-muted hover:border-faint hover:text-fg disabled:opacity-60"
                         title="Anything still open is noted on the tickets as dismissed"
                       >
                         {pending ? "Creating…" : `Send anyway · ${openItems} open`}
@@ -923,7 +967,7 @@ export function RequestForm({
                         type="button"
                         disabled={pending || Boolean(handled.fixing)}
                         onClick={() => send(review.review)}
-                        className="inline-flex h-11 items-center gap-2 rounded-brand bg-brand px-6 text-sm font-medium text-white shadow-[0_8px_30px_-8px_rgba(178,30,44,0.7)] hover:bg-brand-hover disabled:opacity-70"
+                        className="inline-flex h-12 items-center md:h-11 gap-2 rounded-brand bg-brand px-6 text-sm font-medium text-white shadow-[0_8px_30px_-8px_rgba(178,30,44,0.7)] hover:bg-brand-hover disabled:opacity-70"
                       >
                         {pending ? "Creating…" : `Send to the team · ${plural(formats.length, "ticket")}`}
                       </button>
@@ -934,7 +978,7 @@ export function RequestForm({
                     type="button"
                     disabled={pending || review.status === "running"}
                     onClick={() => (review.status === "error" ? send(null) : runReview())}
-                    className="inline-flex h-11 items-center gap-2 rounded-brand bg-brand px-6 text-sm font-medium text-white shadow-[0_8px_30px_-8px_rgba(178,30,44,0.7)] transition-colors hover:bg-brand-hover disabled:opacity-70"
+                    className="inline-flex h-12 items-center md:h-11 gap-2 rounded-brand bg-brand px-6 text-sm font-medium text-white shadow-[0_8px_30px_-8px_rgba(178,30,44,0.7)] transition-colors hover:bg-brand-hover disabled:opacity-70"
                   >
                     {aiOn && review.status !== "error" && <Spark size={12} />}
                     {pending
