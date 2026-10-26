@@ -79,7 +79,7 @@ export function TicketCard({
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onClick={onOpen}
-      className={`group relative grid w-full gap-2.5 overflow-hidden rounded-brand border border-line bg-surface p-3 text-left transition duration-150 before:absolute before:inset-y-0 before:left-0 before:w-[3px] hover:-translate-y-px hover:border-faint hover:shadow-[0_10px_30px_-12px_rgba(0,0,0,0.8)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-text ${EDGE[h]} ${
+      className={`group relative grid w-full gap-2.5 overflow-hidden rounded-brand border border-line bg-surface p-3 text-left transition duration-150 before:absolute before:inset-y-0 before:left-0 before:w-[3px] hover:-translate-y-px hover:border-faint hover:shadow-[0_10px_30px_-12px_rgba(0,0,0,0.8)] max-md:p-3.5 max-md:active:scale-[0.985] focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-text ${EDGE[h]} ${
         dragging ? "opacity-40" : ""
       }`}
     >
@@ -87,7 +87,7 @@ export function TicketCard({
         <ClientTag name={ticket.clientName} small />
         <span className="flex shrink-0 items-center gap-1.5 text-faint">
           {ticket.priority !== "normal" && (
-            <span className={`rounded-full px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide ${ticket.priority === "urgent" ? "bg-bad-soft text-bad" : "bg-warn-soft text-warn"}`}>
+            <span className={`rounded-full px-1.5 py-px text-[11px] font-semibold uppercase md:text-[10px] tracking-wide ${ticket.priority === "urgent" ? "bg-bad-soft text-bad" : "bg-warn-soft text-warn"}`}>
               {ticket.priority}
             </span>
           )}
@@ -102,7 +102,7 @@ export function TicketCard({
         </p>
       )}
       {((ticket.internalRounds ?? 0) > 0 || (ticket.clientRounds ?? 0) > 0) && (
-        <p className="-mt-1 flex flex-wrap gap-1 text-[10.5px]" title="Revision rounds: sent back by the Head of Creative (internal) and by the client">
+        <p className="-mt-1 flex flex-wrap gap-1 text-[11px] md:text-[10.5px]" title="Revision rounds: sent back by the Head of Creative (internal) and by the client">
           {(ticket.internalRounds ?? 0) > 0 && <span className="rounded-full bg-surface-2 px-1.5 py-px text-muted">{ticket.internalRounds} internal rev</span>}
           {(ticket.clientRounds ?? 0) > 0 && (
             <span className={`rounded-full px-1.5 py-px ${(ticket.clientRounds ?? 0) >= 2 ? "bg-warn-soft text-warn" : "bg-brand-soft text-brand-text"}`}>

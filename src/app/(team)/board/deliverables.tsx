@@ -321,8 +321,8 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
 
       {/* Staging: what the drop will become, before anything uploads */}
       {staged ? (
-        <div className="grid gap-3 rounded-[10px] border border-brand-text/30 bg-surface p-4 animate-[step-in_.25s_ease-out]">
-          <div className="flex items-baseline justify-between gap-3">
+        <div className="grid gap-3 rounded-[10px] border border-brand-text/30 bg-surface p-4 animate-[step-in_.25s_ease-out] max-md:p-3">
+          <div className="flex items-baseline justify-between gap-3 max-md:flex-wrap">
             <p className="text-sm font-medium">
               {plural(staged.length, "design")} · {plural(staged.reduce((n, d) => n + d.files.length, 0), "file")}
             </p>
@@ -354,9 +354,9 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
                       value={d.name}
                       onChange={(e) => setStaged(staged.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
                       aria-label="Design name"
-                      className="h-9 min-w-0 flex-1 rounded-brand border border-transparent bg-transparent px-2 text-sm outline-none hover:border-line focus:border-brand-text/60"
+                      className="h-9 min-w-0 flex-1 rounded-brand border border-transparent bg-transparent px-2 text-sm outline-none hover:border-line focus:border-brand-text/60 max-md:h-11 max-md:border-line/60"
                     />
-                    <button onClick={() => setStaged(staged.filter((_, j) => j !== i).length ? staged.filter((_, j) => j !== i) : null)} className="text-xs text-faint hover:text-fg" aria-label="Remove">
+                    <button onClick={() => setStaged(staged.filter((_, j) => j !== i).length ? staged.filter((_, j) => j !== i) : null)} className="text-xs text-faint hover:text-fg max-md:-mr-2 max-md:grid max-md:h-11 max-md:w-11 max-md:shrink-0 max-md:place-items-center max-md:text-sm" aria-label="Remove">
                       ✕
                     </button>
                   </div>
@@ -376,7 +376,7 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
                         value={d.variationOf ?? ""}
                         onChange={(e) => setStaged(staged.map((x, j) => (j === i ? { ...x, variationOf: e.target.value || null } : x)))}
                         aria-label="Variation of"
-                        className="ml-auto h-7 rounded-full border border-line bg-bg px-2 text-xs text-muted"
+                        className="ml-auto h-7 rounded-full border border-line bg-bg px-2 text-xs text-muted max-md:ml-0 max-md:h-11 max-md:w-full max-md:px-3"
                       >
                         <option value="">Net new design</option>
                         {staged
@@ -414,7 +414,7 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
               <p className="text-sm">Did you have to change anything from the brief?</p>
               <span className="flex gap-1">
                 {([false, true] as const).map((v) => (
-                  <button key={String(v)} type="button" onClick={() => setAdjusted(v ? { on: true, note: adjusted.note } : { on: false, note: "" })} className={`h-7 rounded-full px-3 text-xs transition-colors ${adjusted.on === v ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
+                  <button key={String(v)} type="button" onClick={() => setAdjusted(v ? { on: true, note: adjusted.note } : { on: false, note: "" })} className={`h-7 rounded-full px-3 text-xs transition-colors max-md:h-11 max-md:px-5 ${adjusted.on === v ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
                     {v ? "Yes" : "No"}
                   </button>
                 ))}
@@ -431,7 +431,7 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
               />
             )}
           </div>
-          <div className="flex items-center justify-end gap-2">
+          <div className="flex items-center justify-end gap-2 max-md:flex-wrap max-md:[&>button]:h-11">
             <button type="button" onClick={() => filesInput.current?.click()} className="mr-auto h-9 rounded-brand px-3 text-sm text-muted hover:text-fg">
               + Add more files
             </button>
@@ -446,18 +446,18 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
             >
               Cancel
             </button>
-            <button onClick={upload} disabled={adjusted.on && !adjusted.note.trim()} className="h-9 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:bg-brand-hover disabled:opacity-50">
+            <button onClick={upload} disabled={adjusted.on && !adjusted.note.trim()} className="h-9 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:bg-brand-hover disabled:opacity-50 max-md:order-last max-md:w-full">
               Upload {plural(staged.length, "design")}
             </button>
           </div>
         </div>
       ) : replacing ? (
-        <div className="grid gap-3 rounded-[10px] border border-brand-text/30 bg-surface p-4 animate-[step-in_.25s_ease-out]">
+        <div className="grid gap-3 rounded-[10px] border border-brand-text/30 bg-surface p-4 animate-[step-in_.25s_ease-out] max-md:p-3">
           <p className="text-sm font-medium">
             New version of D{replacing.design.position} · {replacing.design.name}
             <span className="font-normal text-muted"> → v{replacing.design.currentVersion + 1}</span>
           </p>
-          <div className="flex gap-2">
+          <div className="flex gap-2 max-md:flex-wrap">
             {replacing.files.slice(0, 6).map((f) => (
               <Thumb key={f.id} src={f.preview} format={ticket.format} className="h-14 w-14 rounded-[6px]" />
             ))}
@@ -467,9 +467,9 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
             value={replacing.note}
             onChange={(e) => setReplacing({ ...replacing, note: e.target.value })}
             placeholder="What changed? e.g. Bigger logo, price moved to the top"
-            className="h-10 rounded-brand border border-line bg-bg px-3 text-sm outline-none placeholder:text-faint focus:border-brand-text/60"
+            className="h-10 rounded-brand border border-line bg-bg px-3 text-sm outline-none placeholder:text-faint focus:border-brand-text/60 max-md:h-11"
           />
-          <div className="flex items-center justify-end gap-2">
+          <div className="flex items-center justify-end gap-2 max-md:[&>button]:h-11 max-md:[&>button]:flex-1">
             <button onClick={() => setReplacing(null)} className="h-9 rounded-brand px-3 text-sm text-muted hover:text-fg">
               Cancel
             </button>
@@ -488,13 +488,17 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
             <p className="text-sm text-muted">Reading files…</p>
           ) : (
             <>
-              <p className="text-sm text-muted">{over ? "Drop to add" : "Drop files or a folder here"}</p>
+              <p className="text-sm text-muted max-md:hidden">{over ? "Drop to add" : "Drop files or a folder here"}</p>
+              {/* Phones: one big button that opens the photo library / files (no drag and drop, and no folders, on a phone) */}
               <p className="flex items-center gap-2 text-xs text-faint">
-                <button onClick={() => filesInput.current?.click()} className="text-fg underline-offset-4 hover:underline">
+                <button
+                  onClick={() => filesInput.current?.click()}
+                  className="text-fg underline-offset-4 hover:underline max-md:h-11 max-md:rounded-full max-md:border max-md:border-line max-md:bg-surface max-md:px-5 max-md:text-sm max-md:font-medium"
+                >
                   Choose files
                 </button>
-                ·
-                <button onClick={() => folderInput.current?.click()} className="text-fg underline-offset-4 hover:underline">
+                <span className="max-md:hidden">·</span>
+                <button onClick={() => folderInput.current?.click()} className="text-fg underline-offset-4 hover:underline max-md:hidden">
                   Choose a folder
                 </button>
               </p>
@@ -548,7 +552,7 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
                   </div>
                 </div>
                 {d.clientApproved ? (
-                  <span className="grid h-8 place-items-center rounded-brand bg-ok/10 text-xs text-ok" title="The client approved this design; it can't be changed">
+                  <span className="grid h-8 place-items-center rounded-brand bg-ok/10 text-xs text-ok max-md:h-auto max-md:min-h-11 max-md:px-1 max-md:text-center" title="The client approved this design; it can't be changed">
                     ✓ Client approved · locked
                   </span>
                 ) : (
@@ -557,7 +561,7 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
                       replaceFor.current = d;
                       replaceInput.current?.click();
                     }}
-                    className="h-8 rounded-brand border border-line text-xs text-muted transition-colors hover:border-faint hover:text-fg"
+                    className="h-8 rounded-brand border border-line text-xs text-muted transition-colors hover:border-faint hover:text-fg max-md:h-11 max-md:text-sm"
                   >
                     Replace
                   </button>
@@ -686,7 +690,7 @@ function CheckPanel({
           </span>
         ) : (
           check.status !== "idle" && (
-            <button onClick={onRetry} className="text-faint hover:text-fg">
+            <button onClick={onRetry} className="text-faint hover:text-fg max-md:-my-2.5 max-md:py-2.5">
               Check again
             </button>
           )
@@ -725,7 +729,7 @@ function CheckPanel({
         <div className="grid gap-2 border-t border-line pt-2.5">
           <p className="text-muted">{check.summary}</p>
           {pending && (
-            <button onClick={onApply} className="justify-self-start rounded-full bg-[#6c7ee1]/15 px-3 py-1.5 font-medium text-[#9aa7f0] hover:bg-[#6c7ee1]/25">
+            <button onClick={onApply} className="justify-self-start rounded-full bg-[#6c7ee1]/15 px-3 py-1.5 font-medium text-[#9aa7f0] hover:bg-[#6c7ee1]/25 max-md:min-h-11 max-md:px-4 max-md:text-sm">
               Use the AI&apos;s grouping
             </button>
           )}
@@ -757,7 +761,7 @@ function CheckPanel({
                 await onCounts(proposed.new, proposed.variations);
                 setSaving(false);
               }}
-              className="rounded-full border border-line px-3 py-1 text-muted hover:border-faint hover:text-fg disabled:opacity-60"
+              className="rounded-full border border-line px-3 py-1 text-muted hover:border-faint hover:text-fg disabled:opacity-60 max-md:min-h-11 max-md:w-full"
             >
               {saving ? "Saving…" : `Make it ${proposed.new} new${proposed.variations ? ` + ${proposed.variations} var.` : ""}`}
             </button>

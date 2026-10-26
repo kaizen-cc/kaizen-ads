@@ -13,17 +13,17 @@ export function ShadowCard({ s, onOpen }: { s: ShadowTicket; onOpen: () => void 
     <button
       type="button"
       onClick={onOpen}
-      className="grid gap-2 rounded-brand border border-dashed border-faint/50 bg-transparent p-3 text-left transition-colors hover:border-fg/40 hover:bg-surface/40"
+      className="grid gap-2 rounded-brand border border-dashed border-faint/50 bg-transparent p-3 text-left transition-colors hover:border-fg/40 hover:bg-surface/40 max-md:p-3.5 max-md:active:bg-surface/40"
     >
       <span className="flex items-center justify-between gap-2">
-        <span className="inline-flex items-center gap-1 rounded-full border border-line px-1.5 py-0.5 text-[10px] text-muted">
+        <span className="inline-flex items-center gap-1 rounded-full border border-line px-1.5 py-0.5 text-[11px] text-muted md:text-[10px]">
           <span className="h-1.5 w-1.5 rounded-full bg-[#f06a6a]" />
           In Asana
         </span>
-        {s.priority && /high|urgent/i.test(s.priority) && <span className="rounded-full bg-bad-soft px-1.5 py-0.5 text-[10px] text-bad">{s.priority}</span>}
+        {s.priority && /high|urgent/i.test(s.priority) && <span className="rounded-full bg-bad-soft px-1.5 py-0.5 text-[11px] text-bad md:text-[10px]">{s.priority}</span>}
       </span>
       <span className="line-clamp-3 text-[13px] leading-snug text-muted">{s.name}</span>
-      {s.section && s.section.trim().toLowerCase() !== stageInfo(s.stage).label.toLowerCase() && <span className="text-[10px] text-faint">Asana: {s.section}</span>}
+      {s.section && s.section.trim().toLowerCase() !== stageInfo(s.stage).label.toLowerCase() && <span className="text-[11px] text-faint md:text-[10px]">Asana: {s.section}</span>}
       <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-faint">
         <span className="truncate">{s.clientName ?? (s.clientRef ? `Client ${s.clientRef}` : "Client not matched")}</span>
         {s.assignee && <span>· {s.assignee.split(" ")[0]}</span>}
@@ -43,21 +43,24 @@ export function ShadowSheet({ s, canMigrate, onClose }: { s: ShadowTicket; canMi
   const fields = Object.entries(s.fields);
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-[2px]" onClick={onClose}>
-      <aside onClick={(e) => e.stopPropagation()} className="grid h-full w-full max-w-xl content-start gap-6 overflow-y-auto border-l border-line bg-bg p-6 animate-[drawer-right_.25s_ease]">
+      <aside
+        onClick={(e) => e.stopPropagation()}
+        className="grid h-full w-full max-w-xl content-start gap-6 overflow-y-auto border-l border-line bg-bg p-6 animate-[drawer-right_.25s_ease] max-md:border-l-0 max-md:overscroll-contain max-md:px-4 max-md:pb-[calc(1.5rem+env(safe-area-inset-bottom))] max-md:pt-[calc(0.75rem+env(safe-area-inset-top))]"
+      >
         <div className="flex items-start justify-between gap-3">
-          <div className="grid gap-2">
+          <div className="grid gap-2 max-md:min-w-0 max-md:[overflow-wrap:anywhere]">
             <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-dashed border-line px-2 py-0.5 text-[11px] text-muted">
               <span className="h-1.5 w-1.5 rounded-full bg-[#f06a6a]" />
               Mirrored from Asana · not a Kaizen Ads ticket yet
             </span>
             <h2 className="font-heading text-xl leading-snug">{s.name}</h2>
           </div>
-          <button type="button" onClick={onClose} className="rounded-full px-2 text-lg text-faint hover:text-fg" aria-label="Close">
+          <button type="button" onClick={onClose} className="rounded-full px-2 text-lg text-faint hover:text-fg max-md:-mr-2 max-md:grid max-md:h-11 max-md:w-11 max-md:shrink-0 max-md:place-items-center max-md:px-0 max-md:text-2xl" aria-label="Close">
             ×
           </button>
         </div>
 
-        <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-[12px] border border-line bg-line text-sm">
+        <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-[12px] border border-line bg-line text-sm max-md:[overflow-wrap:anywhere]">
           {[
             ["Asana column", s.section ?? "—"],
             ["Lands in", stageInfo(s.stage).label],
@@ -80,7 +83,7 @@ export function ShadowSheet({ s, canMigrate, onClose }: { s: ShadowTicket; canMi
             missing for that stage. After that it&apos;s worked here, with the AI, turnarounds and the allotment.
           </p>
           {canMigrate ? (
-            <Link href={`/requests/new?asana=${s.gid}`} className="justify-self-start rounded-full bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-hover">
+            <Link href={`/requests/new?asana=${s.gid}`} className="justify-self-start rounded-full bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-hover max-md:grid max-md:h-12 max-md:w-full max-md:place-items-center max-md:justify-self-stretch">
               Migrate to Kaizen Ads →
             </Link>
           ) : (
@@ -99,7 +102,7 @@ export function ShadowSheet({ s, canMigrate, onClose }: { s: ShadowTicket; canMi
             <p className="text-[11px] uppercase tracking-[0.14em] text-faint">Asana fields</p>
             <dl className="grid gap-1 text-[13px]">
               {fields.map(([k, v]) => (
-                <div key={k} className="grid grid-cols-[140px_minmax(0,1fr)] gap-3">
+                <div key={k} className="grid grid-cols-[110px_minmax(0,1fr)] gap-3 max-md:[overflow-wrap:anywhere] md:grid-cols-[140px_minmax(0,1fr)]">
                   <dt className="text-faint">{k}</dt>
                   <dd className="text-muted">{v}</dd>
                 </div>
@@ -122,7 +125,7 @@ export function ShadowSheet({ s, canMigrate, onClose }: { s: ShadowTicket; canMi
             </ul>
           </div>
         )}
-        <a href={s.url} target="_blank" rel="noreferrer" className="justify-self-start text-sm text-muted hover:text-fg">
+        <a href={s.url} target="_blank" rel="noreferrer" className="justify-self-start text-sm text-muted hover:text-fg max-md:py-3">
           Open in Asana ↗
         </a>
       </aside>

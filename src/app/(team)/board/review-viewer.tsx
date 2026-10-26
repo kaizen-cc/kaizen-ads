@@ -109,12 +109,12 @@ export function ReviewViewer({
 
   return (
     <div className="fixed inset-0 z-[70] grid grid-rows-[auto_1fr] bg-black/92 backdrop-blur-sm animate-[sheet-fade_.2s_ease-out]" role="dialog" aria-modal="true" aria-label={design.name}>
-      <header className="flex items-center justify-between gap-4 px-6 py-4">
+      <header className="flex items-center justify-between gap-4 px-6 py-4 max-md:gap-3 max-md:px-4 max-md:pb-3 max-md:pt-[calc(0.75rem+env(safe-area-inset-top))]">
         <div className="min-w-0">
           <p className="truncate font-medium text-white">
             D{design.position} · {design.name}
           </p>
-          <p className="text-xs text-white/50">
+          <p className="text-xs text-white/50 max-md:line-clamp-2">
             {FORMAT_LABEL[format]} · v{v?.version} {v?.by ? `by ${v.by}` : ""} · {v ? fmtWhen(v.at) : ""}
             {v?.note && <span className="text-white/70"> · “{v.note}”</span>}
           </p>
@@ -125,20 +125,25 @@ export function ReviewViewer({
               Open original
             </a>
           )}
-          <button onClick={onClose} className="grid h-9 w-9 place-items-center rounded-full text-white/70 hover:bg-white/10" aria-label="Close">
+          <button onClick={onClose} className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-white/70 hover:bg-white/10 max-md:h-11 max-md:w-11 max-md:bg-white/10 max-md:text-white" aria-label="Close">
             ✕
           </button>
         </div>
       </header>
 
-      <div className="grid min-h-0 lg:grid-cols-[minmax(0,1fr)_360px]">
+      {/* Phones: the creative, then its comments, scroll as one page; the comment box is pinned to the bottom of the screen */}
+      <div
+        className={`grid min-h-0 lg:grid-cols-[minmax(0,1fr)_360px] max-md:content-start max-md:overflow-y-auto max-md:overscroll-contain ${
+          draft ? "max-md:pb-[calc(13rem+env(safe-area-inset-bottom))]" : "max-md:pb-[calc(5rem+env(safe-area-inset-bottom))]"
+        }`}
+      >
         {/* The creative */}
-        <div className="grid min-h-0 grid-rows-[1fr_auto] gap-3 px-6 pb-6">
+        <div className="grid min-h-0 grid-rows-[1fr_auto] gap-3 px-6 pb-6 max-md:px-4 max-md:pb-4">
           <div className="grid min-h-0 place-items-center">
             {!file ? (
               <p className="text-sm text-white/60">No files on this version.</p>
             ) : isVideo && file.url ? (
-              <video ref={videoRef} key={file.id} src={file.url} controls playsInline onTimeUpdate={(e) => setNowMs(Math.round(e.currentTarget.currentTime * 1000))} className="max-h-full max-w-full rounded-[8px]" />
+              <video ref={videoRef} key={file.id} src={file.url} controls playsInline onTimeUpdate={(e) => setNowMs(Math.round(e.currentTarget.currentTime * 1000))} className="max-h-full max-w-full rounded-[8px] max-md:max-h-[60svh]" />
             ) : file.url && file.mime.startsWith("image/") ? (
               <div className="relative max-h-full">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -167,7 +172,7 @@ export function ReviewViewer({
                     setBox(null);
                   }}
                   onPointerCancel={() => setBox(null)}
-                  className="block max-h-[calc(100vh-220px)] max-w-full cursor-crosshair touch-none select-none rounded-[8px] object-contain"
+                  className="block max-h-[calc(100vh-220px)] max-w-full cursor-crosshair touch-none select-none rounded-[8px] object-contain max-md:max-h-[60svh] max-md:[-webkit-touch-callout:none]"
                 />
                 {pins.map((c) => (
                   <span key={c.id} className="contents">
@@ -180,7 +185,8 @@ export function ReviewViewer({
                   <span
                     onMouseEnter={() => setHover(c.id)}
                     onMouseLeave={() => setHover(null)}
-                    className={`absolute grid h-7 w-7 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full text-xs font-semibold shadow-[0_4px_14px_rgba(0,0,0,0.5)] ring-2 ring-white transition-transform ${
+                    onClick={() => setHover(c.id)} // touch: tapping a pin lights it and its comment
+                    className={`absolute grid h-7 w-7 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full text-xs font-semibold shadow-[0_4px_14px_rgba(0,0,0,0.5)] ring-2 ring-white transition-transform max-md:h-8 max-md:w-8 max-md:text-[13px] ${
                       c.resolved ? "bg-white/70 text-black/60" : "bg-brand text-white"
                     } ${hover === c.id ? "scale-125" : ""}`}
                     style={{ left: `${c.x! * 100}%`, top: `${c.y! * 100}%` }}
@@ -216,7 +222,7 @@ export function ReviewViewer({
                   <button
                     key={f.id}
                     onClick={() => (setFileId(f.id), setDraft(null))}
-                    className={`h-8 rounded-full px-3 text-xs ${f.id === file?.id ? "bg-white text-black" : "border border-white/20 text-white/70 hover:bg-white/10"}`}
+                    className={`h-8 rounded-full px-3 text-xs max-md:h-10 max-md:px-4 ${f.id === file?.id ? "bg-white text-black" : "border border-white/20 text-white/70 hover:bg-white/10"}`}
                   >
                     {format === "carousel" ? `Card ${f.card ?? i + 1}` : aspectLabel(f.aspect)}
                   </button>
@@ -230,7 +236,7 @@ export function ReviewViewer({
                     key={x.id}
                     onClick={() => (onVersion(x.version), setFileId(null), setDraft(null))}
                     title={x.note ?? undefined}
-                    className={`grid rounded-[8px] px-3 py-1.5 text-left text-xs ${x.version === v?.version ? "bg-brand text-white" : "border border-white/15 text-white/70 hover:bg-white/10"}`}
+                    className={`grid rounded-[8px] px-3 py-1.5 text-left text-xs max-md:min-h-11 max-md:content-center ${x.version === v?.version ? "bg-brand text-white" : "border border-white/15 text-white/70 hover:bg-white/10"}`}
                   >
                     <span className="font-medium">v{x.version}</span>
                     {x.note && <span className="max-w-[180px] truncate opacity-80">{x.note}</span>}
@@ -243,20 +249,30 @@ export function ReviewViewer({
 
         {/* Comments */}
         <aside className="grid min-h-0 grid-rows-[auto_1fr_auto] border-t border-white/10 bg-black/40 lg:border-l lg:border-t-0">
-          <div className="flex items-center justify-between px-5 py-4">
+          <div className="flex items-center justify-between px-5 py-4 max-md:flex-wrap max-md:gap-x-3 max-md:gap-y-1 max-md:px-4">
             <p className="text-sm font-medium text-white">
               Comments <span className="tabular text-white/40">{mine.length}</span>
             </p>
-            <p className="text-[11px] text-white/40">{isVideo ? "Pause where it's wrong, then comment" : "Click to pin a comment, or drag to box an area"}</p>
+            <p className="text-[11px] text-white/40">
+              {isVideo ? (
+                "Pause where it's wrong, then comment"
+              ) : (
+                <>
+                  <span className="max-md:hidden">Click to pin a comment, or drag to box an area</span>
+                  <span className="md:hidden">Tap the creative to pin a comment, or drag to box an area</span>
+                </>
+              )}
+            </p>
           </div>
 
-          <ol className="grid min-h-0 content-start gap-2 overflow-y-auto px-5 pb-4">
+          <ol className="grid min-h-0 content-start gap-2 overflow-y-auto px-5 pb-4 max-md:px-4">
             {mine.length === 0 && <li className="rounded-[10px] border border-dashed border-white/15 px-4 py-6 text-center text-xs text-white/40">No comments on v{v?.version} yet.</li>}
             {mine.map((c) => (
               <li
                 key={c.id}
                 onMouseEnter={() => setHover(c.id)}
                 onMouseLeave={() => setHover(null)}
+                onClick={() => setHover(c.id)} // touch: tapping a comment lights its pin
                 className={`grid gap-2 rounded-[12px] border px-3.5 py-3 transition-colors ${hover === c.id ? "border-white/30 bg-white/[0.06]" : "border-white/10 bg-white/[0.03]"} ${c.resolved ? "opacity-50" : ""}`}
               >
                 <div className="flex items-start gap-2.5">
@@ -265,7 +281,7 @@ export function ReviewViewer({
                     <p className="text-[11px] text-white/45">
                       {c.author ?? "Someone"} · {fmtWhen(c.at)}
                       {c.tMs != null && (
-                        <button onClick={() => videoRef.current && ((videoRef.current.currentTime = c.tMs! / 1000), videoRef.current.pause())} className="ml-1.5 rounded bg-white/10 px-1.5 py-0.5 tabular text-white/80 hover:bg-white/20">
+                        <button onClick={() => videoRef.current && ((videoRef.current.currentTime = c.tMs! / 1000), videoRef.current.pause())} className="ml-1.5 rounded bg-white/10 px-1.5 py-0.5 tabular text-white/80 hover:bg-white/20 max-md:px-2.5 max-md:py-1.5">
                           ▶ {clock(c.tMs)}
                         </button>
                       )}
@@ -273,14 +289,14 @@ export function ReviewViewer({
                     <p className={`mt-1 whitespace-pre-wrap text-sm leading-relaxed text-white/90 ${c.resolved ? "line-through" : ""}`}>{c.body}</p>
                   </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-1.5 pl-8">
-                  <button onClick={() => act(() => setCommentResolved(c.id, requestId, !c.resolved))} className="rounded-full px-2.5 py-1 text-[11px] text-white/60 hover:bg-white/10 hover:text-white">
+                <div className="flex flex-wrap items-center gap-1.5 pl-8 max-md:[&>*]:inline-flex max-md:[&>*]:min-h-10 max-md:[&>*]:items-center max-md:[&>*]:px-3.5 max-md:[&>*]:text-xs">
+                  <button onClick={() => act(() => setCommentResolved(c.id, requestId, !c.resolved))} className="rounded-full px-2.5 py-1 text-[11px] text-white/60 hover:bg-white/10 hover:text-white max-md:bg-white/[0.06]">
                     {c.resolved ? "Reopen" : "Resolve"}
                   </button>
                   {c.remembered ? (
                     <span className="rounded-full bg-white/10 px-2.5 py-1 text-[11px] text-white/60">In client memory</span>
                   ) : (
-                    <button onClick={() => act(() => rememberComment(c.id, requestId))} className="rounded-full px-2.5 py-1 text-[11px] text-white/60 hover:bg-white/10 hover:text-white" title="Save as an Avoid rule for this client, so the AI and future briefs know">
+                    <button onClick={() => act(() => rememberComment(c.id, requestId))} className="rounded-full px-2.5 py-1 text-[11px] text-white/60 hover:bg-white/10 hover:text-white max-md:bg-white/[0.06]" title="Save as an Avoid rule for this client, so the AI and future briefs know">
                       Remember for this client
                     </button>
                   )}
@@ -290,16 +306,16 @@ export function ReviewViewer({
             {older.length > 0 && <li className="pt-2 text-[11px] text-white/35">{older.length} comment{older.length === 1 ? "" : "s"} on other versions</li>}
           </ol>
 
-          <div className="grid gap-2 border-t border-white/10 px-5 py-4">
+          <div className="grid gap-2 border-t border-white/10 px-5 py-4 max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:z-10 max-md:bg-[#0b0b0d]/95 max-md:px-4 max-md:pb-[calc(0.75rem+env(safe-area-inset-bottom))] max-md:pt-3 max-md:backdrop-blur-xl">
             {draft ? (
-              <p className="text-[11px] text-white/60">
+              <p className="text-[11px] text-white/60 max-md:flex max-md:items-center max-md:justify-between max-md:text-xs">
                 {draft.tMs != null ? `At ${clock(draft.tMs)}` : draft.w != null ? "On the area you boxed" : draft.x != null ? "Pinned to the spot you clicked" : "On the whole design"}
-                <button onClick={() => setDraft(null)} className="ml-2 text-white/40 hover:text-white">
+                <button onClick={() => setDraft(null)} className="ml-2 text-white/40 hover:text-white max-md:-my-2 max-md:px-2 max-md:py-2.5">
                   cancel
                 </button>
               </p>
             ) : (
-              <div className="flex flex-wrap gap-1.5">
+              <div className="flex flex-wrap gap-1.5 max-md:flex-nowrap max-md:[&>button]:h-11 max-md:[&>button]:flex-1 max-md:[&>button]:text-[13px]">
                 {isVideo && (
                   <button onClick={() => (videoRef.current?.pause(), begin({ x: null, y: null, tMs: nowMs }))} className="h-8 rounded-full bg-white px-3.5 text-xs font-medium text-black">
                     Comment at {clock(nowMs)}
@@ -324,8 +340,8 @@ export function ReviewViewer({
                   className="resize-none rounded-[10px] border border-white/15 bg-white/[0.06] px-3 py-2.5 text-sm text-white outline-none placeholder:text-white/35 focus:border-white/40"
                 />
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] text-white/35">Ctrl + Enter to post</span>
-                  <button disabled={busy || !text.trim()} onClick={save} className="h-8 rounded-full bg-brand px-4 text-xs font-medium text-white disabled:opacity-40">
+                  <span className="text-[11px] text-white/35 max-md:hidden">Ctrl + Enter to post</span>
+                  <button disabled={busy || !text.trim()} onClick={save} className="h-8 rounded-full bg-brand px-4 text-xs font-medium text-white disabled:opacity-40 max-md:h-11 max-md:w-full max-md:text-sm">
                     {busy ? "Posting…" : "Post comment"}
                   </button>
                 </div>

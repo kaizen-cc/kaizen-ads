@@ -65,12 +65,12 @@ export function ScriptPanel({ requestId, demo }: { requestId: string; demo?: Sav
       ) : !s ? (
         <div className="grid justify-items-start gap-3 rounded-[12px] border border-dashed border-line p-5">
           <p className="text-sm text-muted">The Video script writer turns this brief into three hooks, a timed beat sheet, filming notes and a test plan.</p>
-          <button onClick={run} className="h-9 rounded-full bg-brand px-4 text-sm font-medium text-white transition-colors hover:bg-brand-hover">
+          <button onClick={run} className="h-9 rounded-full bg-brand px-4 text-sm font-medium text-white transition-colors hover:bg-brand-hover max-md:h-11 max-md:px-5">
             Write the script
           </button>
         </div>
       ) : (
-        <div className="grid gap-5 rounded-[12px] border border-line bg-bg p-5">
+        <div className="grid gap-5 rounded-[12px] border border-line bg-bg p-5 max-md:p-4">
           <div className="grid gap-1">
             <p className="font-heading text-[16px]">{s.title}</p>
             <p className="text-xs text-muted">
@@ -83,7 +83,7 @@ export function ScriptPanel({ requestId, demo }: { requestId: string; demo?: Sav
             <p className="text-[11px] uppercase tracking-[0.12em] text-faint">Hooks</p>
             <div className="flex flex-wrap gap-1.5">
               {s.hooks.map((h, i) => (
-                <button key={i} onClick={() => setHook(i)} className={`h-7 rounded-full px-3 text-xs transition-colors ${hook === i ? "bg-fg text-bg" : "bg-surface-2 text-muted hover:text-fg"}`}>
+                <button key={i} onClick={() => setHook(i)} className={`h-7 rounded-full px-3 text-xs transition-colors max-md:h-10 max-md:px-3.5 ${hook === i ? "bg-fg text-bg" : "bg-surface-2 text-muted hover:text-fg"}`}>
                   {i + 1}. {h.type}
                 </button>
               ))}
@@ -144,9 +144,9 @@ export function ScriptPanel({ requestId, demo }: { requestId: string; demo?: Sav
               value={note}
               onChange={(e) => setNote(e.target.value)}
               placeholder="What should change? e.g. shorter, funnier hook, use the founder"
-              className="h-9 min-w-0 flex-1 rounded-full border border-line bg-surface px-4 text-xs outline-none focus:border-brand-text/60"
+              className="h-9 min-w-0 flex-1 rounded-full border border-line bg-surface px-4 text-xs outline-none focus:border-brand-text/60 max-md:h-11 max-md:basis-full"
             />
-            <button onClick={run} className="h-9 rounded-full border border-line px-4 text-xs text-muted transition-colors hover:text-fg">
+            <button onClick={run} className="h-9 rounded-full border border-line px-4 text-xs text-muted transition-colors hover:text-fg max-md:h-11 max-md:w-full max-md:text-sm">
               Rewrite
             </button>
           </div>

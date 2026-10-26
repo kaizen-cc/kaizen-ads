@@ -253,7 +253,7 @@ export function AiGate({ ticket, onSent, back, demo = false }: { ticket: Ticket;
   const clean = current?.status === "done" && current.notes?.verdict !== "fix";
 
   return (
-    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 rounded-[12px] border border-line bg-bg/50 p-4">
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 rounded-[12px] border border-line bg-bg/50 p-4 max-md:p-3.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="flex items-center gap-2 text-sm font-medium">
           <ScanIcon className="h-4 w-4 text-[#6c7ee1]" />
@@ -278,7 +278,7 @@ export function AiGate({ ticket, onSent, back, demo = false }: { ticket: Ticket;
             <>
               <p className="text-sm text-muted">You replaced files since the last review. Run it again to check the new version.</p>
               <details className="text-xs text-faint">
-                <summary className="cursor-pointer hover:text-fg">What the last review said</summary>
+                <summary className="cursor-pointer hover:text-fg max-md:py-2.5">What the last review said</summary>
                 <div className="mt-2">
                   <Notes notes={run.notes} dim />
                 </div>
@@ -301,17 +301,17 @@ export function AiGate({ ticket, onSent, back, demo = false }: { ticket: Ticket;
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
                 placeholder={`Add a note for ${where} (optional)`}
-                className="h-10 rounded-brand border border-line bg-bg px-3 text-sm outline-none placeholder:text-faint focus:border-brand-text/60"
+                className="h-10 rounded-brand border border-line bg-bg px-3 text-sm outline-none placeholder:text-faint focus:border-brand-text/60 max-md:h-11"
               />
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   disabled={busy}
                   onClick={() => send(false)}
-                  className="h-10 rounded-brand bg-brand px-4 text-sm font-medium text-white shadow-[0_8px_24px_-10px_rgba(178,30,44,0.9)] hover:bg-brand-hover disabled:opacity-60"
+                  className="h-10 rounded-brand bg-brand px-4 text-sm font-medium text-white shadow-[0_8px_24px_-10px_rgba(178,30,44,0.9)] hover:bg-brand-hover disabled:opacity-60 max-md:h-12 max-md:w-full"
                 >
                   {busy ? "Sending…" : `${nextLabel} →`}
                 </button>
-                <button disabled={busy} onClick={review} className="h-10 rounded-brand px-3 text-sm text-muted hover:text-fg disabled:opacity-60">
+                <button disabled={busy} onClick={review} className="h-10 rounded-brand px-3 text-sm text-muted hover:text-fg disabled:opacity-60 max-md:h-11">
                   Review again
                 </button>
                 {back}
@@ -329,13 +329,13 @@ export function AiGate({ ticket, onSent, back, demo = false }: { ticket: Ticket;
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
                 placeholder="Why? e.g. the price is what the client asked for on the call"
-                className="h-10 rounded-brand border border-line bg-bg px-3 text-sm outline-none placeholder:text-faint focus:border-brand-text/60"
+                className="h-10 rounded-brand border border-line bg-bg px-3 text-sm outline-none placeholder:text-faint focus:border-brand-text/60 max-md:h-11"
               />
               <div className="flex flex-wrap items-center gap-2">
-                <button disabled={busy} onClick={() => send(true)} className="h-9 rounded-brand bg-fg px-4 text-sm font-medium text-bg disabled:opacity-60">
+                <button disabled={busy} onClick={() => send(true)} className="h-9 rounded-brand bg-fg px-4 text-sm font-medium text-bg disabled:opacity-60 max-md:h-11 max-md:flex-1">
                   {busy ? "Sending…" : "Send anyway"}
                 </button>
-                <button onClick={() => setConfirm(false)} className="h-9 rounded-brand px-3 text-sm text-muted hover:text-fg">
+                <button onClick={() => setConfirm(false)} className="h-9 rounded-brand px-3 text-sm text-muted hover:text-fg max-md:h-11">
                   Cancel
                 </button>
               </div>
@@ -345,13 +345,13 @@ export function AiGate({ ticket, onSent, back, demo = false }: { ticket: Ticket;
               <button
                 disabled={busy}
                 onClick={review}
-                className="h-10 rounded-brand px-4 text-sm font-medium text-white disabled:opacity-60"
+                className="h-10 rounded-brand px-4 text-sm font-medium text-white disabled:opacity-60 max-md:h-12 max-md:w-full"
                 style={{ background: ACCENT, boxShadow: "0 8px 24px -10px rgba(108,126,225,0.9)" }}
               >
                 {busy ? "Starting…" : current ? "Review again" : run ? "Review the new files" : "Review creative"}
               </button>
               {fixes > 0 && <span className="text-xs text-faint">Fix the notes, Replace the files, then review again.</span>}
-              <button disabled={busy} onClick={() => setConfirm(true)} className="ml-auto h-10 rounded-brand px-3 text-xs text-faint hover:text-fg disabled:opacity-60">
+              <button disabled={busy} onClick={() => setConfirm(true)} className="ml-auto h-10 rounded-brand px-3 text-xs text-faint hover:text-fg disabled:opacity-60 max-md:ml-0 max-md:h-11">
                 Send anyway
               </button>
               {back}
@@ -401,7 +401,7 @@ export function AiReviewNotes({ ticket, demo = false }: { ticket: Ticket; demo?:
         </div>
       )}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <button onClick={() => setOpen(!open)} className="flex items-center gap-2 text-left">
+        <button onClick={() => setOpen(!open)} className="flex items-center gap-2 text-left max-md:min-h-11 max-md:flex-wrap">
           <ScanIcon className="h-4 w-4 text-[#6c7ee1]" />
           <span className="text-sm font-medium">AI review notes</span>
           {run?.status === "done" && run.notes && <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${VERDICT[run.notes.verdict].cls}`}>{VERDICT[run.notes.verdict].label}</span>}
@@ -415,7 +415,7 @@ export function AiReviewNotes({ ticket, demo = false }: { ticket: Ticket; demo?:
                 {fmtAgo(run.updatedAt)}
               </span>
             )}
-            <button onClick={rerun} className="hover:text-fg">
+            <button onClick={rerun} className="hover:text-fg max-md:-my-3 max-md:shrink-0 max-md:rounded-full max-md:border max-md:border-line max-md:px-3.5 max-md:py-2.5 max-md:text-fg">
               {run ? "Look again" : "Run it now"}
             </button>
           </span>
