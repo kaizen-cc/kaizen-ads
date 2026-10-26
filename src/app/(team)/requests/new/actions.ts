@@ -455,6 +455,7 @@ export async function promiseDraft(commitmentId: string): Promise<{ ok: true; pa
 export async function ideaDraft(
   source: { kind: "winner"; winner: import("@/lib/industry").Winner } | { kind: "market"; adId: string },
   clientId: string,
+  format?: "image" | "video" | "carousel",
 ): Promise<{ ok: true; patch: Partial<Draft> } | { ok: false; error: string }> {
   const me = await requireStaff();
   if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
@@ -469,13 +470,13 @@ export async function ideaDraft(
     let origin: NonNullable<Draft["origin"]>;
     if (source.kind === "winner") {
       const w = source.winner;
-      id = await suggestFromWinner(admin, clientId, { adId: w.id, client: w.client, detail: w.detail, headline: w.headline, text: w.text, thumbnail: w.thumbnail, ratio: w.ratio, result: w.result, costPerResult: w.costPerResult, usual: w.usual }, me.id);
+      id = await suggestFromWinner(admin, clientId, { adId: w.id, client: w.client, detail: w.detail, headline: w.headline, text: w.text, thumbnail: w.thumbnail, ratio: w.ratio, result: w.result, costPerResult: w.costPerResult, usual: w.usual }, me.id, format);
       origin = { kind: "winner", label: `${w.client}'s winning ad (${w.ratio}x their usual cost per ${w.result ?? "result"})${w.headline ? `: "${w.headline}"` : ""}`.slice(0, 200), thumb: w.thumbnail, suggestionId: id };
     } else {
       const { loadMarketAd } = await import("@/lib/market");
       const a = await loadMarketAd(admin, source.adId);
       if (!a) return { ok: false, error: "That ad isn't in the market library any more." };
-      id = await suggestFromMarket(admin, clientId, source.adId, me.id);
+      id = await suggestFromMarket(admin, clientId, source.adId, me.id, format);
       origin = {
         kind: "market",
         label: `${a.brand}'s live ad${a.daysActive != null ? ` (running ${a.daysActive} days)` : ""}${a.angle ? `: ${a.angle}` : ""}`.slice(0, 200),
@@ -514,4 +515,74 @@ export async function marketFor(clientId: string): Promise<{ label: string | nul
   const seen = new Set<string>();
   const ads = all.filter((a) => (seen.has(a.brand) ? false : (seen.add(a.brand), true))).slice(0, 8);
   return { label: c.industry_detail ?? industryLabel(c.industry), ads };
+}
+
+// ─── Why each winner or market ad suits this client, and the gist of its brief ──────────────────────────────
+
+export type IdeaPreview = { why: string; angle: string; hook: string; concept: string; formats: string };
+export type IdeaSource = { key: string; kind: "winner" | "market"; title: string; text: string | null; meta: string };
+
+const PREVIEW_SCHEMA = {
+  type: "object",
+  properties: {
+    items: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { key: { type: "string" }, why: { type: "string" }, angle: { type: "string" }, hook: { type: "string" }, concept: { type: "string" }, formats: { type: "string" } },
+        required: ["key", "why", "angle", "hook", "concept", "formats"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["items"],
+  additionalProperties: false,
+};
+
+/**
+ * For the ads beside the form: one line on why each suits this client, and the gist of the brief the strategist would
+ * write from it (angle, hook, the main concept, formats). One AI call for all of them, kept a day per client and ad.
+ */
+export async function ideaPreviews(clientId: string, sources: IdeaSource[]): Promise<Record<string, IdeaPreview>> {
+  await requireStaff();
+  if (!aiEnabled() || !adminConfigured() || !sources.length) return {};
+  const db = await createClient();
+  const { data: visible } = await db.from("clients").select("id").eq("id", clientId).maybeSingle();
+  if (!visible) return {};
+  const admin = createAdminClient();
+  const since = new Date(Date.now() - 86_400_000).toISOString();
+  const { data: kept } = await admin.from("idea_previews").select("source_key, data").eq("client_id", clientId).in("source_key", sources.map((x) => x.key)).gte("created_at", since);
+  const out: Record<string, IdeaPreview> = Object.fromEntries((kept ?? []).map((k) => [k.source_key as string, k.data as IdeaPreview]));
+  const missing = sources.filter((x) => !out[x.key]).slice(0, 8);
+  if (!missing.length) return out;
+  try {
+    const ctx = await clientContext(admin, clientId);
+    if (!ctx) return out;
+    const r = await askJson<{ items: (IdeaPreview & { key: string })[] }>({
+      agent: "strategist",
+      label: "idea previews",
+      system: AGENCY_SYSTEM,
+      schema: PREVIEW_SCHEMA,
+      maxTokens: 3000,
+      prompt: `${contextBlock(ctx)}
+
+<ads>
+${missing.map((x) => `- key ${x.key} (${x.kind === "winner" ? "a winning ad from another Kaizen client" : "a live ad from a brand like them"}; ${x.meta}): "${x.title}"${x.text ? ` · ${x.text.slice(0, 400)}` : ""}`).join("\n")}
+</ads>
+
+For each ad, for this client (never name the other business):
+- why: one plain sentence, max 140 characters, on why this ad's idea fits this client now (their offer, audience, goal or what's working for them).
+- angle: the angle this client's version would take, in a few words.
+- hook: the opening line or on-image headline it would lead with, in the client's voice.
+- concept: one sentence on what the creative would show.
+- formats: what would be made, e.g. "2 images + 1 video, 4:5 and 9:16".
+Only facts from the context: no invented prices or offers. Return every key.`,
+    });
+    const fresh = r.items.filter((x) => missing.some((m) => m.key === x.key));
+    for (const x of fresh) out[x.key] = { why: x.why, angle: x.angle, hook: x.hook, concept: x.concept, formats: x.formats };
+    if (fresh.length) await admin.from("idea_previews").upsert(fresh.map((x) => ({ client_id: clientId, source_key: x.key, data: out[x.key], created_at: new Date().toISOString() })));
+  } catch (e) {
+    console.error("idea previews", e instanceof Error ? e.message : e);
+  }
+  return out;
 }

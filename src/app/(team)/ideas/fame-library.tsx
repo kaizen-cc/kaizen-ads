@@ -29,6 +29,7 @@ const toWinner = (a: FameAd): Winner => ({
   industry: null,
   detail: a.vertical,
   name: a.adName ?? "",
+  format: /carousel/i.test(a.adName ?? "") ? "carousel" : a.creative.video ? "video" : /(video|vid|ugc|reel|vsl)/i.test(a.adName ?? "") ? "video" : "image",
   headline: a.creative.headline ?? null,
   text: a.creative.text ?? null,
   thumbnail: a.creative.image ?? null,

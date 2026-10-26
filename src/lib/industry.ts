@@ -178,6 +178,7 @@ export type Winner = {
   headline: string | null;
   text: string | null;
   thumbnail: string | null;
+  format: "image" | "video" | "carousel";
   live: boolean | null; // delivering in the last sync (null: not known yet)
   result: string | null;
   results: number;
@@ -191,7 +192,7 @@ export type Winner = {
   fame?: { basis: "kpi" | "benchmark"; roas: boolean; days: number; beatBy: number };
 };
 
-type SnapAd = { id: string; name: string; headline: string | null; text: string | null; thumbnail: string | null; image?: string | null; live?: boolean; spend?: number; results?: number; result?: string | null; costPerResult?: number | null; ctr?: number };
+type SnapAd = { id: string; name: string; headline: string | null; text: string | null; thumbnail: string | null; image?: string | null; format?: "image" | "video" | "carousel" | null; live?: boolean; spend?: number; results?: number; result?: string | null; costPerResult?: number | null; ctr?: number };
 type Peer = { id: string; name: string; slug: string; industry: string | null; industry_detail: string | null };
 
 const median = (xs: number[]) => {
@@ -241,6 +242,7 @@ async function scoreWinners(db: SupabaseClient, peers: Peer[], opts: { perClient
         headline: a.headline,
         text: a.text,
         thumbnail: a.image ?? a.thumbnail,
+        format: a.format ?? (/carousel/i.test(a.name) ? "carousel" : /\b(video|vid|ugc|reel|vsl)\b/i.test(a.name) ? "video" : "image"),
         live: a.live ?? null,
         result: a.result ?? null,
         results: a.results ?? 0,

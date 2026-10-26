@@ -562,6 +562,7 @@ export function RequestForm({
                         <div className="min-h-0 overflow-y-auto overscroll-contain px-4 pb-[calc(16px+env(safe-area-inset-bottom))] pt-4 md:overflow-visible md:p-0">
                           <IdeasPanel
                             clientId={draft.clientId}
+                            formats={selectedFormats(draft)}
                             onBrief={(patch) => {
                               setIdeasOpen(false);
                               applyIdea(patch);
@@ -1003,7 +1004,7 @@ export function RequestForm({
         ai={ai}
         clientName={client?.name ?? null}
         onRefresh={() => suggest(draft, true)}
-        extra={draft.clientId && !demo ? <IdeasPanel clientId={draft.clientId} onBrief={applyIdea} /> : null}
+        extra={draft.clientId && !demo ? <IdeasPanel clientId={draft.clientId} formats={selectedFormats(draft)} onBrief={applyIdea} /> : null}
       />
     </div>
   );
@@ -1076,7 +1077,7 @@ function when(iso: string) {
 
 function AiPanel({ aiOn, ai, clientName, onRefresh, extra }: { aiOn: boolean; ai: AiState; clientName: string | null; onRefresh: () => void; extra?: React.ReactNode }) {
   return (
-    <aside className="hidden min-w-0 xl:sticky xl:top-8 xl:flex xl:max-h-[calc(100vh-4rem)] xl:flex-col xl:gap-4 xl:self-start xl:overflow-y-auto xl:overflow-x-hidden xl:pb-4 [scrollbar-width:thin]">
+    <aside className="hidden min-w-0 xl:sticky xl:top-8 xl:flex xl:max-h-[calc(100vh-4rem)] xl:flex-col xl:gap-4 xl:[&>*]:shrink-0 xl:self-start xl:overflow-y-auto xl:overflow-x-hidden xl:pb-4 [scrollbar-width:thin]">
       <div className="relative grid gap-4 overflow-hidden rounded-[12px] border border-line bg-surface p-5">
         <span className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-brand/20 blur-3xl" />
         <div className="relative flex items-center gap-2.5">

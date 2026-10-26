@@ -60,6 +60,15 @@ export async function pageLeadForms(pageId: string): Promise<{ id: string; name:
   }
 }
 
+/** An ad's format from its creative: cards make a carousel, a video makes a video, anything else is an image. */
+function formatOf(c: unknown): "image" | "video" | "carousel" | null {
+  if (!c) return null;
+  const x = c as { object_story_spec?: { link_data?: { child_attachments?: unknown[] }; video_data?: unknown }; asset_feed_spec?: { videos?: unknown[]; ad_formats?: string[] } };
+  if ((x.object_story_spec?.link_data?.child_attachments?.length ?? 0) > 1 || x.asset_feed_spec?.ad_formats?.includes("CAROUSEL")) return "carousel";
+  if (x.object_story_spec?.video_data || x.asset_feed_spec?.videos?.length) return "video";
+  return "image";
+}
+
 type Action = { action_type: string; value: string };
 export type InsightRow = Record<string, unknown> & {
   date_start: string;
@@ -231,6 +240,8 @@ export type MetaAd = MetaSummary & {
   text: string | null;
   thumbnail: string | null;
   image?: string | null; // the full image, for image ads
+  /** image, video or carousel, from the creative */
+  format?: "image" | "video" | "carousel" | null;
   live?: boolean; // delivering now (effective status ACTIVE)
   rankings: { quality: string | null; engagement: string | null; conversion: string | null };
 };
@@ -404,6 +415,7 @@ async function snapshot(admin: SupabaseClient, clientId: string, adAccountId: st
       text: copyOf(c).text?.slice(0, 2000) ?? null,
       thumbnail: c?.thumbnail_url ?? null,
       image: c?.image_url ?? null,
+      format: formatOf(c),
       live: creatives[id] ? creatives[id].effective_status === "ACTIVE" : undefined,
       rankings: { quality: ranking(list, "quality_ranking"), engagement: ranking(list, "engagement_rate_ranking"), conversion: ranking(list, "conversion_rate_ranking") },
     };

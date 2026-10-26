@@ -578,7 +578,18 @@ export type WinnerSource = { adId: string; client: string; detail: string | null
  * "Start a request from this" in the winners library: the strategist writes a full brief for the chosen client,
  * built on what made the winning ad work. Saved as a draft only its author (and execs and leads) can see.
  */
-export async function suggestFromWinner(admin: SupabaseClient, clientId: string, w: WinnerSource, by: string) {
+type Fmt = "image" | "video" | "carousel";
+const FORMAT_NAME: Record<Fmt, string> = { image: "single images", video: "videos", carousel: "carousels" };
+/** The line that keeps a brief to one format (the request form asks for one format at a time from an idea) */
+const onlyFormat = (format?: Fmt) => (format ? `\nThis request is for ${FORMAT_NAME[format]} only: draft.formats has exactly one entry, format "${format}", and every concept is a ${format === "image" ? "single image" : format}${format === "carousel" ? " (say what each card shows, in order, 3 to 6 cards)" : format === "video" ? " (the first 3 seconds, the beats, the length)" : ""}. Translate the ad's idea into this format even if the ad itself is another.` : "");
+/** A draft held to one format */
+const keepFormat = (d: SuggestionDraft, format?: Fmt): SuggestionDraft => {
+  if (!format) return d;
+  const mine = d.formats.filter((f) => f.format === format);
+  return { ...d, formats: mine.length ? mine : [{ format, new: Math.max(1, d.formats.reduce((n, f) => n + f.new, 0) || 1), variations: 0 }] };
+};
+
+export async function suggestFromWinner(admin: SupabaseClient, clientId: string, w: WinnerSource, by: string, format?: Fmt) {
   const same = w.client;
   const prompt = await promptFor(admin, clientId, [
     { kind: "winner", weight: 1, line: `A winning ad from another account to build on`, facts: [`${w.ratio}x better cost per ${w.result ?? "result"} than its account's usual`] },
@@ -597,9 +608,9 @@ Headline: ${w.headline ?? "(none)"}
 Primary text: ${w.text ?? "(none)"}
 </winning_ad>
 
-Someone on the team wants a request for this client built on this winning ad. Work out why the ad works (the angle, the hook, the format, the structure, the proof) and translate that into a request that fits this client's brand, offer, audience and allotment. Don't copy it word for word and never name the other business. Write the full request: brief, angle, audience, formats and counts within what's left of the allotment, sizes, 2 to 4 concepts and hooks. suggest: true. kind: "kpi". signal: "Built on a winning ad". evidence: 2 to 4 lines on what makes the ad work and why it fits this client. why: two or three sentences. reply: "".`,
+Someone on the team wants a request for this client built on this winning ad. Work out why the ad works (the angle, the hook, the format, the structure, the proof) and translate that into a request that fits this client's brand, offer, audience and allotment. Don't copy it word for word and never name the other business. Write the full request: brief, angle, audience, formats and counts within what's left of the allotment, sizes, 2 to 4 concepts and hooks. suggest: true. kind: "kpi". signal: "Built on a winning ad". evidence: 2 to 4 lines on what makes the ad work and why it fits this client. why: two or three sentences. reply: "".${onlyFormat(format)}`,
   });
-  const draft = clean(out.draft);
+  const draft = keepFormat(clean(out.draft), format);
   const { data, error } = await admin
     .from("creative_suggestions")
     .insert({
@@ -917,7 +928,7 @@ export async function loadCallPromises(db: SupabaseClient): Promise<CallPromise[
  * A request for one client built on a live ad from the market (Motion): why it works, translated to this client.
  * The Motion link (or the ad itself) rides along in the references so the creative team sees the idea.
  */
-export async function suggestFromMarket(admin: SupabaseClient, clientId: string, adId: string, by: string) {
+export async function suggestFromMarket(admin: SupabaseClient, clientId: string, adId: string, by: string, format?: Fmt) {
   const { loadMarketAd } = await import("@/lib/market");
   const a = await loadMarketAd(admin, adId);
   if (!a) throw new Error("That ad isn't in the market library any more");
@@ -939,9 +950,9 @@ CTA: ${a.cta ?? "(none)"}
 Link: ${link ?? "(none)"}
 </market_ad>
 
-Someone on the team wants a request for this client built on this live ad from the market. There are no performance numbers for it: how long it has run is the signal. Work out why it works (the angle, the hook, the format, the structure, the offer mechanics) and translate that into a request that fits this client's brand, offer, audience and allotment. Never copy it, never name the other brand in the brief, and never borrow their offer or claims. Write the full request: brief, angle, audience, formats and counts within what's left of the allotment, sizes, 2 to 4 concepts and hooks. draft.refs: ${link ? `"${link}" first, then any other market links you used` : "any market links you used"}. suggest: true. kind: "offer". signal: "Built on a live ad in the market". evidence: 2 to 4 lines on what makes the ad work and why it fits this client. why: two or three sentences. reply: "".`,
+Someone on the team wants a request for this client built on this live ad from the market. There are no performance numbers for it: how long it has run is the signal. Work out why it works (the angle, the hook, the format, the structure, the offer mechanics) and translate that into a request that fits this client's brand, offer, audience and allotment. Never copy it, never name the other brand in the brief, and never borrow their offer or claims. Write the full request: brief, angle, audience, formats and counts within what's left of the allotment, sizes, 2 to 4 concepts and hooks. draft.refs: ${link ? `"${link}" first, then any other market links you used` : "any market links you used"}. suggest: true. kind: "offer". signal: "Built on a live ad in the market". evidence: 2 to 4 lines on what makes the ad work and why it fits this client. why: two or three sentences. reply: "".${onlyFormat(format)}`,
   });
-  const draft = clean({ ...out.draft, refs: [...(link ? [link] : []), ...(out.draft.refs ?? [])] });
+  const draft = keepFormat(clean({ ...out.draft, refs: [...(link ? [link] : []), ...(out.draft.refs ?? [])] }), format);
   const { data, error } = await admin
     .from("creative_suggestions")
     .insert({
