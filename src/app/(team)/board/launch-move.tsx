@@ -12,7 +12,7 @@ const field = "h-10 w-full rounded-[10px] border border-line bg-bg px-3 text-sm 
 export function LaunchMove({ l, onDone }: { l: LaunchView; onDone: () => void }) {
   const p = l.plan;
   const current = (l.result as { adsetId?: string } | null)?.adsetId;
-  const others = (p?.options.adsets ?? []).filter((a) => a.id !== current);
+  const others = (p?.options.allAdsets ?? p?.options.adsets ?? []).filter((a) => a.id !== current);
   const [open, setOpen] = useState(false);
   const [adsetId, setAdsetId] = useState(others[0]?.id ?? "");
   const [mode, setMode] = useState<"existing" | "clone">("existing");

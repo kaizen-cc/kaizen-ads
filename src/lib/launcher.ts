@@ -18,7 +18,15 @@ import { metaWrite, metaWriteSetting, writeBlocked } from "@/lib/meta-write";
 // ad) and the buyer sees which one passed. Every write passes the sandbox gate (src/lib/meta-write.ts).
 
 const BUCKET = "creative";
-const ADS_MANAGER = (account: string, ids: string) => `https://adsmanager.facebook.com/adsmanager/manage/ads?act=${account}&selected_ad_ids=${ids}`;
+/**
+ * The new ads in Ads Manager's editor, scoped to their campaign and ad set: the ads open ready to check and turn on.
+ * (selected_ad_ids alone only ticks them in whatever view opens, usually every ad in the account.)
+ */
+export function adsManagerLink(account: string, adIds: string[], adsetId: string, campaignId?: string | null) {
+  const q = new URLSearchParams({ act: account, ...(campaignId ? { selected_campaign_ids: campaignId } : {}), selected_adset_ids: adsetId, selected_ad_ids: adIds.join(",") });
+  return `https://adsmanager.facebook.com/adsmanager/manage/ads/edit?${q}`;
+}
+const campaignOf = (plan: LaunchPlan, adsetId: string) => plan.options.adsets.find((a) => a.id === adsetId)?.campaignId ?? null;
 
 export type LaunchCheck = { key: string; label: string; level: "ok" | "warn" | "block"; detail: string };
 type Asset = { fileId: string; aspect: string; kind: "image" | "video"; hash?: string; videoId?: string; thumbUrl?: string; name: string };
@@ -40,7 +48,8 @@ export type LaunchPlan = {
   structure: "placements+text" | "placements" | "text" | "single" | null;
   optOut: string[];
   reason: string;
-  options: { adsets: AdsetOption[]; pages: { id: string; name: string }[]; igs: { id: string; name: string }[] };
+  /** allAdsets: every ad set to move a launched ad to, when it's more than where ads land (the sandbox) */
+  options: { adsets: AdsetOption[]; pages: { id: string; name: string }[]; igs: { id: string; name: string }[]; allAdsets?: AdsetOption[] };
   attempts: { structure: string; error: string | null }[];
 };
 export type Overrides = Partial<Pick<LaunchPlan, "adsetId" | "mode" | "newAdsetName" | "pageId" | "igId" | "link">> & { names?: Record<string, string> };
@@ -225,6 +234,8 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
 
     await update(admin, launchId, { progress: "Reading the ad account", account, sandbox });
     let acct = await readAccount(admin, account);
+    // Every ad set in the account, for moving a launched ad later (in the sandbox, more than where it lands)
+    let everyAdset: AdsetOption[] | null = null;
     // Sandbox tests all go into one paused test campaign, never into Kaizen's own running ad sets; made the first time
     if (sandbox) {
       const isTest = (a: AdsetOption) => a.campaign.includes(SANDBOX_CAMPAIGN);
@@ -233,7 +244,10 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
         await makeSandboxCampaign(admin).catch(() => null);
         acct = await readAccount(admin, account);
       }
-      if (acct.adsets.some(isTest)) acct = { ...acct, adsets: acct.adsets.filter(isTest) };
+      if (acct.adsets.some(isTest)) {
+        everyAdset = acct.adsets;
+        acct = { ...acct, adsets: acct.adsets.filter(isTest) };
+      }
     }
     if (!acct.adsets.length) {
       add("adset", "Ad set", "block", sandbox ? "The sandbox account has no campaign or ad set yet: create a paused test campaign below." : "The account has no campaign or ad set to add ads to; set one up in Ads Manager first.");
@@ -318,7 +332,7 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
       structure: null,
       optOut: [...ENHANCEMENTS],
       reason,
-      options: { adsets: acct.adsets, pages: acct.pages, igs: acct.igs },
+      options: { adsets: acct.adsets, pages: acct.pages, igs: acct.igs, ...(everyAdset ? { allAdsets: everyAdset } : {}) },
       attempts: [],
     };
 
@@ -407,9 +421,9 @@ function creativeSpec(plan: LaunchPlan, ad: LaunchAd, structure: "placements+tex
   };
   const key = video ? "videos" : "images";
   const labelKey = video ? "video_label" : "image_label";
+  if (structure === "text" || !vertical) return textOptionsSpec(plan, ad);
   const asset_feed_spec =
-    structure !== "text" && vertical
-      ? {
+    {
           ...text,
           [key]: [labelled(feed, "kz_feed"), labelled(vertical, "kz_vertical")],
           asset_customization_rules: [
@@ -417,14 +431,30 @@ function creativeSpec(plan: LaunchPlan, ad: LaunchAd, structure: "placements+tex
             { customization_spec: VERTICAL, [labelKey]: { name: "kz_vertical" }, priority: 2 },
           ],
           optimization_type: "PLACEMENT",
-        }
-      : { ...text, [key]: [media(feed)], optimization_type: "DEGREES_OF_FREEDOM" };
+        };
   return {
     name: ad.name.slice(0, 100),
     object_story_spec: { page_id: plan.pageId, ...(plan.igId ? { instagram_user_id: plan.igId } : {}) },
     asset_feed_spec,
     ...(plan.optOut.length ? { degrees_of_freedom_spec: { creative_features_spec: Object.fromEntries(plan.optOut.map((f) => [f, { enroll_status: "OPT_OUT" }])) } } : {}),
     ...(plan.urlTags ? { url_tags: plan.urlTags } : {}),
+  };
+}
+
+/**
+ * One size, every text option: the ad is a normal link (or video) ad with its first text, and the other primary texts,
+ * headlines and descriptions ride along as Meta's text variations (asset_feed_spec, DEGREES_OF_FREEDOM).
+ */
+function textOptionsSpec(plan: LaunchPlan, ad: LaunchAd) {
+  const base = classicSpec(plan, ad);
+  return {
+    ...base,
+    asset_feed_spec: {
+      bodies: plan.copy.bodies.map((t) => ({ text: t })),
+      titles: plan.copy.titles.map((t) => ({ text: t })),
+      descriptions: plan.copy.descriptions.map((t) => ({ text: t })),
+      optimization_type: "DEGREES_OF_FREEDOM",
+    },
   };
 }
 
@@ -543,7 +573,7 @@ export async function runLaunch(admin: SupabaseClient, launchId: string) {
       }
     }
     const ok = made.filter((m) => m.adId);
-    const result = { adsetId, newAdset: plan.mode === "clone" ? adsetId : null, ads: made, link: ok.length ? ADS_MANAGER(plan.account, ok.map((m) => m.adId).join(",")) : null };
+    const result = { adsetId, newAdset: plan.mode === "clone" ? adsetId : null, ads: made, link: ok.length ? adsManagerLink(plan.account, ok.map((m) => m.adId!), adsetId, campaignOf(plan, plan.adsetId)) : null };
     await update(admin, launchId, {
       status: ok.length ? "launched" : "failed",
       progress: null,
@@ -804,12 +834,19 @@ export async function moveLaunch(admin: SupabaseClient, launchId: string, by: st
   }
   const ok = ads.filter((a) => a.adId);
   await update(admin, launchId, {
-    result: { ...result, adsetId, ads, link: ok.length ? ADS_MANAGER(plan.account, ok.map((a) => a.adId).join(",")) : null },
+    result: { ...result, adsetId, ads, link: ok.length ? adsManagerLink(plan.account, ok.map((a) => a.adId!), adsetId, campaignOf(plan, target.adsetId)) : null },
     moves: [...((l.moves ?? []) as unknown[]), { at: new Date().toISOString(), by, from, to, reason: reason.trim(), via: "app" }],
     pending_move: null,
   });
-  if (!plan.sandbox) await learnPlacement(admin, launchId, l.client_id, from, to, reason, by, "app");
+  await learnPlacement(admin, launchId, plan.sandbox ? await sandboxClient(admin, l.client_id) : l.client_id, from, to, reason, by, "app");
   return { to };
+}
+
+/** Where a sandbox test's lessons go: the internal sandbox client, so a test never teaches a real client's placements. */
+async function sandboxClient(admin: SupabaseClient, fallback: string) {
+  const s = await metaWriteSetting(admin);
+  const { data } = await admin.from("clients").select("id").eq("internal", true).eq("meta_ad_account_id", s.sandboxAccount).limit(1).maybeSingle();
+  return (data?.id as string | undefined) ?? fallback;
 }
 
 /** The buyer explains a move they made by hand in Ads Manager; it's learned the same way. */
@@ -819,7 +856,7 @@ export async function explainHandMove(admin: SupabaseClient, launchId: string, b
   if (!l || !p) throw new Error("Nothing to explain.");
   if (!reason.trim()) throw new Error("Say why it goes there.");
   await update(admin, launchId, { pending_move: null, moves: [...((l.moves ?? []) as unknown[]), { at: new Date().toISOString(), by, from: p.from, to: p.to, reason: reason.trim(), via: "ads_manager" }] });
-  if (!l.sandbox) await learnPlacement(admin, launchId, l.client_id, p.from, p.to, reason, by, "ads_manager");
+  await learnPlacement(admin, launchId, l.sandbox ? await sandboxClient(admin, l.client_id) : l.client_id, p.from, p.to, reason, by, "ads_manager");
 }
 
 /**

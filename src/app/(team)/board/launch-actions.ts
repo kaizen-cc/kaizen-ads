@@ -3,7 +3,7 @@
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { requireStaff, type Staff } from "@/lib/auth";
-import { autoLaunch, explainHandMove, makeSandboxCampaign, moveLaunch, planLaunch, runLaunch, type LaunchCheck, type LaunchPlan, type Overrides } from "@/lib/launcher";
+import { adsManagerLink, autoLaunch, explainHandMove, makeSandboxCampaign, moveLaunch, planLaunch, runLaunch, type LaunchCheck, type LaunchPlan, type Overrides } from "@/lib/launcher";
 import { metaConfigured } from "@/lib/context/meta";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -27,6 +27,15 @@ export type LaunchView = {
   pendingMove: { from: { name: string }; to: { name: string; campaign: string } } | null;
 };
 
+/** The Ads Manager link, always in its current form (the ads' editor, scoped to their campaign and ad set). */
+function withLink(result: LaunchView["result"], plan: LaunchPlan | null): LaunchView["result"] {
+  if (!result || !plan) return result;
+  const ids = result.ads.map((a) => a.adId).filter((x): x is string => Boolean(x));
+  if (!ids.length) return result;
+  const campaign = plan.options.adsets.find((a) => a.id === result.adsetId || a.id === plan.adsetId)?.campaignId ?? null;
+  return { ...result, link: adsManagerLink(plan.account, ids, result.adsetId, campaign) };
+}
+
 /** Who can launch: the client's Meta buyer, the Head of Meta and execs. */
 async function canLaunch(me: Staff, clientId: string) {
   if (me.isExec || me.role === "head_of_meta") return true;
@@ -49,7 +58,7 @@ async function view(id: string): Promise<LaunchView | null> {
     sandbox: l.sandbox,
     plan: l.plan as LaunchPlan | null,
     checks: (l.checks ?? []) as LaunchCheck[],
-    result: l.result as LaunchView["result"],
+    result: withLink(l.result as LaunchView["result"], l.plan as LaunchPlan | null),
     error: l.error,
     launchedBy: (l.launcher as unknown as { full_name: string } | null)?.full_name ?? null,
     launchedAt: l.launched_at,
