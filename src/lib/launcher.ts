@@ -223,7 +223,17 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
     }
 
     await update(admin, launchId, { progress: "Reading the ad account", account, sandbox });
-    const acct = await readAccount(admin, account);
+    let acct = await readAccount(admin, account);
+    // Sandbox tests all go into one paused test campaign, never into Kaizen's own running ad sets; made the first time
+    if (sandbox) {
+      const isTest = (a: AdsetOption) => a.campaign.includes(SANDBOX_CAMPAIGN);
+      if (!acct.adsets.some(isTest)) {
+        await update(admin, launchId, { progress: "Setting up the sandbox test campaign" });
+        await makeSandboxCampaign(admin).catch(() => null);
+        acct = await readAccount(admin, account);
+      }
+      if (acct.adsets.some(isTest)) acct = { ...acct, adsets: acct.adsets.filter(isTest) };
+    }
     if (!acct.adsets.length) {
       add("adset", "Ad set", "block", sandbox ? "The sandbox account has no campaign or ad set yet: create a paused test campaign below." : "The account has no campaign or ad set to add ads to; set one up in Ads Manager first.");
       await update(admin, launchId, { status: "blocked", progress: null, checks, plan: { account, sandbox, options: { adsets: [], pages: acct.pages, igs: acct.igs } } });
@@ -539,11 +549,13 @@ export async function runLaunch(admin: SupabaseClient, launchId: string) {
 }
 
 /** Sandbox only: a paused traffic campaign and ad set in Kaizen's own account, so there's somewhere to test launches. */
+const SANDBOX_CAMPAIGN = "Kaizen Ads launcher test";
+
 export async function makeSandboxCampaign(admin: SupabaseClient) {
   const s = await metaWriteSetting(admin);
   if (!s.sandbox) throw new Error("Only in sandbox mode.");
   const act = `act_${s.sandboxAccount}`;
-  const c = await metaWrite<{ id: string }>(admin, s.sandboxAccount, `${act}/campaigns`, { name: "Kaizen | Kaizen Ads launcher test", objective: "OUTCOME_TRAFFIC", status: "PAUSED", special_ad_categories: "[]", is_adset_budget_sharing_enabled: "false" }, false);
+  const c = await metaWrite<{ id: string }>(admin, s.sandboxAccount, `${act}/campaigns`, { name: `Kaizen | ${SANDBOX_CAMPAIGN}`, objective: "OUTCOME_TRAFFIC", status: "PAUSED", special_ad_categories: "[]", is_adset_budget_sharing_enabled: "false" }, false);
   await metaWrite(admin, s.sandboxAccount, `${act}/adsets`, {
     name: "Stage 1 | US | TOF | Launcher test",
     campaign_id: c.id,
