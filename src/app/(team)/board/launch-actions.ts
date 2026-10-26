@@ -3,7 +3,7 @@
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { requireStaff, type Staff } from "@/lib/auth";
-import { adsManagerLink, autoLaunch, explainHandMove, makeSandboxCampaign, moveLaunch, planLaunch, runLaunch, type LaunchCheck, type LaunchPlan, type Overrides } from "@/lib/launcher";
+import { adsManagerLink, type MoveTarget, autoLaunch, explainHandMove, makeSandboxCampaign, moveLaunch, planLaunch, runLaunch, type LaunchCheck, type LaunchPlan, type Overrides } from "@/lib/launcher";
 import { metaConfigured } from "@/lib/context/meta";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -29,10 +29,12 @@ export type LaunchView = {
 
 /** The Ads Manager link, always in its current form (the ads' editor, scoped to their campaign and ad set). */
 function withLink(result: LaunchView["result"], plan: LaunchPlan | null): LaunchView["result"] {
-  if (!result || !plan) return result;
+  // Links made since the editor form are right as saved (a move into a new campaign knows its campaign)
+  if (!result || !plan || result.link?.includes("/manage/ads/edit")) return result;
   const ids = result.ads.map((a) => a.adId).filter((x): x is string => Boolean(x));
   if (!ids.length) return result;
-  const campaign = plan.options.adsets.find((a) => a.id === result.adsetId || a.id === plan.adsetId)?.campaignId ?? null;
+  const all = [...plan.options.adsets, ...(plan.options.allAdsets ?? [])];
+  const campaign = (all.find((a) => a.id === result.adsetId) ?? all.find((a) => a.id === plan.adsetId))?.campaignId ?? null;
   return { ...result, link: adsManagerLink(plan.account, ids, result.adsetId, campaign) };
 }
 
@@ -156,7 +158,7 @@ export async function sandboxCampaign(id: string): Promise<{ ok: true } | { ok: 
 }
 
 /** Moves the launched ads to another ad set (or a copy of one), archiving the old ones; the reason is learned. */
-export async function moveLaunched(id: string, target: { adsetId: string; mode: "existing" | "clone"; newAdsetName?: string | null }, reason: string): Promise<{ ok: true; to: string } | { ok: false; error: string }> {
+export async function moveLaunched(id: string, target: MoveTarget, reason: string): Promise<{ ok: true; to: string } | { ok: false; error: string }> {
   const me = await requireStaff();
   const v = await view(id);
   if (!v) return { ok: false, error: "Not found." };

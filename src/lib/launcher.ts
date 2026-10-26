@@ -26,7 +26,7 @@ export function adsManagerLink(account: string, adIds: string[], adsetId: string
   const q = new URLSearchParams({ act: account, ...(campaignId ? { selected_campaign_ids: campaignId } : {}), selected_adset_ids: adsetId, selected_ad_ids: adIds.join(",") });
   return `https://adsmanager.facebook.com/adsmanager/manage/ads/edit?${q}`;
 }
-const campaignOf = (plan: LaunchPlan, adsetId: string) => plan.options.adsets.find((a) => a.id === adsetId)?.campaignId ?? null;
+const campaignOf = (plan: LaunchPlan, adsetId: string) => [...plan.options.adsets, ...(plan.options.allAdsets ?? [])].find((a) => a.id === adsetId)?.campaignId ?? null;
 
 export type LaunchCheck = { key: string; label: string; level: "ok" | "warn" | "block"; detail: string };
 type Asset = { fileId: string; aspect: string; kind: "image" | "video"; hash?: string; videoId?: string; thumbUrl?: string; name: string };
@@ -752,11 +752,11 @@ export async function clientLaunchRules(admin: SupabaseClient, clientId: string)
   });
 }
 
-type AdsetRef = { id: string; name: string; campaign: string };
+type AdsetRef = { id: string; name: string; campaign: string; campaignId?: string | null };
 
 async function adsetRef(id: string): Promise<AdsetRef> {
-  const a = await metaGraph<{ id: string; name: string; campaign?: { name: string } }>(id, { fields: "name,campaign{name}" }).catch(() => null);
-  return { id, name: a?.name ?? id, campaign: a?.campaign?.name ?? "" };
+  const a = await metaGraph<{ id: string; name: string; campaign?: { id: string; name: string } }>(id, { fields: "name,campaign{id,name}" }).catch(() => null);
+  return { id, name: a?.name ?? id, campaign: a?.campaign?.name ?? "", campaignId: a?.campaign?.id ?? null };
 }
 
 /**
@@ -807,7 +807,17 @@ type Result = { adsetId: string; newAdset: string | null; ads: Made[]; link: str
  * (or in a new ad set copied from the one picked), then the old ad is archived (out of the running account, kept in
  * Meta's history). The buyer's reason is learned.
  */
-export async function moveLaunch(admin: SupabaseClient, launchId: string, by: string, target: { adsetId: string; mode: "existing" | "clone"; newAdsetName?: string | null }, reason: string) {
+export type MoveTarget = {
+  /** existing: into this ad set. clone: a new ad set copied from it, same campaign. campaign: a new campaign (same
+   *  objective and special ad category as this ad set's), with a copy of this ad set in it, all paused */
+  mode: "existing" | "clone" | "campaign";
+  adsetId: string;
+  newAdsetName?: string | null;
+  newCampaignName?: string | null;
+  dailyBudget?: number | null;
+};
+
+export async function moveLaunch(admin: SupabaseClient, launchId: string, by: string, target: MoveTarget, reason: string) {
   const { data: l } = await admin.from("launches").select("client_id, plan, result, moves, status").eq("id", launchId).single();
   const plan = l?.plan as LaunchPlan | null;
   const result = l?.result as Result | null;
@@ -815,7 +825,29 @@ export async function moveLaunch(admin: SupabaseClient, launchId: string, by: st
   if (!reason.trim()) throw new Error("Say why it goes there: that's what the launcher learns from.");
   const from = await adsetRef(result.adsetId);
   let adsetId = target.adsetId;
-  if (target.mode === "clone") {
+  if (target.mode === "campaign") {
+    // A new campaign built like the ad set picked: its objective and special ad category, budget on the ad set
+    const tpl = await metaGraph<{ campaign?: { id: string; objective: string; special_ad_categories?: string[] }; daily_budget?: string }>(target.adsetId, { fields: "daily_budget,campaign{objective,special_ad_categories}" });
+    if (!tpl.campaign) throw new Error("Couldn't read the ad set to copy from.");
+    if (!target.newCampaignName?.trim()) throw new Error("Name the new campaign.");
+    const camp = await metaWrite<{ id: string }>(
+      admin,
+      plan.account,
+      `act_${plan.account}/campaigns`,
+      { name: target.newCampaignName.trim().slice(0, 250), objective: tpl.campaign.objective, status: "PAUSED", special_ad_categories: JSON.stringify((tpl.campaign.special_ad_categories ?? []).filter((c) => c && c !== "NONE")), is_adset_budget_sharing_enabled: "false" },
+      false,
+    );
+    const copy = await metaWrite<{ copied_adset_id?: string }>(admin, plan.account, `${target.adsetId}/copies`, { campaign_id: camp.id, deep_copy: "false", status_option: "PAUSED" }, false);
+    if (!copy.copied_adset_id) throw new Error("Meta made the campaign but didn't return the new ad set.");
+    adsetId = copy.copied_adset_id;
+    await metaWrite(
+      admin,
+      plan.account,
+      adsetId,
+      { ...(target.newAdsetName?.trim() ? { name: target.newAdsetName.trim().slice(0, 250) } : {}), ...(target.dailyBudget && target.dailyBudget > 0 ? { daily_budget: String(Math.round(target.dailyBudget * 100)) } : {}) },
+      false,
+    );
+  } else if (target.mode === "clone") {
     const copy = await metaWrite<{ copied_adset_id?: string }>(admin, plan.account, `${target.adsetId}/copies`, { deep_copy: "false", status_option: "PAUSED" }, false);
     if (!copy.copied_adset_id) throw new Error("Meta didn't return the new ad set");
     adsetId = copy.copied_adset_id;
@@ -834,7 +866,7 @@ export async function moveLaunch(admin: SupabaseClient, launchId: string, by: st
   }
   const ok = ads.filter((a) => a.adId);
   await update(admin, launchId, {
-    result: { ...result, adsetId, ads, link: ok.length ? adsManagerLink(plan.account, ok.map((a) => a.adId!), adsetId, campaignOf(plan, target.adsetId)) : null },
+    result: { ...result, adsetId, ads, link: ok.length ? adsManagerLink(plan.account, ok.map((a) => a.adId!), adsetId, to.campaignId) : null },
     moves: [...((l.moves ?? []) as unknown[]), { at: new Date().toISOString(), by, from, to, reason: reason.trim(), via: "app" }],
     pending_move: null,
   });
