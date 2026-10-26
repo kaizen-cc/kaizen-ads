@@ -1128,8 +1128,6 @@ export function RolesOverview({ roles, agents, items, spine }: { roles: Role[]; 
   return (
     <DirtyProvider>
       <div className="grid gap-8">
-        <SpineEditor spine={spine} />
-
         <section className="grid gap-4">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <h2 className="font-heading text-[20px]">The agents</h2>
@@ -1212,6 +1210,8 @@ export function RolesOverview({ roles, agents, items, spine }: { roles: Role[]; 
             })}
           </ul>
         </section>
+
+        <SpineEditor spine={spine} />
 
         <section className="grid gap-4 rounded-[18px] border border-line bg-surface p-5 sm:p-6">
           <div className="flex flex-wrap items-end justify-between gap-3">
