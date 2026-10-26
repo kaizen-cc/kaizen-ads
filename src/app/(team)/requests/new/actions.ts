@@ -258,7 +258,7 @@ ${issues.map((x, i) => `${i + 1}. [${x.field}] ${x.issue}\n   Fix: ${x.fix}`).jo
 Apply these fixes to the request and return the whole request after the change. Leave everything a fix doesn't touch exactly as it is.
 - title, angle, audience, brief: text. Keep what the person wrote that the fixes don't touch.
 - refs: the reference links, one per line, exactly as given (only remove a link if a fix says to; never invent a link).
-- sizes: from 1x1, 4x5, 9x16.
+- sizes: from 4x5, 9x16 (Kaizen no longer makes 1x1; drop it if it's there).
 - formats: every format in the request with its counts (new = net new designs, variations up to ${MAX_VARIATIONS} per format). Net new must fit what's left of the allotment; if a fix would go over, keep the counts and say so in note.
 Use only facts from the client context; never invent offers, prices, claims or references.
 changed: which of title, angle, audience, brief, refs, sizes, formats you changed. note: one short sentence on anything a fix needs that you can't do here (e.g. attaching a file, getting client sign-off), or "".`,

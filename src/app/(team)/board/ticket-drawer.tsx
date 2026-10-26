@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, useTransition } from "react";
@@ -45,6 +46,24 @@ import { CopyPanel } from "./copy-panel";
 import { LaunchPanel } from "./launch-panel";
 import { ClientTag, FormatIcon, TimeStamp } from "./ticket-card";
 import type { Person, Ticket } from "./types";
+
+/** Comment text with its links as short, clickable labels instead of long raw URLs (an Ads Manager link reads
+ *  "Open in Ads Manager") */
+function linkify(text: string) {
+  return text.split(/(https?:\/\/[^\s)]+)/g).map((part, i) => {
+    if (!/^https?:\/\//.test(part)) return part;
+    let label = part;
+    try {
+      const u = new URL(part);
+      label = u.pathname.startsWith("/adsmanager") ? "Open in Ads Manager" : u.hostname.replace(/^www\./, "");
+    } catch {}
+    return (
+      <a key={i} href={part} target="_blank" rel="noreferrer" className="font-medium text-brand underline-offset-2 hover:underline">
+        {label} ↗
+      </a>
+    );
+  });
+}
 
 const PHASES: Phase[] = ["brief", "make", "review", "client", "launch"];
 
@@ -657,13 +676,19 @@ export function TicketDrawer({
               <ol className="relative grid gap-5 before:absolute before:bottom-3 before:left-[13px] before:top-3 before:w-px before:bg-line">
                 {history.map((e) => (
                   <li key={e.id} className="relative grid grid-cols-[28px_minmax(0,1fr)] gap-3">
-                    {e.actor ? <PersonAvatar name={e.actor} size={28} /> : <span className="h-7 w-7 rounded-full bg-surface-2" />}
+                    {e.actor ? (
+                      <PersonAvatar name={e.actor} size={28} />
+                    ) : (
+                      <span className="relative grid h-7 w-7 place-items-center rounded-full border border-line bg-white">
+                        <Image src="/kaizen-mark.png" alt="Kaizen Ads" width={18} height={18} />
+                      </span>
+                    )}
                     <div className="grid min-w-0 gap-1.5 pt-1">
                       <p className="text-sm leading-snug text-muted">
                         <span className="font-medium text-fg">{e.actor ?? "Kaizen Ads"}</span> {describe(e)}
                         <span className="ml-2 whitespace-nowrap text-xs text-faint">{fmtDate(e.at)}</span>
                       </p>
-                      {e.body && <p className="whitespace-pre-wrap rounded-[8px] bg-surface px-3.5 py-2.5 text-sm leading-relaxed">{e.body}</p>}
+                      {e.body && <p className="whitespace-pre-wrap rounded-[8px] bg-surface px-3.5 py-2.5 text-sm leading-relaxed">{linkify(e.body)}</p>}
                     </div>
                   </li>
                 ))}

@@ -489,7 +489,7 @@ export function describeDigest(d: Digest) {
 export const AGENCY_SYSTEM = `You help Kaizen Marketing, a paid social agency, write creative requests for Meta ads.
 A request goes to a graphic designer (images, carousels) or a video editor (videos). One request can cover several formats; each format becomes its own ticket.
 A "net new" creative is a distinct design. A "variation" reuses the same design and tests copy, title, CTA or layout; it doesn't count as a new deliverable. A carousel counts as one deliverable. Sizes of one design count as one.
-Sizes are 1:1, 4:5 (feed) and 9:16 (stories, reels).
+Sizes are 4:5 (feed) and 9:16 (stories, reels). Kaizen no longer designs 1:1: never ask for it.
 The client pays for a monthly allotment of net new images (carousels count here too) and net new videos. Variations don't use it. Never suggest more net new than what's left; if nothing is left, suggest variations or say an upgrade is needed.
 Client memory holds what the team has learned about the client. Items marked "avoid" are things the client asked us not to do or that failed before; never suggest them. Items marked "prefer" are what works for them.
 Base everything on the client context you're given. When there's little context, keep suggestions sensible and generic rather than inventing facts about the business (prices, offers, locations, claims).
@@ -522,7 +522,7 @@ export const SUGGESTIONS_SCHEMA = obj({
     items: obj({ format: { type: "string", enum: ["image", "video", "carousel"] }, new: { type: "integer" }, variations: { type: "integer" } }),
   },
   mixWhy: str,
-  sizes: { type: "array", items: { type: "string", enum: ["1x1", "4x5", "9x16"] } },
+  sizes: { type: "array", items: { type: "string", enum: ["4x5", "9x16"] } },
   brief: str,
   hooks: strArr,
   watchouts: strArr,
@@ -609,7 +609,7 @@ export function cleanSuggestions(raw: Suggestions): Suggestions {
       .filter((m, i, all) => ["image", "video", "carousel"].includes(m.format) && all.findIndex((x) => x.format === m.format) === i)
       .map((m) => ({ ...m, new: count(m.new), variations: Math.min(count(m.variations), MAX_VARIATIONS) }))
       .filter((m) => m.new + m.variations > 0),
-    sizes: raw.sizes.filter((z) => ["1x1", "4x5", "9x16"].includes(z)),
+    sizes: raw.sizes.filter((z) => ["4x5", "9x16"].includes(z)),
   };
 }
 
@@ -700,7 +700,7 @@ export const PATCH_SCHEMA = obj({
   audience: str,
   brief: str,
   refs: str,
-  sizes: { type: "array", items: { type: "string", enum: ["1x1", "4x5", "9x16"] } },
+  sizes: { type: "array", items: { type: "string", enum: ["4x5", "9x16"] } },
   formats: { type: "array", items: obj({ format: { type: "string", enum: ["image", "video", "carousel"] }, new: { type: "integer" }, variations: { type: "integer" } }) },
   changed: strArr,
   note: str,
@@ -729,7 +729,7 @@ export const CREATIVE_CHECK_SYSTEM = `You check ad creative for Kaizen, a perfor
 Each ticket asks for a number of net new designs and a number of variations. Net new designs count toward the client's monthly allotment; variations don't.
 - Net new: a different concept or layout. A different main visual, composition or idea, even for the same offer.
 - Variation: the same design with a small change for testing: a different headline or hook, copy, colour, CTA, background or product shot swapped into the same layout.
-- Same design: the same creative resized or reframed for another placement (1:1, 4:5, 9:16). It is not a separate design at all; its files belong with the other one.
+- Same design: the same creative resized or reframed for another placement (4:5, 9:16; older work may also have 1:1). It is not a separate design at all; its files belong with the other one.
 
 You get one picture per design (S1, S2… are in this upload; D1, D2… are already on the ticket). For every S design, say whether it is new, a variation (of which S or D design) or the same design as another (which one). A design can only be a variation of, or the same as, a design that is itself new, and an S design should point at an earlier S or at a D. When in doubt between new and variation, look at the layout: same layout = variation.
 reason: one short sentence a designer would agree with, about what's the same and what's different ("Same layout and photo, only the headline changes").
@@ -754,7 +754,7 @@ Go through every picture carefully. Read all the text on it, word by word.
 - Facts: offer, prices, discounts, dates, phone numbers, URLs and codes must match the brief and the client context exactly. Flag anything stated on the creative that isn't in the brief or the client context (a claim, a number, an offer); it may be invented.
 - Brief: does it deliver the angle, audience and the specific things the brief asks for (first look, on-image text, CTA, product shown)?
 - Client: the brand bible (colours, logo, tone, rules) and client memory. Anything marked "avoid" is something the client asked us not to do or that failed before; treat it as a fix.
-- Placement: 9:16 is for Stories and Reels: keep text, logo and CTA out of the top ~14% and bottom ~35% and away from the side edges, where Meta's interface covers them. 4:5 and 1:1 are feed: check nothing is cut off or crammed. Text must be readable on a phone; flag text-heavy designs, weak contrast and a missing or buried CTA.
+- Placement: 9:16 is for Stories and Reels: keep text, logo and CTA out of the top ~14% and bottom ~35% and away from the side edges, where Meta's interface covers them. 4:5 is the feed size: check nothing is cut off or crammed. Kaizen designs statics in 4:5 and 9:16 only; a 1:1 file is no longer part of the standard (a watch note, unless the ticket asked for it). Text must be readable on a phone; flag text-heavy designs, weak contrast and a missing or buried CTA.
 - Sizes and variations: sizes of the same design should carry the same message with nothing cropped; variations should differ only in what they test.
 - Craft: blurry or pixelated images, compression artefacts, bad cut-outs, misaligned elements, stock watermarks, odd AI-generated details (hands, text, faces).
 - Policy: Meta ad policy risks: before-and-after images, calling out personal attributes ("Struggling with your weight?"), unrealistic results or guarantees, health or financial claims.

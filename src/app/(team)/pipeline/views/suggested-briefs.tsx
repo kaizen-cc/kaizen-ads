@@ -24,7 +24,8 @@ const KIND_TONE: Record<SuggestionKind, string> = {
   market: "bg-[#6c5ce7]/15 text-[#8b7cf6]",
 };
 const FORMAT_LABEL = { image: "Images", video: "Videos", carousel: "Carousels" } as const;
-const SIZES = ["1x1", "4x5", "9x16"] as const;
+// 4:5 and 9:16 only: Kaizen no longer designs 1:1
+const SIZES = ["4x5", "9x16"] as const;
 const REASONS = ["Not the right time", "Already handled", "Client wouldn't go for it", "The signal isn't real", "Brief isn't strong enough", "Wrong angle"];
 
 /**

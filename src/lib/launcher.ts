@@ -8,7 +8,7 @@ import { metaWrite, metaWriteSetting, writeBlocked } from "@/lib/meta-write";
 //
 // Rules (agreed 2026-10-26): ads go into an existing ad set the buyer picks, or a new ad set copied from one (same
 // targeting, pixel, optimization) in the same campaign; the launcher never creates campaigns or touches budgets. One ad
-// per design: its sizes become placement assets (4x5 or 1x1 in feeds, 9x16 in Stories and Reels) and the approved copy
+// per design: its sizes become placement assets (4x5 in feeds, 9x16 in Stories and Reels; an older 1x1 stands in for 4x5) and the approved copy
 // set goes in stacked (every primary text, headline and description as Meta's text options). Advantage+ creative
 // enhancements are switched off, so the client sees what they approved. Names continue the ad set's own pattern.
 //
@@ -223,9 +223,9 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
     if (!singles.length && !carousel.length) add("creative", "Creative", "block", "No approved creative files on this ticket.");
     const noFeed = singles.filter((d) => !d.files.some((f) => f.aspect === "4x5" || f.aspect === "1x1"));
     const noVertical = singles.filter((d) => !d.files.some((f) => f.aspect === "9x16"));
-    if (noFeed.length) add("sizes", "Sizes", "warn", `${noFeed.map((d) => d.name).join(", ")} has no 4x5 or 1x1: its ${noFeed[0].files[0]?.aspect ?? "only"} file is used everywhere.`);
+    if (noFeed.length) add("sizes", "Sizes", "warn", `${noFeed.map((d) => d.name).join(", ")} has no 4x5: its ${noFeed[0].files[0]?.aspect ?? "only"} file is used everywhere.`);
     else if (noVertical.length) add("sizes", "Sizes", "warn", `${noVertical.map((d) => d.name).join(", ")} has no 9x16: Stories and Reels get the feed size, letterboxed.`);
-    else if (singles.length) add("sizes", "Sizes", "ok", "Every design has a feed size (4x5 or 1x1) and a 9x16 for Stories and Reels.");
+    else if (singles.length) add("sizes", "Sizes", "ok", "Every design has its 4x5 for feeds and 9x16 for Stories and Reels.");
 
     // Link
     const link = overrides.link ?? (l.plan as LaunchPlan | null)?.link ?? ticket.landing_url ?? ticket.clients.website ?? null;

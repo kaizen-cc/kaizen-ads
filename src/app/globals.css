@@ -252,10 +252,15 @@ html {
   }
 }
 
-/* Phones: a grid with no columns of its own is one column the width of the screen. Left to itself it sizes that column
-   to its longest unbreakable line (a one-line subtitle, a nowrap chip row), and the page content runs off the right edge */
+/* A grid with no columns of its own is one column as wide as its container, on every screen. Left to itself it sizes
+   that column to its longest unbreakable line (a one-line subtitle, a truncated label, a nowrap chip row) and the
+   content runs off the right edge of the page or a drawer. Grids sized to their content (w-fit, w-max) keep doing so. */
+main .grid:not([class^="grid-cols"]):not([class*=" grid-cols"]):not([class^="grid-flow-col"]):not([class*=" grid-flow-col"]):not([class*=" auto-cols"]):not([class*="w-fit"]):not([class*="w-max"]) {
+  grid-template-columns: minmax(0, 1fr);
+}
+/* Phones: grids with columns only from md up are a single column too, and get the same treatment */
 @media (max-width: 767px) {
-  main .grid:not([class^="grid-cols"]):not([class*=" grid-cols"]):not([class^="grid-flow-col"]):not([class*=" grid-flow-col"]):not([class*=" auto-cols"]) {
+  main .grid[class*="md:grid-cols"]:not([class^="grid-cols"]):not([class*=" grid-cols"]) {
     grid-template-columns: minmax(0, 1fr);
   }
 }

@@ -190,7 +190,7 @@ const SCHEMA = {
             additionalProperties: false,
           },
         },
-        sizes: { type: "array", items: { type: "string", enum: ["1x1", "4x5", "9x16"] } },
+        sizes: { type: "array", items: { type: "string", enum: ["4x5", "9x16"] } },
         landing: { type: "string" },
         refs: { type: "array", items: { type: "string" } },
         assets: { type: "object", properties: { have: { type: "array", items: { type: "string" } }, need: { type: "array", items: { type: "string" } } }, required: ["have", "need"], additionalProperties: false },

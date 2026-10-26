@@ -100,13 +100,13 @@ async function fromAsana(gid: string, me: Awaited<ReturnType<typeof requireStaff
       agent: "suggest",
       label: "asana migration",
       system:
-        "You turn an Asana creative request (made from Kaizen's Google Form: client, platform, format, iteration or new, audience, angle, the request, a Drive link for iterations, what to change) into the fields of a Kaizen Ads request. Use only what's in it; leave a field empty if it isn't there. formats: one entry per format asked for, with 1 net new unless it says otherwise (an iteration is 0 new and 1 variation). sizes from 1x1, 4x5, 9x16 (4x5 and 9x16 if unsaid). brief: the request in full, tidied but not shortened, including what to change for an iteration. refs: every link in it. title: short and specific.",
+        "You turn an Asana creative request (made from Kaizen's Google Form: client, platform, format, iteration or new, audience, angle, the request, a Drive link for iterations, what to change) into the fields of a Kaizen Ads request. Use only what's in it; leave a field empty if it isn't there. formats: one entry per format asked for, with 1 net new unless it says otherwise (an iteration is 0 new and 1 variation). sizes from 4x5, 9x16 (both if unsaid; Kaizen no longer makes 1x1, so a 1x1 asked for becomes 4x5). brief: the request in full, tidied but not shortened, including what to change for an iteration. refs: every link in it. title: short and specific.",
       schema: {
         type: "object",
         properties: {
           title: { type: "string" },
           formats: { type: "array", items: { type: "object", properties: { format: { type: "string", enum: ["image", "video", "carousel"] }, new: { type: "integer" }, variations: { type: "integer" } }, required: ["format", "new", "variations"], additionalProperties: false } },
-          sizes: { type: "array", items: { type: "string", enum: ["1x1", "4x5", "9x16"] } },
+          sizes: { type: "array", items: { type: "string", enum: ["4x5", "9x16"] } },
           angle: { type: "string" },
           audience: { type: "string" },
           brief: { type: "string" },

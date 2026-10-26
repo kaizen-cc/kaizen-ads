@@ -1,7 +1,9 @@
 import type { Format, Priority } from "@/lib/stages";
 
 export type Size = "1x1" | "4x5" | "9x16";
-export const SIZES: Size[] = ["1x1", "4x5", "9x16"];
+/** The sizes new work is made in: 4:5 (feed) and 9:16 (Stories, Reels). Kaizen stopped designing 1:1 on Oct 26, 2026; "1x1" stays
+ *  in Size so older tickets still read. */
+export const SIZES: Size[] = ["4x5", "9x16"];
 export const FORMATS: Format[] = ["image", "video", "carousel"];
 
 export type Counts = { new: number; variations: number };
