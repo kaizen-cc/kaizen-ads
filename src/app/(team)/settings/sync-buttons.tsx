@@ -63,13 +63,13 @@ export function SyncNowButton({ job, run, progress }: { job: SyncJob; run: RunSt
   };
 
   return (
-    <span className="flex items-center gap-2">
-      {error && <span className="text-[11px] text-bad">{error}</span>}
+    <span className="flex min-w-0 items-center gap-2">
+      {error && <span className="min-w-0 text-[11px] text-bad [overflow-wrap:anywhere]">{error}</span>}
       <button
         type="button"
         onClick={go}
         disabled={pending || running}
-        className="flex h-7 items-center gap-1.5 rounded-full border border-line px-3 text-[11px] text-muted transition-colors hover:border-fg/30 hover:text-fg disabled:cursor-default disabled:hover:border-line"
+        className="flex h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-line px-4 text-xs active:bg-surface-2 md:h-7 md:px-3 md:text-[11px] text-muted transition-colors hover:border-fg/30 hover:text-fg disabled:cursor-default disabled:hover:border-line"
       >
         {running || pending ? (
           <>
@@ -152,8 +152,8 @@ export function RetryOne({ source }: { source: string }) {
   const [pending, start] = useTransition();
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
   return (
-    <span className="flex items-center justify-end gap-2">
-      {note && <span className={`truncate text-[11px] ${note.ok ? "text-ok" : "text-bad"}`} title={note.text}>{note.text}</span>}
+    <span className="flex min-w-0 items-center justify-end gap-2">
+      {note && <span className={`max-w-[6.5rem] truncate text-[11px] md:max-w-none ${note.ok ? "text-ok" : "text-bad"}`} title={note.text}>{note.text}</span>}
       <button
         type="button"
         disabled={pending}
@@ -164,7 +164,7 @@ export function RetryOne({ source }: { source: string }) {
             router.refresh();
           })
         }
-        className="shrink-0 rounded-full px-2.5 py-0.5 text-[11px] text-muted hover:bg-line/50 hover:text-fg disabled:opacity-60"
+        className="inline-flex min-h-11 shrink-0 items-center rounded-full px-3 py-0.5 text-xs active:bg-line/50 md:min-h-0 md:px-2.5 md:text-[11px] text-muted hover:bg-line/50 hover:text-fg disabled:opacity-60"
       >
         {pending ? "Syncing…" : "Sync"}
       </button>

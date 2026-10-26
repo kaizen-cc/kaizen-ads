@@ -24,7 +24,7 @@ const shift = (day: string, n: number) => {
   return d.toISOString().slice(0, 10);
 };
 const th = "px-3 py-2 text-left text-[11px] font-medium uppercase tracking-[0.1em] text-faint";
-const td = "px-3 py-2 tabular";
+const td = "px-2.5 py-2 tabular md:px-3";
 
 /**
  * Raw Meta numbers behind a KPI, for a chosen date range: what came in per day and per campaign, which action
@@ -33,11 +33,11 @@ const td = "px-3 py-2 tabular";
 export async function DataInspector({ targets, targetId, from, to }: { targets: Target[]; targetId: string | null; from: string; to: string }) {
   const t = targets.find((x) => x.id === targetId) ?? null;
   const picker = (
-    <form method="get" className="grid items-end gap-3 rounded-[14px] border border-line bg-surface p-5 sm:grid-cols-[minmax(0,1fr)_160px_160px_auto]">
+    <form method="get" className="grid grid-cols-2 items-end gap-3 rounded-[14px] border border-line bg-surface p-4 sm:grid-cols-[minmax(0,1fr)_160px_160px_auto] md:p-5">
       <input type="hidden" name="tab" value="data" />
       <label className="grid gap-1.5 text-sm text-muted">
         KPI
-        <select name="target" defaultValue={targetId ?? ""} className="h-10 rounded-[8px] border border-line bg-bg px-3 text-sm text-fg">
+        <select name="target" defaultValue={targetId ?? ""} className="h-11 w-full min-w-0 md:h-10 rounded-[8px] border border-line bg-bg px-3 text-sm text-fg">
           <option value="" disabled>
             Pick a client&apos;s KPI
           </option>
@@ -53,18 +53,18 @@ export async function DataInspector({ targets, targetId, from, to }: { targets: 
       </label>
       <label className="grid gap-1.5 text-sm text-muted">
         From
-        <input type="date" name="from" defaultValue={from} className="h-10 rounded-[8px] border border-line bg-bg px-3 text-sm text-fg tabular" />
+        <input type="date" name="from" defaultValue={from} className="h-11 w-full min-w-0 md:h-10 rounded-[8px] border border-line bg-bg px-3 text-sm text-fg tabular" />
       </label>
       <label className="grid gap-1.5 text-sm text-muted">
         To
-        <input type="date" name="to" defaultValue={to} className="h-10 rounded-[8px] border border-line bg-bg px-3 text-sm text-fg tabular" />
+        <input type="date" name="to" defaultValue={to} className="h-11 w-full min-w-0 md:h-10 rounded-[8px] border border-line bg-bg px-3 text-sm text-fg tabular" />
       </label>
-      <button className="h-10 rounded-[8px] bg-fg px-5 text-sm font-medium text-bg">Inspect</button>
+      <button className="col-span-2 h-11 rounded-[8px] bg-fg px-5 text-sm font-medium text-bg sm:col-span-1 md:h-10">Inspect</button>
     </form>
   );
   if (!t || !t.ad_account_id)
     return (
-      <div className="grid gap-5">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-5">
         {picker}
         <p className="rounded-[14px] border border-dashed border-line px-6 py-14 text-center text-sm text-faint">Pick a KPI and a date range to see the raw numbers behind it.</p>
       </div>
@@ -139,17 +139,17 @@ export async function DataInspector({ targets, targetId, from, to }: { targets: 
   ].join("\n");
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-5 md:gap-6">
       {picker}
 
-      <section className="grid gap-5 rounded-[14px] border border-line bg-surface p-6">
+      <section className="grid grid-cols-[minmax(0,1fr)] gap-5 rounded-[14px] border border-line bg-surface p-4 md:p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h2 className="font-heading text-[20px]">
+          <div className="min-w-0">
+            <h2 className="font-heading text-[18px] [overflow-wrap:anywhere] md:text-[20px]">
               {t.client}
               {t.label && <span className="text-muted"> · {t.label}</span>}
             </h2>
-            <p className="mt-1 text-sm text-muted">
+            <p className="mt-1 text-sm text-muted [overflow-wrap:anywhere]">
               act_{account} · counts <span className="text-fg">{conversionLabel(t.conversion, t.custom_action)}</span> as{" "}
               <code className="rounded bg-surface-2 px-1.5 py-0.5 text-xs text-fg">{conv.field ?? type ?? "nothing yet"}</code>
               {match && (
@@ -167,7 +167,7 @@ export async function DataInspector({ targets, targetId, from, to }: { targets: 
           </div>
           <CsvButton csv={csv} name={`${t.client}-${from}-${to}.csv`} />
         </div>
-        <dl className="grid gap-px overflow-hidden rounded-[10px] border border-line bg-line sm:grid-cols-4">
+        <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-[10px] border border-line bg-line sm:grid-cols-4">
           {[
             ["Spend", money(total.spend)],
             ["Results", total.results.toLocaleString()],
@@ -182,15 +182,42 @@ export async function DataInspector({ targets, targetId, from, to }: { targets: 
         </dl>
       </section>
 
-      <section className="grid gap-4 rounded-[14px] border border-line bg-surface p-6">
+      <section className="grid grid-cols-[minmax(0,1fr)] gap-4 rounded-[14px] border border-line bg-surface p-4 md:p-6">
         <div>
           <h3 className="font-heading text-[17px]">Does it add up?</h3>
-          <p className="mt-1 text-sm text-muted">
+          <p className="mt-1 text-sm text-muted [overflow-wrap:anywhere]">
             The dashboard&apos;s averages recomputed from these rows right now, next to what it last saved
             {snap?.computed_at && ` (${new Date(snap.computed_at).toLocaleString("en-US", { timeZone: "America/New_York" })})`}. Windows end yesterday; today is still filling in.
           </p>
         </div>
-        <div className="overflow-x-auto">
+        {/* Phones: one card per window */}
+        <ul className="grid gap-2 md:hidden">
+          {checks.map((c) => (
+            <li key={c.k} className="grid gap-2 rounded-[10px] bg-bg/60 px-3 py-2.5 text-sm">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="font-medium">{c.n} days</span>
+                <span className={`text-right text-xs ${c.same ? "text-ok" : "text-warn"}`}>{c.stored ? (c.same ? "✓ matches" : "Changed since last sync") : "Not saved yet"}</span>
+              </div>
+              <p className="tabular text-xs text-faint">{c.range}</p>
+              <dl className="grid grid-cols-4 gap-2 text-xs">
+                {(
+                  [
+                    ["Spend", money(c.fresh.spend)],
+                    ["Results", String(c.fresh.results)],
+                    ["Now", kpiValue(c.fresh.value, Boolean(conv.roas))],
+                    ["Dashboard", kpiValue(c.stored?.value, Boolean(conv.roas))],
+                  ] as const
+                ).map(([k, v]) => (
+                  <div key={k} className="grid min-w-0 gap-0.5">
+                    <dt className="truncate text-[10px] uppercase tracking-[0.08em] text-faint">{k}</dt>
+                    <dd className="truncate tabular">{v}</dd>
+                  </div>
+                ))}
+              </dl>
+            </li>
+          ))}
+        </ul>
+        <div className="hidden overflow-x-auto md:block">
           <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="border-b border-line">
@@ -220,10 +247,10 @@ export async function DataInspector({ targets, targetId, from, to }: { targets: 
         </div>
       </section>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
-        <section className="grid content-start gap-4 rounded-[14px] border border-line bg-surface p-6">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-5 md:gap-6 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+        <section className="grid grid-cols-[minmax(0,1fr)] content-start gap-4 rounded-[14px] border border-line bg-surface p-4 md:p-6">
           <h3 className="font-heading text-[17px]">By day</h3>
-          <div className="max-h-[520px] overflow-auto">
+          <div className="max-h-[60vh] overflow-auto overscroll-contain md:max-h-[520px]">
             <table className="w-full min-w-[520px] text-sm">
               <thead className="sticky top-0 bg-surface">
                 <tr className="border-b border-line">
@@ -259,15 +286,15 @@ export async function DataInspector({ targets, targetId, from, to }: { targets: 
           </div>
         </section>
 
-        <section className="grid content-start gap-4 rounded-[14px] border border-line bg-surface p-6">
-          <div>
+        <section className="grid grid-cols-[minmax(0,1fr)] content-start gap-4 rounded-[14px] border border-line bg-surface p-4 md:p-6">
+          <div className="min-w-0">
             <h3 className="font-heading text-[17px]">Everything Meta reported</h3>
             <p className="mt-1 text-sm text-muted">Totals for each action type in this range. If the KPI is counting the wrong one, change it on the KPI page.</p>
           </div>
           <ul className="grid max-h-[460px] gap-1 overflow-auto">
             {actions.map(([k, v]) => (
               <li key={k} className={`flex items-center justify-between gap-3 rounded-[8px] px-3 py-1.5 text-xs ${k === type ? "bg-brand-soft text-brand-text" : "odd:bg-bg"}`}>
-                <code className="truncate">{k}</code>
+                <code className="min-w-0 truncate">{k}</code>
                 <span className="tabular">{v.toLocaleString()}</span>
               </li>
             ))}
@@ -276,9 +303,35 @@ export async function DataInspector({ targets, targetId, from, to }: { targets: 
         </section>
       </div>
 
-      <section className="grid gap-4 rounded-[14px] border border-line bg-surface p-6">
+      <section className="grid grid-cols-[minmax(0,1fr)] gap-4 rounded-[14px] border border-line bg-surface p-4 md:p-6">
         <h3 className="font-heading text-[17px]">By campaign</h3>
-        <div className="overflow-x-auto">
+        {/* Phones: one card per campaign */}
+        <ul className="grid gap-2 md:hidden">
+          {campaigns.map((c) => (
+            <li key={c.name} className={`grid gap-2 rounded-[10px] bg-bg/60 px-3 py-2.5 text-sm ${c.included ? "" : "opacity-50"}`}>
+              <div className="flex items-start justify-between gap-3">
+                <span className="min-w-0 [overflow-wrap:anywhere]">{c.name}</span>
+                <span className={`shrink-0 text-xs ${c.included ? "text-ok" : "text-faint"}`}>{c.included ? "Included" : "Filtered out"}</span>
+              </div>
+              <dl className="grid grid-cols-4 gap-2 text-xs">
+                {(
+                  [
+                    ["Days", String(c.days.size)],
+                    ["Spend", money(Math.round(c.spend * 100) / 100)],
+                    ["Results", String(Math.round(c.results * 10) / 10)],
+                    ["Cost / result", c.results ? money(Math.round((c.spend / c.results) * 100) / 100) : "—"],
+                  ] as const
+                ).map(([k, v]) => (
+                  <div key={k} className="grid min-w-0 gap-0.5">
+                    <dt className="truncate text-[10px] uppercase tracking-[0.08em] text-faint">{k}</dt>
+                    <dd className="truncate tabular">{v}</dd>
+                  </div>
+                ))}
+              </dl>
+            </li>
+          ))}
+        </ul>
+        <div className="hidden overflow-x-auto md:block">
           <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="border-b border-line">

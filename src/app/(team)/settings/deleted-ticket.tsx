@@ -40,15 +40,15 @@ export function DeletedTicketRow({ t }: { t: DeletedTicket }) {
   const [open, setOpen] = useState(false);
   return (
     <li className={`overflow-hidden rounded-[14px] border bg-surface transition-colors ${open ? "border-faint/60" : "border-line hover:border-faint/50"}`}>
-      <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} className="grid w-full gap-1 px-5 py-4 text-left sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-4">
+      <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} className="grid w-full gap-1 px-4 py-4 text-left active:bg-surface-2/60 md:px-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-4">
         <div className="grid min-w-0 gap-1">
           <p className="truncate text-sm font-medium">
             <span className="text-faint">#{t.number}</span> {t.title}
           </p>
-          <p className="text-xs text-muted">
+          <p className="text-xs text-muted [overflow-wrap:anywhere]">
             {t.client} · <span className="capitalize">{t.format}</span> · {t.newCount} new{t.variations ? ` + ${t.variations} var.` : ""} · was in <span className="text-fg">{t.stageLabel}</span>
           </p>
-          <p className="text-xs text-faint">
+          <p className="text-xs text-faint [overflow-wrap:anywhere]">
             Deleted {when(t.deletedAt)}
             {t.deletedBy ? ` by ${t.deletedBy}` : ""}
             {t.reason && <span className="text-muted"> · &ldquo;{t.reason}&rdquo;</span>}
@@ -58,7 +58,7 @@ export function DeletedTicketRow({ t }: { t: DeletedTicket }) {
       </button>
 
       {open && (
-        <div className="grid gap-6 border-t border-line bg-bg/40 px-5 py-6">
+        <div className="grid gap-6 border-t border-line bg-bg/40 px-4 py-5 md:px-5 md:py-6">
           {/* Where it got to */}
           <div className="grid gap-2">
             <p className="text-[10px] uppercase tracking-[0.16em] text-faint">Where it got to</p>
@@ -79,7 +79,7 @@ export function DeletedTicketRow({ t }: { t: DeletedTicket }) {
           </div>
 
           {/* The brief */}
-          <div className="grid gap-4 rounded-[14px] border border-line bg-surface p-5">
+          <div className="grid min-w-0 gap-4 rounded-[14px] border border-line bg-surface p-4 md:p-5">
             <div className="grid gap-3 sm:grid-cols-3">
               {(
                 [
@@ -90,15 +90,15 @@ export function DeletedTicketRow({ t }: { t: DeletedTicket }) {
               ).map(([k, v]) => (
                 <div key={k} className="grid gap-0.5">
                   <p className="text-[10px] uppercase tracking-[0.14em] text-faint">{k}</p>
-                  <p className="text-sm">{v || "—"}</p>
+                  <p className="text-sm [overflow-wrap:anywhere]">{v || "—"}</p>
                 </div>
               ))}
             </div>
             {t.origin && (
-              <p className="text-xs text-muted">
+              <p className="text-xs text-muted [overflow-wrap:anywhere]">
                 Built on: {t.origin.label}
                 {t.origin.link && (
-                  <a href={t.origin.link} target="_blank" rel="noreferrer" className="ml-1 text-fg hover:underline">
+                  <a href={t.origin.link} target="_blank" rel="noreferrer" className="ml-1 inline-flex min-h-11 items-center text-fg hover:underline md:min-h-0">
                     See it ↗
                   </a>
                 )}
@@ -106,17 +106,17 @@ export function DeletedTicketRow({ t }: { t: DeletedTicket }) {
             )}
             <div className="grid gap-1">
               <p className="text-[10px] uppercase tracking-[0.14em] text-faint">Brief</p>
-              <p className="whitespace-pre-wrap text-sm leading-relaxed">{t.brief || "No brief written."}</p>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">{t.brief || "No brief written."}</p>
             </div>
             {(t.refs.length > 0 || t.landing) && (
               <div className="flex flex-wrap gap-2 text-xs">
                 {t.landing && (
-                  <a href={t.landing} target="_blank" rel="noreferrer" className="rounded-full border border-line px-2.5 py-1 text-muted hover:text-fg">
+                  <a href={t.landing} target="_blank" rel="noreferrer" className="inline-flex h-11 items-center rounded-full border border-line px-3.5 text-muted hover:text-fg md:h-auto md:px-2.5 md:py-1">
                     Landing page ↗
                   </a>
                 )}
                 {t.refs.map((r, i) => (
-                  <a key={r} href={r} target="_blank" rel="noreferrer" className="rounded-full border border-line px-2.5 py-1 text-muted hover:text-fg">
+                  <a key={r} href={r} target="_blank" rel="noreferrer" className="inline-flex h-11 items-center rounded-full border border-line px-3.5 text-muted hover:text-fg md:h-auto md:px-2.5 md:py-1">
                     Reference {i + 1} ↗
                   </a>
                 ))}
@@ -138,7 +138,7 @@ export function DeletedTicketRow({ t }: { t: DeletedTicket }) {
                 <p className="font-heading text-[15px]">New ticket, same brief</p>
                 <p className="text-xs leading-relaxed text-muted">Starts fresh through creative with this brief as it is. Opens on the review step.</p>
               </div>
-              <Link href={`/requests/new?from=${t.id}&brief=same`} className="justify-self-start rounded-full bg-fg px-4 py-1.5 text-sm text-bg hover:bg-fg/90">
+              <Link href={`/requests/new?from=${t.id}&brief=same`} className="inline-flex h-11 items-center justify-center rounded-full bg-fg px-4 text-sm text-bg hover:bg-fg/90 md:h-auto md:justify-self-start md:py-1.5">
                 Start it again →
               </Link>
             </div>
@@ -147,7 +147,7 @@ export function DeletedTicketRow({ t }: { t: DeletedTicket }) {
                 <p className="font-heading text-[15px]">New ticket, update the brief</p>
                 <p className="text-xs leading-relaxed text-muted">Everything filled in from this one, ready to change before it goes to the team.</p>
               </div>
-              <Link href={`/requests/new?from=${t.id}`} className="justify-self-start rounded-full border border-line px-4 py-1.5 text-sm hover:border-fg/30">
+              <Link href={`/requests/new?from=${t.id}`} className="inline-flex h-11 items-center justify-center rounded-full border border-line px-4 text-sm hover:border-fg/30 md:h-auto md:justify-self-start md:py-1.5">
                 Edit and start →
               </Link>
             </div>

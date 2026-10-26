@@ -19,7 +19,7 @@ export type Person = {
   usage?: { lastActive: string | null; lastSignIn: string | null; perWeek: string | null; thisWeek: string | null } | null;
 };
 
-const select = "h-10 rounded-[8px] border border-line bg-bg px-3 text-sm outline-none transition-colors hover:border-faint/60 focus:border-brand-text/70";
+const select = "h-11 min-w-0 rounded-[8px] border border-line bg-bg px-3 text-sm outline-none transition-colors hover:border-faint/60 focus:border-brand-text/70 md:h-10";
 
 function RoleOptions() {
   return (
@@ -49,10 +49,10 @@ function Row({ p, canEdit, isMe }: { p: Person; canEdit: boolean; isMe: boolean 
     });
 
   return (
-    <li className={`grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2 px-4 py-3 sm:grid-cols-[auto_1fr_200px_110px] ${p.isActive && p.joined ? "" : "opacity-55"}`}>
+    <li className={`grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2.5 px-4 py-3.5 sm:gap-y-2 sm:py-3 sm:grid-cols-[auto_1fr_200px_110px] ${p.isActive && p.joined ? "" : "opacity-55"}`}>
       <PersonAvatar name={p.fullName} muted={!p.isActive || !p.joined} />
       <div className="min-w-0">
-        <p className="flex items-center gap-2 truncate text-sm font-medium">
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm font-medium sm:flex-nowrap sm:truncate">
           {p.fullName} {isMe && <span className="text-xs font-normal text-faint">(you)</span>}
           {p.isActive &&
             (p.joined ? (
@@ -63,7 +63,7 @@ function Row({ p, canEdit, isMe }: { p: Person; canEdit: boolean; isMe: boolean 
               </span>
             ))}
         </p>
-        <p className="truncate text-xs text-muted">
+        <p className="text-xs text-muted [overflow-wrap:anywhere] sm:truncate">
           {p.email}
           {p.clientCount > 0 && <span className="text-faint"> · {p.clientCount} clients</span>}
         </p>
@@ -76,7 +76,7 @@ function Row({ p, canEdit, isMe }: { p: Person; canEdit: boolean; isMe: boolean 
             {p.usage.lastSignIn && <span>· Signed in {p.usage.lastSignIn}</span>}
             {p.usage.perWeek && <span>· ~{p.usage.perWeek} a week</span>}
             {p.usage.thisWeek && <span>· {p.usage.thisWeek} this week</span>}
-            <Link href={`/team/${p.id}`} className="text-muted underline-offset-2 hover:text-fg hover:underline">
+            <Link href={`/team/${p.id}`} className="inline-flex min-h-11 items-center text-muted underline-offset-2 hover:text-fg hover:underline sm:min-h-0">
               Activity →
             </Link>
           </p>
@@ -97,11 +97,11 @@ function Row({ p, canEdit, isMe }: { p: Person; canEdit: boolean; isMe: boolean 
           <span className="text-sm text-muted">{roleLabel(p.role)}</span>
         )}
       </div>
-      <div className="col-span-2 flex items-center justify-between gap-2 sm:col-span-1 sm:justify-end">
+      <div className="col-span-2 flex items-center justify-between gap-2 max-sm:empty:hidden sm:col-span-1 sm:justify-end">
         {note ? (
-          <span className={`text-xs ${note.ok ? "text-ok" : "text-brand-text"}`}>{note.text}</span>
+          <span className={`min-w-0 text-xs [overflow-wrap:anywhere] ${note.ok ? "text-ok" : "text-brand-text"}`}>{note.text}</span>
         ) : canEdit && !isMe ? (
-          <span className="flex flex-col items-end gap-1">
+          <span className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-col sm:flex-nowrap sm:items-end sm:gap-1">
             {p.isActive && !p.joined && (
               <button
                 disabled={pending}
@@ -112,13 +112,13 @@ function Row({ p, canEdit, isMe }: { p: Person; canEdit: boolean; isMe: boolean 
                     if (res.ok) setTimeout(() => setNote(null), 2500);
                   })
                 }
-                className="rounded-full bg-brand px-3 py-1 text-xs font-medium text-white hover:bg-brand-hover disabled:opacity-60"
+                className="h-11 flex-1 rounded-full bg-brand px-4 text-xs font-medium text-white hover:bg-brand-hover disabled:opacity-60 sm:h-auto sm:flex-none sm:px-3 sm:py-1"
                 title={p.invitedAt ? `Last sent ${new Date(p.invitedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : "Emails them a link to sign in with Google"}
               >
                 {pending ? "Sending…" : p.invitedAt ? "Resend invite" : "Send invite"}
               </button>
             )}
-            <button disabled={pending} onClick={() => run(() => setActive(p.id, !p.isActive))} className="text-xs text-muted hover:text-fg">
+            <button disabled={pending} onClick={() => run(() => setActive(p.id, !p.isActive))} className="h-11 rounded-full border border-line px-4 text-xs text-muted hover:text-fg max-sm:ml-auto sm:h-auto sm:border-0 sm:px-0">
               {p.isActive ? "Deactivate" : "Reactivate"}
             </button>
           </span>
@@ -143,7 +143,7 @@ function Invite() {
           if (res.ok) formEl.reset();
         });
       }}
-      className="grid gap-3 rounded-[12px] border border-line bg-surface p-5"
+      className="grid gap-3 rounded-[12px] border border-line bg-surface p-4 md:p-5"
     >
       <p className="text-sm font-medium">Invite a teammate</p>
       <div className="grid gap-3 sm:grid-cols-[1fr_1.4fr_200px_auto]">
@@ -152,7 +152,7 @@ function Invite() {
         <select name="role" defaultValue="media_buyer" aria-label="Role" className={select}>
           <RoleOptions />
         </select>
-        <button disabled={pending} className="h-10 rounded-[8px] bg-brand px-5 text-sm font-medium text-white hover:bg-brand-hover disabled:opacity-60">
+        <button disabled={pending} className="h-11 rounded-[8px] bg-brand px-5 md:h-10 text-sm font-medium text-white hover:bg-brand-hover disabled:opacity-60">
           {pending ? "Inviting…" : "Invite"}
         </button>
       </div>
@@ -169,7 +169,7 @@ export function TeamList({ people, canEdit, meId }: { people: Person[]; canEdit:
   const waiting = people.filter((p) => p.isActive && !p.joined).length;
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-6">
       {canEdit && <Invite />}
       <p className="text-xs text-muted">
         <span className="text-ok">{joined} active</span> · {waiting} not joined yet. Someone becomes active the first time they sign in; until then they get no notifications or daily recap.
@@ -195,7 +195,7 @@ export function TeamList({ people, canEdit, meId }: { people: Person[]; canEdit:
         );
       })}
       {inactiveCount > 0 && (
-        <button onClick={() => setShowInactive((s) => !s)} className="justify-self-start text-xs text-muted hover:text-fg">
+        <button onClick={() => setShowInactive((s) => !s)} className="min-h-11 justify-self-start text-xs text-muted hover:text-fg md:min-h-0">
           {showInactive ? "Hide" : "Show"} {inactiveCount} deactivated
         </button>
       )}

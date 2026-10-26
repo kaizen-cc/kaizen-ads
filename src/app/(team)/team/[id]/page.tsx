@@ -52,46 +52,53 @@ export default async function PersonActivity({ params, searchParams }: PageProps
   };
 
   return (
-    <div className="mx-auto grid max-w-4xl gap-8">
-      <Link href="/settings?tab=team" className="text-xs text-muted hover:text-fg">
+    <div className="mx-auto grid max-w-4xl grid-cols-[minmax(0,1fr)] gap-6 md:gap-8">
+      <Link href="/settings?tab=team" className="inline-flex min-h-11 items-center justify-self-start text-xs text-muted hover:text-fg md:min-h-0 md:justify-self-stretch">
         ← Team
       </Link>
       <header className="flex flex-wrap items-center gap-4">
         <PersonAvatar name={p.full_name} />
-        <div className="grid gap-0.5">
-          <h1 className="font-heading text-[28px] leading-tight">{p.full_name}</h1>
-          <p className="text-sm text-muted">
+        <div className="grid min-w-0 flex-1 gap-0.5 md:flex-none">
+          <h1 className="font-heading text-[24px] leading-tight [overflow-wrap:anywhere] md:text-[28px]">{p.full_name}</h1>
+          <p className="text-sm text-muted [overflow-wrap:anywhere]">
             {roleLabel(p.role as TeamRole)} · {p.email}
           </p>
         </div>
       </header>
 
-      <section className="grid gap-3 sm:grid-cols-4">
+      <section className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 sm:gap-3">
         {[
           ["Last active", u.lastActive ? (u.lastActive === "now" ? "Now" : u.lastActive) : "Not yet"],
           ["Last sign-in", u.lastSignIn ?? "Not yet"],
           ["A week, on average", u.perWeek ?? "–"],
           ["This week", u.thisWeek ?? "–"],
         ].map(([k, v]) => (
-          <div key={k} className="grid gap-1 rounded-[16px] border border-line bg-surface p-4">
-            <p className="text-[11px] uppercase tracking-[0.14em] text-faint">{k}</p>
-            <p className="font-heading text-xl capitalize">{v}</p>
+          <div key={k} className="grid min-w-0 gap-1 rounded-[16px] border border-line bg-surface p-3.5 sm:p-4">
+            <p className="text-[10px] uppercase tracking-[0.12em] text-faint sm:text-[11px] sm:tracking-[0.14em]">{k}</p>
+            <p className="font-heading text-lg capitalize [overflow-wrap:anywhere] sm:text-xl">{v}</p>
           </div>
         ))}
       </section>
 
-      <section className="grid gap-3 rounded-[18px] border border-line bg-surface p-5">
-        <div className="flex items-baseline justify-between gap-3">
+      <section className="grid gap-3 rounded-[18px] border border-line bg-surface p-4 sm:p-5">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
           <h2 className="font-heading text-lg">Time in Kaizen Ads</h2>
           <p className="text-xs text-faint">Minutes actually in use, each day for four weeks</p>
         </div>
         <div className="flex h-28 items-end gap-1">
-          {days.map((d) => {
+          {days.map((d, i) => {
             const m = month.perDay.get(d) ?? 0;
             const weekend = [0, 6].includes(new Date(`${d}T12:00:00Z`).getUTCDay());
+            const label = `${new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}: ${m ? duration(m) : "none"}`;
             return (
-              <span key={d} className="group relative flex h-full flex-1 items-end" title={`${new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}: ${m ? duration(m) : "none"}`}>
-                <span className={`w-full rounded-t-[3px] transition-colors ${m ? "bg-brand/70 group-hover:bg-brand" : weekend ? "bg-white/[0.03]" : "bg-white/[0.06]"}`} style={{ height: `${Math.max(m ? 6 : 3, (m / peak) * 100)}%` }} />
+              // Phones: tap a day to see its minutes (the title shows on hover elsewhere)
+              <span key={d} tabIndex={0} aria-label={label} className="group relative flex h-full flex-1 items-end outline-none" title={label}>
+                <span className={`w-full rounded-t-[3px] transition-colors ${m ? "bg-brand/70 group-hover:bg-brand group-focus:bg-brand" : weekend ? "bg-white/[0.03]" : "bg-white/[0.06]"}`} style={{ height: `${Math.max(m ? 6 : 3, (m / peak) * 100)}%` }} />
+                <span
+                  className={`pointer-events-none absolute bottom-full z-10 mb-1.5 hidden whitespace-nowrap rounded-[8px] border border-line bg-surface-2 px-2 py-1 text-[11px] text-fg shadow-lg group-focus:block md:!hidden ${i < 5 ? "left-0" : i > 22 ? "right-0" : "left-1/2 -translate-x-1/2"}`}
+                >
+                  {label}
+                </span>
               </span>
             );
           })}
@@ -104,7 +111,7 @@ export default async function PersonActivity({ params, searchParams }: PageProps
           <h2 className="font-heading text-lg">
             Activity <span className="text-sm font-normal text-faint">{before ? `the week to ${new Date(end.getTime() - DAY).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : "the last 7 days"}</span>
           </h2>
-          <Link href={`/team/${p.id}${qs({ pages: showPages ? undefined : "1" })}`} className="text-xs text-muted hover:text-fg">
+          <Link href={`/team/${p.id}${qs({ pages: showPages ? undefined : "1" })}`} className="inline-flex min-h-11 items-center text-xs text-muted hover:text-fg md:min-h-0">
             {showPages ? "Hide pages opened" : `Show pages opened (${pagesOpened})`}
           </Link>
         </div>
@@ -140,12 +147,12 @@ export default async function PersonActivity({ params, searchParams }: PageProps
             </div>
           ))
         )}
-        <div className="flex items-center justify-between text-sm">
-          <Link href={`/team/${p.id}${qs({ before: weekBefore(end) })}`} className="text-muted hover:text-fg">
+        <div className="flex items-center justify-between gap-3 text-sm">
+          <Link href={`/team/${p.id}${qs({ before: weekBefore(end) })}`} className="inline-flex min-h-11 items-center text-muted hover:text-fg md:min-h-0">
             ← The week before
           </Link>
           {before && (
-            <Link href={`/team/${p.id}${qs({ before: undefined })}`} className="text-muted hover:text-fg">
+            <Link href={`/team/${p.id}${qs({ before: undefined })}`} className="inline-flex min-h-11 items-center text-muted hover:text-fg md:min-h-0">
               Back to this week →
             </Link>
           )}
