@@ -26,6 +26,27 @@ export async function markRead(id?: string) {
   await q;
 }
 
+/** Clears notifications off the bell: the ones given, or all of them. They stay on record (cleared_at), so "Undo"
+ *  brings them back. Clearing also counts as reading. */
+export async function clearNotices(ids?: string[]) {
+  const me = await requireStaff();
+  const db = await createClient();
+  const now = new Date().toISOString();
+  let q = db.from("notifications").update({ cleared_at: now }).eq("profile_id", me.id).is("cleared_at", null);
+  if (ids) q = q.in("id", ids);
+  const { data } = await q.select("id, read_at");
+  const fresh = (data ?? []).filter((n) => !n.read_at).map((n) => n.id as string);
+  if (fresh.length) await db.from("notifications").update({ read_at: now }).in("id", fresh);
+  return (data ?? []).map((n) => n.id as string);
+}
+
+/** Puts cleared notifications back on the bell (the Undo after clearing). */
+export async function restoreNotices(ids: string[]) {
+  const me = await requireStaff();
+  if (!ids.length) return;
+  await (await createClient()).from("notifications").update({ cleared_at: null }).eq("profile_id", me.id).in("id", ids);
+}
+
 /** Saves this person's notification settings (each change saves as it's made). */
 export async function saveNoticePrefs(settings: NoticePrefs): Promise<{ ok: true } | { ok: false; error: string }> {
   const me = await requireStaff();

@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { markRead, myNotifications } from "@/app/(team)/notification-actions";
+import { clearNotices, markRead, myNotifications, restoreNotices } from "@/app/(team)/notification-actions";
 import type { Notice } from "@/lib/notifications";
 import { toast } from "./toasts";
 
@@ -92,6 +92,28 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
     await markRead();
   };
 
+  // Clearing takes them off the bell at once; Undo puts them back
+  const clear = async (ids?: string[]) => {
+    const gone = new Set(ids ?? items.map((x) => x.id));
+    setUnread((u) => Math.max(0, u - items.filter((x) => gone.has(x.id) && !x.read).length));
+    setItems((xs) => xs.filter((x) => !gone.has(x.id)));
+    const cleared = await clearNotices(ids);
+    toast({
+      tone: "ok",
+      title: cleared.length === 1 ? "Notification cleared" : `${cleared.length} notifications cleared`,
+      ms: 5000,
+      actions: [
+        {
+          label: "Undo",
+          run: async () => {
+            await restoreNotices(cleared);
+            await load();
+          },
+        },
+      ],
+    });
+  };
+
   const today = items.filter((n) => isToday(n.createdAt));
   const earlier = items.filter((n) => !isToday(n.createdAt));
   const panel =
@@ -132,6 +154,11 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
                 {unread > 0 && (
                   <button type="button" onClick={readAll} className={`text-xs text-muted hover:text-fg ${sheet ? "min-h-11 px-2" : ""}`}>
                     Mark all read
+                  </button>
+                )}
+                {items.length > 0 && (
+                  <button type="button" onClick={() => void clear()} className={`text-xs text-muted hover:text-fg ${sheet ? "min-h-11 px-2" : ""}`}>
+                    Clear all
                   </button>
                 )}
                 <button
@@ -180,11 +207,18 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
               ].map(([label, list]) =>
                 (list as Notice[]).length ? (
                   <div key={label as string}>
-                    <p className="px-4 pb-1 pt-3 text-[10px] font-medium uppercase tracking-[0.16em] text-faint">{label as string}</p>
+                    <div className="flex items-center justify-between px-4 pb-1 pt-3">
+                      <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-faint">{label as string}</p>
+                      {label === "Earlier" && (
+                        <button type="button" onClick={() => void clear((list as Notice[]).map((n) => n.id))} className={`text-[11px] text-faint hover:text-fg ${sheet ? "-my-3 min-h-11 px-2" : ""}`}>
+                          Clear earlier
+                        </button>
+                      )}
+                    </div>
                     <ul>
                       {(list as Notice[]).map((n) => (
-                        <li key={n.id}>
-                          <button type="button" onClick={() => void go(n)} className={`flex w-full gap-3 px-4 text-left transition-colors hover:bg-surface-2 ${sheet ? "py-3.5 active:bg-surface-2" : "py-3"} ${n.read ? "opacity-60" : ""}`}>
+                        <li key={n.id} className="group relative">
+                          <button type="button" onClick={() => void go(n)} className={`flex w-full gap-3 pl-4 text-left ${sheet ? "pr-14" : "pr-4"} transition-colors hover:bg-surface-2 ${sheet ? "py-3.5 active:bg-surface-2" : "py-3"} ${n.read ? "opacity-60" : ""}`}>
                             <span className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full ${n.priority === "critical" && !n.read ? "bg-brand/20 text-brand-text" : "bg-surface-2 text-muted"}`}>
                               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                                 <path d={KIND_ICON[n.kind] ?? KIND_ICON.ticket} />
@@ -193,12 +227,23 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
                             <span className="grid min-w-0 flex-1 gap-0.5">
                               <span className="flex items-start justify-between gap-2">
                                 <span className={`min-w-0 break-words leading-snug ${sheet ? "text-[15px]" : "text-[13.5px]"} ${n.read ? "" : "font-medium"}`}>{n.title}</span>
-                                <span className="shrink-0 pt-0.5 text-[10.5px] text-faint">{ago(n.createdAt)}</span>
+                                <span className={`shrink-0 pt-0.5 text-[10.5px] text-faint ${sheet ? "" : "group-hover:opacity-0"}`}>{ago(n.createdAt)}</span>
                               </span>
                               {n.body && <span className={`line-clamp-2 text-muted ${sheet ? "text-[13px]" : "text-xs"}`}>{n.body}</span>}
                               {n.actor && <span className="text-[10.5px] text-faint">by {n.actor}</span>}
                             </span>
-                            {!n.read && <span className={`mt-2 h-2 w-2 shrink-0 rounded-full ${n.priority === "critical" ? "bg-brand" : "bg-fg/40"}`} />}
+                            {!n.read && <span className={`mt-2 h-2 w-2 shrink-0 rounded-full ${n.priority === "critical" ? "bg-brand" : "bg-fg/40"} ${sheet ? "" : "group-hover:opacity-0"}`} />}
+                          </button>
+                          {/* Clear: always there on phones, on hover on a computer */}
+                          <button
+                            type="button"
+                            onClick={() => void clear([n.id])}
+                            aria-label="Clear this notification"
+                            className={`absolute right-1.5 grid place-items-center rounded-full text-faint transition hover:bg-surface-3 hover:text-fg ${sheet ? "top-1.5 h-11 w-11" : "top-2 h-8 w-8 opacity-0 focus-visible:opacity-100 group-hover:opacity-100"}`}
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden>
+                              <path d="M18 6 6 18M6 6l12 12" />
+                            </svg>
                           </button>
                         </li>
                       ))}

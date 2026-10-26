@@ -10,8 +10,8 @@ export type Notice = { id: string; kind: string; title: string; body: string | n
 
 export async function loadNotifications(db: SupabaseClient, limit = 40): Promise<{ items: Notice[]; unread: number }> {
   const [{ data }, { count }] = await Promise.all([
-    db.from("notifications").select("id, kind, title, body, href, priority, created_at, read_at, actor:profiles!notifications_actor_id_fkey(full_name)").order("created_at", { ascending: false }).limit(limit),
-    db.from("notifications").select("id", { count: "exact", head: true }).is("read_at", null),
+    db.from("notifications").select("id, kind, title, body, href, priority, created_at, read_at, actor:profiles!notifications_actor_id_fkey(full_name)").is("cleared_at", null).order("created_at", { ascending: false }).limit(limit),
+    db.from("notifications").select("id", { count: "exact", head: true }).is("read_at", null).is("cleared_at", null),
   ]);
   return {
     unread: count ?? 0,
@@ -105,6 +105,7 @@ export async function emailNotifications(admin: SupabaseClient) {
     .from("notifications")
     .select("id, profile_id, kind, title, body, href, priority, profiles!notifications_profile_id_fkey(email, full_name)")
     .is("read_at", null)
+    .is("cleared_at", null)
     .is("emailed_at", null)
     .lte("created_at", cutoff)
     .gte("created_at", new Date(Date.now() - 24 * 3_600_000).toISOString())
