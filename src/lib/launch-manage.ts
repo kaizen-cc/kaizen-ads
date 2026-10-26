@@ -90,6 +90,8 @@ export type AdEdit = {
   igId?: string | null;
   /** Advantage+ enhancements switched off */
   optOut?: string[];
+  /** Instant-form ads: the form they open */
+  leadFormId?: string;
   /** The dataset the ads report website events to (null: Meta's default) */
   trackingPixel?: string | null;
   /** Dollars a day, set where the budget lives */
@@ -142,6 +144,11 @@ export async function editLaunch(admin: SupabaseClient, launchId: string, by: st
     next.igId = edit.igId;
     changes.push("Instagram account");
   }
+  if (edit.leadFormId && edit.leadFormId !== plan.leadFormId) {
+    if (!plan.leadFormId) throw new Error("These ads don't open an instant form.");
+    next.leadFormId = edit.leadFormId;
+    changes.push(`instant form → ${plan.options.leadForms?.find((f) => f.id === edit.leadFormId)?.name ?? edit.leadFormId}`);
+  }
   if (edit.optOut !== undefined) {
     const off = ENHANCEMENTS.filter((f) => edit.optOut!.includes(f) && next.known!.includes(f));
     if (!same([...off].sort(), [...plan.optOut].sort())) {
@@ -155,7 +162,7 @@ export async function editLaunch(admin: SupabaseClient, launchId: string, by: st
     next.trackingPixel = edit.trackingPixel || null;
     changes.push(next.trackingPixel ? `website events → ${plan.options.pixels?.find((x) => x.id === next.trackingPixel)?.name ?? next.trackingPixel}` : "website events → Meta's default");
   }
-  const creative = !same({ c: next.copy, a: next.cta, l: next.link, u: next.urlTags, p: next.pageId, i: next.igId, o: next.optOut }, { c: plan.copy, a: plan.cta, l: plan.link, u: plan.urlTags, p: plan.pageId, i: plan.igId, o: plan.optOut });
+  const creative = !same({ c: next.copy, a: next.cta, l: next.link, u: next.urlTags, p: next.pageId, i: next.igId, o: next.optOut, f: next.leadFormId ?? null }, { c: plan.copy, a: plan.cta, l: plan.link, u: plan.urlTags, p: plan.pageId, i: plan.igId, o: plan.optOut, f: plan.leadFormId ?? null });
 
   const result: Result = JSON.parse(JSON.stringify(l.result));
   const renames = Object.entries(edit.names ?? {}).filter(([d, n]) => n.trim() && result.ads.find((a) => a.designId === d && a.adId && a.name !== n.trim()));

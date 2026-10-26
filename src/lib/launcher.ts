@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
-import { metaGraph } from "@/lib/context/meta";
+import { metaGraph, pageLeadForms } from "@/lib/context/meta";
 import { metaWrite, metaWriteSetting, writeBlocked } from "@/lib/meta-write";
 
 // The launcher: a ticket's approved creative and copy, pushed to Meta as PAUSED ads for the buyer to QA and turn on.
@@ -31,7 +31,7 @@ const campaignOf = (plan: LaunchPlan, adsetId: string) => [...plan.options.adset
 export type LaunchCheck = { key: string; label: string; level: "ok" | "warn" | "block"; detail: string };
 type Asset = { fileId: string; aspect: string; kind: "image" | "video"; hash?: string; videoId?: string; thumbUrl?: string; name: string };
 export type LaunchAd = { designId: string; designName: string; name: string; assets: Asset[]; check?: { ok: boolean; error: string | null } };
-type AdsetOption = { id: string; name: string; campaignId: string; campaign: string; status: string; objective: string; optimization: string | null; destination: string | null; dynamic: boolean; leadForm: boolean; pixel: string | null; event: string | null; special: string[]; recentAds: string[]; spend14: number; pages: string[]; igs: string[]; daily?: number | null; lifetime?: number | null; campaignDaily?: number | null };
+type AdsetOption = { id: string; name: string; campaignId: string; campaign: string; status: string; objective: string; optimization: string | null; destination: string | null; dynamic: boolean; leadForm: boolean; pixel: string | null; event: string | null; special: string[]; recentAds: string[]; spend14: number; pages: string[]; igs: string[]; forms?: string[]; daily?: number | null; lifetime?: number | null; campaignDaily?: number | null };
 export type LaunchPlan = {
   account: string;
   sandbox: boolean;
@@ -47,6 +47,8 @@ export type LaunchPlan = {
   event?: string | null;
   /** The event the client's KPI counts, as Meta's event (the Media Buyer's suggestion for a new ad set) */
   suggestedEvent?: string | null;
+  /** Instant-form ad sets: the lead form the ads open (the one the ad set's ads already use, unless the buyer picks another) */
+  leadFormId?: string | null;
   /** The dataset each ad reports its website events to (the ad's tracking) */
   trackingPixel?: string | null;
   budget?: Budget;
@@ -59,7 +61,7 @@ export type LaunchPlan = {
   known?: string[];
   reason: string;
   /** allAdsets: every ad set to move a launched ad to, when it's more than where ads land (the sandbox) */
-  options: { adsets: AdsetOption[]; pages: { id: string; name: string }[]; igs: { id: string; name: string }[]; pixels?: Pixel[]; allAdsets?: AdsetOption[] };
+  options: { adsets: AdsetOption[]; pages: { id: string; name: string }[]; igs: { id: string; name: string }[]; pixels?: Pixel[]; leadForms?: { id: string; name: string }[]; allAdsets?: AdsetOption[] };
   attempts: { structure: string; error: string | null }[];
 };
 /** A pixel (Meta calls them datasets) the account can use, and when it last saw an event */
@@ -82,7 +84,7 @@ function eventFor(conversion: string | null) {
 /** The ad's tracking: its website events reported to this dataset */
 export const trackingSpecs = (pixel: string) => JSON.stringify([{ "action.type": ["offsite_conversion"], fb_pixel: [pixel] }]);
 
-export type Overrides = Partial<Pick<LaunchPlan, "adsetId" | "mode" | "newAdsetName" | "pageId" | "igId" | "link" | "pixelId" | "event" | "trackingPixel" | "urlTags">> & { names?: Record<string, string>; dailyBudget?: number | null };
+export type Overrides = Partial<Pick<LaunchPlan, "adsetId" | "mode" | "newAdsetName" | "pageId" | "igId" | "link" | "pixelId" | "event" | "trackingPixel" | "urlTags" | "leadFormId">> & { names?: Record<string, string>; dailyBudget?: number | null };
 /** level: where the budget lives (the ad set, the campaign for CBO, a lifetime budget that's left alone). value: the
  *  daily budget the launch sets (null: unchanged). suggested: the Media Buyer's, with why. Dollars. */
 export type Budget = { level: "adset" | "campaign" | "lifetime" | null; current: number | null; suggested: number | null; value: number | null; why: string };
@@ -141,8 +143,8 @@ async function readAccount(admin: SupabaseClient, account: string) {
       filtering: live,
       limit: "200",
     }),
-    metaGraph<P<{ id: string; name: string; adset_id: string; created_time: string; creative?: { object_story_spec?: { page_id?: string; instagram_user_id?: string }; instagram_user_id?: string; actor_id?: string } }>>(`${act}/ads`, {
-      fields: "name,adset_id,created_time,creative{object_story_spec{page_id,instagram_user_id},instagram_user_id,actor_id}",
+    metaGraph<P<{ id: string; name: string; adset_id: string; created_time: string; creative?: { object_story_spec?: { page_id?: string; instagram_user_id?: string; link_data?: { call_to_action?: { value?: { lead_gen_form_id?: string } } }; video_data?: { call_to_action?: { value?: { lead_gen_form_id?: string } } } }; instagram_user_id?: string; actor_id?: string } }>>(`${act}/ads`, {
+      fields: "name,adset_id,created_time,creative{object_story_spec{page_id,instagram_user_id,link_data{call_to_action},video_data{call_to_action}},instagram_user_id,actor_id}",
       filtering: live,
       limit: "400",
     }),
@@ -181,6 +183,7 @@ async function readAccount(admin: SupabaseClient, account: string) {
         spend14: Math.round(spend.get(s.id) ?? 0),
         pages: mine.map((a) => a.creative?.object_story_spec?.page_id ?? a.creative?.actor_id).filter((x): x is string => Boolean(x)),
         igs: mine.map((a) => a.creative?.object_story_spec?.instagram_user_id ?? a.creative?.instagram_user_id).filter((x): x is string => Boolean(x)),
+        forms: mine.map((a) => a.creative?.object_story_spec?.link_data?.call_to_action?.value?.lead_gen_form_id ?? a.creative?.object_story_spec?.video_data?.call_to_action?.value?.lead_gen_form_id).filter((x): x is string => Boolean(x)),
       };
     })
     .sort((a, b) => b.spend14 - a.spend14 || Number(b.status === "ACTIVE") - Number(a.status === "ACTIVE"));
@@ -338,8 +341,7 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
     adsetId = adset.id;
 
     // The ad set can take these ads?
-    if (adset.leadForm) add("adset", "Ad set", "block", `"${adset.name}" sends people to an instant form; ads with a lead form aren't launched from here yet.`);
-    else if (adset.dynamic) add("adset", "Ad set", "block", `"${adset.name}" is a dynamic creative ad set, which takes one ad built differently; pick another or launch by hand.`);
+    if (adset.dynamic) add("adset", "Ad set", "block", `"${adset.name}" is a dynamic creative ad set, which takes one ad built differently; pick another or launch by hand.`);
     else if (!["OUTCOME_SALES", "OUTCOME_LEADS", "OUTCOME_TRAFFIC", "OUTCOME_ENGAGEMENT", "OUTCOME_AWARENESS", "CONVERSIONS", "LINK_CLICKS", "REACH", "BRAND_AWARENESS"].includes(adset.objective))
       add("adset", "Ad set", "block", `"${adset.campaign}" is a ${adset.objective} campaign; the launcher handles sales, leads (website), traffic, engagement and awareness.`);
     else add("adset", "Ad set", "ok", mode === "clone" ? `A new ad set, "${newAdsetName}", copied from "${adset.name}" (same targeting, pixel and optimization), paused, in "${adset.campaign}".` : `"${adset.name}" in "${adset.campaign}"${adset.status !== "ACTIVE" ? " (paused)" : ""}.`);
@@ -395,6 +397,23 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
     const pageId = overrides.pageId ?? mostCommon(adset.pages) ?? mostCommon(acct.adsets.flatMap((a) => a.pages)) ?? acct.pages[0]?.id ?? null;
     const igId = overrides.igId !== undefined ? overrides.igId : (mostCommon(adset.igs) ?? mostCommon(acct.adsets.flatMap((a) => a.igs)) ?? null);
     const pageName = acct.pages.find((p) => p.id === pageId)?.name ?? pageId;
+
+    // Instant forms: the form the ad set's ads already use, unless the buyer picked another
+    let leadForms: { id: string; name: string }[] = [];
+    let leadFormId: string | null = null;
+    if (adset.leadForm) {
+      leadForms = pageId ? await pageLeadForms(pageId).catch(() => []) : [];
+      // A form the ads use that the Page list didn't show (an older or archived form): by its own name
+      for (const id of new Set(adset.forms ?? []))
+        if (!leadForms.some((f) => f.id === id)) {
+          const f = await metaGraph<{ id: string; name?: string }>(id, { fields: "name" }).catch(() => null);
+          if (f) leadForms.push({ id, name: f.name ?? id });
+        }
+      const prevForm = (l.plan as LaunchPlan | null)?.leadFormId;
+      leadFormId = overrides.leadFormId ?? (prevForm && leadForms.some((f) => f.id === prevForm) ? prevForm : null) ?? mostCommon(adset.forms ?? []) ?? null;
+      if (!leadFormId) add("form", "Instant form", "block", leadForms.length ? `"${adset.name}" sends people to an instant form: pick which one these ads open.` : `"${adset.name}" sends people to an instant form, and Kaizen Ads can't see the Page's forms: the system user needs the client's Page assigned with Create ads.`);
+      else add("form", "Instant form", "ok", `The ads open "${leadForms.find((f) => f.id === leadFormId)?.name ?? leadFormId}"${(adset.forms ?? []).includes(leadFormId) ? " (the one this ad set's ads use)" : ""}.`);
+    }
     if (!pageId) add("page", "Facebook Page", "block", "No Page this account can advertise for; the system user needs the client's Page assigned in Business Manager.");
     else add("page", "Facebook Page", "ok", `${pageName}${adset.pages.includes(pageId) ? " (the one this ad set's ads use)" : ""}.`);
     add("instagram", "Instagram account", igId ? "ok" : "warn", igId ? `${acct.igs.find((i) => i.id === igId)?.name ?? igId}.` : "None found: on Instagram the ad shows as the Facebook Page. Assign the Instagram account in Business Manager to fix it.");
@@ -424,6 +443,7 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
       event: mode === "clone" ? event : null,
       suggestedEvent,
       trackingPixel,
+      leadFormId,
       budget,
       cta,
       copy: { bodies, titles, descriptions },
@@ -431,7 +451,7 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
       structure: null,
       optOut: [...ENHANCEMENTS],
       reason,
-      options: { adsets: acct.adsets, pages: acct.pages, igs: acct.igs, pixels: acct.pixels, ...(everyAdset ? { allAdsets: everyAdset } : {}) },
+      options: { adsets: acct.adsets, pages: acct.pages, igs: acct.igs, pixels: acct.pixels, ...(leadForms.length ? { leadForms } : {}), ...(everyAdset ? { allAdsets: everyAdset } : {}) },
       attempts: [],
     };
 
@@ -557,10 +577,14 @@ function textOptionsSpec(plan: LaunchPlan, ad: LaunchAd) {
   };
 }
 
+// The buttons Meta takes on an instant-form ad; anything else becomes Sign up
+const LEAD_CTAS = new Set(["SIGN_UP", "LEARN_MORE", "APPLY_NOW", "GET_QUOTE", "GET_OFFER", "SUBSCRIBE", "DOWNLOAD", "BOOK_TRAVEL", "BOOK_NOW", "CONTACT_US", "REQUEST_TIME", "GET_STARTED"]);
+const ctaFor = (plan: LaunchPlan) => (plan.leadFormId && !LEAD_CTAS.has(plan.cta) ? "SIGN_UP" : plan.cta);
+
 /** The classic single ad (no asset feed): the feed size, the first primary text and headline. The last resort. */
 function classicSpec(plan: LaunchPlan, ad: LaunchAd) {
   const feed = ad.assets.find((a) => a.aspect === "4x5") ?? ad.assets.find((a) => a.aspect === "1x1") ?? ad.assets[0];
-  const cta = { type: plan.cta, value: { link: plan.link } };
+  const cta = { type: ctaFor(plan), value: plan.leadFormId ? { lead_gen_form_id: plan.leadFormId, link: plan.link } : { link: plan.link } };
   const story =
     feed.kind === "video"
       ? { video_data: { video_id: feed.videoId, image_url: feed.thumbUrl, message: plan.copy.bodies[0] ?? "", title: plan.copy.titles[0] ?? "", link_description: plan.copy.descriptions[0] ?? "", call_to_action: cta } }
@@ -618,7 +642,7 @@ export async function checkCreative(admin: SupabaseClient, plan: LaunchPlan, ad:
 
 async function dryRun(admin: SupabaseClient, plan: LaunchPlan) {
   const hasVertical = plan.ads.some((a) => a.assets.some((x) => x.aspect === "9x16"));
-  const ladder: NonNullable<LaunchPlan["structure"]>[] = hasVertical ? ["placements+text", "placements", "text", "single"] : ["text", "single"];
+  const ladder: NonNullable<LaunchPlan["structure"]>[] = hasVertical && !plan.leadFormId ? ["placements+text", "placements", "text", "single"] : ["text", "single"];
   const tryOne = (ad: LaunchAd, structure: NonNullable<LaunchPlan["structure"]>) => checkCreative(admin, plan, ad, structure);
   const first = plan.ads[0];
   if (!first) return;

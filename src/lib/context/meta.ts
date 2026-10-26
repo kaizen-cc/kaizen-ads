@@ -40,6 +40,26 @@ async function graph<T>(path: string, params: Record<string, string> = {}, metho
   throw new Error("Meta: rate limited");
 }
 
+/**
+ * A Page's instant forms (lead forms). Some Pages only show them to the Page's own token, so when the system user's
+ * token is refused, the Page's token (which the system user can read for Pages assigned to it) is used instead.
+ */
+export async function pageLeadForms(pageId: string): Promise<{ id: string; name: string; status: string }[]> {
+  type F = { data: { id: string; name: string; status?: string }[] };
+  const fields = { fields: "name,status", limit: "100" };
+  const tidy = (r: F) => r.data.filter((f) => (f.status ?? "ACTIVE") === "ACTIVE").map((f) => ({ id: f.id, name: f.name, status: f.status ?? "ACTIVE" }));
+  try {
+    return tidy(await graph<F>(`${pageId}/leadgen_forms`, fields));
+  } catch {
+    const page = await graph<{ access_token?: string }>(pageId, { fields: "access_token" }).catch(() => null);
+    if (!page?.access_token) return [];
+    const proofed: Record<string, string> = process.env.META_APP_SECRET ? { appsecret_proof: createHmac("sha256", process.env.META_APP_SECRET).update(page.access_token).digest("hex") } : {};
+    const res = await fetch(`https://graph.facebook.com/${VERSION}/${pageId}/leadgen_forms?${new URLSearchParams({ ...fields, ...proofed, access_token: page.access_token })}`, { cache: "no-store" });
+    const body = (await res.json()) as F & { error?: unknown };
+    return body.error ? [] : tidy(body);
+  }
+}
+
 type Action = { action_type: string; value: string };
 export type InsightRow = Record<string, unknown> & {
   date_start: string;

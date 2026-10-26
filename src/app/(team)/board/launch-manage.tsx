@@ -117,6 +117,7 @@ export function LaunchManage({ l, onDone }: { l: LaunchView; onDone: () => void 
     igId: p.igId,
     optOut: [...p.optOut],
     trackingPixel: p.trackingPixel ?? "",
+    leadFormId: p.leadFormId ?? "",
     budget: "" as string,
     reason: "",
   });
@@ -151,6 +152,7 @@ export function LaunchManage({ l, onDone }: { l: LaunchView; onDone: () => void 
           igId: f.igId,
           optOut: f.optOut,
           trackingPixel: f.trackingPixel || null,
+          leadFormId: f.leadFormId || undefined,
           dailyBudget: budget,
         },
         f.reason,
@@ -343,6 +345,19 @@ export function LaunchManage({ l, onDone }: { l: LaunchView; onDone: () => void 
                 </select>
               </label>
             </div>
+          )}
+
+          {p.leadFormId && (p.options.leadForms?.length ?? 0) > 0 && (
+            <label className={`grid gap-1 ${label}`}>
+              Instant form
+              <select value={f.leadFormId} onChange={(e) => set("leadFormId", e.target.value)} className={`${field} h-10 normal-case tracking-normal max-md:h-11`}>
+                {p.options.leadForms!.map((x) => (
+                  <option key={x.id} value={x.id}>
+                    {x.name}
+                  </option>
+                ))}
+              </select>
+            </label>
           )}
 
           <label className={`grid gap-1 ${label}`}>
