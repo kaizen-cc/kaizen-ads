@@ -56,7 +56,13 @@ export type LaunchPlan = {
   cta: string;
   copy: { bodies: string[]; titles: string[]; descriptions: string[] };
   ads: LaunchAd[];
-  structure: "placements+text" | "placements" | "text" | "single" | null;
+  structure: "placements+text" | "placements" | "text" | "single" | "dynamic" | null;
+  /**
+   * A dynamic creative ad set runs one ad that holds every image, video and text. The designs and copy are added into
+   * that ad's mix (adId; base is its asset feed as it was, dropped what had to come out to fit Meta's limits), or one
+   * dynamic ad is made when the ad set has none (adId null).
+   */
+  dynamic?: { adId: string | null; adName: string; status: string | null; base: Feed; dropped: string[] } | null;
   optOut: string[];
   /** The enhancements Meta knows on this account's API version (the ones it accepted switching off at launch) */
   known?: string[];
@@ -65,6 +71,19 @@ export type LaunchPlan = {
   options: { adsets: AdsetOption[]; pages: { id: string; name: string }[]; igs: { id: string; name: string }[]; pixels?: Pixel[]; leadForms?: { id: string; name: string }[]; allAdsets?: AdsetOption[] };
   attempts: { structure: string; error: string | null }[];
 };
+/** A dynamic creative ad's asset feed, as Meta keeps it */
+type Feed = {
+  images?: { hash: string }[];
+  videos?: { video_id: string; thumbnail_url?: string }[];
+  bodies?: { text: string }[];
+  titles?: { text: string }[];
+  descriptions?: { text: string }[];
+  link_urls?: { website_url: string; display_url?: string }[];
+  call_to_action_types?: string[];
+  ad_formats?: string[];
+  [k: string]: unknown;
+};
+
 /** A pixel (Meta calls them datasets) the account can use, and when it last saw an event */
 export type Pixel = { id: string; name: string; lastFired: string | null };
 /** The event a KPI's conversion name means */
@@ -355,7 +374,7 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
     adsetId = adset.id;
 
     // The ad set can take these ads?
-    if (adset.dynamic) add("adset", "Ad set", "block", `"${adset.name}" is a dynamic creative ad set, which takes one ad built differently; pick another or launch by hand.`);
+    if (adset.dynamic) add("adset", "Ad set", "ok", mode === "clone" ? `A new dynamic creative ad set, "${newAdsetName}", copied from "${adset.name}", paused, in "${adset.campaign}".` : `"${adset.name}" in "${adset.campaign}", a dynamic creative ad set.`);
     else if (!["OUTCOME_SALES", "OUTCOME_LEADS", "OUTCOME_TRAFFIC", "OUTCOME_ENGAGEMENT", "OUTCOME_AWARENESS", "CONVERSIONS", "LINK_CLICKS", "REACH", "BRAND_AWARENESS"].includes(adset.objective))
       add("adset", "Ad set", "block", `"${adset.campaign}" is a ${adset.objective} campaign; the launcher handles sales, leads (website), traffic, engagement and awareness.`);
     else add("adset", "Ad set", "ok", mode === "clone" ? `A new ad set, "${newAdsetName}", copied from "${adset.name}" (same targeting, pixel and optimization), paused, in "${adset.campaign}".` : `"${adset.name}" in "${adset.campaign}"${adset.status !== "ACTIVE" ? " (paused)" : ""}.`);
@@ -432,6 +451,14 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
     else add("page", "Facebook Page", "ok", `${pageName}${adset.pages.includes(pageId) ? " (the one this ad set's ads use)" : ""}.`);
     add("instagram", "Instagram account", igId ? "ok" : "warn", igId ? `${acct.igs.find((i) => i.id === igId)?.name ?? igId}.` : "None found: on Instagram the ad shows as the Facebook Page. Assign the Instagram account in Business Manager to fix it.");
 
+    // Dynamic creative: the ad set's one ad and its mix (a new copied ad set starts with none)
+    let dynamic: LaunchPlan["dynamic"] = null;
+    if (adset.dynamic) {
+      type DAd = { id: string; name: string; status: string; creative?: { asset_feed_spec?: Feed } };
+      const one = mode === "clone" ? null : (await metaGraph<{ data: DAd[] }>(`${adset.id}/ads`, { fields: "name,status,creative{asset_feed_spec}", limit: "10" }).catch(() => ({ data: [] as DAd[] }))).data.find((a) => !["ARCHIVED", "DELETED"].includes(a.status));
+      dynamic = { adId: one?.id ?? null, adName: one?.name ?? "", status: one?.status ?? null, base: one?.creative?.asset_feed_spec ?? {}, dropped: [] };
+    }
+
     // Media already in this account's library from an earlier check (never across accounts)
     const prev = (l.plan as LaunchPlan | null)?.account === account ? ((l.plan as LaunchPlan).ads ?? []) : [];
     const asset = (f: (typeof designs)[number]["files"][number]) => ({ fileId: f.id, aspect: f.aspect ?? "?", kind: f.mime.startsWith("video") ? ("video" as const) : ("image" as const), name: f.original_name, card: f.card ?? null, ...(prev.flatMap((p) => p.assets).find((a) => a.fileId === f.id) ?? {}) });
@@ -461,6 +488,7 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
       suggestedEvent,
       trackingPixel,
       leadFormId,
+      dynamic,
       budget,
       cta,
       copy: { bodies, titles, descriptions },
@@ -471,6 +499,21 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
       options: { adsets: acct.adsets, pages: acct.pages, igs: acct.igs, pixels: acct.pixels, ...(leadForms.length ? { leadForms } : {}), ...(everyAdset ? { allAdsets: everyAdset } : {}) },
       attempts: [],
     };
+
+    if (dynamic && carousel.length) add("dynamic", "Dynamic creative", "block", `"${adset.name}" is a dynamic creative ad set, which mixes single images and videos: a carousel can't go in. Pick another ad set.`);
+    else if (dynamic) {
+      const f = dynamicFeed(plan);
+      const n = (k: keyof Feed) => ((f[k] as unknown[] | undefined) ?? []).length;
+      const mix = `${n("images") + n("videos")} ${n("videos") ? "images and videos" : "images"}, ${n("bodies")} primary texts, ${n("titles")} headlines`;
+      add(
+        "dynamic",
+        "Dynamic creative",
+        dynamic.adId && dynamic.status === "ACTIVE" ? "warn" : "ok",
+        dynamic.adId
+          ? `The ad set runs one ad, "${dynamic.adName}"${dynamic.status === "ACTIVE" ? " (on)" : ""}: these ${plan.ads.length === 1 ? "designs go" : `${plan.ads.length} designs go`} into its mix first, with the approved copy, for ${mix}.${plan.dynamic!.dropped.length ? ` To fit Meta's limits, these come out: ${plan.dynamic!.dropped.join(", ")}.` : ""}${dynamic.status === "ACTIVE" ? " It's on, so the new mix serves as soon as Meta approves it." : ""} Nothing changes until the buyer confirms.`
+          : `One dynamic ad is created, paused, holding ${mix}.`,
+      );
+    }
 
     if (checks.some((c) => c.level === "block")) {
       await update(admin, launchId, { status: "blocked", progress: null, checks, plan });
@@ -641,8 +684,57 @@ function carouselSpec(plan: LaunchPlan, ad: LaunchAd, withText: boolean) {
   };
 }
 
+/**
+ * A dynamic creative ad's mix with this launch added: its designs (feed size) and the approved copy go first, then
+ * what the ad already had, up to Meta's limits (10 images, 10 videos, 5 of each text). What had to come out is noted on
+ * the plan. Its link and buttons stay the ad's own (the ad set already sends people there).
+ */
+function dynamicFeed(plan: LaunchPlan): Feed {
+  const base = plan.dynamic?.base ?? {};
+  const feedOf = (ad: LaunchAd) => ad.assets.find((a) => a.aspect === "4x5") ?? ad.assets.find((a) => a.aspect === "1x1") ?? ad.assets[0];
+  const ours = plan.ads.filter((a) => !a.cards).map(feedOf).filter(Boolean);
+  const dropped: string[] = [];
+  const keep = <T>(mine: T[], theirs: T[] | undefined, max: number, key: (x: T) => string, what: string) => {
+    const seen = new Set<string>();
+    const all = [...mine, ...(theirs ?? [])].filter((x) => {
+      const k = key(x);
+      if (!k || seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    if (all.length > max) dropped.push(`${all.length - max} older ${what}`);
+    return all.slice(0, max);
+  };
+  const images = keep(ours.filter((a) => a.kind === "image" && a.hash).map((a) => ({ hash: a.hash! })), base.images, 10, (x) => x.hash, "images");
+  const videos = keep(ours.filter((a) => a.kind === "video" && a.videoId).map((a) => ({ video_id: a.videoId!, ...(a.thumbUrl ? { thumbnail_url: a.thumbUrl } : {}) })), base.videos, 10, (x) => x.video_id, "videos");
+  const text = (xs: string[]) => xs.map((t) => ({ text: t }));
+  const feed: Feed = {
+    ...Object.fromEntries(Object.entries(base).filter(([k]) => !["id", "images", "videos", "bodies", "titles", "descriptions", "ad_formats"].includes(k))),
+    ...(images.length ? { images } : {}),
+    ...(videos.length ? { videos } : {}),
+    bodies: keep(text(plan.copy.bodies), base.bodies, 5, (x) => x.text, "primary texts"),
+    titles: keep(text(plan.copy.titles), base.titles, 5, (x) => x.text, "headlines"),
+    descriptions: keep(text(plan.copy.descriptions), base.descriptions, 5, (x) => x.text, "descriptions"),
+    link_urls: base.link_urls?.length ? base.link_urls : [{ website_url: plan.link ?? "" }],
+    call_to_action_types: base.call_to_action_types?.length ? base.call_to_action_types : [ctaFor(plan)],
+    ad_formats: [...(images.length ? ["SINGLE_IMAGE"] : []), ...(videos.length ? ["SINGLE_VIDEO"] : [])],
+  };
+  if (plan.dynamic) plan.dynamic.dropped = dropped;
+  return feed;
+}
+
+function dynamicSpec(plan: LaunchPlan, name: string) {
+  return {
+    name: name.slice(0, 100),
+    object_story_spec: { page_id: plan.pageId, ...(plan.igId ? { instagram_user_id: plan.igId } : {}) },
+    asset_feed_spec: dynamicFeed(plan),
+    ...(plan.optOut.length ? { degrees_of_freedom_spec: { creative_features_spec: Object.fromEntries(plan.optOut.map((f) => [f, { enroll_status: "OPT_OUT" }])) } } : {}),
+    ...(plan.urlTags ? { url_tags: plan.urlTags } : {}),
+  };
+}
+
 export const specFor = (plan: LaunchPlan, ad: LaunchAd, structure: NonNullable<LaunchPlan["structure"]>) =>
-  ad.cards ? carouselSpec(plan, ad, structure !== "single") : structure === "single" ? classicSpec(plan, ad) : creativeSpec(plan, ad, structure);
+  plan.dynamic ? dynamicSpec(plan, plan.dynamic.adName || ad.name) : ad.cards ? carouselSpec(plan, ad, structure !== "single") : structure === "single" || structure === "dynamic" ? classicSpec(plan, ad) : creativeSpec(plan, ad, structure);
 
 export const params = (spec: Record<string, unknown>) => Object.fromEntries(Object.entries(spec).map(([k, v]) => [k, typeof v === "string" ? v : JSON.stringify(v)]));
 
@@ -691,6 +783,12 @@ async function dryRun(admin: SupabaseClient, plan: LaunchPlan) {
   const tryOne = (ad: LaunchAd, structure: NonNullable<LaunchPlan["structure"]>) => checkCreative(admin, plan, ad, structure);
   const first = plan.ads[0];
   if (!first) return;
+  if (plan.dynamic) {
+    plan.structure = "dynamic";
+    const err = await checkCreative(admin, plan, first, "dynamic");
+    for (const ad of plan.ads) ad.check = { ok: !err, error: err };
+    return;
+  }
   for (const s of ladder) {
     const err = await tryOne(first, s);
     plan.attempts.push({ structure: s, error: err });
@@ -749,7 +847,19 @@ export async function runLaunch(admin: SupabaseClient, launchId: string) {
       if (target) await metaWrite(admin, plan.account, target, { daily_budget: String(Math.round(b.value * 100)) }, false).catch((e) => (budgetNote = `Budget not changed: ${e instanceof Error ? e.message : String(e)}`));
     }
     const made: { designId: string; name: string; adId: string | null; creativeId: string | null; error: string | null }[] = [];
-    for (const ad of plan.ads) {
+    if (plan.dynamic) {
+      const name = plan.dynamic.adId ? plan.dynamic.adName : (plan.ads[0]?.name ?? "Dynamic creative");
+      try {
+        const c = await metaWrite<{ id: string }>(admin, plan.account, `act_${plan.account}/adcreatives`, params(dynamicSpec(plan, name)), false);
+        let adId = plan.dynamic.adId;
+        if (adId) await metaWrite(admin, plan.account, adId, { creative: JSON.stringify({ creative_id: c.id }) }, false);
+        else adId = (await createAd(admin, plan, { name: name.slice(0, 250), adset_id: adsetId, creative: JSON.stringify({ creative_id: c.id }), status: "PAUSED" })).id;
+        made.push({ designId: "dynamic", name, adId, creativeId: c.id, error: null });
+      } catch (e) {
+        made.push({ designId: "dynamic", name, adId: null, creativeId: null, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    for (const ad of plan.dynamic ? [] : plan.ads) {
       try {
         const c = await metaWrite<{ id: string }>(admin, plan.account, `act_${plan.account}/adcreatives`, params(specFor(plan, ad, plan.structure ?? "single")), false);
         const a = await createAd(admin, plan, { name: ad.name.slice(0, 250), adset_id: adsetId, creative: JSON.stringify({ creative_id: c.id }), status: "PAUSED" });
@@ -851,6 +961,18 @@ export async function autoLaunch(admin: SupabaseClient, requestId: string, launc
   const buyer = await buyerOf(admin, ticket);
   const { data: planned } = await admin.from("launches").select("status, checks, error, sandbox").eq("id", l.id).single();
 
+  // Adding to a dynamic creative ad changes an ad that's already there (often on): the buyer confirms it
+  const { data: planRow } = await admin.from("launches").select("plan").eq("id", l.id).single();
+  const dyn = (planRow?.plan as LaunchPlan | null)?.dynamic;
+  if (planned?.status === "ready" && dyn?.adId) {
+    await handTo(admin, ticket, buyer, `Ready to add to the dynamic creative ad "${dyn.adName}"${dyn.status === "ACTIVE" ? " (it's on)" : ""}. It changes an ad that's already running, so it waits for you: check the mix in the Launch panel and confirm.`, {
+      title: `${client}: confirm the dynamic creative update`,
+      body: `#${ticket.number} ${ticket.title} goes into "${dyn.adName}". Check it and confirm in the Launch panel.`,
+      priority: "normal",
+      key: `launch-dynamic:${l.id}`,
+    });
+    return "handed to the buyer";
+  }
   if (planned?.status === "ready") {
     try {
       const r = await runLaunch(admin, l.id);

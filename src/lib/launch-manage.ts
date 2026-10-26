@@ -195,7 +195,7 @@ export async function editLaunch(admin: SupabaseClient, launchId: string, by: st
     }
   if (creative) {
     for (const m of made) {
-      const ad = next.ads.find((a) => a.designId === m.designId);
+      const ad = next.ads.find((a) => a.designId === m.designId) ?? (next.dynamic ? next.ads[0] : undefined);
       if (!ad) throw new Error(`Couldn't find the files for ${m.name}.`);
       const err = await checkCreative(admin, next, { ...ad, name: named(m.designId, m.name) }, next.structure ?? "single");
       if (err) throw new Error(`Meta wouldn't take the change for ${m.name}: ${err}`);
@@ -207,7 +207,7 @@ export async function editLaunch(admin: SupabaseClient, launchId: string, by: st
     const patch: Record<string, string> = {};
     if (name !== m.name) patch.name = name;
     if (creative) {
-      const ad = next.ads.find((a) => a.designId === m.designId)!;
+      const ad = (next.ads.find((a) => a.designId === m.designId) ?? next.ads[0])!;
       const c = await metaWrite<{ id: string }>(admin, plan.account, `act_${plan.account}/adcreatives`, params(specFor(next, { ...ad, name }, next.structure ?? "single")), false);
       patch.creative = JSON.stringify({ creative_id: c.id });
       m.creativeId = c.id;

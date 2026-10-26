@@ -174,7 +174,7 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
             {l.sandbox ? "A test in Kaizen's account: the ticket stays in Ready to launch." : "Turning the ads on (here or in Ads Manager) moves this ticket to Launched."}
             {l.launchedBy ? ` Launched by ${l.launchedBy}.` : ""}
           </p>
-          <LaunchMove l={l} onDone={() => void loadLaunch(l.id).then((x) => x && setL(x))} />
+          {!l.plan?.dynamic && <LaunchMove l={l} onDone={() => void loadLaunch(l.id).then((x) => x && setL(x))} />}
         </div>
       )}
 
@@ -397,10 +397,12 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
           {confirm ? (
             <span className="flex flex-wrap items-center gap-2 text-sm max-md:w-full">
               <span className="max-md:basis-full">
-                Create {p?.ads.length} {p?.ads.length === 1 ? "ad" : "ads"} paused in {l.sandbox ? "Kaizen's sandbox account" : "the client's ad account"}?
+                {p?.dynamic?.adId
+                  ? `Add ${p.ads.length === 1 ? "this design" : `these ${p.ads.length} designs`} and the copy to "${p.dynamic.adName}"${p.dynamic.status === "ACTIVE" ? ", which is on: the new mix serves once Meta approves it" : ""}?`
+                  : `Create ${p?.dynamic ? "1 dynamic ad" : `${p?.ads.length} ${p?.ads.length === 1 ? "ad" : "ads"}`} paused in ${l.sandbox ? "Kaizen's sandbox account" : "the client's ad account"}?`}
               </span>
               <button type="button" onClick={launch} disabled={pending} className="h-9 rounded-full bg-[#0866ff] px-4 text-sm font-medium text-white disabled:opacity-60 max-md:h-12 max-md:flex-1">
-                Yes, launch paused
+                {p?.dynamic?.adId ? "Yes, update the ad" : "Yes, launch paused"}
               </button>
               <button type="button" onClick={() => setConfirm(false)} className="h-9 px-2 text-sm text-faint hover:text-fg max-md:h-12 max-md:px-4">
                 Not yet
@@ -410,7 +412,7 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
             <>
               {l.status === "ready" && !dirty && l.canLaunch && (
                 <button type="button" onClick={() => setConfirm(true)} className="h-10 rounded-full bg-[#0866ff] px-5 text-sm font-medium text-white shadow-[0_10px_30px_-12px_rgba(8,102,255,0.9)] hover:brightness-110 max-md:h-12 max-md:w-full">
-                  Launch {p?.ads.length} {p?.ads.length === 1 ? "ad" : "ads"} paused
+                  {p?.dynamic?.adId ? `Add to "${p.dynamic.adName}"` : p?.dynamic ? "Launch 1 dynamic ad paused" : `Launch ${p?.ads.length} ${p?.ads.length === 1 ? "ad" : "ads"} paused`}
                 </button>
               )}
               {(dirty || l.status !== "ready") && (
