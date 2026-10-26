@@ -124,7 +124,7 @@ export function ActionForm({
           {button && (
             <button
               disabled={pending}
-              className="h-10 rounded-[8px] bg-brand px-5 text-sm font-medium text-white shadow-[0_8px_24px_-12px_rgba(178,30,44,0.9)] transition-colors hover:bg-brand-hover disabled:opacity-60"
+              className="h-12 w-full rounded-[10px] bg-brand px-5 text-[15px] font-medium text-white shadow-[0_8px_24px_-12px_rgba(178,30,44,0.9)] transition-colors hover:bg-brand-hover disabled:opacity-60 sm:w-auto md:h-10 md:rounded-[8px] md:text-sm"
             >
               {pending ? "Saving…" : submitLabel}
             </button>
@@ -164,10 +164,10 @@ export function ActionButton({
     return (
       <span className="inline-flex items-center gap-2 text-xs">
         <span className="text-muted">{confirmText}</span>
-        <button onClick={run} disabled={pending} className="text-brand-text hover:underline">
+        <button onClick={run} disabled={pending} className="min-h-11 px-2 text-brand-text hover:underline md:min-h-0 md:px-0">
           {pending ? "…" : "Yes"}
         </button>
-        <button onClick={() => setAsking(false)} className="text-muted hover:underline">
+        <button onClick={() => setAsking(false)} className="min-h-11 px-2 text-muted hover:underline md:min-h-0 md:px-0">
           No
         </button>
       </span>
@@ -178,7 +178,7 @@ export function ActionButton({
       <button
         onClick={() => (confirmText ? setAsking(true) : run())}
         disabled={pending}
-        className={`text-xs text-muted hover:text-fg ${className}`}
+        className={`min-h-11 px-1 text-xs text-muted hover:text-fg md:min-h-0 md:px-0 ${className}`}
       >
         {pending ? "…" : label}
       </button>
