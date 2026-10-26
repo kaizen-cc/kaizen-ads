@@ -138,7 +138,7 @@ export function accountTopics(d: SharedTopics): Built[] {
         <Topic key="allotments" id="allotments" title="Creative allotments" summary={`${behind} behind where they should be by today · ${over} past their allotment · ${clients.length} clients with a package`} count={behind || undefined} tone={behind ? "warn" : "ok"}>
           <div className="grid gap-2">
             <ClientHealth clients={clients} monthElapsed={d.monthElapsed ?? 0} />
-            <Link href="/clients" className="justify-self-start text-xs text-muted hover:text-fg">
+            <Link href="/clients" className="justify-self-start py-3 text-xs text-muted hover:text-fg md:py-0">
               All clients →
             </Link>
           </div>

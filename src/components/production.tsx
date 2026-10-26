@@ -46,7 +46,7 @@ export function ScorecardView({ s, own = false }: { s: Scorecard; own?: boolean 
       <span aria-hidden className="pointer-events-none absolute -left-16 -top-20 -z-10 h-56 w-56 rounded-full blur-[80px]" style={{ background: `${SCORE_TONE(s.score)}40` }} />
       <div className="flex flex-wrap items-center gap-5">
         <Ring score={s.score} />
-        <div className="grid gap-1">
+        <div className="grid min-w-0 gap-1">
           <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/50">{own ? "Your score · last 30 days" : `${s.name} · last 30 days`}</span>
           <span className="font-display text-3xl tracking-tight" style={{ color: SCORE_TONE(s.score) }}>
             {s.level}
@@ -72,7 +72,7 @@ export function ScorecardView({ s, own = false }: { s: Scorecard; own?: boolean 
         <div className="grid gap-1.5">
           <span className="text-[11px] text-white/45">{own ? "Clear these to bring your score up" : "Sitting with them"}</span>
           {s.sitting.map((x) => (
-            <a key={`${x.name}${x.days}`} href={x.url ?? "#"} target="_blank" rel="noreferrer" className="flex items-baseline justify-between gap-3 rounded-[10px] px-2 py-1 text-sm hover:bg-white/[0.04]">
+            <a key={`${x.name}${x.days}`} href={x.url ?? "#"} target="_blank" rel="noreferrer" className="flex items-baseline justify-between gap-3 rounded-[10px] px-2 py-2.5 text-sm hover:bg-white/[0.04] md:py-1">
               <span className="min-w-0 truncate">
                 {x.client && <span className="text-white/50">{x.client} · </span>}
                 {x.name}
@@ -122,7 +122,7 @@ export function ProductionPanel({ p, showTeam }: { p: Production; showTeam: bool
             <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-white/45">Taking longest to a first draft</p>
             {p.slow.length ? (
               p.slow.map((c) => (
-                <Link key={c.client} href={c.slug ? `/clients/${c.slug}` : "#"} className="flex items-baseline justify-between gap-3 text-sm hover:text-fg">
+                <Link key={c.client} href={c.slug ? `/clients/${c.slug}` : "#"} className="flex items-baseline justify-between gap-3 py-1.5 text-sm hover:text-fg md:py-0">
                   <span className="min-w-0 truncate">{c.client}</span>
                   <span className="tabular shrink-0 text-xs text-warn">
                     {c.days}d avg · {c.pieces} pieces
@@ -137,7 +137,7 @@ export function ProductionPanel({ p, showTeam }: { p: Production; showTeam: bool
             <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-white/45">Most revisions</p>
             {p.revisions.length ? (
               p.revisions.map((c) => (
-                <Link key={c.client} href={c.slug ? `/clients/${c.slug}` : "#"} className="flex items-baseline justify-between gap-3 text-sm hover:text-fg">
+                <Link key={c.client} href={c.slug ? `/clients/${c.slug}` : "#"} className="flex items-baseline justify-between gap-3 py-1.5 text-sm hover:text-fg md:py-0">
                   <span className="min-w-0 truncate">{c.client}</span>
                   <span className="tabular shrink-0 text-xs text-warn">
                     {c.perPiece} per piece · {c.pieces} pieces
@@ -154,7 +154,38 @@ export function ProductionPanel({ p, showTeam }: { p: Production; showTeam: bool
       {showTeam && p.team.length > 0 && (
         <div className="grid gap-2">
           <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-white/45">The team</p>
-          <div className="overflow-x-auto">
+          {/* Phones: one card per person instead of the table */}
+          <ul className="grid gap-2 md:hidden">
+            {p.team.map((s) => (
+              <li key={s.profileId ?? s.name} className="grid gap-2.5 rounded-[14px] border border-white/[0.06] bg-white/[0.03] px-4 py-3">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="min-w-0 truncate text-sm">
+                    {s.name} <span className="text-[11px] text-white/40">{s.kind === "copy" ? "copy" : "creative"}</span>
+                  </span>
+                  <span className="tabular shrink-0 text-sm font-medium" style={{ color: SCORE_TONE(s.score) }}>
+                    {s.score ?? "—"} <span className="text-[11px] font-normal text-white/40">{s.level}</span>
+                  </span>
+                </div>
+                <dl className="tabular grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
+                  {(
+                    [
+                      ["Pieces", String(s.pieces)],
+                      ["First pass", pct(s.firstPass)],
+                      ["Turnaround", `${d(s.turnaround)} / ${s.turnaroundTarget}d`],
+                      ["Revisions back", d(s.revisionTurnaround)],
+                      ["Sitting", String(s.sitting.length)],
+                    ] as const
+                  ).map(([k, v]) => (
+                    <div key={k} className="flex items-baseline justify-between gap-2">
+                      <dt className="text-white/40">{k}</dt>
+                      <dd className={k === "Sitting" && s.sitting.length ? "text-warn" : "text-white/70"}>{v}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </li>
+            ))}
+          </ul>
+          <div className="hidden overflow-x-auto md:block">
             <table className="w-full min-w-[560px] text-sm">
               <thead>
                 <tr className="text-left text-[11px] text-white/40">

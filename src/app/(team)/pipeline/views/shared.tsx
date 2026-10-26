@@ -31,7 +31,7 @@ export function PageHeader({
 }) {
   return (
     <header className="flex flex-wrap items-end justify-between gap-4">
-      <div>
+      <div className="min-w-0">
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">{today}</p>
         <h1 className="mt-2 font-heading text-3xl md:text-4xl">{title}</h1>
         <p className="mt-2 text-sm text-muted">{subtitle}</p>
@@ -43,7 +43,7 @@ export function PageHeader({
 
 export function PrimaryAction({ label, disabled, href }: { label: string; disabled?: boolean; href?: string }) {
   const cls =
-    "flex h-11 items-center gap-2 rounded-brand bg-brand px-5 text-sm font-medium text-white shadow-[0_8px_30px_-8px_rgba(178,30,44,0.7)] transition hover:bg-brand-hover";
+    "flex h-11 w-full items-center justify-center gap-2 rounded-brand bg-brand px-5 text-sm font-medium text-white md:w-auto md:justify-start shadow-[0_8px_30px_-8px_rgba(178,30,44,0.7)] transition hover:bg-brand-hover";
   if (disabled || !href) {
     return (
       <button disabled className={`${cls} opacity-60 shadow-none`} title="Opens in the next build phase">
@@ -73,12 +73,12 @@ export function Stats({ items }: { items: { label: string; value: React.ReactNod
   return (
     <section className={`grid grid-cols-2 gap-px overflow-hidden rounded-brand border border-line bg-line ${items.length === 4 ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}>
       {items.map((s) => (
-        <div key={s.label} className="grid content-start gap-1 bg-surface p-5">
+        <div key={s.label} className="grid min-w-0 content-start gap-1 bg-surface p-4 md:p-5">
           <div className="flex items-center gap-2">
             {s.tone && <span className={`h-1.5 w-1.5 rounded-full ${DOT[s.tone]}`} />}
             <p className="text-xs text-muted">{s.label}</p>
           </div>
-          <p className="tabular font-heading text-4xl">{s.value}</p>
+          <p className="tabular font-heading text-3xl md:text-4xl">{s.value}</p>
           {s.hint && <p className="text-[11px] text-faint">{s.hint}</p>}
         </div>
       ))}
@@ -149,7 +149,7 @@ export function AttentionList({ alerts, empty }: { alerts: Alert[]; empty: strin
   return (
     <ul className="divide-y divide-line overflow-hidden rounded-brand border border-line bg-surface">
       {alerts.map((a) => (
-        <li key={a.id} className="grid grid-cols-[auto_1fr_auto] items-start gap-4 px-4 py-3.5 transition-colors hover:bg-surface-2">
+        <li key={a.id} className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-1 px-4 py-3.5 transition-colors hover:bg-surface-2 md:grid-cols-[auto_1fr_auto] md:gap-4">
           <span className={`mt-0.5 w-20 rounded-full px-2 py-0.5 text-center text-[11px] font-medium ${SOFT[a.tone]}`}>{a.kind}</span>
           <div className="min-w-0">
             <p className="text-sm">
@@ -157,7 +157,7 @@ export function AttentionList({ alerts, empty }: { alerts: Alert[]; empty: strin
             </p>
             <p className="mt-0.5 text-xs text-faint">{a.detail}</p>
           </div>
-          {a.owner && <span className="whitespace-nowrap text-xs text-muted">{a.owner}</span>}
+          {a.owner && <span className="col-start-2 whitespace-nowrap text-xs text-muted md:col-start-auto">{a.owner}</span>}
         </li>
       ))}
     </ul>
@@ -222,7 +222,7 @@ export function Queue({ items, empty }: { items: QueueItem[]; empty: { title: st
     <ul className="divide-y divide-line overflow-hidden rounded-brand border border-line bg-surface">
       {items.map((q) => (
         <li key={q.id}>
-          <Link href={q.href ?? "/board"} className="grid grid-cols-[auto_1fr_auto] items-center gap-4 px-4 py-3.5 transition-colors hover:bg-surface-2">
+          <Link href={q.href ?? "/board"} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-4 py-3.5 transition-colors hover:bg-surface-2 active:bg-surface-2 md:grid-cols-[auto_1fr_auto] md:gap-4">
           <span className={`h-2 w-2 rounded-full ${DOT[q.tone]}`} />
           <div className="min-w-0">
             <p className="truncate text-sm font-medium">{q.title}</p>
@@ -231,7 +231,7 @@ export function Queue({ items, empty }: { items: QueueItem[]; empty: { title: st
             </p>
             {q.note && <p className="mt-1 truncate text-xs text-warn">“{q.note}”</p>}
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-col items-end gap-1 md:flex-row md:items-center md:gap-3">
             {q.priority && (
               <span className={`rounded-full px-2 py-0.5 text-[11px] ${q.priority === "Urgent" ? "bg-bad-soft text-bad" : "bg-warn-soft text-warn"}`}>
                 {q.priority}
@@ -264,7 +264,42 @@ export type ClientPulse = {
 export function ClientHealth({ clients, monthElapsed }: { clients: ClientPulse[]; monthElapsed: number }) {
   if (!clients.length) return <p className="text-xs text-faint">Client health shows here once requests flow.</p>;
   return (
-    <div className="overflow-x-auto rounded-brand border border-line bg-surface">
+    <>
+    {/* Phones: one card per client instead of the table */}
+    <ul className="grid gap-2 md:hidden">
+      {clients.map((c) => {
+        const pct = c.allotment ? Math.min(100, (c.used / c.allotment) * 100) : 0;
+        return (
+          <li key={c.slug} className="grid gap-3 rounded-brand border border-line bg-surface p-4">
+            <div className="flex items-start gap-2.5">
+              <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${DOT[c.tone]}`} />
+              <div className="min-w-0">
+                <Link href={`/clients/${c.slug}`} className="block truncate font-medium hover:text-brand-text">
+                  {c.name}
+                </Link>
+                <span className={`block text-xs ${c.tone === "ok" ? "text-faint" : TXT[c.tone]}`}>{c.note}</span>
+              </div>
+            </div>
+            <div className="grid gap-1.5">
+              <div className="relative h-1.5 rounded-full bg-surface-2">
+                <div className={`h-full rounded-full ${c.tone === "bad" ? "bg-bad" : c.tone === "warn" ? "bg-warn" : "bg-fg/70"}`} style={{ width: `${pct}%` }} />
+                <span aria-hidden className="absolute -top-1 h-3.5 w-px bg-fg/60" style={{ left: `${monthElapsed * 100}%` }} />
+              </div>
+              <div className="tabular flex flex-wrap justify-between gap-x-3 gap-y-1 text-[11px] text-faint">
+                <span>
+                  {c.used} of {c.allotment} this month
+                </span>
+                <span>
+                  <span className={c.revisionsPerItem >= 2 ? "text-bad" : c.revisionsPerItem >= 1.2 ? "text-warn" : "text-muted"}>{c.revisionsPerItem.toFixed(1)}×</span> revisions ·{" "}
+                  <span className="text-muted">{c.waiting}</span> with client
+                </span>
+              </div>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+    <div className="hidden overflow-x-auto rounded-brand border border-line bg-surface md:block">
       <table className="w-full min-w-[620px] text-sm">
         <thead className="text-left text-xs text-muted">
           <tr className="border-b border-line">
@@ -309,6 +344,7 @@ export function ClientHealth({ clients, monthElapsed }: { clients: ClientPulse[]
         </tbody>
       </table>
     </div>
+    </>
   );
 }
 
@@ -368,7 +404,7 @@ export function KpiPulse({ k, title = "Ad accounts" }: { k: KpiPulseData; title?
             <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-faint">Off or close to target{k.offTotal > k.off.length ? ` · worst ${k.off.length} of ${k.offTotal}` : ""}</p>
             {k.off.length ? (
               k.off.map((o) => (
-                <Link key={o.id} href={`/kpis?target=${o.id}`} className="flex items-baseline justify-between gap-3 text-sm hover:text-fg">
+                <Link key={o.id} href={`/kpis?target=${o.id}`} className="flex items-baseline justify-between gap-3 py-1.5 text-sm hover:text-fg md:py-0">
                   <span className="min-w-0 truncate">
                     {o.client}
                     {o.label && <span className="text-faint"> · {o.label}</span>}
@@ -384,7 +420,7 @@ export function KpiPulse({ k, title = "Ad accounts" }: { k: KpiPulseData; title?
             <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-faint">Budget pacing</p>
             {k.pacing.length ? (
               k.pacing.map((p) => (
-                <Link key={p.id} href={`/kpis?target=${p.id}`} className="flex items-baseline justify-between gap-3 text-sm hover:text-fg">
+                <Link key={p.id} href={`/kpis?target=${p.id}`} className="grid gap-0.5 py-1.5 text-sm hover:text-fg md:flex md:items-baseline md:justify-between md:gap-3 md:py-0">
                   <span className="min-w-0 truncate">
                     {p.client}
                     {p.label && <span className="text-faint"> · {p.label}</span>}

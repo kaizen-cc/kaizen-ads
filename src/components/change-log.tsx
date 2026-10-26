@@ -58,13 +58,13 @@ export function ChangeLog({ changes, platform, title = "Change history", limit, 
             const gap = prev ? Date.parse(c.at) - Date.parse(prev.at) : null;
             const long = gap != null && gap > 7 * 86_400_000;
             return (
-              <li key={`${c.at}${c.what}${i}`} className="grid grid-cols-[14px_minmax(0,1fr)_auto] gap-3">
-                <span className="relative flex justify-center">
+              <li key={`${c.at}${c.what}${i}`} className="grid grid-cols-[14px_minmax(0,1fr)] gap-x-3 md:grid-cols-[14px_minmax(0,1fr)_auto] md:gap-3">
+                <span className="relative row-span-2 flex justify-center md:row-span-1">
                   <span className="mt-1.5 h-2 w-2 rounded-full bg-brand" />
                   {i < list.length - 1 && <span className={`absolute bottom-0 top-4 w-px ${long ? "bg-warn/50" : "bg-line"}`} />}
                 </span>
-                <span className="grid min-w-0 gap-0.5 pb-3">
-                  <span className="text-sm">
+                <span className="grid min-w-0 gap-0.5 pb-1 md:pb-3">
+                  <span className="break-words text-sm">
                     {c.what}
                     {c.object && <span className="text-muted"> · {c.object}</span>}
                   </span>
@@ -73,14 +73,14 @@ export function ChangeLog({ changes, platform, title = "Change history", limit, 
                     {gap != null && <span className={long ? "text-warn" : ""}> · {gapText(gap)} than the one before</span>}
                   </span>
                 </span>
-                <span className="tabular pt-0.5 text-[11px] text-faint">{when(c.at)}</span>
+                <span className="tabular col-start-2 pb-3 text-[11px] text-faint md:col-start-auto md:pb-0 md:pt-0.5">{when(c.at)}</span>
               </li>
             );
           })}
         </ol>
       )}
       {collapsed != null && list.length > collapsed && (
-        <button type="button" onClick={() => setAll((a) => !a)} className="justify-self-start text-xs text-brand-text hover:underline">
+        <button type="button" onClick={() => setAll((a) => !a)} className="min-h-11 justify-self-start text-xs text-brand-text hover:underline md:min-h-0">
           {all ? "Show fewer" : `Show all ${list.length} changes`}
         </button>
       )}

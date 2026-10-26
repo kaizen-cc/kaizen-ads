@@ -40,8 +40,8 @@ export function AiProgress({ label, fallbackMs = 40_000, title, steps, note, siz
   return (
     <div className={`grid content-center ${size === "lg" ? "gap-5 py-8" : "gap-4"}`} aria-busy="true" aria-live="polite">
       <div className="grid gap-3">
-        <div className="flex items-baseline justify-between gap-3">
-          <p className={size === "lg" ? "font-heading text-xl" : "text-sm font-medium"}>{title}</p>
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 md:flex-nowrap md:gap-3">
+          <p className={`min-w-0 ${size === "lg" ? "font-heading text-xl" : "text-sm font-medium"}`}>{title}</p>
           <p className="tabular shrink-0 text-sm text-muted">
             <span className="font-medium text-fg">{Math.floor(p)}%</span> · {time}
           </p>

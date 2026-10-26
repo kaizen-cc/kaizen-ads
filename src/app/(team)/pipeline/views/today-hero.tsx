@@ -90,7 +90,7 @@ export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
       <div aria-hidden className="pointer-events-none absolute -left-24 -top-32 h-[340px] w-[340px] rounded-full blur-[110px]" style={{ background: t.counts.critical ? "rgba(200,16,46,0.45)" : "rgba(90,110,255,0.3)" }} />
       <div aria-hidden className="pointer-events-none absolute -bottom-40 right-0 h-[300px] w-[300px] rounded-full bg-[rgba(224,150,40,0.18)] blur-[120px]" />
       <div className="relative flex flex-wrap items-end justify-between gap-5">
-        <div className="grid gap-2">
+        <div className="grid min-w-0 gap-2">
           <p className="flex flex-wrap items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-white/50">
             Your day
             {delta && (delta.handled > 0 || delta.added > 0) && (
@@ -147,7 +147,7 @@ export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
             </HoverCard>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex w-full items-center gap-3 md:w-auto">
           <div className="hidden gap-4 text-right sm:flex">
             {(
               [
@@ -175,7 +175,7 @@ export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
               );
             })}
           </div>
-          <Link href="/today" className="inline-flex h-12 items-center gap-2 rounded-full bg-white px-6 text-[15px] font-semibold text-black shadow-[0_10px_40px_-10px_rgba(255,255,255,0.4)] hover:bg-white/90">
+          <Link href="/today" className="inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-full bg-white px-6 md:flex-none md:justify-start text-[15px] font-semibold text-black shadow-[0_10px_40px_-10px_rgba(255,255,255,0.4)] hover:bg-white/90">
             {t.items.length || t.resolved.length ? "Start your day" : "Open"} <span aria-hidden>→</span>
           </Link>
         </div>
@@ -183,12 +183,12 @@ export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
 
       {topics.length > 0 && (
         <div className="relative flex flex-wrap gap-2">
-          <span className="self-center pr-1 text-[11px] uppercase tracking-[0.16em] text-white/40">Jump to</span>
+          <span className="w-full pr-1 text-[11px] uppercase tracking-[0.16em] text-white/40 md:w-auto md:self-center">Jump to</span>
           {topics.map((k) => {
             const these = t.items.filter((i) => i.topic === k);
             return (
               <HoverCard key={k} content={<List title={`${TOPICS[k].label} · ${TOPICS[k].blurb}`} items={these} more={{ label: `Go through all ${these.length}`, href: `/today?topic=${k}` }} />}>
-                <Link href={`/today?topic=${k}`} className="flex items-center gap-1.5 rounded-full border border-white/15 bg-white/[0.04] px-3 py-1.5 text-xs text-white/80 hover:border-white/40 hover:text-white">
+                <Link href={`/today?topic=${k}`} className="flex min-h-11 items-center gap-1.5 rounded-full border border-white/15 bg-white/[0.04] px-4 py-1.5 text-sm md:min-h-0 md:px-3 md:text-xs text-white/80 hover:border-white/40 hover:text-white">
                   {criticalBy(k) > 0 && <span className="h-1.5 w-1.5 rounded-full bg-[#ff4d5e]" />}
                   {TOPICS[k].label}
                   <span className="tabular text-white/45">{these.length}</span>
@@ -206,7 +206,7 @@ export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
             {saved.slice(0, 6).map((s) => (
               <li key={s.key}>
                 <HoverCard content={<Summary i={s} />} className="block">
-                  <Link href={hrefOf(s)} className="flex items-center gap-2.5 rounded-[12px] bg-white/[0.04] px-3 py-2 text-sm text-white/85 hover:bg-white/[0.08]">
+                  <Link href={hrefOf(s)} className="flex min-h-11 items-center gap-2.5 rounded-[12px] bg-white/[0.04] px-3 py-2 text-sm md:min-h-0 text-white/85 hover:bg-white/[0.08]">
                     <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${TIER_DOT[s.tier]}`} />
                     <span className="min-w-0 flex-1 truncate">{s.title}</span>
                     {s.carried && <span className="shrink-0 text-[10px] text-white/45">from before</span>}

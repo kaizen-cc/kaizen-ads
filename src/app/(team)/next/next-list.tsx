@@ -65,7 +65,7 @@ export function NextList({ data }: { data: NextForMe }) {
           if (!items.length && s.key === "coming") return null;
           return (
             <section key={s.key} className="grid gap-2.5">
-              <div className="flex items-baseline justify-between gap-3">
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
                 <h2 className="font-heading text-lg">
                   {s.title} {items.length > 0 && <span className="text-faint">{items.length}</span>}
                 </h2>
@@ -110,12 +110,14 @@ function Row({ it, onBrief }: { it: NextItem; onBrief: (s: OpenSuggestion) => vo
           <span className="text-faint">{KIND[it.kind]} · </span>
           {it.client} · {it.why}
         </span>
+        {/* Phones: when it's due sits under the line (there's no room beside it) */}
+        {it.when && <span className={`text-xs sm:hidden ${it.tone === "bad" ? "text-bad" : it.tone === "warn" ? "text-warn" : "text-faint"}`}>{it.when}</span>}
       </span>
       {it.when && <span className={`hidden shrink-0 text-xs sm:block ${it.tone === "bad" ? "text-bad" : it.tone === "warn" ? "text-warn" : "text-faint"}`}>{it.when}</span>}
       <span className="shrink-0 rounded-full border border-line px-3 py-1 text-xs text-muted transition-colors group-hover:border-faint group-hover:text-fg">{it.action}</span>
     </>
   );
-  const cls = "group flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-2/50 sm:items-center";
+  const cls = "group flex w-full items-start gap-3 px-4 py-3.5 text-left transition-colors hover:bg-surface-2/50 active:bg-surface-2/50 sm:items-center md:py-3";
   return (
     <li>
       {it.suggestion ? (

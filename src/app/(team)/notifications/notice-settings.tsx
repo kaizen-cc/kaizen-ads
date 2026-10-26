@@ -12,7 +12,7 @@ const EMAIL: [EmailMode, string][] = [
 
 function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
-    <button type="button" role="switch" aria-checked={on} aria-label={label} onClick={() => onChange(!on)} className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${on ? "bg-brand" : "bg-surface-2 ring-1 ring-inset ring-line"}`}>
+    <button type="button" role="switch" aria-checked={on} aria-label={label} onClick={() => onChange(!on)} className={`relative h-6 w-11 shrink-0 rounded-full transition-colors after:absolute after:-inset-x-1 after:-inset-y-2.5 after:content-[''] md:after:hidden ${on ? "bg-brand" : "bg-surface-2 ring-1 ring-inset ring-line"}`}>
       <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${on ? "translate-x-[22px]" : "translate-x-0.5"}`} />
     </button>
   );
@@ -36,7 +36,7 @@ export function NoticeSettings({ initial, groups, email }: { initial: NoticePref
   return (
     <div className="grid gap-6">
       <div className="flex items-center justify-between gap-3 text-xs text-faint">
-        <span>{email ? `Email goes to ${email}` : "No email address on your profile"}</span>
+        <span className="min-w-0 break-words">{email ? `Email goes to ${email}` : "No email address on your profile"}</span>
         <span className={note ? (note.ok ? "text-ok" : "text-bad") : ""}>{saving ? "Saving…" : (note?.text ?? "")}</span>
       </div>
 
@@ -48,15 +48,15 @@ export function NoticeSettings({ initial, groups, email }: { initial: NoticePref
             <li key={g.key} className="grid gap-3 px-5 py-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
               <div className="flex items-start gap-3">
                 <Toggle on={v.app} onChange={(on) => setGroup(g.key, { app: on })} label={`${g.label} on or off`} />
-                <div className="grid gap-0.5">
+                <div className="grid min-w-0 gap-0.5">
                   <p className={`text-[15px] font-medium ${v.app ? "" : "text-muted"}`}>{g.label}</p>
                   <p className="text-xs text-muted">{g.about}</p>
                 </div>
               </div>
               {!recap && (
-                <div className={`flex rounded-full border border-line bg-bg p-0.5 text-xs ${v.app ? "" : "pointer-events-none opacity-40"}`} aria-label={`Email for ${g.label}`}>
+                <div className={`flex w-full rounded-full border border-line bg-bg p-0.5 text-xs md:w-auto ${v.app ? "" : "pointer-events-none opacity-40"}`} aria-label={`Email for ${g.label}`}>
                   {EMAIL.map(([mode, label]) => (
-                    <button key={mode} type="button" onClick={() => setGroup(g.key, { email: mode })} className={`rounded-full px-3 py-1.5 transition-colors ${v.email === mode ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
+                    <button key={mode} type="button" onClick={() => setGroup(g.key, { email: mode })} className={`flex-1 rounded-full px-3 py-2.5 transition-colors md:flex-none md:py-1.5 ${v.email === mode ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
                       {label}
                     </button>
                   ))}

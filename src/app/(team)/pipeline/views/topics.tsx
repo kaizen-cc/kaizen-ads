@@ -139,7 +139,7 @@ export function Topic({
     <div
       id={`topic-${id}`}
       style={{ ["--glow" as string]: t.glow, ["--soft" as string]: t.soft, ["--accent" as string]: t.accent }}
-      className={`group/topic relative isolate scroll-mt-6 overflow-hidden rounded-[22px] border bg-[#0b0a0e] shadow-[0_24px_60px_-40px_rgba(0,0,0,0.9)] transition-colors duration-300 ${isOpen ? "border-white/12" : "border-white/[0.06] hover:border-white/12"}`}
+      className={`group/topic relative isolate scroll-mt-20 md:scroll-mt-6 overflow-hidden rounded-[22px] border bg-[#0b0a0e] shadow-[0_24px_60px_-40px_rgba(0,0,0,0.9)] transition-colors duration-300 ${isOpen ? "border-white/12" : "border-white/[0.06] hover:border-white/12"}`}
     >
       <span aria-hidden className={`pointer-events-none absolute -left-20 -top-20 -z-10 h-[220px] w-[220px] rounded-full blur-[70px] transition-opacity duration-500 ${isOpen ? "opacity-70" : "opacity-40 group-hover/topic:opacity-60"}`} style={{ background: "var(--glow)" }} />
       <span aria-hidden className="pointer-events-none absolute inset-y-4 left-0 -z-10 w-[3px] rounded-r-full" style={{ background: "var(--accent)" }} />

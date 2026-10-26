@@ -172,7 +172,7 @@ function ClientCard({ c, onOpen }: { c: OnboardingCard; onOpen: (s: OpenSuggesti
         </div>
       </div>
 
-      <ol className="grid grid-cols-4 gap-1.5">
+      <ol className="grid grid-cols-2 gap-x-3 gap-y-3 md:grid-cols-4 md:gap-1.5">
         {steps.map((s, i) => (
           <li key={s.label} className="grid content-start gap-1.5">
             <span className="relative h-1 overflow-hidden rounded-full bg-surface-2">
@@ -211,19 +211,19 @@ function ClientCard({ c, onOpen }: { c: OnboardingCard; onOpen: (s: OpenSuggesti
 
       <div className="flex flex-wrap items-center gap-2">
         {c.firstRound ? (
-          <button onClick={() => onOpen(c.firstRound!)} className="h-9 rounded-brand bg-brand px-4 text-sm font-medium text-white shadow-[0_8px_24px_-10px_rgba(178,30,44,0.9)] hover:brightness-110">
+          <button onClick={() => onOpen(c.firstRound!)} className="h-11 flex-1 rounded-brand bg-brand px-4 md:h-9 md:flex-none text-sm font-medium text-white shadow-[0_8px_24px_-10px_rgba(178,30,44,0.9)] hover:brightness-110">
             Review the first round
           </button>
         ) : c.inProduction.length ? (
           <span className="flex flex-wrap items-center gap-1.5 text-xs text-muted">
             {c.inProduction.map((n) => (
-              <Link key={n} href={`/board?t=${n}`} className="rounded-full border border-line px-2 py-0.5 hover:border-faint">
+              <Link key={n} href={`/board?t=${n}`} className="rounded-full border border-line px-3 py-2 hover:border-faint md:px-2 md:py-0.5">
                 #{n}
               </Link>
             ))}
           </span>
         ) : writing ? null : c.creative ? (
-          <button onClick={write} className="h-9 rounded-brand border border-brand/50 px-4 text-sm text-fg hover:bg-brand-soft">
+          <button onClick={write} className="h-11 flex-1 rounded-brand border border-brand/50 px-4 text-sm text-fg hover:bg-brand-soft md:h-9 md:flex-none">
             {failed ? "Try again" : intakeIn ? "Write the first round" : "Write it without the intake"}
           </button>
         ) : null}
@@ -236,7 +236,7 @@ function ClientCard({ c, onOpen }: { c: OnboardingCard; onOpen: (s: OpenSuggesti
             })
           }
           disabled={busy}
-          className="ml-auto h-9 px-2 text-xs text-faint hover:text-fg"
+          className="ml-auto h-11 px-2 text-xs text-faint hover:text-fg md:h-9"
         >
           {busy ? "Saving…" : "Mark onboarded"}
         </button>
@@ -296,7 +296,7 @@ function Unmatched({ u, clients }: { u: { id: string; name: string | null; at: s
       <span className="min-w-0 flex-1 truncate">
         &ldquo;{u.name ?? "No business name"}&rdquo; <span className="text-xs text-faint">· {day(u.at)}</span>
       </span>
-      <select value={pick} onChange={(e) => setPick(e.target.value)} className="h-8 max-w-[220px] rounded-brand border border-line bg-bg px-2 text-xs">
+      <select value={pick} onChange={(e) => setPick(e.target.value)} className="h-11 w-full rounded-brand border border-line bg-bg px-2 text-xs md:h-8 md:w-auto md:max-w-[220px]">
         <option value="">Which client is it?</option>
         {clients.map((c) => (
           <option key={c.id} value={c.id}>
@@ -313,7 +313,7 @@ function Unmatched({ u, clients }: { u: { id: string; name: string | null; at: s
             router.refresh();
           })
         }
-        className="h-8 rounded-brand bg-fg px-3 text-xs text-bg disabled:opacity-40"
+        className="h-11 w-full rounded-brand bg-fg px-3 text-xs text-bg disabled:opacity-40 md:h-8 md:w-auto"
       >
         Match
       </button>
