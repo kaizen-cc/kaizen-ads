@@ -11,7 +11,7 @@ import { confirmLaunch, discardLaunch, launchFor, loadLaunch, replanLaunch, sand
 // hands the ticket to the buyer to turn them on; the ticket completes itself once Meta shows them on. This panel shows
 // how that went, and when something stopped it, it's where the buyer adjusts and launches by hand.
 
-const field = "h-10 w-full rounded-[10px] border border-line bg-bg px-3 text-sm text-fg outline-none transition-colors focus:border-[#0866ff]/60";
+const field = "h-10 w-full rounded-[10px] border border-line bg-bg px-3 text-sm text-fg outline-none transition-colors focus:border-[#0866ff]/60 max-md:h-11";
 const TONE: Record<LaunchCheck["level"], { dot: string; text: string; icon: string }> = {
   ok: { dot: "bg-ok/15 text-ok", text: "text-muted", icon: "✓" },
   warn: { dot: "bg-warn/15 text-warn", text: "text-muted", icon: "!" },
@@ -96,7 +96,7 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
   // Not planned yet
   if (!l)
     return (
-      <section className="relative grid gap-4 overflow-hidden rounded-[18px] border border-[#0866ff]/30 bg-gradient-to-br from-[#0866ff]/[0.09] via-transparent to-transparent p-5">
+      <section className="relative grid gap-4 overflow-hidden rounded-[18px] border border-[#0866ff]/30 bg-gradient-to-br from-[#0866ff]/[0.09] via-transparent to-transparent p-5 max-md:p-4">
         <div aria-hidden className="pointer-events-none absolute -right-16 -top-20 h-48 w-48 rounded-full bg-[#0866ff]/20 blur-[70px]" />
         <div className="relative grid gap-1">
           <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#7aa7ff]">Launch to Meta</p>
@@ -109,7 +109,7 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
           </p>
         </div>
         <div className="relative flex flex-wrap items-center gap-3">
-          <button type="button" onClick={plan} disabled={pending} className="text-xs text-faint underline-offset-2 hover:text-fg hover:underline disabled:opacity-60">
+          <button type="button" onClick={plan} disabled={pending} className="text-xs text-faint underline-offset-2 hover:text-fg hover:underline disabled:opacity-60 max-md:h-11 max-md:rounded-full max-md:border max-md:border-line max-md:px-4 max-md:text-sm max-md:text-muted">
             {pending ? "Starting…" : "Start it now"}
           </button>
           {error && <span className="text-sm text-bad">{error}</span>}
@@ -125,7 +125,7 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
   const noAdset = l.checks.some((c) => c.key === "adset" && c.level === "block" && !p?.options.adsets.length);
 
   return (
-    <section className="relative grid gap-5 overflow-hidden rounded-[18px] border border-[#0866ff]/30 bg-gradient-to-br from-[#0866ff]/[0.07] via-transparent to-transparent p-5">
+    <section className="relative grid gap-5 overflow-hidden rounded-[18px] border border-[#0866ff]/30 bg-gradient-to-br from-[#0866ff]/[0.07] via-transparent to-transparent p-5 max-md:p-4">
       <div aria-hidden className="pointer-events-none absolute -right-16 -top-20 h-48 w-48 rounded-full bg-[#0866ff]/15 blur-[70px]" />
       <header className="relative flex flex-wrap items-center justify-between gap-3">
         <div className="grid gap-0.5">
@@ -146,7 +146,7 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
           </p>
         </div>
         {!busy && l.status !== "launched" && (
-          <button type="button" onClick={() => run(async () => (await discardLaunch(l.id), setL(null)))} className="text-xs text-faint hover:text-fg">
+          <button type="button" onClick={() => run(async () => (await discardLaunch(l.id), setL(null)))} className="text-xs text-faint hover:text-fg max-md:-my-2 max-md:px-2 max-md:py-3">
             Discard
           </button>
         )}
@@ -163,15 +163,15 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
         <div className="relative grid gap-3">
           <ul className="grid gap-1.5">
             {l.result.ads.map((a) => (
-              <li key={a.designId} className="flex items-center justify-between gap-3 rounded-[12px] border border-line bg-bg/40 px-3.5 py-2.5 text-sm">
-                <span className="truncate">{a.name}</span>
-                <span className={`shrink-0 text-xs ${a.adId ? "text-ok" : "text-bad"}`}>{a.adId ? "✓ created, paused" : `× ${a.error}`}</span>
+              <li key={a.designId} className="flex items-center justify-between gap-3 rounded-[12px] border border-line bg-bg/40 px-3.5 py-2.5 text-sm max-md:flex-wrap max-md:gap-y-1">
+                <span className="truncate max-md:min-w-0">{a.name}</span>
+                <span className={`shrink-0 text-xs max-md:shrink ${a.adId ? "text-ok" : "text-bad"}`}>{a.adId ? "✓ created, paused" : `× ${a.error}`}</span>
               </li>
             ))}
           </ul>
           <div className="flex flex-wrap items-center gap-3">
             {l.result.link && (
-              <a href={l.result.link} target="_blank" rel="noreferrer" className="h-10 content-center rounded-full bg-[#0866ff] px-5 text-sm font-medium text-white hover:brightness-110">
+              <a href={l.result.link} target="_blank" rel="noreferrer" className="h-10 content-center rounded-full bg-[#0866ff] px-5 text-sm font-medium text-white hover:brightness-110 max-md:grid max-md:h-12 max-md:w-full max-md:place-items-center">
                 Open in Ads Manager ↗
               </a>
             )}
@@ -206,7 +206,7 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
               </select>
               <div className="flex flex-wrap gap-1.5">
                 {(["existing", "clone"] as const).map((m) => (
-                  <button key={m} type="button" onClick={() => setEdits((x) => ({ ...x, mode: m }))} className={`h-8 rounded-full px-3 text-xs transition-colors ${mode === m ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
+                  <button key={m} type="button" onClick={() => setEdits((x) => ({ ...x, mode: m }))} className={`h-8 rounded-full px-3 text-xs transition-colors max-md:h-11 max-md:px-4 ${mode === m ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
                     {m === "existing" ? "Add to this ad set" : "New ad set, copied from it"}
                   </button>
                 ))}
@@ -225,7 +225,7 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
               </p>
               {p.ads.map((a) => (
                 <div key={a.designId} className="grid gap-1.5 rounded-[12px] border border-line bg-bg/40 p-3">
-                  <input value={edits.names[a.designId] ?? a.name} onChange={(e) => setEdits((x) => ({ ...x, names: { ...x.names, [a.designId]: e.target.value } }))} className={`${field} h-9`} aria-label={`Ad name for ${a.designName}`} />
+                  <input value={edits.names[a.designId] ?? a.name} onChange={(e) => setEdits((x) => ({ ...x, names: { ...x.names, [a.designId]: e.target.value } }))} className={`${field} h-9 max-md:h-11`} aria-label={`Ad name for ${a.designName}`} />
                   <p className="flex flex-wrap items-center gap-1.5 text-[11px] text-faint">
                     <span className="text-muted">{a.designName}</span>
                     {a.assets.map((x) => (
@@ -292,31 +292,31 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
       {!busy && l.status !== "launched" && (
         <div className="relative flex flex-wrap items-center gap-2 border-t border-line pt-4">
           {confirm ? (
-            <span className="flex flex-wrap items-center gap-2 text-sm">
-              <span>
+            <span className="flex flex-wrap items-center gap-2 text-sm max-md:w-full">
+              <span className="max-md:basis-full">
                 Create {p?.ads.length} {p?.ads.length === 1 ? "ad" : "ads"} paused in {l.sandbox ? "Kaizen's sandbox account" : "the client's ad account"}?
               </span>
-              <button type="button" onClick={launch} disabled={pending} className="h-9 rounded-full bg-[#0866ff] px-4 text-sm font-medium text-white disabled:opacity-60">
+              <button type="button" onClick={launch} disabled={pending} className="h-9 rounded-full bg-[#0866ff] px-4 text-sm font-medium text-white disabled:opacity-60 max-md:h-12 max-md:flex-1">
                 Yes, launch paused
               </button>
-              <button type="button" onClick={() => setConfirm(false)} className="h-9 px-2 text-sm text-faint hover:text-fg">
+              <button type="button" onClick={() => setConfirm(false)} className="h-9 px-2 text-sm text-faint hover:text-fg max-md:h-12 max-md:px-4">
                 Not yet
               </button>
             </span>
           ) : (
             <>
               {l.status === "ready" && !dirty && l.canLaunch && (
-                <button type="button" onClick={() => setConfirm(true)} className="h-10 rounded-full bg-[#0866ff] px-5 text-sm font-medium text-white shadow-[0_10px_30px_-12px_rgba(8,102,255,0.9)] hover:brightness-110">
+                <button type="button" onClick={() => setConfirm(true)} className="h-10 rounded-full bg-[#0866ff] px-5 text-sm font-medium text-white shadow-[0_10px_30px_-12px_rgba(8,102,255,0.9)] hover:brightness-110 max-md:h-12 max-md:w-full">
                   Launch {p?.ads.length} {p?.ads.length === 1 ? "ad" : "ads"} paused
                 </button>
               )}
               {(dirty || l.status !== "ready") && (
-                <button type="button" onClick={recheck} disabled={pending} className={`h-10 rounded-full px-5 text-sm font-medium disabled:opacity-60 ${dirty ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
+                <button type="button" onClick={recheck} disabled={pending} className={`h-10 rounded-full px-5 text-sm font-medium disabled:opacity-60 max-md:h-11 max-md:w-full ${dirty ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
                   {pending ? "Checking…" : dirty ? "Check with these changes" : "Check again"}
                 </button>
               )}
               {noAdset && l.sandbox && isExec && (
-                <button type="button" onClick={() => run(async () => { const r = await sandboxCampaign(l.id); if (!r.ok) setError(r.error); else setL(await loadLaunch(l.id)); })} disabled={pending} className="h-10 rounded-full border border-warn/40 px-4 text-sm text-warn hover:bg-warn/10 disabled:opacity-60">
+                <button type="button" onClick={() => run(async () => { const r = await sandboxCampaign(l.id); if (!r.ok) setError(r.error); else setL(await loadLaunch(l.id)); })} disabled={pending} className="h-10 rounded-full border border-warn/40 px-4 text-sm text-warn hover:bg-warn/10 disabled:opacity-60 max-md:h-auto max-md:min-h-11 max-md:w-full max-md:py-2">
                   Create a paused test campaign in the sandbox
                 </button>
               )}

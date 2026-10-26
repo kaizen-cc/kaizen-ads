@@ -144,7 +144,7 @@ export function CopyPanel({ ticket, canApprove, onMoved, demo }: { ticket: Ticke
                 onMoved("client_review");
               })
             }
-            className="h-9 rounded-full bg-ok px-4 text-sm font-medium text-white disabled:opacity-60"
+            className="h-9 rounded-full bg-ok px-4 text-sm font-medium text-white disabled:opacity-60 max-md:h-11 max-md:w-full"
           >
             Reuse it
           </button>
@@ -159,7 +159,7 @@ export function CopyPanel({ ticket, canApprove, onMoved, demo }: { ticket: Ticke
       ) : !set || set.status === "failed" ? (
         <div className="grid justify-items-start gap-3 rounded-[12px] border border-dashed border-line p-5">
           <p className="text-sm text-muted">{set?.error ?? "No copy yet."} The Copywriter writes Kaizen&apos;s set: 3 short-form and 2 long-form ads.</p>
-          <button disabled={busy} onClick={() => rewrite()} className="h-9 rounded-full bg-brand px-4 text-sm font-medium text-white disabled:opacity-60">
+          <button disabled={busy} onClick={() => rewrite()} className="h-9 rounded-full bg-brand px-4 text-sm font-medium text-white disabled:opacity-60 max-md:h-11 max-md:px-5">
             {busy ? "Starting…" : "Write the copy"}
           </button>
         </div>
@@ -185,9 +185,9 @@ export function CopyPanel({ ticket, canApprove, onMoved, demo }: { ticket: Ticke
             )}
           </div>
           {hook && <p className="line-clamp-2 text-sm leading-relaxed text-muted">&ldquo;{hook}&rdquo;</p>}
-          <span className="flex items-center justify-between">
+          <span className="flex items-center justify-between max-md:gap-3">
             <span className="text-[11px] text-faint">{set.status === "approved" ? "See the approved set" : "Read it on the creative, edit, chat with the Copywriter, approve"}</span>
-            <span className="rounded-full bg-fg px-3.5 py-1.5 text-xs font-medium text-bg transition-transform group-hover:translate-x-0.5">View copy →</span>
+            <span className="rounded-full bg-fg px-3.5 py-1.5 text-xs font-medium text-bg transition-transform group-hover:translate-x-0.5 max-md:shrink-0 max-md:px-4 max-md:py-3 max-md:text-sm">View copy →</span>
           </span>
         </button>
       )}

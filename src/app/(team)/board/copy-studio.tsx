@@ -243,7 +243,7 @@ function Chat({ ticket, demo, disabled, onRewriting }: { ticket: Ticket; demo: b
             placeholder={disabled ? "The copy is approved." : "e.g. They never call it a discount. Lead with the teachers, not the price."}
             className="min-w-0 flex-1 resize-none rounded-[10px] border border-line bg-bg px-3 py-2 text-sm outline-none placeholder:text-faint focus:border-brand-text/60 disabled:opacity-60"
           />
-          <button disabled={busy || disabled || !text.trim()} onClick={send} className="h-10 rounded-brand bg-fg px-4 text-sm font-medium text-bg disabled:opacity-40">
+          <button disabled={busy || disabled || !text.trim()} onClick={send} className="h-10 rounded-brand bg-fg px-4 text-sm font-medium text-bg disabled:opacity-40 max-md:h-11">
             Send
           </button>
         </div>
@@ -324,6 +324,8 @@ export function CopyStudio({
   const set = state.set!;
   const [pick, setPick] = useState(0);
   const [side, setSide] = useState<"preview" | "chat">("preview");
+  // Phones have no room for three panes: one at a time, picked from tabs under the header
+  const [pane, setPane] = useState<"edit" | "preview" | "chat">("edit");
   const [designs, setDesigns] = useState<Design[] | null>(null);
   const [designIx, setDesignIx] = useState(0);
   const [note, setNote] = useState("");
@@ -360,17 +362,17 @@ export function CopyStudio({
 
   // Rendered at the page level, over everything (the ticket drawer would otherwise contain it)
   return createPortal(
-    <div className="fixed inset-0 z-[80] grid place-items-center bg-black/70 p-3 backdrop-blur-sm sm:p-6" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="grid h-full max-h-[920px] w-full max-w-[1320px] grid-rows-[auto_auto_minmax(0,1fr)_auto] overflow-hidden rounded-[18px] border border-line bg-bg shadow-2xl animate-[step-in_.2s_ease-out]">
+    <div className="fixed inset-0 z-[80] grid place-items-center bg-black/70 backdrop-blur-sm md:p-6" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="grid h-full max-h-[920px] w-full max-w-[1320px] grid-rows-[auto_auto_minmax(0,1fr)_auto] overflow-hidden rounded-[18px] border border-line bg-bg shadow-2xl animate-[step-in_.2s_ease-out] max-md:flex max-md:max-h-none max-md:flex-col max-md:rounded-none max-md:border-0">
         {/* Header */}
-        <header className="flex flex-wrap items-center gap-3 border-b border-line px-5 py-3.5">
-          <div className="min-w-0">
+        <header className="flex flex-wrap items-center gap-3 border-b border-line px-5 py-3.5 max-md:gap-2.5 max-md:px-4 max-md:pb-3 max-md:pt-[calc(0.5rem+env(safe-area-inset-top))]">
+          <div className="min-w-0 max-md:order-1 max-md:flex-1">
             <p className="text-xs text-faint">
               {ticket.clientName} · #{ticket.number}
             </p>
             <h2 className="truncate font-heading text-[18px]">Copy · {ticket.title}</h2>
           </div>
-          <label className="flex min-w-[220px] flex-1 items-center gap-2 rounded-full border border-line px-3 py-1 text-xs sm:max-w-[340px]">
+          <label className="flex min-w-[220px] flex-1 items-center gap-2 rounded-full border border-line px-3 py-1 text-xs md:max-w-[340px] max-md:order-3 max-md:min-h-11 max-md:min-w-0 max-md:basis-full">
             <span className="shrink-0 text-faint">Landing page</span>
             <input
               value={landingDraft}
@@ -385,24 +387,38 @@ export function CopyStudio({
               className="min-w-0 flex-1 bg-transparent py-1 outline-none placeholder:text-faint"
             />
           </label>
-          <span className="text-xs text-faint">
+          <span className="text-xs text-faint max-md:order-4">
             v{set.version}
             {set.status === "approved" ? ` · approved${set.approvedBy ? ` by ${set.approvedBy}` : ""}` : drafting ? " · rewriting" : dirty ? " · saving…" : " · saved"}
           </span>
-          <div className="ml-auto flex items-center gap-1 rounded-full border border-line p-0.5 text-xs">
+          <div className="ml-auto flex items-center gap-1 rounded-full border border-line p-0.5 text-xs max-md:hidden">
             {(["preview", "chat"] as const).map((k) => (
               <button key={k} onClick={() => setSide(k)} className={`rounded-full px-3 py-1.5 ${side === k ? "bg-surface-2 text-fg" : "text-muted hover:text-fg"}`}>
                 {k === "preview" ? "Feed preview" : "Chat with the Copywriter"}
               </button>
             ))}
           </div>
-          <button onClick={onClose} aria-label="Close" className="grid h-8 w-8 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg">
+          <button onClick={onClose} aria-label="Close" className="grid h-8 w-8 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg max-md:order-2 max-md:h-11 max-md:w-11 max-md:shrink-0 max-md:bg-surface">
             ✕
           </button>
+          {/* Phones: edit, preview or chat, one at a time */}
+          <div className="order-5 flex w-full rounded-full border border-line p-0.5 text-sm md:hidden" role="tablist">
+            {(["edit", "preview", "chat"] as const).map((k) => (
+              <button
+                key={k}
+                role="tab"
+                aria-selected={pane === k}
+                onClick={() => setPane(k)}
+                className={`h-10 flex-1 rounded-full ${pane === k ? "bg-surface-2 text-fg" : "text-muted"}`}
+              >
+                {k === "edit" ? "Edit" : k === "preview" ? "Preview" : "Chat"}
+              </button>
+            ))}
+          </div>
         </header>
 
         {/* The creative */}
-        <div className="flex gap-2.5 overflow-x-auto border-b border-line px-5 py-3">
+        <div className={`flex gap-2.5 overflow-x-auto border-b border-line px-5 py-3 max-md:shrink-0 max-md:px-4 max-md:py-2.5 ${pane === "preview" ? "" : "max-md:hidden"}`}>
           {designs === null && !demo ? (
             <p className="text-xs text-faint">Loading the creative…</p>
           ) : (designs ?? []).length === 0 ? (
@@ -431,8 +447,8 @@ export function CopyStudio({
         </div>
 
         {/* Ads · editor · preview or chat */}
-        <div className="grid min-h-0 grid-cols-1 md:grid-cols-[190px_minmax(0,1fr)] lg:grid-cols-[190px_minmax(0,1fr)_380px]">
-          <ol className="flex gap-1.5 overflow-x-auto border-b border-line p-3 md:grid md:content-start md:overflow-y-auto md:border-b-0 md:border-r">
+        <div className="grid min-h-0 grid-cols-1 md:grid-cols-[190px_minmax(0,1fr)] lg:grid-cols-[190px_minmax(0,1fr)_380px] max-md:flex max-md:flex-1 max-md:flex-col">
+          <ol className={`flex gap-1.5 overflow-x-auto border-b border-line p-3 md:grid md:content-start md:overflow-y-auto md:border-b-0 md:border-r max-md:shrink-0 max-md:px-4 max-md:py-2.5 ${pane === "chat" ? "max-md:hidden" : ""}`}>
             {ads.map((a, i) => {
               const tone = violations.some((v) => v.ad === i + 1) ? "bad" : worst(a);
               return (
@@ -454,7 +470,11 @@ export function CopyStudio({
             })}
           </ol>
 
-          <div className="min-h-0 overflow-y-auto p-5">
+          <div
+            className={`min-h-0 overflow-y-auto p-5 max-md:flex-1 max-md:overscroll-contain max-md:px-4 max-md:pt-4 ${pane === "edit" ? "" : "max-md:hidden"} ${
+              set.status === "approved" ? "max-md:pb-[calc(1.5rem+env(safe-area-inset-bottom))]" : ""
+            }`}
+          >
             {drafting ? (
               <div className="grid gap-4 rounded-[14px] border border-line bg-surface p-5">
                 <CopyProgress progress={set.progress} />
@@ -509,11 +529,27 @@ export function CopyStudio({
               <Chat ticket={ticket} demo={demo} disabled={set.status === "approved"} onRewriting={onRewriting} />
             )}
           </aside>
+
+          {/* Phones: the preview and the chat take the editor's place */}
+          {pane === "preview" && (
+            <div className={`min-h-0 flex-1 overflow-y-auto overscroll-contain bg-surface/40 px-4 py-4 md:hidden ${set.status === "approved" ? "pb-[calc(1.5rem+env(safe-area-inset-bottom))]" : ""}`}>
+              {ad && <FeedPreview ad={ad} client={ticket.clientName} landing={landing} image={chosen ? { url: chosen.thumbUrl ?? chosen.url, aspect: chosen.aspect } : null} />}
+            </div>
+          )}
+          {pane === "chat" && (
+            <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-4 md:hidden">
+              <Chat ticket={ticket} demo={demo} disabled={set.status === "approved"} onRewriting={onRewriting} />
+            </div>
+          )}
         </div>
 
         {/* Approve */}
         {set.status !== "approved" && (
-          <footer className="grid gap-2.5 border-t border-line bg-surface/60 px-5 py-3.5">
+          <footer
+            className={`grid gap-2.5 border-t border-line bg-surface/60 px-5 py-3.5 max-md:max-h-[45svh] max-md:shrink-0 max-md:overflow-y-auto max-md:px-4 max-md:pb-[calc(0.75rem+env(safe-area-inset-bottom))] max-md:pt-3 ${
+              pane === "chat" ? "max-md:hidden" : ""
+            }`}
+          >
             {violations.length > 0 && (
               <div className="grid gap-1.5 rounded-[10px] border border-bad/30 bg-bad-soft/40 px-3.5 py-2.5">
                 <p className="text-xs font-medium text-bad">Goes against what {ticket.clientName} told us. Fix before approving:</p>
@@ -542,7 +578,7 @@ export function CopyStudio({
             )}
             <div className="flex flex-wrap items-center gap-2">
               {canApprove && (
-                <button disabled={busy || drafting || missing.length > 0} onClick={onApprove} title={missing[0]} className="h-10 rounded-brand bg-ok px-5 text-sm font-medium text-white disabled:opacity-40">
+                <button disabled={busy || drafting || missing.length > 0} onClick={onApprove} title={missing[0]} className="h-10 rounded-brand bg-ok px-5 text-sm font-medium text-white disabled:opacity-40 max-md:order-3 max-md:h-11 max-md:flex-1">
                   {busy ? "Checking against client feedback…" : "Approve copy"}
                 </button>
               )}
@@ -551,7 +587,7 @@ export function CopyStudio({
                 onChange={(e) => setNote(e.target.value)}
                 disabled={drafting}
                 placeholder="Quick rewrite with a note, e.g. warmer, lead with the price"
-                className="h-10 min-w-0 flex-1 rounded-brand border border-line bg-bg px-3 text-sm outline-none placeholder:text-faint focus:border-brand-text/60 disabled:opacity-60"
+                className="h-10 min-w-0 flex-1 rounded-brand border border-line bg-bg px-3 text-sm outline-none placeholder:text-faint focus:border-brand-text/60 disabled:opacity-60 max-md:order-1 max-md:h-11 max-md:basis-full"
               />
               <button
                 disabled={busy || drafting}
@@ -559,7 +595,7 @@ export function CopyStudio({
                   onRewrite(note);
                   setNote("");
                 }}
-                className="h-10 rounded-brand border border-line px-4 text-sm text-muted hover:text-fg disabled:opacity-60"
+                className="h-10 rounded-brand border border-line px-4 text-sm text-muted hover:text-fg disabled:opacity-60 max-md:order-2 max-md:h-11"
               >
                 Rewrite
               </button>

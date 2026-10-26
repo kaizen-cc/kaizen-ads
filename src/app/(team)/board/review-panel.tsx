@@ -58,7 +58,7 @@ export function ReviewPanel({
     });
 
   return (
-    <section className={`grid gap-4 rounded-[12px] border p-5 ${reviewing ? "border-brand/30 bg-brand-soft/20" : "border-warn/30 bg-warn-soft/30"}`}>
+    <section className={`grid gap-4 rounded-[12px] border p-5 max-md:p-4 ${reviewing ? "border-brand/30 bg-brand-soft/20" : "border-warn/30 bg-warn-soft/30"}`}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="font-heading text-[16px]">{reviewing ? "Creative review" : clientChanges ? "The client asked for changes" : "Changes requested"}</h3>
         <span className="text-xs text-muted">
@@ -87,14 +87,14 @@ export function ReviewPanel({
       {open.length > 0 && (
         <ol className="grid gap-1.5">
           {open.map((c) => (
-            <li key={c.id} className="flex gap-2.5 rounded-[8px] bg-surface px-3 py-2 text-sm">
+            <li key={c.id} className="flex gap-2.5 rounded-[8px] bg-surface px-3 py-2 text-sm max-md:flex-wrap max-md:gap-x-2 max-md:gap-y-1">
               <span className="shrink-0 text-xs text-faint">
                 v{c.version}
                 {c.tMs != null && ` · ${clock(c.tMs)}`}
                 {c.x != null && " · pin"}
               </span>
-              <span className="min-w-0 flex-1 leading-relaxed">{c.body}</span>
-              <span className="shrink-0 text-[11px] text-faint">{c.author}</span>
+              <span className="min-w-0 flex-1 leading-relaxed max-md:order-last max-md:basis-full">{c.body}</span>
+              <span className="shrink-0 text-[11px] text-faint max-md:ml-auto">{c.author}</span>
             </li>
           ))}
         </ol>
@@ -111,10 +111,10 @@ export function ReviewPanel({
               className="rounded-[10px] border border-line bg-surface px-3.5 py-2.5 text-sm outline-none placeholder:text-faint focus:border-brand-text/60"
             />
             <div className="flex flex-wrap items-center gap-2">
-              <button disabled={busy} onClick={() => decide("approve")} className="h-10 rounded-brand bg-ok px-5 text-sm font-medium text-white shadow-[0_8px_24px_-12px_rgba(47,163,122,0.9)] disabled:opacity-60">
+              <button disabled={busy} onClick={() => decide("approve")} className="h-10 rounded-brand bg-ok px-5 text-sm font-medium text-white shadow-[0_8px_24px_-12px_rgba(47,163,122,0.9)] disabled:opacity-60 max-md:h-12 max-md:w-full">
                 {busy ? "Saving…" : "Approve creative"}
               </button>
-              <button disabled={busy} onClick={() => decide("changes")} className="h-10 rounded-brand border border-line bg-surface px-4 text-sm text-fg hover:border-faint disabled:opacity-60">
+              <button disabled={busy} onClick={() => decide("changes")} className="h-10 rounded-brand border border-line bg-surface px-4 text-sm text-fg hover:border-faint disabled:opacity-60 max-md:h-11 max-md:w-full">
                 Send back with changes
               </button>
               <span className="text-xs text-faint">Approving starts the copy draft for copy review.</span>

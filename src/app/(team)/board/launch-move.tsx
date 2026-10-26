@@ -7,7 +7,7 @@ import { explainMoved, moveLaunched, type LaunchView } from "./launch-actions";
 // the old ones), or explain a move they made by hand in Ads Manager. Either way the reason becomes a rule the
 // launcher reads first for this client next time.
 
-const field = "h-10 w-full rounded-[10px] border border-line bg-bg px-3 text-sm text-fg outline-none transition-colors focus:border-[#0866ff]/60";
+const field = "h-10 w-full rounded-[10px] border border-line bg-bg px-3 text-sm text-fg outline-none transition-colors focus:border-[#0866ff]/60 max-md:h-11";
 
 export function LaunchMove({ l, onDone }: { l: LaunchView; onDone: () => void }) {
   const p = l.plan;
@@ -42,7 +42,7 @@ export function LaunchMove({ l, onDone }: { l: LaunchView; onDone: () => void })
                 onDone();
               })
             }
-            className="h-9 rounded-full bg-fg px-4 text-sm font-medium text-bg disabled:opacity-50"
+            className="h-9 rounded-full bg-fg px-4 text-sm font-medium text-bg disabled:opacity-50 max-md:h-11 max-md:flex-1"
           >
             {pending ? "Saving…" : "Save the reason"}
           </button>
@@ -71,7 +71,7 @@ export function LaunchMove({ l, onDone }: { l: LaunchView; onDone: () => void })
       {!open ? (
         others.length > 0 &&
         l.canLaunch && (
-          <button type="button" onClick={() => setOpen(true)} className="w-fit text-xs text-muted underline-offset-2 hover:text-fg hover:underline">
+          <button type="button" onClick={() => setOpen(true)} className="w-fit text-xs text-muted underline-offset-2 hover:text-fg hover:underline max-md:-my-2 max-md:py-3">
             Wrong ad set? Move it
           </button>
         )
@@ -94,7 +94,7 @@ export function LaunchMove({ l, onDone }: { l: LaunchView; onDone: () => void })
           </select>
           <div className="flex flex-wrap gap-1.5">
             {(["existing", "clone"] as const).map((m) => (
-              <button key={m} type="button" onClick={() => setMode(m)} className={`h-8 rounded-full px-3 text-xs transition-colors ${mode === m ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
+              <button key={m} type="button" onClick={() => setMode(m)} className={`h-8 rounded-full px-3 text-xs transition-colors max-md:h-11 max-md:px-4 ${mode === m ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
                 {m === "existing" ? "Into this ad set" : "A new ad set, copied from it"}
               </button>
             ))}
@@ -126,11 +126,11 @@ export function LaunchMove({ l, onDone }: { l: LaunchView; onDone: () => void })
                   onDone();
                 })
               }
-              className="h-9 rounded-full bg-[#0866ff] px-4 text-sm font-medium text-white disabled:opacity-50"
+              className="h-9 rounded-full bg-[#0866ff] px-4 text-sm font-medium text-white disabled:opacity-50 max-md:h-11 max-md:flex-1"
             >
               {pending ? "Moving…" : "Move it"}
             </button>
-            <button type="button" onClick={() => setOpen(false)} className="h-9 px-2 text-sm text-faint hover:text-fg">
+            <button type="button" onClick={() => setOpen(false)} className="h-9 px-2 text-sm text-faint hover:text-fg max-md:h-11 max-md:px-4">
               Cancel
             </button>
             {error && <span className="text-sm text-bad">{error}</span>}

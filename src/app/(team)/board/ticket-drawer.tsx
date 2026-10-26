@@ -322,11 +322,13 @@ export function TicketDrawer({
   };
 
   const currentPhaseIndex = PHASES.indexOf(info.phase);
+  // Phones: the generic next step also sits in a bar pinned to the bottom of the screen, in thumb reach
+  const nextBar = ticket.stage !== "launched" && !SPECIAL.includes(ticket.stage) && !making && Boolean(info.next);
 
   const section = "grid gap-3";
   const sectionTitle = "text-[11px] font-semibold uppercase tracking-[0.14em] text-faint";
   const control =
-    "h-9 w-full min-w-0 rounded-brand border border-transparent bg-transparent px-2.5 text-sm text-fg outline-none transition-colors hover:border-line hover:bg-surface-2 focus:border-brand-text/60 disabled:opacity-60";
+    "h-9 w-full min-w-0 rounded-brand border border-transparent bg-transparent px-2.5 text-sm text-fg outline-none transition-colors hover:border-line hover:bg-surface-2 focus:border-brand-text/60 disabled:opacity-60 max-md:h-11 max-md:border-line/60 max-md:bg-surface";
   const counts =
     [ticket.newCount && `${ticket.newCount} new`, ticket.variationCount && `${ticket.variationCount} variation${ticket.variationCount === 1 ? "" : "s"}`].filter(Boolean).join(" + ") ||
     `${ticket.quantity} creative${ticket.quantity === 1 ? "" : "s"}`;
@@ -334,9 +336,9 @@ export function TicketDrawer({
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label={`Ticket ${ticket.number}`}>
       <button aria-label="Close" onClick={onClose} className="absolute inset-0 bg-black/60 backdrop-blur-[2px] animate-[sheet-fade_.2s_ease-out]" />
-      <aside className="relative flex h-full w-full max-w-[600px] flex-col border-l border-line bg-bg shadow-2xl animate-[drawer-right_.25s_cubic-bezier(.2,.8,.2,1)]">
+      <aside className="relative flex h-full w-full max-w-[600px] flex-col border-l border-line bg-bg shadow-2xl animate-[drawer-right_.25s_cubic-bezier(.2,.8,.2,1)] max-md:border-l-0">
         {/* Header: who, what, and where it is in the journey */}
-        <header className="grid gap-5 border-b border-line px-7 pb-6 pt-5">
+        <header className="grid gap-5 border-b border-line px-7 pb-6 pt-5 max-md:gap-4 max-md:px-4 max-md:pb-4 max-md:pt-[calc(0.5rem+env(safe-area-inset-top))]">
           <div className="flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2.5">
               <ClientTag name={ticket.clientName} />
@@ -347,13 +349,13 @@ export function TicketDrawer({
                 </span>
               )}
             </div>
-            <button onClick={onClose} className="-mr-2 grid h-8 w-8 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg" aria-label="Close ticket">
+            <button onClick={onClose} className="-mr-2 grid h-8 w-8 shrink-0 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg max-md:h-11 max-md:w-11 max-md:bg-surface max-md:text-base" aria-label="Close ticket">
               ✕
             </button>
           </div>
 
           <div className="grid gap-2.5">
-            <h2 className="font-heading text-[26px] leading-tight">{ticket.title}</h2>
+            <h2 className="font-heading text-[26px] leading-tight max-md:text-[22px] max-md:[overflow-wrap:anywhere]">{ticket.title}</h2>
             {ticket.migration && (
               <div className="grid gap-1.5 rounded-[10px] border border-warn/40 bg-warn-soft px-3.5 py-3 text-sm">
                 <p className="font-medium text-warn">Finish moving this from Asana</p>
@@ -362,7 +364,7 @@ export function TicketDrawer({
                   {ticket.migration.needsCopy && <li>· Add the copy set (Copy, below): it&apos;s past copy, so the client needs to see it.</li>}
                 </ul>
                 {ticket.migration.url && (
-                  <a href={ticket.migration.url} target="_blank" rel="noreferrer" className="text-xs text-muted hover:text-fg">
+                  <a href={ticket.migration.url} target="_blank" rel="noreferrer" className="text-xs text-muted hover:text-fg max-md:py-2">
                     Open the task in Asana ↗
                   </a>
                 )}
@@ -412,11 +414,13 @@ export function TicketDrawer({
         </header>
 
         {/* One column, as wide as the drawer: a long link or file name wraps instead of pushing everything off the side */}
-        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
-          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-9 px-7 py-7 [overflow-wrap:anywhere]">
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden max-md:overscroll-contain">
+          <div
+            className={`grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-9 px-7 py-7 [overflow-wrap:anywhere] max-md:gap-8 max-md:px-4 max-md:py-5 ${nextBar ? "" : "max-md:pb-[calc(1.5rem+env(safe-area-inset-bottom))]"}`}
+          >
           {/* Where it is and what happens next */}
           <section className="overflow-hidden rounded-[10px] border border-line bg-surface">
-            <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 max-md:px-4">
               <div className="min-w-0">
                 <p className="font-medium">{info.label}</p>
                 <p className="mt-0.5 text-xs text-muted">{ticket.stageDueAt ? <>Due {fmtDate(ticket.stageDueAt)}</> : "No turnaround in this stage"}</p>
@@ -426,7 +430,7 @@ export function TicketDrawer({
               </div>
             </div>
             {making && (
-              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 border-t border-line px-5 py-5">
+              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 border-t border-line px-5 py-5 max-md:px-3 max-md:py-4">
                 <Deliverables ticket={ticket} demoDesigns={demo ? DEMO_DESIGNS : undefined} onState={onUploads} />
                 {hasCreative && uploads.uploading === 0 ? (
                   // Remounts after each upload, so it always knows whether the review is about the current files
@@ -436,7 +440,7 @@ export function TicketDrawer({
                     onSent={moved}
                     back={
                       back && (
-                        <button disabled={pending} onClick={() => move(back.to)} className="h-10 rounded-brand px-3 text-xs text-faint hover:text-fg disabled:opacity-60">
+                        <button disabled={pending} onClick={() => move(back.to)} className="h-10 rounded-brand px-3 text-xs text-faint hover:text-fg disabled:opacity-60 max-md:h-11">
                           ↩ {back.label}
                         </button>
                       )
@@ -446,7 +450,7 @@ export function TicketDrawer({
                   <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-faint">
                     <span>{uploads.uploading > 0 ? "Uploading… the next step appears when it's done." : "Upload the creative to send it to creative review."}</span>
                     {back && (
-                      <button disabled={pending} onClick={() => move(back.to)} className="rounded-full px-3 py-1.5 text-muted hover:text-fg disabled:opacity-60">
+                      <button disabled={pending} onClick={() => move(back.to)} className="rounded-full px-3 py-1.5 text-muted hover:text-fg disabled:opacity-60 max-md:min-h-11">
                         ↩ {back.label}
                       </button>
                     )}
@@ -455,26 +459,26 @@ export function TicketDrawer({
               </div>
             )}
             {ticket.stage !== "launched" && !SPECIAL.includes(ticket.stage) && !making && (
-              <div className="grid gap-3 border-t border-line px-5 py-4">
+              <div className="grid gap-3 border-t border-line px-5 py-4 max-md:px-4">
                 <input
                   value={moveNote}
                   onChange={(e) => setMoveNote(e.target.value)}
                   placeholder="Add a note with this move (optional)"
                   aria-label="Note for this move"
-                  className="h-10 rounded-brand border border-line bg-bg px-3 text-sm outline-none placeholder:text-faint focus:border-brand-text/60"
+                  className="h-10 rounded-brand border border-line bg-bg px-3 text-sm outline-none placeholder:text-faint focus:border-brand-text/60 max-md:h-11"
                 />
-                <div className="flex flex-wrap items-center gap-2">
+                <div className={`flex flex-wrap items-center gap-2 ${!back ? "max-md:hidden" : ""}`}>
                   {info.next && (
                     <button
                       disabled={pending}
                       onClick={() => move(info.next!)}
-                      className="h-10 rounded-brand bg-brand px-4 text-sm font-medium text-white shadow-[0_8px_24px_-10px_rgba(178,30,44,0.9)] hover:bg-brand-hover disabled:opacity-60"
+                      className="h-10 rounded-brand bg-brand px-4 text-sm font-medium text-white shadow-[0_8px_24px_-10px_rgba(178,30,44,0.9)] hover:bg-brand-hover disabled:opacity-60 max-md:hidden"
                     >
                       {info.nextLabel} →
                     </button>
                   )}
                   {back && (
-                    <button disabled={pending} onClick={() => move(back.to)} className="h-10 rounded-brand border border-line px-4 text-sm text-muted hover:border-faint hover:text-fg disabled:opacity-60">
+                    <button disabled={pending} onClick={() => move(back.to)} className="h-10 rounded-brand border border-line px-4 text-sm text-muted hover:border-faint hover:text-fg disabled:opacity-60 max-md:h-11 max-md:w-full">
                       ↩ {back.label}
                     </button>
                   )}
@@ -482,16 +486,16 @@ export function TicketDrawer({
               </div>
             )}
             {["ready_for_client", "client_review", "client_revision", "ready_for_launch"].includes(ticket.stage) && (
-              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-5 py-3 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-5 py-3 text-xs max-md:px-4">
                 <span className="text-faint">
                   {ticket.stage === "client_review" ? "Waiting on the client in their portal." : "The client's portal shows where this stands."}
                 </span>
-                <a href={`/c/${ticket.clientSlug}`} target="_blank" rel="noreferrer" className="rounded-full border border-line px-3 py-1 text-muted hover:border-faint hover:text-fg">
+                <a href={`/c/${ticket.clientSlug}`} target="_blank" rel="noreferrer" className="rounded-full border border-line px-3 py-1 text-muted hover:border-faint hover:text-fg max-md:py-3">
                   Open the client&apos;s view ↗
                 </a>
               </div>
             )}
-            {error && <p className="border-t border-line px-5 py-3 text-sm text-brand-text">{error}</p>}
+            {error && <p className="border-t border-line px-5 py-3 text-sm text-brand-text max-md:px-4">{error}</p>}
           </section>
 
           {/* Ready to launch: the launcher (and, once launched from here, what it made) */}
@@ -506,7 +510,7 @@ export function TicketDrawer({
           {/* Properties: label on the left, editable value on the right */}
           <section className={section}>
             <h3 className={sectionTitle}>Details</h3>
-            <dl className="grid grid-cols-[120px_minmax(0,1fr)] items-center gap-x-4 gap-y-1 text-sm">
+            <dl className="grid grid-cols-[120px_minmax(0,1fr)] items-center gap-x-4 gap-y-1 text-sm max-md:grid-cols-[96px_minmax(0,1fr)] max-md:gap-x-3 max-md:gap-y-2">
               <dt className="text-muted">Assigned to</dt>
               <dd className="flex min-w-0 items-center gap-1">
                 <PersonAvatar name={ticket.assigneeName ?? "?"} size={22} muted={!ticket.assigneeName} />
@@ -540,14 +544,14 @@ export function TicketDrawer({
               </dd>
 
               <dt className="text-muted">Priority</dt>
-              <dd className="flex gap-1 px-1 py-1">
+              <dd className="flex gap-1 px-1 py-1 max-md:px-0">
                 {(["normal", "high", "urgent"] as Priority[]).map((p) => (
                   <button
                     key={p}
                     disabled={pending}
                     onClick={() => p !== ticket.priority && run(() => setTicketPriority(ticket.id, p))}
                     aria-pressed={ticket.priority === p}
-                    className={`h-7 rounded-full px-3 text-xs capitalize transition-colors disabled:opacity-60 ${
+                    className={`h-7 rounded-full px-3 text-xs capitalize transition-colors disabled:opacity-60 max-md:h-11 max-md:flex-1 max-md:text-sm ${
                       ticket.priority === p
                         ? p === "urgent"
                           ? "bg-bad-soft text-bad"
@@ -591,8 +595,8 @@ export function TicketDrawer({
             )}
             {ticket.landingUrl && (
               <p className="flex items-center gap-2 text-sm">
-                <span className="text-faint">Landing page</span>
-                <a href={ticket.landingUrl} target="_blank" rel="noreferrer" className="truncate text-brand-text hover:underline">
+                <span className="text-faint max-md:shrink-0">Landing page</span>
+                <a href={ticket.landingUrl} target="_blank" rel="noreferrer" className="truncate text-brand-text hover:underline max-md:min-w-0 max-md:py-2">
                   {ticket.landingUrl.replace(/^https?:\/\//, "")}
                 </a>
               </p>
@@ -610,14 +614,14 @@ export function TicketDrawer({
                   <span className="block truncate text-sm">{ticket.origin.label}</span>
                 </span>
                 {ticket.origin.link && (
-                  <a href={ticket.origin.link} target="_blank" rel="noreferrer" className="shrink-0 rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg">
+                  <a href={ticket.origin.link} target="_blank" rel="noreferrer" className="shrink-0 rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg max-md:py-3">
                     See it ↗
                   </a>
                 )}
               </div>
             )}
             {ticket.brief ? (
-              <p className="whitespace-pre-wrap rounded-[10px] border border-line bg-surface px-5 py-4 text-sm leading-relaxed text-muted">{ticket.brief}</p>
+              <p className="whitespace-pre-wrap rounded-[10px] border border-line bg-surface px-5 py-4 text-sm leading-relaxed text-muted max-md:px-4">{ticket.brief}</p>
             ) : (
               <p className="text-sm text-faint">No brief written.</p>
             )}
@@ -629,7 +633,7 @@ export function TicketDrawer({
                     {/motionapp\.com|facebook\.com\/ads\/library/i.test(r) && (
                       <span className="shrink-0 rounded-full bg-[#6c5ce7]/15 px-2 py-0.5 text-[10px] font-medium text-[#8b7cf6]">{/motionapp\.com/i.test(r) ? "Motion" : "Ad Library"}</span>
                     )}
-                    <a href={r} target="_blank" rel="noreferrer" className="truncate text-brand-text hover:underline">
+                    <a href={r} target="_blank" rel="noreferrer" className="truncate text-brand-text hover:underline max-md:min-w-0 max-md:py-2">
                       {r}
                     </a>
                   </li>
@@ -677,19 +681,31 @@ export function TicketDrawer({
                 onChange={(e) => setComment(e.target.value)}
                 placeholder="Write a comment…"
                 aria-label="Comment"
-                className="h-10 min-w-0 flex-1 rounded-brand border border-line bg-surface px-3 text-sm outline-none placeholder:text-faint focus:border-brand-text/60"
+                className="h-10 min-w-0 flex-1 rounded-brand border border-line bg-surface px-3 text-sm outline-none placeholder:text-faint focus:border-brand-text/60 max-md:h-11"
               />
-              <button disabled={pending || !comment.trim()} className="h-10 rounded-brand bg-surface-2 px-4 text-sm hover:bg-line disabled:opacity-50">
+              <button disabled={pending || !comment.trim()} className="h-10 rounded-brand bg-surface-2 px-4 text-sm hover:bg-line disabled:opacity-50 max-md:h-11">
                 Post
               </button>
             </form>
           </section>
 
-          <Link href={`/clients/${ticket.clientSlug}`} className="border-t border-line pt-5 text-xs text-muted hover:text-fg">
+          <Link href={`/clients/${ticket.clientSlug}`} className="border-t border-line pt-5 text-xs text-muted hover:text-fg max-md:pb-3">
             {ticket.clientName} client page →
           </Link>
           </div>
         </div>
+
+        {nextBar && (
+          <div className="border-t border-line bg-bg/95 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 backdrop-blur-xl md:hidden">
+            <button
+              disabled={pending}
+              onClick={() => move(info.next!)}
+              className="h-12 w-full rounded-brand bg-brand px-4 text-[15px] font-medium text-white shadow-[0_8px_24px_-10px_rgba(178,30,44,0.9)] active:bg-brand-hover disabled:opacity-60"
+            >
+              {info.nextLabel} →
+            </button>
+          </div>
+        )}
       </aside>
     </div>
   );
@@ -704,7 +720,7 @@ function DeleteTicket({ ticket, onDeleted }: { ticket: Ticket; onDeleted: () => 
   const router = useRouter();
   if (!open)
     return (
-      <button onClick={() => setOpen(true)} className="justify-self-start text-xs text-faint hover:text-bad">
+      <button onClick={() => setOpen(true)} className="justify-self-start text-xs text-faint hover:text-bad max-md:-my-3 max-md:py-3">
         Delete ticket
       </button>
     );
@@ -719,9 +735,9 @@ function DeleteTicket({ ticket, onDeleted }: { ticket: Ticket; onDeleted: () => 
         value={reason}
         onChange={(e) => setReason(e.target.value)}
         placeholder="Why? e.g. Duplicate of #1044"
-        className="h-10 rounded-brand border border-line bg-bg px-3 text-sm outline-none placeholder:text-faint focus:border-bad/60"
+        className="h-10 rounded-brand border border-line bg-bg px-3 text-sm outline-none placeholder:text-faint focus:border-bad/60 max-md:h-11"
       />
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 max-md:[&>button]:h-11 max-md:[&>button]:flex-1">
         <button
           disabled={busy || !reason.trim()}
           onClick={async () => {

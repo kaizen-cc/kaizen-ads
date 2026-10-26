@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Combobox } from "@/components/combobox";
 import { tintFor } from "@/lib/colors";
 import { BOARD_ORDER, PHASE_LABEL, health, stageInfo, type Format, type Health, type Phase, type Stage } from "@/lib/stages";
@@ -131,9 +131,33 @@ export function BoardClient({
   const scroller = useRef<HTMLDivElement>(null);
   const pan = useRef<{ x: number; left: number; moved: boolean } | null>(null);
   const [edges, setEdges] = useState({ left: false, right: true });
+  // Phones: one column per page, swiped sideways; the stage pills follow the column in view
+  const switcher = useRef<HTMLDivElement>(null);
+  const pills = useRef<HTMLDivElement>(null);
+  const [active, setActive] = useState(0);
   const measure = () => {
     const el = scroller.current;
-    if (el) setEdges({ left: el.scrollLeft > 4, right: el.scrollLeft + el.clientWidth < el.scrollWidth - 4 });
+    if (!el) return;
+    setEdges({ left: el.scrollLeft > 4, right: el.scrollLeft + el.clientWidth < el.scrollWidth - 4 });
+    const left = el.getBoundingClientRect().left + (parseFloat(getComputedStyle(el).scrollPaddingLeft) || 0);
+    const off = [...el.querySelectorAll<HTMLElement>("section[data-col]")].map((c) => Math.abs(c.getBoundingClientRect().left - left));
+    if (off.length) setActive(off.indexOf(Math.min(...off)));
+  };
+  useEffect(() => {
+    const strip = pills.current;
+    const pill = strip?.children[active] as HTMLElement | undefined;
+    if (strip && pill) strip.scrollTo({ left: pill.offsetLeft - (strip.clientWidth - pill.offsetWidth) / 2, behavior: "smooth" });
+  }, [active]);
+  /** Phones: a stage pill brings its column into view, from the top of its list. */
+  const showColumn = (i: number) => {
+    const el = scroller.current;
+    const col = el?.querySelectorAll<HTMLElement>("section[data-col]")[i];
+    if (!el || !col) return;
+    const pad = parseFloat(getComputedStyle(el).scrollPaddingLeft) || 0;
+    el.scrollTo({ left: el.scrollLeft + col.getBoundingClientRect().left - el.getBoundingClientRect().left - pad, behavior: "smooth" });
+    const below = switcher.current?.getBoundingClientRect().bottom ?? 0;
+    const top = el.getBoundingClientRect().top;
+    if (top < below) window.scrollBy({ top: top - below, behavior: "smooth" });
   };
   useEffect(() => {
     const el = scroller.current;
@@ -185,7 +209,7 @@ export function BoardClient({
 
       {/* Filters + health */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative">
+        <div className="relative w-full md:w-auto">
           <svg className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
             <circle cx="11" cy="11" r="7" />
             <path d="m20 20-3.5-3.5" strokeLinecap="round" />
@@ -195,12 +219,12 @@ export function BoardClient({
             onChange={(e) => setParam({ q: e.target.value || null })}
             placeholder="Search title, client or #"
             aria-label="Search tickets"
-            className="h-9 w-60 rounded-full border border-line bg-surface pl-9 pr-3 text-sm outline-none focus:border-brand-text"
+            className="h-11 w-full rounded-full border border-line bg-surface pl-9 pr-3 text-sm outline-none focus:border-brand-text md:h-9 md:w-60"
           />
         </div>
         <Combobox
           label="Client"
-          className="w-52"
+          className="w-[calc(50%-4px)] max-md:[&>button]:h-11 md:w-52"
           placeholder="All clients"
           allLabel="All clients"
           value={client}
@@ -209,31 +233,31 @@ export function BoardClient({
         />
         <Combobox
           label="Assigned to"
-          className="w-44"
+          className="w-[calc(50%-4px)] max-md:[&>button]:h-11 max-md:[&>div]:left-auto max-md:[&>div]:right-0 md:w-44"
           placeholder="Anyone"
           allLabel="Anyone"
           value={person}
           onChange={(v) => setParam({ person: v })}
           options={people.map((p) => ({ value: p.id, label: p.name, hint: p.role }))}
         />
-        <div className="flex rounded-full border border-line bg-surface p-0.5 text-sm">
+        <div className="flex w-full rounded-full border border-line bg-surface p-0.5 text-sm md:w-auto">
           {([null, "image", "video", "carousel"] as const).map((f) => (
             <button
               key={f ?? "all"}
               onClick={() => setParam({ format: f })}
-              className={`rounded-full px-3 py-1 ${format === f ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}
+              className={`h-10 flex-1 rounded-full px-3 md:h-auto md:flex-initial md:py-1 ${format === f ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}
             >
               {f ? f[0].toUpperCase() + f.slice(1) : "All"}
             </button>
           ))}
         </div>
         {filtersOn && (
-          <button onClick={() => router.replace(pathname, { scroll: false })} className="px-2 text-xs text-muted hover:text-fg">
+          <button onClick={() => router.replace(pathname, { scroll: false })} className="h-11 px-3 text-xs text-muted hover:text-fg md:h-auto md:px-2">
             Clear
           </button>
         )}
 
-        <div className="ml-auto flex items-center gap-1.5 text-xs">
+        <div className="flex w-full items-center justify-between gap-1.5 text-xs md:ml-auto md:w-auto md:justify-start">
           {(
             [
               ["ok", "On time", "bg-ok", counts.ok],
@@ -244,12 +268,12 @@ export function BoardClient({
             <button
               key={k}
               onClick={() => setParam({ only: only === k ? null : k })}
-              className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 transition-colors ${only === k ? "border-fg/40 bg-surface-2 text-fg" : "border-transparent text-muted hover:text-fg"}`}
+              className={`flex h-11 items-center gap-1.5 rounded-full border px-3 transition-colors md:h-auto md:px-2.5 md:py-1 ${only === k ? "border-fg/40 bg-surface-2 text-fg" : "border-transparent text-muted hover:text-fg"}`}
               title={`Show only: ${label}`}
             >
               <span className={`h-2 w-2 rounded-full ${dot}`} />
               <span className="tabular">{n}</span>
-              <span className="hidden lg:inline">{label}</span>
+              <span className="md:hidden lg:inline">{label}</span>
             </button>
           ))}
         </div>
@@ -257,6 +281,28 @@ export function BoardClient({
 
       {/* Board */}
       <div className="relative min-w-0">
+      {/* Phones: a stage switcher that sticks under the top bar; tap a stage to jump to its column */}
+      <div ref={switcher} className="sticky top-[calc(56px+env(safe-area-inset-top))] z-20 -mx-4 mb-3 border-b border-line/70 bg-bg/90 py-2 backdrop-blur-xl md:hidden">
+        <div ref={pills} className="no-scrollbar relative flex gap-1.5 overflow-x-auto px-4">
+          {BOARD_ORDER.map((s, i) => {
+            const list = byStage.get(s) ?? [];
+            const late = list.some((x) => health(x.minutesOver, x.stage) === "bad");
+            return (
+              <button
+                key={s}
+                type="button"
+                onClick={() => showColumn(i)}
+                aria-current={active === i ? "true" : undefined}
+                className={`flex h-10 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-sm transition-colors ${active === i ? "bg-fg text-bg" : "border border-line bg-surface text-muted"}`}
+              >
+                {stageInfo(s).label}
+                <span className="tabular text-xs opacity-70">{list.length + (shadowsBy.get(s)?.length ?? 0)}</span>
+                {late && <span className="h-1.5 w-1.5 rounded-full bg-bad" aria-label="Some are 12h+ over" />}
+              </button>
+            );
+          })}
+        </div>
+      </div>
       {/* Arrows at the edges when there's more board that way */}
       {edges.left && (
         <button onClick={() => scrollBoard(-(COL + GAP) * 3)} aria-label="Scroll the board left" className="absolute left-0 top-1/2 z-10 hidden h-10 w-10 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border border-line bg-surface/95 text-muted shadow-lg backdrop-blur hover:text-fg md:grid">
@@ -272,8 +318,8 @@ export function BoardClient({
         ref={scroller}
         onScroll={measure}
         onPointerDown={(e) => {
-          // Pan from empty board space only; cards and buttons keep their clicks
-          if (e.button !== 0 || (e.target as HTMLElement).closest("button, a, input, select, [role=button], article")) return;
+          // Pan from empty board space only; cards and buttons keep their clicks. Touch swipes the board natively.
+          if (e.pointerType !== "mouse" || e.button !== 0 || (e.target as HTMLElement).closest("button, a, input, select, [role=button], article")) return;
           pan.current = { x: e.clientX, left: scroller.current!.scrollLeft, moved: false };
           (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
         }}
@@ -286,11 +332,11 @@ export function BoardClient({
         }}
         onPointerUp={() => (pan.current = null)}
         onPointerCancel={() => (pan.current = null)}
-        className="board-scroll -mx-4 cursor-grab overflow-x-auto px-4 pb-4 active:cursor-grabbing md:-mx-10 md:px-10"
+        className="board-scroll -mx-4 snap-x snap-mandatory scroll-px-4 overflow-x-auto px-4 pb-4 md:-mx-10 md:cursor-grab md:snap-none md:scroll-px-0 md:px-10 md:active:cursor-grabbing"
       >
-        <div style={{ width: BOARD_ORDER.length * COL + (BOARD_ORDER.length - 1) * GAP }} className="grid gap-3">
-          {/* Phase bands */}
-          <div className="flex gap-3">
+        <div style={{ "--board-w": `${BOARD_ORDER.length * COL + (BOARD_ORDER.length - 1) * GAP}px` } as CSSProperties} className="grid w-max gap-3 md:w-[var(--board-w)]">
+          {/* Phase bands (phones use the stage switcher instead) */}
+          <div className="hidden gap-3 md:flex">
             {BANDS.map((b, i) => (
               <div key={b.phase} style={{ width: b.span * COL + (b.span - 1) * GAP }} className="flex items-center gap-2">
                 <button onClick={() => jumpTo(i)} className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint transition-colors hover:text-fg" title={`Jump to ${PHASE_LABEL[b.phase]}`}>
@@ -310,21 +356,22 @@ export function BoardClient({
               return (
                 <section
                   key={s}
+                  data-col
                   aria-label={info.label}
-                  style={{ width: COL }}
-                  className="grid shrink-0 content-start gap-2 rounded-[10px] bg-surface/50 p-2"
+                  style={{ "--col": `${COL}px` } as CSSProperties}
+                  className="grid w-[88vw] shrink-0 snap-start content-start gap-2 rounded-[10px] bg-surface/50 p-2 md:w-[var(--col)]"
                 >
                   <header className="flex items-center gap-2 px-1.5 pb-1 pt-1">
                     <h2 className="text-sm font-medium">{info.label}</h2>
                     <span className="tabular text-xs text-faint">{list.length}</span>
                     {(shadowsBy.get(s)?.length ?? 0) > 0 && (
-                      <span className="tabular rounded-full border border-dashed border-line px-1.5 text-[10px] text-faint" title="Still in Asana">
+                      <span className="tabular rounded-full border border-dashed border-line px-1.5 text-[11px] text-faint md:text-[10px]" title="Still in Asana">
                         +{shadowsBy.get(s)!.length}
                       </span>
                     )}
                     <span className="ml-auto flex items-center gap-1">
-                      {late > 0 && <span className="tabular rounded-full bg-bad-soft px-1.5 text-[10px] text-bad">{late}</span>}
-                      {risk > 0 && <span className="tabular rounded-full bg-warn-soft px-1.5 text-[10px] text-warn">{risk}</span>}
+                      {late > 0 && <span className="tabular rounded-full bg-bad-soft px-1.5 text-[11px] text-bad md:text-[10px]">{late}</span>}
+                      {risk > 0 && <span className="tabular rounded-full bg-warn-soft px-1.5 text-[11px] text-warn md:text-[10px]">{risk}</span>}
                     </span>
                   </header>
                   {info.owner && <p className="-mt-1 px-1.5 text-[11px] text-faint">{info.owner}</p>}
