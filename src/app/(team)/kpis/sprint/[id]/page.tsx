@@ -74,26 +74,26 @@ export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id
   const watching = (s.watcher_ids as string[]).includes(me.id);
 
   return (
-    <div className="mx-auto grid w-full max-w-6xl gap-8 pb-16">
+    <div className="mx-auto grid w-full min-w-0 max-w-6xl gap-8 pb-16">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Link href="/kpis" className="text-sm text-muted hover:text-fg">
+        <Link href="/kpis" className="-my-2 py-2 text-sm text-muted hover:text-fg md:my-0 md:py-0">
           ← KPIs
         </Link>
         {s.audit_id && (
-          <Link href={`/kpis/audit/${s.audit_id}`} className="text-sm text-muted hover:text-fg">
+          <Link href={`/kpis/audit/${s.audit_id}`} className="-my-2 py-2 text-sm text-muted hover:text-fg md:my-0 md:py-0">
             The audit it came from →
           </Link>
         )}
       </div>
 
-      <header className="grid gap-6 rounded-[24px] border border-line bg-surface p-6 md:p-8">
+      <header className="grid gap-5 rounded-[24px] border border-line bg-surface p-5 md:gap-6 md:p-8">
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="grid gap-1">
+          <div className="grid min-w-0 gap-1">
             <p className="text-xs uppercase tracking-[0.18em] text-faint">
               Optimization sprint · day {day}
               {!active && ` · ${s.status === "done" ? "done" : "closed"}`}
             </p>
-            <h1 className="font-display text-3xl tracking-tight md:text-4xl">
+            <h1 className="break-words font-display text-3xl tracking-tight md:text-4xl">
               {client.name}
               {(s.kpi_targets as unknown as { label: string | null } | null)?.label && <span className="text-muted"> · {(s.kpi_targets as unknown as { label: string }).label}</span>}
             </h1>
@@ -104,7 +104,7 @@ export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id
             </p>
           </div>
           {active && (
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-2 md:flex md:w-auto md:flex-wrap">
               <WatchToggle sprintId={id} watching={watching} />
               <CheckNow sprintId={id} next={s.next_check_at} />
             </div>
@@ -118,7 +118,7 @@ export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id
             [moved == null ? "—" : `${moved > 0 ? "+" : ""}${moved}%`, "Moved since the start"],
             [`${done}/${counted.length}`, "Actions done"],
           ].map(([v, l], i) => (
-            <div key={l} className="grid gap-0.5 bg-surface px-5 py-4">
+            <div key={l} className={`grid min-w-0 gap-0.5 bg-surface px-4 py-4 md:px-5 ${i === 4 ? "col-span-2 md:col-span-1" : ""}`}>
               <dd className={`font-display text-2xl tabular tracking-tight ${i === 3 && moved != null ? (moved > 0 ? "text-ok" : moved < 0 ? "text-bad" : "") : ""}`}>{v}</dd>
               <dt className="text-xs text-muted">{l}</dt>
             </div>
@@ -131,7 +131,7 @@ export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id
 
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <section className="grid content-start gap-3">
-          <div className="flex items-baseline justify-between gap-2">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5 md:flex-nowrap">
             <h2 className="font-heading text-xl">Action list</h2>
             <p className="text-xs text-faint">Tick moves off as you make them; the next check reads your notes</p>
           </div>
@@ -176,7 +176,7 @@ export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id
                   <p className="text-sm leading-relaxed">{c.message}</p>
                   {changes.length > 0 && (
                     <details className="text-xs text-muted">
-                      <summary className="cursor-pointer text-faint hover:text-fg">
+                      <summary className="-my-1.5 cursor-pointer py-1.5 text-faint hover:text-fg md:my-0 md:py-0">
                         {changes.length} {changes.length === 1 ? "change" : "changes"} seen in the ad account
                       </summary>
                       <ul className="mt-2 grid gap-1">

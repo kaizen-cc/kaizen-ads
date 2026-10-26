@@ -110,7 +110,20 @@ export function PaceBar({ pace, note, compact = false }: { pace: Pacing | null; 
 /** Last 30 days: spend as bars, results as a line on top. */
 export function DailyChart({ daily, height = 120 }: { daily: { d: string; spend: number; results: number }[]; height?: number }) {
   if (!daily.length) return <p className="text-sm text-faint">No daily numbers yet.</p>;
-  const width = 600;
+  // Phones draw it at their own width (a 600-wide drawing squeezed to a phone shrinks the dates past reading)
+  return (
+    <>
+      <div className="md:hidden">
+        <DailySvg daily={daily} height={140} width={340} every={7} tidy />
+      </div>
+      <div className="hidden md:block">
+        <DailySvg daily={daily} height={height} width={600} every={5} />
+      </div>
+    </>
+  );
+}
+
+function DailySvg({ daily, height, width, every, tidy = false }: { daily: { d: string; spend: number; results: number }[]; height: number; width: number; every: number; tidy?: boolean }) {
   const maxSpend = Math.max(...daily.map((d) => d.spend), 1);
   const maxRes = Math.max(...daily.map((d) => d.results), 1);
   const bw = width / daily.length;
@@ -127,7 +140,7 @@ export function DailyChart({ daily, height = 120 }: { daily: { d: string; spend:
         );
       })}
       <polyline points={daily.map((d, i) => `${i * bw + bw / 2},${y(d.results)}`).join(" ")} fill="none" stroke="var(--fg)" strokeWidth="1.5" strokeLinejoin="round" opacity="0.8" />
-      {daily.map((d, i) => (i % 5 === 0 || i === daily.length - 1 ? (
+      {daily.map((d, i) => ((i % every === 0 && (!tidy || daily.length - 1 - i >= every / 2)) || i === daily.length - 1 ? (
         <text key={d.d} x={i * bw + bw / 2} y={height - 3} textAnchor={i === 0 ? "start" : i === daily.length - 1 ? "end" : "middle"} fontSize="10" fill="var(--fg-faint)">
           {new Date(`${d.d}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
         </text>

@@ -106,7 +106,7 @@ export function AuditPanel({ targetId, audit, platform }: { targetId: string; au
       type="button"
       onClick={go}
       disabled={pending || running}
-      className={`h-9 shrink-0 rounded-full px-4 text-sm transition-colors disabled:opacity-60 ${primary ? "bg-fg text-bg hover:bg-fg/90" : "border border-line text-muted hover:text-fg"}`}
+      className={`h-11 w-full shrink-0 rounded-full px-4 text-sm transition-colors disabled:opacity-60 sm:w-auto md:h-9 ${primary ? "bg-fg text-bg hover:bg-fg/90" : "border border-line text-muted hover:text-fg"}`}
     >
       {pending ? "Starting…" : label}
     </button>
@@ -115,9 +115,9 @@ export function AuditPanel({ targetId, audit, platform }: { targetId: string; au
   return (
     <div className="relative overflow-hidden rounded-[16px] border border-line bg-surface">
       <div aria-hidden className="pointer-events-none absolute -right-20 -top-24 h-56 w-56 rounded-full bg-brand/15 blur-[80px]" />
-      <div className="relative grid gap-4 p-5 sm:p-6">
+      <div className="relative grid gap-4 p-4 sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="grid gap-1">
+          <div className="grid min-w-0 gap-1">
             <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-faint">AI account audit</p>
             {!audit && <p className="font-heading text-lg">Why is it here, and what should the buyer do?</p>}
             {audit?.status === "ready" && audit.verdict && <p className="font-heading text-lg leading-snug">{audit.verdict.headline}</p>}
@@ -127,16 +127,16 @@ export function AuditPanel({ targetId, audit, platform }: { targetId: string; au
           </div>
           {!audit && button("Audit this account", true)}
           {audit?.status === "ready" && (
-            <div className="flex gap-2">
+            <div className="flex w-full gap-2 sm:w-auto">
               <button
                 type="button"
                 onClick={() => (ranRecently(audit.createdAt) && !confirm ? setConfirm(true) : go())}
                 disabled={pending}
-                className="h-9 shrink-0 rounded-full border border-line px-4 text-sm text-muted transition-colors hover:text-fg disabled:opacity-60"
+                className="h-11 shrink-0 rounded-full border border-line px-4 text-sm text-muted transition-colors hover:text-fg disabled:opacity-60 md:h-9"
               >
                 {pending ? "Starting…" : "Run again"}
               </button>
-              <Link href={`/kpis/audit/${audit.id}`} className="grid h-9 place-items-center rounded-full bg-fg px-4 text-sm text-bg hover:bg-fg/90">
+              <Link href={`/kpis/audit/${audit.id}`} className="grid h-11 flex-1 place-items-center rounded-full bg-fg px-4 text-sm text-bg hover:bg-fg/90 sm:flex-none md:h-9">
                 Open the audit →
               </Link>
             </div>
@@ -149,8 +149,8 @@ export function AuditPanel({ targetId, audit, platform }: { targetId: string; au
               This account was audited {agoText(audit.createdAt)}
               {audit.by ? ` by ${audit.by}` : ""}. A new audit costs a few minutes of AI and {platform === "google" ? "Google" : "Meta"} calls; the last one is probably still current.
             </span>
-            <span className="flex gap-2">
-              <button type="button" onClick={() => setConfirm(false)} className="h-8 rounded-full border border-line bg-surface px-3 text-xs text-muted hover:text-fg">
+            <span className="flex w-full gap-2 sm:w-auto">
+              <button type="button" onClick={() => setConfirm(false)} className="h-10 flex-1 rounded-full border border-line bg-surface px-3 text-xs text-muted hover:text-fg sm:flex-none md:h-8">
                 Keep this one
               </button>
               <button
@@ -159,7 +159,7 @@ export function AuditPanel({ targetId, audit, platform }: { targetId: string; au
                   setConfirm(false);
                   go();
                 }}
-                className="h-8 rounded-full bg-fg px-3 text-xs text-bg"
+                className="h-10 flex-1 rounded-full bg-fg px-3 text-xs text-bg sm:flex-none md:h-8"
               >
                 Run a new one anyway
               </button>
@@ -220,7 +220,7 @@ export function AuditPanel({ targetId, audit, platform }: { targetId: string; au
                   router.refresh();
                 })
               }
-              className="h-9 rounded-full bg-fg px-4 text-sm text-bg disabled:opacity-60"
+              className="h-11 w-full rounded-full bg-fg px-4 text-sm text-bg disabled:opacity-60 sm:w-auto md:h-9"
             >
               Start it now
             </button>
