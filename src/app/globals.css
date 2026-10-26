@@ -251,3 +251,11 @@ html {
     font-size: 16px !important;
   }
 }
+
+/* Phones: a grid with no columns of its own is one column the width of the screen. Left to itself it sizes that column
+   to its longest unbreakable line (a one-line subtitle, a nowrap chip row), and the page content runs off the right edge */
+@media (max-width: 767px) {
+  main .grid:not([class^="grid-cols"]):not([class*=" grid-cols"]):not([class^="grid-flow-col"]):not([class*=" grid-flow-col"]):not([class*=" auto-cols"]) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
