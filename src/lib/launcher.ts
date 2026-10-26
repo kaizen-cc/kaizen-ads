@@ -31,7 +31,7 @@ const campaignOf = (plan: LaunchPlan, adsetId: string) => [...plan.options.adset
 export type LaunchCheck = { key: string; label: string; level: "ok" | "warn" | "block"; detail: string };
 type Asset = { fileId: string; aspect: string; kind: "image" | "video"; hash?: string; videoId?: string; thumbUrl?: string; name: string };
 export type LaunchAd = { designId: string; designName: string; name: string; assets: Asset[]; check?: { ok: boolean; error: string | null } };
-type AdsetOption = { id: string; name: string; campaignId: string; campaign: string; status: string; objective: string; optimization: string | null; destination: string | null; dynamic: boolean; leadForm: boolean; pixel: string | null; event: string | null; special: string[]; recentAds: string[]; spend14: number; pages: string[]; igs: string[] };
+type AdsetOption = { id: string; name: string; campaignId: string; campaign: string; status: string; objective: string; optimization: string | null; destination: string | null; dynamic: boolean; leadForm: boolean; pixel: string | null; event: string | null; special: string[]; recentAds: string[]; spend14: number; pages: string[]; igs: string[]; daily?: number | null; lifetime?: number | null; campaignDaily?: number | null };
 export type LaunchPlan = {
   account: string;
   sandbox: boolean;
@@ -42,6 +42,7 @@ export type LaunchPlan = {
   igId: string | null;
   link: string | null;
   urlTags: string | null;
+  budget?: Budget;
   cta: string;
   copy: { bodies: string[]; titles: string[]; descriptions: string[] };
   ads: LaunchAd[];
@@ -52,7 +53,10 @@ export type LaunchPlan = {
   options: { adsets: AdsetOption[]; pages: { id: string; name: string }[]; igs: { id: string; name: string }[]; allAdsets?: AdsetOption[] };
   attempts: { structure: string; error: string | null }[];
 };
-export type Overrides = Partial<Pick<LaunchPlan, "adsetId" | "mode" | "newAdsetName" | "pageId" | "igId" | "link">> & { names?: Record<string, string> };
+export type Overrides = Partial<Pick<LaunchPlan, "adsetId" | "mode" | "newAdsetName" | "pageId" | "igId" | "link">> & { names?: Record<string, string>; dailyBudget?: number | null };
+/** level: where the budget lives (the ad set, the campaign for CBO, a lifetime budget that's left alone). value: the
+ *  daily budget the launch sets (null: unchanged). suggested: the Media Buyer's, with why. Dollars. */
+export type Budget = { level: "adset" | "campaign" | "lifetime" | null; current: number | null; suggested: number | null; value: number | null; why: string };
 
 // Meta's CTA buttons, from the labels the copy uses
 const CTA: Record<string, string> = {
@@ -85,7 +89,7 @@ async function loadTicket(admin: SupabaseClient, requestId: string) {
       .select("id, position, name, is_variation, current_version, client_status, design_versions(version, design_files(id, path, thumb_path, mime, aspect, card, original_name))")
       .eq("request_id", requestId)
       .order("position"),
-    t ? admin.from("kpi_targets").select("conversion").eq("client_id", (t as unknown as Ticket).client_id).eq("platform", "meta").eq("active", true).limit(1).maybeSingle() : Promise.resolve({ data: null }),
+    t ? admin.from("kpi_targets").select("conversion, monthly_budget").eq("client_id", (t as unknown as Ticket).client_id).eq("platform", "meta").eq("active", true).limit(1).maybeSingle() : Promise.resolve({ data: null }),
   ]);
   type F = { id: string; path: string; thumb_path: string | null; mime: string; aspect: string | null; card: number | null; original_name: string };
   type D = { id: string; position: number; name: string; is_variation: boolean; current_version: number; client_status: string | null; design_versions: { version: number; design_files: F[] }[] };
@@ -93,7 +97,7 @@ async function loadTicket(admin: SupabaseClient, requestId: string) {
     .filter((d) => d.client_status !== "changes")
     .map((d) => ({ id: d.id, name: d.name, position: d.position, files: d.design_versions.find((v) => v.version === d.current_version)?.design_files ?? [] }))
     .filter((d) => d.files.length);
-  return { ticket: t as unknown as Ticket | null, copy: (copy?.ads ?? []) as { kind: string; headline: string; primaryText: string; linkDescription: string; cta: string }[], designs: list, conversion: (kpi?.conversion as string | undefined) ?? null };
+  return { ticket: t as unknown as Ticket | null, copy: (copy?.ads ?? []) as { kind: string; headline: string; primaryText: string; linkDescription: string; cta: string }[], designs: list, conversion: (kpi?.conversion as string | undefined) ?? null, monthlyBudget: kpi?.monthly_budget != null ? Number(kpi.monthly_budget) : null };
 }
 
 /** The ad sets that can take new ads (with their recent ad names, Page and Instagram identity), the Pages and IG accounts. */
@@ -102,9 +106,9 @@ async function readAccount(admin: SupabaseClient, account: string) {
   const live = JSON.stringify([{ field: "effective_status", operator: "IN", value: ["ACTIVE", "PAUSED", "CAMPAIGN_PAUSED", "ADSET_PAUSED", "IN_PROCESS", "WITH_ISSUES"] }]);
   type P<T> = { data: T[] };
   const [camps, sets, ads, pages, igs] = await Promise.all([
-    metaGraph<P<{ id: string; name: string; objective: string; special_ad_categories?: string[] }>>(`${act}/campaigns`, { fields: "name,objective,special_ad_categories", filtering: live, limit: "100" }),
-    metaGraph<P<{ id: string; name: string; campaign_id: string; status: string; optimization_goal?: string; destination_type?: string; is_dynamic_creative?: boolean; promoted_object?: { pixel_id?: string; custom_event_type?: string; page_id?: string } }>>(`${act}/adsets`, {
-      fields: "name,campaign_id,status,optimization_goal,destination_type,is_dynamic_creative,promoted_object",
+    metaGraph<P<{ id: string; name: string; objective: string; special_ad_categories?: string[]; daily_budget?: string }>>(`${act}/campaigns`, { fields: "name,objective,special_ad_categories,daily_budget", filtering: live, limit: "100" }),
+    metaGraph<P<{ id: string; name: string; campaign_id: string; status: string; optimization_goal?: string; destination_type?: string; is_dynamic_creative?: boolean; promoted_object?: { pixel_id?: string; custom_event_type?: string; page_id?: string }; daily_budget?: string; lifetime_budget?: string }>>(`${act}/adsets`, {
+      fields: "name,campaign_id,status,optimization_goal,destination_type,is_dynamic_creative,promoted_object,daily_budget,lifetime_budget",
       filtering: live,
       limit: "200",
     }),
@@ -130,6 +134,9 @@ async function readAccount(admin: SupabaseClient, account: string) {
         id: s.id,
         name: s.name,
         campaignId: s.campaign_id,
+        daily: s.daily_budget ? Number(s.daily_budget) / 100 : null,
+        lifetime: s.lifetime_budget ? Number(s.lifetime_budget) / 100 : null,
+        campaignDaily: c.daily_budget ? Number(c.daily_budget) / 100 : null,
         campaign: c.name,
         status: s.status,
         objective: c.objective,
@@ -164,8 +171,10 @@ const PROPOSE_SCHEMA = {
     newAdsetName: { type: "string" },
     adNames: { type: "array", items: { type: "object", properties: { designId: { type: "string" }, name: { type: "string" } }, required: ["designId", "name"], additionalProperties: false } },
     reason: { type: "string" },
+    dailyBudget: { type: "number" },
+    budgetWhy: { type: "string" },
   },
-  required: ["adsetId", "mode", "newAdsetName", "adNames", "reason"],
+  required: ["adsetId", "mode", "newAdsetName", "adNames", "reason", "dailyBudget", "budgetWhy"],
   additionalProperties: false,
 };
 
@@ -173,7 +182,8 @@ const PROPOSE_SYSTEM = `You place a client's newly approved ads in their Meta ad
 Pick the ad set the new ads belong in: one already testing or running this kind of creative (same funnel stage, audience, offer and goal as the ticket), preferring an active ad set that spends. mode "existing" adds the ads to it. Use mode "clone" only when the ticket clearly calls for its own ad set (a new offer or angle that should be tested apart, or the best match is a "Best performers"/consolidation ad set that shouldn't take untested ads); then the ad set is copied (same targeting, pixel and optimization) and newAdsetName follows the names of the ad sets around it. Never pick an ad set for a different goal (a lead form ad set for website traffic, retargeting for cold creative).
 Name each ad so it continues the pattern of the names in that ad set (same separators, order of parts, stage and geo tags, month format, IMG or Video numbering continuing from the highest, copy code such as "Stacked Copy" since the copy goes in stacked). Use the design's own name or the ticket's angle where the pattern has a concept slot. Never put a client's name where the pattern doesn't. If the ad set has no ads yet, follow the account's other ad names.
 When this client has launch rules (from their buyers moving ads the launcher placed), they win over your own judgment: follow them, and say in reason which rule you followed.
-reason: two or three plain sentences on why this ad set and how the names follow the pattern. newAdsetName empty unless mode is clone.`;
+reason: two or three plain sentences on why this ad set and how the names follow the pattern. newAdsetName empty unless mode is clone.
+dailyBudget: the daily budget in dollars the ad set should run at with these ads in it, where its budget lives (the campaign's when the campaign holds it). Work from the account's monthly budget (a month is about 30.4 days), what it spends now and how many ads would share it: room for each ad to get through learning, never a total that runs the account past its monthly budget. For mode existing, the ad set's current budget when it already has room (only raise it when the new ads clearly need it); for a new ad set (clone), a starting budget to test with, in line with the ad sets around it. 0 when it has a lifetime budget or nothing tells you enough. budgetWhy: one plain sentence.`;
 
 /** Plans a launch (in the background of the request that started it): see the top of this file. */
 export async function planLaunch(admin: SupabaseClient, launchId: string, overrides: Overrides = {}) {
@@ -183,7 +193,7 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
   const add = (key: string, label: string, level: LaunchCheck["level"], detail: string) => checks.push({ key, label, level, detail });
   try {
     await update(admin, launchId, { status: "planning", progress: "Reading the ticket", error: null });
-    const { ticket, copy, designs, conversion } = await loadTicket(admin, l.request_id);
+    const { ticket, copy, designs, conversion, monthlyBudget } = await loadTicket(admin, l.request_id);
     if (!ticket) throw new Error("Ticket not found");
     const setting = await metaWriteSetting(admin);
     const clientAccount = (ticket.clients.meta_ad_account_id ?? "").replace(/\D/g, "");
@@ -262,21 +272,23 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
     let newAdsetName = overrides.newAdsetName ?? null;
     let names: Record<string, string> = overrides.names ?? {};
     let reason = (l.plan as LaunchPlan | null)?.reason ?? "";
+    let suggested = (l.plan as LaunchPlan | null)?.budget?.suggested ?? null;
+    let budgetWhy = (l.plan as LaunchPlan | null)?.budget?.why ?? "";
     if (!adsetId) {
       await update(admin, launchId, { progress: "Picking the ad set and names" });
       // Where this client's buyers have moved ads before, and why: the rules come first
       const rules = await clientLaunchRules(admin, ticket.client_id);
       const rulesBlock = rules.length ? `<this_clients_launch_rules>\n${rules.map((r) => `- ${r}`).join("\n")}\n</this_clients_launch_rules>\n\n` : "";
       const brief = JSON.stringify(ticket.brief ?? {}).slice(0, 2500);
-      const out = await askJson<{ adsetId: string; mode: "existing" | "clone"; newAdsetName: string; adNames: { designId: string; name: string }[]; reason: string }>({
+      const out = await askJson<{ adsetId: string; mode: "existing" | "clone"; newAdsetName: string; adNames: { designId: string; name: string }[]; reason: string; dailyBudget: number; budgetWhy: string }>({
         agent: "launcher",
         label: "place a launch",
         system: PROPOSE_SYSTEM,
         schema: PROPOSE_SCHEMA,
         maxTokens: 4000,
-        prompt: `${rulesBlock}<ticket>\n#${ticket.number} ${ticket.title} (${ticket.format})\nClient: ${ticket.clients.name}\nKPI counted: ${conversion ?? "unknown"}\nBrief: ${brief}\n</ticket>\n\n<designs>\n${singles.map((d) => `- designId ${d.id}: "${d.name}" (${d.files.map((f) => `${f.aspect ?? "?"} ${f.mime.startsWith("video") ? "video" : "image"}`).join(", ")})`).join("\n")}\n</designs>\n\n<ad_sets>\n${acct.adsets
+        prompt: `${rulesBlock}<budget>\nMonthly budget for this account: ${monthlyBudget != null ? `$${monthlyBudget}` : "not set"}. Spend across its ad sets, last 14 days: $${Math.round(acct.adsets.reduce((n, a) => n + a.spend14, 0))}.\n</budget>\n\n<ticket>\n#${ticket.number} ${ticket.title} (${ticket.format})\nClient: ${ticket.clients.name}\nKPI counted: ${conversion ?? "unknown"}\nBrief: ${brief}\n</ticket>\n\n<designs>\n${singles.map((d) => `- designId ${d.id}: "${d.name}" (${d.files.map((f) => `${f.aspect ?? "?"} ${f.mime.startsWith("video") ? "video" : "image"}`).join(", ")})`).join("\n")}\n</designs>\n\n<ad_sets>\n${acct.adsets
           .slice(0, 60)
-          .map((a) => `- id ${a.id} "${a.name}" [${a.status}] in "${a.campaign}" (${a.objective}${a.optimization ? `, optimizing ${a.optimization}` : ""}${a.leadForm ? ", instant form" : ""}${a.special.length ? `, special category ${a.special.join("/")}` : ""}), $${a.spend14} last 14 days\n    recent ads: ${a.recentAds.length ? a.recentAds.map((n) => `"${n}"`).join("; ") : "none"}`)
+          .map((a) => `- id ${a.id} "${a.name}" [${a.status}] in "${a.campaign}" (${a.objective}${a.optimization ? `, optimizing ${a.optimization}` : ""}${a.leadForm ? ", instant form" : ""}${a.special.length ? `, special category ${a.special.join("/")}` : ""}), ${a.campaignDaily != null ? `campaign budget $${a.campaignDaily}/day` : a.daily != null ? `budget $${a.daily}/day` : a.lifetime != null ? `lifetime budget $${a.lifetime}` : "no budget read"}, $${a.spend14} last 14 days\n    recent ads: ${a.recentAds.length ? a.recentAds.map((n) => `"${n}"`).join("; ") : "none"}`)
           .join("\n")}\n</ad_sets>`,
       });
       adsetId = acct.adsets.some((a) => a.id === out.adsetId) ? out.adsetId : acct.adsets[0].id;
@@ -284,6 +296,8 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
       newAdsetName = out.mode === "clone" ? out.newAdsetName || null : null;
       names = Object.fromEntries(out.adNames.map((n) => [n.designId, n.name]));
       reason = out.reason;
+      suggested = out.dailyBudget > 0 ? Math.round(out.dailyBudget * 100) / 100 : null;
+      budgetWhy = out.budgetWhy;
     }
     const adset = acct.adsets.find((a) => a.id === adsetId) ?? acct.adsets[0];
     adsetId = adset.id;
@@ -296,6 +310,25 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
     else add("adset", "Ad set", "ok", mode === "clone" ? `A new ad set, "${newAdsetName}", copied from "${adset.name}" (same targeting, pixel and optimization), paused, in "${adset.campaign}".` : `"${adset.name}" in "${adset.campaign}"${adset.status !== "ACTIVE" ? " (paused)" : ""}.`);
     if (adset.special.length) add("special", "Special ad category", "warn", `"${adset.campaign}" runs under ${adset.special.join(", ").toLowerCase()}: Meta reviews the copy and targeting against those rules.`);
     if (adset.pixel) add("pixel", "Pixel and event", conversion && adset.event && !new RegExp(conversion.replace(/s$/, ""), "i").test(adset.event) ? "warn" : "ok", `Optimizing for ${adset.event ?? adset.optimization ?? "?"} on pixel ${adset.pixel}${conversion ? `; the KPI counts ${conversion}` : ""}.`);
+
+    // Budget: where it lives, what it is, what the Media Buyer suggests, what will be set. A new ad set gets one on its
+    // own; an existing ad set's budget only changes when the buyer sets it (it may be carrying other ads)
+    const level: Budget["level"] = adset.campaignDaily != null ? "campaign" : adset.daily != null ? "adset" : adset.lifetime != null ? "lifetime" : null;
+    const currentBudget = level === "campaign" ? adset.campaignDaily! : level === "adset" ? adset.daily! : level === "lifetime" ? adset.lifetime! : null;
+    const asked = overrides.dailyBudget !== undefined ? overrides.dailyBudget : ((l.plan as LaunchPlan | null)?.budget?.value ?? undefined);
+    const value = level === "lifetime" || level === null ? null : asked !== undefined ? asked : mode === "clone" ? (suggested ?? currentBudget) : null;
+    const budget: Budget = { level, current: currentBudget, suggested, value, why: budgetWhy };
+    const $ = (n: number) => `$${n.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+    const where = level === "campaign" ? `the campaign "${adset.campaign}" (budget shared by its ad sets)` : mode === "clone" ? "the new ad set" : `"${adset.name}"`;
+    if (level === "lifetime") add("budget", "Budget", "ok", `"${adset.name}" runs on a lifetime budget of ${$(currentBudget!)}; it's left as it is.`);
+    else if (level === null) add("budget", "Budget", "warn", "Couldn't read this ad set's budget; check it in Ads Manager.");
+    else
+      add(
+        "budget",
+        "Budget",
+        value != null && currentBudget != null && value > currentBudget * 1.5 ? "warn" : "ok",
+        `${value != null && value !== currentBudget ? `${$(value)}/day on ${where} (now ${$(currentBudget!)}).` : `${$(currentBudget!)}/day on ${where}, unchanged.`}${suggested != null && suggested !== value ? ` The Media Buyer suggests ${$(suggested)}.` : ""}${monthlyBudget != null ? ` Monthly budget ${$(monthlyBudget)} (about ${$(Math.round(monthlyBudget / 30.4))}/day).` : ""}`,
+      );
 
     // Identity: the Page and Instagram account the ad set's ads already use
     const pageId = overrides.pageId ?? mostCommon(adset.pages) ?? mostCommon(acct.adsets.flatMap((a) => a.pages)) ?? acct.pages[0]?.id ?? null;
@@ -326,6 +359,7 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
       igId,
       link,
       urlTags: setting.urlTags ?? null,
+      budget,
       cta,
       copy: { bodies, titles, descriptions },
       ads,
@@ -562,6 +596,13 @@ export async function runLaunch(admin: SupabaseClient, launchId: string) {
       adsetId = copy.copied_adset_id;
       if (plan.newAdsetName) await metaWrite(admin, plan.account, adsetId, { name: plan.newAdsetName.slice(0, 250) }, false);
     }
+    // The budget the plan settled on, set where it lives; a refusal here doesn't stop the ads
+    let budgetNote: string | null = null;
+    const b = plan.budget;
+    if (b?.value != null && b.value > 0 && (b.level === "adset" || b.level === "campaign") && b.value !== b.current) {
+      const target = b.level === "campaign" ? plan.options.adsets.find((a) => a.id === plan.adsetId)?.campaignId : adsetId;
+      if (target) await metaWrite(admin, plan.account, target, { daily_budget: String(Math.round(b.value * 100)) }, false).catch((e) => (budgetNote = `Budget not changed: ${e instanceof Error ? e.message : String(e)}`));
+    }
     const made: { designId: string; name: string; adId: string | null; creativeId: string | null; error: string | null }[] = [];
     for (const ad of plan.ads) {
       try {
@@ -579,7 +620,7 @@ export async function runLaunch(admin: SupabaseClient, launchId: string) {
       progress: null,
       result,
       launched_at: ok.length ? new Date().toISOString() : null,
-      error: ok.length === made.length ? null : made.filter((m) => m.error).map((m) => `${m.name}: ${m.error}`).join(" · ").slice(0, 500),
+      error: [ok.length === made.length ? null : made.filter((m) => m.error).map((m) => `${m.name}: ${m.error}`).join(" · "), budgetNote].filter(Boolean).join(" · ").slice(0, 500) || null,
     });
     return { ok: ok.length, total: made.length, result, sandbox: plan.sandbox };
   } catch (e) {

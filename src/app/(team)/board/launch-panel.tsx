@@ -26,7 +26,7 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
   const [confirm, setConfirm] = useState(false);
   const [pending, start] = useTransition();
   // The buyer's edits, sent with "Check again"
-  const [edits, setEdits] = useState<{ adsetId?: string; mode?: "existing" | "clone"; newAdsetName?: string; pageId?: string; igId?: string | null; link?: string; names: Record<string, string> }>({ names: {} });
+  const [edits, setEdits] = useState<{ adsetId?: string; mode?: "existing" | "clone"; newAdsetName?: string; pageId?: string; igId?: string | null; link?: string; dailyBudget?: number | null; names: Record<string, string> }>({ names: {} });
   const busy = l?.status === "planning" || l?.status === "launching";
 
   useEffect(() => {
@@ -73,6 +73,7 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
         pageId: edits.pageId ?? p?.pageId ?? undefined,
         igId: edits.igId !== undefined ? edits.igId : (p?.igId ?? null),
         link: edits.link ?? p?.link ?? undefined,
+        dailyBudget: edits.dailyBudget !== undefined ? edits.dailyBudget : (p?.budget?.value ?? null),
         names: { ...Object.fromEntries((p?.ads ?? []).map((a) => [a.designId, a.name])), ...edits.names },
       });
       if (!r.ok) return setError(r.error);
@@ -120,7 +121,7 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
   const p = l.plan;
   const adset = p?.options.adsets.find((a) => a.id === (edits.adsetId ?? p.adsetId));
   const mode = edits.mode ?? p?.mode ?? "existing";
-  const dirty = Boolean(edits.adsetId || edits.mode || edits.newAdsetName !== undefined || edits.pageId || edits.igId !== undefined || edits.link !== undefined || Object.keys(edits.names).length);
+  const dirty = Boolean(edits.adsetId || edits.mode || edits.newAdsetName !== undefined || edits.pageId || edits.igId !== undefined || edits.link !== undefined || edits.dailyBudget !== undefined || Object.keys(edits.names).length);
   const blocks = l.checks.filter((c) => c.level === "block");
   const noAdset = l.checks.some((c) => c.key === "adset" && c.level === "block" && !p?.options.adsets.length);
 
@@ -215,6 +216,41 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
                 <input value={edits.newAdsetName ?? p.newAdsetName ?? (adset ? `${adset.name} | New` : "")} onChange={(e) => setEdits((x) => ({ ...x, newAdsetName: e.target.value }))} placeholder="New ad set name" className={field} />
               )}
               {p.reason && !dirty && <p className="text-xs italic leading-relaxed text-faint">{p.reason}</p>}
+            </div>
+          )}
+
+          {p.budget && p.budget.level && p.budget.level !== "lifetime" && (
+            <div className="grid gap-2">
+              <p className="text-[11px] uppercase tracking-[0.14em] text-faint">
+                Daily budget <span className="normal-case tracking-normal">· on {p.budget.level === "campaign" ? "the campaign (shared by its ad sets)" : (edits.mode ?? p.mode) === "clone" ? "the new ad set" : "this ad set"}</span>
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="flex h-10 w-40 items-center gap-1.5 rounded-[10px] border border-line bg-bg px-3 text-sm focus-within:border-[#0866ff]/60 max-md:h-11 max-md:flex-1">
+                  <span className="text-faint">$</span>
+                  <input
+                    inputMode="decimal"
+                    value={edits.dailyBudget !== undefined ? (edits.dailyBudget ?? "") : (p.budget.value ?? "")}
+                    placeholder={p.budget.current != null ? `${p.budget.current} (now)` : "Daily budget"}
+                    onChange={(e) => {
+                      const v = e.target.value.replace(/[^\d.]/g, "");
+                      setEdits((x) => ({ ...x, dailyBudget: v ? Number(v) : null }));
+                    }}
+                    className="h-full min-w-0 flex-1 bg-transparent tabular outline-none placeholder:text-faint"
+                  />
+                  <span className="text-xs text-faint">/day</span>
+                </label>
+                {p.budget.suggested != null && (edits.dailyBudget !== undefined ? edits.dailyBudget : p.budget.value) !== p.budget.suggested && (
+                  <button type="button" onClick={() => setEdits((x) => ({ ...x, dailyBudget: p.budget!.suggested }))} className="h-10 rounded-full border border-[#0866ff]/40 px-3.5 text-xs text-[#7aa7ff] hover:bg-[#0866ff]/10 max-md:h-11">
+                    Use the suggested ${p.budget.suggested}
+                  </button>
+                )}
+                {(edits.dailyBudget !== undefined ? edits.dailyBudget : p.budget.value) != null && (
+                  <button type="button" onClick={() => setEdits((x) => ({ ...x, dailyBudget: null }))} className="h-10 px-2 text-xs text-faint hover:text-fg max-md:h-11">
+                    Keep it as it is
+                  </button>
+                )}
+              </div>
+              {p.budget.why && <p className="text-xs italic leading-relaxed text-faint">{p.budget.why}</p>}
             </div>
           )}
 
