@@ -7,6 +7,7 @@ import { Combobox } from "@/components/combobox";
 import { tintFor } from "@/lib/colors";
 import { BOARD_ORDER, PHASE_LABEL, health, stageInfo, type Format, type Health, type Phase, type Stage } from "@/lib/stages";
 import { TicketCard } from "./ticket-card";
+import { MoveDialog } from "./move-dialog";
 import { ShadowCard, ShadowSheet } from "./shadow";
 import type { ShadowTicket } from "@/lib/asana";
 import { TicketDrawer } from "./ticket-drawer";
@@ -72,6 +73,10 @@ export function BoardClient({
   const format = (params.get("format") as Format | null) ?? null;
   const only = (params.get("only") as Health | null) ?? null;
   const openNumber = params.get("t");
+  // Dragging a ticket across the board, and where it was dropped (confirmed in the move dialog)
+  const [dragging, setDragging] = useState<Ticket | null>(null);
+  const [dropOn, setDropOn] = useState<Stage | null>(null);
+  const [dropped, setDropped] = useState<{ ticket: Ticket; to: Stage } | null>(null);
 
   const setParam = (patch: Record<string, string | null>) => {
     const next = new URLSearchParams(params.toString());
@@ -359,7 +364,20 @@ export function BoardClient({
                   data-col
                   aria-label={info.label}
                   style={{ "--col": `${COL}px` } as CSSProperties}
-                  className="grid w-[88vw] shrink-0 snap-start content-start gap-2 rounded-[10px] bg-surface/50 p-2 md:w-[var(--col)]"
+                  // Drop a ticket here to move it (the move checks it has what this stage needs first)
+                  onDragOver={(e) => {
+                    if (!dragging || dragging.stage === s || demo) return;
+                    e.preventDefault();
+                    setDropOn(s);
+                  }}
+                  onDragLeave={(e) => e.currentTarget.contains(e.relatedTarget as Node) || setDropOn(null)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setDropOn(null);
+                    if (dragging && dragging.stage !== s) setDropped({ ticket: dragging, to: s });
+                    setDragging(null);
+                  }}
+                  className={`grid w-[88vw] shrink-0 snap-start content-start gap-2 rounded-[10px] p-2 transition-colors md:w-[var(--col)] ${dropOn === s ? "bg-brand-soft ring-1 ring-brand-text/50" : "bg-surface/50"}`}
                 >
                   <header className="flex items-center gap-2 px-1.5 pb-1 pt-1">
                     <h2 className="text-sm font-medium">{info.label}</h2>
@@ -380,6 +398,17 @@ export function BoardClient({
                       key={t.id}
                       ticket={t}
                       onOpen={() => setParam({ t: String(t.number) })}
+                      onDragStart={
+                        demo
+                          ? undefined
+                          : (e) => {
+                              e.dataTransfer.effectAllowed = "move";
+                              e.dataTransfer.setData("text/plain", t.id);
+                              setDragging(t);
+                            }
+                      }
+                      dragging={dragging?.id === t.id}
+                      onDragEnd={() => (setDragging(null), setDropOn(null))}
                     />
                   ))}
                   {(shadowsBy.get(s) ?? []).map((x) => (
@@ -406,6 +435,22 @@ export function BoardClient({
       )}
 
       {openShadow && <ShadowSheet s={openShadow} canMigrate={Boolean(me && (me.lead || openShadow.profileId === me.id))} onClose={() => setParam({ a: null })} />}
+      {dropped && (
+        <MoveDialog
+          ticket={dropped.ticket}
+          to={dropped.to}
+          onClose={() => setDropped(null)}
+          onMoved={(stage) => {
+            optimisticMove(dropped.ticket.id, stage);
+            setDropped(null);
+          }}
+          // What's missing is done in the ticket itself
+          onFix={() => {
+            setParam({ t: String(dropped.ticket.number) });
+            setDropped(null);
+          }}
+        />
+      )}
       {open && <TicketDrawer key={open.id} ticket={open} people={people} can={can} onClose={() => setParam({ t: null })} onOptimisticMove={optimisticMove} demo={demo} />}
 
     </div>

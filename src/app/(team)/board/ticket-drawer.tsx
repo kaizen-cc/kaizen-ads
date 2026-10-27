@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { PersonAvatar } from "@/components/person-avatar";
 import { FORMAT_LABEL, PHASE_LABEL, businessDuration, health, stageInfo, type Phase, type Priority, type Stage } from "@/lib/stages";
+import { MoveDialog } from "./move-dialog";
 import { assignTicket, commentTicket, deleteTicket, moveTicket, setTicketDue, setTicketPriority, ticketHistory, type TicketEvent } from "./actions";
 import { briefChanges, type BriefChange, type Design } from "./design-actions";
 
@@ -290,6 +291,7 @@ export function TicketDrawer({
   const [error, setError] = useState<string | null>(null);
   const [comment, setComment] = useState("");
   const [moveNote, setMoveNote] = useState("");
+  const [moving, setMoving] = useState(false);
   const [uploads, setUploads] = useState<UploadState>({ uploaded: 0, uploading: 0, loaded: false });
   const onUploads = useCallback((u: UploadState) => setUploads(u), []);
   const hasCreative = uploads.uploaded > 0 || demo;
@@ -446,6 +448,11 @@ export function TicketDrawer({
               </div>
               <div className="flex items-center gap-2">
                 <TimeStamp ticket={ticket} label />
+                {ticket.stage !== "launched" && !demo && (
+                  <button type="button" onClick={() => setMoving(true)} className="h-8 rounded-full border border-line px-3 text-xs text-muted hover:border-faint hover:text-fg max-md:h-10" title="Move it to any stage: back to production, on to the client…">
+                    Move to…
+                  </button>
+                )}
               </div>
             </div>
             {making && (
@@ -730,6 +737,18 @@ export function TicketDrawer({
               {info.nextLabel} →
             </button>
           </div>
+        )}
+        {moving && (
+          <MoveDialog
+            ticket={ticket}
+            to={null}
+            onClose={() => setMoving(false)}
+            onMoved={(stage) => (setMoving(false), moved(stage))}
+            onFix={(fix) => {
+              setMoving(false);
+              document.querySelector(fix === "upload" ? "[data-deliverables]" : "[data-copy]")?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }}
+          />
         )}
       </aside>
     </div>

@@ -304,6 +304,7 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
 
   return (
     <section
+      data-deliverables
       className="grid gap-3"
       onDragOver={(e) => {
         e.preventDefault();

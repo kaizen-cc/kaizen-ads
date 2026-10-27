@@ -119,7 +119,7 @@ export function CopyPanel({ ticket, canApprove, onMoved, demo }: { ticket: Ticke
   const hook = ads[0]?.primaryText.split("\n")[0] ?? "";
 
   return (
-    <section className="grid gap-3">
+    <section data-copy className="grid gap-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="font-heading text-[16px]">Copy</h3>
         {set && set.status !== "drafting" && (
