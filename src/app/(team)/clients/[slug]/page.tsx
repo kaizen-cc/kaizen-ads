@@ -23,6 +23,8 @@ import { loadClientChat } from "@/lib/client-chat";
 import type { AuditTarget } from "./client-chat";
 import { clientReadiness } from "@/lib/readiness";
 import { loadCampaigns } from "@/lib/client-campaigns";
+import type { HistoryReport } from "./reports-history";
+import { monthLabel } from "@/lib/reports/format";
 
 /** Went live again in the last two weeks (the readiness check stays up that long) */
 const lately = (iso: string | null) => Boolean(iso && Date.now() - new Date(iso).getTime() < 14 * 86_400_000);
@@ -242,12 +244,42 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     .eq("client_id", client.id)
     .order("created_at", { ascending: false })
     .limit(200);
+  // Every report made for them: one row per report (a joint one's parts together)
+  const { data: repRows } = await supabase
+    .from("reports")
+    .select("id, kind, platform, status, period_start, period_end, bundle_id, owner_id, posted_at, sections, metrics, profiles!reports_owner_id_fkey(full_name), report_bundles(status, sent_at, token, ranges)")
+    .eq("client_id", client.id)
+    .order("period_start", { ascending: false })
+    .limit(300);
+  type RepRow = { id: string; kind: HistoryReport["kind"]; platform: "meta" | "google"; status: string; period_start: string; period_end: string; bundle_id: string | null; owner_id: string | null; posted_at: string | null; sections: { headline?: string } | null; metrics: { main?: { label?: string } } | null; profiles: { full_name: string } | null; report_bundles: { status: string; sent_at: string | null; token: string; ranges: { label: string }[] | null } | null };
+  const groups = new Map<string, RepRow[]>();
+  for (const r of (repRows ?? []) as unknown as RepRow[]) groups.set(r.bundle_id ?? r.id, [...(groups.get(r.bundle_id ?? r.id) ?? []), r]);
+  const reportHistory: HistoryReport[] = [...groups.values()].map((list): HistoryReport => {
+    const live = list.filter((r) => r.status !== "skipped");
+    const first = live[0] ?? list[0];
+    const b = first.report_bundles;
+    const sent = b?.status === "sent" || live.some((r) => r.status === "posted");
+    return {
+      id: (live.find((r) => r.owner_id === me.id) ?? first).id,
+      kind: first.kind,
+      period: first.kind === "built" && b?.ranges?.length ? b.ranges.map((x) => x.label).join(" + ") : first.kind === "monthly" ? monthLabel(first.period_start) : (first.metrics?.main?.label ?? `${first.period_start} – ${first.period_end}`),
+      start: first.period_start,
+      services: [...new Set(live.map((r) => r.platform))].sort() as ("meta" | "google")[],
+      by: [...new Set(live.map((r) => r.profiles?.full_name).filter((x): x is string => Boolean(x)))],
+      headline: live.map((r) => r.sections?.headline).filter(Boolean).join(" · ") || null,
+      status: sent ? "sent" : !live.length ? "skipped" : b?.status === "failed" ? "failed" : "in_progress",
+      sentAt: b?.sent_at ?? live.map((r) => r.posted_at).filter((x): x is string => Boolean(x)).sort().at(-1) ?? null,
+      whole: first.kind === "built" && live.length > 1,
+      link: sent && b?.token ? `/r/${b.token}` : null,
+    };
+  }).sort((a, b) => b.start.localeCompare(a.start));
   const docs = (docRows ?? []).map((d) => ({ id: d.id, kind: d.kind, name: d.name, url: d.url, path: d.path, mime: d.mime, bytes: d.bytes, title: d.title, summary: d.summary, status: d.status, note: d.note, via: d.via, at: d.created_at, by: (d.profiles as unknown as { full_name: string } | null)?.full_name ?? null }));
 
   return (
     <ClientView
       campaigns={campaigns}
       docs={docs}
+      reports={reportHistory}
       launchRules={launchRules}
       readiness={readiness}
       services={{

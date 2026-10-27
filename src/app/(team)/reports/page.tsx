@@ -17,9 +17,8 @@ export const maxDuration = 300;
 type Row = { id: string; kind: "weekly" | "monthly" | "custom"; platform: string; status: string; qa: Qa | null; posted_at: string | null; bundle_id: string | null; clients: { name: string; slug: string }; profiles: { full_name: string } | null };
 
 /** On-demand recaps stay listed for two weeks. */
-/** Built reports stay listed for a month. */
-const monthAgo = () => new Date(Date.now() - 30 * 86_400_000).toISOString();
-const twoWeeksAgo = () => new Date(Date.now() - 14 * 86_400_000).toISOString();
+/** Generated reports stay listed for five days (every report is kept on the client's page). */
+const fiveDaysAgo = () => new Date(Date.now() - 5 * 86_400_000).toISOString();
 
 const STATUS: Record<string, { label: string; tone: string }> = {
   queued: { label: "Queued", tone: "text-faint" },
@@ -45,7 +44,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   let q = db
     .from("reports")
     .select("id, kind, platform, status, qa, posted_at, bundle_id, clients(name, slug), profiles!reports_owner_id_fkey(full_name)")
-    .or(`and(kind.eq.weekly,period_start.eq.${week.start}),and(kind.eq.monthly,period_start.eq.${month.start}),and(kind.eq.custom,updated_at.gte.${twoWeeksAgo()})`)
+    .or(`and(kind.eq.weekly,period_start.eq.${week.start}),and(kind.eq.monthly,period_start.eq.${month.start}),and(kind.eq.custom,created_at.gte.${fiveDaysAgo()})`)
     .order("created_at");
   if (!me.isExec) q = q.in("target_id", accounts.length ? accounts.map((a) => a.id) : ["00000000-0000-0000-0000-000000000000"]);
   const [{ data }, slack] = await Promise.all([q, slackConnection(me.id)]);
@@ -60,14 +59,14 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const admin = adminConfigured() ? createAdminClient() : null;
   const [{ data: allTargets }, { data: slots }, { data: built }] = admin && clientIds.length
     ? await Promise.all([
-        admin.from("kpi_targets").select("client_id, platform, owner_id, clients!inner(name, slug, archived_at), profiles!kpi_targets_owner_id_fkey(full_name)").in("client_id", clientIds).eq("active", true).not("ad_account_id", "is", null).is("clients.archived_at", null),
+        admin.from("kpi_targets").select("client_id, platform, owner_id, clients!inner(name, slug, archived_at, slack_channel_id), profiles!kpi_targets_owner_id_fkey(full_name)").in("client_id", clientIds).eq("active", true).not("ad_account_id", "is", null).is("clients.archived_at", null),
         admin.from("client_assignments").select("client_id, role, profile_id, profiles(full_name)").in("client_id", clientIds).in("role", ["meta_buyer", "google_buyer"]),
-        admin.from("report_bundles").select("id, client_id, status, ranges, created_by, created_at, clients(name), reports(id, platform, status, owner_id, profiles!reports_owner_id_fkey(full_name))").eq("kind", "built").gte("created_at", monthAgo()).order("created_at", { ascending: false }).limit(60),
+        admin.from("report_bundles").select("id, client_id, status, ranges, created_by, created_at, clients(name), reports(id, platform, status, owner_id, profiles!reports_owner_id_fkey(full_name))").eq("kind", "built").gte("created_at", fiveDaysAgo()).order("created_at", { ascending: false }).limit(60),
       ])
     : [{ data: [] }, { data: [] }, { data: [] }];
   const byClient = new Map<string, BuilderClient>();
-  for (const t of (allTargets ?? []) as unknown as { client_id: string; platform: "meta" | "google"; owner_id: string | null; clients: { name: string; slug: string }; profiles: { full_name: string } | null }[]) {
-    const c = byClient.get(t.client_id) ?? { id: t.client_id, name: t.clients.name, slug: t.clients.slug, services: [] };
+  for (const t of (allTargets ?? []) as unknown as { client_id: string; platform: "meta" | "google"; owner_id: string | null; clients: { name: string; slug: string; slack_channel_id: string | null }; profiles: { full_name: string } | null }[]) {
+    const c = byClient.get(t.client_id) ?? { id: t.client_id, name: t.clients.name, slug: t.clients.slug, hasChannel: Boolean(t.clients.slack_channel_id), services: [] };
     if (c.services.some((x) => x.platform === t.platform)) continue;
     const slot = (slots ?? []).find((x) => x.client_id === t.client_id && x.role === (t.platform === "google" ? "google_buyer" : "meta_buyer"));
     const ownerId = t.owner_id ?? (slot?.profile_id as string | undefined) ?? null;
@@ -132,9 +131,12 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
 
       <ReportBuilder clients={builderClients} initialClient={typeof wanted === "string" ? wanted : null} yesterday={yesterday} />
 
-      {builtRows.length > 0 && (
+      {(builtRows.length > 0 || onDemand.length > 0) && (
         <section className="grid gap-3">
-          <h2 className="font-heading text-xl">Built reports</h2>
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="font-heading text-xl">Reports generated</h2>
+            <span className="text-xs text-faint">The last 5 days · every report stays in the client&apos;s history</span>
+          </div>
           <ul className="grid gap-2">
             {builtRows.map((b) => {
               const parts = b.reports.filter((p) => p.status !== "skipped");
@@ -163,6 +165,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
               );
             })}
           </ul>
+          {onDemand.length > 0 && list(onDemand)}
         </section>
       )}
 
@@ -181,18 +184,9 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
           <h2 className="font-heading text-xl">This week · {week.label}</h2>
           <span className="text-xs text-faint">{open ? `${open} ready to review` : weekly.length ? "All reviewed" : "Drafted Monday morning"}</span>
         </div>
-        {weekly.length ? list(weekly) : <p className="rounded-[14px] border border-dashed border-line px-4 py-6 text-sm text-muted">Nothing drafted for this week yet. They&apos;re written Monday morning for every account that spent; for one now, use New report (Last 7 days).</p>}
+        {weekly.length ? list(weekly) : <p className="rounded-[14px] border border-dashed border-line px-4 py-6 text-sm text-muted">Nothing drafted for this week yet. They&apos;re written Monday morning for every account that spent; for one now, build it above (Last 7 days).</p>}
       </section>
 
-      {onDemand.length > 0 && (
-        <section className="grid gap-3">
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <h2 className="font-heading text-xl">On demand</h2>
-            <span className="text-xs text-faint">Recaps asked for from a client page, last two weeks</span>
-          </div>
-          {list(onDemand)}
-        </section>
-      )}
 
     </div>
   );

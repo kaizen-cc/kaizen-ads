@@ -283,6 +283,7 @@ function apiMessage(e: InstanceType<typeof Anthropic.APIError>) {
 export type ClientContext = {
   name: string;
   documents?: string; // the files and links shared about the client, with their summaries
+  reports?: string; // what the latest reports told the client, and what they said comes next
   website: string | null;
   industry?: string | null; // e.g. "restaurant"
   industryDetail?: string | null; // e.g. "Pizza restaurant"
@@ -349,6 +350,23 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
     gtm: await import("@/lib/gtm").then(({ gtmForContext }) => gtmForContext(supabase, clientId)),
     // Files and links the team shared about the client, with what's in them
     documents: await import("@/lib/client-docs").then(({ docsBlock }) => docsBlock(supabase, clientId, 10)).catch(() => ""),
+    // What we last told the client in reports: the takeaway, and what we said comes next (so the next piece of work keeps that promise)
+    reports: await supabase
+      .from("reports")
+      .select("kind, platform, period_start, period_end, sections")
+      .eq("client_id", clientId)
+      .in("status", ["posted", "submitted"])
+      .order("period_end", { ascending: false })
+      .limit(4)
+      .then(({ data }) =>
+        (data ?? [])
+          .filter((x) => (x.sections as { headline?: string } | null)?.headline)
+          .map((x) => {
+            const sec = x.sections as { headline: string; next?: string[] };
+            return `- ${x.period_start} to ${x.period_end} (${x.platform === "google" ? "Google" : "Meta"}, ${x.kind}): ${sec.headline}${sec.next?.length ? ` Next, we said: ${sec.next.slice(0, 3).join("; ")}` : ""}`;
+          })
+          .join("\n"),
+      ),
     industry: c.industry,
     industryDetail: c.industry_detail,
     winners: await (async () => {
@@ -415,6 +433,7 @@ export function contextBlock(ctx: ClientContext, request?: { images: number; vid
   if (ctx.gtm)
     lines.push("<go_to_market_strategy>", "The client's Meta go-to-market strategy: the angles, offers, customer and KPI targets the team works from. Stay inside it unless the data says otherwise, and never treat an unconfirmed item as confirmed.", ctx.gtm, "</go_to_market_strategy>");
   if (ctx.documents) lines.push(ctx.documents);
+  if (ctx.reports) lines.push("<recent_reports>", "What our latest reports told the client, and what we said comes next. Keep those promises, and don't contradict what was reported.", ctx.reports, "</recent_reports>");
   if (ctx.intake)
     lines.push("<marketing_intake>", "What the client told us in their marketing intake form. Their offer, audience, voice and what to avoid are hard rules.", ctx.intake, "</marketing_intake>");
   if (!on("meta")) lines.push("(Ad performance isn't part of this task.)");
