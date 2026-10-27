@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 // The client page's sections as tabs: the overview a buyer or exec reads in a few minutes first, and everything else
 // (creative, what the AI knows, the team and setup) one click away. The open tab is kept in the address (?tab=), so
@@ -12,10 +13,11 @@ const read = () => (typeof window === "undefined" ? null : new URLSearchParams(w
 
 export function ClientTabs({ tabs }: { tabs: ClientTab[] }) {
   const [open, setOpen] = useState(tabs[0]?.id);
+  const query = useSearchParams().toString();
   useEffect(() => {
     const t = setTimeout(() => {
       const want = read();
-      if (want && tabs.some((x) => x.id === want)) setOpen(want);
+      setOpen(want && tabs.some((x) => x.id === want) ? want : tabs[0]?.id);
     }, 0);
     const onPop = () => setOpen(read() ?? tabs[0]?.id);
     window.addEventListener("popstate", onPop);
@@ -23,7 +25,7 @@ export function ClientTabs({ tabs }: { tabs: ClientTab[] }) {
       clearTimeout(t);
       window.removeEventListener("popstate", onPop);
     };
-  }, [tabs]);
+  }, [tabs, query]);
   const choose = (id: string) => {
     setOpen(id);
     const u = new URL(window.location.href);

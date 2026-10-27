@@ -22,6 +22,7 @@ import { reportableTargets } from "@/lib/reports/access";
 import { loadClientChat } from "@/lib/client-chat";
 import type { AuditTarget } from "./client-chat";
 import { clientReadiness } from "@/lib/readiness";
+import { loadCampaigns } from "@/lib/client-campaigns";
 
 /** Went live again in the last two weeks (the readiness check stays up that long) */
 const lately = (iso: string | null) => Boolean(iso && Date.now() - new Date(iso).getTime() < 14 * 86_400_000);
@@ -232,8 +233,12 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     active: r.active as boolean,
   }));
 
+  // Each platform's campaigns over the last 30 days (campaign tables are read with the server's rights)
+  const campaigns = adminConfigured() ? await loadCampaigns(createAdminClient(), client.id).catch(() => []) : [];
+
   return (
     <ClientView
+      campaigns={campaigns}
       launchRules={launchRules}
       readiness={readiness}
       services={{

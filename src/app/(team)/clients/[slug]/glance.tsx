@@ -19,6 +19,7 @@ const ago = (iso: string, today: string) => {
 };
 
 export function Glance({
+  accounts = true,
   kpis,
   audits,
   sprints,
@@ -28,6 +29,8 @@ export function Glance({
   summary,
   today,
 }: {
+  /** The accounts against target (off on the whole-business view, where each service has its own card) */
+  accounts?: boolean;
   kpis: ClientKpi[];
   audits: Record<string, AuditSummary>;
   sprints: Record<string, SprintSummary>;
@@ -45,9 +48,9 @@ export function Glance({
       <span aria-hidden className="pointer-events-none absolute -bottom-40 right-0 -z-10 h-[280px] w-[280px] rounded-full bg-[rgba(90,110,255,0.14)] blur-[120px]" />
       {summary && <p className="max-w-3xl text-[15px] leading-relaxed text-white/80">{summary}</p>}
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+      <div className={`grid gap-5 ${accounts ? "lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]" : "lg:grid-cols-2"}`}>
         {/* Each account against its target, with its audit and sprint */}
-        <div className="grid content-start gap-3">
+        <div className={accounts ? "grid content-start gap-3" : "hidden"}>
           <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/45">How the accounts are doing</p>
           {kpis.length === 0 && (
             <Link href="/kpis" className="rounded-[16px] border border-dashed border-white/15 px-4 py-4 text-sm text-white/60 hover:text-white">

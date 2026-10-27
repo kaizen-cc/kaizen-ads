@@ -34,7 +34,13 @@ import type { AuditSummary } from "../../kpis/audit-panel";
 import type { ChatTurn } from "@/lib/handoff";
 import type { AccountChange } from "@/lib/account-changes";
 import { ShotListPanel, type AssetGlance, type SavedShotList } from "./shot-list-panel";
-import { ClientTabs } from "./client-tabs";
+import { ClientSections } from "./client-sections";
+import { BusinessOverview, type ServiceCard } from "./business-overview";
+import { CampaignsPanel } from "./campaigns-panel";
+import type { PlatformSummary } from "@/lib/client-campaigns";
+import { SERVICES, servicesOf } from "@/lib/services";
+import type { Status } from "@/lib/kpi/calc";
+import { STATUS } from "@/lib/kpi/format";
 import { Glance, type Alert } from "./glance";
 import { ReportButton } from "./report-button";
 import type { SprintSummary } from "@/lib/sprints";
@@ -57,6 +63,24 @@ import { isLive } from "@/lib/live";
 const fmt = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
 const chip = "inline-flex items-center rounded-full px-2.5 py-1 text-xs";
 const row = "flex items-start justify-between gap-3 rounded-[8px] bg-surface-2/70 px-4 py-3 text-sm";
+
+const RANK: Record<Status, number> = { off: 0, close: 1, setup: 2, idle: 3, good: 4, excellent: 5 };
+const worstOf = (ks: ClientKpi[]) => [...ks].sort((a, b) => RANK[a.status] - RANK[b.status])[0] ?? null;
+/** A service's dot on the switch: its worst account */
+const toneOf = (ks: ClientKpi[]): "bad" | "warn" | "ok" | null => {
+  const w = worstOf(ks);
+  return !w ? null : w.status === "off" ? "bad" : w.status === "close" ? "warn" : w.status === "good" || w.status === "excellent" ? "ok" : null;
+};
+const noteOf = (ks: ClientKpi[]) => {
+  const w = worstOf(ks);
+  return w ? STATUS[w.status].label : "No KPI target";
+};
+/** Google campaigns held back by budget or rank (more than a quarter of their impressions lost) */
+const googleLosing = (p: PlatformSummary | null) =>
+  (p?.campaigns ?? [])
+    .filter((c) => c.spend > 0 && ((c.share?.lostBudget ?? 0) > 0.25 || (c.share?.lostRank ?? 0) > 0.25))
+    .slice(0, 2)
+    .map((c) => `${c.name.length > 40 ? `${c.name.slice(0, 40)}…` : c.name}: losing ${Math.round(Math.max(c.share!.lostBudget ?? 0, c.share!.lostRank ?? 0) * 100)}% of its impressions to ${(c.share!.lostBudget ?? 0) >= (c.share!.lostRank ?? 0) ? "budget" : "rank"}`);
 
 const MEMORY_SOURCE: Record<string, string> = { client: "Client said", team: "Team", review: "From review", copy: "From copy", lab: "Ads Lab", audit: "Account audit", sprint: "Optimization sprint", network: "From a similar account", call: "From a call" };
 
@@ -125,10 +149,11 @@ export type ClientViewProps = {
   readiness?: { initial: Readiness; autoOpen: boolean; stamp: string } | null; // what's missing after going live again
   services?: { track: string[]; extra: string[]; tiers: Tier[]; chosen: Record<string, string> } | null; // what they buy, and the tiers
   launchRules?: LaunchRule[]; // where their new ads go, learned from their buyers' moves
+  campaigns?: PlatformSummary[] | null; // each platform's campaigns, last 30 days
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [] }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -142,9 +167,9 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
   const alerts: Alert[] = [
     ...(kpis ?? []).filter((k) => k.status === "off").map((k): Alert => ({ tone: "bad", text: `${k.platform === "google" ? "Google" : "Meta"} · ${k.label ?? k.conversionLabel} is off target${k.deviation != null ? ` (${Math.round(Math.abs(k.deviation) * 100)}% off)` : ""}`, href: `/kpis?target=${k.id}` })),
     ...(openPromises.length ? [{ tone: "bad" as const, text: `${openPromises.length} promise${openPromises.length === 1 ? "" : "s"} from calls not started`, href: tab("knowledge") }] : []),
-    ...(tired ? [{ tone: "warn" as const, text: `${tired} ad${tired === 1 ? "" : "s"} worn out and ready for a refresh`, href: tab("overview") }] : []),
-    ...(active && images + videos > 0 && imagesUsed + videosUsed === 0 ? [{ tone: "warn" as const, text: "Nothing made against this month's creative allotment yet", href: tab("creative") }] : []),
-    ...(assets?.stale && active ? [{ tone: "info" as const, text: "No new footage on Drive in 45 days: time for a shot list", href: tab("creative") }] : []),
+    ...(tired ? [{ tone: "warn" as const, text: `${tired} ad${tired === 1 ? "" : "s"} worn out and ready for a refresh`, href: `/clients/${client.slug}?service=meta&tab=ads` }] : []),
+    ...(active && images + videos > 0 && imagesUsed + videosUsed === 0 ? [{ tone: "warn" as const, text: "Nothing made against this month's creative allotment yet", href: `/clients/${client.slug}?service=creative` }] : []),
+    ...(assets?.stale && active ? [{ tone: "info" as const, text: "No new footage on Drive in 45 days: time for a shot list", href: `/clients/${client.slug}?service=creative&tab=package` }] : []),
     ...(!(kpis ?? []).length ? [{ tone: "warn" as const, text: "No KPI target set", href: "/kpis" }] : []),
     ...(!contacts.length ? [{ tone: "warn" as const, text: "No client contact: nobody can approve ads", href: tab("team") }] : []),
     ...(!client.slack_channel_id ? [{ tone: "info" as const, text: "No client Slack channel linked", href: tab("team") }] : []),
@@ -152,13 +177,38 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
   const needsSetup = [!contacts.length, !client.slack_channel_id, !client.drive_folder_id].filter(Boolean).length;
   const sprintMoves = Object.values(sprints ?? {}).reduce((n, s) => n + Math.max(0, s.total - s.done), 0);
   const inMotion = [
-    { label: "creative in production", value: creative?.moving.length ?? 0, href: tab("creative") },
-    { label: "ads live now", value: creative?.live.length ?? 0, href: tab("creative") },
-    { label: "sprint moves open", value: sprintMoves, href: tab("overview") },
-    { label: "creatives this month", value: imagesUsed + videosUsed, href: tab("creative") },
+    { label: "creative in production", value: creative?.moving.length ?? 0, href: `/clients/${client.slug}?service=creative` },
+    { label: "Meta ads live now", value: creative?.live.length ?? 0, href: `/clients/${client.slug}?service=creative` },
+    { label: "sprint moves open", value: sprintMoves, href: "/kpis" },
+    { label: "creatives this month", value: imagesUsed + videosUsed, href: `/clients/${client.slug}?service=creative&tab=package` },
   ].filter((m) => m.value > 0);
   const summary = digest?.summary ? digest.summary.split(/(?<=\.)\s+/).slice(0, 2).join(" ") : null;
-  const glance = kpis || creative ? <Glance kpis={kpis ?? []} audits={audits ?? {}} sprints={sprints ?? {}} changes={changes ?? {}} alerts={alerts} inMotion={inMotion} summary={summary} today={today} /> : null;
+  const glance = kpis || creative ? <Glance accounts={false} kpis={kpis ?? []} audits={audits ?? {}} sprints={sprints ?? {}} changes={changes ?? {}} alerts={alerts} inMotion={inMotion} summary={summary} today={today} /> : null;
+  // Which services this client has: what they buy, or what's set up for them (Track's list is often empty)
+  const bought = servicesOf({ services: services?.track ?? [], services_extra: services?.extra ?? [] });
+  const metaKpis = (kpis ?? []).filter((k) => k.platform === "meta");
+  const googleKpis = (kpis ?? []).filter((k) => k.platform === "google");
+  const metaCampaigns = (campaigns ?? []).find((c) => c.platform === "meta") ?? null;
+  const googleCampaigns = (campaigns ?? []).find((c) => c.platform === "google") ?? null;
+  const has = {
+    meta: bought.includes("facebook-ads") || Boolean(client.meta_ad_account_id) || metaKpis.length > 0,
+    google: bought.includes("google-ads") || googleKpis.length > 0 || Boolean(googleCampaigns),
+    creative: bought.includes("creative") || client.creative_package || images + videos > 0 || Boolean(creative?.moving.length),
+  };
+  const tierOf = (slug: string) => {
+    const id = services?.chosen[slug];
+    return id ? (services?.tiers.find((t) => t.id === id)?.label ?? null) : null;
+  };
+  const cards: ServiceCard[] = [
+    ...(has.meta ? [{ id: "meta" as const, kind: "ads" as const, label: "Meta Ads", kpis: metaKpis, summary: metaCampaigns, extra: [creative?.live.length ? `${creative.live.length} ads live` : "", tired ? `${tired} worn out, ready for a refresh` : ""].filter(Boolean) }] : []),
+    ...(has.google ? [{ id: "google" as const, kind: "ads" as const, label: "Google Ads", kpis: googleKpis, summary: googleCampaigns, extra: googleLosing(googleCampaigns) }] : []),
+    ...(has.creative
+      ? [{ id: "creative" as const, kind: "creative" as const, label: "Creative", package: active ? (packageLabel ?? "Creative package") : null, used: imagesUsed + videosUsed, allotted: images + videos, moving: creative?.moving.filter((r) => !["client_review", "ready_for_launch"].includes(r.stage)).length ?? 0, waiting: creative?.moving.filter((r) => r.stage === "client_review").length ?? 0, live: creative?.live.length ?? 0 }]
+      : []),
+    ...bought.filter((b) => !["facebook-ads", "google-ads", "creative"].includes(b)).map((b) => ({ id: b, kind: "other" as const, label: SERVICES.find((x) => x.slug === b)?.label ?? b, tier: tierOf(b) })),
+  ];
+  const creativeTone: "warn" | null = active && images + videos > 0 && imagesUsed + videosUsed === 0 ? "warn" : null;
+
   const reportAccounts = (kpis ?? []).filter((k) => k.accountId && (!reportable || reportable.includes(k.id))).map((k) => ({ id: k.id, label: `${k.platform === "google" ? "Google" : "Meta"}${k.label ? ` · ${k.label}` : ""}` }));
 
   return (
@@ -213,112 +263,30 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
         </div>
       </header>
 
-      {glance}
-
-      <ClientTabs
-        tabs={[
+      <ClientSections
+        sections={[
           {
-            id: "overview",
-            label: "Overview",
-            hint: "Performance against target, audits and sprints, change history, ads wearing out",
-            content: (
+            id: "business",
+            label: "Whole business",
+            note: `${cards.length} service${cards.length === 1 ? "" : "s"}`,
+            tabs: [
+              {
+                id: "overview",
+                label: "Overview",
+                hint: "Every service side by side, what needs someone and what's in motion",
+                content: (
+                  <div className="grid gap-6">
+                    {glance}
+                    <BusinessOverview cards={cards} audits={audits ?? {}} sprints={sprints ?? {}} />
+                  </div>
+                ),
+              },
+              {
+                id: "knowledge",
+                label: "Knowledge",
+                hint: "What the AI knows: the briefing, memory, Brand Bible, intake and calls",
+                content: (
               <div className="grid gap-6">
-                {kpis && <KpiPanel kpis={kpis} audits={audits} changes={changes} />}
-                {live && fatigue && fatigue.length > 0 && <FatigueWatch rows={fatigue} showClient={false} />}
-              </div>
-            ),
-          },
-          {
-            id: "creative",
-            label: "Creative",
-            hint: "Creative in motion, launched and live; what's working in the market; assets and the shot list; the package and allotment; angles",
-            content: (
-              <div className="grid gap-6">
-                {creative && <CreativePanel data={creative} />}
-                {!demo && live && market.length > 0 && <MarketPanel clientId={client.id} industry={client.industry ?? null} label={client.industry_detail ?? industryLabel(client.industry) ?? "their industry"} ads={market} />}
-              <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-                <div className="grid min-w-0 gap-6">
-                  {assets && !demo && client.creative_package && <ShotListPanel clientId={client.id} slug={client.slug} assets={assets} latest={shotList} live={live} />}
-                  <Section title="Angles & avatars" description="Copy is approved once per angle and reused for every creative on it.">
-            {angles.length > 0 ? (
-              <ul className="grid gap-2 sm:grid-cols-2">
-                {angles.map((a) => (
-                  <li key={a.id} className={`${row} ${a.status === "archived" ? "opacity-50" : ""}`}>
-                    <span className="grid min-w-0 gap-0.5">
-                      <span>
-                        {a.name} <span className="text-xs capitalize text-faint">· {a.kind}</span>
-                      </span>
-                      {a.description && <span className="text-xs leading-relaxed text-muted">{a.description}</span>}
-                    </span>
-                    <ActionButton
-                      action={setAngleStatus.bind(null, client.slug, a.id, a.status === "archived" ? "active" : "archived")}
-                      label={a.status === "archived" ? "Restore" : "Archive"}
-                    />
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-sm text-faint">No angles yet. They&apos;re also created from requests.</p>
-            )}
-            <ActionForm action={addAngle.bind(null, client.id, client.slug)} submitLabel="Add angle" resetOnSuccess className="grid gap-4 border-t border-line pt-5">
-              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_150px_minmax(0,1.4fr)]">
-                <label className={label}>
-                  Name
-                  <input name="name" required className={field} placeholder="e.g. Fresh, never frozen" />
-                </label>
-                <label className={label}>
-                  Type
-                  <select name="kind" className={field}>
-                    <option value="angle">Angle</option>
-                    <option value="avatar">Avatar</option>
-                  </select>
-                </label>
-                <label className={label}>
-                  <span>
-                    Description <span className="font-normal text-faint">(optional)</span>
-                  </span>
-                  <input name="description" className={field} />
-                </label>
-              </div>
-            </ActionForm>
-          </Section>
-                </div>
-                <div className="grid min-w-0 gap-6">
-                  <PackagePanel
-            active={active}
-            packageLabel={packageLabel}
-            packageKey={client.creative_package_key ?? null}
-            until={client.creative_package_until ?? null}
-            note={client.creative_package_note ?? null}
-            today={today}
-            images={images}
-            videos={videos}
-            imagesUsed={imagesUsed}
-            videosUsed={videosUsed}
-            fromAsana={fromAsana}
-            creativeDb={creativeDb}
-            packages={packages}
-            can={{ exec: can.admin, allot: can.allot }}
-            setSprint={setSprintPackage.bind(null, client.id, client.slug)}
-            endPackage={endCreativePackage.bind(null, client.id, client.slug)}
-            saveAllotment={saveAllotment.bind(null, client.id, client.slug)}
-          />
-                </div>
-              </div>
-              </div>
-            ),
-          },
-          {
-            id: "knowledge",
-            label: "Knowledge",
-            hint: "What the AI knows: the briefing, memory, Brand Bible, go-to-market, intake and calls",
-            content: (
-              <div className="grid gap-6">
-                {launchRules.length > 0 && (
-                  <Section title="Where new ads go" description="Learned from the buyers moving ads the launcher placed. The launcher follows these first for this client.">
-                    <LaunchRules rules={launchRules} slug={client.slug} canEdit={!demo} />
-                  </Section>
-                )}
                 {active && (
             <BriefingPanel
               demo={demo}
@@ -491,18 +459,17 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
             </ActionForm>
           </Section>
                 <BrandBiblePanel clientId={client.id} slug={client.slug} bible={brandBible} canBuild={can.assign && live} />
-                {!demo && <GtmPanel clientId={client.id} slug={client.slug} gtm={gtm} canReview={can.assign} readOnly={!live} />}
+                {!demo && !has.meta && <GtmPanel clientId={client.id} slug={client.slug} gtm={gtm} canReview={can.assign} readOnly={!live} />}
                 {intake !== undefined && <IntakePanel intake={intake} />}
                 {calls && <CallsPanel calls={calls} />}
-              </div>
-            ),
-          },
-          {
-            id: "team",
-            label: "Team & setup",
-            hint: "What they buy, the team, client contacts, the portal, connections",
-            count: needsSetup || null,
-            content: (
+              </div>),
+              },
+              {
+                id: "team",
+                label: "Team & setup",
+                hint: "What they buy, the team, client contacts, the portal, connections",
+                count: needsSetup || null,
+                content: (
               <div className="grid items-start gap-6 lg:grid-cols-2">
                 <div className="grid min-w-0 gap-6">
                   {services && (
@@ -695,9 +662,176 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
             )}
           </Section>
                 </div>
-              </div>
-            ),
+              </div>),
+              },
+            ],
           },
+          ...(has.meta
+            ? [
+                {
+                  id: "meta",
+                  label: "Meta Ads",
+                  tone: toneOf(metaKpis),
+                  note: noteOf(metaKpis),
+                  tabs: [
+                    {
+                      id: "performance",
+                      label: "Performance",
+                      hint: "Against target, audits and sprints, change history, campaigns",
+                      content: (
+                        <div className="grid gap-6">
+                          {kpis && <KpiPanel kpis={metaKpis} audits={audits} changes={changes} />}
+                          {metaCampaigns && <CampaignsPanel p={metaCampaigns} />}
+                        </div>
+                      ),
+                    },
+                    {
+                      id: "ads",
+                      label: "Ads",
+                      count: tired || null,
+                      hint: "Ads wearing out and ready for a refresh",
+                      content: (
+                        <div className="grid gap-6">
+                          {live && fatigue && fatigue.length > 0 ? <FatigueWatch rows={fatigue} showClient={false} /> : <p className="text-sm text-faint">No ads wearing out right now.</p>}
+                        </div>
+                      ),
+                    },
+                    {
+                      id: "strategy",
+                      label: "Strategy",
+                      hint: "The Meta go-to-market strategy, and where new ads go",
+                      content: (
+                        <div className="grid gap-6">
+                          {!demo && <GtmPanel clientId={client.id} slug={client.slug} gtm={gtm} canReview={can.assign} readOnly={!live} />}
+                          {launchRules.length > 0 && (
+                            <Section title="Where new ads go" description="Learned from the buyers moving ads the launcher placed. The launcher follows these first for this client.">
+                              <LaunchRules rules={launchRules} slug={client.slug} canEdit={!demo} />
+                            </Section>
+                          )}
+                        </div>
+                      ),
+                    },
+                  ],
+                },
+              ]
+            : []),
+          ...(has.google
+            ? [
+                {
+                  id: "google",
+                  label: "Google Ads",
+                  tone: toneOf(googleKpis),
+                  note: noteOf(googleKpis),
+                  tabs: [
+                    {
+                      id: "performance",
+                      label: "Performance",
+                      hint: "Against target, audits and sprints, change history",
+                      content: <div className="grid gap-6">{kpis && googleKpis.length > 0 ? <KpiPanel kpis={googleKpis} audits={audits} changes={changes} /> : <p className="text-sm text-faint">No Google KPI target yet. Set one on the KPI board and every audit and report starts from it.</p>}</div>,
+                    },
+                    {
+                      id: "campaigns",
+                      label: "Campaigns",
+                      hint: "Every campaign: spend, results, cost and impression share",
+                      content: googleCampaigns ? <CampaignsPanel p={googleCampaigns} /> : <p className="text-sm text-faint">No Google campaign data yet.</p>,
+                    },
+                  ],
+                },
+              ]
+            : []),
+          ...(has.creative
+            ? [
+                {
+                  id: "creative",
+                  label: "Creative",
+                  tone: creativeTone,
+                  note: images + videos > 0 ? `${imagesUsed + videosUsed}/${images + videos} this month` : packageLabel,
+                  tabs: [
+                    { id: "production", label: "Production", hint: "Creative in motion, launched and live; what's working in the market", content: (<div className="grid gap-6">
+                {creative && <CreativePanel data={creative} />}
+                {!demo && live && market.length > 0 && <MarketPanel clientId={client.id} industry={client.industry ?? null} label={client.industry_detail ?? industryLabel(client.industry) ?? "their industry"} ads={market} />}
+              </div>) },
+                    {
+                      id: "package",
+                      label: "Package & assets",
+                      hint: "The package and allotment, assets on Drive and the shot list",
+                      content: (
+                        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+                          <div className="grid min-w-0 gap-6">
+                            {assets && !demo && client.creative_package && <ShotListPanel clientId={client.id} slug={client.slug} assets={assets} latest={shotList} live={live} />}
+                            {!(assets && !demo && client.creative_package) && <p className="text-sm text-faint">Shot lists come with a creative package.</p>}
+                          </div>
+                          <div className="grid min-w-0 gap-6">
+                            <PackagePanel
+            active={active}
+            packageLabel={packageLabel}
+            packageKey={client.creative_package_key ?? null}
+            until={client.creative_package_until ?? null}
+            note={client.creative_package_note ?? null}
+            today={today}
+            images={images}
+            videos={videos}
+            imagesUsed={imagesUsed}
+            videosUsed={videosUsed}
+            fromAsana={fromAsana}
+            creativeDb={creativeDb}
+            packages={packages}
+            can={{ exec: can.admin, allot: can.allot }}
+            setSprint={setSprintPackage.bind(null, client.id, client.slug)}
+            endPackage={endCreativePackage.bind(null, client.id, client.slug)}
+            saveAllotment={saveAllotment.bind(null, client.id, client.slug)}
+          />
+                          </div>
+                        </div>
+                      ),
+                    },
+                    { id: "angles", label: "Angles", count: angles.filter((a) => a.status !== "archived").length || null, hint: "Angles and avatars; copy is approved once per angle", content: (<Section title="Angles & avatars" description="Copy is approved once per angle and reused for every creative on it.">
+            {angles.length > 0 ? (
+              <ul className="grid gap-2 sm:grid-cols-2">
+                {angles.map((a) => (
+                  <li key={a.id} className={`${row} ${a.status === "archived" ? "opacity-50" : ""}`}>
+                    <span className="grid min-w-0 gap-0.5">
+                      <span>
+                        {a.name} <span className="text-xs capitalize text-faint">· {a.kind}</span>
+                      </span>
+                      {a.description && <span className="text-xs leading-relaxed text-muted">{a.description}</span>}
+                    </span>
+                    <ActionButton
+                      action={setAngleStatus.bind(null, client.slug, a.id, a.status === "archived" ? "active" : "archived")}
+                      label={a.status === "archived" ? "Restore" : "Archive"}
+                    />
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-faint">No angles yet. They&apos;re also created from requests.</p>
+            )}
+            <ActionForm action={addAngle.bind(null, client.id, client.slug)} submitLabel="Add angle" resetOnSuccess className="grid gap-4 border-t border-line pt-5">
+              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_150px_minmax(0,1.4fr)]">
+                <label className={label}>
+                  Name
+                  <input name="name" required className={field} placeholder="e.g. Fresh, never frozen" />
+                </label>
+                <label className={label}>
+                  Type
+                  <select name="kind" className={field}>
+                    <option value="angle">Angle</option>
+                    <option value="avatar">Avatar</option>
+                  </select>
+                </label>
+                <label className={label}>
+                  <span>
+                    Description <span className="font-normal text-faint">(optional)</span>
+                  </span>
+                  <input name="description" className={field} />
+                </label>
+              </div>
+            </ActionForm>
+          </Section>) },
+                  ],
+                },
+              ]
+            : []),
         ]}
       />
     </div>
