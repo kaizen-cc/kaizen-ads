@@ -737,14 +737,26 @@ summary: one sentence on the batch as a whole, plain and specific.`;
 
 // ─── Creative review notes (for the reviewer) ───────────────────────────────
 
-export type CreativeNote = { severity: "fix" | "watch" | "good"; design: string; size: string; area: string; note: string };
+/** Where a note sits: the picture it's about (its file, and the moment for a video frame) and the area on it (0–1). */
+export type CreativeNote = { severity: "fix" | "watch" | "good"; design: string; size: string; area: string; note: string; designId?: string; fileId?: string | null; atMs?: number | null; box?: { x: number; y: number; w: number; h: number } | null; commentId?: string | null };
 export type CreativeNotes = { verdict: "ready" | "minor" | "fix"; headline: string; notes: CreativeNote[] };
 /** One design's notes (the review runs design by design, so progress is real). */
 export const DESIGN_NOTES_SCHEMA = obj({
   notes: {
     type: "array",
-    items: obj({ severity: { type: "string", enum: ["fix", "watch", "good"] }, size: str, area: str, note: str }),
+    items: obj({
+      severity: { type: "string", enum: ["fix", "watch", "good"] },
+      size: str,
+      area: str,
+      note: str,
+      picture: { type: "integer" },
+      x: { type: "number" },
+      y: { type: "number" },
+      w: { type: "number" },
+      h: { type: "number" },
+    }),
   },
+  fixed: { type: "array", items: { type: "integer" } },
 });
 
 export const CREATIVE_REVIEW_SYSTEM = `You are a senior creative reviewer at Kaizen Marketing, a paid social agency. Before ad creative goes to the Head of Creative, you look it over and leave notes: mistakes to fix before it goes to the client, things to keep an eye on, and what works.
@@ -762,7 +774,9 @@ Go through every picture carefully. Read all the text on it, word by word.
 You review one design at a time: every size of it. For a variation you also see the design it varies, only for comparison: review the variation, and check it differs only in what it's testing.
 Severity: fix = a mistake that shouldn't reach the client; watch = a judgement call or risk to decide on; good = what's working (at most 1).
 Be specific and useful: say where on the design (top headline, price badge, CTA button) and quote the text. One point per note, one or two sentences. Don't invent problems to have something to say: if the design is clean, say so in a good note. Don't repeat a note for every size; say it once and name the sizes in size.
-For a video you only see one frame: don't judge motion, pacing or sound.
+For a video you see it as a timeline: frames through the whole video, each marked with its time (several a second over the first 3 seconds, then about one a second, plus each scene change), and what's said in it with timings when there's audio. Review it as someone watching it on a phone: the hook (does the first second stop the scroll, is the product or brand there early), every caption and on-screen text as it appears (typos, claims, safe zones), pacing (stretches where nothing changes), what's said (claims, offer, matches the brief and the captions), and the end (CTA, end card, logo). Don't judge the sound itself (music, mix) beyond what's said.
+Every note sits on the creative, like a reviewer's comment, so place it: picture is the number of the picture it's about (for a video, the frame at the moment it happens; for something said, the frame nearest when it's said), and x, y, w, h box the area it's about on that picture, as fractions of its width and height from the top-left (the headline, the price badge, the caption), a little generous rather than tight. When it's about the whole picture or nothing on it, give picture and 0 for x, y, w and h. When it's about the whole design, picture 0.
+fixed: the numbers of the earlier comments you're shown that this version clearly fixes (leave out any you can't see fixed).
 size: "4:5", "9:16"… or "4:5, 9:16" (or "" when it applies to every size). area: one or two words (Text, Offer, Brand, Placement, Brief, Craft, Policy, Sizes).
 Your notes go first to the designer or editor who made it, so they can fix it before the Head of Creative sees it: write so they know exactly what to change.`;
 

@@ -5,6 +5,11 @@ import type { CreativeNote, CreativeNotes } from "@/lib/ai";
 import type { ReviewProgress } from "@/lib/creative-review";
 import { stageInfo } from "@/lib/stages";
 import { aiReview, sendOn, startAiReview, type AiReviewState, type AiRun } from "./review-actions";
+import { prepareVideos } from "./prepare-videos";
+
+const clockOf = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, "0")}`;
+/** Open the creative at the note's comment (the deliverables listen) */
+const openComment = (requestId: string, n: CreativeNote) => n.designId && window.dispatchEvent(new CustomEvent("kz:open-comment", { detail: { requestId, designId: n.designId, commentId: n.commentId ?? null } }));
 import type { Ticket } from "./types";
 
 // The AI review: the maker runs it before sending the work on (QA), fixes and replaces files, runs it again, then sends it
@@ -128,7 +133,7 @@ function StepDot({ state }: { state: "waiting" | "active" | "done" | "failed" })
   return <span className="h-4 w-4 rounded-full border border-line" />;
 }
 
-function Notes({ notes, dim = false }: { notes: CreativeNotes; dim?: boolean }) {
+function Notes({ notes, dim = false, requestId }: { notes: CreativeNotes; dim?: boolean; requestId?: string }) {
   return (
     <div className={`grid gap-3 ${dim ? "opacity-60" : ""}`}>
       <p className="text-sm leading-relaxed">{notes.headline}</p>
@@ -141,15 +146,30 @@ function Notes({ notes, dim = false }: { notes: CreativeNotes; dim?: boolean }) 
               {sec.label} · {list.length}
             </p>
             <ul className="grid gap-1.5">
-              {list.map((n, i) => (
-                <li key={i} className="flex gap-2.5 rounded-[8px] bg-bg/60 px-3 py-2 text-sm">
-                  <span className={`mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full ${sec.dot}`} />
-                  <span className="min-w-0 flex-1 leading-relaxed">
-                    <span className="mr-1.5 text-xs text-faint">{[n.design, n.size, n.area].filter(Boolean).join(" · ")}</span>
-                    {n.note}
-                  </span>
-                </li>
-              ))}
+              {list.map((n, i) => {
+                const pinned = Boolean(requestId && n.designId && n.commentId);
+                const body = (
+                  <>
+                    <span className={`mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full ${sec.dot}`} />
+                    <span className="min-w-0 flex-1 leading-relaxed">
+                      <span className="mr-1.5 text-xs text-faint">{[n.design, n.atMs != null ? `at ${clockOf(n.atMs)}` : n.size, n.area].filter(Boolean).join(" · ")}</span>
+                      {n.note}
+                    </span>
+                    {pinned && <span className="shrink-0 self-center text-[11px] text-faint group-hover:text-fg">{n.atMs != null ? "▶ Watch" : "See it"} →</span>}
+                  </>
+                );
+                return (
+                  <li key={i}>
+                    {pinned ? (
+                      <button type="button" onClick={() => openComment(requestId!, n)} className="group flex w-full gap-2.5 rounded-[8px] bg-bg/60 px-3 py-2 text-left text-sm hover:bg-surface-2 max-md:py-3">
+                        {body}
+                      </button>
+                    ) : (
+                      <div className="flex gap-2.5 rounded-[8px] bg-bg/60 px-3 py-2 text-sm">{body}</div>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </div>
         );
@@ -227,14 +247,19 @@ export function AiGate({ ticket, onSent, back, demo = false }: { ticket: Ticket;
   const nextLabel = info.nextLabel ?? "Send on";
   const where = info.next === "internal_review" ? "creative review" : "the client";
 
+  const [prep, setPrep] = useState("");
   const review = async () => {
     setError(null);
     setConfirm(false);
     if (demo) return demoRun();
     setBusy(true);
+    // Videos are watched here first (frames and audio), so the review sees the whole thing
+    const problem = await prepareVideos(ticket.id, setPrep).catch(() => null);
     const r = await startAiReview(ticket.id);
     setBusy(false);
+    setPrep("");
     if (!r.ok) return setError(r.error);
+    if (problem) setError(problem);
     setState(r.state);
   };
   const send = async (force: boolean) => {
@@ -271,7 +296,7 @@ export function AiGate({ ticket, onSent, back, demo = false }: { ticket: Ticket;
       {run?.status === "running" ? (
         <Progress p={run.progress} />
       ) : current?.status === "done" && current.notes ? (
-        <Notes notes={current.notes} />
+        <Notes notes={current.notes} requestId={ticket.id} />
       ) : (
         <div className="grid gap-3">
           {run?.status === "done" && run.notes && !run.current ? (
@@ -280,7 +305,7 @@ export function AiGate({ ticket, onSent, back, demo = false }: { ticket: Ticket;
               <details className="text-xs text-faint">
                 <summary className="cursor-pointer hover:text-fg max-md:py-2.5">What the last review said</summary>
                 <div className="mt-2">
-                  <Notes notes={run.notes} dim />
+                  <Notes notes={run.notes} dim requestId={ticket.id} />
                 </div>
               </details>
             </>
@@ -348,7 +373,7 @@ export function AiGate({ ticket, onSent, back, demo = false }: { ticket: Ticket;
                 className="h-10 rounded-brand px-4 text-sm font-medium text-white disabled:opacity-60 max-md:h-12 max-md:w-full"
                 style={{ background: ACCENT, boxShadow: "0 8px 24px -10px rgba(108,126,225,0.9)" }}
               >
-                {busy ? "Starting…" : current ? "Review again" : run ? "Review the new files" : "Review creative"}
+                {busy ? prep || "Starting…" : current ? "Review again" : run ? "Review the new files" : "Review creative"}
               </button>
               {fixes > 0 && <span className="text-xs text-faint">Fix the notes, Replace the files, then review again.</span>}
               <button disabled={busy} onClick={() => setConfirm(true)} className="ml-auto h-10 rounded-brand px-3 text-xs text-faint hover:text-fg disabled:opacity-60 max-md:ml-0 max-md:h-11">
@@ -380,6 +405,7 @@ export function AiReviewNotes({ ticket, demo = false }: { ticket: Ticket; demo?:
 
   const rerun = async () => {
     if (demo) return;
+    await prepareVideos(ticket.id, () => {}).catch(() => null);
     const r = await startAiReview(ticket.id);
     if (r.ok) setState(r.state);
   };
@@ -432,7 +458,7 @@ export function AiReviewNotes({ ticket, demo = false }: { ticket: Ticket; demo?:
         run.notes && (
           <>
             {!run.current && <p className="text-xs text-warn">These notes are about an earlier version of the files.</p>}
-            <Notes notes={run.notes} />
+            <Notes notes={run.notes} requestId={ticket.id} />
           </>
         )
       )}

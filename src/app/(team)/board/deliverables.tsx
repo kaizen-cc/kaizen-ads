@@ -83,7 +83,7 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
   const [reading, setReading] = useState(false);
   const [over, setOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [viewing, setViewing] = useState<{ design: Design; version: number } | null>(null);
+  const [viewing, setViewing] = useState<{ design: Design; version: number; focus?: string | null } | null>(null);
   const [comments, setComments] = useState<ReviewComment[]>([]);
   const [replacing, setReplacing] = useState<{ design: Design; files: StagedFile[]; note: string } | null>(null);
   const filesInput = useRef<HTMLInputElement>(null);
@@ -107,6 +107,10 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
     };
   }, [ticket.id, finished, demo]);
 
+  const designsRef = useRef(designs);
+  useEffect(() => {
+    designsRef.current = designs;
+  }, [designs]);
   // Review comments (pins), refreshed whenever the viewer or the review panel changes them
   useEffect(() => {
     if (demo) return;
@@ -115,9 +119,19 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
     load();
     const on = (e: Event) => (e as CustomEvent).detail === ticket.id && load();
     window.addEventListener("kz:comments", on);
+    // The AI review's notes open the creative at their comment
+    const open = (e: Event) => {
+      const { requestId, designId, commentId } = (e as CustomEvent<{ requestId: string; designId: string; commentId: string | null }>).detail;
+      const d = requestId === ticket.id ? designsRef.current?.find((x) => x.id === designId) : null;
+      if (!d) return;
+      load();
+      setViewing({ design: d, version: d.currentVersion, focus: commentId });
+    };
+    window.addEventListener("kz:open-comment", open);
     return () => {
       live = false;
       window.removeEventListener("kz:comments", on);
+      window.removeEventListener("kz:open-comment", open);
     };
   }, [ticket.id, demo]);
 
@@ -618,6 +632,7 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
           onComments={setComments}
           onVersion={(n) => setViewing({ ...viewing, version: n })}
           onClose={() => setViewing(null)}
+          focus={viewing.focus ?? null}
           demo={demo}
         />
       )}

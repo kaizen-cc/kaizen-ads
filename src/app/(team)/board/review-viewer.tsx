@@ -30,8 +30,11 @@ export function ReviewViewer({
   onComments,
   onVersion,
   onClose,
+  focus = null,
   demo = false,
 }: {
+  /** A comment to open on: its file, its moment in a video, lit up */
+  focus?: string | null;
   requestId: string;
   design: Design;
   version: number;
@@ -44,13 +47,16 @@ export function ReviewViewer({
 }) {
   const v = design.versions.find((x) => x.version === version) ?? design.versions[0];
   const [fileId, setFileId] = useState<string | null>(null);
-  const file: DesignFile | undefined = v?.files.find((f) => f.id === fileId) ?? v?.files.find((f) => f.aspect === "4x5") ?? v?.files[0];
+  // Opened at a comment: its file until someone picks another, lit up, and a video paused at its moment
+  const focusC = useMemo(() => (focus ? (comments.find((c) => c.id === focus) ?? null) : null), [focus, comments]);
+  const file: DesignFile | undefined = v?.files.find((f) => f.id === (fileId ?? focusC?.fileId)) ?? v?.files.find((f) => f.aspect === "4x5") ?? v?.files[0];
   const isVideo = Boolean(file?.mime.startsWith("video/"));
   const [draft, setDraft] = useState<Draft | null>(null);
   const [text, setText] = useState("");
   const [busy, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [hover, setHover] = useState<string | null>(null);
+  const [hover, setHover] = useState<string | null>(focus);
+  const sought = useRef(false);
   const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null); // being drawn
   const videoRef = useRef<HTMLVideoElement>(null);
   const [nowMs, setNowMs] = useState(0); // where the video is, for "Comment at 0:07"
@@ -61,6 +67,21 @@ export function ReviewViewer({
   // Pins shown on this file (comments without a file belong to the whole design)
   const pins = mine.filter((c) => c.x != null && c.y != null && (!c.fileId || c.fileId === file?.id));
   const number = (c: ReviewComment) => mine.indexOf(c) + 1;
+  // Moments in this video with a comment, for the timeline under it
+  const marks = isVideo ? mine.filter((c) => c.tMs != null && (!c.fileId || c.fileId === file?.id)) : [];
+  const [duration, setDuration] = useState(0);
+
+  /** Go to a comment: its file, and its moment in a video (paused there) */
+  const goTo = (c: ReviewComment) => {
+    setHover(c.id);
+    if (c.fileId && c.fileId !== file?.id) setFileId(c.fileId);
+    if (c.tMs != null) {
+      const seek = () => videoRef.current && ((videoRef.current.currentTime = c.tMs! / 1000), videoRef.current.pause());
+      // A different file mounts a new video: wait for it
+      if (c.fileId && c.fileId !== file?.id) setTimeout(seek, 350);
+      else seek();
+    }
+  };
 
   useEffect(() => {
     const esc = (e: KeyboardEvent) => {
@@ -143,7 +164,46 @@ export function ReviewViewer({
             {!file ? (
               <p className="text-sm text-white/60">No files on this version.</p>
             ) : isVideo && file.url ? (
-              <video ref={videoRef} key={file.id} src={file.url} controls playsInline onTimeUpdate={(e) => setNowMs(Math.round(e.currentTarget.currentTime * 1000))} className="block h-auto max-h-[calc(100vh-220px)] w-auto max-w-full rounded-[8px] bg-black object-contain max-md:max-h-[60svh]" />
+              <div className="grid w-full justify-items-center gap-2">
+                <video
+                  ref={videoRef}
+                  key={file.id}
+                  src={file.url}
+                  controls
+                  playsInline
+                  onLoadedMetadata={(e) => {
+                    setDuration(e.currentTarget.duration * 1000);
+                    if (!sought.current && focusC?.tMs != null && (!focusC.fileId || focusC.fileId === file.id)) {
+                      sought.current = true;
+                      e.currentTarget.currentTime = focusC.tMs / 1000;
+                    }
+                  }}
+                  onTimeUpdate={(e) => setNowMs(Math.round(e.currentTarget.currentTime * 1000))}
+                  className="block h-auto max-h-[calc(100vh-250px)] w-auto max-w-full rounded-[8px] bg-black object-contain max-md:max-h-[56svh]"
+                />
+                {/* Where the comments are in the video: tap one to jump there */}
+                {duration > 0 && marks.length > 0 && (
+                  <div className="relative h-6 w-full max-w-[560px]">
+                    <span className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-white/15" />
+                    <span className="absolute left-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-white/40" style={{ width: `${Math.min(100, (nowMs / duration) * 100)}%` }} />
+                    {marks.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => goTo(c)}
+                        onMouseEnter={() => setHover(c.id)}
+                        onMouseLeave={() => setHover(null)}
+                        title={`${clock(c.tMs!)} · ${c.body.slice(0, 80)}`}
+                        aria-label={`Comment at ${clock(c.tMs!)}`}
+                        className={`absolute top-1/2 grid h-5 w-5 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full text-[9px] font-semibold ring-2 ring-black transition-transform max-md:h-7 max-md:w-7 ${c.resolved ? "bg-white/60 text-black/60" : c.ai ? "bg-[#6c7ee1] text-white" : "bg-brand text-white"} ${hover === c.id ? "scale-125" : ""}`}
+                        style={{ left: `${Math.min(100, (c.tMs! / duration) * 100)}%` }}
+                      >
+                        {number(c)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             ) : file.url && file.mime.startsWith("image/") ? (
               <div className="relative max-h-full">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -178,7 +238,7 @@ export function ReviewViewer({
                   <span key={c.id} className="contents">
                   {c.w != null && c.h != null && (
                     <span
-                      className={`pointer-events-none absolute rounded-[4px] border-2 ${c.resolved ? "border-white/60 bg-white/10" : "border-brand bg-brand/15"} ${hover === c.id ? "bg-brand/25" : ""}`}
+                      className={`pointer-events-none absolute rounded-[4px] border-2 ${c.resolved ? "border-white/60 bg-white/10" : c.ai ? "border-[#6c7ee1] bg-[#6c7ee1]/15" : "border-brand bg-brand/15"} ${hover === c.id ? "bg-brand/25" : ""}`}
                       style={{ left: `${c.x! * 100}%`, top: `${c.y! * 100}%`, width: `${c.w * 100}%`, height: `${c.h * 100}%` }}
                     />
                   )}
@@ -187,7 +247,7 @@ export function ReviewViewer({
                     onMouseLeave={() => setHover(null)}
                     onClick={() => setHover(c.id)} // touch: tapping a pin lights it and its comment
                     className={`absolute grid h-7 w-7 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full text-xs font-semibold shadow-[0_4px_14px_rgba(0,0,0,0.5)] ring-2 ring-white transition-transform max-md:h-8 max-md:w-8 max-md:text-[13px] ${
-                      c.resolved ? "bg-white/70 text-black/60" : "bg-brand text-white"
+                      c.resolved ? "bg-white/70 text-black/60" : c.ai ? "bg-[#6c7ee1] text-white" : "bg-brand text-white"
                     } ${hover === c.id ? "scale-125" : ""}`}
                     style={{ left: `${c.x! * 100}%`, top: `${c.y! * 100}%` }}
                   >
@@ -272,21 +332,23 @@ export function ReviewViewer({
                 key={c.id}
                 onMouseEnter={() => setHover(c.id)}
                 onMouseLeave={() => setHover(null)}
-                onClick={() => setHover(c.id)} // touch: tapping a comment lights its pin
-                className={`grid gap-2 rounded-[12px] border px-3.5 py-3 transition-colors ${hover === c.id ? "border-white/30 bg-white/[0.06]" : "border-white/10 bg-white/[0.03]"} ${c.resolved ? "opacity-50" : ""}`}
+                onClick={() => goTo(c)} // its pin lights up; a video jumps to its moment
+                className={`grid cursor-pointer gap-2 rounded-[12px] border px-3.5 py-3 transition-colors ${hover === c.id ? "border-white/30 bg-white/[0.06]" : c.ai && !c.resolved ? "border-[#6c7ee1]/35 bg-[#6c7ee1]/[0.06]" : "border-white/10 bg-white/[0.03]"} ${c.resolved ? "opacity-50" : ""}`}
               >
                 <div className="flex items-start gap-2.5">
-                  <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full text-[11px] font-semibold ${c.x != null ? "bg-brand text-white" : "bg-white/15 text-white/80"}`}>{number(c)}</span>
+                  <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full text-[11px] font-semibold ${c.ai && (c.x != null || c.tMs != null) ? "bg-[#6c7ee1] text-white" : c.x != null ? "bg-brand text-white" : "bg-white/15 text-white/80"}`}>{number(c)}</span>
                   <div className="min-w-0 flex-1">
                     <p className="text-[11px] text-white/45">
+                      {c.ai && <span className={`mr-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${c.ai === "fix" ? "bg-[#ff4d5e]/20 text-[#ff8a95]" : "bg-[#6c7ee1]/25 text-[#b4beff]"}`}>AI · {c.ai === "fix" ? "Fix" : "Worth a look"}</span>}
                       {c.author ?? "Someone"} · {fmtWhen(c.at)}
                       {c.tMs != null && (
-                        <button onClick={() => videoRef.current && ((videoRef.current.currentTime = c.tMs! / 1000), videoRef.current.pause())} className="ml-1.5 rounded bg-white/10 px-1.5 py-0.5 tabular text-white/80 hover:bg-white/20 max-md:px-2.5 max-md:py-1.5">
+                        <button onClick={(e) => (e.stopPropagation(), goTo(c))} className="ml-1.5 rounded bg-white/10 px-1.5 py-0.5 tabular text-white/80 hover:bg-white/20 max-md:px-2.5 max-md:py-1.5">
                           ▶ {clock(c.tMs)}
                         </button>
                       )}
                     </p>
                     <p className={`mt-1 whitespace-pre-wrap text-sm leading-relaxed text-white/90 ${c.resolved ? "line-through" : ""}`}>{c.body}</p>
+                    {c.resolved && c.resolvedByAi && <p className="mt-1 text-[11px] text-[#b4beff]">Resolved by Kaizen AI: the next version fixed it</p>}
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5 pl-8 max-md:[&>*]:inline-flex max-md:[&>*]:min-h-10 max-md:[&>*]:items-center max-md:[&>*]:px-3.5 max-md:[&>*]:text-xs">

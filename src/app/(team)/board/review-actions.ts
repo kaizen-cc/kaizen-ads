@@ -6,7 +6,7 @@ import { isExecOrLead, requireStaff } from "@/lib/auth";
 import { stageInfo } from "@/lib/stages";
 import { draftCopy } from "@/lib/copy-draft";
 import { AiUnavailable, type CreativeNotes } from "@/lib/ai";
-import { currentCreative, runCreativeReview, startRun, type ReviewProgress } from "@/lib/creative-review";
+import { currentCreative, runCreativeReview, startRun, videosToPrepare, type ReviewProgress } from "@/lib/creative-review";
 import { onReachedClient } from "@/lib/client-revision";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -27,6 +27,9 @@ export type ReviewComment = {
   author: string | null;
   remembered: boolean;
   resolved: boolean;
+  /** Left by the AI review (fix or worth a look), and resolved by a later AI review that saw it fixed */
+  ai?: "fix" | "watch" | null;
+  resolvedByAi?: boolean;
   at: string;
 };
 
@@ -35,7 +38,7 @@ export async function ticketComments(requestId: string): Promise<ReviewComment[]
   const supabase = await createClient();
   const { data } = await supabase
     .from("review_comments")
-    .select("id, design_id, version, file_id, x, y, w, h, t_ms, body, round, remembered, resolved_at, created_at, author_name, profiles!review_comments_author_id_fkey(full_name)")
+    .select("id, design_id, version, file_id, x, y, w, h, t_ms, body, round, remembered, resolved_at, created_at, author_name, ai_review_id, severity, resolved_by_ai, profiles!review_comments_author_id_fkey(full_name)")
     .eq("request_id", requestId)
     .order("created_at");
   return (data ?? []).map((c) => ({
@@ -53,8 +56,35 @@ export async function ticketComments(requestId: string): Promise<ReviewComment[]
     author: c.author_name ?? (c.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
     remembered: c.remembered,
     resolved: Boolean(c.resolved_at),
+    ai: c.ai_review_id ? ((c.severity as "fix" | "watch" | null) ?? "watch") : null,
+    resolvedByAi: Boolean(c.resolved_by_ai),
     at: c.created_at,
   }));
+}
+
+/** The videos on a ticket the browser should capture frames and audio from before the AI review. */
+export async function videoPrepList(requestId: string): Promise<{ fileId: string; path: string; url: string | null; durationMs: number | null }[]> {
+  await requireStaff();
+  const supabase = await createClient();
+  const { data: r } = await supabase.from("requests").select("id").eq("id", requestId).maybeSingle();
+  if (!r || !adminConfigured()) return [];
+  return videosToPrepare(createAdminClient(), requestId);
+}
+
+/** Saves what the browser captured from a video: its frames (and its audio, for the transcript). */
+export async function saveVideoPrep(fileId: string, frames: { ms: number; path: string }[], audioPath: string | null): Promise<ActionResult> {
+  await requireStaff();
+  const supabase = await createClient();
+  const { data: f } = await supabase.from("design_files").select("id, path").eq("id", fileId).maybeSingle();
+  if (!f || !adminConfigured()) return { ok: false, error: "File not found." };
+  // Only files stored beside the video itself
+  const ok = (p: string) => p.startsWith(`${f.path}.`);
+  if (!frames.every((x) => ok(x.path)) || (audioPath && !ok(audioPath))) return { ok: false, error: "Those files aren't this video's." };
+  const { error } = await createAdminClient()
+    .from("design_files")
+    .update({ frames: frames.sort((a, b) => a.ms - b.ms), audio_path: audioPath, transcript: null, transcript_status: audioPath ? null : "silent" })
+    .eq("id", fileId);
+  return error ? { ok: false, error: error.message } : { ok: true };
 }
 
 /** A comment pinned to a spot on an image (x, y from 0 to 1) or a moment in a video (tMs). */
