@@ -195,7 +195,7 @@ export async function checkCreative(requestId: string, staged: CheckInput[]): Pr
   const supabase = await createClient();
   const { data: r } = await supabase
     .from("requests")
-    .select("id, client_id, number, title, format, sizes, new_count, variation_count, angle, clients(name)")
+    .select("id, client_id, number, title, format, sizes, new_count, variation_count, clients(name)")
     .eq("id", requestId)
     .single();
   if (!r) return { ok: false, error: "Ticket not found." };
@@ -242,7 +242,7 @@ export async function checkCreative(requestId: string, staged: CheckInput[]): Pr
   if (!pictures.length) return { ok: false, error: "There's nothing the AI can look at in these files." };
 
   const client = (r.clients as unknown as { name: string } | null)?.name ?? "the client";
-  const prompt = `Ticket #${r.number} for ${client}: "${r.title}"${r.angle ? ` · angle: ${r.angle}` : ""}
+  const prompt = `Ticket #${r.number} for ${client}: "${r.title}"
 Format: ${r.format}. Asked for: ${r.new_count} net new and ${r.variation_count} variation${r.variation_count === 1 ? "" : "s"}. Sizes asked for: ${(r.sizes as string[]).map(aspectLabel).join(", ") || "not set"}.
 
 The pictures, in order:

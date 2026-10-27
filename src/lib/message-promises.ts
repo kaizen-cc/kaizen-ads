@@ -5,6 +5,7 @@ import { asanaSince } from "@/lib/calls";
 import { slack } from "@/lib/context/slack";
 import { addresses, gmailToken, google, plainText, withoutQuotes, type GmailMessage } from "@/lib/context/google";
 import { LEAD_OF, notify, plain, workingHours, type Msg, type SlackWho } from "@/lib/owed-replies";
+import { loadGroups, shadowedMessages, type PromiseGroup } from "@/lib/promise-groups";
 
 // What the team said yes to in Slack or email, said any way people say it: "yes", but also "love it, let's run with
 // that", "I'll get this over to design", "makes sense, will update tomorrow", or a 👍 on a clear ask. The scan hands
@@ -253,8 +254,11 @@ export async function followPromises(admin: Admin, who: SlackWho | null) {
   ]);
   const byId = new Map((people ?? []).map((p) => [p.id as string, p]));
   const names = new Map((people ?? []).map((p) => [p.id as string, String(p.full_name ?? "").split(" ")[0] || "them"]));
-  const tally = { checked: 0, moving: 0, notified: 0, escalated: 0 };
+  const tally = { checked: 0, moving: 0, notified: 0, escalated: 0, sameAsAnother: 0 };
   if (!open?.length) return tally;
+  // Said about the same thing as a call promise with its brief, or as another message: chased once, there
+  const shadow = await shadowedMessages(admin, open);
+  tally.sameAsAnother = shadow.size;
 
   // Seen: the first notice read in the bell, or the card opened in their day
   const keys = open.filter((p) => p.status === "overdue").map((p) => `said:${p.id}`);
@@ -269,7 +273,7 @@ export async function followPromises(admin: Admin, who: SlackWho | null) {
 
   // Which to look at this run: newly due, overdue ones ready to escalate, escalated ones every few working hours
   // (overdue and escalated ones every couple of working hours, so a ticket made since closes them)
-  const look = open.filter((p) => byId.get(p.owner_id)?.is_active && (p.status === "open" || !p.checked_at || workingHours(new Date(p.checked_at)) >= 2));
+  const look = open.filter((p) => !shadow.has(p.id) && byId.get(p.owner_id)?.is_active && (p.status === "open" || !p.checked_at || workingHours(new Date(p.checked_at)) >= 2));
   const moves = new Map<string, Move & { asanaGids: string[] }>();
   for (let i = 0; i < look.length; i += 8) for (const [k, v] of await movement(admin, look.slice(i, i + 8), who, names)) moves.set(k, v);
 
@@ -377,17 +381,21 @@ export type SaidPromise = {
   client: string | null;
   clientSlug: string | null;
   clientId: string | null;
+  group: PromiseGroup | null;
 };
 
 /** Promises from messages past due with nothing moving: the person's own, and (leads, execs) escalated ones. */
 export async function loadSaidPromises(db: SupabaseClient, me: { id: string; role: string; isExec: boolean; isLead: boolean }): Promise<SaidPromise[]> {
   const { data } = await db
     .from("message_promises")
-    .select("id, source, status, owner_id, what, ask, asked_by, said, said_at, due_at, channel_name, url, channel_url, kind, client_id, clients(name, slug), owner:profiles!message_promises_owner_id_fkey(full_name, role)")
+    .select("id, source, status, owner_id, what, ask, asked_by, said, said_at, due_at, channel_name, url, channel_url, kind, client_id, group_id, clients(name, slug), owner:profiles!message_promises_owner_id_fkey(full_name, role)")
     .in("status", ["overdue", "escalated"])
     .order("due_at")
     .limit(80);
+  const shadow = await shadowedMessages(db, (data ?? []) as { id: string; group_id: string | null; due_at: string | null }[]);
+  const groups = await loadGroups(db, (data ?? []).map((p) => p.group_id as string));
   return (data ?? [])
+    .filter((p) => !shadow.has(p.id as string))
     .filter((p) => {
       if (p.owner_id === me.id) return true;
       if (!(me.isExec || me.isLead) || p.status !== "escalated") return false;
@@ -415,6 +423,7 @@ export async function loadSaidPromises(db: SupabaseClient, me: { id: string; rol
         client: c?.name ?? null,
         clientSlug: c?.slug ?? null,
         clientId: (p.client_id as string | null) ?? null,
+        group: p.group_id ? (groups.get(p.group_id as string) ?? null) : null,
       };
     });
 }

@@ -609,8 +609,12 @@ export async function runOwedReplies(admin: Admin) {
   // What the team said yes to: new ones read, due ones followed through
   const candidates = [...(slackRun && !("error" in slackRun) ? slackRun.said : []), ...(gmailRun && !("error" in gmailRun) ? gmailRun.said : [])];
   const promises = await recordPromises(admin, candidates, names).catch(fail);
+  // A new one about something already promised (on a call, in another thread) joins it
+  const { groupPromises, settleGroups } = await import("@/lib/promise-groups");
+  const grouped = await groupPromises(admin).catch(fail);
   const following = await followPromises(admin, who).catch(fail);
-  return { scanned, ...tally, promises, following };
+  await settleGroups(admin).catch(() => 0);
+  return { scanned, ...tally, promises, grouped, following };
 }
 
 // ─── Reading ────────────────────────────────────────────────────────────────

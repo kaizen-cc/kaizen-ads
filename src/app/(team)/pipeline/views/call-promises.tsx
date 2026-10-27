@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { CallPromise, OpenSuggestion } from "@/lib/suggestions";
 import { SuggestionSheet } from "./suggested-briefs";
+import { PromiseSources } from "./promise-sources";
 
 // What we promised clients on calls and haven't started: two business days after the call, with nothing in
 // production, the strategist writes the brief from the call. One click to review it and send it to the makers.
@@ -32,11 +33,12 @@ export function CallPromises({ promises, bare = false }: { promises: CallPromise
                 <Link href={`/clients/${p.clientSlug}`} className="font-medium text-fg hover:underline">
                   {p.client}
                 </Link>
-                · &ldquo;{p.callTitle}&rdquo; · {day(p.callAt)}
+                {p.group && p.group.sources.length > 1 ? `· said ${p.group.sources.length} times, first ${day(p.group.sources[0].at)}` : <>· &ldquo;{p.callTitle}&rdquo; · {day(p.callAt)}</>}
               </span>
-              <p className="text-[15px] leading-snug">&ldquo;{p.what}&rdquo;</p>
+              <p className="text-[15px] leading-snug">&ldquo;{p.group?.title ?? p.what}&rdquo;</p>
               <p className="text-xs text-warn">Nothing in production since. It was due {day(p.dueAt)}.</p>
             </div>
+            <PromiseSources group={p.group} />
             <div className="flex flex-wrap gap-2">
               <button onClick={() => setSheet(p.suggestion)} className="h-11 w-full rounded-brand bg-fg px-4 text-sm font-medium text-bg md:h-9 md:w-auto">
                 Review the brief

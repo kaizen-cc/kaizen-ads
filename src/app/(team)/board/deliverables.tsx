@@ -60,6 +60,22 @@ function uploadOrder(staged: StagedDesign[]) {
 /** uploaded: designs with at least one finished file. uploading: files still on their way. */
 export type UploadState = { uploaded: number; uploading: number; loaded: boolean };
 
+const VIDEO_EXT = /\.(mp4|mov|m4v|webm|avi|mkv)$/i;
+const IMAGE_EXT = /\.(jpe?g|png|gif|webp|heic|psd|tiff?|svg)$/i;
+const isVideo = (f: File) => f.type.startsWith("video/") || VIDEO_EXT.test(f.name);
+const isImage = (f: File) => (f.type.startsWith("image/") || IMAGE_EXT.test(f.name)) && !isVideo(f);
+/** Only what the ticket is for: videos on a video ticket, images on an image ticket (carousels take both) */
+const fitsFormat = (f: File, format: Ticket["format"]) => (format === "video" ? isVideo(f) : format === "image" ? isImage(f) : isVideo(f) || isImage(f));
+const ACCEPT: Record<Ticket["format"], string> = { video: "video/*,.mov,.mp4,.m4v,.webm", image: "image/*,.psd", carousel: "image/*,video/*,.psd,.mov" };
+
+/** The files that don't belong on this ticket's format, said plainly (or null when they all fit). */
+function wrongFormat(files: File[], format: Ticket["format"]) {
+  const off = files.filter((f) => !fitsFormat(f, format));
+  if (!off.length) return null;
+  const names = off.slice(0, 3).map((f) => f.name).join(", ") + (off.length > 3 ? ` and ${off.length - 3} more` : "");
+  return format === "video" ? `This is a video ticket, so only video files go up. Left out: ${names}.` : `This is an image ticket, so only image files go up (no videos). Left out: ${names}.`;
+}
+
 export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket; demoDesigns?: Design[]; onState?: (s: UploadState) => void }) {
   const uploads = useUploads();
   const [designs, setDesigns] = useState<Design[] | null>(demoDesigns ?? null);
@@ -118,9 +134,11 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
     onState?.({ uploaded: uploadedCount, uploading: pending.length, loaded: designs !== null });
   }, [onState, uploadedCount, pending.length, designs]);
 
-  const take = async (picked: Picked[]) => {
+  const take = async (all: Picked[]) => {
     setError(null);
-    if (!picked.length) return;
+    const picked = all.filter((p) => fitsFormat(p.file, ticket.format));
+    const off = wrongFormat(all.map((p) => p.file), ticket.format);
+    if (!picked.length) return off ? setError(off) : undefined;
     setReading(true);
     const files = await stage(picked);
     setReading(false);
@@ -131,6 +149,7 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
     const grouped = groupFiles([...before, ...fresh], ticket.format);
     setStaged(grouped);
     runCheck(grouped);
+    if (off) setError(off);
   };
 
   /** The AI looks at the staged designs next to what's on the ticket. */
@@ -302,18 +321,20 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
         </span>
       </div>
 
-      <input ref={filesInput} type="file" multiple accept="image/*,video/*,.psd,.mov" className="hidden" onChange={(e) => (fromInput(e.target.files, false), (e.target.value = ""))} />
+      <input ref={filesInput} type="file" multiple accept={ACCEPT[ticket.format]} className="hidden" onChange={(e) => (fromInput(e.target.files, false), (e.target.value = ""))} />
       <input ref={folderInput} type="file" multiple className="hidden" onChange={(e) => (fromInput(e.target.files, true), (e.target.value = ""))} />
       <input
         ref={replaceInput}
         type="file"
         multiple
-        accept="image/*,video/*,.psd,.mov"
+        accept={ACCEPT[ticket.format]}
         className="hidden"
         onChange={async (e) => {
           const design = replaceFor.current;
-          const list = [...(e.target.files ?? [])];
+          const all = [...(e.target.files ?? [])];
           e.target.value = "";
+          const list = all.filter((f) => fitsFormat(f, ticket.format));
+          setError(wrongFormat(all, ticket.format));
           if (!design || !list.length) return;
           setReading(true);
           const files = await stage(list.map((file) => ({ file, folder: null })));

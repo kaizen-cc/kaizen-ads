@@ -143,7 +143,7 @@ export function ReviewViewer({
             {!file ? (
               <p className="text-sm text-white/60">No files on this version.</p>
             ) : isVideo && file.url ? (
-              <video ref={videoRef} key={file.id} src={file.url} controls playsInline onTimeUpdate={(e) => setNowMs(Math.round(e.currentTarget.currentTime * 1000))} className="max-h-full max-w-full rounded-[8px] max-md:max-h-[60svh]" />
+              <video ref={videoRef} key={file.id} src={file.url} controls playsInline onTimeUpdate={(e) => setNowMs(Math.round(e.currentTarget.currentTime * 1000))} className="block h-auto max-h-[calc(100vh-220px)] w-auto max-w-full rounded-[8px] bg-black object-contain max-md:max-h-[60svh]" />
             ) : file.url && file.mime.startsWith("image/") ? (
               <div className="relative max-h-full">
                 {/* eslint-disable-next-line @next/next/no-img-element */}

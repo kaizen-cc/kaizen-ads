@@ -892,17 +892,21 @@ On this call Kaizen promised the above, and two business days later nothing is i
   return data.id as string;
 }
 
-export type CallPromise = { commitmentId: string; client: string; clientSlug: string; what: string; callTitle: string; callAt: string; dueAt: string; suggestion: OpenSuggestion | null };
+export type CallPromise = { commitmentId: string; client: string; clientSlug: string; what: string; callTitle: string; callAt: string; dueAt: string; suggestion: OpenSuggestion | null; group: import("@/lib/promise-groups").PromiseGroup | null };
 
 /** Promises from calls that turned into briefs and still wait for someone to push them. Read with the viewer's access. */
 export async function loadCallPromises(db: SupabaseClient): Promise<CallPromise[]> {
   const { data } = await db
     .from("call_commitments")
-    .select("id, what, due_at, suggestion_id, clients(name, slug), client_calls(title, occurred_at)")
+    .select("id, what, due_at, suggestion_id, group_id, clients(name, slug), client_calls(title, occurred_at)")
     .eq("status", "briefed")
     .order("due_at")
-    .limit(20);
-  const rows = data ?? [];
+    .limit(40);
+  // The same promise from several calls is one card (the earliest due), with all of it
+  const firstOf = new Set<string>();
+  const rows = (data ?? []).filter((r) => !r.group_id || (!firstOf.has(r.group_id as string) && (firstOf.add(r.group_id as string), true))).slice(0, 20);
+  const { loadGroups } = await import("@/lib/promise-groups");
+  const groups = await loadGroups(db, rows.map((r) => r.group_id as string));
   const ids = rows.map((r) => r.suggestion_id).filter(Boolean) as string[];
   const { data: sugg } = ids.length ? await db.from("creative_suggestions").select(OPEN_COLS).in("id", ids).eq("status", "open") : { data: [] };
   const open = await toOpen(db, (sugg ?? []) as unknown as Record<string, unknown>[]);
@@ -919,6 +923,7 @@ export async function loadCallPromises(db: SupabaseClient): Promise<CallPromise[
         callAt: call?.occurred_at ?? r.due_at,
         dueAt: r.due_at,
         suggestion: open.find((o) => o.id === r.suggestion_id) ?? null,
+        group: r.group_id ? (groups.get(r.group_id as string) ?? null) : null,
       };
     })
     .filter((p) => p.suggestion);

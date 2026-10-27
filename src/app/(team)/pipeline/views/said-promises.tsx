@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import type { SaidPromise } from "@/lib/message-promises";
 import { closeSaidPromise } from "@/app/today/actions";
+import { PromiseSources } from "./promise-sources";
 
 // What someone said yes to in Slack or email that's past due with nothing showing it moving: theirs to do (or close),
 // and for leads and execs, the ones that went past a second notice.
@@ -46,13 +47,14 @@ export function SaidPromises({ items, me }: { items: SaidPromise[]; me: string }
               </span>
               <p className="text-[15px] leading-snug">
                 <span className="text-muted">{mine ? "You said you'd" : `${p.owner} said they'd`} </span>
-                {p.what}
+                {p.group?.title ?? p.what}
               </p>
               <p className="line-clamp-2 text-xs text-faint">
                 {p.askedBy ?? "They"} asked{p.ask ? `: ${p.ask}` : ""} · &ldquo;{p.said.replace(/\s+/g, " ")}&rdquo;
               </p>
               <p className={`text-xs ${second ? "text-bad" : "text-warn"}`}>Due {day(p.dueAt)}. Nothing since shows it&apos;s happened.</p>
             </div>
+            <PromiseSources group={p.group} />
             <div className="flex flex-wrap gap-2">
               {make && mine && (
                 <Link href={`/requests/new?client=${p.clientSlug}`} className="inline-flex h-11 w-full items-center justify-center rounded-brand bg-fg px-4 text-sm font-medium text-bg md:h-9 md:w-auto">

@@ -312,13 +312,17 @@ async function collectCallsRun(admin: SupabaseClient, budgetMs: number, t: Track
   }
   t.phase("Re-checking promises against the full calls");
   const rechecked = await recheckCommitments(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+  // The same promise said on several calls (or by both note-takers on one) becomes one, with all its context
+  const { groupPromises, settleGroups } = await import("@/lib/promise-groups");
+  const grouped = await groupPromises(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
   t.tick("Checking which promises are covered by a request");
   const covered = await sweepCovered(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
   t.tick("Watching open promises");
   const watched = await watchCommitments(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+  await settleGroups(admin).catch(() => 0);
   t.tick(null);
-  await setCursor(admin, "calls", started, { found: found.length, saved, read, waiting: Math.max(0, (waiting ?? []).length - read), errors, watched, covered, rechecked });
-  return { found: found.length, saved, read, errors, watched, covered };
+  await setCursor(admin, "calls", started, { found: found.length, saved, read, waiting: Math.max(0, (waiting ?? []).length - read), errors, watched, covered, rechecked, grouped });
+  return { found: found.length, saved, read, errors, watched, covered, grouped };
 }
 
 // ─── Watch what was promised ───────────────────────────────────────────────
@@ -503,7 +507,7 @@ export async function sweepCovered(admin: SupabaseClient, clientId?: string) {
 export async function briefPromise(admin: SupabaseClient, commitmentId: string) {
   const { data: c } = await admin
     .from("call_commitments")
-    .select("id, client_id, kind, what, why, suggestion_id, call_id, client_calls(title, occurred_at)")
+    .select("id, client_id, kind, what, why, suggestion_id, call_id, group_id, client_calls(title, occurred_at)")
     .eq("id", commitmentId)
     .single();
   if (!c) throw new Error("Promise not found");
@@ -511,16 +515,32 @@ export async function briefPromise(admin: SupabaseClient, commitmentId: string) 
     const { data: open } = await admin.from("creative_suggestions").select("id").eq("id", c.suggestion_id).eq("status", "open").maybeSingle();
     if (open) return open.id as string;
   }
+  // Part of a group (the same promise said elsewhere): its brief already written is this one's too, and a new one is
+  // written from everything the group knows
+  let group: { title: string; context: string | null } | null = null;
+  if (c.group_id) {
+    const { data: sibling } = await admin.from("call_commitments").select("suggestion_id").eq("group_id", c.group_id).eq("status", "briefed").not("suggestion_id", "is", null).limit(5);
+    const ids = (sibling ?? []).map((x) => x.suggestion_id as string);
+    const { data: openOnes } = ids.length ? await admin.from("creative_suggestions").select("id").in("id", ids).eq("status", "open").limit(1) : { data: [] };
+    const live = openOnes?.[0] ? { suggestion_id: openOnes[0].id as string } : null;
+    if (live) {
+      await admin.from("call_commitments").update({ status: "briefed", suggestion_id: live.suggestion_id, checked_at: new Date().toISOString() }).eq("id", c.id);
+      return live.suggestion_id as string;
+    }
+    const { data: g } = await admin.from("promise_groups").select("title, context").eq("id", c.group_id).maybeSingle();
+    group = g ? { title: g.title as string, context: (g.context as string | null) ?? null } : null;
+  }
   const { data: mention } = await admin.from("call_mentions").select("summary").eq("call_id", c.call_id).eq("client_id", c.client_id).maybeSingle();
   const call = c.client_calls as unknown as { title: string; occurred_at: string };
   const { suggestFromCall } = await import("@/lib/suggestions");
-  const id = await suggestFromCall(admin, c.client_id, { id: c.id, what: c.what, why: c.why ?? "", kind: c.kind }, { ...call, summary: (mention?.summary as CallSummary | null) ?? null });
+  const id = await suggestFromCall(admin, c.client_id, { id: c.id, what: group?.title ?? c.what, why: [c.why, group?.context].filter(Boolean).join("\n"), kind: c.kind }, { ...call, summary: (mention?.summary as CallSummary | null) ?? null });
   if (typeof id !== "string") {
     // Not work for the paid ads and creative team: off the lists, with the reason on the client page
     await admin.from("call_commitments").update({ status: "dismissed", dismiss_reason: id.skip.slice(0, 300), checked_at: new Date().toISOString() }).eq("id", c.id);
     return null;
   }
   await admin.from("call_commitments").update({ status: "briefed", suggestion_id: id, checked_at: new Date().toISOString() }).eq("id", c.id);
+  if (c.group_id) await admin.from("promise_groups").update({ briefed_members: null }).eq("id", c.group_id);
   return id;
 }
 
