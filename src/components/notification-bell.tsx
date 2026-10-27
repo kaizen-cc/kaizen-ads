@@ -31,6 +31,7 @@ const KIND_ICON: Record<string, string> = {
   onboarding: "M5 13l4 4L19 7",
   handoff: "M7 17 17 7M7 7h10v10",
   sprint: "M13 2 3 14h9l-1 8 10-12h-9l1-8z",
+  reply: "M9 14 4 9l5-5M4 9h10a6 6 0 0 1 6 6v5",
 };
 
 export function NotificationBell({ placement = "side" }: { placement?: "side" | "top" }) {

@@ -3,6 +3,8 @@ import type { WatchRow } from "@/lib/fatigue";
 import { FatigueWatch } from "@/components/fatigue-watch";
 import type { CallPromise, OnboardingState, SuggestionsState } from "@/lib/suggestions";
 import { CallPromises } from "./call-promises";
+import { OwedReplies } from "./owed-replies";
+import type { OwedReply } from "@/lib/owed-replies";
 import { OnboardingCallout } from "./onboarding-callout";
 import { SuggestedBriefs } from "./suggested-briefs";
 import { AttentionList, ClientHealth, KpiPulse, type Alert, type ClientPulse, type KpiPulseData } from "./shared";
@@ -17,6 +19,8 @@ import { Topic, type TopicTile } from "./topics";
 export type SharedTopics = {
   onboarding?: OnboardingState | null;
   callPromises?: CallPromise[] | null;
+  /** Messages nobody answered after a notice (the viewer's own, and the escalated ones they lead) */
+  owed?: { items: OwedReply[]; me: string } | null;
   suggestions?: SuggestionsState | null;
   kpis?: KpiPulseData[] | null; // one per service line the viewer works on (Meta, Google)
   fatigue?: WatchRow[] | null;
@@ -33,19 +37,39 @@ const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: 
 export function actTopics(d: SharedTopics): Built[] {
   const out: Built[] = [];
 
+  // Waiting on us: what we promised on calls and haven't started, and messages (Slack, email) nobody answered
   const promises = d.callPromises ?? [];
-  if (promises.length) {
-    const oldest = promises.map((p) => p.dueAt).sort()[0];
-    const summary = `Said on calls, nothing in production yet · oldest was due ${day(oldest)}`;
+  const owed = d.owed?.items ?? [];
+  if (promises.length || owed.length) {
+    const escalated = owed.filter((o) => o.status === "escalated").length;
+    const oldest = [...promises.map((p) => p.dueAt), ...owed.map((o) => o.askedAt)].sort()[0];
+    const summary = [promises.length ? `${s(promises.length, "promise")} from calls not started` : "", owed.length ? `${s(owed.length, "message")} not answered${escalated ? ` (${escalated} past a second notice)` : ""}` : "", `oldest from ${day(oldest)}`].filter(Boolean).join(" · ");
+    const n = promises.length + owed.length;
+    const tone = escalated ? "bad" : "warn";
+    const both = promises.length > 0 && owed.length > 0;
+    const label = (t: string) => (both ? <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-faint">{t}</span> : null);
     out.push({
-      tile: { id: "promises", label: "Promised", value: promises.length, sub: "on calls, not started", tone: "warn" },
+      tile: { id: "promises", label: "Waiting on us", value: n, sub: [promises.length ? `${promises.length} promised` : "", owed.length ? `${owed.length} unanswered` : ""].filter(Boolean).join(" · "), tone },
       panel: (
-        <Topic key="promises" id="promises" title="Promised on calls" summary={summary} count={promises.length} tone="warn">
-          <CallPromises promises={promises} bare />
+        <Topic key="promises" id="promises" title="Waiting on us" summary={summary} count={n} tone={tone}>
+          <div className="grid gap-5">
+            {owed.length > 0 && (
+              <div className="grid gap-3">
+                {label("Not answered")}
+                <OwedReplies items={owed} me={d.owed!.me} />
+              </div>
+            )}
+            {promises.length > 0 && (
+              <div className="grid gap-3">
+                {label("Promised on calls")}
+                <CallPromises promises={promises} bare />
+              </div>
+            )}
+          </div>
         </Topic>
       ),
     });
-  } else if (d.callPromises) out.push({ tile: null, panel: null, clear: "every promise from calls is in motion" });
+  } else if (d.callPromises) out.push({ tile: null, panel: null, clear: "every promise is in motion and every message answered" });
 
   const briefs = d.suggestions?.open ?? [];
   if (d.suggestions && (briefs.length || d.suggestions.running)) {
@@ -169,7 +193,7 @@ export function buildThemes(d: SharedTopics, extra: { first?: Theme | null; deli
   const built = [...actTopics(d), ...accountTopics(d)].filter((b) => b.tile && b.panel);
   const by = (...ids: string[]) => built.filter((b) => ids.includes(b.tile!.id));
   const sum = (bs: Built[]) => bs.reduce((n, b) => n + (Number(b.tile!.value) || 0), 0);
-  const SAY: Record<string, string> = { promises: "promises not started", attention: "stuck, late or behind", "kpis-meta": "Meta accounts off target", "kpis-google": "Google accounts off target", "kpis-all": "accounts off target", briefs: "brief ideas", fatigue: "ads due a refresh", allotments: "behind on creative" };
+  const SAY: Record<string, string> = { promises: "waiting on us", attention: "stuck, late or behind", "kpis-meta": "Meta accounts off target", "kpis-google": "Google accounts off target", "kpis-all": "accounts off target", briefs: "brief ideas", fatigue: "ads due a refresh", allotments: "behind on creative" };
   const points = (bs: Built[]) => bs.filter((b) => Number(b.tile!.value)).map((b) => `${b.tile!.value} ${SAY[b.tile!.id] ?? b.tile!.label.toLowerCase()}`);
 
   const risk = by("promises", "attention", "kpis-meta", "kpis-google", "kpis-all");
@@ -192,7 +216,7 @@ export function buildThemes(d: SharedTopics, extra: { first?: Theme | null; deli
     title: "Clients at risk",
     tone: sum(risk) ? "bad" : "ok",
     count: sum(risk),
-    headline: sum(risk) ? "Off-target accounts, promises not started, work that's stuck" : "Every account and promise is in hand",
+    headline: sum(risk) ? "Off-target accounts, promises and messages waiting on us, work that's stuck" : "Every account, promise and message is in hand",
     points: points(risk),
     content: risk.map((b) => b.panel),
   });

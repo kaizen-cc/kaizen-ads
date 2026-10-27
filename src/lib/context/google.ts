@@ -25,6 +25,9 @@ function tokenFor(subject: string, scope: string) {
   return new JWT({ email: key.client_email, key: key.private_key, scopes: [scope], subject }).getAccessToken().then((r) => r.token!);
 }
 
+/** A Gmail read token for one person's mailbox (watching for messages they owe a reply). */
+export const gmailToken = (mailbox: string) => tokenFor(mailbox, GMAIL_SCOPE);
+
 /** A Drive read token as someone in the Workspace (their own Drive: Gemini meeting notes). */
 export const googleDriveToken = (user: string) => tokenFor(user, DRIVE_SCOPE);
 
@@ -35,7 +38,7 @@ export const driveToken = () => {
   return tokenFor(user, DRIVE_SCOPE);
 };
 
-async function google<T>(token: string, url: string, params: Record<string, string> = {}): Promise<T> {
+export async function google<T>(token: string, url: string, params: Record<string, string> = {}): Promise<T> {
   const res = await fetch(`${url}?${new URLSearchParams(params)}`, { headers: { authorization: `Bearer ${token}` }, cache: "no-store" });
   if (!res.ok) throw new Error(`Google ${new URL(url).pathname}: ${res.status} ${(await res.text()).slice(0, 200)}`);
   return res.json() as Promise<T>;
@@ -86,12 +89,12 @@ export async function contactMap(admin: SupabaseClient) {
 
 // ─── Gmail ──────────────────────────────────────────────────────────────────
 
-type GmailPart = { mimeType?: string; body?: { data?: string }; parts?: GmailPart[] };
-type GmailMessage = { id: string; threadId: string; snippet?: string; internalDate: string; payload: GmailPart & { headers: { name: string; value: string }[] } };
+export type GmailPart = { mimeType?: string; body?: { data?: string }; parts?: GmailPart[] };
+export type GmailMessage = { id: string; threadId: string; snippet?: string; internalDate: string; payload: GmailPart & { headers: { name: string; value: string }[] } };
 
 const decode = (data: string) => Buffer.from(data.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
 
-function plainText(part: GmailPart): string | null {
+export function plainText(part: GmailPart): string | null {
   if (part.mimeType === "text/plain" && part.body?.data) return decode(part.body.data);
   for (const p of part.parts ?? []) {
     const t = plainText(p);
@@ -101,9 +104,9 @@ function plainText(part: GmailPart): string | null {
 }
 
 /** Drop quoted history so we store what was actually said in this email. */
-const withoutQuotes = (s: string) => s.split(/\n(?:On .{5,120} wrote:|-----Original Message-----|From: .+\nSent: )/)[0];
+export const withoutQuotes = (s: string) => s.split(/\n(?:On .{5,120} wrote:|-----Original Message-----|From: .+\nSent: )/)[0];
 
-const addresses = (header: string | null) => (header?.toLowerCase().match(/[a-z0-9._%+'-]+@[a-z0-9.-]+\.[a-z]{2,}/g) ?? []);
+export const addresses = (header: string | null) => (header?.toLowerCase().match(/[a-z0-9._%+'-]+@[a-z0-9.-]+\.[a-z]{2,}/g) ?? []);
 
 /** Emails to or from any client contact in one mailbox since the cursor. */
 export async function collectGmail(mailbox: string, since: Date, contacts: Map<string, string[]>): Promise<CollectResult> {

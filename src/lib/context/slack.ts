@@ -12,10 +12,10 @@ import { LIVE } from "@/lib/live";
 
 export const slackConfigured = () => Boolean(process.env.SLACK_BOT_TOKEN);
 
-type SlackMessage = { ts: string; user?: string; text?: string; thread_ts?: string; reply_count?: number; latest_reply?: string; subtype?: string; bot_id?: string };
-type SlackChannel = { id: string; name: string; is_private?: boolean; is_ext_shared?: boolean; is_shared?: boolean; is_member?: boolean; is_archived?: boolean };
+export type SlackMessage = { ts: string; user?: string; text?: string; thread_ts?: string; reply_count?: number; latest_reply?: string; subtype?: string; bot_id?: string };
+export type SlackChannel = { id: string; name: string; is_private?: boolean; is_ext_shared?: boolean; is_shared?: boolean; is_member?: boolean; is_archived?: boolean };
 
-async function slack<T>(method: string, params: Record<string, string>): Promise<T> {
+export async function slack<T>(method: string, params: Record<string, string>): Promise<T> {
   for (let attempt = 0; attempt < 4; attempt++) {
     const res = await fetch(`https://slack.com/api/${method}?${new URLSearchParams(params)}`, {
       headers: { authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` },
@@ -33,7 +33,7 @@ async function slack<T>(method: string, params: Record<string, string>): Promise
   throw new Error(`Slack ${method}: rate limited`);
 }
 
-async function listChannels() {
+export async function listChannels() {
   const out: SlackChannel[] = [];
   let cursor = "";
   do {
@@ -149,7 +149,7 @@ async function personName(id: string | undefined) {
   return names.get(id)!;
 }
 
-const permalink = (channel: string, ts: string) => `https://slack.com/archives/${channel}/p${ts.replace(".", "")}`;
+export const permalink = (channel: string, ts: string) => `https://slack.com/archives/${channel}/p${ts.replace(".", "")}`;
 
 export async function readChannel(channel: string, since: Date, clientId: string, source: ContextItem["source"]) {
   const oldest = (since.getTime() / 1000).toFixed(6);

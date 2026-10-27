@@ -22,6 +22,10 @@
       "schedule": "35 * * * *"
     },
     {
+      "path": "/api/cron/context?step=owed",
+      "schedule": "40 * * * *"
+    },
+    {
       "path": "/api/cron/context?step=kpi",
       "schedule": "45 */2 * * *"
     },

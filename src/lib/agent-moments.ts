@@ -45,7 +45,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Rewrites a suggested brief in its chat", where: "Any brief sheet", trigger: "click", when: "When someone talks a brief through", labels: ["suggested brief chat"] },
     { title: "Writes the first round for a new client", where: "Overview · Onboarding", trigger: "auto", when: "When the intake is in, or on Write the first round", labels: ["onboarding first round"] },
     { title: "Writes a refresh for a tiring ad", where: "Ads wearing out", trigger: "auto", when: "After each Meta sync, for every ad on the watch list", labels: ["refresh a tiring ad"] },
-    { title: "Writes a brief from a promise made on a call", where: "Overview · Promised on calls · Request form", trigger: "auto", when: "Two business days after the call with nothing in motion, or when used in a request", labels: ["brief from a call"] },
+    { title: "Writes a brief from a promise made on a call", where: "Overview · Waiting on us · Request form", trigger: "auto", when: "Two business days after the call with nothing in motion, or when used in a request", labels: ["brief from a call"] },
     { title: "Writes a brief from one of our winning ads", where: "Ideas · Our winners · Request form", trigger: "click", when: "When someone clicks Create brief / Brief a client", labels: ["brief from a winner"] },
     { title: "Writes a brief from a live ad in the market", where: "Ideas · In the market · Request form · Client page", trigger: "click", when: "When someone clicks Create brief / Brief a client", labels: ["brief from a market ad"] },
     { title: "Writes the brief for an Ads Lab test", where: "Ads Lab · Running tests", trigger: "auto", when: "When a test starts for a client", labels: ["lab test brief"] },
@@ -58,8 +58,9 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
   industry: [{ title: "Sorts clients into industries from everything on their page", where: "Clients · Winners · Market", trigger: "auto", when: "Hourly for new or thinly-read clients, and at 12pm and 6pm", labels: ["client industries"] }],
   calls: [
     { title: "Reads Gemini and Fireflies notes per client: what was said, decided and promised", where: "Client page · Calls", trigger: "auto", when: "Every 30 minutes in business hours", labels: ["read a call"] },
-    { title: "Checks whether a promise has been covered by a request", where: "Overview · Promised on calls", trigger: "auto", when: "After every request, and with every call sync", labels: ["commitments covered"] },
-    { title: "Re-checks each promise against the whole call: paid ads, or another Kaizen service", where: "Overview · Promised on calls", trigger: "auto", when: "With every call sync, once per promise", labels: ["recheck call promises"] },
+    { title: "Checks whether a promise has been covered by a request", where: "Overview · Waiting on us", trigger: "auto", when: "After every request, and with every call sync", labels: ["commitments covered"] },
+    { title: "Re-checks each promise against the whole call: paid ads, or another Kaizen service", where: "Overview · Waiting on us", trigger: "auto", when: "With every call sync, once per promise", labels: ["recheck call promises"] },
+    { title: "Reads Slack tags and emails nobody answered: does it really need a reply, and what's it about", where: "Your day · Waiting on us · Notifications", trigger: "auto", when: "Hourly on weekdays, once a message has waited a few working hours", labels: ["owed replies"] },
   ],
   gtm: [
     { title: "Researches the client for the Meta go-to-market strategy", where: "Client page · Go-to-market", trigger: "auto", when: "At onboarding once the intake, call notes and website are in, or on Build it now", labels: ["gtm research"] },

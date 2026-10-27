@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 
 export type ItemSnapshot = { topic: string; client: string; title: string; clientId: string | null };
 type Status = "seen" | "saved" | "done" | "dismissed";
@@ -33,8 +34,23 @@ export async function setItem(key: string, status: Status, snap: ItemSnapshot) {
     },
     { onConflict: "profile_id,key" },
   );
+  // A message set aside as not needing a reply stops being chased (only the person it's on can do that)
+  if (next === "dismissed" && /^owed2?:/.test(key)) await closeOwed(key.split(":")[1], me.id);
   revalidatePath("/pipeline");
   return next;
+}
+
+/** "Doesn't need a reply" from the Overview: the message stops being watched, and nobody above them is told. */
+export async function dismissOwed(id: string) {
+  const me = await requireStaff();
+  await closeOwed(id, me.id);
+}
+
+async function closeOwed(id: string, meId: string) {
+  if (!adminConfigured()) return;
+  const now = new Date().toISOString();
+  await createAdminClient().from("owed_replies").update({ status: "dismissed", dismissed_at: now, dismissed_by: meId, dismiss_reason: "Doesn't need a reply" }).eq("id", id).eq("target_id", meId).in("status", ["watching", "nudged", "escalated"]);
+  revalidatePath("/pipeline");
 }
 
 /** A "taken care of" card has been read: it doesn't come back. */

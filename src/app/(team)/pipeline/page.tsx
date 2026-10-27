@@ -8,6 +8,7 @@ import { loadProduction } from "@/lib/production";
 import { roleLabel } from "@/lib/roles";
 import { businessDuration, health, stageInfo, type Stage } from "@/lib/stages";
 import { createClient } from "@/lib/supabase/server";
+import { loadOwedReplies } from "@/lib/owed-replies";
 import { loadCallPromises, loadOnboarding, loadSuggestions } from "@/lib/suggestions";
 import { loadWatchList } from "@/lib/fatigue";
 import { HandoffCallout } from "@/components/handoff-callout";
@@ -34,7 +35,7 @@ export default async function Home() {
   // Ad accounts against target, each service line on its own: execs see Meta and Google, the Head of Meta only Meta,
   // the Head of Google only Google, the Head of Creative neither; a buyer only the accounts they own
   const lines: ("meta" | "google")[] = me.isExec ? ["meta", "google"] : me.role === "head_of_meta" ? ["meta"] : me.role === "head_of_google" ? ["google"] : [];
-  const [h, kpiLines, buyerKpis, suggestions, fatigue, onboarding, clientOptions, callPromises] = await Promise.all([
+  const [h, kpiLines, buyerKpis, suggestions, fatigue, onboarding, clientOptions, callPromises, owedItems] = await Promise.all([
     loadHome(db, me),
     Promise.all(lines.map((platform) => loadKpiPulse(db, { platform }))),
     !me.isLead && !me.isExec && variantNow === "buyer" ? loadKpiPulse(db, me.id) : Promise.resolve(null),
@@ -49,7 +50,10 @@ export default async function Home() {
     me.isExec || me.isLead ? db.from("clients").select("id, name").is("archived_at", null).order("name").then(({ data }) => data ?? []) : Promise.resolve([]),
     // What we promised on calls and haven't started: everyone's for execs and leads, a buyer's own clients for a buyer
     me.isExec || me.isLead || variantFor(me) === "buyer" ? loadCallPromises(db) : Promise.resolve(null),
+    // Messages nobody answered: their own, and the ones escalated past a second notice on the people they lead
+    loadOwedReplies(db, me).catch(() => []),
   ]);
+  const owed = { items: owedItems, me: me.id };
 
   const kpis = kpiLines.filter((k): k is KpiPulse => Boolean(k));
   // How creative production is going (speed, revisions, the team): execs and the Head of Creative
@@ -63,7 +67,7 @@ export default async function Home() {
   );
 
   if (me.isExec) {
-    return <PulseView {...base} vitals={h.vitals} attention={h.attention} phases={h.phases} clients={h.clients} team={h.team} monthElapsed={h.monthElapsed} kpis={kpis} production={production} suggestions={suggestions} fatigue={fatigue} onboarding={onboarding} clientOptions={clientOptions} callPromises={callPromises} handoffs={<HandoffCallout db={db} me={me.id} />} recap={recap} />;
+    return <PulseView {...base} vitals={h.vitals} attention={h.attention} phases={h.phases} clients={h.clients} team={h.team} monthElapsed={h.monthElapsed} kpis={kpis} production={production} suggestions={suggestions} fatigue={fatigue} onboarding={onboarding} clientOptions={clientOptions} callPromises={callPromises} owed={owed} handoffs={<HandoffCallout db={db} me={me.id} />} recap={recap} />;
   }
 
   if (me.isLead) {
@@ -96,6 +100,7 @@ export default async function Home() {
         onboarding={onboarding}
         clientOptions={clientOptions}
         callPromises={callPromises}
+        owed={owed}
         handoffs={<HandoffCallout db={db} me={me.id} />}
         recap={recap}
       />

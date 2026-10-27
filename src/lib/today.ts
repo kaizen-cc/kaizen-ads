@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
 import { loadWatchList } from "@/lib/fatigue";
 import { loadHome } from "@/lib/home";
+import { loadOwedReplies } from "@/lib/owed-replies";
 import { loadCallPromises, loadOnboarding, loadSuggestions, type OpenSuggestion } from "@/lib/suggestions";
 import { assetsStale } from "@/lib/client-assets";
 import { LIVE } from "@/lib/live";
@@ -17,7 +18,7 @@ export type Tier = "critical" | "high" | "normal";
 export type TopicKey = "mine" | "promises" | "onboarding" | "accounts" | "work" | "briefs" | "ads" | "allotments";
 export const TOPICS: Record<TopicKey, { label: string; blurb: string }> = {
   mine: { label: "Your work", blurb: "Tickets and tasks on you" },
-  promises: { label: "Promises", blurb: "What we told clients we'd do" },
+  promises: { label: "Waiting on us", blurb: "Promised to clients, messages nobody answered" },
   onboarding: { label: "New clients", blurb: "First impressions" },
   accounts: { label: "Accounts", blurb: "Results against target" },
   work: { label: "Late work", blurb: "Work running late on our side" },
@@ -42,6 +43,8 @@ export type TodayItem = {
   action: { label: string; href?: string; suggestion?: OpenSuggestion };
   /** The other place to look: the client page, or the account on the KPI board */
   alt?: { label: string; href: string };
+  /** What setting it aside means here, when it's more than "not for me" */
+  dismiss?: string;
   state: "new" | "seen" | "saved"; // what this person has done with it so far
   carried: boolean; // came up on an earlier day and is still open
   image?: string | null;
@@ -69,7 +72,8 @@ type Draft = Omit<TodayItem, "tier" | "state" | "carried">;
 /** Which topics a person's day covers. Everyone has their own work; managers see across their clients. */
 export function topicsFor(me: Staff): Set<TopicKey> {
   const manager = me.isExec || me.isLead;
-  const t = new Set<TopicKey>(["mine"]);
+  // Everyone has messages they could owe a reply to; promises from calls are for the people who run accounts
+  const t = new Set<TopicKey>(["mine", "promises"]);
   if (manager) ["promises", "onboarding", "accounts", "work", "briefs", "ads", "allotments"].forEach((k) => t.add(k as TopicKey));
   if (me.isBuyer) ["promises", "accounts", "ads", "allotments"].forEach((k) => t.add(k as TopicKey));
   if (me.isCoordinator) ["promises", "onboarding", "allotments"].forEach((k) => t.add(k as TopicKey));
@@ -130,15 +134,41 @@ async function mine(db: SupabaseClient, me: Staff): Promise<Draft[]> {
 async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
   const topics = topicsFor(me);
   const manager = me.isExec || me.isLead;
-  const [promises, onboarding, suggestions, fatigue, home, own] = await Promise.all([
-    topics.has("promises") ? loadCallPromises(db).catch(() => []) : [],
+  const callPromises = manager || me.isBuyer || me.isCoordinator;
+  const [promises, onboarding, suggestions, fatigue, home, own, owed] = await Promise.all([
+    callPromises ? loadCallPromises(db).catch(() => []) : [],
     topics.has("onboarding") ? loadOnboarding(db).catch(() => null) : null,
     topics.has("briefs") ? loadSuggestions(db).catch(() => null) : null,
     topics.has("ads") ? loadWatchList(db, manager ? { limit: 20 } : { buyerId: me.id, limit: 20 }).catch(() => []) : [],
     topics.has("work") || topics.has("allotments") ? loadHome(db, me).catch(() => null) : null,
     mine(db, me).catch(() => []),
+    loadOwedReplies(db, me).catch(() => []),
   ]);
   const out: Draft[] = [...own];
+
+  // Messages nobody answered: the person's own after a first notice, and (for leads and execs) ones that were escalated
+  for (const o of owed) {
+    const waited = Math.max(1, bizDays(o.askedAt));
+    const mineToo = o.targetId === me.id;
+    const second = o.status === "escalated";
+    const where = o.source === "gmail" ? "Open the email" : "Open in Slack";
+    out.push({
+      key: mineToo ? `${second ? "owed2" : "owed"}:${o.id}` : `owed-lead:${o.id}`,
+      topic: "promises",
+      score: mineToo ? (second ? 94 : Math.min(88, 74 + waited * 4)) : 84,
+      client: o.client ?? (o.fromTeam ? "Team" : o.from),
+      clientSlug: o.clientSlug ?? "",
+      clientId: o.clientId,
+      stat: { value: String(waited), label: `business ${waited === 1 ? "day" : "days"} without a reply` },
+      title: mineToo ? `${o.from} is waiting on you: ${o.gist}` : `${o.target} hasn't replied to ${o.from}: ${o.gist}`,
+      story: `${o.from} wrote ${o.where} on ${day(o.askedAt)}: "${o.body.replace(/\s+/g, " ").slice(0, 220)}${o.body.length > 220 ? "…" : ""}"`,
+      why: mineToo ? (second ? "Second notice: your lead and the exec team have been told" : "Nobody's answered it yet") : "They had a notice and still haven't answered",
+      evidence: [],
+      action: { label: where, href: o.url ?? o.channelUrl ?? "/today" },
+      ...(o.channelUrl ? { alt: { label: "Open the channel", href: o.channelUrl } } : {}),
+      ...(mineToo ? { dismiss: "Doesn't need a reply" } : {}),
+    });
+  }
 
   // Promises we made on calls and haven't started: the client was told, so it's their trust on the line
   for (const p of promises) {
@@ -382,6 +412,10 @@ async function whatHappened(db: SupabaseClient, keys: { key: string; snapshot: {
     } else if (kind === "kpi") {
       const { data } = await db.from("account_audits").select("created_by, created_at").eq("target_id", rest[0]).order("created_at", { ascending: false }).limit(1).maybeSingle();
       out.push({ ...base, by: await name((data?.created_by as string | null) ?? null), what: data ? "ran an audit; an optimization sprint is under way" : "it's back on target" });
+    } else if (kind === "owed" || kind === "owed2" || kind === "owed-lead") {
+      const { data } = await db.from("owed_replies").select("status, target_id, dismissed_by").eq("id", rest[0]).maybeSingle();
+      if (!data) continue;
+      out.push({ ...base, by: await name((data.status === "dismissed" ? data.dismissed_by : data.target_id) as string | null), what: data.status === "answered" ? "replied" : "marked it as not needing a reply" });
     } else out.push({ ...base, by: null, what: "it's been taken care of" });
   }
   return out;

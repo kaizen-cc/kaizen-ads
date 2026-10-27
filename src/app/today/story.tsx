@@ -29,7 +29,7 @@ function headline(topic: TopicKey, n: number) {
     case "mine":
       return `${n} ${s("thing is", "things are")} on you today`;
     case "promises":
-      return `${n} ${s("promise to a client hasn't", "promises to clients haven't")} started`;
+      return `${n} ${s("thing is", "things are")} waiting on us: promised, or not answered`;
     case "onboarding":
       return `${n} new ${s("client needs", "clients need")} you`;
     case "accounts":
@@ -556,7 +556,7 @@ function Overview({ i, status, dive, onChoose, onAct, onNext }: { i: TodayItem; 
           {status === "saved" ? "Saved ✓" : "Save for later"}
         </button>
         <button type="button" onClick={() => onChoose("dismissed")} className="h-11 rounded-full px-3 text-sm text-white/50 hover:text-white">
-          Not for me
+          {i.dismiss ?? "Not for me"}
         </button>
         {onNext && (
           <button type="button" onClick={onNext} className="ml-auto h-11 rounded-full px-3 text-sm text-white/70 hover:text-white">
