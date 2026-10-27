@@ -126,8 +126,8 @@ function Document({ r, sections, setSections, extras, setExtras, client, editabl
     </div>
   );
   return (
-    <article className="overflow-hidden rounded-[14px] bg-white text-[#0b0b0c] shadow-[0_30px_80px_-30px_rgba(0,0,0,0.7)]">
-      <header className="bg-[#0b0b0c] px-7 pb-6 pt-7 text-white max-md:px-5">
+    <article className="overflow-hidden rounded-[14px] bg-fg text-[#0b0b0c] shadow-[0_30px_80px_-30px_rgba(0,0,0,0.7)]">
+      <header className="bg-deep px-7 pb-6 pt-7 text-fg max-md:px-5">
         <span className="mb-3 block h-[3px] w-7 bg-[#c8102e]" />
         <p className="font-heading text-[22px] leading-tight">{client}</p>
         <p className="mt-1 text-[13px] text-[#b4b4bb]">
@@ -231,8 +231,8 @@ function Mrkdwn({ text }: { text: string }) {
 function SlackPreview({ from, text, file }: { from: { name: string; image: string | null; app: boolean }; text: string; file: string }) {
   const now = new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   return (
-    <div className="overflow-hidden rounded-[12px] border border-white/10 bg-[#1a1d21] font-[Lato,ui-sans-serif,system-ui]">
-      <div className="flex items-center gap-2 border-b border-white/[0.06] px-4 py-2.5 text-[13px] text-[#d1d2d3]">
+    <div className="overflow-hidden rounded-[12px] border border-ink/10 bg-[#1a1d21] font-[Lato,ui-sans-serif,system-ui]">
+      <div className="flex items-center gap-2 border-b border-ink/[0.06] px-4 py-2.5 text-[13px] text-[#d1d2d3]">
         <span className="font-bold"># {file.split(" - ")[0].toLowerCase().replace(/[^a-z0-9]+/g, "-")}</span>
         <span className="text-[#ababad]">· how it&apos;ll look in their channel</span>
       </div>
@@ -245,15 +245,15 @@ function SlackPreview({ from, text, file }: { from: { name: string; image: strin
         )}
         <div className="grid min-w-0 flex-1 gap-1">
           <p className="flex items-center gap-1.5 text-[15px]">
-            <b className="text-white">{from.name}</b>
-            {from.app && <span className="rounded-[3px] bg-white/10 px-1 text-[10px] font-semibold text-[#ababad]">APP</span>}
+            <b className="text-fg">{from.name}</b>
+            {from.app && <span className="rounded-[3px] bg-ink/10 px-1 text-[10px] font-semibold text-[#ababad]">APP</span>}
             <span className="text-[12px] text-[#ababad]">{now}</span>
           </p>
           <Mrkdwn text={text || "(empty)"} />
-          <div className="mt-2 flex max-w-[360px] items-center gap-3 rounded-[8px] border border-white/10 bg-[#222529] px-3 py-2.5">
+          <div className="mt-2 flex max-w-[360px] items-center gap-3 rounded-[8px] border border-ink/10 bg-[#222529] px-3 py-2.5">
             <span className="grid h-10 w-9 shrink-0 place-items-center rounded-[4px] bg-[#e01e5a] text-[10px] font-bold text-white">PDF</span>
             <span className="grid min-w-0">
-              <span className="truncate text-[14px] font-bold text-white">{file}</span>
+              <span className="truncate text-[14px] font-bold text-fg">{file}</span>
               <span className="text-[12px] text-[#ababad]">PDF</span>
             </span>
           </div>

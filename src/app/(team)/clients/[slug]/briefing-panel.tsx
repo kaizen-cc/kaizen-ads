@@ -117,7 +117,7 @@ export function BriefingPanel({
                 className={`absolute inset-y-0 left-0 rounded-full transition-[width] duration-700 ease-out ${finished ? "bg-ok" : "bg-gradient-to-r from-brand to-brand-text"}`}
                 style={{ width: `${progress}%` }}
               />
-              {!finished && <div className="absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-white/25 to-transparent animate-[ai-sweep_1.6s_ease-in-out_infinite]" />}
+              {!finished && <div className="absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-ink/25 to-transparent animate-[ai-sweep_1.6s_ease-in-out_infinite]" />}
             </div>
           </div>
 

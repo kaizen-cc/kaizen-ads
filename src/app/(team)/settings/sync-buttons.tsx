@@ -116,7 +116,7 @@ export function ProgressBar({ progress }: { progress: Progress }) {
       </span>
       <span className="block h-1.5 overflow-hidden rounded-full bg-line">
         <span className="relative block h-full rounded-full bg-ok transition-[width] duration-1000 ease-out" style={{ width: `${Math.max(2, p.pct)}%` }}>
-          <span className="absolute inset-0 animate-pulse rounded-full bg-white/25" />
+          <span className="absolute inset-0 animate-pulse rounded-full bg-ink/25" />
         </span>
       </span>
       <span className="flex flex-wrap justify-between gap-x-4 gap-y-0.5 text-[11px] text-faint">

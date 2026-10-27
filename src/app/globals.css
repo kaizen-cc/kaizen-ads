@@ -17,6 +17,10 @@
   --fg: #f2f2f2;
   --fg-muted: #9a9aa2;
   --fg-faint: #6a6a72;
+  /* ink: the color tints are made of (white on dark, near-black on light); deep: the darker "stage" panels */
+  --ink: #ffffff;
+  --deep: #0b0a0e;
+  --deep-2: #17131a;
 
   /* Status colors (on time / due soon / overdue) */
   --ok: #3fb27f;
@@ -27,20 +31,106 @@
   --bad-soft: rgba(224, 80, 92, 0.15);
 }
 
+/* Light: chosen in the profile menu, or the device's setting when the choice is System (dark is the default) */
 :root[data-theme="light"] {
   color-scheme: light;
   --brand-text: #b21e2c;
   --brand-soft: rgba(178, 30, 44, 0.08);
-  --bg: #fafafa;
+  --bg: #f6f5f4;
   --surface: #ffffff;
-  --surface-2: #f2f2f2;
-  --border: #e4e4e7;
-  --fg: #060606;
-  --fg-muted: #5a5a62;
-  --fg-faint: #8a8a92;
-  --ok: #1f8a5b;
-  --warn: #a86f0c;
-  --bad: #b21e2c;
+  --surface-2: #efeeec;
+  --border: #e2e0de;
+  --fg: #111014;
+  --fg-muted: #55535c;
+  --fg-faint: #8a8790;
+  --ink: #16141a;
+  --deep: #ffffff;
+  --deep-2: #f3f1f0;
+  --ok: #1a8553;
+  --ok-soft: rgba(26, 133, 83, 0.11);
+  --warn: #a2690a;
+  --warn-soft: rgba(162, 105, 10, 0.12);
+  --bad: #c0283a;
+  --bad-soft: rgba(192, 40, 58, 0.09);
+  & .text-\[\#7aa7ff\] { color: #0b5bd3; }
+  & .text-\[\#5be3a5\] { color: #11804f; }
+  & .text-\[\#ff4d5e\] { color: #c41e30; }
+  & .text-\[\#9aa8ff\] { color: #4250c4; }
+  & .text-\[\#9aa7f0\] { color: #4250c4; }
+  & .text-\[\#f2b14c\] { color: #9a6200; }
+  & .text-\[\#8ab4f8\] { color: #1a5fd0; }
+  & .text-\[\#e0505c\] { color: #c0283a; }
+  & .text-\[\#3fb27f\] { color: #1a8553; }
+  & .text-\[\#e0a63a\] { color: #a2690a; }
+  & .text-\[\#ababad\] { color: #6a6870; }
+  & .text-\[\#9a9aa1\] { color: #5f5d66; }
+  & .text-\[\#6b6b73\] { color: #7a7880; }
+}
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] {
+  color-scheme: light;
+  --brand-text: #b21e2c;
+  --brand-soft: rgba(178, 30, 44, 0.08);
+  --bg: #f6f5f4;
+  --surface: #ffffff;
+  --surface-2: #efeeec;
+  --border: #e2e0de;
+  --fg: #111014;
+  --fg-muted: #55535c;
+  --fg-faint: #8a8790;
+  --ink: #16141a;
+  --deep: #ffffff;
+  --deep-2: #f3f1f0;
+  --ok: #1a8553;
+  --ok-soft: rgba(26, 133, 83, 0.11);
+  --warn: #a2690a;
+  --warn-soft: rgba(162, 105, 10, 0.12);
+  --bad: #c0283a;
+  --bad-soft: rgba(192, 40, 58, 0.09);
+  & .text-\[\#7aa7ff\] { color: #0b5bd3; }
+  & .text-\[\#5be3a5\] { color: #11804f; }
+  & .text-\[\#ff4d5e\] { color: #c41e30; }
+  & .text-\[\#9aa8ff\] { color: #4250c4; }
+  & .text-\[\#9aa7f0\] { color: #4250c4; }
+  & .text-\[\#f2b14c\] { color: #9a6200; }
+  & .text-\[\#8ab4f8\] { color: #1a5fd0; }
+  & .text-\[\#e0505c\] { color: #c0283a; }
+  & .text-\[\#3fb27f\] { color: #1a8553; }
+  & .text-\[\#e0a63a\] { color: #a2690a; }
+  & .text-\[\#ababad\] { color: #6a6870; }
+  & .text-\[\#9a9aa1\] { color: #5f5d66; }
+  & .text-\[\#6b6b73\] { color: #7a7880; }
+  }
+}
+
+/* A screen that stays dark in either theme (the media viewer, the morning story): the dark tokens again, scoped */
+.force-dark {
+  color-scheme: dark; /* native scrollbars, selects and date pickers follow the dark theme */
+  --brand: #b21e2c;
+  --brand-hover: #c42a38;
+  --brand-text: #e0505c;
+  --brand-soft: rgba(178, 30, 44, 0.14);
+
+  --bg: #060606;
+  --surface: #101011;
+  --surface-2: #18181a;
+  --border: #26262a;
+  --fg: #f2f2f2;
+  --fg-muted: #9a9aa2;
+  --fg-faint: #6a6a72;
+  /* ink: the color tints are made of (white on dark, near-black on light); deep: the darker "stage" panels */
+  --ink: #ffffff;
+  --deep: #0b0a0e;
+  --deep-2: #17131a;
+
+  /* Status colors (on time / due soon / overdue) */
+  --ok: #3fb27f;
+  --ok-soft: rgba(63, 178, 127, 0.15);
+  --warn: #e0a63a;
+  --warn-soft: rgba(224, 166, 58, 0.15);
+  --bad: #e0505c;
+  --bad-soft: rgba(224, 80, 92, 0.15);
+  color: var(--fg);
 }
 
 @theme inline {
@@ -61,6 +151,9 @@
   --color-warn-soft: var(--warn-soft);
   --color-bad: var(--bad);
   --color-bad-soft: var(--bad-soft);
+  --color-ink: var(--ink);
+  --color-deep: var(--deep);
+  --color-deep-2: var(--deep-2);
 
   --font-sans: var(--font-poppins), ui-sans-serif, system-ui, sans-serif;
   --font-heading: var(--font-flexa), var(--font-poppins), ui-sans-serif, sans-serif;

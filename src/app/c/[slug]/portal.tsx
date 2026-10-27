@@ -42,11 +42,11 @@ export function Portal({ slug, clientName, firstName, data, testing, live, demo 
 
       <main className="mx-auto grid max-w-md gap-4 px-4 pb-[max(4rem,calc(env(safe-area-inset-bottom)+2rem))] pt-4">
         <section className={`grid gap-2.5 rounded-[12px] p-4 text-white ${queue.length ? "bg-brand" : "border border-brand/70 bg-bg"}`}>
-          <p className={`text-[11px] font-semibold uppercase tracking-[0.08em] ${queue.length ? "text-white/75" : "text-brand-text"}`}>Waiting on you</p>
+          <p className={`text-[11px] font-semibold uppercase tracking-[0.08em] ${queue.length ? "text-ink/75" : "text-brand-text"}`}>Waiting on you</p>
           <h1 className="font-heading text-[20px] font-semibold leading-tight">
             {queue.length ? `${total} ${total === 1 ? "piece is" : "pieces are"} ready for your review` : firstName ? `You're all caught up, ${firstName}` : "You're all caught up"}
           </h1>
-          <p className={`text-[12.5px] ${queue.length ? "text-white/90" : "text-muted"}`}>
+          <p className={`text-[12.5px] ${queue.length ? "text-ink/90" : "text-muted"}`}>
             {queue.length ? `${queue.length} ${queue.length === 1 ? "batch" : "batches"}. Approve or ask for changes on each design and each copy.` : "When your Kaizen team sends new ads, they'll show up here."}
           </p>
           {queue.length > 0 && (
@@ -441,9 +441,9 @@ function Intro({ item, designs, ads, onStart }: { item: PortalItem; designs: num
     <div className="grid min-h-0 flex-1 content-start gap-4 overflow-y-auto px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-2">
       {item.revised ? (
         <div className="grid gap-3 rounded-[14px] bg-brand p-4 text-white">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-white/75">Revised · round {item.revised.round + 1}</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ink/75">Revised · round {item.revised.round + 1}</p>
           <h3 className="text-[21px] font-semibold leading-tight">We made the changes you asked for</h3>
-          <p className="text-[12.5px] text-white/85">{item.title}. Here&apos;s what we updated. You&apos;ll see each one next to your notes.</p>
+          <p className="text-[12.5px] text-ink/85">{item.title}. Here&apos;s what we updated. You&apos;ll see each one next to your notes.</p>
           <div className="grid gap-2">
             {revisedDesigns.map((d) => (
               <div key={d.id} className="flex items-center gap-2.5 rounded-[10px] bg-black/20 p-2">
@@ -452,7 +452,7 @@ function Intro({ item, designs, ads, onStart }: { item: PortalItem; designs: num
                   <span className="block truncate text-[12.5px] font-semibold">
                     {item.format === "video" ? "Video" : "Design"} · {d.name}
                   </span>
-                  <span className="line-clamp-2 text-[11.5px] text-white/80">You asked: {d.previous?.notes.map((n) => n.body).join(" · ") || "changes"}</span>
+                  <span className="line-clamp-2 text-[11.5px] text-ink/80">You asked: {d.previous?.notes.map((n) => n.body).join(" · ") || "changes"}</span>
                 </span>
               </div>
             ))}
@@ -461,7 +461,7 @@ function Intro({ item, designs, ads, onStart }: { item: PortalItem; designs: num
                 <span className="grid h-11 w-11 shrink-0 place-items-center rounded-[6px] bg-black/25 text-[11px] font-semibold">Aa</span>
                 <span className="min-w-0 flex-1">
                   <span className="block text-[12.5px] font-semibold">Copy {a.i + 1}</span>
-                  <span className="line-clamp-2 text-[11.5px] text-white/80">You asked: {a.note ?? "changes"}</span>
+                  <span className="line-clamp-2 text-[11.5px] text-ink/80">You asked: {a.note ?? "changes"}</span>
                 </span>
               </div>
             ))}
@@ -835,7 +835,7 @@ function Media({
           // eslint-disable-next-line @next/next/no-img-element
           <img src={file.url} alt="" draggable={false} className="pointer-events-none h-full w-full select-none object-contain" />
         ) : (
-          <span className="grid h-full w-full place-items-center text-xs text-white/60">Preview not available</span>
+          <span className="grid h-full w-full place-items-center text-xs text-ink/60">Preview not available</span>
         )}
         {children}
       </div>
@@ -1043,7 +1043,7 @@ function Preview({ item, clientName, onClose, title = "Preview" }: { item: Porta
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-[max(16px,env(safe-area-inset-bottom))]">
-        <div className="mx-auto max-w-[400px] overflow-hidden rounded-[14px] bg-white text-[#050505]">
+        <div className="mx-auto max-w-[400px] overflow-hidden rounded-[14px] bg-fg text-[#050505]">
           <div className="flex items-center gap-2 px-3 pt-3">
             <span className="grid h-9 w-9 place-items-center rounded-full bg-[#1d1d1f] text-sm font-semibold text-white">{clientName.charAt(0)}</span>
             <span className="grid leading-tight">
@@ -1141,7 +1141,7 @@ function LivePreview({ ad, clientName, onClose }: { ad: RunningAd; clientName: s
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-[max(16px,env(safe-area-inset-bottom))]">
-        <div className="mx-auto max-w-[400px] overflow-hidden rounded-[14px] bg-white text-[#050505]">
+        <div className="mx-auto max-w-[400px] overflow-hidden rounded-[14px] bg-fg text-[#050505]">
           <div className="flex items-center gap-2 px-3 pt-3">
             <span className="grid h-9 w-9 place-items-center rounded-full bg-[#1d1d1f] text-sm font-semibold text-white">{clientName.charAt(0)}</span>
             <span className="grid leading-tight">

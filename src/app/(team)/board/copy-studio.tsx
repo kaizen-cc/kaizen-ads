@@ -95,7 +95,7 @@ function FeedPreview({ ad, client, image, landing }: { ad: Ad; client: string; i
   const cut = ad.primaryText.length > LIMITS.visible && !more;
   const ratio = image?.aspect === "1x1" ? "1 / 1" : image?.aspect === "9x16" ? "9 / 16" : "4 / 5";
   return (
-    <div className="mx-auto w-full max-w-[340px] overflow-hidden rounded-[14px] bg-white text-[#050505] shadow-[0_20px_60px_-25px_rgba(0,0,0,0.9)]">
+    <div className="mx-auto w-full max-w-[340px] overflow-hidden rounded-[14px] bg-fg text-[#050505] shadow-[0_20px_60px_-25px_rgba(0,0,0,0.9)]">
       <div className="flex items-center gap-2 px-3 pt-3">
         <span className="grid h-9 w-9 place-items-center rounded-full bg-[#1d1d1f] text-sm font-semibold text-white">{client.charAt(0)}</span>
         <span className="grid leading-tight">

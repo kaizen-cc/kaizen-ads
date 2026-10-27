@@ -41,8 +41,8 @@ export function TodayLive({ shown }: { shown: string }) {
   }, [shown, router]);
 
   return (
-    <span className={`inline-flex items-center gap-1.5 text-[11px] text-white/40 transition-opacity ${checking ? "opacity-100" : "opacity-0"}`} aria-live="polite">
-      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white/50" />
+    <span className={`inline-flex items-center gap-1.5 text-[11px] text-ink/40 transition-opacity ${checking ? "opacity-100" : "opacity-0"}`} aria-live="polite">
+      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ink/50" />
       Checking for updates
     </span>
   );

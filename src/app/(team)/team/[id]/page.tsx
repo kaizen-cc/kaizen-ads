@@ -93,7 +93,7 @@ export default async function PersonActivity({ params, searchParams }: PageProps
             return (
               // Phones: tap a day to see its minutes (the title shows on hover elsewhere)
               <span key={d} tabIndex={0} aria-label={label} className="group relative flex h-full flex-1 items-end outline-none" title={label}>
-                <span className={`w-full rounded-t-[3px] transition-colors ${m ? "bg-brand/70 group-hover:bg-brand group-focus:bg-brand" : weekend ? "bg-white/[0.03]" : "bg-white/[0.06]"}`} style={{ height: `${Math.max(m ? 6 : 3, (m / peak) * 100)}%` }} />
+                <span className={`w-full rounded-t-[3px] transition-colors ${m ? "bg-brand/70 group-hover:bg-brand group-focus:bg-brand" : weekend ? "bg-ink/[0.03]" : "bg-ink/[0.06]"}`} style={{ height: `${Math.max(m ? 6 : 3, (m / peak) * 100)}%` }} />
                 <span
                   className={`pointer-events-none absolute bottom-full z-10 mb-1.5 hidden whitespace-nowrap rounded-[8px] border border-line bg-surface-2 px-2 py-1 text-[11px] text-fg shadow-lg group-focus:block md:!hidden ${i < 5 ? "left-0" : i > 22 ? "right-0" : "left-1/2 -translate-x-1/2"}`}
                 >

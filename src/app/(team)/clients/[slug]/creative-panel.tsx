@@ -107,7 +107,7 @@ function Ads({ ads, paused, onOpen }: { ads: MetaRow[]; paused: boolean; onOpen:
               <span className="absolute inset-0 grid place-items-center p-2 text-center text-[10px] text-faint">{a.name}</span>
             )}
             <span className={`absolute left-1.5 top-1.5 flex items-center gap-1 rounded-full bg-black/60 px-1.5 py-px text-[9.5px] text-white`}>
-              <i className={`h-1.5 w-1.5 rounded-full ${paused ? "bg-white/50" : "bg-[#3fb27f]"}`} />
+              <i className={`h-1.5 w-1.5 rounded-full ${paused ? "bg-ink/50" : "bg-[#3fb27f]"}`} />
               {paused ? "Paused" : "Live"}
             </span>
           </span>
@@ -135,7 +135,7 @@ function AdSheet({ ad, onClose }: { ad: MetaRow; onClose: () => void }) {
             Done
           </button>
         </div>
-        <div className="overflow-hidden rounded-[12px] bg-white text-[#050505]">
+        <div className="overflow-hidden rounded-[12px] bg-fg text-[#050505]">
           {ad.text && <p className="whitespace-pre-wrap px-3 py-2.5 text-[13px] leading-[1.35]">{ad.text}</p>}
           {ad.thumbnail ? (
             // eslint-disable-next-line @next/next/no-img-element

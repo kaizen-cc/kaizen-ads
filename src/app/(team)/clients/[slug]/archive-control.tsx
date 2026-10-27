@@ -93,7 +93,7 @@ export function ArchiveControl({ clientId, slug, name, archived }: { clientId: s
             aria-label={`Archive ${name}`}
             className="fixed inset-x-0 bottom-0 z-50 grid gap-3 rounded-t-[22px] border-t border-line bg-surface px-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] pt-3 text-left shadow-2xl md:hidden"
           >
-            <span aria-hidden className="mx-auto mb-1 h-1 w-10 rounded-full bg-white/15" />
+            <span aria-hidden className="mx-auto mb-1 h-1 w-10 rounded-full bg-ink/15" />
             {confirm}
           </div>
         </Layer>

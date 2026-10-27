@@ -30,7 +30,7 @@ async function openDoc(id: string) {
   if (url) window.open(url, "_blank", "noreferrer");
 }
 
-const LEVEL = { quick: { label: "Quick answer", dot: "bg-white/40" }, standard: { label: "Considered", dot: "bg-[#9aa8ff]" }, deep: { label: "Thought it through", dot: "bg-brand" } } as const;
+const LEVEL = { quick: { label: "Quick answer", dot: "bg-ink/40" }, standard: { label: "Considered", dot: "bg-[#9aa8ff]" }, deep: { label: "Thought it through", dot: "bg-brand" } } as const;
 
 function Bubble({ t, onUndo }: { t: ChatTurn; onUndo?: (i: number) => void }) {
   const me = t.role === "user";
@@ -39,23 +39,23 @@ function Bubble({ t, onUndo }: { t: ChatTurn; onUndo?: (i: number) => void }) {
       {t.attachments && t.attachments.length > 0 && (
         <span className={`flex max-w-[92%] flex-wrap gap-1.5 ${me ? "justify-end" : ""}`}>
           {t.attachments.map((a) => (
-            <button key={a.id} type="button" onClick={() => void openDoc(a.id)} className="inline-flex min-h-9 max-w-full items-center gap-1.5 truncate rounded-full border border-white/10 bg-white/[0.04] px-3 text-[11.5px] text-white/75 hover:text-white md:min-h-7" title="Open it (it's in the client's documents)">
+            <button key={a.id} type="button" onClick={() => void openDoc(a.id)} className="inline-flex min-h-9 max-w-full items-center gap-1.5 truncate rounded-full border border-ink/10 bg-ink/[0.04] px-3 text-[11.5px] text-ink/75 hover:text-fg md:min-h-7" title="Open it (it's in the client's documents)">
               <span aria-hidden>{a.kind === "link" ? "↗" : "📄"}</span>
               <span className="truncate">{a.name}</span>
             </button>
           ))}
         </span>
       )}
-      {t.text && <p className={`max-w-[92%] whitespace-pre-wrap rounded-[14px] px-3.5 py-2.5 text-[13.5px] leading-relaxed ${me ? "bg-fg text-bg" : "border border-white/[0.06] bg-white/[0.04] text-fg"}`}>{t.text}</p>}
+      {t.text && <p className={`max-w-[92%] whitespace-pre-wrap rounded-[14px] px-3.5 py-2.5 text-[13.5px] leading-relaxed ${me ? "bg-fg text-bg" : "border border-ink/[0.06] bg-ink/[0.04] text-fg"}`}>{t.text}</p>}
       {/* What it changed in the knowledge base, each with an undo */}
       {!me && t.done && t.done.length > 0 && (
         <ul className="grid w-full max-w-[92%] gap-1">
           {t.done.map((d, i) => (
-            <li key={i} className={`flex items-start gap-2 rounded-[10px] border px-3 py-2 text-[12px] ${d.undone ? "border-white/[0.05] text-white/35 line-through" : "border-[#5be3a5]/25 bg-[#5be3a5]/[0.06] text-white/80"}`}>
+            <li key={i} className={`flex items-start gap-2 rounded-[10px] border px-3 py-2 text-[12px] ${d.undone ? "border-ink/[0.05] text-ink/35 line-through" : "border-[#5be3a5]/25 bg-[#5be3a5]/[0.06] text-ink/80"}`}>
               <span className={`mt-0.5 shrink-0 ${d.undone ? "" : "text-[#5be3a5]"}`}>✓</span>
               <span className="min-w-0 flex-1">{d.label}</span>
               {d.undo && !d.undone && onUndo && (
-                <button type="button" onClick={() => onUndo(i)} className="-my-1 shrink-0 rounded-full px-2 py-1 text-[11px] text-white/55 no-underline hover:bg-white/10 hover:text-white max-md:min-h-9">
+                <button type="button" onClick={() => onUndo(i)} className="-my-1 shrink-0 rounded-full px-2 py-1 text-[11px] text-ink/55 no-underline hover:bg-ink/10 hover:text-fg max-md:min-h-9">
                   Undo
                 </button>
               )}
@@ -64,7 +64,7 @@ function Bubble({ t, onUndo }: { t: ChatTurn; onUndo?: (i: number) => void }) {
         </ul>
       )}
       {!me && t.level && (
-        <span className="flex items-center gap-1.5 px-1 text-[10px] text-white/40">
+        <span className="flex items-center gap-1.5 px-1 text-[10px] text-ink/40">
           <span className={`h-1.5 w-1.5 rounded-full ${LEVEL[t.level].dot}`} />
           {LEVEL[t.level].label}
           {t.researched && " · checked the web"}
@@ -208,7 +208,7 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className={`fixed bottom-[calc(76px+env(safe-area-inset-bottom))] right-4 z-40 flex max-w-[calc(100vw-2rem)] items-center gap-2.5 rounded-full md:bottom-6 md:right-6 md:max-w-none border border-white/10 bg-[#141117] py-2.5 pl-3 pr-5 text-sm shadow-[0_20px_50px_-15px_rgba(200,16,46,0.55)] transition duration-300 hover:-translate-y-0.5 hover:border-white/25 ${open ? "pointer-events-none opacity-0" : ""}`}
+        className={`fixed bottom-[calc(76px+env(safe-area-inset-bottom))] right-4 z-40 flex max-w-[calc(100vw-2rem)] items-center gap-2.5 rounded-full md:bottom-6 md:right-6 md:max-w-none border border-ink/10 bg-deep-2 py-2.5 pl-3 pr-5 text-sm shadow-[0_20px_50px_-15px_rgba(200,16,46,0.55)] transition duration-300 hover:-translate-y-0.5 hover:border-ink/25 ${open ? "pointer-events-none opacity-0" : ""}`}
       >
         <span className="relative grid h-8 w-8 place-items-center rounded-full bg-brand text-white">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -225,14 +225,14 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
       <aside
         ref={panel}
         aria-hidden={!open}
-        className={`fixed right-0 top-[var(--vvt,0px)] z-50 grid h-[var(--vvh,100dvh)] w-full grid-rows-[auto_auto_minmax(0,1fr)_auto] overflow-hidden bg-[#0b0a0e] shadow-[-30px_0_80px_-30px_rgba(0,0,0,0.9)] transition-transform duration-300 ease-out md:inset-y-0 md:h-auto md:max-w-[460px] md:border-l md:border-white/[0.07] ${open ? "translate-x-0 translate-y-0" : "pointer-events-none translate-y-full md:translate-x-full md:translate-y-0"}`}
+        className={`fixed right-0 top-[var(--vvt,0px)] z-50 grid h-[var(--vvh,100dvh)] w-full grid-rows-[auto_auto_minmax(0,1fr)_auto] overflow-hidden bg-deep shadow-[-30px_0_80px_-30px_rgba(0,0,0,0.9)] transition-transform duration-300 ease-out md:inset-y-0 md:h-auto md:max-w-[460px] md:border-l md:border-ink/[0.07] ${open ? "translate-x-0 translate-y-0" : "pointer-events-none translate-y-full md:translate-x-full md:translate-y-0"}`}
       >
         <span aria-hidden className="pointer-events-none absolute -left-24 -top-28 h-72 w-72 rounded-full bg-[rgba(200,16,46,0.35)] blur-[90px]" />
         <header className="relative flex items-start justify-between gap-3 px-4 pb-3 pt-[calc(1rem+env(safe-area-inset-top))] md:px-5 md:pt-5">
           <div className="grid min-w-0 gap-1">
-            <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-white/50">Client desk</p>
+            <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-ink/50">Client desk</p>
             <h2 className="font-display text-2xl leading-tight tracking-tight [overflow-wrap:anywhere]">{client}</h2>
-            <p className="text-xs text-white/50">Ask anything, share files and links (they&apos;re filed in the client&apos;s documents), or tell it what to remember or change. It reads everything Kaizen Ads knows about the client.</p>
+            <p className="text-xs text-ink/50">Ask anything, share files and links (they&apos;re filed in the client&apos;s documents), or tell it what to remember or change. It reads everything Kaizen Ads knows about the client.</p>
           </div>
           <span className="flex shrink-0 gap-1.5">
             {chat.length > 0 && (
@@ -242,33 +242,33 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
                   await clearClientAi(clientId);
                   setChat([]);
                 }}
-                className="h-11 rounded-full border border-white/10 px-3.5 text-xs text-white/55 hover:text-white md:h-8 md:px-3"
+                className="h-11 rounded-full border border-ink/10 px-3.5 text-xs text-ink/55 hover:text-fg md:h-8 md:px-3"
               >
                 New chat
               </button>
             )}
-            <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="grid h-11 w-11 place-items-center rounded-full border border-white/10 text-lg text-white/55 hover:text-white md:h-8 md:w-8 md:text-base">
+            <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="grid h-11 w-11 place-items-center rounded-full border border-ink/10 text-lg text-ink/55 hover:text-fg md:h-8 md:w-8 md:text-base">
               ×
             </button>
           </span>
         </header>
 
         {/* The account audit, the same one as on the KPI board */}
-        <div className="relative mx-4 mb-3 grid gap-2 rounded-[14px] md:mx-5 border border-white/[0.07] bg-white/[0.03] p-3">
+        <div className="relative mx-4 mb-3 grid gap-2 rounded-[14px] md:mx-5 border border-ink/[0.07] bg-ink/[0.03] p-3">
           {targets.length === 0 ? (
-            <p className="text-xs text-white/50">An audit needs a KPI with an ad account. Set one on the KPI board.</p>
+            <p className="text-xs text-ink/50">An audit needs a KPI with an ad account. Set one on the KPI board.</p>
           ) : (
             targets.map((t) => (
               <div key={t.id} className="flex items-center justify-between gap-3">
                 <span className="grid min-w-0">
                   <span className="truncate text-[13px]">Audit · {t.label}</span>
-                  <span className="text-[11px] text-white/45">
+                  <span className="text-[11px] text-ink/45">
                     {t.status === "running" ? "Running now, follow it on the page" : t.status === "queued" ? "Queued for a free slot" : t.status === "ready" ? "Last audit ready" : t.status === "failed" ? "The last one didn't finish" : "Never audited"}
                   </span>
                 </span>
                 <span className="flex shrink-0 gap-1.5">
                   {t.auditId && t.status === "ready" && (
-                    <Link href={`/kpis/audit/${t.auditId}`} className="grid h-10 place-items-center rounded-full border border-white/10 px-3 text-xs text-white/65 hover:text-white md:h-8">
+                    <Link href={`/kpis/audit/${t.auditId}`} className="grid h-10 place-items-center rounded-full border border-ink/10 px-3 text-xs text-ink/65 hover:text-fg md:h-8">
                       Open
                     </Link>
                   )}
@@ -287,11 +287,11 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
         </div>
 
         <div className="relative grid content-start gap-3 overflow-y-auto overscroll-contain px-4 py-2 md:px-5">
-          {!loaded && <p className="animate-pulse text-xs text-white/50">Loading your conversation about {client}…</p>}
+          {!loaded && <p className="animate-pulse text-xs text-ink/50">Loading your conversation about {client}…</p>}
           {loaded && !chat.length && !pending && (
             <div className="grid gap-2">
               {STARTERS.map((s) => (
-                <button key={s} type="button" onClick={() => ask(s)} className="min-h-11 rounded-[12px] border border-white/[0.08] px-3.5 py-2.5 text-left text-[13px] md:min-h-0 text-white/70 transition-colors hover:border-brand/50 hover:text-white">
+                <button key={s} type="button" onClick={() => ask(s)} className="min-h-11 rounded-[12px] border border-ink/[0.08] px-3.5 py-2.5 text-left text-[13px] md:min-h-0 text-ink/70 transition-colors hover:border-brand/50 hover:text-fg">
                   {s}
                 </button>
               ))}
@@ -303,7 +303,7 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
           {pending && (
             <>
               <Bubble t={{ role: "user", text: pending, at: "" }} />
-              <p className="flex items-center gap-2 text-xs text-white/50">
+              <p className="flex items-center gap-2 text-xs text-ink/50">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" />
                 {pendingDeep ? "Thinking it through · checking the market and the web…" : pending.startsWith("Shared ") || slow ? "Reading what you shared…" : "Reading the account…"}
               </p>
@@ -328,7 +328,7 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
             setOver(false);
             addFiles([...e.dataTransfer.files]);
           }}
-          className={`relative grid gap-2 border-t px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 transition-colors md:p-4 ${over ? "border-brand/60 bg-brand/[0.08]" : "border-white/[0.07]"}`}
+          className={`relative grid gap-2 border-t px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 transition-colors md:p-4 ${over ? "border-brand/60 bg-brand/[0.08]" : "border-ink/[0.07]"}`}
         >
           <input
             ref={picker}
@@ -343,28 +343,28 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
           {files.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {files.map((f, i) => (
-                <span key={`${f.name}-${i}`} className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.05] py-1 pl-3 pr-1 text-[11.5px] text-white/80">
+                <span key={`${f.name}-${i}`} className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-ink/10 bg-ink/[0.05] py-1 pl-3 pr-1 text-[11.5px] text-ink/80">
                   <span className="truncate">{f.name}</span>
-                  <button type="button" onClick={() => setFiles((cur) => cur.filter((_, j) => j !== i))} aria-label={`Remove ${f.name}`} className="grid h-7 w-7 place-items-center rounded-full text-white/50 hover:bg-white/10 hover:text-white md:h-5 md:w-5">
+                  <button type="button" onClick={() => setFiles((cur) => cur.filter((_, j) => j !== i))} aria-label={`Remove ${f.name}`} className="grid h-7 w-7 place-items-center rounded-full text-ink/50 hover:bg-ink/10 hover:text-fg md:h-5 md:w-5">
                     ×
                   </button>
                 </span>
               ))}
             </div>
           )}
-          {over && <p className="text-center text-xs text-white/70">Drop to share with the desk: it&apos;s filed in the client&apos;s documents and read</p>}
+          {over && <p className="text-center text-xs text-ink/70">Drop to share with the desk: it&apos;s filed in the client&apos;s documents and read</p>}
           <div className="flex items-center justify-between gap-2">
             <button
               type="button"
               onClick={() => setDeep((d) => !d)}
               aria-pressed={deep}
               title="The full model, the client's market and a web search for this answer"
-              className={`inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[11px] transition-colors md:h-7 md:px-3 ${deep ? "bg-brand text-white shadow-[0_6px_20px_-8px_rgba(200,16,46,0.9)]" : "border border-white/10 text-white/55 hover:text-white"}`}
+              className={`inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[11px] transition-colors md:h-7 md:px-3 ${deep ? "bg-brand text-white shadow-[0_6px_20px_-8px_rgba(200,16,46,0.9)]" : "border border-ink/10 text-ink/55 hover:text-white"}`}
             >
               <span aria-hidden>✦</span>
               Go deep
             </button>
-            <span className="min-w-0 text-right text-[10px] text-white/35 md:text-left">{deep ? "Full model, the market and the web for this one" : "Quick questions get quick answers; big ones get the full treatment"}</span>
+            <span className="min-w-0 text-right text-[10px] text-ink/35 md:text-left">{deep ? "Full model, the market and the web for this one" : "Quick questions get quick answers; big ones get the full treatment"}</span>
           </div>
           <div className="flex items-end gap-2">
           <button
@@ -372,7 +372,7 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
             onClick={() => picker.current?.click()}
             aria-label="Share a file"
             title="Share files (PDF, Word, PowerPoint, Excel, text, pictures): filed in the client's documents and read"
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-white/10 text-white/60 hover:border-white/25 hover:text-white"
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-ink/10 text-ink/60 hover:border-ink/25 hover:text-fg"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
               <path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" />
@@ -397,7 +397,7 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
             }}
             rows={2}
             placeholder="Ask, update, paste a link or drop a file…"
-            className="min-h-[46px] min-w-0 flex-1 resize-none rounded-[12px] border border-white/10 bg-white/[0.03] px-3 py-2.5 text-[13.5px] outline-none placeholder:text-white/35 focus:border-brand/50"
+            className="min-h-[46px] min-w-0 flex-1 resize-none rounded-[12px] border border-ink/10 bg-ink/[0.03] px-3 py-2.5 text-[13.5px] outline-none placeholder:text-ink/35 focus:border-brand/50"
           />
           <button type="submit" disabled={(!q.trim() && !files.length) || Boolean(pending)} className="h-11 shrink-0 rounded-full bg-fg px-5 text-sm text-bg disabled:opacity-40">
             {files.length && !q.trim() ? "Share" : "Send"}

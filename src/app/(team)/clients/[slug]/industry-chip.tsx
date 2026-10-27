@@ -89,7 +89,7 @@ export function IndustryChip({
         <Layer>
           <button type="button" aria-label="Close" onClick={() => setOpen(false)} className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px] md:hidden" />
           <div role="dialog" aria-label="Industry" className="fixed inset-x-0 bottom-0 z-50 grid gap-3 rounded-t-[22px] border-t border-line bg-surface px-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] pt-3 shadow-2xl md:hidden">
-            <span aria-hidden className="mx-auto mb-1 h-1 w-10 rounded-full bg-white/15" />
+            <span aria-hidden className="mx-auto mb-1 h-1 w-10 rounded-full bg-ink/15" />
             {editor}
           </div>
         </Layer>

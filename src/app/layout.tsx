@@ -37,12 +37,19 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#060606",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f6f5f4" },
+    { media: "(prefers-color-scheme: dark)", color: "#060606" },
+  ],
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${poppins.variable} ${flexa.variable} ${osake.variable} h-full antialiased`}>
+    <html lang="en" data-theme="dark" suppressHydrationWarning className={`${poppins.variable} ${flexa.variable} ${osake.variable} h-full antialiased`}>
+      <head>
+        {/* The person's light/dark choice, applied before anything paints (see src/components/theme-switch.tsx) */}
+        <script dangerouslySetInnerHTML={{ __html: `try{var t=localStorage.getItem("kz-theme");if(t==="light"||t==="dark"||t==="system")document.documentElement.dataset.theme=t}catch(e){}` }} />
+      </head>
       <body className="min-h-full font-sans">
         {children}
         {/* A newer version is live: offer a refresh. Errors in the browser get reported. */}

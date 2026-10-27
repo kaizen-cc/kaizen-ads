@@ -47,13 +47,13 @@ export function PlaybookPanel({ items, learnings }: { items: LedgerItem[]; learn
 
   return (
     <div className="grid gap-6">
-      <section className="relative isolate grid gap-5 overflow-hidden rounded-[22px] border border-white/[0.07] bg-[#0b0a0e] p-5 md:p-7">
+      <section className="relative isolate grid gap-5 overflow-hidden rounded-[22px] border border-ink/[0.07] bg-deep p-5 md:p-7">
         <span aria-hidden className="pointer-events-none absolute -right-20 -top-28 -z-10 h-72 w-72 rounded-full bg-[rgba(91,227,165,0.14)] blur-[100px]" />
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div className="grid gap-1">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/45">Client playbook</span>
+            <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-ink/45">Client playbook</span>
             <h2 className="font-heading text-2xl">Everything they&apos;ve run, and what it taught us</h2>
-            <p className="max-w-2xl text-sm text-white/55">Every ad, message angle and audience, kept forever with its results against their KPI. Briefs, suggestions and the Brand Bible all build on it.</p>
+            <p className="max-w-2xl text-sm text-ink/55">Every ad, message angle and audience, kept forever with its results against their KPI. Briefs, suggestions and the Brand Bible all build on it.</p>
           </div>
           <div className="flex gap-2">
             {[
@@ -61,23 +61,23 @@ export function PlaybookPanel({ items, learnings }: { items: LedgerItem[]; learn
               { v: winners, l: "winners" },
               { v: items.filter((i) => i.live && i.kind === "creative").length, l: "live now" },
             ].map((s) => (
-              <span key={s.l} className="grid min-w-[86px] gap-0.5 rounded-[14px] bg-white/[0.05] px-3 py-2">
+              <span key={s.l} className="grid min-w-[86px] gap-0.5 rounded-[14px] bg-ink/[0.05] px-3 py-2">
                 <span className="tabular font-display text-2xl leading-none">{s.v}</span>
-                <span className="text-[10.5px] text-white/45">{s.l}</span>
+                <span className="text-[10.5px] text-ink/45">{s.l}</span>
               </span>
             ))}
           </div>
         </div>
         {learnings.length > 0 && (
           <div className="grid gap-2">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/45">Latest learnings · in the Brand Bible</span>
+            <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-ink/45">Latest learnings · in the Brand Bible</span>
             <ul className="grid gap-1.5 md:grid-cols-2">
               {[...learnings].reverse().slice(0, 8).map((l, i) => (
-                <li key={i} className="flex gap-2.5 rounded-[12px] bg-white/[0.04] px-3 py-2.5 text-[13px] leading-relaxed">
+                <li key={i} className="flex gap-2.5 rounded-[12px] bg-ink/[0.04] px-3 py-2.5 text-[13px] leading-relaxed">
                   <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${l.kind === "avoid" ? "bg-[#ff4d5e]" : "bg-[#5be3a5]"}`} />
                   <span className="min-w-0">
                     {l.text}
-                    <span className="block text-[11px] text-white/35">{day(l.at)}</span>
+                    <span className="block text-[11px] text-ink/35">{day(l.at)}</span>
                   </span>
                 </li>
               ))}

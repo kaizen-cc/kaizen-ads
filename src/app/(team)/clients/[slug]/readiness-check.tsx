@@ -120,7 +120,7 @@ export function ReadinessCheck({ clientId, slug, name, initial, team, autoOpen, 
                 </div>
                 <ul className="grid w-full max-w-sm gap-2 text-left text-sm">
                   {["A full sync: ad accounts, Slack, email and Drive, from when we stopped", "This week's and this month's reports queued, if still due", "Sprint check-ins back on", "A comeback brief for each buyer: where we left it and how to restart"].map((t) => (
-                    <li key={t} className="flex items-center gap-2.5 rounded-[10px] bg-white/[0.03] px-3 py-2">
+                    <li key={t} className="flex items-center gap-2.5 rounded-[10px] bg-ink/[0.03] px-3 py-2">
                       <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ok" />
                       {t}
                     </li>
@@ -160,7 +160,7 @@ export function ReadinessCheck({ clientId, slug, name, initial, team, autoOpen, 
                         </span>
                       )}
                     </div>
-                    <span className="h-1 overflow-hidden rounded-full bg-white/[0.07]">
+                    <span className="h-1 overflow-hidden rounded-full bg-ink/[0.07]">
                       <span className="block h-full rounded-full bg-gradient-to-r from-brand to-[#ff5a6e] transition-[width] duration-700" style={{ width: `${needed.length ? (got / needed.length) * 100 : 100}%` }} />
                     </span>
                   </div>
@@ -193,7 +193,7 @@ export function ReadinessCheck({ clientId, slug, name, initial, team, autoOpen, 
                 </form>
 
                 {error && <p className="relative rounded-[10px] bg-bad/10 px-3 py-2 text-sm text-bad">{error}</p>}
-                <div className="sticky bottom-0 -mx-5 mt-auto flex items-center justify-between gap-3 border-t border-line bg-surface/95 px-5 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 backdrop-blur-md md:relative md:-mx-7 md:-mb-7 md:mt-0 md:bg-white/[0.015] md:px-7 md:py-5 md:backdrop-blur-none">
+                <div className="sticky bottom-0 -mx-5 mt-auto flex items-center justify-between gap-3 border-t border-line bg-surface/95 px-5 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 backdrop-blur-md md:relative md:-mx-7 md:-mb-7 md:mt-0 md:bg-ink/[0.015] md:px-7 md:py-5 md:backdrop-blur-none">
                   <button type="button" onClick={later} className="h-11 px-2 text-sm text-faint hover:text-fg md:h-10">
                     Later
                   </button>
@@ -203,7 +203,7 @@ export function ReadinessCheck({ clientId, slug, name, initial, team, autoOpen, 
                     disabled={pending}
                     className="inline-flex h-11 items-center gap-2 rounded-full bg-brand px-6 text-sm font-medium text-white shadow-[0_12px_30px_-12px_rgba(200,16,46,0.95)] transition hover:brightness-110 disabled:opacity-60"
                   >
-                    {pending && <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />}
+                    {pending && <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-ink/40 border-t-white" />}
                     {pending ? "Bringing it up…" : "Bring everything up"}
                   </button>
                 </div>
@@ -225,7 +225,7 @@ function Ring({ got, of, size }: { got: number; of: number; size: number }) {
   return (
     <span className="relative grid shrink-0 place-items-center" style={{ width: size, height: size }}>
       <svg width={size} height={size} className="-rotate-90" aria-hidden>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="currentColor" strokeWidth="3.5" className="text-white/[0.08]" />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="currentColor" strokeWidth="3.5" className="text-ink/[0.08]" />
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeDasharray={len} strokeDashoffset={len * (1 - pct)} className={`transition-[stroke-dashoffset] duration-700 ${pct === 1 ? "text-ok" : "text-brand"}`} />
       </svg>
       <span className={`absolute tabular font-medium ${size > 40 ? "text-sm" : "text-[10px]"}`}>
@@ -238,7 +238,7 @@ function Ring({ got, of, size }: { got: number; of: number; size: number }) {
 function Row({ check, children }: { check: Check; children: React.ReactNode }) {
   const needed = check.need === "needed";
   return (
-    <div className={`grid gap-3.5 rounded-[16px] border p-4 ${needed ? "border-brand/25 bg-brand/[0.035]" : "border-line bg-white/[0.015]"}`}>
+    <div className={`grid gap-3.5 rounded-[16px] border p-4 ${needed ? "border-brand/25 bg-brand/[0.035]" : "border-line bg-ink/[0.015]"}`}>
       <div className="grid grid-cols-[20px_minmax(0,1fr)] gap-3">
         <span className={`mt-0.5 grid h-5 w-5 place-items-center rounded-full ${needed ? "bg-brand/20 text-brand-text" : "bg-warn/15 text-warn"}`}>
           <span className="h-1.5 w-1.5 rounded-full bg-current" />

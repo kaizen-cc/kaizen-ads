@@ -190,7 +190,7 @@ export function AuditPanel({ targetId, audit, platform }: { targetId: string; au
             </div>
             <div className="h-1.5 overflow-hidden rounded-full bg-line">
               <div className="relative h-full rounded-full bg-brand transition-[width] duration-1000 ease-out" style={{ width: `${Math.max(3, audit.progress)}%` }}>
-                <span className="absolute inset-0 animate-pulse rounded-full bg-white/25" />
+                <span className="absolute inset-0 animate-pulse rounded-full bg-ink/25" />
               </div>
             </div>
             <Steps steps={audit.steps} live />

@@ -106,7 +106,7 @@ export function ServicesPanel({
           {on.map((s) => {
             const fromTrack = track.includes(s.slug);
             return (
-              <li key={s.slug} className="flex flex-wrap items-center gap-3 rounded-[14px] border border-line bg-gradient-to-r from-white/[0.035] to-transparent px-3.5 py-3">
+              <li key={s.slug} className="flex flex-wrap items-center gap-3 rounded-[14px] border border-line bg-gradient-to-r from-ink/[0.035] to-transparent px-3.5 py-3">
                 <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] bg-brand/15 text-brand-text">
                   <ServiceIcon slug={s.slug} />
                 </span>

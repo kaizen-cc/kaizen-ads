@@ -1,6 +1,8 @@
 "use client";
 
 import Image from "next/image";
+import { ThemeSwitch } from "./theme-switch";
+import type { Theme } from "@/app/(team)/theme-actions";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -53,7 +55,7 @@ function Icon({ d }: { d: string }) {
   );
 }
 
-export function TeamShell({ name, roles, tier, children }: { name: string; roles: string; tier: Tier; children: React.ReactNode }) {
+export function TeamShell({ name, roles, tier, theme = null, children }: { name: string; roles: string; tier: Tier; theme?: Theme | null; children: React.ReactNode }) {
   const path = usePathname();
   const can = (i: Item) => !i.tiers || i.tiers.includes(tier);
   const groups = GROUPS.map((g) => ({ ...g, items: g.items.filter(can) }));
@@ -129,6 +131,9 @@ export function TeamShell({ name, roles, tier, children }: { name: string; roles
           <form action="/auth/signout" method="post">
             <button className="rounded-brand px-2 py-1 text-xs text-muted hover:bg-surface-2 hover:text-fg">Sign out</button>
           </form>
+        </div>
+        <div className="px-4 pb-4">
+          <ThemeSwitch saved={theme} />
         </div>
       </aside>
 
@@ -206,6 +211,10 @@ export function TeamShell({ name, roles, tier, children }: { name: string; roles
               <form action="/auth/signout" method="post">
                 <button className="min-h-10 rounded-full border border-line px-3 text-xs text-muted active:bg-surface-2">Sign out</button>
               </form>
+            </div>
+            <div className="px-5 pb-[calc(env(safe-area-inset-bottom)+16px)]">
+              <p className="pb-2 text-[11px] font-medium uppercase tracking-[0.16em] text-faint">Appearance</p>
+              <ThemeSwitch saved={theme} size="lg" />
             </div>
           </aside>
         </div>

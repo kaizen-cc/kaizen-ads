@@ -156,7 +156,7 @@ export function Story({
 
   return (
     // Phones: a column (progress, the screen, then back and next within thumb reach); desktop as it was
-    <div className="fixed inset-0 z-40 flex flex-col overflow-hidden bg-[#07060a] text-white [color-scheme:dark] md:block">
+    <div className="force-dark fixed inset-0 z-40 flex flex-col overflow-hidden bg-[#07060a] text-white [color-scheme:dark] md:block">
       <style>{`@keyframes card-in { from { opacity: 0; transform: translateY(18px) scale(.985) } to { opacity: 1; transform: none } } @keyframes glow { 0%,100% { transform: translate(-10%,-10%) scale(1) } 50% { transform: translate(6%,4%) scale(1.15) } }`}</style>
       {/* The colour of what's on screen: red for critical, amber for important, blue for the rest, green for done */}
       <div aria-hidden className="pointer-events-none absolute -left-1/4 -top-1/4 h-[90vh] w-[90vh] rounded-full blur-[140px] transition-colors duration-700" style={{ background: tone.glow, animation: "glow 14s ease-in-out infinite" }} />

@@ -46,9 +46,9 @@ export function AiProgress({ label, fallbackMs = 40_000, title, steps, note, siz
             <span className="font-medium text-fg">{Math.floor(p)}%</span> · {time}
           </p>
         </div>
-        <span className="relative h-1.5 overflow-hidden rounded-full bg-white/[0.07]">
+        <span className="relative h-1.5 overflow-hidden rounded-full bg-ink/[0.07]">
           <span className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-brand to-[#ff5a6e] transition-[width] duration-300 ease-linear" style={{ width: `${p}%` }} />
-          <span className="absolute inset-y-0 w-16 animate-[shimmer_1.6s_linear_infinite] bg-gradient-to-r from-transparent via-white/25 to-transparent" style={{ left: `calc(${p}% - 4rem)` }} />
+          <span className="absolute inset-y-0 w-16 animate-[shimmer_1.6s_linear_infinite] bg-gradient-to-r from-transparent via-ink/25 to-transparent" style={{ left: `calc(${p}% - 4rem)` }} />
         </span>
       </div>
       {steps?.length ? (

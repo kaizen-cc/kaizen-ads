@@ -141,7 +141,7 @@ export function ReviewViewer({
     });
 
   return (
-    <div className="fixed inset-0 z-[70] grid grid-rows-[auto_1fr] bg-black/92 backdrop-blur-sm animate-[sheet-fade_.2s_ease-out]" role="dialog" aria-modal="true" aria-label={design.name}>
+    <div className="force-dark fixed inset-0 z-[70] grid grid-rows-[auto_1fr] bg-black/92 backdrop-blur-sm animate-[sheet-fade_.2s_ease-out]" role="dialog" aria-modal="true" aria-label={design.name}>
       <header className="flex items-center justify-between gap-4 px-6 py-4 max-md:gap-3 max-md:px-4 max-md:pb-3 max-md:pt-[calc(0.75rem+env(safe-area-inset-top))]">
         <div className="min-w-0">
           <p className="truncate font-medium text-white">

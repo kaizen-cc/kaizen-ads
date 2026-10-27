@@ -55,7 +55,7 @@ function AdsetPicker({ adsets, value, current, onPick }: { adsets: Adset[]; valu
                   key={a.id}
                   type="button"
                   onClick={() => onPick(a.id)}
-                  className={`flex min-h-11 items-center gap-2.5 rounded-[10px] px-2.5 text-left transition-colors ${on ? "bg-[#0866ff]/15 ring-1 ring-[#0866ff]/50" : "hover:bg-white/[0.04]"}`}
+                  className={`flex min-h-11 items-center gap-2.5 rounded-[10px] px-2.5 text-left transition-colors ${on ? "bg-[#0866ff]/15 ring-1 ring-[#0866ff]/50" : "hover:bg-ink/[0.04]"}`}
                 >
                   <span className={`h-2 w-2 shrink-0 rounded-full ${a.status === "ACTIVE" ? "bg-ok" : "bg-faint/50"}`} title={a.status === "ACTIVE" ? "On" : "Paused"} />
                   <span className="grid min-w-0 flex-1">
@@ -136,7 +136,7 @@ export function LaunchMove({ l, onDone }: { l: LaunchView; onDone: () => void })
       {l.moves.length > 0 && (
         <ul className="grid gap-1.5">
           {l.moves.map((m, i) => (
-            <li key={i} className="rounded-[12px] bg-white/[0.03] px-3.5 py-2.5 text-xs text-muted">
+            <li key={i} className="rounded-[12px] bg-ink/[0.03] px-3.5 py-2.5 text-xs text-muted">
               <span className="text-fg">
                 Moved from &ldquo;{m.from.name}&rdquo; to &ldquo;{m.to.name}&rdquo;
               </span>
@@ -158,7 +158,7 @@ export function LaunchMove({ l, onDone }: { l: LaunchView; onDone: () => void })
       ) : (
         <div className="grid gap-4 rounded-[16px] border border-line bg-bg/40 p-4">
           {/* Where it is now */}
-          <div className="grid gap-0.5 rounded-[12px] bg-white/[0.03] px-3.5 py-2.5">
+          <div className="grid gap-0.5 rounded-[12px] bg-ink/[0.03] px-3.5 py-2.5">
             <p className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-faint">Now in</p>
             <p className="truncate text-sm">
               <span className="text-muted">{here?.campaign ?? "Its campaign"}</span>

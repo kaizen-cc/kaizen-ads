@@ -74,19 +74,19 @@ export function TopicDeck({ tiles }: { tiles: TopicTile[] }) {
               requestAnimationFrame(() => document.getElementById(`topic-${t.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
             }}
             style={{ ["--glow" as string]: tone.glow, ["--accent" as string]: tone.accent }}
-            className={`group relative isolate grid min-h-[132px] content-between gap-4 overflow-hidden rounded-[22px] border border-white/[0.07] bg-[#0b0a0e] p-5 text-left shadow-[0_24px_60px_-34px_rgba(0,0,0,0.9)] transition duration-300 hover:-translate-y-0.5 hover:border-white/15 ${lead ? "col-span-2 md:p-6" : ""}`}
+            className={`group relative isolate grid min-h-[132px] content-between gap-4 overflow-hidden rounded-[22px] border border-ink/[0.07] bg-deep p-5 text-left shadow-[0_24px_60px_-34px_rgba(0,0,0,0.9)] transition duration-300 hover:-translate-y-0.5 hover:border-ink/15 ${lead ? "col-span-2 md:p-6" : ""}`}
           >
             <span aria-hidden className={`pointer-events-none absolute -z-10 rounded-full opacity-80 blur-[60px] transition-opacity duration-500 group-hover:opacity-100 ${lead ? "-left-16 -top-24 h-[240px] w-[240px]" : "-left-10 -top-16 h-[150px] w-[150px]"}`} style={{ background: "var(--glow)" }} />
             <span aria-hidden className="pointer-events-none absolute inset-x-5 top-0 -z-10 h-px opacity-60" style={{ background: "linear-gradient(90deg, var(--accent), transparent)" }} />
             <span className="flex items-center justify-between gap-2">
-              <span className="truncate text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55">{t.label}</span>
-              <span className="text-white/30 transition-transform duration-300 group-hover:translate-y-0.5 group-hover:text-white/70">↓</span>
+              <span className="truncate text-[11px] font-semibold uppercase tracking-[0.16em] text-ink/55">{t.label}</span>
+              <span className="text-ink/30 transition-transform duration-300 group-hover:translate-y-0.5 group-hover:text-ink/70">↓</span>
             </span>
             <span className="grid gap-1.5">
               <span className={`tabular font-display leading-none tracking-tight ${lead ? "text-6xl md:text-7xl" : "text-5xl"}`} style={{ color: "var(--accent)" }}>
                 {t.value}
               </span>
-              <span className={`leading-snug text-white/65 ${lead ? "max-w-[30ch] text-sm" : "line-clamp-2 text-[12px]"}`}>{t.sub}</span>
+              <span className={`leading-snug text-ink/65 ${lead ? "max-w-[30ch] text-sm" : "line-clamp-2 text-[12px]"}`}>{t.sub}</span>
             </span>
           </button>
         );
@@ -103,7 +103,7 @@ export function Compartment({ title, note, tone = "brand", children }: { title: 
       <div className="grid gap-2.5">
         <div className="flex flex-wrap items-end justify-between gap-2">
           <h2 className="font-display text-2xl tracking-tight md:text-[28px]">{title}</h2>
-          {note && <span className="pb-1 text-xs text-white/45">{note}</span>}
+          {note && <span className="pb-1 text-xs text-ink/45">{note}</span>}
         </div>
         <span aria-hidden className="h-px w-full" style={{ background: `linear-gradient(90deg, ${t.accent}, ${t.soft} 35%, transparent 80%)` }} />
       </div>
@@ -139,7 +139,7 @@ export function Topic({
     <div
       id={`topic-${id}`}
       style={{ ["--glow" as string]: t.glow, ["--soft" as string]: t.soft, ["--accent" as string]: t.accent }}
-      className={`group/topic relative isolate scroll-mt-20 md:scroll-mt-6 overflow-hidden rounded-[22px] border bg-[#0b0a0e] shadow-[0_24px_60px_-40px_rgba(0,0,0,0.9)] transition-colors duration-300 ${isOpen ? "border-white/12" : "border-white/[0.06] hover:border-white/12"}`}
+      className={`group/topic relative isolate scroll-mt-20 md:scroll-mt-6 overflow-hidden rounded-[22px] border bg-deep shadow-[0_24px_60px_-40px_rgba(0,0,0,0.9)] transition-colors duration-300 ${isOpen ? "border-ink/12" : "border-ink/[0.06] hover:border-ink/12"}`}
     >
       <span aria-hidden className={`pointer-events-none absolute -left-20 -top-20 -z-10 h-[220px] w-[220px] rounded-full blur-[70px] transition-opacity duration-500 ${isOpen ? "opacity-70" : "opacity-40 group-hover/topic:opacity-60"}`} style={{ background: "var(--glow)" }} />
       <span aria-hidden className="pointer-events-none absolute inset-y-4 left-0 -z-10 w-[3px] rounded-r-full" style={{ background: "var(--accent)" }} />
@@ -150,10 +150,10 @@ export function Topic({
           </span>
         )}
         <span className="grid min-w-0 flex-1 gap-1">
-          <span className="font-heading text-[17px] leading-tight text-white md:text-lg">{title}</span>
-          <span className="truncate text-[13px] text-white/55">{summary}</span>
+          <span className="font-heading text-[17px] leading-tight text-fg md:text-lg">{title}</span>
+          <span className="truncate text-[13px] text-ink/55">{summary}</span>
         </span>
-        <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full border border-white/10 text-white/50 transition duration-300 group-hover/topic:border-white/25 group-hover/topic:text-white ${isOpen ? "rotate-180" : ""}`} aria-hidden>
+        <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full border border-ink/10 text-ink/50 transition duration-300 group-hover/topic:border-ink/25 group-hover/topic:text-fg ${isOpen ? "rotate-180" : ""}`} aria-hidden>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
             <path d="m6 9 6 6 6-6" />
           </svg>

@@ -83,7 +83,7 @@ export function HoverCard({ content, children, width = 340, className = "" }: { 
             onMouseEnter={show}
             onMouseLeave={hide}
             role="tooltip"
-            className="fixed z-[95] grid gap-2 rounded-[16px] border border-white/10 bg-[#121016]/95 p-3.5 text-left text-white shadow-[0_24px_60px_-20px_rgba(0,0,0,0.9)] backdrop-blur-xl"
+            className="fixed z-[95] grid gap-2 rounded-[16px] border border-ink/10 bg-deep-2/95 p-3.5 text-left text-white shadow-[0_24px_60px_-20px_rgba(0,0,0,0.9)] backdrop-blur-xl"
             style={{ left: at.left, top: at.top, width, transform: at.above ? "translateY(-100%)" : undefined, animation: "card-in-hover .14s ease-out" }}
           >
             <style>{`@keyframes card-in-hover { from { opacity: 0; } to { opacity: 1; } }`}</style>
@@ -97,12 +97,12 @@ export function HoverCard({ content, children, width = 340, className = "" }: { 
             <style>{`@keyframes sheet-up-hover { from { transform: translateY(100%); } to { transform: none; } }`}</style>
             <div className="absolute inset-0 bg-black/60" onClick={() => setSheet(null)} aria-hidden />
             <div
-              className="pb-safe absolute inset-x-0 bottom-0 grid max-h-[85vh] grid-rows-[auto_minmax(0,1fr)_auto] rounded-t-[22px] border-t border-white/10 bg-[#121016] text-left text-white shadow-[0_-24px_60px_-20px_rgba(0,0,0,0.9)]"
+              className="pb-safe absolute inset-x-0 bottom-0 grid max-h-[85vh] grid-rows-[auto_minmax(0,1fr)_auto] rounded-t-[22px] border-t border-ink/10 bg-deep-2 text-left text-white shadow-[0_-24px_60px_-20px_rgba(0,0,0,0.9)]"
               style={{ animation: "sheet-up-hover .22s ease-out" }}
             >
               <div className="relative flex justify-end pr-1 pt-1">
-                <span className="absolute left-1/2 top-2 h-1 w-10 -translate-x-1/2 rounded-full bg-white/20" aria-hidden />
-                <button type="button" onClick={() => setSheet(null)} aria-label="Close" className="grid h-11 w-11 place-items-center rounded-full text-white/60 active:bg-white/10">
+                <span className="absolute left-1/2 top-2 h-1 w-10 -translate-x-1/2 rounded-full bg-ink/20" aria-hidden />
+                <button type="button" onClick={() => setSheet(null)} aria-label="Close" className="grid h-11 w-11 place-items-center rounded-full text-ink/60 active:bg-ink/10">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
                     <path d="M18 6 6 18M6 6l12 12" />
                   </svg>
@@ -118,8 +118,8 @@ export function HoverCard({ content, children, width = 340, className = "" }: { 
                 {content}
               </div>
               {sheet.href && (
-                <div className="border-t border-white/10 px-4 py-3">
-                  <Link href={sheet.href} onClick={() => setSheet(null)} className="flex h-12 items-center justify-center rounded-full bg-white text-[15px] font-semibold text-black">
+                <div className="border-t border-ink/10 px-4 py-3">
+                  <Link href={sheet.href} onClick={() => setSheet(null)} className="flex h-12 items-center justify-center rounded-full bg-fg text-[15px] font-semibold text-bg">
                     Open <span aria-hidden className="ml-1.5">→</span>
                   </Link>
                 </div>

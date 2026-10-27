@@ -48,7 +48,7 @@ export function PrimaryAction({ label, disabled, href }: { label: string; disabl
     return (
       <button disabled className={`${cls} opacity-60 shadow-none`} title="Opens in the next build phase">
         <span className="text-lg leading-none">+</span> {label}
-        <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] uppercase tracking-wide">Soon</span>
+        <span className="rounded-full bg-ink/20 px-1.5 py-0.5 text-[10px] uppercase tracking-wide">Soon</span>
       </button>
     );
   }
