@@ -245,3 +245,33 @@ export async function approveBuiltMessage(bundleId: string, message: string): Pr
     return { ok: false, error: e instanceof Error ? e.message : "Couldn't send it." };
   }
 }
+
+/**
+ * Takes a report off "Reports generated". Not sent yet: it's deleted (every part of a built report). Sent: it stays
+ * in the client's history and is only hidden from the list.
+ */
+export async function removeGenerated(kind: "bundle" | "report", id: string): Promise<Result<{ deleted: boolean }>> {
+  const me = await requireStaff();
+  const db = await createClient();
+  const admin = createAdminClient();
+  if (kind === "bundle") {
+    const { data: b } = await db.from("report_bundles").select("id, status, created_by").eq("id", id).eq("kind", "built").maybeSingle();
+    if (!b) return { ok: false, error: "Not found." };
+    if (b.created_by !== me.id && !me.isExec) return { ok: false, error: "Only whoever built it can remove it." };
+    if (b.status === "sent") {
+      await admin.from("report_bundles").update({ hidden_at: new Date().toISOString() }).eq("id", id);
+      revalidatePath("/reports");
+      return { ok: true, deleted: false };
+    }
+    await admin.from("reports").delete().eq("bundle_id", id).neq("status", "posted");
+    await admin.from("report_bundles").delete().eq("id", id);
+    revalidatePath("/reports");
+    return { ok: true, deleted: true };
+  }
+  const ok = await mine(id);
+  if (!ok) return { ok: false, error: "Not found." };
+  if (ok.r.status === "posted") await admin.from("reports").update({ hidden_at: new Date().toISOString() }).eq("id", id);
+  else await admin.from("reports").delete().eq("id", id);
+  revalidatePath("/reports");
+  return { ok: true, deleted: ok.r.status !== "posted" };
+}

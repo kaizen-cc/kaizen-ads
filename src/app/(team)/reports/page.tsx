@@ -9,7 +9,8 @@ import { slackConnection } from "@/lib/slack-user";
 import { SlackConnect } from "@/components/slack-connect";
 import { reportableTargets } from "@/lib/reports/access";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
-import { ReportBuilder, type BuilderClient } from "./report-builder";
+import { ReportBuilder, type BuilderClient, type QuickPick } from "./report-builder";
+import { RemoveGenerated } from "./remove-generated";
 
 export const metadata: Metadata = { title: "Reports" };
 export const maxDuration = 300;
@@ -44,7 +45,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   let q = db
     .from("reports")
     .select("id, kind, platform, status, qa, posted_at, bundle_id, clients(name, slug), profiles!reports_owner_id_fkey(full_name)")
-    .or(`and(kind.eq.weekly,period_start.eq.${week.start}),and(kind.eq.monthly,period_start.eq.${month.start}),and(kind.eq.custom,created_at.gte.${fiveDaysAgo()})`)
+    .or(`and(kind.eq.weekly,period_start.eq.${week.start}),and(kind.eq.monthly,period_start.eq.${month.start}),and(kind.eq.custom,created_at.gte.${fiveDaysAgo()},hidden_at.is.null)`)
     .order("created_at");
   if (!me.isExec) q = q.in("target_id", accounts.length ? accounts.map((a) => a.id) : ["00000000-0000-0000-0000-000000000000"]);
   const [{ data }, slack] = await Promise.all([q, slackConnection(me.id)]);
@@ -61,7 +62,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
     ? await Promise.all([
         admin.from("kpi_targets").select("client_id, platform, owner_id, clients!inner(name, slug, archived_at, slack_channel_id), profiles!kpi_targets_owner_id_fkey(full_name)").in("client_id", clientIds).eq("active", true).not("ad_account_id", "is", null).is("clients.archived_at", null),
         admin.from("client_assignments").select("client_id, role, profile_id, profiles(full_name)").in("client_id", clientIds).in("role", ["meta_buyer", "google_buyer"]),
-        admin.from("report_bundles").select("id, client_id, status, ranges, created_by, created_at, clients(name), reports(id, platform, status, owner_id, profiles!reports_owner_id_fkey(full_name))").eq("kind", "built").gte("created_at", fiveDaysAgo()).order("created_at", { ascending: false }).limit(60),
+        admin.from("report_bundles").select("id, client_id, status, ranges, created_by, created_at, clients(name), reports(id, platform, status, owner_id, profiles!reports_owner_id_fkey(full_name))").eq("kind", "built").is("hidden_at", null).gte("created_at", fiveDaysAgo()).order("created_at", { ascending: false }).limit(60),
       ])
     : [{ data: [] }, { data: [] }, { data: [] }];
   const byClient = new Map<string, BuilderClient>();
@@ -79,9 +80,36 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   // Reports built in the last 30 days that involve this person (built them, or have a part in them)
   const builtRows = ((built ?? []) as unknown as BuiltRow[]).filter((b) => me.isExec || b.created_by === me.id || b.reports.some((p) => p.owner_id === me.id));
   const yesterday = new Date(Date.parse(`${today}T12:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+
+  // Quick create: the reports this person builds again and again, and their own clients with no report this week
+  const [{ data: myBuilds }, { data: recentSent }] = admin
+    ? await Promise.all([
+        admin.from("report_bundles").select("client_id, ranges, services, created_at").eq("kind", "built").eq("created_by", me.id).gte("created_at", new Date(Date.parse(`${today}T12:00:00Z`) - 90 * 86_400_000).toISOString()).order("created_at", { ascending: false }).limit(80),
+        clientIds.length ? admin.from("reports").select("client_id").in("client_id", clientIds).in("status", ["posted", "submitted", "draft", "drafting"]).gte("created_at", new Date(Date.parse(`${today}T12:00:00Z`) - 7 * 86_400_000).toISOString()) : Promise.resolve({ data: [] }),
+      ])
+    : [{ data: [] }, { data: [] }];
+  const quick: QuickPick[] = [];
+  const habits = new Map<string, { clientId: string; ranges: string[]; services: string[]; n: number; last: string }>();
+  for (const b of myBuilds ?? []) {
+    const ranges = ((b.ranges ?? []) as { key: string }[]).map((x) => x.key).filter((k) => k !== "custom");
+    const services = ((b.services ?? []) as string[]).sort();
+    if (!ranges.length || !byClient.has(b.client_id as string)) continue;
+    const k = `${b.client_id}|${ranges.join(",")}|${services.join(",")}`;
+    const h = habits.get(k) ?? { clientId: b.client_id as string, ranges, services, n: 0, last: b.created_at as string };
+    h.n++;
+    habits.set(k, h);
+  }
+  for (const h of [...habits.values()].sort((a, b) => b.n - a.n || b.last.localeCompare(a.last)).slice(0, 2))
+    quick.push({ clientId: h.clientId, ranges: h.ranges, services: h.services, reason: h.n > 1 ? `You've built this ${h.n} times` : `Like the one you built ${new Date(h.last).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` });
+  const reported = new Set((recentSent ?? []).map((x) => x.client_id as string));
+  for (const c of builderClients.filter((c) => c.services.some((s) => s.mine) && !reported.has(c.id))) {
+    if (quick.length >= 4) break;
+    if (quick.some((q) => q.clientId === c.id)) continue;
+    quick.push({ clientId: c.id, ranges: ["last7"], services: c.services.filter((s) => s.mine).map((s) => s.platform), reason: "Your client · no report in the last 7 days" });
+  }
   const open = weekly.filter((r) => r.status === "draft").length;
 
-  const list = (items: Row[]) => (
+  const list = (items: Row[], removable = false) => (
     <ul className="grid gap-2">
       {items
         .sort((a, b) => a.clients.name.localeCompare(b.clients.name))
@@ -91,8 +119,8 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
           const fix = flags.filter((f) => f.severity === "fix").length;
           const alert = flags.filter((f) => f.severity === "alert").length;
           return (
-            <li key={r.id}>
-              <Link href={`/reports/${r.id}`} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-[14px] border border-line bg-surface px-4 py-3.5 transition-colors hover:border-faint/70 active:bg-surface-2 max-md:gap-3">
+            <li key={r.id} className="flex items-center gap-2">
+              <Link href={`/reports/${r.id}`} className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-[14px] border border-line bg-surface px-4 py-3.5 transition-colors hover:border-faint/70 active:bg-surface-2 max-md:gap-3">
                 <span className="grid min-w-0 gap-0.5">
                   <span className="truncate font-heading text-[15px] max-md:whitespace-normal max-md:[overflow-wrap:anywhere]">
                     {r.clients.name} <span className="text-muted">· {r.platform === "google" ? "Google" : "Meta"}</span>
@@ -109,6 +137,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
                   <span className="text-faint">→</span>
                 </span>
               </Link>
+              {removable && <RemoveGenerated kind="report" id={r.id} sent={r.status === "posted"} />}
             </li>
           );
         })}
@@ -129,7 +158,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
         </span>
       </header>
 
-      <ReportBuilder clients={builderClients} initialClient={typeof wanted === "string" ? wanted : null} yesterday={yesterday} />
+      <ReportBuilder clients={builderClients} quick={quick} initialClient={typeof wanted === "string" ? wanted : null} yesterday={yesterday} />
 
       {(builtRows.length > 0 || onDemand.length > 0) && (
         <section className="grid gap-3">
@@ -143,8 +172,8 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
               const mine = parts.find((p) => p.owner_id === me.id) ?? parts[0];
               const waitingOnMe = parts.some((p) => p.owner_id === me.id && ["draft", "drafting", "queued"].includes(p.status));
               return (
-                <li key={b.id}>
-                  <Link href={mine ? `/reports/${mine.id}` : "/reports"} className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-[14px] border bg-surface px-4 py-3.5 transition-colors hover:border-faint/70 ${waitingOnMe ? "border-warn/50" : "border-line"}`}>
+                <li key={b.id} className="flex items-center gap-2">
+                  <Link href={mine ? `/reports/${mine.id}` : "/reports"} className={`grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-[14px] border bg-surface px-4 py-3.5 transition-colors hover:border-faint/70 ${waitingOnMe ? "border-warn/50" : "border-line"}`}>
                     <span className="grid min-w-0 gap-0.5">
                       <span className="truncate font-heading text-[15px]">
                         {b.clients.name} <span className="text-muted">· {(b.ranges ?? []).map((x) => x.label).join(" + ")}</span>
@@ -161,11 +190,12 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
                       {b.status === "sent" ? "Sent" : b.status === "failed" ? "Didn't send" : b.status === "waiting" ? "Waiting on a part" : waitingOnMe ? "Your turn" : "In progress"} →
                     </span>
                   </Link>
+                  {(b.created_by === me.id || me.isExec) && <RemoveGenerated kind="bundle" id={b.id} sent={b.status === "sent"} />}
                 </li>
               );
             })}
           </ul>
-          {onDemand.length > 0 && list(onDemand)}
+          {onDemand.length > 0 && list(onDemand, true)}
         </section>
       )}
 

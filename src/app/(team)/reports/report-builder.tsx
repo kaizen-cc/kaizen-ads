@@ -8,6 +8,8 @@ import { buildReportAction } from "./actions";
 // the services. Another buyer's service is drafted for them and they're asked to approve it; the whole thing goes to
 // the client as one report. On the right, the report as it takes shape: what it covers, who's in it, where it goes.
 
+/** A one-tap report: what this person builds again and again, or their client with no report this week */
+export type QuickPick = { clientId: string; ranges: string[]; services: string[]; reason: string };
 export type BuilderClient = { id: string; name: string; slug: string; hasChannel: boolean; services: { platform: "meta" | "google"; owner: string | null; mine: boolean }[] };
 
 const RANGES = [
@@ -53,9 +55,9 @@ function Mark({ platform, size = 18 }: { platform: "meta" | "google"; size?: num
   );
 }
 
-function Step({ n, title, done, children, last = false }: { n: number; title: string; done: boolean; children: React.ReactNode; last?: boolean }) {
+function Step({ n, title, done, children, last = false, enter = false }: { n: number; title: string; done: boolean; children: React.ReactNode; last?: boolean; enter?: boolean }) {
   return (
-    <div className="relative grid grid-cols-[32px_minmax(0,1fr)] gap-4">
+    <div className="relative grid grid-cols-[32px_minmax(0,1fr)] gap-4" style={enter ? { animation: "step-in .4s cubic-bezier(.2,.8,.2,1) both" } : undefined}>
       {!last && <span aria-hidden className={`absolute left-[15px] top-9 bottom-[-12px] w-px ${done ? "bg-gradient-to-b from-brand/70 to-line" : "bg-line"}`} />}
       <span className={`relative z-10 grid h-8 w-8 place-items-center rounded-full text-[13px] font-semibold transition-colors ${done ? "bg-brand text-white shadow-[0_0_0_4px_rgba(200,16,46,0.18)]" : "border border-line bg-bg text-muted"}`}>{done ? "✓" : n}</span>
       <div className="grid min-w-0 gap-3 pb-7">
@@ -66,21 +68,32 @@ function Step({ n, title, done, children, last = false }: { n: number; title: st
   );
 }
 
-export function ReportBuilder({ clients, initialClient, yesterday }: { clients: BuilderClient[]; initialClient?: string | null; yesterday: string }) {
+export function ReportBuilder({ clients, quick = [], initialClient, yesterday }: { clients: BuilderClient[]; quick?: QuickPick[]; initialClient?: string | null; yesterday: string }) {
   const router = useRouter();
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<BuilderClient | null>(() => clients.find((c) => c.slug === initialClient || c.id === initialClient) ?? null);
-  const [ranges, setRanges] = useState<string[]>(["last7"]);
+  const [ranges, setRanges] = useState<string[]>([]);
   const [custom, setCustom] = useState({ start: "", end: yesterday });
   const [services, setServices] = useState<string[]>(() => picked?.services.filter((s) => s.mine).map((s) => s.platform) ?? []);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
+  // Results from the second letter on
+  const searching = q.trim().length >= 2;
   const matches = useMemo(() => {
     const t = q.trim().toLowerCase();
-    const list = t ? clients.filter((c) => c.name.toLowerCase().includes(t)) : [...clients].sort((a, b) => Number(b.services.some((s) => s.mine)) - Number(a.services.some((s) => s.mine)) || a.name.localeCompare(b.name));
-    return list.slice(0, t ? 9 : 6);
+    if (t.length < 2) return [];
+    return clients.filter((c) => c.name.toLowerCase().includes(t)).sort((a, b) => Number(b.name.toLowerCase().startsWith(t)) - Number(a.name.toLowerCase().startsWith(t)) || a.name.localeCompare(b.name)).slice(0, 9);
   }, [q, clients]);
+  const picks = quick.map((p) => ({ ...p, client: clients.find((c) => c.id === p.clientId) })).filter((p): p is QuickPick & { client: BuilderClient } => Boolean(p.client));
+  /** A quick pick fills every step at once */
+  const apply = (p: QuickPick & { client: BuilderClient }) => {
+    setPicked(p.client);
+    setQ("");
+    setRanges(p.ranges);
+    setServices(p.services.filter((s) => p.client.services.some((x) => x.platform === s)));
+    setError(null);
+  };
   const choose = (c: BuilderClient) => {
     setPicked(c);
     setQ("");
@@ -121,7 +134,7 @@ export function ReportBuilder({ clients, initialClient, yesterday }: { clients: 
             <p className="max-w-xl text-sm text-white/55">Pick the client, the dates and the services. Each service is written for its buyer, and the client gets it all as one.</p>
           </div>
 
-          <Step n={1} title="Who it's for" done={Boolean(picked)}>
+          <Step n={1} title="Who it's for" done={Boolean(picked)} last={!picked}>
             {picked ? (
               <div className="flex flex-wrap items-center gap-3 rounded-[16px] border border-white/10 bg-white/[0.04] p-3 pr-4">
                 <span className="grid h-11 w-11 place-items-center rounded-[12px] bg-gradient-to-br from-brand to-[#7a0a1c] font-heading text-sm text-white">{initials(picked.name)}</span>
@@ -134,14 +147,53 @@ export function ReportBuilder({ clients, initialClient, yesterday }: { clients: 
                 </button>
               </div>
             ) : (
-              <div className="grid gap-3">
+              <div className="grid gap-4">
                 <div className="relative md:max-w-md">
                   <svg className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-white/40" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
                     <circle cx="11" cy="11" r="7" />
                     <path d="m20 20-3.5-3.5" />
                   </svg>
-                  <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search your clients" className="h-12 w-full rounded-[14px] border border-white/10 bg-white/[0.04] pl-10 pr-4 text-[15px] outline-none placeholder:text-white/35 focus:border-brand/60" />
+                  <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${clients.length} clients`} className="h-12 w-full rounded-[14px] border border-white/10 bg-white/[0.04] pl-10 pr-4 text-[15px] outline-none placeholder:text-white/35 focus:border-brand/60" />
                 </div>
+                {!searching && q.trim().length === 1 && <p className="-mt-2 text-xs text-white/40">One more letter…</p>}
+                {/* Before a search: one-tap reports, from what you usually build and your clients due one */}
+                {!searching && picks.length > 0 && (
+                  <div className="grid gap-2">
+                    <span className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/45">
+                      <span className="text-brand-text">✦</span> Quick create
+                    </span>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {picks.map((p) => (
+                        <button
+                          key={`${p.clientId}-${p.ranges.join()}-${p.services.join()}`}
+                          type="button"
+                          onClick={() => apply(p)}
+                          className="group relative grid gap-2 overflow-hidden rounded-[16px] border border-white/[0.08] bg-gradient-to-br from-white/[0.06] to-white/[0.02] p-4 text-left transition hover:-translate-y-0.5 hover:border-brand/50 hover:shadow-[0_16px_40px_-20px_rgba(200,16,46,0.8)]"
+                        >
+                          <span className="flex items-center gap-3">
+                            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[11px] bg-gradient-to-br from-brand to-[#7a0a1c] text-[12px] font-semibold text-white">{initials(p.client.name)}</span>
+                            <span className="grid min-w-0">
+                              <span className="truncate font-heading text-[15px]">{p.client.name}</span>
+                              <span className="truncate text-[11.5px] text-white/50">{p.ranges.map((k) => RANGES.find((x) => x.key === k)?.label).join(" + ")}</span>
+                            </span>
+                          </span>
+                          <span className="flex flex-wrap items-center gap-1.5">
+                            {p.services.map((sv) => (
+                              <span key={sv} className="flex items-center gap-1 rounded-full bg-white/[0.06] px-2 py-0.5 text-[11px] text-white/70">
+                                <span className="h-1.5 w-1.5 rounded-full" style={{ background: PLATFORM[sv as "meta" | "google"]?.color }} />
+                                {PLATFORM[sv as "meta" | "google"]?.name.replace(" Ads", "")}
+                              </span>
+                            ))}
+                          </span>
+                          <span className="text-[11px] text-white/40">{p.reason}</span>
+                          <span className="absolute right-4 top-4 text-sm text-white/30 transition group-hover:translate-x-0.5 group-hover:text-white">→</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {!searching && !picks.length && <p className="text-xs text-white/40">Type two letters of a client&apos;s name.</p>}
+                {searching && (
                 <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                   {matches.map((c) => (
                     <button key={c.id} type="button" onClick={() => choose(c)} className="group flex min-h-[60px] items-center gap-3 rounded-[14px] border border-white/[0.07] bg-white/[0.03] px-3 py-2.5 text-left transition hover:-translate-y-px hover:border-white/20 hover:bg-white/[0.06]">
@@ -161,12 +213,14 @@ export function ReportBuilder({ clients, initialClient, yesterday }: { clients: 
                   ))}
                   {!matches.length && <p className="px-1 text-sm text-white/45">No client by that name with an ad account to report on.</p>}
                 </div>
+                )}
               </div>
             )}
           </Step>
 
-          <Step n={2} title="What it covers" done={Boolean(picked) && rangesReady}>
-            <div className={`grid gap-2 sm:grid-cols-3 ${picked ? "" : "pointer-events-none opacity-40"}`}>
+          {picked && (
+          <Step key={`dates-${picked.id}`} n={2} title="What it covers" done={rangesReady} last={!ranges.length} enter>
+            <div className="grid gap-2 sm:grid-cols-3">
               {RANGES.map((r) => {
                 const on = ranges.includes(r.key);
                 const d = datesOf(r.key, yesterday, custom);
@@ -192,12 +246,14 @@ export function ReportBuilder({ clients, initialClient, yesterday }: { clients: 
                 <input type="date" value={custom.end} max={yesterday} onChange={(e) => setCustom({ ...custom, end: e.target.value })} className="h-11 rounded-[12px] border border-white/10 bg-white/[0.04] px-3 [color-scheme:dark]" />
               </div>
             )}
-            <p className="text-xs text-white/40">{ranges.length > 1 ? "Number 1 leads the report; the others each get their own section, each against the period before it." : "Pick more than one to cover both: the last 7 days and the month, say."}</p>
+            <p className="text-xs text-white/40">{ranges.length > 1 ? "Number 1 leads the report; the others each get their own section, each against the period before it." : ranges.length ? "Pick another to cover both: the last 7 days and the month, say." : "Pick one or more."}</p>
           </Step>
+          )}
 
-          <Step n={3} title="Which services" done={Boolean(picked) && chosen.length > 0} last>
-            <div className={`grid gap-2 sm:grid-cols-2 ${picked ? "" : "pointer-events-none opacity-40"}`}>
-              {(picked?.services ?? [{ platform: "meta" as const, owner: null, mine: false }, { platform: "google" as const, owner: null, mine: false }]).map((s) => {
+          {picked && ranges.length > 0 && (
+          <Step key={`services-${picked.id}`} n={3} title="Which services" done={chosen.length > 0} last enter>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {picked.services.map((s) => {
                 const on = services.includes(s.platform);
                 const p = PLATFORM[s.platform];
                 return (
@@ -225,6 +281,8 @@ export function ReportBuilder({ clients, initialClient, yesterday }: { clients: 
               })}
             </div>
           </Step>
+          )}
+          <style>{`@keyframes step-in { from { opacity: 0; transform: translateY(10px) } to { opacity: 1; transform: none } }`}</style>
         </div>
 
         {/* The report as it takes shape */}
