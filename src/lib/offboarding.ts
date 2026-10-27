@@ -43,13 +43,35 @@ async function match(admin: SupabaseClient, raw: Record<string, string>): Promis
   return { clientId: null, asked, candidates: (exact.length ? exact : close).map((c) => c.name as string).slice(0, 5) };
 }
 
-/** Tell people: the client's team and the execs (archived), or the execs alone (it couldn't be matched). */
+/** Which team heads a client concerns: Meta, Google and creative, by what they bought or what's set up for them
+ *  (Track's service list is often empty, so an ad account, a KPI, a package or the people on it count too). */
+async function headsFor(admin: SupabaseClient, clientId: string) {
+  const [{ data: c }, { data: kpis }, { data: team }] = await Promise.all([
+    admin.from("clients").select("services, services_extra, meta_ad_account_id, creative_package, creative_package_key").eq("id", clientId).maybeSingle(),
+    admin.from("kpi_targets").select("platform").eq("client_id", clientId),
+    admin.from("client_assignments").select("role").eq("client_id", clientId),
+  ]);
+  const services = new Set([...((c?.services as string[] | null) ?? []), ...((c?.services_extra as string[] | null) ?? [])]);
+  const platforms = new Set((kpis ?? []).map((k) => k.platform as string));
+  const roles = new Set((team ?? []).map((a) => a.role as string));
+  const heads: string[] = [];
+  if (services.has("facebook-ads") || c?.meta_ad_account_id || platforms.has("meta") || roles.has("meta_buyer")) heads.push("head_of_meta");
+  if (services.has("google-ads") || platforms.has("google") || roles.has("google_buyer")) heads.push("head_of_google");
+  if (services.has("creative") || c?.creative_package || c?.creative_package_key || ["graphic_designer", "video_editor", "copywriter"].some((r) => roles.has(r))) heads.push("head_of_creative");
+  return heads;
+}
+
+/**
+ * Tell people: the execs and customer success, the heads of the teams the client had (Meta, Google, creative), and
+ * everyone on the client (archived); or the execs and customer success alone (it couldn't be matched).
+ */
 async function tell(admin: SupabaseClient, clientId: string | null, n: { title: string; body: string; key: string; priority: "critical" | "normal" }) {
-  const [{ data: execs }, { data: team }] = await Promise.all([
-    admin.from("profiles").select("id").eq("is_active", true).in("role", ["executive", "customer_success"]),
+  const roles = ["executive", "customer_success", ...(clientId ? await headsFor(admin, clientId) : [])];
+  const [{ data: leads }, { data: team }] = await Promise.all([
+    admin.from("profiles").select("id").eq("is_active", true).in("role", roles),
     clientId ? admin.from("client_assignments").select("profile_id").eq("client_id", clientId) : Promise.resolve({ data: [] as { profile_id: string }[] }),
   ]);
-  const ids = [...new Set([...(execs ?? []).map((p) => p.id as string), ...(team ?? []).map((a) => a.profile_id as string)])];
+  const ids = [...new Set([...(leads ?? []).map((p) => p.id as string), ...(team ?? []).map((a) => a.profile_id as string)])];
   if (!ids.length) return;
   await admin.from("notifications").upsert(
     ids.map((id) => ({ profile_id: id, kind: "client", title: n.title.slice(0, 200), body: n.body.slice(0, 1000), href: "/clients?view=archived", client_id: clientId, key: n.key, priority: n.priority })),
