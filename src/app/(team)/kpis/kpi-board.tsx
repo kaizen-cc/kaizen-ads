@@ -17,6 +17,10 @@ import { AuditPanel, agoText, type AuditSummary } from "./audit-panel";
 import { ChangeLog } from "@/components/change-log";
 import type { AccountChange } from "@/lib/account-changes";
 import type { SprintSummary } from "@/lib/sprints";
+import type { LedgerItem } from "@/lib/ledger";
+import { FatigueWatch } from "@/components/fatigue-watch";
+import { MarketPanel } from "../clients/[slug]/market-panel";
+import { kpiCreative, type KpiCreative } from "./creative-actions";
 
 export type KpiRow = {
   id: string;
@@ -541,8 +545,27 @@ function SprintStrip({ s }: { s: SprintSummary }) {
   );
 }
 
-function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
+type Tab = "overview" | "numbers" | "actions" | "creative" | "notes" | "settings";
+
+function Detail({ r, buyers, onClose, onStep }: { r: KpiRow; buyers: Person[]; onClose: () => void; onStep: (dir: 1 | -1) => void }) {
   const router = useRouter();
+  const [tab, setTab] = useState<Tab>("overview");
+  // A sheet over the board: Escape closes it, the arrows step through the accounts, the page behind stays put
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement | null)?.closest("input, textarea, select, [contenteditable]")) return;
+      if (e.key === "Escape") onClose();
+      else if (e.key === "ArrowRight" || e.key === "ArrowDown") onStep(1);
+      else if (e.key === "ArrowLeft" || e.key === "ArrowUp") onStep(-1);
+    };
+    window.addEventListener("keydown", key);
+    const was = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", key);
+      document.body.style.overflow = was;
+    };
+  }, [onClose, onStep]);
   // What's being tried in the form; the numbers follow it live, before Save
   const [conv, setConv] = useState(r.conversion);
   const [custom, setCustom] = useState(r.customAction ?? "");
@@ -613,255 +636,491 @@ function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
       </span>
     </>
   );
-  return (
-    <div className="grid gap-5 border-t border-line bg-bg/40 px-4 py-5 sm:px-6 md:gap-6 md:py-6">
-      {/* First the audit and the AI to talk the account through with (the same thread as the client page) */}
-      <div className="grid gap-3">
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <ClientChat
-            variant="inline"
-            clientId={r.clientId}
-            client={r.client}
-            live
-            targets={r.accountId ? [{ id: r.id, label: `${r.platform === "google" ? "Google" : "Meta"}${r.label ? ` · ${r.label}` : ""}`, status: r.audit?.status ?? "none", auditId: r.audit?.id ?? null }] : []}
-          />
-          <Link href={`/clients/${r.slug}`} className="inline-flex h-11 items-center rounded-full border border-line px-4 text-sm text-muted hover:text-fg md:h-9">
-            Client page →
-          </Link>
+  const color = healthHex(healthOf(r.status));
+  const d14 = r.windows.d14;
+  const gap = gapText(r);
+  const moves = (r.audit?.quick ?? []).filter((q) => !q.done).length;
+  const notes = NOTE_FIELDS.filter(([k]) => r.sheet?.[k]).length;
+  const tabs: { id: Tab; label: string; count?: number | null; hint: string }[] = [
+    { id: "overview", label: "Overview", hint: "Where it stands, the 30 days, budget and the next move" },
+    { id: "numbers", label: "Numbers", hint: "Every window, month and quarter, and the metrics Meta reports" },
+    { id: "actions", label: "Actions", count: moves || null, hint: "The audit and the moves to make in the ad account" },
+    { id: "creative", label: "Creative", hint: "Ads wearing out, what has worked for them, and what's live in their market" },
+    { id: "notes", label: "Notes", count: notes || null, hint: "The #1 problem, the plan, this week's updates and every change in the account" },
+    { id: "settings", label: "Settings", hint: "What's counted, the target and the budget" },
+  ];
+  const dim = loading && previewing ? "opacity-60" : "";
+
+  const chart = (
+    <div className={`relative isolate grid content-start gap-3 overflow-hidden rounded-[20px] border border-line bg-surface p-4 transition-opacity md:p-5 ${dim}`}>
+      <span aria-hidden className="pointer-events-none absolute -left-20 -top-24 -z-10 h-64 w-64 rounded-full blur-[90px]" style={{ background: `${color}33` }} />
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="grid gap-0.5">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">Last 30 days</p>
+          <p className="text-sm text-muted">{roas ? `${convLabel} per day` : `Cost per ${convLabel.toLowerCase().replace(/s$/, "")}, 3-day rolling`}</p>
         </div>
-        {r.accountId && <AuditPanel targetId={r.id} audit={r.audit} platform={r.platform} />}
+        <span className="flex gap-3 text-[11px] text-faint">
+          <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#3fb27f]" />Beating</span>
+          <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#e0a63a]" />Close</span>
+          <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#e0505c]" />Over</span>
+        </span>
       </div>
-      {r.sprint && <SprintStrip s={r.sprint} />}
+      <HealthChart id={`${r.id}-detail`} daily={daily} target={r.target} roas={roas} status={r.status} unit={convLabel.toLowerCase().replace(/s$/, "")} />
+      <p className="text-[11px] text-faint">Faint bars are daily spend. Point at a day for its numbers.</p>
+    </div>
+  );
 
-      {previewing && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[12px] border border-brand/40 bg-brand-soft px-4 py-3 text-sm">
-          <span>
-            Previewing <b>{convLabel}</b>
-            {match ? ` in campaigns containing "${match}"` : ""}
-            {loading ? " · counting…" : ex?.resultType ? <span className="text-muted"> · counted as Meta&apos;s {ex.resultType}</span> : null}
-            <span className="text-muted"> · not saved yet</span>
-          </span>
-          <button type="button" onClick={reset} className="rounded-full border border-line bg-surface px-3 py-2.5 text-xs text-muted hover:text-fg md:py-1">
-            Back to the saved view
-          </button>
-        </div>
-      )}
-
-      <div className={`grid gap-6 transition-opacity lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] ${loading && previewing ? "opacity-60" : ""}`}>
-        <div className="relative isolate grid content-start gap-3 overflow-hidden rounded-[20px] border border-line bg-surface p-4 md:p-5">
-          <span aria-hidden className="pointer-events-none absolute -left-20 -top-24 -z-10 h-64 w-64 rounded-full blur-[90px]" style={{ background: `${healthHex(healthOf(r.status))}33` }} />
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div className="grid gap-0.5">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">Last 30 days</p>
-              <p className="text-sm text-muted">
-                {roas ? `${convLabel} per day` : `Cost per ${convLabel.toLowerCase().replace(/s$/, "")}, 3-day rolling`}
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label={`${r.client} KPI`}>
+      <button type="button" aria-label="Close" onClick={onClose} className="absolute inset-0 bg-black/60 backdrop-blur-[2px] motion-safe:animate-[fadeIn_.18s_ease-out]" />
+      <div className="relative flex h-full w-full flex-col overflow-hidden border-l border-line bg-bg shadow-[0_0_80px_-20px_rgba(0,0,0,0.9)] motion-safe:animate-[sheetIn_.24s_cubic-bezier(.2,.8,.2,1)] md:w-[min(980px,94vw)]">
+        {/* Who, how it's doing, and the tabs: always in view */}
+        <header className="relative isolate shrink-0 border-b border-line bg-surface/80 backdrop-blur" style={{ backgroundImage: `radial-gradient(90% 140% at 0% 0%, ${color}2e, transparent 60%)` }}>
+          <span aria-hidden className="absolute inset-x-0 top-0 h-[3px]" style={{ background: color, boxShadow: `0 0 22px ${color}` }} />
+          <div className="flex items-start justify-between gap-3 px-4 pb-3 pt-[calc(env(safe-area-inset-top)+16px)] sm:px-6 md:pt-5">
+            <div className="grid min-w-0 gap-1">
+              <p className="truncate font-heading text-xl leading-tight md:text-2xl">
+                {r.client}
+                {r.label && <span className="text-muted"> · {r.label}</span>}
+              </p>
+              <p className="truncate text-xs text-faint">
+                {r.platform === "google" ? "Google Ads" : "Meta"} · {r.conversionLabel}
+                {r.owner && ` · ${r.owner}`}
+                {r.source === "client" && " · client's target"}
               </p>
             </div>
-            <span className="flex gap-3 text-[11px] text-faint">
-              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#3fb27f]" />Beating target</span>
-              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#e0a63a]" />Close</span>
-              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#e0505c]" />Over</span>
-            </span>
-          </div>
-          <HealthChart id={`${r.id}-detail`} daily={daily} target={r.target} roas={roas} status={r.status} unit={convLabel.toLowerCase().replace(/s$/, "")} />
-          <p className="text-[11px] text-faint">The faint bars are daily spend. Point at a day for its numbers.</p>
-        </div>
-        <div className="grid content-start gap-3">
-          <p className="text-xs font-medium uppercase tracking-[0.12em] text-faint">Budget</p>
-          <PaceBar pace={r.pace} note={r.budgetNote} />
-          {r.pace && r.pace.dailyNeeded != null && r.pace.status !== "early" && (
-            <p className="text-xs leading-relaxed text-muted">
-              Spend about <span className="tabular text-fg">{money(r.pace.dailyNeeded)}</span> a day for the next {Math.ceil(r.pace.daysLeft)} days to land on budget.
-            </p>
-          )}
-          {r.budgetNote && r.pace && <p className="text-xs leading-relaxed text-faint">{r.budgetNote}</p>}
-        </div>
-      </div>
-
-      <div className={`grid gap-px overflow-hidden rounded-[10px] border border-line bg-line transition-opacity grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 ${loading && previewing ? "opacity-60" : ""}`}>
-        {win.map(([name, a]) => (
-          <div key={name} className={`grid min-w-0 gap-1.5 bg-surface px-3 py-3 md:px-4 ${name === "14 days" ? "ring-1 ring-inset ring-fg/25" : ""}`}>
-            <span className="text-[11px] text-faint">
-              {name}
-              {name === "14 days" && " · sets the status"}
-            </span>
-            {cell(a)}
-          </div>
-        ))}
-      </div>
-      <div className={`grid gap-px overflow-hidden rounded-[10px] border border-line bg-line transition-opacity grid-cols-2 lg:grid-cols-4 ${loading && previewing ? "opacity-60" : ""}`}>
-        {monthList.map(([name, a]) => (
-          <div key={name} className="grid min-w-0 gap-1.5 bg-surface px-3 py-3 md:px-4">
-            <span className="text-[11px] text-faint">{name}</span>
-            {cell(a)}
-          </div>
-        ))}
-      </div>
-
-      {canExplore && <MetricBoxes key={r.extraMetrics.join(",")} r={r} ex={ex} onChange={() => { setNonce((n) => n + 1); router.refresh(); }} />}
-      {canExplore && ex && (
-        <Reported
-          ex={ex}
-          conv={conv}
-          custom={custom}
-          onPick={pick}
-          boxes={r.extraMetrics}
-          onAddBox={async (k) => {
-            await setExtraMetrics(r.id, [...r.extraMetrics, k]);
-            setNonce((n) => n + 1);
-            router.refresh();
-          }}
-        />
-      )}
-      {err && <p className="text-xs text-bad">{err}</p>}
-
-      {/* The target's settings, folded away (open while previewing a change to what's counted, so it can be saved) */}
-      <details open={previewing || undefined} className="group rounded-[16px] border border-line bg-surface">
-        <summary className="flex cursor-pointer list-none flex-nowrap items-center justify-between gap-3 px-4 py-4 md:flex-wrap md:px-5">
-          <span className="min-w-0 text-xs font-medium uppercase tracking-[0.12em] text-faint">
-            Target and budget settings
-            <span className="ml-2 normal-case tracking-normal">
-              · {kpiValue(r.target, r.roas)} target{r.budget ? ` · ${money(r.budget)} a month` : ""}
-              {r.owner ? ` · ${r.owner}` : ""}
-            </span>
-          </span>
-          <span className="text-faint transition-transform group-open:rotate-90">›</span>
-        </summary>
-        <div className="grid gap-4 border-t border-line px-4 py-5 md:px-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            {r.sheet ? <p className="text-[11px] text-faint">Buyer, budget and target come from the Account Overview sheet (read at 12pm and 5pm): change them there.</p> : <span />}
-            <div className="flex flex-wrap items-center gap-3 md:flex-nowrap">
-              {r.accountId && <ActionButton action={pullClientKpis.bind(null, r.clientId)} label={r.platform === "google" ? "Pull from Google now" : "Pull from Meta now"} />}
-              <ActionButton action={archiveKpiTarget.bind(null, r.id)} label="Remove" confirmText="Remove this KPI?" />
+            <div className="flex shrink-0 items-center gap-1">
+              <button type="button" onClick={() => onStep(-1)} aria-label="Previous account" className="hidden h-9 w-9 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg md:grid">‹</button>
+              <button type="button" onClick={() => onStep(1)} aria-label="Next account" className="hidden h-9 w-9 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg md:grid">›</button>
+              <button type="button" onClick={onClose} aria-label="Close" className="grid h-11 w-11 place-items-center rounded-full text-lg text-muted hover:bg-surface-2 hover:text-fg md:h-9 md:w-9">
+                ×
+              </button>
             </div>
           </div>
-          <ActionForm action={saveKpiTarget.bind(null, r.id, r.clientId)} submitLabel={`Save, counting ${convLabel}`} autosave={!previewing} button={previewing} className="grid gap-4">
-            <TargetFields row={r} buyers={buyers} platform={r.platform} ctl={{ conv, setConv, custom, setCustom, match, setMatch, actions: ex?.actions ?? [] }} />
-          </ActionForm>
-        </div>
-      </details>
+          <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 px-4 pb-4 sm:px-6">
+            {r.status === "setup" ? (
+              <div className="flex items-center gap-2">
+                <StatusPill status="setup" />
+                <span className="text-xs text-faint">{r.error ?? (r.target ? "Waiting for data" : "Add a target in Settings")}</span>
+              </div>
+            ) : (
+              <div className="grid gap-1.5">
+                <div className="flex flex-wrap items-baseline gap-x-2">
+                  <span className="tabular font-display text-[34px] leading-none tracking-tight" style={{ color }}>
+                    {kpiValue(d14?.value, r.roas)}
+                  </span>
+                  <span className="tabular text-sm text-faint">/ {kpiValue(r.target, r.roas)} target · 14 days</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusPill status={r.status} />
+                  {gap && <span className="text-xs text-muted">{gap}</span>}
+                </div>
+              </div>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <ClientChat
+                variant="inline"
+                clientId={r.clientId}
+                client={r.client}
+                live
+                targets={r.accountId ? [{ id: r.id, label: `${r.platform === "google" ? "Google" : "Meta"}${r.label ? ` · ${r.label}` : ""}`, status: r.audit?.status ?? "none", auditId: r.audit?.id ?? null }] : []}
+              />
+              <Link href={`/clients/${r.slug}?service=${r.platform}`} className="inline-flex h-11 items-center rounded-full border border-line px-4 text-sm text-muted hover:text-fg md:h-9">
+                Client page →
+              </Link>
+            </div>
+          </div>
+          <nav className="no-scrollbar flex gap-1 overflow-x-auto px-3 sm:px-5" role="tablist">
+            {tabs.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={tab === t.id}
+                title={t.hint}
+                onClick={() => setTab(t.id)}
+                className={`relative inline-flex h-12 shrink-0 items-center gap-1.5 px-3 text-sm transition-colors md:h-11 ${tab === t.id ? "text-fg" : "text-muted hover:text-fg"}`}
+              >
+                {t.label}
+                {t.count ? <span className={`tabular rounded-full px-1.5 text-[10px] leading-4 ${t.id === "actions" ? "bg-brand text-white" : "bg-surface-2 text-muted"}`}>{t.count}</span> : null}
+                {tab === t.id && <span aria-hidden className="absolute inset-x-2 bottom-0 h-[2px] rounded-full" style={{ background: color }} />}
+              </button>
+            ))}
+          </nav>
+        </header>
 
-      <AccountNotes r={r} />
-      {r.accountId && <ChangeLog changes={r.changes} platform={r.platform} limit={10} collapsed={3} />}
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5 pb-[calc(env(safe-area-inset-bottom)+24px)] sm:px-6 md:py-6">
+          <div className="grid gap-5 md:gap-6">
+            <p className="-mb-2 text-xs text-faint">{tabs.find((t) => t.id === tab)?.hint}</p>
+
+            {previewing && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-[12px] border border-brand/40 bg-brand-soft px-4 py-3 text-sm">
+                <span>
+                  Previewing <b>{convLabel}</b>
+                  {match ? ` in campaigns containing "${match}"` : ""}
+                  {loading ? " · counting…" : ex?.resultType ? <span className="text-muted"> · counted as Meta&apos;s {ex.resultType}</span> : null}
+                  <span className="text-muted"> · not saved yet</span>
+                </span>
+                <span className="flex gap-2">
+                  {tab !== "settings" && (
+                    <button type="button" onClick={() => setTab("settings")} className="rounded-full bg-fg px-3 py-2.5 text-xs text-bg md:py-1">
+                      Save it
+                    </button>
+                  )}
+                  <button type="button" onClick={reset} className="rounded-full border border-line bg-surface px-3 py-2.5 text-xs text-muted hover:text-fg md:py-1">
+                    Back to the saved view
+                  </button>
+                </span>
+              </div>
+            )}
+
+            {tab === "overview" && (
+              <>
+                <div className="grid gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+                  {chart}
+                  <div className="grid content-start gap-3">
+                    <div className="grid gap-3 rounded-[20px] border border-line bg-surface p-4 md:p-5">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">Budget this month</p>
+                      <PaceBar pace={r.pace} note={r.budgetNote} />
+                      {r.pace && r.pace.dailyNeeded != null && r.pace.status !== "early" && (
+                        <p className="text-xs leading-relaxed text-muted">
+                          About <span className="tabular text-fg">{money(r.pace.dailyNeeded)}</span> a day for the next {Math.ceil(r.pace.daysLeft)} days lands it on budget.
+                        </p>
+                      )}
+                    </div>
+                    <div className="grid gap-2 rounded-[20px] border border-line bg-surface p-4 md:p-5">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">Momentum</p>
+                      <Delta label="vs last month" value={r.vsMonth} />
+                      <Delta label="vs last quarter" value={r.vsQuarter} />
+                      {r.trend && r.status !== "setup" && (
+                        <span className={`text-xs ${r.trend === "improving" ? "text-ok" : r.trend === "slipping" ? "text-bad" : "text-faint"}`}>
+                          {r.trend === "improving" ? "Last 3 days improving" : r.trend === "slipping" ? "Last 3 days slipping" : "Last 3 days steady"}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <NextMove r={r} moves={moves} onActions={() => setTab("actions")} onNotes={() => setTab("notes")} />
+                {r.sprint && <SprintStrip s={r.sprint} />}
+              </>
+            )}
+
+            {tab === "numbers" && (
+              <>
+                <div className={`grid grid-cols-2 gap-px overflow-hidden rounded-[14px] border border-line bg-line transition-opacity sm:grid-cols-3 lg:grid-cols-6 ${dim}`}>
+                  {win.map(([name, a]) => (
+                    <div key={name} className={`grid min-w-0 gap-1.5 bg-surface px-3 py-3 md:px-4 ${name === "14 days" ? "ring-1 ring-inset ring-fg/25" : ""}`}>
+                      <span className="text-[11px] text-faint">
+                        {name}
+                        {name === "14 days" && " · sets the status"}
+                      </span>
+                      {cell(a)}
+                    </div>
+                  ))}
+                </div>
+                <div className={`grid grid-cols-2 gap-px overflow-hidden rounded-[14px] border border-line bg-line transition-opacity lg:grid-cols-4 ${dim}`}>
+                  {monthList.map(([name, a]) => (
+                    <div key={name} className="grid min-w-0 gap-1.5 bg-surface px-3 py-3 md:px-4">
+                      <span className="text-[11px] text-faint">{name}</span>
+                      {cell(a)}
+                    </div>
+                  ))}
+                </div>
+                {canExplore && <MetricBoxes key={r.extraMetrics.join(",")} r={r} ex={ex} onChange={() => { setNonce((n) => n + 1); router.refresh(); }} />}
+                {canExplore && ex && (
+                  <Reported
+                    ex={ex}
+                    conv={conv}
+                    custom={custom}
+                    onPick={pick}
+                    boxes={r.extraMetrics}
+                    onAddBox={async (k) => {
+                      await setExtraMetrics(r.id, [...r.extraMetrics, k]);
+                      setNonce((n) => n + 1);
+                      router.refresh();
+                    }}
+                  />
+                )}
+                {err && <p className="text-xs text-bad">{err}</p>}
+              </>
+            )}
+
+            {tab === "actions" &&
+              (r.accountId ? (
+                <>
+                  {(r.status === "off" || r.status === "close") && !r.sprint && r.audit?.status !== "running" && !recentlyChanged(r) && (
+                    <p className="rounded-[14px] border border-dashed border-bad/50 px-4 py-3 text-sm text-bad">
+                      Nobody&apos;s optimizing this account yet{r.lastChange?.at ? `: no changes in ${sinceText(r.lastChange.at)}` : ""}. Run the audit and make the first moves below.
+                    </p>
+                  )}
+                  <AuditPanel targetId={r.id} audit={r.audit} platform={r.platform} />
+                  {r.sprint && <SprintStrip s={r.sprint} />}
+                </>
+              ) : (
+                <p className="rounded-[14px] border border-dashed border-line px-5 py-10 text-center text-sm text-muted">Link the ad account (in Settings) and the audit can read it.</p>
+              ))}
+
+            {tab === "creative" && <CreativeTab r={r} />}
+
+            {tab === "notes" && (
+              <>
+                <AccountNotes r={r} />
+                {r.accountId && <ChangeLog changes={r.changes} platform={r.platform} limit={10} collapsed={5} />}
+              </>
+            )}
+
+            {tab === "settings" && (
+              <section className="grid gap-4 rounded-[16px] border border-line bg-surface p-4 md:p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  {r.sheet ? <p className="text-[11px] text-faint">Buyer, budget and target come from the Account Overview sheet (read at 12pm and 5pm): change them there.</p> : <span />}
+                  <div className="flex flex-wrap items-center gap-3 md:flex-nowrap">
+                    {r.accountId && <ActionButton action={pullClientKpis.bind(null, r.clientId)} label={r.platform === "google" ? "Pull from Google now" : "Pull from Meta now"} />}
+                    <ActionButton action={archiveKpiTarget.bind(null, r.id)} label="Remove" confirmText="Remove this KPI?" />
+                  </div>
+                </div>
+                <ActionForm action={saveKpiTarget.bind(null, r.id, r.clientId)} submitLabel={`Save, counting ${convLabel}`} autosave={!previewing} button={previewing} className="grid gap-4">
+                  <TargetFields row={r} buyers={buyers} platform={r.platform} ctl={{ conv, setConv, custom, setCustom, match, setMatch, actions: ex?.actions ?? [] }} />
+                </ActionForm>
+              </section>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
 
-function Row({ r, open, onToggle, buyers }: { r: KpiRow; open: boolean; onToggle: () => void; buyers: Person[] }) {
-  const s = STATUS[r.status];
+/** The next move, on the Overview: the audit's verdict and its moves, or the account's #1 problem and plan. */
+function NextMove({ r, moves, onActions, onNotes }: { r: KpiRow; moves: number; onActions: () => void; onNotes: () => void }) {
+  const v = r.audit?.status === "ready" ? r.audit.verdict : null;
+  const problem = r.sheet?.problem;
+  const solution = r.sheet?.solution;
+  return (
+    <div className="grid gap-3 md:grid-cols-2">
+      <button type="button" onClick={onActions} className="group grid content-start gap-2 rounded-[20px] border border-line bg-surface p-4 text-left transition-colors hover:border-faint/70 md:p-5">
+        <span className="flex items-center justify-between gap-2">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">What to do</span>
+          <span className="text-xs text-muted group-hover:text-fg">{moves ? `${moves} ${moves === 1 ? "move" : "moves"} →` : "Actions →"}</span>
+        </span>
+        {v ? (
+          <>
+            <span className="font-heading text-[17px] leading-snug">{v.headline}</span>
+            <span className="line-clamp-3 text-sm leading-relaxed text-muted">{v.summary}</span>
+            <span className="text-[11px] text-faint">
+              Audited {agoText(r.audit!.createdAt)}
+              {r.audit!.by ? ` by ${r.audit!.by}` : ""}
+            </span>
+          </>
+        ) : r.audit?.status === "running" || r.audit?.status === "queued" ? (
+          <span className="text-sm text-brand-text">{r.audit.status === "running" ? `The audit is running (${r.audit.progress}%)` : "The audit is queued"}</span>
+        ) : (
+          <span className="text-sm text-muted">No audit yet. Run one and the moves to make in the account show up here.</span>
+        )}
+      </button>
+      <button type="button" onClick={onNotes} className="group grid content-start gap-2 rounded-[20px] border border-line bg-surface p-4 text-left transition-colors hover:border-faint/70 md:p-5">
+        <span className="flex items-center justify-between gap-2">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">#1 problem{r.sheet?.priority ? ` · ${r.sheet.priority} priority` : ""}</span>
+          <span className="text-xs text-muted group-hover:text-fg">Notes →</span>
+        </span>
+        {problem ? <span className="line-clamp-3 text-sm leading-relaxed">{problem}</span> : <span className="text-sm text-muted">Not written down yet.</span>}
+        {solution && (
+          <span className="line-clamp-3 text-sm leading-relaxed text-muted">
+            <span className="text-faint">Plan: </span>
+            {solution}
+          </span>
+        )}
+        {r.lastChange?.at && (
+          <span className="truncate text-[11px] text-faint">
+            Last change {sinceText(r.lastChange.at)} ago · {r.lastChange.what}
+            {r.lastChange.who ? ` by ${r.lastChange.who}` : ""}
+          </span>
+        )}
+      </button>
+    </div>
+  );
+}
+
+const ledgerMetric = (i: LedgerItem) => (i.roas != null ? `${i.roas}x ROAS` : i.costPerResult != null ? `${money(i.costPerResult)} each` : `${Math.round(i.results)} results`);
+
+/** Creative, read when the tab opens: ads wearing out, what has and hasn't worked for this client, their market. */
+function CreativeTab({ r }: { r: KpiRow }) {
+  const [d, setD] = useState<KpiCreative | null>(null);
+  useEffect(() => {
+    let live = true;
+    void kpiCreative(r.clientId).then((x) => {
+      if (live) setD(x);
+    });
+    return () => {
+      live = false;
+    };
+  }, [r.clientId]);
+  if (!d)
+    return (
+      <div className="grid gap-3">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="h-28 animate-pulse rounded-[20px] bg-surface" />
+        ))}
+      </div>
+    );
+  return (
+    <>
+      <FatigueWatch rows={d.fatigue} showClient={false} empty="No ads wearing out right now." />
+      <section className="grid gap-4 rounded-[20px] border border-line bg-surface p-4 md:p-5">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <div>
+            <h2 className="font-heading text-[17px]">What has worked for them</h2>
+            <p className="mt-1 text-sm text-muted">From their playbook: build the next creative on these.</p>
+          </div>
+          <span className="flex flex-wrap gap-3 text-xs">
+            <Link href={`/clients/${r.slug}?service=business&tab=playbook`} className="inline-flex min-h-11 items-center text-muted hover:text-fg md:min-h-0">
+              Full playbook →
+            </Link>
+            <Link href={`/clients/${r.slug}?service=creative&tab=production`} className="inline-flex min-h-11 items-center text-muted hover:text-fg md:min-h-0">
+              Creative in production →
+            </Link>
+          </span>
+        </div>
+        {d.winners.length ? (
+          <ul className="grid gap-2 sm:grid-cols-2">
+            {d.winners.map((i) => (
+              <li key={i.id} className="flex gap-3 rounded-[14px] bg-bg/50 p-3">
+                {i.kind === "creative" &&
+                  (i.detail.image ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={i.detail.image} alt="" loading="lazy" className="h-16 w-12 shrink-0 rounded-[8px] bg-surface-2 object-cover" onError={(e) => (e.currentTarget.style.visibility = "hidden")} />
+                  ) : (
+                    <span className="h-16 w-12 shrink-0 rounded-[8px] bg-surface-2" />
+                  ))}
+                <span className="grid min-w-0 content-start gap-1">
+                  <span className="flex items-center gap-2 text-[11px]">
+                    <span className="rounded-full bg-ok-soft px-2 py-0.5 font-medium text-ok">{i.kind === "angle" ? "Winning angle" : "Winning ad"}</span>
+                    {i.live && <span className="text-ok">Live</span>}
+                  </span>
+                  <span className="line-clamp-2 text-sm leading-snug">{i.title}</span>
+                  <span className="tabular text-[11px] text-muted">
+                    {money(i.spend)} spent · {ledgerMetric(i)}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-faint">No clear winners yet: the playbook fills in as their ads gather results.</p>
+        )}
+        {d.losers.length > 0 && (
+          <div className="grid gap-1.5">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">Didn&apos;t work, don&apos;t repeat</span>
+            <ul className="flex flex-wrap gap-1.5">
+              {d.losers.map((i) => (
+                <li key={i.id} className="rounded-full bg-bad-soft px-3 py-1 text-xs text-bad" title={i.reason ?? undefined}>
+                  {i.title}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </section>
+      {d.market.length ? (
+        <MarketPanel clientId={r.clientId} industry={d.industry} label={d.industryLabel} ads={d.market} />
+      ) : (
+        <p className="rounded-[20px] border border-dashed border-line px-5 py-8 text-center text-sm text-faint">Nothing from their market yet: set their industry or competitors on the client page.</p>
+      )}
+    </>
+  );
+}
+
+function Card({ r, active, onOpen }: { r: KpiRow; active: boolean; onOpen: () => void }) {
   const d14 = r.windows.d14;
   const gap = gapText(r);
   const color = healthHex(healthOf(r.status));
+  const moves = (r.audit?.quick ?? []).filter((q) => !q.done).length;
+  const idle = (r.status === "off" || r.status === "close") && !r.sprint && r.audit?.status !== "running" && !recentlyChanged(r);
+  const headline = r.sheet?.problem || (r.audit?.status === "ready" ? r.audit.verdict?.headline : null);
   return (
-    <li
-      id={`kpi-${r.id}`}
-      className={`relative isolate scroll-mt-20 overflow-hidden rounded-[18px] border bg-surface transition-all md:scroll-mt-6 ${open ? "border-faint/70 shadow-[0_24px_60px_-30px_rgba(0,0,0,0.9)]" : "border-line hover:-translate-y-px hover:border-faint/60"}`}
-      style={{ backgroundImage: `linear-gradient(100deg, ${color}1f 0%, transparent 38%)` }}
-    >
-      {/* The account's color: an edge, and a glow behind the name */}
-      <span aria-hidden className="absolute inset-y-0 left-0 w-[4px]" style={{ background: color, boxShadow: `0 0 18px ${color}` }} />
+    <li id={`kpi-${r.id}`} className="scroll-mt-24">
       <button
-        onClick={onToggle}
-        aria-expanded={open}
-        className="grid w-full grid-cols-2 items-center gap-x-4 gap-y-4 px-4 py-4 pl-5 text-left sm:px-6 sm:pl-7 md:gap-x-6 md:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)_200px] xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.9fr)_210px_minmax(150px,0.7fr)_minmax(0,0.95fr)]"
+        type="button"
+        onClick={onOpen}
+        aria-haspopup="dialog"
+        className={`group relative isolate grid h-full w-full content-start gap-3 overflow-hidden rounded-[20px] border bg-surface p-4 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_24px_50px_-28px_rgba(0,0,0,0.95)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fg/40 ${active ? "border-fg/40" : "border-line hover:border-faint/60"}`}
+        style={{ backgroundImage: `radial-gradient(120% 90% at 0% 0%, ${color}26, transparent 55%)` }}
       >
-        {/* Who and what */}
-        <div className="col-span-2 flex min-w-0 items-center gap-3 md:col-span-1">
-          <span className="relative flex h-2.5 w-2.5 shrink-0">
-            {r.status === "off" && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-bad opacity-40" />}
-            <span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${s.dot}`} />
-          </span>
+        <span aria-hidden className="absolute inset-x-0 top-0 h-[3px]" style={{ background: color, boxShadow: `0 0 18px ${color}` }} />
+
+        {/* Who */}
+        <div className="flex min-w-0 items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="truncate font-heading text-[15px] leading-snug">
+            <p className="truncate font-heading text-[16px] leading-snug">
               {r.client}
               {r.label && <span className="text-muted"> · {r.label}</span>}
             </p>
             <p className="mt-0.5 truncate text-xs text-faint">
               {r.conversionLabel}
               {r.owner && ` · ${r.owner}`}
-              {r.source === "client" && " · client's target"}
             </p>
-            {r.sprint ? (
-              <span className={`mt-1.5 inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] ${SPRINT_TONE[r.sprint.verdict ?? "started"] ?? "bg-surface-2 text-muted"}`}>
-                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
-                Sprint in motion · {r.sprint.buyer ?? "no buyer"} · {r.sprint.done}/{r.sprint.total}
-              </span>
-            ) : (r.status === "off" || r.status === "close") && r.audit?.status !== "running" && !recentlyChanged(r) ? (
-              <span className="mt-1.5 inline-flex rounded-full border border-dashed border-bad/50 px-2 py-0.5 text-[10px] text-bad">
-                Nobody&apos;s optimizing it yet{r.lastChange?.at ? ` · no changes in ${sinceText(r.lastChange.at)}` : ""}
-              </span>
-            ) : null}
-            {r.audit?.status === "ready" && !r.sprint && (
-              <p className="mt-1 truncate text-[11px] text-faint">
-                Audited {agoText(r.audit.createdAt)}
-                {r.audit.by ? ` by ${r.audit.by}` : ""}
-              </p>
-            )}
-            {(r.audit?.status === "running" || r.audit?.status === "queued") && (
-              <p className="mt-1 truncate text-[11px] text-brand-text">
-                {r.audit.status === "running" ? `Audit running (${r.audit.progress}%)` : "Audit queued"}
-                {r.audit.by ? ` · ${r.audit.by}` : ""}
-              </p>
-            )}
-            {r.lastChange?.at && (
-              <p className="mt-1 line-clamp-2 text-[11px] text-faint md:line-clamp-none md:truncate" title={`${r.lastChange.who ?? "Someone"}: ${r.lastChange.what}${r.lastChange.object ? ` · ${r.lastChange.object}` : ""}`}>
-                Last change {sinceText(r.lastChange.at)} ago · {r.lastChange.what}
-                {r.lastChange.who ? ` by ${r.lastChange.who}` : ""}
-              </p>
-            )}
           </div>
-        </div>
-
-        {/* The KPI */}
-        <div className="grid min-w-0 gap-1">
-          {r.status === "setup" ? (
-            <>
-              <StatusPill status="setup" />
-              <span className="truncate text-xs text-faint">{r.error ?? (r.target ? "Waiting for data" : "Add a target")}</span>
-            </>
-          ) : (
-            <>
-              <div className="flex flex-wrap items-baseline gap-x-2 md:flex-nowrap">
-                <span className="tabular font-display text-[28px] leading-none tracking-tight" style={{ color }}>
-                  {kpiValue(d14?.value, r.roas)}
-                </span>
-                <span className="tabular text-xs text-faint">/ {kpiValue(r.target, r.roas)} target</span>
-              </div>
-              <TargetGauge value={d14?.value} target={r.target} roas={r.roas} />
-              <div className="flex flex-wrap items-center gap-2">
-                <StatusPill status={r.status} />
-                {gap && <span className="text-[11px] text-muted">{gap}</span>}
-              </div>
-            </>
-          )}
-        </div>
-
-        {/* The last 30 days, each day in its own color, the whole in the account's */}
-        <div className="hidden min-w-0 gap-1 md:grid">
-          <HealthChart id={r.id} daily={r.daily} target={r.target} roas={r.roas} status={r.status} compact height={52} />
-          <span className="flex justify-between text-[10px] text-faint">
-            <span>30 days ago</span>
-            <span>{r.trend === "improving" ? "Improving" : r.trend === "slipping" ? "Slipping" : "Today"}</span>
+          <span className="relative mt-1.5 flex h-2.5 w-2.5 shrink-0">
+            {r.status === "off" && <span className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-50" style={{ background: color }} />}
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full" style={{ background: color }} />
           </span>
         </div>
 
-        {/* Month and quarter */}
-        <div className="hidden min-w-0 gap-1.5 xl:grid">
-          <Delta label="vs last month" value={r.vsMonth} />
-          <Delta label="vs last quarter" value={r.vsQuarter} />
-          {r.trend && r.status !== "setup" && (
-            <span className={`text-[11px] ${r.trend === "improving" ? "text-ok" : r.trend === "slipping" ? "text-bad" : "text-faint"}`}>
-              {r.trend === "improving" ? "Last 3 days improving" : r.trend === "slipping" ? "Last 3 days slipping" : "Last 3 days steady"}
+        {/* The KPI */}
+        {r.status === "setup" ? (
+          <div className="grid gap-1">
+            <StatusPill status="setup" />
+            <span className="truncate text-xs text-faint">{r.error ?? (r.target ? "Waiting for data" : "Add a target")}</span>
+          </div>
+        ) : (
+          <div className="grid gap-1.5">
+            <div className="flex items-baseline gap-2">
+              <span className="tabular font-display text-[30px] leading-none tracking-tight" style={{ color }}>
+                {kpiValue(d14?.value, r.roas)}
+              </span>
+              <span className="tabular truncate text-xs text-faint">/ {kpiValue(r.target, r.roas)}</span>
+            </div>
+            <TargetGauge value={d14?.value} target={r.target} roas={r.roas} />
+            <span className="flex items-center gap-2">
+              <StatusPill status={r.status} />
+              {gap && <span className="truncate text-[11px] text-muted">{gap}</span>}
             </span>
-          )}
+          </div>
+        )}
+
+        {/* The 30 days and the budget; on hover, the quick read */}
+        <div className="relative">
+          <div className="grid gap-2.5 transition-opacity duration-200 group-hover:opacity-0 group-focus-visible:opacity-0">
+            <HealthChart id={r.id} daily={r.daily} target={r.target} roas={r.roas} status={r.status} compact height={44} />
+            <PaceBar pace={r.pace} note={r.budgetNote} compact />
+          </div>
+          <div className="pointer-events-none absolute inset-0 grid content-start gap-1.5 overflow-hidden opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100">
+            <Delta label="vs last month" value={r.vsMonth} />
+            <Delta label="vs last quarter" value={r.vsQuarter} />
+            {r.trend && r.status !== "setup" && (
+              <span className={`text-xs ${r.trend === "improving" ? "text-ok" : r.trend === "slipping" ? "text-bad" : "text-faint"}`}>
+                {r.trend === "improving" ? "Last 3 days improving" : r.trend === "slipping" ? "Last 3 days slipping" : "Last 3 days steady"}
+              </span>
+            )}
+            {headline ? <span className="line-clamp-2 text-xs leading-snug text-fg/85">{headline}</span> : r.pace?.dailyNeeded != null && r.pace.status !== "early" ? <span className="text-xs text-muted">{money(r.pace.dailyNeeded)}/day lands it on budget</span> : null}
+            {r.lastChange?.at && <span className="truncate text-[11px] text-faint">Changed {sinceText(r.lastChange.at)} ago{r.lastChange.who ? ` by ${r.lastChange.who}` : ""}</span>}
+          </div>
         </div>
 
-        {/* Budget */}
-        <div className="min-w-0 md:col-span-3 xl:col-span-1">
-          <PaceBar pace={r.pace} note={r.budgetNote} compact />
+        {/* What's happening on it */}
+        <div className="flex min-h-6 flex-wrap items-center gap-1.5">
+          {r.sprint ? (
+            <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10.5px] ${SPRINT_TONE[r.sprint.verdict ?? "started"] ?? "bg-surface-2 text-muted"}`}>
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
+              Sprint · {r.sprint.done}/{r.sprint.total}
+            </span>
+          ) : idle ? (
+            <span className="inline-flex rounded-full border border-dashed border-bad/50 px-2 py-0.5 text-[10.5px] text-bad">Nobody&apos;s on it</span>
+          ) : null}
+          {(r.audit?.status === "running" || r.audit?.status === "queued") && <span className="rounded-full bg-brand-soft px-2 py-0.5 text-[10.5px] text-brand-text">{r.audit.status === "running" ? `Auditing ${r.audit.progress}%` : "Audit queued"}</span>}
+          {moves > 0 && <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10.5px] text-muted">{moves} {moves === 1 ? "move" : "moves"} to make</span>}
+          <span className="ml-auto text-[11px] text-faint opacity-0 transition-opacity group-hover:opacity-100">Open →</span>
         </div>
       </button>
-      {open && <Detail r={r} buyers={buyers} />}
     </li>
   );
 }
@@ -965,6 +1224,7 @@ export function KpiBoard({
   const [pace, setPace] = useState<Pacing["status"] | "all">("all");
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<string | null>(focus?.id ?? null);
+  const close = () => setOpen(null);
   const [adding, setAdding] = useState(false);
   // The focused card scrolls into view once it's on screen
   useEffect(() => {
@@ -984,6 +1244,13 @@ export function KpiBoard({
   const shown = base
     .filter((r) => (status === "all" || r.status === status) && (pace === "all" || r.pace?.status === pace) && (term.length < 2 || `${r.client} ${r.label ?? ""}`.toLowerCase().includes(term)))
     .sort((a, b) => RANK[a.status] - RANK[b.status] || (b.deviation ?? -9) - (a.deviation ?? -9) || a.client.localeCompare(b.client));
+
+  const openRow = open ? (rows.find((r) => r.id === open) ?? null) : null;
+  const step = (dir: 1 | -1) =>
+    setOpen((cur) => {
+      const at = shown.findIndex((r) => r.id === cur);
+      return at < 0 || !shown.length ? cur : shown[(at + dir + shown.length) % shown.length].id;
+    });
 
   const count = (s: Status) => base.filter((r) => r.status === s).length;
   const paced = base.filter((r) => r.pace);
@@ -1120,24 +1387,16 @@ export function KpiBoard({
         </p>
       )}
 
-      {/* Column guide */}
-      <div className="-mb-4 hidden gap-x-6 px-6 text-[11px] uppercase tracking-[0.12em] text-faint md:grid md:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)_172px] xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_172px_minmax(168px,0.8fr)_minmax(0,1fr)]">
-        <span>Client</span>
-        <span>14-day vs target</span>
-        <span>90 → 3 day averages</span>
-        <span className="hidden xl:block">Trend</span>
-        <span className="hidden xl:block">Budget this month</span>
-      </div>
-
       {shown.length ? (
-        <ul className="grid gap-2.5">
+        <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {shown.map((r) => (
-            <Row key={r.id} r={r} open={open === r.id} onToggle={() => setOpen(open === r.id ? null : r.id)} buyers={buyers} />
+            <Card key={r.id} r={r} active={open === r.id} onOpen={() => setOpen(r.id)} />
           ))}
         </ul>
       ) : (
         <p className="rounded-[14px] border border-dashed border-line px-6 py-14 text-center text-sm text-faint">Nothing here.</p>
       )}
+      {openRow && <Detail key={openRow.id} r={openRow} buyers={buyers} onClose={close} onStep={step} />}
 
       {setup > 0 && status === "all" && (
         <p className="text-center text-xs text-faint">

@@ -262,3 +262,13 @@ html {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Sheets sliding over a page (the KPI board's account sheet) */
+@keyframes sheetIn {
+  from { transform: translateX(28px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
