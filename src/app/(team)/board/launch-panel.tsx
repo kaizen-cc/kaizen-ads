@@ -26,6 +26,8 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
+  // The buyer ticked that they checked what Meta locks (for the settings shown: the fingerprint)
+  const [ticked, setTicked] = useState<string | null>(null);
   const [pending, start] = useTransition();
   // The buyer's edits, sent with "Check again"
   const [edits, setEdits] = useState<{ adsetId?: string; mode?: "existing" | "clone"; newAdsetName?: string; pageId?: string; igId?: string | null; link?: string; dailyBudget?: number | null; pixelId?: string | null; event?: string | null; trackingPixel?: string | null; urlTags?: string; leadFormId?: string; names: Record<string, string> }>({ names: {} });
@@ -64,11 +66,12 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
       setEdits({ names: {} });
       setL(await loadLaunch(r.id));
     });
-  const recheck = () =>
+  const recheck = (ack?: string) =>
     run(async () => {
       if (!l) return;
       const p = l.plan;
       const r = await replanLaunch(l.id, {
+        acks: [...(p?.acks ?? []), ...(ack ? [ack] : [])],
         adsetId: edits.adsetId ?? p?.adsetId,
         mode: edits.mode ?? p?.mode,
         newAdsetName: edits.newAdsetName ?? p?.newAdsetName ?? undefined,
@@ -91,7 +94,7 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
       if (!l) return;
       setConfirm(false);
       setL({ ...l, status: "launching" });
-      const r = await confirmLaunch(l.id);
+      const r = await confirmLaunch(l.id, l.plan?.locked?.fingerprint);
       if (!r.ok) setError(r.error);
       setL(await loadLaunch(l.id));
       router.refresh();
@@ -384,6 +387,16 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
               <span className={`mt-0.5 grid h-5 w-5 place-items-center rounded-full text-[11px] font-semibold ${TONE[c.level].dot}`}>{TONE[c.level].icon}</span>
               <span className={TONE[c.level].text}>
                 <span className="font-medium text-fg">{c.label}</span> · {c.detail}
+                {c.level === "block" && (c.key === "goal" || c.key === "event") && p?.locked && l.canLaunch && (
+                  <button
+                    type="button"
+                    onClick={() => recheck(`${c.key}:${c.key === "goal" ? p.locked!.objective : (p.locked!.event ?? "none")}`)}
+                    disabled={pending}
+                    className="ml-2 inline-flex h-7 items-center rounded-full border border-line px-2.5 text-xs text-muted hover:text-fg disabled:opacity-60 max-md:mt-1.5 max-md:h-10"
+                  >
+                    It&apos;s meant this way
+                  </button>
+                )}
               </span>
             </li>
           ))}
@@ -391,6 +404,18 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
       )}
 
       {l.status === "failed" && l.error && <p className="relative rounded-[10px] bg-bad/10 px-3 py-2 text-sm text-bad">{l.error}</p>}
+
+      {p?.locked && !busy && l.status !== "launched" && (
+        <Locked
+          locked={p.locked}
+          checks={l.checks}
+          signed={l.signed}
+          signoff={l.signoff}
+          ticked={ticked === p.locked.fingerprint}
+          onTick={(v) => setTicked(v ? p.locked!.fingerprint : null)}
+          canSign={l.status === "ready" && l.canLaunch && !dirty}
+        />
+      )}
 
       {!busy && l.status !== "launched" && (
         <div className="relative flex flex-wrap items-center gap-2 border-t border-line pt-4">
@@ -411,12 +436,12 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
           ) : (
             <>
               {l.status === "ready" && !dirty && l.canLaunch && (
-                <button type="button" onClick={() => setConfirm(true)} className="h-10 rounded-full bg-[#0866ff] px-5 text-sm font-medium text-white shadow-[0_10px_30px_-12px_rgba(8,102,255,0.9)] hover:brightness-110 max-md:h-12 max-md:w-full">
+                <button type="button" onClick={() => setConfirm(true)} disabled={!l.signed && ticked !== p?.locked?.fingerprint} title={!l.signed && ticked !== p?.locked?.fingerprint ? "Sign off the locked settings first" : undefined} className="h-10 rounded-full bg-[#0866ff] px-5 text-sm font-medium text-white shadow-[0_10px_30px_-12px_rgba(8,102,255,0.9)] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none max-md:h-12 max-md:w-full">
                   {p?.dynamic?.adId ? `Add to "${p.dynamic.adName}"` : p?.dynamic ? "Launch 1 dynamic ad paused" : `Launch ${p?.ads.length} ${p?.ads.length === 1 ? "ad" : "ads"} paused`}
                 </button>
               )}
               {(dirty || l.status !== "ready") && (
-                <button type="button" onClick={recheck} disabled={pending} className={`h-10 rounded-full px-5 text-sm font-medium disabled:opacity-60 max-md:h-11 max-md:w-full ${dirty ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
+                <button type="button" onClick={() => recheck()} disabled={pending} className={`h-10 rounded-full px-5 text-sm font-medium disabled:opacity-60 max-md:h-11 max-md:w-full ${dirty ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
                   {pending ? "Checking…" : dirty ? "Check with these changes" : "Check again"}
                 </button>
               )}
@@ -432,5 +457,60 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
         </div>
       )}
     </section>
+  );
+}
+
+const OBJ = (o: string) => o.replace(/^OUTCOME_/, "").replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
+
+/**
+ * What Meta locks once the ad set is published, laid out for a human to sign off: the client's goal, the campaign's
+ * objective, the pixel, the conversion event, attribution and the budget, each with how it checked.
+ */
+function Locked({ locked, checks, signed, signoff, ticked, onTick, canSign }: { locked: NonNullable<NonNullable<LaunchView["plan"]>["locked"]>; checks: LaunchCheck[]; signed: boolean; signoff: LaunchView["signoff"]; ticked: boolean; onTick: (v: boolean) => void; canSign: boolean }) {
+  const level = (key: string) => checks.find((c) => c.key === key)?.level ?? "ok";
+  const rows: { label: string; value: string; key: string | null }[] = [
+    { label: "Client's goal", value: locked.goal ? `${locked.goal === "sales" ? "Sales" : "Leads"} (KPI: ${locked.conversion})` : (locked.conversion ?? "Not set"), key: "goal" },
+    { label: "Campaign objective", value: `${OBJ(locked.objective)} · ${locked.campaign}`, key: "goal" },
+    { label: locked.mode === "clone" ? "New ad set" : "Ad set", value: locked.adset, key: null },
+    { label: "Pixel", value: locked.pixel ?? "None", key: "pixel" },
+    { label: "Conversion event", value: locked.event ? OBJ(locked.event) : "None", key: "event" },
+    { label: "Attribution", value: locked.attribution ?? "Unknown", key: "attribution" },
+    { label: "Budget", value: locked.budget, key: "budget" },
+  ];
+  const at = (d: string) => new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return (
+    <div className={`relative grid gap-3 rounded-[16px] border p-4 ${signed ? "border-ok/30 bg-ok/[0.04]" : "border-[#0866ff]/30 bg-[#0866ff]/[0.05]"}`}>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#7aa7ff]">Locked once published</p>
+        <p className="text-[11px] text-faint">Meta won&apos;t let these change after the ad set goes out</p>
+      </div>
+      <dl className="grid gap-x-6 gap-y-2.5 sm:grid-cols-2">
+        {rows.map((x, i) => {
+          const lv = x.key ? level(x.key) : "ok";
+          return (
+            <div key={i} className="grid min-w-0 grid-cols-[12px_minmax(0,1fr)] gap-2.5">
+              <span className={`mt-1.5 h-2 w-2 rounded-full ${lv === "block" ? "bg-bad" : lv === "warn" ? "bg-warn" : "bg-ok"}`} />
+              <span className="grid min-w-0">
+                <dt className="text-[11px] text-faint">{x.label}</dt>
+                <dd className={`truncate text-sm ${lv === "block" ? "text-bad" : "text-fg"}`} title={x.value}>{x.value}</dd>
+              </span>
+            </div>
+          );
+        })}
+      </dl>
+      {signed ? (
+        <p className="flex items-center gap-2 text-sm text-ok">
+          <span className="grid h-5 w-5 place-items-center rounded-full bg-ok/15 text-[11px]">✓</span>
+          {signoff?.fingerprint === locked.fingerprint ? `Signed off by ${signoff.name}, ${at(signoff.at)}` : locked.remembered ? `Signed off for this ad set by ${locked.remembered.by}, ${at(locked.remembered.at)}: same settings, so it goes on its own` : "Signed off"}
+        </p>
+      ) : canSign ? (
+        <label className="flex cursor-pointer items-start gap-3 rounded-[12px] bg-bg/60 px-3 py-3 text-sm max-md:min-h-12">
+          <input type="checkbox" checked={ticked} onChange={(e) => onTick(e.target.checked)} className="mt-0.5 h-5 w-5 shrink-0 accent-[#0866ff]" />
+          <span>I&apos;ve checked the objective, pixel, event and attribution are right for this client. Nothing is created until I launch.</span>
+        </label>
+      ) : (
+        <p className="text-xs text-faint">A buyer signs these off before anything is created.</p>
+      )}
+    </div>
   );
 }

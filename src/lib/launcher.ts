@@ -32,7 +32,7 @@ export type LaunchCheck = { key: string; label: string; level: "ok" | "warn" | "
 type Asset = { fileId: string; aspect: string; kind: "image" | "video"; hash?: string; videoId?: string; thumbUrl?: string; name: string; card?: number | null };
 /** cards: a carousel's cards in order (headline and description per card, from the copy studio); its assets are the cards */
 export type LaunchAd = { designId: string; designName: string; name: string; assets: Asset[]; cards?: { headline: string; description: string }[]; check?: { ok: boolean; error: string | null } };
-type AdsetOption = { id: string; name: string; campaignId: string; campaign: string; status: string; objective: string; optimization: string | null; destination: string | null; dynamic: boolean; leadForm: boolean; pixel: string | null; event: string | null; special: string[]; recentAds: string[]; spend14: number; pages: string[]; igs: string[]; forms?: string[]; daily?: number | null; lifetime?: number | null; campaignDaily?: number | null };
+type AdsetOption = { id: string; name: string; campaignId: string; campaign: string; status: string; objective: string; optimization: string | null; destination: string | null; dynamic: boolean; leadForm: boolean; pixel: string | null; event: string | null; attribution?: string | null; special: string[]; recentAds: string[]; spend14: number; pages: string[]; igs: string[]; forms?: string[]; daily?: number | null; lifetime?: number | null; campaignDaily?: number | null };
 export type LaunchPlan = {
   account: string;
   sandbox: boolean;
@@ -64,6 +64,12 @@ export type LaunchPlan = {
    */
   dynamic?: { adId: string | null; adName: string; status: string | null; base: Feed; dropped: string[] } | null;
   optOut: string[];
+  /** Multi-advertiser ads switched off on each creative (dropped when Meta won't take it) */
+  multiOff?: boolean;
+  /** What can't change once published (objective, pixel, event, attribution), for the human sign-off */
+  locked?: Locked;
+  /** Mismatches the buyer confirmed are meant that way ("goal:OUTCOME_TRAFFIC", "event:LEAD") */
+  acks?: string[];
   /** The enhancements Meta knows on this account's API version (the ones it accepted switching off at launch) */
   known?: string[];
   reason: string;
@@ -101,10 +107,51 @@ function eventFor(conversion: string | null) {
   if (/lead|form|quote|enquir|inquir/.test(c)) return "LEAD";
   return null;
 }
+/** What the client's KPI counts, as the business result: sales or leads (99% of clients) */
+export function goalOf(conversion: string | null): "sales" | "leads" | null {
+  const c = (conversion ?? "").toLowerCase();
+  if (!c) return null;
+  if (/purchase|sale|order|revenue|roas|checkout|cart/.test(c)) return "sales";
+  if (/lead|form|quote|enquir|inquir|book|schedul|appointment|consult|call|contact|applic|regist|sign ?up|trial|subscri/.test(c)) return "leads";
+  return null;
+}
+/** The campaign objectives that buy each goal (older names kept for older campaigns) */
+const OBJECTIVES: Record<"sales" | "leads", string[]> = { sales: ["OUTCOME_SALES", "CONVERSIONS", "PRODUCT_CATALOG_SALES"], leads: ["OUTCOME_LEADS", "LEAD_GENERATION", "CONVERSIONS"] };
+/** The pixel events that count as each goal */
+const GOAL_EVENTS: Record<"sales" | "leads", string[]> = { sales: ["PURCHASE"], leads: ["LEAD", "COMPLETE_REGISTRATION", "SCHEDULE", "CONTACT", "SUBMIT_APPLICATION", "SUBSCRIBE", "START_TRIAL"] };
+/** Kaizen's attribution standard */
+export const ATTRIBUTION = "7d click, 1d view";
+const attrText = (spec?: { event_type: string; window_days: number }[]) =>
+  spec?.length
+    ? [...spec]
+        .sort((a, b) => Number(a.event_type !== "CLICK_THROUGH") - Number(b.event_type !== "CLICK_THROUGH"))
+        .map((x) => `${x.window_days}d ${x.event_type === "CLICK_THROUGH" ? "click" : x.event_type === "VIEW_THROUGH" ? "view" : x.event_type.toLowerCase().replace(/_/g, " ").replace(" through", "")}`)
+        .join(", ")
+    : null;
+/**
+ * The settings Meta locks once the ad set is published, as the human signs them off. fingerprint ties a sign-off to
+ * exactly these values; remembered: an earlier sign-off of this same ad set with the same settings (no new one needed).
+ */
+export type Locked = {
+  goal: "sales" | "leads" | null;
+  conversion: string | null;
+  objective: string;
+  campaign: string;
+  adset: string;
+  mode: "existing" | "clone";
+  pixel: string | null;
+  event: string | null;
+  attribution: string | null;
+  budget: string;
+  fingerprint: string;
+  remembered?: { by: string; at: string } | null;
+};
+export type SignOff = { by: string; name: string; at: string; fingerprint: string };
+
 /** The ad's tracking: its website events reported to this dataset */
 export const trackingSpecs = (pixel: string) => JSON.stringify([{ "action.type": ["offsite_conversion"], fb_pixel: [pixel] }]);
 
-export type Overrides = Partial<Pick<LaunchPlan, "adsetId" | "mode" | "newAdsetName" | "pageId" | "igId" | "link" | "pixelId" | "event" | "trackingPixel" | "urlTags" | "leadFormId">> & { names?: Record<string, string>; dailyBudget?: number | null };
+export type Overrides = Partial<Pick<LaunchPlan, "adsetId" | "mode" | "newAdsetName" | "pageId" | "igId" | "link" | "pixelId" | "event" | "trackingPixel" | "urlTags" | "leadFormId" | "acks">> & { names?: Record<string, string>; dailyBudget?: number | null };
 /** level: where the budget lives (the ad set, the campaign for CBO, a lifetime budget that's left alone). value: the
  *  daily budget the launch sets (null: unchanged). suggested: the Media Buyer's, with why. Dollars. */
 export type Budget = { level: "adset" | "campaign" | "lifetime" | null; current: number | null; suggested: number | null; value: number | null; why: string };
@@ -158,8 +205,8 @@ async function readAccount(admin: SupabaseClient, account: string) {
   type P<T> = { data: T[] };
   const [camps, sets, ads, pages, igs, pixels] = await Promise.all([
     metaGraph<P<{ id: string; name: string; objective: string; special_ad_categories?: string[]; daily_budget?: string }>>(`${act}/campaigns`, { fields: "name,objective,special_ad_categories,daily_budget", filtering: live, limit: "100" }),
-    metaGraph<P<{ id: string; name: string; campaign_id: string; status: string; optimization_goal?: string; destination_type?: string; is_dynamic_creative?: boolean; promoted_object?: { pixel_id?: string; custom_event_type?: string; page_id?: string }; daily_budget?: string; lifetime_budget?: string }>>(`${act}/adsets`, {
-      fields: "name,campaign_id,status,optimization_goal,destination_type,is_dynamic_creative,promoted_object,daily_budget,lifetime_budget",
+    metaGraph<P<{ id: string; name: string; campaign_id: string; status: string; optimization_goal?: string; destination_type?: string; is_dynamic_creative?: boolean; promoted_object?: { pixel_id?: string; custom_event_type?: string; page_id?: string }; daily_budget?: string; lifetime_budget?: string; attribution_spec?: { event_type: string; window_days: number }[] }>>(`${act}/adsets`, {
+      fields: "name,campaign_id,status,optimization_goal,destination_type,is_dynamic_creative,promoted_object,daily_budget,lifetime_budget,attribution_spec",
       filtering: live,
       limit: "200",
     }),
@@ -198,6 +245,7 @@ async function readAccount(admin: SupabaseClient, account: string) {
         leadForm: s.destination_type === "ON_AD" || s.optimization_goal === "LEAD_GENERATION",
         pixel: s.promoted_object?.pixel_id ?? null,
         event: s.promoted_object?.custom_event_type ?? null,
+        attribution: attrText(s.attribution_spec),
         special: (c.special_ad_categories ?? []).filter((x) => x && x !== "NONE"),
         recentAds: mine.slice(0, 8).map((a) => a.name),
         spend14: Math.round(spend.get(s.id) ?? 0),
@@ -242,6 +290,17 @@ Name each ad so it continues the pattern of the names in that ad set (same separ
 When this client has launch rules (from their buyers moving ads the launcher placed), they win over your own judgment: follow them, and say in reason which rule you followed.
 reason: two or three plain sentences on why this ad set and how the names follow the pattern. newAdsetName empty unless mode is clone.
 dailyBudget: the daily budget in dollars the ad set should run at with these ads in it, where its budget lives (the campaign's when the campaign holds it). Work from the account's monthly budget (a month is about 30.4 days), what it spends now and how many ads would share it: room for each ad to get through learning, never a total that runs the account past its monthly budget. For mode existing, the ad set's current budget when it already has room (only raise it when the new ads clearly need it); for a new ad set (clone), a starting budget to test with, in line with the ad sets around it. 0 when it has a lifetime budget or nothing tells you enough. budgetWhy: one plain sentence.`;
+
+/** A human signed off these exact locked settings: on this launch, or earlier for this same ad set (existing only). */
+export const signedOff = (plan: LaunchPlan, signoff: SignOff | null) => !plan.locked || Boolean(plan.locked.remembered) || signoff?.fingerprint === plan.locked.fingerprint;
+
+/** Records the human sign-off on the launch, and on the ad set so later launches into it with the same settings go on their own. */
+export async function signOff(admin: SupabaseClient, launchId: string, plan: LaunchPlan, by: { id: string; name: string }) {
+  if (!plan.locked) return;
+  const s: SignOff = { by: by.id, name: by.name, at: new Date().toISOString(), fingerprint: plan.locked.fingerprint };
+  await admin.from("launches").update({ signoff: s }).eq("id", launchId);
+  if (plan.mode === "existing") await admin.from("launch_signoffs").upsert({ adset_id: plan.adsetId, fingerprint: plan.locked.fingerprint, profile_id: by.id, signed_at: s.at }, { onConflict: "adset_id,fingerprint" });
+}
 
 /** Plans a launch (in the background of the request that started it): see the top of this file. */
 export async function planLaunch(admin: SupabaseClient, launchId: string, overrides: Overrides = {}) {
@@ -393,8 +452,9 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
       const f = fired(id);
       return f ? Math.floor((Date.now() - Date.parse(f)) / 86_400_000) : null;
     };
+    const goal = goalOf(conversion);
     if (pixelId) {
-      const off = conversion && event && suggestedEvent && suggestedEvent !== event;
+      const off = conversion && event && suggestedEvent && suggestedEvent !== event && !(goal && !GOAL_EVENTS[goal].includes(event));
       const days = stale(pixelId);
       add(
         "pixel",
@@ -402,7 +462,34 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
         off || (days != null && days > 3) ? "warn" : "ok",
         `${mode === "clone" ? "The new ad set optimizes" : `"${adset.name}" optimizes`} for ${(event ?? adset.optimization ?? "?").replace(/_/g, " ").toLowerCase()} on ${pixelName(pixelId)}.${off ? ` The KPI counts ${conversion} (${suggestedEvent.replace(/_/g, " ").toLowerCase()}).` : ""}${days != null && days > 3 ? ` That dataset hasn't seen an event in ${days} days: check the pixel on the site.` : ""}`,
       );
-    } else if (adset.destination === "WEBSITE" || ["OUTCOME_SALES", "OUTCOME_LEADS", "CONVERSIONS"].includes(adset.objective)) add("pixel", "Optimization", "warn", `"${adset.name}" doesn't optimize for a pixel event.`);
+    } else if (!goal && (adset.destination === "WEBSITE" || ["OUTCOME_SALES", "OUTCOME_LEADS", "CONVERSIONS"].includes(adset.objective))) add("pixel", "Optimization", "warn", `"${adset.name}" doesn't optimize for a pixel event.`);
+    if (pixelId && acct.pixels.length && !acct.pixels.some((x) => x.id === pixelId)) add("pixel-owner", "Pixel", "warn", `The pixel this ad set optimizes on (${pixelId}) isn't one this ad account can see: check it's ${ticket.clients.name}'s.`);
+
+    // What Meta locks once it's published: the campaign's objective, the ad set's pixel, conversion event and
+    // attribution. They have to match what the client's KPI counts (sales or leads): a mismatch stops the launch
+    // unless the buyer confirms it's meant that way (a traffic or retargeting test, say)
+    const acks = overrides.acks ?? prevPlan?.acks ?? [];
+    const words = (x: string | null | undefined) => (x ?? "?").replace(/^OUTCOME_/, "").replace(/_/g, " ").toLowerCase();
+    const lockCheck = (key: string, value: string, label: string, detail: string) => {
+      const meant = acks.includes(`${key}:${value}`);
+      add(key, label, meant ? "warn" : "block", meant ? `${detail} Confirmed as intended.` : detail);
+    };
+    if (!goal)
+      add("goal", "Client's conversion", "warn", conversion ? `The KPI counts "${conversion}", which isn't sales or leads: check the objective and event by hand before signing off.` : `${ticket.clients.name} has no Meta KPI target, so Kaizen Ads can't tell sales from leads: set it on the KPI board, and check the objective and event by hand before signing off.`);
+    else {
+      const leadsOnSales = goal === "leads" && adset.objective === "OUTCOME_SALES" && GOAL_EVENTS.leads.includes(event ?? "");
+      if (OBJECTIVES[goal].includes(adset.objective) || leadsOnSales) add("goal", "Objective", "ok", `A ${words(adset.objective)} campaign, for a ${goal} client (the KPI counts ${conversion}).`);
+      else lockCheck("goal", adset.objective, "Objective", `"${adset.campaign}" is a ${words(adset.objective)} campaign, but ${ticket.clients.name}'s KPI counts ${conversion} (${goal}). A campaign's objective can't be changed once it's published.`);
+      if (event && !GOAL_EVENTS[goal].includes(event))
+        lockCheck("event", event, "Conversion event", `${mode === "clone" ? "The new ad set" : `"${adset.name}"`} optimizes for ${words(event)}, not ${goal === "sales" ? "purchases" : "leads"}. ${mode === "clone" ? "Pick the right event above, or confirm it's meant this way." : "An ad set's event can't be changed once it's published: pick another ad set, or confirm it's meant this way."}`);
+      else if (!pixelId && !adset.leadForm && !adset.dynamic && (adset.destination === "WEBSITE" || ["OUTCOME_SALES", "OUTCOME_LEADS", "CONVERSIONS"].includes(adset.objective)))
+        lockCheck("event", "none", "Conversion event", `"${adset.name}" has no pixel or conversion event, so Meta can't optimize for ${goal === "sales" ? "purchases" : "leads"}.`);
+      else if (event) add("event", "Conversion event", "ok", `${words(event)}, a ${goal === "sales" ? "sale" : "lead"}.`);
+      else if (adset.leadForm) add("event", "Conversion event", "ok", "Leads from the instant form.");
+    }
+    if (adset.attribution && adset.attribution !== ATTRIBUTION)
+      add("attribution", "Attribution", "warn", `"${adset.name}" counts results on ${adset.attribution}; Kaizen's standard is ${ATTRIBUTION}. It can't be changed once an ad set is published${mode === "clone" ? ", and the new ad set copies it" : ""}.`);
+    else add("attribution", "Attribution", adset.attribution ? "ok" : "warn", adset.attribution ? `${adset.attribution}, Kaizen's standard.` : `Couldn't read the ad set's attribution: check it's ${ATTRIBUTION} in Ads Manager.`);
     if (trackingPixel) add("tracking", "Website events", "ok", `Each ad reports to ${pixelName(trackingPixel)}.`);
     else add("tracking", "Website events", acct.pixels.length ? "warn" : "ok", acct.pixels.length ? "No dataset picked for the ads' website events: Meta uses its default." : "This account has no pixel or dataset.");
     add("utm", "UTM parameters", urlTags ? "ok" : "warn", urlTags ? `${urlTags}${ticket.clients.url_tags ? ` (${ticket.clients.name}'s own)` : ""}` : "None: site analytics won't see which ad a visit came from.");
@@ -473,6 +560,26 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
       };
     });
 
+    const budgetText = level === "lifetime" ? `${$(currentBudget!)} lifetime, unchanged` : level === null ? "unknown" : `${$(value ?? currentBudget!)}/day on ${level === "campaign" ? "the campaign" : "the ad set"}`;
+    const lockedPixel = mode === "clone" ? pixelId : adset.pixel;
+    const lockedEvent = mode === "clone" ? event : adset.event;
+    const fingerprint = [account, adset.campaignId, adset.objective, lockedPixel ?? "-", lockedEvent ?? "-", adset.attribution ?? "-", mode].join("|");
+    const { data: seen } = await admin.from("launch_signoffs").select("signed_at, profiles(full_name)").eq("adset_id", adset.id).eq("fingerprint", fingerprint).maybeSingle();
+    const locked: Locked = {
+      goal,
+      conversion,
+      objective: adset.objective,
+      campaign: adset.campaign,
+      adset: mode === "clone" ? (newAdsetName ?? `copy of ${adset.name}`) : adset.name,
+      mode,
+      pixel: lockedPixel ? pixelName(lockedPixel) : null,
+      event: lockedEvent,
+      attribution: adset.attribution ?? null,
+      budget: budgetText,
+      fingerprint,
+      remembered: seen && mode === "existing" ? { by: (seen.profiles as unknown as { full_name: string } | null)?.full_name ?? "a buyer", at: seen.signed_at as string } : null,
+    };
+
     const plan: LaunchPlan = {
       account,
       sandbox,
@@ -495,6 +602,9 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
       ads,
       structure: null,
       optOut: [...ENHANCEMENTS],
+      multiOff: true,
+      locked,
+      acks,
       reason,
       options: { adsets: acct.adsets, pages: acct.pages, igs: acct.igs, pixels: acct.pixels, ...(leadForms.length ? { leadForms } : {}), ...(everyAdset ? { allAdsets: everyAdset } : {}) },
       attempts: [],
@@ -539,6 +649,7 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
       plan.optOut.length >= ENHANCEMENTS.length - 4 ? "ok" : "warn",
       plan.optOut.length ? `Switched off (${plan.optOut.length}), so the ad runs as the client approved it.` : "Meta wouldn't take the switches here: check Advantage+ creative is off in Ads Manager before turning the ad on.",
     );
+    add("multi", "Multi-advertiser ads", plan.multiOff === false ? "warn" : "ok", plan.multiOff === false ? "Meta wouldn't take the opt-out here: switch multi-advertiser ads off in Ads Manager before turning the ad on." : "Off: the ad never shows in a row with other advertisers' ads.");
     add("meta", "Meta's dry run", failed.length ? "block" : "ok", failed.length ? failed.map((a) => `${a.name}: ${a.check?.error}`).join(" · ") : `Meta checked all ${plan.ads.length} ${plan.ads.length === 1 ? "ad" : "ads"} and would accept ${plan.ads.length === 1 ? "it" : "them"}.`);
     await update(admin, launchId, { status: failed.length ? "blocked" : "ready", progress: null, checks, plan });
   } catch (e) {
@@ -733,8 +844,11 @@ function dynamicSpec(plan: LaunchPlan, name: string) {
   };
 }
 
-export const specFor = (plan: LaunchPlan, ad: LaunchAd, structure: NonNullable<LaunchPlan["structure"]>) =>
-  plan.dynamic ? dynamicSpec(plan, plan.dynamic.adName || ad.name) : ad.cards ? carouselSpec(plan, ad, structure !== "single") : structure === "single" || structure === "dynamic" ? classicSpec(plan, ad) : creativeSpec(plan, ad, structure);
+export const specFor = (plan: LaunchPlan, ad: LaunchAd, structure: NonNullable<LaunchPlan["structure"]>) => {
+  const spec: Record<string, unknown> = plan.dynamic ? dynamicSpec(plan, plan.dynamic.adName || ad.name) : ad.cards ? carouselSpec(plan, ad, structure !== "single") : structure === "single" || structure === "dynamic" ? classicSpec(plan, ad) : creativeSpec(plan, ad, structure);
+  // The client's ad shown on its own, never in a carousel with other advertisers' ads
+  return plan.multiOff === false ? spec : { ...spec, contextual_multi_ads: { enroll_status: "OPT_OUT" } };
+};
 
 export const params = (spec: Record<string, unknown>) => Object.fromEntries(Object.entries(spec).map(([k, v]) => [k, typeof v === "string" ? v : JSON.stringify(v)]));
 
@@ -769,7 +883,8 @@ export async function checkCreative(admin: SupabaseClient, plan: LaunchPlan, ad:
       const m = e instanceof Error ? e.message : String(e);
       // An enhancement Meta doesn't recognize: drop it and check again; the whole switch block as a last resort
       const named = plan.optOut.find((f) => m.includes(f));
-      if (named) plan.optOut = plan.optOut.filter((f) => f !== named);
+      if (plan.multiOff !== false && /contextual_multi_ads|multi.?advertiser/i.test(m)) plan.multiOff = false;
+      else if (named) plan.optOut = plan.optOut.filter((f) => f !== named);
       else if (plan.optOut.length && /creative_features_spec|degrees_of_freedom|enroll_status|creative feature/i.test(m)) plan.optOut = [];
       else return m;
     }
@@ -820,9 +935,10 @@ async function dryRun(admin: SupabaseClient, plan: LaunchPlan) {
  * doesn't stop the rest. Returns what was made, with links into Ads Manager.
  */
 export async function runLaunch(admin: SupabaseClient, launchId: string) {
-  const { data: l } = await admin.from("launches").select("plan, status").eq("id", launchId).single();
+  const { data: l } = await admin.from("launches").select("plan, status, signoff").eq("id", launchId).single();
   const plan = l?.plan as LaunchPlan | null;
   if (!l || !plan || l.status !== "ready") throw new Error("This launch isn't ready.");
+  if (!signedOff(plan, l.signoff as SignOff | null)) throw new Error("Sign off the settings Meta locks (objective, pixel, event, attribution) first.");
   await update(admin, launchId, { status: "launching", progress: "Creating the ads in Meta" });
   try {
     let adsetId = plan.adsetId;
@@ -972,6 +1088,24 @@ export async function autoLaunch(admin: SupabaseClient, requestId: string, launc
       key: `launch-dynamic:${l.id}`,
     });
     return "handed to the buyer";
+  }
+  const { data: so } = await admin.from("launches").select("signoff").eq("id", l.id).single();
+  const lockedPlan = planRow?.plan as LaunchPlan | null;
+  if (planned?.status === "ready" && lockedPlan && !signedOff(lockedPlan, (so?.signoff ?? null) as SignOff | null)) {
+    const k = lockedPlan.locked!;
+    await handTo(
+      admin,
+      ticket,
+      buyer,
+      `Checked and ready, waiting on your sign-off of what Meta locks once it's published: ${k.objective.replace(/^OUTCOME_/, "").toLowerCase()} campaign "${k.campaign}", ${k.mode === "clone" ? "new ad set" : "ad set"} "${k.adset}", pixel ${k.pixel ?? "none"}, event ${(k.event ?? "none").toLowerCase()}, attribution ${k.attribution ?? "unknown"}. Sign off in the Launch panel and it's created paused.`,
+      {
+        title: `${client}: sign off the launch settings`,
+        body: `#${ticket.number} ${ticket.title} passed every check. Confirm the objective, pixel, event and attribution in the Launch panel.`,
+        priority: "normal",
+        key: `launch-signoff:${l.id}`,
+      },
+    );
+    return "waiting on sign-off";
   }
   if (planned?.status === "ready") {
     try {

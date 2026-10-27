@@ -3,7 +3,7 @@
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { requireStaff, type Staff } from "@/lib/auth";
-import { adsManagerLink, type MoveTarget, autoLaunch, explainHandMove, makeSandboxCampaign, moveLaunch, planLaunch, runLaunch, type LaunchCheck, type LaunchPlan, type Overrides } from "@/lib/launcher";
+import { adsManagerLink, type MoveTarget, autoLaunch, explainHandMove, makeSandboxCampaign, moveLaunch, planLaunch, runLaunch, signOff, signedOff, type LaunchCheck, type LaunchPlan, type Overrides, type SignOff } from "@/lib/launcher";
 import { metaConfigured } from "@/lib/context/meta";
 import { delivery, editLaunch, setDelivery, type AdEdit, type Delivery } from "@/lib/launch-manage";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
@@ -27,6 +27,9 @@ export type LaunchView = {
   moves: { at: string; from: { name: string }; to: { name: string; campaign: string }; reason: string; via?: string }[];
   pendingMove: { from: { name: string }; to: { name: string; campaign: string } } | null;
   edits: { at: string; changes: string[]; reason: string | null }[];
+  /** Who signed off the locked settings, when it matches the plan as it is now */
+  signoff: SignOff | null;
+  signed: boolean;
 };
 
 /** The Ads Manager link, always in its current form (the ads' editor, scoped to their campaign and ad set). */
@@ -51,7 +54,7 @@ async function view(id: string): Promise<LaunchView | null> {
   const me = await requireStaff();
   const { data: l } = await (await createClient())
     .from("launches")
-    .select("id, client_id, status, progress, sandbox, plan, checks, result, error, launched_at, moves, pending_move, edits, launcher:profiles!launches_launched_by_fkey(full_name)")
+    .select("id, client_id, status, progress, sandbox, plan, checks, result, error, launched_at, moves, pending_move, edits, signoff, launcher:profiles!launches_launched_by_fkey(full_name)")
     .eq("id", id)
     .maybeSingle();
   if (!l) return null;
@@ -70,6 +73,8 @@ async function view(id: string): Promise<LaunchView | null> {
     moves: (l.moves ?? []) as LaunchView["moves"],
     pendingMove: (l.pending_move ?? null) as LaunchView["pendingMove"],
     edits: (l.edits ?? []) as LaunchView["edits"],
+    signoff: (l.signoff ?? null) as SignOff | null,
+    signed: l.plan ? signedOff(l.plan as LaunchPlan, (l.signoff ?? null) as SignOff | null) : false,
   };
 }
 
@@ -120,13 +125,18 @@ export async function replanLaunch(id: string, overrides: Overrides): Promise<{ 
  * Creates the ads in Meta, paused. A client launch moves the ticket to Launched with the ad names in its history;
  * a sandbox launch is a test and leaves the ticket where it is.
  */
-export async function confirmLaunch(id: string): Promise<{ ok: true; launched: number; total: number; link: string | null; sandbox: boolean } | { ok: false; error: string }> {
+export async function confirmLaunch(id: string, fingerprint?: string): Promise<{ ok: true; launched: number; total: number; link: string | null; sandbox: boolean } | { ok: false; error: string }> {
   const me = await requireStaff();
   const v = await view(id);
   if (!v) return { ok: false, error: "Not found." };
   if (!v.canLaunch) return { ok: false, error: "Only the client's Meta buyer, the Head of Meta or an exec can launch." };
   if (v.status !== "ready") return { ok: false, error: "Run the checks first; they have to pass." };
   const admin = createAdminClient();
+  // The human sign-off of what Meta locks: only for the settings as they were shown
+  if (!v.signed) {
+    if (!fingerprint || fingerprint !== v.plan?.locked?.fingerprint) return { ok: false, error: "The settings changed since you looked: check them again and sign off." };
+    await signOff(admin, id, v.plan!, { id: me.id, name: me.fullName });
+  }
   try {
     const r = await runLaunch(admin, id);
     await admin.from("launches").update({ launched_by: me.id }).eq("id", id);
