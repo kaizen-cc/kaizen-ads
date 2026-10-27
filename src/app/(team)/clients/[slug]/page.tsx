@@ -23,6 +23,7 @@ import { loadClientChat } from "@/lib/client-chat";
 import type { AuditTarget } from "./client-chat";
 import { clientReadiness } from "@/lib/readiness";
 import { loadCampaigns } from "@/lib/client-campaigns";
+import { loadLedger } from "@/lib/ledger";
 import type { HistoryReport } from "./reports-history";
 import { monthLabel } from "@/lib/reports/format";
 
@@ -279,6 +280,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     <ClientView
       campaigns={campaigns}
       docs={docs}
+      playbook={{ items: await loadLedger(supabase, client.id), learnings: ((await supabase.from("client_brand_bibles").select("learnings").eq("client_id", client.id).maybeSingle()).data?.learnings ?? []) as { at: string; kind: string; text: string }[] }}
       reports={reportHistory}
       launchRules={launchRules}
       readiness={readiness}

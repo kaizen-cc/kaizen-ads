@@ -284,6 +284,8 @@ export type ClientContext = {
   name: string;
   documents?: string; // the files and links shared about the client, with their summaries
   reports?: string; // what the latest reports told the client, and what they said comes next
+  playbook?: string; // the client playbook: what won and lost, dated, and the Brand Bible's learnings
+  peers?: string; // winning angles and audiences from similar clients
   website: string | null;
   industry?: string | null; // e.g. "restaurant"
   industryDetail?: string | null; // e.g. "Pizza restaurant"
@@ -350,6 +352,9 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
     gtm: await import("@/lib/gtm").then(({ gtmForContext }) => gtmForContext(supabase, clientId)),
     // Files and links the team shared about the client, with what's in them
     documents: await import("@/lib/client-docs").then(({ docsBlock }) => docsBlock(supabase, clientId, 10)).catch(() => ""),
+    // Everything they've run and how it did (the playbook), and what won for similar clients
+    playbook: await import("@/lib/ledger").then(({ playbookBlock }) => playbookBlock(supabase, clientId)).catch(() => ""),
+    peers: await import("@/lib/ledger").then(({ peersBlock }) => peersBlock(supabase, clientId, c.industry ?? null, c.industry_detail ?? null)).catch(() => ""),
     // What we last told the client in reports: the takeaway, and what we said comes next (so the next piece of work keeps that promise)
     reports: await supabase
       .from("reports")
@@ -433,6 +438,8 @@ export function contextBlock(ctx: ClientContext, request?: { images: number; vid
   if (ctx.gtm)
     lines.push("<go_to_market_strategy>", "The client's Meta go-to-market strategy: the angles, offers, customer and KPI targets the team works from. Stay inside it unless the data says otherwise, and never treat an unconfirmed item as confirmed.", ctx.gtm, "</go_to_market_strategy>");
   if (ctx.documents) lines.push(ctx.documents);
+  if (ctx.playbook) lines.push(ctx.playbook);
+  if (ctx.peers) lines.push(ctx.peers);
   if (ctx.reports) lines.push("<recent_reports>", "What our latest reports told the client, and what we said comes next. Keep those promises, and don't contradict what was reported.", ctx.reports, "</recent_reports>");
   if (ctx.intake)
     lines.push("<marketing_intake>", "What the client told us in their marketing intake form. Their offer, audience, voice and what to avoid are hard rules.", ctx.intake, "</marketing_intake>");

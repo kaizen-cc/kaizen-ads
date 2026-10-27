@@ -39,6 +39,8 @@ import { BusinessOverview, type ServiceCard } from "./business-overview";
 import { CampaignsPanel } from "./campaigns-panel";
 import { DocsPanel } from "./docs-panel";
 import { ReportsHistory, type HistoryReport } from "./reports-history";
+import { PlaybookPanel } from "./playbook-panel";
+import type { LedgerItem } from "@/lib/ledger";
 import type { ClientDoc } from "@/lib/client-docs";
 import type { PlatformSummary } from "@/lib/client-campaigns";
 import { SERVICES, servicesOf } from "@/lib/services";
@@ -154,10 +156,11 @@ export type ClientViewProps = {
   campaigns?: PlatformSummary[] | null; // each platform's campaigns, last 30 days
   docs?: ClientDoc[] | null; // every file and link shared about them
   reports?: HistoryReport[] | null; // every report made for them
+  playbook?: { items: LedgerItem[]; learnings: { at: string; kind: string; text: string }[] } | null; // everything they've run, and what it taught
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, docs = null, reports = null }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, docs = null, reports = null, playbook = null }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -290,6 +293,17 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                   </div>
                 ),
               },
+              ...(playbook
+                ? [
+                    {
+                      id: "playbook",
+                      label: "Playbook",
+                      count: playbook.items.filter((i) => i.verdict === "winner").length || null,
+                      hint: "Every creative, message angle and audience they've run, with what won and what didn't, kept forever",
+                      content: <PlaybookPanel items={playbook.items} learnings={playbook.learnings} />,
+                    },
+                  ]
+                : []),
               ...(reports
                 ? [
                     {
