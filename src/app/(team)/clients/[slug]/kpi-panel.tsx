@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Section } from "@/components/ui";
 import type { ClientKpi } from "@/lib/kpi/client";
 import { STATUS, kpiValue } from "@/lib/kpi/format";
-import { DailyChart, PaceBar } from "../../kpis/kpi-charts";
+import { HealthChart, PaceBar } from "../../kpis/kpi-charts";
 import { AuditPanel, type AuditSummary } from "../../kpis/audit-panel";
 import { ChangeLog } from "@/components/change-log";
 import type { AccountChange } from "@/lib/account-changes";
@@ -100,8 +100,8 @@ export function KpiPanel({ kpis, audits, changes }: { kpis: ClientKpi[]; audits?
                     {gap(k) && <p className={`text-sm ${s.text}`}>{gap(k)} over the last 14 days.</p>}
                     <div className="grid gap-4 @xl:grid-cols-[minmax(0,1fr)_220px]">
                       <div className="grid gap-1">
-                        <p className="text-[11px] text-faint">Daily spend and results</p>
-                        <DailyChart daily={k.daily.slice(-30)} height={96} />
+                        <p className="text-[11px] text-faint">Last 30 days against target, in the account&apos;s color</p>
+                        <HealthChart id={k.id} daily={k.daily.slice(-30)} target={k.target} roas={k.roas} status={k.status} height={150} />
                       </div>
                       <div className="grid content-start gap-1">
                         <p className="text-[11px] text-faint">This month&apos;s budget</p>

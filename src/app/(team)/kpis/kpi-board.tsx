@@ -12,7 +12,7 @@ import { freshness } from "@/lib/dates";
 import { addKpiTarget, archiveKpiTarget, exploreKpi, linkAdAccount, pullClientKpis, saveAccountNotes, saveKpiTarget, setExtraMetrics, type NoteKey } from "./actions";
 import { ClientChat } from "../clients/[slug]/client-chat";
 import type { Explore } from "@/lib/kpi/explore";
-import { DailyChart, Ladder, PaceBar, paceMeta } from "./kpi-charts";
+import { HealthChart, PaceBar, TargetGauge, healthHex, healthOf, paceMeta } from "./kpi-charts";
 import { AuditPanel, agoText, type AuditSummary } from "./audit-panel";
 import { ChangeLog } from "@/components/change-log";
 import type { AccountChange } from "@/lib/account-changes";
@@ -604,9 +604,10 @@ function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
   ] as const;
   const cell = (a: Agg | undefined) => (
     <>
-      <span className={`tabular text-sm ${r.target ? deviationTone(a?.value != null && r.target ? (roas ? (r.target - a.value) / r.target : (a.value - r.target) / r.target) : null) : "text-fg"}`}>
+      <span className={`tabular font-heading text-lg leading-tight ${r.target ? deviationTone(a?.value != null && r.target ? (roas ? (r.target - a.value) / r.target : (a.value - r.target) / r.target) : null) : "text-fg"}`}>
         {kpiValue(a?.value, roas)}
       </span>
+      <TargetGauge value={a?.value} target={r.target} roas={roas} />
       <span className="tabular text-[11px] text-faint">
         {money(a?.spend ?? 0)} · {a?.results ?? 0} {a?.results === 1 ? "result" : "results"}
       </span>
@@ -646,11 +647,24 @@ function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
         </div>
       )}
 
-      <div className={`grid gap-6 transition-opacity lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] ${loading && previewing ? "opacity-60" : ""}`}>
-        <div className="grid content-start gap-3">
-          <p className="text-xs font-medium uppercase tracking-[0.12em] text-faint">Last 30 days</p>
-          <DailyChart daily={daily} />
-          <p className="text-[11px] text-faint">Bars are spend, the line is {convLabel.toLowerCase()} per day.</p>
+      <div className={`grid gap-6 transition-opacity lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] ${loading && previewing ? "opacity-60" : ""}`}>
+        <div className="relative isolate grid content-start gap-3 overflow-hidden rounded-[20px] border border-line bg-surface p-4 md:p-5">
+          <span aria-hidden className="pointer-events-none absolute -left-20 -top-24 -z-10 h-64 w-64 rounded-full blur-[90px]" style={{ background: `${healthHex(healthOf(r.status))}33` }} />
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div className="grid gap-0.5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">Last 30 days</p>
+              <p className="text-sm text-muted">
+                {roas ? `${convLabel} per day` : `Cost per ${convLabel.toLowerCase().replace(/s$/, "")}, 3-day rolling`}
+              </p>
+            </div>
+            <span className="flex gap-3 text-[11px] text-faint">
+              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#3fb27f]" />Beating target</span>
+              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#e0a63a]" />Close</span>
+              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#e0505c]" />Over</span>
+            </span>
+          </div>
+          <HealthChart id={`${r.id}-detail`} daily={daily} target={r.target} roas={roas} status={r.status} unit={convLabel.toLowerCase().replace(/s$/, "")} />
+          <p className="text-[11px] text-faint">The faint bars are daily spend. Point at a day for its numbers.</p>
         </div>
         <div className="grid content-start gap-3">
           <p className="text-xs font-medium uppercase tracking-[0.12em] text-faint">Budget</p>
@@ -666,7 +680,7 @@ function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
 
       <div className={`grid gap-px overflow-hidden rounded-[10px] border border-line bg-line transition-opacity grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 ${loading && previewing ? "opacity-60" : ""}`}>
         {win.map(([name, a]) => (
-          <div key={name} className={`grid min-w-0 gap-0.5 bg-surface px-3 py-3 md:px-4 ${name === "14 days" ? "ring-1 ring-inset ring-brand/40" : ""}`}>
+          <div key={name} className={`grid min-w-0 gap-1.5 bg-surface px-3 py-3 md:px-4 ${name === "14 days" ? "ring-1 ring-inset ring-fg/25" : ""}`}>
             <span className="text-[11px] text-faint">
               {name}
               {name === "14 days" && " · sets the status"}
@@ -677,7 +691,7 @@ function Detail({ r, buyers }: { r: KpiRow; buyers: Person[] }) {
       </div>
       <div className={`grid gap-px overflow-hidden rounded-[10px] border border-line bg-line transition-opacity grid-cols-2 lg:grid-cols-4 ${loading && previewing ? "opacity-60" : ""}`}>
         {monthList.map(([name, a]) => (
-          <div key={name} className="grid min-w-0 gap-0.5 bg-surface px-3 py-3 md:px-4">
+          <div key={name} className="grid min-w-0 gap-1.5 bg-surface px-3 py-3 md:px-4">
             <span className="text-[11px] text-faint">{name}</span>
             {cell(a)}
           </div>
@@ -737,12 +751,19 @@ function Row({ r, open, onToggle, buyers }: { r: KpiRow; open: boolean; onToggle
   const s = STATUS[r.status];
   const d14 = r.windows.d14;
   const gap = gapText(r);
+  const color = healthHex(healthOf(r.status));
   return (
-    <li id={`kpi-${r.id}`} className={`scroll-mt-20 overflow-hidden rounded-[14px] md:scroll-mt-6 border bg-surface transition-colors ${open ? "border-faint/70" : "border-line hover:border-faint/60"}`}>
+    <li
+      id={`kpi-${r.id}`}
+      className={`relative isolate scroll-mt-20 overflow-hidden rounded-[18px] border bg-surface transition-all md:scroll-mt-6 ${open ? "border-faint/70 shadow-[0_24px_60px_-30px_rgba(0,0,0,0.9)]" : "border-line hover:-translate-y-px hover:border-faint/60"}`}
+      style={{ backgroundImage: `linear-gradient(100deg, ${color}1f 0%, transparent 38%)` }}
+    >
+      {/* The account's color: an edge, and a glow behind the name */}
+      <span aria-hidden className="absolute inset-y-0 left-0 w-[4px]" style={{ background: color, boxShadow: `0 0 18px ${color}` }} />
       <button
         onClick={onToggle}
         aria-expanded={open}
-        className="grid w-full grid-cols-2 items-center gap-x-4 gap-y-4 px-4 py-4 text-left sm:px-6 md:gap-x-6 md:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)_172px] xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_172px_minmax(168px,0.8fr)_minmax(0,1fr)]"
+        className="grid w-full grid-cols-2 items-center gap-x-4 gap-y-4 px-4 py-4 pl-5 text-left sm:px-6 sm:pl-7 md:gap-x-6 md:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)_200px] xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.9fr)_210px_minmax(150px,0.7fr)_minmax(0,0.95fr)]"
       >
         {/* Who and what */}
         <div className="col-span-2 flex min-w-0 items-center gap-3 md:col-span-1">
@@ -801,9 +822,12 @@ function Row({ r, open, onToggle, buyers }: { r: KpiRow; open: boolean; onToggle
           ) : (
             <>
               <div className="flex flex-wrap items-baseline gap-x-2 md:flex-nowrap">
-                <span className={`tabular font-heading text-[22px] leading-none ${s.text}`}>{kpiValue(d14?.value, r.roas)}</span>
-                <span className="tabular text-xs text-faint">/ {kpiValue(r.target, r.roas)}</span>
+                <span className="tabular font-display text-[28px] leading-none tracking-tight" style={{ color }}>
+                  {kpiValue(d14?.value, r.roas)}
+                </span>
+                <span className="tabular text-xs text-faint">/ {kpiValue(r.target, r.roas)} target</span>
               </div>
+              <TargetGauge value={d14?.value} target={r.target} roas={r.roas} />
               <div className="flex flex-wrap items-center gap-2">
                 <StatusPill status={r.status} />
                 {gap && <span className="text-[11px] text-muted">{gap}</span>}
@@ -812,9 +836,13 @@ function Row({ r, open, onToggle, buyers }: { r: KpiRow; open: boolean; onToggle
           )}
         </div>
 
-        {/* Moving averages */}
-        <div className="hidden md:block">
-          <Ladder windows={r.windows} target={r.target} roas={r.roas} />
+        {/* The last 30 days, each day in its own color, the whole in the account's */}
+        <div className="hidden min-w-0 gap-1 md:grid">
+          <HealthChart id={r.id} daily={r.daily} target={r.target} roas={r.roas} status={r.status} compact height={52} />
+          <span className="flex justify-between text-[10px] text-faint">
+            <span>30 days ago</span>
+            <span>{r.trend === "improving" ? "Improving" : r.trend === "slipping" ? "Slipping" : "Today"}</span>
+          </span>
         </div>
 
         {/* Month and quarter */}

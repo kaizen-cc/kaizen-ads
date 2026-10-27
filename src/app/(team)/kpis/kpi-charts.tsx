@@ -149,3 +149,139 @@ function DailySvg({ daily, height, width, every }: { daily: { d: string; spend: 
     </svg>
   );
 }
+
+// ─── Health: the account's color, day by day ────────────────────────────────
+
+export type Health = "ok" | "warn" | "bad" | "none";
+/** An account's overall color, from its status */
+export const healthOf = (status: string): Health => (status === "excellent" || status === "good" ? "ok" : status === "close" ? "warn" : status === "off" ? "bad" : "none");
+const HEX: Record<Health, string> = { ok: "#3fb27f", warn: "#e0a63a", bad: "#e0505c", none: "#8a8a93" };
+export const healthHex = (h: Health) => HEX[h];
+
+type Day = { d: string; spend: number; results: number };
+
+/** Cost per result over the 3 days to this one, so one quiet day doesn't paint the chart red */
+const rolling = (daily: Day[], i: number) => {
+  const win = daily.slice(Math.max(0, i - 2), i + 1);
+  const spend = win.reduce((n, d) => n + d.spend, 0);
+  const results = win.reduce((n, d) => n + d.results, 0);
+  return { spend, results, cpr: results ? spend / results : null };
+};
+
+/** How one day did against target (3-day rolling) */
+function dayHealth(daily: Day[], i: number, target: number | null, roas: boolean): Health {
+  if (!target || roas) return "none";
+  const r = rolling(daily, i);
+  if (!r.spend) return "none";
+  if (r.cpr == null) return r.spend > target ? "bad" : "none";
+  const off = (r.cpr - target) / target;
+  return off <= 0 ? "ok" : off <= 0.15 ? "warn" : "bad";
+}
+
+const dateLabel = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+/**
+ * The last 30 days in the account's color: cost per result (3-day rolling) as a line that takes each day's own color
+ * (green beating target, amber close, red over), over spend bars, with the target line; the whole chart is washed in
+ * the account's overall color. ROAS accounts (no daily revenue) show results per day in the account's color.
+ */
+export function HealthChart({ id, daily, target, roas, status, height = 200, compact = false, unit = "result" }: { id: string; daily: Day[]; target: number | null; roas: boolean; status: string; height?: number; compact?: boolean; unit?: string }) {
+  const h = healthOf(status);
+  const color = HEX[h];
+  if (!daily.length) return compact ? <span className="text-[11px] text-faint">No daily data</span> : <p className="text-sm text-faint">No daily numbers yet.</p>;
+  const width = compact ? 180 : 640;
+  const padB = compact ? 4 : 22;
+  const padT = compact ? 4 : 16;
+  const inner = height - padB - padT;
+  const byCost = Boolean(target) && !roas;
+  const vals = daily.map((_, i) => (byCost ? rolling(daily, i).cpr : daily[i].results));
+  const finite = vals.filter((v): v is number => v != null);
+  const top = Math.max(...finite, byCost && target ? target * 1.6 : 1, 1);
+  const y = (v: number) => padT + inner - (Math.min(v, top) / top) * inner;
+  const x = (i: number) => (daily.length === 1 ? width / 2 : (i * width) / (daily.length - 1));
+  const maxSpend = Math.max(...daily.map((d) => d.spend), 1);
+  const known = vals.map((v, i) => (v == null ? null : { x: x(i), y: y(v), i })).filter((p): p is { x: number; y: number; i: number } => p !== null);
+  const path = known.map((p, k) => `${k ? "L" : "M"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+  const area = known.length > 1 ? `${path} L${known[known.length - 1].x},${padT + inner} L${known[0].x},${padT + inner} Z` : "";
+  const ty = byCost && target ? y(target) : null;
+  const gid = `hc-${id}-${compact ? "s" : "l"}`;
+  const last = known[known.length - 1];
+  const lastHealth = last ? (byCost ? dayHealth(daily, last.i, target, roas) : h) : h;
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} className="block h-auto w-full overflow-visible" preserveAspectRatio="none" aria-label={byCost ? `Cost per ${unit}, last 30 days` : "Results per day, last 30 days"}>
+      <defs>
+        {/* The line takes each day's color; the area the account's */}
+        <linearGradient id={`${gid}-line`} x1="0" x2={width} y1="0" y2="0" gradientUnits="userSpaceOnUse">
+          {daily.map((_, i) => {
+            const dh = byCost ? dayHealth(daily, i, target, roas) : h;
+            return <stop key={i} offset={`${(x(i) / width) * 100}%`} stopColor={HEX[dh === "none" ? h : dh]} />;
+          })}
+        </linearGradient>
+        <linearGradient id={`${gid}-area`} x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity={compact ? 0.34 : 0.3} />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      {/* Lower cost is better: under the target line is the good side */}
+      {ty != null && !compact && (
+        <>
+          <rect x="0" y={padT} width={width} height={Math.max(0, ty - padT)} fill="#e0505c" opacity="0.05" />
+          <rect x="0" y={ty} width={width} height={Math.max(0, padT + inner - ty)} fill="#3fb27f" opacity="0.05" />
+        </>
+      )}
+      {!compact &&
+        daily.map((d, i) => {
+          const bh = (d.spend / maxSpend) * inner * 0.5;
+          const bw = Math.max(2, width / daily.length - 5);
+          return <rect key={d.d} x={x(i) - bw / 2} y={padT + inner - bh} width={bw} height={bh} rx="2" fill={color} opacity="0.12" />;
+        })}
+      {area && <path d={area} fill={`url(#${gid}-area)`} />}
+      {ty != null && (
+        <>
+          <line x1="0" x2={width} y1={ty} y2={ty} stroke="var(--fg-faint)" strokeDasharray="4 4" strokeWidth={compact ? 0.8 : 1} opacity="0.85" />
+          {!compact && (
+            <text x={width - 4} y={ty - 6} textAnchor="end" fontSize="10.5" fill="var(--fg-muted)">
+              Target {money(target)}
+            </text>
+          )}
+        </>
+      )}
+      {path && <path d={path} fill="none" stroke={`url(#${gid}-line)`} strokeWidth={compact ? 2 : 2.75} strokeLinejoin="round" strokeLinecap="round" />}
+      {/* The latest point, glowing in its own color */}
+      {last && (
+        <g>
+          <circle cx={last.x} cy={last.y} r={compact ? 5.5 : 8} fill={HEX[lastHealth === "none" ? h : lastHealth]} opacity="0.25" />
+          <circle cx={last.x} cy={last.y} r={compact ? 2.8 : 4} fill={HEX[lastHealth === "none" ? h : lastHealth]} stroke="var(--surface)" strokeWidth="1.5" />
+        </g>
+      )}
+      {!compact &&
+        known.map((p) => (
+          <rect key={p.i} x={p.x - width / daily.length / 2} y={padT} width={width / daily.length} height={inner} fill="transparent">
+            <title>{`${dateLabel(daily[p.i].d)}: ${byCost ? `${money(vals[p.i])} per ${unit} (3-day)` : `${daily[p.i].results} results`} · ${money(daily[p.i].spend)} spent that day`}</title>
+          </rect>
+        ))}
+      {!compact &&
+        daily.map((d, i) =>
+          (i % 6 === 0 && daily.length - 1 - i >= 3) || i === daily.length - 1 ? (
+            <text key={d.d} x={x(i)} y={height - 5} textAnchor={i === 0 ? "start" : i === daily.length - 1 ? "end" : "middle"} fontSize="10.5" fill="var(--fg-faint)">
+              {dateLabel(d.d)}
+            </text>
+          ) : null,
+        )}
+    </svg>
+  );
+}
+
+/** How far from target, as a gauge: the dot sits left of the target mark (better) or right (worse). */
+export function TargetGauge({ value, target, roas }: { value: number | null | undefined; target: number | null; roas: boolean }) {
+  if (value == null || !target) return null;
+  const off = roas ? (target - value) / target : (value - target) / target; // positive = worse
+  const pos = 50 + Math.max(-1, Math.min(1, off / 0.6)) * 50;
+  const h: Health = off <= 0 ? "ok" : off <= 0.15 ? "warn" : "bad";
+  return (
+    <div className="relative h-1.5 w-full max-w-[160px] rounded-full" style={{ background: "linear-gradient(90deg, rgba(63,178,127,0.45), rgba(63,178,127,0.15) 46%, rgba(224,166,58,0.3) 56%, rgba(224,80,92,0.45))" }} title={`${Math.abs(Math.round(off * 100))}% ${off <= 0 ? "better" : "worse"} than target`}>
+      <span className="absolute -top-1 bottom-[-4px] w-px bg-fg/70" style={{ left: "50%" }} />
+      <span className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full ring-2 ring-surface" style={{ left: `${pos}%`, background: HEX[h], boxShadow: `0 0 12px ${HEX[h]}` }} />
+    </div>
+  );
+}
