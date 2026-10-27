@@ -4,8 +4,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { after } from "next/server";
 import { welcomeBack } from "@/lib/client-sync";
 import { applyContacts, applyPackageText, applyTeam, flagUnmatched } from "@/lib/team-from-form";
-import { matchClient, processIntake, receiveIntake } from "@/lib/onboarding";
-import { isZapierRequest, pickLoose, readEnrollment, readRaw } from "@/lib/zapier";
+import { processIntake, receiveIntake } from "@/lib/onboarding";
+import { isZapierRequest, readEnrollment, readRaw } from "@/lib/zapier";
 
 // Reading an intake and writing the first round runs after the reply
 export const maxDuration = 300;
@@ -66,12 +66,10 @@ export async function POST(request: Request, ctx: RouteContext<"/api/zapier/[for
 
     if (form === "offboarding") {
       const raw = await readRaw(request);
-      const { clientId, name } = await matchClient(admin, raw);
-      // No match: 422 so Zapier shows it, without retrying
-      if (!clientId) return Response.json({ ok: false, error: "No matching client in Kaizen Ads", client: name }, { status: 422 });
-      const reason = pickLoose(raw, ["reason", "whyaretheyleaving", "reasonforleaving", "notes"]);
-      await admin.rpc("system_archive_client", { p_client: clientId, p_reason: reason ?? "Offboarding form", p_source: "zapier" });
-      return Response.json({ ok: true, archived: clientId });
+      if (!Object.keys(raw).length) return Response.json({ error: "The form came through empty" }, { status: 400 });
+      const r = await (await import("@/lib/offboarding")).receiveOffboarding(admin, raw);
+      // Not matched to exactly one client: 422 so Zapier shows it, without retrying (the execs are told)
+      return Response.json(r, { status: r.ok ? 200 : 422 });
     }
 
     const { data, key, raw } = await readEnrollment(request, form);

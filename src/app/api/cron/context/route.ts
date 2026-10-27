@@ -185,6 +185,8 @@ export async function GET(request: Request) {
         industries: await refreshIndustries(admin).catch((e) => String(e)),
         // Catch up on refresh briefs the Meta run didn't get to
         refreshes: await prewriteRefreshes(admin, 4).catch((e) => String(e)),
+        // Clients whose offboarding form gave a last day that has now come
+        offboarded: await (await import("@/lib/offboarding")).runScheduledOffboardings(admin).catch((e) => String(e)),
         // Onboarding clients whose intake is in but who have no first round yet
         firstRounds: await writeMissingFirstRounds(admin).catch((e) => String(e)),
       });
