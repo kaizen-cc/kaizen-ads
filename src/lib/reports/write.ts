@@ -22,8 +22,14 @@ const DRAFT_SCHEMA = obj({ message: S, sections: SECTIONS });
 
 const agentFor = (platform: string): AgentKey => (platform === "google" ? "google_reporter" : "reporter");
 
-function writerSystem(kind: "weekly" | "monthly" | "custom", platform: string): string {
+type Kind = "weekly" | "monthly" | "custom" | "built";
+
+function writerSystem(kind: Kind, platform: string): string {
   const where = platform === "google" ? "Google Ads" : "Meta Ads";
+  // A built report (from the report builder) reads like an on-demand recap; its other date ranges get their own short part
+  if (kind === "built")
+    return `${writerSystem("custom", platform)}
+This report may cover more than one date range (for example the last 7 days and the month): the first is the main one, the others are given as <numbers range="…">. Lead with the main range; give each other range its own short part (a line or two in the message under its own bold label, and a highlight in sections), each against its own comparison. This part may be sent together with another platform's part, so keep it about ${where} only.`;
   if (kind === "custom")
     return writerSystem("weekly", platform)
       .replace(/a weekly (Meta Ads|Google Ads) report/, `an on-demand ${where} recap (the client asked where things stand, for the dates given)`)
@@ -56,7 +62,7 @@ function dataFlags(m: ReportMetrics): QaFlag[] {
 async function context(admin: SupabaseClient, reportId: string) {
   const { data: r } = await admin
     .from("reports")
-    .select("id, kind, platform, period_start, period_end, client_id, target_id, owner_id, extras, metrics, work, sections, message, chat, clients(name), kpi_targets(id, client_id, platform, ad_account_id, conversion, custom_action, campaign_match, target, monthly_budget), profiles!reports_owner_id_fkey(full_name)")
+    .select("id, kind, platform, period_start, period_end, client_id, target_id, owner_id, bundle_id, extras, metrics, extra_metrics, work, sections, message, chat, clients(name), kpi_targets(id, client_id, platform, ad_account_id, conversion, custom_action, campaign_match, target, monthly_budget), profiles!reports_owner_id_fkey(full_name)")
     .eq("id", reportId)
     .single();
   if (!r) throw new Error("Report not found");
@@ -74,6 +80,7 @@ function sourcesBlock(c: Awaited<ReturnType<typeof context>>, metrics: ReportMet
     `<client>${c.client}</client>`,
     `<buyer>${c.owner ?? "the buyer"}</buyer>`,
     `<numbers>\n${metricsText(metrics)}\n</numbers>`,
+    ...(((c.r as unknown as { extra_metrics?: ReportMetrics[] | null }).extra_metrics ?? []) as ReportMetrics[]).map((m) => `<numbers range="${m.main.label}">\n${metricsText(m)}\n</numbers>`),
     `<work_log period="${c.r.period_start} to ${c.r.period_end}">\n${work}\n</work_log>`,
     lastNext.length ? `<what_the_last_report_said_was_next>\n${lastNext.map((x) => `- ${x}`).join("\n")}\n</what_the_last_report_said_was_next>` : "",
     c.r.extras ? `<added_by_the_buyer>\n${c.r.extras}\n</added_by_the_buyer>` : "",
@@ -109,20 +116,27 @@ export async function draftReport(admin: SupabaseClient, reportId: string) {
   await admin.from("reports").update({ status: "drafting", error: null, updated_at: new Date().toISOString() }).eq("id", reportId);
   try {
     const c = await context(admin, reportId);
-    const kind = c.r.kind as "weekly" | "monthly" | "custom";
-    const today = new Date(`${c.r.period_end}T12:00:00Z`);
-    today.setUTCDate(today.getUTCDate() + 1);
-    const range = kind === "custom" ? { start: c.r.period_start as string, end: c.r.period_end as string } : undefined;
-    const [metrics, voice] = await Promise.all([reportMetrics(admin, c.target, kind, today.toISOString().slice(0, 10), range), voiceOf(admin, c.owner, c.r.client_id)]);
-    const work = await workDone(admin, c.target, metrics.main.start, metrics.main.end);
-    await admin.from("reports").update({ metrics, work }).eq("id", reportId);
+    const kind = c.r.kind as Kind;
+    const dayAfter = (d: string) => new Date(Date.parse(`${d}T12:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+    const range = kind === "custom" || kind === "built" ? { start: c.r.period_start as string, end: c.r.period_end as string } : undefined;
+    const [metrics, voice] = await Promise.all([reportMetrics(admin, c.target, kind === "built" ? "custom" : kind, dayAfter(c.r.period_end), range), voiceOf(admin, c.owner, c.r.client_id)]);
+    // A built report's other date ranges, each against its own comparison
+    let extra: ReportMetrics[] = [];
+    if (kind === "built" && c.r.bundle_id) {
+      const { data: b } = await admin.from("report_bundles").select("ranges").eq("id", c.r.bundle_id).maybeSingle();
+      const more = ((b?.ranges ?? []) as { start: string; end: string }[]).slice(1);
+      extra = await Promise.all(more.map((x) => reportMetrics(admin, c.target, "custom", dayAfter(x.end), { start: x.start, end: x.end })));
+    }
+    const work = await workDone(admin, c.target, [metrics.main.start, ...extra.map((m) => m.main.start)].sort()[0], metrics.main.end);
+    await admin.from("reports").update({ metrics, work, extra_metrics: extra.length ? extra : null }).eq("id", reportId);
+    (c.r as unknown as { extra_metrics: ReportMetrics[] }).extra_metrics = extra;
     const out = await askJson<{ message: string; sections: Sections }>({
       agent: agentFor(c.r.platform),
       label: `${kind} report`,
       system: writerSystem(kind, c.r.platform),
       schema: DRAFT_SCHEMA,
       maxTokens: 12000,
-      prompt: `${sourcesBlock(c, metrics, work.text, voice)}\n\nWrite the ${kind === "custom" ? `recap for ${metrics.main.label}` : `${kind} report`}.`,
+      prompt: `${sourcesBlock(c, metrics, work.text, voice)}\n\nWrite the ${kind === "custom" || kind === "built" ? `recap for ${[metrics.main.label, ...extra.map((m) => m.main.label)].join(" and ")}` : `${kind} report`}.`,
     });
     await admin.from("reports").update({ message: out.message, sections: out.sections, updated_at: new Date().toISOString() }).eq("id", reportId);
     // The QA runs before the buyer hears about it, so the note they get says whether there's anything to fix
@@ -146,7 +160,7 @@ export async function reviseReport(admin: SupabaseClient, reportId: string, ask:
   const out = await askJson<{ reply: string; message: string; sections: Sections; lesson: string }>({
     agent: agentFor(c.r.platform),
     label: "revise report",
-    system: `${writerSystem(c.r.kind as "weekly" | "monthly" | "custom", c.r.platform)}\n\n${REVISE_SYSTEM}`,
+    system: `${writerSystem(c.r.kind as Kind, c.r.platform)}\n\n${REVISE_SYSTEM}`,
     schema: REVISE_SCHEMA,
     maxTokens: 12000,
     prompt: `${sourcesBlock(c, metrics, work, "")}\n\n<current_message>\n${c.r.message ?? ""}\n</current_message>\n<current_sections>\n${JSON.stringify(c.r.sections ?? {})}\n</current_sections>\n\n<conversation>\n${chat

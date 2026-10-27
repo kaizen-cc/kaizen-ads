@@ -8,7 +8,7 @@ import { monthLabel, platformName, shortRange } from "./format";
 // Loading a report (or a client's monthly bundle) for reading: the PDF, and the live report page the client opens from
 // the link. Read-only. A bundle only shows the reports the buyers have finished (submitted or posted).
 
-const REPORT_FIELDS = "id, client_id, platform, kind, period_start, period_end, status, metrics, sections, extras, clients(name, slug), profiles!reports_owner_id_fkey(full_name)";
+const REPORT_FIELDS = "id, client_id, platform, kind, period_start, period_end, status, metrics, extra_metrics, sections, extras, clients(name, slug), profiles!reports_owner_id_fkey(full_name)";
 
 type Row = {
   id: string;
@@ -18,6 +18,7 @@ type Row = {
   period_end: string;
   status: string;
   metrics: ReportMetrics | null;
+  extra_metrics?: ReportMetrics[] | null;
   sections: Sections | null;
   extras: string | null;
   clients: { name: string; slug: string } | null;
@@ -25,7 +26,7 @@ type Row = {
 };
 
 const toPart = (r: Row): ReportPart | null =>
-  r.metrics && r.sections ? { platform: r.platform === "google" ? "google" : "meta", buyer: r.profiles?.full_name ?? null, metrics: r.metrics, sections: r.sections, extras: r.extras } : null;
+  r.metrics && r.sections ? { platform: r.platform === "google" ? "google" : "meta", buyer: r.profiles?.full_name ?? null, metrics: r.metrics, sections: r.sections, extras: r.extras, extra: r.extra_metrics ?? null } : null;
 
 const order = (p: ReportPart) => (p.platform === "meta" ? 0 : 1);
 
@@ -46,10 +47,11 @@ export async function loadReport(admin: SupabaseClient, id: string) {
 /** A client's monthly bundle by its share token: the finished reports in it, Meta first. */
 export async function loadBundle(admin: SupabaseClient, token: string) {
   if (!/^[\w-]{16,80}$/.test(token)) return null;
-  const { data: bundle } = await admin.from("report_bundles").select("id, client_id, kind, period_start, period_end, status, sent_at, clients(name, slug)").eq("token", token).maybeSingle();
+  const { data: bundle } = await admin.from("report_bundles").select("id, client_id, kind, period_start, period_end, status, sent_at, ranges, clients(name, slug)").eq("token", token).maybeSingle();
   if (!bundle) return null;
   const client = (bundle.clients as unknown as { name: string } | null)?.name ?? "Client";
-  const periodLabel = monthLabel(bundle.period_start);
+  const built = bundle.kind === "built";
+  const periodLabel = built ? ((bundle.ranges ?? []) as { label: string }[]).map((r) => r.label).join(" + ") : monthLabel(bundle.period_start);
   const { data } = await admin.from("reports").select(REPORT_FIELDS).eq("bundle_id", bundle.id).in("status", ["submitted", "posted"]);
   const parts = ((data ?? []) as unknown as Row[])
     .map(toPart)
@@ -59,7 +61,8 @@ export async function loadBundle(admin: SupabaseClient, token: string) {
     ready: bundle.status === "sent",
     client,
     periodLabel,
-    input: { client, kind: "monthly" as const, periodLabel, parts },
-    fileName: `${client} - Monthly recap - ${periodLabel}.pdf`,
+    title: built ? "Report" : "Monthly recap",
+    input: { client, kind: built ? ("built" as const) : ("monthly" as const), periodLabel, parts },
+    fileName: `${client} - ${built ? "Report" : "Monthly recap"} - ${periodLabel}.pdf`,
   };
 }

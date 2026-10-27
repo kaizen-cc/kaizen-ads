@@ -55,7 +55,9 @@ export default async function MonthlyRecap({ params }: PageProps<"/r/[token]">) 
 
       <section className="mx-auto max-w-5xl px-4 pt-14 pb-10 sm:px-8 sm:pt-20 sm:pb-14">
         <div className="mb-6 h-[3px] w-10 bg-brand" />
-        <p className="text-sm text-muted">Monthly recap · {bundle.periodLabel}</p>
+        <p className="text-sm text-muted">
+          {bundle.title} · {bundle.periodLabel}
+        </p>
         <h1 className="mt-2 font-heading text-4xl leading-[1.05] tracking-tight [overflow-wrap:anywhere] sm:text-6xl">{bundle.client}</h1>
         {ready && parts.length > 1 && (
           <nav className="mt-8 flex flex-wrap gap-2 print:hidden">

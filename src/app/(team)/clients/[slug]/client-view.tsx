@@ -44,7 +44,6 @@ import { SERVICES, servicesOf } from "@/lib/services";
 import type { Status } from "@/lib/kpi/calc";
 import { STATUS } from "@/lib/kpi/format";
 import { Glance, type Alert } from "./glance";
-import { ReportButton } from "./report-button";
 import type { SprintSummary } from "@/lib/sprints";
 import { ArchiveControl } from "./archive-control";
 import { IntakePanel, type IntakeRecord } from "./intake-panel";
@@ -225,7 +224,12 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="min-w-0 font-heading text-[28px] leading-tight [overflow-wrap:anywhere] md:text-[32px]">{client.name}</h1>
           <span className="flex flex-wrap items-center gap-2">
-            {!demo && live && <ReportButton accounts={reportAccounts} today={today} />}
+            {/* Reports are built on the Reports page (dates, services, one report for the client) */}
+            {!demo && live && reportAccounts.length > 0 && (
+              <Link href={`/reports?client=${client.slug}`} className="inline-flex h-10 items-center rounded-full border border-line px-4 text-sm text-muted hover:border-faint hover:text-fg max-md:h-11">
+                Build a report
+              </Link>
+            )}
             {can.assign && !demo && !client.archived_at && <ArchiveControl clientId={client.id} slug={client.slug} name={client.name} archived={null} />}
           </span>
         </div>

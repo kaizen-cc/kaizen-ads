@@ -170,3 +170,78 @@ export async function draftNow(targetId: string, kind: "weekly" | "monthly"): Pr
   revalidatePath("/reports");
   return { ok: true, id: row.id };
 }
+
+// ─── The report builder ─────────────────────────────────────────────────────
+
+/** Builds a report for a client: date ranges (the first is the main one) and services; each part is written now. */
+export async function buildReportAction(clientId: string, ranges: { key: string; start?: string; end?: string }[], platforms: string[]): Promise<Result<{ id: string }>> {
+  const me = await requireStaff();
+  const { resolveRange, buildReport, draftParts } = await import("@/lib/reports/builder");
+  const resolved = ranges.map((r) => resolveRange(r.key, undefined, r.start && r.end ? { start: r.start, end: r.end } : undefined)).filter((r): r is NonNullable<typeof r> => Boolean(r));
+  if (!resolved.length) return { ok: false, error: "Pick the dates to report on (custom dates need a start and an end in the past)." };
+  // The same range picked twice counts once
+  const unique = resolved.filter((r, i) => resolved.findIndex((x) => x.start === r.start && x.end === r.end) === i);
+  try {
+    const admin = createAdminClient();
+    const out = await buildReport(admin, await createClient(), me, clientId, unique, [...new Set(platforms)].filter((p) => p === "meta" || p === "google"));
+    after(() => draftParts(admin, out.partIds));
+    revalidatePath("/reports");
+    return { ok: true, id: out.mineId ?? out.partIds[0] };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't build it." };
+  }
+}
+
+/** A buyer approves their part of a built report. */
+export async function approveMyPart(id: string): Promise<Result<{ sent: boolean; waitingOn: string[] }>> {
+  const ok = await mine(id);
+  if (!ok) return { ok: false, error: "Not found." };
+  const { approvePart } = await import("@/lib/reports/builder");
+  try {
+    const out = await approvePart(createAdminClient(), id, ok.me);
+    done(id);
+    return { ok: true, ...out };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't approve it." };
+  }
+}
+
+/** The bundle, if this person built it or works on one of its parts. */
+async function myBundle(bundleId: string) {
+  const me = await requireStaff();
+  const db = await createClient();
+  const { data: b } = await db.from("report_bundles").select("id, created_by, message, message_approved_at").eq("id", bundleId).maybeSingle();
+  if (!b) return null;
+  if (b.created_by === me.id || isExecOrLead(me)) return { me, b };
+  const { data: parts } = await db.from("reports").select("id").eq("bundle_id", bundleId).eq("owner_id", me.id).limit(1);
+  return parts?.length ? { me, b } : null;
+}
+
+/** The Slack message for a built report: the saved one, or written now from the approved parts (joint: combined). */
+export async function builtMessage(bundleId: string, fresh = false): Promise<Result<{ message: string }>> {
+  const ok = await myBundle(bundleId);
+  if (!ok) return { ok: false, error: "Not found." };
+  if (ok.b.message && !fresh) return { ok: true, message: ok.b.message };
+  const { composeMessage } = await import("@/lib/reports/builder");
+  try {
+    const message = await composeMessage(createAdminClient(), bundleId);
+    if (message && !ok.b.message_approved_at) await createAdminClient().from("report_bundles").update({ message }).eq("id", bundleId);
+    return { ok: true, message };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't write the message." };
+  }
+}
+
+/** The builder approves the message: it goes now, or as soon as the last part is approved. */
+export async function approveBuiltMessage(bundleId: string, message: string): Promise<Result<{ sent: boolean; waitingOn: string[] }>> {
+  const ok = await myBundle(bundleId);
+  if (!ok) return { ok: false, error: "Not found." };
+  const { approveMessage } = await import("@/lib/reports/builder");
+  try {
+    const out = await approveMessage(createAdminClient(), bundleId, ok.me, message);
+    revalidatePath("/reports");
+    return { ok: true, ...out };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't send it." };
+  }
+}

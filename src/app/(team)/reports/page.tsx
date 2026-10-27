@@ -7,8 +7,9 @@ import { periodsFor } from "@/lib/reports/metrics";
 import type { Qa } from "@/lib/reports/write";
 import { slackConnection } from "@/lib/slack-user";
 import { SlackConnect } from "@/components/slack-connect";
-import { ReportButton } from "../clients/[slug]/report-button";
 import { reportableTargets } from "@/lib/reports/access";
+import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
+import { ReportBuilder, type BuilderClient } from "./report-builder";
 
 export const metadata: Metadata = { title: "Reports" };
 export const maxDuration = 300;
@@ -16,6 +17,8 @@ export const maxDuration = 300;
 type Row = { id: string; kind: "weekly" | "monthly" | "custom"; platform: string; status: string; qa: Qa | null; posted_at: string | null; bundle_id: string | null; clients: { name: string; slug: string }; profiles: { full_name: string } | null };
 
 /** On-demand recaps stay listed for two weeks. */
+/** Built reports stay listed for a month. */
+const monthAgo = () => new Date(Date.now() - 30 * 86_400_000).toISOString();
 const twoWeeksAgo = () => new Date(Date.now() - 14 * 86_400_000).toISOString();
 
 const STATUS: Record<string, { label: string; tone: string }> = {
@@ -29,8 +32,9 @@ const STATUS: Record<string, { label: string; tone: string }> = {
 };
 
 /** This week's reports and this month's recap, for each buyer (theirs) and for leads and execs (their line, or all). */
-export default async function ReportsPage() {
+export default async function ReportsPage({ searchParams }: PageProps<"/reports">) {
   const me = await requireStaff();
+  const wanted = (await searchParams).client;
   const db = await createClient();
   const today = nyParts(new Date()).date;
   const week = periodsFor("weekly", today).main;
@@ -50,6 +54,32 @@ export default async function ReportsPage() {
   const monthly = rows.filter((r) => r.kind === "monthly");
   const onDemand = rows.filter((r) => r.kind === "custom");
   const dom = Number(today.slice(8, 10));
+
+  // The builder: the clients this person reports on, each with every service that has an ad account (and its buyer)
+  const clientIds = [...new Set(accounts.map((a) => a.client_id))];
+  const admin = adminConfigured() ? createAdminClient() : null;
+  const [{ data: allTargets }, { data: slots }, { data: built }] = admin && clientIds.length
+    ? await Promise.all([
+        admin.from("kpi_targets").select("client_id, platform, owner_id, clients!inner(name, slug, archived_at), profiles!kpi_targets_owner_id_fkey(full_name)").in("client_id", clientIds).eq("active", true).not("ad_account_id", "is", null).is("clients.archived_at", null),
+        admin.from("client_assignments").select("client_id, role, profile_id, profiles(full_name)").in("client_id", clientIds).in("role", ["meta_buyer", "google_buyer"]),
+        admin.from("report_bundles").select("id, client_id, status, ranges, created_by, created_at, clients(name), reports(id, platform, status, owner_id, profiles!reports_owner_id_fkey(full_name))").eq("kind", "built").gte("created_at", monthAgo()).order("created_at", { ascending: false }).limit(60),
+      ])
+    : [{ data: [] }, { data: [] }, { data: [] }];
+  const byClient = new Map<string, BuilderClient>();
+  for (const t of (allTargets ?? []) as unknown as { client_id: string; platform: "meta" | "google"; owner_id: string | null; clients: { name: string; slug: string }; profiles: { full_name: string } | null }[]) {
+    const c = byClient.get(t.client_id) ?? { id: t.client_id, name: t.clients.name, slug: t.clients.slug, services: [] };
+    if (c.services.some((x) => x.platform === t.platform)) continue;
+    const slot = (slots ?? []).find((x) => x.client_id === t.client_id && x.role === (t.platform === "google" ? "google_buyer" : "meta_buyer"));
+    const ownerId = t.owner_id ?? (slot?.profile_id as string | undefined) ?? null;
+    const owner = t.profiles?.full_name ?? (slot?.profiles as unknown as { full_name: string } | null)?.full_name ?? null;
+    c.services.push({ platform: t.platform, owner, mine: ownerId === me.id });
+    byClient.set(t.client_id, c);
+  }
+  const builderClients = [...byClient.values()].map((c) => ({ ...c, services: c.services.sort((a, b) => (a.platform === "meta" ? 0 : 1) - (b.platform === "meta" ? 0 : 1)) })).sort((a, b) => a.name.localeCompare(b.name));
+  type BuiltRow = { id: string; status: string; ranges: { label: string }[] | null; created_by: string | null; clients: { name: string }; reports: { id: string; platform: string; status: string; owner_id: string | null; profiles: { full_name: string } | null }[] };
+  // Reports built in the last 30 days that involve this person (built them, or have a part in them)
+  const builtRows = ((built ?? []) as unknown as BuiltRow[]).filter((b) => me.isExec || b.created_by === me.id || b.reports.some((p) => p.owner_id === me.id));
+  const yesterday = new Date(Date.parse(`${today}T12:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
   const open = weekly.filter((r) => r.status === "draft").length;
 
   const list = (items: Row[]) => (
@@ -97,14 +127,44 @@ export default async function ReportsPage() {
         </div>
         <span className="flex flex-wrap items-center gap-2 max-md:w-full">
           <SlackConnect connected={slack.connected} next="/reports" />
-          <ReportButton
-            primary
-            label="New report"
-            today={today}
-            accounts={accounts.map((a) => ({ id: a.id, client: a.clients.name, label: `${a.platform === "google" ? "Google" : "Meta"}${a.label ? ` · ${a.label}` : ""}` }))}
-          />
         </span>
       </header>
+
+      <ReportBuilder clients={builderClients} initialClient={typeof wanted === "string" ? wanted : null} yesterday={yesterday} />
+
+      {builtRows.length > 0 && (
+        <section className="grid gap-3">
+          <h2 className="font-heading text-xl">Built reports</h2>
+          <ul className="grid gap-2">
+            {builtRows.map((b) => {
+              const parts = b.reports.filter((p) => p.status !== "skipped");
+              const mine = parts.find((p) => p.owner_id === me.id) ?? parts[0];
+              const waitingOnMe = parts.some((p) => p.owner_id === me.id && ["draft", "drafting", "queued"].includes(p.status));
+              return (
+                <li key={b.id}>
+                  <Link href={mine ? `/reports/${mine.id}` : "/reports"} className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-[14px] border bg-surface px-4 py-3.5 transition-colors hover:border-faint/70 ${waitingOnMe ? "border-warn/50" : "border-line"}`}>
+                    <span className="grid min-w-0 gap-0.5">
+                      <span className="truncate font-heading text-[15px]">
+                        {b.clients.name} <span className="text-muted">· {(b.ranges ?? []).map((x) => x.label).join(" + ")}</span>
+                      </span>
+                      <span className="flex flex-wrap gap-x-3 text-xs">
+                        {parts.map((p) => (
+                          <span key={p.id} className={p.status === "submitted" || p.status === "posted" ? "text-ok" : "text-muted"}>
+                            {p.platform === "google" ? "Google" : "Meta"} · {p.owner_id === me.id ? "you" : (p.profiles?.full_name ?? "buyer")} · {p.status === "submitted" ? "approved" : p.status === "posted" ? "sent" : p.status === "drafting" ? "writing" : "to review"}
+                          </span>
+                        ))}
+                      </span>
+                    </span>
+                    <span className={`text-xs ${b.status === "sent" ? "text-ok" : b.status === "failed" ? "text-bad" : b.status === "waiting" ? "text-warn" : "text-faint"}`}>
+                      {b.status === "sent" ? "Sent" : b.status === "failed" ? "Didn't send" : b.status === "waiting" ? "Waiting on a part" : waitingOnMe ? "Your turn" : "In progress"} →
+                    </span>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
 
       {dom <= 7 && monthly.length > 0 && (
         <section className="grid gap-3">

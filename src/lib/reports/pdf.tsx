@@ -9,8 +9,10 @@ import { conversionTiles, count, headlineTiles, kpiRows, money, percent, multipl
 // platform: the conversion summary, the KPI table, top ads, campaigns and the notes). Helvetica, lots of white, Kaizen
 // red only where the eye should go. Ad images are fetched and turned into small JPEGs; one that fails is left out.
 
-export type ReportPart = { platform: "meta" | "google"; buyer: string | null; metrics: ReportMetrics; sections: Sections; extras: string | null };
-export type ReportPdfInput = { client: string; kind: "weekly" | "monthly"; periodLabel: string; parts: ReportPart[] };
+/** extra: a built report's other date ranges (the first range is metrics) */
+export type ReportPart = { platform: "meta" | "google"; buyer: string | null; metrics: ReportMetrics; sections: Sections; extras: string | null; extra?: ReportMetrics[] | null };
+/** built: a report from the report builder (a cover, the whole account when it covers more than one service, then each) */
+export type ReportPdfInput = { client: string; kind: "weekly" | "monthly" | "built"; periodLabel: string; parts: ReportPart[] };
 
 const RED = "#c8102e";
 const INK = "#0b0b0c";
@@ -256,6 +258,78 @@ function Weekly({ input, part, images }: { input: ReportPdfInput; part: ReportPa
   );
 }
 
+/** A built report covering several services: the whole account first, each service side by side, for every range. */
+function Overview({ input }: { input: ReportPdfInput }) {
+  const ranges = [input.parts[0].metrics, ...(input.parts[0].extra ?? [])].map((m) => m.main.label);
+  const w = ["30%", "17.5%", "17.5%", "17.5%", "17.5%"];
+  return (
+    <Page size="A4" style={s.page}>
+      <Footer client={input.client} />
+      <Band client={input.client} title="The whole account" period={input.periodLabel} />
+      {ranges.map((label, ri) => {
+        const rows = input.parts.map((p) => ({ p, m: ri === 0 ? p.metrics : p.extra?.[ri - 1] })).filter((x): x is { p: ReportPart; m: ReportMetrics } => Boolean(x.m));
+        const spend = rows.reduce((n, x) => n + x.m.main.spend, 0);
+        const before = rows.reduce((n, x) => n + x.m.compare.spend, 0);
+        return (
+          <View key={label} style={s.section} wrap={false}>
+            <Text style={s.eyebrow}>{label}</Text>
+            <Text style={{ fontSize: 10, color: "#3a3a40", marginBottom: 10 }}>
+              {money(spend)} across {rows.length} services{before ? `, against ${money(before)} the period before` : ""}.
+            </Text>
+            <View style={s.th}>
+              <Text style={[s.thText, { width: w[0] }]}>Service</Text>
+              <Text style={[s.thText, { width: w[1], textAlign: "right" }]}>Spend</Text>
+              <Text style={[s.thText, { width: w[2], textAlign: "right" }]}>Results</Text>
+              <Text style={[s.thText, { width: w[3], textAlign: "right" }]}>Per result</Text>
+              <Text style={[s.thText, { width: w[4], textAlign: "right" }]}>ROAS</Text>
+            </View>
+            {rows.map(({ p, m }) => (
+              <View key={p.platform} style={s.tr}>
+                <Text style={[s.td, { width: w[0], fontFamily: "Helvetica-Bold" }]}>
+                  {platformName(p.platform)} <Text style={{ color: MUTED, fontFamily: "Helvetica" }}>· {m.conversion}</Text>
+                </Text>
+                <Text style={[s.td, { width: w[1], textAlign: "right" }]}>{money(m.main.spend)}</Text>
+                <Text style={[s.td, { width: w[2], textAlign: "right" }]}>{count(m.main.results)}</Text>
+                <Text style={[s.td, { width: w[3], textAlign: "right" }]}>{money(m.main.costPerResult)}</Text>
+                <Text style={[s.td, { width: w[4], textAlign: "right" }]}>{m.main.roas != null ? multiple(m.main.roas) : "–"}</Text>
+              </View>
+            ))}
+          </View>
+        );
+      })}
+      <View style={s.section}>
+        <Text style={s.eyebrow}>In short</Text>
+        {input.parts.map((p) => (
+          <View key={p.platform} style={s.bullet}>
+            <Text style={s.dot}>•</Text>
+            <Text style={s.bulletText}>
+              <Text style={{ fontFamily: "Helvetica-Bold" }}>{platformName(p.platform)}: </Text>
+              {p.sections.headline}
+            </Text>
+          </View>
+        ))}
+      </View>
+    </Page>
+  );
+}
+
+/** A built report's other date ranges for one service, each with its headline tiles against its own comparison. */
+function Ranges({ part }: { part: ReportPart }) {
+  if (!part.extra?.length) return null;
+  return (
+    <>
+      {part.extra.map((m) => (
+        <View key={m.main.label} style={s.section} wrap={false}>
+          <Text style={s.eyebrow}>
+            {m.main.label} vs {m.compare.label}
+          </Text>
+          <Tiles tiles={headlineTiles(m)} />
+        </View>
+      ))}
+    </>
+  );
+}
+
 function Cover({ input }: { input: ReportPdfInput }) {
   const buyers = [...new Set(input.parts.map((p) => p.buyer).filter(Boolean))];
   return (
@@ -264,7 +338,9 @@ function Cover({ input }: { input: ReportPdfInput }) {
       <View>
         <View style={{ width: 40, height: 4, backgroundColor: RED, marginBottom: 22 }} />
         <Text style={{ fontSize: 40, fontFamily: "Helvetica-Bold", letterSpacing: -1, lineHeight: 1.1 }}>{input.client}</Text>
-        <Text style={{ fontSize: 16, color: "#b4b4bb", marginTop: 12 }}>Monthly recap · {input.periodLabel}</Text>
+        <Text style={{ fontSize: 16, color: "#b4b4bb", marginTop: 12 }}>
+          {input.kind === "built" ? "Report" : "Monthly recap"} · {input.periodLabel}
+        </Text>
         <Text style={{ fontSize: 10, color: "#7a7a82", marginTop: 26 }}>{input.parts.map((p) => platformName(p.platform)).join("  ·  ")}</Text>
       </View>
       <Text style={{ fontSize: 9, color: "#7a7a82" }}>{buyers.length ? `Prepared by ${buyers.join(" and ")}` : "Prepared by Kaizen Marketing"}</Text>
@@ -286,16 +362,17 @@ function MonthlyPart({ input, part, images }: { input: ReportPdfInput; part: Rep
       <Text style={s.headline}>{part.sections.headline}</Text>
       {part.sections.summary ? <Text style={s.summary}>{part.sections.summary}</Text> : null}
       <View style={s.section}>
-        <Text style={s.eyebrow}>Conversions</Text>
-        <Tiles tiles={conversionTiles(m)} />
+        <Text style={s.eyebrow}>{input.kind === "built" ? `${m.main.label} vs ${m.compare.label}` : "Conversions"}</Text>
+        <Tiles tiles={input.kind === "built" ? headlineTiles(m) : conversionTiles(m)} />
       </View>
+      <Ranges part={part} />
       <KpiTable m={m} />
       {part.platform === "meta" ? <TopAds ads={m.topAds.slice(0, 3)} images={images} conversion={m.conversion} /> : null}
       <Campaigns m={m} limit={8} />
       <Notes sections={part.sections} />
       {part.extras?.trim() ? (
         <View style={s.section} wrap={false}>
-          <Text style={s.eyebrow}>Also this month</Text>
+          <Text style={s.eyebrow}>{input.kind === "built" ? "Also" : "Also this month"}</Text>
           <Text style={s.extras}>{part.extras.trim()}</Text>
         </View>
       ) : null}
@@ -311,7 +388,7 @@ export async function renderReportPdf(input: ReportPdfInput): Promise<Uint8Array
   const fresh = ids.length && metaConfigured() ? await adPreviews(ids).catch(() => new Map<string, { image: string | null }>()) : new Map<string, { image: string | null }>();
   const imageOf = async (a: { id: string; image: string | null }) => (await adImage(fresh.get(a.id)?.image ?? null)) ?? (await adImage(a.image));
   const images = await Promise.all(input.parts.map((p) => (p.platform === "meta" ? Promise.all(p.metrics.topAds.slice(0, 3).map(imageOf)) : Promise.resolve([]))));
-  const title = `${input.client} · ${input.kind === "weekly" ? "Weekly report" : "Monthly recap"} · ${input.periodLabel}`;
+  const title = `${input.client} · ${input.kind === "weekly" ? "Weekly report" : input.kind === "built" ? "Report" : "Monthly recap"} · ${input.periodLabel}`;
   const doc = (
     <Document title={title} author="Kaizen Marketing" creator="Kaizen Marketing" producer="Kaizen Marketing">
       {input.kind === "weekly" ? (
@@ -319,6 +396,7 @@ export async function renderReportPdf(input: ReportPdfInput): Promise<Uint8Array
       ) : (
         <>
           <Cover input={input} />
+          {input.kind === "built" && input.parts.length > 1 ? <Overview input={input} /> : null}
           {input.parts.map((p, i) => (
             <MonthlyPart key={i} input={input} part={p} images={images[i]} />
           ))}
