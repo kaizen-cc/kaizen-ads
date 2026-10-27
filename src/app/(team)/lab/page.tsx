@@ -18,16 +18,22 @@ export default async function Lab({ searchParams }: PageProps<"/lab">) {
   const { t, tab } = await searchParams;
   const db = await createClient();
 
-  const [{ data: threads }, { data: sources }, { data: tests }, { data: clients }, { data: kpis }, { data: labSuggestions }] = await Promise.all([
-    db.from("lab_threads").select("id, title, updated_at").order("updated_at", { ascending: false }).limit(50),
+  // Your own conversations with the table; execs also see everyone else's, in their own tab
+  const [{ data: threads }, { data: everyone }, { data: sources }, { data: tests }, { data: clients }, { data: kpis }, { data: labSuggestions }, { data: notes }] = await Promise.all([
+    db.from("lab_threads").select("id, title, updated_at").eq("created_by", me.id).order("updated_at", { ascending: false }).limit(50),
+    me.isExec ? db.from("lab_threads").select("id, title, updated_at, profiles!lab_threads_created_by_fkey(full_name)").neq("created_by", me.id).order("updated_at", { ascending: false }).limit(150) : Promise.resolve({ data: [] }),
     db.from("lab_sources").select("id, kind, title, url, summary, status, created_at, body").order("created_at", { ascending: false }).limit(200),
-    db.from("lab_tests").select("*").neq("status", "dropped").order("created_at", { ascending: false }).limit(200),
+    db.from("lab_tests").select("*, profiles!lab_tests_created_by_fkey(full_name)").neq("status", "dropped").order("created_at", { ascending: false }).limit(200),
     db.from("clients").select("id, name, slug, industry, industry_detail").neq("status", "offboarded").order("name"),
     db.from("kpi_snapshots").select("client_id, windows"),
     db.from("creative_suggestions").select("lab_test_id, client_id, status, request_numbers").not("lab_test_id", "is", null),
+    db.from("lab_test_notes").select("id, test_id, body, created_at, profiles(full_name)").order("created_at"),
   ]);
 
   const threadId = typeof t === "string" ? t : null;
+  // Someone else's conversation (an exec reading it): read-only
+  const { data: openThread } = threadId ? await db.from("lab_threads").select("created_by, profiles!lab_threads_created_by_fkey(full_name)").eq("id", threadId).maybeSingle() : { data: null };
+  const readOnly = openThread ? openThread.created_by !== me.id : false;
   const { data: messages } = threadId
     ? await db.from("lab_messages").select("id, role, agent, body, data, created_at, profiles(full_name)").eq("thread_id", threadId).order("created_at")
     : { data: [] };
@@ -69,12 +75,19 @@ export default async function Lab({ searchParams }: PageProps<"/lab">) {
       briefs: { waiting: sugg.filter((s) => s.status === "open").length, approved: sugg.filter((s) => s.status === "approved").length, tickets: sugg.flatMap((s) => s.request_numbers as number[]) },
       deployed: deployed.map((id) => ({ id, change: cprChange(deployBase[id], deployNow[id]) })),
       deployedAt: x.deployed_at,
+      by: (x.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
+      mine: x.created_by === me.id,
+      following: ((x.followers ?? []) as string[]).includes(me.id),
+      followers: ((x.followers ?? []) as string[]).length,
+      notes: (notes ?? []).filter((n) => n.test_id === x.id).map((n) => ({ id: n.id as string, body: n.body as string, at: n.created_at as string, by: (n.profiles as unknown as { full_name: string } | null)?.full_name ?? null })),
     };
   });
 
   return (
     <LabClient
       threads={(threads ?? []).map((x) => ({ id: x.id, title: x.title, updatedAt: x.updated_at }))}
+      everyone={me.isExec ? (everyone ?? []).map((x) => ({ id: x.id as string, title: x.title as string, updatedAt: x.updated_at as string, by: (x.profiles as unknown as { full_name: string } | null)?.full_name ?? "Someone" })) : null}
+      readOnly={readOnly ? ((openThread?.profiles as unknown as { full_name: string } | null)?.full_name ?? "someone") : null}
       threadId={threadId}
       messages={(messages ?? []).map(
         (m): LabMessage => ({
@@ -93,7 +106,7 @@ export default async function Lab({ searchParams }: PageProps<"/lab">) {
       )}
       tests={testRows}
       clients={clientRows}
-      tab={tab === "tests" ? "tests" : "table"}
+      tab={tab === "tests" ? "tests" : tab === "kaizen" && me.isExec ? "kaizen" : "table"}
       aiOn={aiEnabled()}
     />
   );

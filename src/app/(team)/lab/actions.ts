@@ -187,8 +187,15 @@ export async function decideTest(id: string, won: boolean, note: string): Promis
   const me = await lead();
   if (note.trim().length < 3) return { ok: false, error: "Say what happened, so the table learns." };
   const supabase = await createClient();
-  const { data: t } = await supabase.from("lab_tests").select("title, client_ids, started_at, status").eq("id", id).single();
+  const { data: t } = await supabase.from("lab_tests").select("title, client_ids, started_at, status, created_by, followers").eq("id", id).single();
   if (!t || t.status !== "running") return { ok: false, error: "Only a running test can be called." };
+  // Whoever started it and its followers hear how it went
+  const told = [...new Set([t.created_by, ...((t.followers ?? []) as string[])].filter((x): x is string => Boolean(x) && x !== me.id))];
+  if (told.length && adminConfigured())
+    await createAdminClient().from("notifications").upsert(
+      told.map((pid) => ({ profile_id: pid, kind: "assigned", title: `"${t.title}" ${won ? "won" : "didn't win"}`, body: note.trim().slice(0, 300), href: `/lab?tab=tests#test-${id}`, key: `lab-called:${id}`, priority: "normal" })),
+      { onConflict: "profile_id,key", ignoreDuplicates: true },
+    );
   const result = await clientNumbers(supabase, t.client_ids as string[], windowSince(t.started_at));
   const { error } = await supabase
     .from("lab_tests")
@@ -299,4 +306,39 @@ async function liveClients(db: Awaited<ReturnType<typeof createClient>>, ids: st
   if (!ids.length) return [];
   const { data } = await db.from("clients").select("id").in("id", ids).is("archived_at", null);
   return (data ?? []).map((c) => c.id as string);
+}
+
+// ─── Thoughts and followers on a test (anyone in the Lab) ───
+
+/** A thought on someone's test: whoever runs it and its followers hear about it. */
+export async function addTestNote(testId: string, body: string): Promise<Result> {
+  const me = await lead();
+  const text = body.trim().slice(0, 2000);
+  if (!text) return { ok: false, error: "Write the thought first." };
+  const supabase = await createClient();
+  const { error } = await supabase.from("lab_test_notes").insert({ test_id: testId, author_id: me.id, body: text });
+  if (error) return { ok: false, error: error.message };
+  const { data: t } = await supabase.from("lab_tests").select("title, created_by, followers").eq("id", testId).single();
+  const to = [...new Set([t?.created_by, ...((t?.followers ?? []) as string[])].filter((x): x is string => Boolean(x) && x !== me.id))];
+  if (to.length && adminConfigured())
+    await createAdminClient().from("notifications").upsert(
+      to.map((id) => ({ profile_id: id, kind: "assigned", title: `${me.fullName.split(" ")[0]} left a thought on "${t?.title}"`, body: text.slice(0, 300), href: `/lab?tab=tests#test-${testId}`, key: `lab-note:${testId}:${Date.now()}`, priority: "normal" })),
+      { onConflict: "profile_id,key", ignoreDuplicates: true },
+    );
+  revalidatePath("/lab");
+  return { ok: true };
+}
+
+/** Follow a test (hear when it's called) or stop following it. */
+export async function followTest(testId: string, on: boolean): Promise<Result> {
+  const me = await lead();
+  if (!adminConfigured()) return { ok: false, error: "Server key missing." };
+  const admin = createAdminClient();
+  const { data: t } = await admin.from("lab_tests").select("followers").eq("id", testId).single();
+  const now = new Set((t?.followers ?? []) as string[]);
+  if (on) now.add(me.id);
+  else now.delete(me.id);
+  await admin.from("lab_tests").update({ followers: [...now] }).eq("id", testId);
+  revalidatePath("/lab");
+  return { ok: true };
 }

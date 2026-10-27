@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
 import { METRIC_LABEL, SEATS, TURNS_PER_ROUND, type Metric, type Seat } from "@/lib/lab-seats";
 import type { ClientNumbers, ProposedTest } from "@/lib/lab";
-import { createTest, decideTest, deleteSource, deleteThread, deployLearning, draftDeploy, dropTest, iterateTest, sendToTable, startTest, tableSpeaks, type Attachment } from "./actions";
+import { addTestNote, followTest, createTest, decideTest, deleteSource, deleteThread, deployLearning, draftDeploy, dropTest, iterateTest, sendToTable, startTest, tableSpeaks, type Attachment } from "./actions";
 
 export type LabClientRow = { id: string; name: string; slug: string; industry: string | null; spend30: number };
 export type LabMessage = { id: string; role: "user" | "agent"; seat: Seat | null; author: string | null; body: string; tests: ProposedTest[]; attachments: { id: string; kind: string; title: string; url: string | null; failed?: boolean }[]; at: string };
@@ -30,8 +30,16 @@ export type LabTest = {
   briefs: { waiting: number; approved: number; tickets: number[] };
   deployed: { id: string; change: number | null }[];
   deployedAt: string | null;
+  /** Who started it, and whether it's the viewer */
+  by?: string | null;
+  mine?: boolean;
+  following?: boolean;
+  followers?: number;
+  /** Thoughts left on it by anyone in the Lab */
+  notes?: { id: string; body: string; at: string; by: string | null }[];
 };
-type Tab = "table" | "tests";
+type Tab = "table" | "tests" | "kaizen";
+type OtherThread = { id: string; title: string; updatedAt: string; by: string };
 
 const money = (n: number | null | undefined) => (n == null ? "—" : `$${n.toLocaleString("en-US", { maximumFractionDigits: n < 100 ? 2 : 0 })}`);
 const pct = (n: number | null) => (n == null ? "—" : `${n > 0 ? "+" : ""}${n}%`);
@@ -49,6 +57,10 @@ export function LabClient(props: {
   clients: LabClientRow[];
   tab: Tab;
   aiOn: boolean;
+  /** Execs: everyone else's conversations with the table */
+  everyone?: OtherThread[] | null;
+  /** Reading someone else's conversation (an exec): whose it is */
+  readOnly?: string | null;
 }) {
   const [tab, setTab] = useState<Tab>(props.tab);
   // Opening a conversation (e.g. a flop sent back to iterate) shows the table
@@ -88,6 +100,7 @@ export function LabClient(props: {
           [
             ["table", "Round table"],
             ["tests", `Running tests${props.tests.length ? ` · ${props.tests.length}` : ""}`],
+            ...(props.everyone ? ([["kaizen", `Across Kaizen · ${props.everyone.length}`]] as const) : []),
           ] as const
         ).map(([k, l]) => (
           <button key={k} onClick={() => go(k)} className={`relative px-4 pb-3 pt-3 text-sm md:pt-0 ${tab === k ? "text-fg" : "text-muted hover:text-fg"}`}>
@@ -101,6 +114,7 @@ export function LabClient(props: {
 
       {tab === "table" && <RoundTable {...props} />}
       {tab === "tests" && <Tests tests={props.tests} clients={props.clients} />}
+      {tab === "kaizen" && props.everyone && <AcrossKaizen threads={props.everyone} />}
     </div>
   );
 }
@@ -132,7 +146,7 @@ function SeatMark({ seat, size = 30 }: { seat: Seat; size?: number }) {
 const SHARE_KINDS: Record<Attachment["kind"], string> = { video: "Video", link: "Link", transcript: "Call transcript", doc: "Doc", note: "Note" };
 const isVideo = (url: string) => /youtube\.com|youtu\.be|vimeo\.com|tiktok\.com|instagram\.com\/reel|facebook\.com\/.*videos/i.test(url);
 
-function RoundTable({ threads, threadId, messages, tests, clients, sources }: { threads: { id: string; title: string; updatedAt: string }[]; threadId: string | null; messages: LabMessage[]; tests: LabTest[]; clients: LabClientRow[]; sources: LabSource[] }) {
+function RoundTable({ threads, threadId, messages, tests, clients, sources, readOnly = null }: { threads: { id: string; title: string; updatedAt: string }[]; threadId: string | null; messages: LabMessage[]; tests: LabTest[]; clients: LabClientRow[]; sources: LabSource[]; readOnly?: string | null }) {
   const router = useRouter();
   const [text, setText] = useState("");
   const [shared, setShared] = useState<Attachment[]>([]);
@@ -285,7 +299,7 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources }: { 
   return (
     <div className="grid gap-4 lg:grid-cols-[272px_minmax(0,1fr)] lg:items-start">
       <aside className="grid min-w-0 content-start gap-5 lg:sticky lg:top-6">
-        <Conversations threads={threads} active={tid} />
+        <Conversations threads={threads} active={readOnly ? null : tid} />
         {sources.length > 0 && (
           <div className="hidden lg:block">
             <SharedMemory sources={sources} />
@@ -320,7 +334,7 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources }: { 
             ))}
           </div>
           <p className="min-w-0 flex-1 truncate text-xs text-faint">{title ?? "Strategy, creative, copy, media, data and accounts, with every winner, test and thing you've shared"}</p>
-          {tid && (
+          {tid && !readOnly && (
             <button
               onClick={async () => {
                 if (!confirm("Delete this conversation? Tests started from it stay.")) return;
@@ -381,7 +395,7 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources }: { 
                   </div>
                 </div>
                 {m.tests.map((t, i) => (
-                  <ProposalCard key={i} t={t} clients={clients} duplicate={t.duplicateOf ? (testById.get(t.duplicateOf) ?? null) : null} onStart={() => setStarting(t)} />
+                  <ProposalCard key={i} t={t} clients={clients} duplicate={(t.duplicateOf ? testById.get(t.duplicateOf) : null) ?? similarRunning(t, tests)} onStart={() => setStarting(t)} />
                 ))}
               </div>
             ),
@@ -402,6 +416,14 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources }: { 
           <div ref={end} />
         </div>
 
+        {readOnly ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-4 py-3 text-sm text-muted">
+            <span>You&apos;re reading {readOnly}&apos;s conversation with the table. Only they can add to it.</span>
+            <Link href="/lab?tab=kaizen" className="text-xs text-faint hover:text-fg">
+              ← Across Kaizen
+            </Link>
+          </div>
+        ) : (
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -536,6 +558,7 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources }: { 
             </button>
           </div>
         </form>
+        )}
       </section>
 
       {starting && <StartDialog t={starting} clients={clients} tests={tests} threadId={tid} onClose={() => setStarting(null)} />}
@@ -740,13 +763,23 @@ function ProposalCard({ t, clients, duplicate, onStart }: { t: ProposedTest; cli
       <p className="text-xs text-faint">A win: {t.success}</p>
       {names.length > 0 && <p className="text-xs text-muted">On: {names.join(", ")}</p>}
       {duplicate ? (
-        <div className="rounded-[10px] border border-warn/40 bg-warn-soft px-3 py-2 text-xs text-warn">
-          Already in the lab: &ldquo;{duplicate.title}&rdquo; ({duplicate.status === "lost" ? "flopped" : duplicate.status}).{t.duplicateWhy ? ` ${t.duplicateWhy}` : ""}
+        <div className="grid gap-2 rounded-[12px] border border-warn/40 bg-warn-soft px-3.5 py-3 text-sm">
+          <p className="text-warn">
+            {duplicate.status === "running"
+              ? `Hey, ${duplicate.mine ? "you're" : `${duplicate.by ?? "someone"} is`} already running this test: "${duplicate.title}". Want to check it out and add your thoughts, or follow how it does?`
+              : `Already in the lab: "${duplicate.title}" (${duplicate.status === "lost" ? "flopped" : duplicate.status === "won" ? "won" : "an idea"}${duplicate.by ? `, from ${duplicate.by}` : ""}).`}
+            {t.duplicateWhy ? ` ${t.duplicateWhy}` : ""}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Link href={`/lab?tab=tests#test-${duplicate.id}`} className="inline-flex h-11 items-center rounded-brand bg-fg px-3.5 text-sm font-medium text-bg md:h-8 md:text-xs">
+              See their test →
+            </Link>
+          </div>
         </div>
       ) : null}
       <div className="flex flex-wrap gap-2">
-        <button onClick={onStart} className="h-11 rounded-brand bg-fg px-4 text-sm font-medium text-bg md:h-9">
-          {duplicate ? "Run it anyway…" : "Set up the test…"}
+        <button onClick={onStart} className={`h-11 rounded-brand px-4 text-sm font-medium md:h-9 ${duplicate ? "border border-line text-muted hover:text-fg" : "bg-fg text-bg"}`}>
+          {duplicate ? "Run mine anyway…" : "Set up the test…"}
         </button>
       </div>
     </div>
@@ -932,12 +965,13 @@ function TestCard({ t, clients, tests }: { t: LabTest; clients: LabClientRow[]; 
     });
 
   return (
-    <article className="grid content-start gap-3 rounded-[16px] border border-line bg-surface p-4">
+    <article id={`test-${t.id}`} className="grid scroll-mt-24 content-start gap-3 rounded-[16px] border border-line bg-surface p-4 target:border-brand target:shadow-[0_0_0_3px_rgba(200,16,46,0.18)]">
       <div className="flex items-start justify-between gap-3">
         <div className="grid gap-1">
-          <span className="flex items-center gap-2">
+          <span className="flex flex-wrap items-center gap-2">
             <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_TONE[t.status]}`}>{STATUS_LABEL[t.status]}</span>
             <span className="text-xs text-faint">{METRIC_LABEL[t.metric]}</span>
+            {t.by && <span className="text-xs text-faint">· {t.mine ? "yours" : `by ${t.by}`}</span>}
           </span>
           <p className="font-heading text-lg leading-snug">{t.title}</p>
         </div>
@@ -1093,6 +1127,7 @@ function TestCard({ t, clients, tests }: { t: LabTest; clients: LabClientRow[]; 
         />
       )}
       {deploy && <DeployDialog t={t} draft={deploy} clients={clients} onClose={() => setDeploy(null)} />}
+      <Thoughts t={t} />
     </article>
   );
 }
@@ -1161,5 +1196,122 @@ function DeployDialog({ t, draft, clients, onClose }: { t: LabTest; draft: { lea
         </button>
       </div>
     </Sheet>
+  );
+}
+
+/** Thoughts on a test from anyone in the Lab, and following it (you hear when it's called). */
+function Thoughts({ t }: { t: LabTest }) {
+  const router = useRouter();
+  const [text, setText] = useState("");
+  const [open, setOpen] = useState(false);
+  const [busy, act] = useTransition();
+  const notes = t.notes ?? [];
+  return (
+    <div className="grid gap-2 border-t border-line pt-3">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <button type="button" onClick={() => setOpen((o) => !o)} className="text-muted hover:text-fg max-md:min-h-10">
+          {notes.length ? `${notes.length} thought${notes.length === 1 ? "" : "s"}` : "Add a thought"} {open ? "▴" : "▾"}
+        </button>
+        {!t.mine && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => act(async () => void (await followTest(t.id, !t.following), router.refresh()))}
+            className={`ml-auto h-8 rounded-full border px-3 max-md:h-10 ${t.following ? "border-ok/50 text-ok" : "border-line text-muted hover:text-fg"}`}
+          >
+            {t.following ? "✓ Following" : "Follow"}
+            {t.followers ? <span className="text-faint"> · {t.followers}</span> : null}
+          </button>
+        )}
+        {t.mine && t.followers ? <span className="ml-auto text-faint">{t.followers} following</span> : null}
+      </div>
+      {open && (
+        <div className="grid gap-2">
+          {notes.map((n) => (
+            <p key={n.id} className="rounded-[10px] bg-surface-2/70 px-3 py-2 text-[13px] leading-relaxed">
+              <span className="mb-0.5 block text-[11px] text-faint">
+                {n.by ?? "Someone"} · {ago(n.at)} ago
+              </span>
+              {n.body}
+            </p>
+          ))}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!text.trim()) return;
+              act(async () => {
+                const res = await addTestNote(t.id, text);
+                if (res.ok) {
+                  setText("");
+                  router.refresh();
+                }
+              });
+            }}
+            className="flex gap-2"
+          >
+            <input value={text} onChange={(e) => setText(e.target.value)} placeholder={t.mine ? "A note on how it's going" : "What you think, or what you've seen"} className="h-10 min-w-0 flex-1 rounded-brand border border-line bg-bg px-3 text-sm outline-none focus:border-brand-text/60 max-md:h-11" />
+            <button type="submit" disabled={busy || !text.trim()} className="h-10 shrink-0 rounded-brand bg-fg px-3.5 text-sm text-bg disabled:opacity-40 max-md:h-11">
+              Add
+            </button>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const words = (x: string) => new Set(x.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length > 3));
+/** A running test that's about the same thing (most of the same words in what it tests and what it changes) */
+function similarRunning(p: ProposedTest, tests: LabTest[]): LabTest | null {
+  const a = words(`${p.title} ${p.change}`);
+  let best: { t: LabTest; score: number } | null = null;
+  for (const t of tests) {
+    if (t.status !== "running") continue;
+    const b = words(`${t.title} ${t.change}`);
+    const both = [...a].filter((w) => b.has(w)).length;
+    const score = both / Math.max(1, Math.min(a.size, b.size));
+    if (score >= 0.5 && (!best || score > best.score)) best = { t, score };
+  }
+  return best?.t ?? null;
+}
+
+/** Execs: everyone's conversations with the table, by person, to see who's sharing what. */
+function AcrossKaizen({ threads }: { threads: OtherThread[] }) {
+  const [q, setQ] = useState("");
+  const shown = q.trim() ? threads.filter((t) => `${t.title} ${t.by}`.toLowerCase().includes(q.trim().toLowerCase())) : threads;
+  const people = [...new Set(shown.map((t) => t.by))];
+  if (!threads.length)
+    return <p className="rounded-[16px] border border-dashed border-line px-6 py-12 text-center text-sm text-muted">Nobody else has talked with the table yet.</p>;
+  return (
+    <div className="grid gap-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-muted">What the team is bringing to the table. Your own conversations stay on the Round table.</p>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by topic or person" className="h-10 w-full rounded-brand border border-line bg-surface px-3 text-sm outline-none focus:border-brand-text/60 md:w-64" />
+      </div>
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {people.map((who) => {
+          const mine = shown.filter((t) => t.by === who);
+          return (
+            <section key={who} className="grid content-start gap-2 rounded-[16px] border border-line bg-surface p-4">
+              <p className="flex items-center gap-2 font-medium">
+                <span className="grid h-8 w-8 place-items-center rounded-full bg-surface-2 text-xs">{who.split(" ").map((w) => w[0]).slice(0, 2).join("")}</span>
+                {who}
+                <span className="text-xs font-normal text-faint">{mine.length}</span>
+              </p>
+              <ul className="grid gap-0.5">
+                {mine.map((t) => (
+                  <li key={t.id}>
+                    <Link href={`/lab?t=${t.id}`} className="grid min-h-11 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-[10px] px-2.5 py-1.5 text-sm text-muted hover:bg-surface-2 hover:text-fg md:min-h-0">
+                      <span className="truncate">{t.title}</span>
+                      <span className="tabular text-[11px] text-faint">{ago(t.updatedAt)}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          );
+        })}
+      </div>
+    </div>
   );
 }
