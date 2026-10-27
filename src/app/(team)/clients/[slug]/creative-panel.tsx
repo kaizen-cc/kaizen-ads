@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import type { ClientCreative, CreativeRow, MetaRow } from "@/lib/client-creative";
 import { Layer } from "./layer";
 
@@ -18,8 +18,14 @@ const ago = (iso: string) => {
 };
 
 export function CreativePanel({ data }: { data: ClientCreative }) {
-  const [tab, setTab] = useState<Tab>(data.moving.length ? "moving" : "live");
-  const [ad, setAd] = useState<MetaRow | null>(null);
+  // Which list and which ad are open live in the address (?list=&ad=), so back returns to them and a link opens them
+  const first: Tab = data.moving.length ? "moving" : "live";
+  const asked = useParam("list");
+  const tab: Tab = asked === "moving" || asked === "launched" || asked === "live" || asked === "paused" ? asked : first;
+  const setTab = (k: Tab) => pushParams({ list: k === first ? null : k });
+  const adId = useParam("ad");
+  const ad = adId ? ([...data.live, ...data.paused].find((x) => x.id === adId) ?? null) : null;
+  const setAd = (x: MetaRow) => pushParams({ ad: x.id });
   const tabs: [Tab, string, number][] = [
     ["moving", "In motion", data.moving.length],
     ["launched", "Launched", data.launched.length],
@@ -52,7 +58,7 @@ export function CreativePanel({ data }: { data: ClientCreative }) {
         </>
       )}
 
-      {ad && <AdSheet ad={ad} onClose={() => setAd(null)} />}
+      {ad && <AdSheet ad={ad} onClose={() => closeParams("ad")} />}
     </section>
   );
 }

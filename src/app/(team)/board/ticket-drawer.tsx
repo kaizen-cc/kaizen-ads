@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { PersonAvatar } from "@/components/person-avatar";
+import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { FORMAT_LABEL, PHASE_LABEL, businessDuration, health, stageInfo, type Phase, type Priority, type Stage } from "@/lib/stages";
 import { MoveDialog } from "./move-dialog";
 import { assignTicket, commentTicket, deleteTicket, moveTicket, setTicketDue, setTicketPriority, ticketHistory, type TicketEvent } from "./actions";
@@ -291,7 +292,8 @@ export function TicketDrawer({
   const [error, setError] = useState<string | null>(null);
   const [comment, setComment] = useState("");
   const [moveNote, setMoveNote] = useState("");
-  const [moving, setMoving] = useState(false);
+  // The move dialog is a place of its own (?move=number), so back closes it before the ticket
+  const moving = useParam("move") === String(ticket.number);
   const [uploads, setUploads] = useState<UploadState>({ uploaded: 0, uploading: 0, loaded: false });
   const onUploads = useCallback((u: UploadState) => setUploads(u), []);
   const hasCreative = uploads.uploaded > 0 || demo;
@@ -308,7 +310,8 @@ export function TicketDrawer({
   // The board remounts this drawer per ticket (key), so history starts empty for each one
   useEffect(() => {
     reload();
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    // Escape closes what's on top: the move dialog handles its own
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && !new URLSearchParams(window.location.search).has("move") && onClose();
     window.addEventListener("keydown", esc);
     return () => window.removeEventListener("keydown", esc);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -449,7 +452,7 @@ export function TicketDrawer({
               <div className="flex items-center gap-2">
                 <TimeStamp ticket={ticket} label />
                 {ticket.stage !== "launched" && !demo && (
-                  <button type="button" onClick={() => setMoving(true)} className="h-8 rounded-full border border-line px-3 text-xs text-muted hover:border-faint hover:text-fg max-md:h-10" title="Move it to any stage: back to production, on to the client…">
+                  <button type="button" onClick={() => pushParams({ move: String(ticket.number) })} className="h-8 rounded-full border border-line px-3 text-xs text-muted hover:border-faint hover:text-fg max-md:h-10" title="Move it to any stage: back to production, on to the client…">
                     Move to…
                   </button>
                 )}
@@ -742,10 +745,11 @@ export function TicketDrawer({
           <MoveDialog
             ticket={ticket}
             to={null}
-            onClose={() => setMoving(false)}
-            onMoved={(stage) => (setMoving(false), moved(stage))}
+            onClose={() => closeParams("move")}
+            // Moved: the ticket closes too (closing the ticket takes the dialog with it)
+            onMoved={moved}
             onFix={(fix) => {
-              setMoving(false);
+              closeParams("move");
               document.querySelector(fix === "upload" ? "[data-deliverables]" : "[data-copy]")?.scrollIntoView({ behavior: "smooth", block: "start" });
             }}
           />

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { WatchRow } from "@/lib/fatigue";
+import { closeThen, pushParams, useParam } from "@/lib/url-state";
 import type { OpenSuggestion } from "@/lib/suggestions";
 import { SuggestionSheet } from "@/app/(team)/pipeline/views/suggested-briefs";
 import { briefRefresh, dismissFatigue } from "@/app/(team)/fatigue/actions";
@@ -46,7 +47,10 @@ export function FatigueWatch({ rows, showClient = true, title = "Ads wearing out
 function WatchCard({ r, showClient, onGone }: { r: WatchRow; showClient: boolean; onGone: () => void }) {
   const router = useRouter();
   const [step, setStep] = useState<"idle" | "writing" | "dismiss">("idle");
-  const [brief, setBrief] = useState<OpenSuggestion | null>(null);
+  // The refresh brief is a place of its own (?refresh=id): back closes it, forward opens it again
+  const [written, setWritten] = useState<OpenSuggestion | null>(null);
+  const briefId = useParam("refresh");
+  const brief = written && written.id === briefId ? written : null;
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const s = r.signals;
@@ -58,7 +62,8 @@ function WatchCard({ r, showClient, onGone }: { r: WatchRow; showClient: boolean
     const res = await briefRefresh(r.clientId, r.adId);
     setStep("idle");
     if (!res.ok) return setError(res.error);
-    setBrief(res.suggestion);
+    setWritten(res.suggestion);
+    pushParams({ refresh: res.suggestion.id });
   };
   const dismiss = async () => {
     const res = await dismissFatigue(r.clientId, r.adId, reason);
@@ -165,10 +170,7 @@ function WatchCard({ r, showClient, onGone }: { r: WatchRow; showClient: boolean
       {brief && (
         <SuggestionSheet
           s={brief}
-          onClose={() => {
-            setBrief(null);
-            router.refresh();
-          }}
+          onClose={() => closeThen(() => router.refresh(), "refresh")}
         />
       )}
     </article>

@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
 import type { MarketAd } from "@/lib/market";
+import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { AdCard, MarketSheet } from "../../market/market-library";
 
 /**
@@ -10,7 +10,9 @@ import { AdCard, MarketSheet } from "../../market/market-library";
  * being tested in their industry. Open one to brief this client on it, with the Motion link in the references.
  */
 export function MarketPanel({ clientId, industry, label, ads }: { clientId: string; industry: string | null; label: string; ads: MarketAd[] }) {
-  const [open, setOpen] = useState<MarketAd | null>(null);
+  // The ad open is in the address (?market=id), so back closes it and a link opens it
+  const openId = useParam("market");
+  const open = openId ? (ads.find((a) => a.id === openId) ?? null) : null;
   if (!ads.length) return null;
   const competitors = ads.filter((a) => a.competitorOf.includes(clientId)).length;
   return (
@@ -28,10 +30,10 @@ export function MarketPanel({ clientId, industry, label, ads }: { clientId: stri
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {ads.slice(0, 8).map((a) => (
-          <AdCard key={a.id} a={a} sub={a.competitorOf.includes(clientId) ? "Competitor" : (a.matchWhy ?? a.detail ?? label)} onOpen={() => setOpen(a)} />
+          <AdCard key={a.id} a={a} sub={a.competitorOf.includes(clientId) ? "Competitor" : (a.matchWhy ?? a.detail ?? label)} onOpen={() => pushParams({ market: a.id })} />
         ))}
       </div>
-      {open && <MarketSheet key={open.id} a={open} industryLabel={label} clients={[]} forClient={clientId} onClose={() => setOpen(null)} />}
+      {open && <MarketSheet key={open.id} a={open} industryLabel={label} clients={[]} forClient={clientId} onClose={() => closeParams("market", "brief")} />}
     </section>
   );
 }

@@ -8,6 +8,7 @@ import { PromisesStrip } from "./promises-strip";
 import Link from "next/link";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { PersonAvatar } from "@/components/person-avatar";
+import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
 import type { DraftPatch, Review, ReviewIssue, Suggestions } from "@/lib/ai";
 import { draws, type Allotment } from "@/lib/allotment";
 import { FORMAT_LABEL, type Format, type Priority } from "@/lib/stages";
@@ -18,6 +19,8 @@ import { FORMATS, INSPIRE_KEY, MAX_VARIATIONS, SIZES, emptyDraft, selectedFormat
 import { AllotmentMeter, AspectOption, Chip, ClientSearch, Progress, Spark, Stepper, Thinking, type ClientOption } from "./parts";
 
 const STEPS = ["Client", "Formats", "Direction", "Brief", "Review"];
+// Each step in the address (?step=formats), so back returns to the step before
+const STEP_KEYS = STEPS.map((x) => x.toLowerCase());
 const TURNAROUND: Record<Format, number> = { image: 2, video: 4, carousel: 2 };
 const MAKER: Record<Format, { role: string; label: string }> = {
   image: { role: "graphic_designer", label: "designer" },
@@ -116,7 +119,9 @@ export function RequestForm({
 }) {
   const router = useRouter();
   const [draft, setDraft] = useState<Draft>(() => ({ ...emptyDraft(initialClient), ...(initialDraft ?? {}) }));
-  const [step, setStep] = useState(startAtReview ? STEPS.length - 1 : initialClient ? 1 : 0);
+  const askedStep = STEP_KEYS.indexOf(useParam("step") ?? "");
+  // No client yet: the first step, whatever the address says
+  const step = !draft.clientId ? 0 : askedStep >= 0 ? askedStep : startAtReview ? STEPS.length - 1 : initialClient ? 1 : 0;
   const [ai, setAi] = useState<AiState>(initialClient && aiOn ? { status: "loading" } : { status: "idle" });
   const [briefAi, setBriefAi] = useState<{ status: "idle" | "loading" } | { status: "offer"; text: string }>({ status: "idle" });
   const [review, setReview] = useState<ReviewState>({ status: "idle" });
@@ -124,7 +129,7 @@ export function RequestForm({
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<number[] | null>(null);
   // Phones: the winners and market ideas open as a bottom sheet instead of pushing the form down
-  const [ideasOpen, setIdeasOpen] = useState(false);
+  const ideasOpen = useParam("ideas") === "1";
   const [pending, start] = useTransition();
   const latest = useRef(0); // ignore suggestions that come back after the client changed
   const topRef = useRef<HTMLDivElement>(null);
@@ -169,7 +174,8 @@ export function RequestForm({
     void Promise.resolve().then(() => {
       if (saved && saved.draft.clientId && (!initialClient || saved.draft.clientId === initialClient)) {
         setDraft(saved.draft);
-        setStep(saved.step);
+        // Picked up where it was left: the same entry, on that step
+        replaceParams({ step: STEP_KEYS[saved.step] ?? null });
         // Anything that was mid-flight comes back settled: an unfinished AI call is simply asked again
         setAi(saved.ai.status === "loading" ? { status: "idle" } : saved.ai);
         setBriefAi(saved.briefAi.status === "loading" ? { status: "idle" } : saved.briefAi);
@@ -257,7 +263,8 @@ export function RequestForm({
 
   function go(i: number) {
     setError(null);
-    setStep(i);
+    // From the ideas sheet, the step takes the sheet's place: back doesn't open it again
+    (ideasOpen ? replaceParams : pushParams)({ step: STEP_KEYS[i], ideas: null });
     reveal(topRef, "start");
   }
 
@@ -532,7 +539,7 @@ export function RequestForm({
                   <>
                     <button
                       type="button"
-                      onClick={() => setIdeasOpen(true)}
+                      onClick={() => pushParams({ ideas: "1" })}
                       className="flex min-h-12 items-center gap-3 rounded-[10px] border border-line bg-surface px-4 py-3 text-left active:bg-surface-2 md:hidden"
                     >
                       <Spark size={14} className="shrink-0 text-brand-text" />
@@ -551,11 +558,11 @@ export function RequestForm({
                       aria-modal={ideasOpen || undefined}
                       aria-label={ideasOpen ? "Start from an idea" : undefined}
                     >
-                      <button type="button" aria-label="Close" onClick={() => setIdeasOpen(false)} className="absolute inset-0 bg-black/70 backdrop-blur-sm animate-[sheet-fade_.2s_ease-out] md:hidden" />
+                      <button type="button" aria-label="Close" onClick={() => closeParams("ideas")} className="absolute inset-0 bg-black/70 backdrop-blur-sm animate-[sheet-fade_.2s_ease-out] md:hidden" />
                       <div className="relative grid max-h-[88dvh] min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-t-[20px] border-t border-line bg-bg animate-[sheet-up_.28s_cubic-bezier(.2,.8,.2,1)] md:block md:max-h-none md:animate-none md:overflow-visible md:rounded-none md:border-0 md:bg-transparent">
                         <div className="flex items-center justify-between gap-3 border-b border-line py-1 pl-4 pr-2 md:hidden">
                           <p className="text-sm font-medium">Start from an idea</p>
-                          <button type="button" onClick={() => setIdeasOpen(false)} className="h-11 rounded-full px-3 text-sm text-muted active:bg-surface-2">
+                          <button type="button" onClick={() => closeParams("ideas")} className="h-11 rounded-full px-3 text-sm text-muted active:bg-surface-2">
                             Done
                           </button>
                         </div>
@@ -563,10 +570,7 @@ export function RequestForm({
                           <IdeasPanel
                             clientId={draft.clientId}
                             formats={selectedFormats(draft)}
-                            onBrief={(patch) => {
-                              setIdeasOpen(false);
-                              applyIdea(patch);
-                            }}
+                            onBrief={applyIdea}
                           />
                         </div>
                       </div>

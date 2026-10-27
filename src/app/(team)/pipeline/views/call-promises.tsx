@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import type { CallPromise, OpenSuggestion } from "@/lib/suggestions";
+import { closeThen, pushParams, useParam } from "@/lib/url-state";
+import type { CallPromise } from "@/lib/suggestions";
 import { SuggestionSheet } from "./suggested-briefs";
 import { PromiseSources } from "./promise-sources";
 
@@ -14,7 +14,9 @@ const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { weekday
 
 export function CallPromises({ promises, bare = false }: { promises: CallPromise[]; bare?: boolean }) {
   const router = useRouter();
-  const [sheet, setSheet] = useState<OpenSuggestion | null>(null);
+  // The brief open is in the address (?promise=id), so back closes it and a link opens it
+  const openId = useParam("promise");
+  const sheet = promises.find((p) => openId && p.suggestion?.id === openId)?.suggestion ?? null;
   if (!promises.length) return null;
   return (
     <section className="grid gap-4 rounded-[20px] border border-warn/40 bg-[radial-gradient(120%_140%_at_0%_0%,rgba(224,166,58,0.16),transparent_60%)] p-5 md:p-6">
@@ -40,7 +42,7 @@ export function CallPromises({ promises, bare = false }: { promises: CallPromise
             </div>
             <PromiseSources group={p.group} />
             <div className="flex flex-wrap gap-2">
-              <button onClick={() => setSheet(p.suggestion)} className="h-11 w-full rounded-brand bg-fg px-4 text-sm font-medium text-bg md:h-9 md:w-auto">
+              <button onClick={() => p.suggestion && pushParams({ promise: p.suggestion.id })} className="h-11 w-full rounded-brand bg-fg px-4 text-sm font-medium text-bg md:h-9 md:w-auto">
                 Review the brief
               </button>
             </div>
@@ -50,10 +52,7 @@ export function CallPromises({ promises, bare = false }: { promises: CallPromise
       {sheet && (
         <SuggestionSheet
           s={sheet}
-          onClose={() => {
-            setSheet(null);
-            router.refresh();
-          }}
+          onClose={() => closeThen(() => router.refresh(), "promise")}
         />
       )}
     </section>

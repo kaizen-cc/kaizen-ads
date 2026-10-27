@@ -47,8 +47,6 @@ export default async function Market({ searchParams }: PageProps<"/market">) {
         connected={Boolean(connection)}
         lastSync={connection?.lastSyncAt ?? null}
         canConnect={me.isExec}
-        openId={typeof sp.ad === "string" ? sp.ad : null}
-        startIndustry={typeof sp.industry === "string" ? sp.industry : null}
         startClient={typeof sp.client === "string" ? (clients.find((c) => c.id === sp.client) ?? clientsBySlug.get(sp.client))?.id ?? null : null}
       />
     </div>

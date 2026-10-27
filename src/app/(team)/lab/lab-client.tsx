@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
 import { METRIC_LABEL, SEATS, TURNS_PER_ROUND, type Metric, type Seat } from "@/lib/lab-seats";
 import type { ClientNumbers, ProposedTest } from "@/lib/lab";
+import { pushParams, useParam } from "@/lib/url-state";
 import { addTestNote, followTest, createTest, decideTest, deleteSource, deleteThread, deployLearning, draftDeploy, dropTest, iterateTest, sendToTable, startTest, tableSpeaks, type Attachment } from "./actions";
 
 export type LabClientRow = { id: string; name: string; slug: string; industry: string | null; spend30: number };
@@ -55,30 +56,21 @@ export function LabClient(props: {
   sources: LabSource[];
   tests: LabTest[];
   clients: LabClientRow[];
-  tab: Tab;
   aiOn: boolean;
   /** Execs: everyone else's conversations with the table */
   everyone?: OtherThread[] | null;
   /** Reading someone else's conversation (an exec): whose it is */
   readOnly?: string | null;
 }) {
-  const [tab, setTab] = useState<Tab>(props.tab);
-  // Opening a conversation (e.g. a flop sent back to iterate) shows the table
-  const [opened, setOpened] = useState(props.threadId);
-  if (props.threadId !== opened) {
-    setOpened(props.threadId);
-    if (props.threadId) setTab("table");
-  }
+  // The tab is in the address (?tab=), so back and forward move between tabs. Opening a conversation (a link to
+  // ?t=, e.g. a flop sent back to iterate) has no tab, so it shows the table.
+  const asked = useParam("tab");
+  const tab: Tab = asked === "tests" ? "tests" : asked === "kaizen" && props.everyone ? "kaizen" : "table";
   const running = props.tests.filter((t) => t.status === "running").length;
   const won = props.tests.filter((t) => t.status === "won").length;
   const deployedClients = new Set(props.tests.flatMap((t) => t.deployed.map((d) => d.id))).size;
 
-  const go = (t: Tab) => {
-    setTab(t);
-    const url = new URL(window.location.href);
-    url.searchParams.set("tab", t);
-    window.history.replaceState(null, "", url);
-  };
+  const go = (t: Tab) => pushParams({ tab: t === "table" ? null : t });
 
   return (
     <div className="mx-auto grid max-w-7xl gap-6">

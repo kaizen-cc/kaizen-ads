@@ -5,7 +5,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { Option } from "./assign-select";
 import { type ClientCard } from "./client-grid";
-import { ClientsBrowser, type Filter } from "./clients-browser";
+import { ClientsBrowser } from "./clients-browser";
 import { ArchivedList, type ArchiveLog } from "./archived-list";
 
 type Row = {
@@ -27,8 +27,7 @@ type Row = {
 
 export default async function Clients({ searchParams }: PageProps<"/clients">) {
   const me = await requireStaff();
-  const { filter, view } = await searchParams;
-  const initialFilter = (["creative", "sprint", "none", "gaps"].includes(String(filter)) ? filter : "all") as Filter;
+  const { view } = await searchParams;
 
   const supabase = await createClient();
   const req = supabase
@@ -124,7 +123,7 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
         )}
       </header>
 
-      <ClientsBrowser cards={cards} slotOptions={slotOptions} canEdit={canEdit} initialFilter={initialFilter} />
+      <ClientsBrowser cards={cards} slotOptions={slotOptions} canEdit={canEdit} />
 
       <ArchivedList
         canRestore={canEdit}

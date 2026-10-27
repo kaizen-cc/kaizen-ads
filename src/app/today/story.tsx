@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { SuggestionSheet } from "@/app/(team)/pipeline/views/suggested-briefs";
 import type { Resolved, Tier, TodayItem, TopicKey } from "@/lib/today";
+import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { acknowledge, setItem } from "./actions";
 import { ScorecardView } from "@/components/production";
 import type { Scorecard } from "@/lib/production";
@@ -52,7 +53,6 @@ export function Story({
   resolved,
   counts,
   topics,
-  startTopic,
   home = "/pipeline",
   demo = false,
   score = null,
@@ -65,7 +65,6 @@ export function Story({
   resolved: Resolved[];
   counts: Record<Tier, number>;
   topics: Record<TopicKey, { label: string; blurb: string }>;
-  startTopic: TopicKey | null;
   /** Where Close and the end card go: the person's home */
   home?: string;
   /** Design preview: nothing is saved */
@@ -78,16 +77,23 @@ export function Story({
     for (const i of items) m.set(i.topic, [...(m.get(i.topic) ?? []), i]);
     return [...m.entries()].map(([topic, list]) => ({ topic, items: list.sort((a, b) => b.score - a.score) })).sort((a, b) => b.items[0].score - a.items[0].score);
   }, [items]);
-  const [first, setFirst] = useState<TopicKey | null>(startTopic);
+  // Every screen is a place in the address (?topic= to play first, ?card= for the screen, ?item= for a brief open), so
+  // the browser's back and forward move through the story like its own arrows
+  const askedTopic = useParam("topic");
+  const first = askedTopic && askedTopic in topics ? (askedTopic as TopicKey) : null;
   const cards: Card[] = useMemo(() => {
     const ordered = first ? [...groups.filter((g) => g.topic === first), ...groups.filter((g) => g.topic !== first)] : groups;
     return [{ kind: "intro" }, ...(score ? [{ kind: "score" as const }] : []), ...resolved.map((r) => ({ kind: "resolved" as const, r })), ...ordered.map((g) => ({ kind: "topic" as const, ...g })), { kind: "end" }];
   }, [groups, resolved, first, score]);
   // Where the topics start: after the intro, the scorecard and what teammates took care of
   const lead = 1 + (score ? 1 : 0) + resolved.length;
-  const [at, setAt] = useState(startTopic ? lead : 0);
+  const askedCard = useParam("card");
+  const at = askedCard ? Math.max(0, Math.min(cards.length - 1, Number(askedCard) || 0)) : first ? lead : 0;
+  // Moving to another screen leaves the client open on this one behind
+  const setAt = (n: number) => pushParams({ card: String(n), pick: null, dive: null });
   const [mine, setMine] = useState<Record<string, Mark>>(() => Object.fromEntries(items.map((i) => [i.key, i.state === "new" ? "seen" : i.state])));
-  const [sheet, setSheet] = useState<TodayItem | null>(null);
+  const askedItem = useParam("item");
+  const sheet = items.find((i) => i.key === askedItem) ?? null;
   const [picker, setPicker] = useState(false);
   const card = cards[Math.min(at, cards.length - 1)];
 
@@ -107,7 +113,10 @@ export function Story({
     }
   }, [card, demo]);
 
-  const go = useCallback((n: number) => setAt((a) => Math.max(0, Math.min(cards.length - 1, a + n))), [cards.length]);
+  const go = (n: number) => {
+    const to = Math.max(0, Math.min(cards.length - 1, at + n));
+    if (to !== at) setAt(to);
+  };
   const choose = async (i: TodayItem, status: "saved" | "done" | "dismissed") => {
     const next = demo ? (status === "saved" && mine[i.key] === "saved" ? "seen" : status) : await setItem(i.key, status, snap(i));
     setMine((m) => ({ ...m, [i.key]: (next ?? status) as Mark }));
@@ -116,8 +125,7 @@ export function Story({
     for (const i of list) if (mine[i.key] !== "saved") await choose(i, "saved");
   };
   const jump = (topic: TopicKey) => {
-    setFirst(topic);
-    setAt(lead);
+    pushParams({ topic, card: null, pick: null, dive: null });
     setPicker(false);
   };
 
@@ -270,7 +278,7 @@ export function Story({
               mine={mine}
               label={topics[card.topic].label}
               onChoose={(i, s) => void choose(i, s)}
-              onAct={(i) => setSheet(i)}
+              onAct={(i) => pushParams({ item: i.key })}
               onSaveAll={() => void saveAll(card.items)}
               onNext={() => go(1)}
             />
@@ -344,7 +352,7 @@ export function Story({
             onClose={() => {
               setMine((m) => ({ ...m, [sheet.key]: "done" }));
               if (!demo) void setItem(sheet.key, "done", snap(sheet));
-              setSheet(null);
+              closeParams("item");
             }}
           />
         </div>
@@ -377,22 +385,22 @@ function TopicScreen({
   onNext: () => void;
 }) {
   const live = list.filter((i) => mine[i.key] !== "dismissed" && mine[i.key] !== "done");
-  const [selected, setSelected] = useState<string | null>(null);
-  const [dive, setDive] = useState<number | null>(null);
+  // The client open (?pick=key) and the deep dive (?dive=n) are places too: back returns to the list
+  const selected = useParam("pick");
+  const setSelected = (key: string) => pushParams({ pick: key, dive: null });
+  const askedDive = useParam("dive");
+  const dive = askedDive && live.length ? Number(askedDive) || 0 : null;
+  const setDive = (n: number | null) => pushParams({ dive: n == null ? null : String(n), pick: null });
   const current = dive != null ? live[Math.min(dive, live.length - 1)] : (live.find((i) => i.key === selected) ?? null);
   const critical = list.filter((i) => i.tier === "critical").length;
   const t = TIER[list[0].tier];
   const allSaved = live.length > 0 && live.every((i) => mine[i.key] === "saved");
-  const closeOverview = () => {
-    setDive(null);
-    setSelected(null);
-  };
+  const closeOverview = () => closeParams(dive != null ? "dive" : "pick", "pick", "dive");
   const nextInDive = () => {
     if (dive == null) return;
-    if (dive + 1 >= live.length) {
-      setDive(null);
-      onNext();
-    } else setDive(dive + 1);
+    // The last one: on to the next screen (which leaves the dive behind)
+    if (dive + 1 >= live.length) onNext();
+    else setDive(dive + 1);
   };
 
   return (
@@ -418,10 +426,7 @@ function TopicScreen({
                 <button
                   type="button"
                   disabled={gone}
-                  onClick={() => {
-                    setDive(null);
-                    setSelected(on ? null : i.key);
-                  }}
+                  onClick={() => (on ? closeOverview() : setSelected(i.key))}
                   className={`group grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-[16px] border px-4 py-3.5 text-left transition-colors md:py-3 ${on ? "border-white/40 bg-white/[0.1]" : "border-white/10 bg-white/[0.035] hover:border-white/25 hover:bg-white/[0.07]"} ${gone ? "opacity-40" : ""}`}
                   style={{ animation: `card-in .4s ${0.04 * n}s cubic-bezier(.2,.8,.2,1) both` }}
                 >

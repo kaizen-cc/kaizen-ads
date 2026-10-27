@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
 import { KIND_LABEL, type SuggestionKind } from "@/lib/suggestion-kinds";
+import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import type { OpenSuggestion, SuggestionDraft, SuggestionsState } from "@/lib/suggestions";
 import { approveSuggestion, chatSuggestion, declineSuggestion, refreshSuggestions, saveSuggestion } from "../suggestion-actions";
 import { SectionTitle } from "./shared";
@@ -34,7 +35,8 @@ const REASONS = ["Not the right time", "Already handled", "Client wouldn't go fo
  */
 export function SuggestedBriefs({ state, bare = false }: { state: SuggestionsState; bare?: boolean }) {
   const router = useRouter();
-  const [open, setOpen] = useState<string | null>(null);
+  // The suggestion open is in the address (?brief=id), so back closes it and a link opens it
+  const open = useParam("brief");
   const [starting, start] = useTransition();
   const [note, setNote] = useState<string | null>(null);
   const running = state.running || starting;
@@ -89,7 +91,7 @@ export function SuggestedBriefs({ state, bare = false }: { state: SuggestionsSta
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
           {state.open.map((s) => (
-            <button key={s.id} onClick={() => setOpen(s.id)} className="group grid content-start gap-2.5 rounded-[14px] border border-line bg-surface p-4 text-left transition-colors hover:border-faint">
+            <button key={s.id} onClick={() => pushParams({ brief: s.id })} className="group grid content-start gap-2.5 rounded-[14px] border border-line bg-surface p-4 text-left transition-colors hover:border-faint">
               <span className="flex flex-wrap items-center gap-2">
                 <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${KIND_TONE[s.kind]}`}>{KIND_LABEL[s.kind]}</span>
                 <span className="text-xs text-muted">{s.client}</span>
@@ -114,7 +116,7 @@ export function SuggestedBriefs({ state, bare = false }: { state: SuggestionsSta
         </div>
       )}
 
-      {current && <SuggestionSheet key={current.id} s={current} onClose={() => setOpen(null)} />}
+      {current && <SuggestionSheet key={current.id} s={current} onClose={() => closeParams("brief")} />}
     </section>
   );
 }

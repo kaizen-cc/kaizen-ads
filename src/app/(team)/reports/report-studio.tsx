@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { SlackConnect } from "@/components/slack-connect";
+import { pushParams, useParam } from "@/lib/url-state";
 import { headlineTiles, kpiRows, money, platformName, type Delta } from "@/lib/reports/format";
 import type { ReportMetrics } from "@/lib/reports/metrics";
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
@@ -292,7 +293,12 @@ export function ReportStudio({
   const [pending, start] = useTransition();
   const [editMsg, setEditMsg] = useState(false);
   const initial: "report" | "message" | "done" = sent ? "done" : built && mineDone && bundle?.isBuilder ? "message" : "report";
-  const [step, setStep] = useState<"report" | "message" | "done">(initial);
+  // The step is in the address (?step=), so back from the Slack message returns to the report. Once it's sent, it's
+  // sent: every entry shows that.
+  const [sentHere, setSentHere] = useState(false);
+  const asked = useParam("step");
+  const step: "report" | "message" | "done" = sent || sentHere ? "done" : asked === "report" || asked === "message" ? asked : initial;
+  const setStep = (to: "report" | "message" | "done") => (to === "done" ? setSentHere(true) : pushParams({ step: to === initial ? null : to }));
   const chatEnd = useRef<HTMLDivElement>(null);
 
   // A fresh draft from the server (after a redraft or the first write) replaces what's shown

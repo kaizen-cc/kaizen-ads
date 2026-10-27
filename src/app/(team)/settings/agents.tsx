@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
 import { field } from "@/components/ui";
+import { pushParams, useParam } from "@/lib/url-state";
 import {
   addItem,
   applyChange,
@@ -903,7 +904,10 @@ const TABS = [
 ] as const;
 
 export function AgentDetail({ a, items, chat }: { a: Agent; items: Item[]; chat: ChatMessage[] }) {
-  const [tab, setTab] = useState<(typeof TABS)[number][0]>("use");
+  // The skill's tab is in the address (?view=), so back returns to the tab read before
+  const asked = useParam("view");
+  const tab = TABS.find(([k]) => k === asked)?.[0] ?? "use";
+  const setTab = (k: (typeof TABS)[number][0]) => pushParams({ view: k === "use" ? null : k });
   const mine = items.filter((k) => k.agentKey === a.key);
   const shared = items.filter((k) => k.agentKey === null && k.active);
   const tint = TINT[a.icon] ?? TINT.spark;
@@ -1121,7 +1125,10 @@ function splitRule(line: string) {
 
 function SpineEditor({ spine }: { spine: { body: string; updatedAt: string | null; updatedBy: string | null } }) {
   const [body, setBody] = useState(spine.body);
-  const [mode, setMode] = useState<"summary" | "read" | "edit">("summary");
+  // Summary, read or edit, in the address (?spine=), so back steps out of reading or editing it
+  const asked = useParam("spine");
+  const mode = asked === "read" || asked === "edit" ? asked : "summary";
+  const setMode = (k: typeof mode) => pushParams({ spine: k === "summary" ? null : k });
   useDirty("spine", body !== spine.body, { label: "Kaizen strategy", save: () => saveSpine(body), discard: () => setBody(spine.body) });
   const rules = spine.body
     .split("\n")

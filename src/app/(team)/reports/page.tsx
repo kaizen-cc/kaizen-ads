@@ -32,9 +32,8 @@ const STATUS: Record<string, { label: string; tone: string }> = {
 };
 
 /** This week's reports and this month's recap, for each buyer (theirs) and for leads and execs (their line, or all). */
-export default async function ReportsPage({ searchParams }: PageProps<"/reports">) {
+export default async function ReportsPage() {
   const me = await requireStaff();
-  const wanted = (await searchParams).client;
   const db = await createClient();
   const today = nyParts(new Date()).date;
   const week = periodsFor("weekly", today).main;
@@ -158,7 +157,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
         </span>
       </header>
 
-      <ReportBuilder clients={builderClients} quick={quick} initialClient={typeof wanted === "string" ? wanted : null} yesterday={yesterday} />
+      <ReportBuilder clients={builderClients} quick={quick} yesterday={yesterday} />
 
       {(builtRows.length > 0 || onDemand.length > 0) && (
         <section className="grid gap-3">

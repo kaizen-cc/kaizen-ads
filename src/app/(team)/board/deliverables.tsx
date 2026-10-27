@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useUploads } from "@/components/upload-provider";
+import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
 import { aspectLabel, aspectOf, filesFromDrop, groupFiles, isMedia, probe, safeName, smallJpeg, type Picked, type StagedDesign, type StagedFile } from "@/lib/uploads/media";
 import type { CreativeCheck } from "@/lib/ai";
 import { checkCreative, noteBriefChange, setTicketCounts, startDesigns, startVersion, ticketDesigns, type Design } from "./design-actions";
@@ -83,7 +84,10 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
   const [reading, setReading] = useState(false);
   const [over, setOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [viewing, setViewing] = useState<{ design: Design; version: number; focus?: string | null } | null>(null);
+  // The creative open in the viewer is in the address (?design=&ver=&pin=), so back closes it and a link opens it
+  const viewId = useParam("design");
+  const viewVer = Number(useParam("ver")) || null;
+  const viewPin = useParam("pin");
   // When this person last opened each design: comments since then are new to them (kept in this browser)
   const [seen, setSeen] = useState<Record<string, string>>(() => {
     try {
@@ -111,6 +115,8 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
   const [counts, setCounts] = useState<{ new: number; variations: number } | null>(null); // after correcting the ticket here
   const router = useRouter();
   const asked = counts ?? { new: ticket.newCount, variations: ticket.variationCount };
+  const viewDesign = designs?.find((d) => d.id === viewId) ?? null;
+  const viewing = viewDesign ? { design: viewDesign, version: viewDesign.versions.some((x) => x.version === viewVer) ? viewVer! : viewDesign.currentVersion, focus: viewPin } : null;
 
   const finished = uploads?.finished[ticket.id] ?? 0;
   const demo = Boolean(demoDesigns);
@@ -141,7 +147,7 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
       const d = requestId === ticket.id ? designsRef.current?.find((x) => x.id === designId) : null;
       if (!d) return;
       load();
-      setViewing({ design: d, version: d.currentVersion, focus: commentId });
+      pushParams({ design: d.id, ver: null, pin: commentId });
       markSeen(d.id);
     };
     window.addEventListener("kz:open-comment", open);
@@ -612,7 +618,7 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
                 key={d.id}
                 className={`group grid gap-2 rounded-[10px] border bg-surface p-2.5 transition-colors hover:border-faint ${unreadOf(d) ? "border-[#6c7ee1] shadow-[0_0_0_3px_rgba(108,126,225,0.25),0_12px_32px_-12px_rgba(108,126,225,0.8)]" : "border-line"}`}
               >
-                <button onClick={() => (setViewing({ design: d, version: d.currentVersion }), markSeen(d.id))} className="relative block overflow-hidden rounded-[7px]" aria-label={`Open ${d.name}`}>
+                <button onClick={() => (pushParams({ design: d.id, ver: null, pin: null }), markSeen(d.id))} className="relative block overflow-hidden rounded-[7px]" aria-label={`Open ${d.name}`}>
                   {(() => {
                     const open = comments.filter((c) => c.designId === d.id && c.version === d.currentVersion && !c.resolved).length;
                     const fresh = unreadOf(d);
@@ -664,14 +670,15 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
 
       {viewing && (
         <ReviewViewer
+          key={viewing.design.id}
           requestId={ticket.id}
           design={viewing.design}
           version={viewing.version}
           format={ticket.format}
           comments={comments}
           onComments={setComments}
-          onVersion={(n) => setViewing({ ...viewing, version: n })}
-          onClose={() => (markSeen(viewing.design.id), setViewing(null))}
+          onVersion={(n) => replaceParams({ ver: n === viewing.design.currentVersion ? null : String(n) })}
+          onClose={() => (markSeen(viewing.design.id), closeParams("design", "ver", "pin"))}
           focus={viewing.focus ?? null}
           demo={demo}
         />

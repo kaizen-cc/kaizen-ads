@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Combobox } from "@/components/combobox";
 import { tintFor } from "@/lib/colors";
+import { closeParams, pushParams, replaceParams } from "@/lib/url-state";
 import { BOARD_ORDER, PHASE_LABEL, health, stageInfo, type Format, type Health, type Phase, type Stage } from "@/lib/stages";
 import { TicketCard } from "./ticket-card";
 import { MoveDialog } from "./move-dialog";
@@ -49,7 +50,6 @@ export function BoardClient({
   me?: { id: string; lead: boolean } | null;
 }) {
   const router = useRouter();
-  const pathname = usePathname();
   const params = useSearchParams();
   const [tickets, setTickets] = useState(initial);
 
@@ -66,26 +66,20 @@ export function BoardClient({
     return () => clearInterval(t);
   }, [router, demo]);
 
-  // Filters live in the URL so a filtered board can be shared
+  // Filters, the open ticket and the move dialog live in the URL: a filtered board can be shared, and back and forward
+  // walk through what was opened (search typing replaces the entry instead of adding one per key)
   const q = params.get("q") ?? "";
   const client = params.get("client");
   const person = params.get("person");
   const format = (params.get("format") as Format | null) ?? null;
   const only = (params.get("only") as Health | null) ?? null;
   const openNumber = params.get("t");
-  // Dragging a ticket across the board, and where it was dropped (confirmed in the move dialog)
+  // A ticket dropped on another column waits in the move dialog (?move=number&to=stage) until it's confirmed
+  const moveNumber = params.get("move");
+  const moveTo = (params.get("to") as Stage | null) ?? null;
+  // Dragging a ticket across the board, and where it's hovering
   const [dragging, setDragging] = useState<Ticket | null>(null);
   const [dropOn, setDropOn] = useState<Stage | null>(null);
-  const [dropped, setDropped] = useState<{ ticket: Ticket; to: Stage } | null>(null);
-
-  const setParam = (patch: Record<string, string | null>) => {
-    const next = new URLSearchParams(params.toString());
-    for (const [k, v] of Object.entries(patch)) {
-      if (v) next.set(k, v);
-      else next.delete(k);
-    }
-    router.replace(`${pathname}${next.size ? `?${next}` : ""}`, { scroll: false });
-  };
 
   const filtered = useMemo(() => {
     const t = q.trim().toLowerCase().replace(/^#/, "");
@@ -114,6 +108,9 @@ export function BoardClient({
   }, [filtered]);
 
   const open = tickets.find((x) => String(x.number) === openNumber) ?? null;
+  // The board's own move dialog; one opened from inside a ticket is drawn by the ticket
+  const moving = open ? null : (tickets.find((x) => String(x.number) === moveNumber) ?? null);
+  const dropped = moving && moveTo && BOARD_ORDER.includes(moveTo) && moveTo !== moving.stage ? { ticket: moving, to: moveTo } : null;
   const shadowId = params.get("a");
   const openShadow = shadows.find((x) => x.gid === shadowId) ?? null;
   const shadowsBy = useMemo(() => {
@@ -221,7 +218,7 @@ export function BoardClient({
           </svg>
           <input
             defaultValue={q}
-            onChange={(e) => setParam({ q: e.target.value || null })}
+            onChange={(e) => replaceParams({ q: e.target.value || null })}
             placeholder="Search title, client or #"
             aria-label="Search tickets"
             className="h-11 w-full rounded-full border border-line bg-surface pl-9 pr-3 text-sm outline-none focus:border-brand-text md:h-9 md:w-60"
@@ -233,7 +230,7 @@ export function BoardClient({
           placeholder="All clients"
           allLabel="All clients"
           value={client}
-          onChange={(v) => setParam({ client: v })}
+          onChange={(v) => pushParams({ client: v })}
           options={clients.map((c) => ({ value: c.slug, label: c.name, dot: tintFor(c.name), hint: String(tickets.filter((t) => t.clientSlug === c.slug && t.stage !== "launched").length || "") }))}
         />
         <Combobox
@@ -242,14 +239,14 @@ export function BoardClient({
           placeholder="Anyone"
           allLabel="Anyone"
           value={person}
-          onChange={(v) => setParam({ person: v })}
+          onChange={(v) => pushParams({ person: v })}
           options={people.map((p) => ({ value: p.id, label: p.name, hint: p.role }))}
         />
         <div className="flex w-full rounded-full border border-line bg-surface p-0.5 text-sm md:w-auto">
           {([null, "image", "video", "carousel"] as const).map((f) => (
             <button
               key={f ?? "all"}
-              onClick={() => setParam({ format: f })}
+              onClick={() => pushParams({ format: f })}
               className={`h-10 flex-1 rounded-full px-3 md:h-auto md:flex-initial md:py-1 ${format === f ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}
             >
               {f ? f[0].toUpperCase() + f.slice(1) : "All"}
@@ -257,7 +254,7 @@ export function BoardClient({
           ))}
         </div>
         {filtersOn && (
-          <button onClick={() => router.replace(pathname, { scroll: false })} className="h-11 px-3 text-xs text-muted hover:text-fg md:h-auto md:px-2">
+          <button onClick={() => pushParams({ q: null, client: null, person: null, format: null, only: null })} className="h-11 px-3 text-xs text-muted hover:text-fg md:h-auto md:px-2">
             Clear
           </button>
         )}
@@ -272,7 +269,7 @@ export function BoardClient({
           ).map(([k, label, dot, n]) => (
             <button
               key={k}
-              onClick={() => setParam({ only: only === k ? null : k })}
+              onClick={() => pushParams({ only: only === k ? null : k })}
               className={`flex h-11 items-center gap-1.5 rounded-full border px-3 transition-colors md:h-auto md:px-2.5 md:py-1 ${only === k ? "border-fg/40 bg-surface-2 text-fg" : "border-transparent text-muted hover:text-fg"}`}
               title={`Show only: ${label}`}
             >
@@ -374,7 +371,7 @@ export function BoardClient({
                   onDrop={(e) => {
                     e.preventDefault();
                     setDropOn(null);
-                    if (dragging && dragging.stage !== s) setDropped({ ticket: dragging, to: s });
+                    if (dragging && dragging.stage !== s) pushParams({ move: String(dragging.number), to: s });
                     setDragging(null);
                   }}
                   className={`grid w-[88vw] shrink-0 snap-start content-start gap-2 rounded-[10px] p-2 transition-colors md:w-[var(--col)] ${dropOn === s ? "bg-brand-soft ring-1 ring-brand-text/50" : "bg-surface/50"}`}
@@ -397,7 +394,7 @@ export function BoardClient({
                     <TicketCard
                       key={t.id}
                       ticket={t}
-                      onOpen={() => setParam({ t: String(t.number) })}
+                      onOpen={() => pushParams({ t: String(t.number) })}
                       onDragStart={
                         demo
                           ? undefined
@@ -412,7 +409,7 @@ export function BoardClient({
                     />
                   ))}
                   {(shadowsBy.get(s) ?? []).map((x) => (
-                    <ShadowCard key={x.gid} s={x} onOpen={() => setParam({ a: x.gid })} />
+                    <ShadowCard key={x.gid} s={x} onOpen={() => pushParams({ a: x.gid })} />
                   ))}
                   {list.length === 0 && !(shadowsBy.get(s) ?? []).length && (
                     <div className="grid h-20 place-items-center rounded-brand border border-dashed border-line/70 text-xs text-faint">
@@ -434,24 +431,22 @@ export function BoardClient({
         </div>
       )}
 
-      {openShadow && <ShadowSheet s={openShadow} canMigrate={Boolean(me && (me.lead || openShadow.profileId === me.id))} onClose={() => setParam({ a: null })} />}
+      {openShadow && <ShadowSheet s={openShadow} canMigrate={Boolean(me && (me.lead || openShadow.profileId === me.id))} onClose={() => closeParams("a")} />}
       {dropped && (
         <MoveDialog
+          key={`${dropped.ticket.id}-${dropped.to}`}
           ticket={dropped.ticket}
           to={dropped.to}
-          onClose={() => setDropped(null)}
+          onClose={() => closeParams("move", "to")}
           onMoved={(stage) => {
             optimisticMove(dropped.ticket.id, stage);
-            setDropped(null);
+            closeParams("move", "to");
           }}
-          // What's missing is done in the ticket itself
-          onFix={() => {
-            setParam({ t: String(dropped.ticket.number) });
-            setDropped(null);
-          }}
+          // What's missing is done in the ticket itself: it takes the dialog's place in history
+          onFix={() => replaceParams({ move: null, to: null, t: String(dropped.ticket.number) })}
         />
       )}
-      {open && <TicketDrawer key={open.id} ticket={open} people={people} can={can} onClose={() => setParam({ t: null })} onOptimisticMove={optimisticMove} demo={demo} />}
+      {open && <TicketDrawer key={open.id} ticket={open} people={people} can={can} onClose={() => closeParams("t", "move", "to", "design", "ver", "pin", "copy")} onOptimisticMove={optimisticMove} demo={demo} />}
 
     </div>
   );

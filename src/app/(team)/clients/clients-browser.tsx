@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { SlotRole } from "@/lib/roles";
+import { pushParams, useParam } from "@/lib/url-state";
 import type { Option } from "./assign-select";
 import { ClientGrid, type ClientCard } from "./client-grid";
 
@@ -20,28 +21,22 @@ export function ClientsBrowser({
   cards,
   slotOptions,
   canEdit,
-  initialFilter = "all",
 }: {
   cards: ClientCard[];
   slotOptions: Record<SlotRole, Option[]>;
   canEdit: boolean;
-  initialFilter?: Filter;
 }) {
   const [q, setQ] = useState("");
-  const [filter, setFilter] = useState<Filter>(initialFilter);
+  // The filter is in the address (?filter=), so back returns to the list as it was
+  const asked = useParam("filter");
+  const filter: Filter = FILTERS.find((f) => f.key === asked)?.key ?? "all";
   const term = q.trim().toLowerCase();
   const searching = term.length >= 2;
   const test = FILTERS.find((f) => f.key === filter)!.test;
   const inFilter = cards.filter(test);
   const shown = inFilter.filter((c) => !searching || c.name.toLowerCase().includes(term));
 
-  const pick = (f: Filter) => {
-    setFilter(f);
-    const url = new URL(window.location.href);
-    if (f === "all") url.searchParams.delete("filter");
-    else url.searchParams.set("filter", f);
-    window.history.replaceState(null, "", url);
-  };
+  const pick = (f: Filter) => pushParams({ filter: f === "all" ? null : f });
 
   return (
     <>

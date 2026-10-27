@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { requestAudit } from "@/components/audit-watcher";
 import type { ChatTurn } from "@/lib/handoff";
+import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { askClientAi, clearClientAi, loadClientAi, openClientDoc, undoClientDesk } from "./actions";
 import { createClient } from "@/lib/supabase/client";
 import { Layer } from "./layer";
@@ -81,7 +82,13 @@ function Bubble({ t, onUndo }: { t: ChatTurn; onUndo?: (i: number) => void }) {
  */
 export function ClientChat({ clientId, client, initial, targets, live, variant = "floating" }: { clientId: string; client: string; initial?: ChatTurn[]; targets: AuditTarget[]; live: boolean; variant?: "floating" | "inline" }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  // On the client page the open chat is in the address (?chat=1), so back closes it and a link opens it. The inline
+  // button sits on cards that can share a page, so it keeps its own.
+  const floating = variant === "floating";
+  const inAddress = useParam("chat") === "1";
+  const [openHere, setOpenHere] = useState(false);
+  const open = floating ? inAddress : openHere;
+  const setOpen = (v: boolean) => (!floating ? setOpenHere(v) : v ? pushParams({ chat: "1" }) : closeParams("chat"));
   const [chat, setChat] = useState<ChatTurn[]>(initial ?? []);
   const [loaded, setLoaded] = useState(Boolean(initial));
   useEffect(() => {
@@ -116,11 +123,13 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
     if (!open) return;
     input.current?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key !== "Escape") return;
+      if (floating) closeParams("chat");
+      else setOpenHere(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
+  }, [open, floating]);
 
   // Phones: the drawer fills the visible area, so the box stays right above the keyboard when it opens
   useEffect(() => {

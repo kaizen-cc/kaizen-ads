@@ -15,7 +15,7 @@ export const maxDuration = 300;
 export default async function Lab({ searchParams }: PageProps<"/lab">) {
   const me = await requireStaff();
   if (!isExecOrLead(me)) redirect("/pipeline");
-  const { t, tab } = await searchParams;
+  const { t } = await searchParams;
   const db = await createClient();
 
   // Your own conversations with the table; execs also see everyone else's, in their own tab
@@ -106,7 +106,6 @@ export default async function Lab({ searchParams }: PageProps<"/lab">) {
       )}
       tests={testRows}
       clients={clientRows}
-      tab={tab === "tests" ? "tests" : tab === "kaizen" && me.isExec ? "kaizen" : "table"}
       aiOn={aiEnabled()}
     />
   );

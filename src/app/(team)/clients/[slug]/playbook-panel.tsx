@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { LedgerItem } from "@/lib/ledger";
+import { pushParams, useParam } from "@/lib/url-state";
 
 // The client playbook: everything they've run (creatives, message angles, audiences), kept forever with when it ran,
 // how it did against their KPI and a verdict. Winners first; nothing disappears when an ad is turned off. The Brand
@@ -23,8 +24,12 @@ const money = (n: number | null) => (n == null ? "—" : `$${n.toLocaleString("e
 const day = (d: string | null) => (d ? new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit", timeZone: "UTC" }) : "—");
 
 export function PlaybookPanel({ items, learnings }: { items: LedgerItem[]; learnings: Learning[] }) {
-  const [kind, setKind] = useState<"angle" | "audience" | "creative">("angle");
-  const [verdict, setVerdict] = useState<string | null>(null);
+  // What's being looked at (?kind=&verdict=) is in the address, so back returns to the list read before
+  const askedKind = useParam("kind");
+  const kind = KINDS.find((k) => k.key === askedKind)?.key ?? "angle";
+  const setKind = (k: (typeof KINDS)[number]["key"]) => pushParams({ kind: k === "angle" ? null : k });
+  const verdict = useParam("verdict");
+  const setVerdict = (v: string | null) => pushParams({ verdict: v });
   const [q, setQ] = useState("");
   const [shown, setShown] = useState(30);
   const counts = useMemo(() => {

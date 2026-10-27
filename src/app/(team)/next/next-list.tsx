@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { closeThen, pushParams, useParam } from "@/lib/url-state";
 import type { NextForMe, NextItem } from "@/lib/next-for-me";
 import type { OpenSuggestion } from "@/lib/suggestions";
 import { SuggestionSheet } from "../pipeline/views/suggested-briefs";
@@ -34,7 +34,9 @@ const KIND: Record<NextItem["kind"], string> = {
 /** Everything on one person, in four calm sections. Briefs open right here; everything else goes where it lives. */
 export function NextList({ data }: { data: NextForMe }) {
   const router = useRouter();
-  const [sheet, setSheet] = useState<OpenSuggestion | null>(null);
+  // The brief open is in the address (?brief=id), so back closes it and a link opens it
+  const openId = useParam("brief");
+  const sheet = (openId && SECTIONS.flatMap((x) => data[x.key]).find((it) => it.suggestion?.id === openId)?.suggestion) || null;
   const total = data.now.length + data.decide.length + data.watch.length;
   return (
     <div className="grid gap-8">
@@ -76,7 +78,7 @@ export function NextList({ data }: { data: NextForMe }) {
               ) : (
                 <ul className="grid divide-y divide-line overflow-hidden rounded-[14px] border border-line bg-surface">
                   {items.map((it) => (
-                    <Row key={it.id} it={it} onBrief={setSheet} />
+                    <Row key={it.id} it={it} onBrief={(b) => pushParams({ brief: b.id })} />
                   ))}
                 </ul>
               )}
@@ -88,10 +90,7 @@ export function NextList({ data }: { data: NextForMe }) {
       {sheet && (
         <SuggestionSheet
           s={sheet}
-          onClose={() => {
-            setSheet(null);
-            router.refresh();
-          }}
+          onClose={() => closeThen(() => router.refresh(), "brief")}
         />
       )}
     </div>

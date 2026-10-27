@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import { FilterMenu, FilterPill } from "@/components/filters";
+import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
 import type { FameAd } from "@/lib/hall-of-fame";
 import type { Winner } from "@/lib/industry";
 import type { OpenSuggestion } from "@/lib/suggestions";
@@ -50,10 +51,21 @@ const toWinner = (a: FameAd): Winner => ({
  * sub-vertical's benchmark), kept six months. By vertical and sub-vertical; open one to see it and brief a client on it.
  */
 export function FameLibrary({ ads, verticals, clients }: { ads: FameAd[]; verticals: { id: string; name: string; parent: string }[]; clients: PickClient[] }) {
-  const [vertical, setVertical] = useState<string | null>(null);
-  const [sort, setSort] = useState<Sort>("beat");
-  const [q, setQ] = useState("");
-  const [open, setOpen] = useState<FameAd | null>(null);
+  // Filters and the open ad are in the address (?vertical=&sort=&ad=), so back and forward step through them;
+  // typing a search replaces the entry instead of adding one per key
+  const vertical = useParam("vertical");
+  const setVertical = (v: string | null) => pushParams({ vertical: v });
+  const askedSort = useParam("sort");
+  const sort: Sort = SORTS.some(([k]) => k === askedSort) ? (askedSort as Sort) : "beat";
+  const setSort = (v: Sort) => pushParams({ sort: v === "beat" ? null : v });
+  const [q, setQState] = useState(useParam("q") ?? "");
+  const setQ = (v: string) => {
+    setQState(v);
+    replaceParams({ q: v.trim() ? v : null });
+  };
+  const openId = useParam("ad");
+  const open = ads.find((a) => a.adId === openId) ?? null;
+  const setOpen = (a: FameAd) => pushParams({ ad: a.adId });
   // Hovering a card (mouse only) shows the ad as it runs, with the AI's read of why it works, like the live winners
   const [hover, setHover] = useState<{ a: FameAd; rect: DOMRect } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -146,9 +158,8 @@ export function FameLibrary({ ads, verticals, clients }: { ads: FameAd[]; vertic
                 {q.trim() && <FilterPill onClear={() => setQ("")}>&ldquo;{q.trim()}&rdquo;</FilterPill>}
                 <button
                   onClick={() => {
-                    setVertical(null);
-                    setSort("beat");
-                    setQ("");
+                    setQState("");
+                    pushParams({ vertical: null, sort: null, q: null });
                   }}
                   className="ml-1 py-2 text-xs text-muted underline-offset-4 hover:text-fg hover:underline md:py-0"
                 >
@@ -208,7 +219,7 @@ export function FameLibrary({ ads, verticals, clients }: { ads: FameAd[]; vertic
           }}
         />
       )}
-      {open && <FameSheet key={open.adId} a={open} w={winners.get(open.adId)!} clients={clients} onClose={() => setOpen(null)} />}
+      {open && <FameSheet key={open.adId} a={open} w={winners.get(open.adId)!} clients={clients} onClose={() => closeParams("ad", "brief")} />}
     </div>
   );
 }
@@ -217,7 +228,10 @@ function FameSheet({ a, w, clients, onClose }: { a: FameAd; w: Winner; clients: 
   const ad = useAd(a.adId);
   const insight = useInsight(w, ad);
   const [step, setStep] = useState<"ad" | "pick" | "writing">("ad");
-  const [brief, setBrief] = useState<OpenSuggestion | null>(null);
+  // The written brief is a place of its own (?brief=id): back returns to the ad, forward to the brief
+  const [written, setWritten] = useState<OpenSuggestion | null>(null);
+  const briefId = useParam("brief");
+  const brief = written && written.id === briefId ? written : null;
   const [error, setError] = useState<string | null>(null);
   const write = async (clientId: string) => {
     setError(null);
@@ -230,7 +244,10 @@ function FameSheet({ a, w, clients, onClose }: { a: FameAd; w: Winner; clients: 
       setError(r.error);
       return setStep("pick");
     }
-    setBrief(r.suggestion);
+    // Back from the brief lands on the ad again, not on the writing screen
+    setStep("pick");
+    setWritten(r.suggestion);
+    pushParams({ brief: r.suggestion.id });
   };
   if (brief) return <SuggestionSheet s={brief} onClose={onClose} />;
   const c = a.creative;

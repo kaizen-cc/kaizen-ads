@@ -8,6 +8,7 @@ import { ClientPick, SHEET_BACKDROP, SHEET_PANEL, SheetAction, SheetBar, Writing
 import { briefFromMarket, clientMarket } from "./actions";
 import { ClientSearch } from "./client-search";
 import { FilterMenu as Menu, FilterPill as Pill } from "@/components/filters";
+import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
 import { MarketHoverCard, MarketPreview, MarketReadPanel, useMarketRead } from "./market-preview";
 
 type View = "all" | "proven" | "fresh" | "testing";
@@ -35,8 +36,6 @@ export function MarketLibrary({
   connected,
   lastSync,
   canConnect,
-  openId,
-  startIndustry,
   startClient,
 }: {
   ads: MarketAd[];
@@ -47,20 +46,20 @@ export function MarketLibrary({
   connected: boolean;
   lastSync: string | null;
   canConnect: boolean;
-  openId: string | null;
-  startIndustry: string | null;
+  /** The client in a link, found by its slug (the address keeps the slug) */
   startClient: string | null;
 }) {
   // For a client: the brands matched to them from their client page (competitors first, then lookalikes from any
   // industry), so the list is what they can actually learn from, not everything in a broad industry
-  const [forId, setForId] = useState<string | null>(() => clients.find((c) => c.id === startClient)?.id ?? null);
+  // The client, filters and the open ad are in the address (?client=&industry=&view=&format=&ad=), so back and
+  // forward step through them and a link opens the same list. A client's page links by slug: the server resolved it.
+  const wantClient = useParam("client");
+  const forId = clients.some((c) => c.id === wantClient) ? wantClient : wantClient ? startClient : null;
   const forClient = clients.find((c) => c.id === forId) ?? null;
-  const [industry, setIndustry] = useState<string | null>(() => (startClient ? null : startIndustry));
+  const industry = useParam("industry");
+  const setIndustry = (v: string | null) => pushParams({ industry: v });
   const [clientAds, setClientAds] = useState<{ id: string; ads: MarketAd[] } | null>(null);
-  const pickClient = (id: string | null) => {
-    setForId(id);
-    setIndustry(null);
-  };
+  const pickClient = (id: string | null) => pushParams({ client: id, industry: null });
   useEffect(() => {
     if (!forId) return;
     let live = true;
@@ -71,10 +70,20 @@ export function MarketLibrary({
   }, [forId]);
   const matching = Boolean(forId) && clientAds?.id !== forId;
   const pool = useMemo(() => (forId ? (clientAds?.id === forId ? clientAds.ads : []) : ads), [forId, clientAds, ads]);
-  const [view, setView] = useState<View>("all");
-  const [format, setFormat] = useState<string | null>(null);
-  const [q, setQ] = useState("");
-  const [open, setOpen] = useState<MarketAd | null>(() => ads.find((a) => a.id === openId) ?? null);
+  const askedView = useParam("view");
+  const view: View = VIEWS.some(([k]) => k === askedView) ? (askedView as View) : "all";
+  const setView = (v: View) => pushParams({ view: v === "all" ? null : v });
+  const format = useParam("format");
+  const setFormat = (v: string | null) => pushParams({ format: v });
+  // Typing keeps the address current without an entry per key
+  const [q, setQState] = useState(useParam("q") ?? "");
+  const setQ = (v: string) => {
+    setQState(v);
+    replaceParams({ q: v.trim() ? v : null });
+  };
+  const openAd = useParam("ad");
+  const open = ads.find((a) => a.id === openAd) ?? null;
+  const setOpen = (a: MarketAd) => pushParams({ ad: a.id });
   // Hovering a card (mouse only) shows the ad as it runs, with the AI's read
   const [hover, setHover] = useState<{ a: MarketAd; rect: DOMRect } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -230,11 +239,8 @@ export function MarketLibrary({
                 {q.trim() && <Pill onClear={() => setQ("")}>&ldquo;{q.trim()}&rdquo;</Pill>}
                 <button
                   onClick={() => {
-                    pickClient(null);
-                    setIndustry(null);
-                    setView("all");
-                    setFormat(null);
-                    setQ("");
+                    setQState("");
+                    pushParams({ client: null, industry: null, view: null, format: null, q: null });
                   }}
                   className="ml-1 py-2 text-xs text-muted underline-offset-4 hover:text-fg hover:underline md:py-0"
                 >
@@ -294,7 +300,7 @@ export function MarketLibrary({
           }}
         />
       )}
-      {open && <MarketSheet forClient={forId ?? undefined} key={open.id} a={open} industryLabel={label(open.industry)} clients={clients} onClose={() => setOpen(null)} />}
+      {open && <MarketSheet forClient={forId ?? undefined} key={open.id} a={open} industryLabel={label(open.industry)} clients={clients} onClose={() => closeParams("ad", "brief")} />}
     </div>
   );
 }
@@ -340,7 +346,10 @@ export function AdCard({ a, sub, onOpen, onHover, onLeave }: { a: MarketAd; sub:
 
 export function MarketSheet({ a, industryLabel, clients, onClose, forClient }: { a: MarketAd; industryLabel: string; clients: PickClient[]; onClose: () => void; forClient?: string }) {
   const [step, setStep] = useState<"ad" | "pick" | "writing">("ad");
-  const [brief, setBrief] = useState<OpenSuggestion | null>(null);
+  // The written brief is a place of its own (?brief=id): back returns to the ad, forward to the brief
+  const [written, setWritten] = useState<OpenSuggestion | null>(null);
+  const briefId = useParam("brief");
+  const brief = written && written.id === briefId ? written : null;
   const [error, setError] = useState<string | null>(null);
   const read = useMarketRead(a);
 
@@ -352,7 +361,10 @@ export function MarketSheet({ a, industryLabel, clients, onClose, forClient }: {
       setError(r.error);
       return setStep(forClient ? "ad" : "pick");
     }
-    setBrief(r.suggestion);
+    // Back from the brief lands on the ad again, not on the writing screen
+    setStep(forClient ? "ad" : "pick");
+    setWritten(r.suggestion);
+    pushParams({ brief: r.suggestion.id });
   };
 
   if (brief) return <SuggestionSheet s={brief} onClose={onClose} />;

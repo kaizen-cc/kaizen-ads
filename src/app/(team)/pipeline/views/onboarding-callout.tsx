@@ -6,6 +6,7 @@ import { useEffect, useState, useSyncExternalStore, useTransition } from "react"
 import type { OnboardingCard, OnboardingState, OpenSuggestion } from "@/lib/suggestions";
 import { markOnboarded } from "../../clients/[slug]/actions";
 import { matchIntake, writeFirstRound } from "../onboarding-actions";
+import { closeThen, pushParams, useParam } from "@/lib/url-state";
 import { SuggestionSheet } from "./suggested-briefs";
 
 // New and returning clients, front and center for execs and leads: where each one is (intake, first round,
@@ -14,7 +15,9 @@ import { SuggestionSheet } from "./suggested-briefs";
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" });
 
 export function OnboardingCallout({ state, clients, bare = false }: { state: OnboardingState; clients: { id: string; name: string }[]; bare?: boolean }) {
-  const [sheet, setSheet] = useState<OpenSuggestion | null>(null);
+  // The first round open is in the address (?first=id), so back closes it and a link opens it
+  const openId = useParam("first");
+  const sheet = (openId && state.clients.find((c) => c.firstRound?.id === openId)?.firstRound) || null;
   const router = useRouter();
   // Keeps itself current: quickly while an intake is being read, otherwise every minute (a new intake can land any time)
   const reading = state.clients.some((c) => c.intake && ["received", "read"].includes(c.intake.status) && !c.firstRound && !c.inProduction.length);
@@ -52,7 +55,7 @@ export function OnboardingCallout({ state, clients, bare = false }: { state: Onb
           make), then the rest, whose card is their account setup */}
       <div className="grid gap-3 lg:grid-cols-2">
         {[...creative, ...other].map((c) => (
-          <ClientCard key={c.clientId} c={c} onOpen={setSheet} />
+          <ClientCard key={c.clientId} c={c} onOpen={(f) => pushParams({ first: f.id })} />
         ))}
       </div>
 
@@ -68,10 +71,7 @@ export function OnboardingCallout({ state, clients, bare = false }: { state: Onb
       {sheet && (
         <SuggestionSheet
           s={sheet}
-          onClose={() => {
-            setSheet(null);
-            router.refresh();
-          }}
+          onClose={() => closeThen(() => router.refresh(), "first")}
         />
       )}
     </section>

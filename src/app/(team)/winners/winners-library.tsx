@@ -10,6 +10,7 @@ import type { OpenSuggestion } from "@/lib/suggestions";
 import { SuggestionSheet } from "../pipeline/views/suggested-briefs";
 import { briefFromWinner } from "./actions";
 import { FilterMenu, FilterPill } from "@/components/filters";
+import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
 import { FbPreview, InsightPanel, useAd, useInsight } from "./fb-preview";
 
 export type PickClient = { id: string; name: string; industry: string | null; detail: string | null; allotment: Allotment };
@@ -27,11 +28,23 @@ const SORTS: [Sort, string][] = [
  * usual, from the last Meta sync. Filter by industry, open one to see it as it runs, and start a request from it.
  */
 export function WinnersLibrary({ winners, industries, clients, scope }: { winners: Winner[]; industries: readonly (readonly [string, string])[]; clients: PickClient[]; scope: WinnerScope }) {
-  const [industry, setIndustry] = useState<string | null>(null);
-  const [q, setQ] = useState("");
-  const [liveOnly, setLiveOnly] = useState(false);
-  const [sort, setSort] = useState<Sort>("ratio");
-  const [open, setOpen] = useState<Winner | null>(null);
+  // Filters and the open ad are in the address (?industry=&live=&sort=&ad=), so back and forward step through them;
+  // typing a search replaces the entry instead of adding one per key
+  const industry = useParam("industry");
+  const setIndustry = (v: string | null) => pushParams({ industry: v });
+  const liveOnly = useParam("live") === "1";
+  const setLiveOnly = (v: boolean) => pushParams({ live: v ? "1" : null });
+  const askedSort = useParam("sort");
+  const sort: Sort = SORTS.some(([k]) => k === askedSort) ? (askedSort as Sort) : "ratio";
+  const setSort = (v: Sort) => pushParams({ sort: v === "ratio" ? null : v });
+  const [q, setQState] = useState(useParam("q") ?? "");
+  const setQ = (v: string) => {
+    setQState(v);
+    replaceParams({ q: v.trim() ? v : null });
+  };
+  const openId = useParam("ad");
+  const open = winners.find((w) => w.id === openId) ?? null;
+  const setOpen = (w: Winner) => pushParams({ ad: w.id });
   // Hovering a card (mouse only) shows the ad as it runs, with the AI's read
   const [hover, setHover] = useState<{ w: Winner; rect: DOMRect } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -171,10 +184,8 @@ export function WinnersLibrary({ winners, industries, clients, scope }: { winner
                 {q.trim() && <FilterPill onClear={() => setQ("")}>&ldquo;{q.trim()}&rdquo;</FilterPill>}
                 <button
                   onClick={() => {
-                    setIndustry(null);
-                    setLiveOnly(false);
-                    setSort("ratio");
-                    setQ("");
+                    setQState("");
+                    pushParams({ industry: null, live: null, sort: null, q: null });
                   }}
                   className="ml-1 py-2 text-xs text-muted underline-offset-4 hover:text-fg hover:underline md:py-0"
                 >
@@ -244,7 +255,7 @@ export function WinnersLibrary({ winners, industries, clients, scope }: { winner
           }}
         />
       )}
-      {open && <WinnerSheet key={open.id} w={open} industryLabel={label(open.industry)} clients={clients} onClose={() => setOpen(null)} />}
+      {open && <WinnerSheet key={open.id} w={open} industryLabel={label(open.industry)} clients={clients} onClose={() => closeParams("ad", "brief")} />}
     </div>
   );
 }
@@ -282,7 +293,10 @@ function WinnerSheet({ w, industryLabel, clients, onClose }: { w: Winner; indust
   const ad = useAd(w.id); // undefined: still reading it from Meta
   const insight = useInsight(w, ad);
   const [step, setStep] = useState<"ad" | "pick" | "writing">("ad");
-  const [brief, setBrief] = useState<OpenSuggestion | null>(null);
+  // The written brief is a place of its own (?brief=id): back returns to the ad, forward to the brief
+  const [written, setWritten] = useState<OpenSuggestion | null>(null);
+  const briefId = useParam("brief");
+  const brief = written && written.id === briefId ? written : null;
   const [error, setError] = useState<string | null>(null);
   const synced = new Date(w.syncedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
@@ -297,7 +311,10 @@ function WinnerSheet({ w, industryLabel, clients, onClose }: { w: Winner; indust
       setError(r.error);
       return setStep("pick");
     }
-    setBrief(r.suggestion);
+    // Back from the brief lands on the ad again, not on the writing screen
+    setStep("pick");
+    setWritten(r.suggestion);
+    pushParams({ brief: r.suggestion.id });
   };
 
   if (brief) return <SuggestionSheet s={brief} onClose={onClose} />;

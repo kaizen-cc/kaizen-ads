@@ -13,9 +13,8 @@ export const metadata: Metadata = { title: "Today" };
 export const maxDuration = 120;
 
 /** The daily recap, full screen: one item at a time, most critical first, with a jump to any topic. */
-export default async function TodayPage({ searchParams }: PageProps<"/today">) {
+export default async function TodayPage() {
   const me = await requireStaff();
-  const { topic } = await searchParams;
   const db = await createClient();
   // Designers, editors and copywriters see their own scorecard; it's worked out across the whole board (their pieces
   // can move to clients they don't hold), and only their own card is passed on
@@ -35,7 +34,6 @@ export default async function TodayPage({ searchParams }: PageProps<"/today">) {
       topics={TOPICS}
       home={me.isExec || me.isLead ? "/pipeline" : "/next"}
       score={score}
-      startTopic={typeof topic === "string" && topic in TOPICS ? (topic as keyof typeof TOPICS) : null}
     />
   );
 }

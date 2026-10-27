@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { blockers, headsUp, type Ad } from "@/lib/copy";
 import type { CopyViolation } from "@/lib/ai";
+import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { approveCopy, redraftCopy, reuseCopy, saveCopy, ticketCopy, type CopyState } from "./copy-actions";
 import { CopyProgress, CopyStudio } from "./copy-studio";
 import type { Ticket } from "./types";
@@ -20,7 +21,8 @@ export function CopyPanel({ ticket, canApprove, onMoved, demo }: { ticket: Ticke
   const [dirty, setDirty] = useState(false);
   const [busy, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [open, setOpen] = useState(false);
+  // The copy studio is in the address (?copy=1), so back closes it
+  const open = useParam("copy") === "1";
   const [violations, setViolations] = useState<CopyViolation[]>([]);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -98,10 +100,8 @@ export function CopyPanel({ ticket, canApprove, onMoved, demo }: { ticket: Ticke
 
   const approve = () =>
     run(async () => {
-      if (demo) {
-        setOpen(false);
-        return onMoved("client_review");
-      }
+      // Approved: the ticket closes, and the studio with it
+      if (demo) return onMoved("client_review");
       const r = await approveCopy(set!.id, ads);
       if (!r.ok) {
         setViolations(r.violations ?? []);
@@ -109,7 +109,6 @@ export function CopyPanel({ ticket, canApprove, onMoved, demo }: { ticket: Ticke
       }
       setViolations([]);
       await load();
-      setOpen(false);
       onMoved("client_review");
     });
 
@@ -166,7 +165,7 @@ export function CopyPanel({ ticket, canApprove, onMoved, demo }: { ticket: Ticke
         </div>
       ) : (
         <button
-          onClick={() => setOpen(true)}
+          onClick={() => pushParams({ copy: "1" })}
           className="group grid gap-3 rounded-[12px] border border-line bg-surface p-4 text-left transition-colors hover:border-faint"
         >
           <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -212,7 +211,7 @@ export function CopyPanel({ ticket, canApprove, onMoved, demo }: { ticket: Ticke
           onApprove={approve}
           onRewrite={rewrite}
           onRewriting={() => void load()}
-          onClose={() => setOpen(false)}
+          onClose={() => closeParams("copy")}
         />
       )}
     </section>

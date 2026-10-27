@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { pushParams, replaceParams, useParam } from "@/lib/url-state";
 import type { Benchmark, Vertical } from "@/lib/verticals";
 import { RebuildVerticals } from "./rebuild-verticals";
 
@@ -49,9 +50,17 @@ export function VerticalsView({
   totals: { clients: number; fame: number; market: number; playbooks: number };
   canRebuild: boolean;
 }) {
-  const [q, setQ] = useState("");
-  const [vertical, setVertical] = useState<string | null>(null);
-  const [proven, setProven] = useState(true);
+  // The vertical picked and proven-or-all are in the address (?vertical=&all=1), so back undoes them; typing a
+  // search replaces the entry instead of adding one per key
+  const [q, setQState] = useState(useParam("q") ?? "");
+  const setQ = (v: string) => {
+    setQState(v);
+    replaceParams({ q: v.trim() ? v : null });
+  };
+  const vertical = useParam("vertical");
+  const setVertical = (v: string | null) => pushParams({ vertical: v });
+  const proven = useParam("all") !== "1";
+  const setProven = (v: boolean) => pushParams({ all: v ? null : "1" });
 
   // Sub-verticals with a paid client or market brands in them
   const has = (id: string) => (cards.get(id)?.clients.length ?? 0) > 0 || (cards.get(id)?.brands ?? 0) > 0;

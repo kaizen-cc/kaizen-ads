@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
+import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { buildReportAction } from "./actions";
 
 // The report builder: the client, the date ranges (as many as the report needs: the last 7 days AND the month), and
@@ -68,13 +69,20 @@ function Step({ n, title, done, children, last = false, enter = false }: { n: nu
   );
 }
 
-export function ReportBuilder({ clients, quick = [], initialClient, yesterday }: { clients: BuilderClient[]; quick?: QuickPick[]; initialClient?: string | null; yesterday: string }) {
+export function ReportBuilder({ clients, quick = [], yesterday }: { clients: BuilderClient[]; quick?: QuickPick[]; yesterday: string }) {
   const router = useRouter();
   const [q, setQ] = useState("");
-  const [picked, setPicked] = useState<BuilderClient | null>(() => clients.find((c) => c.slug === initialClient || c.id === initialClient) ?? null);
+  // The client is the first step, kept in the address (?client=): back returns to picking one, and a link from a
+  // client's page arrives with it picked
+  const wanted = useParam("client");
+  const picked = clients.find((c) => c.slug === wanted || c.id === wanted) ?? null;
   const [ranges, setRanges] = useState<string[]>([]);
   const [custom, setCustom] = useState({ start: "", end: yesterday });
-  const [services, setServices] = useState<string[]>(() => picked?.services.filter((s) => s.mine).map((s) => s.platform) ?? []);
+  // The services ticked for the picked client; until they're changed, the buyer's own (or all of them)
+  const [ticked, setTicked] = useState<{ id: string; list: string[] } | null>(null);
+  const mine = picked?.services.filter((s) => s.mine).map((s) => s.platform) ?? [];
+  const services = !picked ? [] : ticked?.id === picked.id ? ticked.list : mine.length ? mine : picked.services.map((s) => s.platform);
+  const setServices = (list: string[]) => picked && setTicked({ id: picked.id, list });
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
@@ -88,17 +96,16 @@ export function ReportBuilder({ clients, quick = [], initialClient, yesterday }:
   const picks = quick.map((p) => ({ ...p, client: clients.find((c) => c.id === p.clientId) })).filter((p): p is QuickPick & { client: BuilderClient } => Boolean(p.client));
   /** A quick pick fills every step at once */
   const apply = (p: QuickPick & { client: BuilderClient }) => {
-    setPicked(p.client);
+    pushParams({ client: p.client.slug });
     setQ("");
     setRanges(p.ranges);
-    setServices(p.services.filter((s) => p.client.services.some((x) => x.platform === s)));
+    setTicked({ id: p.client.id, list: p.services.filter((s) => p.client.services.some((x) => x.platform === s)) });
     setError(null);
   };
   const choose = (c: BuilderClient) => {
-    setPicked(c);
+    pushParams({ client: c.slug });
     setQ("");
-    const mine = c.services.filter((s) => s.mine).map((s) => s.platform);
-    setServices(mine.length ? mine : c.services.map((s) => s.platform));
+    setTicked(null);
     setError(null);
   };
   const toggle = (list: string[], set: (x: string[]) => void, v: string) => set(list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
@@ -142,7 +149,7 @@ export function ReportBuilder({ clients, quick = [], initialClient, yesterday }:
                   <span className="truncate font-heading text-lg leading-tight">{picked.name}</span>
                   <span className="text-xs text-ink/50">{picked.services.map((s) => PLATFORM[s.platform].name).join(" · ")}</span>
                 </span>
-                <button type="button" onClick={() => setPicked(null)} className="h-9 rounded-full border border-ink/10 px-3.5 text-xs text-ink/60 hover:text-fg max-md:h-11">
+                <button type="button" onClick={() => closeParams("client")} className="h-9 rounded-full border border-ink/10 px-3.5 text-xs text-ink/60 hover:text-fg max-md:h-11">
                   Change
                 </button>
               </div>
