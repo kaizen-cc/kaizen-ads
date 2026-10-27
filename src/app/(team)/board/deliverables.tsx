@@ -6,6 +6,7 @@ import { useUploads } from "@/components/upload-provider";
 import { aspectLabel, aspectOf, filesFromDrop, groupFiles, isMedia, probe, safeName, smallJpeg, type Picked, type StagedDesign, type StagedFile } from "@/lib/uploads/media";
 import type { CreativeCheck } from "@/lib/ai";
 import { checkCreative, noteBriefChange, setTicketCounts, startDesigns, startVersion, ticketDesigns, type Design } from "./design-actions";
+import { CarouselBuilder } from "./carousel-builder";
 import { FormatIcon } from "./ticket-card";
 import type { Ticket } from "./types";
 import { ReviewViewer } from "./review-viewer";
@@ -279,6 +280,8 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
       onDrop={async (e) => {
         e.preventDefault();
         setOver(false);
+        // Carousels take their files in the card slots (they keep the order); a drop elsewhere would guess it
+        if (ticket.format === "carousel" && !staged) return;
         await take(await filesFromDrop(e.dataTransfer.items));
       }}
     >
@@ -478,7 +481,19 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
             </button>
           </div>
         </div>
-      ) : !canAdd ? null : (
+      ) : !canAdd ? null : ticket.format === "carousel" ? (
+        // Carousels: a slot for each card, in order, instead of a drop zone that guesses
+        <CarouselBuilder
+          cards={ticket.cards ?? 5}
+          next={(designs ?? []).length + 1}
+          asked={asked.new + asked.variations - (designs ?? []).length}
+          read={(files) => stage(files.map((file) => ({ file, folder: null })))}
+          onReady={(list) => {
+            setStaged(list);
+            runCheck(list);
+          }}
+        />
+      ) : (
         <div
           className={`grid place-items-center gap-2 rounded-[10px] border border-dashed px-6 py-7 text-center transition-colors ${
             over ? "border-brand-text bg-brand-soft" : "border-line"

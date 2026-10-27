@@ -302,7 +302,10 @@ export async function createBatch(draft: Draft, review: Review | null, decisions
   });
   if (error) return { ok: false, error: error.message };
 
-  const { data: rows } = await supabase.from("requests").select("id, number").eq("batch_id", batch).order("number");
+  const { data: rows } = await supabase.from("requests").select("id, number, format").eq("batch_id", batch).order("number");
+  // Carousels: how many cards each has (the upload gets a slot per card)
+  const carouselRow = (rows ?? []).find((r) => r.format === "carousel");
+  if (carouselRow && adminConfigured()) await createAdminClient().from("requests").update({ cards: Math.min(10, Math.max(2, draft.formats.carousel?.cards ?? 5)) }).eq("id", carouselRow.id);
 
   // Migrated from Asana: into the stage it had reached, with its creative and copy, and the mirror points here now
   if (mig && rows?.length && adminConfigured()) {

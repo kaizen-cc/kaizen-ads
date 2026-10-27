@@ -10,6 +10,22 @@ const STAMP: Record<Health, string> = {
   warn: "bg-warn-soft text-warn",
   bad: "bg-bad-soft text-bad shadow-[0_0_18px_-4px_rgba(224,80,92,0.7)]",
 };
+/** Each format's colour, so image, video and carousel tickets tell apart at a glance */
+export const FORMAT_TONE: Record<Ticket["format"], string> = {
+  image: "bg-[#3b82f6]/15 text-[#8ab4ff]",
+  video: "bg-[#a855f7]/15 text-[#d0a8ff]",
+  carousel: "bg-[#f59e0b]/15 text-[#ffc46b]",
+};
+
+export function FormatBadge({ format }: { format: Ticket["format"] }) {
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${FORMAT_TONE[format]}`}>
+      <FormatIcon format={format} size={12} />
+      {FORMAT_LABEL[format]}
+    </span>
+  );
+}
+
 const EDGE: Record<Health, string> = { ok: "before:bg-transparent", warn: "before:bg-warn", bad: "before:bg-bad" };
 
 export function FormatIcon({ format, size = 14 }: { format: Ticket["format"]; size?: number }) {
@@ -91,10 +107,23 @@ export function TicketCard({
               {ticket.priority}
             </span>
           )}
-          <FormatIcon format={ticket.format} />
+          <FormatBadge format={ticket.format} />
         </span>
       </div>
       <p className="line-clamp-2 text-sm font-medium leading-snug">{ticket.title}</p>
+      {ticket.uploaded && (
+        <p className="-mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-faint">
+          <span className={ticket.uploaded.new >= ticket.newCount ? "text-ok" : ""}>
+            {ticket.uploaded.new}/{ticket.newCount} new
+          </span>
+          {ticket.variationCount > 0 && (
+            <span className={ticket.uploaded.variations >= ticket.variationCount ? "text-ok" : ""}>
+              {ticket.uploaded.variations}/{ticket.variationCount} var
+            </span>
+          )}
+          {ticket.format === "carousel" && ticket.cards ? <span>{ticket.cards} cards each</span> : null}
+        </p>
+      )}
       {ticket.parentNumber && <p className="-mt-1 text-[11px] text-ok">Client-approved part of #{ticket.parentNumber}</p>}
       {ticket.migration && (
         <p className="-mt-1 rounded-[6px] bg-warn-soft px-2 py-1 text-[11px] text-warn">

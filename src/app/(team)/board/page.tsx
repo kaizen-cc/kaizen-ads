@@ -41,9 +41,24 @@ export default async function Board({ searchParams }: PageProps<"/board">) {
     return needsCreative || needsCopy ? { url: m.url as string | null, needsCreative, needsCopy } : null;
   };
   const rows = [...(moving ?? []), ...(one && !(moving ?? []).some((r) => r.id === one.id) ? [one] : [])];
+  // What each ticket in the making has uploaded, against what it asked for (and carousels' card counts)
+  const making = rows.filter((r) => ["requested", "in_production", "internal_review", "client_revision"].includes(r.stage)).map((r) => r.id as string);
+  const [{ data: made }, { data: cardRows }] = making.length
+    ? await Promise.all([
+        supabase.from("designs").select("request_id, is_variation, current_version, design_versions(version, design_files(card))").in("request_id", making),
+        supabase.from("requests").select("id, cards").in("id", making).not("cards", "is", null),
+      ])
+    : [{ data: [] }, { data: [] }];
+  type Made = { request_id: string; is_variation: boolean; current_version: number; design_versions: { version: number; design_files: { card: number | null }[] }[] };
+  const uploadedOf = (id: string) => {
+    if (!making.includes(id)) return null;
+    const mine = ((made ?? []) as unknown as Made[]).filter((d) => d.request_id === id).map((d) => ({ ...d, files: d.design_versions.find((v) => v.version === d.current_version)?.design_files ?? [] })).filter((d) => d.files.length);
+    return { new: mine.filter((d) => !d.is_variation).length, variations: mine.filter((d) => d.is_variation).length, cards: mine.map((d) => d.files.filter((f) => (f.card ?? 0) > 0).length).filter(Boolean) };
+  };
+  const cardsOf = new Map((cardRows ?? []).map((r) => [r.id as string, r.cards as number]));
   return (
     <BoardClient
-      tickets={(rows as BoardRow[]).map((r) => ({ ...toTicket(r), migration: migrationOf(r.id, r.stage) }))}
+      tickets={(rows as BoardRow[]).map((r) => ({ ...toTicket(r), migration: migrationOf(r.id, r.stage), cards: cardsOf.get(r.id) ?? null, uploaded: uploadedOf(r.id) }))}
       clients={clients ?? []}
       people={(people ?? []).map((p) => ({ id: p.id, name: p.full_name, role: roleLabel(p.role as TeamRole) }))}
       canRequest

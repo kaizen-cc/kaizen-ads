@@ -235,7 +235,7 @@ export function RequestForm({
     set({ formats: next });
   };
 
-  const setCount = (f: Format, key: "new" | "variations", n: number) => set({ formats: { ...draft.formats, [f]: { ...draft.formats[f]!, [key]: n } } });
+  const setCount = (f: Format, key: "new" | "variations" | "cards", n: number) => set({ formats: { ...draft.formats, [f]: { ...draft.formats[f]!, [key]: n } } });
 
   const applyMix = (sg: Suggestions) =>
     set({
@@ -656,6 +656,15 @@ export function RequestForm({
                                 <span className={`tabular grid h-11 place-items-center text-lg md:h-10 ${c.new + c.variations === 0 ? "text-bad" : ""}`}>{c.new + c.variations}</span>
                               </span>
                             </div>
+                            {f === "carousel" && (
+                              <div className="flex flex-wrap items-end justify-between gap-3 border-t border-line pt-3 sm:col-span-2">
+                                <span className="grid gap-0.5 text-sm">
+                                  Cards per carousel
+                                  <span className="text-[11px] text-faint">The upload gets a slot for each card, in order.</span>
+                                </span>
+                                <Stepper label="Cards" value={c.cards ?? 5} min={2} max={10} onChange={(n) => setCount(f, "cards", n)} />
+                              </div>
+                            )}
                           </div>
                         );
                       })}

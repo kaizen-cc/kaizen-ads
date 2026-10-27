@@ -6,7 +6,8 @@ export type Size = "1x1" | "4x5" | "9x16";
 export const SIZES: Size[] = ["4x5", "9x16"];
 export const FORMATS: Format[] = ["image", "video", "carousel"];
 
-export type Counts = { new: number; variations: number };
+/** cards: carousels only, how many cards each has */
+export type Counts = { new: number; variations: number; cards?: number };
 
 export { MAX_VARIATIONS } from "@/lib/allotment";
 

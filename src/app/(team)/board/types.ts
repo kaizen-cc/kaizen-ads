@@ -23,6 +23,10 @@ export type Ticket = {
   refs: string[];
   origin: { kind: "winner" | "market" | "promise" | "brief"; label: string; link?: string | null; thumb?: string | null } | null; // what it's built on
   sizes: string[];
+  /** Carousels: cards per carousel */
+  cards?: number | null;
+  /** What's uploaded so far: net new and variation designs, and each carousel's card count */
+  uploaded?: { new: number; variations: number; cards: number[] } | null;
   quantity: number;
   newCount: number;
   variationCount: number;
