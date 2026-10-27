@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ActionButton, ActionForm } from "@/components/action-form";
 import { field, label } from "@/components/ui";
 import type { Agg, Pacing, Status, Trend } from "@/lib/kpi/calc";
@@ -21,6 +21,7 @@ import type { LedgerItem } from "@/lib/ledger";
 import { FatigueWatch } from "@/components/fatigue-watch";
 import { MarketPanel } from "../clients/[slug]/market-panel";
 import { kpiCreative, type KpiCreative } from "./creative-actions";
+import { QuickActions } from "./quick-actions";
 
 export type KpiRow = {
   id: string;
@@ -547,9 +548,10 @@ function SprintStrip({ s }: { s: SprintSummary }) {
 
 type Tab = "overview" | "numbers" | "actions" | "creative" | "notes" | "settings";
 
-function Detail({ r, buyers, onClose, onStep }: { r: KpiRow; buyers: Person[]; onClose: () => void; onStep: (dir: 1 | -1) => void }) {
+const TABS: Tab[] = ["overview", "numbers", "actions", "creative", "notes", "settings"];
+
+function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers: Person[]; tab: Tab; setTab: (t: Tab) => void; onClose: () => void; onStep: (dir: 1 | -1) => void }) {
   const router = useRouter();
-  const [tab, setTab] = useState<Tab>("overview");
   // A sheet over the board: Escape closes it, the arrows step through the accounts, the page behind stays put
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -801,6 +803,14 @@ function Detail({ r, buyers, onClose, onStep }: { r: KpiRow; buyers: Person[]; o
                   </div>
                 </div>
                 <NextMove r={r} moves={moves} onActions={() => setTab("actions")} onNotes={() => setTab("notes")} />
+                {r.audit?.status === "ready" && r.audit.quick && r.audit.quick.length > 0 && (
+                  <section className="grid gap-1 rounded-[20px] border border-line bg-surface px-4 pb-4 md:px-5 md:pb-5">
+                    <QuickActions key={r.audit.id} auditId={r.audit.id} items={r.audit.quick} platform={r.audit.platform ?? r.platform} />
+                    <button type="button" onClick={() => setTab("actions")} className="justify-self-start py-2 text-xs text-muted hover:text-fg">
+                      The whole audit, with why and every step →
+                    </button>
+                  </section>
+                )}
                 {r.sprint && <SprintStrip s={r.sprint} />}
               </>
             )}
@@ -1218,12 +1228,35 @@ export function KpiBoard({
   /** One account to open and bring into view (from a recap card, a notification or the client page) */
   focus?: { id: string; platform: "meta" | "google" } | null;
 }) {
-  const [platform, setPlatform] = useState<"meta" | "google">(focus?.platform ?? "meta");
-  const [owner, setOwner] = useState(initialOwner);
-  const [status, setStatus] = useState<Status | "all">("all");
-  const [pace, setPace] = useState<Pacing["status"] | "all">("all");
-  const [q, setQ] = useState("");
-  const [open, setOpen] = useState<string | null>(focus?.id ?? null);
+  // Where you are on the board lives in the address (platform, buyer, filters, the open account and its tab): back and
+  // forward walk through it, and a link lands on the same view. Changes go through the History API, so nothing reloads
+  const sp = useSearchParams();
+  const linked = Boolean(sp.get("target") || sp.get("client"));
+  const platform = (sp.get("p") as "meta" | "google" | null) ?? focus?.platform ?? "meta";
+  const owner = sp.get("who") ?? initialOwner;
+  const status = (sp.get("status") as Status | null) ?? "all";
+  const pace = (sp.get("pace") as Pacing["status"] | null) ?? "all";
+  const open = sp.get("open") ?? (linked ? (focus?.id ?? null) : null);
+  const tab = (TABS as string[]).includes(sp.get("tab") ?? "") ? (sp.get("tab") as Tab) : "overview";
+  const [q, setQ] = useState(() => sp.get("q") ?? "");
+  const go = (patch: Record<string, string | null>, how: "push" | "replace" = "push") => {
+    const u = new URL(window.location.href);
+    for (const [k, v] of Object.entries(patch)) {
+      if (v == null || v === "") u.searchParams.delete(k);
+      else u.searchParams.set(k, v);
+    }
+    if (u.href !== window.location.href) window.history[how === "push" ? "pushState" : "replaceState"](null, "", u);
+  };
+  const setPlatform = (p: "meta" | "google") => go({ p, who: null, open: null, tab: null, target: null, client: null, platform: null });
+  const setOwner = (who: string) => go({ who: who === initialOwner ? null : who });
+  const setStatus = (v: Status | "all") => go({ status: v === "all" ? null : v });
+  const setPace = (v: Pacing["status"] | "all") => go({ pace: v === "all" ? null : v });
+  const setOpen = (id: string | null) => go({ open: id, tab: null, target: null, client: null, platform: null });
+  const setTab = (t: Tab) => go({ open, tab: t === "overview" ? null : t, target: null, client: null, platform: null });
+  const search = (v: string) => {
+    setQ(v);
+    go({ q: v.trim() || null }, "replace");
+  };
   const close = () => setOpen(null);
   const [adding, setAdding] = useState(false);
   // The focused card scrolls into view once it's on screen
@@ -1246,11 +1279,10 @@ export function KpiBoard({
     .sort((a, b) => RANK[a.status] - RANK[b.status] || (b.deviation ?? -9) - (a.deviation ?? -9) || a.client.localeCompare(b.client));
 
   const openRow = open ? (rows.find((r) => r.id === open) ?? null) : null;
-  const step = (dir: 1 | -1) =>
-    setOpen((cur) => {
-      const at = shown.findIndex((r) => r.id === cur);
-      return at < 0 || !shown.length ? cur : shown[(at + dir + shown.length) % shown.length].id;
-    });
+  const step = (dir: 1 | -1) => {
+    const at = shown.findIndex((r) => r.id === open);
+    if (at >= 0 && shown.length > 1) setOpen(shown[(at + dir + shown.length) % shown.length].id);
+  };
 
   const count = (s: Status) => base.filter((r) => r.status === s).length;
   const paced = base.filter((r) => r.pace);
@@ -1278,11 +1310,7 @@ export function KpiBoard({
             {(["meta", "google"] as const).map((p) => (
               <button
                 key={p}
-                onClick={() => {
-                  setPlatform(p);
-                  setOwner("all");
-                  setOpen(null);
-                }}
+                onClick={() => setPlatform(p)}
                 className={`h-10 flex-1 rounded-full px-3 text-sm transition-colors md:h-8 md:flex-none md:px-4 ${platform === p ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}
               >
                 {p === "meta" ? "Meta" : "Google Ads"} <span className="tabular opacity-60">{rows.filter((r) => r.platform === p).length}</span>
@@ -1368,8 +1396,8 @@ export function KpiBoard({
         <input
           type="search"
           value={q}
-          onChange={(e) => setQ(e.target.value)}
-          onKeyDown={(e) => e.key === "Escape" && setQ("")}
+          onChange={(e) => search(e.target.value)}
+          onKeyDown={(e) => e.key === "Escape" && search("")}
           placeholder="Search clients"
           aria-label="Search clients"
           className="h-11 w-full max-w-full rounded-full border border-line bg-surface px-4 text-sm outline-none md:h-10 md:w-64 transition-colors hover:border-faint/60 focus:border-brand-text/70"
@@ -1381,7 +1409,7 @@ export function KpiBoard({
           Showing {shown.length} {status !== "all" && <span className={STATUS[status].text}>{STATUS[status].label.toLowerCase()}</span>}
           {status !== "all" && pace !== "all" && " and "}
           {pace !== "all" && <span>{paceMeta({ status: pace } as Pacing).label.toLowerCase()}</span>}
-          <button onClick={() => (setStatus("all"), setPace("all"))} className="ml-2 py-2 text-muted underline-offset-4 hover:text-fg hover:underline md:py-0">
+          <button onClick={() => go({ status: null, pace: null })} className="ml-2 py-2 text-muted underline-offset-4 hover:text-fg hover:underline md:py-0">
             Show all
           </button>
         </p>
@@ -1396,7 +1424,7 @@ export function KpiBoard({
       ) : (
         <p className="rounded-[14px] border border-dashed border-line px-6 py-14 text-center text-sm text-faint">Nothing here.</p>
       )}
-      {openRow && <Detail key={openRow.id} r={openRow} buyers={buyers} onClose={close} onStep={step} />}
+      {openRow && <Detail key={openRow.id} r={openRow} buyers={buyers} tab={tab} setTab={setTab} onClose={close} onStep={step} />}
 
       {setup > 0 && status === "all" && (
         <p className="text-center text-xs text-faint">
