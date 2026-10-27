@@ -46,7 +46,7 @@ async function match(admin: SupabaseClient, raw: Record<string, string>): Promis
 /** Tell people: the client's team and the execs (archived), or the execs alone (it couldn't be matched). */
 async function tell(admin: SupabaseClient, clientId: string | null, n: { title: string; body: string; key: string; priority: "critical" | "normal" }) {
   const [{ data: execs }, { data: team }] = await Promise.all([
-    admin.from("profiles").select("id").eq("is_active", true).in("role", ["exec", "executive", "ceo", "coo", "cmo", "head_of_customer_success", "customer_success"]),
+    admin.from("profiles").select("id").eq("is_active", true).in("role", ["executive", "customer_success"]),
     clientId ? admin.from("client_assignments").select("profile_id").eq("client_id", clientId) : Promise.resolve({ data: [] as { profile_id: string }[] }),
   ]);
   const ids = [...new Set([...(execs ?? []).map((p) => p.id as string), ...(team ?? []).map((a) => a.profile_id as string)])];
