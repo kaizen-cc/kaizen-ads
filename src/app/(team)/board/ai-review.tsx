@@ -134,9 +134,12 @@ function StepDot({ state }: { state: "waiting" | "active" | "done" | "failed" })
 }
 
 function Notes({ notes, dim = false, requestId }: { notes: CreativeNotes; dim?: boolean; requestId?: string }) {
-  return (
-    <div className={`grid gap-3 ${dim ? "opacity-60" : ""}`}>
-      <p className="text-sm leading-relaxed">{notes.headline}</p>
+  // The comments are the place to work from: open the creative at the first one; the list stays folded away
+  const pinned = notes.notes.filter((n) => n.commentId && n.designId);
+  const first = [...pinned].sort((a, b) => (Number(a.design.slice(1)) || 0) - (Number(b.design.slice(1)) || 0) || (a.atMs ?? 0) - (b.atMs ?? 0))[0];
+  const video = pinned.some((n) => n.atMs != null);
+  const list = (
+    <>
       {SECTIONS.map((sec) => {
         const list = notes.notes.filter((n) => n.severity === sec.key);
         if (!list.length) return null;
@@ -174,6 +177,31 @@ function Notes({ notes, dim = false, requestId }: { notes: CreativeNotes; dim?: 
           </div>
         );
       })}
+    </>
+  );
+  return (
+    <div className={`grid gap-3 ${dim ? "opacity-60" : ""}`}>
+      <p className="text-sm leading-relaxed">{notes.headline}</p>
+      {requestId && first ? (
+        <>
+          <button
+            type="button"
+            onClick={() => openComment(requestId, first)}
+            className="flex h-11 items-center justify-center gap-2 rounded-brand bg-[#6c7ee1] px-4 text-sm font-medium text-white shadow-[0_8px_24px_-10px_rgba(108,126,225,0.9)] hover:brightness-110 max-md:h-12 md:justify-self-start"
+          >
+            {video ? "▶ Watch it with the comments" : "Open it with the comments"} · {pinned.length}
+          </button>
+          <details className="group">
+            <summary className="cursor-pointer list-none text-xs text-faint hover:text-fg max-md:py-2.5">
+              <span className="group-open:hidden">Show the notes as a list ▾</span>
+              <span className="hidden group-open:inline">Hide the list ▴</span>
+            </summary>
+            <div className="mt-3 grid gap-3">{list}</div>
+          </details>
+        </>
+      ) : (
+        list
+      )}
     </div>
   );
 }
@@ -197,7 +225,18 @@ function useReview(ticketId: string, demo: boolean) {
   }, [ticketId, demo]);
   useEffect(() => {
     if (demo || !running) return;
-    const t = setInterval(() => void aiReview(ticketId).then(setState), 1500);
+    const t = setInterval(
+      () =>
+        void aiReview(ticketId).then((s) => {
+          setState(s);
+          // Done: its comments are on the creative now; the page shows them at once and takes you to the creative
+          if (s.latest?.status === "done") {
+            window.dispatchEvent(new CustomEvent("kz:comments", { detail: ticketId }));
+            window.dispatchEvent(new CustomEvent("kz:review-done", { detail: ticketId }));
+          }
+        }),
+      1500,
+    );
     return () => clearInterval(t);
   }, [ticketId, demo, running]);
   return [state, setState] as const;

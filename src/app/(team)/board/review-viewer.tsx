@@ -13,6 +13,17 @@ const clock = (ms: number) => {
 };
 
 /** Tell the rest of the drawer (review panel, design cards) that comments changed. */
+/** Where a comment sits, for ordering: its moment in a video, or how far down (then across) an image */
+const placeOf = (c: ReviewComment) => (c.tMs != null ? c.tMs : c.y != null ? 1e9 + Math.round(c.y * 1000) * 1000 + Math.round((c.x ?? 0) * 1000) : null);
+const byPlace = (a: ReviewComment, b: ReviewComment) => {
+  const pa = placeOf(a);
+  const pb = placeOf(b);
+  if (pa != null && pb != null) return pa - pb;
+  if (pa != null) return -1;
+  if (pb != null) return 1;
+  return a.at.localeCompare(b.at);
+};
+
 export const commentsChanged = (requestId: string) => window.dispatchEvent(new CustomEvent("kz:comments", { detail: requestId }));
 
 type Draft = { x: number | null; y: number | null; w?: number | null; h?: number | null; tMs: number | null };
@@ -62,7 +73,8 @@ export function ReviewViewer({
   const [nowMs, setNowMs] = useState(0); // where the video is, for "Comment at 0:07"
   const input = useRef<HTMLTextAreaElement>(null);
 
-  const mine = useMemo(() => comments.filter((c) => c.designId === design.id && c.version === v?.version), [comments, design.id, v?.version]);
+  // In the order they happen: through a video by time, down an image from the top, then the ones about the whole design
+  const mine = useMemo(() => comments.filter((c) => c.designId === design.id && c.version === v?.version).sort(byPlace), [comments, design.id, v?.version]);
   const older = useMemo(() => comments.filter((c) => c.designId === design.id && c.version !== v?.version), [comments, design.id, v?.version]);
   // Pins shown on this file (comments without a file belong to the whole design)
   const pins = mine.filter((c) => c.x != null && c.y != null && (!c.fileId || c.fileId === file?.id));

@@ -84,6 +84,22 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
   const [over, setOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [viewing, setViewing] = useState<{ design: Design; version: number; focus?: string | null } | null>(null);
+  // When this person last opened each design: comments since then are new to them (kept in this browser)
+  const [seen, setSeen] = useState<Record<string, string>>(() => {
+    try {
+      return typeof window === "undefined" ? {} : (JSON.parse(localStorage.getItem("kz:seen-comments") ?? "{}") as Record<string, string>);
+    } catch {
+      return {};
+    }
+  });
+  const markSeen = (designId: string) =>
+    setSeen((m) => {
+      const next = { ...m, [designId]: new Date().toISOString() };
+      try {
+        localStorage.setItem("kz:seen-comments", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
   const [comments, setComments] = useState<ReviewComment[]>([]);
   const [replacing, setReplacing] = useState<{ design: Design; files: StagedFile[]; note: string } | null>(null);
   const filesInput = useRef<HTMLInputElement>(null);
@@ -126,12 +142,21 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
       if (!d) return;
       load();
       setViewing({ design: d, version: d.currentVersion, focus: commentId });
+      markSeen(d.id);
     };
     window.addEventListener("kz:open-comment", open);
+    // A review just finished: bring the creative into view (its new comments glow on it)
+    const reviewed = (e: Event) => {
+      if ((e as CustomEvent).detail !== ticket.id) return;
+      load();
+      document.querySelector("[data-deliverables]")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+    window.addEventListener("kz:review-done", reviewed);
     return () => {
       live = false;
       window.removeEventListener("kz:comments", on);
       window.removeEventListener("kz:open-comment", open);
+      window.removeEventListener("kz:review-done", reviewed);
     };
   }, [ticket.id, demo]);
 
@@ -296,6 +321,9 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
     });
     setReplacing(null);
   };
+
+  /** Open comments on a design's current version added since this person last opened it */
+  const unreadOf = (d: Design) => comments.filter((c) => c.designId === d.id && c.version === d.currentVersion && !c.resolved && (!seen[d.id] || c.at > seen[d.id])).length;
 
   // New designs are added while it's being made; past that (in review, with the client) a design is changed with Replace
   const canAdd = ["requested", "in_production", "client_revision"].includes(ticket.stage) || !(designs ?? []).length;
@@ -580,10 +608,21 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
             const sizes = [...new Set((v?.files ?? []).map((f) => f.aspect).filter(Boolean))] as string[];
             const of = d.variationOf ? designs.find((x) => x.id === d.variationOf) : null;
             return (
-              <li key={d.id} className="group grid gap-2 rounded-[10px] border border-line bg-surface p-2.5 transition-colors hover:border-faint">
-                <button onClick={() => setViewing({ design: d, version: d.currentVersion })} className="relative block overflow-hidden rounded-[7px]" aria-label={`Open ${d.name}`}>
+              <li
+                key={d.id}
+                className={`group grid gap-2 rounded-[10px] border bg-surface p-2.5 transition-colors hover:border-faint ${unreadOf(d) ? "border-[#6c7ee1] shadow-[0_0_0_3px_rgba(108,126,225,0.25),0_12px_32px_-12px_rgba(108,126,225,0.8)]" : "border-line"}`}
+              >
+                <button onClick={() => (setViewing({ design: d, version: d.currentVersion }), markSeen(d.id))} className="relative block overflow-hidden rounded-[7px]" aria-label={`Open ${d.name}`}>
                   {(() => {
                     const open = comments.filter((c) => c.designId === d.id && c.version === d.currentVersion && !c.resolved).length;
+                    const fresh = unreadOf(d);
+                    if (fresh)
+                      return (
+                        <span className="absolute inset-x-2 bottom-2 z-10 flex items-center justify-center gap-1.5 rounded-full bg-[#6c7ee1] px-2.5 py-1.5 text-[11px] font-semibold text-white shadow-lg">
+                          <span className="h-1.5 w-1.5 animate-ping rounded-full bg-white" />
+                          {fresh} new comment{fresh === 1 ? "" : "s"} · {cover?.mime.startsWith("video/") ? "Watch" : "Open"}
+                        </span>
+                      );
                     return open ? (
                       <span className="absolute right-1 top-1 z-10 grid h-5 min-w-5 place-items-center rounded-full bg-brand px-1.5 text-[10px] font-semibold text-white shadow" title={`${open} open comment${open === 1 ? "" : "s"}`}>
                         {open}
@@ -632,7 +671,7 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
           comments={comments}
           onComments={setComments}
           onVersion={(n) => setViewing({ ...viewing, version: n })}
-          onClose={() => setViewing(null)}
+          onClose={() => (markSeen(viewing.design.id), setViewing(null))}
           focus={viewing.focus ?? null}
           demo={demo}
         />
