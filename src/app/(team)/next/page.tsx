@@ -10,6 +10,8 @@ import { TodayHero, TodayHeroSkeleton } from "../pipeline/views/today-hero";
 import { NextList } from "./next-list";
 
 export const metadata: Metadata = { title: "Next for me" };
+// Briefing a refresh from here has the strategist write and review a whole brief
+export const maxDuration = 300;
 
 /** Everything on you: tickets, decisions, your accounts. Team members and leads; execs have the Overview. */
 export default async function NextForMe() {

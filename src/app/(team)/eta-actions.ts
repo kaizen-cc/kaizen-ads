@@ -33,7 +33,8 @@ async function one(label: string, fallbackMs: number): Promise<number> {
     .limit(200);
   const ms = (data ?? []).map((r) => Number(r.ms)).filter((n) => n > 0).sort((a, b) => a - b);
   // A few seconds on top of the AI call itself: reading the client before, saving after
-  const eta = ms.length >= 3 ? ms[Math.floor(ms.length * 0.75)] + 4000 : fallbackMs;
+  // One or two runs so far: the slowest of them, or the screen's guess if that's longer
+  const eta = ms.length >= 3 ? ms[Math.floor(ms.length * 0.75)] + 4000 : ms.length ? Math.max(fallbackMs, ms[ms.length - 1] + 4000) : fallbackMs;
   cache.set(label, { ms: eta, at: Date.now() });
   return eta;
 }

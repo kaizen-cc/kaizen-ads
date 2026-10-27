@@ -8,7 +8,8 @@ import { RequestForm } from "./request-form";
 import { LIVE } from "@/lib/live";
 
 // The AI review can take a little while
-export const maxDuration = 60;
+// The strategist writes a whole brief and then reviews it (about two minutes on a slow day)
+export const maxDuration = 300;
 
 export default async function NewRequest({ searchParams }: PageProps<"/requests/new">) {
   const me = await requireStaff();

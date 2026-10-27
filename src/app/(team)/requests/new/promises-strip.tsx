@@ -61,7 +61,7 @@ export function PromisesStrip({ clientId, used, onUse }: { clientId: string; use
                 disabled={Boolean(loading) || on}
                 className={`h-10 shrink-0 rounded-full text-xs font-medium md:h-8 ${on ? "px-3.5 text-ok" : loading === p.id && !p.briefed ? "w-full bg-brand-soft text-brand-text md:w-72" : "bg-fg px-3.5 text-bg disabled:opacity-60"}`}
               >
-                {on ? "Loaded into this request" : loading === p.id ? (p.briefed ? "Loading…" : <AiProgressButton label="brief from a call+brief self-review" fallbackMs={70_000} />) : "Use this"}
+                {on ? "Loaded into this request" : loading === p.id ? (p.briefed ? "Loading…" : <AiProgressButton label="brief from a call+brief self-review" fallbackMs={110_000} />) : "Use this"}
               </button>
             </div>
           );

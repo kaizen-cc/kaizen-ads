@@ -257,7 +257,7 @@ function Item({
         disabled={disabled}
         className={`h-10 rounded-full text-xs font-medium transition-colors md:h-8 ${busy ? "bg-brand-soft text-brand-text" : "border border-line text-muted hover:border-brand/50 hover:text-fg disabled:opacity-50"}`}
       >
-        {busy ? <AiProgressButton label={label} fallbackMs={70_000} /> : "View suggested brief"}
+        {busy ? <AiProgressButton label={label} fallbackMs={110_000} /> : "View suggested brief"}
       </button>
     </li>
   );
