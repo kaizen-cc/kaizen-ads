@@ -235,10 +235,19 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
 
   // Each platform's campaigns over the last 30 days (campaign tables are read with the server's rights)
   const campaigns = adminConfigured() ? await loadCampaigns(createAdminClient(), client.id).catch(() => []) : [];
+  // Every file and link shared about them
+  const { data: docRows } = await supabase
+    .from("client_documents")
+    .select("id, kind, name, url, path, mime, bytes, title, summary, status, note, via, created_at, profiles!client_documents_uploaded_by_fkey(full_name)")
+    .eq("client_id", client.id)
+    .order("created_at", { ascending: false })
+    .limit(200);
+  const docs = (docRows ?? []).map((d) => ({ id: d.id, kind: d.kind, name: d.name, url: d.url, path: d.path, mime: d.mime, bytes: d.bytes, title: d.title, summary: d.summary, status: d.status, note: d.note, via: d.via, at: d.created_at, by: (d.profiles as unknown as { full_name: string } | null)?.full_name ?? null }));
 
   return (
     <ClientView
       campaigns={campaigns}
+      docs={docs}
       launchRules={launchRules}
       readiness={readiness}
       services={{

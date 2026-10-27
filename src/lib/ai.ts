@@ -133,6 +133,7 @@ export async function askJson<T>({
   prompt,
   schema,
   images = [],
+  pdfs = [],
   onText,
   maxTokens = 16000,
   override,
@@ -145,6 +146,8 @@ export async function askJson<T>({
   schema: Record<string, unknown>;
   /** Pictures the AI should look at (reference images), sent before the text */
   images?: { mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp"; data: string }[];
+  /** PDFs the AI reads whole (text and pages), sent before the pictures */
+  pdfs?: { data: string; title?: string }[];
   /** Streams the answer and calls this with everything written so far (for real progress). */
   onText?: (soFar: string) => void;
   /** Room for the answer (thinking counts against it). Long answers need onText, so they stream. */
@@ -166,8 +169,9 @@ export async function askJson<T>({
     messages: [
       {
         role: "user" as const,
-        content: images.length
+        content: images.length || pdfs.length
           ? [
+              ...pdfs.map((d) => ({ type: "document" as const, source: { type: "base64" as const, media_type: "application/pdf" as const, data: d.data }, ...(d.title ? { title: d.title } : {}) })),
               ...images.map((im) => ({ type: "image" as const, source: { type: "base64" as const, media_type: im.mediaType, data: im.data } })),
               { type: "text" as const, text: prompt },
             ]
@@ -278,6 +282,7 @@ function apiMessage(e: InstanceType<typeof Anthropic.APIError>) {
 
 export type ClientContext = {
   name: string;
+  documents?: string; // the files and links shared about the client, with their summaries
   website: string | null;
   industry?: string | null; // e.g. "restaurant"
   industryDetail?: string | null; // e.g. "Pizza restaurant"
@@ -342,6 +347,8 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
         : null,
     // Loaded here, not at the top: the strategy module uses this one
     gtm: await import("@/lib/gtm").then(({ gtmForContext }) => gtmForContext(supabase, clientId)),
+    // Files and links the team shared about the client, with what's in them
+    documents: await import("@/lib/client-docs").then(({ docsBlock }) => docsBlock(supabase, clientId, 10)).catch(() => ""),
     industry: c.industry,
     industryDetail: c.industry_detail,
     winners: await (async () => {
@@ -407,6 +414,7 @@ export function contextBlock(ctx: ClientContext, request?: { images: number; vid
   if (ctx.brandBible) lines.push("<brand_bible>", "The client's Brand Bible. Its audience profiles, voice, banned claims and rules are hard limits.", ctx.brandBible, "</brand_bible>");
   if (ctx.gtm)
     lines.push("<go_to_market_strategy>", "The client's Meta go-to-market strategy: the angles, offers, customer and KPI targets the team works from. Stay inside it unless the data says otherwise, and never treat an unconfirmed item as confirmed.", ctx.gtm, "</go_to_market_strategy>");
+  if (ctx.documents) lines.push(ctx.documents);
   if (ctx.intake)
     lines.push("<marketing_intake>", "What the client told us in their marketing intake form. Their offer, audience, voice and what to avoid are hard rules.", ctx.intake, "</marketing_intake>");
   if (!on("meta")) lines.push("(Ad performance isn't part of this task.)");

@@ -13,7 +13,8 @@ import { runFatigue } from "@/lib/fatigue";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { notLive } from "@/lib/live-guard";
-import { askAboutClient, loadClientChat } from "@/lib/client-chat";
+import { askAboutClient, loadClientChat, undoDeskAction } from "@/lib/client-chat";
+import { addDocs, DOCS_BUCKET, summarizeDocs } from "@/lib/client-docs";
 import { writeShotList } from "@/lib/shot-list";
 import type { ChatTurn } from "@/lib/handoff";
 
@@ -407,16 +408,56 @@ export async function markOnboarded(clientId: string, slug: string): Promise<Act
 }
 
 /** The AI chat on the client page: one message in your own thread about this client. RLS decides who sees the client. */
-export async function askClientAi(clientId: string, question: string, goDeep = false): Promise<{ ok: true; chat: ChatTurn[] } | { ok: false; error: string }> {
+export async function askClientAi(clientId: string, question: string, goDeep = false, files: { path: string; name: string; mime: string; bytes: number }[] = []): Promise<{ ok: true; chat: ChatTurn[] } | { ok: false; error: string }> {
   const me = await requireStaff();
-  if (!question.trim()) return { ok: false, error: "Ask something first." };
+  if (!question.trim() && !files.length) return { ok: false, error: "Ask something first." };
   const { data: c } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
   if (!c) return { ok: false, error: "Client not found." };
   try {
-    return { ok: true, chat: await askAboutClient(createAdminClient(), clientId, me.id, question, goDeep) };
+    const chat = await askAboutClient(createAdminClient(), clientId, me.id, question, goDeep, files);
+    revalidatePath("/clients/[slug]", "page");
+    return { ok: true, chat };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Couldn't answer that just now." };
   }
+}
+
+/** Undo one change the client desk made in my thread. */
+export async function undoClientDesk(clientId: string, turnAt: string, index: number): Promise<ChatTurn[]> {
+  const me = await requireStaff();
+  const { data: c } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
+  if (!c) return [];
+  const chat = await undoDeskAction(createAdminClient(), clientId, me.id, turnAt, index);
+  revalidatePath("/clients/[slug]", "page");
+  return chat;
+}
+
+/** Files (already uploaded to the client's folder) and links added on the client page's Documents: filed, then read. */
+export async function addClientDocs(clientId: string, slug: string, files: { path: string; name: string; mime: string; bytes: number }[], links: string[]): Promise<ActionResult> {
+  const me = await requireStaff();
+  const { data: c } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
+  if (!c) return { ok: false, error: "Client not found." };
+  const good = links.map((l) => l.trim()).filter((l) => /^https?:\/\/\S+$/.test(l));
+  if (!files.length && !good.length) return { ok: false, error: "Add a file or a link." };
+  const admin = createAdminClient();
+  try {
+    const rows = await addDocs(admin, clientId, me.id, "page", files, good);
+    after(() => summarizeDocs(admin, clientId, rows.map((r) => r.id as string)));
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't save them." };
+  }
+  revalidatePath(`/clients/${slug}`);
+  return { ok: true };
+}
+
+/** A link to open one of the client's files (an hour). */
+export async function openClientDoc(id: string): Promise<string | null> {
+  await requireStaff();
+  const { data: d } = await (await createClient()).from("client_documents").select("path, url").eq("id", id).maybeSingle();
+  if (!d) return null;
+  if (d.url) return d.url as string;
+  const { data } = await createAdminClient().storage.from(DOCS_BUCKET).createSignedUrl(d.path as string, 3600);
+  return data?.signedUrl ?? null;
 }
 
 /** My thread about this client, for the chat opened from elsewhere (the KPI board): the same thread as the client page. */

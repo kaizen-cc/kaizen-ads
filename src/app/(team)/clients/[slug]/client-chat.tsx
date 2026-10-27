@@ -5,12 +5,14 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { requestAudit } from "@/components/audit-watcher";
 import type { ChatTurn } from "@/lib/handoff";
-import { askClientAi, clearClientAi, loadClientAi } from "./actions";
+import { askClientAi, clearClientAi, loadClientAi, openClientDoc, undoClientDesk } from "./actions";
+import { createClient } from "@/lib/supabase/client";
 import { Layer } from "./layer";
 
-// The AI on the client page: a button in the corner that opens a drawer, so the page itself doesn't get longer. Ask a
-// question, strategize, bounce an idea off it, get a summary, or run the account audit (the same audit as on the KPI
-// board; it shows on both). Each person has their own thread per client, kept between visits.
+// The client desk: a button in the corner that opens a drawer, so the page itself doesn't get longer. Ask a question,
+// strategize, get a summary, share files and links (filed in the client's documents and read), tell it what to
+// remember or change (it updates the knowledge base and says what it did, each with an undo), or run the account
+// audit (the same audit as on the KPI board). Each person has their own thread per client, kept between visits.
 
 export type AuditTarget = { id: string; label: string; status: "none" | "queued" | "running" | "ready" | "failed"; auditId: string | null };
 
@@ -18,16 +20,49 @@ const STARTERS = [
   "Summarize where this account stands",
   "What should we test next, and why?",
   "What has the client told us lately?",
-  "What could put this client at risk?",
+  "What's in the files we have for them?",
 ];
+const MAX_FILE = 50 * 1024 * 1024;
+const safe = (n: string) => n.normalize("NFKD").replace(/[^\w.\-]+/g, "-").replace(/-+/g, "-").slice(-120);
+
+async function openDoc(id: string) {
+  const url = await openClientDoc(id);
+  if (url) window.open(url, "_blank", "noreferrer");
+}
 
 const LEVEL = { quick: { label: "Quick answer", dot: "bg-white/40" }, standard: { label: "Considered", dot: "bg-[#9aa8ff]" }, deep: { label: "Thought it through", dot: "bg-brand" } } as const;
 
-function Bubble({ t }: { t: ChatTurn }) {
+function Bubble({ t, onUndo }: { t: ChatTurn; onUndo?: (i: number) => void }) {
   const me = t.role === "user";
   return (
     <div className={`grid gap-1 ${me ? "justify-items-end" : ""}`}>
-      <p className={`max-w-[92%] whitespace-pre-wrap rounded-[14px] px-3.5 py-2.5 text-[13.5px] leading-relaxed ${me ? "bg-fg text-bg" : "border border-white/[0.06] bg-white/[0.04] text-fg"}`}>{t.text}</p>
+      {t.attachments && t.attachments.length > 0 && (
+        <span className={`flex max-w-[92%] flex-wrap gap-1.5 ${me ? "justify-end" : ""}`}>
+          {t.attachments.map((a) => (
+            <button key={a.id} type="button" onClick={() => void openDoc(a.id)} className="inline-flex min-h-9 max-w-full items-center gap-1.5 truncate rounded-full border border-white/10 bg-white/[0.04] px-3 text-[11.5px] text-white/75 hover:text-white md:min-h-7" title="Open it (it's in the client's documents)">
+              <span aria-hidden>{a.kind === "link" ? "↗" : "📄"}</span>
+              <span className="truncate">{a.name}</span>
+            </button>
+          ))}
+        </span>
+      )}
+      {t.text && <p className={`max-w-[92%] whitespace-pre-wrap rounded-[14px] px-3.5 py-2.5 text-[13.5px] leading-relaxed ${me ? "bg-fg text-bg" : "border border-white/[0.06] bg-white/[0.04] text-fg"}`}>{t.text}</p>}
+      {/* What it changed in the knowledge base, each with an undo */}
+      {!me && t.done && t.done.length > 0 && (
+        <ul className="grid w-full max-w-[92%] gap-1">
+          {t.done.map((d, i) => (
+            <li key={i} className={`flex items-start gap-2 rounded-[10px] border px-3 py-2 text-[12px] ${d.undone ? "border-white/[0.05] text-white/35 line-through" : "border-[#5be3a5]/25 bg-[#5be3a5]/[0.06] text-white/80"}`}>
+              <span className={`mt-0.5 shrink-0 ${d.undone ? "" : "text-[#5be3a5]"}`}>✓</span>
+              <span className="min-w-0 flex-1">{d.label}</span>
+              {d.undo && !d.undone && onUndo && (
+                <button type="button" onClick={() => onUndo(i)} className="-my-1 shrink-0 rounded-full px-2 py-1 text-[11px] text-white/55 no-underline hover:bg-white/10 hover:text-white max-md:min-h-9">
+                  Undo
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
       {!me && t.level && (
         <span className="flex items-center gap-1.5 px-1 text-[10px] text-white/40">
           <span className={`h-1.5 w-1.5 rounded-full ${LEVEL[t.level].dot}`} />
@@ -105,24 +140,52 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
     };
   }, [open]);
 
+  // Files to share with the next message (dropped, picked or pasted)
+  const [files, setFiles] = useState<File[]>([]);
+  const [over, setOver] = useState(false);
+  const picker = useRef<HTMLInputElement>(null);
+  const addFiles = (list: File[]) => {
+    const ok = list.filter((f) => f.size <= MAX_FILE);
+    if (ok.length < list.length) setError("Files over 50 MB were left out.");
+    setFiles((cur) => [...cur, ...ok].slice(0, 6));
+  };
+
   const ask = async (text: string) => {
-    if (!text.trim() || pending) return;
+    if ((!text.trim() && !files.length) || pending) return;
     setError(null);
-    setPending(text);
+    const sending = files;
+    setPending(text || `Shared ${sending.length} file${sending.length === 1 ? "" : "s"}`);
     setPendingDeep(deep);
     setQ("");
+    setFiles([]);
     // Past a few seconds it's a question that earned the full treatment: say so
     const t = setTimeout(() => setSlow(true), 7000);
-    const r = await askClientAi(clientId, text, deep);
+    // Files go straight to the client's folder; the desk files and reads them
+    const supabase = createClient();
+    const uploaded: { path: string; name: string; mime: string; bytes: number }[] = [];
+    for (const f of sending) {
+      const path = `${clientId}/${crypto.randomUUID()}-${safe(f.name)}`;
+      const { error: e } = await supabase.storage.from("client-docs").upload(path, f, { contentType: f.type || "application/octet-stream" });
+      if (!e) uploaded.push({ path, name: f.name, mime: f.type, bytes: f.size });
+    }
+    const r = await askClientAi(clientId, text, deep, uploaded);
     clearTimeout(t);
     setSlow(false);
     setPending(null);
     setDeep(false);
-    if (r.ok) setChat(r.chat);
-    else {
+    if (r.ok) {
+      setChat(r.chat);
+      if (uploaded.length < sending.length) setError(`${sending.length - uploaded.length} file${sending.length - uploaded.length === 1 ? "" : "s"} didn't upload.`);
+      router.refresh();
+    } else {
       setError(r.error);
       setQ(text);
+      setFiles(sending);
     }
+  };
+  const undo = async (turnAt: string, i: number) => {
+    setChat(await undoClientDesk(clientId, turnAt, i));
+    router.refresh();
   };
 
   const audit = async (t: AuditTarget) => {
@@ -167,9 +230,9 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
         <span aria-hidden className="pointer-events-none absolute -left-24 -top-28 h-72 w-72 rounded-full bg-[rgba(200,16,46,0.35)] blur-[90px]" />
         <header className="relative flex items-start justify-between gap-3 px-4 pb-3 pt-[calc(1rem+env(safe-area-inset-top))] md:px-5 md:pt-5">
           <div className="grid min-w-0 gap-1">
-            <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-white/50">Account strategist</p>
+            <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-white/50">Client desk</p>
             <h2 className="font-display text-2xl leading-tight tracking-tight [overflow-wrap:anywhere]">{client}</h2>
-            <p className="text-xs text-white/50">Questions, strategy, ideas, a summary. It reads everything Kaizen Ads knows about the account, including the latest audit.</p>
+            <p className="text-xs text-white/50">Ask anything, share files and links (they&apos;re filed in the client&apos;s documents), or tell it what to remember or change. It reads everything Kaizen Ads knows about the client.</p>
           </div>
           <span className="flex shrink-0 gap-1.5">
             {chat.length > 0 && (
@@ -235,14 +298,14 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
             </div>
           )}
           {chat.map((t, i) => (
-            <Bubble key={i} t={t} />
+            <Bubble key={i} t={t} onUndo={t.role === "assistant" ? (n) => void undo(t.at, n) : undefined} />
           ))}
           {pending && (
             <>
               <Bubble t={{ role: "user", text: pending, at: "" }} />
               <p className="flex items-center gap-2 text-xs text-white/50">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" />
-                {pendingDeep ? "Thinking it through · checking the market and the web…" : slow ? "A big one: thinking it through…" : "Reading the account…"}
+                {pendingDeep ? "Thinking it through · checking the market and the web…" : pending.startsWith("Shared ") || slow ? "Reading what you shared…" : "Reading the account…"}
               </p>
             </>
           )}
@@ -255,8 +318,41 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
             e.preventDefault();
             void ask(q);
           }}
-          className="relative grid gap-2 border-t border-white/[0.07] px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 md:p-4"
+          onDragOver={(e) => {
+            e.preventDefault();
+            setOver(true);
+          }}
+          onDragLeave={(e) => e.currentTarget.contains(e.relatedTarget as Node) || setOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setOver(false);
+            addFiles([...e.dataTransfer.files]);
+          }}
+          className={`relative grid gap-2 border-t px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 transition-colors md:p-4 ${over ? "border-brand/60 bg-brand/[0.08]" : "border-white/[0.07]"}`}
         >
+          <input
+            ref={picker}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              addFiles([...(e.target.files ?? [])]);
+              e.target.value = "";
+            }}
+          />
+          {files.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {files.map((f, i) => (
+                <span key={`${f.name}-${i}`} className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.05] py-1 pl-3 pr-1 text-[11.5px] text-white/80">
+                  <span className="truncate">{f.name}</span>
+                  <button type="button" onClick={() => setFiles((cur) => cur.filter((_, j) => j !== i))} aria-label={`Remove ${f.name}`} className="grid h-7 w-7 place-items-center rounded-full text-white/50 hover:bg-white/10 hover:text-white md:h-5 md:w-5">
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          {over && <p className="text-center text-xs text-white/70">Drop to share with the desk: it&apos;s filed in the client&apos;s documents and read</p>}
           <div className="flex items-center justify-between gap-2">
             <button
               type="button"
@@ -271,6 +367,17 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
             <span className="min-w-0 text-right text-[10px] text-white/35 md:text-left">{deep ? "Full model, the market and the web for this one" : "Quick questions get quick answers; big ones get the full treatment"}</span>
           </div>
           <div className="flex items-end gap-2">
+          <button
+            type="button"
+            onClick={() => picker.current?.click()}
+            aria-label="Share a file"
+            title="Share files (PDF, Word, PowerPoint, Excel, text, pictures): filed in the client's documents and read"
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-white/10 text-white/60 hover:border-white/25 hover:text-white"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" />
+            </svg>
+          </button>
           <textarea
             ref={input}
             value={q}
@@ -281,12 +388,19 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
                 void ask(q);
               }
             }}
+            onPaste={(e) => {
+              const pasted = [...e.clipboardData.files];
+              if (pasted.length) {
+                e.preventDefault();
+                addFiles(pasted);
+              }
+            }}
             rows={2}
-            placeholder="Ask, strategize, think out loud…"
+            placeholder="Ask, update, paste a link or drop a file…"
             className="min-h-[46px] min-w-0 flex-1 resize-none rounded-[12px] border border-white/10 bg-white/[0.03] px-3 py-2.5 text-[13.5px] outline-none placeholder:text-white/35 focus:border-brand/50"
           />
-          <button type="submit" disabled={!q.trim() || Boolean(pending)} className="h-11 shrink-0 rounded-full bg-fg px-5 text-sm text-bg disabled:opacity-40">
-            Ask
+          <button type="submit" disabled={(!q.trim() && !files.length) || Boolean(pending)} className="h-11 shrink-0 rounded-full bg-fg px-5 text-sm text-bg disabled:opacity-40">
+            {files.length && !q.trim() ? "Share" : "Send"}
           </button>
           </div>
         </form>

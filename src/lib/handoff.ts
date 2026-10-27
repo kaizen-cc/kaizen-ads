@@ -41,7 +41,20 @@ export type ComebackDoc = {
 };
 
 /** level: how much thinking the answer got (quick, standard, deep); researched: it searched the web for it */
-export type ChatTurn = { role: "user" | "assistant"; text: string; at: string; by?: string; level?: "quick" | "standard" | "deep"; researched?: boolean };
+/** Something the client desk changed in the knowledge base, and what undoes it */
+export type DeskAction = { label: string; undo?: { type: "memory" | "undated" | "angle" | "website"; id: string; prev?: string }; undone?: boolean };
+export type ChatTurn = {
+  role: "user" | "assistant";
+  text: string;
+  at: string;
+  by?: string;
+  level?: "quick" | "standard" | "deep";
+  researched?: boolean;
+  /** Files and links shared with the message (filed in the client's documents) */
+  attachments?: { id: string; name: string; kind: "file" | "link" }[];
+  /** What the desk changed in the knowledge base */
+  done?: DeskAction[];
+};
 
 const S = { type: "string" };
 const LIST = { type: "array", items: S };
