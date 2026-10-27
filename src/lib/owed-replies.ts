@@ -5,6 +5,7 @@ import { LIVE } from "@/lib/live";
 import { getCursor, setCursor, trimBody } from "@/lib/context/shared";
 import { listChannels, permalink, slack, slackConfigured, type SlackMessage } from "@/lib/context/slack";
 import { addresses, gmailToken, google, googleConfigured, plainText, withoutQuotes, type GmailMessage } from "@/lib/context/google";
+import { APPROVE_EMOJI, COMMIT, REQUESTISH, clearNotices, followPromises, recordPromises, type Candidate } from "@/lib/message-promises";
 
 // Messages someone on the team owes a reply to. Slack: anyone tagged in a channel the Kaizen OS bot is in, and a
 // client's message in their channel with nobody tagged (it's on the people on the account). Email: a client contact
@@ -17,7 +18,7 @@ import { addresses, gmailToken, google, googleConfigured, plainText, withoutQuot
 // Slack DMs can't be read by the bot, so only channels it's in count.
 
 type Admin = SupabaseClient;
-type Msg = SlackMessage & { reactions?: { name: string; users?: string[] }[] };
+export type Msg = SlackMessage & { reactions?: { name: string; users?: string[] }[] };
 
 const LOOKBACK_DAYS = 7;
 const OPEN = ["watching", "nudged", "escalated"];
@@ -28,7 +29,7 @@ const ESCALATE_SEEN = 4;
 const ESCALATE_UNSEEN = 9;
 
 /** The lead each role answers to (the execs always hear too) */
-const LEAD_OF: Record<string, string | null> = {
+export const LEAD_OF: Record<string, string | null> = {
   media_buyer: "head_of_meta",
   google_buyer: "head_of_google",
   graphic_designer: "head_of_creative",
@@ -64,6 +65,7 @@ const norm = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
 type SlackUser = { id: string; deleted?: boolean; is_bot?: boolean; is_restricted?: boolean; is_ultra_restricted?: boolean; real_name?: string; profile?: { email?: string; real_name?: string; display_name?: string } };
 
 /** Our workspace's people (not guests: those are clients), and each teammate in Kaizen Ads matched to their Slack. */
+export type SlackWho = Awaited<ReturnType<typeof slackPeople>>;
 async function slackPeople(admin: Admin) {
   const users: SlackUser[] = [];
   let cursor = "";
@@ -98,7 +100,7 @@ async function slackPeople(admin: Admin) {
 
 const MENTION = /<@([A-Z0-9]+)(?:\|[^>]*)?>/g;
 /** Slack's markup in plain words: tags as names, links as their text */
-const plain = (text: string, nameOf: Map<string, string>) =>
+export const plain = (text: string, nameOf: Map<string, string>) =>
   text
     .replace(MENTION, (_, id: string) => `@${nameOf.get(id) ?? "someone"}`)
     .replace(/<(https?:[^|>]+)\|([^>]+)>/g, "$2 ($1)")
@@ -133,6 +135,8 @@ async function scanSlack(admin: Admin) {
   let found = 0;
   let read = 0;
   const errors: string[] = [];
+  const said: Candidate[] = [];
+  const line = (x: Msg) => `${who.nameOf.get(x.user ?? "") ?? "Someone"}${x.user && who.team.has(x.user) ? " (team)" : ""}: ${plain(x.text ?? "", who.nameOf).replace(/\s+/g, " ").slice(0, 400)}`;
   for (const ch of channels.filter((c) => c.is_member && !c.is_archived)) {
     const key = `owed:slack:${ch.id}`;
     const started = new Date();
@@ -141,16 +145,19 @@ async function scanSlack(admin: Admin) {
       // A week of top-level messages: new ones, and older threads with new replies in them
       const { messages } = await slack<{ messages: Msg[] }>("conversations.history", { channel: ch.id, oldest: (since / 1000).toFixed(6), limit: "200" });
       const fresh: Msg[] = messages.filter((m) => Number(m.ts) > cursor);
+      // Whole threads with something new in them, so what was asked is there to read alongside the answer
+      const threads = new Map<string, Msg[]>();
       for (const m of messages) {
         if (!m.reply_count || !m.latest_reply || Number(m.latest_reply) <= cursor) continue;
-        const { messages: replies } = await slack<{ messages: Msg[] }>("conversations.replies", { channel: ch.id, ts: m.ts, oldest: cursor.toFixed(6), limit: "200" });
+        const { messages: replies } = await slack<{ messages: Msg[] }>("conversations.replies", { channel: ch.id, ts: m.ts, limit: "200" });
+        threads.set(m.ts, replies);
         fresh.push(...replies.filter((r) => r.ts !== m.ts && Number(r.ts) > cursor));
       }
       fresh.sort((a, b) => Number(a.ts) - Number(b.ts));
       read += fresh.length;
       const client = clientOf.get(ch.id) ?? null;
       const rows: Row[] = [];
-      const { data: waiting } = fresh.length ? await admin.from("owed_replies").select("id, target_id, thread_ts, message_ts, mentioned").eq("source", "slack").eq("channel_id", ch.id).in("status", OPEN) : { data: [] };
+      const { data: waiting } = fresh.length ? await admin.from("owed_replies").select("id, status, target_id, from_name, client_id, url, thread_ts, message_ts, mentioned").eq("source", "slack").eq("channel_id", ch.id).in("status", OPEN) : { data: [] };
       const stillOpen = (waiting ?? []) as Row[];
       for (const m of fresh) {
         if (!m.user || m.bot_id || (m.subtype && m.subtype !== "thread_broadcast") || !m.text?.trim()) continue;
@@ -158,6 +165,26 @@ async function scanSlack(admin: Admin) {
         // Someone speaking in a thread (or the channel) answers what was asked of them there before
         const authorProfile = who.profileOf.get(m.user);
         if (fromTeam) await answeredBy(admin, stillOpen, m, authorProfile ?? null);
+        // Something taken on ("I'll get that over", "love it, let's run it"): handed to the promise reader with what came before
+        if (fromTeam && authorProfile && COMMIT.test(m.text)) {
+          const before = (m.thread_ts ? (threads.get(m.thread_ts) ?? []) : [...messages].reverse()).filter((x) => Number(x.ts) < Number(m.ts) && x.text?.trim()).slice(-6);
+          if (before.length)
+            said.push({
+              source: "slack",
+              message_key: `${ch.id}:${m.ts}`,
+              owner_id: authorProfile,
+              client_id: client?.id ?? null,
+              channel_id: ch.id,
+              channel_name: ch.name,
+              thread_ts: m.thread_ts ?? null,
+              message_ts: m.ts,
+              url: permalink(ch.id, m.ts),
+              channel_url: `https://slack.com/app_redirect?channel=${ch.id}`,
+              said_at: new Date(Number(m.ts) * 1000).toISOString(),
+              said: plain(m.text, who.nameOf).slice(0, 1500),
+              before: before.map(line).join("\n"),
+            });
+        }
         const tagged = [...new Set([...m.text.matchAll(MENTION)].map((x) => who.profileOf.get(x[1])).filter((p): p is string => Boolean(p) && p !== authorProfile))];
         const targets = tagged.length ? tagged : !fromTeam && client?.external ? onAccount(client.id) : [];
         for (const target of targets)
@@ -179,6 +206,34 @@ async function scanSlack(admin: Admin) {
             channel_url: `https://slack.com/app_redirect?channel=${ch.id}`,
           });
       }
+      // A thumbs-up (or a check, an ok hand, "on it") from a teammate on someone else's ask, in the last few days
+      const recent = Date.now() / 1000 - 3 * 86_400;
+      for (const x of [...messages, ...[...threads.values()].flat()]) {
+        if (Number(x.ts) < recent || !x.user || !x.text || !REQUESTISH.test(x.text)) continue;
+        for (const r of x.reactions ?? []) {
+          if (!APPROVE_EMOJI.has(r.name.split("::")[0])) continue;
+          for (const u of r.users ?? []) {
+            const owner = who.profileOf.get(u);
+            if (!owner || u === x.user) continue;
+            const thread = x.thread_ts ? (threads.get(x.thread_ts) ?? []) : [...messages].reverse();
+            said.push({
+              source: "slack",
+              message_key: `${ch.id}:${x.ts}:r:${u}`,
+              owner_id: owner,
+              client_id: client?.id ?? null,
+              channel_id: ch.id,
+              channel_name: ch.name,
+              thread_ts: x.thread_ts ?? null,
+              message_ts: x.ts,
+              url: permalink(ch.id, x.ts),
+              channel_url: `https://slack.com/app_redirect?channel=${ch.id}`,
+              said_at: new Date(Math.max(Number(x.ts) * 1000, Date.now() - 3_600_000)).toISOString(),
+              said: `(reacted :${r.name}: to ${who.nameOf.get(x.user) ?? "their"} message)`,
+              before: [...thread.filter((y) => Number(y.ts) < Number(x.ts) && y.text?.trim()).slice(-4), x].map(line).join("\n"),
+            });
+          }
+        }
+      }
       if (rows.length) {
         const { error } = await admin.from("owed_replies").upsert(rows, { onConflict: "source,message_key,target_id", ignoreDuplicates: true });
         if (error) throw new Error(error.message);
@@ -189,7 +244,7 @@ async function scanSlack(admin: Admin) {
       errors.push(`#${ch.name}: ${e instanceof Error ? e.message : e}`);
     }
   }
-  return { channels: channels.filter((c) => c.is_member).length, read, found, errors: errors.slice(0, 5) };
+  return { who, said, notes: { channels: channels.filter((c) => c.is_member).length, read, found, said: said.length, errors: errors.slice(0, 5) } };
 }
 
 /** A teammate's message closes what was open for them in the same place: the thread, or the channel for top-level asks. */
@@ -202,9 +257,29 @@ async function answeredBy(admin: Admin, open: Row[], m: Msg, profileId: string |
     // Tagged: they have to answer themselves. A client's untagged message: anyone on the team answering will do
     const them = o.mentioned ? o.target_id === profileId : true;
     if (!here || !them) continue;
-    await admin.from("owed_replies").update({ status: "answered", answered_at: now }).eq("id", o.id);
+    await closeAnswered(admin, o, now);
     open.splice(open.indexOf(o), 1);
   }
+}
+
+/**
+ * Answered: off the person's list and their unread notices off the bell. If it had gone to their lead and the
+ * execs, they hear it's been answered.
+ */
+async function closeAnswered(admin: Admin, o: Row, now = new Date().toISOString()) {
+  await admin.from("owed_replies").update({ status: "answered", answered_at: now, checked_at: now }).eq("id", o.id);
+  await clearNotices(admin, "owed", String(o.id));
+  if (o.status !== "escalated") return;
+  const { data: sent } = await admin.from("notifications").select("profile_id").eq("key", `owed-lead:${o.id}`);
+  const { data: person } = await admin.from("profiles").select("full_name").eq("id", o.target_id).maybeSingle();
+  await notify(admin, (sent ?? []).map((s) => s.profile_id as string), {
+    key: `owed-done:${o.id}`,
+    title: `${person?.full_name ?? "They"} replied to ${o.from_name}`,
+    body: "The message that went unanswered has an answer now.",
+    href: (o.url as string | null) ?? null,
+    clientId: (o.client_id as string | null) ?? null,
+    priority: "normal",
+  });
 }
 
 /** The definitive look before a notice: everything said after it in its thread (or the channel), and reactions on it. */
@@ -240,6 +315,7 @@ async function scanGmail(admin: Admin) {
   const since = Date.now() - LOOKBACK_DAYS * 86_400_000;
   let found = 0;
   const errors: string[] = [];
+  const said: Candidate[] = [];
   for (const [mailbox, person] of team) {
     const key = `owed:gmail:${mailbox}`;
     const started = new Date();
@@ -280,12 +356,56 @@ async function scanGmail(admin: Admin) {
         found += rows.length;
       }
       await setCursor(admin, key, new Date(started.getTime() - 2 * 60_000), { ok: true, found: rows.length });
+      await sentMail(admin, token, mailbox, person.id as string, after, team, contacts, said);
     } catch (e) {
       // Someone without a Workspace mailbox (or one the service account can't open) is skipped
       errors.push(`${mailbox}: ${(e instanceof Error ? e.message : String(e)).slice(0, 120)}`);
     }
   }
-  return { mailboxes: team.size, found, errors: errors.slice(0, 5) };
+  return { said, notes: { mailboxes: team.size, found, said: said.length, errors: errors.slice(0, 5) } };
+}
+
+/**
+ * What someone sent: a reply in a thread answers what was waiting on them there (closed straight away), and a reply
+ * to a client or teammate that takes something on goes to the promise reader with the email it answers.
+ */
+async function sentMail(admin: Admin, token: string, mailbox: string, me: string, after: number, team: Map<string, unknown>, contacts: Map<string, { clientId: string }>, said: Candidate[]) {
+  const list = await google<{ messages?: { id: string }[] }>(token, "https://gmail.googleapis.com/gmail/v1/users/me/messages", { q: `in:sent after:${after}`, maxResults: "40" });
+  for (const { id } of list.messages ?? []) {
+    const m = await google<GmailMessage>(token, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}`, { format: "full" });
+    const header = (n: string) => m.payload.headers.find((h) => h.name.toLowerCase() === n)?.value ?? null;
+    const sentAt = new Date(Number(m.internalDate)).toISOString();
+    // Anything waiting on them in this thread is answered
+    const { data: waiting } = await admin.from("owed_replies").select("id, status, target_id, from_name, client_id, url").eq("source", "gmail").eq("mailbox", mailbox).eq("gmail_thread_id", m.threadId).in("status", OPEN).lt("asked_at", sentAt);
+    for (const o of waiting ?? []) await closeAnswered(admin, o);
+    if (!header("in-reply-to")) continue;
+    const body = withoutQuotes(plainText(m.payload) ?? m.snippet ?? "");
+    const to = [...addresses(header("to")), ...addresses(header("cc"))] as string[];
+    const client = to.map((a) => contacts.get(a)).find(Boolean);
+    if (!COMMIT.test(body) || (!client && !to.some((a) => a !== mailbox && team.has(a)))) continue;
+    const thread = await google<{ messages: GmailMessage[] }>(token, `https://gmail.googleapis.com/gmail/v1/users/me/threads/${m.threadId}`, { format: "full" });
+    const before = thread.messages
+      .filter((x) => Number(x.internalDate) < Number(m.internalDate))
+      .slice(-3)
+      .map((x) => {
+        const from = x.payload.headers.find((h) => h.name.toLowerCase() === "from")?.value ?? "";
+        const a = (addresses(from) as string[])[0] ?? "";
+        return `${from.replace(/<[^>]+>/, "").replace(/"/g, "").trim() || a}${team.has(a) ? " (team)" : ""}: ${withoutQuotes(plainText(x.payload) ?? x.snippet ?? "").replace(/\s+/g, " ").slice(0, 600)}`;
+      });
+    if (!before.length) continue;
+    said.push({
+      source: "gmail",
+      message_key: `${mailbox}:${m.id}`,
+      owner_id: me,
+      client_id: client?.clientId ?? null,
+      mailbox,
+      gmail_thread_id: m.threadId,
+      url: `https://mail.google.com/mail/u/${mailbox}/#all/${m.id}`,
+      said_at: sentAt,
+      said: `(email "${header("subject") ?? ""}") ${body.replace(/\s+/g, " ").slice(0, 1200)}`,
+      before: before.join("\n"),
+    });
+  }
 }
 
 /** Whether the thread has an answer from our side after the email: from them, or anyone on the team for a client. */
@@ -357,10 +477,10 @@ async function judge(items: Row[], context: Map<string, string>, names: Map<stri
 const whereOf = (o: Row) => (o.source === "gmail" ? `by email${o.subject ? ` ("${String(o.subject).slice(0, 60)}")` : ""}` : `in #${o.channel_name}`);
 const gistOf = (o: Row) => (o.gist as string | null) || String(o.body ?? "").replace(/\s+/g, " ").slice(0, 90);
 
-async function notify(admin: Admin, ids: string[], n: { key: string; title: string; body: string; href: string | null; clientId: string | null; priority: "critical" | "normal" }) {
+export async function notify(admin: Admin, ids: string[], n: { key: string; kind?: string; title: string; body: string; href: string | null; clientId: string | null; priority: "critical" | "normal" }) {
   if (!ids.length) return;
   await admin.from("notifications").upsert(
-    ids.map((id) => ({ profile_id: id, kind: "reply", title: n.title.slice(0, 200), body: n.body.slice(0, 1000), href: n.href, client_id: n.clientId, key: n.key, priority: n.priority })),
+    ids.map((id) => ({ profile_id: id, kind: n.kind ?? "reply", title: n.title.slice(0, 200), body: n.body.slice(0, 1000), href: n.href, client_id: n.clientId, key: n.key, priority: n.priority })),
     { onConflict: "profile_id,key", ignoreDuplicates: true },
   );
 }
@@ -369,9 +489,12 @@ async function notify(admin: Admin, ids: string[], n: { key: string; title: stri
 export async function runOwedReplies(admin: Admin) {
   const slackOn = slackConfigured();
   const gmailOn = googleConfigured();
+  const fail = (e: unknown) => ({ error: e instanceof Error ? e.message : String(e) });
+  const slackRun = slackOn ? await scanSlack(admin).catch(fail) : null;
+  const gmailRun = gmailOn ? await scanGmail(admin).catch(fail) : null;
   const scanned = {
-    slack: slackOn ? await scanSlack(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) })) : { skipped: "Slack isn't connected" },
-    gmail: gmailOn ? await scanGmail(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) })) : { skipped: "Google isn't connected" },
+    slack: !slackRun ? { skipped: "Slack isn't connected" } : "error" in slackRun ? slackRun : slackRun.notes,
+    gmail: !gmailRun ? { skipped: "Google isn't connected" } : "error" in gmailRun ? gmailRun : gmailRun.notes,
   };
 
   const cutoff = new Date(Date.now() - 14 * 86_400_000).toISOString();
@@ -382,7 +505,7 @@ export async function runOwedReplies(admin: Admin) {
   const byId = new Map((people ?? []).map((p) => [p.id as string, p]));
   const teamEmails = new Set((people ?? []).filter((p) => p.is_active && p.email).map((p) => String(p.email).toLowerCase()));
   const names = new Map((people ?? []).map((p) => [p.id as string, String(p.full_name ?? "").split(" ")[0] || "them"]));
-  const who = slackOn && (open ?? []).some((o) => o.source === "slack") ? await slackPeople(admin).catch(() => null) : null;
+  const who = slackRun && !("error" in slackRun) ? slackRun.who : slackOn ? await slackPeople(admin).catch(() => null) : null;
   const context = new Map<string, string>();
   const now = new Date();
   const stamp = now.toISOString();
@@ -394,7 +517,7 @@ export async function runOwedReplies(admin: Admin) {
     if (workingHours(new Date(o.asked_at)) < NUDGE_AFTER[o.source as "slack" | "gmail"]) continue;
     if (!byId.get(o.target_id)?.is_active) continue;
     if (await isAnswered(o, who, teamEmails, context)) {
-      await admin.from("owed_replies").update({ status: "answered", answered_at: stamp, checked_at: stamp }).eq("id", o.id);
+      await closeAnswered(admin, o, stamp);
       tally.answered++;
     } else due.push(o);
   }
@@ -436,12 +559,16 @@ export async function runOwedReplies(admin: Admin) {
   }
   const { data: execs } = await admin.from("profiles").select("id, role").eq("is_active", true).eq("role", "executive");
   for (const o of nudged) {
+    // Looked at every run, so a reply closes it (and its notice) within the hour, not only when it's about to escalate
+    if (await isAnswered(o, who, teamEmails, context)) {
+      await closeAnswered(admin, o, stamp);
+      tally.answered++;
+      continue;
+    }
     const seen = seenAt.get(`owed:${o.id}`);
     const ready = seen ? workingHours(new Date(seen)) >= ESCALATE_SEEN : workingHours(new Date(o.nudged_at)) >= ESCALATE_UNSEEN;
-    if (!ready) continue;
-    if (await isAnswered(o, who, teamEmails, context)) {
-      await admin.from("owed_replies").update({ status: "answered", answered_at: stamp, checked_at: stamp }).eq("id", o.id);
-      tally.answered++;
+    if (!ready) {
+      await admin.from("owed_replies").update({ checked_at: stamp }).eq("id", o.id);
       continue;
     }
     const person = byId.get(o.target_id);
@@ -469,17 +596,21 @@ export async function runOwedReplies(admin: Admin) {
     tally.escalated++;
   }
 
-  // Escalated ones: close them once answered (a few a run, oldest first)
-  for (const o of (open ?? []).filter((x) => x.status === "escalated").slice(0, 25)) {
-    if (o.checked_at && workingHours(new Date(o.checked_at)) < 1) continue;
+  // Escalated ones: closed once answered, and the lead and execs told
+  for (const o of (open ?? []).filter((x) => x.status === "escalated").slice(0, 40)) {
     if (await isAnswered(o, who, teamEmails, context)) {
-      await admin.from("owed_replies").update({ status: "answered", answered_at: stamp, checked_at: stamp }).eq("id", o.id);
+      await closeAnswered(admin, o, stamp);
       tally.answered++;
     } else await admin.from("owed_replies").update({ checked_at: stamp }).eq("id", o.id);
   }
   // Too old to chase any more: two weeks on, it's let go quietly
   await admin.from("owed_replies").update({ status: "not_needed", dismiss_reason: "Two weeks old" }).eq("status", "watching").lt("asked_at", cutoff);
-  return { scanned, ...tally };
+
+  // What the team said yes to: new ones read, due ones followed through
+  const candidates = [...(slackRun && !("error" in slackRun) ? slackRun.said : []), ...(gmailRun && !("error" in gmailRun) ? gmailRun.said : [])];
+  const promises = await recordPromises(admin, candidates, names).catch(fail);
+  const following = await followPromises(admin, who).catch(fail);
+  return { scanned, ...tally, promises, following };
 }
 
 // ─── Reading ────────────────────────────────────────────────────────────────

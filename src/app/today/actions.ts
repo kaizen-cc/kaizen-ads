@@ -36,6 +36,7 @@ export async function setItem(key: string, status: Status, snap: ItemSnapshot) {
   );
   // A message set aside as not needing a reply stops being chased (only the person it's on can do that)
   if (next === "dismissed" && /^owed2?:/.test(key)) await closeOwed(key.split(":")[1], me.id);
+  if (next === "dismissed" && /^said2?:/.test(key)) await closeSaid(key.split(":")[1], me.id, "done");
   revalidatePath("/pipeline");
   return next;
 }
@@ -50,6 +51,26 @@ async function closeOwed(id: string, meId: string) {
   if (!adminConfigured()) return;
   const now = new Date().toISOString();
   await createAdminClient().from("owed_replies").update({ status: "dismissed", dismissed_at: now, dismissed_by: meId, dismiss_reason: "Doesn't need a reply" }).eq("id", id).eq("target_id", meId).in("status", ["watching", "nudged", "escalated"]);
+  revalidatePath("/pipeline");
+}
+
+/** A promise from Slack or email closed by the person who made it: done, or not happening after all. */
+export async function closeSaidPromise(id: string, how: "done" | "dropped") {
+  const me = await requireStaff();
+  await closeSaid(id, me.id, how);
+}
+
+async function closeSaid(id: string, meId: string, how: "done" | "dropped") {
+  if (!adminConfigured()) return;
+  const now = new Date().toISOString();
+  const admin = createAdminClient();
+  await admin
+    .from("message_promises")
+    .update(how === "done" ? { status: "done", evidence: "Marked done by them", closed_at: now } : { status: "dismissed", dismissed_by: meId, dismiss_reason: "Not needed any more", closed_at: now })
+    .eq("id", id)
+    .eq("owner_id", meId)
+    .in("status", ["open", "overdue", "escalated"]);
+  await admin.from("notifications").update({ cleared_at: now }).in("key", [`said:${id}`, `said2:${id}`]).eq("profile_id", meId).is("cleared_at", null);
   revalidatePath("/pipeline");
 }
 

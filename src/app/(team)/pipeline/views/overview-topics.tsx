@@ -5,6 +5,8 @@ import type { CallPromise, OnboardingState, SuggestionsState } from "@/lib/sugge
 import { CallPromises } from "./call-promises";
 import { OwedReplies } from "./owed-replies";
 import type { OwedReply } from "@/lib/owed-replies";
+import type { SaidPromise } from "@/lib/message-promises";
+import { SaidPromises } from "./said-promises";
 import { OnboardingCallout } from "./onboarding-callout";
 import { SuggestedBriefs } from "./suggested-briefs";
 import { AttentionList, ClientHealth, KpiPulse, type Alert, type ClientPulse, type KpiPulseData } from "./shared";
@@ -20,7 +22,7 @@ export type SharedTopics = {
   onboarding?: OnboardingState | null;
   callPromises?: CallPromise[] | null;
   /** Messages nobody answered after a notice (the viewer's own, and the escalated ones they lead) */
-  owed?: { items: OwedReply[]; me: string } | null;
+  owed?: { items: OwedReply[]; said: SaidPromise[]; me: string } | null;
   suggestions?: SuggestionsState | null;
   kpis?: KpiPulseData[] | null; // one per service line the viewer works on (Meta, Google)
   fatigue?: WatchRow[] | null;
@@ -40,16 +42,17 @@ export function actTopics(d: SharedTopics): Built[] {
   // Waiting on us: what we promised on calls and haven't started, and messages (Slack, email) nobody answered
   const promises = d.callPromises ?? [];
   const owed = d.owed?.items ?? [];
-  if (promises.length || owed.length) {
-    const escalated = owed.filter((o) => o.status === "escalated").length;
-    const oldest = [...promises.map((p) => p.dueAt), ...owed.map((o) => o.askedAt)].sort()[0];
-    const summary = [promises.length ? `${s(promises.length, "promise")} from calls not started` : "", owed.length ? `${s(owed.length, "message")} not answered${escalated ? ` (${escalated} past a second notice)` : ""}` : "", `oldest from ${day(oldest)}`].filter(Boolean).join(" · ");
-    const n = promises.length + owed.length;
+  const said = d.owed?.said ?? [];
+  if (promises.length || owed.length || said.length) {
+    const escalated = [...owed, ...said].filter((o) => o.status === "escalated").length;
+    const oldest = [...promises.map((p) => p.dueAt), ...owed.map((o) => o.askedAt), ...said.map((p) => p.dueAt)].sort()[0];
+    const summary = [promises.length ? `${s(promises.length, "promise")} from calls not started` : "", said.length ? `${s(said.length, "yes", "yeses")} in Slack or email not done` : "", owed.length ? `${s(owed.length, "message")} not answered` : "", escalated ? `${escalated} past a second notice` : "", `oldest from ${day(oldest)}`].filter(Boolean).join(" · ");
+    const n = promises.length + owed.length + said.length;
     const tone = escalated ? "bad" : "warn";
-    const both = promises.length > 0 && owed.length > 0;
+    const both = [promises.length, owed.length, said.length].filter(Boolean).length > 1;
     const label = (t: string) => (both ? <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-faint">{t}</span> : null);
     out.push({
-      tile: { id: "promises", label: "Waiting on us", value: n, sub: [promises.length ? `${promises.length} promised` : "", owed.length ? `${owed.length} unanswered` : ""].filter(Boolean).join(" · "), tone },
+      tile: { id: "promises", label: "Waiting on us", value: n, sub: [promises.length + said.length ? `${promises.length + said.length} promised` : "", owed.length ? `${owed.length} unanswered` : ""].filter(Boolean).join(" · "), tone },
       panel: (
         <Topic key="promises" id="promises" title="Waiting on us" summary={summary} count={n} tone={tone}>
           <div className="grid gap-5">
@@ -57,6 +60,12 @@ export function actTopics(d: SharedTopics): Built[] {
               <div className="grid gap-3">
                 {label("Not answered")}
                 <OwedReplies items={owed} me={d.owed!.me} />
+              </div>
+            )}
+            {said.length > 0 && (
+              <div className="grid gap-3">
+                {label("Said yes in Slack or email")}
+                <SaidPromises items={said} me={d.owed!.me} />
               </div>
             )}
             {promises.length > 0 && (

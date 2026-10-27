@@ -9,6 +9,7 @@ import { roleLabel } from "@/lib/roles";
 import { businessDuration, health, stageInfo, type Stage } from "@/lib/stages";
 import { createClient } from "@/lib/supabase/server";
 import { loadOwedReplies } from "@/lib/owed-replies";
+import { loadSaidPromises } from "@/lib/message-promises";
 import { loadCallPromises, loadOnboarding, loadSuggestions } from "@/lib/suggestions";
 import { loadWatchList } from "@/lib/fatigue";
 import { HandoffCallout } from "@/components/handoff-callout";
@@ -35,7 +36,7 @@ export default async function Home() {
   // Ad accounts against target, each service line on its own: execs see Meta and Google, the Head of Meta only Meta,
   // the Head of Google only Google, the Head of Creative neither; a buyer only the accounts they own
   const lines: ("meta" | "google")[] = me.isExec ? ["meta", "google"] : me.role === "head_of_meta" ? ["meta"] : me.role === "head_of_google" ? ["google"] : [];
-  const [h, kpiLines, buyerKpis, suggestions, fatigue, onboarding, clientOptions, callPromises, owedItems] = await Promise.all([
+  const [h, kpiLines, buyerKpis, suggestions, fatigue, onboarding, clientOptions, callPromises, owedItems, said] = await Promise.all([
     loadHome(db, me),
     Promise.all(lines.map((platform) => loadKpiPulse(db, { platform }))),
     !me.isLead && !me.isExec && variantNow === "buyer" ? loadKpiPulse(db, me.id) : Promise.resolve(null),
@@ -52,8 +53,10 @@ export default async function Home() {
     me.isExec || me.isLead || variantFor(me) === "buyer" ? loadCallPromises(db) : Promise.resolve(null),
     // Messages nobody answered: their own, and the ones escalated past a second notice on the people they lead
     loadOwedReplies(db, me).catch(() => []),
+    // And what someone said yes to in Slack or email that's past due with nothing moving
+    loadSaidPromises(db, me).catch(() => []),
   ]);
-  const owed = { items: owedItems, me: me.id };
+  const owed = { items: owedItems, said, me: me.id };
 
   const kpis = kpiLines.filter((k): k is KpiPulse => Boolean(k));
   // How creative production is going (speed, revisions, the team): execs and the Head of Creative

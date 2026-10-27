@@ -4,6 +4,7 @@ import type { Staff } from "@/lib/auth";
 import { loadWatchList } from "@/lib/fatigue";
 import { loadHome } from "@/lib/home";
 import { loadOwedReplies } from "@/lib/owed-replies";
+import { loadSaidPromises } from "@/lib/message-promises";
 import { loadCallPromises, loadOnboarding, loadSuggestions, type OpenSuggestion } from "@/lib/suggestions";
 import { assetsStale } from "@/lib/client-assets";
 import { LIVE } from "@/lib/live";
@@ -18,7 +19,7 @@ export type Tier = "critical" | "high" | "normal";
 export type TopicKey = "mine" | "promises" | "onboarding" | "accounts" | "work" | "briefs" | "ads" | "allotments";
 export const TOPICS: Record<TopicKey, { label: string; blurb: string }> = {
   mine: { label: "Your work", blurb: "Tickets and tasks on you" },
-  promises: { label: "Waiting on us", blurb: "Promised to clients, messages nobody answered" },
+  promises: { label: "Waiting on us", blurb: "Promised, said yes to, or not answered" },
   onboarding: { label: "New clients", blurb: "First impressions" },
   accounts: { label: "Accounts", blurb: "Results against target" },
   work: { label: "Late work", blurb: "Work running late on our side" },
@@ -135,7 +136,7 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
   const topics = topicsFor(me);
   const manager = me.isExec || me.isLead;
   const callPromises = manager || me.isBuyer || me.isCoordinator;
-  const [promises, onboarding, suggestions, fatigue, home, own, owed] = await Promise.all([
+  const [promises, onboarding, suggestions, fatigue, home, own, owed, said] = await Promise.all([
     callPromises ? loadCallPromises(db).catch(() => []) : [],
     topics.has("onboarding") ? loadOnboarding(db).catch(() => null) : null,
     topics.has("briefs") ? loadSuggestions(db).catch(() => null) : null,
@@ -143,8 +144,34 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
     topics.has("work") || topics.has("allotments") ? loadHome(db, me).catch(() => null) : null,
     mine(db, me).catch(() => []),
     loadOwedReplies(db, me).catch(() => []),
+    loadSaidPromises(db, me).catch(() => []),
   ]);
   const out: Draft[] = [...own];
+
+  // What someone said yes to in Slack or email, past when it was due with nothing moving
+  for (const p of said) {
+    const late = Math.max(0, bizDays(p.dueAt));
+    const mineToo = p.ownerId === me.id;
+    const second = p.status === "escalated";
+    const open = p.source === "gmail" ? "Open the email" : "Open in Slack";
+    const make = ["creative", "copy", "offer"].includes(p.kind ?? "") && p.clientSlug;
+    out.push({
+      key: mineToo ? `${second ? "said2" : "said"}:${p.id}` : `said-lead:${p.id}`,
+      topic: "promises",
+      score: mineToo ? (second ? 95 : Math.min(90, 78 + late * 4)) : 85,
+      client: p.client ?? p.askedBy ?? "Team",
+      clientSlug: p.clientSlug ?? "",
+      clientId: p.clientId,
+      stat: late ? { value: String(late), label: `business ${late === 1 ? "day" : "days"} past when it was due` } : { value: "Due", label: `was due ${day(p.dueAt)}` },
+      title: mineToo ? `You said you'd ${p.what}` : `${p.owner} said they'd ${p.what}`,
+      story: `${p.askedBy ?? "Someone"} asked ${p.where} on ${day(p.saidAt)}${p.ask ? ` (${p.ask})` : ""}. ${mineToo ? "You" : p.owner.split(" ")[0]} said: "${p.said.replace(/\s+/g, " ").slice(0, 200)}${p.said.length > 200 ? "…" : ""}". Nothing since shows it's happened.`,
+      why: mineToo ? (second ? "Second notice: your lead and the exec team have been told" : "You said yes, and it's past due") : "They had a notice and nothing's moved",
+      evidence: [],
+      action: make ? { label: "Make the request", href: `/requests/new?client=${p.clientSlug}` } : { label: open, href: p.url ?? p.channelUrl ?? "/today" },
+      ...(make && p.url ? { alt: { label: open, href: p.url } } : p.channelUrl ? { alt: { label: "Open the channel", href: p.channelUrl } } : {}),
+      ...(mineToo ? { dismiss: "Done, or not needed" } : {}),
+    });
+  }
 
   // Messages nobody answered: the person's own after a first notice, and (for leads and execs) ones that were escalated
   for (const o of owed) {
@@ -412,6 +439,10 @@ async function whatHappened(db: SupabaseClient, keys: { key: string; snapshot: {
     } else if (kind === "kpi") {
       const { data } = await db.from("account_audits").select("created_by, created_at").eq("target_id", rest[0]).order("created_at", { ascending: false }).limit(1).maybeSingle();
       out.push({ ...base, by: await name((data?.created_by as string | null) ?? null), what: data ? "ran an audit; an optimization sprint is under way" : "it's back on target" });
+    } else if (kind === "said" || kind === "said2" || kind === "said-lead") {
+      const { data } = await db.from("message_promises").select("status, owner_id, dismissed_by, evidence").eq("id", rest[0]).maybeSingle();
+      if (!data) continue;
+      out.push({ ...base, by: await name((data.dismissed_by ?? data.owner_id) as string | null), what: data.status === "dismissed" ? "closed it" : `it's moving${data.evidence ? `: ${data.evidence}` : ""}` });
     } else if (kind === "owed" || kind === "owed2" || kind === "owed-lead") {
       const { data } = await db.from("owed_replies").select("status, target_id, dismissed_by").eq("id", rest[0]).maybeSingle();
       if (!data) continue;

@@ -348,7 +348,7 @@ const GRACE_MS = 86_400_000;
 const graced = (iso: string) => new Date(Date.parse(iso) - GRACE_MS).toISOString();
 
 /** Asana tasks for the client made since a moment (open, or completed): work in motion before the move to Kaizen Ads. */
-async function asanaSince(admin: SupabaseClient, clientId: string, since: string) {
+export async function asanaSince(admin: SupabaseClient, clientId: string, since: string) {
   const { data } = await admin
     .from("asana_tasks")
     .select("gid, name, notes, section, asana_created_at")

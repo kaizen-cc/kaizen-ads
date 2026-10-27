@@ -27,7 +27,7 @@ export type PulseData = {
   fatigue?: WatchRow[] | null;
   onboarding?: OnboardingState | null;
   callPromises?: CallPromise[] | null;
-  owed?: { items: import("@/lib/owed-replies").OwedReply[]; me: string } | null;
+  owed?: { items: import("@/lib/owed-replies").OwedReply[]; said: import("@/lib/message-promises").SaidPromise[]; me: string } | null;
   clientOptions?: { id: string; name: string }[];
   suggestions?: SuggestionsState | null;
   handoffs?: React.ReactNode;

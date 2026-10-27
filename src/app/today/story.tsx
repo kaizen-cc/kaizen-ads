@@ -29,7 +29,7 @@ function headline(topic: TopicKey, n: number) {
     case "mine":
       return `${n} ${s("thing is", "things are")} on you today`;
     case "promises":
-      return `${n} ${s("thing is", "things are")} waiting on us: promised, or not answered`;
+      return `${n} ${s("thing is", "things are")} waiting on us: promised, said yes to, or not answered`;
     case "onboarding":
       return `${n} new ${s("client needs", "clients need")} you`;
     case "accounts":
