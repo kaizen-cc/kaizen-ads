@@ -22,6 +22,10 @@
       "schedule": "35 * * * *"
     },
     {
+      "path": "/api/cron/context?step=bibles",
+      "schedule": "3,13,23,33,43,53 * * * *"
+    },
+    {
       "path": "/api/cron/context?step=ledger",
       "schedule": "27 * * * *"
     },
