@@ -5,6 +5,8 @@ import { AGENT_MOMENTS } from "@/lib/agent-moments";
 import { AiUnavailable, askJson, forgetAgent, type AgentKey } from "@/lib/ai";
 import { requireExec } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { readShared, SHARED_RULES, type AgentFile, type Attachment } from "@/lib/agent-docs";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 type Kind = "knowledge" | "skill" | "example";
@@ -89,7 +91,7 @@ export type Change = {
   skill?: string;
   applied?: boolean;
 };
-export type ChatMessage = { id: number; role: "user" | "coach"; content: string; changes: Change[]; at: string };
+export type ChatMessage = { id: number; role: "user" | "coach"; content: string; changes: Change[]; at: string; attachments?: Attachment[] };
 
 const s = { type: "string" };
 const COACH_SCHEMA = {
@@ -145,10 +147,10 @@ How to propose changes:
 - If the feedback is vague, ask one clarifying question in reply and propose no changes. If it's a question about the agent, answer it from the playbook.
 reply: 1 to 3 sentences, plain and direct, saying what you'd change (the exec applies each change with a click).`;
 
-export async function chatWithCoach(key: AgentKey, message: string): Promise<{ ok: true; messages: ChatMessage[] } | { ok: false; error: string }> {
+export async function chatWithCoach(key: AgentKey, message: string, files: AgentFile[] = []): Promise<{ ok: true; messages: ChatMessage[] } | { ok: false; error: string }> {
   const me = await requireExec();
   const text = message.trim();
-  if (!text) return { ok: false, error: "Write something first." };
+  if (!text && !files.length) return { ok: false, error: "Write something first." };
   const supabase = await createClient();
   const [{ data: agent }, { data: items }, { data: history }] = await Promise.all([
     supabase.from("ai_agents").select("key, label, description, model, effort, instructions, live, ai_roles(label, core)").eq("key", key).maybeSingle(),
@@ -183,19 +185,22 @@ ${role.core}
     .join("\n");
 
   try {
+    const shared = await readShared(createAdminClient(), key, files, text);
     const out = await askJson<{ reply: string; changes: Change[] }>({
       agent: "coach",
       label: `coach ${key}`,
-      system: COACH_SYSTEM,
+      system: `${COACH_SYSTEM}\n${SHARED_RULES}`,
       schema: COACH_SCHEMA,
-      prompt: `${playbook}\n\n<conversation_so_far>\n${convo || "(new conversation)"}\n</conversation_so_far>\n\n<exec_says>\n${text}\n</exec_says>`,
+      images: shared.images,
+      pdfs: shared.pdfs,
+      prompt: `${playbook}\n\n<conversation_so_far>\n${convo || "(new conversation)"}\n</conversation_so_far>\n\n${shared.block}\n\n<exec_says>\n${text || "(shared the material above)"}\n</exec_says>`,
     });
     const known = new Set((items ?? []).map((k) => k.id));
     const changes = out.changes
       .filter((c) => (c.op === "update_item" || c.op === "turn_off_item" ? known.has(c.item_id) : true))
       .map((c) => ({ ...c, applied: false }));
     await supabase.from("ai_agent_chats").insert([
-      { agent_key: key, role: "user", content: text.slice(0, 8000), created_by: me.id },
+      { agent_key: key, role: "user", content: text.slice(0, 8000), attachments: shared.attachments, created_by: me.id },
       { agent_key: key, role: "coach", content: out.reply, changes, created_by: me.id },
     ]);
   } catch (e) {
@@ -207,8 +212,8 @@ ${role.core}
 export async function loadChat(key: AgentKey): Promise<ChatMessage[]> {
   await requireExec();
   const supabase = await createClient();
-  const { data } = await supabase.from("ai_agent_chats").select("id, role, content, changes, created_at").eq("agent_key", key).order("created_at").limit(200);
-  return (data ?? []).map((m) => ({ id: m.id, role: m.role as "user" | "coach", content: m.content, changes: (m.changes ?? []) as Change[], at: m.created_at }));
+  const { data } = await supabase.from("ai_agent_chats").select("id, role, content, changes, attachments, created_at").eq("agent_key", key).order("created_at").limit(200);
+  return (data ?? []).map((m) => ({ id: m.id, role: m.role as "user" | "coach", content: m.content, changes: (m.changes ?? []) as Change[], at: m.created_at, attachments: (m.attachments ?? []) as Attachment[] }));
 }
 
 type Db = Awaited<ReturnType<typeof createClient>>;
@@ -277,7 +282,7 @@ export async function clearChat(key: AgentKey): Promise<ActionResult> {
 // playbook, answers how it works, and turns feedback into edits wherever they belong: the core when it's about
 // everything it does, the one skill whose work it's about, or each skill it touches. Applied on click, like the coach.
 
-export type RoleChatMessage = { id: number; role: "user" | "agent"; content: string; changes: Change[]; at: string };
+export type RoleChatMessage = { id: number; role: "user" | "agent"; content: string; changes: Change[]; at: string; attachments?: Attachment[] };
 
 const ROLE_SCHEMA = {
   type: "object",
@@ -332,10 +337,10 @@ reply: plain text, conversational, like a sharp colleague. No markdown, no aster
 const ITEM_CAP = 6000;
 const PLAYBOOK_CAP = 90000;
 
-export async function chatWithAgent(roleKey: string, message: string): Promise<{ ok: true; messages: RoleChatMessage[] } | { ok: false; error: string }> {
+export async function chatWithAgent(roleKey: string, message: string, files: AgentFile[] = []): Promise<{ ok: true; messages: RoleChatMessage[] } | { ok: false; error: string }> {
   const me = await requireExec();
   const text = message.trim();
-  if (!text) return { ok: false, error: "Write something first." };
+  if (!text && !files.length) return { ok: false, error: "Write something first." };
   const supabase = await createClient();
   const [{ data: role }, { data: skills }, { data: spine }, { data: history }] = await Promise.all([
     supabase.from("ai_roles").select("key, label, description, core").eq("key", roleKey).maybeSingle(),
@@ -385,12 +390,15 @@ export async function chatWithAgent(roleKey: string, message: string): Promise<{
     .join("\n");
 
   try {
+    const shared = await readShared(createAdminClient(), roleKey, files, text);
     const out = await askJson<{ reply: string; changes: Change[] }>({
       agent: "coach",
       label: `agent chat ${roleKey}`,
-      system: roleSystem(role.label),
+      system: `${roleSystem(role.label)}\n${SHARED_RULES}`,
       schema: ROLE_SCHEMA,
-      prompt: `${playbook}\n\n<conversation_so_far>\n${convo || "(new conversation)"}\n</conversation_so_far>\n\n<exec_says>\n${text}\n</exec_says>`,
+      images: shared.images,
+      pdfs: shared.pdfs,
+      prompt: `${playbook}\n\n<conversation_so_far>\n${convo || "(new conversation)"}\n</conversation_so_far>\n\n${shared.block}\n\n<exec_says>\n${text || "(shared the material above)"}\n</exec_says>`,
     });
     // Only edits to this agent's own core, skills and items survive; an item edit is filed under the item's real skill
     const owner = new Map((items ?? []).map((k) => [k.id as string, k.agent_key as string]));
@@ -409,7 +417,7 @@ export async function chatWithAgent(roleKey: string, message: string): Promise<{
     // Plain words: no markdown emphasis or emojis, whatever the model does
     const reply = out.reply.replace(/\*\*|__|(^|\s)[*#]+\s/gm, "$1").replace(/\p{Extended_Pictographic}️?/gu, "").trim();
     const { error } = await supabase.from("ai_role_chats").insert([
-      { role_key: roleKey, role: "user", content: text.slice(0, 8000), created_by: me.id },
+      { role_key: roleKey, role: "user", content: text.slice(0, 8000), attachments: shared.attachments, created_by: me.id },
       { role_key: roleKey, role: "agent", content: reply, changes, created_by: me.id },
     ]);
     if (error) return { ok: false, error: error.message };
@@ -422,8 +430,8 @@ export async function chatWithAgent(roleKey: string, message: string): Promise<{
 export async function loadRoleChat(roleKey: string): Promise<RoleChatMessage[]> {
   await requireExec();
   const supabase = await createClient();
-  const { data } = await supabase.from("ai_role_chats").select("id, role, content, changes, created_at").eq("role_key", roleKey).order("created_at").limit(200);
-  return (data ?? []).map((m) => ({ id: m.id, role: m.role as "user" | "agent", content: m.content, changes: (m.changes ?? []) as Change[], at: m.created_at }));
+  const { data } = await supabase.from("ai_role_chats").select("id, role, content, changes, attachments, created_at").eq("role_key", roleKey).order("created_at").limit(200);
+  return (data ?? []).map((m) => ({ id: m.id, role: m.role as "user" | "agent", content: m.content, changes: (m.changes ?? []) as Change[], at: m.created_at, attachments: (m.attachments ?? []) as Attachment[] }));
 }
 
 /** Apply one edit the agent proposed, checking it still lands on this agent's own core, skills or items. */

@@ -67,7 +67,7 @@ function officeText(buf: Buffer, ext: keyof typeof OFFICE) {
 }
 
 /** Open one document for the AI. */
-export async function readDoc(admin: SupabaseClient, d: { id: string; kind: string; name: string; path: string | null; url: string | null; mime: string | null; text?: string | null }): Promise<DocRead> {
+export async function readDoc(admin: SupabaseClient, d: { id: string; kind: string; name: string; path: string | null; url: string | null; mime: string | null; text?: string | null }, bucket = DOCS_BUCKET): Promise<DocRead> {
   const base = { id: d.id, label: d.name, text: null, pdf: null, image: null, note: null };
   if (d.kind === "link") {
     if (d.text) return { ...base, text: d.text };
@@ -76,7 +76,7 @@ export async function readDoc(admin: SupabaseClient, d: { id: string; kind: stri
     return { ...base, label: r?.label ?? d.name, text: r?.ok ? r.text : null, image: images[0] ?? null, note: r?.ok ? null : (r?.note ?? "Couldn't open the link") };
   }
   if (!d.path) return { ...base, note: "No file" };
-  const { data } = await admin.storage.from(DOCS_BUCKET).download(d.path);
+  const { data } = await admin.storage.from(bucket).download(d.path);
   if (!data) return { ...base, note: "The file is missing" };
   const buf = Buffer.from(await data.arrayBuffer());
   const mime = d.mime ?? "";

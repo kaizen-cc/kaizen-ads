@@ -6,6 +6,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { createPortal } from "react-dom";
 import { field } from "@/components/ui";
 import { pushParams, useParam } from "@/lib/url-state";
+import { createClient as createBrowserClient } from "@/lib/supabase/client";
+import type { AgentFile, Attachment } from "@/lib/agent-docs";
 import {
   addItem,
   applyChange,
@@ -628,7 +630,12 @@ const ROLE_STARTERS: Record<string, string[]> = {
   account_manager: ["Put client complaints at the very top, always.", "How do you decide a client is at risk?", "Keep briefings to what changed since last time."],
 };
 
-type ChatMsg = { id: number; role: "user" | "coach" | "agent"; content: string; changes: Change[]; at: string };
+type ChatMsg = { id: number; role: "user" | "coach" | "agent"; content: string; changes: Change[]; at: string; attachments?: Attachment[] };
+
+// Training material dropped into an agent chat: up to 6 files of 50 MB, stored privately under the agent's key
+const MAX_FILE = 50 * 1024 * 1024;
+const safeName = (n: string) => n.normalize("NFKD").replace(/[^\w.\-]+/g, "-").replace(/-+/g, "-").slice(-120);
+const PAPERCLIP = "m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5";
 
 /** One running conversation with an agent or one of its skills: messages, proposed edits with Apply, and the composer. */
 function ChatPanel({
@@ -645,6 +652,7 @@ function ChatPanel({
   onSend,
   onApply,
   onClear,
+  folder,
   tall = false,
 }: {
   icon: string;
@@ -658,9 +666,11 @@ function ChatPanel({
   items: Item[];
   /** In the agent chat: the name of the skill (or "Core") each change touches */
   skillName?: (c: Change) => string | null;
-  onSend: (msg: string) => Promise<{ ok: true; messages: ChatMsg[] } | { ok: false; error: string }>;
+  onSend: (msg: string, files: AgentFile[]) => Promise<{ ok: true; messages: ChatMsg[] } | { ok: false; error: string }>;
   onApply: (chatId: number, index: number) => Promise<Result>;
   onClear: () => Promise<Result>;
+  /** Where files shared in this chat are stored (the agent's or skill's key) */
+  folder: string;
   tall?: boolean;
 }) {
   const [messages, setMessages] = useState(initial);
@@ -692,17 +702,39 @@ function ChatPanel({
   const pendingEdits = messages.reduce((t, m) => t + m.changes.filter((c) => !c.applied).length, 0);
   const last = [...messages].reverse().find((m) => m.content.trim());
 
+  // Files to share with the next message (dropped, picked or pasted); links are read straight from the message
+  const [files, setFiles] = useState<File[]>([]);
+  const [over, setOver] = useState(false);
+  const picker = useRef<HTMLInputElement>(null);
+  const addFiles = (list: File[]) => {
+    const ok = list.filter((f) => f.size <= MAX_FILE);
+    if (ok.length < list.length) setError("Files over 50 MB were left out.");
+    setFiles((cur) => [...cur, ...ok].slice(0, 6));
+  };
+
   const send = (msg: string) => {
-    if (!msg.trim() || thinking) return;
+    if ((!msg.trim() && !files.length) || thinking) return;
+    const sending = files;
     setError(null);
     setText("");
-    setMessages((m) => [...m, { id: -Date.now(), role: "user", content: msg, changes: [], at: new Date().toISOString() }]);
+    setFiles([]);
+    setMessages((m) => [...m, { id: -Date.now(), role: "user", content: msg, changes: [], at: new Date().toISOString(), attachments: sending.map((f) => ({ kind: "file" as const, name: f.name, note: null })) }]);
     start(async () => {
-      const r = await onSend(msg);
-      if (r.ok) setMessages(r.messages);
-      else {
+      const supabase = createBrowserClient();
+      const uploaded: AgentFile[] = [];
+      for (const f of sending) {
+        const path = `${folder}/${crypto.randomUUID()}-${safeName(f.name)}`;
+        const { error: e } = await supabase.storage.from("agent-docs").upload(path, f, { contentType: f.type || "application/octet-stream" });
+        if (!e) uploaded.push({ path, name: f.name, mime: f.type, bytes: f.size });
+      }
+      const r = await onSend(msg, uploaded);
+      if (r.ok) {
+        setMessages(r.messages);
+        if (uploaded.length < sending.length) setError(`${sending.length - uploaded.length} file${sending.length - uploaded.length === 1 ? "" : "s"} didn't upload.`);
+      } else {
         setError(r.error);
         setText(msg);
+        setFiles(sending);
         setMessages((m) => m.filter((x) => x.id > 0));
       }
     });
@@ -760,8 +792,21 @@ function ChatPanel({
             <ul className="grid gap-5">
               {messages.map((m) =>
                 m.role === "user" ? (
-                  <li key={m.id} className="ml-auto max-w-[85%] whitespace-pre-wrap rounded-[16px] rounded-br-[6px] bg-surface-2 px-4 py-2.5 text-sm leading-relaxed [overflow-wrap:anywhere] md:max-w-[80%]">
-                    {m.content}
+                  <li key={m.id} className="ml-auto grid max-w-[85%] justify-items-end gap-1.5 md:max-w-[80%]">
+                    {m.content && <p className="whitespace-pre-wrap rounded-[16px] rounded-br-[6px] bg-surface-2 px-4 py-2.5 text-sm leading-relaxed [overflow-wrap:anywhere]">{m.content}</p>}
+                    {m.attachments && m.attachments.length > 0 && (
+                      <span className="flex flex-wrap justify-end gap-1.5">
+                        {m.attachments.map((a, i) => (
+                          <span key={i} title={a.note ?? undefined} className={`inline-flex max-w-[260px] items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] ${a.note ? "border-warn/40 text-warn" : "border-line text-muted"}`}>
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                              <path d={a.kind === "link" ? "M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" : PAPERCLIP} />
+                            </svg>
+                            <span className="truncate">{a.name}</span>
+                            {a.note && <span className="shrink-0">· not read</span>}
+                          </span>
+                        ))}
+                      </span>
+                    )}
                   </li>
                 ) : (
                   <li key={m.id} className="grid min-w-0 gap-3 md:max-w-[92%]">
@@ -811,8 +856,53 @@ function ChatPanel({
           e.preventDefault();
           send(text);
         }}
-        className={`flex shrink-0 items-end gap-2 border-t border-line bg-surface p-3 ${full ? "pb-[max(12px,env(safe-area-inset-bottom))]" : ""}`}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setOver(true);
+        }}
+        onDragLeave={(e) => e.currentTarget.contains(e.relatedTarget as Node) || setOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setOver(false);
+          addFiles([...e.dataTransfer.files]);
+        }}
+        className={`grid shrink-0 gap-2 border-t p-3 transition-colors ${over ? "border-brand/60 bg-brand-soft" : "border-line bg-surface"} ${full ? "pb-[max(12px,env(safe-area-inset-bottom))]" : ""}`}
       >
+        <input
+          ref={picker}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            addFiles([...(e.target.files ?? [])]);
+            e.target.value = "";
+          }}
+        />
+        {files.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {files.map((f, i) => (
+              <span key={`${f.name}-${i}`} className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-line bg-bg py-1 pl-3 pr-1 text-[11.5px] text-muted">
+                <span className="truncate">{f.name}</span>
+                <button type="button" onClick={() => setFiles((cur) => cur.filter((_, j) => j !== i))} aria-label={`Remove ${f.name}`} className="grid h-7 w-7 place-items-center rounded-full text-faint hover:bg-surface-2 hover:text-fg md:h-5 md:w-5">
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        {over && <p className="text-center text-xs text-muted">Drop to share: it reads the file and proposes what to change</p>}
+        <div className="flex items-end gap-2">
+        <button
+          type="button"
+          onClick={() => picker.current?.click()}
+          aria-label="Share a file"
+          title="Share files (PDF, Word, PowerPoint, Excel, text, pictures) or paste links: it reads them and proposes edits"
+          className="grid h-11 w-11 shrink-0 place-items-center rounded-[10px] border border-line text-muted hover:border-faint hover:text-fg md:h-10 md:w-10"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d={PAPERCLIP} />
+          </svg>
+        </button>
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -822,13 +912,21 @@ function ChatPanel({
               send(text);
             }
           }}
+          onPaste={(e) => {
+            const pasted = [...e.clipboardData.files];
+            if (pasted.length) {
+              e.preventDefault();
+              addFiles(pasted);
+            }
+          }}
           rows={Math.min(8, Math.max(1, text.split("\n").length))}
           placeholder={placeholder}
           className="min-h-11 min-w-0 flex-1 resize-none rounded-[10px] border border-line bg-bg px-3.5 py-2.5 text-sm outline-none focus:border-brand-text/60 md:min-h-10"
         />
-        <button disabled={thinking || !text.trim()} className="h-11 shrink-0 rounded-[10px] bg-brand px-4 text-sm font-medium text-white disabled:opacity-40 md:h-10">
-          Send
+        <button disabled={thinking || (!text.trim() && !files.length)} className="h-11 shrink-0 rounded-[10px] bg-brand px-4 text-sm font-medium text-white disabled:opacity-40 md:h-10">
+          {files.length && !text.trim() ? "Share" : "Send"}
         </button>
+        </div>
       </form>
     </div>
   );
@@ -888,7 +986,8 @@ function Coach({ a, initial, items }: { a: Agent; initial: ChatMessage[]; items:
       thinkingLabel="Reading its playbook…"
       initial={initial}
       items={items}
-      onSend={(msg) => chatWithCoach(a.key, msg)}
+      folder={a.key}
+      onSend={(msg, files) => chatWithCoach(a.key, msg, files)}
       onApply={(id, i) => applyChange(a.key, id, i)}
       onClear={() => clearChat(a.key)}
     />
@@ -1344,7 +1443,7 @@ function TalkToAgent({ role, skills, items, chat }: { role: Role; skills: Agent[
         <div>
           <h3 className="font-heading text-[20px] leading-tight">Talk to the {role.label}</h3>
           <p className="mt-1 max-w-2xl text-sm text-muted">
-            Ask how it works or tell it what to do better, like you would a teammate. It works out whether that belongs in its core or in one of its {skills.length} skills and proposes the exact edit. You apply each one.
+            Ask how it works, tell it what to do better, or share files and links (SOPs, examples of great work, call notes) like you would with a teammate. It works out whether that belongs in its core or in one of its {skills.length} skills and proposes the exact edit. You apply each one.
           </p>
         </div>
         <div className="flex flex-wrap gap-1.5">
@@ -1360,15 +1459,16 @@ function TalkToAgent({ role, skills, items, chat }: { role: Role; skills: Agent[
         tall
         icon={role.icon}
         heading={`Hi, I'm the ${role.label}`}
-        intro={`I know my core and all ${skills.length} of my skills. Ask me how I do something, or tell me what to change and I'll show you exactly where I'd change it.`}
+        intro={`I know my core and all ${skills.length} of my skills. Ask me how I do something, tell me what to change, or share a playbook, an example or a link and I'll show you exactly where I'd change it.`}
         starters={ROLE_STARTERS[role.key] ?? []}
-        placeholder={`Talk to the ${role.label}…`}
+        placeholder={`Talk to the ${role.label}, paste a link or drop a file…`}
         footnote="Runs on Opus. Nothing changes until you press Apply."
         thinkingLabel="Thinking it through…"
         initial={chat}
         items={items}
         skillName={(c) => (c.skill === "core" ? "Core" : names.get(c.skill ?? "") ?? null)}
-        onSend={(msg) => chatWithAgent(role.key, msg)}
+        folder={role.key}
+        onSend={(msg, files) => chatWithAgent(role.key, msg, files)}
         onApply={(id, i) => applyRoleChange(role.key, id, i)}
         onClear={() => clearRoleChat(role.key)}
       />
