@@ -29,7 +29,7 @@ export async function buildBible(admin: SupabaseClient, clientId: string, opts: 
   const [{ data: client }, ctx, { data: prev }] = await Promise.all([
     admin.from("clients").select("id, name, website").eq("id", clientId).maybeSingle(),
     clientContext(admin, clientId),
-    admin.from("client_brand_bibles").select("markdown, version, sources_pasted").eq("client_id", clientId).maybeSingle(),
+    admin.from("client_brand_bibles").select("markdown, version, sources_pasted, research, researched_at").eq("client_id", clientId).maybeSingle(),
   ]);
   if (!client || !ctx) return "missing";
   const sources = opts.pasted?.trim() || prev?.sources_pasted || (await intakeSource(admin, clientId));
@@ -44,8 +44,17 @@ export async function buildBible(admin: SupabaseClient, clientId: string, opts: 
 
   const context = contextBlock(ctx);
   try {
-    const research = await researchWeb({
+    // Research is the expensive half: kept as soon as it's done, and reused for 30 days (a retry or an update within
+    // the month doesn't pay for it again). Gathering pages runs on Sonnet with a few searches; the strategy is Opus.
+    const fresh = prev?.research && prev.researched_at && Date.now() - Date.parse(prev.researched_at) < 30 * 86_400_000;
+    const research = fresh
+      ? (prev!.research as string)
+      : await researchWeb({
       agent: "brandbible",
+      model: "sonnet",
+      maxSearches: 6,
+      maxFetches: 5,
+      maxTurns: 3,
       label: `brand bible research ${client.name}`,
       system: "You research a client for Kaizen Marketing's Brand Bible. Follow the research playbook skill. Report only what you actually found, each fact with its source URL and the date you read it.",
       prompt: `Research ${client.name}${client.website ? ` (website: ${client.website})` : ""} for their Brand Bible. Today is ${today()}.
@@ -60,16 +69,20 @@ Find and report, with a source URL on every line:
 What Kaizen already knows about this client (don't repeat it; use it to aim the research):
 ${context.slice(0, 12000)}`,
     });
+    if (!fresh && research) await admin.from("client_brand_bibles").update({ research: research.slice(0, 100000), researched_at: new Date().toISOString() }).eq("client_id", clientId);
 
     const bible = await askJson<BrandBibleOut>({
       agent: "brandbible",
       label: `brand bible ${client.name}`,
+      // A full Bible runs 15-25k tokens; 16k cut most of them off
+      maxTokens: 48000,
+      onText: () => {},
       system: "You are Kaizen Marketing's brand strategist.",
       schema: BRAND_BIBLE_SCHEMA,
       prompt: `${context}
 
 <web_research date="${today()}">
-${research || "No research came back."}
+${(research || "No research came back.").slice(0, 60000)}
 </web_research>
 
 <sources_pasted_by_the_team>
@@ -92,7 +105,6 @@ Build ${client.name}'s Brand Bible following the Brand Bible structure skill. To
         read_this_first: bible.readThisFirst,
         team_notes: bible.teamNotes,
         open_questions: bible.openQuestions,
-        research: research.slice(0, 100000),
         generated_at: new Date().toISOString(),
         reviewed_at: null,
         reviewed_by: null,
@@ -110,13 +122,15 @@ Build ${client.name}'s Brand Bible following the Brand Bible structure skill. To
 }
 
 const DAY = 86_400_000;
+/** At most this many Bibles a day (about $2 each), so the catch-up costs a predictable amount per day */
+const DAILY_CAP = 15;
 
 /**
  * Every client in Kaizen Ads (onboarding, active or paused; not archived) with a Brand Bible, kept current. Each run
  * builds a few, in parallel, in this order: clients with none (onboarding and active first), then ones whose new
  * intake came in after the Bible was built, then ones a month old; a failed or stuck build is tried again after 6 hours.
  */
-export async function autoBibles(admin: SupabaseClient, max = 3) {
+export async function autoBibles(admin: SupabaseClient, max = 1) {
   const [{ data: clients }, { data: bibles }, { data: intakes }] = await Promise.all([
     admin.from("clients").select("id, name, status, created_at").is("archived_at", null).in("status", ["onboarding", "active", "paused"]),
     admin.from("client_brand_bibles").select("client_id, status, markdown, generated_at, started_at"),
@@ -133,14 +147,17 @@ export async function autoBibles(admin: SupabaseClient, max = 3) {
   for (const c of clients ?? []) {
     const b = bible.get(c.id);
     const tier = c.status === "paused" ? 1 : 0;
-    // A build in flight (or one that died less than 6 hours ago) is left alone
+    // A build in flight is left alone for 6 hours; a failed one waits a day before it's tried again
     if (b?.status === "building" && ago(b.started_at) < 6 * 3_600_000) continue;
-    if (b?.status === "failed" && ago(b.started_at) < 6 * 3_600_000) continue;
+    if (b?.status === "failed" && ago(b.started_at) < 24 * 3_600_000) continue;
     if (!b?.markdown) todo.push({ id: c.id, name: c.name, rank: tier, why: "new" });
     else if (lastIntake.get(c.id) && Date.parse(lastIntake.get(c.id)!) > Date.parse(b.generated_at ?? "1970-01-01")) todo.push({ id: c.id, name: c.name, rank: 2, why: "new intake" });
     else if (ago(b.generated_at) > 30 * DAY && c.status !== "paused") todo.push({ id: c.id, name: c.name, rank: 3, why: "monthly update" });
   }
   todo.sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name));
+  // A ceiling per 24 hours, so building every client's Bible spreads over days instead of one spike
+  const { count: lastDay } = await admin.from("ai_runs").select("id", { count: "exact", head: true }).eq("agent_key", "brandbible").not("label", "like", "brand bible research%").gte("created_at", new Date(Date.now() - DAY).toISOString());
+  if ((lastDay ?? 0) >= DAILY_CAP) return { waiting: todo.length, results: {}, paused: `${DAILY_CAP} built in the last 24 hours` };
   const batch = todo.slice(0, max);
   const results = await Promise.all(batch.map(async (t) => [t.name, `${t.why}: ${await buildBible(admin, t.id, { by: null })}`] as const));
   return { waiting: todo.length - batch.length, results: Object.fromEntries(results) };

@@ -125,6 +125,20 @@ function logRun(row: Record<string, unknown>) {
 
 export class AiUnavailable extends Error {}
 
+/**
+ * The system prompt as a cached block: an agent's core, skills and playbook are the same on every call, so after the
+ * first call within five minutes they're read from Anthropic's prompt cache (about a tenth of the price) instead of
+ * being paid for again.
+ */
+const cached = (text: string) => [{ type: "text" as const, text, cache_control: { type: "ephemeral" as const } }];
+/** Tokens a call used, including what it wrote to and read from the prompt cache */
+const usageOf = (u: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null }) => ({
+  input_tokens: u.input_tokens,
+  output_tokens: u.output_tokens,
+  cache_write_tokens: u.cache_creation_input_tokens ?? 0,
+  cache_read_tokens: u.cache_read_input_tokens ?? 0,
+});
+
 /** One structured call by an agent. Returns the parsed JSON or throws AiUnavailable with a message the UI can show. */
 export async function askJson<T>({
   agent,
@@ -164,7 +178,7 @@ export async function askJson<T>({
   const request = {
     model: MODEL_IDS[cfg.model],
     max_tokens: maxTokens,
-    system: bare ? system : withAgent(system, cfg),
+    system: cached(bare ? system : withAgent(system, cfg)),
     output_config: { effort: cfg.effort, format: { type: "json_schema" as const, schema } },
     messages: [
       {
@@ -201,8 +215,8 @@ export async function askJson<T>({
       }
     const ms = Date.now() - started;
     const bad = res.stop_reason === "refusal" || res.stop_reason === "max_tokens";
-    console.log(`[ai] ${label} · ${res.model} · ${ms}ms · ${res.usage.input_tokens} in / ${res.usage.output_tokens} out`);
-    logRun({ ...run, ms, input_tokens: res.usage.input_tokens, output_tokens: res.usage.output_tokens, ok: !bad, error: bad ? res.stop_reason : null });
+    console.log(`[ai] ${label} · ${res.model} · ${ms}ms · ${res.usage.input_tokens} in (${res.usage.cache_read_input_tokens ?? 0} cached) / ${res.usage.output_tokens} out`);
+    logRun({ ...run, ms, ...usageOf(res.usage), ok: !bad, error: bad ? res.stop_reason : null });
     if (res.stop_reason === "refusal") throw new AiUnavailable("The AI couldn't help with this one.");
     if (res.stop_reason === "max_tokens") throw new AiUnavailable("The AI ran out of room. Try again.");
     const text = (res.content as { type: string; text?: string }[]).find((b) => b.type === "text");
@@ -224,27 +238,34 @@ export async function askJson<T>({
  * Web research by an agent: searches and reads pages, then returns plain-text notes with sources.
  * Server tools can pause a long turn ("pause_turn"); the paused turn is sent back to continue.
  */
-export async function researchWeb({ agent, label, system, prompt, maxSearches = 8, maxFetches = 10 }: {
+export async function researchWeb({ agent, label, system, prompt, maxSearches = 8, maxFetches = 10, maxTurns = 6, model }: {
   agent: AgentKey;
   label: string;
   system: string;
   prompt: string;
   maxSearches?: number;
   maxFetches?: number;
+  /** How many paused turns to continue: every continuation resends everything read so far */
+  maxTurns?: number;
+  /** This research's model instead of the agent's (gathering pages doesn't need the strategy model) */
+  model?: ModelKey;
 }): Promise<string> {
   if (!aiEnabled()) throw new AiUnavailable("AI isn't connected yet.");
-  const cfg = await getAgent(agent);
+  const base = await getAgent(agent);
+  const cfg = { ...base, model: model ?? base.model };
   const started = Date.now();
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: prompt }];
   const run = { agent_key: agent, label, model: cfg.model, effort: cfg.effort };
   let inTok = 0;
   let outTok = 0;
+  let cacheW = 0;
+  let cacheR = 0;
   try {
-    for (let turn = 0; turn < 6; turn++) {
+    for (let turn = 0; turn < maxTurns; turn++) {
       const res = await anthropic().messages.create({
         model: MODEL_IDS[cfg.model],
         max_tokens: 16000,
-        system: withAgent(system, cfg),
+        system: cached(withAgent(system, cfg)),
         output_config: { effort: cfg.effort },
         tools: [
           { type: "web_search_20260209", name: "web_search", max_uses: maxSearches },
@@ -254,19 +275,21 @@ export async function researchWeb({ agent, label, system, prompt, maxSearches = 
       });
       inTok += res.usage.input_tokens;
       outTok += res.usage.output_tokens;
+      cacheW += res.usage.cache_creation_input_tokens ?? 0;
+      cacheR += res.usage.cache_read_input_tokens ?? 0;
       if (res.stop_reason === "pause_turn") {
         messages.push({ role: "assistant", content: res.content });
         continue;
       }
       const text = res.content.map((b) => (b.type === "text" ? b.text : "")).join("").trim();
-      logRun({ ...run, ms: Date.now() - started, input_tokens: inTok, output_tokens: outTok, ok: Boolean(text), error: text ? null : res.stop_reason });
+      logRun({ ...run, ms: Date.now() - started, input_tokens: inTok, output_tokens: outTok, cache_write_tokens: cacheW, cache_read_tokens: cacheR, ok: Boolean(text), error: text ? null : res.stop_reason });
       return text;
     }
     throw new AiUnavailable("The research took too many steps. Try again.");
   } catch (e) {
     if (e instanceof AiUnavailable) throw e;
     console.error("[ai] research failed:", e instanceof Error ? e.message : e);
-    logRun({ ...run, ms: Date.now() - started, input_tokens: inTok, output_tokens: outTok, ok: false, error: (e instanceof Error ? e.message : String(e)).slice(0, 300) });
+    logRun({ ...run, ms: Date.now() - started, input_tokens: inTok, output_tokens: outTok, cache_write_tokens: cacheW, cache_read_tokens: cacheR, ok: false, error: (e instanceof Error ? e.message : String(e)).slice(0, 300) });
     if (e instanceof Anthropic.BadRequestError) throw new AiUnavailable(`The AI rejected the research request: ${apiMessage(e)}`);
     throw new AiUnavailable("The research didn't finish. Try again.");
   }
