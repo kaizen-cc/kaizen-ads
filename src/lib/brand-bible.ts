@@ -4,10 +4,11 @@ import { AiUnavailable, askJson, BRAND_BIBLE_SCHEMA, clientContext, contextBlock
 
 // The Brand Bible: every client that touches Kaizen Ads gets one, and it's kept current. Built from web research, the
 // intake form and sales calls (or what the team pastes), and everything the app already knows about the client.
-// Execs and leads can build it by hand from the client page; the hourly step (autoBibles) builds it for any client
-// without one (new clients as soon as they're added), updates it when a new intake comes in or it's a month old, and
-// tries a failed build again later. A built Bible is a draft until the head of creative marks it reviewed; agents read
-// drafts as drafts.
+// The heavy build (web research, then the Bible) happens once: when the client is added, and again only when a new
+// intake form comes in. After that the Bible is maintained, not rebuilt: the client playbook (src/lib/ledger.ts) adds
+// dated lessons from what their ads proved (what worked, what to avoid) to its living learnings, which agents and the
+// team read as part of the Bible. Execs and leads can still rebuild it by hand from the client page. A built Bible is a
+// draft until the head of creative marks it reviewed; agents read drafts as drafts.
 
 const today = () => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", year: "numeric" }).format(new Date());
 
@@ -126,9 +127,9 @@ const DAY = 86_400_000;
 const DAILY_CAP = 15;
 
 /**
- * Every client in Kaizen Ads (onboarding, active or paused; not archived) with a Brand Bible, kept current. Each run
- * builds a few, in parallel, in this order: clients with none (onboarding and active first), then ones whose new
- * intake came in after the Bible was built, then ones a month old; a failed or stuck build is tried again after 6 hours.
+ * Every client in Kaizen Ads (onboarding, active or paused; not archived) with a Brand Bible. Each run builds one, in
+ * this order: clients with none (onboarding and active first), then ones whose new intake came in after the Bible was
+ * built. No time-based rebuilds: between intakes the playbook keeps it current. A failed build waits a day.
  */
 export async function autoBibles(admin: SupabaseClient, max = 1) {
   const [{ data: clients }, { data: bibles }, { data: intakes }] = await Promise.all([
@@ -152,7 +153,6 @@ export async function autoBibles(admin: SupabaseClient, max = 1) {
     if (b?.status === "failed" && ago(b.started_at) < 24 * 3_600_000) continue;
     if (!b?.markdown) todo.push({ id: c.id, name: c.name, rank: tier, why: "new" });
     else if (lastIntake.get(c.id) && Date.parse(lastIntake.get(c.id)!) > Date.parse(b.generated_at ?? "1970-01-01")) todo.push({ id: c.id, name: c.name, rank: 2, why: "new intake" });
-    else if (ago(b.generated_at) > 30 * DAY && c.status !== "paused") todo.push({ id: c.id, name: c.name, rank: 3, why: "monthly update" });
   }
   todo.sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name));
   // A ceiling per 24 hours, so building every client's Bible spreads over days instead of one spike

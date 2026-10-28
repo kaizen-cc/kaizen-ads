@@ -62,7 +62,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     ]);
   const { data: bibleRow } = await supabase
     .from("client_brand_bibles")
-    .select("status, version, markdown, read_this_first, team_notes, open_questions, error, started_at, generated_at, reviewed_at, profiles!client_brand_bibles_reviewed_by_fkey(full_name)")
+    .select("status, version, markdown, read_this_first, team_notes, open_questions, error, started_at, generated_at, reviewed_at, learnings, profiles!client_brand_bibles_reviewed_by_fkey(full_name)")
     .eq("client_id", client.id)
     .maybeSingle();
   const brandBible = bibleRow
@@ -78,6 +78,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
         generatedAt: bibleRow.generated_at,
         reviewedAt: bibleRow.reviewed_at,
         reviewedBy: (bibleRow.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
+        learnings: (bibleRow.learnings ?? []) as { at: string; kind: string; text: string }[],
       }
     : null;
   const { data: gtmRow } = await supabase

@@ -17,6 +17,8 @@ export type BrandBible = {
   generatedAt: string | null;
   reviewedAt: string | null;
   reviewedBy: string | null;
+  /** Living learnings: dated lessons from what their ads proved, added by the client playbook */
+  learnings?: { at: string; kind: string; text: string }[];
 };
 
 const STEPS = [
@@ -131,6 +133,24 @@ export function BrandBiblePanel({ clientId, slug, bible, canBuild }: { clientId:
             <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.12em] text-faint">Read this first</p>
             <Markdown text={bible.readThisFirst} />
           </div>
+
+          {bible.learnings && bible.learnings.length > 0 && (
+            <div className="min-w-0 rounded-[12px] border border-line bg-bg p-4 md:p-5">
+              <p className="mb-1 text-[11px] font-medium uppercase tracking-[0.12em] text-faint">What their ads proved since</p>
+              <p className="mb-3 text-xs text-faint">Kept current from the client playbook; newer than the Bible&apos;s text where they disagree.</p>
+              <ul className="grid gap-2">
+                {[...bible.learnings].reverse().slice(0, 12).map((l, i) => (
+                  <li key={i} className="flex gap-2.5 text-[13px] leading-relaxed">
+                    <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${l.kind === "avoid" ? "bg-bad" : "bg-ok"}`} />
+                    <span className="min-w-0">
+                      {l.text}
+                      <span className="ml-1.5 text-[11px] text-faint">{l.at}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {(bible.openQuestions.length > 0 || bible.teamNotes.length > 0) && (
             <div className="grid gap-3 sm:grid-cols-2">

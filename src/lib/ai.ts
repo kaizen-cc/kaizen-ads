@@ -356,7 +356,9 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
   ]);
   if (!c) return null;
   // The whole Brand Bible, for the most context (a draft is read as a draft)
-  const { data: bible } = await supabase.from("client_brand_bibles").select("status, markdown, read_this_first, version").eq("client_id", clientId).in("status", ["draft", "reviewed"]).maybeSingle();
+  const { data: bible } = await supabase.from("client_brand_bibles").select("status, markdown, read_this_first, version, learnings").eq("client_id", clientId).in("status", ["draft", "reviewed"]).maybeSingle();
+  // The Bible's living learnings: what their ads proved since it was written, newest first
+  const learned = ((bible?.learnings ?? []) as { at: string; kind: string; text: string }[]).slice(-30).reverse();
   // Slack and email that came in after the briefing was written, so suggestions and the review are current
   const { data: newer } = await supabase
     .from("context_items")
@@ -369,7 +371,7 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
   return {
     brandBible:
       bible?.markdown || bible?.read_this_first
-        ? `${bible.read_this_first ? `Read this first:\n${bible.read_this_first}\n\n` : ""}${bible.markdown ? `The full Brand Bible:\n${bible.markdown.slice(0, 40000)}` : ""}\n(Brand Bible ${bible.version}${bible.status === "reviewed" ? ", reviewed by Kaizen" : ", a draft the Head of Creative hasn't reviewed yet"})`
+        ? `${bible.read_this_first ? `Read this first:\n${bible.read_this_first}\n\n` : ""}${learned.length ? `What their ads proved since (living learnings, newer than the Bible's text where they disagree):\n${learned.map((l) => `- ${l.at} ${l.kind === "avoid" ? "AVOID" : "WORKS"}: ${l.text}`).join("\n")}\n\n` : ""}${bible.markdown ? `The full Brand Bible:\n${bible.markdown.slice(0, 40000)}` : ""}\n(Brand Bible ${bible.version}${bible.status === "reviewed" ? ", reviewed by Kaizen" : ", a draft the Head of Creative hasn't reviewed yet"})`
         : null,
     // Loaded here, not at the top: the strategy module uses this one
     gtm: await import("@/lib/gtm").then(({ gtmForContext }) => gtmForContext(supabase, clientId)),
