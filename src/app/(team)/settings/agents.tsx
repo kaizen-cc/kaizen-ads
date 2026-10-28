@@ -8,6 +8,7 @@ import { field } from "@/components/ui";
 import { pushParams, useParam } from "@/lib/url-state";
 import { createClient as createBrowserClient } from "@/lib/supabase/client";
 import type { AgentFile, Attachment } from "@/lib/agent-docs";
+import { EFFORT_TRADEOFFS, TRADEOFFS, costIf, costOf, type ModelKey as CostModel, type Usage } from "@/lib/ai-costs";
 import {
   addItem,
   applyChange,
@@ -44,6 +45,10 @@ export type Agent = {
   updatedAt: string;
   updatedBy: string | null;
   stats: { runs: number; avgMs: number | null; inTokens: number; outTokens: number; failed: number };
+  /** What it cost over the last 7 days, in dollars */
+  cost7: number;
+  /** This month's tokens by the model they ran on */
+  mtd: Partial<Record<CostModel, Usage>>;
   lastAt: string | null; // the last time it ran, ever
   moments: { title: string; where: string; trigger: "auto" | "click"; when: string; runs7: number; lastAt: string | null }[];
   recent: { at: string; moment: string | null; label: string; model: string; ms: number | null; tokens: string; ok: boolean; error: string | null }[];
@@ -487,6 +492,73 @@ function ItemList({ items, agentKey }: { items: Item[]; agentKey: string | null 
 
 // ─── One agent ───────────────────────────────────────────────────────────────
 
+/**
+ * What switching this skill's model or effort would do: this month's actual cost against the same work repriced on
+ * the picked model (output scaled for the effort), projected over the month, with what's gained and given up.
+ */
+function CostCompare({ a, model, effort }: { a: Agent; model: string; effort: string }) {
+  const used = Object.values(a.mtd).filter((u): u is Usage => Boolean(u));
+  const runs = used.reduce((t, u) => t + u.runs, 0);
+  const actual = Object.entries(a.mtd).reduce((t, [m, u]) => t + (u ? costOf(m, u) : 0), 0);
+  const same = model === a.model && effort === a.effort;
+  const next = costIf(a.mtd, a.effort as "low" | "medium" | "high", { model: model as CostModel, effort: effort as "low" | "medium" | "high" });
+  const day = new Date().getDate();
+  const days = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
+  const month = (n: number) => (n / Math.max(1, day)) * days;
+  const diff = actual ? (next - actual) / actual : 0;
+  const t = TRADEOFFS[model as CostModel];
+  const e = EFFORT_TRADEOFFS[effort as "low" | "medium" | "high"];
+  return (
+    <div className={`grid gap-3 rounded-[14px] border p-4 transition-colors ${same ? "border-line bg-bg" : diff < 0 ? "border-ok/40 bg-ok-soft/30" : "border-warn/40 bg-warn-soft/30"}`}>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">{same ? "What this skill costs" : "If you make this change"}</p>
+        <p className="text-[11px] text-faint">{runs ? `${runs.toLocaleString()} runs this month` : "No runs yet this month"}</p>
+      </div>
+      {runs > 0 ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-0.5">
+            <span className="text-xs text-muted">This month so far</span>
+            <span className="tabular font-heading text-[22px] leading-none">{money(actual)}</span>
+            <span className="tabular text-[11px] text-faint">about {money(month(actual))} for the month · {money(actual / runs)} a run</span>
+          </div>
+          {!same && (
+            <div className="grid gap-0.5">
+              <span className="text-xs text-muted">
+                The same work on {model[0].toUpperCase() + model.slice(1)}, {effort} effort
+              </span>
+              <span className={`tabular font-heading text-[22px] leading-none ${diff < 0 ? "text-ok" : "text-warn"}`}>
+                {money(next)} <span className="text-sm">({diff < 0 ? "" : "+"}{Math.round(diff * 100)}%)</span>
+              </span>
+              <span className="tabular text-[11px] text-faint">
+                about {money(month(next))} for the month · {diff < 0 ? "saves" : "adds"} about {money(Math.abs(month(next) - month(actual)))}
+              </span>
+            </div>
+          )}
+        </div>
+      ) : (
+        <p className="text-xs text-muted">Once it runs this month, the cost of switching shows here.</p>
+      )}
+      {!same && (
+        <ul className="grid gap-1.5 text-[12.5px] leading-relaxed">
+          {model !== a.model && (
+            <>
+              <li className="flex gap-2"><span className="text-ok">+</span><span>{t.good}</span></li>
+              <li className="flex gap-2"><span className="text-warn">−</span><span>{t.watch}</span></li>
+            </>
+          )}
+          {effort !== a.effort && (
+            <>
+              <li className="flex gap-2"><span className="text-ok">+</span><span>{e.good}</span></li>
+              {e.watch && <li className="flex gap-2"><span className="text-warn">−</span><span>{e.watch}</span></li>}
+            </>
+          )}
+        </ul>
+      )}
+      {!same && <p className="text-[10.5px] text-faint">An estimate: this month&apos;s tokens repriced, with output scaled for effort. Quality changes aren&apos;t priced in, so check a few results after switching.</p>}
+    </div>
+  );
+}
+
 function Setup({ a }: { a: Agent }) {
   const [model, setModel] = useState(a.model);
   const [effort, setEffort] = useState(a.effort);
@@ -534,6 +606,7 @@ function Setup({ a }: { a: Agent }) {
           </div>
           <p className="text-xs text-faint">{EFFORTS.find((e) => e.key === effort)?.hint}</p>
         </div>
+        <CostCompare a={a} model={model} effort={effort} />
       </div>
 
       <div className="grid gap-3">
@@ -1046,6 +1119,7 @@ export function AgentDetail({ a, items, chat }: { a: Agent; items: Item[]; chat:
                 ["Brain", `${a.model[0].toUpperCase()}${a.model.slice(1)} · ${a.effort}`],
                 ["Reads", `~${tokens.toLocaleString()} tokens`],
                 ["Runs, 7 days", a.stats.runs ? String(a.stats.runs) : "—"],
+                ["Cost, 7 days", a.cost7 >= 0.005 ? `${money(a.cost7)} · ${money(a.cost7 / 7)}/day` : "—"],
                 ["Last used", ago(a.lastAt) ?? "Never"],
                 ["Avg time", a.stats.avgMs == null ? "—" : `${(a.stats.avgMs / 1000).toFixed(1)}s`],
               ].map(([k, v]) => (
@@ -1303,14 +1377,61 @@ function SpineEditor({ spine }: { spine: { body: string; updatedAt: string | nul
   );
 }
 
+const money = (n: number) => (n >= 100 ? `$${Math.round(n).toLocaleString("en-US")}` : `$${n.toFixed(n >= 10 ? 1 : 2)}`);
 const roleStats = (role: Role, skills: Agent[]) => ({
+  cost7: skills.reduce((t, s) => t + s.cost7, 0),
   runs: skills.reduce((t, s) => t + s.stats.runs, 0),
   last: skills.map((s) => s.lastAt).filter((x): x is string => Boolean(x)).sort().at(-1) ?? null,
   proposals: role.proposals + skills.reduce((t, s) => t + s.proposals, 0),
 });
 
-export function RolesOverview({ roles, agents, items, spine }: { roles: Role[]; agents: Agent[]; items: Item[]; spine: { body: string; updatedAt: string | null; updatedBy: string | null } }) {
+/** The AI agents section: the agents, the knowledge every one of them reads, and what they cost */
+export function AgentsNav({ section }: { section: string }) {
+  const tabs = [
+    ["agents", "Agents"],
+    ["knowledge", "Knowledge"],
+    ["expenses", "Expenses"],
+  ] as const;
+  const on = tabs.some(([k]) => k === section) ? section : "agents";
+  return (
+    <nav className="flex w-full gap-1 rounded-full border border-line bg-surface p-1 md:w-auto md:self-start" aria-label="AI agents">
+      {tabs.map(([k, l]) => (
+        <Link
+          key={k}
+          href={k === "agents" ? "/settings?tab=agents" : `/settings?tab=agents&section=${k}`}
+          aria-current={on === k ? "page" : undefined}
+          className={`inline-flex h-10 flex-1 items-center justify-center rounded-full px-5 text-sm transition-colors md:h-9 md:flex-none ${on === k ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}
+        >
+          {l}
+        </Link>
+      ))}
+    </nav>
+  );
+}
+
+/** Knowledge every agent reads: Kaizen's strategy first, then the shared items (how Kaizen works, policy, formats) */
+export function KnowledgeView({ items, spine }: { items: Item[]; spine: { body: string; updatedAt: string | null; updatedBy: string | null } }) {
   const shared = items.filter((k) => k.agentKey === null);
+  return (
+    <DirtyProvider>
+      <div className="grid gap-8">
+        <SpineEditor spine={spine} />
+        <section className="grid gap-4 rounded-[18px] border border-line bg-surface p-4 sm:p-6">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h2 className="font-heading text-[20px]">Shared knowledge</h2>
+              <p className="mt-1 text-[13px] text-muted">Every agent reads these: how Kaizen works, packages and pricing, Meta policy, formats and specs.</p>
+            </div>
+            <span className="tabular text-xs text-faint">~{shared.filter((k) => k.active).reduce((t, k) => t + tokensOf(k.body), 0).toLocaleString()} tokens</span>
+          </div>
+          <ItemList items={shared} agentKey={null} />
+        </section>
+      </div>
+    </DirtyProvider>
+  );
+}
+
+export function RolesOverview({ roles, agents, items }: { roles: Role[]; agents: Agent[]; items: Item[] }) {
   return (
     <DirtyProvider>
       <div className="grid gap-8">
@@ -1370,6 +1491,9 @@ export function RolesOverview({ roles, agents, items, spine }: { roles: Role[]; 
                             <span className="w-14 text-right tabular" title="Runs in the last 7 days">
                               {s.stats.runs ? `${s.stats.runs} run${s.stats.runs === 1 ? "" : "s"}` : "—"}
                             </span>
+                            <span className="hidden w-12 text-right tabular sm:inline" title="Cost over the last 7 days">
+                              {s.cost7 >= 0.005 ? money(s.cost7) : "—"}
+                            </span>
                             {s.key === "fatigue" ? (
                               <span className="w-16" title="A rule after every Meta sync; it makes no AI call">
                                 rule, no AI
@@ -1387,6 +1511,12 @@ export function RolesOverview({ roles, agents, items, spine }: { roles: Role[]; 
                     <div className="mt-auto flex items-center justify-between text-[11px] text-faint">
                       <span>
                         <span className="tabular text-fg">{st.runs}</span> runs this week
+                        {st.cost7 >= 0.005 && (
+                          <>
+                            {" · "}
+                            <span className="tabular text-fg">{money(st.cost7 / 7)}</span>/day avg
+                          </>
+                        )}
                       </span>
                       <span>{st.last ? `last used ${ago(st.last)}` : "not used yet"}</span>
                     </div>
@@ -1397,18 +1527,6 @@ export function RolesOverview({ roles, agents, items, spine }: { roles: Role[]; 
           </ul>
         </section>
 
-        <SpineEditor spine={spine} />
-
-        <section className="grid gap-4 rounded-[18px] border border-line bg-surface p-4 sm:p-6">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <h2 className="font-heading text-[20px]">Shared knowledge</h2>
-              <p className="mt-1 text-[13px] text-muted">Every agent reads these: how Kaizen works, Meta policy, formats and specs.</p>
-            </div>
-            <span className="tabular text-xs text-faint">~{shared.filter((k) => k.active).reduce((t, k) => t + tokensOf(k.body), 0).toLocaleString()} tokens</span>
-          </div>
-          <ItemList items={shared} agentKey={null} />
-        </section>
       </div>
     </DirtyProvider>
   );
@@ -1492,10 +1610,11 @@ export function RoleDetail({ role, skills, items, chat }: { role: Role; skills: 
               <h2 className="font-heading text-[26px] leading-tight [overflow-wrap:anywhere] md:text-[30px]">{role.label}</h2>
               <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">{role.description}</p>
             </div>
-            <dl className="grid w-full grid-cols-2 gap-x-8 gap-y-3 border-t border-line pt-5 sm:grid-cols-4">
+            <dl className="grid w-full grid-cols-2 gap-x-8 gap-y-3 border-t border-line pt-5 sm:grid-cols-5">
               {[
                 ["Skills", String(skills.length)],
                 ["Runs, 7 days", st.runs ? String(st.runs) : "—"],
+                ["Cost, 7 days", st.cost7 >= 0.005 ? `${money(st.cost7)} · ${money(st.cost7 / 7)}/day` : "—"],
                 ["Last used", ago(st.last) ?? "Never"],
                 ["Proposed edits", st.proposals ? String(st.proposals) : "None"],
               ].map(([k, v]) => (

@@ -115,11 +115,33 @@ ${a.role.core.trim()}
   return parts.join("\n\n");
 }
 
-function logRun(row: Record<string, unknown>) {
+/** Who set an AI call off: the signed-in team member, or Kaizen Ads itself (a scheduled job, no one signed in) */
+type Actor = { profile_id: string | null; actor: "person" | "auto" };
+const AUTO: Actor = { profile_id: null, actor: "auto" };
+const profileOf = new Map<string, string | null>();
+async function actorNow(): Promise<Actor> {
+  try {
+    // Read from the request's session; a scheduled job has none (and outside a request there's no cookie to read)
+    const { createClient } = await import("@/lib/supabase/server");
+    const { data } = await (await createClient()).auth.getClaims();
+    const uid = data?.claims?.sub;
+    if (!uid) return AUTO;
+    if (!profileOf.has(uid)) {
+      const { data: p } = await createAdminClient().from("profiles").select("id").eq("auth_user_id", uid).maybeSingle();
+      profileOf.set(uid, (p?.id as string | undefined) ?? null);
+    }
+    const id = profileOf.get(uid) ?? null;
+    return id ? { profile_id: id, actor: "person" } : AUTO;
+  } catch {
+    return AUTO;
+  }
+}
+
+function logRun(row: Record<string, unknown>, who: Promise<Actor> = Promise.resolve(AUTO)) {
   if (!adminConfigured()) return;
-  void createAdminClient()
-    .from("ai_runs")
-    .insert(row)
+  void who
+    .catch(() => AUTO)
+    .then((a) => createAdminClient().from("ai_runs").insert({ ...row, ...a }))
     .then(({ error }) => error && console.error("[ai] couldn't log run:", error.message));
 }
 
@@ -197,6 +219,7 @@ export async function askJson<T>({
     ],
   };
   const run = { agent_key: agent, label, model: cfg.model, effort: cfg.effort };
+  const who = adminConfigured() ? actorNow() : Promise.resolve(AUTO);
   try {
     let res;
     if (onText) {
@@ -219,7 +242,7 @@ export async function askJson<T>({
     const ms = Date.now() - started;
     const bad = res.stop_reason === "refusal" || res.stop_reason === "max_tokens";
     console.log(`[ai] ${label} · ${res.model} · ${ms}ms · ${res.usage.input_tokens} in (${res.usage.cache_read_input_tokens ?? 0} cached) / ${res.usage.output_tokens} out`);
-    logRun({ ...run, ms, ...usageOf(res.usage), ok: !bad, error: bad ? res.stop_reason : null });
+    logRun({ ...run, ms, ...usageOf(res.usage), ok: !bad, error: bad ? res.stop_reason : null }, who);
     if (res.stop_reason === "refusal") throw new AiUnavailable("The AI couldn't help with this one.");
     if (res.stop_reason === "max_tokens") throw new AiUnavailable("The AI ran out of room. Try again.");
     const text = (res.content as { type: string; text?: string }[]).find((b) => b.type === "text");
@@ -228,7 +251,7 @@ export async function askJson<T>({
   } catch (e) {
     if (e instanceof AiUnavailable) throw e;
     console.error("[ai] request failed:", e instanceof Error ? e.message : e);
-    logRun({ ...run, ms: Date.now() - started, ok: false, error: (e instanceof Error ? e.message : String(e)).slice(0, 300) });
+    logRun({ ...run, ms: Date.now() - started, ok: false, error: (e instanceof Error ? e.message : String(e)).slice(0, 300) }, who);
     if (paused(e)) throw new AiPaused("The AI is busy or at Kaizen's usage limit. Try again in a moment.");
     if (e instanceof Anthropic.AuthenticationError) throw new AiUnavailable("The AI key isn't valid.");
     if (e instanceof Anthropic.BadRequestError) throw new AiUnavailable(`The AI rejected the request: ${apiMessage(e)}`);
@@ -263,6 +286,8 @@ export async function researchWeb({ agent, label, system, prompt, maxSearches = 
   let outTok = 0;
   let cacheW = 0;
   let cacheR = 0;
+  let searches = 0;
+  const who = adminConfigured() ? actorNow() : Promise.resolve(AUTO);
   try {
     for (let turn = 0; turn < maxTurns; turn++) {
       const res = await anthropic().messages.create({
@@ -280,19 +305,20 @@ export async function researchWeb({ agent, label, system, prompt, maxSearches = 
       outTok += res.usage.output_tokens;
       cacheW += res.usage.cache_creation_input_tokens ?? 0;
       cacheR += res.usage.cache_read_input_tokens ?? 0;
+      searches += res.usage.server_tool_use?.web_search_requests ?? 0;
       if (res.stop_reason === "pause_turn") {
         messages.push({ role: "assistant", content: res.content });
         continue;
       }
       const text = res.content.map((b) => (b.type === "text" ? b.text : "")).join("").trim();
-      logRun({ ...run, ms: Date.now() - started, input_tokens: inTok, output_tokens: outTok, cache_write_tokens: cacheW, cache_read_tokens: cacheR, ok: Boolean(text), error: text ? null : res.stop_reason });
+      logRun({ ...run, ms: Date.now() - started, input_tokens: inTok, output_tokens: outTok, cache_write_tokens: cacheW, cache_read_tokens: cacheR, searches, ok: Boolean(text), error: text ? null : res.stop_reason }, who);
       return text;
     }
     throw new AiUnavailable("The research took too many steps. Try again.");
   } catch (e) {
     if (e instanceof AiUnavailable) throw e;
     console.error("[ai] research failed:", e instanceof Error ? e.message : e);
-    logRun({ ...run, ms: Date.now() - started, input_tokens: inTok, output_tokens: outTok, cache_write_tokens: cacheW, cache_read_tokens: cacheR, ok: false, error: (e instanceof Error ? e.message : String(e)).slice(0, 300) });
+    logRun({ ...run, ms: Date.now() - started, input_tokens: inTok, output_tokens: outTok, cache_write_tokens: cacheW, cache_read_tokens: cacheR, searches, ok: false, error: (e instanceof Error ? e.message : String(e)).slice(0, 300) }, who);
     if (e instanceof Anthropic.BadRequestError) throw new AiUnavailable(`The AI rejected the research request: ${apiMessage(e)}`);
     if (paused(e)) throw new AiPaused("Kaizen's AI account is at its usage limit right now. It tries again on its own once the limit lifts.");
     throw new AiUnavailable("The research didn't finish. Try again.");

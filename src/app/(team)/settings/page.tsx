@@ -8,7 +8,10 @@ import { nyParts } from "@/lib/kpi/calc";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { ChatMessage, Change, RoleChatMessage } from "./actions";
-import { AgentDetail, RoleDetail, RolesOverview, type Agent, type Item, type Role } from "./agents";
+import { AgentDetail, AgentsNav, KnowledgeView, RoleDetail, RolesOverview, type Agent, type Item, type Role } from "./agents";
+import { Expenses, rollupFrom, type CostRow } from "./expenses";
+import { addUsage, costOf, emptyUsage, type ModelKey, type Usage } from "@/lib/ai-costs";
+import { roleLabel, type TeamRole } from "@/lib/roles";
 import { DataInspector } from "./data-inspector";
 import { AGENT_MOMENTS, momentOf } from "@/lib/agent-moments";
 import Team from "../team/page";
@@ -38,9 +41,36 @@ const day = (offset: number) => {
   return d.toISOString().slice(0, 10);
 };
 
-async function Agents({ open, role: openRole }: { open: string | null; role: string | null }) {
+// The clock, read outside render (the page is dynamic; these only frame the cost rollup)
+const tomorrowIso = () => new Date(Date.now() + 86_400_000).toISOString();
+const sixDaysAgo = () => new Date(Date.now() - 6 * 86_400_000);
+
+async function Agents({ open, role: openRole, section, range, by }: { open: string | null; role: string | null; section: string; range: string; by: string }) {
   const supabase = await createClient();
   const since = daysAgoIso(7);
+  // What every AI call cost, rolled up by day, skill, model, kind and person, back to the earliest period the
+  // Expenses page offers; the agent cards and the model picker read the last 7 days and this month from it
+  const nyDay = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(d);
+  const [{ data: rollup }, { data: staff }] = await Promise.all([
+    supabase.rpc("ai_cost_rollup", { p_from: `${rollupFrom()}T00:00:00-05:00`, p_to: tomorrowIso() }),
+    supabase.from("profiles").select("id, full_name, role, is_active").eq("is_active", true).order("full_name"),
+  ]);
+  const costRows = ((rollup ?? []) as CostRow[]).map((r) => ({ ...r, runs: Number(r.runs), failed: Number(r.failed), input: Number(r.input), output: Number(r.output), cache_w: Number(r.cache_w), cache_r: Number(r.cache_r), searches: Number(r.searches) }));
+  const week = nyDay(sixDaysAgo());
+  const monthStart = `${nyDay(new Date()).slice(0, 7)}-01`;
+  const rowUsage = (r: CostRow): Usage => ({ runs: r.runs, failed: r.failed, input: r.input, output: r.output, cacheW: r.cache_w, cacheR: r.cache_r, searches: r.searches });
+  const cost7 = new Map<string, number>();
+  const mtdByModel = new Map<string, Partial<Record<ModelKey, Usage>>>();
+  for (const r of costRows) {
+    const k = r.agent ?? "?";
+    if (r.day >= week) cost7.set(k, (cost7.get(k) ?? 0) + costOf(r.model, rowUsage(r)));
+    if (r.day >= monthStart) {
+      const m = (["opus", "sonnet", "haiku"].includes(r.model ?? "") ? r.model : "opus") as ModelKey;
+      const by = mtdByModel.get(k) ?? {};
+      by[m] = addUsage(by[m] ?? emptyUsage(), rowUsage(r));
+      mtdByModel.set(k, by);
+    }
+  }
   const [{ data: agents }, { data: knowledge }, { data: month }, { data: roleRows }, { data: spineRow }, { data: chats }, { data: roleChats }] = await Promise.all([
     supabase.from("ai_agents").select("*, profiles(full_name)").order("sort_order"),
     supabase.from("ai_knowledge").select("*").order("created_at"),
@@ -101,6 +131,8 @@ async function Agents({ open, role: openRole }: { open: string | null; role: str
       live: a.live,
       updatedAt: a.updated_at,
       updatedBy: (a.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
+      cost7: cost7.get(a.key) ?? 0,
+      mtd: mtdByModel.get(a.key) ?? {},
       stats: {
         runs: mine.length,
         avgMs: timed.length ? Math.round(timed.reduce((t, r) => t + r.ms!, 0) / timed.length) : null,
@@ -145,12 +177,23 @@ async function Agents({ open, role: openRole }: { open: string | null; role: str
   }
   if (!agent)
     return (
-      <RolesOverview
-        roles={roles}
-        agents={list.filter((a) => a.roleKey)}
-        items={items}
-        spine={{ body: spineRow?.body ?? "", updatedAt: spineRow?.updated_at ?? null, updatedBy: (spineRow?.profiles as unknown as { full_name: string } | null)?.full_name ?? null }}
-      />
+      <div className="grid gap-6">
+        <AgentsNav section={section} />
+        {section === "knowledge" ? (
+          <KnowledgeView items={items} spine={{ body: spineRow?.body ?? "", updatedAt: spineRow?.updated_at ?? null, updatedBy: (spineRow?.profiles as unknown as { full_name: string } | null)?.full_name ?? null }} />
+        ) : section === "expenses" ? (
+          <Expenses
+            rows={costRows}
+            people={(staff ?? []).map((p) => ({ id: p.id as string, name: p.full_name as string, role: roleLabel(p.role as TeamRole) }))}
+            roles={roles.map((r) => ({ key: r.key, label: r.label }))}
+            skills={list.map((a) => ({ key: a.key, label: a.label, roleKey: a.roleKey }))}
+            range={range}
+            by={by}
+          />
+        ) : (
+          <RolesOverview roles={roles} agents={list.filter((a) => a.roleKey)} items={items} />
+        )}
+      </div>
     );
   const { data: chat } = await supabase.from("ai_agent_chats").select("id, role, content, changes, created_at").eq("agent_key", agent.key).order("created_at").limit(200);
   const messages: ChatMessage[] = (chat ?? []).map((m) => ({ id: m.id, role: m.role, content: m.content, changes: (m.changes ?? []) as Change[], at: m.created_at }));
@@ -741,7 +784,15 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
           </Link>
         ))}
       </nav>
-      {tab === "agents" && <Agents open={typeof sp.agent === "string" ? sp.agent : null} role={typeof sp.role === "string" ? sp.role : null} />}
+      {tab === "agents" && (
+        <Agents
+          open={typeof sp.agent === "string" ? sp.agent : null}
+          role={typeof sp.role === "string" ? sp.role : null}
+          section={typeof sp.section === "string" ? sp.section : "agents"}
+          range={typeof sp.range === "string" ? sp.range : "mtd"}
+          by={typeof sp.by === "string" ? sp.by : "agents"}
+        />
+      )}
       {tab === "team" && <Team />}
       {tab === "data" && <Data target={typeof sp.target === "string" ? sp.target : null} from={from} to={to} />}
       {tab === "sync" && <Sync motion={typeof sp.motion === "string" ? sp.motion : null} />}
