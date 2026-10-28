@@ -139,13 +139,16 @@ function Invite() {
         const data = new FormData(formEl);
         start(async () => {
           const res = await invitePerson(data);
-          setNote(res.ok ? { ok: true, text: "Invited. They can sign in with Google now." } : { ok: false, text: res.error });
+          setNote(res.ok ? { ok: true, text: "Added. Their accounts follow the sheet from the next run. No email went out; send the invite when they're ready." } : { ok: false, text: res.error });
           if (res.ok) formEl.reset();
         });
       }}
       className="grid gap-3 rounded-[12px] border border-line bg-surface p-4 md:p-5"
     >
-      <p className="text-sm font-medium">Invite a teammate</p>
+      <div>
+        <p className="text-sm font-medium">Add a teammate</p>
+        <p className="mt-0.5 text-xs text-faint">Adds them to the team (accounts, KPIs, assignments) without emailing them. Send the invite from their row when they&apos;re ready.</p>
+      </div>
       <div className="grid gap-3 sm:grid-cols-[1fr_1.4fr_200px_auto]">
         <input name="full_name" required placeholder="Name" aria-label="Name" className={select} />
         <input name="email" type="email" required placeholder="name@kaizenmarketing.agency" aria-label="Email" className={select} />
@@ -153,7 +156,7 @@ function Invite() {
           <RoleOptions />
         </select>
         <button disabled={pending} className="h-11 rounded-[8px] bg-brand px-5 md:h-10 text-sm font-medium text-white hover:bg-brand-hover disabled:opacity-60">
-          {pending ? "Inviting…" : "Invite"}
+          {pending ? "Adding…" : "Add"}
         </button>
       </div>
       {note && <p className={`text-xs ${note.ok ? "text-ok" : "text-brand-text"}`}>{note.text}</p>}
