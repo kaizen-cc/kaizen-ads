@@ -8,6 +8,7 @@ import { field } from "@/components/ui";
 import { pushParams, useParam } from "@/lib/url-state";
 import { createClient as createBrowserClient } from "@/lib/supabase/client";
 import type { AgentFile, Attachment } from "@/lib/agent-docs";
+import { AGENT_TINT, tintOf } from "@/lib/agent-look";
 import { EFFORT_TRADEOFFS, TRADEOFFS, costIf, costOf, type ModelKey as CostModel, type Usage } from "@/lib/ai-costs";
 import {
   addItem,
@@ -93,7 +94,7 @@ const ICONS: Record<string, string> = {
   target: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zm0-4a5 5 0 1 0 0-10 5 5 0 0 0 0 10zm0-4a1 1 0 1 0 0-2 1 1 0 0 0 0 2z",
   spark: "M12 3c.7 5 3 7.3 8 8v2c-5 .7-7.3 3-8 8h-.1c-.7-5-3-7.3-8-8v-2c5-.7 7.3-3 8-8z",
 };
-const TINT: Record<string, string> = { compass: "#5b8def", shield: "#b21e2c", feed: "#2fa37a", pen: "#c08a2e", rocket: "#8a63d2", pulse: "#d1495b", film: "#e07a3f", book: "#3fa7b5", eye: "#6c7ee1", scan: "#9b6bd6", target: "#e0a03f", spark: "#888" };
+const TINT = AGENT_TINT;
 
 const fmt = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
 const tokensOf = (s: string) => Math.round(s.length / 4);
@@ -1394,7 +1395,7 @@ export function AgentsNav({ section }: { section: string }) {
   ] as const;
   const on = tabs.some(([k]) => k === section) ? section : "agents";
   return (
-    <nav className="flex w-full gap-1 rounded-full border border-line bg-surface p-1 md:w-auto md:self-start" aria-label="AI agents">
+    <nav className="flex w-full gap-1 justify-self-start rounded-full border border-line bg-surface p-1 md:w-fit" aria-label="AI agents">
       {tabs.map(([k, l]) => (
         <Link
           key={k}
@@ -1432,101 +1433,116 @@ export function KnowledgeView({ items, spine }: { items: Item[]; spine: { body: 
 }
 
 export function RolesOverview({ roles, agents, items }: { roles: Role[]; agents: Agent[]; items: Item[] }) {
+  const week = agents.reduce((t, a) => t + a.cost7, 0);
+  const runs = agents.reduce((t, a) => t + a.stats.runs, 0);
+  const live = agents.filter((a) => a.live).length;
+  const review = roles.reduce((t, r) => t + roleStats(r, agents.filter((a) => a.roleKey === r.key)).proposals, 0);
   return (
     <DirtyProvider>
-      <div className="grid gap-8">
-        <section className="grid gap-4">
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <h2 className="font-heading text-[20px]">The agents</h2>
-            <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-faint">
-              <span className="flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-ok" /> connected
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full border border-dashed border-faint" /> not switched on yet
-              </span>
-              <span>· runs are the last 7 days · six agents, fixed</span>
-            </p>
+      <div className="grid gap-6">
+        {/* The team at a glance */}
+        <section className="relative isolate overflow-hidden rounded-[28px] border border-line bg-deep px-5 py-6 md:px-8 md:py-7">
+          <span aria-hidden className="pointer-events-none absolute -right-20 -top-28 -z-10 h-80 w-80 rounded-full bg-[#5b8def]/20 blur-[110px]" />
+          <span aria-hidden className="pointer-events-none absolute -bottom-32 -left-16 -z-10 h-72 w-72 rounded-full bg-brand/20 blur-[110px]" />
+          <div className="flex flex-wrap items-end justify-between gap-6">
+            <div className="grid gap-2">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-faint">Kaizen&apos;s AI team</p>
+              <h2 className="font-heading text-[28px] leading-tight md:text-[34px]">Six agents, {agents.length} skills</h2>
+              <div className="flex -space-x-2">
+                {roles.map((r) => (
+                  <span key={r.key} className="rounded-[16px] ring-4 ring-deep">
+                    <AgentIcon icon={r.icon} size={40} />
+                  </span>
+                ))}
+              </div>
+            </div>
+            <dl className="grid grid-cols-3 gap-6 md:gap-10">
+              {[
+                ["This week", money(week), `${money(week / 7)} a day`],
+                ["Runs", runs.toLocaleString(), "last 7 days"],
+                ["Switched on", `${live}/${agents.length}`, review ? `${review} edits to review` : "skills running"],
+              ].map(([k, v, n]) => (
+                <div key={k} className="grid gap-0.5">
+                  <dt className="text-[11px] text-faint">{k}</dt>
+                  <dd className="tabular font-display text-[26px] leading-none md:text-[32px]">{v}</dd>
+                  <dd className={`text-[11px] ${k === "Switched on" && review ? "text-brand-text" : "text-faint"}`}>{n}</dd>
+                </div>
+              ))}
+            </dl>
           </div>
-          <ul className="grid auto-rows-fr gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {roles.map((r) => {
-              const skills = agents.filter((a) => a.roleKey === r.key);
-              const st = roleStats(r, skills);
-              const itemCount = items.filter((k) => k.active && skills.some((s) => s.key === k.agentKey)).length;
-              return (
-                <li key={r.key} className="min-w-0">
-                  <Link
-                    href={`/settings?tab=agents&role=${r.key}`}
-                    className="group flex h-full flex-col gap-4 rounded-[18px] border border-line bg-surface p-5 transition-colors hover:border-faint/70 hover:bg-surface-2/40 active:bg-surface-2/60"
-                  >
-                    <div className="flex items-center gap-3">
-                      <AgentIcon icon={r.icon} size={38} />
-                      <div className="min-w-0 flex-1">
-                        <h3 className="truncate font-heading text-[17px] leading-tight">{r.label}</h3>
-                        <p className="text-[11px] text-faint">
-                          {skills.length} skills · {itemCount} playbook items
-                        </p>
-                      </div>
-                      {st.proposals > 0 ? (
-                        <span className="shrink-0 rounded-full bg-brand-soft px-2 py-0.5 text-[10px] text-brand-text">{st.proposals} to review</span>
-                      ) : (
-                        <span className="shrink-0 text-faint transition-transform group-hover:translate-x-0.5" aria-hidden>
-                          →
-                        </span>
-                      )}
-                    </div>
-                    <p className="line-clamp-2 min-h-[2.6em] text-[13px] leading-relaxed text-muted">{r.description}</p>
-                    <ul className="grid divide-y divide-line rounded-[12px] border border-line bg-bg/40">
-                      {skills.map((s) => (
-                        <li key={s.key} className="flex items-center justify-between gap-3 px-3 py-2 text-[13px]">
-                          <span className="flex min-w-0 items-center gap-2">
-                            <span
-                              className={`h-1.5 w-1.5 shrink-0 rounded-full ${s.live ? "bg-ok" : "border border-dashed border-faint"}`}
-                              title={s.live ? "Connected: it runs in the app" : "Not switched on yet"}
-                            />
-                            <span className={`truncate ${s.live ? "" : "text-muted"}`}>{s.label}</span>
-                            {!s.live && <span className="shrink-0 rounded-full border border-dashed border-line px-1.5 text-[10px] text-faint">off</span>}
-                          </span>
-                          <span className="flex shrink-0 items-center gap-3 text-[11px] text-faint">
-                            <span className="w-14 text-right tabular" title="Runs in the last 7 days">
-                              {s.stats.runs ? `${s.stats.runs} run${s.stats.runs === 1 ? "" : "s"}` : "—"}
-                            </span>
-                            <span className="hidden w-12 text-right tabular sm:inline" title="Cost over the last 7 days">
-                              {s.cost7 >= 0.005 ? money(s.cost7) : "—"}
-                            </span>
-                            {s.key === "fatigue" ? (
-                              <span className="w-16" title="A rule after every Meta sync; it makes no AI call">
-                                rule, no AI
-                              </span>
-                            ) : (
-                              <span className="flex w-16 items-center gap-1.5 capitalize">
-                                <ModelMeter model={s.model} />
-                                {s.model}
-                              </span>
-                            )}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                    <div className="mt-auto flex items-center justify-between text-[11px] text-faint">
-                      <span>
-                        <span className="tabular text-fg">{st.runs}</span> runs this week
-                        {st.cost7 >= 0.005 && (
-                          <>
-                            {" · "}
-                            <span className="tabular text-fg">{money(st.cost7 / 7)}</span>/day avg
-                          </>
-                        )}
-                      </span>
-                      <span>{st.last ? `last used ${ago(st.last)}` : "not used yet"}</span>
-                    </div>
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
         </section>
 
+        <ul className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {roles.map((r) => {
+            const skills = agents.filter((a) => a.roleKey === r.key);
+            const st = roleStats(r, skills);
+            const tint = tintOf(r.icon);
+            const itemCount = items.filter((k) => k.active && skills.some((s) => s.key === k.agentKey)).length;
+            const top = Math.max(...skills.map((s) => s.cost7), 0.0001);
+            return (
+              <li key={r.key} className="min-w-0">
+                <Link
+                  href={`/settings?tab=agents&role=${r.key}`}
+                  className="group relative isolate flex h-full flex-col gap-5 overflow-hidden rounded-[24px] border border-line bg-surface p-5 transition-all duration-300 hover:-translate-y-0.5 hover:border-faint/60 hover:shadow-[0_30px_60px_-35px_rgba(0,0,0,0.8)] md:p-6"
+                  style={{ backgroundImage: `radial-gradient(120% 70% at 0% 0%, ${tint}1f, transparent 60%)` }}
+                >
+                  <span aria-hidden className="absolute inset-x-6 top-0 h-px" style={{ background: `linear-gradient(90deg, transparent, ${tint}, transparent)` }} />
+                  <div className="flex items-start gap-3.5">
+                    <AgentIcon icon={r.icon} size={46} />
+                    <div className="min-w-0 flex-1">
+                      <h3 className="truncate font-heading text-[19px] leading-tight">{r.label}</h3>
+                      <p className="mt-0.5 text-[11px] text-faint">
+                        {skills.length} skills · {itemCount} playbook items
+                      </p>
+                    </div>
+                    <div className="grid shrink-0 justify-items-end">
+                      <span className="tabular font-display text-[26px] leading-none" style={{ color: st.cost7 >= 0.005 ? undefined : "var(--fg-faint)" }}>
+                        {st.cost7 >= 0.005 ? money(st.cost7 / 7) : "$0"}
+                      </span>
+                      <span className="text-[10.5px] text-faint">a day, avg</span>
+                    </div>
+                  </div>
+                  <p className="line-clamp-2 text-[13px] leading-relaxed text-muted">{r.description}</p>
+                  <ul className="grid gap-2.5">
+                    {skills.map((s) => (
+                      <li key={s.key} className="grid gap-1">
+                        <span className="flex items-center justify-between gap-3 text-[13px]">
+                          <span className="flex min-w-0 items-center gap-2">
+                            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${s.live ? "" : "border border-dashed border-faint"}`} style={s.live ? { background: tint } : undefined} title={s.live ? "Connected: it runs in the app" : "Not switched on yet"} />
+                            <span className={`truncate ${s.live ? "" : "text-faint"}`}>{s.label}</span>
+                          </span>
+                          <span className="flex shrink-0 items-center gap-2 text-[11px] text-faint">
+                            {s.stats.runs > 0 && <span className="tabular">{s.stats.runs} runs</span>}
+                            <span className="tabular w-11 text-right text-muted">{s.cost7 >= 0.005 ? money(s.cost7) : "—"}</span>
+                            <span className="w-14 rounded-full border border-line px-1.5 py-px text-center capitalize">{s.key === "fatigue" ? "rule" : s.model}</span>
+                          </span>
+                        </span>
+                        <span className="ml-3.5 h-[3px] overflow-hidden rounded-full bg-surface-2">
+                          <span className="block h-full rounded-full opacity-80" style={{ width: `${s.cost7 >= 0.005 ? Math.max(2, (s.cost7 / top) * 100) : 0}%`, background: tint }} />
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="mt-auto flex items-center justify-between border-t border-line/70 pt-4 text-[11px] text-faint">
+                    <span>
+                      <span className="tabular text-fg">{st.runs}</span> runs this week{st.cost7 >= 0.005 ? ` · ${money(st.cost7)}` : ""}
+                    </span>
+                    {st.proposals > 0 ? (
+                      <span className="rounded-full bg-brand-soft px-2 py-0.5 text-[10px] text-brand-text">{st.proposals} to review</span>
+                    ) : (
+                      <span className="flex items-center gap-1.5">
+                        {st.last ? `used ${ago(st.last)}` : "not used yet"}
+                        <span className="transition-transform group-hover:translate-x-0.5" aria-hidden>
+                          →
+                        </span>
+                      </span>
+                    )}
+                  </div>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
       </div>
     </DirtyProvider>
   );

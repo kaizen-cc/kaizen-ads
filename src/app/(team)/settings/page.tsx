@@ -185,7 +185,7 @@ async function Agents({ open, role: openRole, section, range, by }: { open: stri
           <Expenses
             rows={costRows}
             people={(staff ?? []).map((p) => ({ id: p.id as string, name: p.full_name as string, role: roleLabel(p.role as TeamRole) }))}
-            roles={roles.map((r) => ({ key: r.key, label: r.label }))}
+            roles={roles.map((r) => ({ key: r.key, label: r.label, icon: r.icon }))}
             skills={list.map((a) => ({ key: a.key, label: a.label, roleKey: a.roleKey }))}
             range={range}
             by={by}
