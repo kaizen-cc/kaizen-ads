@@ -316,6 +316,9 @@ export async function researchWeb({ agent, label, system, prompt, maxSearches = 
         model: MODEL_IDS[cfg.model],
         max_tokens: 16000,
         system: cached(withAgent(system, cfg)),
+        // The conversation grows every round (searches, pages read); this caches it too, so each round reads the
+        // last one's tokens from the cache instead of paying for them again
+        cache_control: { type: "ephemeral" },
         output_config: { effort: cfg.effort },
         tools: [
           { type: "web_search_20260209", name: "web_search", max_uses: maxSearches },
