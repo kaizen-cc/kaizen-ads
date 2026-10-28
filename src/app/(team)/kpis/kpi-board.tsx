@@ -1266,13 +1266,16 @@ export function KpiBoard({
     return () => clearTimeout(t);
   }, [focus]);
 
-  const owners = useMemo(() => {
+  // A buyer kept only as a name (an older import) is the same person as the buyer with that name, not a second chip
+  const byName = new Map(rows.filter((r) => r.ownerId && r.owner).map((r) => [r.owner!.toLowerCase(), r.ownerId!]));
+  const ownerKey = (r: KpiRow) => r.ownerId ?? (r.owner ? (byName.get(r.owner.toLowerCase()) ?? `name:${r.owner}`) : null);
+  const owners = (() => {
     const names = new Map<string, string>();
-    for (const r of rows) if (r.platform === platform && r.owner) names.set(r.ownerId ?? `name:${r.owner}`, r.owner);
+    for (const r of rows) if (r.platform === platform && r.owner) names.set(ownerKey(r)!, r.owner);
     return [...names.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [rows, platform]);
+  })();
 
-  const base = rows.filter((r) => r.platform === platform && (owner === "all" || (r.ownerId ?? `name:${r.owner}`) === owner));
+  const base = rows.filter((r) => r.platform === platform && (owner === "all" || ownerKey(r) === owner));
   const term = q.trim().toLowerCase();
   const shown = base
     .filter((r) => (status === "all" || r.status === status) && (pace === "all" || r.pace?.status === pace) && (term.length < 2 || `${r.client} ${r.label ?? ""}`.toLowerCase().includes(term)))
