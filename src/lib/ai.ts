@@ -137,6 +137,26 @@ async function actorNow(): Promise<Actor> {
   }
 }
 
+/**
+ * A long call's log row, kept current as it goes: written after its first round and updated after every one, so
+ * tokens it used are on record even if the server cuts it off before it finishes (it's paid for either way).
+ */
+function liveRun(base: Record<string, unknown>, who: Promise<Actor>) {
+  let id: Promise<number | null> | null = null;
+  return (row: Record<string, unknown>) => {
+    if (!adminConfigured()) return;
+    if (!id)
+      id = who
+        .catch(() => AUTO)
+        .then((a) => createAdminClient().from("ai_runs").insert({ ...base, ...row, ...a }).select("id").single())
+        .then(({ data }) => (data?.id as number | undefined) ?? null);
+    else
+      void id.then(async (rid) => {
+        if (rid) await createAdminClient().from("ai_runs").update(row).eq("id", rid);
+      });
+  };
+}
+
 function logRun(row: Record<string, unknown>, who: Promise<Actor> = Promise.resolve(AUTO)) {
   if (!adminConfigured()) return;
   void who
@@ -288,6 +308,8 @@ export async function researchWeb({ agent, label, system, prompt, maxSearches = 
   let cacheR = 0;
   let searches = 0;
   const who = adminConfigured() ? actorNow() : Promise.resolve(AUTO);
+  const record = liveRun(run, who);
+  const tally = (extra: Record<string, unknown>) => record({ ms: Date.now() - started, input_tokens: inTok, output_tokens: outTok, cache_write_tokens: cacheW, cache_read_tokens: cacheR, searches, ...extra });
   try {
     for (let turn = 0; turn < maxTurns; turn++) {
       const res = await anthropic().messages.create({
@@ -307,18 +329,21 @@ export async function researchWeb({ agent, label, system, prompt, maxSearches = 
       cacheR += res.usage.cache_read_input_tokens ?? 0;
       searches += res.usage.server_tool_use?.web_search_requests ?? 0;
       if (res.stop_reason === "pause_turn") {
+        // On record now, marked as still going until it finishes
+        tally({ ok: false, error: "still researching (cut off if it stays like this)" });
         messages.push({ role: "assistant", content: res.content });
         continue;
       }
       const text = res.content.map((b) => (b.type === "text" ? b.text : "")).join("").trim();
-      logRun({ ...run, ms: Date.now() - started, input_tokens: inTok, output_tokens: outTok, cache_write_tokens: cacheW, cache_read_tokens: cacheR, searches, ok: Boolean(text), error: text ? null : res.stop_reason }, who);
+      tally({ ok: Boolean(text), error: text ? null : res.stop_reason });
       return text;
     }
+    tally({ ok: false, error: "took too many steps" });
     throw new AiUnavailable("The research took too many steps. Try again.");
   } catch (e) {
     if (e instanceof AiUnavailable) throw e;
     console.error("[ai] research failed:", e instanceof Error ? e.message : e);
-    logRun({ ...run, ms: Date.now() - started, input_tokens: inTok, output_tokens: outTok, cache_write_tokens: cacheW, cache_read_tokens: cacheR, searches, ok: false, error: (e instanceof Error ? e.message : String(e)).slice(0, 300) }, who);
+    tally({ ok: false, error: (e instanceof Error ? e.message : String(e)).slice(0, 300) });
     if (e instanceof Anthropic.BadRequestError) throw new AiUnavailable(`The AI rejected the research request: ${apiMessage(e)}`);
     if (paused(e)) throw new AiPaused("Kaizen's AI account is at its usage limit right now. It tries again on its own once the limit lifts.");
     throw new AiUnavailable("The research didn't finish. Try again.");
