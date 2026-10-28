@@ -60,6 +60,7 @@ import { IndustryChip } from "./industry-chip";
 import { INDUSTRY_OPTIONS, industryLabel } from "@/lib/industries";
 import type { ClientCreative } from "@/lib/client-creative";
 import { BrandBiblePanel, type BrandBible } from "./brand-bible-panel";
+import { Fold } from "./knowledge-fold";
 import { GtmPanel, type GtmStrategy } from "./gtm-panel";
 import { untilLabel } from "@/lib/allotment";
 import { isLive } from "@/lib/live";
@@ -329,10 +330,12 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
               {
                 id: "knowledge",
                 label: "Knowledge",
-                hint: "What the AI knows: the briefing, memory, Brand Bible, intake and calls",
+                hint: "What the AI knows: the Brand Bible, briefing, memory, intake and calls",
                 content: (
-              <div className="grid gap-6">
+              <div className="grid gap-4">
+                <BrandBiblePanel clientId={client.id} slug={client.slug} bible={brandBible} canBuild={can.assign && live} />
                 {active && (
+            <Fold id="briefing">
             <BriefingPanel
               demo={demo}
               refresh={live ? refreshClientBriefing.bind(null, client.id, client.slug) : undefined}
@@ -413,7 +416,9 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                 <p className="text-sm text-faint">No briefing yet. It&apos;s made at the next 12pm or 6pm run, or now with Refresh now.</p>
               )}
             </BriefingPanel>
+            </Fold>
           )}
+                <Fold id="memory">
                 <Section title="Client memory" description="What we've learned about this client. The AI reads it for suggestions and flags anything that goes against it before a request is sent.">
             {memory.length > 0 ? (
               <div className="grid gap-3">
@@ -503,10 +508,22 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
               </div>
             </ActionForm>
           </Section>
-                <BrandBiblePanel clientId={client.id} slug={client.slug} bible={brandBible} canBuild={can.assign && live} />
-                {!demo && !has.meta && <GtmPanel clientId={client.id} slug={client.slug} gtm={gtm} canReview={can.assign} readOnly={!live} />}
-                {intake !== undefined && <IntakePanel intake={intake} />}
-                {calls && <CallsPanel calls={calls} />}
+                </Fold>
+                {!demo && !has.meta && (
+                  <Fold id="gtm">
+                    <GtmPanel clientId={client.id} slug={client.slug} gtm={gtm} canReview={can.assign} readOnly={!live} />
+                  </Fold>
+                )}
+                {intake !== undefined && (
+                  <Fold id="intake">
+                    <IntakePanel intake={intake} />
+                  </Fold>
+                )}
+                {calls && (
+                  <Fold id="calls">
+                    <CallsPanel calls={calls} />
+                  </Fold>
+                )}
               </div>),
               },
               {
