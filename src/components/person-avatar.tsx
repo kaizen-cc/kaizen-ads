@@ -1,4 +1,4 @@
-import { initials } from "@/components/brand-switcher";
+import { initials } from "@/lib/initials";
 
 // One quiet tint per person, picked from their name, so faces are easy to tell apart in lists.
 const TINTS = ["#b21e2c", "#7a4f9a", "#2f6f8f", "#3f7d5a", "#9a6a2f", "#5a5a8f", "#8f3f6a"];

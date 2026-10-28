@@ -5,14 +5,8 @@ import { useEffect, useRef, useState } from "react";
 
 export type BrandLink = { name: string; slug: string };
 
-export const initials = (name: string) =>
-  name
-    .replace(/[^A-Za-z0-9 ]/g, " ")
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0]!.toUpperCase())
-    .join("");
+import { initials } from "@/lib/initials";
+export { initials };
 
 export function BrandAvatar({ name, size = 28 }: { name: string; size?: number }) {
   return (
