@@ -132,6 +132,10 @@ const DAILY_CAP = 15;
  * built. No time-based rebuilds: between intakes the playbook keeps it current. A failed build waits a day.
  */
 export async function autoBibles(admin: SupabaseClient, max = 1) {
+  // Off until an exec switches it on: while the Bible is being dialed in, each one is started by hand from the client
+  // page and reviewed before the next
+  const { data: setting } = await admin.from("app_settings").select("value").eq("key", "brand_bibles").maybeSingle();
+  if ((setting?.value as { auto?: boolean } | null)?.auto !== true) return { paused: "automatic builds are off; start each from the client page" };
   const [{ data: clients }, { data: bibles }, { data: intakes }] = await Promise.all([
     admin.from("clients").select("id, name, status, created_at").is("archived_at", null).in("status", ["onboarding", "active", "paused"]),
     admin.from("client_brand_bibles").select("client_id, status, markdown, generated_at, started_at"),
