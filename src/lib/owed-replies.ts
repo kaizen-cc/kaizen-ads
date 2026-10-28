@@ -263,23 +263,42 @@ async function answeredBy(admin: Admin, open: Row[], m: Msg, profileId: string |
 }
 
 /**
- * Answered: off the person's list and their unread notices off the bell. If it had gone to their lead and the
- * execs, they hear it's been answered.
+ * Answered (or handled another way, which the person marks themselves): off their list and their unread notices off
+ * the bell. If it had gone to their lead and the execs, they hear it's been taken care of.
  */
-async function closeAnswered(admin: Admin, o: Row, now = new Date().toISOString()) {
-  await admin.from("owed_replies").update({ status: "answered", answered_at: now, checked_at: now }).eq("id", o.id);
+async function closeAnswered(admin: Admin, o: Row, now = new Date().toISOString(), how: "replied" | "handled" = "replied") {
+  await admin
+    .from("owed_replies")
+    .update({ status: "answered", answered_at: now, checked_at: now, ...(how === "handled" ? { dismiss_reason: "Handled another way (marked done)" } : {}) })
+    .eq("id", o.id);
   await clearNotices(admin, "owed", String(o.id));
   if (o.status !== "escalated") return;
   const { data: sent } = await admin.from("notifications").select("profile_id").eq("key", `owed-lead:${o.id}`);
   const { data: person } = await admin.from("profiles").select("full_name").eq("id", o.target_id).maybeSingle();
   await notify(admin, (sent ?? []).map((s) => s.profile_id as string), {
     key: `owed-done:${o.id}`,
-    title: `${person?.full_name ?? "They"} replied to ${o.from_name}`,
-    body: "The message that went unanswered has an answer now.",
+    title: how === "handled" ? `${person?.full_name ?? "They"} took care of ${o.from_name}'s message` : `${person?.full_name ?? "They"} replied to ${o.from_name}`,
+    body: how === "handled" ? "Marked done: handled another way, like a call or in person." : "The message that went unanswered has an answer now.",
     href: (o.url as string | null) ?? null,
     clientId: (o.client_id as string | null) ?? null,
     priority: "normal",
   });
+}
+
+/**
+ * The person closes it themselves: done (handled another way: a call, in person, already sorted) or there was
+ * nothing to answer. Either way it leaves their list and its notices leave the bell.
+ */
+export async function closeByHand(admin: Admin, id: string, profileId: string, how: "done" | "not_needed") {
+  const { data: o } = await admin.from("owed_replies").select("*").eq("id", id).eq("target_id", profileId).in("status", OPEN).maybeSingle();
+  if (!o) return false;
+  const now = new Date().toISOString();
+  if (how === "done") await closeAnswered(admin, o as Row, now, "handled");
+  else {
+    await admin.from("owed_replies").update({ status: "dismissed", dismissed_at: now, dismissed_by: profileId, dismiss_reason: "Doesn't need a reply", checked_at: now }).eq("id", id);
+    await clearNotices(admin, "owed", id);
+  }
+  return true;
 }
 
 /** The definitive look before a notice: everything said after it in its thread (or the channel), and reactions on it. */

@@ -34,8 +34,9 @@ export async function setItem(key: string, status: Status, snap: ItemSnapshot) {
     },
     { onConflict: "profile_id,key" },
   );
-  // A message set aside as not needing a reply stops being chased (only the person it's on can do that)
-  if (next === "dismissed" && /^owed2?:/.test(key)) await closeOwed(key.split(":")[1], me.id);
+  // A message marked done (handled another way) or set aside as not needing a reply stops being chased (only the
+  // person it's on can do that)
+  if ((next === "dismissed" || next === "done") && /^owed2?:/.test(key)) await closeOwed(key.split(":")[1], me.id, next === "done" ? "done" : "not_needed");
   if (next === "dismissed" && /^said2?:/.test(key)) await closeSaid(key.split(":")[1], me.id, "done");
   revalidatePath("/pipeline");
   return next;
@@ -44,13 +45,19 @@ export async function setItem(key: string, status: Status, snap: ItemSnapshot) {
 /** "Doesn't need a reply" from the Overview: the message stops being watched, and nobody above them is told. */
 export async function dismissOwed(id: string) {
   const me = await requireStaff();
-  await closeOwed(id, me.id);
+  await closeOwed(id, me.id, "not_needed");
 }
 
-async function closeOwed(id: string, meId: string) {
+/** "Done" from the Overview: handled another way (a call, in person); anyone it went up to hears it's taken care of. */
+export async function doneOwed(id: string) {
+  const me = await requireStaff();
+  await closeOwed(id, me.id, "done");
+}
+
+async function closeOwed(id: string, meId: string, how: "done" | "not_needed") {
   if (!adminConfigured()) return;
-  const now = new Date().toISOString();
-  await createAdminClient().from("owed_replies").update({ status: "dismissed", dismissed_at: now, dismissed_by: meId, dismiss_reason: "Doesn't need a reply" }).eq("id", id).eq("target_id", meId).in("status", ["watching", "nudged", "escalated"]);
+  const { closeByHand } = await import("@/lib/owed-replies");
+  await closeByHand(createAdminClient(), id, meId, how);
   revalidatePath("/pipeline");
 }
 
