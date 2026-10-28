@@ -257,6 +257,11 @@ export async function researchBenchmarks(admin: SupabaseClient, max = 2) {
     const parent = parents.get(s.parent_id) ?? "";
     const research = await researchWeb({
       agent: "verticals",
+      // Gathering figures doesn't need the strategy model: Sonnet with a few searches and reads
+      model: "sonnet",
+      maxSearches: 6,
+      maxFetches: 5,
+      maxTurns: 3,
       label: `benchmarks ${s.name}`,
       system: "You research paid social benchmarks for a marketing agency. Report only figures you actually found, each with its source URL and year. Prefer recent (last 2 years), US, Meta (Facebook and Instagram) figures; say when a figure is for all paid social or a broader category.",
       prompt: `Meta (Facebook and Instagram) ad benchmarks for: ${s.name} (${parent}). ${s.description ?? ""} A result here is a ${s.conversion ?? "conversion"}.

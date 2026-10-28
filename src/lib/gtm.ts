@@ -109,6 +109,11 @@ export async function buildGtm(admin: SupabaseClient, clientId: string, by: stri
 
     const research = await researchWeb({
       agent: "gtm",
+      // Gathering pages runs on Sonnet with a few searches; the strategy itself is written by the gtm agent's model
+      model: "sonnet",
+      maxSearches: 6,
+      maxFetches: 5,
+      maxTurns: 3,
       label: `gtm research ${client.name}`,
       system: "You research a client for Kaizen Marketing's Meta go-to-market strategy. Report only what you actually found, every fact with its source URL. Meta only: no Google Ads or TikTok research.",
       prompt: `Research ${client.name} (website: ${client.website}) for their Meta go-to-market strategy. Today is ${today()}.
