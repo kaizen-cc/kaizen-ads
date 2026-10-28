@@ -1,7 +1,7 @@
 import "server-only";
 import { tracker, type Tracker } from "@/lib/progress";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { askJson } from "@/lib/ai";
+import { AiPaused, askJson } from "@/lib/ai";
 import { googleConfigured, gmailMailboxes, googleDriveToken } from "@/lib/context/google";
 import { compact, getCursor, rememberLessons, saveItems, setCursor, trimBody, type Lesson } from "@/lib/context/shared";
 import { LIVE } from "@/lib/live";
@@ -306,6 +306,8 @@ async function collectCallsRun(admin: SupabaseClient, budgetMs: number, t: Track
       read++;
       t.tick(`Call ${read} of ${(waiting ?? []).length}`);
     } catch (e) {
+      // The AI is paused (usage limit): the call stays waiting and is read once it's back
+      if (e instanceof AiPaused) break;
       await admin.from("client_calls").update({ status: "failed", error: (e instanceof Error ? e.message : String(e)).slice(0, 300) }).eq("id", w.id);
       t.tick(null, false);
     }

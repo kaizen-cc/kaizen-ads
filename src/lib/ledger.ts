@@ -293,7 +293,16 @@ export async function runLedger(admin: Admin, budgetMs = 600_000) {
       if (r.creatives) {
         await labelAngles(admin, c.id).catch(() => 0);
         // Angles named by the AI just now count toward the angle rows next run; learnings from what changed
-        await writeLearnings(admin, c.id, r.changed).catch(() => 0);
+        // Changes the AI couldn't write up yet (paused) are kept and written with the next ones
+        const { data: kept } = await admin.from("client_brand_bibles").select("pending_learnings").eq("client_id", c.id).maybeSingle();
+        const changed = [...new Set([...((kept?.pending_learnings ?? []) as string[]), ...r.changed])];
+        await writeLearnings(admin, c.id, changed)
+          .then(() => kept?.pending_learnings?.length && admin.from("client_brand_bibles").update({ pending_learnings: [] }).eq("client_id", c.id))
+          .catch(async () => {
+            if (!changed.length) return;
+            if (kept) await admin.from("client_brand_bibles").update({ pending_learnings: changed.slice(-200) }).eq("client_id", c.id);
+            else await admin.from("client_brand_bibles").insert({ client_id: c.id, status: "none", pending_learnings: changed.slice(-200) });
+          });
       }
       done++;
     } catch (e) {

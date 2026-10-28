@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createHash } from "node:crypto";
-import { askJson } from "@/lib/ai";
+import { AiPaused, askJson } from "@/lib/ai";
 import { gmailMailboxes, googleDriveToken } from "@/lib/context/google";
 import { rememberLessons, saveItems, trimBody, type Lesson } from "@/lib/context/shared";
 import { LIVE } from "@/lib/live";
@@ -89,6 +89,7 @@ export async function watchDocs(admin: SupabaseClient, budgetMs = 600_000) {
     t.total(queue.length);
     const out = { found: unique.length, read: 0, aboutClients: 0, skipped: 0, unchanged: 0, lessons: 0, failed: failed.length };
     let reached = to;
+    let stopped = false;
     for (const { f, token } of queue) {
       if (Date.now() > deadline) {
         reached = new Date(Date.parse(f.modifiedTime) - 1);
@@ -160,12 +161,18 @@ export async function watchDocs(admin: SupabaseClient, budgetMs = 600_000) {
         out.aboutClients++;
         t.tick(f.name);
       } catch (e) {
+        // The AI is paused (usage limit): stop here and pick up from this doc next run, nothing skipped
+        if (e instanceof AiPaused) {
+          reached = new Date(Date.parse(f.modifiedTime) - 1);
+          stopped = true;
+          break;
+        }
         await admin.from("drive_docs").upsert({ file_id: f.id, name: f.name, mime: f.mimeType, owner_email: owner, url: f.webViewLink ?? null, modified_at: f.modifiedTime, status: "failed", error: (e instanceof Error ? e.message : String(e)).slice(0, 300) });
         t.tick(f.name, false);
       }
     }
     // More than one run's worth: pick up after the last one read
-    if (unique.length > queue.length) reached = new Date(Date.parse(queue[queue.length - 1].f.modifiedTime));
+    if (!stopped && unique.length > queue.length) reached = new Date(Date.parse(queue[queue.length - 1].f.modifiedTime));
     const now = new Date().toISOString();
     await admin.from("sync_state").upsert({ source: "docs", cursor_at: reached.toISOString(), last_run_at: now, last_result: { ok: true, ...out } });
     await t.finish({ summary: `${out.aboutClients} docs about clients, ${out.lessons} things remembered, ${out.skipped} not about a client` });
