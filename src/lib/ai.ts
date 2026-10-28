@@ -291,6 +291,7 @@ export async function researchWeb({ agent, label, system, prompt, maxSearches = 
     console.error("[ai] research failed:", e instanceof Error ? e.message : e);
     logRun({ ...run, ms: Date.now() - started, input_tokens: inTok, output_tokens: outTok, cache_write_tokens: cacheW, cache_read_tokens: cacheR, ok: false, error: (e instanceof Error ? e.message : String(e)).slice(0, 300) });
     if (e instanceof Anthropic.BadRequestError) throw new AiUnavailable(`The AI rejected the research request: ${apiMessage(e)}`);
+    if (e instanceof Anthropic.RateLimitError) throw new AiUnavailable("Kaizen's AI account is at its usage limit right now. It tries again on its own once the limit lifts.");
     throw new AiUnavailable("The research didn't finish. Try again.");
   }
 }

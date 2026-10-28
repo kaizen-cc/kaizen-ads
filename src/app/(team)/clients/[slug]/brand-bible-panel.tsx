@@ -40,8 +40,6 @@ const fmt = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "Ameri
 export function BrandBiblePanel({ clientId, slug, bible, canBuild }: { clientId: string; slug: string; bible: BrandBible | null; canBuild: boolean }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [composing, setComposing] = useState(false);
-  const [pasted, setPasted] = useState("");
   const [busy, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState(0);
@@ -59,17 +57,18 @@ export function BrandBiblePanel({ clientId, slug, bible, canBuild }: { clientId:
     };
   }, [building, router]);
 
-  const build = () =>
+  const has = bible && bible.markdown;
+  const failed = !building && (bible?.status === "failed" || (bible?.status === "building" && !has));
+  // Everything it reads is already on the client page (intake form, calls, Drive, Slack, email, memory): one click
+  const build = () => {
+    if (has && !confirm("Rebuild the Brand Bible from scratch? It researches the client again (a few minutes, about $2). Between intakes it keeps itself current from what their ads prove.")) return;
     start(async () => {
       setError(null);
-      const r = await buildBrandBible(clientId, slug, pasted);
-      if (r.ok) {
-        setComposing(false);
-        router.refresh();
-      } else setError(r.error);
+      const r = await buildBrandBible(clientId, slug, "");
+      if (r.ok) router.refresh();
+      else setError(r.error);
     });
-
-  const has = bible && bible.markdown;
+  };
 
   return (
     <section className="relative grid gap-5 overflow-hidden rounded-[12px] border border-line bg-surface p-5 md:p-6">
@@ -88,9 +87,13 @@ export function BrandBiblePanel({ clientId, slug, bible, canBuild }: { clientId:
               : "Researches the website, reviews and competitors, then builds the foundation every agent and creative works from."}
           </p>
         </div>
-        {canBuild && !building && !composing && (
-          <button onClick={() => setComposing(true)} className="h-11 shrink-0 rounded-full border border-line px-4 text-sm md:h-9 text-muted transition-colors hover:text-fg">
-            {has ? "Update" : "Build Brand Bible"}
+        {canBuild && !building && (
+          <button
+            disabled={busy}
+            onClick={build}
+            className={`h-11 shrink-0 rounded-full px-4 text-sm transition-colors disabled:opacity-50 md:h-9 ${failed ? "bg-brand font-medium text-white hover:bg-brand-hover" : "border border-line text-muted hover:text-fg"}`}
+          >
+            {busy ? "Starting…" : failed ? "Retry" : has ? "Rebuild" : "Build Brand Bible"}
           </button>
         )}
       </div>
@@ -102,26 +105,6 @@ export function BrandBiblePanel({ clientId, slug, bible, canBuild }: { clientId:
           </div>
           <p className="text-sm">{STEPS[step]}…</p>
           <p className="text-xs text-faint">This takes a few minutes. You can leave the page; it keeps going.</p>
-        </div>
-      ) : composing ? (
-        <div className="relative grid gap-3 rounded-[12px] border border-line bg-bg p-5">
-          <p className="text-sm">Anything the web can&apos;t see? <span className="text-muted">Paste the marketing intake form, sales call notes or transcript, brand guide text.</span></p>
-          <textarea
-            value={pasted}
-            onChange={(e) => setPasted(e.target.value)}
-            rows={6}
-            placeholder="Optional. The website, reviews, competitors, Slack, email, Drive and client memory are read automatically."
-            className="min-w-0 rounded-[10px] border border-line bg-surface px-3.5 py-3 text-sm leading-relaxed outline-none focus:border-brand-text/60"
-          />
-          <div className="flex flex-wrap items-center gap-2">
-            <button disabled={busy} onClick={build} className="h-11 rounded-full bg-brand px-4 text-sm font-medium text-white transition-colors hover:bg-brand-hover disabled:opacity-50 md:h-9">
-              {busy ? "Starting…" : has ? "Update the Brand Bible" : "Build it"}
-            </button>
-            <button onClick={() => setComposing(false)} className="h-11 rounded-full px-3 text-sm text-muted hover:text-fg md:h-9">
-              Cancel
-            </button>
-            <span className="text-xs text-faint">Runs on Opus with web research. A few minutes.</span>
-          </div>
         </div>
       ) : null}
 
