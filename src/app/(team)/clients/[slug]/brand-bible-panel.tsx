@@ -2,8 +2,9 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
-import { Markdown } from "@/components/markdown";
-import { buildBrandBible, markBrandBibleReviewed } from "./brand-bible-actions";
+import Link from "next/link";
+import { splitBible, statsOf } from "@/lib/bible-sections";
+import { buildBrandBible } from "./brand-bible-actions";
 
 export type BrandBible = {
   status: "building" | "draft" | "reviewed" | "failed";
@@ -39,7 +40,6 @@ const fmt = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "Ameri
  */
 export function BrandBiblePanel({ clientId, slug, bible, canBuild }: { clientId: string; slug: string; bible: BrandBible | null; canBuild: boolean }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
   const [busy, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState(0);
@@ -110,86 +110,48 @@ export function BrandBiblePanel({ clientId, slug, bible, canBuild }: { clientId:
 
       {(error || (bible?.error && !building)) && <p className="relative text-xs text-bad">{error ?? bible?.error}</p>}
 
-      {has && !building && (
-        <div className="relative grid gap-4">
-          <div className="min-w-0 rounded-[12px] border border-line bg-bg p-4 [overflow-wrap:anywhere] md:p-5">
-            <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.12em] text-faint">Read this first</p>
-            <Markdown text={bible.readThisFirst} />
-          </div>
-
-          {bible.learnings && bible.learnings.length > 0 && (
-            <div className="min-w-0 rounded-[12px] border border-line bg-bg p-4 md:p-5">
-              <p className="mb-1 text-[11px] font-medium uppercase tracking-[0.12em] text-faint">What their ads proved since</p>
-              <p className="mb-3 text-xs text-faint">Kept current from the client playbook; newer than the Bible&apos;s text where they disagree.</p>
-              <ul className="grid gap-2">
-                {[...bible.learnings].reverse().slice(0, 12).map((l, i) => (
-                  <li key={i} className="flex gap-2.5 text-[13px] leading-relaxed">
-                    <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${l.kind === "avoid" ? "bg-bad" : "bg-ok"}`} />
-                    <span className="min-w-0">
-                      {l.text}
-                      <span className="ml-1.5 text-[11px] text-faint">{l.at}</span>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {(bible.openQuestions.length > 0 || bible.teamNotes.length > 0) && (
-            <div className="grid gap-3 sm:grid-cols-2">
-              {bible.openQuestions.length > 0 && (
-                <div className="rounded-[12px] border border-warn/30 bg-warn-soft/40 p-4">
-                  <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.12em] text-warn">Open questions</p>
-                  <ul className="grid gap-1.5 text-xs leading-relaxed text-muted">
-                    {bible.openQuestions.map((q, i) => (
-                      <li key={i}>
-                        {q.question} <span className="text-faint">· {q.who}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {bible.teamNotes.length > 0 && (
-                <div className="rounded-[12px] border border-line p-4">
-                  <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.12em] text-faint">For the team</p>
-                  <ul className="grid gap-1.5 text-xs leading-relaxed text-muted">
-                    {bible.teamNotes.map((n, i) => (
-                      <li key={i}>{n}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="flex flex-wrap items-center gap-2">
-            <button onClick={() => setOpen((o) => !o)} className="h-11 rounded-full bg-fg px-4 text-sm text-bg md:h-9">
-              {open ? "Hide the full Brand Bible" : "Open the full Brand Bible"}
-            </button>
-            {canBuild && bible.status === "draft" && (
-              <button
-                disabled={busy}
-                onClick={() =>
-                  start(async () => {
-                    const r = await markBrandBibleReviewed(clientId, slug);
-                    if (r.ok) router.refresh();
-                    else setError(r.error);
-                  })
-                }
-                className="h-11 rounded-full bg-ok px-4 text-sm font-medium text-white disabled:opacity-50 md:h-9"
-              >
-                Mark reviewed
-              </button>
-            )}
-            {bible.status === "reviewed" && bible.reviewedBy && <span className="text-xs text-faint">Reviewed by {bible.reviewedBy}{bible.reviewedAt && ` on ${fmt(bible.reviewedAt)}`}</span>}
-          </div>
-          {open && (
-            <div className="max-h-[900px] min-w-0 overflow-y-auto rounded-[12px] border border-line bg-bg p-4 [overflow-wrap:anywhere] md:p-6">
-              <Markdown text={bible.markdown} />
-            </div>
-          )}
-        </div>
-      )}
+      {has && !building && <Ready slug={slug} clientId={clientId} bible={bible} />}
     </section>
+  );
+}
+
+/** A built Bible on the client page: what's in it at a glance, and the way into the review page */
+function Ready({ slug, clientId, bible }: { slug: string; clientId: string; bible: BrandBible }) {
+  const stats = statsOf(splitBible(bible.markdown));
+  const sell = bible.readThisFirst.match(/What they sell:\s*(.+)/i)?.[1];
+  const open = bible.openQuestions.length;
+  return (
+    <div className="relative grid gap-4 rounded-[18px] border border-line bg-bg p-4 md:p-5">
+      {sell && <p className="line-clamp-2 text-[14px] leading-relaxed">{sell}</p>}
+      <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {(
+          [
+            ["Audiences", stats.audiences],
+            ["Reviews", stats.reviews],
+            ["Competitors", stats.competitors],
+            ["Moments", stats.moments],
+          ] as const
+        ).map(([k, n]) => (
+          <div key={k} className="rounded-[12px] border border-line px-3 py-2">
+            <dd className="tabular font-display text-[20px] leading-none">{n}</dd>
+            <dt className="mt-1 text-[11px] text-faint">{k}</dt>
+          </div>
+        ))}
+      </dl>
+      <div className="flex flex-wrap items-center gap-2">
+        <Link href={`/clients/${slug}/brand-bible`} className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-full bg-fg px-5 text-sm font-medium text-bg sm:flex-none md:h-10">
+          Review the Brand Bible <span aria-hidden>→</span>
+        </Link>
+        {open > 0 && (
+          <Link href={`/clients/${slug}/brand-bible?ask=1`} className="inline-flex h-11 items-center gap-2 rounded-full border border-warn/40 bg-warn-soft px-4 text-sm text-warn md:h-10">
+            {open} open question{open === 1 ? "" : "s"}
+          </Link>
+        )}
+        <a href={`/api/clients/${clientId}/brand-bible/pdf`} className="inline-flex h-11 items-center gap-1.5 rounded-full border border-line px-4 text-sm text-muted hover:text-fg md:h-10">
+          <span aria-hidden>↓</span> PDF
+        </a>
+        {bible.status === "reviewed" && bible.reviewedBy && <span className="text-xs text-faint">Reviewed by {bible.reviewedBy}{bible.reviewedAt && ` on ${fmt(bible.reviewedAt)}`}</span>}
+      </div>
+    </div>
   );
 }
