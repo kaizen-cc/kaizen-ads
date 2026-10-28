@@ -266,8 +266,6 @@ export async function researchBenchmarks(admin: SupabaseClient, max = 2) {
       system: "You research paid social benchmarks for a marketing agency. Report only figures you actually found, each with its source URL and year. Prefer recent (last 2 years), US, Meta (Facebook and Instagram) figures; say when a figure is for all paid social or a broader category.",
       prompt: `Meta (Facebook and Instagram) ad benchmarks for: ${s.name} (${parent}). ${s.description ?? ""} A result here is a ${s.conversion ?? "conversion"}.
 Find: typical cost per ${s.conversion ?? "result"} (and what counts as strong), ROAS if it's e-commerce, link CTR, CPM, and conversion rate. Several sources if they differ.`,
-      maxSearches: 6,
-      maxFetches: 6,
     }).catch(() => "");
     if (!research) continue;
     const out = await askJson<{ benchmarks: Benchmark[] }>({

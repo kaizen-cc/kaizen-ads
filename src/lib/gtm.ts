@@ -132,8 +132,6 @@ ${answers.slice(0, 15000)}
 <calls>
 ${calls.slice(0, 10000)}
 </calls>`,
-      maxSearches: 12,
-      maxFetches: 14,
     });
 
     const out = await askJson<Out>({
