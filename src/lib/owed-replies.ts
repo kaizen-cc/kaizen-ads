@@ -186,7 +186,12 @@ async function scanSlack(admin: Admin) {
             });
         }
         const tagged = [...new Set([...m.text.matchAll(MENTION)].map((x) => who.profileOf.get(x[1])).filter((p): p is string => Boolean(p) && p !== authorProfile))];
-        const targets = tagged.length ? tagged : !fromTeam && client?.external ? onAccount(client.id) : [];
+        // A client's untagged reply in a thread is on the teammates already in that thread (whoever started it, say
+        // email marketing), not every buyer on the account. Only a new top-level message (or a thread with nobody from
+        // the team in it) falls to the account's buyers. Teammates not in Kaizen Ads aren't chased here.
+        const inThread = m.thread_ts ? (threads.get(m.thread_ts) ?? []).filter((x) => Number(x.ts) < Number(m.ts) && x.user && x.user !== m.user && who.team.has(x.user)) : [];
+        const threadPeople = [...new Set(inThread.map((x) => who.profileOf.get(x.user!)).filter((p): p is string => Boolean(p)))];
+        const targets = tagged.length ? tagged : fromTeam || !client?.external ? [] : inThread.length ? threadPeople : onAccount(client.id);
         for (const target of targets)
           rows.push({
             source: "slack",
@@ -266,7 +271,7 @@ async function answeredBy(admin: Admin, open: Row[], m: Msg, profileId: string |
  * Answered (or handled another way, which the person marks themselves): off their list and their unread notices off
  * the bell. If it had gone to their lead and the execs, they hear it's been taken care of.
  */
-async function closeAnswered(admin: Admin, o: Row, now = new Date().toISOString(), how: "replied" | "handled" = "replied") {
+async function closeAnswered(admin: Admin, o: Row, now = new Date().toISOString(), how: "replied" | "handled" | "reacted" = "replied") {
   await admin
     .from("owed_replies")
     .update({ status: "answered", answered_at: now, checked_at: now, ...(how === "handled" ? { dismiss_reason: "Handled another way (marked done)" } : {}) })
@@ -277,8 +282,8 @@ async function closeAnswered(admin: Admin, o: Row, now = new Date().toISOString(
   const { data: person } = await admin.from("profiles").select("full_name").eq("id", o.target_id).maybeSingle();
   await notify(admin, (sent ?? []).map((s) => s.profile_id as string), {
     key: `owed-done:${o.id}`,
-    title: how === "handled" ? `${person?.full_name ?? "They"} took care of ${o.from_name}'s message` : `${person?.full_name ?? "They"} replied to ${o.from_name}`,
-    body: how === "handled" ? "Marked done: handled another way, like a call or in person." : "The message that went unanswered has an answer now.",
+    title: how === "replied" ? `${person?.full_name ?? "They"} replied to ${o.from_name}` : how === "reacted" ? `${o.from_name}'s message was acknowledged` : `${person?.full_name ?? "They"} took care of ${o.from_name}'s message`,
+    body: how === "replied" ? "The message that went unanswered has an answer now." : how === "reacted" ? "Someone on the team reacted to it in Slack, so it's taken care of." : "Marked done: handled another way, like a call or in person.",
     href: (o.url as string | null) ?? null,
     clientId: (o.client_id as string | null) ?? null,
     priority: "normal",
@@ -460,7 +465,7 @@ async function isAnswered(o: Row, who: Awaited<ReturnType<typeof slackPeople>> |
     // Tagged: their own reply, a reply from anyone else on the team (not the person who asked), or a teammate's
     // reaction. Several people are often tagged on one message and one of them answering covers it.
     if (after.some((x) => x.user && (mine.includes(x.user) || (who.team.has(x.user) && x.user !== asker)))) return true;
-    return reacted.length > 0;
+    return reacted.length > 0 ? "reacted" : false;
   } catch {
     return false;
   }
@@ -541,8 +546,9 @@ export async function runOwedReplies(admin: Admin) {
   for (const o of (open ?? []).filter((x) => x.status === "watching")) {
     if (workingHours(new Date(o.asked_at)) < NUDGE_AFTER[o.source as "slack" | "gmail"]) continue;
     if (!byId.get(o.target_id)?.is_active) continue;
-    if (await isAnswered(o, who, teamEmails, context)) {
-      await closeAnswered(admin, o, stamp);
+    const how = await isAnswered(o, who, teamEmails, context);
+    if (how) {
+      await closeAnswered(admin, o, stamp, how === "reacted" ? "reacted" : "replied");
       tally.answered++;
     } else due.push(o);
   }
@@ -608,8 +614,9 @@ export async function runOwedReplies(admin: Admin) {
   const { data: execs } = await admin.from("profiles").select("id, role").eq("is_active", true).eq("role", "executive");
   for (const o of nudged) {
     // Looked at every run, so a reply closes it (and its notice) within the hour, not only when it's about to escalate
-    if (await isAnswered(o, who, teamEmails, context)) {
-      await closeAnswered(admin, o, stamp);
+    const how = await isAnswered(o, who, teamEmails, context);
+    if (how) {
+      await closeAnswered(admin, o, stamp, how === "reacted" ? "reacted" : "replied");
       tally.answered++;
       continue;
     }
@@ -646,8 +653,9 @@ export async function runOwedReplies(admin: Admin) {
 
   // Escalated ones: closed once answered, and the lead and execs told
   for (const o of (open ?? []).filter((x) => x.status === "escalated" && !dropped.has(x.id)).slice(0, 40)) {
-    if (await isAnswered(o, who, teamEmails, context)) {
-      await closeAnswered(admin, o, stamp);
+    const how = await isAnswered(o, who, teamEmails, context);
+    if (how) {
+      await closeAnswered(admin, o, stamp, how === "reacted" ? "reacted" : "replied");
       tally.answered++;
     } else await admin.from("owed_replies").update({ checked_at: stamp }).eq("id", o.id);
   }
