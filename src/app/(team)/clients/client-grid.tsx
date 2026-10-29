@@ -4,6 +4,7 @@ import type { Freshness } from "@/lib/dates";
 import { untilLabel } from "@/lib/allotment";
 import { SLOTS, type SlotRole } from "@/lib/roles";
 import { AssignSelect, type Option } from "./assign-select";
+import { SERVICES, type ServiceSlug } from "@/lib/services";
 
 export type ClientCard = {
   id: string;
@@ -19,8 +20,9 @@ export type ClientCard = {
   videos: { used: number; cap: number };
   inFlight: number;
   contacts: number;
-  /** team slots and contacts still empty */
+  /** team slots (for the services they have) and contacts still empty */
   missing: number;
+  services: ServiceSlug[];
   live: { meta: Freshness["tone"] | null; slack: Freshness["tone"] | null; drive: Freshness["tone"] | null };
   assigned: Record<SlotRole, Option | null>;
 };
@@ -54,16 +56,46 @@ function Light({ label, tone }: { label: string; tone: Freshness["tone"] | null 
   );
 }
 
-/** Every client as a card: package, allotment, what's in flight, live connections, and the team. */
+export const SVC_DOT: Partial<Record<ServiceSlug, string>> = { "facebook-ads": "bg-[#5b8def]", "google-ads": "bg-[#f2b14c]", creative: "bg-brand", "tiktok-ads": "bg-[#36c5f0]" };
+const MANAGED: ServiceSlug[] = ["facebook-ads", "google-ads", "creative"];
+
+/**
+ * Every client as a card, at a glance: the services they're on (with the creative package tier), and for each one only
+ * the people it needs. A service they don't have takes no space; an empty seat on one they do is flagged.
+ */
 export function ClientGrid({ cards, slotOptions, canEdit }: { cards: ClientCard[]; slotOptions: Record<SlotRole, Option[]>; canEdit: boolean }) {
   return (
     <ul className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       {cards.map((c) => {
         const tint = tintFor(c.name);
+        const has = (s: ServiceSlug) => c.services.includes(s);
+        const seat = (slot: SlotRole) => {
+          const s = SLOTS.find((x) => x.value === slot)!;
+          const empty = !c.assigned[slot];
+          return (
+            <div key={slot} className="grid grid-cols-[96px_minmax(0,1fr)] items-center gap-2 max-md:py-0.5">
+              <dt className={`text-xs ${empty ? "text-warn" : "text-faint"}`}>{s.label}</dt>
+              <dd className="min-w-0">
+                <AssignSelect clientId={c.id} slot={slot} label={s.label} current={c.assigned[slot]} options={slotOptions[slot]} canEdit={canEdit} />
+              </dd>
+            </div>
+          );
+        };
+        const block = (title: string, dot: string, children: React.ReactNode, note?: React.ReactNode) => (
+          <div className="grid gap-2 rounded-[12px] border border-line/80 bg-bg/40 px-3.5 py-3">
+            <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">
+              <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
+              {title}
+              {note && <span className="ml-auto font-normal normal-case tracking-normal">{note}</span>}
+            </p>
+            {children}
+          </div>
+        );
+        const others = c.services.filter((x) => !MANAGED.includes(x));
         return (
           <li
             key={c.id}
-            className={`group relative grid content-start gap-5 overflow-hidden rounded-[14px] border border-line bg-surface p-5 transition-colors hover:border-faint/70 ${c.status === "paused" ? "opacity-60" : ""}`}
+            className={`group relative grid content-start gap-4 overflow-hidden rounded-[14px] border border-line bg-surface p-5 transition-colors hover:border-faint/70 ${c.status === "paused" ? "opacity-60" : ""}`}
           >
             {/* A wash of the client's color along the top */}
             <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-24 opacity-[0.10]" style={{ background: `linear-gradient(180deg, ${tint}, transparent)` }} />
@@ -76,11 +108,9 @@ export function ClientGrid({ cards, slotOptions, canEdit }: { cards: ClientCard[
                 <Link href={`/clients/${c.slug}`} className="block truncate font-heading text-[17px] leading-snug hover:text-brand-text">
                   {c.name}
                 </Link>
-                <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-faint">
-                  {c.pkg === "none" ? <span>No creative package</span> : <span className="text-muted">{c.packageLabel ?? "Creative"}</span>}
-                  {c.pkg === "sprint" && c.until && <span className="text-warn">· Sprint until {untilLabel(c.until)}</span>}
-                  {c.status !== "active" && <span className="capitalize">· {c.status}</span>}
-                  {c.whiteLabel && <span>· White label</span>}
+                <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs capitalize text-faint">
+                  {c.status}
+                  {c.whiteLabel && <span className="normal-case">· White label</span>}
                 </p>
               </div>
               <Link
@@ -92,51 +122,63 @@ export function ClientGrid({ cards, slotOptions, canEdit }: { cards: ClientCard[
               </Link>
             </div>
 
-            {c.pkg === "none" ? (
-              <Link
-                href={`/clients/${c.slug}`}
-                className="relative flex min-h-11 items-center gap-2.5 rounded-[10px] border border-dashed border-line px-3.5 py-2.5 text-xs md:min-h-0 text-faint transition-colors hover:text-muted"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden className="shrink-0">
-                  <rect x="5" y="11" width="14" height="9" rx="2" />
-                  <path d="M8 11V8a4 4 0 0 1 8 0v3" />
-                </svg>
-                <span className="min-w-0 flex-1">Creative requests are off. An upsell conversation.</span>
-              </Link>
-            ) : (
-              <div className="relative grid grid-cols-2 gap-4">
-                <Meter label="Images" used={c.images.used} cap={c.images.cap} />
-                <Meter label="Videos" used={c.videos.used} cap={c.videos.cap} />
-              </div>
-            )}
-
-            <div className="relative flex flex-wrap items-center gap-x-4 gap-y-1">
-              <Light label="Meta" tone={c.live.meta} />
-              <Light label="Slack" tone={c.live.slack} />
-              <Light label="Drive" tone={c.live.drive} />
-            </div>
-
-            <dl className="relative grid gap-0.5 border-t border-line pt-4">
-              {SLOTS.map((s) => (
-                <div key={s.value} className="grid grid-cols-[88px_minmax(0,1fr)] items-center gap-2 max-md:py-0.5">
-                  <dt className="text-xs text-faint">{s.label}</dt>
-                  <dd className="min-w-0">
-                    <AssignSelect clientId={c.id} slot={s.value} label={s.label} current={c.assigned[s.value]} options={slotOptions[s.value]} canEdit={canEdit} />
-                  </dd>
-                </div>
-              ))}
-            </dl>
-
-            <div className="relative -mt-1 flex items-center justify-between text-xs">
-              {c.contacts ? (
-                <span className="text-faint">
-                  {c.contacts} client contact{c.contacts === 1 ? "" : "s"}
-                </span>
+            {/* The services, at a glance */}
+            <div className="relative flex flex-wrap gap-1.5">
+              {c.services.length ? (
+                c.services.map((x) => {
+                  const svc = SERVICES.find((v) => v.slug === x)!;
+                  return (
+                    <span key={x} className="inline-flex items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-[11.5px]">
+                      <span className={`h-1.5 w-1.5 rounded-full ${SVC_DOT[x] ?? "bg-muted"}`} />
+                      {svc.short}
+                      {x === "creative" && c.packageLabel && <span className="text-faint">· {c.packageLabel}</span>}
+                      {x === "creative" && c.pkg === "sprint" && c.until && <span className="text-warn">· sprint to {untilLabel(c.until)}</span>}
+                    </span>
+                  );
+                })
               ) : (
-                <Link href={`/clients/${c.slug}`} className="inline-flex min-h-11 items-center text-warn hover:underline md:inline md:min-h-0">
-                  No client contacts yet
+                <Link href={`/clients/${c.slug}`} className="rounded-full border border-dashed border-warn/40 px-2.5 py-1 text-[11.5px] text-warn">
+                  No services on file
                 </Link>
               )}
+            </div>
+
+            {/* Each service with the people it needs */}
+            {(has("facebook-ads") || has("google-ads") || has("creative") || others.length > 0) && (
+              <dl className="relative grid gap-2">
+                {has("facebook-ads") && block("Meta Ads", SVC_DOT["facebook-ads"]!, seat("meta_buyer"), <Light label="synced" tone={c.live.meta} />)}
+                {has("google-ads") && block("Google Ads", SVC_DOT["google-ads"]!, seat("google_buyer"))}
+                {has("creative") &&
+                  block(
+                    `Creative${c.packageLabel ? ` · ${c.packageLabel}` : ""}`,
+                    SVC_DOT.creative!,
+                    <>
+                      <div className="grid grid-cols-2 gap-4 pb-1">
+                        <Meter label="Images" used={c.images.used} cap={c.images.cap} />
+                        <Meter label="Videos" used={c.videos.used} cap={c.videos.cap} />
+                      </div>
+                      {seat("graphic_designer")}
+                      {seat("video_editor")}
+                    </>,
+                  )}
+                {others.length > 0 && <p className="px-1 text-[11.5px] text-faint">Also on {others.map((x) => SERVICES.find((v) => v.slug === x)!.short).join(", ")}.</p>}
+              </dl>
+            )}
+
+            <div className="relative -mt-1 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span className="flex flex-wrap items-center gap-3">
+                <Light label="Slack" tone={c.live.slack} />
+                <Light label="Drive" tone={c.live.drive} />
+                {c.contacts ? (
+                  <span className="text-faint">
+                    {c.contacts} contact{c.contacts === 1 ? "" : "s"}
+                  </span>
+                ) : (
+                  <Link href={`/clients/${c.slug}`} className="inline-flex min-h-11 items-center text-warn hover:underline md:inline md:min-h-0">
+                    No client contacts
+                  </Link>
+                )}
+              </span>
               <Link href={`/clients/${c.slug}`} className="inline-flex min-h-11 items-center text-muted transition-opacity hover:text-fg md:inline md:min-h-0 md:opacity-0 md:group-hover:opacity-100 md:focus:opacity-100">
                 Open →
               </Link>

@@ -337,6 +337,7 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
             pkg: (["ongoing", "sprint", "ongoing", "none"] as const)[i],
             until: i === 1 ? "2026-11-30" : null,
             missing: i === 2 ? 1 : 0,
+            services: ([["facebook-ads", "creative"], ["facebook-ads", "google-ads", "creative"], ["creative"], ["facebook-ads"]] as const)[i].slice(),
             images: [{ used: 6, cap: 20 }, { used: 48, cap: 50 }, { used: 12, cap: 10 }, { used: 0, cap: 3 }][i],
             videos: [{ used: 0, cap: 0 }, { used: 7, cap: 10 }, { used: 1, cap: 3 }, { used: 0, cap: 0 }][i],
             inFlight: [4, 9, 2, 0][i],

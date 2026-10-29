@@ -7,6 +7,7 @@ import type { Option } from "./assign-select";
 import { type ClientCard } from "./client-grid";
 import { ClientsBrowser } from "./clients-browser";
 import { ArchivedList, type ArchiveLog } from "./archived-list";
+import { SERVICES, servicesOf, type ServiceSlug } from "@/lib/services";
 
 type Row = {
   id: string;
@@ -20,6 +21,8 @@ type Row = {
   slack_channel_id: string | null;
   internal_slack_channel_id: string | null;
   drive_folder_id: string | null;
+  services: string[] | null;
+  services_extra: string[] | null;
   creative_packages: { label: string } | null;
   client_assignments: { role: string; profile_id: string; profiles: { full_name: string } | null }[];
   contact_clients: { contact_id: string }[];
@@ -33,18 +36,32 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
   const req = supabase
     .from("clients")
     .select(
-      "id, name, slug, status, client_type, creative_package, creative_package_until, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, creative_packages(label), client_assignments(role, profile_id, profiles(full_name)), contact_clients(contact_id)",
+      "id, name, slug, status, client_type, creative_package, creative_package_until, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, services, services_extra, creative_packages(label), client_assignments(role, profile_id, profiles(full_name)), contact_clients(contact_id)",
     )
     .neq("status", "offboarded")
     .order("name");
-  const [{ data }, { data: staff }, { data: usage }, { data: open }, { data: snaps }, { data: archived }] = await Promise.all([
+  const [{ data }, { data: staff }, { data: usage }, { data: open }, { data: snaps }, { data: archived }, { data: kpiRows }] = await Promise.all([
     req,
     supabase.from("profiles").select("id, full_name, role").eq("is_active", true).order("full_name"),
     supabase.from("client_allotment_usage").select("*"),
     supabase.from("requests").select("client_id").neq("stage", "launched"),
     supabase.from("meta_snapshots").select("client_id, fetched_at").order("fetched_at", { ascending: false }).limit(500),
     supabase.from("clients").select("id, name, slug, archived_at, archive_reason, archive_source").not("archived_at", "is", null).order("archived_at", { ascending: false }),
+    // Which ad platforms each client is set up on (Track's service list is often empty)
+    supabase.from("kpi_targets").select("client_id, platform").eq("active", true),
   ]);
+  const platforms = new Map<string, Set<string>>();
+  for (const k of kpiRows ?? []) platforms.set(k.client_id as string, (platforms.get(k.client_id as string) ?? new Set()).add(k.platform as string));
+  // What each client is on: what they buy, or what's set up for them
+  const servicesFor = (r: Row): ServiceSlug[] => {
+    const bought = new Set<string>(servicesOf(r));
+    if (r.meta_ad_account_id || platforms.get(r.id)?.has("meta")) bought.add("facebook-ads");
+    if (platforms.get(r.id)?.has("google")) bought.add("google-ads");
+    if (pkgOf(r) !== "none") bought.add("creative");
+    return SERVICES.filter((s) => bought.has(s.slug)).map((s) => s.slug);
+  };
+  // The people each service needs: a slot only shows (and only counts as missing) when the client has that service
+  const SLOT_SERVICE: Record<string, ServiceSlug> = { meta_buyer: "facebook-ads", google_buyer: "google-ads", graphic_designer: "creative", video_editor: "creative" };
   // The archive log: every archive and restore, who did it, why, and what was set aside
   const { data: log } = archived?.length || isExecOrLead(me)
     ? await supabase.from("client_archive_events").select("client_id, action, reason, source, set_aside, at, profiles(full_name), clients(name, slug)").order("at", { ascending: false }).limit(300)
@@ -72,7 +89,7 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
     const a = r.client_assignments.find((x) => x.role === slot);
     return a ? { id: a.profile_id, name: a.profiles?.full_name ?? "Unknown" } : null;
   };
-  const missing = (r: Row) => SLOTS.filter((s) => !current(r, s.value)).length + (r.contact_clients.length ? 0 : 1);
+  const missing = (r: Row) => SLOTS.filter((s) => servicesFor(r).includes(SLOT_SERVICE[s.value]) && !current(r, s.value)).length + (r.contact_clients.length ? 0 : 1);
   const inFlight = new Map<string, number>();
   for (const o of open ?? []) inFlight.set(o.client_id, (inFlight.get(o.client_id) ?? 0) + 1);
 
@@ -82,6 +99,7 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
     const u = (usage ?? []).find((x) => x.client_id === r.id);
     return {
       missing: missing(r),
+      services: servicesFor(r),
       pkg: pkgOf(r),
       until: r.creative_package_until,
       id: r.id,
