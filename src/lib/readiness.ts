@@ -13,7 +13,7 @@ export type Readiness = { checks: Check[]; targets: ReadinessTarget[]; ready: bo
 
 export async function clientReadiness(db: SupabaseClient, clientId: string): Promise<Readiness> {
   const [{ data: c }, { data: rows }, { data: team }, { count: contacts }] = await Promise.all([
-    db.from("clients").select("services, services_extra, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, website").eq("id", clientId).maybeSingle(),
+    db.from("clients").select("services, services_extra, services_removed, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, website").eq("id", clientId).maybeSingle(),
     db.from("kpi_targets").select("id, platform, label, ad_account_id, target").eq("client_id", clientId).eq("active", true),
     db.from("client_assignments").select("role").eq("client_id", clientId).in("role", ["meta_buyer", "google_buyer"]),
     db.from("contact_clients").select("contact_id", { count: "exact", head: true }).eq("client_id", clientId),

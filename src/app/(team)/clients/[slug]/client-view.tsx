@@ -152,7 +152,7 @@ export type ClientViewProps = {
   intake?: IntakeRecord | null; // the marketing intake form; undefined in the design preview
   calls?: ClientCall[]; // from Gemini and Fireflies notes; undefined in the design preview
   readiness?: { initial: Readiness; autoOpen: boolean; stamp: string } | null; // what's missing after going live again
-  services?: { track: string[]; extra: string[]; tiers: Tier[]; chosen: Record<string, string> } | null; // what they buy, and the tiers
+  services?: { track: string[]; extra: string[]; removed?: string[]; tiers: Tier[]; chosen: Record<string, string> } | null; // what they buy, and the tiers
   launchRules?: LaunchRule[]; // where their new ads go, learned from their buyers' moves
   campaigns?: PlatformSummary[] | null; // each platform's campaigns, last 30 days
   docs?: ClientDoc[] | null; // every file and link shared about them
@@ -193,15 +193,17 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
   const summary = digest?.summary ? digest.summary.split(/(?<=\.)\s+/).slice(0, 2).join(" ") : null;
   const glance = kpis || creative ? <Glance accounts={false} kpis={kpis ?? []} audits={audits ?? {}} sprints={sprints ?? {}} changes={changes ?? {}} alerts={alerts} inMotion={inMotion} summary={summary} today={today} /> : null;
   // Which services this client has: what they buy, or what's set up for them (Track's list is often empty)
-  const bought = servicesOf({ services: services?.track ?? [], services_extra: services?.extra ?? [] });
+  const bought = servicesOf({ services: services?.track ?? [], services_extra: services?.extra ?? [], services_removed: services?.removed ?? [] });
+  const offList = new Set(services?.removed ?? []);
   const metaKpis = (kpis ?? []).filter((k) => k.platform === "meta");
   const googleKpis = (kpis ?? []).filter((k) => k.platform === "google");
   const metaCampaigns = (campaigns ?? []).find((c) => c.platform === "meta") ?? null;
   const googleCampaigns = (campaigns ?? []).find((c) => c.platform === "google") ?? null;
   const has = {
-    meta: bought.includes("facebook-ads") || Boolean(client.meta_ad_account_id) || metaKpis.length > 0,
-    google: bought.includes("google-ads") || googleKpis.length > 0 || Boolean(googleCampaigns),
-    creative: bought.includes("creative") || client.creative_package || images + videos > 0 || Boolean(creative?.moving.length),
+    // Taken off on purpose stays off, even with an account or a package still set up
+    meta: !offList.has("facebook-ads") && (bought.includes("facebook-ads") || Boolean(client.meta_ad_account_id) || metaKpis.length > 0),
+    google: !offList.has("google-ads") && (bought.includes("google-ads") || googleKpis.length > 0 || Boolean(googleCampaigns)),
+    creative: !offList.has("creative") && (bought.includes("creative") || client.creative_package || images + videos > 0 || Boolean(creative?.moving.length)),
   };
   const tierOf = (slug: string) => {
     const id = services?.chosen[slug];
@@ -541,6 +543,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                         slug={client.slug}
                         track={services.track}
                         extra={services.extra}
+                        removed={services.removed ?? []}
                         tiers={services.tiers}
                         chosen={services.chosen}
                         creative={{ label: active ? packageLabel : null, active, until: active && until ? untilLabel(until) : null }}

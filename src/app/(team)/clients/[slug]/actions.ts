@@ -139,8 +139,8 @@ export async function fillReadiness(clientId: string, slug: string, form: FormDa
 }
 
 /**
- * Execs and leads: switch a service on or off for a client. Kaizen Track's services can't be switched off here (Track
- * is where a sale is recorded, and the hourly mirror would put them back); the rest are kept beside Track's.
+ * Execs and leads: switch a service on or off for a client. One that comes from Kaizen Track can be taken off here too:
+ * it's marked removed, so the hourly mirror doesn't put it back (Track itself is unchanged).
  */
 export async function setClientService(clientId: string, slug: string, service: string, on: boolean): Promise<ActionResult> {
   const me = await requireStaff();
@@ -148,13 +148,19 @@ export async function setClientService(clientId: string, slug: string, service: 
   if (!SERVICES.some((s) => s.slug === service)) return { ok: false, error: "Unknown service." };
   if (!adminConfigured()) return { ok: false, error: "Can't save here." };
   const admin = createAdminClient();
-  const { data: c } = await admin.from("clients").select("services, services_extra").eq("id", clientId).maybeSingle();
+  const { data: c } = await admin.from("clients").select("services, services_extra, services_removed").eq("id", clientId).maybeSingle();
   if (!c) return { ok: false, error: "Client not found." };
-  if (!on && (c.services ?? []).includes(service)) return { ok: false, error: "This one comes from Kaizen Track: end it there." };
   const extra = new Set((c.services_extra ?? []) as string[]);
-  if (on) extra.add(service);
-  else extra.delete(service);
-  const { error } = await admin.from("clients").update({ services_extra: [...extra] }).eq("id", clientId);
+  const removed = new Set((c.services_removed ?? []) as string[]);
+  // Off: out of the added list, and marked removed (so Track's mirror, or a linked ad account, doesn't bring it back)
+  if (on) {
+    removed.delete(service);
+    if (!(c.services ?? []).includes(service)) extra.add(service);
+  } else {
+    extra.delete(service);
+    removed.add(service);
+  }
+  const { error } = await admin.from("clients").update({ services_extra: [...extra], services_removed: [...removed] }).eq("id", clientId);
   return done(slug, error);
 }
 

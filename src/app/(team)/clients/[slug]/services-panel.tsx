@@ -36,6 +36,7 @@ export function ServicesPanel({
   slug,
   track,
   extra,
+  removed = [],
   tiers: allTiers,
   chosen,
   creative,
@@ -45,13 +46,14 @@ export function ServicesPanel({
   slug: string;
   track: string[];
   extra: string[];
+  removed?: string[];
   tiers: Tier[];
   chosen: Record<string, string>; // service → tier id
   creative: { label: string | null; active: boolean; until: string | null };
   canEdit: boolean;
 }) {
   const router = useRouter();
-  const [mine, setMine] = useState(() => new Set([...track, ...extra]));
+  const [mine, setMine] = useState(() => new Set([...track, ...extra].filter((s) => !removed.includes(s))));
   const [tiers, setTiers] = useState(allTiers);
   const [picked, setPicked] = useState(chosen);
   const [error, setError] = useState<string | null>(null);
@@ -137,8 +139,16 @@ export function ServicesPanel({
                     />
                   )}
                 </span>
-                {canEdit && !fromTrack && (
-                  <button type="button" onClick={() => toggle(s.slug, false)} disabled={pending} className="min-h-11 px-2 text-xs text-faint hover:text-fg md:min-h-0 md:px-0">
+                {canEdit && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (fromTrack && !confirm(`Take ${s.label} off this client in Kaizen Ads? Kaizen Track still lists it; this keeps it off here.`)) return;
+                      toggle(s.slug, false);
+                    }}
+                    disabled={pending}
+                    className="min-h-11 px-2 text-xs text-faint hover:text-bad md:min-h-0 md:px-0"
+                  >
                     Remove
                   </button>
                 )}

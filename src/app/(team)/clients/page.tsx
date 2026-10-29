@@ -23,6 +23,7 @@ type Row = {
   drive_folder_id: string | null;
   services: string[] | null;
   services_extra: string[] | null;
+  services_removed: string[] | null;
   creative_packages: { label: string } | null;
   client_assignments: { role: string; profile_id: string; profiles: { full_name: string } | null }[];
   contact_clients: { contact_id: string }[];
@@ -36,7 +37,7 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
   const req = supabase
     .from("clients")
     .select(
-      "id, name, slug, status, client_type, creative_package, creative_package_until, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, services, services_extra, creative_packages(label), client_assignments(role, profile_id, profiles(full_name)), contact_clients(contact_id)",
+      "id, name, slug, status, client_type, creative_package, creative_package_until, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, services, services_extra, services_removed, creative_packages(label), client_assignments(role, profile_id, profiles(full_name)), contact_clients(contact_id)",
     )
     .neq("status", "offboarded")
     .order("name");
@@ -55,9 +56,10 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
   // What each client is on: what they buy, or what's set up for them
   const servicesFor = (r: Row): ServiceSlug[] => {
     const bought = new Set<string>(servicesOf(r));
-    if (r.meta_ad_account_id || platforms.get(r.id)?.has("meta")) bought.add("facebook-ads");
-    if (platforms.get(r.id)?.has("google")) bought.add("google-ads");
-    if (pkgOf(r) !== "none") bought.add("creative");
+    const off = new Set(r.services_removed ?? []);
+    if (!off.has("facebook-ads") && (r.meta_ad_account_id || platforms.get(r.id)?.has("meta"))) bought.add("facebook-ads");
+    if (!off.has("google-ads") && platforms.get(r.id)?.has("google")) bought.add("google-ads");
+    if (!off.has("creative") && pkgOf(r) !== "none") bought.add("creative");
     return SERVICES.filter((s) => bought.has(s.slug)).map((s) => s.slug);
   };
   // The people each service needs: a slot only shows (and only counts as missing) when the client has that service

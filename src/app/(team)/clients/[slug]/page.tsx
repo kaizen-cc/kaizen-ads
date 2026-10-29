@@ -42,7 +42,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
   const { data: client } = await supabase
     .from("clients")
     .select(
-      "id, name, slug, status, client_type, archived_at, archive_reason, archive_source, portal_live, portal_live_at, industry, industry_detail, industry_source, website, meta_ad_account_id, url_tags, slack_channel_id, internal_slack_channel_id, drive_folder_id, kaizen_id, auto_approve_opt_in, creative_package, creative_package_key, creative_package_until, creative_package_note, creative_db, reactivated_at, reactivated_by, services, services_extra, creative_packages(label)",
+      "id, name, slug, status, client_type, archived_at, archive_reason, archive_source, portal_live, portal_live_at, industry, industry_detail, industry_source, website, meta_ad_account_id, url_tags, slack_channel_id, internal_slack_channel_id, drive_folder_id, kaizen_id, auto_approve_opt_in, creative_package, creative_package_key, creative_package_until, creative_package_note, creative_db, reactivated_at, reactivated_by, services, services_extra, services_removed, creative_packages(label)",
     )
     .eq("slug", slug)
     .maybeSingle();
@@ -288,6 +288,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       services={{
         track: (client.services ?? []) as string[],
         extra: (client.services_extra ?? []) as string[],
+        removed: (client.services_removed ?? []) as string[],
         tiers: tierList ?? [],
         chosen: Object.fromEntries((tierPicks ?? []).filter((t) => t.tier_id).map((t) => [t.service as string, t.tier_id as string])),
       }}

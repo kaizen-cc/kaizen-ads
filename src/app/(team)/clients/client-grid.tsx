@@ -92,6 +92,12 @@ export function ClientGrid({ cards, slotOptions, canEdit }: { cards: ClientCard[
           </div>
         );
         const others = c.services.filter((x) => !MANAGED.includes(x));
+        // What's being made for them: with their creative
+        const flight = (
+          <Link href={`/board?client=${c.slug}`} title="Open on the board" className={`rounded-full px-2 py-0.5 text-[11px] tabular transition-colors ${c.inFlight ? "bg-brand-soft text-brand-text hover:bg-brand/25" : "text-faint hover:text-fg"}`}>
+            {c.inFlight ? `${c.inFlight} in flight` : "Nothing in flight"}
+          </Link>
+        );
         return (
           <li
             key={c.id}
@@ -113,13 +119,6 @@ export function ClientGrid({ cards, slotOptions, canEdit }: { cards: ClientCard[
                   {c.whiteLabel && <span className="normal-case">· White label</span>}
                 </p>
               </div>
-              <Link
-                href={`/board?client=${c.slug}`}
-                className={`inline-flex min-h-9 shrink-0 items-center rounded-full px-2.5 py-1 text-xs tabular md:inline md:min-h-0 transition-colors ${c.inFlight ? "bg-brand-soft text-brand-text hover:bg-brand/25" : "bg-surface-2 text-faint hover:text-fg"}`}
-                title="Open on the board"
-              >
-                {c.inFlight ? `${c.inFlight} in flight` : "Nothing in flight"}
-              </Link>
             </div>
 
             {/* The services, at a glance */}
@@ -160,6 +159,7 @@ export function ClientGrid({ cards, slotOptions, canEdit }: { cards: ClientCard[
                       {seat("graphic_designer")}
                       {seat("video_editor")}
                     </>,
+                    flight,
                   )}
                 {others.length > 0 && <p className="px-1 text-[11.5px] text-faint">Also on {others.map((x) => SERVICES.find((v) => v.slug === x)!.short).join(", ")}.</p>}
               </dl>
@@ -167,6 +167,7 @@ export function ClientGrid({ cards, slotOptions, canEdit }: { cards: ClientCard[
 
             <div className="relative -mt-1 flex flex-wrap items-center justify-between gap-2 text-xs">
               <span className="flex flex-wrap items-center gap-3">
+                {!has("creative") && c.inFlight > 0 && flight}
                 <Light label="Slack" tone={c.live.slack} />
                 <Light label="Drive" tone={c.live.drive} />
                 {c.contacts ? (
