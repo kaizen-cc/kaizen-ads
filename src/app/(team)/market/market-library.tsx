@@ -82,7 +82,10 @@ export function MarketLibrary({
     replaceParams({ q: v.trim() ? v : null });
   };
   const openAd = useParam("ad");
-  const open = ads.find((a) => a.id === openAd) ?? null;
+  const open = ads.find((a) => a.id === openAd) ?? clientAds?.ads.find((a) => a.id === openAd) ?? null;
+  // No client picked, but one is named in the search ("oceanbox salmon"): a brief from here is for them
+  const said = q.trim().toLowerCase();
+  const named = forId || said.length < 3 ? null : (clients.find((c) => said.includes(c.name.toLowerCase())) ?? clients.find((c) => c.name.toLowerCase().startsWith(said)) ?? null);
   const setOpen = (a: MarketAd) => pushParams({ ad: a.id });
   // Hovering a card (mouse only) shows the ad as it runs, with the AI's read
   const [hover, setHover] = useState<{ a: MarketAd; rect: DOMRect } | null>(null);
@@ -300,7 +303,7 @@ export function MarketLibrary({
           }}
         />
       )}
-      {open && <MarketSheet forClient={forId ?? undefined} key={open.id} a={open} industryLabel={label(open.industry)} clients={clients} onClose={() => closeParams("ad", "brief")} />}
+      {open && <MarketSheet forClient={forId ?? named?.id} guessed={!forId && Boolean(named)} key={open.id} a={open} industryLabel={label(open.industry)} clients={clients} onClose={() => closeParams("ad", "brief")} />}
     </div>
   );
 }
@@ -344,7 +347,24 @@ export function AdCard({ a, sub, onOpen, onHover, onLeave }: { a: MarketAd; sub:
 }
 
 
-export function MarketSheet({ a, industryLabel, clients, onClose, forClient }: { a: MarketAd; industryLabel: string; clients: PickClient[]; onClose: () => void; forClient?: string }) {
+export function MarketSheet({
+  a,
+  industryLabel,
+  clients,
+  onClose,
+  forClient,
+  guessed = false,
+}: {
+  a: MarketAd;
+  industryLabel: string;
+  clients: PickClient[];
+  onClose: () => void;
+  forClient?: string;
+  /** The client came from the search words, not a pick: offer another client too */
+  guessed?: boolean;
+}) {
+  const forName = clients.find((c) => c.id === forClient)?.name;
+  const briefLabel = forClient ? `Brief ${forName ?? "this client"} on it` : "Brief a client on this";
   const [step, setStep] = useState<"ad" | "pick" | "writing">("ad");
   // The written brief is a place of its own (?brief=id): back returns to the ad, forward to the brief
   const [written, setWritten] = useState<OpenSuggestion | null>(null);
@@ -404,8 +424,13 @@ export function MarketSheet({ a, industryLabel, clients, onClose, forClient }: {
                 onClick={() => (forClient ? write(forClient) : setStep("pick"))}
                 className="hidden h-10 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:brightness-110 md:block"
               >
-                {forClient ? "Brief this client on it" : "Brief a client on this"}
+                {briefLabel}
               </button>
+              {forClient && guessed && (
+                <button onClick={() => setStep("pick")} className="grid h-11 place-items-center rounded-brand border border-line px-4 text-sm text-muted hover:text-fg md:h-10">
+                  Another client
+                </button>
+              )}
               {a.motionUrl && (
                 <a href={a.motionUrl} target="_blank" rel="noreferrer" className="grid h-11 place-items-center rounded-brand border border-line px-4 text-sm text-muted hover:text-fg md:h-10">
                   Open in Motion ↗
@@ -433,7 +458,7 @@ export function MarketSheet({ a, industryLabel, clients, onClose, forClient }: {
         ) : (
           <Writing steps={WRITING} label="brief from a market ad+brief self-review" />
         )}
-        {step === "ad" && <SheetAction onClick={() => (forClient ? write(forClient) : setStep("pick"))}>{forClient ? "Brief this client on it" : "Brief a client on this"}</SheetAction>}
+        {step === "ad" && <SheetAction onClick={() => (forClient ? write(forClient) : setStep("pick"))}>{briefLabel}</SheetAction>}
       </div>
     </div>
   );

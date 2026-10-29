@@ -380,8 +380,9 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
       story: `${r.client}'s ad is ${r.severity === "tired" ? "worn out and ready to replace" : "starting to slip"}.${r.briefId ? " A refresh brief is written and ready." : ""}`,
       why: r.severity === "tired" ? "Results slipping on a live ad" : "Early signs of wear",
       evidence: [],
-      action: { label: "Client page", href: `/clients/${r.clientSlug}` },
-      alt: { label: "KPI board", href: `/kpis?client=${r.clientSlug}` },
+      // A new request with the client already picked; the client page is a click away
+      action: { label: "Make a request", href: `/requests/new?client=${r.clientSlug}` },
+      alt: { label: "Client page", href: `/clients/${r.clientSlug}` },
       image: r.thumbnail,
     });
   }
@@ -404,7 +405,7 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
         story: `${c.used} of ${c.allotment} made with ${Math.round(elapsed * 100)}% of the month gone. They're paying for more than they're getting.`,
         why: "Under-delivering on what they pay for",
         evidence: [],
-        action: { label: "New request", href: `/requests/new` },
+        action: { label: "New request", href: `/requests/new?client=${c.slug}` },
       });
   }
   return out;
