@@ -6,7 +6,8 @@ import { useState, useTransition } from "react";
 import type { OwedReply } from "@/lib/owed-replies";
 import { dismissOwed, doneOwed } from "@/app/today/actions";
 import { HideForMe } from "./hide-for-me";
-import { completeCard } from "@/lib/complete-card";
+import { SourceChip } from "@/components/source-logo";
+import { completeCard, refreshInPlace } from "@/lib/complete-card";
 
 // Messages nobody answered (Slack tags, a client's message in their channel, emails written to someone), once the
 // person has had a notice: theirs to answer or set aside, and for leads and execs, the ones that were escalated.
@@ -28,6 +29,7 @@ export function OwedReplies({ items, me }: { items: OwedReply[]; me: string }) {
           <article key={o.id} data-hideable className={`grid content-start gap-3 rounded-[16px] border bg-bg/70 p-4 ${second ? "border-bad/40" : "border-line"}`}>
             <div className="grid gap-1">
               <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+                <SourceChip source={o.source} />
                 <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${second ? "bg-bad-soft text-bad" : "bg-warn-soft text-warn"}`}>{second ? "Second notice" : "Notice sent"}</span>
                 {o.clientSlug ? (
                   <Link href={`/clients/${o.clientSlug}`} className="font-medium text-fg hover:underline">
@@ -36,7 +38,7 @@ export function OwedReplies({ items, me }: { items: OwedReply[]; me: string }) {
                 ) : (
                   <span className="font-medium text-fg">{o.fromTeam ? "Team" : o.from}</span>
                 )}
-                · {o.source === "gmail" ? "Email" : "Slack"} · {day(o.askedAt)}
+                · {day(o.askedAt)}
               </span>
               <p className="text-[15px] leading-snug">
                 <span className="text-muted">{mine ? "You" : o.target} → </span>
@@ -67,7 +69,7 @@ export function OwedReplies({ items, me }: { items: OwedReply[]; me: string }) {
                         setGone((g) => new Set(g).add(o.id));
                         start(async () => {
                           await saved;
-                          router.refresh();
+                          refreshInPlace(router);
                         });
                       });
                     }}
@@ -81,7 +83,7 @@ export function OwedReplies({ items, me }: { items: OwedReply[]; me: string }) {
                       setGone((g) => new Set(g).add(o.id));
                       start(async () => {
                         await dismissOwed(o.id);
-                        router.refresh();
+                        refreshInPlace(router);
                       });
                     }}
                     className="h-11 rounded-brand px-3 text-sm text-faint hover:text-fg md:h-9"

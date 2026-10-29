@@ -455,7 +455,19 @@ async function whatHappened(db: SupabaseClient, keys: { key: string; snapshot: {
 
 /** Today's recap for this person: open items most critical first (with what they've done with each), and what got resolved. */
 export async function loadToday(db: SupabaseClient, me: Staff): Promise<Today> {
-  const [drafts, { data: mine }] = await Promise.all([gather(db, me), db.from("daily_items").select("key, status, snapshot, first_seen_at").eq("profile_id", me.id)]);
+  const [all, { data: mine }, { data: hiddenRows }] = await Promise.all([
+    gather(db, me),
+    db.from("daily_items").select("key, status, snapshot, first_seen_at").eq("profile_id", me.id),
+    db.from("hidden_items").select("key").eq("profile_id", me.id),
+  ]);
+  // What they cleared off their Overview (Done or Dismiss there) leaves their day too, so the counts match
+  const hidden = new Set((hiddenRows ?? []).map((h) => h.key as string));
+  const asHidden = (key: string) => {
+    const [kind, id] = key.split(":");
+    const as = kind.startsWith("owed") ? "owed" : kind.startsWith("said") ? "said" : kind === "promise" ? "call" : kind === "attention" ? "alert" : null;
+    return Boolean(as && hidden.has(`${as}:${id}`));
+  };
+  const drafts = all.filter((d) => !asHidden(d.key));
   const state = new Map((mine ?? []).map((m) => [m.key as string, m]));
   const startOfDay = new Date(new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }) + "T04:00:00Z").toISOString();
   const items: TodayItem[] = drafts

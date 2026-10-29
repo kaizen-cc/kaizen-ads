@@ -7,7 +7,8 @@ import type { SaidPromise } from "@/lib/message-promises";
 import { closeSaidPromise } from "@/app/today/actions";
 import { PromiseSources } from "./promise-sources";
 import { HideForMe } from "./hide-for-me";
-import { completeCard } from "@/lib/complete-card";
+import { SourceChip } from "@/components/source-logo";
+import { completeCard, refreshInPlace } from "@/lib/complete-card";
 
 // What someone said yes to in Slack or email that's past due with nothing showing it moving: theirs to do (or close),
 // and for leads and execs, the ones that went past a second notice.
@@ -26,7 +27,7 @@ export function SaidPromises({ items, me }: { items: SaidPromise[]; me: string }
       setGone((g) => new Set(g).add(id));
       start(async () => {
         await saved;
-        router.refresh();
+        refreshInPlace(router);
       });
     };
     // Done: a check plays over the card first
@@ -43,6 +44,7 @@ export function SaidPromises({ items, me }: { items: SaidPromise[]; me: string }
           <article key={p.id} data-hideable className={`grid content-start gap-3 rounded-[16px] border bg-bg/70 p-4 ${second ? "border-bad/40" : "border-line"}`}>
             <div className="grid gap-1">
               <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+                <SourceChip source={p.source} />
                 <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${second ? "bg-bad-soft text-bad" : "bg-warn-soft text-warn"}`}>{second ? "Second notice" : "Past due"}</span>
                 {p.clientSlug ? (
                   <Link href={`/clients/${p.clientSlug}`} className="font-medium text-fg hover:underline">
@@ -51,7 +53,7 @@ export function SaidPromises({ items, me }: { items: SaidPromise[]; me: string }
                 ) : (
                   <span className="font-medium text-fg">{p.askedBy ?? "Team"}</span>
                 )}
-                · {p.source === "gmail" ? "Email" : "Slack"} · said {day(p.saidAt)}
+                · said {day(p.saidAt)}
               </span>
               <p className="text-[15px] leading-snug">
                 <span className="text-muted">{mine ? "You said you'd" : `${p.owner} said they'd`} </span>

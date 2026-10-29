@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
-import { completeCard } from "@/lib/complete-card";
+import { completeCard, refreshInPlace } from "@/lib/complete-card";
 import { hideForMe } from "../hide-actions";
 
 // Done and Dismiss on anything on the Overview: it leaves this person's board only. Whoever it's on still has it, and
@@ -20,7 +20,7 @@ export function HideForMe({ hideKey, label, href, compact = false }: { hideKey: 
     const save = hideForMe(hideKey, how, label, href);
     const after = () => start(async () => {
       await save;
-      router.refresh();
+      refreshInPlace(router);
     });
     if (how === "done") completeCard(card, after);
     else {

@@ -14,3 +14,29 @@ export function completeCard(el: Element | null | undefined, then?: () => void) 
     then?.();
   }, SHOW_MS + LEAVE_MS);
 }
+
+/**
+ * Refresh the page without losing your place: if the page jumps while it re-renders (a list above got shorter, a
+ * panel re-drew), it's put back where you were, unless you scrolled yourself in the meantime.
+ */
+export function refreshInPlace(router: { refresh: () => void }) {
+  const y = window.scrollY;
+  let moved = false;
+  const mine = () => (moved = true);
+  window.addEventListener("wheel", mine, { once: true, passive: true });
+  window.addEventListener("touchmove", mine, { once: true, passive: true });
+  window.addEventListener("keydown", mine, { once: true });
+  router.refresh();
+  const until = Date.now() + 2500;
+  const hold = () => {
+    if (moved || Date.now() > until) {
+      window.removeEventListener("wheel", mine);
+      window.removeEventListener("touchmove", mine);
+      window.removeEventListener("keydown", mine);
+      return;
+    }
+    if (Math.abs(window.scrollY - y) > 120) window.scrollTo({ top: y });
+    requestAnimationFrame(hold);
+  };
+  requestAnimationFrame(hold);
+}
