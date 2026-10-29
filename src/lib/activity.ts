@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { stageInfo } from "@/lib/stages";
+import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 
 // The team's activity record, for execs: when each person was last on, how much they use Kaizen Ads (minutes in use,
 // from the heartbeat in src/components/activity-tracker.tsx), and a log of what they did: sign-ins, pages opened,
@@ -57,7 +58,7 @@ export async function usageOf(db: SupabaseClient, people: Prof[]) {
   return out;
 }
 
-export type ActivityEntry = { at: string; kind: "sign_in" | "page" | "ticket" | "report"; what: string; detail: string | null; href: string | null };
+export type ActivityEntry = { at: string; kind: "sign_in" | "page" | "click" | "search" | "submit" | "decision" | "ticket" | "report"; what: string; detail: string | null; href: string | null };
 
 const TICKET: Record<string, string> = { review: "Reviewed", copy: "Worked the copy on", upload: "Uploaded files to", created: "Created", priority: "Changed the priority of" };
 
@@ -65,8 +66,11 @@ const TICKET: Record<string, string> = { review: "Reviewed", copy: "Worked the c
 export async function activityLog(db: SupabaseClient, profileId: string, before: Date, days = 7) {
   const from = new Date(before.getTime() - days * DAY).toISOString();
   const to = before.toISOString();
-  const [{ data: events }, { data: tickets }, { data: reports }, { data: minutes }] = await Promise.all([
-    db.from("activity_events").select("at, kind, path, label").eq("profile_id", profileId).gte("at", from).lt("at", to).order("at", { ascending: false }).limit(600),
+  // What they did with items in their day and on their Overview is private to them: read with the server key (execs only
+  // reach this page)
+  const own = adminConfigured() ? createAdminClient() : db;
+  const [{ data: events }, { data: tickets }, { data: reports }, { data: minutes }, { data: decided }, { data: cleared }] = await Promise.all([
+    db.from("activity_events").select("at, kind, path, label").eq("profile_id", profileId).gte("at", from).lt("at", to).order("at", { ascending: false }).limit(3000),
     db
       .from("request_events")
       .select("created_at, kind, from_stage, to_stage, body, requests(number, title, clients(name))")
@@ -77,9 +81,29 @@ export async function activityLog(db: SupabaseClient, profileId: string, before:
       .limit(300),
     db.from("reports").select("id, kind, posted_at, platform, clients(name)").eq("posted_by", profileId).gte("posted_at", from).lt("posted_at", to).limit(100),
     db.from("activity_minutes").select("day, minutes").eq("profile_id", profileId).gte("day", nyDate(new Date(before.getTime() - days * DAY))).lte("day", nyDate(before)),
+    own.from("daily_items").select("key, status, snapshot, updated_at").eq("profile_id", profileId).in("status", ["done", "dismissed", "saved"]).gte("updated_at", from).lt("updated_at", to).limit(500),
+    own.from("hidden_items").select("key, how, label, href, hidden_at").eq("profile_id", profileId).gte("hidden_at", from).lt("hidden_at", to).limit(500),
   ]);
+  const DECIDED: Record<string, string> = { done: "Marked done in their day", dismissed: "Set aside in their day", saved: "Saved for later in their day" };
   const log: ActivityEntry[] = [
-    ...(events ?? []).map((e): ActivityEntry => ({ at: e.at as string, kind: e.kind as "sign_in" | "page", what: e.kind === "sign_in" ? "Signed in" : `Opened ${e.label ?? e.path}`, detail: e.kind === "page" ? (e.path as string) : null, href: e.kind === "page" ? (e.path as string) : null })),
+    ...(events ?? []).map((e): ActivityEntry => ({
+      at: e.at as string,
+      kind: e.kind as ActivityEntry["kind"],
+      what: e.kind === "sign_in" ? "Signed in" : e.kind === "page" ? `Opened ${e.label ?? e.path}` : String(e.label ?? ""),
+      detail: e.kind === "sign_in" ? null : (e.path as string),
+      href: e.kind === "sign_in" ? null : (e.path as string),
+    })),
+    ...(decided ?? []).map((d): ActivityEntry => {
+      const s = (d.snapshot ?? {}) as { client?: string; title?: string };
+      return { at: d.updated_at as string, kind: "decision", what: `${DECIDED[d.status as string]}: ${[s.client, s.title].filter(Boolean).join(" · ") || d.key}`, detail: null, href: null };
+    }),
+    ...(cleared ?? []).map((h): ActivityEntry => ({
+      at: h.hidden_at as string,
+      kind: "decision",
+      what: `${h.how === "done" ? "Marked done" : "Dismissed"} on their Overview: ${h.label ?? h.key}`,
+      detail: null,
+      href: (h.href as string | null) ?? null,
+    })),
     ...(tickets ?? []).map((t): ActivityEntry => {
       const r = t.requests as unknown as { number: number; title: string; clients: { name: string } | null } | null;
       const ticket = r ? `#${r.number} ${r.title}${r.clients ? ` (${r.clients.name})` : ""}` : "a ticket";

@@ -20,6 +20,10 @@ const weekBefore = (d: Date) => nyDay(new Date(d.getTime() - 7 * DAY));
 const KIND: Record<ActivityEntry["kind"], { dot: string; label: string }> = {
   sign_in: { dot: "bg-ok", label: "Sign-in" },
   page: { dot: "bg-faint/60", label: "Opened" },
+  click: { dot: "bg-muted/60", label: "Clicked" },
+  search: { dot: "bg-[#36c5f0]", label: "Searched" },
+  submit: { dot: "bg-warn", label: "Submitted" },
+  decision: { dot: "bg-ok/70", label: "Decided" },
   ticket: { dot: "bg-brand", label: "Ticket" },
   report: { dot: "bg-[#9aa8ff]", label: "Report" },
 };
@@ -38,14 +42,15 @@ export default async function PersonActivity({ params, searchParams }: PageProps
   const u = usage.get(p.id)!;
   const days = lastDays(28);
   const peak = Math.max(60, ...days.map((d) => month.perDay.get(d) ?? 0));
-  const showPages = pages === "1";
-  const shown = showPages ? log : log.filter((e) => e.kind !== "page");
+  // Everything shows by default; pages opened and clicks can be folded away for a quieter read
+  const showPages = pages !== "0";
+  const shown = showPages ? log : log.filter((e) => e.kind !== "page" && e.kind !== "click");
   const byDay = new Map<string, ActivityEntry[]>();
   for (const e of shown) {
     const d = nyDay(new Date(e.at));
     byDay.set(d, [...(byDay.get(d) ?? []), e]);
   }
-  const pagesOpened = log.filter((e) => e.kind === "page").length;
+  const pagesOpened = log.filter((e) => e.kind === "page" || e.kind === "click").length;
   const qs = (o: Record<string, string | undefined>) => {
     const q = new URLSearchParams(Object.entries({ before, pages, ...o }).filter((x): x is [string, string] => Boolean(x[1])));
     return q.size ? `?${q}` : "";
@@ -111,8 +116,8 @@ export default async function PersonActivity({ params, searchParams }: PageProps
           <h2 className="font-heading text-lg">
             Activity <span className="text-sm font-normal text-faint">{before ? `the week to ${new Date(end.getTime() - DAY).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : "the last 7 days"}</span>
           </h2>
-          <Link href={`/team/${p.id}${qs({ pages: showPages ? undefined : "1" })}`} className="inline-flex min-h-11 items-center text-xs text-muted hover:text-fg md:min-h-0">
-            {showPages ? "Hide pages opened" : `Show pages opened (${pagesOpened})`}
+          <Link href={`/team/${p.id}${qs({ pages: showPages ? "0" : undefined })}`} className="inline-flex min-h-11 items-center text-xs text-muted hover:text-fg md:min-h-0">
+            {showPages ? `Hide pages and clicks (${pagesOpened})` : `Show pages and clicks (${pagesOpened})`}
           </Link>
         </div>
         {byDay.size === 0 ? (
