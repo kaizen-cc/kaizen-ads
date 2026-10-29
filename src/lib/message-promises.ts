@@ -216,8 +216,18 @@ async function accountChangesSince(admin: Admin, clientId: string, at: string) {
   const ids = [...new Set((targets ?? []).filter((t) => t.ad_account_id).map((t) => (t.platform === "google" ? String(t.ad_account_id).replace(/\D/g, "") : String(t.ad_account_id).replace(/^act_/, ""))))];
   if (!ids.length) return "";
   const from = new Date(Date.parse(at) - 3 * 3_600_000).toISOString();
-  const { data } = await admin.from("ad_account_changes").select("at, who, what, object").in("ad_account_id", ids).gte("at", from).order("at").limit(40);
-  return (data ?? []).map((c) => `${nyDay(String(c.at))} ${c.who ?? "someone"}: ${c.what}${c.object ? ` (${String(c.object).slice(0, 80)})` : ""}`).join(" | ");
+  const recent = new Date(Date.now() - 3 * 86_400_000).toISOString().slice(0, 10);
+  const metaIds = (targets ?? []).filter((t) => t.platform !== "google" && t.ad_account_id).flatMap((t) => [String(t.ad_account_id), `act_${String(t.ad_account_id).replace(/^act_/, "")}`]);
+  const googleIds = (targets ?? []).filter((t) => t.platform === "google" && t.ad_account_id).map((t) => String(t.ad_account_id).replace(/\D/g, ""));
+  const [{ data }, { data: meta }, { data: google }] = await Promise.all([
+    admin.from("ad_account_changes").select("at, who, what, object").in("ad_account_id", ids).gte("at", from).order("at").limit(40),
+    // Renames aren't in Meta's change history: what things are called now shows them
+    metaIds.length ? admin.from("meta_campaign_daily").select("campaign_name").in("ad_account_id", metaIds).gte("date", recent).limit(400) : Promise.resolve({ data: [] as { campaign_name: string | null }[] }),
+    googleIds.length ? admin.from("google_campaign_daily").select("campaign_name").in("ad_account_id", googleIds).gte("date", recent).limit(400) : Promise.resolve({ data: [] as { campaign_name: string | null }[] }),
+  ]);
+  const changes = (data ?? []).map((c) => `${nyDay(String(c.at))} ${c.who ?? "someone"}: ${c.what}${c.object ? ` (${String(c.object).slice(0, 80)})` : ""}`).join(" | ");
+  const names = [...new Set([...(meta ?? []), ...(google ?? [])].map((r) => r.campaign_name).filter(Boolean))].slice(0, 30);
+  return `${changes || "none"}${names.length ? `\nCampaigns running in their ad accounts now (current names): ${names.join(" | ")}` : ""}`;
 }
 
 /** For each promise: done, moving (a ticket, a task, the thread, or the ad account shows it), or nothing yet. */
@@ -245,7 +255,7 @@ async function movement(admin: Admin, list: Row[], who: SlackWho | null, names: 
       bare: true,
       maxTokens: 4000,
       system:
-        "You check whether something the team said they'd do has happened or is moving. done: the later messages show it delivered (sent, shared, live, launched, changed, \"here it is\"), or the ad accounts' own change history shows it done (ads or ad sets paused or their status changed for a pause, names changed for a rename, budgets changed for a budget change), whoever's name is on it, since people use their own Meta or Google names. moving: a ticket or Asana task makes substantially the same thing, or the messages show it started or handed on (\"with design now\", \"drafting it\", a new date agreed with the person who asked). nothing: no sign of either. The person who asked dropping it (\"never mind\", \"let's hold off\") counts as done. evidence: one short line saying what showed it (or \"nothing since\"). tickets: the ticket numbers that cover it; asana: the Asana task numbers without the A.",
+        "You check whether something the team said they'd do has happened or is moving. done: the later messages show it delivered (sent, shared, live, launched, changed, \"here it is\"), or the ad accounts' own change history shows it done (ads or ad sets paused or their status changed for a pause, names changed for a rename, budgets changed for a budget change), or for a rename or a naming change, the current campaign names already show it, whoever's name is on it, since people use their own Meta or Google names. moving: a ticket or Asana task makes substantially the same thing, or the messages show it started or handed on (\"with design now\", \"drafting it\", a new date agreed with the person who asked). nothing: no sign of either. The person who asked dropping it (\"never mind\", \"let's hold off\") counts as done. evidence: one short line saying what showed it (or \"nothing since\"). tickets: the ticket numbers that cover it; asana: the Asana task numbers without the A.",
       schema: MOVE_SCHEMA,
       prompt: blocks.join("\n\n"),
     });
