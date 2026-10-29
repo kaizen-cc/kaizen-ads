@@ -408,7 +408,7 @@ export function KpiPulse({ k, title = "Ad accounts" }: { k: KpiPulseData; title?
             <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-faint">Off or close to target{k.offTotal > k.off.length ? ` · worst ${k.off.length} of ${k.offTotal}` : ""}</p>
             {k.off.length ? (
               k.off.map((o) => (
-                <Link key={o.id} href={o.slug ? `/clients/${o.slug}` : `/kpis?target=${o.id}`} className="flex items-baseline justify-between gap-3 py-1.5 text-sm hover:text-fg md:py-0">
+                <Link key={o.id} href={o.slug ? `/clients/${o.slug}?service=${o.platform}` : `/kpis?target=${o.id}`} className="flex items-baseline justify-between gap-3 py-1.5 text-sm hover:text-fg md:py-0">
                   <span className="min-w-0 truncate">
                     {o.client}
                     {o.label && <span className="text-faint"> · {o.label}</span>}
@@ -429,7 +429,7 @@ export function KpiPulse({ k, title = "Ad accounts" }: { k: KpiPulseData; title?
                 </summary>
                 <div className="grid gap-1 pt-2">
                   {k.working.map((w) => (
-                    <Link key={w.id} href={`/clients/${w.slug}`} className="flex items-baseline justify-between gap-3 py-1 text-[13px] text-muted hover:text-fg">
+                    <Link key={w.id} href={`/clients/${w.slug}?service=${w.platform}`} className="flex items-baseline justify-between gap-3 py-1 text-[13px] text-muted hover:text-fg">
                       <span className="min-w-0 truncate">
                         {w.client}
                         {w.label && <span className="text-faint"> · {w.label}</span>}
@@ -448,7 +448,7 @@ export function KpiPulse({ k, title = "Ad accounts" }: { k: KpiPulseData; title?
             <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-faint">Budget pacing</p>
             {k.pacing.length ? (
               k.pacing.map((p) => (
-                <Link key={p.id} href={p.slug ? `/clients/${p.slug}` : `/kpis?target=${p.id}`} className="grid gap-0.5 py-1.5 text-sm hover:text-fg md:flex md:items-baseline md:justify-between md:gap-3 md:py-0">
+                <Link key={p.id} href={p.slug ? `/clients/${p.slug}?service=${p.platform}` : `/kpis?target=${p.id}`} className="grid gap-0.5 py-1.5 text-sm hover:text-fg md:flex md:items-baseline md:justify-between md:gap-3 md:py-0">
                   <span className="min-w-0 truncate">
                     {p.client}
                     {p.label && <span className="text-faint"> · {p.label}</span>}

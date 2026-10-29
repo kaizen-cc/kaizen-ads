@@ -240,13 +240,13 @@ export type KpiPulse = {
   /** "Needs setup", split: a new client with no ad account yet, and an account we can't read (access) */
   setup: { noAccount: string[]; cantRead: string[] };
   spend30: number;
-  off: { id: string; client: string; slug: string; label: string; deviation: number | null; status: string }[];
+  off: { id: string; client: string; slug: string; platform: string; label: string; deviation: number | null; status: string }[];
   offTotal: number;
   /** Off target but no alarm needed yet: someone changed the account within the last few days (see WORKED_DAYS) */
   offFresh: number;
-  working: { id: string; client: string; slug: string; label: string; changedAt: string; who: string | null }[];
+  working: { id: string; client: string; slug: string; platform: string; label: string; changedAt: string; who: string | null }[];
   /** check: the spend is so far past the budget that the budget itself is probably wrong (a typo, a daily figure) */
-  pacing: { id: string; client: string; slug: string; label: string; status: "over" | "under" | "check"; pace: number; spent: number; budget: number }[];
+  pacing: { id: string; client: string; slug: string; platform: string; label: string; status: "over" | "under" | "check"; pace: number; spent: number; budget: number }[];
   syncedAt: string | null;
   syncedMinutes: number | null;
 };
@@ -304,12 +304,12 @@ export async function loadKpiPulse(db: SupabaseClient, opts?: string | { owner?:
     const label = [platform ? null : PLATFORM[t.platform as "meta" | "google"], t.label].filter(Boolean).join(" · ");
     spend30 += Number((snap?.windows as { d30?: { spend?: number } } | null)?.d30?.spend ?? 0);
     if (snap?.computed_at && (!synced || snap.computed_at > synced)) synced = snap.computed_at;
-    if (status === "off" || status === "close") off.push({ id: t.id, client: name, slug: c?.slug ?? "", label, deviation: snap?.deviation == null ? null : Number(snap.deviation), status });
+    if (status === "off" || status === "close") off.push({ id: t.id, client: name, slug: c?.slug ?? "", platform: t.platform as string, label, deviation: snap?.deviation == null ? null : Number(snap.deviation), status });
     const b = snap?.budget as { status?: string; pace?: number; spent?: number; budget?: number } | null;
     // A budget under $20 a month is a typo (a "k" lost from the sheet), not a budget
     if ((b?.status === "over" || b?.status === "under") && Number(b.budget ?? 0) >= 20) {
       const pace = b.pace ?? 1;
-      pacing.push({ id: t.id, client: name, slug: c?.slug ?? "", label, status: pace > 3 ? "check" : b.status, pace, spent: Math.round(Number(b.spent ?? 0)), budget: Math.round(Number(b.budget ?? 0)) });
+      pacing.push({ id: t.id, client: name, slug: c?.slug ?? "", platform: t.platform as string, label, status: pace > 3 ? "check" : b.status, pace, spent: Math.round(Number(b.spent ?? 0)), budget: Math.round(Number(b.budget ?? 0)) });
     }
   }
   off.sort((a, b) => (b.deviation ?? 0) - (a.deviation ?? 0));
@@ -320,7 +320,7 @@ export async function loadKpiPulse(db: SupabaseClient, opts?: string | { owner?:
   for (const o of off) {
     const t = targets.find((x) => x.id === o.id)!;
     const w = workedOn(worked, t as { platform: string; ad_account_id: string | null });
-    if (w) working.push({ id: o.id, client: o.client, slug: o.slug, label: o.label, changedAt: w.at, who: w.who });
+    if (w) working.push({ id: o.id, client: o.client, slug: o.slug, platform: o.platform, label: o.label, changedAt: w.at, who: w.who });
     else alarms.push(o);
   }
   const offFresh = alarms.filter((o) => o.status === "off").length;
