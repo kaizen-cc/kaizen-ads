@@ -367,15 +367,22 @@ export async function asanaSince(admin: SupabaseClient, clientId: string, since:
   return (data ?? []) as CoverTask[];
 }
 
+/** An Asana task's request: past the standard note at the top when there is one ("Here is what you submitted:") */
+const requestOf = (notes: string | null) => {
+  const text = (notes ?? "").replace(/\s+/g, " ").trim();
+  const at = text.search(/here is what you submit+ed:?/i);
+  return at >= 0 ? text.slice(at) : text;
+};
+
 /** Which promises a ticket in Kaizen Ads or a task in Asana since the call already covers. */
 async function coverCheck(promises: { what: string }[], requests: CoverTicket[], tasks: CoverTask[]) {
   return askJson<{ covered: { commitment: number; tickets: number[]; asana: number[] }[] }>({
     agent: "calls",
     label: "commitments covered",
     system:
-      "You check whether promises made on a client call have been turned into creative work since: a ticket in Kaizen Ads, or a task on the Asana creative board (the team is still moving over from Asana). A ticket or task covers a promise when it makes substantially the same thing.",
+      "You check whether promises made on a client call have been turned into creative work since: a ticket in Kaizen Ads, or a task on the Asana creative board (the team is still moving over from Asana). A ticket or task covers a promise when it makes substantially the same thing, or a real part of it (10 images of a promised 10 images and 3 videos counts: the work is in motion). Judge the request itself: an Asana task can start with a standard note about the creative package before what was asked for.",
     schema: COVER_SCHEMA,
-    prompt: `Promises:\n${promises.map((c, i) => `${i + 1}. ${c.what}`).join("\n")}\n\nKaizen Ads tickets made since the call:\n${requests.map((r) => `#${r.number} "${r.title}": ${(r.brief ?? "").replace(/\s+/g, " ").slice(0, 300)}`).join("\n") || "(none)"}\n\nAsana tasks made since the call:\n${tasks.map((t, i) => `A${i + 1} "${t.name}" (${t.section ?? "done"}): ${(t.notes ?? "").replace(/\s+/g, " ").slice(0, 300)}`).join("\n") || "(none)"}\n\ncovered: each promise number that work covers, with the ticket numbers (tickets) and the Asana task numbers without the A (asana). Leave out promises nothing covers.`,
+    prompt: `Promises:\n${promises.map((c, i) => `${i + 1}. ${c.what}`).join("\n")}\n\nKaizen Ads tickets made since the call:\n${requests.map((r) => `#${r.number} "${r.title}": ${(r.brief ?? "").replace(/\s+/g, " ").slice(0, 300)}`).join("\n") || "(none)"}\n\nAsana tasks made since the call:\n${tasks.map((t, i) => `A${i + 1} "${t.name}" (${t.section ?? "done"}): ${requestOf(t.notes).slice(0, 1500)}`).join("\n") || "(none)"}\n\ncovered: each promise number that work covers, with the ticket numbers (tickets) and the Asana task numbers without the A (asana). Leave out promises nothing covers.`,
   });
 }
 
