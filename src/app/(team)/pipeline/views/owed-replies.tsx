@@ -87,7 +87,7 @@ export function OwedReplies({ items, me }: { items: OwedReply[]; me: string }) {
                 </>
               )}
               {/* Someone else's: clear it off your board (it stays theirs) */}
-              {!mine && <HideForMe hideKey={`owed:${o.id}`} />}
+              {!mine && <HideForMe hideKey={`owed:${o.id}`} label={`${o.target} → ${o.from}: ${o.gist}`} href={o.url} />}
             </div>
           </article>
         );

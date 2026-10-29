@@ -46,7 +46,7 @@ export function CallPromises({ promises, bare = false }: { promises: CallPromise
               <button onClick={() => p.suggestion && pushParams({ promise: p.suggestion.id })} className="h-11 w-full rounded-brand bg-fg px-4 text-sm font-medium text-bg md:h-9 md:w-auto">
                 Review the brief
               </button>
-              <HideForMe hideKey={`call:${p.commitmentId}`} />
+              <HideForMe hideKey={`call:${p.commitmentId}`} label={`${p.client}: ${p.group?.title ?? p.what}`} href={`/clients/${p.clientSlug}`} />
             </div>
           </article>
         ))}

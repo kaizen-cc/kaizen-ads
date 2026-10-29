@@ -160,7 +160,7 @@ export function AttentionList({ alerts, empty }: { alerts: Alert[]; empty: strin
           </div>
           {a.owner ? <span className="col-start-2 whitespace-nowrap text-xs text-muted md:col-start-auto">{a.owner}</span> : <span className="hidden md:block" />}
           <span className="col-start-2 -my-1 md:col-start-auto">
-            <HideForMe hideKey={`alert:${a.id}`} compact />
+            <HideForMe hideKey={`alert:${a.id}`} label={`${a.kind}: ${a.client} · ${a.title}`} href={a.href} compact />
           </span>
         </li>
       ))}

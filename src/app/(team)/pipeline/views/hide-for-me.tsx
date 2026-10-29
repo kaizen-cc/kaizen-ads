@@ -7,7 +7,7 @@ import { hideForMe } from "../hide-actions";
 // Done and Dismiss on anything on the Overview: it leaves this person's board only. Whoever it's on still has it, and
 // nothing is closed or sent. The card goes at once; the page catches up behind it.
 
-export function HideForMe({ hideKey, compact = false }: { hideKey: string; compact?: boolean }) {
+export function HideForMe({ hideKey, label, href, compact = false }: { hideKey: string; label: string; href?: string | null; compact?: boolean }) {
   const router = useRouter();
   const [, start] = useTransition();
   const hide = (e: React.MouseEvent<HTMLButtonElement>, how: "done" | "dismissed") => {
@@ -15,7 +15,7 @@ export function HideForMe({ hideKey, compact = false }: { hideKey: string; compa
     e.stopPropagation();
     (e.currentTarget.closest("[data-hideable]") as HTMLElement | null)?.style.setProperty("display", "none");
     start(async () => {
-      await hideForMe(hideKey, how);
+      await hideForMe(hideKey, how, label, href);
       router.refresh();
     });
   };

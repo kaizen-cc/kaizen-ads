@@ -9,6 +9,7 @@ import { roleLabel } from "@/lib/roles";
 import { businessDuration, health, stageInfo, type Stage } from "@/lib/stages";
 import { createClient } from "@/lib/supabase/server";
 import { loadOwedReplies } from "@/lib/owed-replies";
+import { HiddenLog } from "./views/hidden-log";
 import { loadSaidPromises } from "@/lib/message-promises";
 import { loadCallPromises, loadOnboarding, loadSuggestions } from "@/lib/suggestions";
 import { loadWatchList } from "@/lib/fatigue";
@@ -57,7 +58,7 @@ export default async function Home() {
     loadSaidPromises(db, me).catch(() => []),
   ]);
   // What this person cleared off their own board (Done or Dismiss): gone for them, still there for everyone else
-  const { data: hiddenRows } = await db.from("hidden_items").select("key").eq("profile_id", me.id);
+  const { data: hiddenRows } = await db.from("hidden_items").select("key, how, label, href, hidden_at").eq("profile_id", me.id).order("hidden_at", { ascending: false }).limit(200);
   const hidden = new Set((hiddenRows ?? []).map((r) => r.key as string));
   h.attention = h.attention.filter((a) => !hidden.has(`alert:${a.id}`));
   const callPromises = callPromisesAll?.filter((p) => !hidden.has(`call:${p.commitmentId}`)) ?? null;
@@ -67,11 +68,15 @@ export default async function Home() {
   // How creative production is going (speed, revisions, the team): execs and the Head of Creative
   const production = me.isExec || me.role === "head_of_creative" ? await loadProduction(db).catch(() => null) : null;
 
-  // The daily recap's way in, streamed in after the rest of the page
+  // The daily recap's way in, streamed in after the rest of the page, and under it what this person cleared off their
+  // board (kept, so anything can be put back)
   const recap = (
-    <Suspense fallback={<TodayHeroSkeleton />}>
-      <TodayHero db={db} me={me} />
-    </Suspense>
+    <>
+      <Suspense fallback={<TodayHeroSkeleton />}>
+        <TodayHero db={db} me={me} />
+      </Suspense>
+      <HiddenLog items={(hiddenRows ?? []).map((r) => ({ key: r.key as string, how: r.how as "done" | "dismissed", label: r.label as string | null, href: r.href as string | null, at: r.hidden_at as string }))} />
+    </>
   );
 
   if (me.isExec) {

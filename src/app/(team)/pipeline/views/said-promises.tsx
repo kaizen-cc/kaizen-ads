@@ -77,7 +77,7 @@ export function SaidPromises({ items, me }: { items: SaidPromise[]; me: string }
                   </button>
                 </>
               )}
-              {!mine && <HideForMe hideKey={`said:${p.id}`} />}
+              {!mine && <HideForMe hideKey={`said:${p.id}`} label={`${p.owner} said they'd ${p.group?.title ?? p.what}`} href={p.url} />}
             </div>
           </article>
         );

@@ -10,7 +10,7 @@ import { APPROVE_EMOJI, COMMIT, REQUESTISH, clearNotices, followPromises, record
 // Messages someone on the team owes a reply to. Slack: anyone tagged in a channel the Kaizen OS bot is in, and a
 // client's message in their channel with nobody tagged (it's on the people on the account). Email: a client contact
 // or a teammate writing to someone directly. Each is watched from when it's asked:
-//   1. Still unanswered after a few working hours: the AI checks it really needs something from them, then they get
+//   1. Still unanswered after 6 business hours (8am–6pm ET, weekdays): the AI checks it really needs something from them, then they get
 //      a notice and it's in their day, with a link straight to the message.
 //   2. Still unanswered once they've seen that (or a working day after it if they never open it): their lead and the
 //      execs are told, and the person gets a second notice saying so.
@@ -22,8 +22,8 @@ export type Msg = SlackMessage & { reactions?: { name: string; users?: string[] 
 
 const LOOKBACK_DAYS = 7;
 const OPEN = ["watching", "nudged", "escalated"];
-/** Working hours (weekdays 9–6, New York) before the first notice */
-const NUDGE_AFTER = { slack: 3, gmail: 6 } as const;
+/** Business hours (weekdays 8am–6pm New York) a message waits unanswered before the first notice */
+const NUDGE_AFTER = { slack: 6, gmail: 6 } as const;
 /** After the first notice: working hours once seen, or in all, before the lead and execs hear */
 const ESCALATE_SEEN = 4;
 const ESCALATE_UNSEEN = 9;
@@ -43,7 +43,7 @@ export const LEAD_OF: Record<string, string | null> = {
 };
 
 const ny = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", hour: "numeric", hour12: false });
-/** Working hours (weekdays 9am–6pm New York) between two moments, to the quarter hour. */
+/** Business hours (weekdays 8am–6pm New York) between two moments, to the quarter hour. */
 export function workingHours(from: Date, to = new Date()) {
   let n = 0;
   const step = 15 * 60_000;
@@ -53,7 +53,7 @@ export function workingHours(from: Date, to = new Date()) {
     const parts = ny.formatToParts(new Date(t));
     const wd = parts.find((p) => p.type === "weekday")?.value;
     const h = Number(parts.find((p) => p.type === "hour")?.value) % 24;
-    if (wd !== "Sat" && wd !== "Sun" && h >= 9 && h < 18) n += 0.25;
+    if (wd !== "Sat" && wd !== "Sun" && h >= 8 && h < 18) n += 0.25;
   }
   return n;
 }
