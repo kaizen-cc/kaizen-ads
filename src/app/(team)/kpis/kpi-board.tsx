@@ -22,6 +22,7 @@ import { FatigueWatch } from "@/components/fatigue-watch";
 import { MarketPanel } from "../clients/[slug]/market-panel";
 import { kpiCreative, type KpiCreative } from "./creative-actions";
 import { QuickActions } from "./quick-actions";
+import { kpiCampaigns, type CampaignPerf } from "./campaign-actions";
 
 export type KpiRow = {
   id: string;
@@ -803,6 +804,7 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
                   </div>
                 </div>
                 <NextMove r={r} moves={moves} onActions={() => setTab("actions")} onNotes={() => setTab("notes")} />
+                {r.accountId && <Campaigns key={r.id} id={r.id} target={r.target} />}
                 {r.audit?.status === "ready" && r.audit.quick && r.audit.quick.length > 0 && (
                   <section className="grid gap-1 rounded-[20px] border border-line bg-surface px-4 pb-4 md:px-5 md:pb-5">
                     <QuickActions key={r.audit.id} auditId={r.audit.id} items={r.audit.quick} platform={r.audit.platform ?? r.platform} />
@@ -901,6 +903,77 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
 }
 
 /** The next move, on the Overview: the audit's verdict and its moves, or the account's #1 problem and plan. */
+/** Every campaign in the account against the card's target: one card per client, the campaigns inside it */
+function Campaigns({ id, target }: { id: string; target: number | null }) {
+  const [data, setData] = useState<{ roas: boolean; campaigns: CampaignPerf[] } | null>(null);
+  const [all, setAll] = useState(false);
+  useEffect(() => {
+    let live = true;
+    kpiCampaigns(id).then((d) => live && setData(d), () => live && setData({ roas: false, campaigns: [] }));
+    return () => {
+      live = false;
+    };
+  }, [id]);
+  if (data && !data.campaigns.length) return null;
+  const fmt = (v: number | null) => (v == null ? "—" : data?.roas ? `${v.toFixed(2)}x` : money(v));
+  const list = data ? (all ? data.campaigns : data.campaigns.slice(0, 8)) : [];
+  return (
+    <section className="grid gap-3 rounded-[20px] border border-line bg-surface p-4 md:p-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">Campaigns</p>
+        <span className="text-[11px] text-faint">Last 30 days against {target == null ? "the target" : `the ${fmt(target)} target`} · spending now first</span>
+      </div>
+      {!data ? (
+        <div className="grid gap-2">
+          {[0, 1, 2].map((n) => (
+            <span key={n} className="h-9 animate-pulse rounded-[10px] bg-surface-2" />
+          ))}
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[560px] text-left text-[13px]">
+            <thead className="text-[11px] text-faint">
+              <tr>
+                <th className="py-1.5 pr-3 font-normal">Campaign</th>
+                <th className="py-1.5 pr-3 text-right font-normal">Spend 7d</th>
+                <th className="py-1.5 pr-3 text-right font-normal">Spend 30d</th>
+                <th className="py-1.5 pr-3 text-right font-normal">Results 30d</th>
+                <th className="py-1.5 text-right font-normal">{data.roas ? "ROAS" : "Cost per result"} 30d</th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.map((c) => {
+                const tone = c.deviation == null ? (c.spend30 > 0 && !c.results30 ? "text-bad" : "text-faint") : c.deviation <= 0 ? "text-ok" : c.deviation <= 0.15 ? "text-warn" : "text-bad";
+                return (
+                  <tr key={c.id} className={`border-t border-line/70 ${c.spend7 > 0 ? "" : "opacity-55"}`}>
+                    <td className="max-w-[340px] py-2 pr-3">
+                      <span className="flex items-center gap-2">
+                        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${c.spend7 > 0 ? "bg-ok" : "bg-faint/50"}`} title={c.spend7 > 0 ? "Spending this week" : c.lastSpent ? `Last spent ${c.lastSpent}` : "Not spending"} />
+                        <span className="truncate" title={c.name}>
+                          {c.name}
+                        </span>
+                      </span>
+                    </td>
+                    <td className="tabular py-2 pr-3 text-right">{money(c.spend7)}</td>
+                    <td className="tabular py-2 pr-3 text-right text-muted">{money(c.spend30)}</td>
+                    <td className="tabular py-2 pr-3 text-right text-muted">{c.results30}</td>
+                    <td className={`tabular py-2 text-right ${tone}`}>{c.value30 == null && c.spend30 > 0 ? "no results" : fmt(c.value30)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {data.campaigns.length > 8 && (
+            <button type="button" onClick={() => setAll((a) => !a)} className="mt-2 h-11 text-xs text-muted hover:text-fg md:h-8">
+              {all ? "Show fewer" : `All ${data.campaigns.length} campaigns`}
+            </button>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function NextMove({ r, moves, onActions, onNotes }: { r: KpiRow; moves: number; onActions: () => void; onNotes: () => void }) {
   const v = r.audit?.status === "ready" ? r.audit.verdict : null;
   const problem = r.sheet?.problem;
