@@ -402,13 +402,13 @@ export function KpiPulse({ k, title = "Ad accounts" }: { k: KpiPulseData; title?
           )}
         </div>
       )}
-      {(k.off.length > 0 || k.pacing.length > 0) && (
+      {(k.off.length > 0 || k.pacing.length > 0 || k.working.length > 0) && (
         <div className="grid gap-4 border-t border-line pt-4 sm:grid-cols-2">
           <div className="grid content-start gap-2">
             <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-faint">Off or close to target{k.offTotal > k.off.length ? ` · worst ${k.off.length} of ${k.offTotal}` : ""}</p>
             {k.off.length ? (
               k.off.map((o) => (
-                <Link key={o.id} href={`/kpis?target=${o.id}`} className="flex items-baseline justify-between gap-3 py-1.5 text-sm hover:text-fg md:py-0">
+                <Link key={o.id} href={o.slug ? `/clients/${o.slug}` : `/kpis?target=${o.id}`} className="flex items-baseline justify-between gap-3 py-1.5 text-sm hover:text-fg md:py-0">
                   <span className="min-w-0 truncate">
                     {o.client}
                     {o.label && <span className="text-faint"> · {o.label}</span>}
@@ -417,14 +417,38 @@ export function KpiPulse({ k, title = "Ad accounts" }: { k: KpiPulseData; title?
                 </Link>
               ))
             ) : (
-              <p className="text-xs text-ok">Every account is on or ahead of target.</p>
+              <p className="text-xs text-ok">{k.working.length ? "Nothing else off target needs a look." : "Every account is on or ahead of target."}</p>
+            )}
+            {/* Off target, but changed in the last few days: given time to turn around before it's raised again */}
+            {k.working.length > 0 && (
+              <details className="group mt-1 rounded-[10px] border border-line/70 px-3 py-2">
+                <summary className="flex cursor-pointer list-none items-center gap-2 text-xs text-faint">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[#9aa8ff]" />
+                  {k.working.length} being worked on · changed in the last 5 days, back here if still off after that
+                  <span className="ml-auto transition-transform group-open:rotate-90">›</span>
+                </summary>
+                <div className="grid gap-1 pt-2">
+                  {k.working.map((w) => (
+                    <Link key={w.id} href={`/clients/${w.slug}`} className="flex items-baseline justify-between gap-3 py-1 text-[13px] text-muted hover:text-fg">
+                      <span className="min-w-0 truncate">
+                        {w.client}
+                        {w.label && <span className="text-faint"> · {w.label}</span>}
+                      </span>
+                      <span className="shrink-0 text-[11px] text-faint">
+                        changed {new Date(w.changedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" })}
+                        {w.who ? ` by ${w.who}` : ""}
+                      </span>
+                    </Link>
+                  ))}
+                </div>
+              </details>
             )}
           </div>
           <div className="grid content-start gap-2">
             <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-faint">Budget pacing</p>
             {k.pacing.length ? (
               k.pacing.map((p) => (
-                <Link key={p.id} href={`/kpis?target=${p.id}`} className="grid gap-0.5 py-1.5 text-sm hover:text-fg md:flex md:items-baseline md:justify-between md:gap-3 md:py-0">
+                <Link key={p.id} href={p.slug ? `/clients/${p.slug}` : `/kpis?target=${p.id}`} className="grid gap-0.5 py-1.5 text-sm hover:text-fg md:flex md:items-baseline md:justify-between md:gap-3 md:py-0">
                   <span className="min-w-0 truncate">
                     {p.client}
                     {p.label && <span className="text-faint"> · {p.label}</span>}

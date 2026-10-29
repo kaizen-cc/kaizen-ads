@@ -242,13 +242,38 @@ export type KpiPulse = {
   spend30: number;
   off: { id: string; client: string; slug: string; label: string; deviation: number | null; status: string }[];
   offTotal: number;
+  /** Off target but no alarm needed yet: someone changed the account within the last few days (see WORKED_DAYS) */
+  offFresh: number;
+  working: { id: string; client: string; slug: string; label: string; changedAt: string; who: string | null }[];
   /** check: the spend is so far past the budget that the budget itself is probably wrong (a typo, a daily figure) */
-  pacing: { id: string; client: string; label: string; status: "over" | "under" | "check"; pace: number; spent: number; budget: number }[];
+  pacing: { id: string; client: string; slug: string; label: string; status: "over" | "under" | "check"; pace: number; spent: number; budget: number }[];
   syncedAt: string | null;
   syncedMinutes: number | null;
 };
 
 const PLATFORM = { meta: "Meta", google: "Google" } as const;
+
+/** An account changed this recently is being worked on: off target or not, it isn't raised as an alarm until then */
+export const WORKED_DAYS = 5;
+const accountKey = (platform: string, id: string) => (platform === "google" ? id.replace(/\D/g, "") : id.replace(/^act_/, ""));
+
+/**
+ * The last change in each ad account within WORKED_DAYS (from Meta and Google's own history). A red account someone
+ * changed is given time to turn around: it comes back as an alert once that long has passed with no newer change.
+ */
+export async function recentlyWorked(db: SupabaseClient, accounts: { platform: string; ad_account_id: string | null }[]) {
+  const keys = [...new Set(accounts.filter((a) => a.ad_account_id).map((a) => accountKey(a.platform, String(a.ad_account_id))))];
+  const out = new Map<string, { at: string; who: string | null }>();
+  if (!keys.length) return out;
+  const since = new Date(Date.now() - WORKED_DAYS * 86_400_000).toISOString();
+  const { data } = await db.from("ad_account_changes").select("ad_account_id, at, who").in("ad_account_id", keys).gte("at", since).order("at", { ascending: false }).limit(2000);
+  // Our team's changes only: a client changing their own account (shown by their email) or an automated tool isn't us
+  // working on it
+  const ours = (who: string | null) => Boolean(who) && (!who!.includes("@") || who!.toLowerCase().endsWith("@kaizenmarketing.agency")) && !/commandcenter|automated|rule/i.test(who!);
+  for (const c of data ?? []) if (ours(c.who as string | null) && !out.has(c.ad_account_id as string)) out.set(c.ad_account_id as string, { at: c.at as string, who: (c.who as string | null) ?? null });
+  return out;
+}
+export const workedOn = (worked: Map<string, { at: string; who: string | null }>, t: { platform: string; ad_account_id: string | null }) => (t.ad_account_id ? (worked.get(accountKey(t.platform, String(t.ad_account_id))) ?? null) : null);
 
 /**
  * The ad accounts against their targets. owner: only the accounts this buyer owns. platform: Meta or Google only;
@@ -284,11 +309,22 @@ export async function loadKpiPulse(db: SupabaseClient, opts?: string | { owner?:
     // A budget under $20 a month is a typo (a "k" lost from the sheet), not a budget
     if ((b?.status === "over" || b?.status === "under") && Number(b.budget ?? 0) >= 20) {
       const pace = b.pace ?? 1;
-      pacing.push({ id: t.id, client: name, label, status: pace > 3 ? "check" : b.status, pace, spent: Math.round(Number(b.spent ?? 0)), budget: Math.round(Number(b.budget ?? 0)) });
+      pacing.push({ id: t.id, client: name, slug: c?.slug ?? "", label, status: pace > 3 ? "check" : b.status, pace, spent: Math.round(Number(b.spent ?? 0)), budget: Math.round(Number(b.budget ?? 0)) });
     }
   }
   off.sort((a, b) => (b.deviation ?? 0) - (a.deviation ?? 0));
+  // Off target but changed in the last few days: being worked on, so set apart rather than raised
+  const worked = await recentlyWorked(db, targets.filter((t) => off.some((o) => o.id === t.id)) as { platform: string; ad_account_id: string | null }[]);
+  const working: KpiPulse["working"] = [];
+  const alarms: KpiPulse["off"] = [];
+  for (const o of off) {
+    const t = targets.find((x) => x.id === o.id)!;
+    const w = workedOn(worked, t as { platform: string; ad_account_id: string | null });
+    if (w) working.push({ id: o.id, client: o.client, slug: o.slug, label: o.label, changedAt: w.at, who: w.who });
+    else alarms.push(o);
+  }
+  const offFresh = alarms.filter((o) => o.status === "off").length;
   // Real pacing problems first; budgets that look wrong after
   pacing.sort((a, b) => Number(a.status === "check") - Number(b.status === "check") || Math.abs(b.pace - 1) - Math.abs(a.pace - 1));
-  return { platform: platform ?? "all", accounts: targets.length, counts, setup, spend30: Math.round(spend30), off: off.slice(0, 8), offTotal: off.length, pacing: pacing.slice(0, 6), syncedAt: synced, syncedMinutes: synced ? Math.round((Date.now() - Date.parse(synced)) / 60000) : null };
+  return { platform: platform ?? "all", accounts: targets.length, counts, setup, spend30: Math.round(spend30), off: alarms.slice(0, 8), offTotal: alarms.length, offFresh, working, pacing: pacing.slice(0, 6), syncedAt: synced, syncedMinutes: synced ? Math.round((Date.now() - Date.parse(synced)) / 60000) : null };
 }

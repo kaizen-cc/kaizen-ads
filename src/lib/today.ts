@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
 import { loadWatchList } from "@/lib/fatigue";
-import { loadHome } from "@/lib/home";
+import { loadHome, recentlyWorked, workedOn } from "@/lib/home";
 import { loadOwedReplies } from "@/lib/owed-replies";
 import { loadSaidPromises } from "@/lib/message-promises";
 import { loadCallPromises, loadOnboarding, loadSuggestions, type OpenSuggestion } from "@/lib/suggestions";
@@ -257,16 +257,21 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
   // Accounts off target, weighted by how far off, how much is spent and how important the account is
   // Each service line on its own, for the people on it: execs both, the Head of Meta Meta, the Head of Google Google,
   // a buyer only the accounts they own
-  let kq = db.from("kpi_targets").select("id, label, platform, conversion, target, monthly_budget, sheet, client_id, clients!inner(name, slug, archived_at, status)").eq("active", true).is("clients.archived_at", null).in("clients.status", LIVE);
+  let kq = db.from("kpi_targets").select("id, label, platform, ad_account_id, conversion, target, monthly_budget, sheet, client_id, clients!inner(name, slug, archived_at, status)").eq("active", true).is("clients.archived_at", null).in("clients.status", LIVE);
   if (!manager) kq = kq.eq("owner_id", me.id);
   else if (me.role === "head_of_meta") kq = kq.eq("platform", "meta");
   else if (me.role === "head_of_google") kq = kq.eq("platform", "google");
   const { data: targets } = topics.has("accounts") ? await kq : { data: [] };
   const ids = (targets ?? []).map((t) => t.id as string);
-  const { data: snaps } = ids.length ? await db.from("kpi_snapshots").select("target_id, status, deviation, windows, budget").in("target_id", ids) : { data: [] };
+  const [{ data: snaps }, worked] = await Promise.all([
+    ids.length ? db.from("kpi_snapshots").select("target_id, status, deviation, windows, budget").in("target_id", ids) : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+    recentlyWorked(db, (targets ?? []) as { platform: string; ad_account_id: string | null }[]),
+  ]);
   for (const t of targets ?? []) {
     const s = (snaps ?? []).find((x) => x.target_id === t.id);
     if (!s || !["off", "close"].includes(s.status as string)) continue;
+    // Changed in the last few days: someone's on it, so it's given time before it comes back as an item
+    if (workedOn(worked, t as { platform: string; ad_account_id: string | null })) continue;
     const c = t.clients as unknown as { name: string; slug: string };
     const dev = Number(s.deviation ?? 0);
     const d7 = (s.windows as { d7?: { spend?: number; value?: number | null; results?: number } } | null)?.d7;

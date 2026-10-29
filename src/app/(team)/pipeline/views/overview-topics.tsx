@@ -136,11 +136,13 @@ export function accountTopics(d: SharedTopics): Built[] {
     const on = k.counts.excellent + k.counts.good;
     const live = k.accounts - k.counts.setup;
     const pacing = k.pacing.filter((p) => p.status !== "check").length;
-    const tone = k.counts.off ? "bad" : k.counts.close ? "warn" : "ok";
+    // The alarm is what's off target with nobody on it lately; accounts changed in the last few days are counted apart
+    const fresh = k.offFresh;
+    const tone = fresh ? "bad" : k.offTotal ? "warn" : "ok";
     out.push({
-      tile: { id, label: `${name} off target`, value: k.counts.off, sub: `of ${live} ${name} accounts · ${on} on target`, tone },
+      tile: { id, label: `${name} off target`, value: fresh, sub: `of ${live} ${name} accounts · ${on} on target${k.working.length ? ` · ${k.working.length} being worked on` : ""}`, tone },
       panel: (
-        <Topic key={id} id={id} title={`${name} accounts against target`} summary={`${k.counts.off} off target · ${k.counts.close} close · ${on} on or beating it${pacing ? ` · ${s(pacing, "budget")} off pace` : ""}`} count={k.counts.off} tone={tone}>
+        <Topic key={id} id={id} title={`${name} accounts against target`} summary={`${fresh} off target need a look${k.working.length ? ` · ${k.working.length} being worked on` : ""} · ${on} on or beating it${pacing ? ` · ${s(pacing, "budget")} off pace` : ""}`} count={fresh} tone={tone}>
           <KpiPulse k={k} title="" />
         </Topic>
       ),
