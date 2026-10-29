@@ -410,7 +410,7 @@ export function ClientPick({
       <input value={q} onChange={(e) => setQ(e.target.value)} autoFocus placeholder="Find a client" className="h-11 rounded-brand border border-line bg-surface px-3 text-sm outline-none placeholder:text-faint focus:border-faint md:h-10" />
       {error && <p className="text-sm text-bad">{error}</p>}
       {/* Phones: the list scrolls with the sheet rather than in a box of its own */}
-      <div className="grid gap-1 md:max-h-[56vh] md:overflow-y-auto md:pr-1">
+      <div className="flex flex-col gap-1 md:max-h-[56vh] md:overflow-y-auto md:pr-1">
         {list.map((c) => {
           const a = c.allotment;
           const img = leftOf(a.images, a.imagesUsed);
@@ -418,7 +418,7 @@ export function ClientPick({
           const none = (img ?? 0) === 0 && (vid ?? 0) === 0;
           const same = industry && c.industry === industry;
           return (
-            <button key={c.id} onClick={() => onPick(c.id)} className="group flex min-h-14 items-center gap-3 rounded-[12px] border border-line bg-surface px-3.5 py-2.5 text-left transition-colors hover:border-faint active:bg-surface-2 md:min-h-0 md:active:bg-surface">
+            <button key={c.id} onClick={() => onPick(c.id)} className="group flex min-h-14 shrink-0 items-center gap-3 rounded-[12px] border border-line bg-surface px-3.5 py-2.5 text-left transition-colors hover:border-faint active:bg-surface-2 md:min-h-0 md:active:bg-surface">
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-2">
                   <span className="truncate text-sm font-medium">{c.name}</span>

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { AiUnavailable, askJson, clientContext, COPY_CHAT_SCHEMA, COPY_CHAT_SYSTEM, type CopyLesson, type CopyViolation } from "@/lib/ai";
-import { requireStaff } from "@/lib/auth";
+import { isExecOrLead, requireStaff } from "@/lib/auth";
 import { blockers, type Ad } from "@/lib/copy";
 import { checkAgainstClient, draftCopy, learnFromCopy } from "@/lib/copy-draft";
 import { onReachedClient } from "@/lib/client-revision";
@@ -149,6 +149,29 @@ export async function approveCopy(setId: string, ads: Ad[]): Promise<{ ok: true 
   }
   revalidatePath("/board");
   return error ? { ok: false, error: error.message } : { ok: true };
+}
+
+/**
+ * Approved copy is locked; this opens it again for edits (the copywriter, a lead or an exec). The ticket stays where it
+ * is, ads the client already approved stay locked, and approving it again saves the new version.
+ */
+export async function reopenCopy(setId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  if (!(isExecOrLead(me) || me.isCopywriter)) return { ok: false, error: "Only the copywriter or a lead can reopen approved copy." };
+  if (!adminConfigured()) return { ok: false, error: "Server key missing." };
+  const supabase = await createClient();
+  // Only someone who can see the ticket gets this far
+  const { data: set } = await supabase.from("copy_sets").select("id, request_id, status").eq("id", setId).maybeSingle();
+  if (!set) return { ok: false, error: "Copy not found." };
+  if (set.status !== "approved") return { ok: true };
+  const admin = createAdminClient();
+  const now = new Date().toISOString();
+  const { error } = await admin.from("copy_sets").update({ status: "review", approved_by: null, approved_at: null, updated_by: me.id, updated_at: now }).eq("id", setId);
+  if (error) return { ok: false, error: error.message };
+  const { data: req } = await admin.from("requests").select("stage").eq("id", set.request_id).maybeSingle();
+  await admin.from("request_events").insert({ request_id: set.request_id, kind: "copy", from_stage: req?.stage ?? null, to_stage: req?.stage ?? null, actor_id: me.id, data: { action: "reopened" } });
+  revalidatePath("/board");
+  return { ok: true };
 }
 
 /** Copy was already approved for this angle on another ticket: reuse it instead of asking again. */

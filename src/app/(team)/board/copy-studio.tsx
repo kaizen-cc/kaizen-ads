@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CTA_BUTTONS, LIMITS, meters, type Ad, type Meter } from "@/lib/copy";
-import { chatWithCopywriter, copyChat, setLandingUrl, type ChatMessage, type CopyState } from "./copy-actions";
+import { chatWithCopywriter, copyChat, reopenCopy, setLandingUrl, type ChatMessage, type CopyState } from "./copy-actions";
 import type { CopyViolation } from "@/lib/ai";
 import { ticketDesigns, type Design } from "./design-actions";
 import type { Ticket } from "./types";
@@ -329,6 +329,8 @@ export function CopyStudio({
   const [designs, setDesigns] = useState<Design[] | null>(null);
   const [designIx, setDesignIx] = useState(0);
   const [note, setNote] = useState("");
+  const [reopening, setReopening] = useState(false);
+  const [reopenError, setReopenError] = useState<string | null>(null);
   const drafting = set.status === "drafting";
   const [landing, setLanding] = useState<string | null>(ticket.landingUrl ?? null);
   const [landingDraft, setLandingDraft] = useState(ticket.landingUrl ?? "");
@@ -391,6 +393,23 @@ export function CopyStudio({
             v{set.version}
             {set.status === "approved" ? ` · approved${set.approvedBy ? ` by ${set.approvedBy}` : ""}` : drafting ? " · rewriting" : dirty ? " · saving…" : " · saved"}
           </span>
+          {/* Approved copy is locked: the copywriter or a lead can open it again for edits */}
+          {set.status === "approved" && canApprove && !demo && (
+            <button
+              disabled={reopening}
+              onClick={async () => {
+                setReopening(true);
+                const r = await reopenCopy(set.id);
+                if (!r.ok) setReopenError(r.error);
+                onRewriting();
+                setReopening(false);
+              }}
+              className="h-9 rounded-full border border-line px-3 text-xs text-muted hover:border-faint hover:text-fg disabled:opacity-50 max-md:order-4 max-md:h-11"
+            >
+              {reopening ? "Opening…" : "Reopen to edit"}
+            </button>
+          )}
+          {reopenError && <span className="text-xs text-bad max-md:order-4">{reopenError}</span>}
           <div className="ml-auto flex items-center gap-1 rounded-full border border-line p-0.5 text-xs max-md:hidden">
             {(["preview", "chat"] as const).map((k) => (
               <button key={k} onClick={() => setSide(k)} className={`rounded-full px-3 py-1.5 ${side === k ? "bg-surface-2 text-fg" : "text-muted hover:text-fg"}`}>
