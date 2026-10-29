@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { refreshInPlace } from "@/lib/complete-card";
+import { completeCard, refreshInPlace } from "@/lib/complete-card";
 import { useEffect, useState, useSyncExternalStore, useTransition } from "react";
 import type { OnboardingCard, OnboardingState, OpenSuggestion } from "@/lib/suggestions";
 import { markOnboarded } from "../../clients/[slug]/actions";
@@ -99,7 +99,6 @@ const waited = (days: number) => (days === 0 ? "today" : days === 1 ? "1 day" : 
 
 function ClientCard({ c, onOpen }: { c: OnboardingCard; onOpen: (s: OpenSuggestion) => void }) {
   const router = useRouter();
-  const [busy, act] = useTransition();
   const [started, setStarted] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -230,17 +229,24 @@ function ClientCard({ c, onOpen }: { c: OnboardingCard; onOpen: (s: OpenSuggesti
           </button>
         ) : null}
         <button
-          onClick={() =>
-            act(async () => {
-              const r = await markOnboarded(c.clientId, c.slug);
-              if (!r.ok) return setError(r.error);
-              router.refresh();
-            })
-          }
-          disabled={busy}
+          onClick={(e) => {
+            // Done at once: the check plays and the card leaves while it saves; the page catches up behind it (waiting
+            // for the whole Overview to reload first is what left it on "Saving…")
+            const card = e.currentTarget.closest("article");
+            const saved = markOnboarded(c.clientId, c.slug);
+            completeCard(card, async () => {
+              const r = await saved;
+              if (!r.ok) {
+                card?.removeAttribute("data-completing");
+                card?.style.removeProperty("display");
+                return setError(r.error);
+              }
+              refreshInPlace(router);
+            });
+          }}
           className="ml-auto h-11 px-2 text-xs text-faint hover:text-fg md:h-9"
         >
-          {busy ? "Saving…" : "Mark onboarded"}
+          Mark onboarded
         </button>
       </div>
     </article>
