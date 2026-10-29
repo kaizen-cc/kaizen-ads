@@ -14,7 +14,7 @@ import { APPROVE_EMOJI, COMMIT, REQUESTISH, clearNotices, followPromises, record
 //      a notice and it's in their day, with a link straight to the message.
 //   2. Still unanswered once they've seen that (or a working day after it if they never open it): their lead and the
 //      execs are told, and the person gets a second notice saying so.
-// A reply in the thread (or, when tagged, a reaction from them) closes it; "Doesn't need a reply" closes it by hand.
+// A reply in the thread, or anyone on the team acknowledging it (a reply or an emoji reaction), closes it; "Doesn't need a reply" closes it by hand.
 // Slack DMs can't be read by the bot, so only channels it's in count.
 
 type Admin = SupabaseClient;
@@ -314,7 +314,7 @@ async function slackSince(o: Row) {
     const { messages: later } = await slack<{ messages: Msg[] }>("conversations.history", { channel, oldest: ts, limit: "50" });
     after.push(...later.filter((x) => Number(x.ts) > Number(ts)));
   }
-  return { after, reactors: new Set((asked?.reactions ?? []).flatMap((r) => r.users ?? [])) };
+  return { after, asker: asked?.user ?? null, reactors: new Set((asked?.reactions ?? []).flatMap((r) => r.users ?? [])) };
 }
 
 // ─── Email ──────────────────────────────────────────────────────────────────
@@ -450,11 +450,17 @@ async function isAnswered(o: Row, who: Awaited<ReturnType<typeof slackPeople>> |
   try {
     if (o.source === "gmail") return await gmailAnswered(o, teamEmails);
     if (!who) return false;
-    const { after, reactors } = await slackSince(o);
+    const { after, asker, reactors } = await slackSince(o);
     const mine = [...who.profileOf].filter(([, p]) => p === o.target_id).map(([s]) => s);
     context.set(o.id as string, after.slice(0, 6).map((x) => `${who.nameOf.get(x.user ?? "") ?? "Someone"}: ${plain(x.text ?? "", who.nameOf).slice(0, 300)}`).join("\n"));
-    if (o.mentioned) return after.some((x) => x.user && mine.includes(x.user)) || mine.some((s) => reactors.has(s));
-    return after.some((x) => x.user && who.team.has(x.user));
+    const reacted = [...reactors].filter((u) => who.team.has(u) && u !== asker);
+    if (reacted.length) context.set(o.id as string, `${context.get(o.id as string) ?? ""}
+(Reacted to it with an emoji: ${reacted.map((u) => who.nameOf.get(u) ?? "a teammate").join(", ")})`.trim());
+    // A reply from them, or anyone on the team acknowledging it (a reply, or a reaction like ✅ or 👍), takes care of it.
+    // Tagged: their own reply, a reply from anyone else on the team (not the person who asked), or a teammate's
+    // reaction. Several people are often tagged on one message and one of them answering covers it.
+    if (after.some((x) => x.user && (mine.includes(x.user) || (who.team.has(x.user) && x.user !== asker)))) return true;
+    return reacted.length > 0;
   } catch {
     return false;
   }
@@ -472,7 +478,7 @@ async function judge(items: Row[], context: Map<string, string>, names: Map<stri
       bare: true,
       maxTokens: 4000,
       system:
-        "You read messages sent to someone at Kaizen, a paid ads and creative agency, and decide if that person owes a reply or an action. needsReply is true when they're asked a question, asked to check, review, approve, send or do something, when someone shares work for their feedback (a landing page, a design, a doc), or when a client raises something with them. It's false for an FYI that needs nothing, a thank-you or sign-off, an announcement, something automated, or when what follows already answers it. gist: what they're waiting on, in a few words a person would say (\"feedback on the landing page concept\", \"the March invoice question\"), no names, at most 70 characters.",
+        "You read messages sent to someone at Kaizen, a paid ads and creative agency, and decide if that person owes a reply or an action. needsReply is true when they're asked a question, asked to check, review, approve, send or do something, when someone shares work for their feedback (a landing page, a design, a doc), or when a client raises something with them. It's false for an FYI that needs nothing, a thank-you, praise or approval with no question in it (“looks great, thank you”, “approved”, “love it”), a sign-off, an @here or @channel announcement that asks nothing, something automated, or when what follows (a reply or an emoji reaction from the team) already answers or acknowledges it. When in doubt about a message that asks nothing, it's false. gist: what they're waiting on, in a few words a person would say (\"feedback on the landing page concept\", \"the March invoice question\"), no names, at most 70 characters.",
       schema: {
         type: "object",
         properties: { items: { type: "array", items: { type: "object", properties: { n: { type: "integer" }, needsReply: { type: "boolean" }, gist: { type: "string" } }, required: ["n", "needsReply", "gist"], additionalProperties: false } } },
@@ -544,12 +550,17 @@ export async function runOwedReplies(admin: Admin) {
   for (let i = 0; i < due.length; i += 15) for (const [k, v] of await judge(due.slice(i, i + 15), context, names)) verdicts.set(k, v);
   for (const o of due) {
     const v = verdicts.get(o.id);
-    if (v && !v.needsReply) {
+    // No read from the AI (it's down or paused): wait for the next run rather than chase something that may need nothing
+    if (!v) {
+      await admin.from("owed_replies").update({ checked_at: stamp }).eq("id", o.id);
+      continue;
+    }
+    if (!v.needsReply) {
       await admin.from("owed_replies").update({ status: "not_needed", gist: v.gist.slice(0, 120), checked_at: stamp }).eq("id", o.id);
       tally.notNeeded++;
       continue;
     }
-    const gist = v?.gist?.slice(0, 120) || null;
+    const gist = v.gist.slice(0, 120) || null;
     await admin.from("owed_replies").update({ status: "nudged", nudged_at: stamp, checked_at: stamp, gist }).eq("id", o.id);
     await notify(admin, [o.target_id], {
       key: `owed:${o.id}`,
@@ -562,8 +573,26 @@ export async function runOwedReplies(admin: Admin) {
     tally.nudged++;
   }
 
+  // Ones that went out without the AI's read (it was down): read now, and dropped quietly if nothing's owed
+  const unread = (open ?? []).filter((x) => (x.status === "nudged" || x.status === "escalated") && !x.gist);
+  const dropped = new Set<string>();
+  for (let i = 0; i < unread.length; i += 15) {
+    const batch = unread.slice(i, i + 15);
+    for (const o of batch) if (!context.has(o.id)) await isAnswered(o, who, teamEmails, context);
+    for (const [id, v] of await judge(batch, context, names)) {
+      if (v.needsReply) {
+        await admin.from("owed_replies").update({ gist: v.gist.slice(0, 120) }).eq("id", id);
+        continue;
+      }
+      await admin.from("owed_replies").update({ status: "not_needed", gist: v.gist.slice(0, 120), dismiss_reason: "Needed no reply (read again)", checked_at: stamp }).eq("id", id);
+      await clearNotices(admin, "owed", id);
+      dropped.add(id);
+      tally.notNeeded++;
+    }
+  }
+
   // First notice out, still no answer: after they've seen it (or a working day if they never open it), escalate
-  const nudged = (open ?? []).filter((x) => x.status === "nudged");
+  const nudged = (open ?? []).filter((x) => x.status === "nudged" && !dropped.has(x.id));
   const keys = nudged.map((o) => `owed:${o.id}`);
   const [{ data: reads }, { data: views }] = keys.length
     ? await Promise.all([
@@ -616,7 +645,7 @@ export async function runOwedReplies(admin: Admin) {
   }
 
   // Escalated ones: closed once answered, and the lead and execs told
-  for (const o of (open ?? []).filter((x) => x.status === "escalated").slice(0, 40)) {
+  for (const o of (open ?? []).filter((x) => x.status === "escalated" && !dropped.has(x.id)).slice(0, 40)) {
     if (await isAnswered(o, who, teamEmails, context)) {
       await closeAnswered(admin, o, stamp);
       tally.answered++;
