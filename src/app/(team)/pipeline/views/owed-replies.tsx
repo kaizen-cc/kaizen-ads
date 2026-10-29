@@ -53,11 +53,6 @@ export function OwedReplies({ items, me }: { items: OwedReply[]; me: string }) {
                   {o.source === "gmail" ? "Open the email" : "Open in Slack"} ↗
                 </a>
               )}
-              {o.channelUrl && (
-                <a href={o.channelUrl} target="_blank" rel="noreferrer" className="inline-flex h-11 flex-1 items-center justify-center rounded-brand border border-line px-4 text-sm text-muted hover:text-fg md:h-9 md:flex-none">
-                  The channel ↗
-                </a>
-              )}
               {mine && (
                 <>
                   <button
