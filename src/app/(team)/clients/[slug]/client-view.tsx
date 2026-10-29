@@ -211,7 +211,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
     ...(has.meta ? [{ id: "meta" as const, kind: "ads" as const, label: "Meta Ads", kpis: metaKpis, summary: metaCampaigns, extra: [creative?.live.length ? `${creative.live.length} ads live` : "", tired ? `${tired} worn out, ready for a refresh` : ""].filter(Boolean) }] : []),
     ...(has.google ? [{ id: "google" as const, kind: "ads" as const, label: "Google Ads", kpis: googleKpis, summary: googleCampaigns, extra: googleLosing(googleCampaigns) }] : []),
     ...(has.creative
-      ? [{ id: "creative" as const, kind: "creative" as const, label: "Creative", package: active ? (packageLabel ?? "Creative package") : null, used: imagesUsed + videosUsed, allotted: images + videos, moving: creative?.moving.filter((r) => !["client_review", "ready_for_launch"].includes(r.stage)).length ?? 0, waiting: creative?.moving.filter((r) => r.stage === "client_review").length ?? 0, live: creative?.live.length ?? 0 }]
+      ? [{ id: "creative" as const, kind: "creative" as const, label: "Creative", package: active ? (packageLabel ?? "Creative package") : null, used: imagesUsed + videosUsed, allotted: images + videos, moving: creative?.moving.filter((r) => !["client_review", "ready_for_launch"].includes(r.stage)).length ?? 0, waiting: creative?.moving.filter((r) => r.stage === "client_review").length ?? 0, live: creative?.live.length ?? 0, asana: creative?.asana?.length ?? 0 }]
       : []),
     ...bought.filter((b) => !["facebook-ads", "google-ads", "creative"].includes(b)).map((b) => ({ id: b, kind: "other" as const, label: SERVICES.find((x) => x.slug === b)?.label ?? b, tier: tierOf(b) })),
   ];

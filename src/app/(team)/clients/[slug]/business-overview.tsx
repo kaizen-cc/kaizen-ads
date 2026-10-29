@@ -10,7 +10,7 @@ import { OpenService } from "./client-sections";
 
 export type ServiceCard =
   | { id: "meta" | "google"; kind: "ads"; label: string; kpis: ClientKpi[]; summary: PlatformSummary | null; extra: string[] }
-  | { id: "creative"; kind: "creative"; label: string; package: string | null; used: number; allotted: number; moving: number; waiting: number; live: number }
+  | { id: "creative"; kind: "creative"; label: string; package: string | null; used: number; allotted: number; moving: number; waiting: number; live: number; asana?: number }
   | { id: string; kind: "other"; label: string; tier: string | null };
 
 const money = (n: number) => `$${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
@@ -133,7 +133,7 @@ export function BusinessOverview({ cards, audits, sprints }: { cards: ServiceCar
                   <span className="text-sm text-faint">No monthly allotment set</span>
                 )}
                 <span className="grid grid-cols-3 gap-2 text-xs">
-                  <Stat k="In production" v={String(c.moving)} />
+                  <Stat k={c.asana ? `In production · ${c.asana} in Asana` : "In production"} v={String(c.moving + (c.asana ?? 0))} />
                   <Stat k="With the client" v={String(c.waiting)} />
                   <Stat k="Ads live" v={String(c.live)} />
                 </span>

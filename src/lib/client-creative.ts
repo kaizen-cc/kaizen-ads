@@ -30,7 +30,9 @@ export type MetaRow = {
   costPerResult: number | null;
   ctr: number;
 };
-export type ClientCreative = { moving: CreativeRow[]; launched: CreativeRow[]; live: MetaRow[]; paused: MetaRow[]; syncedAt: string | null };
+export type ClientCreative = { moving: CreativeRow[]; launched: CreativeRow[]; live: MetaRow[]; paused: MetaRow[]; syncedAt: string | null; asana: AsanaWork[] };
+/** Open work still on the Asana creative board (not moved into Kaizen Ads yet): it counts as in production */
+export type AsanaWork = { gid: string; name: string; section: string | null };
 
 type Row = {
   id: string;
@@ -47,10 +49,11 @@ type Row = {
 
 export async function loadClientCreative(db: SupabaseClient, clientId: string): Promise<ClientCreative> {
   const cols = "id, number, title, format, stage, stage_entered_at, launched_at, internal_rounds, client_rounds, minutes_over";
-  const [{ data: moving }, { data: launched }, { data: snap }] = await Promise.all([
+  const [{ data: moving }, { data: launched }, { data: snap }, { data: asana }] = await Promise.all([
     db.from("client_page_requests").select(cols).eq("client_id", clientId).neq("stage", "launched").order("created_at", { ascending: false }).limit(200),
     db.from("client_page_requests").select(cols).eq("client_id", clientId).eq("stage", "launched").order("launched_at", { ascending: false }).limit(60),
     db.from("meta_snapshots").select("fetched_at, ads").eq("client_id", clientId).order("fetched_at", { ascending: false }).limit(1).maybeSingle(),
+    db.from("asana_tasks").select("gid, name, section").eq("client_id", clientId).eq("open", true).is("request_id", null).order("asana_created_at", { ascending: false }).limit(30),
   ]);
   const rows = [...((moving ?? []) as Row[]), ...((launched ?? []) as Row[])];
   const designs = await designsForTickets(db, rows.map((r) => r.id));
@@ -98,5 +101,6 @@ export async function loadClientCreative(db: SupabaseClient, clientId: string): 
     live: ads.filter((a) => a.live !== false && a.row.spend > 0).map((a) => a.row),
     paused: ads.filter((a) => a.live === false).map((a) => a.row),
     syncedAt: snap?.fetched_at ?? null,
+    asana: (asana ?? []) as AsanaWork[],
   };
 }
