@@ -6,6 +6,7 @@ import { useState, useTransition } from "react";
 import type { SaidPromise } from "@/lib/message-promises";
 import { closeSaidPromise } from "@/app/today/actions";
 import { PromiseSources } from "./promise-sources";
+import { HideForMe } from "./hide-for-me";
 
 // What someone said yes to in Slack or email that's past due with nothing showing it moving: theirs to do (or close),
 // and for leads and execs, the ones that went past a second notice.
@@ -32,7 +33,7 @@ export function SaidPromises({ items, me }: { items: SaidPromise[]; me: string }
         const second = p.status === "escalated";
         const make = ["creative", "copy", "offer"].includes(p.kind ?? "") && p.clientSlug;
         return (
-          <article key={p.id} className={`grid content-start gap-3 rounded-[16px] border bg-bg/70 p-4 ${second ? "border-bad/40" : "border-line"}`}>
+          <article key={p.id} data-hideable className={`grid content-start gap-3 rounded-[16px] border bg-bg/70 p-4 ${second ? "border-bad/40" : "border-line"}`}>
             <div className="grid gap-1">
               <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
                 <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${second ? "bg-bad-soft text-bad" : "bg-warn-soft text-warn"}`}>{second ? "Second notice" : "Past due"}</span>
@@ -76,6 +77,7 @@ export function SaidPromises({ items, me }: { items: SaidPromise[]; me: string }
                   </button>
                 </>
               )}
+              {!mine && <HideForMe hideKey={`said:${p.id}`} />}
             </div>
           </article>
         );

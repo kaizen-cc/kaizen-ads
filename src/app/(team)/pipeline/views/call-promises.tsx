@@ -6,6 +6,7 @@ import { closeThen, pushParams, useParam } from "@/lib/url-state";
 import type { CallPromise } from "@/lib/suggestions";
 import { SuggestionSheet } from "./suggested-briefs";
 import { PromiseSources } from "./promise-sources";
+import { HideForMe } from "./hide-for-me";
 
 // What we promised clients on calls and haven't started: two business days after the call, with nothing in
 // production, the strategist writes the brief from the call. One click to review it and send it to the makers.
@@ -29,7 +30,7 @@ export function CallPromises({ promises, bare = false }: { promises: CallPromise
       </div>
       <div className="grid gap-3 lg:grid-cols-2">
         {promises.map((p) => (
-          <article key={p.commitmentId} className="grid content-start gap-3 rounded-[16px] border border-line bg-bg/70 p-4">
+          <article key={p.commitmentId} data-hideable className="grid content-start gap-3 rounded-[16px] border border-line bg-bg/70 p-4">
             <div className="grid gap-1">
               <span className="flex flex-wrap items-center gap-2 text-xs text-muted">
                 <Link href={`/clients/${p.clientSlug}`} className="font-medium text-fg hover:underline">
@@ -45,6 +46,7 @@ export function CallPromises({ promises, bare = false }: { promises: CallPromise
               <button onClick={() => p.suggestion && pushParams({ promise: p.suggestion.id })} className="h-11 w-full rounded-brand bg-fg px-4 text-sm font-medium text-bg md:h-9 md:w-auto">
                 Review the brief
               </button>
+              <HideForMe hideKey={`call:${p.commitmentId}`} />
             </div>
           </article>
         ))}

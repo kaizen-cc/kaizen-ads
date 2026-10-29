@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { HideForMe } from "./hide-for-me";
 
 // Building blocks shared by every role's home.
 
@@ -149,7 +150,7 @@ export function AttentionList({ alerts, empty }: { alerts: Alert[]; empty: strin
   return (
     <ul className="divide-y divide-line overflow-hidden rounded-brand border border-line bg-surface">
       {alerts.map((a) => (
-        <li key={a.id} className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-1 px-4 py-3.5 transition-colors hover:bg-surface-2 md:grid-cols-[auto_1fr_auto] md:gap-4">
+        <li key={a.id} data-hideable className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-1 px-4 py-3.5 transition-colors hover:bg-surface-2 md:grid-cols-[auto_1fr_auto_auto] md:gap-4">
           <span className={`mt-0.5 w-20 rounded-full px-2 py-0.5 text-center text-[11px] font-medium ${SOFT[a.tone]}`}>{a.kind}</span>
           <div className="min-w-0">
             <p className="text-sm">
@@ -157,7 +158,10 @@ export function AttentionList({ alerts, empty }: { alerts: Alert[]; empty: strin
             </p>
             <p className="mt-0.5 text-xs text-faint">{a.detail}</p>
           </div>
-          {a.owner && <span className="col-start-2 whitespace-nowrap text-xs text-muted md:col-start-auto">{a.owner}</span>}
+          {a.owner ? <span className="col-start-2 whitespace-nowrap text-xs text-muted md:col-start-auto">{a.owner}</span> : <span className="hidden md:block" />}
+          <span className="col-start-2 -my-1 md:col-start-auto">
+            <HideForMe hideKey={`alert:${a.id}`} compact />
+          </span>
         </li>
       ))}
     </ul>

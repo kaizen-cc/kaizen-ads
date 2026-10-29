@@ -36,7 +36,7 @@ export default async function Home() {
   // Ad accounts against target, each service line on its own: execs see Meta and Google, the Head of Meta only Meta,
   // the Head of Google only Google, the Head of Creative neither; a buyer only the accounts they own
   const lines: ("meta" | "google")[] = me.isExec ? ["meta", "google"] : me.role === "head_of_meta" ? ["meta"] : me.role === "head_of_google" ? ["google"] : [];
-  const [h, kpiLines, buyerKpis, suggestions, fatigue, onboarding, clientOptions, callPromises, owedItems, said] = await Promise.all([
+  const [h, kpiLines, buyerKpis, suggestions, fatigue, onboarding, clientOptions, callPromisesAll, owedItems, said] = await Promise.all([
     loadHome(db, me),
     Promise.all(lines.map((platform) => loadKpiPulse(db, { platform }))),
     !me.isLead && !me.isExec && variantNow === "buyer" ? loadKpiPulse(db, me.id) : Promise.resolve(null),
@@ -56,7 +56,12 @@ export default async function Home() {
     // And what someone said yes to in Slack or email that's past due with nothing moving
     loadSaidPromises(db, me).catch(() => []),
   ]);
-  const owed = { items: owedItems, said, me: me.id };
+  // What this person cleared off their own board (Done or Dismiss): gone for them, still there for everyone else
+  const { data: hiddenRows } = await db.from("hidden_items").select("key").eq("profile_id", me.id);
+  const hidden = new Set((hiddenRows ?? []).map((r) => r.key as string));
+  h.attention = h.attention.filter((a) => !hidden.has(`alert:${a.id}`));
+  const callPromises = callPromisesAll?.filter((p) => !hidden.has(`call:${p.commitmentId}`)) ?? null;
+  const owed = { items: owedItems.filter((o) => o.targetId === me.id || !hidden.has(`owed:${o.id}`)), said: said.filter((p) => p.ownerId === me.id || !hidden.has(`said:${p.id}`)), me: me.id };
 
   const kpis = kpiLines.filter((k): k is KpiPulse => Boolean(k));
   // How creative production is going (speed, revisions, the team): execs and the Head of Creative

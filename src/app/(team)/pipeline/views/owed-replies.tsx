@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import type { OwedReply } from "@/lib/owed-replies";
 import { dismissOwed, doneOwed } from "@/app/today/actions";
+import { HideForMe } from "./hide-for-me";
 
 // Messages nobody answered (Slack tags, a client's message in their channel, emails written to someone), once the
 // person has had a notice: theirs to answer or set aside, and for leads and execs, the ones that were escalated.
@@ -23,7 +24,7 @@ export function OwedReplies({ items, me }: { items: OwedReply[]; me: string }) {
         const mine = o.targetId === me;
         const second = o.status === "escalated";
         return (
-          <article key={o.id} className={`grid content-start gap-3 rounded-[16px] border bg-bg/70 p-4 ${second ? "border-bad/40" : "border-line"}`}>
+          <article key={o.id} data-hideable className={`grid content-start gap-3 rounded-[16px] border bg-bg/70 p-4 ${second ? "border-bad/40" : "border-line"}`}>
             <div className="grid gap-1">
               <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
                 <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${second ? "bg-bad-soft text-bad" : "bg-warn-soft text-warn"}`}>{second ? "Second notice" : "Notice sent"}</span>
@@ -85,6 +86,8 @@ export function OwedReplies({ items, me }: { items: OwedReply[]; me: string }) {
                   </button>
                 </>
               )}
+              {/* Someone else's: clear it off your board (it stays theirs) */}
+              {!mine && <HideForMe hideKey={`owed:${o.id}`} />}
             </div>
           </article>
         );

@@ -77,7 +77,7 @@ function due(step: string | null) {
   if (step === "reports") return true; // every 15 minutes (vercel.json): queues on Mondays and the 1st, drafts what's queued
   if (step === "audits") return hour >= 6 && hour <= 21;
   if (step === "ledger") return hour >= 5 && hour <= 22; // hourly (vercel.json): each client's playbook, oldest first
-  if (step === "owed") return !["Sat", "Sun"].includes(weekday) && hour >= 8 && hour <= 19; // hourly (vercel.json): unanswered messages, nudged then escalated // hourly (vercel.json): accounts in the red get audited
+  if (step === "owed") return !["Sat", "Sun"].includes(weekday) && hour >= 8 && hour <= 19; // every 15 minutes (vercel.json): unanswered messages, nudged then escalated
   if (step === "launches") return true; // every 5 minutes (vercel.json): launch what reached Ready to launch, complete what was turned on
 
   if (step === "market") return hour === 8;
