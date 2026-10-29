@@ -1,5 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { isLive } from "@/lib/live";
 import { askJson } from "@/lib/ai";
 import { asanaSince } from "@/lib/calls";
 import { slack } from "@/lib/context/slack";
@@ -402,7 +403,7 @@ export type SaidPromise = {
 export async function loadSaidPromises(db: SupabaseClient, me: { id: string; role: string; isExec: boolean; isLead: boolean }): Promise<SaidPromise[]> {
   const { data } = await db
     .from("message_promises")
-    .select("id, source, status, owner_id, what, ask, asked_by, said, said_at, due_at, channel_name, url, channel_url, kind, client_id, group_id, clients(name, slug), owner:profiles!message_promises_owner_id_fkey(full_name, role)")
+    .select("id, source, status, owner_id, what, ask, asked_by, said, said_at, due_at, channel_name, url, channel_url, kind, client_id, group_id, clients(name, slug, status, archived_at), owner:profiles!message_promises_owner_id_fkey(full_name, role)")
     .in("status", ["overdue", "escalated"])
     .order("due_at")
     .limit(80);
@@ -410,6 +411,11 @@ export async function loadSaidPromises(db: SupabaseClient, me: { id: string; rol
   const groups = await loadGroups(db, (data ?? []).map((p) => p.group_id as string));
   return (data ?? [])
     .filter((p) => !shadow.has(p.id as string))
+    // A paused or archived client's yeses aren't chased on the board
+    .filter((p) => {
+      const c = p.clients as unknown as { status?: string | null; archived_at?: string | null } | null;
+      return !c || isLive(c);
+    })
     .filter((p) => {
       if (p.owner_id === me.id) return true;
       if (!(me.isExec || me.isLead) || p.status !== "escalated") return false;

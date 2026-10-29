@@ -257,7 +257,7 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
   // Accounts off target, weighted by how far off, how much is spent and how important the account is
   // Each service line on its own, for the people on it: execs both, the Head of Meta Meta, the Head of Google Google,
   // a buyer only the accounts they own
-  let kq = db.from("kpi_targets").select("id, label, platform, conversion, target, monthly_budget, sheet, client_id, clients!inner(name, slug, archived_at)").eq("active", true).is("clients.archived_at", null);
+  let kq = db.from("kpi_targets").select("id, label, platform, conversion, target, monthly_budget, sheet, client_id, clients!inner(name, slug, archived_at, status)").eq("active", true).is("clients.archived_at", null).in("clients.status", LIVE);
   if (!manager) kq = kq.eq("owner_id", me.id);
   else if (me.role === "head_of_meta") kq = kq.eq("platform", "meta");
   else if (me.role === "head_of_google") kq = kq.eq("platform", "google");

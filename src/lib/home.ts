@@ -1,5 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { LIVE } from "@/lib/live";
 import type { Staff } from "@/lib/auth";
 import { nyToday } from "@/lib/dates";
 import { roleLabel, type TeamRole } from "@/lib/roles";
@@ -93,14 +94,18 @@ export async function loadHome(db: SupabaseClient, me: Staff) {
   const since7 = new Date(Date.now() - 7 * 86_400_000).toISOString();
   const cols =
     "id, number, client_id, client_name, client_slug, title, format, priority, stage, assignee_id, assignee_name, creative_id, buyer_id, stage_entered_at, stage_due_at, created_at, minutes_in_stage, minutes_over, internal_rounds, client_rounds, new_count";
-  const [{ data: open }, { data: rounds }, { data: usage }, { data: people }, { data: events }, { data: copyDone }] = await Promise.all([
+  const [{ data: open }, { data: rounds }, { data: usageAll }, { data: people }, { data: events }, { data: copyDone }, { data: liveRows }] = await Promise.all([
     db.from("board_requests").select(cols).neq("stage", "launched").limit(2000),
     db.from("client_rounds").select("request_id, round, decision, created_at, requests(created_at, client_id)").gte("created_at", since30 > month ? month : since30).order("round"),
     db.from("client_allotment_usage").select("client_id, images_per_month, videos_per_month, images_used, videos_used"),
     db.from("profiles").select("id, full_name, role").eq("is_active", true),
     db.from("request_events").select("request_id, kind, to_stage, data, actor_id, created_at").gte("created_at", since30).in("kind", ["review", "stage"]).limit(5000),
     db.from("copy_sets").select("request_id, approved_by, approved_at").gte("approved_at", since7),
+    // Paused and archived clients aren't owed creative, so they're never flagged for it
+    db.from("clients").select("id").is("archived_at", null).in("status", LIVE),
   ]);
+  const liveIds = new Set((liveRows ?? []).map((c) => c.id as string));
+  const usage = (usageAll ?? []).filter((u) => liveIds.has(u.client_id as string));
   const rows = (open ?? []) as Row[];
   const roleOf = new Map((people ?? []).map((p) => [p.id, p.role as TeamRole]));
 
@@ -251,7 +256,7 @@ const PLATFORM = { meta: "Meta", google: "Google" } as const;
  */
 export async function loadKpiPulse(db: SupabaseClient, opts?: string | { owner?: string; platform?: "meta" | "google" }): Promise<KpiPulse | null> {
   const { owner, platform } = typeof opts === "string" ? { owner: opts, platform: undefined } : (opts ?? {});
-  let q = db.from("kpi_targets").select("id, label, platform, ad_account_id, owner_id, clients!inner(name, slug, archived_at)").eq("active", true).is("clients.archived_at", null);
+  let q = db.from("kpi_targets").select("id, label, platform, ad_account_id, owner_id, clients!inner(name, slug, archived_at, status)").eq("active", true).is("clients.archived_at", null).in("clients.status", LIVE);
   if (owner) q = q.eq("owner_id", owner);
   if (platform) q = q.eq("platform", platform);
   const [{ data: targets }, { data: snaps }] = await Promise.all([q, db.from("kpi_snapshots").select("target_id, status, deviation, windows, budget, computed_at")]);

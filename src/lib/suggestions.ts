@@ -10,7 +10,7 @@ import { MAX_VARIATIONS, toAllotment, type Allotment, type UsageRow } from "@/li
 // Every decision and reason goes back into the next suggestions.
 
 import type { SuggestionKind } from "@/lib/suggestion-kinds";
-import { LIVE } from "@/lib/live";
+import { LIVE, isLive } from "@/lib/live";
 import { assetsBlock, loadAssets } from "@/lib/client-assets";
 export { KIND_LABEL, type SuggestionKind } from "@/lib/suggestion-kinds";
 
@@ -517,7 +517,9 @@ export type OpenSuggestion = {
 };
 export type SuggestionsState = { open: OpenSuggestion[]; running: boolean; lastRun: string | null; decided30: { approved: number; declined: number } };
 
-const OPEN_COLS = "id, client_id, kind, signal, evidence, why, draft, version, created_at, source, clients(name, slug)";
+const OPEN_COLS = "id, client_id, kind, signal, evidence, why, draft, version, created_at, source, clients(name, slug, status, archived_at)";
+// Paused and archived clients are left out of what the team is asked to act on
+const liveClient = (c: unknown) => !c || isLive(c as { status?: string | null; archived_at?: string | null });
 
 /** Open suggestions as the sheet shows them: with their conversation and the client's allotment. */
 async function toOpen(db: SupabaseClient, rows: Record<string, unknown>[]): Promise<OpenSuggestion[]> {
@@ -565,7 +567,7 @@ export async function loadSuggestions(db: SupabaseClient): Promise<SuggestionsSt
   ]);
   const run = runs?.[0];
   return {
-    open: await toOpen(db, rows ?? []),
+    open: await toOpen(db, (rows ?? []).filter((r) => liveClient(r.clients))),
     running: Boolean(run && !run.finished_at && Date.now() - Date.parse(run.started_at) < 10 * 60_000),
     lastRun: run?.finished_at ?? null,
     decided30: { approved: (decided ?? []).filter((d) => d.status === "approved").length, declined: (decided ?? []).filter((d) => d.status === "declined").length },
@@ -898,13 +900,13 @@ export type CallPromise = { commitmentId: string; client: string; clientSlug: st
 export async function loadCallPromises(db: SupabaseClient): Promise<CallPromise[]> {
   const { data } = await db
     .from("call_commitments")
-    .select("id, what, due_at, suggestion_id, group_id, clients(name, slug), client_calls(title, occurred_at)")
+    .select("id, what, due_at, suggestion_id, group_id, clients(name, slug, status, archived_at), client_calls(title, occurred_at)")
     .eq("status", "briefed")
     .order("due_at")
     .limit(40);
   // The same promise from several calls is one card (the earliest due), with all of it
   const firstOf = new Set<string>();
-  const rows = (data ?? []).filter((r) => !r.group_id || (!firstOf.has(r.group_id as string) && (firstOf.add(r.group_id as string), true))).slice(0, 20);
+  const rows = (data ?? []).filter((r) => liveClient(r.clients)).filter((r) => !r.group_id || (!firstOf.has(r.group_id as string) && (firstOf.add(r.group_id as string), true))).slice(0, 20);
   const { loadGroups } = await import("@/lib/promise-groups");
   const groups = await loadGroups(db, rows.map((r) => r.group_id as string));
   const ids = rows.map((r) => r.suggestion_id).filter(Boolean) as string[];

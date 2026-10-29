@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
-import { LIVE } from "@/lib/live";
+import { LIVE, isLive } from "@/lib/live";
 import { getCursor, setCursor, trimBody } from "@/lib/context/shared";
 import { listChannels, permalink, slack, slackConfigured, type SlackMessage } from "@/lib/context/slack";
 import { addresses, gmailToken, google, googleConfigured, plainText, withoutQuotes, type GmailMessage } from "@/lib/context/google";
@@ -701,12 +701,15 @@ export type OwedReply = {
 export async function loadOwedReplies(db: SupabaseClient, me: { id: string; role: string; isExec: boolean; isLead: boolean }, others = me.isExec || me.isLead): Promise<OwedReply[]> {
   const { data } = await db
     .from("owed_replies")
-    .select("id, source, status, target_id, from_name, from_team, channel_name, subject, gist, body, asked_at, url, channel_url, client_id, clients(name, slug), target:profiles!owed_replies_target_id_fkey(full_name, role)")
+    .select("id, source, status, target_id, from_name, from_team, channel_name, subject, gist, body, asked_at, url, channel_url, client_id, clients(name, slug, status, archived_at), target:profiles!owed_replies_target_id_fkey(full_name, role)")
     .in("status", ["nudged", "escalated"])
     .order("asked_at")
     .limit(80);
   return (data ?? [])
     .filter((o) => {
+      // A paused or archived client's messages aren't chased on the board
+      const c = o.clients as unknown as { status?: string | null; archived_at?: string | null } | null;
+      if (c && !isLive(c)) return false;
       if (o.target_id === me.id) return true;
       if (!others || o.status !== "escalated") return false;
       if (me.isExec) return true;
