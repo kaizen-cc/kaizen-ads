@@ -14,7 +14,7 @@ import type { Scorecard } from "@/lib/production";
 // that matters. Pick a client to see its overview right there and act on it, save the whole topic for later, or deep
 // dive through them one by one. Topics play most critical first; any topic can be jumped to. Arrows or space move on.
 
-type Card = { kind: "intro" } | { kind: "score" } | { kind: "resolved"; r: Resolved } | { kind: "topic"; topic: TopicKey; items: TodayItem[] } | { kind: "end" };
+type Card = { kind: "intro" } | { kind: "score" } | { kind: "resolved"; rs: Resolved[] } | { kind: "topic"; topic: TopicKey; items: TodayItem[] } | { kind: "end" };
 type Mark = "seen" | "saved" | "done" | "dismissed";
 
 const TIER: Record<Tier, { label: string; glow: string; accent: string; chip: string }> = {
@@ -83,10 +83,10 @@ export function Story({
   const first = askedTopic && askedTopic in topics ? (askedTopic as TopicKey) : null;
   const cards: Card[] = useMemo(() => {
     const ordered = first ? [...groups.filter((g) => g.topic === first), ...groups.filter((g) => g.topic !== first)] : groups;
-    return [{ kind: "intro" }, ...(score ? [{ kind: "score" as const }] : []), ...resolved.map((r) => ({ kind: "resolved" as const, r })), ...ordered.map((g) => ({ kind: "topic" as const, ...g })), { kind: "end" }];
+    return [{ kind: "intro" }, ...(score ? [{ kind: "score" as const }] : []), ...(resolved.length ? [{ kind: "resolved" as const, rs: resolved }] : []), ...ordered.map((g) => ({ kind: "topic" as const, ...g })), { kind: "end" }];
   }, [groups, resolved, first, score]);
   // Where the topics start: after the intro, the scorecard and what teammates took care of
-  const lead = 1 + (score ? 1 : 0) + resolved.length;
+  const lead = 1 + (score ? 1 : 0) + (resolved.length ? 1 : 0);
   const askedCard = useParam("card");
   const at = askedCard ? Math.max(0, Math.min(cards.length - 1, Number(askedCard) || 0)) : first ? lead : 0;
   // Moving to another screen leaves the client open on this one behind
@@ -107,10 +107,12 @@ export function Story({
           shown.current.add(i.key);
           if (!demo) void setItem(i.key, "seen", { topic: i.topic, client: i.client, title: i.title, clientId: i.clientId });
         }
-    if (card.kind === "resolved" && !shown.current.has(card.r.key)) {
-      shown.current.add(card.r.key);
-      if (!demo) void acknowledge(card.r.key);
-    }
+    if (card.kind === "resolved")
+      for (const r of card.rs)
+        if (!shown.current.has(r.key)) {
+          shown.current.add(r.key);
+          if (!demo) void acknowledge(r.key);
+        }
   }, [card, demo]);
 
   const go = (n: number) => {
@@ -256,12 +258,29 @@ export function Story({
 
           {card.kind === "resolved" && (
             <div className="grid max-w-4xl gap-6">
-              <p className="text-sm uppercase tracking-[0.24em] text-[#5be3a5]">Since you last looked · {card.r.client}</p>
+              <p className="text-sm uppercase tracking-[0.24em] text-[#5be3a5]">Since you last looked</p>
               <h2 className="font-display text-4xl leading-tight tracking-tight md:text-6xl">Taken care of.</h2>
-              <p className="max-w-2xl text-xl leading-relaxed text-white/80">
-                &ldquo;{card.r.title}&rdquo; came up for you. {card.r.by ? `${card.r.by} ${card.r.what}.` : `${card.r.what.charAt(0).toUpperCase()}${card.r.what.slice(1)}.`}
+              <p className="max-w-2xl text-lg leading-relaxed text-white/70">
+                {card.rs.length} {card.rs.length === 1 ? "thing that came up for you is" : "things that came up for you are"} handled. Nothing for you to do.
               </p>
-              <p className="text-sm text-white/50">Nothing for you to do. It&apos;s in motion.</p>
+              {/* Every one on this one screen, not a screen each */}
+              <ul className="grid max-h-[46vh] gap-2 overflow-y-auto pr-1">
+                {card.rs.map((r) => (
+                  <li key={r.key} className="flex items-start gap-3 rounded-[16px] border border-white/10 bg-white/[0.04] px-4 py-3">
+                    <span className="mt-0.5 shrink-0 text-[#5be3a5]" aria-hidden>
+                      ✓
+                    </span>
+                    <span className="grid min-w-0 gap-0.5">
+                      <span className="text-[15px] leading-snug text-white/90">{r.title}</span>
+                      <span className="text-[13px] text-white/50">
+                        {r.client}
+                        {" · "}
+                        {r.by ? `${r.by} ${r.what}` : `${r.what.charAt(0).toUpperCase()}${r.what.slice(1)}`}
+                      </span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
               <div>
                 <button type="button" onClick={() => go(1)} className="h-11 rounded-full bg-white px-6 text-sm font-semibold text-black">
                   Next
