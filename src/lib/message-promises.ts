@@ -206,7 +206,20 @@ const MOVE_SCHEMA = {
   additionalProperties: false,
 };
 
-/** For each promise: done, moving (a ticket, a task, or the thread shows it started), or nothing yet. */
+/**
+ * What changed in the client's ad accounts from a little before it was said (people often do it, then say so) until
+ * now: paused, renamed, budgets, new ads. A promise to change something in the account is kept there, not in a ticket.
+ */
+async function accountChangesSince(admin: Admin, clientId: string, at: string) {
+  const { data: targets } = await admin.from("kpi_targets").select("platform, ad_account_id").eq("client_id", clientId).eq("active", true);
+  const ids = [...new Set((targets ?? []).filter((t) => t.ad_account_id).map((t) => (t.platform === "google" ? String(t.ad_account_id).replace(/\D/g, "") : String(t.ad_account_id).replace(/^act_/, ""))))];
+  if (!ids.length) return "";
+  const from = new Date(Date.parse(at) - 3 * 3_600_000).toISOString();
+  const { data } = await admin.from("ad_account_changes").select("at, who, what, object").in("ad_account_id", ids).gte("at", from).order("at").limit(40);
+  return (data ?? []).map((c) => `${nyDay(String(c.at))} ${c.who ?? "someone"}: ${c.what}${c.object ? ` (${String(c.object).slice(0, 80)})` : ""}`).join(" | ");
+}
+
+/** For each promise: done, moving (a ticket, a task, the thread, or the ad account shows it), or nothing yet. */
 async function movement(admin: Admin, list: Row[], who: SlackWho | null, names: Map<string, string>) {
   const blocks: string[] = [];
   const tasksOf = new Map<string, { gid: string }[]>();
@@ -214,12 +227,13 @@ async function movement(admin: Admin, list: Row[], who: SlackWho | null, names: 
     const after = await since(p, who);
     let work = "";
     if (p.client_id) {
-      const [{ data: tickets }, tasks] = await Promise.all([
+      const [{ data: tickets }, tasks, changes] = await Promise.all([
         admin.from("requests").select("number, title, brief").eq("client_id", p.client_id).gte("created_at", p.said_at).is("deleted_at", null).limit(15),
         asanaSince(admin, String(p.client_id), String(p.said_at)),
+        accountChangesSince(admin, String(p.client_id), String(p.said_at)),
       ]);
       tasksOf.set(String(p.id), tasks);
-      work = `Tickets made since: ${(tickets ?? []).map((t) => `#${t.number} "${t.title}": ${String(t.brief ?? "").replace(/\s+/g, " ").slice(0, 160)}`).join(" | ") || "none"}\nAsana tasks made since: ${tasks.map((t, n) => `A${n + 1} "${t.name}"`).join(" | ") || "none"}`;
+      work = `Tickets made since: ${(tickets ?? []).map((t) => `#${t.number} "${t.title}": ${String(t.brief ?? "").replace(/\s+/g, " ").slice(0, 160)}`).join(" | ") || "none"}\nAsana tasks made since: ${tasks.map((t, n) => `A${n + 1} "${t.name}"`).join(" | ") || "none"}\nChanges in their ad accounts around then and since (Meta and Google's own history): ${changes || "none"}`;
     }
     blocks.push(`${i + 1}. ${names.get(String(p.owner_id)) ?? "A teammate"} said on ${nyDay(String(p.said_at))} they'd: ${p.what} (asked by ${p.asked_by ?? "someone"}: ${p.ask ?? ""})\nSaid since, where it was promised:\n${after || "(nothing)"}${work ? `\n${work}` : ""}`);
   }
@@ -230,7 +244,7 @@ async function movement(admin: Admin, list: Row[], who: SlackWho | null, names: 
       bare: true,
       maxTokens: 4000,
       system:
-        "You check whether something the team said they'd do has happened or is moving. done: the later messages show it delivered (sent, shared, live, launched, changed, \"here it is\"). moving: a ticket or Asana task makes substantially the same thing, or the messages show it started or handed on (\"with design now\", \"drafting it\", a new date agreed with the person who asked). nothing: no sign of either. The person who asked dropping it (\"never mind\", \"let's hold off\") counts as done. evidence: one short line saying what showed it (or \"nothing since\"). tickets: the ticket numbers that cover it; asana: the Asana task numbers without the A.",
+        "You check whether something the team said they'd do has happened or is moving. done: the later messages show it delivered (sent, shared, live, launched, changed, \"here it is\"), or the ad accounts' own change history shows it done (ads or ad sets paused or their status changed for a pause, names changed for a rename, budgets changed for a budget change), whoever's name is on it, since people use their own Meta or Google names. moving: a ticket or Asana task makes substantially the same thing, or the messages show it started or handed on (\"with design now\", \"drafting it\", a new date agreed with the person who asked). nothing: no sign of either. The person who asked dropping it (\"never mind\", \"let's hold off\") counts as done. evidence: one short line saying what showed it (or \"nothing since\"). tickets: the ticket numbers that cover it; asana: the Asana task numbers without the A.",
       schema: MOVE_SCHEMA,
       prompt: blocks.join("\n\n"),
     });

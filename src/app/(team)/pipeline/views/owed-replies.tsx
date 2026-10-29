@@ -17,6 +17,8 @@ const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { weekday
 export function OwedReplies({ items, me }: { items: OwedReply[]; me: string }) {
   const router = useRouter();
   const [gone, setGone] = useState<Set<string>>(new Set());
+  // Someone else's email can't be opened from here (the link opens their inbox, not yours): it's read in the card
+  const [reading, setReading] = useState<Set<string>>(new Set());
   const [, start] = useTransition();
   const shown = items.filter((o) => !gone.has(o.id));
   if (!shown.length) return null;
@@ -25,6 +27,8 @@ export function OwedReplies({ items, me }: { items: OwedReply[]; me: string }) {
       {shown.map((o) => {
         const mine = o.targetId === me;
         const second = o.status === "escalated";
+        const openable = Boolean(o.url) && (o.source === "slack" || mine);
+        const open = reading.has(o.id);
         return (
           <article key={o.id} data-hideable className={`grid content-start gap-3 rounded-[16px] border bg-bg/70 p-4 ${second ? "border-bad/40" : "border-line"}`}>
             <div className="grid gap-1">
@@ -44,12 +48,22 @@ export function OwedReplies({ items, me }: { items: OwedReply[]; me: string }) {
                 <span className="text-muted">{mine ? "You" : o.target} → </span>
                 {o.from}: {o.gist}
               </p>
-              <p className="line-clamp-2 text-xs text-faint">&ldquo;{o.body.replace(/\s+/g, " ")}&rdquo;</p>
+              <p className={`text-xs text-faint ${open ? "whitespace-pre-line" : "line-clamp-2"}`}>&ldquo;{open ? o.body.trim() : o.body.replace(/\s+/g, " ")}&rdquo;</p>
               {second && !mine && <p className="text-xs text-bad">They had a notice and still haven&apos;t answered.</p>}
             </div>
             <div className="flex flex-wrap gap-2">
-              {o.url && (
-                <a href={o.url} target="_blank" rel="noreferrer" className="inline-flex h-11 w-full items-center justify-center rounded-brand bg-fg px-4 text-sm font-medium text-bg md:h-9 md:w-auto">
+              {!openable && o.source === "gmail" && (
+                <button
+                  type="button"
+                  onClick={() => setReading((r) => (r.has(o.id) ? new Set([...r].filter((x) => x !== o.id)) : new Set(r).add(o.id)))}
+                  title="It's in their inbox, not yours: read it here"
+                  className="inline-flex h-11 w-full items-center justify-center rounded-brand border border-line px-4 text-sm text-muted hover:text-fg md:h-9 md:w-auto"
+                >
+                  {open ? "Show less" : "Read the email"}
+                </button>
+              )}
+              {openable && (
+                <a href={o.url!} target="_blank" rel="noreferrer" className="inline-flex h-11 w-full items-center justify-center rounded-brand bg-fg px-4 text-sm font-medium text-bg md:h-9 md:w-auto">
                   {o.source === "gmail" ? "Open the email" : "Open in Slack"} ↗
                 </a>
               )}
@@ -88,7 +102,7 @@ export function OwedReplies({ items, me }: { items: OwedReply[]; me: string }) {
                 </>
               )}
               {/* Someone else's: clear it off your board (it stays theirs) */}
-              {!mine && <HideForMe hideKey={`owed:${o.id}`} label={`${o.target} → ${o.from}: ${o.gist}`} href={o.url} />}
+              {!mine && <HideForMe hideKey={`owed:${o.id}`} label={`${o.target} → ${o.from}: ${o.gist}`} href={o.source === "slack" ? o.url : null} />}
             </div>
           </article>
         );

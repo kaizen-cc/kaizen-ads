@@ -71,7 +71,8 @@ export function SaidPromises({ items, me }: { items: SaidPromise[]; me: string }
                   Make the request
                 </Link>
               )}
-              {p.url && (
+              {/* An email opens in its owner's inbox only, so only they get the link */}
+              {p.url && (p.source === "slack" || mine) && (
                 <a href={p.url} target="_blank" rel="noreferrer" className={`inline-flex h-11 items-center justify-center rounded-brand px-4 text-sm md:h-9 ${make && mine ? "flex-1 border border-line text-muted hover:text-fg md:flex-none" : "w-full bg-fg font-medium text-bg md:w-auto"}`}>
                   {p.source === "gmail" ? "Open the email" : "Open in Slack"} ↗
                 </a>
@@ -86,7 +87,7 @@ export function SaidPromises({ items, me }: { items: SaidPromise[]; me: string }
                   </button>
                 </>
               )}
-              {!mine && <HideForMe hideKey={`said:${p.id}`} label={`${p.owner} said they'd ${p.group?.title ?? p.what}`} href={p.url} />}
+              {!mine && <HideForMe hideKey={`said:${p.id}`} label={`${p.owner} said they'd ${p.group?.title ?? p.what}`} href={p.source === "slack" ? p.url : null} />}
             </div>
           </article>
         );
