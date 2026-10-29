@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { refreshInPlace } from "@/lib/complete-card";
 import { refreshToday } from "../today-actions";
 
 // Keeps the daily review on the Overview current without making anyone wait: shown from the saved version at once,
@@ -21,7 +22,7 @@ export function TodayLive({ shown }: { shown: string }) {
       setChecking(true);
       try {
         const r = await refreshToday(shown);
-        if (!stop && r.changed) router.refresh();
+        if (!stop && r.changed) refreshInPlace(router);
       } catch {
         // Offline or signed out: the saved review stays on screen
       } finally {

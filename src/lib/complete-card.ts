@@ -26,6 +26,7 @@ export function refreshInPlace(router: { refresh: () => void }) {
   window.addEventListener("wheel", mine, { once: true, passive: true });
   window.addEventListener("touchmove", mine, { once: true, passive: true });
   window.addEventListener("keydown", mine, { once: true });
+  window.addEventListener("pointerdown", mine, { once: true });
   router.refresh();
   const until = Date.now() + 2500;
   const hold = () => {
@@ -33,6 +34,7 @@ export function refreshInPlace(router: { refresh: () => void }) {
       window.removeEventListener("wheel", mine);
       window.removeEventListener("touchmove", mine);
       window.removeEventListener("keydown", mine);
+      window.removeEventListener("pointerdown", mine);
       return;
     }
     if (Math.abs(window.scrollY - y) > 120) window.scrollTo({ top: y });

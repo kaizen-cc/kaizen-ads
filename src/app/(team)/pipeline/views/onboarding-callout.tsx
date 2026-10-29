@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { refreshInPlace } from "@/lib/complete-card";
 import { useEffect, useState, useSyncExternalStore, useTransition } from "react";
 import type { OnboardingCard, OnboardingState, OpenSuggestion } from "@/lib/suggestions";
 import { markOnboarded } from "../../clients/[slug]/actions";
@@ -19,11 +20,12 @@ export function OnboardingCallout({ state, clients, bare = false }: { state: Onb
   const openId = useParam("first");
   const sheet = (openId && state.clients.find((c) => c.firstRound?.id === openId)?.firstRound) || null;
   const router = useRouter();
-  // Keeps itself current: quickly while an intake is being read, otherwise every minute (a new intake can land any time)
+  // Keeps itself current while an intake is being read. Otherwise it doesn't refresh the page on its own: a refresh
+  // every minute redrew the whole Overview under the reader (a new intake shows on the next visit or Today check)
   const reading = state.clients.some((c) => c.intake && ["received", "read"].includes(c.intake.status) && !c.firstRound && !c.inProduction.length);
   useEffect(() => {
-    if (sheet) return;
-    const t = setInterval(() => router.refresh(), reading ? 8000 : 60000);
+    if (sheet || !reading) return;
+    const t = setInterval(() => refreshInPlace(router), 8000);
     return () => clearInterval(t);
   }, [reading, sheet, router]);
   if (!state.clients.length && !state.unmatched.length) return null;
@@ -110,7 +112,7 @@ function ClientCard({ c, onOpen }: { c: OnboardingCard; onOpen: (s: OpenSuggesti
   useEffect(() => {
     if (!writing) return;
     const tick = setInterval(() => setNow(Date.now()), 1000);
-    const poll = setInterval(() => router.refresh(), 4000);
+    const poll = setInterval(() => refreshInPlace(router), 4000);
     return () => {
       clearInterval(tick);
       clearInterval(poll);

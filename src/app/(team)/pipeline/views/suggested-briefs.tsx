@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { refreshInPlace } from "@/lib/complete-card";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
 import { KIND_LABEL, type SuggestionKind } from "@/lib/suggestion-kinds";
@@ -44,7 +45,7 @@ export function SuggestedBriefs({ state, bare = false }: { state: SuggestionsSta
   // While the strategist is looking, pick up suggestions as they land
   useEffect(() => {
     if (!state.running) return;
-    const t = setInterval(() => router.refresh(), 8000);
+    const t = setInterval(() => refreshInPlace(router), 8000);
     return () => clearInterval(t);
   }, [state.running, router]);
 

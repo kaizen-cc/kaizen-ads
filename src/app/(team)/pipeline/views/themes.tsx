@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { OpenTopics, type TopicTone } from "./topics";
 
 // The Overview as a few big themes (clients at risk, creative and growth, new clients, delivery): each a lit card with
@@ -25,26 +25,13 @@ const TONE: Record<TopicTone, { accent: string; glow: string }> = {
   quiet: { accent: "#9aa8ff", glow: "rgba(90,110,255,0.3)" },
 };
 
-const read = () => (typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("theme"));
-
 export function Themes({ themes }: { themes: Theme[] }) {
-  const [open, setOpen] = useState<string | null>(null);
-  // The theme in the address (a link or a refresh) opens on load; changes keep the address in step
-  useEffect(() => {
-    const t = setTimeout(() => setOpen(read()), 0);
-    const onPop = () => setOpen(read());
-    window.addEventListener("popstate", onPop);
-    return () => {
-      clearTimeout(t);
-      window.removeEventListener("popstate", onPop);
-    };
-  }, []);
+  // The open theme is read straight from the address on every render (never held in state that a page refresh could
+  // reset), so the page doesn't fold and jump when the Overview refreshes behind you
+  const open = useParam("theme");
   const choose = (id: string | null) => {
-    setOpen(id);
-    const u = new URL(window.location.href);
-    if (id) u.searchParams.set("theme", id);
-    else u.searchParams.delete("theme");
-    window.history.pushState(null, "", u);
+    if (id) pushParams({ theme: id });
+    else closeParams("theme");
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
   const current = themes.find((t) => t.id === open) ?? null;
