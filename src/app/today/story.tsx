@@ -7,6 +7,7 @@ import { SuggestionSheet } from "@/app/(team)/pipeline/views/suggested-briefs";
 import type { Resolved, Tier, TodayItem, TopicKey } from "@/lib/today";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { acknowledge, setItem } from "./actions";
+import { DoneBurst } from "@/components/done-burst";
 import { ScorecardView } from "@/components/production";
 import type { Scorecard } from "@/lib/production";
 
@@ -49,8 +50,8 @@ function headline(topic: TopicKey, n: number) {
 export function Story({
   firstName,
   greeting,
-  items,
-  resolved,
+  items: itemsAtStart,
+  resolved: resolvedAtStart,
   counts,
   topics,
   home = "/pipeline",
@@ -71,6 +72,11 @@ export function Story({
   demo?: boolean;
 }) {
   const router = useRouter();
+  // The screens are fixed for this sitting: marking something done refreshes the page, and a list that changed under
+  // you (a topic gone, a "taken care of" screen added) would shift every screen after it. What you did shows on the
+  // item instead, and the next visit starts from the fresh list.
+  const [items] = useState(itemsAtStart);
+  const [resolved] = useState(resolvedAtStart);
   // Topics, most critical first (the most urgent item in each decides), each with its items most urgent first
   const groups = useMemo(() => {
     const m = new Map<TopicKey, TodayItem[]>();
@@ -167,7 +173,7 @@ export function Story({
   return (
     // Phones: a column (progress, the screen, then back and next within thumb reach); desktop as it was
     <div className="force-dark fixed inset-0 z-40 flex flex-col overflow-hidden bg-[#07060a] text-white [color-scheme:dark] md:block">
-      <style>{`@keyframes card-in { from { opacity: 0; transform: translateY(18px) scale(.985) } to { opacity: 1; transform: none } } @keyframes glow { 0%,100% { transform: translate(-10%,-10%) scale(1) } 50% { transform: translate(6%,4%) scale(1.15) } }`}</style>
+      <style>{`@keyframes card-in { from { opacity: 0; transform: translateY(18px) scale(.985) } to { opacity: 1; transform: none } } @keyframes card-out { to { opacity: 0; transform: translateX(14px) } } @keyframes glow { 0%,100% { transform: translate(-10%,-10%) scale(1) } 50% { transform: translate(6%,4%) scale(1.15) } }`}</style>
       {/* The colour of what's on screen: red for critical, amber for important, blue for the rest, green for done */}
       <div aria-hidden className="pointer-events-none absolute -left-1/4 -top-1/4 h-[90vh] w-[90vh] rounded-full blur-[140px] transition-colors duration-700" style={{ background: tone.glow, animation: "glow 14s ease-in-out infinite" }} />
       <div aria-hidden className="pointer-events-none absolute -bottom-1/3 right-0 h-[70vh] w-[70vh] rounded-full opacity-60 blur-[160px] transition-colors duration-700" style={{ background: tone.glow, animation: "glow 18s ease-in-out infinite reverse" }} />
@@ -404,6 +410,16 @@ function TopicScreen({
   onNext: () => void;
 }) {
   const live = list.filter((i) => mine[i.key] !== "dismissed" && mine[i.key] !== "done");
+  // Something just marked done: a check plays where it was, then it leaves the list (dismissed ones simply go)
+  const [cheer, setCheer] = useState<TodayItem | null>(null);
+  const [left, setLeft] = useState<Set<string>>(new Set());
+  const finish = (i: TodayItem, s: "done" | "dismissed") => {
+    if (s === "done") setCheer(i);
+    setTimeout(() => {
+      setLeft((l) => new Set(l).add(i.key));
+      setCheer((c) => (c?.key === i.key ? null : c));
+    }, s === "done" ? 1700 : 350);
+  };
   // The client open (?pick=key) and the deep dive (?dive=n) are places too: back returns to the list
   const selected = useParam("pick");
   const setSelected = (key: string) => pushParams({ pick: key, dive: null });
@@ -436,20 +452,26 @@ function TopicScreen({
           </h2>
         </div>
         <ul className="grid gap-1.5" data-own-keys>
-          {list.map((i, n) => {
+          {list.filter((i) => !left.has(i.key)).map((i, n) => {
             const m = mine[i.key];
             const gone = m === "dismissed" || m === "done";
             const on = current?.key === i.key;
             return (
-              <li key={i.key}>
+              <li key={i.key} className={gone ? "pointer-events-none" : ""} style={gone ? { animation: "card-out .35s ease 1.35s both" } : undefined}>
                 <button
                   type="button"
                   disabled={gone}
                   onClick={() => (on ? closeOverview() : setSelected(i.key))}
-                  className={`group grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-[16px] border px-4 py-3.5 text-left transition-colors md:py-3 ${on ? "border-white/40 bg-white/[0.1]" : "border-white/10 bg-white/[0.035] hover:border-white/25 hover:bg-white/[0.07]"} ${gone ? "opacity-40" : ""}`}
+                  className={`group grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-[16px] border px-4 py-3.5 text-left transition-colors md:py-3 ${m === "done" ? "border-[#5be3a5]/50 bg-[#5be3a5]/[0.08]" : on ? "border-white/40 bg-white/[0.1]" : "border-white/10 bg-white/[0.035] hover:border-white/25 hover:bg-white/[0.07]"} ${m === "dismissed" ? "opacity-40" : ""}`}
                   style={{ animation: `card-in .4s ${0.04 * n}s cubic-bezier(.2,.8,.2,1) both` }}
                 >
-                  <span className="h-2.5 w-2.5 rounded-full" style={{ background: TIER[i.tier].accent, boxShadow: `0 0 12px ${TIER[i.tier].accent}` }} />
+                  {m === "done" ? (
+                    <span className="grid h-5 w-5 place-items-center rounded-full bg-[#5be3a5] text-[11px] font-bold text-black" style={{ animation: "card-in .35s cubic-bezier(.2,.8,.2,1.4) both" }}>
+                      ✓
+                    </span>
+                  ) : (
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ background: TIER[i.tier].accent, boxShadow: `0 0 12px ${TIER[i.tier].accent}` }} />
+                  )}
                   <span className="grid min-w-0 gap-0.5">
                     <span className="flex items-center gap-2">
                       <span className="truncate text-[15px] font-medium">{i.client}</span>
@@ -493,7 +515,16 @@ function TopicScreen({
         onClick={(e) => e.target === e.currentTarget && closeOverview()}
         className={current ? "fixed inset-0 z-[45] flex flex-col justify-end bg-black/60 backdrop-blur-sm md:static md:z-auto md:block md:bg-transparent md:backdrop-blur-none lg:sticky lg:top-4" : "lg:sticky lg:top-4"}
       >
-        {current ? (
+        {cheer && (!current || dive == null) ? (
+          <div className="grid min-h-[300px] place-items-center rounded-[28px] border border-[#5be3a5]/25 bg-[#5be3a5]/[0.05] p-10 text-center max-md:fixed max-md:inset-x-4 max-md:top-1/3 max-md:z-[46] max-md:bg-[#0d0c11]" style={{ animation: "card-in .3s cubic-bezier(.2,.8,.2,1) both" }}>
+            <div className="grid gap-3">
+              <DoneBurst label="Done" />
+              <p className="text-sm text-white/60">
+                {cheer.client} · {cheer.title}
+              </p>
+            </div>
+          </div>
+        ) : current ? (
           <div className="max-h-[92dvh] overflow-y-auto overscroll-contain rounded-t-[28px] bg-[#0d0c11] pb-[env(safe-area-inset-bottom)] md:max-h-none md:overflow-visible md:rounded-none md:bg-transparent md:pb-0 max-md:animate-[card-in_.3s_cubic-bezier(.2,.8,.2,1)_both]">
             <div className="sticky top-0 z-10 flex justify-end bg-[#0d0c11]/90 px-2 pt-2 backdrop-blur md:hidden">
               <button type="button" onClick={closeOverview} aria-label="Back to the list" className="grid h-11 w-11 place-items-center rounded-full text-white/60 active:bg-white/10">
@@ -509,6 +540,7 @@ function TopicScreen({
             dive={dive != null ? { at: Math.min(dive, live.length - 1) + 1, of: live.length } : null}
             onChoose={(s) => {
               onChoose(current, s);
+              if (s !== "saved") finish(current, s);
               if (dive != null && s !== "saved") nextInDive();
             }}
             onAct={() => (current.action.suggestion ? onAct(current) : undefined)}
@@ -576,6 +608,9 @@ function Overview({ i, status, dive, onChoose, onAct, onNext }: { i: TodayItem; 
             {i.alt.label} ↗
           </a>
         )}
+        <button type="button" onClick={() => onChoose("done")} className="h-11 flex-1 rounded-full border border-[#5be3a5]/50 px-4 text-sm text-[#5be3a5] hover:bg-[#5be3a5]/10 md:flex-none">
+          ✓ Done
+        </button>
         <button type="button" onClick={() => onChoose("saved")} className={`h-11 flex-1 rounded-full border px-4 text-sm md:flex-none ${status === "saved" ? "border-white bg-white/15" : "border-white/25 text-white/85 hover:bg-white/10"}`}>
           {status === "saved" ? "Saved ✓" : "Save for later"}
         </button>

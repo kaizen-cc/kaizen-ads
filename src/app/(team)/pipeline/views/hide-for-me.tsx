@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
+import { completeCard } from "@/lib/complete-card";
 import { hideForMe } from "../hide-actions";
 
 // Done and Dismiss on anything on the Overview: it leaves this person's board only. Whoever it's on still has it, and
@@ -13,11 +14,19 @@ export function HideForMe({ hideKey, label, href, compact = false }: { hideKey: 
   const hide = (e: React.MouseEvent<HTMLButtonElement>, how: "done" | "dismissed") => {
     e.preventDefault();
     e.stopPropagation();
-    (e.currentTarget.closest("[data-hideable]") as HTMLElement | null)?.style.setProperty("display", "none");
-    start(async () => {
-      await hideForMe(hideKey, how, label, href);
+    const card = e.currentTarget.closest("[data-hideable]") as HTMLElement | null;
+    // Done: a check plays over the card, then it goes. Dismiss: it just goes. The page refreshes once it's gone, so
+    // nothing moves under the pointer while it plays.
+    const save = hideForMe(hideKey, how, label, href);
+    const after = () => start(async () => {
+      await save;
       router.refresh();
     });
+    if (how === "done") completeCard(card, after);
+    else {
+      card?.style.setProperty("display", "none");
+      after();
+    }
   };
   const btn = compact ? "h-11 rounded-full px-2.5 text-xs md:h-7" : "h-11 rounded-brand px-3 text-sm md:h-9";
   return (

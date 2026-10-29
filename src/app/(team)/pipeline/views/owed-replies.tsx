@@ -6,6 +6,7 @@ import { useState, useTransition } from "react";
 import type { OwedReply } from "@/lib/owed-replies";
 import { dismissOwed, doneOwed } from "@/app/today/actions";
 import { HideForMe } from "./hide-for-me";
+import { completeCard } from "@/lib/complete-card";
 
 // Messages nobody answered (Slack tags, a client's message in their channel, emails written to someone), once the
 // person has had a notice: theirs to answer or set aside, and for leads and execs, the ones that were escalated.
@@ -60,11 +61,14 @@ export function OwedReplies({ items, me }: { items: OwedReply[]; me: string }) {
                   <button
                     type="button"
                     title="You took care of it another way (a call, in person). It closes, and anyone it went up to hears it's done."
-                    onClick={() => {
-                      setGone((g) => new Set(g).add(o.id));
-                      start(async () => {
-                        await doneOwed(o.id);
-                        router.refresh();
+                    onClick={(e) => {
+                      const saved = doneOwed(o.id);
+                      completeCard(e.currentTarget.closest("article"), () => {
+                        setGone((g) => new Set(g).add(o.id));
+                        start(async () => {
+                          await saved;
+                          router.refresh();
+                        });
                       });
                     }}
                     className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-brand border border-ok/40 px-4 text-sm text-ok hover:bg-ok-soft md:h-9 md:flex-none"

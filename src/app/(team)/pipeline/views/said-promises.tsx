@@ -7,6 +7,7 @@ import type { SaidPromise } from "@/lib/message-promises";
 import { closeSaidPromise } from "@/app/today/actions";
 import { PromiseSources } from "./promise-sources";
 import { HideForMe } from "./hide-for-me";
+import { completeCard } from "@/lib/complete-card";
 
 // What someone said yes to in Slack or email that's past due with nothing showing it moving: theirs to do (or close),
 // and for leads and execs, the ones that went past a second notice.
@@ -19,12 +20,18 @@ export function SaidPromises({ items, me }: { items: SaidPromise[]; me: string }
   const [, start] = useTransition();
   const shown = items.filter((p) => !gone.has(p.id));
   if (!shown.length) return null;
-  const close = (id: string, how: "done" | "dropped") => {
-    setGone((g) => new Set(g).add(id));
-    start(async () => {
-      await closeSaidPromise(id, how);
-      router.refresh();
-    });
+  const close = (id: string, how: "done" | "dropped", card?: Element | null) => {
+    const saved = closeSaidPromise(id, how);
+    const after = () => {
+      setGone((g) => new Set(g).add(id));
+      start(async () => {
+        await saved;
+        router.refresh();
+      });
+    };
+    // Done: a check plays over the card first
+    if (how === "done") completeCard(card, after);
+    else after();
   };
   return (
     <div className="grid gap-3 lg:grid-cols-2">
@@ -69,7 +76,7 @@ export function SaidPromises({ items, me }: { items: SaidPromise[]; me: string }
               )}
               {mine && (
                 <>
-                  <button type="button" onClick={() => close(p.id, "done")} className="h-11 flex-1 rounded-brand border border-line px-3 text-sm text-muted hover:text-fg md:h-9 md:flex-none">
+                  <button type="button" onClick={(e) => close(p.id, "done", e.currentTarget.closest("article"))} className="h-11 flex-1 rounded-brand border border-line px-3 text-sm text-muted hover:text-fg md:h-9 md:flex-none">
                     It&apos;s done
                   </button>
                   <button type="button" onClick={() => close(p.id, "dropped")} className="h-11 rounded-brand px-3 text-sm text-faint hover:text-fg md:h-9">
