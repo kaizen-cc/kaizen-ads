@@ -61,6 +61,27 @@ export async function saveClientDetails(clientId: string, slug: string, form: Fo
   return done(slug, error);
 }
 
+/**
+ * Pause a client (off every alert, recap and count until they're back; nothing is archived) or bring them back: back
+ * means active and straight into the cycle again (KPIs, reports, check-ins). Execs and leads.
+ */
+export async function setClientPaused(clientId: string, slug: string, paused: boolean): Promise<ActionResult> {
+  const me = await requireStaff();
+  if (!isExecOrLead(me)) return { ok: false, error: "Only execs and leads can pause a client." };
+  // Leads too (the table only lets execs change it directly; who may is checked just above)
+  const supabase = adminConfigured() ? createAdminClient() : await createClient();
+  const { data: was } = await supabase.from("clients").select("archived_at, status").eq("id", clientId).maybeSingle();
+  if (!was) return { ok: false, error: "Client not found." };
+  if (was.archived_at) return { ok: false, error: "This client is archived. Restore them first." };
+  const wokeUp = was.status === "paused" && !paused;
+  const { error } = await supabase
+    .from("clients")
+    .update({ status: paused ? "paused" : "active", ...(wokeUp ? { reactivated_at: new Date().toISOString(), reactivated_by: me.id } : {}) })
+    .eq("id", clientId);
+  if (!error && wokeUp) wakeUp(clientId, me.id);
+  return done(slug, error);
+}
+
 /** After the response: the client's KPIs, due reports and sprint check-ins start again. */
 function wakeUp(clientId: string, byId: string) {
   if (!adminConfigured()) return;

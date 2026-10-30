@@ -4,17 +4,20 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
-import { setClientService } from "./[slug]/actions";
+import { setClientPaused, setClientService } from "./[slug]/actions";
 import { ArchiveControl } from "./[slug]/archive-control";
 import { tintFor } from "@/lib/colors";
 import type { Freshness } from "@/lib/dates";
 import { untilLabel } from "@/lib/allotment";
 import { SLOTS, seatNeeded, type SlotRole } from "@/lib/roles";
 import { AssignSelect, type Option } from "./assign-select";
+import { AddServices, MissingLinks, type MissingLink } from "./link-fix";
 import { SERVICES, type ServiceSlug } from "@/lib/services";
 
 export type ClientCard = {
   id: string;
+  /** Connections not made yet (Slack channels, the Drive folder), named on the card even folded */
+  links: MissingLink[];
   name: string;
   slug: string;
   status: string;
@@ -90,6 +93,7 @@ function Card({ c, open, slotOptions, canEdit }: { c: ClientCard; open: boolean;
   const [services, setServices] = useState(c.services);
   const [error, setError] = useState<string | null>(null);
   const [, start] = useTransition();
+  const [pausing, startPause] = useTransition();
   const tint = tintFor(c.name);
   const has = (s: ServiceSlug) => services.includes(s);
   const toggleOpen = () => (open ? closeParams("card") : pushParams({ card: c.id }));
@@ -160,6 +164,7 @@ function Card({ c, open, slotOptions, canEdit }: { c: ClientCard; open: boolean;
             {c.status}
             {c.whiteLabel && <span className="normal-case">· White label</span>}
             {c.missing > 0 && <span className="normal-case text-warn">· {c.missing} to fill</span>}
+            <MissingLinks clientId={c.id} slug={c.slug} missing={c.links} canEdit={canEdit} />
           </p>
         </div>
         <button
@@ -195,7 +200,7 @@ function Card({ c, open, slotOptions, canEdit }: { c: ClientCard; open: boolean;
             );
           })
         ) : (
-          <span className="rounded-full border border-dashed border-warn/40 px-2.5 py-1 text-[11.5px] text-warn">No services on file</span>
+          <AddServices clientId={c.id} slug={c.slug} canEdit={canEdit} onAdded={(s) => setServices((now) => (now.includes(s) ? now : [...now, s]))} />
         )}
       </div>
       {error && <p className="relative -mt-2 text-xs text-bad">{error}</p>}
@@ -238,7 +243,23 @@ function Card({ c, open, slotOptions, canEdit }: { c: ClientCard; open: boolean;
                 </Link>
               )}
             </span>
-            <span className="flex items-center gap-3">
+            <span className="flex items-center gap-1">
+              {canEdit && (
+                <button
+                  type="button"
+                  disabled={pausing}
+                  onClick={() =>
+                    startPause(async () => {
+                      const r = await setClientPaused(c.id, c.slug, c.status !== "paused");
+                      if (!r.ok) setError(r.error);
+                      else router.refresh();
+                    })
+                  }
+                  className="h-11 rounded-full px-3 text-xs text-faint transition-colors hover:bg-surface-2 hover:text-fg disabled:opacity-50 md:h-7"
+                >
+                  {pausing ? (c.status === "paused" ? "Resuming…" : "Pausing…") : c.status === "paused" ? "Resume" : "Pause"}
+                </button>
+              )}
               {canEdit && <ArchiveControl clientId={c.id} slug={c.slug} name={c.name} archived={null} />}
               <Link href={`/clients/${c.slug}`} className="inline-flex min-h-11 items-center text-muted hover:text-fg md:min-h-0">
                 Open →

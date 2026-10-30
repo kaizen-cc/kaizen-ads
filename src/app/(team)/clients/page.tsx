@@ -106,6 +106,7 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
     const u = (usage ?? []).find((x) => x.client_id === r.id);
     return {
       missing: missing(r),
+      links: (["slack_channel_id", "internal_slack_channel_id", "drive_folder_id"] as const).filter((k) => !r[k]),
       services: servicesFor(r),
       pkg: pkgOf(r),
       until: r.creative_package_until,
