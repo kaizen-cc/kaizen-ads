@@ -78,9 +78,15 @@ jobs:
           git fetch origin "claude/fix-$ISSUE" && git checkout "claude/fix-$ISSUE"
           npm ci
           if npx eslint src tests && npx next typegen && npx tsc --noEmit && npm test && npm run test:db; then
-            # Rebase keeps Claude's commits authored as kaizen-cc, the identity Vercel deploys
-            gh pr merge "$PR" --rebase --delete-branch
-            gh issue comment "$ISSUE" --body "Low severity, and every check passed: merged automatically. It goes live with the next Vercel deploy."
+            # One commit on main authored as kaizen-cc, the only identity Vercel deploys (Claude's own commits are
+            # claude[bot], which Vercel skips)
+            TITLE=$(gh pr view "$PR" --json title --jq .title)
+            git checkout main && git pull --ff-only origin main
+            git merge --squash "origin/claude/fix-$ISSUE"
+            git commit -m "$TITLE" -m "Low-severity fix by Claude from #$ISSUE, merged automatically after every check passed."
+            git push origin main
+            gh pr close "$PR" --delete-branch --comment "Merged into main as $(git rev-parse --short HEAD) (every check passed)."
+            gh issue close "$ISSUE" --comment "Low severity, and every check passed: merged automatically. It goes live with this Vercel deploy."
           else
             gh pr comment "$PR" --body "A check failed, so this one wasn't merged automatically. It needs a look."
           fi
