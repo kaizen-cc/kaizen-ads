@@ -7,14 +7,17 @@ import type { Option } from "./assign-select";
 import { ClientGrid, type ClientCard } from "./client-grid";
 import { SERVICES, type ServiceSlug } from "@/lib/services";
 
-export type Filter = "all" | "creative" | "sprint" | "none" | "gaps";
+export type Filter = "all" | "creative" | "sprint" | "none" | "gaps" | "paused";
 
+// Every list is the clients we're working for now; paused ones sit in their own tab, counted nowhere else
+const live = (c: ClientCard) => c.status !== "paused";
 const FILTERS: { key: Filter; label: string; test: (c: ClientCard) => boolean }[] = [
-  { key: "all", label: "All clients", test: () => true },
-  { key: "creative", label: "Creative package", test: (c) => c.pkg !== "none" },
-  { key: "sprint", label: "Sprint", test: (c) => c.pkg === "sprint" },
-  { key: "none", label: "No package", test: (c) => c.pkg === "none" },
-  { key: "gaps", label: "Missing someone", test: (c) => c.missing > 0 },
+  { key: "all", label: "All clients", test: live },
+  { key: "creative", label: "Creative package", test: (c) => live(c) && c.pkg !== "none" },
+  { key: "sprint", label: "Sprint", test: (c) => live(c) && c.pkg === "sprint" },
+  { key: "none", label: "No package", test: (c) => live(c) && c.pkg === "none" },
+  { key: "gaps", label: "Missing someone", test: (c) => live(c) && c.missing > 0 },
+  { key: "paused", label: "Paused", test: (c) => !live(c) },
 ];
 
 /** Every client in one place: filter chips plus a live search that narrows the cards from two letters typed. */
@@ -59,7 +62,7 @@ export function ClientsBrowser({
             const warn = f.key === "gaps";
             return (
               <span key={f.key} className="contents">
-                {warn && <span className="mx-1 h-4 w-px shrink-0 bg-line" />}
+                {(warn || f.key === "paused") && <span className="mx-1 h-4 w-px shrink-0 bg-line" />}
                 <button
                   onClick={() => pick(f.key)}
                   className={`inline-flex h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-full px-4 text-sm transition-colors md:h-9 ${
