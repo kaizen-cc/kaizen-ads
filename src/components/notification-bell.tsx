@@ -149,7 +149,7 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
             <div className={`flex items-center justify-between gap-3 border-b border-line px-4 ${sheet ? "py-2" : "py-3"}`}>
               <div className="min-w-0">
                 <p className="font-heading text-[16px]">Notifications</p>
-                <p className="text-[11px] text-faint">What&apos;s on you, and what&apos;s new with your clients</p>
+                <p className="text-[11px] text-faint">Only whatWhat&apos;s on you, and what&apos;s new with your clientsapos;s on you: replies you owe, yeses you havenWhat&apos;s on you, and what&apos;s new with your clientsapos;t done, work handed to you. Updates are in your day.</p>
               </div>
               <span className={`flex shrink-0 items-center ${sheet ? "gap-1" : "gap-3"}`}>
                 {unread > 0 && (
