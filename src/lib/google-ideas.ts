@@ -190,8 +190,27 @@ export type GoogleIdea = {
   live: boolean;
   liveResult: number | null;
   liveBeatBy: number | null;
+  /** A search for the client's own name (or in a brand campaign): it always wins, and isn't an idea for anyone else */
+  branded: boolean;
   insight: GoogleInsight | null;
 };
+
+const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+/** Whether a winner is the client's own brand: a brand campaign or ad group, or a search with the client's name in it. */
+function isBranded(client: string, kind: string, campaign: string | null, adGroup: string | null, text: string | undefined) {
+  if (/(^|[^a-z])brand(ed)?([^a-z]|$)/i.test(`${campaign ?? ""} ${adGroup ?? ""}`)) return true;
+  if (kind === "ad" || !text) return false;
+  const t = squash(text);
+  const whole = squash(client);
+  if (whole.length >= 4 && t.includes(whole)) return true;
+  // Any distinctive word of the name ("Crust" in Crust Pizza Co., "Aldecoa", "E11even"), not the generic ones
+  const generic = /^(the|and|co|inc|llc|group|pizza|coffee|miami|law|dental|med|spa|clinic|studio|shop|store|company|marketing|services?|solutions?)$/;
+  return client
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length >= 4 && !generic.test(w))
+    .some((w) => t.includes(w));
+}
 
 export type GoogleInsight = { observation: string; why: string; angle: string; takeaways: string[]; deploy: { copy: string; keywords: string[]; campaign: string } };
 
@@ -224,6 +243,7 @@ export async function loadGoogleIdeas(db: SupabaseClient, which: "fame" | "live"
       live: r.live,
       liveResult: r.live_result == null ? null : Number(r.live_result),
       liveBeatBy: r.live_beat_by == null ? null : Number(r.live_beat_by),
+      branded: isBranded(c?.name ?? "", r.kind, r.campaign, r.ad_group, (r.content as { text?: string } | null)?.text),
       insight: (r.insight as GoogleInsight | null) ?? null,
     };
   });
