@@ -1,4 +1,4 @@
-import { conversionFor, type Conversion } from "./conversions";
+import { MAIN_RESULTS, conversionFor, type Conversion } from "./conversions";
 
 /** One day of an ad account (campaigns already filtered and summed). */
 export type Day = {
@@ -188,6 +188,17 @@ export function toDays(
   const m = match?.trim().toLowerCase();
   const out = new Set(exclude ?? []);
   const byDate = new Map<string, Day>();
+  // A Meta campaign whose goal isn't known yet: its strongest result over the whole period (MAIN_RESULTS), chosen once
+  // per campaign so it's counted the same way every day
+  const strongest = new Map<string, string>();
+  if (goals && platform !== "google") {
+    const seen = new Map<string, Set<string>>();
+    for (const r of rows) if (r.campaign_id && !goals.has(String(r.campaign_id))) for (const [k, v] of Object.entries(r.actions ?? {})) if (Number(v) > 0) (seen.get(String(r.campaign_id)) ?? seen.set(String(r.campaign_id), new Set()).get(String(r.campaign_id))!).add(k);
+    for (const [id, types] of seen) {
+      const t = MAIN_RESULTS.find((x) => types.has(x));
+      if (t) strongest.set(id, t);
+    }
+  }
   for (const r of rows) {
     if (m && !(r.campaign_name ?? "").toLowerCase().includes(m)) continue;
     if (r.campaign_id && out.has(String(r.campaign_id))) continue;
@@ -197,7 +208,9 @@ export function toDays(
     d.uniqueLinkClicks! += Number(r.unique_link_clicks) || 0;
     for (const [k, v] of Object.entries(r.actions ?? {})) d.actions[k] = (d.actions[k] ?? 0) + Number(v);
     // Each campaign's own result, summed as one action: the first of its goal's types this campaign reports
-    const own = goals?.get(String(r.campaign_id)) ?? (platform === "google" ? ["conversions"] : undefined);
+    // A campaign whose goal isn't known yet counts its strongest result; Google counts conversions
+    const id = String(r.campaign_id);
+    const own = goals?.get(id) ?? (platform === "google" ? ["conversions"] : strongest.has(id) ? [strongest.get(id)!] : undefined);
     const hit = own?.find((t) => r.actions?.[t] != null);
     if (hit) {
       d.actions.campaign_goal = (d.actions.campaign_goal ?? 0) + Number(r.actions[hit]);

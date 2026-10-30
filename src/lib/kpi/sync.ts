@@ -60,7 +60,7 @@ export async function syncMetaCampaigns(admin: SupabaseClient, account: string) 
 }
 
 /** Each campaign's optimization goal, kept beside its days (read again on every pull: goals change with new ad sets). */
-async function saveCampaignGoals(admin: SupabaseClient, account: string) {
+export async function saveCampaignGoals(admin: SupabaseClient, account: string) {
   const { campaignGoals } = await import("@/lib/context/meta");
   const { goalOf } = await import("./conversions");
   const now = new Date().toISOString();

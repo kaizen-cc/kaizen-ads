@@ -1,9 +1,10 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { aggregate, nyParts, pickType, toDays, type Day } from "./calc";
-import { conversionFor } from "./conversions";
+import { MAIN_RESULTS, conversionFor } from "./conversions";
 import { actionLabel } from "./explore";
-import { accountRows, goalsFor } from "./sync";
+import { accountRows, goalsFor, saveCampaignGoals } from "./sync";
+import { metaConfigured } from "@/lib/context/meta";
 
 // Each campaign in a client's ad account against its KPI: the result that campaign is judged on (picked by hand on the
 // card, or what it's optimized for, or the card's own result), its cost, purchases and ROAS, and whether it counts
@@ -17,7 +18,8 @@ export type CampaignPerf = {
   /** The result this campaign is judged on, and where that choice came from */
   result: string | null;
   resultLabel: string;
-  resultFrom: "picked" | "goal" | "card";
+  /** picked: by the buyer · goal: what it's optimized for · auto: its strongest result (goal not known) · card: the card's */
+  resultFrom: "picked" | "goal" | "auto" | "card";
   results7: number;
   results30: number;
   /** Cost per result (or ROAS on a ROAS card) over 30 days */
@@ -81,15 +83,21 @@ function choices(sums: Map<string, number>) {
     .map((o) => ({ type: o.type, label: o.label.charAt(0).toUpperCase() + o.label.slice(1), count: Math.round(o.count) }));
 }
 
-export async function campaignScorecard(admin: SupabaseClient, t: ScoreTarget): Promise<{ roas: boolean; campaigns: CampaignPerf[] }> {
+export async function campaignScorecard(admin: SupabaseClient, t: ScoreTarget, opts: { fetchGoals?: boolean } = {}): Promise<{ roas: boolean; campaigns: CampaignPerf[]; fetched?: boolean }> {
   if (!t.ad_account_id) return { roas: false, campaigns: [] };
   const platform = t.platform === "google" ? "google" : "meta";
   const account = String(t.ad_account_id);
-  const [rows, goals, { data: labels }] = await Promise.all([
-    accountRows(admin, account, platform).catch(() => []),
-    goalsFor(admin, account, platform),
-    admin.from("campaign_goals").select("campaign_id, label").eq("ad_account_id", account.replace(/^act_/, "")),
-  ]);
+  const readGoals = () =>
+    Promise.all([goalsFor(admin, account, platform), admin.from("campaign_goals").select("campaign_id, label").eq("ad_account_id", account.replace(/^act_/, ""))]);
+  const [rows, first] = await Promise.all([accountRows(admin, account, platform).catch(() => []), readGoals()]);
+  let [goals, { data: labels }] = first;
+  // Never read from Meta yet (a new account, or before the first sync since this came in): read them now, so every
+  // campaign is judged on its own goal without anyone picking
+  let fetched = false;
+  if (opts.fetchGoals && platform === "meta" && goals.size === 0 && metaConfigured()) {
+    fetched = (await saveCampaignGoals(admin, account).catch(() => 0)) > 0;
+    if (fetched) [goals, { data: labels }] = await readGoals();
+  }
   const picked = t.campaign_results ?? {};
   const labelOf = new Map((labels ?? []).map((l) => [l.campaign_id as string, l.label as string]));
   const conv = conversionFor(t.conversion);
@@ -114,9 +122,10 @@ export async function campaignScorecard(admin: SupabaseClient, t: ScoreTarget): 
   for (const [id, list] of byCampaign) {
     const days = toDays(list);
     const total = (ds: Day[], type: string | null) => (type ? ds.reduce((n, d) => n + (d.actions[type] ?? 0), 0) : 0);
-    // Its result: picked by hand, else the first of its goal's types it reports, else the card's
+    // Its result: picked by hand, else the first of its goal's types it reports, else its strongest result, else the card's
     const goalType = goals.get(id)?.find((x) => days.some((d) => d.actions[x] != null)) ?? null;
-    const [result, resultFrom] = picked[id] ? [picked[id], "picked" as const] : goalType ? [goalType, "goal" as const] : [cardType, "card" as const];
+    const strongest = platform === "google" ? "conversions" : (MAIN_RESULTS.find((x) => days.some((d) => (d.actions[x] ?? 0) > 0)) ?? null);
+    const [result, resultFrom] = picked[id] ? [picked[id], "picked" as const] : goalType ? [goalType, "goal" as const] : strongest ? [strongest, "auto" as const] : [cardType, "card" as const];
     const spend30 = days.reduce((n, d) => n + d.spend, 0);
     const spend7 = days.filter((d) => d.date >= from7).reduce((n, d) => n + d.spend, 0);
     const results30 = total(days, result);
@@ -151,7 +160,7 @@ export async function campaignScorecard(admin: SupabaseClient, t: ScoreTarget): 
     });
   }
   campaigns.sort((a, b) => Number(a.excluded) - Number(b.excluded) || Number(b.spend7 > 0) - Number(a.spend7 > 0) || b.spend30 - a.spend30);
-  return { roas, campaigns };
+  return { roas, campaigns, fetched };
 }
 
 const money = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;

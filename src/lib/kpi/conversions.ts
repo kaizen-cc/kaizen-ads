@@ -82,3 +82,20 @@ export function goalOf(goal: string | null, event: string | null, customConversi
   if (goal && GOAL_ACTIONS[goal]) return { label: GOAL_ACTIONS[goal][0], actions: GOAL_ACTIONS[goal][1] };
   return null;
 }
+
+/**
+ * When a campaign's goal can't be read, its result is the strongest one it reports, in this order: a sale, then a
+ * booking, an application, a sign-up, a lead, a contact, then steps toward them.
+ */
+export const MAIN_RESULTS = [
+  "omni_purchase", "purchase", "offsite_conversion.fb_pixel_purchase",
+  "schedule_total", "schedule_website", "offsite_conversion.fb_pixel_schedule",
+  "submit_application_total", "submit_application_website", "offsite_conversion.fb_pixel_submit_application",
+  "omni_complete_registration", "complete_registration", "offsite_conversion.fb_pixel_complete_registration",
+  "onsite_conversion.lead_grouped", "leadgen_grouped", "offsite_conversion.fb_pixel_lead", "lead",
+  "contact_total", "offsite_conversion.fb_pixel_contact",
+  "onsite_conversion.messaging_conversation_started_7d",
+  "omni_initiated_checkout", "initiate_checkout",
+  "omni_add_to_cart", "add_to_cart",
+  "landing_page_view", "link_click",
+];

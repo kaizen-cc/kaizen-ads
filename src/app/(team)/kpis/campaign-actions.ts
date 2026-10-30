@@ -27,10 +27,13 @@ async function recompute(clientId: string) {
   revalidatePath("/kpis");
 }
 
-export async function kpiCampaigns(targetId: string): Promise<{ roas: boolean; campaigns: CampaignPerf[] }> {
+export async function kpiCampaigns(targetId: string): Promise<{ roas: boolean; campaigns: CampaignPerf[]; fetched?: boolean }> {
   const t = await mine(targetId);
   if (!t?.ad_account_id || !adminConfigured()) return { roas: false, campaigns: [] };
-  return campaignScorecard(createAdminClient(), t as ScoreTarget);
+  // Goals not read from Meta yet: they're read now, and the card's numbers are worked out again with them
+  const s = await campaignScorecard(createAdminClient(), t as ScoreTarget, { fetchGoals: true });
+  if (s.fetched) await recompute(t.client_id as string);
+  return s;
 }
 
 /**

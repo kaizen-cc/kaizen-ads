@@ -919,11 +919,19 @@ function Campaigns({ id, target, conversion, platform }: { id: string; target: n
   const load = () => kpiCampaigns(id).then(setData, () => setData({ roas: false, campaigns: [] }));
   useEffect(() => {
     let live = true;
-    kpiCampaigns(id).then((d) => live && setData(d), () => live && setData({ roas: false, campaigns: [] }));
+    kpiCampaigns(id).then(
+      (d) => {
+        if (!live) return;
+        setData(d);
+        // The campaigns' goals were just read from Meta: the card's own numbers changed with them
+        if (d.fetched) router.refresh();
+      },
+      () => live && setData({ roas: false, campaigns: [] }),
+    );
     return () => {
       live = false;
     };
-  }, [id]);
+  }, [id, router]);
   const after = async (res: { ok: true } | { ok: false; error: string }) => {
     setError(res.ok ? null : res.error);
     await load();
@@ -1123,6 +1131,7 @@ function ResultPicker({ c, busy, onPick }: { c: CampaignPerf; busy: boolean; onP
     };
   }, [open]);
   const unset = !c.result || c.result === "campaign_goal";
+  const auto = !c.goal;
   const choose = (t: string | null) => {
     setOpen(false);
     onPick(t);
@@ -1150,18 +1159,18 @@ function ResultPicker({ c, busy, onPick }: { c: CampaignPerf; busy: boolean; onP
       {open && (
         <span role="menu" className="absolute right-0 top-full z-30 mt-1.5 grid w-[260px] gap-0.5 rounded-[16px] border border-line bg-surface p-1.5 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.7)] md:left-0 md:right-auto" style={{ animation: "fadeIn .15s ease-out" }}>
           <span className="px-2.5 pb-1 pt-1.5 text-[10.5px] font-medium uppercase tracking-[0.12em] text-faint">Judge {c.name.length > 26 ? "this campaign" : c.name} on</span>
-          {c.goal && (
-            <button type="button" role="menuitemradio" aria-checked={c.resultFrom === "goal"} onClick={() => choose(null)} className={`flex items-center gap-2 rounded-[10px] px-2.5 py-2 text-left text-[13px] transition-colors hover:bg-surface-2 ${c.resultFrom === "goal" ? "bg-surface-2" : ""}`}>
+          {(c.goal || c.resultFrom === "auto" || (c.resultFrom === "picked" && auto)) && (
+            <button type="button" role="menuitemradio" aria-checked={c.resultFrom === "goal" || c.resultFrom === "auto"} onClick={() => choose(null)} className={`flex items-center gap-2 rounded-[10px] px-2.5 py-2 text-left text-[13px] transition-colors hover:bg-surface-2 ${c.resultFrom === "goal" || c.resultFrom === "auto" ? "bg-surface-2" : ""}`}>
               <span className="grid min-w-0 flex-1">
-                <span className="truncate">{c.goal}</span>
-                <span className="text-[10.5px] text-faint">What it&apos;s optimized for</span>
+                <span className="truncate">{c.goal ?? (c.resultFrom === "auto" ? c.resultLabel : "Automatic")}</span>
+                <span className="text-[10.5px] text-faint">{c.goal ? "What it's optimized for" : "Automatic: its strongest result"}</span>
               </span>
-              {c.resultFrom === "goal" && <span className="text-ok">✓</span>}
+              {(c.resultFrom === "goal" || c.resultFrom === "auto") && <span className="text-ok">✓</span>}
             </button>
           )}
-          {c.goal && c.options.length > 0 && <span className="mx-2.5 my-1 h-px bg-line" />}
+          {(c.goal || c.resultFrom === "auto") && c.options.length > 0 && <span className="mx-2.5 my-1 h-px bg-line" />}
           {c.options.map((o) => {
-            const on = c.resultFrom !== "goal" && c.result === o.type;
+            const on = c.resultFrom === "picked" && c.result === o.type;
             return (
               <button key={o.type} type="button" role="menuitemradio" aria-checked={on} onClick={() => choose(o.type)} className={`flex items-center gap-2 rounded-[10px] px-2.5 py-2 text-left text-[13px] transition-colors hover:bg-surface-2 ${on ? "bg-surface-2" : ""}`}>
                 <span className="min-w-0 flex-1 truncate">{o.label}</span>
