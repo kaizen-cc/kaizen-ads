@@ -22,7 +22,7 @@ import { FatigueWatch } from "@/components/fatigue-watch";
 import { MarketPanel } from "../clients/[slug]/market-panel";
 import { kpiCreative, type KpiCreative } from "./creative-actions";
 import { QuickActions } from "./quick-actions";
-import { kpiCampaigns, type CampaignPerf } from "./campaign-actions";
+import { kpiCampaigns, setCampaignCounted, type CampaignPerf } from "./campaign-actions";
 
 export type KpiRow = {
   id: string;
@@ -902,11 +902,24 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
   );
 }
 
-/** The next move, on the Overview: the audit's verdict and its moves, or the account's #1 problem and plan. */
-/** Every campaign in the account against the card's target: one card per client, the campaigns inside it */
+/**
+ * Every campaign in the account against the card's target: one card per client, the campaigns inside it. A campaign
+ * the client runs themselves can be left out (Count it / Not ours): the card's spend, results, cost, pacing and status
+ * are worked out again without it.
+ */
 function Campaigns({ id, target }: { id: string; target: number | null }) {
+  const router = useRouter();
   const [data, setData] = useState<{ roas: boolean; campaigns: CampaignPerf[] } | null>(null);
   const [all, setAll] = useState(false);
+  const [saving, setSaving] = useState<string | null>(null);
+  const toggle = async (c: CampaignPerf) => {
+    setSaving(c.id);
+    setData((d) => (d ? { ...d, campaigns: d.campaigns.map((x) => (x.id === c.id ? { ...x, excluded: !x.excluded } : x)) } : d));
+    const res = await setCampaignCounted(id, c.id, c.excluded);
+    if (!res.ok) setData((d) => (d ? { ...d, campaigns: d.campaigns.map((x) => (x.id === c.id ? { ...x, excluded: c.excluded } : x)) } : d));
+    setSaving(null);
+    router.refresh();
+  };
   useEffect(() => {
     let live = true;
     kpiCampaigns(id).then((d) => live && setData(d), () => live && setData({ roas: false, campaigns: [] }));
@@ -921,7 +934,10 @@ function Campaigns({ id, target }: { id: string; target: number | null }) {
     <section className="grid gap-3 rounded-[20px] border border-line bg-surface p-4 md:p-5">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">Campaigns</p>
-        <span className="text-[11px] text-faint">Last 30 days against {target == null ? "the target" : `the ${fmt(target)} target`} · spending now first</span>
+        <span className="text-[11px] text-faint">
+          Last 30 days against {target == null ? "the target" : `the ${fmt(target)} target`} · leave out what the client runs themselves
+          {data && data.campaigns.some((c) => c.excluded) ? ` · ${data.campaigns.filter((c) => c.excluded).length} left out` : ""}
+        </span>
       </div>
       {!data ? (
         <div className="grid gap-2">
@@ -938,18 +954,19 @@ function Campaigns({ id, target }: { id: string; target: number | null }) {
                 <th className="py-1.5 pr-3 text-right font-normal">Spend 7d</th>
                 <th className="py-1.5 pr-3 text-right font-normal">Spend 30d</th>
                 <th className="py-1.5 pr-3 text-right font-normal">Results 30d</th>
-                <th className="py-1.5 text-right font-normal">{data.roas ? "ROAS" : "Cost per result"} 30d</th>
+                <th className="py-1.5 pr-3 text-right font-normal">{data.roas ? "ROAS" : "Cost per result"} 30d</th>
+                <th className="py-1.5 text-right font-normal">In the KPI</th>
               </tr>
             </thead>
             <tbody>
               {list.map((c) => {
                 const tone = c.deviation == null ? (c.spend30 > 0 && !c.results30 ? "text-bad" : "text-faint") : c.deviation <= 0 ? "text-ok" : c.deviation <= 0.15 ? "text-warn" : "text-bad";
                 return (
-                  <tr key={c.id} className={`border-t border-line/70 ${c.spend7 > 0 ? "" : "opacity-55"}`}>
+                  <tr key={c.id} className={`border-t border-line/70 ${c.excluded ? "opacity-45" : c.spend7 > 0 ? "" : "opacity-55"}`}>
                     <td className="max-w-[340px] py-2 pr-3">
                       <span className="flex items-center gap-2">
                         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${c.spend7 > 0 ? "bg-ok" : "bg-faint/50"}`} title={c.spend7 > 0 ? "Spending this week" : c.lastSpent ? `Last spent ${c.lastSpent}` : "Not spending"} />
-                        <span className="truncate" title={c.name}>
+                        <span className={`truncate ${c.excluded ? "line-through decoration-faint/60" : ""}`} title={c.name}>
                           {c.name}
                         </span>
                       </span>
@@ -957,7 +974,18 @@ function Campaigns({ id, target }: { id: string; target: number | null }) {
                     <td className="tabular py-2 pr-3 text-right">{money(c.spend7)}</td>
                     <td className="tabular py-2 pr-3 text-right text-muted">{money(c.spend30)}</td>
                     <td className="tabular py-2 pr-3 text-right text-muted">{c.results30}</td>
-                    <td className={`tabular py-2 text-right ${tone}`}>{c.value30 == null && c.spend30 > 0 ? "no results" : fmt(c.value30)}</td>
+                    <td className={`tabular py-2 pr-3 text-right ${tone}`}>{c.value30 == null && c.spend30 > 0 ? "no results" : fmt(c.value30)}</td>
+                    <td className="py-1 text-right">
+                      <button
+                        type="button"
+                        disabled={saving === c.id}
+                        onClick={() => toggle(c)}
+                        title={c.excluded ? "Left out: the client runs it. Count it again" : "Leave it out of the KPI (the client runs it themselves)"}
+                        className={`h-11 rounded-full px-3 text-[11px] transition-colors disabled:opacity-50 md:h-7 ${c.excluded ? "border border-line text-faint hover:text-fg" : "text-muted hover:bg-surface-2 hover:text-fg"}`}
+                      >
+                        {saving === c.id ? "…" : c.excluded ? "Count it" : "✓ Counted"}
+                      </button>
+                    </td>
                   </tr>
                 );
               })}

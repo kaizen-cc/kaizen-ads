@@ -171,13 +171,14 @@ export type Explore = {
 /** Everything the KPI card's explorer shows, for one target, with the "counts as a result" being tried. */
 export async function exploreTarget(
   admin: SupabaseClient,
-  t: { ad_account_id: string; platform?: string; target: number | null; monthly_budget: number | null; extra_metrics: string[] },
+  t: { ad_account_id: string; platform?: string; target: number | null; monthly_budget: number | null; extra_metrics: string[]; excluded_campaigns?: string[] | null },
   tryOut: { conversion: string; custom: string | null; campaignMatch: string | null },
 ): Promise<Explore> {
   const account = t.ad_account_id.replace(/^act_/, "");
   const all = await accountRows(admin, account, t.platform ?? "meta");
   const m = tryOut.campaignMatch?.trim().toLowerCase();
-  const rows = m ? all.filter((r) => (r.campaign_name ?? "").toLowerCase().includes(m)) : all;
+  const left = new Set(t.excluded_campaigns ?? []);
+  const rows = (m ? all.filter((r) => (r.campaign_name ?? "").toLowerCase().includes(m)) : all).filter((r) => !left.has(String(r.campaign_id)));
   const { toDays } = await import("./calc");
   const days = toDays(rows);
   const now = new Date();

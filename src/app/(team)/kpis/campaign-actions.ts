@@ -3,7 +3,8 @@
 import { requireStaff } from "@/lib/auth";
 import { aggregate, nyParts, pickType, toDays, worseBy } from "@/lib/kpi/calc";
 import { conversionFor } from "@/lib/kpi/conversions";
-import { accountRows } from "@/lib/kpi/sync";
+import { accountRows, refreshClientKpis } from "@/lib/kpi/sync";
+import { revalidatePath } from "next/cache";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -22,6 +23,8 @@ export type CampaignPerf = {
   /** +0.2 = 20% worse than the target over 30 days */
   deviation: number | null;
   lastSpent: string | null;
+  /** Left out of the KPI: the client runs it themselves */
+  excluded: boolean;
 };
 
 const shift = (day: string, n: number) => {
@@ -34,7 +37,7 @@ export async function kpiCampaigns(targetId: string): Promise<{ roas: boolean; c
   await requireStaff();
   const db = await createClient();
   // Read with their own access first: only someone who can see the card gets its campaigns
-  const { data: t } = await db.from("kpi_targets").select("platform, ad_account_id, conversion, custom_action, campaign_match, target").eq("id", targetId).maybeSingle();
+  const { data: t } = await db.from("kpi_targets").select("platform, ad_account_id, conversion, custom_action, campaign_match, target, excluded_campaigns").eq("id", targetId).maybeSingle();
   if (!t?.ad_account_id || !adminConfigured()) return { roas: false, campaigns: [] };
   const rows = await accountRows(createAdminClient(), String(t.ad_account_id), String(t.platform)).catch(() => []);
   const conv = conversionFor(String(t.conversion));
@@ -50,6 +53,7 @@ export async function kpiCampaigns(targetId: string): Promise<{ roas: boolean; c
     byCampaign.set(r.campaign_id, [...(byCampaign.get(r.campaign_id) ?? []), r]);
   }
   const target = t.target == null ? null : Number(t.target);
+  const left = new Set((t.excluded_campaigns ?? []) as string[]);
   const campaigns: CampaignPerf[] = [];
   for (const [id, list] of byCampaign) {
     const days = toDays(list);
@@ -68,9 +72,31 @@ export async function kpiCampaigns(targetId: string): Promise<{ roas: boolean; c
       value30: a30.value,
       deviation: worseBy(a30.value, target, Boolean(conv.roas)),
       lastSpent: spent[spent.length - 1] ?? null,
+      excluded: left.has(id),
     });
   }
-  // Spending now first, then by the month's spend
-  campaigns.sort((a, b) => Number(b.spend7 > 0) - Number(a.spend7 > 0) || b.spend30 - a.spend30);
+  // Counted first, spending now first, then by the month's spend
+  campaigns.sort((a, b) => Number(a.excluded) - Number(b.excluded) || Number(b.spend7 > 0) - Number(a.spend7 > 0) || b.spend30 - a.spend30);
   return { roas: Boolean(conv.roas), campaigns };
+}
+
+/**
+ * Count a campaign in the KPI or leave it out (a campaign the client runs themselves: we're not on the hook for it).
+ * The card's numbers (spend, results, cost, pacing, status) are worked out again straight away.
+ */
+export async function setCampaignCounted(targetId: string, campaignId: string, counted: boolean): Promise<{ ok: true } | { ok: false; error: string }> {
+  await requireStaff();
+  const db = await createClient();
+  const { data: t } = await db.from("kpi_targets").select("client_id, excluded_campaigns").eq("id", targetId).maybeSingle();
+  if (!t) return { ok: false, error: "You don't work on this client." };
+  if (!adminConfigured()) return { ok: false, error: "Server key missing." };
+  const left = new Set((t.excluded_campaigns ?? []) as string[]);
+  if (counted) left.delete(campaignId);
+  else left.add(campaignId);
+  const admin = createAdminClient();
+  const { error } = await admin.from("kpi_targets").update({ excluded_campaigns: [...left] }).eq("id", targetId);
+  if (error) return { ok: false, error: error.message };
+  await refreshClientKpis(admin, t.client_id as string);
+  revalidatePath("/kpis");
+  return { ok: true };
 }

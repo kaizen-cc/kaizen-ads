@@ -173,15 +173,21 @@ export function computeSnapshot(
   };
 }
 
-/** Add up campaign rows into days, optionally only campaigns whose name contains `match`. */
+/**
+ * Add up campaign rows into days, optionally only campaigns whose name contains `match`, and leaving out the campaigns
+ * in `exclude` (ones the client runs themselves, that we're not on the hook for).
+ */
 export function toDays(
-  rows: { date: string; campaign_name?: string | null; spend: number | string; actions: Record<string, number>; action_values: Record<string, number>; link_clicks?: number | string; unique_link_clicks?: number | string }[],
+  rows: { date: string; campaign_id?: string; campaign_name?: string | null; spend: number | string; actions: Record<string, number>; action_values: Record<string, number>; link_clicks?: number | string; unique_link_clicks?: number | string }[],
   match?: string | null,
+  exclude?: string[] | null,
 ): Day[] {
   const m = match?.trim().toLowerCase();
+  const out = new Set(exclude ?? []);
   const byDate = new Map<string, Day>();
   for (const r of rows) {
     if (m && !(r.campaign_name ?? "").toLowerCase().includes(m)) continue;
+    if (r.campaign_id && out.has(String(r.campaign_id))) continue;
     const d = byDate.get(r.date) ?? { date: r.date, spend: 0, actions: {}, values: {}, linkClicks: 0, uniqueLinkClicks: 0 };
     d.spend += Number(r.spend) || 0;
     d.linkClicks! += Number(r.link_clicks) || 0;

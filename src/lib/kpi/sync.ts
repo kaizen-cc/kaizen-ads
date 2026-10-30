@@ -67,6 +67,7 @@ type Target = {
   campaign_match: string | null;
   target: number | null;
   monthly_budget: number | null;
+  excluded_campaigns?: string[] | null;
 };
 
 export type CampaignRow = Parameters<typeof toDays>[0][number] & { campaign_id: string; impressions: number; clicks: number; updated_at: string };
@@ -100,7 +101,7 @@ export async function computeAccount(admin: SupabaseClient, account: string, tar
   const rows = await accountRows(admin, account, platform);
   const now = new Date();
   for (const t of targets) {
-    const s = computeSnapshot(toDays(rows, t.campaign_match), {
+    const s = computeSnapshot(toDays(rows, t.campaign_match, t.excluded_campaigns), {
       conversion: t.conversion,
       custom: t.custom_action,
       target: t.target == null ? null : Number(t.target),
@@ -123,7 +124,7 @@ export async function computeAccount(admin: SupabaseClient, account: string, tar
   }
 }
 
-const TARGET_FIELDS = "id, client_id, platform, ad_account_id, conversion, custom_action, campaign_match, target, monthly_budget";
+const TARGET_FIELDS = "id, client_id, platform, ad_account_id, conversion, custom_action, campaign_match, target, monthly_budget, excluded_campaigns";
 
 /** One client's targets now (after an edit, or the dashboard's Refresh). Recompute only unless `pull`. */
 export async function refreshClientKpis(admin: SupabaseClient, clientId: string, pull = false) {
