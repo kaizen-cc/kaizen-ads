@@ -99,8 +99,8 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
   const inFlight = new Map<string, number>();
   for (const o of open ?? []) inFlight.set(o.client_id, (inFlight.get(o.client_id) ?? 0) + 1);
 
-  // Clients on a package first, then the rest; alphabetical within each
-  const ordered = [...rows].sort((a, b) => Number(pkgOf(a) === "none") - Number(pkgOf(b) === "none") || a.name.localeCompare(b.name));
+  // A to Z (ignoring case and accents, and numbers in order: "Club 9" before "Club 76")
+  const ordered = [...rows].sort((a, b) => a.name.localeCompare(b.name, "en", { sensitivity: "base", numeric: true }));
   const cards = ordered.map((r) => {
     const u = (usage ?? []).find((x) => x.client_id === r.id);
     return {
