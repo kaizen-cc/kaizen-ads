@@ -80,10 +80,14 @@ async function post(customer: string, path: string, body: unknown): Promise<stri
   const mcc = digits(env("GOOGLE_ADS_LOGIN_CUSTOMER_ID"));
   let res = await call(mcc);
   let text = await res.text();
-  // Not linked under our manager account, but the signed-in person was added to the account itself: go directly
-  if (!res.ok && digits(customer) !== mcc && /PERMISSION_DENIED|permission/i.test(text)) {
+  // Not linked under our manager account, but the signed-in person was added to the account itself: go directly.
+  // Only for "can't see this account": any other refusal (a feature our access doesn't include) is the real answer,
+  // and if going directly fails too, the first reason is the one that explains it
+  if (!res.ok && digits(customer) !== mcc && /USER_PERMISSION_DENIED/.test(text)) {
+    const first = { text, status: res.status };
     res = await call(digits(customer));
     text = await res.text();
+    if (!res.ok) throw new Error(`${explain(first.text, first.status)}${/USER_PERMISSION_DENIED/.test(text) ? "" : ` (directly: ${explain(text, res.status)})`}`);
   }
   if (!res.ok) throw new Error(explain(text, res.status));
   return text;
