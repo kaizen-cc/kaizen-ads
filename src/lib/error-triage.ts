@@ -8,9 +8,9 @@ export type AutoHandled = {
   handled: string; // what was done about it
 };
 
-// How browsers word a request that never completed (Safari: "Load failed"; Chrome: "Failed to fetch"; Firefox: "NetworkError…")
+// How browsers word a request that never completed (Safari: "Load failed"; Chrome: "Failed to fetch", or "network error" when the response is cut off mid-download; Firefox: "NetworkError…")
 const NETWORK =
-  /^(typeerror: )?(load failed|failed to fetch|fetch failed|networkerror when attempting to fetch resource\.?|network request failed|the network connection was lost\.?|the internet connection appears to be offline\.?|a network error occurred\.?|cancelled|the operation was aborted\.?|aborterror\b.*|the request timed out\.?)$/i;
+  /^(typeerror: )?(load failed|failed to fetch|fetch failed|network error|networkerror when attempting to fetch resource\.?|network request failed|the network connection was lost\.?|the internet connection appears to be offline\.?|a network error occurred\.?|cancelled|the operation was aborted\.?|aborterror\b.*|the request timed out\.?)$/i;
 // A tab still running the previous version asked for files or actions that no longer exist
 const STALE =
   /chunkloaderror|loading chunk [\w-]+ failed|loading css chunk|failed to fetch dynamically imported module|importing a module script failed|failed to find server action|server action .* was not found|older or newer deployment/i;
