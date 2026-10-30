@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { requireStaff } from "@/lib/auth";
 import { canReportOn } from "@/lib/reports/access";
 import { createClient } from "@/lib/supabase/server";
@@ -19,6 +19,8 @@ export const maxDuration = 300;
 export default async function ReportPage({ params }: PageProps<"/reports/[id]">) {
   const { id } = await params;
   const me = await requireStaff();
+  // Nobody works on reports without their own Slack connected: the Reports page asks for it first
+  if (!(await slackConnection(me.id)).connected) redirect("/reports");
   const db = await createClient();
   const { data: r } = await db
     .from("reports")

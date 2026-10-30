@@ -174,7 +174,7 @@ export async function draftNow(targetId: string, kind: "weekly" | "monthly"): Pr
 // ─── The report builder ─────────────────────────────────────────────────────
 
 /** Builds a report for a client: date ranges (the first is the main one) and services; each part is written now. */
-export async function buildReportAction(clientId: string, ranges: { key: string; start?: string; end?: string }[], platforms: string[]): Promise<Result<{ id: string }>> {
+export async function buildReportAction(clientId: string, ranges: { key: string; start?: string; end?: string }[], platforms: string[], replace: string[] = []): Promise<Result<{ id: string }>> {
   const me = await requireStaff();
   const { resolveRange, buildReport, draftParts } = await import("@/lib/reports/builder");
   const resolved = ranges.map((r) => resolveRange(r.key, undefined, r.start && r.end ? { start: r.start, end: r.end } : undefined)).filter((r): r is NonNullable<typeof r> => Boolean(r));
@@ -185,6 +185,9 @@ export async function buildReportAction(clientId: string, ranges: { key: string;
     const admin = createAdminClient();
     const out = await buildReport(admin, await createClient(), me, clientId, unique, [...new Set(platforms)].filter((p) => p === "meta" || p === "google"));
     after(() => draftParts(admin, out.partIds));
+    // Built in place of a Monday draft that was waiting: that draft steps aside (skipped and off the page; it stays in
+    // the client's history). Only the person's own drafts
+    if (replace.length) await admin.from("reports").update({ status: "skipped", hidden_at: new Date().toISOString(), updated_at: new Date().toISOString() }).in("id", replace.slice(0, 10)).eq("owner_id", me.id).eq("client_id", clientId).neq("status", "posted");
     revalidatePath("/reports");
     return { ok: true, id: out.mineId ?? out.partIds[0] };
   } catch (e) {

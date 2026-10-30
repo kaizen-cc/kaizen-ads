@@ -1,9 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { buildReportAction } from "./actions";
+import { TagChip, type Tag } from "./report-cards";
 
 // The report builder: the client, the date ranges (as many as the report needs: the last 7 days AND the month), and
 // the services. Another buyer's service is drafted for them and they're asked to approve it; the whole thing goes to
@@ -69,7 +71,7 @@ function Step({ n, title, done, children, last = false, enter = false }: { n: nu
   );
 }
 
-export function ReportBuilder({ clients, quick = [], yesterday }: { clients: BuilderClient[]; quick?: QuickPick[]; yesterday: string }) {
+export function ReportBuilder({ clients, quick = [], yesterday, waiting = {} }: { clients: BuilderClient[]; quick?: QuickPick[]; yesterday: string; waiting?: Record<string, { id: string; tag: Tag; platform: string }[]> }) {
   const router = useRouter();
   const [q, setQ] = useState("");
   // The client is the first step, kept in the address (?client=): back returns to picking one, and a link from a
@@ -85,6 +87,10 @@ export function ReportBuilder({ clients, quick = [], yesterday }: { clients: Bui
   const setServices = (list: string[]) => picked && setTicked({ id: picked.id, list });
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  // A Monday draft already waiting for this person on the picked client: offered first; building another replaces it
+  const already = picked ? (waiting[picked.id] ?? []) : [];
+  const [replacing, setReplacing] = useState<string | null>(null);
+  const holding = already.length > 0 && replacing !== picked?.id;
 
   // Results from the second letter on
   const searching = q.trim().length >= 2;
@@ -123,6 +129,7 @@ export function ReportBuilder({ clients, quick = [], yesterday }: { clients: Bui
         picked.id,
         ranges.map((k) => (k === "custom" ? { key: k, start: custom.start, end: custom.end } : { key: k })),
         services,
+        replacing === picked.id ? already.map((a) => a.id) : [],
       );
       if (!r.ok) return setError(r.error);
       router.push(`/reports/${r.id}`);
@@ -225,7 +232,40 @@ export function ReportBuilder({ clients, quick = [], yesterday }: { clients: Bui
             )}
           </Step>
 
-          {picked && (
+          {picked && holding && (
+            <div className="relative -mt-2 mb-6 ml-12 grid gap-4 overflow-hidden rounded-[20px] border border-ok/30 bg-ok/[0.07] p-5" style={{ animation: "step-in .4s cubic-bezier(.2,.8,.2,1) both" }}>
+              <span aria-hidden className="pointer-events-none absolute -right-16 -top-20 h-48 w-48 rounded-full bg-ok/20 blur-[60px]" />
+              <div className="relative flex items-start gap-3">
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-ok/15 text-ok">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden>
+                    <path d="M5 12.5l4.5 4.5L19 7" />
+                  </svg>
+                </span>
+                <span className="grid gap-1">
+                  <span className="font-heading text-[18px] leading-snug">{already.length > 1 ? "Reports are already drafted for this client" : "There's already a report ready for this client"}</span>
+                  <span className="text-sm text-ink/60">Written for you and checked by the QA: review it and send it, no need to build another.</span>
+                </span>
+              </div>
+              <div className="relative grid gap-2">
+                {already.map((a) => (
+                  <Link key={a.id} href={`/reports/${a.id}`} className="group flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-ink/10 bg-ink/[0.04] px-4 py-3 transition hover:border-ok/50 hover:bg-ink/[0.07]">
+                    <span className="flex flex-wrap items-center gap-2">
+                      <TagChip tag={a.tag} />
+                      <span className="text-xs text-ink/50">{PLATFORM[a.platform as "meta" | "google"]?.name}</span>
+                    </span>
+                    <span className="inline-flex h-9 items-center gap-1.5 rounded-full bg-fg px-4 text-xs font-medium text-bg">
+                      Review and send <span aria-hidden className="transition-transform group-hover:translate-x-0.5">→</span>
+                    </span>
+                  </Link>
+                ))}
+              </div>
+              <button type="button" onClick={() => setReplacing(picked.id)} className="relative justify-self-start text-xs text-ink/55 underline-offset-4 hover:text-fg hover:underline max-md:min-h-11">
+                Build a different one instead (it replaces the draft)
+              </button>
+            </div>
+          )}
+
+          {picked && !holding && (
           <Step key={`dates-${picked.id}`} n={2} title="What it covers" done={rangesReady} last={!ranges.length} enter>
             <div className="grid gap-2 sm:grid-cols-3">
               {RANGES.map((r) => {
@@ -257,7 +297,7 @@ export function ReportBuilder({ clients, quick = [], yesterday }: { clients: Bui
           </Step>
           )}
 
-          {picked && ranges.length > 0 && (
+          {picked && !holding && ranges.length > 0 && (
           <Step key={`services-${picked.id}`} n={3} title="Which services" done={chosen.length > 0} last enter>
             <div className="grid gap-2 sm:grid-cols-2">
               {picked.services.map((s) => {
