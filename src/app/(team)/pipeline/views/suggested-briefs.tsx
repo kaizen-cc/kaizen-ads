@@ -15,7 +15,8 @@ const KIND_TONE: Record<SuggestionKind, string> = {
   fatigue: "bg-warn-soft text-warn",
   kpi: "bg-bad-soft text-bad",
   pacing: "bg-warn-soft text-warn",
-  offer: "bg-ok-soft text-ok",
+  // A client asked and nothing's been made: urgent, not good news
+  offer: "bg-bad text-white",
   unhappy: "bg-bad-soft text-bad",
   flop: "bg-warn-soft text-warn",
   lab: "bg-brand-soft text-brand-text",
@@ -26,6 +27,16 @@ const KIND_TONE: Record<SuggestionKind, string> = {
   market: "bg-[#6c5ce7]/15 text-[#8b7cf6]",
 };
 const FORMAT_LABEL = { image: "Images", video: "Videos", carousel: "Carousels" } as const;
+const FORMAT_ONE = { image: "image", video: "video", carousel: "carousel" } as const;
+// The order they're read in: accounts off target, then what clients asked for that nobody has started, then behind on
+// creative, then the rest, and ideas from the market last
+const RANK: Record<SuggestionKind, number> = { kpi: 0, offer: 1, call: 1, unhappy: 1, pacing: 2, fatigue: 3, refresh: 3, flop: 3, onboarding: 4, winner: 4, lab: 4, market: 5 };
+/** "1 new image · 5 variations": net new and variations, not one total that hides which is which */
+const countsOf = (formats: SuggestionDraft["formats"]) =>
+  formats
+    .map((f) => [f.new ? `${f.new} new ${FORMAT_ONE[f.format]}${f.new === 1 ? "" : "s"}` : "", f.variations ? `${f.variations} variation${f.variations === 1 ? "" : "s"}${f.new ? "" : ` of ${FORMAT_ONE[f.format]}s`}` : ""].filter(Boolean).join(" · "))
+    .filter(Boolean)
+    .join(" · ");
 // 4:5 and 9:16 only: Kaizen no longer designs 1:1
 const SIZES = ["4x5", "9x16"] as const;
 const REASONS = ["Not the right time", "Already handled", "Client wouldn't go for it", "The signal isn't real", "Brief isn't strong enough", "Wrong angle"];
@@ -91,7 +102,7 @@ export function SuggestedBriefs({ state, bare = false }: { state: SuggestionsSta
         </div>
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
-          {state.open.map((s) => (
+          {[...state.open].sort((a, b) => RANK[a.kind] - RANK[b.kind]).map((s) => (
             <button key={s.id} onClick={() => pushParams({ brief: s.id })} className="group grid content-start gap-2.5 rounded-[14px] border border-line bg-surface p-4 text-left transition-colors hover:border-faint">
               <span className="flex flex-wrap items-center gap-2">
                 <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${KIND_TONE[s.kind]}`}>{KIND_LABEL[s.kind]}</span>
@@ -101,8 +112,8 @@ export function SuggestedBriefs({ state, bare = false }: { state: SuggestionsSta
               <span className="line-clamp-2 text-sm text-muted">{s.signal}</span>
               <span className="flex items-center justify-between gap-2 pt-1 text-xs text-faint">
                 <span>
-                  {s.draft.formats.map((f) => `${f.new + f.variations} ${FORMAT_LABEL[f.format].toLowerCase()}`).join(" · ")}
-                  {s.draft.concepts.length ? ` · ${s.draft.concepts.length} concepts` : ""}
+                  {countsOf(s.draft.formats)}
+                  {s.draft.concepts.length > 1 ? ` · ${s.draft.concepts.length} concepts` : ""}
                 </span>
                 <span className="text-fg transition-transform group-hover:translate-x-0.5">Review →</span>
               </span>

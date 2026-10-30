@@ -14,7 +14,8 @@ import { LIVE, isLive } from "@/lib/live";
 import { assetsBlock, loadAssets } from "@/lib/client-assets";
 export { KIND_LABEL, type SuggestionKind } from "@/lib/suggestion-kinds";
 
-export type Concept = { name: string; hook: string; visual: string; copy: string };
+/** format/new/variations: what this one concept makes, so each concept can go to production as its own ticket */
+export type Concept = { name: string; hook: string; visual: string; copy: string; format?: "image" | "video" | "carousel"; new?: number; variations?: number };
 export type SuggestionDraft = {
   title: string;
   angle: string;
@@ -179,7 +180,12 @@ const SCHEMA = {
         hooks: { type: "array", items: { type: "string" } },
         concepts: {
           type: "array",
-          items: { type: "object", properties: { name: { type: "string" }, hook: { type: "string" }, visual: { type: "string" }, copy: { type: "string" } }, required: ["name", "hook", "visual", "copy"], additionalProperties: false },
+          items: {
+            type: "object",
+            properties: { name: { type: "string" }, hook: { type: "string" }, visual: { type: "string" }, copy: { type: "string" }, format: { type: "string", enum: ["image", "video", "carousel"] }, new: { type: "integer" }, variations: { type: "integer" } },
+            required: ["name", "hook", "visual", "copy", "format", "new", "variations"],
+            additionalProperties: false,
+          },
         },
         formats: {
           type: "array",
@@ -212,7 +218,7 @@ You are the agency's strategist. You watch the accounts and, when the data says 
 - Start from the signal: say plainly what the data shows and why this creative answers it. Ads tiring: fresh designs on what's working, or variations of the winners. KPI off: a different angle or offer framing. Behind on creative: enough net new to catch up. A new offer: creative for that offer. Client not happy: answer what they said. Angle not landing: a new angle, and say what to stop.
 - Only facts from the context. Never invent prices, offers, dates or claims. If the offer's details aren't known, say what to confirm in the brief.
 - Formats and counts: net new must fit what's left of the allotment; variations up to ${MAX_VARIATIONS} per format.
-- Concepts: name, the hook (first line or on-image headline), the visual (what's shown, in a sentence or two), and the copy direction.
+- Concepts: name, the hook (first line or on-image headline), the visual (what's shown, in a sentence or two), the copy direction, and what that one concept makes: its format, net new count and variations count. Each concept becomes its own ticket for the designer and the copywriter, so it must stand on its own (one angle, one idea), and the concepts' counts add up to the formats.
 - The brief is what the designer reads: 5 to 10 lines, specific.
 - The team's past decisions on your suggestions are the most important thing you read. Never suggest again what they declined for a reason that still holds; lean into what they approved.
 - Balance the team's time across clients (work_in_motion). If what's already in motion for this client answers the signal, don't add more: set suggest to false. A client with well above the average open work needs a strong reason for more; a client nobody has touched in weeks deserves the attention. When designers or editors are near capacity, keep it small (variations of what works, 1 to 2 net new) and say so in why.
@@ -405,6 +411,20 @@ const clean = (d: SuggestionDraft): SuggestionDraft => ({
   assets: d.assets ? { have: d.assets.have.slice(0, 8), need: d.assets.need.slice(0, 8) } : undefined,
 });
 
+/** A request with several concepts as one request per concept, each with that concept's own format and counts. */
+export function byConcept(d: SuggestionDraft): SuggestionDraft[] {
+  const own = d.concepts.filter((c) => c.format && (c.new ?? 0) + (c.variations ?? 0) > 0);
+  if (d.concepts.length < 2 || own.length !== d.concepts.length) return [d];
+  return own.map((c) => ({
+    ...d,
+    title: `${c.name}`.slice(0, 80),
+    angle: c.name,
+    hooks: [c.hook, ...d.hooks.filter((h) => h !== c.hook)].slice(0, 3),
+    concepts: [c],
+    formats: [{ format: c.format!, new: Math.max(0, Math.min(10, c.new ?? 0)), variations: Math.max(0, Math.min(MAX_VARIATIONS, c.variations ?? 0)) }],
+  }));
+}
+
 /** One suggestion for one client from its signals. Returns null when the strategist decides it isn't needed. */
 async function suggestFor(admin: SupabaseClient, clientId: string, signals: Signal[], load?: Workload) {
   const prompt = await promptFor(admin, clientId, signals, load);
@@ -419,8 +439,10 @@ async function suggestFor(admin: SupabaseClient, clientId: string, signals: Sign
 Decide whether this client needs new creative now, and if so write the request. kind: the main signal it answers. signal: one line on what the data shows. evidence: 2 to 4 short facts from the signals and context. why: 2 or 3 sentences making the case to an exec. reply: "".`,
   });
   if (!out.suggest || !out.draft.formats.length) return null;
-  const draft = clean(out.draft);
-  const { error } = await admin.from("creative_suggestions").insert({ client_id: clientId, kind: out.kind, signal: out.signal, evidence: out.evidence.slice(0, 5), why: out.why, draft, original: draft });
+  // One concept, one ticket: a request that bundles several angles is split, so each is briefed, written and made on
+  // its own (the copywriter gets one idea per ticket)
+  const drafts = byConcept(clean(out.draft));
+  const { error } = await admin.from("creative_suggestions").insert(drafts.map((draft) => ({ client_id: clientId, kind: out.kind, signal: out.signal, evidence: out.evidence.slice(0, 5), why: out.why, draft, original: draft })));
   return error ? null : true;
 }
 
