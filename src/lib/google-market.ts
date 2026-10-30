@@ -8,11 +8,12 @@ import { LIVE } from "@/lib/live";
 //   and keywords) and the industry's name, with monthly volume, the last 12 months, competition and top-of-page bids.
 // - Who we're up against: Auction Insights from our clients' accounts in that industry, the other advertisers in the
 //   same searches, how often they show and how often they outrank us (read only where the account's access allows it).
-// Refreshed weekly.
+// Competitors refreshed twice a week; searches weekly (Keyword Planner's numbers are monthly).
 
 const KEEP_SEARCHES = 60;
 
-export async function updateGoogleMarket(admin: SupabaseClient, deadline = Date.now() + 240_000) {
+export async function updateGoogleMarket(admin: SupabaseClient, deadline = Date.now() + 240_000, opts: { searches?: boolean } = {}) {
+  const withSearches = opts.searches ?? true;
   const { data: targets } = await admin
     .from("kpi_targets")
     .select("client_id, ad_account_id, clients!inner(vertical_id, archived_at, status, industry_detail)")
@@ -46,7 +47,7 @@ export async function updateGoogleMarket(admin: SupabaseClient, deadline = Date.
     const { data: wins } = await admin.from("google_ideas").select("kind, content, conversions").in("client_id", [...v.clients]).in("kind", ["search_term", "keyword"]).order("conversions", { ascending: false }).limit(15);
     const seeds = [...new Set([...(wins ?? []).map((w) => String((w.content as { text?: string }).text ?? "").toLowerCase()).filter(Boolean), ...[...v.details].map((d) => d.toLowerCase()), (nameOf.get(verticalId) ?? "").toLowerCase()].filter((x) => x && x.length <= 80))].slice(0, 20);
     const account = [...v.accounts][0];
-    if (seeds.length) {
+    if (withSearches && seeds.length) {
       try {
         const ideas = (await keywordIdeas(account, seeds)).filter((i) => i.searches > 0).sort((a, b) => b.searches - a.searches).slice(0, KEEP_SEARCHES);
         if (ideas.length) {
