@@ -851,3 +851,41 @@ export async function adPreviews(adIds: string[]) {
 
 /** For writes (src/lib/meta-write.ts), which gates every one of them through the sandbox setting */
 export { graph as metaGraph };
+
+/**
+ * What each campaign in an account is optimized for: its ad sets' optimization goal and promoted object (the pixel
+ * event, or a custom conversion with its name). One per campaign, from an active ad set when it has one.
+ */
+export async function campaignGoals(adAccountId: string) {
+  type AdSet = { campaign_id: string; optimization_goal?: string; effective_status?: string; promoted_object?: { custom_event_type?: string; custom_conversion_id?: string } };
+  const sets: AdSet[] = [];
+  let after = "";
+  for (let page = 0; page < 10; page++) {
+    const res = await graph<{ data: AdSet[]; paging?: { cursors?: { after?: string }; next?: string } }>(`act_${adAccountId.replace(/^act_/, "")}/adsets`, {
+      fields: "campaign_id,optimization_goal,promoted_object,effective_status",
+      limit: "200",
+      ...(after ? { after } : {}),
+    });
+    sets.push(...res.data);
+    if (!res.paging?.next || !res.paging.cursors?.after) break;
+    after = res.paging.cursors.after;
+  }
+  const byCampaign = new Map<string, AdSet>();
+  for (const s of sets) {
+    const cur = byCampaign.get(s.campaign_id);
+    if (!cur || (cur.effective_status !== "ACTIVE" && s.effective_status === "ACTIVE")) byCampaign.set(s.campaign_id, s);
+  }
+  // Custom conversions' names, so the card says "Website Schedule" rather than an ID
+  const ids = [...new Set([...byCampaign.values()].map((s) => s.promoted_object?.custom_conversion_id).filter((x): x is string => Boolean(x)))];
+  const names = new Map<string, string>();
+  for (const id of ids.slice(0, 25)) {
+    const c = await graph<{ name?: string }>(id, { fields: "name" }).catch(() => null);
+    if (c?.name) names.set(id, c.name);
+  }
+  return [...byCampaign.entries()].map(([campaignId, s]) => ({
+    campaignId,
+    goal: s.optimization_goal ?? null,
+    event: s.promoted_object?.custom_event_type ?? null,
+    customConversion: s.promoted_object?.custom_conversion_id ? { id: s.promoted_object.custom_conversion_id, name: names.get(s.promoted_object.custom_conversion_id) ?? null } : null,
+  }));
+}

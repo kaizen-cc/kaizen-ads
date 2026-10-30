@@ -54,7 +54,29 @@ export async function syncMetaCampaigns(admin: SupabaseClient, account: string) 
     const { error } = await admin.from("meta_campaign_daily").upsert(records.slice(i, i + 500), { onConflict: "campaign_id,date" });
     if (error) throw new Error(`Saving campaign days: ${error.message}`);
   }
-  return { from: ymd(since), rows: records.length };
+  // What each campaign is optimized for, for KPIs that count each campaign by its own goal
+  const goals = await saveCampaignGoals(admin, account).catch(() => 0);
+  return { from: ymd(since), rows: records.length, goals };
+}
+
+/** Each campaign's optimization goal, kept beside its days (read again on every pull: goals change with new ad sets). */
+async function saveCampaignGoals(admin: SupabaseClient, account: string) {
+  const { campaignGoals } = await import("@/lib/context/meta");
+  const { goalOf } = await import("./conversions");
+  const now = new Date().toISOString();
+  const rows = (await campaignGoals(account))
+    .map((g) => ({ g, own: goalOf(g.goal, g.event, g.customConversion) }))
+    .filter((x) => x.own)
+    .map(({ g, own }) => ({ platform: "meta", ad_account_id: account, campaign_id: g.campaignId, optimization_goal: g.goal, event: g.customConversion ? `custom:${g.customConversion.id}` : g.event, label: own!.label, actions: own!.actions, updated_at: now }));
+  if (rows.length) await admin.from("campaign_goals").upsert(rows, { onConflict: "platform,ad_account_id,campaign_id" });
+  return rows.length;
+}
+
+/** campaign id → the action types that count as its result. Google campaigns' conversions already follow their own goals. */
+export async function goalsFor(admin: SupabaseClient, account: string, platform = "meta"): Promise<Map<string, string[]>> {
+  if (platform === "google") return new Map();
+  const { data } = await admin.from("campaign_goals").select("campaign_id, actions").eq("platform", "meta").eq("ad_account_id", account.replace(/^act_/, ""));
+  return new Map((data ?? []).map((g) => [g.campaign_id as string, g.actions as string[]]));
 }
 
 type Target = {
@@ -99,9 +121,10 @@ async function saveSnapshot(admin: SupabaseClient, t: Target, fields: Record<str
 /** Recompute the snapshots of an account's targets from what's stored. */
 export async function computeAccount(admin: SupabaseClient, account: string, targets: Target[], error?: string, platform = "meta") {
   const rows = await accountRows(admin, account, platform);
+  const goals = targets.some((t) => t.conversion === "campaign_goal") ? await goalsFor(admin, account, platform) : undefined;
   const now = new Date();
   for (const t of targets) {
-    const s = computeSnapshot(toDays(rows, t.campaign_match, t.excluded_campaigns), {
+    const s = computeSnapshot(toDays(rows, t.campaign_match, t.excluded_campaigns, goals, platform), {
       conversion: t.conversion,
       custom: t.custom_action,
       target: t.target == null ? null : Number(t.target),
@@ -167,7 +190,7 @@ async function refreshTargets(admin: SupabaseClient, targets: Target[], pull: bo
     }
     t?.on(account);
     let error: string | undefined;
-    let pulled: Awaited<ReturnType<typeof syncMetaCampaigns>> | null = null;
+    let pulled: { from: string; rows: number; goals?: number } | null = null;
     if (pull && platform === "google") {
       try {
         pulled = await syncGoogleCampaigns(admin, account);

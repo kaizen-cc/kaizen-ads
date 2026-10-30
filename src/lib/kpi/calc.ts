@@ -181,6 +181,9 @@ export function toDays(
   rows: { date: string; campaign_id?: string; campaign_name?: string | null; spend: number | string; actions: Record<string, number>; action_values: Record<string, number>; link_clicks?: number | string; unique_link_clicks?: number | string }[],
   match?: string | null,
   exclude?: string[] | null,
+  /** campaign id → the action types its own goal counts (for "each campaign's own goal"); Google uses conversions */
+  goals?: Map<string, string[]>,
+  platform = "meta",
 ): Day[] {
   const m = match?.trim().toLowerCase();
   const out = new Set(exclude ?? []);
@@ -193,6 +196,13 @@ export function toDays(
     d.linkClicks! += Number(r.link_clicks) || 0;
     d.uniqueLinkClicks! += Number(r.unique_link_clicks) || 0;
     for (const [k, v] of Object.entries(r.actions ?? {})) d.actions[k] = (d.actions[k] ?? 0) + Number(v);
+    // Each campaign's own result, summed as one action: the first of its goal's types this campaign reports
+    const own = platform === "google" ? ["conversions"] : goals?.get(String(r.campaign_id));
+    const hit = own?.find((t) => r.actions?.[t] != null);
+    if (hit) {
+      d.actions.campaign_goal = (d.actions.campaign_goal ?? 0) + Number(r.actions[hit]);
+      d.values.campaign_goal = (d.values.campaign_goal ?? 0) + Number(r.action_values?.[hit] ?? 0);
+    }
     for (const [k, v] of Object.entries(r.action_values ?? {})) d.values[k] = (d.values[k] ?? 0) + Number(v);
     byDate.set(r.date, d);
   }

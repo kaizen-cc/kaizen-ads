@@ -3,7 +3,7 @@
 import { requireStaff } from "@/lib/auth";
 import { aggregate, nyParts, pickType, toDays, worseBy } from "@/lib/kpi/calc";
 import { conversionFor } from "@/lib/kpi/conversions";
-import { accountRows, refreshClientKpis } from "@/lib/kpi/sync";
+import { accountRows, goalsFor, refreshClientKpis } from "@/lib/kpi/sync";
 import { revalidatePath } from "next/cache";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -25,6 +25,12 @@ export type CampaignPerf = {
   lastSpent: string | null;
   /** Left out of the KPI: the client runs it themselves */
   excluded: boolean;
+  /** What the campaign is optimized for (Meta), when known */
+  goal: string | null;
+  /** Purchases, their value and ROAS over 30 days, whatever the campaign is optimized for (Google: all conversions) */
+  purchases30: number;
+  revenue30: number;
+  roas30: number | null;
 };
 
 const shift = (day: string, n: number) => {
@@ -54,12 +60,25 @@ export async function kpiCampaigns(targetId: string): Promise<{ roas: boolean; c
   }
   const target = t.target == null ? null : Number(t.target);
   const left = new Set((t.excluded_campaigns ?? []) as string[]);
+  const platform = String(t.platform);
+  const admin = createAdminClient();
+  const [goals, { data: labels }] = await Promise.all([
+    goalsFor(admin, String(t.ad_account_id), platform),
+    admin.from("campaign_goals").select("campaign_id, label").eq("ad_account_id", String(t.ad_account_id).replace(/^act_/, "")),
+  ]);
+  const labelOf = new Map((labels ?? []).map((l) => [l.campaign_id as string, l.label as string]));
+  const own = conv.key === "campaign_goal";
+  // Purchases and their value on every campaign (Google: conversions and conversion value)
+  const buy = conversionFor(platform === "google" ? "google_roas" : "roas");
   const campaigns: CampaignPerf[] = [];
   for (const [id, list] of byCampaign) {
-    const days = toDays(list);
-    const a30 = aggregate(days, conv, type);
+    const days = toDays(list, null, null, goals, platform);
+    const a30 = aggregate(days, conv, own ? "campaign_goal" : type);
     if (!a30.spend && !a30.results) continue;
-    const a7 = aggregate(days.filter((d) => d.date >= from7), conv, type);
+    const a7 = aggregate(days.filter((d) => d.date >= from7), conv, own ? "campaign_goal" : type);
+    const bt = pickType(days, buy, null);
+    const b30 = aggregate(days, buy, bt);
+    const bought = bt ? days.reduce((n, d) => n + (d.actions[bt] ?? 0), 0) : 0;
     const spent = days.filter((d) => d.spend > 0).map((d) => d.date).sort();
     campaigns.push({
       id,
@@ -73,6 +92,10 @@ export async function kpiCampaigns(targetId: string): Promise<{ roas: boolean; c
       deviation: worseBy(a30.value, target, Boolean(conv.roas)),
       lastSpent: spent[spent.length - 1] ?? null,
       excluded: left.has(id),
+      goal: platform === "google" ? "Conversions" : (labelOf.get(id) ?? null),
+      purchases30: Math.round(bought * 10) / 10,
+      revenue30: Math.round((b30.value ?? 0) * b30.spend * 100) / 100,
+      roas30: b30.value,
     });
   }
   // Counted first, spending now first, then by the month's spend

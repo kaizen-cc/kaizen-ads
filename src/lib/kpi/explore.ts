@@ -180,7 +180,9 @@ export async function exploreTarget(
   const left = new Set(t.excluded_campaigns ?? []);
   const rows = (m ? all.filter((r) => (r.campaign_name ?? "").toLowerCase().includes(m)) : all).filter((r) => !left.has(String(r.campaign_id)));
   const { toDays } = await import("./calc");
-  const days = toDays(rows);
+  const { goalsFor } = await import("./sync");
+  const goals = tryOut.conversion === "campaign_goal" ? await goalsFor(admin, account, t.platform ?? "meta") : undefined;
+  const days = toDays(rows, null, null, goals, t.platform ?? "meta");
   const now = new Date();
   const snapshot = computeSnapshot(days, { conversion: tryOut.conversion, custom: tryOut.custom, target: t.target, budget: t.monthly_budget, now });
   const conv = conversionFor(tryOut.conversion);

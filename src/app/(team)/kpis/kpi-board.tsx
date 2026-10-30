@@ -947,7 +947,7 @@ function Campaigns({ id, target }: { id: string; target: number | null }) {
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[560px] text-left text-[13px]">
+          <table className="w-full min-w-[720px] text-left text-[13px]">
             <thead className="text-[11px] text-faint">
               <tr>
                 <th className="py-1.5 pr-3 font-normal">Campaign</th>
@@ -955,6 +955,8 @@ function Campaigns({ id, target }: { id: string; target: number | null }) {
                 <th className="py-1.5 pr-3 text-right font-normal">Spend 30d</th>
                 <th className="py-1.5 pr-3 text-right font-normal">Results 30d</th>
                 <th className="py-1.5 pr-3 text-right font-normal">{data.roas ? "ROAS" : "Cost per result"} 30d</th>
+                {!data.roas && <th className="py-1.5 pr-3 text-right font-normal">Purchases 30d</th>}
+                {!data.roas && <th className="py-1.5 pr-3 text-right font-normal">ROAS 30d</th>}
                 <th className="py-1.5 text-right font-normal">In the KPI</th>
               </tr>
             </thead>
@@ -966,8 +968,11 @@ function Campaigns({ id, target }: { id: string; target: number | null }) {
                     <td className="max-w-[340px] py-2 pr-3">
                       <span className="flex items-center gap-2">
                         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${c.spend7 > 0 ? "bg-ok" : "bg-faint/50"}`} title={c.spend7 > 0 ? "Spending this week" : c.lastSpent ? `Last spent ${c.lastSpent}` : "Not spending"} />
-                        <span className={`truncate ${c.excluded ? "line-through decoration-faint/60" : ""}`} title={c.name}>
-                          {c.name}
+                        <span className="grid min-w-0">
+                          <span className={`truncate ${c.excluded ? "line-through decoration-faint/60" : ""}`} title={c.name}>
+                            {c.name}
+                          </span>
+                          {c.goal && <span className="truncate text-[10.5px] text-faint">Optimized for {c.goal}</span>}
                         </span>
                       </span>
                     </td>
@@ -975,6 +980,12 @@ function Campaigns({ id, target }: { id: string; target: number | null }) {
                     <td className="tabular py-2 pr-3 text-right text-muted">{money(c.spend30)}</td>
                     <td className="tabular py-2 pr-3 text-right text-muted">{c.results30}</td>
                     <td className={`tabular py-2 pr-3 text-right ${tone}`}>{c.value30 == null && c.spend30 > 0 ? "no results" : fmt(c.value30)}</td>
+                    {!data.roas && <td className="tabular py-2 pr-3 text-right text-muted">{c.purchases30 || "—"}</td>}
+                    {!data.roas && (
+                      <td className={`tabular py-2 pr-3 text-right ${c.roas30 == null || !c.revenue30 ? "text-faint" : c.roas30 >= 1 ? "text-ok" : "text-warn"}`} title={c.revenue30 ? `${money(c.revenue30)} in purchases` : undefined}>
+                        {c.roas30 != null && c.revenue30 ? `${c.roas30.toFixed(2)}x` : "—"}
+                      </td>
+                    )}
                     <td className="py-1 text-right">
                       <button
                         type="button"
