@@ -69,7 +69,7 @@ function Competitor({ c }: { c: MarketCompetitor }) {
           <span className="tabular">{pct(c.impressionShare)} of searches</span>
         </span>
         <span className="h-1.5 overflow-hidden rounded-full bg-surface-2">
-          <span className="block h-full rounded-full bg-[#4285f4]" style={{ width: `${Math.round((c.impressionShare ?? 0) * 100)}%` }} />
+          <span className="block h-full rounded-full bg-brand" style={{ width: `${Math.round((c.impressionShare ?? 0) * 100)}%` }} />
         </span>
       </span>
       <span className="grid grid-cols-3 gap-2 text-center">
@@ -124,10 +124,10 @@ export function GoogleMarketView({ industries }: { industries: MarketIndustry[] 
       </nav>
 
       <section className="relative isolate grid gap-5 overflow-hidden rounded-[26px] border border-ink/[0.08] bg-deep p-6 md:grid-cols-[minmax(0,1fr)_auto] md:items-end md:p-8">
-        <span aria-hidden className="pointer-events-none absolute -left-24 -top-32 -z-10 h-[340px] w-[340px] rounded-full bg-[rgba(66,133,244,0.22)] blur-[110px]" />
-        <span aria-hidden className="pointer-events-none absolute -bottom-40 right-[-80px] -z-10 h-[300px] w-[300px] rounded-full bg-[rgba(52,168,83,0.16)] blur-[110px]" />
+        <span aria-hidden className="pointer-events-none absolute -left-24 -top-32 -z-10 h-[340px] w-[340px] rounded-full bg-[rgba(200,16,46,0.28)] blur-[110px]" />
+        <span aria-hidden className="pointer-events-none absolute -bottom-40 right-[-80px] -z-10 h-[300px] w-[300px] rounded-full bg-[rgba(79,124,255,0.14)] blur-[110px]" />
         <div className="grid gap-1.5">
-          <span className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#7aa7ff]">{current.parent ?? "Industry"}</span>
+          <span className="text-[11px] font-semibold uppercase tracking-[0.22em] text-brand-text">{current.parent ?? "Industry"}</span>
           <h2 className="font-heading text-[30px] leading-tight md:text-[36px]">{current.name}</h2>
           <p className="max-w-xl text-sm text-ink/55">
             {current.clients.length ? `Our Google clients here: ${current.clients.join(", ")}.` : "No live Google client here right now."} From Keyword Planner and our accounts&apos; Auction Insights{updated ? `, read ${updated}` : ""}.

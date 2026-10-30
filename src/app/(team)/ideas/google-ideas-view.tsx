@@ -15,11 +15,11 @@ import { SHEET_BACKDROP, SHEET_PANEL, SheetBar } from "../winners/winners-librar
 const money = (n: number) => `$${n.toLocaleString("en-US", { maximumFractionDigits: n < 100 ? 2 : 0 })}`;
 const big = (n: number) => (n >= 10_000 ? `${Math.round(n / 1000)}K` : n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(Math.round(n)));
 
-// Each kind in one of Google's colors
+// Each kind in a Kaizen color: the brand red, gold and a cool silver
 const KIND: Record<GoogleKind, { label: string; plural: string; color: string; icon: string }> = {
-  ad: { label: "Search ad", plural: "Ads", color: "#4285f4", icon: "M4 5h16v14H4zM4 9h16M8 13h8M8 16h5" },
-  keyword: { label: "Keyword", plural: "Keywords", color: "#fbbc04", icon: "M15 7a4 4 0 1 1-3.5 6L5 19.5 3.5 18l1.5-1.5L3.5 15 5 13.5l1.5 1.5 4-4A4 4 0 0 1 15 7z" },
-  search_term: { label: "Search term", plural: "Search terms", color: "#34a853", icon: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4" },
+  ad: { label: "Search ad", plural: "Ads", color: "#e0505c", icon: "M4 5h16v14H4zM4 9h16M8 13h8M8 16h5" },
+  keyword: { label: "Keyword", plural: "Keywords", color: "#e0a63a", icon: "M15 7a4 4 0 1 1-3.5 6L5 19.5 3.5 18l1.5-1.5L3.5 15 5 13.5l1.5 1.5 4-4A4 4 0 0 1 15 7z" },
+  search_term: { label: "Search term", plural: "Search terms", color: "#a7a2b6", icon: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4" },
 };
 const MATCH: Record<string, (t: string) => string> = { EXACT: (t) => `[${t}]`, PHRASE: (t) => `"${t}"`, BROAD: (t) => t };
 
@@ -94,24 +94,19 @@ export function GoogleIdeasView({ items, mode, verticals }: { items: GoogleIdea[
     <div className="mx-auto grid w-full max-w-6xl gap-7">
       {/* The stage: what this is, and the numbers behind it */}
       <section className="relative isolate overflow-hidden rounded-[28px] border border-ink/[0.08] bg-deep p-6 md:p-9">
-        <span aria-hidden className="pointer-events-none absolute -left-24 -top-32 -z-10 h-[360px] w-[360px] rounded-full bg-[rgba(66,133,244,0.26)] blur-[110px]" />
-        <span aria-hidden className="pointer-events-none absolute -top-24 right-1/3 -z-10 h-[240px] w-[240px] rounded-full bg-[rgba(251,188,4,0.12)] blur-[100px]" />
-        <span aria-hidden className="pointer-events-none absolute -bottom-40 right-[-80px] -z-10 h-[340px] w-[340px] rounded-full bg-[rgba(52,168,83,0.2)] blur-[110px]" />
+        <span aria-hidden className="pointer-events-none absolute -left-32 -top-40 -z-10 h-[420px] w-[420px] rounded-full bg-[rgba(200,16,46,0.28)] blur-[120px]" />
+        <span aria-hidden className="pointer-events-none absolute -bottom-48 right-[-120px] -z-10 h-[380px] w-[380px] rounded-full bg-[rgba(79,124,255,0.14)] blur-[120px]" />
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
           <div className="grid gap-2">
-            <span className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-[#7aa7ff]">
-              <span className="flex gap-1">
-                {["#4285f4", "#ea4335", "#fbbc04", "#34a853"].map((c) => (
-                  <span key={c} className="h-1.5 w-1.5 rounded-full" style={{ background: c }} />
-                ))}
-              </span>
+            <span className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-brand-text">
+              <span>✦</span>
               {mode === "fame" ? "Six months of proof" : "Winning right now"}
             </span>
             <h1 className="font-heading text-[34px] leading-[1.05] tracking-tight md:text-[44px]">{mode === "fame" ? "Google Hall of Fame" : "Live Google winners"}</h1>
             <p className="max-w-xl text-sm text-ink/60">
               {mode === "fame"
                 ? "The search ads, keywords and searches that beat their client's target (or their account by 20%+). Point at one for why it won and how to take it to another client."
-                : "Converting at least 20% cheaper than their own account over the last 30 days, and still running. Point at one for why."}
+                : "Beating their client's target over the last 30 days (or their account by 20%+), and still running. Point at one for why."}
             </p>
           </div>
           <div className="grid grid-cols-3 gap-2.5">
@@ -177,7 +172,7 @@ export function GoogleIdeasView({ items, mode, verticals }: { items: GoogleIdea[
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search clients, copy, keywords"
             aria-label="Search Google winners"
-            className="h-11 w-full rounded-full border border-ink/10 bg-ink/[0.04] px-4 text-sm outline-none placeholder:text-ink/35 focus:border-[#4285f4]/60 md:ml-auto md:h-10 md:w-64"
+            className="h-11 w-full rounded-full border border-ink/10 bg-ink/[0.04] px-4 text-sm outline-none placeholder:text-ink/35 focus:border-brand/60 md:ml-auto md:h-10 md:w-64"
           />
         </div>
       </section>
@@ -235,7 +230,7 @@ function Versus({ i, mode, compact = false }: { i: GoogleIdea; mode: "fame" | "l
   const ours = resultOf(i, mode);
   const bar = i.usual;
   const max = Math.max(ours ?? 0, bar ?? 0, 0.0001);
-  const label = mode === "live" ? "Account" : i.basis === "target" ? "Target" : "Account";
+  const label = i.basis === "target" ? "Target" : "Account";
   return (
     <span className={`grid gap-1.5 ${compact ? "" : "rounded-[14px] border border-line/70 bg-bg/50 p-3"}`}>
       {[
@@ -412,7 +407,7 @@ function Read({ i, insight }: { i: GoogleIdea; insight: GoogleInsight | null | u
     return (
       <div className="grid gap-2" aria-busy>
         <p className="flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-faint">
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#4285f4]" /> Reading why it wins…
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" /> Reading why it wins…
         </p>
         {[0, 1, 2, 3, 4].map((n) => (
           <span key={n} className="h-3 animate-pulse rounded bg-surface-2" style={{ width: `${94 - n * 12}%` }} />
@@ -438,8 +433,8 @@ function Read({ i, insight }: { i: GoogleIdea; insight: GoogleInsight | null | u
           ))}
         </div>
       )}
-      <div className="relative grid gap-2.5 overflow-hidden rounded-[16px] border border-[#4285f4]/25 bg-[#4285f4]/[0.06] p-4">
-        <span className="text-[10px] uppercase tracking-[0.14em] text-[#7aa7ff]">To use it on another {i.vertical ? i.vertical.toLowerCase() : ""} client</span>
+      <div className="relative grid gap-2.5 overflow-hidden rounded-[16px] border border-brand/30 bg-brand-soft p-4">
+        <span className="text-[10px] uppercase tracking-[0.14em] text-brand-text">To use it on another {i.vertical ? i.vertical.toLowerCase() : ""} client</span>
         <p>
           <span className="text-faint">Copy · </span>
           {insight.deploy.copy}

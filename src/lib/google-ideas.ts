@@ -10,7 +10,7 @@ import { LIVE } from "@/lib/live";
 // - Hall of Fame: over the last 180 days, enough spend and conversions, and a cost per conversion at or under the
 //   client's KPI target (ROAS at or above it), or 20% better than the account's own when there's no target. Kept six
 //   months after it last qualified.
-// - Live winners: the last 30 days, still running, 20% better than the account over the same 30 days.
+// - Live winners: the last 30 days and still running, held to the same bar (the target, or 20% better than the account).
 // Updated once a day; the AI's read of why one won is written the first time someone points at it.
 
 const DAY = 86_400_000;
@@ -115,8 +115,10 @@ export async function updateGoogleIdeas(admin: SupabaseClient, deadline = Date.n
           const lb = better(lr, bench, a.roas);
           const isFame = Boolean(l && l.spend >= fl.spend && l.conversions >= fl.conv && lb != null && lb >= (basis === "target" ? 0 : 0.2));
           const sr = s ? resultOf(s, a.roas) : null;
-          const sb = better(sr, usual30, a.roas);
-          const isLive = Boolean(s && (kind === "search_term" || s.enabled) && s.spend >= lv.spend && s.conversions >= lv.conv && sb != null && sb >= 0.2);
+          // Live: the same bar over the last 30 days (the target when there is one, else 20% better than the account)
+          const liveBench = a.target ?? usual30;
+          const sb = better(sr, liveBench, a.roas);
+          const isLive = Boolean(s && (kind === "search_term" || s.enabled) && s.spend >= lv.spend && s.conversions >= lv.conv && sb != null && sb >= (a.target ? 0 : 0.2));
           if (!isFame && !isLive) continue;
           const base = (l ?? s)!;
           rows.push({
