@@ -15,6 +15,8 @@ import { toAllotment, type UsageRow } from "@/lib/allotment";
 import type { PickClient } from "../winners/winners-library";
 import { GoogleIdeasView } from "./google-ideas-view";
 import { loadGoogleIdeas } from "@/lib/google-ideas";
+import { loadGoogleMarket } from "@/lib/google-market";
+import { GoogleMarketView } from "./google-market-view";
 import { GoogleAdsMark, MetaMark } from "@/components/source-logo";
 
 export const metadata: Metadata = { title: "Ideas" };
@@ -25,7 +27,7 @@ export const maxDuration = 300;
 const GOOGLE_TABS = [
   ["fame", "Hall of Fame", "Our search ads, keywords and search terms that beat their target over six months"],
   ["winners", "Live winners", "What's converting cheapest in our Google accounts right now"],
-  ["market", "In the market", "Competitors' live Google ads, from the Ads Transparency Center"],
+  ["market", "In the market", "What people search in each industry, and who's in our clients' auctions"],
   ["verticals", "Verticals", "A Google playbook for each market we serve"],
 ] as const;
 
@@ -91,7 +93,7 @@ export default async function Ideas({ searchParams }: PageProps<"/ideas">) {
       </div>
       {line === "google" ? (
         tab === "market" ? (
-          <GoogleSoon title="Google ads in the market" body="Competitors' live search ads for every industry we serve, read from Google's Ads Transparency Center, the way Motion fills the Meta side. It needs one connection to switch on." />
+          <GoogleMarket />
         ) : tab === "verticals" ? (
           <GoogleSoon title="Google playbooks by vertical" body="For each industry we serve: the search ads, keywords and search terms that won for our clients, the intents that convert, and the campaign structure behind them. It's written from the Hall of Fame below as it fills." />
         ) : (
@@ -116,6 +118,12 @@ async function GoogleIdeas({ mode }: { mode: "fame" | "live" }) {
   const items = await loadGoogleIdeas(db, mode);
   const verticals = [...new Set(items.map((i) => i.vertical).filter((v): v is string => Boolean(v)))].sort();
   return <GoogleIdeasView items={items} mode={mode} verticals={verticals} />;
+}
+
+async function GoogleMarket() {
+  await requireStaff();
+  const db = adminConfigured() ? createAdminClient() : await createClient();
+  return <GoogleMarketView industries={await loadGoogleMarket(db)} />;
 }
 
 function GoogleSoon({ title, body }: { title: string; body: string }) {

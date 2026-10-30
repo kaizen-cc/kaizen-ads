@@ -66,7 +66,7 @@ type Row = Record<string, Record<string, unknown>>;
 async function post(customer: string, path: string, body: unknown): Promise<string> {
   const token = await accessToken();
   const call = (login: string) =>
-    fetch(`https://googleads.googleapis.com/${VERSION}/customers/${digits(customer)}/${path}`, {
+    fetch(`https://googleads.googleapis.com/${VERSION}/customers/${digits(customer)}${path.startsWith(":") ? "" : "/"}${path}`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -393,3 +393,54 @@ export async function googleIdeaRows(account: string) {
   return { ads180, ads30, kw180, kw30, st180, st30, t180, t30 };
 }
 export type GoogleIdeaRow = Row;
+
+/**
+ * Keyword Planner: ideas around some seed searches, in the US and in English, with their average monthly searches, the
+ * last 12 months, how competitive they are and what advertisers bid for the top of the page.
+ */
+export async function keywordIdeas(account: string, seeds: string[]) {
+  const body = {
+    language: "languageConstants/1000",
+    geoTargetConstants: ["geoTargetConstants/2840"],
+    includeAdultKeywords: false,
+    keywordPlanNetwork: "GOOGLE_SEARCH",
+    keywordSeed: { keywords: seeds.slice(0, 20) },
+    pageSize: 150,
+  };
+  const out = JSON.parse(await post(account, ":generateKeywordIdeas", body)) as {
+    results?: { text: string; keywordIdeaMetrics?: { avgMonthlySearches?: string; competition?: string; competitionIndex?: string; lowTopOfPageBidMicros?: string; highTopOfPageBidMicros?: string; monthlySearchVolumes?: { month: string; year: string; monthlySearches?: string }[] } }[];
+  };
+  return (out.results ?? []).map((r) => ({
+    text: r.text,
+    searches: Number(r.keywordIdeaMetrics?.avgMonthlySearches ?? 0),
+    competition: (r.keywordIdeaMetrics?.competition ?? "UNSPECIFIED").toLowerCase(),
+    competitionIndex: Number(r.keywordIdeaMetrics?.competitionIndex ?? 0),
+    bidLow: Number(r.keywordIdeaMetrics?.lowTopOfPageBidMicros ?? 0) / 1e6,
+    bidHigh: Number(r.keywordIdeaMetrics?.highTopOfPageBidMicros ?? 0) / 1e6,
+    months: (r.keywordIdeaMetrics?.monthlySearchVolumes ?? []).map((m) => Number(m.monthlySearches ?? 0)),
+  }));
+}
+
+/** Auction Insights: the other advertisers in one account's search auctions over the last 30 days (when the account's access allows it). */
+export async function auctionInsights(account: string) {
+  const rows = await search(
+    digits(account),
+    "SELECT segments.auction_insight_domain, metrics.auction_insight_search_impression_share, metrics.auction_insight_search_overlap_rate, metrics.auction_insight_search_outranking_share, metrics.auction_insight_search_position_above_rate, metrics.auction_insight_search_top_impression_percentage FROM campaign WHERE segments.date DURING LAST_30_DAYS AND campaign.advertising_channel_type = 'SEARCH'",
+  );
+  const by = new Map<string, { domain: string; impressionShare: number[]; overlap: number[]; outranking: number[]; above: number[]; top: number[] }>();
+  for (const r of rows) {
+    const domain = String(r.segments?.auctionInsightDomain ?? "");
+    if (!domain) continue;
+    const d = by.get(domain) ?? { domain, impressionShare: [], overlap: [], outranking: [], above: [], top: [] };
+    const m = r.metrics ?? {};
+    const push = (list: number[], v: unknown) => v != null && list.push(Number(v));
+    push(d.impressionShare, m.auctionInsightSearchImpressionShare);
+    push(d.overlap, m.auctionInsightSearchOverlapRate);
+    push(d.outranking, m.auctionInsightSearchOutrankingShare);
+    push(d.above, m.auctionInsightSearchPositionAboveRate);
+    push(d.top, m.auctionInsightSearchTopImpressionPercentage);
+    by.set(domain, d);
+  }
+  const avg = (l: number[]) => (l.length ? l.reduce((a, b) => a + b, 0) / l.length : null);
+  return [...by.values()].map((d) => ({ domain: d.domain, impressionShare: avg(d.impressionShare), overlap: avg(d.overlap), outranking: avg(d.outranking), above: avg(d.above), top: avg(d.top) }));
+}

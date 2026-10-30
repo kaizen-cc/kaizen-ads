@@ -42,6 +42,7 @@ function nyNow() {
  * Whether a scheduled call should do its step now (Vercel Cron runs in UTC; this is New York time):
  * - slack, drive, gmail: every 30 minutes on weekdays 8am to 6pm, every 3 hours otherwise
  * - meta: every 2 hours (Meta's own numbers settle slowly)
+ * - google_market: Mondays at 7am, Google in the market by industry (Keyword Planner searches, Auction Insights competitors)
  * - google_ideas: daily at 6:30am, Google's Hall of Fame and live winners (ads, keywords, search terms)
  * - kpi: every 30 minutes on weekdays 8am to 6pm, every hour otherwise (campaign numbers for the KPI dashboard; no AI)
  * - brief: 12pm and 6pm
@@ -65,6 +66,7 @@ function due(step: string | null) {
   if (step === "meta") return hour % 2 === 0;
   if (step === "kpi") return businessHours || minute >= 30; // called at :15 and :45 (vercel.json)
   if (step === "google_ideas") return true; // once a day (vercel.json): Google's Hall of Fame and live winners
+  if (step === "google_market") return true; // Mondays (vercel.json): Google in the market, by industry
   if (step === "brief") return [12, 18].includes(hour) && minute < 30;
   if (step === "suggest") return !["Sat", "Sun"].includes(weekday) && hour === 8;
   if (step === "clients") return true;
@@ -136,6 +138,11 @@ export async function GET(request: Request) {
       const { googleAdsConfigured } = await import("@/lib/context/google-ads");
       if (!googleAdsConfigured()) return Response.json({ skipped: "Google Ads isn't connected" });
       return Response.json(await (await import("@/lib/google-ideas")).updateGoogleIdeas(admin));
+    }
+    if (step === "google_market") {
+      const { googleAdsConfigured } = await import("@/lib/context/google-ads");
+      if (!googleAdsConfigured()) return Response.json({ skipped: "Google Ads isn't connected" });
+      return Response.json(await (await import("@/lib/google-market")).updateGoogleMarket(admin));
     }
     if (step === "brief") {
       const out = await refreshAll(admin, undefined, new URL(request.url).searchParams.get("rebuild") === "1");
