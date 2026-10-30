@@ -13,11 +13,21 @@ import { FameLibrary } from "./fame-library";
 import { loadHallOfFame } from "@/lib/hall-of-fame";
 import { toAllotment, type UsageRow } from "@/lib/allotment";
 import type { PickClient } from "../winners/winners-library";
+import { GoogleIdeasView } from "./google-ideas-view";
+import { loadGoogleIdeas } from "@/lib/google-ideas";
+import { GoogleAdsMark, MetaMark } from "@/components/source-logo";
 
 export const metadata: Metadata = { title: "Ideas" };
 
 // The strategist writes a full brief from a winner or a market ad while the person waits
 export const maxDuration = 300;
+
+const GOOGLE_TABS = [
+  ["fame", "Hall of Fame", "Our search ads, keywords and search terms that beat their target over six months"],
+  ["winners", "Live winners", "What's converting cheapest in our Google accounts right now"],
+  ["market", "In the market", "Competitors' live Google ads, from the Ads Transparency Center"],
+  ["verticals", "Verticals", "A Google playbook for each market we serve"],
+] as const;
 
 const TABS = [
   ["fame", "Hall of Fame", "Our ads that beat their target over 30+ days, kept six months"],
@@ -30,30 +40,91 @@ const TABS = [
 export default async function Ideas({ searchParams }: PageProps<"/ideas">) {
   const sp = await searchParams;
   const tab = sp.tab === "market" ? "market" : sp.tab === "verticals" ? "verticals" : sp.tab === "winners" ? "winners" : "fame";
+  // Two sides, the same four kinds of ideas: Meta (briefs for the creative team) and Google (search ads, keywords and
+  // search terms). Everyone can look at both
+  const line = sp.line === "google" ? "google" : "meta";
   // Keep the client (and anything else) when switching tabs
-  const keep = (t: string) => {
+  const keep = (t: string, l: string = line) => {
     const q = new URLSearchParams();
+    if (l === "google") q.set("line", "google");
     q.set("tab", t);
     if (typeof sp.client === "string") q.set("client", sp.client);
     return `/ideas?${q.toString()}`;
   };
+  const tabs = line === "google" ? GOOGLE_TABS : TABS;
   return (
     <div className="grid gap-6">
-      {/* Phones: the four tabs as a two-by-two segmented control, every label whole */}
-      <nav className="mx-auto grid w-full max-w-6xl grid-cols-2 gap-1 rounded-[18px] border border-line bg-surface p-1 sm:flex sm:w-fit sm:rounded-full" aria-label="Ideas">
-        {TABS.map(([k, label, hint]) => (
-          <Link
-            key={k}
-            href={keep(k)}
-            title={hint}
-            aria-current={tab === k ? "page" : undefined}
-            className={`flex-1 whitespace-nowrap rounded-[14px] px-3 py-2.5 text-center text-sm transition-colors sm:flex-none sm:rounded-full sm:px-4 sm:py-2 ${tab === k ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}
-          >
-            {label}
-          </Link>
-        ))}
-      </nav>
-      {tab === "market" ? <Market {...({ searchParams, params: Promise.resolve({}) } as unknown as PageProps<"/market">)} /> : tab === "verticals" ? <Verticals /> : tab === "winners" ? <Winners /> : <Fame />}
+      <div className="mx-auto grid w-full max-w-6xl gap-3">
+        {/* The side: Meta or Google */}
+        <nav className="grid w-full grid-cols-2 gap-1 rounded-[20px] border border-line bg-surface p-1 sm:mx-auto sm:w-fit" aria-label="Platform">
+          {(
+            [
+              ["meta", "Meta", <MetaMark key="m" size={18} />],
+              ["google", "Google Ads", <GoogleAdsMark key="g" size={15} />],
+            ] as const
+          ).map(([k, label, mark]) => (
+            <Link
+              key={k}
+              href={keep(tab, k)}
+              aria-current={line === k ? "page" : undefined}
+              className={`flex items-center justify-center gap-2.5 rounded-[16px] px-6 py-3 text-[15px] font-medium transition-colors sm:min-w-[170px] ${line === k ? "bg-fg text-bg" : "text-muted hover:bg-surface-2 hover:text-fg"}`}
+            >
+              {mark}
+              {label}
+            </Link>
+          ))}
+        </nav>
+        {/* Phones: the four tabs as a two-by-two segmented control, every label whole */}
+        <nav className="grid w-full grid-cols-2 gap-1 rounded-[18px] border border-line bg-surface p-1 sm:mx-auto sm:flex sm:w-fit sm:rounded-full" aria-label="Ideas">
+          {tabs.map(([k, label, hint]) => (
+            <Link
+              key={k}
+              href={keep(k)}
+              title={hint}
+              aria-current={tab === k ? "page" : undefined}
+              className={`flex-1 whitespace-nowrap rounded-[14px] px-3 py-2.5 text-center text-sm transition-colors sm:flex-none sm:rounded-full sm:px-4 sm:py-2 ${tab === k ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}
+            >
+              {label}
+            </Link>
+          ))}
+        </nav>
+      </div>
+      {line === "google" ? (
+        tab === "market" ? (
+          <GoogleSoon title="Google ads in the market" body="Competitors' live search ads for every industry we serve, read from Google's Ads Transparency Center, the way Motion fills the Meta side. It needs one connection to switch on." />
+        ) : tab === "verticals" ? (
+          <GoogleSoon title="Google playbooks by vertical" body="For each industry we serve: the search ads, keywords and search terms that won for our clients, the intents that convert, and the campaign structure behind them. It's written from the Hall of Fame below as it fills." />
+        ) : (
+          <GoogleIdeas mode={tab === "winners" ? "live" : "fame"} />
+        )
+      ) : tab === "market" ? (
+        <Market {...({ searchParams, params: Promise.resolve({}) } as unknown as PageProps<"/market">)} />
+      ) : tab === "verticals" ? (
+        <Verticals />
+      ) : tab === "winners" ? (
+        <Winners />
+      ) : (
+        <Fame />
+      )}
+    </div>
+  );
+}
+
+async function GoogleIdeas({ mode }: { mode: "fame" | "live" }) {
+  await requireStaff();
+  const db = adminConfigured() ? createAdminClient() : await createClient();
+  const items = await loadGoogleIdeas(db, mode);
+  const verticals = [...new Set(items.map((i) => i.vertical).filter((v): v is string => Boolean(v)))].sort();
+  return <GoogleIdeasView items={items} mode={mode} verticals={verticals} />;
+}
+
+function GoogleSoon({ title, body }: { title: string; body: string }) {
+  return (
+    <div className="mx-auto grid w-full max-w-3xl place-items-center gap-3 rounded-[22px] border border-dashed border-line px-6 py-16 text-center">
+      <GoogleAdsMark size={28} />
+      <p className="font-heading text-2xl">{title}</p>
+      <p className="max-w-lg text-sm text-muted">{body}</p>
+      <span className="rounded-full bg-surface-2 px-3 py-1 text-xs text-faint">Coming next</span>
     </div>
   );
 }

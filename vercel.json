@@ -34,6 +34,10 @@
       "schedule": "10,25,40,55 * * * *"
     },
     {
+      "path": "/api/cron/context?step=google_ideas",
+      "schedule": "30 10 * * *"
+    },
+    {
       "path": "/api/cron/context?step=kpi",
       "schedule": "15,45 * * * *"
     },

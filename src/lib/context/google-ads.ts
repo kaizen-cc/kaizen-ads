@@ -365,3 +365,31 @@ export async function checkGoogleAds() {
     return { ok: false, detail: e instanceof Error ? e.message : String(e) };
   }
 }
+
+/**
+ * What the Ideas tab reads from one account: every ad's copy and keyword and converting search term, with their totals
+ * over the last 180 days and the last 30 (the Hall of Fame and live winners are worked out from these).
+ */
+export async function googleIdeaRows(account: string) {
+  const id = digits(account);
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  const ago = (n: number) => ymd(new Date(Date.now() - n * 86_400_000));
+  const range = (n: number) => `segments.date BETWEEN '${ago(n)}' AND '${today}'`;
+  const safe = (q: string) => search(id, q).catch(() => [] as Row[]);
+  const ads = (n: number) =>
+    safe(
+      `SELECT ad_group_ad.ad.id, ad_group_ad.ad.type, ad_group_ad.status, ad_group_ad.ad.final_urls, ad_group_ad.ad.responsive_search_ad.headlines, ad_group_ad.ad.responsive_search_ad.descriptions, ad_group_ad.ad.responsive_search_ad.path1, ad_group_ad.ad.responsive_search_ad.path2, campaign.name, campaign.status, ad_group.name, metrics.cost_micros, metrics.clicks, metrics.impressions, metrics.conversions, metrics.conversions_value FROM ad_group_ad WHERE ${range(n)} AND metrics.cost_micros > 0 AND ad_group_ad.ad.type = 'RESPONSIVE_SEARCH_AD'`,
+    );
+  const keywords = (n: number) =>
+    safe(
+      `SELECT ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.status, campaign.name, campaign.status, ad_group.name, metrics.cost_micros, metrics.clicks, metrics.impressions, metrics.conversions, metrics.conversions_value FROM keyword_view WHERE ${range(n)} AND metrics.cost_micros > 0`,
+    );
+  const terms = (n: number) =>
+    safe(
+      `SELECT search_term_view.search_term, campaign.name, ad_group.name, metrics.cost_micros, metrics.clicks, metrics.impressions, metrics.conversions, metrics.conversions_value FROM search_term_view WHERE ${range(n)} AND metrics.conversions > 0`,
+    );
+  const totals = (n: number) => safe(`SELECT metrics.cost_micros, metrics.conversions, metrics.conversions_value FROM customer WHERE ${range(n)}`);
+  const [ads180, ads30, kw180, kw30, st180, st30, t180, t30] = await Promise.all([ads(180), ads(30), keywords(180), keywords(30), terms(180), terms(30), totals(180), totals(30)]);
+  return { ads180, ads30, kw180, kw30, st180, st30, t180, t30 };
+}
+export type GoogleIdeaRow = Row;

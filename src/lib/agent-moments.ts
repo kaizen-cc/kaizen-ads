@@ -95,6 +95,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
   ],
   winners: [
     { title: "Reads each winning ad: what the numbers show and why the creative works", where: "Ideas · Our winners", trigger: "auto", when: "After each Meta sync, or the first time someone hovers a winner", labels: ["read a winner"] },
+    { title: "Reads a winning Google ad, keyword or search term: why it wins and how to use it on another client", where: "Ideas · Google · Hall of Fame and Live winners", trigger: "click", when: "The first time someone points at one (kept a week)", labels: ["read a Google winner"] },
     { title: "Writes each client's playbook: every angle, hook and format they've run, with what won and what didn't", where: "Client page \u00b7 Playbook \u00b7 Brand Bible learnings", trigger: "auto", when: "Hourly, each client in turn", labels: ["playbook angles", "playbook learnings"] },
   ],
   verticals: [
