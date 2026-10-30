@@ -72,11 +72,15 @@ async function saveCampaignGoals(admin: SupabaseClient, account: string) {
   return rows.length;
 }
 
-/** campaign id → the action types that count as its result. Google campaigns' conversions already follow their own goals. */
-export async function goalsFor(admin: SupabaseClient, account: string, platform = "meta"): Promise<Map<string, string[]>> {
-  if (platform === "google") return new Map();
-  const { data } = await admin.from("campaign_goals").select("campaign_id, actions").eq("platform", "meta").eq("ad_account_id", account.replace(/^act_/, ""));
-  return new Map((data ?? []).map((g) => [g.campaign_id as string, g.actions as string[]]));
+/**
+ * campaign id → the action types that count as its result: a result picked by hand on the card first, then what the
+ * campaign is optimized for (Meta). Google campaigns' conversions already follow their own goals.
+ */
+export async function goalsFor(admin: SupabaseClient, account: string, platform = "meta", picked?: Record<string, string> | null): Promise<Map<string, string[]>> {
+  const { data } = platform === "google" ? { data: [] } : await admin.from("campaign_goals").select("campaign_id, actions").eq("platform", "meta").eq("ad_account_id", account.replace(/^act_/, ""));
+  const out = new Map((data ?? []).map((g) => [g.campaign_id as string, g.actions as string[]]));
+  for (const [id, type] of Object.entries(picked ?? {})) if (type) out.set(id, [type]);
+  return out;
 }
 
 type Target = {
@@ -90,6 +94,7 @@ type Target = {
   target: number | null;
   monthly_budget: number | null;
   excluded_campaigns?: string[] | null;
+  campaign_results?: Record<string, string> | null;
 };
 
 export type CampaignRow = Parameters<typeof toDays>[0][number] & { campaign_id: string; impressions: number; clicks: number; updated_at: string };
@@ -121,9 +126,9 @@ async function saveSnapshot(admin: SupabaseClient, t: Target, fields: Record<str
 /** Recompute the snapshots of an account's targets from what's stored. */
 export async function computeAccount(admin: SupabaseClient, account: string, targets: Target[], error?: string, platform = "meta") {
   const rows = await accountRows(admin, account, platform);
-  const goals = targets.some((t) => t.conversion === "campaign_goal") ? await goalsFor(admin, account, platform) : undefined;
   const now = new Date();
   for (const t of targets) {
+    const goals = t.conversion === "campaign_goal" ? await goalsFor(admin, account, platform, t.campaign_results) : undefined;
     const s = computeSnapshot(toDays(rows, t.campaign_match, t.excluded_campaigns, goals, platform), {
       conversion: t.conversion,
       custom: t.custom_action,
@@ -147,7 +152,7 @@ export async function computeAccount(admin: SupabaseClient, account: string, tar
   }
 }
 
-const TARGET_FIELDS = "id, client_id, platform, ad_account_id, conversion, custom_action, campaign_match, target, monthly_budget, excluded_campaigns";
+const TARGET_FIELDS = "id, client_id, platform, ad_account_id, conversion, custom_action, campaign_match, target, monthly_budget, excluded_campaigns, campaign_results";
 
 /** One client's targets now (after an edit, or the dashboard's Refresh). Recompute only unless `pull`. */
 export async function refreshClientKpis(admin: SupabaseClient, clientId: string, pull = false) {

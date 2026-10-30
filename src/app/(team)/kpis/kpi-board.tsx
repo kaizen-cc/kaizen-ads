@@ -22,7 +22,7 @@ import { FatigueWatch } from "@/components/fatigue-watch";
 import { MarketPanel } from "../clients/[slug]/market-panel";
 import { kpiCreative, type KpiCreative } from "./creative-actions";
 import { QuickActions } from "./quick-actions";
-import { kpiCampaigns, setCampaignCounted, type CampaignPerf } from "./campaign-actions";
+import { kpiCampaigns, setCampaignCounted, setCampaignResult, setCardMetric, type CampaignPerf } from "./campaign-actions";
 
 export type KpiRow = {
   id: string;
@@ -804,7 +804,7 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
                   </div>
                 </div>
                 <NextMove r={r} moves={moves} onActions={() => setTab("actions")} onNotes={() => setTab("notes")} />
-                {r.accountId && <Campaigns key={r.id} id={r.id} target={r.target} />}
+                {r.accountId && <Campaigns key={`${r.id}:${r.conversion}:${r.target}`} id={r.id} target={r.target} conversion={r.conversion} platform={r.platform} />}
                 {r.audit?.status === "ready" && r.audit.quick && r.audit.quick.length > 0 && (
                   <section className="grid gap-1 rounded-[20px] border border-line bg-surface px-4 pb-4 md:px-5 md:pb-5">
                     <QuickActions key={r.audit.id} auditId={r.audit.id} items={r.audit.quick} platform={r.audit.platform ?? r.platform} />
@@ -903,23 +903,20 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
 }
 
 /**
- * Every campaign in the account against the card's target: one card per client, the campaigns inside it. A campaign
- * the client runs themselves can be left out (Count it / Not ours): the card's spend, results, cost, pacing and status
- * are worked out again without it.
+ * Every campaign in the account against the card's target: one card per client, the campaigns inside it. Each
+ * campaign is judged on its own result (what it's optimized for, or one picked here), and one the client runs
+ * themselves can be left out. At the top, what the whole card is judged on (each campaign's own result added up, cost
+ * per lead, cost per purchase, ROAS) and its target. Any change works the card's numbers out again straight away.
  */
-function Campaigns({ id, target }: { id: string; target: number | null }) {
+function Campaigns({ id, target, conversion, platform }: { id: string; target: number | null; conversion: string; platform: "meta" | "google" }) {
   const router = useRouter();
   const [data, setData] = useState<{ roas: boolean; campaigns: CampaignPerf[] } | null>(null);
   const [all, setAll] = useState(false);
   const [saving, setSaving] = useState<string | null>(null);
-  const toggle = async (c: CampaignPerf) => {
-    setSaving(c.id);
-    setData((d) => (d ? { ...d, campaigns: d.campaigns.map((x) => (x.id === c.id ? { ...x, excluded: !x.excluded } : x)) } : d));
-    const res = await setCampaignCounted(id, c.id, c.excluded);
-    if (!res.ok) setData((d) => (d ? { ...d, campaigns: d.campaigns.map((x) => (x.id === c.id ? { ...x, excluded: c.excluded } : x)) } : d));
-    setSaving(null);
-    router.refresh();
-  };
+  const [error, setError] = useState<string | null>(null);
+  const [metric, setMetric] = useState(conversion);
+  const [goal, setGoal] = useState(target == null ? "" : String(target));
+  const load = () => kpiCampaigns(id).then(setData, () => setData({ roas: false, campaigns: [] }));
   useEffect(() => {
     let live = true;
     kpiCampaigns(id).then((d) => live && setData(d), () => live && setData({ roas: false, campaigns: [] }));
@@ -927,6 +924,30 @@ function Campaigns({ id, target }: { id: string; target: number | null }) {
       live = false;
     };
   }, [id]);
+  const after = async (res: { ok: true } | { ok: false; error: string }) => {
+    if (!res.ok) setError(res.error);
+    else setError(null);
+    await load();
+    setSaving(null);
+    router.refresh();
+  };
+  const toggle = async (c: CampaignPerf) => {
+    setSaving(c.id);
+    setData((d) => (d ? { ...d, campaigns: d.campaigns.map((x) => (x.id === c.id ? { ...x, excluded: !x.excluded } : x)) } : d));
+    await after(await setCampaignCounted(id, c.id, c.excluded));
+  };
+  const pick = async (c: CampaignPerf, type: string) => {
+    setSaving(c.id);
+    await after(await setCampaignResult(id, c.id, type || null));
+  };
+  const options = CONVERSIONS.filter((c) => c.platforms.includes(platform) && c.key !== "custom");
+  const roasMetric = Boolean(CONVERSIONS.find((c) => c.key === metric)?.roas);
+  const changed = metric !== conversion || goal !== (target == null ? "" : String(target));
+  const saveMetric = async () => {
+    setSaving("card");
+    await after(await setCardMetric(id, metric, goal ? Number(goal) : null));
+  };
+
   if (data && !data.campaigns.length) return null;
   const fmt = (v: number | null) => (v == null ? "—" : data?.roas ? `${v.toFixed(2)}x` : money(v));
   // Counted first (spending now first, then the month's spend); left-out ones drop to the bottom as soon as they're left out
@@ -937,10 +958,52 @@ function Campaigns({ id, target }: { id: string; target: number | null }) {
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">Campaigns</p>
         <span className="text-[11px] text-faint">
-          Last 30 days against {target == null ? "the target" : `the ${fmt(target)} target`} · leave out what the client runs themselves
+          Last 30 days · each judged on its own result · leave out what the client runs themselves
           {data && data.campaigns.some((c) => c.excluded) ? ` · ${data.campaigns.filter((c) => c.excluded).length} left out` : ""}
         </span>
       </div>
+
+      {/* What the whole card is judged on */}
+      <div className="flex flex-wrap items-center gap-2 rounded-[14px] bg-bg/50 px-3 py-2.5 text-xs">
+        <span className="text-muted">The card is judged on</span>
+        <select
+          value={metric}
+          onChange={(e) => {
+            const next = e.target.value;
+            setMetric(next);
+            // A cost target and a ROAS target aren't the same number: asked again when switching between them
+            if (Boolean(CONVERSIONS.find((c) => c.key === next)?.roas) !== Boolean(CONVERSIONS.find((c) => c.key === conversion)?.roas)) setGoal("");
+          }}
+          aria-label="What the card is judged on"
+          className="h-11 rounded-full border border-line bg-surface px-3 text-xs outline-none md:h-8"
+        >
+          {options.map((c) => (
+            <option key={c.key} value={c.key}>
+              {c.key === "campaign_goal" ? "Each campaign's own result (cost per result)" : c.roas ? `ROAS (${c.label})` : `Cost per ${c.label.toLowerCase().replace(/s$/, "")}`}
+            </option>
+          ))}
+        </select>
+        <span className="text-muted">target</span>
+        <span className="relative">
+          {!roasMetric && <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint">$</span>}
+          <input
+            value={goal}
+            onChange={(e) => setGoal(e.target.value.replace(/[^\d.]/g, ""))}
+            inputMode="decimal"
+            placeholder={roasMetric ? "e.g. 3" : "e.g. 45"}
+            aria-label="Target"
+            className={`h-11 w-24 rounded-full border border-line bg-surface pr-3 text-xs outline-none md:h-8 ${roasMetric ? "pl-3" : "pl-6"}`}
+          />
+          {roasMetric && <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-faint">x</span>}
+        </span>
+        {changed && (
+          <button type="button" disabled={saving === "card" || !goal} onClick={saveMetric} className="h-11 rounded-full bg-fg px-4 text-xs font-medium text-bg disabled:opacity-50 md:h-8">
+            {saving === "card" ? "Saving…" : "Save"}
+          </button>
+        )}
+        {error && <span className="w-full text-bad">{error}</span>}
+      </div>
+
       {!data ? (
         <div className="grid gap-2">
           {[0, 1, 2].map((n) => (
@@ -949,16 +1012,16 @@ function Campaigns({ id, target }: { id: string; target: number | null }) {
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px] text-left text-[13px]">
+          <table className="w-full min-w-[780px] text-left text-[13px]">
             <thead className="text-[11px] text-faint">
               <tr>
                 <th className="py-1.5 pr-3 font-normal">Campaign</th>
                 <th className="py-1.5 pr-3 text-right font-normal">Spend 7d</th>
                 <th className="py-1.5 pr-3 text-right font-normal">Spend 30d</th>
-                <th className="py-1.5 pr-3 text-right font-normal">Results 30d</th>
+                <th className="py-1.5 pr-3 font-normal">Result 30d</th>
                 <th className="py-1.5 pr-3 text-right font-normal">{data.roas ? "ROAS" : "Cost per result"} 30d</th>
-                {!data.roas && <th className="py-1.5 pr-3 text-right font-normal">Purchases 30d</th>}
-                {!data.roas && <th className="py-1.5 pr-3 text-right font-normal">ROAS 30d</th>}
+                {!data.roas && <th className="py-1.5 pr-3 text-right font-normal">Purchases</th>}
+                {!data.roas && <th className="py-1.5 pr-3 text-right font-normal">ROAS</th>}
                 <th className="py-1.5 text-right font-normal">In the KPI</th>
               </tr>
             </thead>
@@ -966,8 +1029,8 @@ function Campaigns({ id, target }: { id: string; target: number | null }) {
               {list.map((c) => {
                 const tone = c.deviation == null ? (c.spend30 > 0 && !c.results30 ? "text-bad" : "text-faint") : c.deviation <= 0 ? "text-ok" : c.deviation <= 0.15 ? "text-warn" : "text-bad";
                 return (
-                  <tr key={c.id} className={`border-t border-line/70 ${c.excluded ? "opacity-45" : c.spend7 > 0 ? "" : "opacity-55"}`}>
-                    <td className="max-w-[340px] py-2 pr-3">
+                  <tr key={c.id} className={`border-t border-line/70 align-top ${c.excluded ? "opacity-45" : c.spend7 > 0 ? "" : "opacity-55"}`}>
+                    <td className="max-w-[300px] py-2 pr-3">
                       <span className="flex items-center gap-2">
                         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${c.spend7 > 0 ? "bg-ok" : "bg-faint/50"}`} title={c.spend7 > 0 ? "Spending this week" : c.lastSpent ? `Last spent ${c.lastSpent}` : "Not spending"} />
                         <span className="grid min-w-0">
@@ -980,7 +1043,29 @@ function Campaigns({ id, target }: { id: string; target: number | null }) {
                     </td>
                     <td className="tabular py-2 pr-3 text-right">{money(c.spend7)}</td>
                     <td className="tabular py-2 pr-3 text-right text-muted">{money(c.spend30)}</td>
-                    <td className="tabular py-2 pr-3 text-right text-muted">{c.results30}</td>
+                    <td className="py-1.5 pr-3">
+                      <span className="grid gap-0.5">
+                        <span className="tabular text-muted">{c.results30}</span>
+                        {/* The result this campaign is judged on: what it's optimized for, or one picked here */}
+                        <select
+                          value={c.resultFrom === "picked" ? (c.result ?? "") : ""}
+                          disabled={saving === c.id}
+                          onChange={(e) => pick(c, e.target.value)}
+                          aria-label={`What ${c.name} is judged on`}
+                          title="What this campaign is judged on"
+                          className="max-w-[170px] truncate rounded-full bg-transparent text-[10.5px] text-faint outline-none hover:text-fg"
+                        >
+                          <option value="">{c.resultFrom === "card" ? `${c.resultLabel} (the card's)` : `${c.resultLabel} (its goal)`}</option>
+                          {c.options
+                            .filter((o) => c.resultFrom !== "picked" ? o.type !== c.result : true)
+                            .map((o) => (
+                              <option key={o.type} value={o.type}>
+                                {o.label} · {o.count}
+                              </option>
+                            ))}
+                        </select>
+                      </span>
+                    </td>
                     <td className={`tabular py-2 pr-3 text-right ${tone}`}>{c.value30 == null && c.spend30 > 0 ? "no results" : fmt(c.value30)}</td>
                     {!data.roas && <td className="tabular py-2 pr-3 text-right text-muted">{c.purchases30 || "—"}</td>}
                     {!data.roas && (

@@ -197,7 +197,7 @@ export function toDays(
     d.uniqueLinkClicks! += Number(r.unique_link_clicks) || 0;
     for (const [k, v] of Object.entries(r.actions ?? {})) d.actions[k] = (d.actions[k] ?? 0) + Number(v);
     // Each campaign's own result, summed as one action: the first of its goal's types this campaign reports
-    const own = platform === "google" ? ["conversions"] : goals?.get(String(r.campaign_id));
+    const own = goals?.get(String(r.campaign_id)) ?? (platform === "google" ? ["conversions"] : undefined);
     const hit = own?.find((t) => r.actions?.[t] != null);
     if (hit) {
       d.actions.campaign_goal = (d.actions.campaign_goal ?? 0) + Number(r.actions[hit]);

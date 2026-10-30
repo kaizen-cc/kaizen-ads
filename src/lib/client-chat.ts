@@ -151,13 +151,18 @@ export async function askAboutClient(
   const docs = await addDocs(admin, clientId, profileId, "chat", files, links);
   const reads: DocRead[] = await Promise.all(docs.map((d) => readDoc(admin, d).catch((e) => ({ id: d.id, label: d.name, text: null, pdf: null, image: null, note: e instanceof Error ? e.message : "Couldn't read it" }))));
   // The brief includes the documents shared before (their summaries)
-  const [brief, audits, chat, route, { data: memory }] = await Promise.all([
+  const [brief, audits, chat, route, { data: memory }, campaigns] = await Promise.all([
     accountBrief(admin, clientId, null),
     auditsText(admin, clientId),
     loadClientChat(admin, clientId, profileId),
     routeMessage(q || "Read what I shared", ceiling, goDeep),
     admin.from("client_memory").select("id, kind, body, dated").eq("client_id", clientId).eq("status", "active").order("created_at", { ascending: false }).limit(80),
+    // Every campaign judged on its own result, with purchases and ROAS (as on the KPI card)
+    import("@/lib/kpi/campaigns").then((m) => m.clientCampaignsText(admin, clientId)).catch(() => ""),
   ]);
+  const scorecard = campaigns
+    ? `\n\n<campaigns_scorecard note="last 30 days; each campaign judged on its own result; ones marked left out are run by the client and don't count toward the KPI">\n${campaigns}\n</campaigns_scorecard>`
+    : "";
   // Something shared is always read properly, never as a quick one
   const level = docs.length && route.level === "quick" ? "standard" : route.level;
   const model = docs.length && route.level === "quick" ? ceiling.model : route.model;
@@ -195,7 +200,7 @@ export async function askAboutClient(
     override: { model, effort: route.effort },
     pdfs,
     images,
-    prompt: `${brief.text}\n\n${audits}${extra ? `\n\n${extra}` : ""}\n\n<knowledge_base>\nWhat's remembered about this client now (numbered for "background"):\n${
+    prompt: `${brief.text}${scorecard}\n\n${audits}${extra ? `\n\n${extra}` : ""}\n\n<knowledge_base>\nWhat's remembered about this client now (numbered for "background"):\n${
       mem.map((m, i) => `${i + 1}. [${m.kind}${m.dated ? `, background as of ${m.dated}` : ""}] ${m.body}`).join("\n") || "(nothing yet)"
     }\n</knowledge_base>\n\n<conversation>\n${chat
       .slice(-14)

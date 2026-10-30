@@ -542,6 +542,10 @@ async function finishAudit(admin: SupabaseClient, id: string, a: { target_id: st
     const label = conversionLabel(t.conversion, t.custom_action);
     const target = t.target == null ? null : Number(t.target);
     const roas = Boolean(conv.roas);
+    // Every campaign judged on its own result, with purchases and ROAS, and which ones the client runs themselves
+    const { campaignScorecard, campaignsText } = await import("@/lib/kpi/campaigns");
+    const { data: st } = await admin.from("kpi_targets").select("platform, ad_account_id, conversion, custom_action, campaign_match, target, excluded_campaigns, campaign_results").eq("id", a.target_id).maybeSingle();
+    const scorecard = st ? campaignsText(await campaignScorecard(admin, st as import("@/lib/kpi/campaigns").ScoreTarget).catch(() => ({ roas: false, campaigns: [] })), st.target) : "";
     const gap = target && x.last14 != null ? Math.round(((roas ? (target - x.last14) / target : (x.last14 - target) / target) || 0) * 100) : null;
     const context = `${contextBlock(ctx)}
 
@@ -553,6 +557,11 @@ Monthly budget: ${t.monthly_budget ? `$${t.monthly_budget}` : "not set"}${t.budg
 <account_numbers platform="${x.platform}">
 ${x.numbersText}
 </account_numbers>
+${scorecard ? `
+<campaigns_scorecard note="last 30 days; each campaign judged on its own result (what it's optimized for, or what the buyer picked); campaigns marked left out are run by the client and don't count toward this KPI, so don't hold the team to them">
+${scorecard}
+</campaigns_scorecard>
+` : ""}
 ${t.sheet ? `
 <team_notes source="the Account Overview sheet the buyers keep">
 ${Object.entries(t.sheet as Record<string, string>).filter(([k, v]) => v && !["name", "platform", "syncedAt"].includes(k)).map(([k, v]) => `${k}: ${v}`).join("\n")}

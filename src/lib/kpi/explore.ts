@@ -171,7 +171,7 @@ export type Explore = {
 /** Everything the KPI card's explorer shows, for one target, with the "counts as a result" being tried. */
 export async function exploreTarget(
   admin: SupabaseClient,
-  t: { ad_account_id: string; platform?: string; target: number | null; monthly_budget: number | null; extra_metrics: string[]; excluded_campaigns?: string[] | null },
+  t: { ad_account_id: string; platform?: string; target: number | null; monthly_budget: number | null; extra_metrics: string[]; excluded_campaigns?: string[] | null; campaign_results?: Record<string, string> | null },
   tryOut: { conversion: string; custom: string | null; campaignMatch: string | null },
 ): Promise<Explore> {
   const account = t.ad_account_id.replace(/^act_/, "");
@@ -181,7 +181,7 @@ export async function exploreTarget(
   const rows = (m ? all.filter((r) => (r.campaign_name ?? "").toLowerCase().includes(m)) : all).filter((r) => !left.has(String(r.campaign_id)));
   const { toDays } = await import("./calc");
   const { goalsFor } = await import("./sync");
-  const goals = tryOut.conversion === "campaign_goal" ? await goalsFor(admin, account, t.platform ?? "meta") : undefined;
+  const goals = tryOut.conversion === "campaign_goal" ? await goalsFor(admin, account, t.platform ?? "meta", t.campaign_results) : undefined;
   const days = toDays(rows, null, null, goals, t.platform ?? "meta");
   const now = new Date();
   const snapshot = computeSnapshot(days, { conversion: tryOut.conversion, custom: tryOut.custom, target: t.target, budget: t.monthly_budget, now });
