@@ -195,7 +195,7 @@ const fmtMetric = (v: number | null, unit: string) =>
   v == null ? "—" : unit === "$" ? money(v) : unit === "x" ? `${v.toFixed(2)}x` : unit === "%" ? `${v.toFixed(2)}%` : Math.round(v).toLocaleString("en-US");
 
 /** The extra metric boxes on this card, and adding one: from the list, or any action this account reports. */
-function MetricBoxes({ r, ex, onChange }: { r: KpiRow; ex: Explore | null; onChange: () => void }) {
+function MetricBoxes({ r, ex, onChange }: { r: Pick<KpiRow, "id" | "extraMetrics">; ex: Explore | null; onChange: () => void }) {
   const [adding, setAdding] = useState(false);
   const [pending, start] = useTransition();
   const [keys, setKeys] = useState(r.extraMetrics);
@@ -1342,8 +1342,8 @@ function Card({ r, active, onOpen }: { r: KpiRow; active: boolean; onOpen: () =>
       >
         <span aria-hidden className="absolute inset-x-0 top-0 h-[3px]" style={{ background: color, boxShadow: `0 0 18px ${color}` }} />
 
-        {/* Who */}
-        <div className="flex min-w-0 items-start justify-between gap-2">
+        {/* Who: pointing here shows the quick read in place of the chart */}
+        <div className="kpi-head flex min-w-0 items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="truncate font-heading text-[16px] leading-snug">
               {r.client}
@@ -1382,13 +1382,13 @@ function Card({ r, active, onOpen }: { r: KpiRow; active: boolean; onOpen: () =>
           </div>
         )}
 
-        {/* The 30 days and the budget; on hover, the quick read */}
+        {/* The 30 days and the budget (point at the chart for a day's numbers); pointing at the name shows the quick read */}
         <div className="relative">
-          <div className="grid gap-2.5 transition-opacity duration-200 group-hover:opacity-0 group-focus-visible:opacity-0">
-            <HealthChart id={r.id} daily={r.daily} target={r.target} roas={r.roas} status={r.status} compact height={44} />
+          <div className="grid gap-2.5 transition-opacity duration-200 group-focus-visible:opacity-0 [.group:has(.kpi-head:hover)_&]:opacity-0">
+            <HealthChart id={r.id} daily={r.daily} target={r.target} roas={r.roas} status={r.status} compact height={44} unit={r.conversionLabel.toLowerCase().replace(/s$/, "")} />
             <PaceBar pace={r.pace} note={r.budgetNote} compact />
           </div>
-          <div className="pointer-events-none absolute inset-0 grid content-start gap-1.5 overflow-hidden opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100">
+          <div className="pointer-events-none absolute inset-0 grid content-start gap-1.5 overflow-hidden opacity-0 transition-opacity duration-200 group-focus-visible:opacity-100 [.group:has(.kpi-head:hover)_&]:opacity-100">
             <Delta label="vs last month" value={r.vsMonth} />
             <Delta label="vs last quarter" value={r.vsQuarter} />
             {r.trend && r.status !== "setup" && (
@@ -1722,6 +1722,38 @@ export function KpiBoard({
           </Link>
         </p>
       )}
+    </div>
+  );
+}
+
+/**
+ * The KPI's working parts on the client page: the metric boxes and the campaigns (what the card is judged on, each
+ * campaign's result, which ones count). The same parts as the KPI board's card, saved to the same KPI, so a change in
+ * either place shows in both.
+ */
+export function KpiExtras({ k }: { k: { id: string; target: number | null; conversion: string; customAction: string | null; campaignMatch: string | null; platform: "meta" | "google"; extraMetrics: string[] } }) {
+  const router = useRouter();
+  const [ex, setEx] = useState<Explore | null>(null);
+  const [nonce, setNonce] = useState(0);
+  useEffect(() => {
+    let live = true;
+    exploreKpi(k.id, { conversion: k.conversion, custom: k.customAction, campaignMatch: k.campaignMatch }).then((res) => live && res.ok && setEx(res.data));
+    return () => {
+      live = false;
+    };
+  }, [k.id, k.conversion, k.customAction, k.campaignMatch, nonce]);
+  return (
+    <div className="grid gap-4">
+      <MetricBoxes
+        key={k.extraMetrics.join(",")}
+        r={k}
+        ex={ex}
+        onChange={() => {
+          setNonce((n) => n + 1);
+          router.refresh();
+        }}
+      />
+      <Campaigns key={`${k.id}:${k.conversion}:${k.target}`} id={k.id} target={k.target} conversion={k.conversion} platform={k.platform} />
     </div>
   );
 }

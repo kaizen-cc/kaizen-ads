@@ -3,6 +3,7 @@ import { Section } from "@/components/ui";
 import type { ClientKpi } from "@/lib/kpi/client";
 import { STATUS, kpiValue } from "@/lib/kpi/format";
 import { HealthChart, PaceBar } from "../../kpis/kpi-charts";
+import { KpiExtras } from "../../kpis/kpi-board";
 import { AuditPanel, type AuditSummary } from "../../kpis/audit-panel";
 import { ChangeLog } from "@/components/change-log";
 import type { AccountChange } from "@/lib/account-changes";
@@ -101,7 +102,7 @@ export function KpiPanel({ kpis, audits, changes }: { kpis: ClientKpi[]; audits?
                     <div className="grid gap-4 @xl:grid-cols-[minmax(0,1fr)_220px]">
                       <div className="grid gap-1">
                         <p className="text-[11px] text-faint">Last 30 days against target, in the account&apos;s color</p>
-                        <HealthChart id={k.id} daily={k.daily.slice(-30)} target={k.target} roas={k.roas} status={k.status} height={150} />
+                        <HealthChart id={k.id} daily={k.daily.slice(-30)} target={k.target} roas={k.roas} status={k.status} height={150} unit={k.conversionLabel.toLowerCase().replace(/s$/, "")} />
                       </div>
                       <div className="grid content-start gap-1">
                         <p className="text-[11px] text-faint">This month&apos;s budget</p>
@@ -112,6 +113,8 @@ export function KpiPanel({ kpis, audits, changes }: { kpis: ClientKpi[]; audits?
                 ) : (
                   <p className="text-sm text-muted">{k.status === "idle" ? "Not spending right now." : k.error ?? "Waiting for its first sync."}</p>
                 )}
+                {/* The same metric boxes and campaigns as the KPI board's card: changed here or there, it's the same KPI */}
+                {k.accountId && k.status !== "setup" && <KpiExtras k={{ id: k.id, target: k.target, conversion: k.conversion, customAction: k.customAction, campaignMatch: k.campaignMatch, platform: k.platform, extraMetrics: k.extraMetrics }} />}
                 {audits && k.accountId && <AuditPanel targetId={k.id} audit={audits[k.id] ?? null} platform={k.platform} />}
                 {changes && k.accountId && <ChangeLog changes={changes[k.id] ?? []} platform={k.platform} limit={30} collapsed={5} />}
               </article>

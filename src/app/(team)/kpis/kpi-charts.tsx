@@ -1,3 +1,6 @@
+"use client";
+
+import { useRef, useState } from "react";
 import { worseBy, type Agg, type Pacing } from "@/lib/kpi/calc";
 import { kpiValue, money } from "@/lib/kpi/format";
 
@@ -185,7 +188,7 @@ const dateLabel = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString("e
  * (green beating target, amber close, red over), over spend bars, with the target line; the whole chart is washed in
  * the account's overall color. ROAS accounts (no daily revenue) show results per day in the account's color.
  */
-export function HealthChart({ id, daily, target, roas, status, height = 200, compact = false, unit = "result" }: { id: string; daily: Day[]; target: number | null; roas: boolean; status: string; height?: number; compact?: boolean; unit?: string }) {
+function HealthSvg({ id, daily, target, roas, status, height = 200, compact = false, unit = "result", hover }: { id: string; daily: Day[]; target: number | null; roas: boolean; status: string; height?: number; compact?: boolean; unit?: string; hover: number | null }) {
   const h = healthOf(status);
   const color = HEX[h];
   if (!daily.length) return compact ? <span className="text-[11px] text-faint">No daily data</span> : <p className="text-sm text-faint">No daily numbers yet.</p>;
@@ -254,12 +257,15 @@ export function HealthChart({ id, daily, target, roas, status, height = 200, com
           <circle cx={last.x} cy={last.y} r={compact ? 2.8 : 4} fill={HEX[lastHealth === "none" ? h : lastHealth]} stroke="var(--surface)" strokeWidth="1.5" />
         </g>
       )}
-      {!compact &&
-        known.map((p) => (
-          <rect key={p.i} x={p.x - width / daily.length / 2} y={padT} width={width / daily.length} height={inner} fill="transparent">
-            <title>{`${dateLabel(daily[p.i].d)}: ${byCost ? `${money(vals[p.i])} per ${unit} (3-day)` : `${daily[p.i].results} results`} · ${money(daily[p.i].spend)} spent that day`}</title>
-          </rect>
-        ))}
+      {/* The day being pointed at: a guide line and its point */}
+      {hover != null && (
+        <g>
+          <line x1={x(hover)} x2={x(hover)} y1={padT} y2={padT + inner} stroke="var(--fg-faint)" strokeWidth={compact ? 0.8 : 1} opacity="0.7" />
+          {vals[hover] != null && (
+            <circle cx={x(hover)} cy={y(vals[hover]!)} r={compact ? 3.2 : 5} fill={HEX[byCost ? (dayHealth(daily, hover, target, roas) === "none" ? h : dayHealth(daily, hover, target, roas)) : h]} stroke="var(--surface)" strokeWidth="1.5" />
+          )}
+        </g>
+      )}
       {!compact &&
         daily.map((d, i) =>
           (i % 6 === 0 && daily.length - 1 - i >= 3) || i === daily.length - 1 ? (
@@ -282,6 +288,63 @@ export function TargetGauge({ value, target, roas }: { value: number | null | un
     <div className="relative h-1.5 w-full max-w-[160px] rounded-full" style={{ background: "linear-gradient(90deg, rgba(63,178,127,0.45), rgba(63,178,127,0.15) 46%, rgba(224,166,58,0.3) 56%, rgba(224,80,92,0.45))" }} title={`${Math.abs(Math.round(off * 100))}% ${off <= 0 ? "better" : "worse"} than target`}>
       <span className="absolute -top-1 bottom-[-4px] w-px bg-fg/70" style={{ left: "50%" }} />
       <span className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full ring-2 ring-surface" style={{ left: `${pos}%`, background: HEX[h], boxShadow: `0 0 12px ${HEX[h]}` }} />
+    </div>
+  );
+}
+
+/**
+ * The 30-day chart, with a reading for the day under the pointer: the date, the cost per result over the 3 days to
+ * it (or that day's results), and what was spent that day. On the board's cards, the card details and the client page.
+ */
+export function HealthChart(props: { id: string; daily: Day[]; target: number | null; roas: boolean; status: string; height?: number; compact?: boolean; unit?: string }) {
+  const { daily, target, roas, compact = false, unit = "result" } = props;
+  const [hover, setHover] = useState<number | null>(null);
+  const box = useRef<HTMLDivElement>(null);
+  if (!daily.length) return <HealthSvg {...props} hover={null} />;
+  const byCost = Boolean(target) && !roas;
+  const point = (clientX: number) => {
+    const el = box.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const f = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
+    setHover(daily.length === 1 ? 0 : Math.round(f * (daily.length - 1)));
+  };
+  const day = hover == null ? null : daily[hover];
+  const roll = hover == null ? null : rolling(daily, hover);
+  const left = hover == null ? 0 : daily.length === 1 ? 50 : (hover / (daily.length - 1)) * 100;
+  const tone = hover != null && byCost ? dayHealth(daily, hover, target, roas) : "none";
+  return (
+    <div
+      ref={box}
+      className="relative"
+      onMouseMove={(e) => point(e.clientX)}
+      onMouseLeave={() => setHover(null)}
+      onTouchStart={(e) => point(e.touches[0].clientX)}
+      onTouchMove={(e) => point(e.touches[0].clientX)}
+      onTouchEnd={() => setHover(null)}
+    >
+      <HealthSvg {...props} hover={hover} />
+      {day && roll && (
+        <div
+          className={`pointer-events-none absolute z-20 grid gap-0.5 whitespace-nowrap rounded-[10px] border border-line bg-surface/95 px-2.5 py-1.5 shadow-[0_12px_30px_-12px_rgba(0,0,0,0.6)] backdrop-blur ${compact ? "-top-1 -translate-y-full text-[10.5px]" : "top-1 text-xs"}`}
+          style={{ left: `${left}%`, transform: `translateX(${left > 70 ? "-100%" : left < 30 ? "0" : "-50%"})${compact ? " translateY(-100%)" : ""}` }}
+        >
+          <span className="text-faint">{dateLabel(day.d)}</span>
+          {byCost ? (
+            <span className="tabular font-medium" style={{ color: tone === "none" ? undefined : HEX[tone] }}>
+              {roll.cpr == null ? `No ${unit}s` : `${money(roll.cpr)} per ${unit}`}
+              <span className="font-normal text-faint"> · 3-day</span>
+            </span>
+          ) : (
+            <span className="tabular font-medium">
+              {day.results} {day.results === 1 ? unit : `${unit}s`}
+            </span>
+          )}
+          <span className="tabular text-faint">
+            {money(day.spend)} spent{day.results ? ` · ${day.results} ${day.results === 1 ? unit : `${unit}s`}` : ""}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
