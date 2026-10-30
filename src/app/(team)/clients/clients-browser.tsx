@@ -7,16 +7,13 @@ import type { Option } from "./assign-select";
 import { ClientGrid, type ClientCard } from "./client-grid";
 import { SERVICES, type ServiceSlug } from "@/lib/services";
 
-export type Filter = "all" | "creative" | "sprint" | "none" | "gaps" | "paused";
+// The tabs: every client we're working for now, then each service line, then the paused ones (counted nowhere else)
+export type Filter = "all" | ServiceSlug | "paused";
 
-// Every list is the clients we're working for now; paused ones sit in their own tab, counted nowhere else
 const live = (c: ClientCard) => c.status !== "paused";
 const FILTERS: { key: Filter; label: string; test: (c: ClientCard) => boolean }[] = [
   { key: "all", label: "All clients", test: live },
-  { key: "creative", label: "Creative package", test: (c) => live(c) && c.pkg !== "none" },
-  { key: "sprint", label: "Sprint", test: (c) => live(c) && c.pkg === "sprint" },
-  { key: "none", label: "No package", test: (c) => live(c) && c.pkg === "none" },
-  { key: "gaps", label: "Missing someone", test: (c) => live(c) && c.missing > 0 },
+  ...SERVICES.map((s) => ({ key: s.slug as Filter, label: s.label, test: (c: ClientCard) => live(c) && c.services.includes(s.slug) })),
   { key: "paused", label: "Paused", test: (c) => !live(c) },
 ];
 
@@ -37,14 +34,12 @@ export function ClientsBrowser({
   const term = q.trim().toLowerCase();
   const searching = term.length >= 2;
   // Narrow by service, by who's on the account, and by creative package tier (each in the address too)
-  const svc = useParam("svc");
   const who = useParam("who");
   const tier = useParam("tier");
   const people = [...new Map(cards.flatMap((c) => Object.values(c.assigned).filter((o): o is Option => Boolean(o)).map((o) => [o.id, o.name] as const))).entries()].sort((a, b) => a[1].localeCompare(b[1]));
   const tiers = [...new Set(cards.map((c) => (c.pkg !== "none" ? c.packageLabel : null)).filter((t): t is string => Boolean(t)))].sort();
-  const services = SERVICES.filter((s) => cards.some((c) => c.services.includes(s.slug)));
   const narrow = (c: ClientCard) =>
-    (!svc || c.services.includes(svc as ServiceSlug)) && (!who || Object.values(c.assigned).some((o) => o?.id === who)) && (!tier || (c.pkg !== "none" && c.packageLabel === tier));
+    (!who || Object.values(c.assigned).some((o) => o?.id === who)) && (!tier || (c.pkg !== "none" && c.packageLabel === tier));
   const test = FILTERS.find((f) => f.key === filter)!.test;
   const inFilter = cards.filter(test).filter(narrow);
   const shown = inFilter.filter((c) => !searching || c.name.toLowerCase().includes(term));
@@ -59,14 +54,13 @@ export function ClientsBrowser({
             const n = cards.filter(f.test).length;
             if (!n && f.key !== "all" && f.key !== filter) return null;
             const on = filter === f.key;
-            const warn = f.key === "gaps";
             return (
               <span key={f.key} className="contents">
-                {(warn || f.key === "paused") && <span className="mx-1 h-4 w-px shrink-0 bg-line" />}
+                {f.key === "paused" && <span className="mx-1 h-4 w-px shrink-0 bg-line" />}
                 <button
                   onClick={() => pick(f.key)}
                   className={`inline-flex h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-full px-4 text-sm transition-colors md:h-9 ${
-                    on ? (warn ? "bg-warn-soft text-warn" : "bg-fg text-bg") : "text-muted hover:bg-surface-2 hover:text-fg"
+                    on ? "bg-fg text-bg" : "text-muted hover:bg-surface-2 hover:text-fg"
                   }`}
                 >
                   {f.label} <span className="tabular opacity-60">{n}</span>
@@ -95,7 +89,6 @@ export function ClientsBrowser({
       <div className="-mt-2 flex flex-wrap items-center gap-2">
         {(
           [
-            ["svc", svc, "Every service", services.map((s) => [s.slug, s.label] as const)],
             ["who", who, "Everyone on the team", people],
             ["tier", tier, "Any package tier", tiers.map((t) => [t, t] as const)],
           ] as const
@@ -115,8 +108,8 @@ export function ClientsBrowser({
             ))}
           </select>
         ))}
-        {(svc || who || tier) && (
-          <button type="button" onClick={() => pushParams({ svc: null, who: null, tier: null })} className="h-11 px-2 text-xs text-muted hover:text-fg md:h-9">
+        {(who || tier) && (
+          <button type="button" onClick={() => pushParams({ who: null, tier: null })} className="h-11 px-2 text-xs text-muted hover:text-fg md:h-9">
             Clear filters
           </button>
         )}
@@ -137,7 +130,7 @@ export function ClientsBrowser({
         <ClientGrid cards={shown} slotOptions={slotOptions} canEdit={canEdit} />
       ) : searching ? null : (
         <p className="rounded-[14px] border border-dashed border-line px-6 py-14 text-center text-sm text-faint">
-          {filter === "gaps" ? "Every client is fully staffed." : filter === "sprint" ? "No clients on a sprint package." : "No clients here yet."}
+          {filter === "paused" ? "No paused clients." : "No clients here yet."}
         </p>
       )}
     </>
