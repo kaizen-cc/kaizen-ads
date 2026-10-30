@@ -326,8 +326,8 @@ export function HealthChart(props: { id: string; daily: Day[]; target: number | 
       <HealthSvg {...props} hover={hover} />
       {day && roll && (
         <div
-          className={`pointer-events-none absolute z-20 grid gap-0.5 whitespace-nowrap rounded-[10px] border border-line bg-surface/95 px-2.5 py-1.5 shadow-[0_12px_30px_-12px_rgba(0,0,0,0.6)] backdrop-blur ${compact ? "-top-1 -translate-y-full text-[10.5px]" : "top-1 text-xs"}`}
-          style={{ left: `${left}%`, transform: `translateX(${left > 70 ? "-100%" : left < 30 ? "0" : "-50%"})${compact ? " translateY(-100%)" : ""}` }}
+          className={`pointer-events-none absolute z-20 grid w-max gap-0.5 whitespace-nowrap rounded-[10px] border border-line bg-surface/95 px-2.5 py-1.5 shadow-[0_12px_30px_-12px_rgba(0,0,0,0.6)] backdrop-blur ${compact ? "top-0 text-[10.5px]" : "top-1 text-xs"}`}
+          style={{ left: `${left}%`, transform: `translate(${left > 70 ? "-100%" : left < 30 ? "0" : "-50%"}, ${compact ? "calc(-100% - 6px)" : "0"})` }}
         >
           <span className="text-faint">{dateLabel(day.d)}</span>
           {byCost ? (

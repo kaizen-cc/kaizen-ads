@@ -13,7 +13,7 @@ import { addKpiTarget, archiveKpiTarget, exploreKpi, linkAdAccount, pullClientKp
 import { ClientChat } from "../clients/[slug]/client-chat";
 import type { Explore } from "@/lib/kpi/explore";
 import { HealthChart, PaceBar, TargetGauge, healthHex, healthOf, paceMeta } from "./kpi-charts";
-import { AuditPanel, agoText, type AuditSummary } from "./audit-panel";
+import { AuditPanel, agoText, type AuditSummary, type QuickAction } from "./audit-panel";
 import { ChangeLog } from "@/components/change-log";
 import type { AccountChange } from "@/lib/account-changes";
 import type { SprintSummary } from "@/lib/sprints";
@@ -22,6 +22,8 @@ import { FatigueWatch } from "@/components/fatigue-watch";
 import { MarketPanel } from "../clients/[slug]/market-panel";
 import { kpiCreative, type KpiCreative } from "./creative-actions";
 import { QuickActions } from "./quick-actions";
+import { Layer } from "../clients/[slug]/layer";
+import { GoogleAdsMark, MetaMark } from "@/components/source-logo";
 import { kpiCampaigns, setCampaignCounted, setCampaignResult, setCardMetric, type CampaignPerf } from "./campaign-actions";
 
 export type KpiRow = {
@@ -1342,8 +1344,8 @@ function Card({ r, active, onOpen }: { r: KpiRow; active: boolean; onOpen: () =>
       >
         <span aria-hidden className="absolute inset-x-0 top-0 h-[3px]" style={{ background: color, boxShadow: `0 0 18px ${color}` }} />
 
-        {/* Who: pointing here shows the quick read in place of the chart */}
-        <div className="kpi-head flex min-w-0 items-start justify-between gap-2">
+        {/* Who */}
+        <div className="flex min-w-0 items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="truncate font-heading text-[16px] leading-snug">
               {r.client}
@@ -1382,13 +1384,15 @@ function Card({ r, active, onOpen }: { r: KpiRow; active: boolean; onOpen: () =>
           </div>
         )}
 
-        {/* The 30 days and the budget (point at the chart for a day's numbers); pointing at the name shows the quick read */}
+        {/* The 30 days and the budget: pointing at the chart reads a day; pointing anywhere else on the card shows the quick read */}
         <div className="relative">
-          <div className="grid gap-2.5 transition-opacity duration-200 group-focus-visible:opacity-0 [.group:has(.kpi-head:hover)_&]:opacity-0">
-            <HealthChart id={r.id} daily={r.daily} target={r.target} roas={r.roas} status={r.status} compact height={44} unit={r.conversionLabel.toLowerCase().replace(/s$/, "")} />
+          <div className="grid gap-2.5 transition-opacity duration-200 group-focus-visible:opacity-0 [.group:hover:not(:has(.kpi-chart:hover,.kpi-chip:hover))_&]:opacity-0">
+            <div className="kpi-chart">
+              <HealthChart id={r.id} daily={r.daily} target={r.target} roas={r.roas} status={r.status} compact height={44} unit={r.conversionLabel.toLowerCase().replace(/s$/, "")} />
+            </div>
             <PaceBar pace={r.pace} note={r.budgetNote} compact />
           </div>
-          <div className="pointer-events-none absolute inset-0 grid content-start gap-1.5 overflow-hidden opacity-0 transition-opacity duration-200 group-focus-visible:opacity-100 [.group:has(.kpi-head:hover)_&]:opacity-100">
+          <div className="pointer-events-none absolute inset-0 grid content-start gap-1.5 overflow-hidden opacity-0 transition-opacity duration-200 group-focus-visible:opacity-100 [.group:hover:not(:has(.kpi-chart:hover,.kpi-chip:hover))_&]:opacity-100">
             <Delta label="vs last month" value={r.vsMonth} />
             <Delta label="vs last quarter" value={r.vsQuarter} />
             {r.trend && r.status !== "setup" && (
@@ -1404,19 +1408,128 @@ function Card({ r, active, onOpen }: { r: KpiRow; active: boolean; onOpen: () =>
         {/* What's happening on it */}
         <div className="flex min-h-6 flex-wrap items-center gap-1.5">
           {r.sprint ? (
-            <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10.5px] ${SPRINT_TONE[r.sprint.verdict ?? "started"] ?? "bg-surface-2 text-muted"}`}>
+            <ChipTip
+              tip={<SprintTip s={r.sprint} />}
+              className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10.5px] ${SPRINT_TONE[r.sprint.verdict ?? "started"] ?? "bg-surface-2 text-muted"}`}
+            >
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
               Sprint · {r.sprint.done}/{r.sprint.total}
-            </span>
+            </ChipTip>
           ) : idle ? (
             <span className="inline-flex rounded-full border border-dashed border-bad/50 px-2 py-0.5 text-[10.5px] text-bad">Nobody&apos;s on it</span>
           ) : null}
           {(r.audit?.status === "running" || r.audit?.status === "queued") && <span className="rounded-full bg-brand-soft px-2 py-0.5 text-[10.5px] text-brand-text">{r.audit.status === "running" ? `Auditing ${r.audit.progress}%` : "Audit queued"}</span>}
-          {moves > 0 && <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10.5px] text-muted">{moves} {moves === 1 ? "move" : "moves"} to make</span>}
+          {moves > 0 && (
+            <ChipTip tip={<MovesTip items={(r.audit?.quick ?? []).filter((q) => !q.done)} google={r.platform === "google"} />} className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface-2 px-2 py-0.5 text-[10.5px] text-fg/85">
+              {r.platform === "google" ? <GoogleAdsMark size={11} /> : <MetaMark size={13} />}
+              {moves} {moves === 1 ? "move" : "moves"} to make
+            </ChipTip>
+          )}
           <span className="ml-auto text-[11px] text-faint opacity-0 transition-opacity group-hover:opacity-100">Open →</span>
         </div>
       </button>
     </li>
+  );
+}
+
+/** A chip on a card with a read of its own on hover (drawn above the page, so the card's edges don't cut it off) */
+function ChipTip({ tip, className, children }: { tip: React.ReactNode; className: string; children: React.ReactNode }) {
+  const [at, setAt] = useState<{ x: number; y: number; up: boolean } | null>(null);
+  const show = (el: HTMLElement) => {
+    const b = el.getBoundingClientRect();
+    const w = Math.min(300, window.innerWidth - 24);
+    const up = b.top > window.innerHeight / 2;
+    setAt({ x: Math.max(12, Math.min(b.left, window.innerWidth - w - 12)), y: up ? b.top - 8 : b.bottom + 8, up });
+  };
+  return (
+    <span className={`kpi-chip ${className}`} onMouseEnter={(e) => show(e.currentTarget)} onMouseLeave={() => setAt(null)}>
+      {children}
+      {at && (
+        <Layer>
+          <div
+            role="tooltip"
+            className="pointer-events-none fixed z-[80] grid w-[min(300px,calc(100vw-24px))] gap-2 rounded-[14px] border border-line bg-surface/95 p-3 text-left text-xs shadow-[0_24px_60px_-24px_rgba(0,0,0,0.85)] backdrop-blur"
+            style={{ left: at.x, top: at.y, transform: at.up ? "translateY(-100%)" : undefined }}
+          >
+            {tip}
+          </div>
+        </Layer>
+      )}
+    </span>
+  );
+}
+
+const VERDICT_TEXT: Record<string, string> = {
+  started: "Just started",
+  no_action: "Nothing done since the last check",
+  wrong_move: "A move went the wrong way",
+  on_track: "On track",
+  improving: "Improving",
+  worse: "Getting worse",
+  done: "Done",
+};
+
+function SprintTip({ s }: { s: SprintSummary }) {
+  const pct = s.total ? Math.round((s.done / s.total) * 100) : 0;
+  return (
+    <>
+      <div className="flex items-center justify-between gap-3">
+        <span className="font-heading text-[13px]">Sprint{s.buyer ? ` · ${s.buyer}` : ""}</span>
+        <span className="tabular text-faint">
+          {s.done}/{s.total} done
+        </span>
+      </div>
+      <span className="h-1 overflow-hidden rounded-full bg-surface-2">
+        <span className="block h-full rounded-full bg-ok" style={{ width: `${pct}%` }} />
+      </span>
+      {(s.verdict || s.message) && (
+        <p className="leading-snug text-fg/85">
+          {s.verdict && <span className="font-medium">{VERDICT_TEXT[s.verdict] ?? s.verdict}. </span>}
+          {s.message && <span className="text-muted">{s.message.length > 220 ? `${s.message.slice(0, 220)}…` : s.message}</span>}
+        </p>
+      )}
+      {s.next && s.next.length > 0 && (
+        <div className="grid gap-1">
+          <span className="text-[10px] uppercase tracking-[0.14em] text-faint">What comes next</span>
+          {s.next.map((a, i) => (
+            <span key={i} className="flex gap-2 leading-snug">
+              <span className="mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full border border-faint" />
+              <span className="min-w-0">
+                {a.title}
+                {a.when && <span className="text-faint"> · {a.when}</span>}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
+      <span suppressHydrationWarning className="text-[11px] text-faint">
+        Next check {new Date(s.nextCheckAt).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
+      </span>
+    </>
+  );
+}
+
+function MovesTip({ items, google }: { items: QuickAction[]; google: boolean }) {
+  const where = google ? "Google Ads" : "Meta";
+  return (
+    <>
+      <div className="flex items-center gap-2">
+        {google ? <GoogleAdsMark size={13} /> : <MetaMark size={15} />}
+        <span className="font-heading text-[13px]">
+          {items.length} {items.length === 1 ? "move" : "moves"} ready for {where}
+        </span>
+      </div>
+      <div className="grid gap-1.5">
+        {items.slice(0, 5).map((q) => (
+          <span key={q.index} className="grid gap-0.5 leading-snug">
+            <span className="text-fg/90">{q.title || q.label}</span>
+            <span className="text-[11px] text-faint">{[q.area, q.when, q.impact && `${q.impact} impact`].filter(Boolean).join(" · ")}</span>
+          </span>
+        ))}
+        {items.length > 5 && <span className="text-[11px] text-faint">and {items.length - 5} more</span>}
+      </div>
+      <span className="text-[11px] text-muted">Open the card to make them in {where} from here.</span>
+    </>
   );
 }
 

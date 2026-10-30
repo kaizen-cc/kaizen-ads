@@ -33,3 +33,34 @@ export function SourceChip({ source }: { source: "slack" | "gmail" }) {
     </span>
   );
 }
+
+/** Meta's mark, for actions Kaizen Ads can make in Meta from here */
+export function MetaMark({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={(size * 2) / 3} viewBox="0 0 36 24" aria-hidden>
+      <defs>
+        <linearGradient id="kz-meta" x1="0" x2="1" y1="0" y2="0">
+          <stop offset="0" stopColor="#0064e1" />
+          <stop offset="0.6" stopColor="#0082fb" />
+          <stop offset="1" stopColor="#00a3ff" />
+        </linearGradient>
+      </defs>
+      <path
+        d="M3.9 15.8c0 1.4.3 2.4.7 3.1.6.9 1.4 1.3 2.3 1.3 1.1 0 2.2-.3 4.2-3.1 1.6-2.2 3.5-5.4 4.8-7.4l2.2-3.4C19.7 3.9 21.5 2 23.6 2c1.7 0 3.4 1 4.7 2.9 1.4 2.1 2.1 4.7 2.1 7.4 0 1.6-.3 2.8-.9 3.8-.6 1-1.6 2-3.4 2v-2.7c1.5 0 1.9-1.4 1.9-3 0-2.3-.5-4.8-1.7-6.6-.8-1.3-1.9-2-3-2-1.2 0-2.2.9-3.3 2.5-.6.9-1.2 1.9-1.9 3.1l-.8 1.3c-1.5 2.6-1.9 3.2-2.6 4.2-1.3 1.8-2.5 2.5-4 2.5-1.8 0-2.9-.8-3.6-1.9C2.5 18.5 2.2 17.1 2.2 15.6Z"
+        fill="url(#kz-meta)"
+      />
+      <path d="M3.4 8.1C4.7 6.1 6.6 4.6 8.8 4.6c1.3 0 2.5.4 3.9 1.5 1.5 1.2 3.1 3.3 5.1 6.6l.7 1.2c1.7 2.8 2.7 4.3 3.3 5 .7.9 1.3 1.2 2 1.2 1.9 0 2.3-1.7 2.3-3.2l2.8-.1c0 1.6-.3 2.8-.9 3.8-.6 1-1.6 2-3.4 2-1 0-2-.2-3.1-1.3-.8-.8-1.8-2.2-2.6-3.5l-2.2-3.8c-1.1-1.9-2.2-3.3-2.8-3.9-.7-.7-1.5-1.5-2.9-1.5-1.1 0-2.1.8-2.9 2Z" fill="#0081fb" />
+    </svg>
+  );
+}
+
+/** Google Ads' mark, for actions Kaizen Ads can make in Google Ads from here */
+export function GoogleAdsMark({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden>
+      <path d="M8.3 3.6 1.5 15.4a4 4 0 1 0 6.9 4l6.8-11.8a4 4 0 0 0-6.9-4Z" fill="#fbbc04" />
+      <path d="M22.5 15.4 15.7 3.6a4 4 0 0 0-6.9 4l6.8 11.8a4 4 0 1 0 6.9-4Z" fill="#4285f4" />
+      <circle cx="4.9" cy="19.4" r="3.9" fill="#34a853" />
+    </svg>
+  );
+}
