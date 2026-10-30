@@ -150,7 +150,9 @@ function explain(text: string, status: number) {
     const detail = (err as { details?: { errors?: { errorCode?: Record<string, string>; message?: string }[] }[] } | undefined)?.details?.[0]?.errors?.[0];
     const code = detail?.errorCode ? Object.values(detail.errorCode)[0] : "";
     msg = detail?.message ?? err?.message ?? msg;
-    if (code === "USER_PERMISSION_DENIED" || /permission/i.test(msg)) return "Google Ads can't see this account through our manager account. Link it to the MCC (or check the customer ID).";
+    if (code === "USER_PERMISSION_DENIED") return "Google Ads can't see this account through our manager account. Link it to the MCC (or check the customer ID).";
+    // A feature our API access level doesn't include (Keyword Planner, Auction Insights): say so, with Google's words
+    if (/permission|not allowed|allowlist|access level|basic access|standard access/i.test(msg)) return `Our Google Ads API access doesn't include this yet (${code || "permission"}): ${msg}`;
     if (/test account|not approved|access level/i.test(msg) || code === "DEVELOPER_TOKEN_NOT_APPROVED") return "Our Google Cloud project only has Test access. Apply for Explorer access on the Google Ads API Overview page in Cloud Console.";
     if (/has not been used|is disabled|SERVICE_DISABLED/i.test(msg)) return "Turn on the Google Ads API in the Google Cloud project our service account belongs to.";
     if (/unauthorized_client|delegation/i.test(msg)) return "Add the https://www.googleapis.com/auth/adwords scope to the service account's domain-wide delegation in Google Admin.";
