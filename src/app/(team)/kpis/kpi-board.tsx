@@ -1326,7 +1326,7 @@ function CreativeTab({ r }: { r: KpiRow }) {
   );
 }
 
-function Card({ r, active, onOpen }: { r: KpiRow; active: boolean; onOpen: () => void }) {
+function Card({ r, active, onOpen, onMove }: { r: KpiRow; active: boolean; onOpen: () => void; onMove: (index: number) => void }) {
   const d14 = r.windows.d14;
   const gap = gapText(r);
   const color = healthHex(healthOf(r.status));
@@ -1420,7 +1420,7 @@ function Card({ r, active, onOpen }: { r: KpiRow; active: boolean; onOpen: () =>
           ) : null}
           {(r.audit?.status === "running" || r.audit?.status === "queued") && <span className="rounded-full bg-brand-soft px-2 py-0.5 text-[10.5px] text-brand-text">{r.audit.status === "running" ? `Auditing ${r.audit.progress}%` : "Audit queued"}</span>}
           {moves > 0 && (
-            <ChipTip tip={<MovesTip items={(r.audit?.quick ?? []).filter((q) => !q.done)} google={r.platform === "google"} />} className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface-2 px-2 py-0.5 text-[10.5px] text-fg/85">
+            <ChipTip tip={<MovesTip items={(r.audit?.quick ?? []).filter((q) => !q.done)} google={r.platform === "google"} onMove={onMove} />} className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface-2 px-2 py-0.5 text-[10.5px] text-fg/85">
               {r.platform === "google" ? <GoogleAdsMark size={11} /> : <MetaMark size={13} />}
               {moves} {moves === 1 ? "move" : "moves"} to make
             </ChipTip>
@@ -1432,26 +1432,44 @@ function Card({ r, active, onOpen }: { r: KpiRow; active: boolean; onOpen: () =>
   );
 }
 
-/** A chip on a card with a read of its own on hover (drawn above the page, so the card's edges don't cut it off) */
+/**
+ * A chip on a card with a read of its own on hover, drawn above the page so the card's edges don't cut it off. The
+ * pointer can travel into it and pick something there; it closes a moment after the pointer leaves both.
+ */
 function ChipTip({ tip, className, children }: { tip: React.ReactNode; className: string; children: React.ReactNode }) {
   const [at, setAt] = useState<{ x: number; y: number; up: boolean } | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const keep = () => {
+    if (timer.current) clearTimeout(timer.current);
+  };
+  const leave = () => {
+    keep();
+    timer.current = setTimeout(() => setAt(null), 180);
+  };
   const show = (el: HTMLElement) => {
+    keep();
     const b = el.getBoundingClientRect();
-    const w = Math.min(300, window.innerWidth - 24);
+    const w = Math.min(320, window.innerWidth - 24);
     const up = b.top > window.innerHeight / 2;
-    setAt({ x: Math.max(12, Math.min(b.left, window.innerWidth - w - 12)), y: up ? b.top - 8 : b.bottom + 8, up });
+    setAt({ x: Math.max(12, Math.min(b.left, window.innerWidth - w - 12)), y: up ? b.top - 6 : b.bottom + 6, up });
   };
   return (
-    <span className={`kpi-chip ${className}`} onMouseEnter={(e) => show(e.currentTarget)} onMouseLeave={() => setAt(null)}>
+    <span className={`kpi-chip ${className}`} onMouseEnter={(e) => show(e.currentTarget)} onMouseLeave={leave}>
       {children}
       {at && (
         <Layer>
+          {/* Clicks in here stay here: the card underneath would open otherwise */}
           <div
-            role="tooltip"
-            className="pointer-events-none fixed z-[80] grid w-[min(300px,calc(100vw-24px))] gap-2 rounded-[14px] border border-line bg-surface/95 p-3 text-left text-xs shadow-[0_24px_60px_-24px_rgba(0,0,0,0.85)] backdrop-blur"
-            style={{ left: at.x, top: at.y, transform: at.up ? "translateY(-100%)" : undefined }}
+            role="dialog"
+            onMouseEnter={keep}
+            onMouseLeave={leave}
+            onClick={(e) => e.stopPropagation()}
+            className="fixed z-[80] w-[min(320px,calc(100vw-24px))]"
+            style={{ left: at.x, top: at.y, transform: at.up ? "translateY(-100%)" : undefined, padding: at.up ? "0 0 6px" : "6px 0 0", margin: at.up ? "0 0 -6px" : "-6px 0 0" }}
           >
-            {tip}
+            <div className="grid gap-2 rounded-[14px] border border-line bg-surface/95 p-3 text-left text-xs shadow-[0_24px_60px_-24px_rgba(0,0,0,0.85)] backdrop-blur" style={{ animation: "fadeIn .15s ease-out" }}>
+              {tip}
+            </div>
           </div>
         </Layer>
       )}
@@ -1468,6 +1486,31 @@ const VERDICT_TEXT: Record<string, string> = {
   worse: "Getting worse",
   done: "Done",
 };
+const WHEN_TEXT: Record<string, string> = { now: "today", this_week: "this week", next: "next" };
+const whenText = (w: string | null | undefined) => (w ? (WHEN_TEXT[w] ?? w.replaceAll("_", " ")) : null);
+
+function TipRow({ title, meta, ...link }: { title: string; meta?: string | null } & ({ href: string } | { onClick: () => void })) {
+  const body = (
+    <>
+      <span className="mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full border border-faint transition-colors group-hover/row:border-fg group-hover/row:bg-fg" />
+      <span className="min-w-0 flex-1">
+        <span className="text-fg/90 group-hover/row:text-fg">{title}</span>
+        {meta && <span className="text-faint"> · {meta}</span>}
+      </span>
+      <span aria-hidden className="mt-px shrink-0 text-faint opacity-0 transition-opacity group-hover/row:opacity-100">→</span>
+    </>
+  );
+  const cls = "group/row -mx-1.5 flex gap-2 rounded-[8px] px-1.5 py-1 text-left leading-snug transition-colors hover:bg-surface-2";
+  return "href" in link ? (
+    <Link href={link.href} className={cls}>
+      {body}
+    </Link>
+  ) : (
+    <button type="button" onClick={link.onClick} className={cls}>
+      {body}
+    </button>
+  );
+}
 
 function SprintTip({ s }: { s: SprintSummary }) {
   const pct = s.total ? Math.round((s.done / s.total) * 100) : 0;
@@ -1489,27 +1532,26 @@ function SprintTip({ s }: { s: SprintSummary }) {
         </p>
       )}
       {s.next && s.next.length > 0 && (
-        <div className="grid gap-1">
+        <div className="grid gap-0.5">
           <span className="text-[10px] uppercase tracking-[0.14em] text-faint">What comes next</span>
-          {s.next.map((a, i) => (
-            <span key={i} className="flex gap-2 leading-snug">
-              <span className="mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full border border-faint" />
-              <span className="min-w-0">
-                {a.title}
-                {a.when && <span className="text-faint"> · {a.when}</span>}
-              </span>
-            </span>
+          {s.next.map((a) => (
+            <TipRow key={a.id} href={`/kpis/sprint/${s.id}#move-${a.id}`} title={a.title} meta={whenText(a.when)} />
           ))}
         </div>
       )}
-      <span suppressHydrationWarning className="text-[11px] text-faint">
-        Next check {new Date(s.nextCheckAt).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
-      </span>
+      <div className="flex items-center justify-between gap-3 text-[11px]">
+        <span suppressHydrationWarning className="text-faint">
+          Next check {new Date(s.nextCheckAt).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
+        </span>
+        <Link href={`/kpis/sprint/${s.id}`} className="text-muted hover:text-fg">
+          Open the sprint →
+        </Link>
+      </div>
     </>
   );
 }
 
-function MovesTip({ items, google }: { items: QuickAction[]; google: boolean }) {
+function MovesTip({ items, google, onMove }: { items: QuickAction[]; google: boolean; onMove: (index: number) => void }) {
   const where = google ? "Google Ads" : "Meta";
   return (
     <>
@@ -1519,16 +1561,13 @@ function MovesTip({ items, google }: { items: QuickAction[]; google: boolean }) 
           {items.length} {items.length === 1 ? "move" : "moves"} ready for {where}
         </span>
       </div>
-      <div className="grid gap-1.5">
-        {items.slice(0, 5).map((q) => (
-          <span key={q.index} className="grid gap-0.5 leading-snug">
-            <span className="text-fg/90">{q.title || q.label}</span>
-            <span className="text-[11px] text-faint">{[q.area, q.when, q.impact && `${q.impact} impact`].filter(Boolean).join(" · ")}</span>
-          </span>
+      <div className="grid gap-0.5">
+        {items.slice(0, 6).map((q) => (
+          <TipRow key={q.index} onClick={() => onMove(q.index)} title={q.label || q.title} meta={[q.area, whenText(q.when)].filter(Boolean).join(" · ") || null} />
         ))}
-        {items.length > 5 && <span className="text-[11px] text-faint">and {items.length - 5} more</span>}
+        {items.length > 6 && <span className="text-[11px] text-faint">and {items.length - 6} more</span>}
       </div>
-      <span className="text-[11px] text-muted">Open the card to make them in {where} from here.</span>
+      <span className="text-[11px] text-muted">Pick one to make it in {where} from here.</span>
     </>
   );
 }
@@ -1649,8 +1688,8 @@ export function KpiBoard({
   const setOwner = (who: string) => go({ who: who === initialOwner ? null : who });
   const setStatus = (v: Status | "all") => go({ status: v === "all" ? null : v });
   const setPace = (v: Pacing["status"] | "all") => go({ pace: v === "all" ? null : v });
-  const setOpen = (id: string | null) => go({ open: id, tab: null, target: null, client: null, platform: null });
-  const setTab = (t: Tab) => go({ open, tab: t === "overview" ? null : t, target: null, client: null, platform: null });
+  const setOpen = (id: string | null) => go({ open: id, tab: null, move: null, target: null, client: null, platform: null });
+  const setTab = (t: Tab) => go({ open, tab: t === "overview" ? null : t, move: null, target: null, client: null, platform: null });
   const search = (v: string) => {
     setQ(v);
     go({ q: v.trim() || null }, "replace");
@@ -1784,7 +1823,7 @@ export function KpiBoard({
       <div className="flex flex-wrap items-center justify-between gap-3">
         {/* Phones: the buyers scroll sideways in one strip instead of stacking rows */}
         <nav className="no-scrollbar -mx-4 flex w-[calc(100%+2rem)] items-center gap-1.5 overflow-x-auto px-4 md:mx-0 md:w-auto md:flex-wrap md:overflow-visible md:px-0">
-          {[["all", "Everyone"] as const, ...(owners.some(([id]) => id === me.id) ? ([[me.id, `Mine`]] as const) : []), ...owners.filter(([id]) => id !== me.id)].map(([id, name]) => (
+          {[["all", "Everyone"] as const, ...(owners.some(([id]) => id === me.id) || owner === me.id ? ([[me.id, `Mine`]] as const) : []), ...owners.filter(([id]) => id !== me.id)].map(([id, name]) => (
             <button
               key={id}
               onClick={() => setOwner(id)}
@@ -1819,7 +1858,7 @@ export function KpiBoard({
       {shown.length ? (
         <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {shown.map((r) => (
-            <Card key={r.id} r={r} active={open === r.id} onOpen={() => setOpen(r.id)} />
+            <Card key={r.id} r={r} active={open === r.id} onOpen={() => setOpen(r.id)} onMove={(i) => go({ open: r.id, tab: "actions", move: String(i), target: null, client: null, platform: null })} />
           ))}
         </ul>
       ) : (

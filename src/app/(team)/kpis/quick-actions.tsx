@@ -1,7 +1,7 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState, useTransition } from "react";
 import { tickAuditAction } from "./audit-actions";
 import type { QuickAction } from "./audit-panel";
 import { GoogleChange } from "./google-change";
@@ -26,7 +26,12 @@ const WHEN: Record<string, string> = { now: "Today", this_week: "This week", nex
 export function QuickActions({ auditId, items, platform }: { auditId: string; items: QuickAction[]; platform: "meta" | "google" }) {
   const router = useRouter();
   const [hover, setHover] = useState<number | null>(null);
-  const [open, setOpen] = useState<number | null>(null);
+  // ?move=<n>: one move picked from a card's hover, opened and brought into view
+  const picked = Number(useSearchParams().get("move") ?? NaN);
+  const [open, setOpen] = useState<number | null>(() => (items.some((a) => a.index === picked) ? picked : null));
+  useEffect(() => {
+    if (!Number.isNaN(picked)) document.getElementById(`qa-${auditId}-${picked}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [auditId, picked]);
   const [done, setDone] = useState<Record<number, boolean>>(() => Object.fromEntries(items.map((a) => [a.index, a.done])));
   const [, start] = useTransition();
   const name = platform === "google" ? "Google Ads" : "Meta";
@@ -54,7 +59,7 @@ export function QuickActions({ auditId, items, platform }: { auditId: string; it
           const isOpen = open === a.index;
           const isDone = done[a.index];
           return (
-            <li key={a.index} onMouseEnter={() => setHover(a.index)} onMouseLeave={() => setHover((h) => (h === a.index ? null : h))}>
+            <li key={a.index} id={`qa-${auditId}-${a.index}`} className="scroll-mt-24" onMouseEnter={() => setHover(a.index)} onMouseLeave={() => setHover((h) => (h === a.index ? null : h))}>
               <div className={`grid rounded-[14px] border transition-colors ${isOpen ? "border-[#0866ff]/40 bg-[#0866ff]/[0.05]" : "border-line bg-bg/40 hover:border-fg/20 hover:bg-surface-2"}`}>
                 <button type="button" onClick={() => setOpen(isOpen ? null : a.index)} aria-expanded={isOpen} className="flex min-h-12 items-center gap-3 px-3 py-2 text-left">
                   <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full ${isDone ? "bg-ok/15 text-ok" : k.tone}`}>

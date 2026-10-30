@@ -135,7 +135,7 @@ export function ActionRow({ a, readOnly, writable = null }: { a: SprintAction; r
     });
   const done = a.status === "done";
   return (
-    <article className={`grid gap-3 rounded-[16px] border p-4 transition-colors ${done ? "border-ok/30 bg-ok-soft/30" : a.status === "skipped" ? "border-line bg-surface opacity-60" : "border-line bg-surface"}`}>
+    <article id={`move-${a.id}`} className={`grid scroll-mt-24 gap-3 rounded-[16px] border p-4 transition-colors target:ring-2 target:ring-fg/40 ${done ? "border-ok/30 bg-ok-soft/30" : a.status === "skipped" ? "border-line bg-surface opacity-60" : "border-line bg-surface"}`}>
       <div className="grid grid-cols-[24px_minmax(0,1fr)_auto] items-start gap-2.5 md:gap-3">
         <button
           type="button"

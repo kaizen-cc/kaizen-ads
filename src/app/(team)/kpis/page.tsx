@@ -124,7 +124,7 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
       buyers={(buyers ?? []).map((b) => ({ id: b.id, name: b.full_name }))}
       clients={clients ?? []}
       me={{ id: me.id, firstName: me.fullName.split(" ")[0] }}
-      initialOwner={focus ? "all" : mine ? me.id : "all"}
+      initialOwner={focus || me.isExec || me.isLead ? "all" : mine ? me.id : "all"}
       focus={focus ? { id: focus.id, platform: focus.platform } : null}
       lastSync={lastSync}
       unlinked={unlinked}

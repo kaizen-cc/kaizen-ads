@@ -356,7 +356,7 @@ export async function checkDueSprints(admin: SupabaseClient, deadline = Date.now
 }
 
 /** next: the moves still open, in order (for the board card's summary) */
-export type SprintSummary = { id: string; buyer: string | null; buyerId: string | null; done: number; total: number; verdict: string | null; message: string | null; lastCheckAt: string | null; nextCheckAt: string; startedAt: string; watcherIds: string[]; next?: { title: string; when: string | null }[] };
+export type SprintSummary = { id: string; buyer: string | null; buyerId: string | null; done: number; total: number; verdict: string | null; message: string | null; lastCheckAt: string | null; nextCheckAt: string; startedAt: string; watcherIds: string[]; next?: { id: string; title: string; when: string | null }[] };
 
 /** Active sprints by KPI, for the board and Next for me. */
 export async function loadSprints(db: SupabaseClient, opts: { targetIds?: string[]; personId?: string } = {}) {
@@ -366,7 +366,7 @@ export async function loadSprints(db: SupabaseClient, opts: { targetIds?: string
   const { data: sprints } = await q;
   const ids = (sprints ?? []).map((s) => s.id);
   const [{ data: actions }, { data: checks }] = await Promise.all([
-    ids.length ? db.from("sprint_actions").select("sprint_id, status, title, when, sort_order").in("sprint_id", ids).order("sort_order") : Promise.resolve({ data: [] }),
+    ids.length ? db.from("sprint_actions").select("id, sprint_id, status, title, when, sort_order").in("sprint_id", ids).order("sort_order") : Promise.resolve({ data: [] }),
     ids.length ? db.from("sprint_checks").select("sprint_id, verdict, message, created_at").in("sprint_id", ids).order("created_at", { ascending: false }).limit(500) : Promise.resolve({ data: [] }),
   ]);
   return (sprints ?? []).map((s) => {
@@ -389,7 +389,7 @@ export async function loadSprints(db: SupabaseClient, opts: { targetIds?: string
         nextCheckAt: s.next_check_at,
         startedAt: s.started_at,
         watcherIds: (s.watcher_ids ?? []) as string[],
-        next: mine.filter((a) => a.status !== "done").slice(0, 4).map((a) => ({ title: String(a.title ?? ""), when: (a.when as string | null) ?? null })),
+        next: mine.filter((a) => a.status !== "done").slice(0, 4).map((a) => ({ id: String(a.id), title: String(a.title ?? ""), when: (a.when as string | null) ?? null })),
       } satisfies SprintSummary,
     };
   });
