@@ -21,3 +21,17 @@ export function servicesOf(c: { services?: string[] | null; services_extra?: str
   const all = new Set([...(c.services ?? []), ...(c.services_extra ?? [])].filter((s) => !removed.has(s)));
   return SERVICES.filter((s) => all.has(s.slug)).map((s) => s.slug);
 }
+
+/** A service as a form or sheet names it ("Facebook Ads", "Social Media Management", "Email Marketing") → its slug. */
+export function serviceFromName(name: string): ServiceSlug | null {
+  const n = name.toLowerCase();
+  if (/facebook|meta|instagram/.test(n)) return "facebook-ads";
+  if (/google|ppc|search ads|youtube/.test(n)) return "google-ads";
+  if (/tik ?tok/.test(n)) return "tiktok-ads";
+  if (/creative|content creation|ugc/.test(n)) return "creative";
+  if (/e-?mail|klaviyo|newsletter/.test(n)) return "email-marketing";
+  if (/web|landing page|site/.test(n)) return "web-design";
+  if (/social|organic|community/.test(n)) return "social-media";
+  if (/crm|gohighlevel|ghl|hubspot|automation/.test(n)) return "crm";
+  return null;
+}

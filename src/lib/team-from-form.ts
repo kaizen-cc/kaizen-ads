@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { aiEnabled, askJson } from "@/lib/ai";
+import { serviceFromName } from "@/lib/services";
 
 // The enrollment and upsell forms name the client's team (media buyer, designer, video editor, copywriter, customer
 // success). Those names become the client's assignments here, which is what decides who sees the client: a media
@@ -193,4 +194,22 @@ standard: the set package's key if the answer is exactly one set package with no
   await admin.from("client_allotments").upsert({ client_id: clientId, images_per_month: read.images, videos_per_month: read.videos, updated_at: new Date().toISOString() }, { onConflict: "client_id" });
   await admin.from("clients").update({ creative_package: true, creative_package_key: "custom", creative_package_note: `Custom: ${read.summary}`.slice(0, 300) }).eq("id", clientId);
   return { images: read.images, videos: read.videos, summary: read.summary };
+}
+
+/**
+ * The services ticked on the enrollment or upsell form become the client's services in Kaizen Ads straight away (a new
+ * client isn't in Kaizen Track yet, so nothing else would bring them in). Added only: a form never takes one off, and
+ * one ticked again comes back even if it had been removed here.
+ */
+export async function applyServices(admin: SupabaseClient, clientId: string, names: unknown, creatives?: boolean | null) {
+  const list = (Array.isArray(names) ? names : typeof names === "string" ? names.split(/[,;\n]/) : []).map((s) => String(s).trim()).filter(Boolean);
+  const slugs = new Set(list.map(serviceFromName).filter((s): s is NonNullable<typeof s> => Boolean(s)));
+  if (creatives) slugs.add("creative");
+  if (!slugs.size) return [];
+  const { data: c } = await admin.from("clients").select("services_extra, services_removed").eq("id", clientId).maybeSingle();
+  if (!c) return [];
+  const extra = new Set([...((c.services_extra ?? []) as string[]), ...slugs]);
+  const removed = ((c.services_removed ?? []) as string[]).filter((s) => !slugs.has(s as never));
+  await admin.from("clients").update({ services_extra: [...extra], services_removed: removed }).eq("id", clientId);
+  return [...slugs];
 }
