@@ -1652,6 +1652,7 @@ export function KpiBoard({
   unlinked = [],
   googleConnected = false,
   focus = null,
+  only = null,
 }: {
   rows: KpiRow[];
   buyers: Person[];
@@ -1664,12 +1665,14 @@ export function KpiBoard({
   googleConnected?: boolean;
   /** One account to open and bring into view (from a recap card, a notification or the client page) */
   focus?: { id: string; platform: "meta" | "google" } | null;
+  /** Someone on one platform's team (the Meta buyers, the Google buyers) sees only that platform: no switch */
+  only?: "meta" | "google" | null;
 }) {
   // Where you are on the board lives in the address (platform, buyer, filters, the open account and its tab): back and
   // forward walk through it, and a link lands on the same view. Changes go through the History API, so nothing reloads
   const sp = useSearchParams();
   const linked = Boolean(sp.get("target") || sp.get("client"));
-  const platform = (sp.get("p") as "meta" | "google" | null) ?? focus?.platform ?? "meta";
+  const platform = only ?? (sp.get("p") as "meta" | "google" | null) ?? focus?.platform ?? "meta";
   const owner = sp.get("who") ?? initialOwner;
   const status = (sp.get("status") as Status | null) ?? "all";
   const pace = (sp.get("pace") as Pacing["status"] | null) ?? "all";
@@ -1747,7 +1750,7 @@ export function KpiBoard({
         </div>
         <div className="flex w-full items-center gap-2 md:w-auto">
           <div className="flex flex-1 rounded-full border border-line bg-surface p-1 md:inline-flex md:flex-none">
-            {(["meta", "google"] as const).map((p) => (
+            {(only ? [only] : (["meta", "google"] as const)).map((p) => (
               <button
                 key={p}
                 onClick={() => setPlatform(p)}

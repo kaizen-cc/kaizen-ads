@@ -1,4 +1,5 @@
 import { googleAdsConfigured } from "@/lib/context/google-ads";
+import { teamPlatform } from "@/lib/roles";
 import { requireStaff } from "@/lib/auth";
 import type { Agg, Pacing, Status, Trend } from "@/lib/kpi/calc";
 import { conversionFor, conversionLabel } from "@/lib/kpi/conversions";
@@ -50,7 +51,10 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
   // Each account's last 10 changes, for its change history
   const changes = await loadChanges(supabase, (targets ?? []).filter((t) => t.ad_account_id).map((t) => changeKey(t.platform, String(t.ad_account_id))), 10);
 
+  // The Meta team sees Meta accounts and the Google team Google's; execs and everyone else see both
+  const team = teamPlatform(me.role);
   const rows: KpiRow[] = (targets ?? [])
+    .filter((t) => !team || (t.platform === "google" ? "google" : "meta") === team)
     .map((t) => {
       const c = t.clients as unknown as { name: string; slug: string; status: string } | null;
       const s = snapBy.get(t.id);
@@ -129,6 +133,7 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
       lastSync={lastSync}
       unlinked={unlinked}
       googleConnected={googleAdsConfigured()}
+      only={team}
     />
   );
 }

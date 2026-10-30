@@ -59,3 +59,10 @@ export function seatNeeded(slot: string, allotment: { images: number; videos: nu
 export function canHold(slot: { value: string; eligible: readonly TeamRole[] }, p: { role: string; also_buys?: boolean | null }) {
   return slot.eligible.includes(p.role as TeamRole) || (Boolean(p.also_buys) && (slot.value === "meta_buyer" || slot.value === "google_buyer"));
 }
+
+/** The ad platform someone's team works on: the Meta team (buyers and head) Meta, the Google team Google, anyone else null (both) */
+export function teamPlatform(role: string): "meta" | "google" | null {
+  if (role === "media_buyer" || role === "head_of_meta") return "meta";
+  if (role === "google_buyer" || role === "head_of_google") return "google";
+  return null;
+}
