@@ -36,7 +36,10 @@ const STATUS: Record<string, { label: string; tone: string }> = {
 /** This week's reports and this month's recap, for each buyer (theirs) and for leads and execs (their line, or all). */
 export default async function ReportsPage({ searchParams }: PageProps<"/reports">) {
   const me = await requireStaff();
-  const view = (await searchParams).view === "sent" ? "sent" : "open";
+  const sp = await searchParams;
+  const view = sp.view === "sent" ? "sent" : "open";
+  // The Monday drafts, one platform at a time (execs switch; everyone else is on their own line) and one buyer at a time
+  const pick = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : null);
   const db = await createClient();
   const today = nyParts(new Date()).date;
   const week = periodsFor("weekly", today).main;
@@ -56,8 +59,32 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const rows = (data ?? []) as unknown as Row[];
   // Drafted Monday (and on the 1st), they stay up until they're sent: last week's unsent draft doesn't drop off
   const waiting = (r: Row) => !DONE.includes(r.status);
-  const weekly = rows.filter((r) => r.kind === "weekly" && waiting(r));
-  const monthly = rows.filter((r) => r.kind === "monthly" && waiting(r));
+  // Each Monday's drafts replace the last ones: only the latest week (and the latest month's recap) shows
+  const latest = (kind: string) => rows.filter((r) => r.kind === kind).map((r) => r.period_start).sort().at(-1) ?? null;
+  const [lastWeek, lastMonth] = [latest("weekly"), latest("monthly")];
+  const allWeekly = rows.filter((r) => r.kind === "weekly" && r.period_start === lastWeek && waiting(r));
+  const allMonthly = rows.filter((r) => r.kind === "monthly" && r.period_start === lastMonth && waiting(r));
+  const both = [...allWeekly, ...allMonthly];
+  const platforms = (["meta", "google"] as const).filter((x) => both.some((r) => (r.platform === "google" ? "google" : "meta") === x));
+  const wp = platforms.length > 1 ? (pick("wp") === "google" ? "google" : pick("wp") === "meta" ? "meta" : platforms[0]) : (platforms[0] ?? "meta");
+  const onLine = (r: Row) => (r.platform === "google" ? "google" : "meta") === wp;
+  const buyers = [...new Map(both.filter(onLine).filter((r) => r.owner_id).map((r) => [r.owner_id!, r.owner_id === me.id ? "You" : (r.profiles?.full_name ?? "Buyer")])).entries()].sort((a, b) => (a[1] === "You" ? -1 : b[1] === "You" ? 1 : a[1].localeCompare(b[1])));
+  const wb = buyers.some(([id]) => id === pick("wb")) ? pick("wb") : null;
+  const shown = (r: Row) => onLine(r) && (!wb || r.owner_id === wb);
+  const weekly = allWeekly.filter(shown);
+  const monthly = allMonthly.filter(shown);
+  const periodLabel = (start: string | null, days: number) => {
+    if (!start) return "";
+    const a = new Date(`${start}T12:00:00Z`);
+    const b = new Date(a.getTime() + (days - 1) * 86_400_000);
+    const f = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+    return `${f(a)} – ${f(b)}`;
+  };
+  const href = (patch: Record<string, string | null>) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries({ wp: platforms.length > 1 ? wp : null, wb, ...patch })) if (v) q.set(k, v);
+    return `/reports${q.size ? `?${q}` : ""}`;
+  };
   const onDemand = rows.filter((r) => r.kind === "custom" && waiting(r));
   const sentReports = rows.filter((r) => r.status === "posted" && r.posted_at && r.posted_at >= daysAgo(30));
 
@@ -122,6 +149,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
     quick.push({ clientId: c.id, ranges: ["last7"], services: c.services.filter((s) => s.mine).map((s) => s.platform), reason: "Your client · no report in the last 7 days" });
   }
   const open = weekly.filter((r) => r.status === "draft").length;
+  const monthName = lastMonth ? new Date(`${lastMonth}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" }) : month.label;
 
   const list = (items: Row[], removable = false) => (
     <ul className="grid gap-2">
@@ -141,7 +169,6 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
                   </span>
                   <span className={`text-xs ${s.tone}`}>
                     {s.label}
-                    {r.kind !== "weekly" && r.kind !== "monthly" ? null : r.period_start !== (r.kind === "weekly" ? week.start : month.start) && r.status !== "posted" ? <span className="text-warn"> · from {new Date(`${r.period_start}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span> : null}
                     {lead && r.profiles?.full_name ? <span className="text-faint"> · {r.profiles.full_name}</span> : null}
                     {lead && r.owner_id !== me.id && r.status !== "posted" ? <Seen at={r.viewed_at} /> : null}
                     {r.status === "posted" && r.posted_at ? <span className="text-faint"> · {new Date(r.posted_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span> : null}
@@ -167,7 +194,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
         <div className="grid gap-1">
           <h1 className="font-heading text-[32px] leading-tight max-md:text-[28px]">Reports</h1>
           <p className="max-w-2xl text-sm text-muted">
-            Drafted every Monday (the last 7 days and the month so far) and on the 1st (the monthly recap), in your voice, checked by the QA. Read it, tweak it or ask the AI to, then send it as you.
+            Drafted every Monday (the last 7 days and the month so far), and on the month&apos;s first Monday the full monthly recap instead, in your voice, checked by the QA. Read it, tweak it or ask the AI to, then send it as you.
           </p>
         </div>
         <span className="flex flex-wrap items-center gap-2 max-md:w-full">
@@ -180,7 +207,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
       <nav className="-mb-3 flex items-center gap-1.5" aria-label="Reports">
         {(
           [
-            ["open", "To send", weekly.length + monthly.length + onDemand.length + builtRows.length],
+            ["open", "To send", allWeekly.length + allMonthly.length + onDemand.length + builtRows.length],
             ["sent", "Sent", sentReports.length + sentBuilt.length],
           ] as const
         ).map(([key, label, n]) => (
@@ -272,26 +299,45 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
         </section>
       )}
 
-      {view === "open" && monthly.length > 0 && (
+      {view === "open" && (
         <section className="grid gap-3">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <h2 className="font-heading text-xl">{month.label} recap</h2>
-            <span className="text-xs text-faint">Due by the 5th · it goes to the client once every buyer on the account submits</span>
+            <h2 className="font-heading text-xl">{allMonthly.length && !allWeekly.length ? `${monthName} recap` : `This week · ${periodLabel(lastWeek, 7) || week.label}`}</h2>
+            <span className="text-xs text-faint">{allMonthly.length && !allWeekly.length ? "The month's first Monday: the full recap instead of a weekly" : open ? `${open} ready to review` : weekly.length ? "All reviewed" : "Drafted Monday morning"}</span>
           </div>
-          {list(monthly)}
+          {/* Meta or Google (execs; everyone else sees their own line), then one buyer at a time */}
+          {(platforms.length > 1 || buyers.length > 1) && (
+            <div className="flex flex-wrap items-center gap-2">
+              {platforms.length > 1 && (
+                <span className="inline-flex rounded-full border border-line bg-surface p-1">
+                  {platforms.map((x) => (
+                    <Link key={x} href={href({ wp: x, wb: null })} scroll={false} className={`inline-flex h-10 items-center gap-1.5 rounded-full px-4 text-sm transition-colors md:h-8 ${wp === x ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
+                      {x === "meta" ? "Meta" : "Google Ads"} <span className="tabular opacity-60">{both.filter((r) => (r.platform === "google" ? "google" : "meta") === x).length}</span>
+                    </Link>
+                  ))}
+                </span>
+              )}
+              {buyers.length > 1 && (
+                <span className="no-scrollbar flex max-w-full items-center gap-1 overflow-x-auto">
+                  <Link href={href({ wb: null })} scroll={false} className={`inline-flex h-10 shrink-0 items-center rounded-full px-3.5 text-sm transition-colors md:h-8 ${!wb ? "bg-surface-2 text-fg" : "text-muted hover:text-fg"}`}>
+                    Everyone
+                  </Link>
+                  {buyers.map(([id, name]) => (
+                    <Link key={id} href={href({ wb: id })} scroll={false} className={`inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-sm transition-colors md:h-8 ${wb === id ? "bg-surface-2 text-fg" : "text-muted hover:text-fg"}`}>
+                      {name} <span className="tabular opacity-60">{both.filter((r) => onLine(r) && r.owner_id === id).length}</span>
+                    </Link>
+                  ))}
+                </span>
+              )}
+            </div>
+          )}
+          {monthly.length > 0 && list(monthly)}
+          {weekly.length > 0 && list(weekly)}
+          {!weekly.length && !monthly.length && (
+            <p className="rounded-[14px] border border-dashed border-line px-4 py-6 text-sm text-muted">Nothing waiting to send. The drafts are written Monday morning for every account that spent, and next Monday&apos;s replace them; for one now, build it above (Last 7 days).</p>
+          )}
         </section>
       )}
-
-      {view === "open" && (
-      <section className="grid gap-3">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 className="font-heading text-xl">This week · {week.label}</h2>
-          <span className="text-xs text-faint">{open ? `${open} ready to review` : weekly.length ? "All reviewed" : "Drafted Monday morning"}</span>
-        </div>
-        {weekly.length ? list(weekly) : <p className="rounded-[14px] border border-dashed border-line px-4 py-6 text-sm text-muted">Nothing waiting to send. The weekly drafts are written Monday morning for every account that spent and stay here until they&apos;re sent; for one now, build it above (Last 7 days).</p>}
-      </section>
-      )}
-
 
     </div>
   );

@@ -154,18 +154,20 @@ export async function GET(request: Request) {
     if (step === "remind") return Response.json(await (await import("@/lib/notifications")).remindRecaps(admin));
     if (step === "notify") return Response.json(await (await import("@/lib/notifications")).emailNotifications(admin));
     if (step === "reports") {
-      // Mondays from 5am: this week's reports; the 1st (and the 2nd, in case a run was missed): last month's recaps.
-      // Every run drafts what's queued; reminders go out on Monday afternoon, Tuesday morning, and the 2nd to the 5th.
+      // Mondays from 5am: this week's reports, except the month's first Monday, which gets last month's full recap
+      // instead (a weekly and a monthly the same Monday would say the same thing twice). Each Monday's drafts replace
+      // the last ones still unsent. Every run drafts what's queued; reminders go out Monday afternoon and Tuesday morning.
       const { queueReports, draftQueued, remindReports } = await import("@/lib/reports/run");
       const { weekday, hour, minute } = nyNow();
       const date = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
       const dom = Number(date.slice(8, 10));
+      const firstMonday = weekday === "Mon" && dom <= 7;
       const queued = {
-        weekly: weekday === "Mon" && hour >= 5 ? await queueReports(admin, "weekly", date) : 0,
-        monthly: dom <= 2 && hour >= 5 ? await queueReports(admin, "monthly", date) : 0,
+        weekly: weekday === "Mon" && !firstMonday && hour >= 5 ? await queueReports(admin, "weekly", date) : 0,
+        monthly: firstMonday && hour >= 5 ? await queueReports(admin, "monthly", date) : 0,
       };
       const drafted = await draftQueued(admin, 600_000);
-      const remindNow = minute < 15 && ((weekday === "Mon" && hour === 14) || (weekday === "Tue" && hour === 10) || (dom >= 2 && dom <= 5 && hour === 10));
+      const remindNow = minute < 15 && ((weekday === "Mon" && hour === 14) || (weekday === "Tue" && hour === 10));
       const reminded = remindNow ? await remindReports(admin, date) : 0;
       return Response.json({ queued, drafted, reminded });
     }
