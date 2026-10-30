@@ -44,3 +44,13 @@ export const SLOTS = [
 
 export type SlotRole = (typeof SLOTS)[number]["value"];
 export type AssignmentRole = SlotRole | "copywriter" | "coordinator";
+
+/**
+ * Whether a creative client needs this seat, from their monthly allotment: a video-only package needs no designer, an
+ * images-only one no video editor. Every other seat (and a package with both, or none set) is needed as usual.
+ */
+export function seatNeeded(slot: string, allotment: { images: number; videos: number }) {
+  if (slot === "graphic_designer") return !(allotment.videos > 0 && allotment.images === 0);
+  if (slot === "video_editor") return !(allotment.images > 0 && allotment.videos === 0);
+  return true;
+}

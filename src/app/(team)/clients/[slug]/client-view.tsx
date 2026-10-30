@@ -3,7 +3,7 @@ import type { CreativeDb } from "@/lib/creative-db";
 import { ActionButton, ActionForm } from "@/components/action-form";
 import { Section, field, label } from "@/components/ui";
 import type { Digest } from "@/lib/ai";
-import { SLOTS } from "@/lib/roles";
+import { SLOTS, seatNeeded } from "@/lib/roles";
 import { AssignSelect, type Option } from "../assign-select";
 import type { Freshness } from "@/lib/dates";
 import { BriefingPanel } from "./briefing-panel";
@@ -553,7 +553,8 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                   )}
                   <Section title="Kaizen team" description="The copywriter reviews all copy and customer success handles every client.">
             <dl className="grid gap-1">
-              {SLOTS.map((slot) => (
+              {/* The same seats as the client cards: a video-only package needs no designer, an images-only one no editor */}
+              {SLOTS.filter((slot) => seatNeeded(slot.value, { images, videos }) || team[slot.value]?.current).map((slot) => (
                 <div key={slot.value} className="grid grid-cols-[100px_minmax(0,1fr)] items-center gap-3">
                   <dt className="text-sm text-muted">{slot.label}</dt>
                   <dd className="min-w-0">

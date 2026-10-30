@@ -1,6 +1,6 @@
 import { isExecOrLead, requireStaff, seesAllClients } from "@/lib/auth";
 import { freshness, nyToday } from "@/lib/dates";
-import { SLOTS, type SlotRole, type TeamRole } from "@/lib/roles";
+import { SLOTS, seatNeeded, type SlotRole, type TeamRole } from "@/lib/roles";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { Option } from "./assign-select";
@@ -91,7 +91,12 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
     const a = r.client_assignments.find((x) => x.role === slot);
     return a ? { id: a.profile_id, name: a.profiles?.full_name ?? "Unknown" } : null;
   };
-  const missing = (r: Row) => SLOTS.filter((s) => servicesFor(r).includes(SLOT_SERVICE[s.value]) && !current(r, s.value)).length + (r.contact_clients.length ? 0 : 1);
+  // The monthly allotment: a video-only package needs no designer, an images-only one no video editor
+  const capsOf = (r: Row) => {
+    const u = (usage ?? []).find((x) => x.client_id === r.id);
+    return { images: u?.images_per_month ?? 0, videos: u?.videos_per_month ?? 0 };
+  };
+  const missing = (r: Row) => SLOTS.filter((s) => servicesFor(r).includes(SLOT_SERVICE[s.value]) && seatNeeded(s.value, capsOf(r)) && !current(r, s.value)).length + (r.contact_clients.length ? 0 : 1);
   const inFlight = new Map<string, number>();
   for (const o of open ?? []) inFlight.set(o.client_id, (inFlight.get(o.client_id) ?? 0) + 1);
 

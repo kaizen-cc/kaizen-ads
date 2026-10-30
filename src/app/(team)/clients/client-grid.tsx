@@ -9,7 +9,7 @@ import { ArchiveControl } from "./[slug]/archive-control";
 import { tintFor } from "@/lib/colors";
 import type { Freshness } from "@/lib/dates";
 import { untilLabel } from "@/lib/allotment";
-import { SLOTS, type SlotRole } from "@/lib/roles";
+import { SLOTS, seatNeeded, type SlotRole } from "@/lib/roles";
 import { AssignSelect, type Option } from "./assign-select";
 import { SERVICES, type ServiceSlug } from "@/lib/services";
 
@@ -130,6 +130,7 @@ function Card({ c, open, slotOptions, canEdit }: { c: ClientCard; open: boolean;
     </div>
   );
   const others = services.filter((x) => !MANAGED.includes(x));
+  const caps = { images: c.images.cap, videos: c.videos.cap };
   // Only the allotments that apply: a video-only package shows no images line
   const meters = [c.images.cap || c.images.used ? <Meter key="i" label="Images" used={c.images.used} cap={c.images.cap} /> : null, c.videos.cap || c.videos.used ? <Meter key="v" label="Videos" used={c.videos.used} cap={c.videos.cap} /> : null].filter(Boolean);
   const flight = (
@@ -212,8 +213,9 @@ function Card({ c, open, slotOptions, canEdit }: { c: ClientCard; open: boolean;
                   SVC_DOT.creative!,
                   <>
                     {meters.length ? <div className={`grid gap-4 pb-1 ${meters.length === 2 ? "grid-cols-2" : ""}`}>{meters}</div> : <p className="text-xs text-faint">No monthly allotment set</p>}
-                    {seat("graphic_designer")}
-                    {seat("video_editor")}
+                    {/* Video only: no designer to assign (one already on stays, so they can be taken off); images only: no editor */}
+                    {(seatNeeded("graphic_designer", caps) || c.assigned.graphic_designer) && seat("graphic_designer")}
+                    {(seatNeeded("video_editor", caps) || c.assigned.video_editor) && seat("video_editor")}
                   </>,
                   flight,
                 )}
