@@ -11,15 +11,17 @@ import { reportableTargets } from "@/lib/reports/access";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { ReportBuilder, type BuilderClient, type QuickPick } from "./report-builder";
 import { RemoveGenerated } from "./remove-generated";
+import { teamPlatform } from "@/lib/roles";
 
 export const metadata: Metadata = { title: "Reports" };
 export const maxDuration = 300;
 
-type Row = { id: string; kind: "weekly" | "monthly" | "custom"; platform: string; status: string; qa: Qa | null; posted_at: string | null; bundle_id: string | null; clients: { name: string; slug: string }; profiles: { full_name: string } | null };
+type Row = { id: string; kind: "weekly" | "monthly" | "custom"; platform: string; status: string; qa: Qa | null; posted_at: string | null; viewed_at: string | null; owner_id: string | null; period_start: string; bundle_id: string | null; clients: { name: string; slug: string }; profiles: { full_name: string } | null };
 
-/** On-demand recaps stay listed for two weeks. */
-/** Generated reports stay listed for five days (every report is kept on the client's page). */
-const fiveDaysAgo = () => new Date(Date.now() - 5 * 86_400_000).toISOString();
+// How far back the page looks: anything not sent yet stays on the page until it's sent (or removed); the Sent tab
+// keeps the last 30 days (every report stays in the client's history)
+const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
+const DONE = ["posted", "skipped"];
 
 const STATUS: Record<string, { label: string; tone: string }> = {
   queued: { label: "Queued", tone: "text-faint" },
@@ -32,8 +34,9 @@ const STATUS: Record<string, { label: string; tone: string }> = {
 };
 
 /** This week's reports and this month's recap, for each buyer (theirs) and for leads and execs (their line, or all). */
-export default async function ReportsPage() {
+export default async function ReportsPage({ searchParams }: PageProps<"/reports">) {
   const me = await requireStaff();
+  const view = (await searchParams).view === "sent" ? "sent" : "open";
   const db = await createClient();
   const today = nyParts(new Date()).date;
   const week = periodsFor("weekly", today).main;
@@ -43,25 +46,31 @@ export default async function ReportsPage() {
   const accounts = await reportableTargets(db, me);
   let q = db
     .from("reports")
-    .select("id, kind, platform, status, qa, posted_at, bundle_id, clients(name, slug), profiles!reports_owner_id_fkey(full_name)")
-    .or(`and(kind.eq.weekly,period_start.eq.${week.start}),and(kind.eq.monthly,period_start.eq.${month.start}),and(kind.eq.custom,created_at.gte.${fiveDaysAgo()},hidden_at.is.null)`)
+    .select("id, kind, platform, status, qa, posted_at, viewed_at, owner_id, period_start, bundle_id, clients(name, slug), profiles!reports_owner_id_fkey(full_name)")
+    .in("kind", ["weekly", "monthly", "custom"])
+    .is("hidden_at", null)
+    .gte("created_at", daysAgo(60))
     .order("created_at");
   if (!me.isExec) q = q.in("target_id", accounts.length ? accounts.map((a) => a.id) : ["00000000-0000-0000-0000-000000000000"]);
   const [{ data }, slack] = await Promise.all([q, slackConnection(me.id)]);
   const rows = (data ?? []) as unknown as Row[];
-  const weekly = rows.filter((r) => r.kind === "weekly");
-  const monthly = rows.filter((r) => r.kind === "monthly");
-  const onDemand = rows.filter((r) => r.kind === "custom");
-  const dom = Number(today.slice(8, 10));
+  // Drafted Monday (and on the 1st), they stay up until they're sent: last week's unsent draft doesn't drop off
+  const waiting = (r: Row) => !DONE.includes(r.status);
+  const weekly = rows.filter((r) => r.kind === "weekly" && waiting(r));
+  const monthly = rows.filter((r) => r.kind === "monthly" && waiting(r));
+  const onDemand = rows.filter((r) => r.kind === "custom" && waiting(r));
+  const sentReports = rows.filter((r) => r.status === "posted" && r.posted_at && r.posted_at >= daysAgo(30));
 
   // The builder: the clients this person reports on, each with every service that has an ad account (and its buyer)
   const clientIds = [...new Set(accounts.map((a) => a.client_id))];
+  // Each team searches and builds for its own line only: execs see both
+  const line = me.isExec ? null : teamPlatform(me.role);
   const admin = adminConfigured() ? createAdminClient() : null;
   const [{ data: allTargets }, { data: slots }, { data: built }] = admin && clientIds.length
     ? await Promise.all([
-        admin.from("kpi_targets").select("client_id, platform, owner_id, clients!inner(name, slug, archived_at, slack_channel_id), profiles!kpi_targets_owner_id_fkey(full_name)").in("client_id", clientIds).eq("active", true).not("ad_account_id", "is", null).is("clients.archived_at", null),
+        admin.from("kpi_targets").select("client_id, platform, owner_id, clients!inner(name, slug, archived_at, slack_channel_id), profiles!kpi_targets_owner_id_fkey(full_name)").in("client_id", clientIds).in("platform", line ? [line] : ["meta", "google"]).eq("active", true).not("ad_account_id", "is", null).is("clients.archived_at", null),
         admin.from("client_assignments").select("client_id, role, profile_id, profiles(full_name)").in("client_id", clientIds).in("role", ["meta_buyer", "google_buyer"]),
-        admin.from("report_bundles").select("id, client_id, status, ranges, created_by, created_at, clients(name), reports(id, platform, status, owner_id, profiles!reports_owner_id_fkey(full_name))").eq("kind", "built").is("hidden_at", null).gte("created_at", fiveDaysAgo()).order("created_at", { ascending: false }).limit(60),
+        admin.from("report_bundles").select("id, client_id, status, ranges, created_by, created_at, sent_at, clients(name), reports(id, platform, status, owner_id, viewed_at, profiles!reports_owner_id_fkey(full_name))").eq("kind", "built").is("hidden_at", null).gte("created_at", daysAgo(60)).order("created_at", { ascending: false }).limit(150),
       ])
     : [{ data: [] }, { data: [] }, { data: [] }];
   const byClient = new Map<string, BuilderClient>();
@@ -75,9 +84,15 @@ export default async function ReportsPage() {
     byClient.set(t.client_id, c);
   }
   const builderClients = [...byClient.values()].map((c) => ({ ...c, services: c.services.sort((a, b) => (a.platform === "meta" ? 0 : 1) - (b.platform === "meta" ? 0 : 1)) })).sort((a, b) => a.name.localeCompare(b.name));
-  type BuiltRow = { id: string; status: string; ranges: { label: string }[] | null; created_by: string | null; clients: { name: string }; reports: { id: string; platform: string; status: string; owner_id: string | null; profiles: { full_name: string } | null }[] };
-  // Reports built in the last 30 days that involve this person (built them, or have a part in them)
-  const builtRows = ((built ?? []) as unknown as BuiltRow[]).filter((b) => me.isExec || b.created_by === me.id || b.reports.some((p) => p.owner_id === me.id));
+  type BuiltRow = { id: string; client_id: string; status: string; ranges: { label: string }[] | null; created_by: string | null; created_at: string; sent_at: string | null; clients: { name: string }; reports: { id: string; platform: string; status: string; owner_id: string | null; viewed_at: string | null; profiles: { full_name: string } | null }[] };
+  // Reports built by hand: an exec sees all of them, the Head of Meta or Google every one with a part on their line,
+  // a buyer the ones they built or have a part in
+  const headLine = me.isExec ? null : me.role === "head_of_meta" ? "meta" : me.role === "head_of_google" ? "google" : null;
+  const reach = ((built ?? []) as unknown as BuiltRow[]).filter(
+    (b) => me.isExec || b.created_by === me.id || b.reports.some((p) => p.owner_id === me.id) || (headLine != null && b.reports.some((p) => p.platform === headLine)),
+  );
+  const builtRows = reach.filter((b) => b.status !== "sent");
+  const sentBuilt = reach.filter((b) => b.status === "sent" && (b.sent_at ?? b.created_at) >= daysAgo(30));
   const yesterday = new Date(Date.parse(`${today}T12:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
 
   // Quick create: the reports this person builds again and again, and their own clients with no report this week
@@ -126,7 +141,10 @@ export default async function ReportsPage() {
                   </span>
                   <span className={`text-xs ${s.tone}`}>
                     {s.label}
+                    {r.kind !== "weekly" && r.kind !== "monthly" ? null : r.period_start !== (r.kind === "weekly" ? week.start : month.start) && r.status !== "posted" ? <span className="text-warn"> · from {new Date(`${r.period_start}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span> : null}
                     {lead && r.profiles?.full_name ? <span className="text-faint"> · {r.profiles.full_name}</span> : null}
+                    {lead && r.owner_id !== me.id && r.status !== "posted" ? <Seen at={r.viewed_at} /> : null}
+                    {r.status === "posted" && r.posted_at ? <span className="text-faint"> · {new Date(r.posted_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span> : null}
                   </span>
                 </span>
                 <span className="flex items-center gap-1.5 max-md:max-w-[9.5rem] max-md:flex-wrap max-md:justify-end">
@@ -159,11 +177,66 @@ export default async function ReportsPage() {
 
       <ReportBuilder clients={builderClients} quick={quick} yesterday={yesterday} />
 
-      {(builtRows.length > 0 || onDemand.length > 0) && (
+      <nav className="-mb-3 flex items-center gap-1.5" aria-label="Reports">
+        {(
+          [
+            ["open", "To send", weekly.length + monthly.length + onDemand.length + builtRows.length],
+            ["sent", "Sent", sentReports.length + sentBuilt.length],
+          ] as const
+        ).map(([key, label, n]) => (
+          <Link
+            key={key}
+            href={key === "sent" ? "/reports?view=sent" : "/reports"}
+            scroll={false}
+            className={`inline-flex h-11 items-center gap-2 rounded-full px-4 text-sm transition-colors md:h-9 ${view === key ? "bg-fg text-bg" : "text-muted hover:bg-surface-2 hover:text-fg"}`}
+          >
+            {label} <span className="tabular opacity-60">{n}</span>
+          </Link>
+        ))}
+      </nav>
+
+      {view === "sent" && (
+        <section className="grid gap-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="font-heading text-xl">Sent</h2>
+            <span className="text-xs text-faint">The last 30 days · every report stays in the client&apos;s history</span>
+          </div>
+          {sentBuilt.length + sentReports.length === 0 ? (
+            <p className="rounded-[14px] border border-dashed border-line px-4 py-6 text-sm text-muted">Nothing sent in the last 30 days.</p>
+          ) : (
+            <>
+              {sentBuilt.length > 0 && (
+                <ul className="grid gap-2">
+                  {sentBuilt.map((b) => {
+                    const parts = b.reports.filter((p) => p.status !== "skipped");
+                    const mine = parts.find((p) => p.owner_id === me.id) ?? parts[0];
+                    return (
+                      <li key={b.id}>
+                        <Link href={mine ? `/reports/${mine.id}` : "/reports"} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-[14px] border border-line bg-surface px-4 py-3.5 transition-colors hover:border-faint/70">
+                          <span className="grid min-w-0 gap-0.5">
+                            <span className="truncate font-heading text-[15px]">
+                              {b.clients.name} <span className="text-muted">· {(b.ranges ?? []).map((x) => x.label).join(" + ")}</span>
+                            </span>
+                            <span className="text-xs text-faint">{parts.map((p) => `${p.platform === "google" ? "Google" : "Meta"} · ${p.owner_id === me.id ? "you" : (p.profiles?.full_name ?? "buyer")}`).join("  ·  ")}</span>
+                          </span>
+                          <span className="text-xs text-ok">Sent {new Date(b.sent_at ?? b.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })} →</span>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              {sentReports.length > 0 && list([...sentReports])}
+            </>
+          )}
+        </section>
+      )}
+
+      {view === "open" && (builtRows.length > 0 || onDemand.length > 0) && (
         <section className="grid gap-3">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <h2 className="font-heading text-xl">Reports generated</h2>
-            <span className="text-xs text-faint">The last 5 days · every report stays in the client&apos;s history</span>
+            <span className="text-xs text-faint">Built by hand · here until they&apos;re sent</span>
           </div>
           <ul className="grid gap-2">
             {builtRows.map((b) => {
@@ -181,6 +254,7 @@ export default async function ReportsPage() {
                         {parts.map((p) => (
                           <span key={p.id} className={p.status === "submitted" || p.status === "posted" ? "text-ok" : "text-muted"}>
                             {p.platform === "google" ? "Google" : "Meta"} · {p.owner_id === me.id ? "you" : (p.profiles?.full_name ?? "buyer")} · {p.status === "submitted" ? "approved" : p.status === "posted" ? "sent" : p.status === "drafting" ? "writing" : "to review"}
+                            {p.owner_id !== me.id && !["submitted", "posted"].includes(p.status) && <Seen at={p.viewed_at} />}
                           </span>
                         ))}
                       </span>
@@ -198,7 +272,7 @@ export default async function ReportsPage() {
         </section>
       )}
 
-      {dom <= 7 && monthly.length > 0 && (
+      {view === "open" && monthly.length > 0 && (
         <section className="grid gap-3">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <h2 className="font-heading text-xl">{month.label} recap</h2>
@@ -208,15 +282,26 @@ export default async function ReportsPage() {
         </section>
       )}
 
+      {view === "open" && (
       <section className="grid gap-3">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 className="font-heading text-xl">This week · {week.label}</h2>
           <span className="text-xs text-faint">{open ? `${open} ready to review` : weekly.length ? "All reviewed" : "Drafted Monday morning"}</span>
         </div>
-        {weekly.length ? list(weekly) : <p className="rounded-[14px] border border-dashed border-line px-4 py-6 text-sm text-muted">Nothing drafted for this week yet. They&apos;re written Monday morning for every account that spent; for one now, build it above (Last 7 days).</p>}
+        {weekly.length ? list(weekly) : <p className="rounded-[14px] border border-dashed border-line px-4 py-6 text-sm text-muted">Nothing waiting to send. The weekly drafts are written Monday morning for every account that spent and stay here until they&apos;re sent; for one now, build it above (Last 7 days).</p>}
       </section>
+      )}
 
 
     </div>
+  );
+}
+
+/** Whether the report's buyer has opened it yet (for the heads of each line and execs) */
+function Seen({ at }: { at: string | null }) {
+  return at ? (
+    <span className="text-faint"> · opened {new Date(at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+  ) : (
+    <span className="text-warn"> · not opened yet</span>
   );
 }

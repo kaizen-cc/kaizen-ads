@@ -9,6 +9,8 @@ import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
 import { monthLabel } from "@/lib/reports/format";
 import { slackConnection, slackIdentity } from "@/lib/slack-user";
 import { ReportStudio } from "../report-studio";
+import { after } from "next/server";
+import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 
 export const metadata: Metadata = { title: "Report" };
 // Revising and checking a report, putting a joint message together and posting it with its PDF can take a minute
@@ -20,13 +22,17 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
   const db = await createClient();
   const { data: r } = await db
     .from("reports")
-    .select("id, kind, platform, status, period_start, period_end, owner_id, bundle_id, message, sections, metrics, extra_metrics, extras, qa, chat, error, posted_at, clients(name, slug, slack_channel_id), profiles!reports_owner_id_fkey(full_name), kpi_targets(id, client_id, platform, owner_id)")
+    .select("id, kind, platform, status, period_start, period_end, owner_id, viewed_at, bundle_id, message, sections, metrics, extra_metrics, extras, qa, chat, error, posted_at, clients(name, slug, slack_channel_id), profiles!reports_owner_id_fkey(full_name), kpi_targets(id, client_id, platform, owner_id)")
     .eq("id", id)
     .maybeSingle();
   if (!r) notFound();
   // Only the account's buyer, the leads of its line and execs see a report (a link alone doesn't open it)
   const target = r.kpi_targets as unknown as { id: string; client_id: string; platform: string; owner_id: string | null } | null;
   if (!(r.owner_id === me.id || (target && (await canReportOn(db, me, target))))) notFound();
+  // Its buyer opening it for the first time: the heads of the line see it's been looked at
+  if (r.owner_id === me.id && !r.viewed_at && adminConfigured()) after(async () => {
+    await createAdminClient().from("reports").update({ viewed_at: new Date().toISOString() }).eq("id", r.id).is("viewed_at", null);
+  });
 
   const [slack, identity, { data: bundle }, { data: parts }] = await Promise.all([
     slackConnection(me.id),
