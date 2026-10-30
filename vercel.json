@@ -35,7 +35,7 @@
     },
     {
       "path": "/api/cron/context?step=google_market",
-      "schedule": "0 11 * * 1,4"
+      "schedule": "0 11 * * 1"
     },
     {
       "path": "/api/cron/context?step=google_ideas",

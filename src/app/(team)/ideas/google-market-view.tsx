@@ -130,7 +130,7 @@ export function GoogleMarketView({ industries }: { industries: MarketIndustry[] 
           <span className="text-[11px] font-semibold uppercase tracking-[0.22em] text-brand-text">{current.parent ?? "Industry"}</span>
           <h2 className="font-heading text-[30px] leading-tight md:text-[36px]">{current.name}</h2>
           <p className="max-w-xl text-sm text-ink/55">
-            {current.clients.length ? `Our Google clients here: ${current.clients.join(", ")}.` : "No live Google client here right now."} From Keyword Planner and our accounts&apos; Auction Insights{updated ? `, read ${updated}` : ""}.
+            {current.clients.length ? `Our Google clients here: ${current.clients.join(", ")}.` : "No live Google client here right now."} From Google&apos;s Keyword Planner{updated ? `, read ${updated}` : ""}.
           </p>
         </div>
         <div className="grid grid-cols-2 gap-2.5">
@@ -139,8 +139,8 @@ export function GoogleMarketView({ industries }: { industries: MarketIndustry[] 
             <span className="text-[11px] text-ink/50">searches a month</span>
           </span>
           <span className="grid gap-0.5 rounded-[16px] border border-ink/10 bg-ink/[0.04] px-4 py-3">
-            <span className="tabular font-display text-[28px] leading-none">{current.competitors.length}</span>
-            <span className="text-[11px] text-ink/50">competitors seen</span>
+            <span className="tabular font-display text-[28px] leading-none">{current.searches.length}</span>
+            <span className="text-[11px] text-ink/50">searches tracked</span>
           </span>
         </div>
       </section>
@@ -168,21 +168,22 @@ export function GoogleMarketView({ industries }: { industries: MarketIndustry[] 
         )}
       </section>
 
+      {/* Competitors from Auction Insights, when Google opens those metrics to us */}
+      {current.competitors.length > 0 && (
       <section className="grid gap-3">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h3 className="font-heading text-xl">Who we&apos;re up against</h3>
           <span className="text-xs text-faint">The other advertisers in our clients&apos; searches, the last 30 days</span>
         </div>
-        {current.competitors.length ? (
+        {(
           <ul className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
             {current.competitors.map((c) => (
               <Competitor key={c.domain} c={c} />
             ))}
           </ul>
-        ) : (
-          <p className="rounded-[14px] border border-dashed border-line px-4 py-6 text-sm text-muted">Auction Insights aren&apos;t readable for these accounts through our access yet, or there&apos;s no search spend to compare.</p>
         )}
       </section>
+      )}
     </div>
   );
 }

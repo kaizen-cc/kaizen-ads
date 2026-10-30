@@ -8,9 +8,11 @@ import { LIVE } from "@/lib/live";
 //   and keywords) and the industry's name, with monthly volume, the last 12 months, competition and top-of-page bids.
 // - Who we're up against: Auction Insights from our clients' accounts in that industry, the other advertisers in the
 //   same searches, how often they show and how often they outrank us (read only where the account's access allows it).
-// Competitors refreshed twice a week; searches weekly (Keyword Planner's numbers are monthly).
+// Refreshed weekly (Keyword Planner's numbers are monthly). Auction Insights stays off unless GOOGLE_ADS_AUCTION_INSIGHTS=1:
+// Google only opens its metrics to allowlisted developers.
 
 const KEEP_SEARCHES = 60;
+const AUCTION_INSIGHTS = process.env.GOOGLE_ADS_AUCTION_INSIGHTS === "1";
 
 export async function updateGoogleMarket(admin: SupabaseClient, deadline = Date.now() + 240_000, opts: { searches?: boolean } = {}) {
   const withSearches = opts.searches ?? true;
@@ -62,7 +64,8 @@ export async function updateGoogleMarket(admin: SupabaseClient, deadline = Date.
     }
     // The other advertisers in our clients' auctions here, across their accounts (each domain averaged over them)
     const seen = new Map<string, { domain: string; accounts: number; impressionShare: number[]; overlap: number[]; outranking: number[]; above: number[]; top: number[] }>();
-    for (const acc of v.accounts) {
+    // Auction Insights' metrics are only open to developers Google allowlists: off until we're on that list
+    for (const acc of AUCTION_INSIGHTS ? v.accounts : []) {
       if (Date.now() > deadline) break;
       try {
         for (const d of await auctionInsights(acc)) {
@@ -91,7 +94,7 @@ export async function updateGoogleMarket(admin: SupabaseClient, deadline = Date.
       competitors += rows.length;
     }
   }
-  return { industries: byVertical.size, searches, competitors, failed: failed.slice(0, 5), auctionInsights: auctionsBlocked.length ? `not readable on ${auctionsBlocked.length} account(s): ${auctionsBlocked[0]}` : "ok" };
+  return { industries: byVertical.size, searches, competitors, failed: failed.slice(0, 5), auctionInsights: !AUCTION_INSIGHTS ? "off (Google only opens these to allowlisted developers)" : auctionsBlocked.length ? `not readable on ${auctionsBlocked.length} account(s): ${auctionsBlocked[0]}` : "ok" };
 }
 
 export type MarketSearch = { text: string; searches: number; competition: string; competitionIndex: number; bidLow: number; bidHigh: number; months: number[]; seeded: boolean };
