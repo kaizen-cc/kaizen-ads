@@ -7,7 +7,7 @@ const LABEL = "claude-fix";
  * Hand an error to Claude: open a GitHub issue labelled claude-fix with everything we know.
  * The claude-fix workflow picks it up and opens a pull request. Returns the issue link.
  */
-export async function createFixIssue(fingerprint: string, by = "by Santi"): Promise<{ url?: string; error?: string }> {
+export async function createFixIssue(fingerprint: string, by = "by Santi", autoMerge = false): Promise<{ url?: string; error?: string }> {
   const token = process.env.GITHUB_TOKEN;
   const repo = process.env.GITHUB_REPO || "kaizen-cc/kaizen-ads";
   if (!token) return { error: "Automatic fixes aren't connected yet: add GITHUB_TOKEN in Vercel." };
@@ -47,7 +47,9 @@ export async function createFixIssue(fingerprint: string, by = "by Santi"): Prom
   ]
     .filter(Boolean)
     .join("\n");
-  const res = await gh("/issues", { title: `Fix: ${e.message.slice(0, 120)}`, body, labels: [LABEL] });
+  // auto-merge: low severity, so the workflow merges the fix itself once every check passes
+  if (autoMerge) await gh("/labels", { name: "auto-merge", color: "2EB67D", description: "Low-severity fix: merges itself when the checks pass" }).catch(() => null);
+  const res = await gh("/issues", { title: `Fix: ${e.message.slice(0, 120)}`, body, labels: autoMerge ? [LABEL, "auto-merge"] : [LABEL] });
   if (!res.ok) return { error: `GitHub said ${res.status}: ${(await res.text()).slice(0, 300)}` };
   const issue = (await res.json()) as { html_url: string };
   await admin.from("error_events").update({ fix_issue_url: issue.html_url }).eq("fingerprint", e.fingerprint);

@@ -58,3 +58,29 @@ jobs:
                `gh pr create --base main` titled "Fix: <short description>" whose body explains, in plain language for a non-technical owner:
                What happened · Why it happened · What changed · How it was checked. End the body with "Closes #${{ github.event.issue.number }}".
             6. Comment on the issue with the PR link.
+
+      # Low severity (the issue is labelled auto-merge): once Claude's pull request is up, run the same checks as
+      # every push and, if they all pass and the fix doesn't touch the database, merge it so it goes live with no one
+      # waiting on it. Medium and high fixes are left for someone to review and merge.
+      - name: Merge a low-severity fix that passes the checks
+        if: contains(github.event.issue.labels.*.name, 'auto-merge')
+        env:
+          ISSUE: ${{ github.event.issue.number }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -e
+          PR=$(gh pr list --head "claude/fix-$ISSUE" --state open --json number --jq '.[0].number')
+          if [ -z "$PR" ]; then echo "No fix pull request (Claude found nothing of ours to fix)"; exit 0; fi
+          if gh pr diff "$PR" --name-only | grep -q '^supabase/migrations/'; then
+            gh pr comment "$PR" --body "This fix changes the database, so it waits for a person to apply the migration and merge it."
+            exit 0
+          fi
+          git fetch origin "claude/fix-$ISSUE" && git checkout "claude/fix-$ISSUE"
+          npm ci
+          if npx eslint src tests && npx next typegen && npx tsc --noEmit && npm test && npm run test:db; then
+            # Rebase keeps Claude's commits authored as kaizen-cc, the identity Vercel deploys
+            gh pr merge "$PR" --rebase --delete-branch
+            gh issue comment "$ISSUE" --body "Low severity, and every check passed: merged automatically. It goes live with the next Vercel deploy."
+          else
+            gh pr comment "$PR" --body "A check failed, so this one wasn't merged automatically. It needs a look."
+          fi
