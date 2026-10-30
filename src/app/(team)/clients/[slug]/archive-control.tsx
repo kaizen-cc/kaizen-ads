@@ -76,25 +76,25 @@ export function ArchiveControl({ clientId, slug, name, archived }: { clientId: s
 
   return (
     <span className="relative">
-      <button onClick={() => setOpen(!open)} className="h-11 rounded-full px-3 text-xs text-faint hover:bg-surface-2 hover:text-fg md:h-7">
+      <button onClick={(e) => (e.stopPropagation(), setOpen(!open))} className="h-11 rounded-full px-3 text-xs text-faint hover:bg-surface-2 hover:text-fg md:h-7">
         Archive
       </button>
-      {open && (
-        <span className="absolute right-0 top-9 z-30 hidden w-80 gap-3 rounded-[12px] border border-line bg-surface p-4 text-left shadow-2xl md:grid">
-          {confirm}
-        </span>
-      )}
-      {/* Phones: the same confirmation as a sheet from the bottom */}
+      {/* Drawn above the page (a card's edges would cut it off): a sheet from the bottom on phones, a dialog on computers.
+          Clicks inside stay inside, so the card underneath doesn't open */}
       {open && (
         <Layer>
-          <button type="button" aria-label="Close" onClick={() => setOpen(false)} className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px] md:hidden" />
-          <div
-            role="dialog"
-            aria-label={`Archive ${name}`}
-            className="fixed inset-x-0 bottom-0 z-50 grid gap-3 rounded-t-[22px] border-t border-line bg-surface px-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] pt-3 text-left shadow-2xl md:hidden"
-          >
-            <span aria-hidden className="mx-auto mb-1 h-1 w-10 rounded-full bg-ink/15" />
-            {confirm}
+          <div onClick={(e) => e.stopPropagation()}>
+            <button type="button" aria-label="Close" onClick={() => setOpen(false)} className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px]" style={{ animation: "fadeIn .15s ease-out" }} />
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label={`Archive ${name}`}
+              className="fixed inset-x-0 bottom-0 z-50 grid gap-3 rounded-t-[22px] border-t border-line bg-surface px-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] pt-3 text-left shadow-2xl md:inset-x-auto md:bottom-auto md:left-1/2 md:top-1/2 md:w-[400px] md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-[18px] md:border md:p-5"
+              style={{ animation: "fadeIn .18s ease-out" }}
+            >
+              <span aria-hidden className="mx-auto mb-1 h-1 w-10 rounded-full bg-ink/15 md:hidden" />
+              {confirm}
+            </div>
           </div>
         </Layer>
       )}
