@@ -929,7 +929,9 @@ function Campaigns({ id, target }: { id: string; target: number | null }) {
   }, [id]);
   if (data && !data.campaigns.length) return null;
   const fmt = (v: number | null) => (v == null ? "—" : data?.roas ? `${v.toFixed(2)}x` : money(v));
-  const list = data ? (all ? data.campaigns : data.campaigns.slice(0, 8)) : [];
+  // Counted first (spending now first, then the month's spend); left-out ones drop to the bottom as soon as they're left out
+  const sorted = data ? [...data.campaigns].sort((a, b) => Number(a.excluded) - Number(b.excluded) || Number(b.spend7 > 0) - Number(a.spend7 > 0) || b.spend30 - a.spend30) : [];
+  const list = all ? sorted : sorted.slice(0, 8);
   return (
     <section className="grid gap-3 rounded-[20px] border border-line bg-surface p-4 md:p-5">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
