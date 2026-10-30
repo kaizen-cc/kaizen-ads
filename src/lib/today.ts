@@ -77,10 +77,13 @@ export function topicsFor(me: Staff): Set<TopicKey> {
   const t = new Set<TopicKey>(["mine", "promises"]);
   if (manager) ["promises", "onboarding", "accounts", "work", "briefs", "ads", "allotments"].forEach((k) => t.add(k as TopicKey));
   if (me.isBuyer) ["promises", "accounts", "ads", "allotments"].forEach((k) => t.add(k as TopicKey));
+  // Google buyers: their accounts and promises (no Meta ads wearing out, no creative allotments)
+  if (me.role === "google_buyer") ["promises", "accounts"].forEach((k) => t.add(k as TopicKey));
   if (me.isCoordinator) ["promises", "onboarding", "allotments"].forEach((k) => t.add(k as TopicKey));
   // Each lead sees their own line: no ad accounts for the Head of Creative, no Meta ads wearing out for the Head of Google
   if (me.role === "head_of_creative") t.delete("accounts");
-  if (me.role === "head_of_google") t.delete("ads");
+  // The Head of Google: Google only (Meta ads wearing out, creative briefs and allotments aren't theirs)
+  if (me.role === "head_of_google") ["ads", "briefs", "allotments"].forEach((k) => t.delete(k as TopicKey));
   return t;
 }
 

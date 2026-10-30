@@ -101,7 +101,9 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
 
   // A to Z (ignoring case and accents, and numbers in order: "Club 9" before "Club 76")
   const ordered = [...rows].sort((a, b) => a.name.localeCompare(b.name, "en", { sensitivity: "base", numeric: true }));
-  const cards = ordered.map((r) => {
+  // The Head of Meta sees the clients on Meta, the Head of Google those on Google (execs everyone)
+  const line = me.role === "head_of_meta" ? "facebook-ads" : me.role === "head_of_google" ? "google-ads" : null;
+  const cards = ordered.filter((r) => !line || servicesFor(r).includes(line)).map((r) => {
     const u = (usage ?? []).find((x) => x.client_id === r.id);
     return {
       missing: missing(r),

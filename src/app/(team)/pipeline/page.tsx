@@ -6,6 +6,7 @@ import { greetingFor, todayLabel } from "@/lib/dates";
 import { loadHome, loadKpiPulse, type KpiPulse } from "@/lib/home";
 import { loadProduction } from "@/lib/production";
 import { roleLabel } from "@/lib/roles";
+import { servicesOf } from "@/lib/services";
 import { businessDuration, health, stageInfo, type Stage } from "@/lib/stages";
 import { createClient } from "@/lib/supabase/server";
 import { loadOwedReplies } from "@/lib/owed-replies";
@@ -41,8 +42,8 @@ export default async function Home() {
     loadHome(db, me),
     Promise.all(lines.map((platform) => loadKpiPulse(db, { platform }))),
     !me.isLead && !me.isExec && variantNow === "buyer" ? loadKpiPulse(db, me.id) : Promise.resolve(null),
-    // Briefs the strategist suggests: execs and leads decide them
-    me.isExec || me.isLead ? loadSuggestions(db) : Promise.resolve(null),
+    // Briefs the strategist suggests (Meta creative): execs and the leads on it decide them, not the Head of Google
+    (me.isExec || me.isLead) && me.role !== "head_of_google" ? loadSuggestions(db) : Promise.resolve(null),
     // Ads wearing out: every client for execs and leads, a buyer's own clients for a buyer
     // (Meta ads only, so not for the Head of Google)
     me.role === "head_of_google" ? Promise.resolve(null) : me.isExec || me.isLead ? loadWatchList(db, { limit: 8 }) : variantFor(me) === "buyer" ? loadWatchList(db, { buyerId: me.id, limit: 12 }) : Promise.resolve(null),
@@ -65,6 +66,19 @@ export default async function Home() {
   const owed = { items: owedItems.filter((o) => o.targetId === me.id || !hidden.has(`owed:${o.id}`)), said: said.filter((p) => p.ownerId === me.id || !hidden.has(`said:${p.id}`)), me: me.id };
 
   const kpis = kpiLines.filter((k): k is KpiPulse => Boolean(k));
+  // The heads of Meta and Google see the clients on their line being onboarded, not every new client
+  if (onboarding && lines.length === 1) {
+    const ids = onboarding.clients.map((c) => c.clientId);
+    const [{ data: cs }, { data: ks }] = ids.length
+      ? await Promise.all([db.from("clients").select("id, services, services_extra, services_removed, meta_ad_account_id").in("id", ids), db.from("kpi_targets").select("client_id").eq("platform", lines[0]).in("client_id", ids)])
+      : [{ data: [] }, { data: [] }];
+    const slug = lines[0] === "google" ? "google-ads" : "facebook-ads";
+    const on = new Set([
+      ...(ks ?? []).map((k) => k.client_id as string),
+      ...(cs ?? []).filter((c) => servicesOf(c).includes(slug) || (lines[0] === "meta" && c.meta_ad_account_id && !(c.services_removed ?? []).includes(slug))).map((c) => c.id as string),
+    ]);
+    onboarding.clients = onboarding.clients.filter((c) => on.has(c.clientId));
+  }
   // How creative production is going (speed, revisions, the team): execs and the Head of Creative
   const production = me.isExec || me.role === "head_of_creative" ? await loadProduction(db).catch(() => null) : null;
 
@@ -87,9 +101,11 @@ export default async function Home() {
     const dept = department(me);
     const creative = dept === "Creative";
     // The Head of Creative decides creative review; the heads of Meta and Google, launches
-    const waiting = h.rows.filter((r) => (creative ? r.stage === "internal_review" : r.stage === "ready_for_launch")).sort((a, b) => b.minutes_over - a.minutes_over);
+    const google = dept === "Google";
+    // Ads launched from here are Meta ads: the Head of Google has none waiting on them
+    const waiting = google ? [] : h.rows.filter((r) => (creative ? r.stage === "internal_review" : r.stage === "ready_for_launch")).sort((a, b) => b.minutes_over - a.minutes_over);
     const mine = new Set<Stage>(creative ? ["requested", "in_production", "client_revision", "internal_review"] : ["client_review", "ready_for_launch"]);
-    const team = h.teamOf(creative ? ["graphic_designer", "video_editor"] : ["media_buyer"]);
+    const team = h.teamOf(creative ? ["graphic_designer", "video_editor"] : google ? ["google_buyer"] : ["media_buyer"]);
     return (
       <LeaderView
         {...base}

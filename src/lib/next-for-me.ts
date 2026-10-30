@@ -49,7 +49,9 @@ const ago = (iso: string) => {
 };
 
 export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<NextForMe> {
-  const buyerish = me.isBuyer || me.isLead || me.isExec;
+  const buyerish = me.isBuyer || me.isLead || me.isExec || me.role === "google_buyer";
+  // Meta ads wearing out are for the Meta side, not Google's
+  const metaSide = me.role !== "google_buyer" && me.role !== "head_of_google";
   // My clients: the ones I'm assigned to and the ad accounts I own in the KPI tracker
   const [{ data: assigned }, { data: owned }] = await Promise.all([
     db.from("client_assignments").select("client_id").eq("profile_id", me.id),
@@ -60,7 +62,7 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
   const [h, kpis, fatigue, onboarding, promises, suggestions] = await Promise.all([
     loadHome(db, me),
     buyerish ? loadKpiPulse(db, me.id) : Promise.resolve(null),
-    buyerish ? loadWatchList(db, { buyerId: me.id, limit: 30 }) : Promise.resolve([]),
+    buyerish && metaSide ? loadWatchList(db, { buyerId: me.id, limit: 30 }) : Promise.resolve([]),
     buyerish ? loadOnboarding(db) : Promise.resolve(null),
     buyerish ? loadCallPromises(db) : Promise.resolve([]),
     me.isLead || me.isExec ? loadSuggestions(db) : Promise.resolve(null),

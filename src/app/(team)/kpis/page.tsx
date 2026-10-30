@@ -53,8 +53,13 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
 
   // The Meta team sees Meta accounts and the Google team Google's; execs and everyone else see both
   const team = teamPlatform(me.role);
+  // A buyer: only the accounts they're on (they own the KPI, or they're the client's buyer for that platform)
+  const buyer = Boolean(team) && !me.isExec && !me.isLead;
+  const { data: seats } = buyer ? await supabase.from("client_assignments").select("client_id, role").eq("profile_id", me.id).in("role", ["meta_buyer", "google_buyer"]) : { data: [] };
+  const seated = new Set((seats ?? []).map((a) => `${a.client_id}:${a.role === "google_buyer" ? "google" : "meta"}`));
   const rows: KpiRow[] = (targets ?? [])
     .filter((t) => !team || (t.platform === "google" ? "google" : "meta") === team)
+    .filter((t) => !buyer || t.owner_id === me.id || seated.has(`${t.client_id}:${t.platform === "google" ? "google" : "meta"}`))
     .map((t) => {
       const c = t.clients as unknown as { name: string; slug: string; status: string } | null;
       const s = snapBy.get(t.id);
