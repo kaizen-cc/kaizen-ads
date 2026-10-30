@@ -50,7 +50,7 @@ export function ChangeLog({ changes, platform, title = "Change history", limit, 
         )}
       </div>
       {list.length === 0 ? (
-        <p className="text-sm text-muted">No changes logged yet. They show here from the next sync (every 2 hours), up to {platform === "google" ? "30" : "90"} days back.</p>
+        <p className="text-sm text-muted">No changes logged yet. They show here from the next sync (every 30 minutes in business hours), up to {platform === "google" ? "30" : "90"} days back.</p>
       ) : (
         <ol className="grid">
           {list.slice(0, collapsed && !all ? collapsed : list.length).map((c, i) => {

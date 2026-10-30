@@ -1741,7 +1741,7 @@ export function KpiBoard({
             How every account is pacing toward its target and its budget.
             <span suppressHydrationWarning className="inline-flex items-center gap-1.5 text-xs text-faint">
               <span className={`h-1.5 w-1.5 rounded-full ${synced.tone === "ok" ? "bg-ok" : synced.tone === "warn" ? "bg-warn" : "bg-faint/60"}`} />
-              {synced.label} · every 2 hours
+              {synced.label} · every 30 min in business hours
             </span>
           </p>
         </div>

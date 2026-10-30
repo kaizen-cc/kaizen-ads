@@ -8,7 +8,7 @@ import { AuditPanel, type AuditSummary } from "../../kpis/audit-panel";
 import { ChangeLog } from "@/components/change-log";
 import type { AccountChange } from "@/lib/account-changes";
 
-// How the client's ad accounts are doing against their targets, from the KPI tracker (refreshed every 2 hours).
+// How the client's ad accounts are doing against their targets, from the KPI tracker (refreshed every 30 minutes in business hours, hourly otherwise).
 // The same picture every agent reads before it writes a brief, copy or a review for this client. Each KPI carries its
 // account audit: the same audit as on the KPI board, so one started here shows there and the other way round.
 

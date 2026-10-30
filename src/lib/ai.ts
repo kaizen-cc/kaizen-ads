@@ -377,7 +377,7 @@ export type ClientContext = {
   meta: string | null; // the latest Meta ad performance, in readable lines
   tiring?: string; // ads the fatigue watcher flagged, in lines
   intake?: string; // the marketing intake form, as the AI read it
-  kpis?: string | null; // the KPI targets and how each account is doing against them (refreshed every 2 hours)
+  kpis?: string | null; // the KPI targets and how each account is doing against them (refreshed every 30 minutes in business hours, hourly otherwise)
   brandBible: string | null; // the whole Brand Bible ("Read this first", then the full document; a draft marked as a draft)
   gtm?: string | null; // the whole Meta go-to-market strategy (reviewed, or marked as a draft)
   sinceBriefing: { source: string; at: string; author: string | null; title: string | null; body: string | null }[]; // newer than the briefing

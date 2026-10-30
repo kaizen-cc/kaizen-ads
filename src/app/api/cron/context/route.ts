@@ -42,7 +42,7 @@ function nyNow() {
  * Whether a scheduled call should do its step now (Vercel Cron runs in UTC; this is New York time):
  * - slack, drive, gmail: every 30 minutes on weekdays 8am to 6pm, every 3 hours otherwise
  * - meta: every 2 hours (Meta's own numbers settle slowly)
- * - kpi: every 2 hours (campaign numbers for the KPI dashboard; no AI, so it's cheap)
+ * - kpi: every 30 minutes on weekdays 8am to 6pm, every hour otherwise (campaign numbers for the KPI dashboard; no AI)
  * - brief: 12pm and 6pm
  * - market: 8:30am (live ads from Motion for the Market tab, ready for the morning)
  * - sheet: 12pm and 5pm, the Account Overview sheet (buyer, budget and KPI target per account, and the team's notes)
@@ -62,7 +62,7 @@ function due(step: string | null) {
   const businessHours = !["Sat", "Sun"].includes(weekday) && hour >= 8 && hour < 18;
   if (step === "slack" || step === "drive" || step === "gmail") return businessHours || (hour % 3 === 0 && minute < 30);
   if (step === "meta") return hour % 2 === 0;
-  if (step === "kpi") return true; // every 2 hours (vercel.json)
+  if (step === "kpi") return businessHours || minute >= 30; // called at :15 and :45 (vercel.json)
   if (step === "brief") return [12, 18].includes(hour) && minute < 30;
   if (step === "suggest") return !["Sat", "Sun"].includes(weekday) && hour === 8;
   if (step === "clients") return true;

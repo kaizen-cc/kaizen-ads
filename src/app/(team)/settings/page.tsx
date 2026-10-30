@@ -216,7 +216,7 @@ async function Data({ target, from, to }: { target: string | null; from: string;
 // [source prefix, name, the job Sync now runs, what it does]
 /** prefix, name, job, what it does, category, how often (short) */
 const GROUPS: [string, string, SyncJob, string, string, string][] = [
-  ["kpi:", "KPI numbers", "kpi", "Campaign numbers for the KPI dashboard, per ad account, every 2 hours", "ads", "Per ad account · every 2 hours"],
+  ["kpi:", "KPI numbers", "kpi", "Campaign numbers for the KPI dashboard, per ad account, every 30 minutes in business hours and hourly otherwise", "ads", "Per ad account · every 30 min (business hours), hourly otherwise"],
   ["meta", "Meta ads", "meta", "Every ad's daily numbers, then fatigue, winners and the Hall of Fame, every 2 hours", "ads", "Daily, per ad · every 2 hours"],
   ["slack", "Slack channels", "slack", "Client and internal channels, every 30 minutes in business hours", "talk", "Every 30 min · business hours"],
   ["gmail:", "Inboxes", "gmail", "Mail with client contacts in every team inbox, every 30 minutes in business hours", "talk", "Every 30 min · business hours"],

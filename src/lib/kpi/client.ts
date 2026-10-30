@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Agg, Pacing, Status, Trend } from "./calc";
 import { conversionFor, conversionLabel } from "./conversions";
 
-// One client's KPI targets as the tracker last computed them (every 2 hours): for the client page and for every
+// One client's KPI targets as the tracker last computed them (every 30 minutes in business hours, hourly otherwise): for the client page and for every
 // agent that reads the client, so a brief for an off-target account knows it's off target.
 
 export type ClientKpi = {

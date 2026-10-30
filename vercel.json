@@ -35,7 +35,7 @@
     },
     {
       "path": "/api/cron/context?step=kpi",
-      "schedule": "45 */2 * * *"
+      "schedule": "15,45 * * * *"
     },
     {
       "path": "/api/cron/context?step=brief",

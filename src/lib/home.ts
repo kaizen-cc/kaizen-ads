@@ -231,7 +231,7 @@ export async function loadHome(db: SupabaseClient, me: Staff) {
   };
 }
 
-// ─── Ad accounts against their KPI targets (from the KPI tracker, refreshed every 2 hours) ───
+// ─── Ad accounts against their KPI targets (from the KPI tracker, refreshed every 30 minutes in business hours, hourly otherwise) ───
 
 export type KpiPulse = {
   platform: "meta" | "google" | "all";
