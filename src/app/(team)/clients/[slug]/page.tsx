@@ -7,7 +7,7 @@ import type { ClientCall } from "./calls-panel";
 import { notFound } from "next/navigation";
 import type { Digest } from "@/lib/ai";
 import { isExecOrLead, requireStaff, seesAllClients } from "@/lib/auth";
-import { SLOTS, type TeamRole } from "@/lib/roles";
+import { SLOTS, canHold } from "@/lib/roles";
 import { freshness, nyToday } from "@/lib/dates";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -54,7 +54,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       supabase.from("contact_clients").select("is_primary, contacts(id, email, full_name, auth_user_id)").eq("client_id", client.id),
       supabase.from("angles").select("id, name, kind, description, status").eq("client_id", client.id).order("status").order("name"),
       supabase.from("client_allotment_usage").select("*").eq("client_id", client.id).maybeSingle(),
-      supabase.from("profiles").select("id, full_name, role").eq("is_active", true).order("full_name"),
+      supabase.from("profiles").select("id, full_name, role, also_buys").eq("is_active", true).order("full_name"),
       supabase.from("client_memory").select("id, kind, body, source, share_reason, created_at, dated, profiles(full_name)").eq("client_id", client.id).eq("status", "active").order("created_at", { ascending: false }),
       supabase.from("client_briefings").select("digest, generated_at, sources").eq("client_id", client.id).maybeSingle(),
       // Execs only (RLS): which of this client's Slack channels the bot couldn't get into on the last run
@@ -117,8 +117,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     const a = (assignments ?? []).find((x) => x.role === slot);
     return a ? { id: a.profile_id, name: (a.profiles as unknown as { full_name: string } | null)?.full_name ?? "Unknown" } : null;
   };
-  const optionsFor = (eligible: readonly TeamRole[]) =>
-    (staff ?? []).filter((p) => eligible.includes(p.role as TeamRole)).map((p) => ({ id: p.id, name: p.full_name }));
+  const optionsFor = (slot: (typeof SLOTS)[number]) => (staff ?? []).filter((p) => canHold(slot, p)).map((p) => ({ id: p.id, name: p.full_name }));
   const contacts = (links ?? []).flatMap((l: { is_primary: boolean; contacts: unknown }) => {
     const c = l.contacts as { id: string; email: string; full_name: string | null; auth_user_id: string | null } | null;
     return c ? [{ ...c, isPrimary: l.is_primary }] : [];
@@ -312,7 +311,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       brandBible={brandBible}
       gtm={gtm}
       today={nyToday()}
-      team={Object.fromEntries(SLOTS.map((slot) => [slot.value, { current: currentIn(slot.value), options: optionsFor(slot.eligible) }]))}
+      team={Object.fromEntries(SLOTS.map((slot) => [slot.value, { current: currentIn(slot.value), options: optionsFor(slot) }]))}
       contacts={contacts}
       angles={angles ?? []}
       memory={(memory ?? []).map((m) => ({ id: m.id, kind: m.kind, body: m.body, source: m.source, shareReason: m.share_reason, dated: m.dated, by: (m.profiles as unknown as { full_name: string } | null)?.full_name ?? null }))}

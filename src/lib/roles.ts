@@ -54,3 +54,8 @@ export function seatNeeded(slot: string, allotment: { images: number; videos: nu
   if (slot === "video_editor") return !(allotment.images > 0 && allotment.videos === 0);
   return true;
 }
+
+/** Who can hold a seat: their role, or (for the buyer seats) someone who also buys media alongside their own role (an exec) */
+export function canHold(slot: { value: string; eligible: readonly TeamRole[] }, p: { role: string; also_buys?: boolean | null }) {
+  return slot.eligible.includes(p.role as TeamRole) || (Boolean(p.also_buys) && (slot.value === "meta_buyer" || slot.value === "google_buyer"));
+}

@@ -52,11 +52,11 @@ export function teamInForm(raw: Record<string, unknown>) {
 export async function applyTeam(admin: SupabaseClient, clientId: string, raw: Record<string, unknown>) {
   const team = teamInForm(raw);
   if (!team.size) return { assigned: {}, unmatched: [] as string[] };
-  const { data: people } = await admin.from("profiles").select("id, full_name, role").eq("is_active", true);
+  const { data: people } = await admin.from("profiles").select("id, full_name, role, also_buys").eq("is_active", true);
   const assigned: Record<string, string> = {};
   const unmatched: string[] = [];
   for (const [slot, names] of team) {
-    const pool = (people ?? []).filter((p) => ELIGIBLE[slot].includes(p.role));
+    const pool = (people ?? []).filter((p) => ELIGIBLE[slot].includes(p.role) || (p.also_buys && (slot === "meta_buyer" || slot === "google_buyer")));
     const ids: string[] = [];
     for (const name of names) {
       const n = norm(name);

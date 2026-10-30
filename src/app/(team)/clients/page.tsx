@@ -1,6 +1,6 @@
 import { isExecOrLead, requireStaff, seesAllClients } from "@/lib/auth";
 import { freshness, nyToday } from "@/lib/dates";
-import { SLOTS, seatNeeded, type SlotRole, type TeamRole } from "@/lib/roles";
+import { SLOTS, canHold, seatNeeded, type SlotRole } from "@/lib/roles";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { Option } from "./assign-select";
@@ -43,7 +43,7 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
     .order("name");
   const [{ data }, { data: staff }, { data: usage }, { data: open }, { data: snaps }, { data: archived }, { data: kpiRows }] = await Promise.all([
     req,
-    supabase.from("profiles").select("id, full_name, role").eq("is_active", true).order("full_name"),
+    supabase.from("profiles").select("id, full_name, role, also_buys").eq("is_active", true).order("full_name"),
     supabase.from("client_allotment_usage").select("*"),
     supabase.from("requests").select("client_id").neq("stage", "launched"),
     supabase.from("meta_snapshots").select("client_id, fetched_at").order("fetched_at", { ascending: false }).limit(500),
@@ -84,9 +84,8 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
   const newest = (...xs: (string | null | undefined)[]) => xs.filter(Boolean).sort().pop() ?? null;
 
   const canEdit = isExecOrLead(me);
-  const optionsFor = (eligible: readonly TeamRole[]): Option[] =>
-    (staff ?? []).filter((p) => eligible.includes(p.role as TeamRole)).map((p) => ({ id: p.id, name: p.full_name }));
-  const slotOptions = Object.fromEntries(SLOTS.map((s) => [s.value, optionsFor(s.eligible)])) as Record<SlotRole, Option[]>;
+  const optionsFor = (slot: (typeof SLOTS)[number]): Option[] => (staff ?? []).filter((p) => canHold(slot, p)).map((p) => ({ id: p.id, name: p.full_name }));
+  const slotOptions = Object.fromEntries(SLOTS.map((s) => [s.value, optionsFor(s)])) as Record<SlotRole, Option[]>;
   const current = (r: Row, slot: string): Option | null => {
     const a = r.client_assignments.find((x) => x.role === slot);
     return a ? { id: a.profile_id, name: a.profiles?.full_name ?? "Unknown" } : null;

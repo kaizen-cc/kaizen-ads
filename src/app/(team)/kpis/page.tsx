@@ -39,7 +39,7 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
       .eq("active", true)
       .is("clients.archived_at", null),
     supabase.from("kpi_snapshots").select("*"),
-    supabase.from("profiles").select("id, full_name, role").eq("is_active", true).in("role", ["media_buyer", "head_of_meta"]).order("full_name"),
+    supabase.from("profiles").select("id, full_name, role").eq("is_active", true).or("role.in.(media_buyer,head_of_meta),also_buys.eq.true").order("full_name"),
     supabase.from("clients").select("id, name").neq("status", "offboarded").order("name"),
     latestAudits(supabase),
   ]);
