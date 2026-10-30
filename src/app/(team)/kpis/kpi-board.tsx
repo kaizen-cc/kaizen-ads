@@ -861,7 +861,7 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
               (r.accountId ? (
                 <>
                   {(r.status === "off" || r.status === "close") && !r.sprint && r.audit?.status !== "running" && !recentlyChanged(r) && (
-                    <p className="rounded-[14px] border border-dashed border-bad/50 px-4 py-3 text-sm text-bad">
+                    <p suppressHydrationWarning className="rounded-[14px] border border-dashed border-bad/50 px-4 py-3 text-sm text-bad">
                       Nobody&apos;s optimizing this account yet{r.lastChange?.at ? `: no changes in ${sinceText(r.lastChange.at)}` : ""}. Run the audit and make the first moves below.
                     </p>
                   )}
@@ -989,7 +989,7 @@ function NextMove({ r, moves, onActions, onNotes }: { r: KpiRow; moves: number; 
           <>
             <span className="font-heading text-[17px] leading-snug">{v.headline}</span>
             <span className="line-clamp-3 text-sm leading-relaxed text-muted">{v.summary}</span>
-            <span className="text-[11px] text-faint">
+            <span suppressHydrationWarning className="text-[11px] text-faint">
               Audited {agoText(r.audit!.createdAt)}
               {r.audit!.by ? ` by ${r.audit!.by}` : ""}
             </span>
@@ -1013,7 +1013,7 @@ function NextMove({ r, moves, onActions, onNotes }: { r: KpiRow; moves: number; 
           </span>
         )}
         {r.lastChange?.at && (
-          <span className="truncate text-[11px] text-faint">
+          <span suppressHydrationWarning className="truncate text-[11px] text-faint">
             Last change {sinceText(r.lastChange.at)} ago · {r.lastChange.what}
             {r.lastChange.who ? ` by ${r.lastChange.who}` : ""}
           </span>
@@ -1185,7 +1185,7 @@ function Card({ r, active, onOpen }: { r: KpiRow; active: boolean; onOpen: () =>
               </span>
             )}
             {headline ? <span className="line-clamp-2 text-xs leading-snug text-fg/85">{headline}</span> : r.pace?.dailyNeeded != null && r.pace.status !== "early" ? <span className="text-xs text-muted">{money(r.pace.dailyNeeded)}/day lands it on budget</span> : null}
-            {r.lastChange?.at && <span className="truncate text-[11px] text-faint">Changed {sinceText(r.lastChange.at)} ago{r.lastChange.who ? ` by ${r.lastChange.who}` : ""}</span>}
+            {r.lastChange?.at && <span suppressHydrationWarning className="truncate text-[11px] text-faint">Changed {sinceText(r.lastChange.at)} ago{r.lastChange.who ? ` by ${r.lastChange.who}` : ""}</span>}
           </div>
         </div>
 
@@ -1375,7 +1375,7 @@ export function KpiBoard({
           <h1 className="font-heading text-[32px] leading-tight">KPIs</h1>
           <p className="mt-1.5 flex flex-wrap items-center gap-x-2 text-sm text-muted">
             How every account is pacing toward its target and its budget.
-            <span className="inline-flex items-center gap-1.5 text-xs text-faint">
+            <span suppressHydrationWarning className="inline-flex items-center gap-1.5 text-xs text-faint">
               <span className={`h-1.5 w-1.5 rounded-full ${synced.tone === "ok" ? "bg-ok" : synced.tone === "warn" ? "bg-warn" : "bg-faint/60"}`} />
               {synced.label} · every 2 hours
             </span>

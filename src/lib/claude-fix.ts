@@ -7,7 +7,7 @@ const LABEL = "claude-fix";
  * Hand an error to Claude: open a GitHub issue labelled claude-fix with everything we know.
  * The claude-fix workflow picks it up and opens a pull request. Returns the issue link.
  */
-export async function createFixIssue(fingerprint: string): Promise<{ url?: string; error?: string }> {
+export async function createFixIssue(fingerprint: string, by = "by Santi"): Promise<{ url?: string; error?: string }> {
   const token = process.env.GITHUB_TOKEN;
   const repo = process.env.GITHUB_REPO || "kaizen-cc/kaizen-ads";
   if (!token) return { error: "Automatic fixes aren't connected yet: add GITHUB_TOKEN in Vercel." };
@@ -32,7 +32,7 @@ export async function createFixIssue(fingerprint: string): Promise<{ url?: strin
   const d = (e.diagnosis ?? {}) as Record<string, unknown>;
   const sample = (e.sample ?? {}) as Record<string, unknown>;
   const body = [
-    `Reported by Kaizen Ads's error monitor and handed to Claude by Santi.`,
+    `Reported by Kaizen Ads's error monitor and handed to Claude ${by}.`,
     ``,
     `**Error:** \`${e.message}\``,
     `**Where:** ${e.path ?? "unknown"} (${e.kind}) · seen ${e.count}× · people: ${((e.people as string[]) ?? []).join(", ") || "unknown"}`,

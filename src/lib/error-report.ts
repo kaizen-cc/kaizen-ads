@@ -118,10 +118,17 @@ export async function reportError(input: {
     }
 
     const sev = d?.severity ?? "medium";
+    // Handed to Claude without waiting for a click: anything past low severity, or that has happened more than once.
+    // Claude reads the code, fixes it in a pull request (or says why it isn't ours), and the checks run on it.
+    let fixUrl = rec?.fix_issue_url ?? null;
+    if (!fixUrl && process.env.GITHUB_TOKEN && (sev !== "low" || count >= 2)) {
+      const { createFixIssue } = await import("@/lib/claude-fix");
+      fixUrl = (await createFixIssue(fingerprint, "automatically").catch(() => ({ url: undefined }))).url ?? null;
+    }
     const handled = d?.handled ?? "Recorded; the person saw a friendly error page and their work is safe.";
     const subject = `[Kaizen Ads] ${sev === "high" ? "🔴 " : sev === "low" ? "" : "🟠 "}${count > 1 ? `${count}× ` : ""}${input.message.slice(0, 80)}`;
-    const fixHref = rec?.fix_issue_url ?? opsLink("fix", fingerprint);
-    const fixLabel = rec?.fix_issue_url ? "Claude is already on it" : "Have Claude fix it";
+    const fixHref = fixUrl ?? opsLink("fix", fingerprint);
+    const fixLabel = fixUrl ? "Claude is already on it" : "Have Claude fix it";
     const text = [
       d ? `What happened: ${d.summary}` : `Something broke in Kaizen Ads: ${input.message}`,
       d ? `Why: ${d.cause}` : "",

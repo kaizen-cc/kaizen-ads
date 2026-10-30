@@ -150,7 +150,7 @@ export function AuditPanel({ targetId, audit, platform }: { targetId: string; au
         </div>
         {confirm && audit?.status === "ready" && (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-[12px] border border-warn/40 bg-warn-soft px-4 py-3 text-sm">
-            <span>
+            <span suppressHydrationWarning>
               This account was audited {agoText(audit.createdAt)}
               {audit.by ? ` by ${audit.by}` : ""}. A new audit costs a few minutes of AI and {platform === "google" ? "Google" : "Meta"} calls; the last one is probably still current.
             </span>
@@ -206,7 +206,7 @@ export function AuditPanel({ targetId, audit, platform }: { targetId: string; au
               <span className="rounded-full border border-line px-2.5 py-1 text-muted">
                 <span className="tabular text-fg">{audit.done}</span> of <span className="tabular">{audit.actions}</span> actions done
               </span>
-              <span className="text-faint" title={when(audit.createdAt)}>
+              <span suppressHydrationWarning className="text-faint" title={when(audit.createdAt)}>
                 This audit ran {agoText(audit.createdAt)}
                 {audit.by ? ` · run by ${audit.by}` : ""}
               </span>
