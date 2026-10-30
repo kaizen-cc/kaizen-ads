@@ -51,7 +51,35 @@ const shift = (day: string, n: number) => {
   return d.toISOString().slice(0, 10);
 };
 // Not results anyone runs a campaign for
-const NOISE = /^(post|page|post_|onsite_conversion\.post|video_view|photo_view|comment|like|post_reaction|post_engagement|page_engagement|post_interaction|onsite_conversion\.messaging_user_depth)/;
+const NOISE = /^(post|page|post_|onsite_conversion\.post|video_view|photo_view|comment|like|post_reaction|post_engagement|page_engagement|post_interaction|onsite_conversion\.messaging_user_depth|onsite_web_|onsite_app_|web_in_store|web_app_in_store)/;
+
+/**
+ * The results a campaign reports, as a short list a person can pick from: the same thing reported several ways
+ * ("Registrations", "Registrations (all)", "Registrations (pixel)", a raw custom conversion with the same count) is
+ * one choice, under its plain name, with the type that reported the most.
+ */
+function choices(sums: Map<string, number>) {
+  const raw = [...sums.entries()].filter(([, n]) => n > 0).map(([type, count]) => {
+    const label = actionLabel(type);
+    // Named: one Meta or Google has a real name for (not a raw type spelled out with spaces)
+    const known = label !== type.replace(/^(onsite_conversion|offsite_conversion|omni)\./, "").replaceAll("_", " ");
+    return { type, count, label: label.replace(/\s*\((all|pixel)\)$/i, ""), suffix: /\((all|pixel)\)$/i.test(label), known };
+  });
+  const best = new Map<string, (typeof raw)[number]>();
+  for (const o of raw) {
+    const cur = best.get(o.label);
+    if (!cur || o.count > cur.count || (o.count === cur.count && cur.suffix && !o.suffix)) best.set(o.label, o);
+  }
+  const list = [...best.values()];
+  // A raw, unnamed type that only repeats a named one's count is the same thing again
+  const seen = new Set(list.filter((o) => o.known).map((o) => o.count));
+  return list
+    .sort((a, b) => Number(b.known) - Number(a.known))
+    .filter((o) => o.known || (!seen.has(o.count) && (seen.add(o.count), true)))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10)
+    .map((o) => ({ type: o.type, label: o.label.charAt(0).toUpperCase() + o.label.slice(1), count: Math.round(o.count) }));
+}
 
 export async function campaignScorecard(admin: SupabaseClient, t: ScoreTarget): Promise<{ roas: boolean; campaigns: CampaignPerf[] }> {
   if (!t.ad_account_id) return { roas: false, campaigns: [] };
@@ -106,7 +134,8 @@ export async function campaignScorecard(admin: SupabaseClient, t: ScoreTarget): 
       spend7: Math.round(spend7 * 100) / 100,
       spend30: Math.round(spend30 * 100) / 100,
       result,
-      resultLabel: result ? (resultFrom === "goal" && labelOf.get(id) ? labelOf.get(id)! : actionLabel(result)) : "Nothing counted",
+      // "campaign_goal" before the goals are read from Meta (the next sync): nothing to show for it yet
+      resultLabel: !result || result === "campaign_goal" ? "Pick its result" : resultFrom === "goal" && labelOf.get(id) ? labelOf.get(id)! : actionLabel(result).replace(/\s*\((all|pixel)\)$/i, ""),
       resultFrom,
       results7: Math.round(results7 * 10) / 10,
       results30: Math.round(results30 * 10) / 10,
@@ -118,7 +147,7 @@ export async function campaignScorecard(admin: SupabaseClient, t: ScoreTarget): 
       purchases30: Math.round(total(days, bt) * 10) / 10,
       revenue30: Math.round((b30.value ?? 0) * b30.spend * 100) / 100,
       roas30: b30.value,
-      options: [...sums.entries()].filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).slice(0, 14).map(([type, count]) => ({ type, label: actionLabel(type), count: Math.round(count) })),
+      options: choices(sums),
     });
   }
   campaigns.sort((a, b) => Number(a.excluded) - Number(b.excluded) || Number(b.spend7 > 0) - Number(a.spend7 > 0) || b.spend30 - a.spend30);

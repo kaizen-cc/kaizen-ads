@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ActionButton, ActionForm } from "@/components/action-form";
 import { field, label } from "@/components/ui";
@@ -905,8 +905,8 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
 /**
  * Every campaign in the account against the card's target: one card per client, the campaigns inside it. Each
  * campaign is judged on its own result (what it's optimized for, or one picked here), and one the client runs
- * themselves can be left out. At the top, what the whole card is judged on (each campaign's own result added up, cost
- * per lead, cost per purchase, ROAS) and its target. Any change works the card's numbers out again straight away.
+ * themselves can be switched out of the KPI. At the top, what the whole card is judged on and its target. Any change
+ * works the card's numbers out again straight away.
  */
 function Campaigns({ id, target, conversion, platform }: { id: string; target: number | null; conversion: string; platform: "meta" | "google" }) {
   const router = useRouter();
@@ -925,8 +925,7 @@ function Campaigns({ id, target, conversion, platform }: { id: string; target: n
     };
   }, [id]);
   const after = async (res: { ok: true } | { ok: false; error: string }) => {
-    if (!res.ok) setError(res.error);
-    else setError(null);
+    setError(res.ok ? null : res.error);
     await load();
     setSaving(null);
     router.refresh();
@@ -936,9 +935,9 @@ function Campaigns({ id, target, conversion, platform }: { id: string; target: n
     setData((d) => (d ? { ...d, campaigns: d.campaigns.map((x) => (x.id === c.id ? { ...x, excluded: !x.excluded } : x)) } : d));
     await after(await setCampaignCounted(id, c.id, c.excluded));
   };
-  const pick = async (c: CampaignPerf, type: string) => {
+  const pick = async (c: CampaignPerf, type: string | null) => {
     setSaving(c.id);
-    await after(await setCampaignResult(id, c.id, type || null));
+    await after(await setCampaignResult(id, c.id, type));
   };
   const options = CONVERSIONS.filter((c) => c.platforms.includes(platform) && c.key !== "custom");
   const roasMetric = Boolean(CONVERSIONS.find((c) => c.key === metric)?.roas);
@@ -950,153 +949,231 @@ function Campaigns({ id, target, conversion, platform }: { id: string; target: n
 
   if (data && !data.campaigns.length) return null;
   const fmt = (v: number | null) => (v == null ? "—" : data?.roas ? `${v.toFixed(2)}x` : money(v));
-  // Counted first (spending now first, then the month's spend); left-out ones drop to the bottom as soon as they're left out
+  // Counted first (spending now first, then the month's spend); switched-out ones drop to the bottom at once
   const sorted = data ? [...data.campaigns].sort((a, b) => Number(a.excluded) - Number(b.excluded) || Number(b.spend7 > 0) - Number(a.spend7 > 0) || b.spend30 - a.spend30) : [];
   const list = all ? sorted : sorted.slice(0, 8);
+  const out = sorted.filter((c) => c.excluded).length;
+  const cols = "md:grid-cols-[minmax(0,1fr)_92px_minmax(150px,190px)_104px_92px_44px]";
+
   return (
-    <section className="grid gap-3 rounded-[20px] border border-line bg-surface p-4 md:p-5">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">Campaigns</p>
-        <span className="text-[11px] text-faint">
-          Last 30 days · each judged on its own result · leave out what the client runs themselves
-          {data && data.campaigns.some((c) => c.excluded) ? ` · ${data.campaigns.filter((c) => c.excluded).length} left out` : ""}
-        </span>
+    <section className="grid gap-4 rounded-[20px] border border-line bg-surface p-4 md:p-5">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div className="grid gap-0.5">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">Campaigns</p>
+          <p className="text-xs text-faint">Last 30 days, each judged on its own result{out ? ` · ${out} switched out of the KPI` : ""}</p>
+        </div>
       </div>
 
       {/* What the whole card is judged on */}
-      <div className="flex flex-wrap items-center gap-2 rounded-[14px] bg-bg/50 px-3 py-2.5 text-xs">
-        <span className="text-muted">The card is judged on</span>
-        <select
-          value={metric}
-          onChange={(e) => {
-            const next = e.target.value;
-            setMetric(next);
-            // A cost target and a ROAS target aren't the same number: asked again when switching between them
-            if (Boolean(CONVERSIONS.find((c) => c.key === next)?.roas) !== Boolean(CONVERSIONS.find((c) => c.key === conversion)?.roas)) setGoal("");
-          }}
-          aria-label="What the card is judged on"
-          className="h-11 rounded-full border border-line bg-surface px-3 text-xs outline-none md:h-8"
-        >
-          {options.map((c) => (
-            <option key={c.key} value={c.key}>
-              {c.key === "campaign_goal" ? "Each campaign's own result (cost per result)" : c.roas ? `ROAS (${c.label})` : `Cost per ${c.label.toLowerCase().replace(/s$/, "")}`}
-            </option>
-          ))}
-        </select>
-        <span className="text-muted">target</span>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[16px] border border-line/70 bg-bg/40 px-4 py-3">
+        <span className="text-xs text-faint">Judge the card on</span>
         <span className="relative">
-          {!roasMetric && <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint">$</span>}
+          <select
+            value={metric}
+            onChange={(e) => {
+              const next = e.target.value;
+              setMetric(next);
+              // A cost target and a ROAS target aren't the same number: asked again when switching between them
+              if (Boolean(CONVERSIONS.find((c) => c.key === next)?.roas) !== Boolean(CONVERSIONS.find((c) => c.key === conversion)?.roas)) setGoal("");
+            }}
+            aria-label="What the card is judged on"
+            className="h-11 appearance-none rounded-full border border-line bg-surface pl-4 pr-9 text-sm font-medium outline-none transition-colors hover:border-faint focus:border-brand-text/60 md:h-9"
+          >
+            {options.map((c) => (
+              <option key={c.key} value={c.key}>
+                {c.key === "campaign_goal" ? "Each campaign's own result" : c.roas ? `ROAS (${c.label === "ROAS" ? "purchases" : c.label})` : `Cost per ${c.label.toLowerCase().replace(/s$/, "")}`}
+              </option>
+            ))}
+          </select>
+          <svg aria-hidden width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-faint">
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+        </span>
+        <span className="text-xs text-faint">at</span>
+        <span className="relative">
+          {!roasMetric && <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-sm text-faint">$</span>}
           <input
             value={goal}
             onChange={(e) => setGoal(e.target.value.replace(/[^\d.]/g, ""))}
             inputMode="decimal"
-            placeholder={roasMetric ? "e.g. 3" : "e.g. 45"}
+            placeholder={roasMetric ? "3.0" : "45"}
             aria-label="Target"
-            className={`h-11 w-24 rounded-full border border-line bg-surface pr-3 text-xs outline-none md:h-8 ${roasMetric ? "pl-3" : "pl-6"}`}
+            className={`tabular h-11 w-24 rounded-full border border-line bg-surface pr-4 text-sm font-medium outline-none transition-colors hover:border-faint focus:border-brand-text/60 md:h-9 ${roasMetric ? "pl-4" : "pl-7"}`}
           />
-          {roasMetric && <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-faint">x</span>}
+          {roasMetric && <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm text-faint">x</span>}
         </span>
+        <span className="text-xs text-faint">{roasMetric ? "or better" : "or less per result"}</span>
         {changed && (
-          <button type="button" disabled={saving === "card" || !goal} onClick={saveMetric} className="h-11 rounded-full bg-fg px-4 text-xs font-medium text-bg disabled:opacity-50 md:h-8">
+          <button type="button" disabled={saving === "card" || !goal} onClick={saveMetric} className="ml-auto h-11 rounded-full bg-fg px-5 text-sm font-medium text-bg transition-opacity disabled:opacity-40 md:h-9">
             {saving === "card" ? "Saving…" : "Save"}
           </button>
         )}
-        {error && <span className="w-full text-bad">{error}</span>}
+        {error && <span className="w-full text-xs text-bad">{error}</span>}
       </div>
 
       {!data ? (
         <div className="grid gap-2">
           {[0, 1, 2].map((n) => (
-            <span key={n} className="h-9 animate-pulse rounded-[10px] bg-surface-2" />
+            <span key={n} className="h-14 animate-pulse rounded-[14px] bg-surface-2" />
           ))}
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[780px] text-left text-[13px]">
-            <thead className="text-[11px] text-faint">
-              <tr>
-                <th className="py-1.5 pr-3 font-normal">Campaign</th>
-                <th className="py-1.5 pr-3 text-right font-normal">Spend 7d</th>
-                <th className="py-1.5 pr-3 text-right font-normal">Spend 30d</th>
-                <th className="py-1.5 pr-3 font-normal">Result 30d</th>
-                <th className="py-1.5 pr-3 text-right font-normal">{data.roas ? "ROAS" : "Cost per result"} 30d</th>
-                {!data.roas && <th className="py-1.5 pr-3 text-right font-normal">Purchases</th>}
-                {!data.roas && <th className="py-1.5 pr-3 text-right font-normal">ROAS</th>}
-                <th className="py-1.5 text-right font-normal">In the KPI</th>
-              </tr>
-            </thead>
-            <tbody>
-              {list.map((c) => {
-                const tone = c.deviation == null ? (c.spend30 > 0 && !c.results30 ? "text-bad" : "text-faint") : c.deviation <= 0 ? "text-ok" : c.deviation <= 0.15 ? "text-warn" : "text-bad";
-                return (
-                  <tr key={c.id} className={`border-t border-line/70 align-top ${c.excluded ? "opacity-45" : c.spend7 > 0 ? "" : "opacity-55"}`}>
-                    <td className="max-w-[300px] py-2 pr-3">
-                      <span className="flex items-center gap-2">
-                        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${c.spend7 > 0 ? "bg-ok" : "bg-faint/50"}`} title={c.spend7 > 0 ? "Spending this week" : c.lastSpent ? `Last spent ${c.lastSpent}` : "Not spending"} />
-                        <span className="grid min-w-0">
-                          <span className={`truncate ${c.excluded ? "line-through decoration-faint/60" : ""}`} title={c.name}>
-                            {c.name}
-                          </span>
-                          {c.goal && <span className="truncate text-[10.5px] text-faint">Optimized for {c.goal}</span>}
-                        </span>
+        <div className="grid">
+          <div className={`hidden gap-4 px-3 pb-2 text-[10.5px] font-medium uppercase tracking-[0.12em] text-faint md:grid ${cols}`}>
+            <span>Campaign</span>
+            <span className="text-right">Spend</span>
+            <span>Result</span>
+            <span className="text-right">{data.roas ? "ROAS" : "Per result"}</span>
+            <span className="text-right">{data.roas ? "Purchases" : "ROAS"}</span>
+            <span className="text-right" title="Counted in the KPI">KPI</span>
+          </div>
+          <ul className="grid gap-1.5">
+            {list.map((c) => {
+              const tone = c.deviation == null ? (c.spend30 > 0 && !c.results30 ? "text-bad" : "text-faint") : c.deviation <= 0 ? "text-ok" : c.deviation <= 0.15 ? "text-warn" : "text-bad";
+              return (
+                <li
+                  key={c.id}
+                  className={`grid grid-cols-2 items-center gap-x-4 gap-y-3 rounded-[14px] border px-3 py-3 transition-[opacity,background-color] md:gap-y-0 ${cols} ${c.excluded ? "border-dashed border-line bg-transparent opacity-50" : "border-line/60 bg-bg/40 hover:bg-bg/70"}`}
+                >
+                  {/* The campaign */}
+                  <span className="col-span-2 flex min-w-0 items-start gap-2.5 md:col-span-1">
+                    <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${c.spend7 > 0 ? "bg-ok shadow-[0_0_0_3px_var(--ok-soft)]" : "bg-faint/40"}`} title={c.spend7 > 0 ? "Spending this week" : c.lastSpent ? `Last spent ${c.lastSpent}` : "Not spending"} />
+                    <span className="grid min-w-0 gap-0.5">
+                      <span className={`truncate text-[13.5px] font-medium ${c.excluded ? "line-through decoration-faint/60" : ""}`} title={c.name}>
+                        {c.name}
                       </span>
-                    </td>
-                    <td className="tabular py-2 pr-3 text-right">{money(c.spend7)}</td>
-                    <td className="tabular py-2 pr-3 text-right text-muted">{money(c.spend30)}</td>
-                    <td className="py-1.5 pr-3">
-                      <span className="grid gap-0.5">
-                        <span className="tabular text-muted">{c.results30}</span>
-                        {/* The result this campaign is judged on: what it's optimized for, or one picked here */}
-                        <select
-                          value={c.resultFrom === "picked" ? (c.result ?? "") : ""}
-                          disabled={saving === c.id}
-                          onChange={(e) => pick(c, e.target.value)}
-                          aria-label={`What ${c.name} is judged on`}
-                          title="What this campaign is judged on"
-                          className="max-w-[170px] truncate rounded-full bg-transparent text-[10.5px] text-faint outline-none hover:text-fg"
-                        >
-                          <option value="">{c.resultFrom === "card" ? `${c.resultLabel} (the card's)` : `${c.resultLabel} (its goal)`}</option>
-                          {c.options
-                            .filter((o) => c.resultFrom !== "picked" ? o.type !== c.result : true)
-                            .map((o) => (
-                              <option key={o.type} value={o.type}>
-                                {o.label} · {o.count}
-                              </option>
-                            ))}
-                        </select>
+                      <span className="truncate text-[11px] text-faint">
+                        {c.excluded ? "Run by the client · not in the KPI" : c.goal ? `Optimized for ${c.goal}` : c.spend7 > 0 ? "Spending this week" : c.lastSpent ? `Last spent ${c.lastSpent}` : "Not spending"}
                       </span>
-                    </td>
-                    <td className={`tabular py-2 pr-3 text-right ${tone}`}>{c.value30 == null && c.spend30 > 0 ? "no results" : fmt(c.value30)}</td>
-                    {!data.roas && <td className="tabular py-2 pr-3 text-right text-muted">{c.purchases30 || "—"}</td>}
-                    {!data.roas && (
-                      <td className={`tabular py-2 pr-3 text-right ${c.roas30 == null || !c.revenue30 ? "text-faint" : c.roas30 >= 1 ? "text-ok" : "text-warn"}`} title={c.revenue30 ? `${money(c.revenue30)} in purchases` : undefined}>
-                        {c.roas30 != null && c.revenue30 ? `${c.roas30.toFixed(2)}x` : "—"}
-                      </td>
+                    </span>
+                  </span>
+
+                  {/* Spend */}
+                  <span className="grid justify-items-start gap-0.5 md:justify-items-end">
+                    <span className="tabular text-[13.5px]">{money(c.spend30)}</span>
+                    <span className="tabular text-[11px] text-faint">{money(c.spend7)} this week</span>
+                  </span>
+
+                  {/* The result it's judged on, and the picker */}
+                  <span className="justify-self-end md:justify-self-stretch">
+                    <ResultPicker c={c} busy={saving === c.id} onPick={(t) => pick(c, t)} />
+                  </span>
+
+                  {/* Cost per result (ROAS on a ROAS card) */}
+                  <span className="grid justify-items-start gap-0.5 md:justify-items-end">
+                    <span className={`tabular font-display text-[17px] leading-none ${tone}`}>{c.value30 == null ? (c.spend30 > 0 ? "None" : "—") : fmt(c.value30)}</span>
+                    <span className="text-[11px] text-faint">{c.value30 == null && c.spend30 > 0 ? "no results yet" : data.roas ? "return" : "per result"}</span>
+                  </span>
+
+                  {/* ROAS from purchases (purchases on a ROAS card) */}
+                  <span className="grid justify-items-end gap-0.5" title={c.revenue30 ? `${c.purchases30} purchases, ${money(c.revenue30)} in sales` : "No purchases tracked"}>
+                    {data.roas ? (
+                      <span className="tabular text-[13.5px]">{c.purchases30 || "—"}</span>
+                    ) : (
+                      <span className={`tabular text-[13.5px] ${c.roas30 != null && c.revenue30 ? (c.roas30 >= 1 ? "text-ok" : "text-warn") : "text-faint"}`}>{c.roas30 != null && c.revenue30 ? `${c.roas30.toFixed(2)}x` : "—"}</span>
                     )}
-                    <td className="py-1 text-right">
-                      <button
-                        type="button"
-                        disabled={saving === c.id}
-                        onClick={() => toggle(c)}
-                        title={c.excluded ? "Left out: the client runs it. Count it again" : "Leave it out of the KPI (the client runs it themselves)"}
-                        className={`h-11 rounded-full px-3 text-[11px] transition-colors disabled:opacity-50 md:h-7 ${c.excluded ? "border border-line text-faint hover:text-fg" : "text-muted hover:bg-surface-2 hover:text-fg"}`}
-                      >
-                        {saving === c.id ? "…" : c.excluded ? "Count it" : "✓ Counted"}
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                    <span className="text-[11px] text-faint">{data.roas ? "purchases" : c.purchases30 ? `${c.purchases30} purchase${c.purchases30 === 1 ? "" : "s"}` : "no purchases"}</span>
+                  </span>
+
+                  {/* In the KPI or not */}
+                  <span className="col-span-2 flex justify-end md:col-span-1">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={!c.excluded}
+                      disabled={saving === c.id}
+                      onClick={() => toggle(c)}
+                      title={c.excluded ? "Switched out: the client runs it. Switch it back into the KPI" : "In the KPI. Switch it out if the client runs it themselves"}
+                      className="group/sw flex min-h-11 items-center gap-2 disabled:opacity-50 md:min-h-0"
+                    >
+                      <span className="text-[11px] text-faint md:hidden">{c.excluded ? "Not in the KPI" : "In the KPI"}</span>
+                      <span className={`relative h-5 w-9 rounded-full transition-colors ${c.excluded ? "bg-surface-2 ring-1 ring-line" : "bg-ok/80"}`}>
+                        <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-[left] ${c.excluded ? "left-0.5" : "left-[18px]"}`} />
+                      </span>
+                    </button>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
           {data.campaigns.length > 8 && (
-            <button type="button" onClick={() => setAll((a) => !a)} className="mt-2 h-11 text-xs text-muted hover:text-fg md:h-8">
+            <button type="button" onClick={() => setAll((a) => !a)} className="mt-2 h-11 justify-self-start px-1 text-xs text-muted hover:text-fg md:h-8">
               {all ? "Show fewer" : `All ${data.campaigns.length} campaigns`}
             </button>
           )}
         </div>
       )}
     </section>
+  );
+}
+
+/** The result a campaign is judged on, as a chip; it opens a short list of what the campaign reports to pick from. */
+function ResultPicker({ c, busy, onPick }: { c: CampaignPerf; busy: boolean; onPick: (type: string | null) => void }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: MouseEvent) => !box.current?.contains(e.target as Node) && setOpen(false);
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [open]);
+  const unset = !c.result || c.result === "campaign_goal";
+  const choose = (t: string | null) => {
+    setOpen(false);
+    onPick(t);
+  };
+  return (
+    <span ref={box} className="relative block">
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className={`group/rp flex min-h-11 w-full items-center gap-2 rounded-[12px] border px-3 py-1.5 text-left transition-colors disabled:opacity-50 md:min-h-0 ${unset ? "border-dashed border-warn/50 hover:border-warn" : "border-transparent hover:border-line hover:bg-surface"}`}
+      >
+        <span className="grid min-w-0 flex-1">
+          <span className="tabular text-[15px] font-medium leading-tight">{unset ? "—" : c.results30.toLocaleString("en-US")}</span>
+          <span className={`truncate text-[11px] ${unset ? "text-warn" : "text-faint"}`}>
+            {busy ? "Saving…" : c.resultLabel}
+            {c.resultFrom === "picked" && !busy && <span className="text-brand-text"> · set</span>}
+          </span>
+        </span>
+        <svg aria-hidden width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" className={`shrink-0 text-faint transition-transform group-hover/rp:text-fg ${open ? "rotate-180" : ""}`}>
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+      {open && (
+        <span role="menu" className="absolute right-0 top-full z-30 mt-1.5 grid w-[260px] gap-0.5 rounded-[16px] border border-line bg-surface p-1.5 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.7)] md:left-0 md:right-auto" style={{ animation: "fadeIn .15s ease-out" }}>
+          <span className="px-2.5 pb-1 pt-1.5 text-[10.5px] font-medium uppercase tracking-[0.12em] text-faint">Judge {c.name.length > 26 ? "this campaign" : c.name} on</span>
+          {c.goal && (
+            <button type="button" role="menuitemradio" aria-checked={c.resultFrom === "goal"} onClick={() => choose(null)} className={`flex items-center gap-2 rounded-[10px] px-2.5 py-2 text-left text-[13px] transition-colors hover:bg-surface-2 ${c.resultFrom === "goal" ? "bg-surface-2" : ""}`}>
+              <span className="grid min-w-0 flex-1">
+                <span className="truncate">{c.goal}</span>
+                <span className="text-[10.5px] text-faint">What it&apos;s optimized for</span>
+              </span>
+              {c.resultFrom === "goal" && <span className="text-ok">✓</span>}
+            </button>
+          )}
+          {c.goal && c.options.length > 0 && <span className="mx-2.5 my-1 h-px bg-line" />}
+          {c.options.map((o) => {
+            const on = c.resultFrom !== "goal" && c.result === o.type;
+            return (
+              <button key={o.type} type="button" role="menuitemradio" aria-checked={on} onClick={() => choose(o.type)} className={`flex items-center gap-2 rounded-[10px] px-2.5 py-2 text-left text-[13px] transition-colors hover:bg-surface-2 ${on ? "bg-surface-2" : ""}`}>
+                <span className="min-w-0 flex-1 truncate">{o.label}</span>
+                <span className="tabular text-[11.5px] text-faint">{o.count.toLocaleString("en-US")}</span>
+                <span className="w-3 text-ok">{on ? "✓" : ""}</span>
+              </button>
+            );
+          })}
+          {!c.options.length && <span className="px-2.5 py-2 text-xs text-faint">This campaign hasn&apos;t reported any results yet.</span>}
+        </span>
+      )}
+    </span>
   );
 }
 
