@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson, type AgentKey } from "@/lib/ai";
 import { metricsText, reportMetrics, type ReportMetrics } from "./metrics";
 import { voiceOf, workDone } from "./work";
+import { diagnose, diagnosisText, opportunityFor } from "./diagnose";
 
 // Writing a client report: the numbers (reportMetrics), the work behind them (workDone), the buyer's own voice (their
 // recaps in client channels), what this client likes in a report (learned from past edits), and what the buyer added
@@ -38,14 +39,20 @@ This report may cover more than one date range (for example the last 7 days and 
 Every report follows the same arc: what we did, what we're doing now and why, and what comes next. Its job is to show the client the work behind the numbers, not just the numbers.
 Accuracy above everything: every number you write must come from the numbers given, rounded the way the buyer rounds; never estimate, never invent a figure, an ad, a change or a plan. Comparisons say against what ("vs the week before", "vs August"). If results are down, say it plainly and say what we're doing about it; never spin. Only mention work that's in the work log, the sprint, or what the buyer added; group many small edits into what they amount to ("tightened budgets on the low-performing ad sets"). Never mention internal things: team members other than the client's own people, Kaizen Ads, AI, audits by name, allotments, internal Slack, other clients.
 message: the ${kind === "weekly" ? "Slack message to the client channel" : "Slack post that goes with the monthly report link"}, in Slack formatting (*bold* for short section headers, "• " for bullets, line breaks; no # headings, no emojis unless the buyer uses them). ${kind === "weekly" ? "Open with the headline numbers for the last 7 days against the week before (and where the month stands), then what we did this week, the top creative with its preview link when there is one, and what's next. Keep it as short as the buyer's own recaps." : "A short, warm note that the monthly recap is ready, the two or three numbers that matter most for the month against the month before, one line on the biggest thing we did and the biggest thing coming up; the link is added after."}
-sections: the same content, structured, for the PDF and the report page: headline (one line, the main takeaway), summary (2 to 4 sentences, the numbers in context), did (what we did, 3 to 7 bullets), doing (what we're doing now and why, 2 to 5), next (what comes next, 2 to 5), highlights (2 to 4 short numeric callouts, e.g. "14 leads at $84.21, down 56%").`;
+sections: the same content, structured, for the PDF and the report page: headline (one line, the main takeaway), summary (2 to 4 sentences, the numbers in context), did (what we did, 3 to 7 bullets), doing (what we're doing now and why, 2 to 5), next (what comes next, 2 to 5), highlights (2 to 4 short numeric callouts, e.g. "14 leads at $84.21, down 56%").
+${DIAGNOSE_RULES}`;
 }
+
+// How a report explains the numbers, and how (rarely) it raises another service
+const DIAGNOSE_RULES = `Explaining the numbers: <diagnosis> says where performance is weak and why (the creative, cost from ads wearing out or from tests that lost, or the website after the click), worked out from the data. Use it to explain what happened in plain words, then what we're doing about it. Don't recite it, don't blame the client, and keep it in the buyer's voice. When the account is healthy, say what's working.
+Raising another service: only when <opportunity> names one. Then mention it once: one line in "next" and at most one short sentence near the end of the message. Write it the way a trusted partner shares an idea, tied to their own numbers and their goal: "One idea we've been thinking about…", "If it's helpful, we could…". No prices, no urgency, no "upgrade", "package", "upsell" or "add-on", and leave an easy out ("happy to walk you through it if it's interesting"). If <opportunity> says none, don't suggest any new service, channel or product, even one that seems useful: most reports should simply report.`;
 
 const QA_SYSTEM = `You are the QA for client reports at Kaizen Marketing, a paid social agency. Before a buyer sees a draft, you check it as if the client's trust depended on it. Compare the draft (message and sections) with the source data, the work log and what the buyer added. Flag:
 - fix: a number that doesn't match the data or the math (percent changes, cost per result = spend / results, ROAS = revenue / spend), a wrong period or comparison, an ad, change or plan that isn't in the sources, a client-facing mention of something internal (team names other than the client's, AI, Kaizen Ads, other clients), a broken or missing preview link it refers to.
 - check: something the buyer should confirm before sending: a claim that's only loosely supported, wording that could read badly to the client, a missing section of the arc (did, doing, next), a number shown without what it's compared to.
 - alert: something alarming in the data itself the buyer should know before sending, even if the draft is right: results collapsing, spend with no results, spend far past budget, tracking that looks broken (clicks but zero results for days, a sudden zero), days with no data, a big swing that needs an explanation.
-issue: what's wrong in one sentence. where: the line or section it's in (quote a few words). suggestion: the exact fix or what to check. Only real issues; no style nitpicks. verdict: clean (nothing to fix or check), check (only checks or alerts), or fix (anything to fix).`;
+issue: what's wrong in one sentence. where: the line or section it's in (quote a few words). suggestion: the exact fix or what to check. Only real issues; no style nitpicks. A service named in <opportunity> may be mentioned once, softly; flag it as fix if it's pushy (prices, urgency, "upgrade"), repeated, or another service the sources didn't name.
+verdict: clean (nothing to fix or check), check (only checks or alerts), or fix (anything to fix).`;
 const QA_SCHEMA = obj({ verdict: { type: "string", enum: ["clean", "check", "fix"] }, flags: { type: "array", items: obj({ severity: { type: "string", enum: ["fix", "check", "alert"] }, issue: S, where: S, suggestion: S }) } });
 
 /** Plain checks on the data, before any AI: what the QA must never miss. */
@@ -56,13 +63,14 @@ function dataFlags(m: ReportMetrics): QaFlag[] {
   if (m.compare.results > 4 && m.main.results < m.compare.results * 0.4) out.push({ severity: "alert", issue: `${m.conversion} fell from ${m.compare.results} to ${m.main.results}.`, where: "Data", suggestion: "Make sure the report explains why and what we're doing about it." });
   if (m.mtd && m.monthlyBudget && m.mtd.spend > m.monthlyBudget) out.push({ severity: "alert", issue: `Month to date spend ($${m.mtd.spend.toFixed(0)}) is already past the $${m.monthlyBudget.toFixed(0)} monthly budget.`, where: "Data", suggestion: "Confirm the budget with the client, or say how spend is being brought in line." });
   if (m.main.spend === 0) out.push({ severity: "alert", issue: "Nothing spent in the period.", where: "Data", suggestion: "If the account is paused on purpose, the report should say so." });
+  if (m.opportunity) out.push({ severity: "check", issue: `This report raises ${m.opportunity.label} as an idea for the client (${m.opportunity.why})`, where: "Next", suggestion: "Keep it if the timing feels right with this client; ask the AI to take it out if not. Reports only raise a service now and then, never two in a row." });
   return out;
 }
 
 async function context(admin: SupabaseClient, reportId: string) {
   const { data: r } = await admin
     .from("reports")
-    .select("id, kind, platform, period_start, period_end, client_id, target_id, owner_id, bundle_id, extras, metrics, extra_metrics, work, sections, message, chat, clients(name), kpi_targets(id, client_id, platform, ad_account_id, conversion, custom_action, campaign_match, target, monthly_budget), profiles!reports_owner_id_fkey(full_name)")
+    .select("id, kind, platform, period_start, period_end, client_id, target_id, owner_id, bundle_id, extras, metrics, extra_metrics, work, sections, message, chat, clients(name), kpi_targets(id, client_id, platform, ad_account_id, conversion, custom_action, campaign_match, target, monthly_budget, excluded_campaigns, campaign_results), profiles!reports_owner_id_fkey(full_name)")
     .eq("id", reportId)
     .single();
   if (!r) throw new Error("Report not found");
@@ -82,6 +90,7 @@ function sourcesBlock(c: Awaited<ReturnType<typeof context>>, metrics: ReportMet
     `<numbers>\n${metricsText(metrics)}\n</numbers>`,
     ...(((c.r as unknown as { extra_metrics?: ReportMetrics[] | null }).extra_metrics ?? []) as ReportMetrics[]).map((m) => `<numbers range="${m.main.label}">\n${metricsText(m)}\n</numbers>`),
     `<work_log period="${c.r.period_start} to ${c.r.period_end}">\n${work}\n</work_log>`,
+    diagnosisText(metrics.diagnosis, metrics.opportunity),
     lastNext.length ? `<what_the_last_report_said_was_next>\n${lastNext.map((x) => `- ${x}`).join("\n")}\n</what_the_last_report_said_was_next>` : "",
     c.r.extras ? `<added_by_the_buyer>\n${c.r.extras}\n</added_by_the_buyer>` : "",
     c.prefs.length ? `<what_this_client_wants_in_a_report>\n${c.prefs.map((p) => `- ${p}`).join("\n")}\n</what_this_client_wants_in_a_report>` : "",
@@ -128,6 +137,9 @@ export async function draftReport(admin: SupabaseClient, reportId: string) {
       extra = await Promise.all(more.map((x) => reportMetrics(admin, c.target, "custom", dayAfter(x.end), { start: x.start, end: x.end })));
     }
     const work = await workDone(admin, c.target, [metrics.main.start, ...extra.map((m) => m.main.start)].sort()[0], metrics.main.end);
+    // Where the numbers are weak and why, and whether this is the moment to raise another service
+    metrics.diagnosis = await diagnose(admin, c.r.client_id, metrics).catch(() => undefined);
+    metrics.opportunity = metrics.diagnosis ? await opportunityFor(admin, c.r, metrics, metrics.diagnosis).catch(() => null) : null;
     await admin.from("reports").update({ metrics, work, extra_metrics: extra.length ? extra : null }).eq("id", reportId);
     (c.r as unknown as { extra_metrics: ReportMetrics[] }).extra_metrics = extra;
     const out = await askJson<{ message: string; sections: Sections }>({
