@@ -200,8 +200,8 @@ ${role.core}
       .filter((c) => (c.op === "update_item" || c.op === "turn_off_item" ? known.has(c.item_id) : true))
       .map((c) => ({ ...c, applied: false }));
     await supabase.from("ai_agent_chats").insert([
-      { agent_key: key, role: "user", content: text.slice(0, 8000), attachments: shared.attachments, created_by: me.id },
-      { agent_key: key, role: "coach", content: out.reply, changes, created_by: me.id },
+      { agent_key: key, role: "user", content: text.slice(0, 8000), attachments: shared.attachments, changes: [], created_by: me.id },
+      { agent_key: key, role: "coach", content: out.reply, changes, attachments: [], created_by: me.id },
     ]);
   } catch (e) {
     return { ok: false, error: e instanceof AiUnavailable ? e.message : "The coach couldn't answer. Try again." };
@@ -417,8 +417,9 @@ export async function chatWithAgent(roleKey: string, message: string, files: Age
     // Plain words: no markdown emphasis or emojis, whatever the model does
     const reply = out.reply.replace(/\*\*|__|(^|\s)[*#]+\s/gm, "$1").replace(/\p{Extended_Pictographic}️?/gu, "").trim();
     const { error } = await supabase.from("ai_role_chats").insert([
-      { role_key: roleKey, role: "user", content: text.slice(0, 8000), attachments: shared.attachments, created_by: me.id },
-      { role_key: roleKey, role: "agent", content: reply, changes, created_by: me.id },
+      // Both rows carry every column: inserted together, a column one row leaves out is sent as null, not its default
+      { role_key: roleKey, role: "user", content: text.slice(0, 8000), attachments: shared.attachments, changes: [], created_by: me.id },
+      { role_key: roleKey, role: "agent", content: reply, changes, attachments: [], created_by: me.id },
     ]);
     if (error) return { ok: false, error: error.message };
   } catch (e) {

@@ -1,6 +1,6 @@
 # Kaizen Ads: Roadmap
 
-Where things stand on 2026-10-19 and what comes next, in order. The target is the full request → approval → launch loop live before Black Friday / Cyber Monday. See VISION.md for every decision behind it.
+Where things stand on 2026-10-31 and what comes next, in order. The target is the full request → approval → launch loop live before Black Friday / Cyber Monday. See VISION.md for every decision behind it.
 
 ## Built
 
@@ -40,6 +40,39 @@ Where things stand on 2026-10-19 and what comes next, in order. The target is th
 - **Handoffs**: a buyer change moves the work and writes the new buyer a handoff with a chat (waits until they've joined).
 - **Overview as topics** and the **daily recap** for everyone (most critical first, jump to a topic, save for later, "taken care of by a teammate").
 - **Team notifications**: bell, critical pop-ups, email, recap reminders, per-person settings. Boards scoped to each person's clients.
+- **Google Ads on the KPI board**: Google accounts next to Meta, each campaign judged on its own result, campaigns left out, card metric switcher, hover readings on every chart. KPI numbers pulled every 30 minutes in business hours, hourly otherwise.
+- **Each team sees its own line**: the Head of Meta and Meta buyers see Meta, the Head of Google and Google buyers see Google (buyers only their own accounts); only execs see both. KPI board, Clients, Overview, daily recap and Reports.
+- **Reports in three parts**: Build a report, Ready to send (by platform and buyer, tagged Monday weekly, monthly recap or built by hand), Sent. Monday drafts replace last week's; the month's first Monday drafts the full monthly recap instead. A draft already waiting for a client is offered before building another. Heads see whether each buyer has opened their report. Slack must be connected to use reporting.
+- **Ideas for Google**: a Meta and a Google side. Google Hall of Fame and Live winners (search ads, keywords, search terms that beat their target, brand searches set aside) with the AI's read of why each wins and how to use it on another client.
+- **Clients page**: tabs by service line plus Paused; missing Slack and Drive connections filled in from the card; services added on the spot; Pause and Archive from the card; seats follow the allotment (no designer for video-only).
+
+## Now: open items (feedback from Kyle and earlier sessions)
+
+### Reports that read right and sell
+1. **Report on the right result.** Each account's report should be judged on the conversion it's optimized for, read from the ad account (the campaigns' own optimization goals, as the KPI cards already do), not a generic default. Example: 7th Dimension Aesthetics should report on its website "submit application" conversion, and today's numbers are off.
+2. **Diagnose, then recommend (where upsells come from).** Every report names the weak link in plain words and the next step:
+   - Low click-through rate: say so, and that we're testing new creative.
+   - High cost per result: say whether it's failed tests or ad fatigue (the fatigue watcher and test history know), and what's next.
+   - Low conversion rate on the site: say so, and recommend a website upgrade.
+   Positioned well, the report sells the next service.
+
+### Client page: one dashboard for the whole business (MER)
+3. **Shopify in Kaizen Ads** (likely as a Shopify app the client installs): orders, revenue, customers.
+4. **Our own attribution**: Shopify sales matched to Meta and Google through the UTM parameters on every ad, clearer than Shopify's or Meta's own view.
+5. **The business dashboard** on the client page: total spend, total revenue, MER, impressions; revenue and ROAS goals; average order value, customer lifetime value, returning-customer rate, win-back rate.
+6. **What moved the business**: changes in Meta, Google and email campaigns marked on the timeline with their effect on the whole business, and incrementality (lift) reads.
+7. **Projections**: financial forecasts from the same numbers.
+
+### Ideas for Google (next steps)
+8. **Deploy an idea to a client.** Google buyers and the Head of Google turn an idea into an action item on a client: copy around it, a campaign around it, or the keywords to add. Meta roles keep the brief flow. Execs choose Meta or Google first on the same hover.
+9. **Google Verticals**: a Google playbook per industry from the Hall of Fame (the intents, copy and structure that won).
+10. **Google In the market**: built, waiting on Google. OAuth brand verification on the Cloud project (home page and privacy policy on kaizenmarketing.agency, domain verified in Search Console), then apply for **Basic access** to the Google Ads API to unlock Keyword Planner. Auction Insights needs Google to allowlist us (GOOGLE_ADS_AUCTION_INSIGHTS=1 once it does). Competitors' actual ad copy would need a paid service (SerpApi recommended over ScraperAPI).
+
+### Smaller items
+11. **Mobile pass on Settings › AI agents and skills**, so execs can work on agents and skills from their phones.
+12. **"Also buys" on the Team page**: today it's set in the database (Kyle has it); a switch on each person.
+13. **KPI board for creative, customer success and copy**: decide whether they see one platform, both (limited to their clients, as now), or none.
+14. **"Missing someone"** as a filter on the Clients page, if still wanted (the card still shows "N to fill").
 
 ## Next: close the approval loop (Phase 1, before BFCM)
 
@@ -49,7 +82,7 @@ Where things stand on 2026-10-19 and what comes next, in order. The target is th
 ## Then: launch and learn (Phase 2)
 
 4. **Launcher**: approved ads are pushed to Meta **paused** through the system user. The AI suggests campaign, ad set and naming; the buyer confirms. Kaizen's media-buying standards live in the Launcher agent's playbook.
-7. **Google Ads**: apply for the Google Ads API developer token now, since approval takes days. Then pull Google numbers into the same KPI dashboard (targets are already stored).
+7. ~~Google Ads~~: on the KPI board, in reports, audits and Ideas (see Built). Basic API access still to apply for (see Now, item 10).
 8. ~~Alerts~~: covered by team notifications and the daily recap.
 
 ## Later (Phase 3)
