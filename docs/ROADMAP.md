@@ -49,12 +49,7 @@ Where things stand on 2026-10-31 and what comes next, in order. The target is th
 ## Now: open items (feedback from Kyle and earlier sessions)
 
 ### Reports that read right and sell
-1. **Report on the right result.** Each account's report should be judged on the conversion it's optimized for, read from the ad account (the campaigns' own optimization goals, as the KPI cards already do), not a generic default. Example: 7th Dimension Aesthetics should report on its website "submit application" conversion, and today's numbers are off.
-2. **Diagnose, then recommend (where upsells come from).** Every report names the weak link in plain words and the next step:
-   - Low click-through rate: say so, and that we're testing new creative.
-   - High cost per result: say whether it's failed tests or ad fatigue (the fatigue watcher and test history know), and what's next.
-   - Low conversion rate on the site: say so, and recommend a website upgrade.
-   Positioned well, the report sells the next service.
+1. ~~Report on the right result~~ and 2. ~~Diagnose, then recommend~~: built. Meta reports count each campaign's own optimized result; every report names the weak link (creative, cost from fatigue or lost tests, the website) and what we're doing; another Kaizen service is raised rarely, as an idea, with cadence rules so it never feels like a pitch.
 
 ### Client page: one dashboard for the whole business (MER)
 3. **Shopify in Kaizen Ads** (likely as a Shopify app the client installs): orders, revenue, customers.
