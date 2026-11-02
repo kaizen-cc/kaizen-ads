@@ -19,6 +19,8 @@ export type ClientCard = {
   /** Connections not made yet (Slack channels, the Drive folder), named on the card even folded */
   links: MissingLink[];
   name: string;
+  /** The Client ID we assign at enrollment (asked for on the intake form) */
+  kaizenId: number | null;
   slug: string;
   status: string;
   whiteLabel: boolean;
@@ -161,6 +163,7 @@ function Card({ c, open, slotOptions, canEdit }: { c: ClientCard; open: boolean;
             {c.name}
           </Link>
           <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs capitalize text-faint">
+            {c.kaizenId != null && <span className="tabular normal-case">ID {c.kaizenId} ·</span>}
             {c.status}
             {c.whiteLabel && <span className="normal-case">· White label</span>}
             {c.missing > 0 && <span className="normal-case text-warn">· {c.missing} to fill</span>}

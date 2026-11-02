@@ -194,6 +194,11 @@ export async function syncAccountSheet(admin: SupabaseClient) {
       const { writeHandoff } = await import("@/lib/handoff");
       for (const id of handoffs) await writeHandoff(admin, id);
     }
+    // Each client's Client ID (the number we assign at enrollment, asked for on the intake form), where we don't have it:
+    // the row's client by its ad account, else its name. An ID already on another client, or a different one on this
+    // client, is reported, never overwritten.
+    const ids = await clientIds(admin, rows.map(({ r }) => r), targets ?? [], clientNamed);
+    Object.assign(out, ids);
     // Buyers the sheet names who aren't on the team: execs hear it once a day, not on every run
     const missing = [...new Set(out.unknownBuyer.map((x) => x.replace(/\s*\(.*$/, "")))];
     if (missing.length) {
@@ -247,6 +252,44 @@ export type OnboardingSheet = { steps: Record<string, boolean>; progress: string
 
 const norm = (s: string) => s.toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]/g, "");
 
+/** A row's Client ID, whatever the column is called ("Client ID", "ID", "Client #", "Kaizen ID") */
+const ID_HEADERS = new Set(["clientid", "id", "client", "clientno", "clientnumber", "kaizenid"]);
+function idOf(r: Record<string, string>) {
+  for (const [h, v] of Object.entries(r)) if (ID_HEADERS.has(norm(h.replace(/#/g, "no"))) && /^\s*\d{1,7}\s*$/.test(v)) return Number(v);
+  return null;
+}
+
+async function clientIds(admin: SupabaseClient, rows: Record<string, string>[], targets: { client_id: string; ad_account_id: string | null }[], named: (name: string) => { id: string } | null) {
+  const { data: have } = await admin.from("clients").select("id, name, kaizen_id");
+  const byId = new Map((have ?? []).filter((c) => c.kaizen_id != null).map((c) => [Number(c.kaizen_id), c]));
+  const mine = new Map((have ?? []).map((c) => [c.id as string, c]));
+  const idsSet: string[] = [];
+  const idConflicts: string[] = [];
+  for (const r of rows) {
+    const id = idOf(r);
+    if (id == null) continue;
+    const name = r["Client Name"] ?? r["Clients"] ?? r["Business Name"] ?? "";
+    const account = digits(r["Ad Account ID"]);
+    const clientId = (account && targets.find((x) => digits(x.ad_account_id ?? "") === account)?.client_id) || named(name)?.id;
+    const c = clientId ? mine.get(clientId) : null;
+    if (!c) continue;
+    if (c.kaizen_id != null) {
+      if (Number(c.kaizen_id) !== id) idConflicts.push(`${name}: the sheet says ${id}, Kaizen Ads has ${c.kaizen_id}`);
+      continue;
+    }
+    const taken = byId.get(id);
+    if (taken && taken.id !== c.id) {
+      idConflicts.push(`${name}: ${id} is already ${taken.name}'s`);
+      continue;
+    }
+    await admin.from("clients").update({ kaizen_id: id }).eq("id", c.id).is("kaizen_id", null);
+    c.kaizen_id = id;
+    byId.set(id, c);
+    idsSet.push(`${c.name} (${id})`);
+  }
+  return { idsSet, idConflicts: [...new Set(idConflicts)] };
+}
+
 /** The Onboarding tab onto each client it names (by business name), so the onboarding cards show where setup is. */
 async function syncOnboarding(admin: SupabaseClient, tok: string, now: string) {
   const [head = [], ...rest] = await readTab(tok, "Onboarding");
@@ -278,6 +321,13 @@ async function syncOnboarding(admin: SupabaseClient, tok: string, now: string) {
     await admin.from("clients").update({ onboarding_sheet: sheet }).eq("id", client.id);
     matched.push(client.id);
   }
+  // Client IDs on this tab too (new clients are often here before they have an ad account)
+  const pick = (name: string) => {
+    const key = norm(name);
+    const loose = all.filter((c) => c.key.length > 3 && key.length > 3 && (c.key.includes(key) || key.includes(c.key)));
+    return all.find((c) => c.key === key) ?? (loose.length === 1 ? loose[0] : null);
+  };
+  await clientIds(admin, rows, [], pick).catch(() => null);
   // A client that's come off the tab is done there: its checklist goes
   if (matched.length) await admin.from("clients").update({ onboarding_sheet: null }).not("onboarding_sheet", "is", null).not("id", "in", `(${matched.join(",")})`);
   return { onboarding: matched.length, onboardingUnmatched: unmatched };

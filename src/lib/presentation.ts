@@ -13,7 +13,7 @@ import { siteUrl } from "@/lib/site";
 // answer what we still need, pick how we launch, and approve. What they say goes back into the Bible.
 
 export * from "@/lib/presentation-types";
-import type { Deck } from "@/lib/presentation-types";
+import { INTAKE_FORM_URL, type Deck } from "@/lib/presentation-types";
 
 const s = { type: "string" };
 const o = (properties: Record<string, unknown>) => ({ type: "object", properties, required: Object.keys(properties), additionalProperties: false });
@@ -71,7 +71,7 @@ export async function writePresentation(admin: SupabaseClient, clientId: string,
         intake?.summary
           ? `<their_intake_form>\n${describeIntake(intake.summary as IntakeSummary)}\n</their_intake_form>`
           : `<no_intake_form>
-They haven't sent their marketing intake form yet, and we didn't want to sit and wait. Say so plainly and warmly in the intro: we haven't received their intake form, but here's what we've gathered from our conversations so far, their website and our own research, and our best recommendations from it. Show we're moving: proactive, not waiting on them. Where the intake form would normally have told us something, say what we're assuming instead so they can correct it. Lead the questions with the few answers that would change the most, and make the last question a light nudge to fill in the intake form when they can.
+They haven't sent their marketing intake form yet, and we didn't want to sit and wait. Say so plainly and warmly in the intro: we haven't received their intake form, but here's what we've gathered from our conversations so far, their website and our own research, and our best recommendations from it. Show we're moving: proactive, not waiting on them. Where the intake form would normally have told us something, say what we're assuming instead so they can correct it. Lead the questions with the few answers that would change the most. Don't ask them to fill in the intake form in the questions: the page has its own button for it, with their Client ID.
 </no_intake_form>`,
         `<open_questions_for_the_client>\n${forClient.map((q) => `- ${q.question}`).join("\n") || "None listed."}\n</open_questions_for_the_client>`,
         `<brand_bible>\n${String(b.markdown).slice(0, 120_000)}\n</brand_bible>`,
@@ -127,13 +127,14 @@ async function tellApprovers(admin: SupabaseClient, clientId: string, name: stri
 
 const esc = (t: string) => t.replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]!);
 
-function touchpointEmail(p: { firstName: string | null; brand: string; headline: string; link: string; withoutIntake: boolean }) {
+function touchpointEmail(p: { firstName: string | null; brand: string; headline: string; link: string; withoutIntake: boolean; clientId: number | null }) {
   const hello = p.firstName ? `Hi ${p.firstName},` : "Hi there,";
   const subject = p.withoutIntake ? `${p.brand}: we got started, here's what we've got` : `${p.brand}: are we getting this right?`;
   const lines = p.withoutIntake
     ? [
         "We haven't received your intake form yet, but we didn't want to sit and wait. So we took everything from our conversations so far, your website and our own research on your brand and your market, and put together how we see you: who you're for, how you sound, and the first campaigns we'd recommend.",
         "Have a look and tell us where we're spot on and where we're off. Anything we've assumed, you can correct right there, and the few questions at the end fill the gaps the intake form would have. It takes about five minutes, and it gets your ads moving sooner.",
+        `When you have ten minutes, the intake form is here: ${INTAKE_FORM_URL}${p.clientId != null ? ` (it asks for your Client ID: ${p.clientId})` : ""}.`,
       ]
     : [
         "Thanks for filling in the intake form. We've taken everything you told us, plus our own research on your brand and your market, and put together how we see you: who you're for, how you sound, and the first campaigns we'd run.",
@@ -148,8 +149,9 @@ function touchpointEmail(p: { firstName: string | null; brand: string; headline:
     </div>
     <div style="padding:12px 28px 28px">
       <p style="margin:0 0 12px;font-size:15px">${esc(hello)}</p>
-      ${lines.map((l) => `<p style="margin:0 0 12px;font-size:15px;line-height:1.55;color:#d8d8dc">${esc(l)}</p>`).join("")}
+      ${lines.slice(0, 2).map((l) => `<p style="margin:0 0 12px;font-size:15px;line-height:1.55;color:#d8d8dc">${esc(l)}</p>`).join("")}
       <a href="${esc(p.link)}" style="display:inline-block;margin-top:8px;background:#b21e2c;color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:13px 22px;border-radius:999px">See how we see you →</a>
+      ${p.withoutIntake ? `<p style="margin:20px 0 0;font-size:14px;line-height:1.55;color:#d8d8dc">When you have ten minutes, <a href="${INTAKE_FORM_URL}" style="color:#e0505c">fill in the intake form</a>${p.clientId != null ? `. It asks for your Client ID: <b style="color:#f2f2f2">${p.clientId}</b>` : ""}.</p>` : ""}
       <p style="margin:22px 0 0;font-size:12px;line-height:1.5;color:#6a6a72">The link opens your Kaizen portal. If it asks, enter this email and we'll send you a one-tap sign-in.</p>
     </div>
   </div>
@@ -160,7 +162,7 @@ function touchpointEmail(p: { firstName: string | null; brand: string; headline:
 /** Send it: the client's contacts by email and their Slack channel, and their portal switched on so they can open it. */
 export async function sendPresentation(admin: SupabaseClient, clientId: string, by: string | null) {
   const [{ data: c }, { data: p }, { data: links }] = await Promise.all([
-    admin.from("clients").select("name, slug, portal_live, slack_channel_id").eq("id", clientId).single(),
+    admin.from("clients").select("name, slug, portal_live, slack_channel_id, kaizen_id").eq("id", clientId).single(),
     admin.from("client_presentations").select("status, deck, without_intake").eq("client_id", clientId).maybeSingle(),
     admin.from("contact_clients").select("contacts(id, email, full_name, is_active)").eq("client_id", clientId),
   ]);
@@ -175,12 +177,13 @@ export async function sendPresentation(admin: SupabaseClient, clientId: string, 
   const deck = p.deck as Deck;
   const sent: string[] = [];
   for (const x of contacts) {
-    const r = await sendEmail({ to: x.email, ...touchpointEmail({ firstName: x.full_name?.split(" ")[0] ?? null, brand: c.name as string, headline: deck.headline, link, withoutIntake: Boolean(p.without_intake) }) });
+    const r = await sendEmail({ to: x.email, ...touchpointEmail({ firstName: x.full_name?.split(" ")[0] ?? null, brand: c.name as string, headline: deck.headline, link, withoutIntake: Boolean(p.without_intake), clientId: (c.kaizen_id as number | null) ?? null }) });
     if (r.ok) sent.push(x.email);
   }
   if (slackOn) {
     const text = p.without_intake
-      ? `Hi team! We haven't received your intake form yet, but we didn't want to wait: from our conversations so far, your website and our research, here's how we see ${c.name} and the first campaigns we'd recommend. Tell us where we're spot on and where we're off, and fill in the few gaps (about five minutes): ${link}`
+      ? `Hi team! We haven't received your intake form yet, but we didn't want to wait: from our conversations so far, your website and our research, here's how we see ${c.name} and the first campaigns we'd recommend. Tell us where we're spot on and where we're off, and fill in the few gaps (about five minutes): ${link}
+When you have ten minutes, the intake form is here: ${INTAKE_FORM_URL}${c.kaizen_id != null ? ` (your Client ID: ${c.kaizen_id})` : ""}`
       : `Hi team! We've put together how we see ${c.name}: who you're for, how you sound, and the first campaigns we'd run. Before we make anything, we'd love you to tell us where we're spot on and where we're off (about five minutes): ${link}`;
     const res = await fetch("https://slack.com/api/chat.postMessage", { method: "POST", headers: { authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`, "content-type": "application/json; charset=utf-8" }, body: JSON.stringify({ channel: c.slack_channel_id, text, unfurl_links: false }) });
     const body = (await res.json().catch(() => ({}))) as { ok?: boolean };

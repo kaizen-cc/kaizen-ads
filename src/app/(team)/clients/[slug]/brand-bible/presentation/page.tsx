@@ -13,7 +13,7 @@ export default async function PresentationPage({ params }: { params: Promise<{ s
   await requireStaff();
   const { slug } = await params;
   const supabase = await createClient();
-  const { data: client } = await supabase.from("clients").select("id, name, slug, status").eq("slug", slug).maybeSingle();
+  const { data: client } = await supabase.from("clients").select("id, name, slug, status, kaizen_id").eq("slug", slug).maybeSingle();
   if (!client) notFound();
   const [{ data: p }, { data: b }] = await Promise.all([
     supabase.from("client_presentations").select("status, deck, reactions, without_intake, drafted_at, send_after, sent_at, sent_to, viewed_at, approved_at, error, started_at").eq("client_id", client.id).maybeSingle(),
@@ -21,7 +21,7 @@ export default async function PresentationPage({ params }: { params: Promise<{ s
   ]);
   return (
     <PresentationAdmin
-      client={{ id: client.id, name: client.name, slug: client.slug }}
+      client={{ id: client.id, name: client.name, slug: client.slug, kaizenId: client.kaizen_id ?? null }}
       hasBible={Boolean(b?.markdown)}
       p={
         p

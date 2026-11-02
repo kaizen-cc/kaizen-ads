@@ -36,7 +36,7 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
   const [{ data: targets }, { data: snaps }, { data: buyers }, { data: clients }, auditBy] = await Promise.all([
     supabase
       .from("kpi_targets")
-      .select("id, client_id, platform, ad_account_id, label, conversion, custom_action, campaign_match, target, monthly_budget, budget_note, source, owner_id, owner_name, extra_metrics, sheet, clients!inner(name, slug, status), profiles!kpi_targets_owner_id_fkey(full_name)")
+      .select("id, client_id, platform, ad_account_id, label, conversion, custom_action, campaign_match, target, monthly_budget, budget_note, source, owner_id, owner_name, extra_metrics, sheet, clients!inner(name, slug, status, kaizen_id), profiles!kpi_targets_owner_id_fkey(full_name)")
       .eq("active", true)
       .is("clients.archived_at", null),
     supabase.from("kpi_snapshots").select("*"),
@@ -61,13 +61,14 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
     .filter((t) => !team || (t.platform === "google" ? "google" : "meta") === team)
     .filter((t) => !buyer || t.owner_id === me.id || seated.has(`${t.client_id}:${t.platform === "google" ? "google" : "meta"}`))
     .map((t) => {
-      const c = t.clients as unknown as { name: string; slug: string; status: string } | null;
+      const c = t.clients as unknown as { name: string; slug: string; status: string; kaizen_id: number | null } | null;
       const s = snapBy.get(t.id);
       const pace = s?.budget && "pace" in s.budget ? (s.budget as Pacing) : null;
       return {
         id: t.id,
         clientId: t.client_id,
         client: c?.name ?? "Unknown",
+        kaizenId: c?.kaizen_id ?? null,
         slug: c?.slug ?? "",
         clientStatus: c?.status ?? "active",
         platform: t.platform as "meta" | "google",

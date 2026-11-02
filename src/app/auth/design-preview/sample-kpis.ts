@@ -36,6 +36,7 @@ const make = (
     id,
     clientId: id,
     client,
+    kaizenId: null,
     slug: client.toLowerCase().replace(/\W+/g, "-"),
     clientStatus: "active",
     platform: "meta",

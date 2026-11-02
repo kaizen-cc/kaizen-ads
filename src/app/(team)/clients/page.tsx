@@ -14,6 +14,7 @@ type Row = {
   name: string;
   slug: string;
   status: string;
+  kaizen_id: number | null;
   client_type: string;
   creative_package: boolean;
   creative_package_until: string | null;
@@ -37,7 +38,7 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
   const req = supabase
     .from("clients")
     .select(
-      "id, name, slug, status, client_type, creative_package, creative_package_until, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, services, services_extra, services_removed, creative_packages(label), client_assignments(role, profile_id, profiles(full_name)), contact_clients(contact_id)",
+      "id, name, slug, status, kaizen_id, client_type, creative_package, creative_package_until, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, services, services_extra, services_removed, creative_packages(label), client_assignments(role, profile_id, profiles(full_name)), contact_clients(contact_id)",
     )
     .neq("status", "offboarded")
     .order("name");
@@ -113,6 +114,7 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
       until: r.creative_package_until,
       id: r.id,
       name: r.name,
+      kaizenId: r.kaizen_id ?? null,
       slug: r.slug,
       status: r.status,
       whiteLabel: r.client_type === "whitelabel",

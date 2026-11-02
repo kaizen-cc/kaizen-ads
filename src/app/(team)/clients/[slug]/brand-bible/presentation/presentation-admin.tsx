@@ -22,7 +22,7 @@ type P = {
 
 const when = (iso: string) => new Date(iso).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
-export function PresentationAdmin({ client, hasBible, p }: { client: { id: string; name: string; slug: string }; hasBible: boolean; p: P | null }) {
+export function PresentationAdmin({ client, hasBible, p }: { client: { id: string; name: string; slug: string; kaizenId: number | null }; hasBible: boolean; p: P | null }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -123,7 +123,7 @@ export function PresentationAdmin({ client, hasBible, p }: { client: { id: strin
       </section>
 
       {p?.deck ? (
-        <PresentationDeck brand={client.name} deck={p.deck} reactions={p.reactions} approved={p.status === "approved"} readOnly />
+        <PresentationDeck brand={client.name} deck={p.deck} reactions={p.reactions} approved={p.status === "approved"} readOnly intake={p.withoutIntake ? { clientId: client.kaizenId } : undefined} />
       ) : (
         <p className="rounded-[20px] border border-dashed border-line p-8 text-center text-[14px] text-muted">
           {writing ? "Writing it…" : hasBible ? "Write it from the Brand Bible to see exactly what the client will get." : "It's written once the Brand Bible is in."}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { Deck, Reactions, Section } from "@/lib/presentation-types";
+import { INTAKE_FORM_URL, type Deck, type Reactions, type Section } from "@/lib/presentation-types";
 
 // The client presentation, as the client sees it (and the team previews it): a cover, then one card per part of how
 // we see them, each with "Spot on" / "Not quite", how we launch, the few things only they can tell us, and approve.
@@ -15,7 +15,7 @@ type Handlers = {
 
 const FORMAT = { image: "Image", video: "Video", carousel: "Carousel" } as const;
 
-export function PresentationDeck({ brand, deck, reactions, approved, readOnly = false, ...h }: { brand: string; deck: Deck; reactions: Reactions; approved: boolean; readOnly?: boolean } & Handlers) {
+export function PresentationDeck({ brand, deck, reactions, approved, readOnly = false, intake, ...h }: { brand: string; deck: Deck; reactions: Reactions; approved: boolean; readOnly?: boolean; /** Written without their intake form: a way to send it, with their Client ID */ intake?: { clientId: number | null } } & Handlers) {
   const locked = readOnly || approved;
   const offCount = Object.values(reactions.sections ?? {}).filter((r) => r?.verdict === "off").length;
   return (
@@ -29,6 +29,8 @@ export function PresentationDeck({ brand, deck, reactions, approved, readOnly = 
         <p className="mt-5 max-w-2xl text-[15.5px] leading-relaxed text-muted md:text-[17px]">{deck.intro}</p>
         {!readOnly && !approved && <p className="mt-6 text-[12.5px] text-faint">About five minutes · tap Spot on or Not quite on each part</p>}
       </section>
+
+      {intake && <IntakeNudge clientId={intake.clientId} />}
 
       <Card n={1} title="Who you are" section="brand" reactions={reactions} locked={locked} onReact={h.onReact}>
         <p className="font-heading text-[20px] leading-snug md:text-[24px]">{deck.brand.statement}</p>
@@ -124,6 +126,37 @@ export function PresentationDeck({ brand, deck, reactions, approved, readOnly = 
         )}
       </section>
     </div>
+  );
+}
+
+function IntakeNudge({ clientId }: { clientId: number | null }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <section className="grid gap-3 rounded-[24px] border border-brand/40 bg-brand/[0.07] p-5 md:flex md:items-center md:justify-between md:gap-6 md:p-6">
+      <div className="grid gap-1">
+        <p className="font-heading text-[16.5px]">We&rsquo;re still missing your intake form</p>
+        <p className="text-[14px] leading-relaxed text-muted">Everything below is our best read without it. Ten minutes on the form sharpens all of it.</p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {clientId != null && (
+          <button
+            type="button"
+            onClick={() => {
+              void navigator.clipboard?.writeText(String(clientId)).then(() => setCopied(true));
+            }}
+            className="inline-flex h-11 items-center gap-2 rounded-full border border-line bg-bg px-4 text-[13.5px]"
+            title="It asks for this: tap to copy"
+          >
+            <span className="text-faint">Your Client ID</span>
+            <span className="tabular font-heading text-[15px]">{clientId}</span>
+            <span className="text-[12px] text-brand-text">{copied ? "Copied" : "Copy"}</span>
+          </button>
+        )}
+        <a href={INTAKE_FORM_URL} target="_blank" rel="noreferrer" className="inline-flex h-11 items-center rounded-full bg-brand px-5 text-[14px] font-medium text-white hover:bg-brand-hover">
+          Fill in the intake form ↗
+        </a>
+      </div>
+    </section>
   );
 }
 

@@ -17,9 +17,11 @@ export default async function PlanPage({ params }: { params: Promise<{ slug: str
   const team = viewer.kind === "staff";
   if (!team && (!viewer.brands.some((b) => b.slug === slug) || !adminConfigured())) notFound();
   const db = team ? await createClient() : createAdminClient();
-  const { data: client } = await db.from("clients").select("id, name, slug, portal_live").eq("slug", slug).maybeSingle();
+  const { data: client } = await db.from("clients").select("id, name, slug, portal_live, kaizen_id").eq("slug", slug).maybeSingle();
   if (!client || (!team && !client.portal_live)) notFound();
-  const { data: p } = await db.from("client_presentations").select("status, deck, reactions, viewed_at").eq("client_id", client.id).maybeSingle();
+  const { data: p } = await db.from("client_presentations").select("status, deck, reactions, viewed_at, without_intake").eq("client_id", client.id).maybeSingle();
+  // Once their intake form is in, the nudge to send it goes
+  const { count: intakes } = p?.without_intake ? await createAdminClient().from("client_intakes").select("id", { count: "exact", head: true }).eq("client_id", client.id) : { count: 0 };
   const ready = p?.deck && (team || ["sent", "approved"].includes(p.status as string));
   // The first time the client opens it
   if (!team && ready && !p.viewed_at) await createAdminClient().from("client_presentations").update({ viewed_at: new Date().toISOString() }).eq("client_id", client.id);
@@ -37,7 +39,7 @@ export default async function PlanPage({ params }: { params: Promise<{ slug: str
       <main className="mx-auto max-w-4xl px-4 pb-24 pt-5 md:pt-8">
         {team && <p className="mb-4 rounded-[14px] border border-warn/40 bg-warn-soft/40 px-4 py-3 text-[13px] text-warn">You&rsquo;re seeing what the client sees. Anything you tap here is saved as the team testing.</p>}
         {ready ? (
-          <PlanView slug={client.slug} brand={client.name} deck={p.deck as Deck} reactions={(p.reactions ?? {}) as Reactions} approved={p.status === "approved"} canAct={team ? ["sent", "approved"].includes(p.status as string) : true} />
+          <PlanView intake={p.without_intake && !intakes ? { clientId: client.kaizen_id ?? null } : undefined} slug={client.slug} brand={client.name} deck={p.deck as Deck} reactions={(p.reactions ?? {}) as Reactions} approved={p.status === "approved"} canAct={team ? ["sent", "approved"].includes(p.status as string) : true} />
         ) : (
           <div className="grid gap-2 rounded-[24px] border border-line bg-surface p-8 text-center">
             <p className="font-heading text-[18px]">Nothing to look at yet</p>

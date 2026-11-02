@@ -42,7 +42,7 @@ export function ClientsBrowser({
     (!who || Object.values(c.assigned).some((o) => o?.id === who)) && (!tier || (c.pkg !== "none" && c.packageLabel === tier));
   const test = FILTERS.find((f) => f.key === filter)!.test;
   const inFilter = cards.filter(test).filter(narrow);
-  const shown = inFilter.filter((c) => !searching || c.name.toLowerCase().includes(term));
+  const shown = inFilter.filter((c) => !searching || c.name.toLowerCase().includes(term) || (c.kaizenId != null && String(c.kaizenId) === term.replace(/\D/g, "")));
 
   const pick = (f: Filter) => pushParams({ filter: f === "all" ? null : f });
 

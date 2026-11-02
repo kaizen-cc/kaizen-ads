@@ -1,5 +1,8 @@
 // The client presentation's shape, shared by the server and the deck the client sees
 
+/** Kaizen's marketing intake form (it asks for the client's Client ID) */
+export const INTAKE_FORM_URL = "https://forms.gle/m3WUwbrprQ1Fc1KF8";
+
 export type Deck = {
   headline: string;
   intro: string;

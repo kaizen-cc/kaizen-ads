@@ -30,6 +30,8 @@ export type KpiRow = {
   id: string;
   clientId: string;
   client: string;
+  /** The Client ID we assign at enrollment */
+  kaizenId: number | null;
   slug: string;
   clientStatus: string;
   platform: "meta" | "google";
@@ -689,6 +691,7 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
                 {r.label && <span className="text-muted"> · {r.label}</span>}
               </p>
               <p className="truncate text-xs text-faint">
+                {r.kaizenId != null && <span className="tabular">ID {r.kaizenId} · </span>}
                 {r.platform === "google" ? "Google Ads" : "Meta"} · {r.conversionLabel}
                 {r.owner && ` · ${r.owner}`}
                 {r.source === "client" && " · client's target"}
@@ -1352,6 +1355,7 @@ function Card({ r, active, onOpen, onMove }: { r: KpiRow; active: boolean; onOpe
               {r.label && <span className="text-muted"> · {r.label}</span>}
             </p>
             <p className="mt-0.5 truncate text-xs text-faint">
+              {r.kaizenId != null && <span className="tabular">ID {r.kaizenId} · </span>}
               {r.conversionLabel}
               {r.owner && ` · ${r.owner}`}
             </p>
@@ -1718,7 +1722,7 @@ export function KpiBoard({
   const base = rows.filter((r) => r.platform === platform && (owner === "all" || ownerKey(r) === owner));
   const term = q.trim().toLowerCase();
   const shown = base
-    .filter((r) => (status === "all" || r.status === status) && (pace === "all" || r.pace?.status === pace) && (term.length < 2 || `${r.client} ${r.label ?? ""}`.toLowerCase().includes(term)))
+    .filter((r) => (status === "all" || r.status === status) && (pace === "all" || r.pace?.status === pace) && (term.length < 2 || `${r.client} ${r.label ?? ""} ${r.kaizenId ?? ""}`.toLowerCase().includes(term)))
     .sort((a, b) => RANK[a.status] - RANK[b.status] || (b.deviation ?? -9) - (a.deviation ?? -9) || a.client.localeCompare(b.client));
 
   const openRow = open ? (rows.find((r) => r.id === open) ?? null) : null;

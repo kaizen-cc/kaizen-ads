@@ -5,7 +5,7 @@ import { PresentationDeck } from "@/components/presentation-deck";
 import type { Deck, Reactions } from "@/lib/presentation-types";
 import { answerQuestion, approvePlan, chooseLaunch, reactPart } from "./actions";
 
-export function PlanView({ slug, brand, deck, reactions: initial, approved: wasApproved, canAct }: { slug: string; brand: string; deck: Deck; reactions: Reactions; approved: boolean; canAct: boolean }) {
+export function PlanView({ slug, brand, deck, reactions: initial, approved: wasApproved, canAct, intake }: { slug: string; brand: string; deck: Deck; reactions: Reactions; approved: boolean; canAct: boolean; intake?: { clientId: number | null } }) {
   const [reactions, setReactions] = useState(initial);
   const [approved, setApproved] = useState(wasApproved);
   const [error, setError] = useState<string | null>(null);
@@ -23,6 +23,7 @@ export function PlanView({ slug, brand, deck, reactions: initial, approved: wasA
         reactions={reactions}
         approved={approved}
         readOnly={!canAct}
+        intake={intake}
         onReact={(section, verdict, note) => run(reactPart(slug, section, verdict, note))}
         onAnswer={(q, a) => run(answerQuestion(slug, q, a))}
         onLaunch={(choice) => run(chooseLaunch(slug, choice))}

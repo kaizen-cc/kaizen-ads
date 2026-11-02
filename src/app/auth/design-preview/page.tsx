@@ -332,6 +332,7 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
         <ClientsBrowser
           cards={rows.map((r, i): ClientCard => ({
             ...r,
+            kaizenId: 1040 + i,
             links: i === 2 ? ["internal_slack_channel_id"] : [],
             status: i === 3 ? "paused" : "active",
             packageLabel: ["Silver", "Gold", "Basic", null][i],
