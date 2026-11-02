@@ -23,12 +23,22 @@ export const compact = (s: string) => s.toLowerCase().replace(/&/g, "and").repla
 export const trimBody = (s: string | null | undefined, max = 3000) => {
   if (!s) return null;
   const clean = s.replace(/\r/g, "").replace(/\n{3,}/g, "\n\n").trim();
-  return clean.length > max ? `${clean.slice(0, max)}…` : clean;
+  return clean.length > max ? `${pgSafe(clean.slice(0, max))}…` : clean;
 };
+
+/** Text Postgres will take: no half emoji (a lone surrogate, e.g. from a cut at a length) and no NUL characters. */
+export const pgSafe = (s: string) => s.replace(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, "").replace(/\u0000/g, "");
+
+function cleanDeep<T>(v: T): T {
+  if (typeof v === "string") return pgSafe(v) as T;
+  if (Array.isArray(v)) return v.map(cleanDeep) as T;
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [pgSafe(k), cleanDeep(x)])) as T;
+  return v;
+}
 
 export async function saveItems(admin: SupabaseClient, items: ContextItem[]) {
   // The same message can arrive twice in one read (a thread reply also sent to the channel); keep the last
-  const unique = [...new Map(items.map((i) => [`${i.source}|${i.external_id}`, i])).values()];
+  const unique = [...new Map(items.map((i) => [`${i.source}|${i.external_id}`, cleanDeep(i)])).values()];
   for (let i = 0; i < unique.length; i += 500) {
     const { error } = await admin.from("context_items").upsert(unique.slice(i, i + 500), { onConflict: "source,external_id" });
     if (error) throw new Error(`Saving context: ${error.message}`);
