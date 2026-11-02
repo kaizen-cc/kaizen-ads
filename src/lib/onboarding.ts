@@ -103,9 +103,12 @@ export async function processIntake(admin: SupabaseClient, intakeId: string, opt
       .eq("id", intake.client_id)
       .or("industry_source.is.null,industry_source.eq.ai");
     // A first round only for a client we make creative for; for anyone else the intake is context and nothing more
-    const { data: client } = await admin.from("clients").select("creative_package").eq("id", intake.client_id).single();
+    const { data: client } = await admin.from("clients").select("creative_package, created_at, reonboarded_at").eq("id", intake.client_id).single();
     // Historic intakes (backfilled) are context only: those clients are already running
     if (!client?.creative_package || opts.firstRound === false) return { status: "read" };
+    // The new onboarding: the first round waits for the client's review of their presentation (written on approval)
+    const { inNewFlow } = await import("@/lib/presentation-types");
+    if (inNewFlow(client)) return { status: "read" };
     const job = await writeFirstRoundJob(admin, intake.client_id);
     if (!job.ok) throw new Error(job.error);
     await admin.from("client_intakes").update({ status: "briefed" }).eq("id", intakeId);
@@ -154,13 +157,29 @@ export async function writeFirstRoundJob(admin: SupabaseClient, clientId: string
 export async function writeMissingFirstRounds(admin: SupabaseClient, max = 3) {
   const { data: clients } = await admin
     .from("clients")
-    .select("id, first_round_started_at")
+    .select("id, first_round_started_at, created_at, reonboarded_at")
     .eq("status", "onboarding")
     .eq("creative_package", true)
     .is("archived_at", null)
     .is("first_round_error", null);
   const stale = (iso: string | null) => !iso || Date.now() - Date.parse(iso) > 15 * 60_000;
-  const ids = (clients ?? []).filter((c) => stale(c.first_round_started_at)).map((c) => c.id as string);
+  // The new onboarding writes it when the client approves their presentation; it's written anyway when they haven't
+  // 3 business days after it went out, or 7 after they signed with nothing sent
+  const { inNewFlow } = await import("@/lib/presentation-types");
+  const { businessDaysSince } = await import("@/lib/brand-bible");
+  const flow = (clients ?? []).filter((c) => inNewFlow(c));
+  const { data: decks } = flow.length ? await admin.from("client_presentations").select("client_id, status, sent_at").in("client_id", flow.map((c) => c.id)) : { data: [] };
+  const waiting = new Set(
+    flow
+      .filter((c) => {
+        const d = (decks ?? []).find((x) => x.client_id === c.id);
+        if (d?.status === "approved") return false;
+        if (d?.sent_at) return businessDaysSince(d.sent_at as string) < 3;
+        return businessDaysSince((c.reonboarded_at ?? c.created_at) as string) < 7;
+      })
+      .map((c) => c.id as string),
+  );
+  const ids = (clients ?? []).filter((c) => stale(c.first_round_started_at) && !waiting.has(c.id as string)).map((c) => c.id as string);
   if (!ids.length) return 0;
   const [{ data: intakes }, { data: rounds }] = await Promise.all([
     admin.from("client_intakes").select("client_id").in("client_id", ids).in("status", ["read", "briefed"]).not("summary", "is", null),

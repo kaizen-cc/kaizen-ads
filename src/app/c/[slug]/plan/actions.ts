@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { getViewer } from "@/lib/auth";
 import type { Reactions, Section } from "@/lib/presentation-types";
 import { SECTIONS } from "@/lib/presentation-types";
@@ -78,6 +79,61 @@ export async function approvePlan(slug: string): Promise<{ ok: true } | { ok: fa
       })),
       { onConflict: "profile_id,key", ignoreDuplicates: true },
     );
+  // Folded into the Bible, the team told, and the first round written, after the answer
+  const admin = l.admin;
+  const clientId = l.client.id;
+  after(async () => {
+    const { afterApproval } = await import("@/lib/plan-chat");
+    await afterApproval(admin, clientId).catch((e) => console.error("[plan] after approval failed:", e instanceof Error ? e.message : e));
+  });
   revalidatePath(`/c/${slug}/plan`);
   return { ok: true };
+}
+
+const safe = (name: string) => name.replace(/[^\w.-]+/g, "-").slice(-80);
+
+/** Where the client's files (and voice messages) go: signed upload slots in the client's own folder */
+export async function planUploadSlots(slug: string, files: { name: string; bytes: number }[]): Promise<{ ok: true; slots: { path: string; token: string }[] } | { ok: false; error: string }> {
+  const l = await load(slug);
+  if ("error" in l) return { ok: false, error: l.error! };
+  if (files.length > 6) return { ok: false, error: "Up to six files at a time." };
+  if (files.some((f) => f.bytes > 50_000_000)) return { ok: false, error: "Files up to 50 MB." };
+  const slots: { path: string; token: string }[] = [];
+  for (const f of files) {
+    const path = `${l.client.id}/portal/${crypto.randomUUID()}-${safe(f.name)}`;
+    const { data, error } = await l.admin.storage.from("client-docs").createSignedUploadUrl(path);
+    if (error || !data) return { ok: false, error: "Uploads aren't working right now. Try again in a minute." };
+    slots.push({ path, token: data.token });
+  }
+  return { ok: true, slots };
+}
+
+/** A message in the conversation: text, files already uploaded, or a voice message (its WAV, uploaded, is transcribed) */
+export async function talkPlan(slug: string, text: string, files: { path: string; name: string; mime: string; bytes: number }[], voicePath: string | null) {
+  const l = await load(slug);
+  if ("error" in l) return { ok: false as const, error: l.error! };
+  if (l.approved) return { ok: false as const, error: "It's already approved: the team has it from here." };
+  let words = text.trim().slice(0, 8000);
+  if (voicePath) {
+    if (!voicePath.startsWith(`${l.client.id}/`)) return { ok: false as const, error: "Not found." };
+    const { data } = await l.admin.storage.from("client-docs").download(voicePath);
+    if (!data) return { ok: false as const, error: "The voice message didn't upload. Try again." };
+    try {
+      const { transcribe } = await import("@/lib/transcribe");
+      const lines = await transcribe(Buffer.from(await data.arrayBuffer()));
+      words = lines.map((x) => x.text).join(" ").trim();
+    } catch {
+      return { ok: false as const, error: "We couldn't make out the voice message. Try again, or type it." };
+    }
+    if (!words) return { ok: false as const, error: "We couldn't hear anything in that one. Try again a little closer to the mic." };
+  }
+  if (!words && !files.length) return { ok: false as const, error: "Write something first." };
+  try {
+    const { talkPlan: talk } = await import("@/lib/plan-chat");
+    const r = await talk(l.admin, l.client.id, { name: l.by, contactId: l.contactId }, { text: words, files, voice: Boolean(voicePath) });
+    return { ok: true as const, chat: r.chat, reactions: r.reactions };
+  } catch (e) {
+    const { AiUnavailable } = await import("@/lib/ai");
+    return { ok: false as const, error: e instanceof AiUnavailable ? e.message : "Something went wrong. Try again in a moment." };
+  }
 }

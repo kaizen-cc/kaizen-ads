@@ -2,10 +2,14 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getViewer } from "@/lib/auth";
+import type { PlanTurn } from "@/lib/plan-chat-types";
 import type { Deck, Reactions } from "@/lib/presentation-types";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { PlanView } from "./plan-view";
+
+// A conversation answer reads files and voice messages; approving folds it all into the Bible and writes the first round
+export const maxDuration = 800;
 
 export const metadata: Metadata = { title: "How we see you · Kaizen", robots: { index: false, follow: false } };
 
@@ -19,7 +23,7 @@ export default async function PlanPage({ params }: { params: Promise<{ slug: str
   const db = team ? await createClient() : createAdminClient();
   const { data: client } = await db.from("clients").select("id, name, slug, portal_live, kaizen_id").eq("slug", slug).maybeSingle();
   if (!client || (!team && !client.portal_live)) notFound();
-  const { data: p } = await db.from("client_presentations").select("status, deck, reactions, viewed_at, without_intake").eq("client_id", client.id).maybeSingle();
+  const { data: p } = await db.from("client_presentations").select("status, deck, reactions, viewed_at, without_intake, chat").eq("client_id", client.id).maybeSingle();
   // Once their intake form is in, the nudge to send it goes
   const { count: intakes } = p?.without_intake ? await createAdminClient().from("client_intakes").select("id", { count: "exact", head: true }).eq("client_id", client.id) : { count: 0 };
   const ready = p?.deck && (team || ["sent", "approved"].includes(p.status as string));
@@ -39,7 +43,7 @@ export default async function PlanPage({ params }: { params: Promise<{ slug: str
       <main className="mx-auto max-w-4xl px-4 pb-24 pt-5 md:pt-8">
         {team && <p className="mb-4 rounded-[14px] border border-warn/40 bg-warn-soft/40 px-4 py-3 text-[13px] text-warn">You&rsquo;re seeing what the client sees. Anything you tap here is saved as the team testing.</p>}
         {ready ? (
-          <PlanView intake={p.without_intake && !intakes ? { clientId: client.kaizen_id ?? null } : undefined} slug={client.slug} brand={client.name} deck={p.deck as Deck} reactions={(p.reactions ?? {}) as Reactions} approved={p.status === "approved"} canAct={team ? ["sent", "approved"].includes(p.status as string) : true} />
+          <PlanView chat={(p.chat ?? []) as PlanTurn[]} intake={p.without_intake && !intakes ? { clientId: client.kaizen_id ?? null } : undefined} slug={client.slug} brand={client.name} deck={p.deck as Deck} reactions={(p.reactions ?? {}) as Reactions} approved={p.status === "approved"} canAct={team ? ["sent", "approved"].includes(p.status as string) : true} />
         ) : (
           <div className="grid gap-2 rounded-[24px] border border-line bg-surface p-8 text-center">
             <p className="font-heading text-[18px]">Nothing to look at yet</p>

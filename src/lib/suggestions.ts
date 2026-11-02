@@ -757,6 +757,10 @@ export async function suggestOnboarding(admin: SupabaseClient, clientId: string)
   if (!c) throw new Error("Client not found");
   const { industryWinners, winnersBlock } = await import("@/lib/industry");
   const winners = c.industry && c.industry !== "other" ? await industryWinners(admin, c.industry, clientId, 10) : [];
+  // What the client told us reviewing their presentation (each part, their answers, the conversation): it outranks guesses
+  const { data: plan } = await admin.from("client_presentations").select("deck, reactions, chat, status").eq("client_id", clientId).maybeSingle();
+  const { reviewBlock } = await import("@/lib/plan-chat");
+  const review = plan?.deck && ["approved", "sent"].includes(plan.status as string) ? reviewBlock(plan.deck as never, (plan.reactions ?? {}) as never, (plan.chat ?? []) as never) : "";
   const prompt = await promptFor(admin, clientId, [
     { kind: "onboarding", weight: 1, line: c.reonboarded_at ? "Returning client: their first round back" : "New client: their first round of creative", facts: intake ? ["The marketing intake form is in"] : ["No marketing intake form yet: work from what's known and list what to confirm"] },
   ]);
@@ -769,6 +773,9 @@ export async function suggestOnboarding(admin: SupabaseClient, clientId: string)
     prompt: `${prompt}
 
 ${winners.length ? winnersBlock(c.industry, c.industry_detail, winners) : "No winning ads in this industry across our accounts yet."}
+
+${review ? `${review}
+The client reviewed how we see them: build on what they confirmed, fix what they marked not quite, use their answers, and lead with the campaign ideas they reacted well to. If they chose the 48-hour engagement launch, the first round is what we move into after it (conversion creative).` : ""}
 
 ${intake ? "" : "The marketing intake form hasn't come in yet. Build from what's known, keep claims general, and put what to confirm in the brief."}
 

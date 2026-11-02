@@ -13,7 +13,7 @@ import { siteUrl } from "@/lib/site";
 // answer what we still need, pick how we launch, and approve. What they say goes back into the Bible.
 
 export * from "@/lib/presentation-types";
-import { INTAKE_FORM_URL, type Deck } from "@/lib/presentation-types";
+import { FLOW_START, INTAKE_FORM_URL, type Deck } from "@/lib/presentation-types";
 
 const s = { type: "string" };
 const o = (properties: Record<string, unknown>) => ({ type: "object", properties, required: Object.keys(properties), additionalProperties: false });
@@ -194,16 +194,13 @@ When you have ten minutes, the intake form is here: ${INTAKE_FORM_URL}${c.kaizen
   return { ok: true as const, sent };
 }
 
-/** Clients who signed (or came back) from this day go through it on their own; anyone already onboarding before it is
- * written and sent by hand from the presentation page, so nobody weeks into onboarding gets a first-look message. */
-const FLOW_START = "2026-11-02";
-
 /**
  * Every 10 minutes: a new client whose Bible is in gets their presentation written; one that's been ready for 24
  * hours without anyone holding or sending it goes out (onboarding clients only: one written by hand for anyone else
  * waits for a person to send it).
  */
 export async function keepPresentations(admin: SupabaseClient) {
+  // Clients in the new onboarding (FLOW_START) only: anyone weeks in is written and sent by hand, never a surprise first look
   const inFlow = `created_at.gte.${FLOW_START},reonboarded_at.gte.${FLOW_START}`;
   const { data: fresh } = await admin.from("clients").select("id, name").eq("status", "onboarding").is("archived_at", null).or(inFlow);
   const ids = (fresh ?? []).map((c) => c.id as string);
