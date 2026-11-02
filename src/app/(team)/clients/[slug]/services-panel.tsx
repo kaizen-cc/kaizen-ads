@@ -4,11 +4,12 @@ import Link from "next/link";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { SERVICES } from "@/lib/services";
-import { addServiceTier, setClientService, setServiceTier } from "./actions";
+import { addServiceTier, setClientService, setOngoingPackage, setServiceTier } from "./actions";
 
 // What the client buys, at a glance: every service Kaizen sells, lit when they have it, with its tier. Kaizen Track's
 // services come in on their own (and end there); execs and leads add the rest here and pick each one's tier, adding a
-// tier when a new one is sold. Creative's tier is its creative package, set on the Creative tab.
+// tier when a new one is sold. Creative's tier is its creative package: an exec picks it here (ongoing), or starts a
+// sprint with an end date on the Creative tab.
 
 export type Tier = { id: string; service: string; label: string; includes: string | null };
 
@@ -41,6 +42,8 @@ export function ServicesPanel({
   chosen,
   creative,
   canEdit,
+  packages = [],
+  canSetPackage = false,
 }: {
   clientId: string;
   slug: string;
@@ -49,8 +52,11 @@ export function ServicesPanel({
   removed?: string[];
   tiers: Tier[];
   chosen: Record<string, string>; // service → tier id
-  creative: { label: string | null; active: boolean; until: string | null };
+  creative: { label: string | null; active: boolean; until: string | null; key?: string | null };
   canEdit: boolean;
+  /** The creative packages an exec can put the client on */
+  packages?: { key: string; label: string; images: number; videos: number }[];
+  canSetPackage?: boolean;
 }) {
   const router = useRouter();
   const [mine, setMine] = useState(() => new Set([...track, ...extra].filter((s) => !removed.includes(s))));
@@ -117,7 +123,34 @@ export function ServicesPanel({
                     {s.label}
                     <span className={`rounded-full px-1.5 py-px text-[10px] font-normal ${fromTrack ? "bg-surface-2 text-faint" : "bg-warn-soft text-warn"}`}>{fromTrack ? "Track" : "Added here"}</span>
                   </span>
-                  {s.slug === "creative" ? (
+                  {s.slug === "creative" && canSetPackage && packages.length ? (
+                    <span className="flex flex-wrap items-center gap-x-2 text-xs text-muted">
+                      <select
+                        value={creative.active && !creative.until ? (creative.key ?? "") : ""}
+                        disabled={pending}
+                        onChange={(e) =>
+                          e.target.value &&
+                          start(async () => {
+                            setError(null);
+                            const r = await setOngoingPackage(clientId, slug, e.target.value);
+                            if (!r.ok) setError(r.error);
+                            else router.refresh();
+                          })
+                        }
+                        className="max-w-full cursor-pointer truncate bg-transparent text-xs text-muted outline-none hover:text-fg max-md:min-h-10"
+                      >
+                        <option value="">{creative.label ? `${creative.label}${creative.until ? ` (sprint until ${creative.until})` : ""}` : "Pick a package"}</option>
+                        {packages.map((pk) => (
+                          <option key={pk.key} value={pk.key}>
+                            {pk.label} · {[pk.images && `${pk.images} images`, pk.videos && `${pk.videos} videos`].filter(Boolean).join(" + ") || "no allotment"} a month
+                          </option>
+                        ))}
+                      </select>
+                      <Link href={`/clients/${slug}?tab=creative`} className="text-faint underline-offset-2 hover:text-fg hover:underline">
+                        or a sprint on Creative
+                      </Link>
+                    </span>
+                  ) : s.slug === "creative" ? (
                     <span className="text-xs text-muted">
                       {creative.label ? `${creative.label} package${creative.until ? ` until ${creative.until}` : ""}` : "No package set"}
                       {" · "}
@@ -229,11 +262,12 @@ function TierPick({ service, tiers, value, canEdit, onPick, onAdded }: { service
     );
 
   return (
-    <span className="relative inline-flex max-w-full items-center">
+    <span className="inline-flex max-w-full items-center">
+      {/* The arrow is the app's own for every select (globals.css) */}
       <select
         value={value ?? ""}
         onChange={(e) => (e.target.value === "__new" ? setAdding(true) : onPick(e.target.value || null))}
-        className="max-w-full cursor-pointer appearance-none truncate bg-transparent pr-5 text-xs text-muted outline-none hover:text-fg max-md:min-h-10"
+        className="max-w-full cursor-pointer truncate bg-transparent text-xs text-muted outline-none hover:text-fg max-md:min-h-10"
       >
         <option value="">{tiers.length ? "Pick a tier" : "No tiers yet"}</option>
         {tiers.map((t) => (
@@ -244,9 +278,6 @@ function TierPick({ service, tiers, value, canEdit, onPick, onAdded }: { service
         ))}
         <option value="__new">+ New tier…</option>
       </select>
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" className="pointer-events-none absolute right-0 text-faint" aria-hidden>
-        <path d="M6 9l6 6 6-6" />
-      </svg>
     </span>
   );
 }

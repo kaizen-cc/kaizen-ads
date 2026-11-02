@@ -549,8 +549,10 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                         removed={services.removed ?? []}
                         tiers={services.tiers}
                         chosen={services.chosen}
-                        creative={{ label: active ? packageLabel : null, active, until: active && until ? untilLabel(until) : null }}
+                        creative={{ label: active ? packageLabel : null, active, until: active && until ? untilLabel(until) : null, key: client.creative_package_key ?? null }}
                         canEdit={can.assign && !demo}
+                        packages={packages}
+                        canSetPackage={can.admin && !demo}
                       />
                     </Section>
                   )}

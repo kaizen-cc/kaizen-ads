@@ -523,3 +523,11 @@ export async function clearClientAi(clientId: string) {
   const me = await requireStaff();
   await createAdminClient().from("client_chats").delete().eq("client_id", clientId).eq("profile_id", me.id);
 }
+
+/** Execs: put a client on an ongoing creative package from the client page (its allotment follows). */
+export async function setOngoingPackage(clientId: string, slug: string, pkg: string): Promise<ActionResult> {
+  await requireStaff();
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("set_ongoing_package", { p_client: clientId, p_package: pkg });
+  return done(slug, error);
+}
