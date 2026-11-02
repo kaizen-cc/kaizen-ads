@@ -761,6 +761,14 @@ export async function suggestOnboarding(admin: SupabaseClient, clientId: string)
   const { data: plan } = await admin.from("client_presentations").select("deck, reactions, chat, status").eq("client_id", clientId).maybeSingle();
   const { reviewBlock } = await import("@/lib/plan-chat");
   const review = plan?.deck && ["approved", "sent"].includes(plan.status as string) ? reviewBlock(plan.deck as never, (plan.reactions ?? {}) as never, (plan.chat ?? []) as never) : "";
+  // The look they picked in their setup guide (styles, pacing, the ads they liked): the creative team's first visual brief
+  const { data: guide } = await admin.from("client_onboarding").select("style").eq("client_id", clientId).maybeSingle();
+  const { STYLES, PACING } = await import("@/lib/onboarding-guide-types");
+  const style = (guide?.style ?? {}) as { styles?: string[]; pacing?: string | null; liked?: { image: string }[]; note?: string };
+  const looks = (style.styles ?? []).map((k) => STYLES.find((x) => x.key === k)?.brief).filter(Boolean);
+  const pace = PACING.find((x) => x.key === style.pacing)?.brief;
+  const liked = (style.liked ?? []).map((l) => l.image).filter((u) => /^https:\/\//.test(u));
+  const lookBlock = looks.length || pace || liked.length || style.note ? `<the_look_they_picked>\n${[looks.length && `Styles: ${looks.join("; ")}`, pace && `Pacing: ${pace}`, liked.length && `They liked ${liked.length} example ads (in refs)`, style.note && `In their words: ${style.note}`].filter(Boolean).join("\n")}\n</the_look_they_picked>\nBuild the concepts in these styles and this pacing, and say in the brief which concept uses which style.` : "";
   const prompt = await promptFor(admin, clientId, [
     { kind: "onboarding", weight: 1, line: c.reonboarded_at ? "Returning client: their first round back" : "New client: their first round of creative", facts: intake ? ["The marketing intake form is in"] : ["No marketing intake form yet: work from what's known and list what to confirm"] },
   ]);
@@ -777,6 +785,8 @@ ${winners.length ? winnersBlock(c.industry, c.industry_detail, winners) : "No wi
 ${review ? `${review}
 The client reviewed how we see them: build on what they confirmed, fix what they marked not quite, use their answers, and lead with the campaign ideas they reacted well to. If they chose the 48-hour engagement launch, the first round is what we move into after it (conversion creative).` : ""}
 
+${lookBlock}
+
 ${intake ? "" : "The marketing intake form hasn't come in yet. Build from what's known, keep claims general, and put what to confirm in the brief."}
 
 This is ${c.name}'s ${c.reonboarded_at ? "first round since they came back" : "first round with Kaizen"}: the first impression, and the first read on what works for them. Write the request:
@@ -788,7 +798,8 @@ This is ${c.name}'s ${c.reonboarded_at ? "first round since they came back" : "f
 - In the brief, list anything the team must confirm with the client before production (from the intake's open questions).
 suggest: true. kind: "kpi". signal: one line on what this first round sets out to learn. evidence: 2 to 4 lines from the intake and the winners. why: two or three sentences. reply: "".`,
   });
-  const draft = clean(out.draft);
+  // The example ads they liked go to the creative team with the brief, as references
+  const draft = clean({ ...out.draft, refs: [...(out.draft.refs ?? []), ...liked].slice(0, 6) });
   // One open first round per client: a newer one replaces it
   await admin.from("creative_suggestions").update({ status: "expired", updated_at: new Date().toISOString() }).eq("client_id", clientId).eq("kind", "onboarding").eq("status", "open");
   const { data, error } = await admin

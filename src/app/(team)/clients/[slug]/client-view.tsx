@@ -158,10 +158,12 @@ export type ClientViewProps = {
   docs?: ClientDoc[] | null; // every file and link shared about them
   reports?: HistoryReport[] | null; // every report made for them
   playbook?: { items: LedgerItem[]; learnings: { at: string; kind: string; text: string }[] } | null; // everything they've run, and what it taught
+  /** A new client's setup (their onboarding guide's steps), shown above the intake */
+  setup?: React.ReactNode;
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, docs = null, reports = null, playbook = null }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, docs = null, reports = null, playbook = null, setup = null }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -516,6 +518,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                     <GtmPanel clientId={client.id} slug={client.slug} gtm={gtm} canReview={can.assign} readOnly={!live} />
                   </Fold>
                 )}
+                {setup}
                 {intake !== undefined && (
                   <Fold id="intake">
                     <IntakePanel intake={intake} />

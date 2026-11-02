@@ -279,6 +279,8 @@ async function readCall(admin: SupabaseClient, id: string, clients: { id: string
         meta: { call_id: id, source: call.source, internal: out.internal },
       },
     ]);
+    // A new client's onboarding call: did we get the access we need? (checked against Meta and Google, then flagged)
+    if (recent) await import("@/lib/onboarding-guide").then(({ afterOnboardingCall }) => afterOnboardingCall(admin, m.clientId, { id, title: call.title, at: call.occurred_at, summary: m.summary })).catch(() => null);
   }
 }
 

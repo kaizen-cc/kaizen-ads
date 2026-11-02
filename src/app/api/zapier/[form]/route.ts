@@ -89,6 +89,12 @@ export async function POST(request: Request, ctx: RouteContext<"/api/zapier/[for
     const services = enrolled ? await applyServices(admin, enrolled, data.services, data.creatives).catch(() => [] as string[]) : [];
     // The client's own people named on the form become their contacts (portal link, approvals)
     const contacts = enrolled ? await applyContacts(admin, enrolled, raw).catch(() => [] as string[]) : [];
+    // A new client: their welcome and onboarding guide go out now (access, Google Ads ID, assets, style)
+    if (enrolled && form === "enrollment")
+      after(async () => {
+        const { data: c } = await admin.from("clients").select("status").eq("id", enrolled).single();
+        if (c?.status === "onboarding") await (await import("@/lib/onboarding-guide")).welcomeClient(admin, enrolled).catch(() => null);
+      });
     // Anything but a plain set package ("3 Videos per Month", "Silver + 2 extra videos") becomes Custom, with
     // exactly those deliverables as the allotment
     const recognised = (result as { creative_package?: string | null })?.creative_package ?? null;

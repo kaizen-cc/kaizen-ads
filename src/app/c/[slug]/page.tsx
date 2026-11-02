@@ -22,10 +22,17 @@ export default async function ClientHome({ params }: PageProps<"/c/[slug]">) {
     db = await createClient(); // the team's own access rules
   }
 
-  const { data: client } = await db.from("clients").select("id, name, slug, portal_live").eq("slug", slug).maybeSingle();
+  const { data: client } = await db.from("clients").select("id, name, slug, portal_live, status, services").eq("slug", slug).maybeSingle();
   if (!client || (viewer.kind === "contact" && !client.portal_live)) notFound();
 
   const data = await loadPortal(db, client.id);
+  // A new client still setting up: their guide, first
+  let setup: { done: number; total: number } | null = null;
+  if (client.status === "onboarding" && adminConfigured()) {
+    const [{ loadGuide }, { guideProgress }] = await Promise.all([import("@/lib/onboarding-guide"), import("@/lib/onboarding-guide-types")]);
+    const p = guideProgress(await loadGuide(createAdminClient(), client.id), ((client.services ?? []) as string[]).includes("google-ads"));
+    if (p.done < p.total) setup = p;
+  }
   const brands = viewer.kind === "contact" ? viewer.brands : [{ name: client.name, slug: client.slug }];
   const firstName = viewer.kind === "contact" ? (viewer.fullName?.split(" ")[0] ?? null) : null;
 
@@ -48,6 +55,20 @@ export default async function ClientHome({ params }: PageProps<"/c/[slug]">) {
           </span>
         </div>
       </header>
+      {setup && (
+        <div className="mx-auto max-w-md px-4 pt-4">
+          <Link href={`/c/${client.slug}/start`} className="flex items-center gap-3 rounded-[18px] border border-brand/40 bg-brand/[0.07] p-4">
+            <span className="tabular grid h-11 w-11 shrink-0 place-items-center rounded-full bg-brand text-[13px] font-semibold text-white">
+              {setup.done}/{setup.total}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block font-heading text-[15.5px]">Finish getting set up</span>
+              <span className="block text-[12.5px] text-muted">A few quick steps so we can start building your ads</span>
+            </span>
+            <span className="text-[13px] text-brand-text">→</span>
+          </Link>
+        </div>
+      )}
       <Portal slug={client.slug} clientName={client.name} firstName={firstName} data={data} testing={viewer.kind === "staff"} live={client.portal_live} />
     </div>
   );

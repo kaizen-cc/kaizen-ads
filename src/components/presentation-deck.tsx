@@ -25,7 +25,7 @@ export function PresentationDeck({ brand, deck, reactions, approved, readOnly = 
         <span aria-hidden className="pointer-events-none absolute -right-24 -top-32 -z-10 h-96 w-96 rounded-full bg-brand/30 blur-[120px]" />
         <span aria-hidden className="pointer-events-none absolute -bottom-40 left-1/4 -z-10 h-80 w-80 rounded-full bg-[#5b8def]/15 blur-[120px]" />
         <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-faint">Kaizen Marketing · How we see {brand}</p>
-        <h1 className="mt-4 font-display text-[34px] leading-[1.04] tracking-tight md:text-[56px]">{deck.headline}</h1>
+        <h1 className="mt-4 font-heading text-[32px] leading-[1.08] tracking-tight md:text-[50px]">{deck.headline}</h1>
         <p className="mt-5 max-w-2xl text-[15.5px] leading-relaxed text-muted md:text-[17px]">{deck.intro}</p>
         {!readOnly && !approved && <p className="mt-6 text-[12.5px] text-faint">About five minutes · tap Spot on or Not quite on each part</p>}
       </section>
@@ -69,7 +69,7 @@ export function PresentationDeck({ brand, deck, reactions, approved, readOnly = 
       <Card n={4} title="How you sound" section="voice" reactions={reactions} locked={locked} onReact={h.onReact}>
         <div className="flex flex-wrap gap-x-5 gap-y-1">
           {deck.voice.words.map((w) => (
-            <span key={w} className="font-display text-[30px] leading-tight tracking-tight md:text-[40px]">
+            <span key={w} className="font-heading text-[30px] leading-tight tracking-tight md:text-[40px]">
               {w}
             </span>
           ))}

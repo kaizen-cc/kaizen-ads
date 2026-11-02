@@ -277,8 +277,22 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
   }).sort((a, b) => b.start.localeCompare(a.start));
   const docs = (docRows ?? []).map((d) => ({ id: d.id, kind: d.kind, name: d.name, url: d.url, path: d.path, mime: d.mime, bytes: d.bytes, title: d.title, summary: d.summary, status: d.status, note: d.note, via: d.via, at: d.created_at, by: (d.profiles as unknown as { full_name: string } | null)?.full_name ?? null }));
 
+  // A new client's onboarding guide, step by step
+  let setup: React.ReactNode = null;
+  if (client.status === "onboarding" && adminConfigured()) {
+    const admin = createAdminClient();
+    const [{ loadGuide }, { data: o }, { data: launch }] = await Promise.all([
+      import("@/lib/onboarding-guide"),
+      admin.from("client_onboarding").select("welcomed_at").eq("client_id", client.id).maybeSingle(),
+      admin.from("engagement_launches").select("status").eq("client_id", client.id).maybeSingle(),
+    ]);
+    const { GuidePanel } = await import("./guide-panel");
+    setup = <GuidePanel slug={client.slug} guide={await loadGuide(admin, client.id)} google={((client.services ?? []) as string[]).includes("google-ads")} welcomed={(o?.welcomed_at as string | null) ?? null} launch={(launch?.status as string | null) ?? null} />;
+  }
+
   return (
     <ClientView
+      setup={setup}
       campaigns={campaigns}
       docs={docs}
       playbook={{ items: await loadLedger(supabase, client.id), learnings: ((await supabase.from("client_brand_bibles").select("learnings").eq("client_id", client.id).maybeSingle()).data?.learnings ?? []) as { at: string; kind: string; text: string }[] }}

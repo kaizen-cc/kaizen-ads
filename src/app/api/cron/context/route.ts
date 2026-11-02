@@ -203,7 +203,8 @@ export async function GET(request: Request) {
     if (step === "presentations") {
       const presentations = await (await import("@/lib/presentation")).keepPresentations(admin);
       const launches = await (await import("@/lib/engagement-launch")).keepLaunches(admin);
-      return Response.json({ presentations, launches });
+      const guides = await (await import("@/lib/onboarding-guide")).keepGuides(admin);
+      return Response.json({ presentations, launches, guides });
     }
     if (step === "history") {
       const { googleConfigured, pullEmailHistory } = await import("@/lib/context/google");

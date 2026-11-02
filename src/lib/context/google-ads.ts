@@ -360,6 +360,15 @@ export async function managedAccounts() {
     .map((r) => ({ id: String(r.customerClient?.id), name: String(r.customerClient?.descriptiveName ?? ""), status: String(r.customerClient?.status ?? "") }));
 }
 
+/** Our manager account's ID, as Google shows it (123-456-7890) */
+export const managerId = () => digits(env("GOOGLE_ADS_LOGIN_CUSTOMER_ID")).replace(/^(\d{3})(\d{3})(\d{4})$/, "$1-$2-$3");
+
+/** Ask to manage a client's account from our manager account (they accept it in Google Ads: Admin, Access and security, Managers) */
+export async function inviteToManager(customer: string) {
+  const mcc = digits(env("GOOGLE_ADS_LOGIN_CUSTOMER_ID"));
+  await post(mcc, "customerClientLinks:mutate", { operation: { create: { clientCustomer: `customers/${digits(customer)}`, status: "PENDING" } } });
+}
+
 /** The setup check: signs in and lists the manager account's clients. Names and counts only. */
 export async function checkGoogleAds() {
   if (!googleAdsConfigured()) return { ok: false, detail: `Missing: ${googleAdsMissing().join("; ")}` };
