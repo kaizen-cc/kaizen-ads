@@ -5,6 +5,7 @@ import { accessSetting, industryExamples, loadGuide } from "@/lib/onboarding-gui
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { StartView } from "./start-view";
 import { servicesOf } from "@/lib/services";
+import { guideSteps } from "@/lib/onboarding-guide-types";
 
 export const metadata: Metadata = { title: "Get set up · Kaizen", robots: { index: false, follow: false } };
 // "I've done it" checks Meta and Google right away; sharing assets uploads and reads them
@@ -43,7 +44,7 @@ export default async function StartPage({ params }: { params: Promise<{ slug: st
           brand={client.name}
           firstName={firstName}
           guide={guide}
-          google={servicesOf(client).includes("google-ads")}
+          has={guideSteps(servicesOf(client))}
           bmId={access.bmId}
           adminEmails={access.adminEmails}
           managerId={managerId() || null}

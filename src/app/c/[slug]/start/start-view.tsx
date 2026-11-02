@@ -12,17 +12,17 @@ import { assetSlots, assetsShared, googleSend, metaDone, onTheCall, saveStyle } 
 // them through with pictures of the screens they'll see, and says plainly when it's done. Nothing here is a form to
 // puzzle over: copy buttons for every ID, one tap for "let's do it on our call".
 
-type Props = { slug: string; brand: string; firstName: string | null; guide: Guide; google: boolean; bmId: string | null; adminEmails: string[]; managerId: string | null; examples: { id: string; image: string; video: boolean }[]; presentation: string | null };
+type Props = { slug: string; brand: string; firstName: string | null; guide: Guide; has: { meta: boolean; google: boolean; looks: boolean }; bmId: string | null; adminEmails: string[]; managerId: string | null; examples: { id: string; image: string; video: boolean }[]; presentation: string | null };
 type StepKey = "meta" | "google" | "assets" | "style";
 
 export function StartView(p: Props) {
   const step = useParam("step") as StepKey | null;
-  const { done, total } = guideProgress(p.guide, p.google);
+  const { done, total } = guideProgress(p.guide, p.has);
   const steps: { key: StepKey; title: string; line: string; mins: string; state: "done" | "call" | "todo" | "wait" }[] = [
-    { key: "meta", title: "Facebook & Instagram access", line: "Add Kaizen as a partner so we can run your ads", mins: "4 min", state: p.guide.meta.status === "verified" ? "done" : p.guide.meta.status === "on_call" ? "call" : p.guide.meta.status === "done" ? "wait" : "todo" },
-    ...(p.google ? [{ key: "google" as const, title: "Google Ads", line: "Send us your account ID (or make one)", mins: "2 min", state: (p.guide.google.status === "verified" ? "done" : p.guide.google.status === "on_call" ? "call" : ["sent", "invited", "none"].includes(p.guide.google.status ?? "") ? "wait" : "todo") as "done" | "call" | "todo" | "wait" }] : []),
+    ...(p.has.meta ? [{ key: "meta" as const, title: "Facebook & Instagram access", line: "Add Kaizen as a partner so we can run your ads", mins: "4 min", state: (p.guide.meta.status === "verified" ? "done" : p.guide.meta.status === "on_call" ? "call" : p.guide.meta.status === "done" ? "wait" : "todo") as "done" | "call" | "todo" | "wait" }] : []),
+    ...(p.has.google ? [{ key: "google" as const, title: "Google Ads", line: "Send us your account ID (or make one)", mins: "2 min", state: (p.guide.google.status === "verified" ? "done" : p.guide.google.status === "on_call" ? "call" : ["sent", "invited", "none"].includes(p.guide.google.status ?? "") ? "wait" : "todo") as "done" | "call" | "todo" | "wait" }] : []),
     { key: "assets", title: "Your brand assets", line: "Logo, photos, videos, brand guide", mins: "3 min", state: (p.guide.assets.files ?? 0) + (p.guide.assets.links ?? 0) ? "done" : "todo" },
-    { key: "style", title: "The look you want", line: "Pick the styles and pacing you love", mins: "2 min", state: p.guide.style.styles?.length || p.guide.style.pacing ? "done" : "todo" },
+    ...(p.has.looks ? [{ key: "style" as const, title: "The look you want", line: "Pick the styles and pacing you love", mins: "2 min", state: (p.guide.style.styles?.length || p.guide.style.pacing ? "done" : "todo") as "done" | "todo" }] : []),
   ];
   const pct = Math.round((done / Math.max(1, total)) * 100);
 
@@ -66,10 +66,10 @@ export function StartView(p: Props) {
         )}
       </div>
 
-      {step === "meta" && <MetaSheet {...p} />}
-      {step === "google" && p.google && <GoogleSheet {...p} />}
+      {step === "meta" && p.has.meta && <MetaSheet {...p} />}
+      {step === "google" && p.has.google && <GoogleSheet {...p} />}
       {step === "assets" && <AssetsSheet {...p} />}
-      {step === "style" && <StyleSheet {...p} />}
+      {step === "style" && p.has.looks && <StyleSheet {...p} />}
     </div>
   );
 }

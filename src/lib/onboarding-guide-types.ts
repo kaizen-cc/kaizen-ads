@@ -25,13 +25,19 @@ export const PACING = [
   { key: "slow", name: "Slow and cinematic", line: "Long, calm shots that let it sink in", brief: "Slow, cinematic pacing: long, calm shots" },
 ] as const;
 
-/** Steps done (Google only counts for clients we run Google for) */
-export function guideProgress(g: Guide, google: boolean) {
+/** Which steps a client has, from what they buy: Meta access if we run their Meta ads, Google if Google, the look if
+ *  we run ads or make their creative; their assets always */
+export function guideSteps(services: string[]) {
+  return { meta: services.includes("facebook-ads"), google: services.includes("google-ads"), looks: services.includes("facebook-ads") || services.includes("creative") || services.includes("tiktok-ads") };
+}
+
+/** Steps done, out of the steps they have */
+export function guideProgress(g: Guide, has: { meta: boolean; google: boolean; looks: boolean }) {
   const steps = [
-    ["verified", "done"].includes(g.meta.status ?? "") || g.meta.status === "on_call",
-    ...(google ? [["sent", "invited", "verified", "on_call", "none"].includes(g.google.status ?? "")] : []),
+    ...(has.meta ? [["verified", "done", "on_call"].includes(g.meta.status ?? "")] : []),
+    ...(has.google ? [["sent", "invited", "verified", "on_call", "none"].includes(g.google.status ?? "")] : []),
     Boolean((g.assets.files ?? 0) + (g.assets.links ?? 0)),
-    Boolean(g.style.styles?.length || g.style.pacing),
+    ...(has.looks ? [Boolean(g.style.styles?.length || g.style.pacing)] : []),
   ];
   return { done: steps.filter(Boolean).length, total: steps.length };
 }

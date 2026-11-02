@@ -2,7 +2,8 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { metaConfigured, metaGraph } from "@/lib/context/meta";
 import { sendEmail } from "@/lib/email";
-import type { Guide, GoogleStep, MetaStep } from "@/lib/onboarding-guide-types";
+import { guideSteps, type Guide, type GoogleStep, type MetaStep } from "@/lib/onboarding-guide-types";
+import { servicesOf } from "@/lib/services";
 import { siteUrl } from "@/lib/site";
 
 // A new client's onboarding guide in their portal, sent the moment they enroll: Meta access (Kaizen's business as a
@@ -119,12 +120,24 @@ async function tellTeam(admin: SupabaseClient, clientId: string, what: string, b
 }
 export { tellTeam as tellGuideTeam };
 
+/** The setup steps for what a client buys: Meta access if we run their Meta ads, Google if Google, the look if we run
+ *  ads or make their creative, and their assets always */
+export function setupSteps(services: string[]) {
+  const { meta, google, looks } = guideSteps(services);
+  return [
+    ...(meta ? [{ title: "Give us access to your Facebook and Instagram ads", text: "Add Kaizen as a partner in your Business Manager. We show you every click." }] : []),
+    ...(google ? [{ title: "Send us your Google Ads account ID", text: "We show you where to find it, or how to make an account." }] : []),
+    { title: "Share your brand assets", text: "Your logo, photos, videos and brand guide, or a link to them." },
+    ...(looks ? [{ title: "Pick the look you want", text: "The styles and pacing you love, so your first ads feel like you." }] : []),
+  ];
+}
+
 /** The welcome, at enrollment: their portal opened, an email to each contact and a post in their Slack channel */
 export async function welcomeClient(admin: SupabaseClient, clientId: string) {
   const { data: o } = await admin.from("client_onboarding").select("welcomed_at").eq("client_id", clientId).maybeSingle();
   if (o?.welcomed_at) return "already";
   const [{ data: c }, { data: links }] = await Promise.all([
-    admin.from("clients").select("name, slug, portal_live, slack_channel_id").eq("id", clientId).single(),
+    admin.from("clients").select("name, slug, portal_live, slack_channel_id, services, services_extra, services_removed").eq("id", clientId).single(),
     admin.from("contact_clients").select("contacts(email, full_name, is_active)").eq("client_id", clientId),
   ]);
   if (!c) return "missing";
@@ -134,21 +147,29 @@ export async function welcomeClient(admin: SupabaseClient, clientId: string) {
   if (!contacts.length && !c.slack_channel_id) return "no contact";
   if (!c.portal_live) await admin.from("clients").update({ portal_live: true, portal_live_at: new Date().toISOString() }).eq("id", clientId);
   const link = `${siteUrl()}/c/${c.slug}/start`;
-  const lines = [
-    `Welcome to Kaizen! Your portal is where everything with us happens: getting set up, seeing how we see your brand, and approving every ad before it runs.`,
-    `First, four quick things so we can start building: give us access to your Facebook and Instagram ads, send your Google Ads account ID (if we run Google for you), share your brand assets, and pick the look you want for your ads. Each one walks you through it, about ten minutes in all.`,
-  ];
+  // Only the steps for what they buy from us
+  const steps = setupSteps(servicesOf(c));
+  const { emailHtml, emailText } = await import("@/lib/email-layout");
   for (const x of contacts) {
-    const hello = x.full_name ? `Hi ${x.full_name.split(" ")[0]},` : "Hi there,";
-    await sendEmail({
-      to: x.email,
-      subject: `Welcome to Kaizen, ${c.name}: let's get you set up`,
-      text: [hello, "", ...lines.flatMap((l) => [l, ""]), link, "", "— The Kaizen team"].join("\n"),
-      html: `<div style="background:#060606;padding:32px 16px;font-family:Poppins,system-ui,sans-serif"><div style="max-width:520px;margin:0 auto;background:#101011;border:1px solid #26262a;border-radius:12px;overflow:hidden;color:#f2f2f2"><div style="padding:28px 28px 8px;background:radial-gradient(circle at 100% 0%,rgba(178,30,44,.35),transparent 60%)"><p style="margin:0 0 14px;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#9a9aa2">Kaizen Marketing · ${c.name}</p><p style="margin:0 0 6px;font-size:22px;line-height:1.25;font-weight:600">Welcome aboard. Let's get you set up.</p></div><div style="padding:12px 28px 28px"><p style="margin:0 0 12px;font-size:15px">${hello}</p>${lines.map((l) => `<p style="margin:0 0 12px;font-size:15px;line-height:1.55;color:#d8d8dc">${l}</p>`).join("")}<a href="${link}" style="display:inline-block;margin-top:8px;background:#b21e2c;color:#fff;text-decoration:none;font-weight:600;font-size:15px;padding:13px 22px;border-radius:999px">Start setup →</a><p style="margin:22px 0 0;font-size:12px;line-height:1.5;color:#6a6a72">The link opens your Kaizen portal. If it asks, enter this email and we'll send you a one-tap sign-in.</p></div></div></div>`,
-    }).catch(() => null);
+    const parts = {
+      preheader: `${steps.length} quick steps so we can start building your ads.`,
+      kicker: c.name as string,
+      title: "Welcome to Kaizen",
+      highlight: "Kaizen",
+      hello: x.full_name ? `Hi ${x.full_name.split(" ")[0]},` : "Hi there,",
+      lines: ["We're excited to get started. Your Kaizen portal is where everything with us happens: getting set up, seeing how we see your brand, and approving every ad before it runs.", `First, ${steps.length} quick step${steps.length === 1 ? "" : "s"} so we can start building (about ${steps.length * 3} minutes, and each one walks you through it):`],
+      steps,
+      cta: { label: "Start setup →", url: link },
+      note: "The button opens your Kaizen portal. If it asks, enter this email and we'll send you a one-tap sign-in.",
+    };
+    await sendEmail({ to: x.email, subject: `Welcome to Kaizen, ${c.name}: let's get you set up`, text: emailText(parts), html: emailHtml(parts) }).catch(() => null);
   }
   if (process.env.SLACK_BOT_TOKEN && c.slack_channel_id)
-    await fetch("https://slack.com/api/chat.postMessage", { method: "POST", headers: { authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`, "content-type": "application/json; charset=utf-8" }, body: JSON.stringify({ channel: c.slack_channel_id, text: `Welcome to Kaizen! 🎉 Four quick setup steps so we can start building (access, Google Ads ID, your assets and the look you want), about ten minutes: ${link}`, unfurl_links: false }) }).catch(() => null);
+    await fetch("https://slack.com/api/chat.postMessage", {
+      method: "POST",
+      headers: { authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`, "content-type": "application/json; charset=utf-8" },
+      body: JSON.stringify({ channel: c.slack_channel_id, text: `Welcome to Kaizen! 🎉 ${steps.length} quick steps so we can start building:\n${steps.map((st) => `• ${st.title}`).join("\n")}\n<${link}|Start setup →>`, unfurl_links: false }),
+    }).catch(() => null);
   await admin.from("client_onboarding").upsert({ client_id: clientId, welcomed_at: new Date().toISOString(), updated_at: new Date().toISOString() });
   return "sent";
 }
@@ -168,7 +189,6 @@ export async function afterOnboardingCall(admin: SupabaseClient, clientId: strin
     if (count) return; // not their first call since enrolling
   }
   const meta = await checkMeta(admin, clientId);
-  const { servicesOf } = await import("@/lib/services");
   const google = servicesOf(c).includes("google-ads") ? await checkGoogle(admin, clientId) : null;
   await admin.from("client_onboarding").upsert({ client_id: clientId, call_checked_at: new Date().toISOString(), updated_at: new Date().toISOString() });
   const missing = [meta.status !== "verified" && `Meta access (${meta.note ?? "we can't see their ad account and Page yet"})`, google && google.status !== "verified" && `Google Ads (${google.account ? `ID ${google.account}, ${google.note ?? "not linked yet"}` : "no account ID yet"})`].filter(Boolean) as string[];

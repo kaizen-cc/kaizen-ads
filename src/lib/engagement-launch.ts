@@ -287,15 +287,20 @@ async function tellClientLive(admin: SupabaseClient, clientId: string) {
   const plan = l.plan as EngagementPlan;
   const lines = [`Your first campaign is live: ${n} of your best posts are now running as ads on Facebook and Instagram, reaching people in ${plan.geo.label}.`, "This builds an audience and traffic for you right away, and it's the warm-up for the conversion campaigns we launch as your new creative lands. We'll keep you posted on how it's going."];
   const { sendEmail } = await import("@/lib/email");
+  const { emailHtml, emailText } = await import("@/lib/email-layout");
   for (const x of (links ?? []).map((k) => k.contacts as unknown as { email: string; full_name: string | null; is_active: boolean } | null)) {
     if (!x?.is_active || !x.email) continue;
-    const hello = x.full_name ? `Hi ${x.full_name.split(" ")[0]},` : "Hi there,";
-    await sendEmail({
-      to: x.email,
-      subject: `${c.name}: your first campaign is live`,
-      text: [hello, "", ...lines.flatMap((t) => [t, ""]), "— The Kaizen team"].join("\n"),
-      html: `<div style="background:#060606;padding:32px 16px;font-family:Poppins,system-ui,sans-serif"><div style="max-width:520px;margin:0 auto;background:#101011;border:1px solid #26262a;border-radius:12px;padding:28px;color:#f2f2f2"><p style="margin:0 0 14px;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#9a9aa2">Kaizen Marketing · ${c.name}</p><p style="margin:0 0 16px;font-size:22px;font-weight:600">You're live 🎉</p><p style="margin:0 0 12px;font-size:15px">${hello}</p>${lines.map((t) => `<p style="margin:0 0 12px;font-size:15px;line-height:1.55;color:#d8d8dc">${t}</p>`).join("")}</div></div>`,
-    }).catch(() => null);
+    const parts = {
+      preheader: `${n} of your best posts are running as ads now.`,
+      kicker: c.name as string,
+      title: "You're live 🎉",
+      hello: x.full_name ? `Hi ${x.full_name.split(" ")[0]},` : "Hi there,",
+      lines: ["Your first campaign is running:"],
+      bullets: [`${n} of your best posts, now ads on Facebook and Instagram`, `Reaching people in ${plan.geo.label}`, "Building your audience and site traffic from today", "The warm-up for the conversion campaigns that follow as your new creative lands"],
+      cta: { label: "See it on your dashboard →", url: `${(await import("@/lib/site")).siteUrl()}/c/${c.slug}/dashboard` },
+      note: "We'll keep you posted on how it's going.",
+    };
+    await sendEmail({ to: x.email, subject: `${c.name}: your first campaign is live`, text: emailText(parts), html: emailHtml(parts) }).catch(() => null);
   }
   if (process.env.SLACK_BOT_TOKEN && c.slack_channel_id)
     await fetch("https://slack.com/api/chat.postMessage", { method: "POST", headers: { authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`, "content-type": "application/json; charset=utf-8" }, body: JSON.stringify({ channel: c.slack_channel_id, text: `🎉 ${lines.join(" ")}`, unfurl_links: false }) }).catch(() => null);

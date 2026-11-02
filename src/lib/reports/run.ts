@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { nyParts } from "@/lib/kpi/calc";
 import { LIVE } from "@/lib/live";
 import { sendEmail } from "@/lib/email";
+import { emailHtml, emailText } from "@/lib/email-layout";
 import { postAsUser } from "@/lib/slack-user";
 import { renderReportPdf } from "./pdf";
 import { periodsFor, type ReportMetrics } from "./metrics";
@@ -195,12 +196,8 @@ async function deliverLatePart(admin: SupabaseClient, id: string, by: { id: stri
   const { data: links } = await admin.from("contact_clients").select("contacts(email, full_name)").eq("client_id", b.client_id);
   const sentTo: string[] = [];
   for (const c of (links ?? []).map((l) => l.contacts as unknown as { email: string; full_name: string | null } | null).filter((x): x is { email: string; full_name: string | null } => Boolean(x?.email)).slice(0, 6)) {
-    const res = await sendEmail({
-      to: c.email,
-      subject: `Your ${month} recap from Kaizen: ${service} is in`,
-      text: `Hi ${c.full_name?.split(" ")[0] ?? "there"},\n\nThe ${service} part of your ${month} recap is ready: ${link}\n\n${r.sections?.headline ?? ""}\n\nThe Kaizen team`,
-      html: `<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:560px;margin:0 auto;padding:32px 24px;color:#17131a"><p style="font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:#c8102e;margin:0 0 16px">Kaizen Marketing</p><h1 style="font-size:24px;line-height:1.25;margin:0 0 12px">${service} is in your ${month} recap</h1><p style="font-size:15px;line-height:1.6;color:#4d464f;margin:0 0 24px">${(r.sections?.headline ?? "").replace(/[<>&]/g, "")}</p><a href="${link}" style="display:inline-block;background:#c8102e;color:#fff;text-decoration:none;font-weight:600;font-size:15px;padding:12px 22px;border-radius:999px">See the recap</a></div>`,
-    });
+    const parts = { kicker: r.client.name, title: `${service} is in your ${month} recap`, hello: `Hi ${c.full_name?.split(" ")[0] ?? "there"},`, lines: [r.sections?.headline ?? `The ${service} part of your ${month} recap is ready.`], cta: { label: "See the recap →", url: link } };
+    const res = await sendEmail({ to: c.email, subject: `Your ${month} recap from Kaizen: ${service} is in`, text: emailText(parts), html: emailHtml(parts) });
     if (res.ok) sentTo.push(c.email);
   }
   delivered.email = sentTo;
@@ -233,12 +230,19 @@ export async function deliverBundle(admin: SupabaseClient, bundleId: string, by:
     const headline = parts.map((p) => p.sections?.headline).filter(Boolean).join(" · ");
     const sentTo: string[] = [];
     for (const c of to.slice(0, 6)) {
-      const res = await sendEmail({
-        to: c.email,
-        subject: `Your ${month} recap from Kaizen`,
-        text: `Hi ${c.full_name?.split(" ")[0] ?? "there"},\n\nYour ${month} recap is ready: ${link}\n\n${headline}\n\nThe Kaizen team`,
-        html: `<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:560px;margin:0 auto;padding:32px 24px;color:#17131a"><p style="font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:#c8102e;margin:0 0 16px">Kaizen Marketing</p><h1 style="font-size:24px;line-height:1.25;margin:0 0 12px">Your ${month} recap is ready</h1><p style="font-size:15px;line-height:1.6;color:#4d464f;margin:0 0 24px">${headline.replace(/[<>&]/g, "")}</p><a href="${link}" style="display:inline-block;background:#c8102e;color:#fff;text-decoration:none;font-weight:600;font-size:15px;padding:12px 22px;border-radius:999px">See the recap</a><p style="font-size:12px;color:#8a8189;margin:24px 0 0">You can download it as a PDF from the page.</p></div>`,
-      });
+      const dash = dashboardUrl(parts[0]);
+      const mail = {
+        preheader: headline,
+        kicker: client.name,
+        title: `Your ${month} recap is ready`,
+        highlight: month,
+        hello: `Hi ${c.full_name?.split(" ")[0] ?? "there"},`,
+        lines: ["Here's the short version:"],
+        bullets: parts.map((x) => `${x.platform === "google" ? "Google Ads" : "Meta Ads"}: ${x.sections?.headline ?? ""}`).filter((x) => !x.endsWith(": ")),
+        cta: { label: "Read the recap →", url: link },
+        note: dash ? `For every number, any dates: ${dash}` : "You can download it as a PDF from the page.",
+      };
+      const res = await sendEmail({ to: c.email, subject: `Your ${month} recap from Kaizen`, text: emailText(mail), html: emailHtml(mail) });
       if (res.ok) sentTo.push(c.email);
     }
     delivered.email = sentTo;

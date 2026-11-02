@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { AiPaused, askJson } from "@/lib/ai";
 import { describeIntake, type IntakeSummary } from "@/lib/intake-format";
 import { sendEmail } from "@/lib/email";
+import { emailHtml, emailText, type EmailParts } from "@/lib/email-layout";
 import { siteUrl } from "@/lib/site";
 
 // The client presentation: the Brand Bible, short and beautiful, for the client ("Here's how we see you: are we
@@ -125,38 +126,29 @@ async function tellApprovers(admin: SupabaseClient, clientId: string, name: stri
   );
 }
 
-const esc = (t: string) => t.replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]!);
-
 function touchpointEmail(p: { firstName: string | null; brand: string; headline: string; link: string; withoutIntake: boolean; clientId: number | null }) {
-  const hello = p.firstName ? `Hi ${p.firstName},` : "Hi there,";
   const subject = p.withoutIntake ? `${p.brand}: we got started, here's what we've got` : `${p.brand}: are we getting this right?`;
-  const lines = p.withoutIntake
-    ? [
-        "We haven't received your intake form yet, but we didn't want to sit and wait. So we took everything from our conversations so far, your website and our own research on your brand and your market, and put together how we see you: who you're for, how you sound, and the first campaigns we'd recommend.",
-        "Have a look and tell us where we're spot on and where we're off. Anything we've assumed, you can correct right there, and the few questions at the end fill the gaps the intake form would have. It takes about five minutes, and it gets your ads moving sooner.",
-        `When you have ten minutes, the intake form is here: ${INTAKE_FORM_URL}${p.clientId != null ? ` (it asks for your Client ID: ${p.clientId})` : ""}.`,
-      ]
-    : [
-        "Thanks for filling in the intake form. We've taken everything you told us, plus our own research on your brand and your market, and put together how we see you: who you're for, how you sound, and the first campaigns we'd run.",
-        "Before we make anything, we want to be sure we're on the same page. Have a look, tell us where we're spot on and where we're off, and fill in the few gaps only you can. It takes about five minutes.",
-      ];
-  const text = [hello, "", ...lines.flatMap((l) => [l, ""]), p.link, "", "— The Kaizen team"].join("\n");
-  const html = `<div style="background:#060606;padding:32px 16px;font-family:Poppins,system-ui,-apple-system,Segoe UI,sans-serif">
-  <div style="max-width:520px;margin:0 auto;background:#101011;border:1px solid #26262a;border-radius:12px;overflow:hidden;color:#f2f2f2">
-    <div style="padding:28px 28px 8px;background:radial-gradient(circle at 100% 0%,rgba(178,30,44,.35),transparent 60%)">
-      <p style="margin:0 0 14px;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#9a9aa2">Kaizen Marketing · ${esc(p.brand)}</p>
-      <p style="margin:0 0 6px;font-size:22px;line-height:1.25;font-weight:600">${esc(p.headline)}</p>
-    </div>
-    <div style="padding:12px 28px 28px">
-      <p style="margin:0 0 12px;font-size:15px">${esc(hello)}</p>
-      ${lines.slice(0, 2).map((l) => `<p style="margin:0 0 12px;font-size:15px;line-height:1.55;color:#d8d8dc">${esc(l)}</p>`).join("")}
-      <a href="${esc(p.link)}" style="display:inline-block;margin-top:8px;background:#b21e2c;color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:13px 22px;border-radius:999px">See how we see you →</a>
-      ${p.withoutIntake ? `<p style="margin:20px 0 0;font-size:14px;line-height:1.55;color:#d8d8dc">When you have ten minutes, <a href="${INTAKE_FORM_URL}" style="color:#e0505c">fill in the intake form</a>${p.clientId != null ? `. It asks for your Client ID: <b style="color:#f2f2f2">${p.clientId}</b>` : ""}.</p>` : ""}
-      <p style="margin:22px 0 0;font-size:12px;line-height:1.5;color:#6a6a72">The link opens your Kaizen portal. If it asks, enter this email and we'll send you a one-tap sign-in.</p>
-    </div>
-  </div>
-</div>`;
-  return { subject, text, html };
+  const parts: EmailParts = {
+    preheader: p.headline,
+    kicker: p.brand,
+    title: p.withoutIntake ? "We got started for you" : "Are we getting this right?",
+    highlight: p.withoutIntake ? "started" : "right",
+    hello: p.firstName ? `Hi ${p.firstName},` : "Hi there,",
+    lines: [
+      p.withoutIntake
+        ? "We haven't received your intake form yet, but we didn't want to wait. From our conversations, your website and our own research, here's how we see you:"
+        : "Thanks for your intake form. From everything you told us, plus our own research, here's how we see you:",
+    ],
+    bullets: ["Who you are and what makes you different", "Who we'll be speaking to, and what stops them scrolling", "How you sound", "The first campaigns we'd run", "How we get you live"],
+    cta: { label: "See how we see you →", url: p.link },
+    note: [
+      "Tap Spot on or Not quite on each part, or just talk it through with us. About five minutes.",
+      p.withoutIntake ? `When you have ten minutes, the intake form is here: ${INTAKE_FORM_URL}${p.clientId != null ? ` (your Client ID: ${p.clientId})` : ""}.` : "",
+    ]
+      .filter(Boolean)
+      .join(" "),
+  };
+  return { subject, text: emailText(parts), html: emailHtml(parts) };
 }
 
 /** Send it: the client's contacts by email and their Slack channel, and their portal switched on so they can open it. */

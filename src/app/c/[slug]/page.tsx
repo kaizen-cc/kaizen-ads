@@ -27,8 +27,8 @@ export default async function ClientHome({ params }: { params: Promise<{ slug: s
   ]);
   let setup: { done: number; total: number } | null = null;
   if (client.status === "onboarding") {
-    const [{ loadGuide }, { guideProgress }] = await Promise.all([import("@/lib/onboarding-guide"), import("@/lib/onboarding-guide-types")]);
-    const p = guideProgress(await loadGuide(admin, client.id), servicesOf(client).includes("google-ads"));
+    const [{ loadGuide }, { guideProgress, guideSteps }] = await Promise.all([import("@/lib/onboarding-guide"), import("@/lib/onboarding-guide-types")]);
+    const p = guideProgress(await loadGuide(admin, client.id), guideSteps(servicesOf(client)));
     if (p.done < p.total) setup = p;
   }
   // The last 30 days across their accounts, from the KPI board's own numbers
