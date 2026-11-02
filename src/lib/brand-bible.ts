@@ -272,6 +272,20 @@ Build ${client.name}'s Brand Bible following the Brand Bible structure skill. To
 }
 
 const DAY = 86_400_000;
+
+/** How long a new client's Bible waits for their intake form before it's built without it */
+export const INTAKE_WAIT_DAYS = 4;
+
+/** Whole business days (Monday to Friday, New York) since a moment */
+export function businessDaysSince(iso: string, now = new Date()) {
+  const ny = (d: Date) => new Date(d.toLocaleString("en-US", { timeZone: "America/New_York" }));
+  const end = ny(now);
+  const d = ny(new Date(iso));
+  let n = 0;
+  d.setDate(d.getDate() + 1);
+  for (; d <= end && n < 60; d.setDate(d.getDate() + 1)) if (d.getDay() !== 0 && d.getDay() !== 6) n++;
+  return n;
+}
 /** At most this many Bibles a day (about $4 each), so the catch-up costs a predictable amount per day */
 const DAILY_CAP = 15;
 
@@ -296,8 +310,10 @@ export async function autoBibles(admin: SupabaseClient, max = 1) {
     return { written: await writeBible(admin, b.client_id as string) };
   }
   // A new client's Bible starts once their intake form is read and their email history (sales emails included) is in,
-  // automatic builds on or not: it's the next step of onboarding
-  const { data: fresh } = await admin.from("clients").select("id, name").eq("status", "onboarding").is("archived_at", null);
+  // automatic builds on or not: it's the next step of onboarding. If the intake still isn't in 4 business days after
+  // they signed, it's built anyway from everything before (calls, emails, their website, the research), and built
+  // again when the intake arrives.
+  const { data: fresh } = await admin.from("clients").select("id, name, created_at, reonboarded_at").eq("status", "onboarding").is("archived_at", null);
   if (fresh?.length) {
     const ids = fresh.map((c) => c.id as string);
     const [{ data: read }, { data: have }] = await Promise.all([
@@ -307,10 +323,10 @@ export async function autoBibles(admin: SupabaseClient, max = 1) {
     const { emailHistoryPending } = await import("@/lib/context/google");
     for (const c of fresh) {
       const intake = (read ?? []).filter((i) => i.client_id === c.id).map((i) => i.received_at as string).sort().pop();
-      if (!intake) continue;
       const b = (have ?? []).find((x) => x.client_id === c.id);
+      if (!intake && (b?.generated_at || businessDaysSince((c.reonboarded_at ?? c.created_at) as string) < INTAKE_WAIT_DAYS)) continue;
       if (b?.status === "building" || (b?.status === "failed" && Date.now() - Date.parse(b.started_at as string) < DAY)) continue;
-      if (b?.generated_at && Date.parse(b.generated_at as string) > Date.parse(intake)) continue;
+      if (intake && b?.generated_at && Date.parse(b.generated_at as string) > Date.parse(intake)) continue;
       if (await emailHistoryPending(admin, c.id as string)) continue;
       return { onboarding: { [c.name as string]: await buildBible(admin, c.id as string, { by: null }) } };
     }

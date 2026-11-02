@@ -16,7 +16,7 @@ export default async function PresentationPage({ params }: { params: Promise<{ s
   const { data: client } = await supabase.from("clients").select("id, name, slug, status").eq("slug", slug).maybeSingle();
   if (!client) notFound();
   const [{ data: p }, { data: b }] = await Promise.all([
-    supabase.from("client_presentations").select("status, deck, reactions, drafted_at, send_after, sent_at, sent_to, viewed_at, approved_at, error, started_at").eq("client_id", client.id).maybeSingle(),
+    supabase.from("client_presentations").select("status, deck, reactions, without_intake, drafted_at, send_after, sent_at, sent_to, viewed_at, approved_at, error, started_at").eq("client_id", client.id).maybeSingle(),
     supabase.from("client_brand_bibles").select("markdown").eq("client_id", client.id).maybeSingle(),
   ]);
   return (
@@ -35,6 +35,7 @@ export default async function PresentationPage({ params }: { params: Promise<{ s
               viewedAt: p.viewed_at,
               approvedAt: p.approved_at,
               error: p.error,
+              withoutIntake: Boolean(p.without_intake),
             }
           : null
       }

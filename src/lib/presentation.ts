@@ -6,7 +6,8 @@ import { sendEmail } from "@/lib/email";
 import { siteUrl } from "@/lib/site";
 
 // The client presentation: the Brand Bible, short and beautiful, for the client ("Here's how we see you: are we
-// getting this right?"). Written once a new client's Bible is in; the client's buyer or a lead approves it, or it goes
+// getting this right?"). Written once a new client's Bible is in (from their intake form, or 4 business days in
+// without it, which it says plainly); the client's buyer or a lead approves it, or it goes
 // out on its own 24 hours after it's ready unless someone holds it. It goes to the client's contacts by email and to
 // their Slack channel, opens in their portal, and they react section by section (spot on, or not quite and why),
 // answer what we still need, pick how we launch, and approve. What they say goes back into the Bible.
@@ -67,7 +68,11 @@ export async function writePresentation(admin: SupabaseClient, clientId: string,
         `<client>${c.name}</client>`,
         b.overview ? `<overview>\n${JSON.stringify(b.overview)}\n</overview>` : "",
         `<read_this_first>\n${b.read_this_first ?? ""}\n</read_this_first>`,
-        intake?.summary ? `<their_intake_form>\n${describeIntake(intake.summary as IntakeSummary)}\n</their_intake_form>` : "",
+        intake?.summary
+          ? `<their_intake_form>\n${describeIntake(intake.summary as IntakeSummary)}\n</their_intake_form>`
+          : `<no_intake_form>
+They haven't sent their marketing intake form yet, and we didn't want to sit and wait. Say so plainly and warmly in the intro: we haven't received their intake form, but here's what we've gathered from our conversations so far, their website and our own research, and our best recommendations from it. Show we're moving: proactive, not waiting on them. Where the intake form would normally have told us something, say what we're assuming instead so they can correct it. Lead the questions with the few answers that would change the most, and make the last question a light nudge to fill in the intake form when they can.
+</no_intake_form>`,
         `<open_questions_for_the_client>\n${forClient.map((q) => `- ${q.question}`).join("\n") || "None listed."}\n</open_questions_for_the_client>`,
         `<brand_bible>\n${String(b.markdown).slice(0, 120_000)}\n</brand_bible>`,
         change && prev?.deck ? `<current_presentation>\n${JSON.stringify(prev.deck)}\n</current_presentation>\n\n<what_to_change>\n${change}\n</what_to_change>\n\nRewrite it with that change; keep what still holds.` : "Write the presentation.",
@@ -78,7 +83,7 @@ export async function writePresentation(admin: SupabaseClient, clientId: string,
     const now = new Date();
     await admin
       .from("client_presentations")
-      .update({ status: "draft", deck, error: null, drafted_at: now.toISOString(), send_after: new Date(now.getTime() + 24 * 3_600_000).toISOString(), updated_at: now.toISOString() })
+      .update({ status: "draft", deck, without_intake: !intake?.summary, error: null, drafted_at: now.toISOString(), send_after: new Date(now.getTime() + 24 * 3_600_000).toISOString(), updated_at: now.toISOString() })
       .eq("client_id", clientId);
     if (!change) await tellApprovers(admin, clientId, c.name as string);
     return "draft" as const;
@@ -122,13 +127,18 @@ async function tellApprovers(admin: SupabaseClient, clientId: string, name: stri
 
 const esc = (t: string) => t.replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]!);
 
-function touchpointEmail(p: { firstName: string | null; brand: string; headline: string; link: string }) {
+function touchpointEmail(p: { firstName: string | null; brand: string; headline: string; link: string; withoutIntake: boolean }) {
   const hello = p.firstName ? `Hi ${p.firstName},` : "Hi there,";
-  const subject = `${p.brand}: are we getting this right?`;
-  const lines = [
-    "Thanks for filling in the intake form. We've taken everything you told us, plus our own research on your brand and your market, and put together how we see you: who you're for, how you sound, and the first campaigns we'd run.",
-    "Before we make anything, we want to be sure we're on the same page. Have a look, tell us where we're spot on and where we're off, and fill in the few gaps only you can. It takes about five minutes.",
-  ];
+  const subject = p.withoutIntake ? `${p.brand}: we got started, here's what we've got` : `${p.brand}: are we getting this right?`;
+  const lines = p.withoutIntake
+    ? [
+        "We haven't received your intake form yet, but we didn't want to sit and wait. So we took everything from our conversations so far, your website and our own research on your brand and your market, and put together how we see you: who you're for, how you sound, and the first campaigns we'd recommend.",
+        "Have a look and tell us where we're spot on and where we're off. Anything we've assumed, you can correct right there, and the few questions at the end fill the gaps the intake form would have. It takes about five minutes, and it gets your ads moving sooner.",
+      ]
+    : [
+        "Thanks for filling in the intake form. We've taken everything you told us, plus our own research on your brand and your market, and put together how we see you: who you're for, how you sound, and the first campaigns we'd run.",
+        "Before we make anything, we want to be sure we're on the same page. Have a look, tell us where we're spot on and where we're off, and fill in the few gaps only you can. It takes about five minutes.",
+      ];
   const text = [hello, "", ...lines.flatMap((l) => [l, ""]), p.link, "", "— The Kaizen team"].join("\n");
   const html = `<div style="background:#060606;padding:32px 16px;font-family:Poppins,system-ui,-apple-system,Segoe UI,sans-serif">
   <div style="max-width:520px;margin:0 auto;background:#101011;border:1px solid #26262a;border-radius:12px;overflow:hidden;color:#f2f2f2">
@@ -151,7 +161,7 @@ function touchpointEmail(p: { firstName: string | null; brand: string; headline:
 export async function sendPresentation(admin: SupabaseClient, clientId: string, by: string | null) {
   const [{ data: c }, { data: p }, { data: links }] = await Promise.all([
     admin.from("clients").select("name, slug, portal_live, slack_channel_id").eq("id", clientId).single(),
-    admin.from("client_presentations").select("status, deck").eq("client_id", clientId).maybeSingle(),
+    admin.from("client_presentations").select("status, deck, without_intake").eq("client_id", clientId).maybeSingle(),
     admin.from("contact_clients").select("contacts(id, email, full_name, is_active)").eq("client_id", clientId),
   ]);
   if (!c || !p?.deck) return { ok: false as const, error: "There's no presentation to send." };
@@ -165,11 +175,13 @@ export async function sendPresentation(admin: SupabaseClient, clientId: string, 
   const deck = p.deck as Deck;
   const sent: string[] = [];
   for (const x of contacts) {
-    const r = await sendEmail({ to: x.email, ...touchpointEmail({ firstName: x.full_name?.split(" ")[0] ?? null, brand: c.name as string, headline: deck.headline, link }) });
+    const r = await sendEmail({ to: x.email, ...touchpointEmail({ firstName: x.full_name?.split(" ")[0] ?? null, brand: c.name as string, headline: deck.headline, link, withoutIntake: Boolean(p.without_intake) }) });
     if (r.ok) sent.push(x.email);
   }
   if (slackOn) {
-    const text = `Hi team! We've put together how we see ${c.name}: who you're for, how you sound, and the first campaigns we'd run. Before we make anything, we'd love you to tell us where we're spot on and where we're off (about five minutes): ${link}`;
+    const text = p.without_intake
+      ? `Hi team! We haven't received your intake form yet, but we didn't want to wait: from our conversations so far, your website and our research, here's how we see ${c.name} and the first campaigns we'd recommend. Tell us where we're spot on and where we're off, and fill in the few gaps (about five minutes): ${link}`
+      : `Hi team! We've put together how we see ${c.name}: who you're for, how you sound, and the first campaigns we'd run. Before we make anything, we'd love you to tell us where we're spot on and where we're off (about five minutes): ${link}`;
     const res = await fetch("https://slack.com/api/chat.postMessage", { method: "POST", headers: { authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`, "content-type": "application/json; charset=utf-8" }, body: JSON.stringify({ channel: c.slack_channel_id, text, unfurl_links: false }) });
     const body = (await res.json().catch(() => ({}))) as { ok?: boolean };
     if (body.ok) sent.push("Slack");
@@ -179,13 +191,18 @@ export async function sendPresentation(admin: SupabaseClient, clientId: string, 
   return { ok: true as const, sent };
 }
 
+/** Clients who signed (or came back) from this day go through it on their own; anyone already onboarding before it is
+ * written and sent by hand from the presentation page, so nobody weeks into onboarding gets a first-look message. */
+const FLOW_START = "2026-11-02";
+
 /**
  * Every 10 minutes: a new client whose Bible is in gets their presentation written; one that's been ready for 24
  * hours without anyone holding or sending it goes out (onboarding clients only: one written by hand for anyone else
  * waits for a person to send it).
  */
 export async function keepPresentations(admin: SupabaseClient) {
-  const { data: fresh } = await admin.from("clients").select("id, name").eq("status", "onboarding").is("archived_at", null);
+  const inFlow = `created_at.gte.${FLOW_START},reonboarded_at.gte.${FLOW_START}`;
+  const { data: fresh } = await admin.from("clients").select("id, name").eq("status", "onboarding").is("archived_at", null).or(inFlow);
   const ids = (fresh ?? []).map((c) => c.id as string);
   const out: Record<string, string> = {};
   if (ids.length) {
@@ -204,7 +221,7 @@ export async function keepPresentations(admin: SupabaseClient) {
       break; // one a run
     }
   }
-  const { data: due } = await admin.from("client_presentations").select("client_id, clients!inner(name, status)").eq("status", "draft").eq("clients.status", "onboarding").lt("send_after", new Date().toISOString());
+  const { data: due } = await admin.from("client_presentations").select("client_id, clients!inner(name, status, created_at, reonboarded_at)").eq("status", "draft").eq("clients.status", "onboarding").or(inFlow, { referencedTable: "clients" }).lt("send_after", new Date().toISOString());
   for (const d of due ?? []) {
     const r = await sendPresentation(admin, d.client_id as string, null);
     out[(d.clients as unknown as { name: string } | null)?.name ?? (d.client_id as string)] = r.ok ? `sent on its own (${r.sent.join(", ")})` : r.error;

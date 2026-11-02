@@ -17,6 +17,7 @@ type P = {
   viewedAt: string | null;
   approvedAt: string | null;
   error: string | null;
+  withoutIntake: boolean;
 };
 
 const when = (iso: string) => new Date(iso).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
@@ -75,7 +76,10 @@ export function PresentationAdmin({ client, hasBible, p }: { client: { id: strin
 
       {/* Where it stands, and what to do */}
       <section className="grid gap-4 rounded-[20px] border border-line bg-surface p-4 md:p-6">
-        <p className={`justify-self-start rounded-full px-3 py-1 text-[12.5px] ${tone}`}>{status.text}</p>
+        <div className="flex flex-wrap gap-2">
+          <p className={`rounded-full px-3 py-1 text-[12.5px] ${tone}`}>{status.text}</p>
+          {p?.withoutIntake && <p className="rounded-full bg-surface-2 px-3 py-1 text-[12.5px] text-muted">Written without their intake form (none 4 business days in): it says so</p>}
+        </div>
         {editable && hasBible && (
           <div className="grid gap-3">
             {p?.deck && (
