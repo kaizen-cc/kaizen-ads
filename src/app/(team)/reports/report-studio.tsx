@@ -148,8 +148,6 @@ export function ReportStudio({
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
   const [pending, start] = useTransition();
   const [editMsg, setEditMsg] = useState(false);
-  // Bumped each time a change is saved, so the PDF preview draws the saved version
-  const [rev, setRev] = useState(0);
   const [adding, setAdding] = useState<{ key: "did" | "doing" | "next" | "extras"; text: string } | null>(null);
   // The metrics the buyer chose: saved on the report and as this client's layout for the next one
   const [layout, setLayoutState] = useState<ReportLayout | null>(report.layout);
@@ -160,7 +158,6 @@ export function ReportStudio({
       const r = await saveLayout(report.id, next);
       if (!r.ok) setNote({ ok: false, text: r.error });
       else setNote({ ok: true, text: `Saved as ${client.name}'s layout: their next report starts this way.` });
-      setRev((n) => n + 1);
     });
   };
   const initial: "report" | "message" | "done" = sent ? "done" : built && mineDone && bundle?.isBuilder ? "message" : "report";
@@ -217,14 +214,12 @@ export function ReportStudio({
     start(async () => {
       const r = await saveReport(report.id, { sections: s });
       if (!r.ok) setNote({ ok: false, text: r.error });
-      setRev((n) => n + 1);
     });
   };
   const setExtras = (v: string) => {
     setExtrasState(v);
     start(async () => {
       await saveReport(report.id, { extras: v });
-      setRev((n) => n + 1);
     });
   };
   const tweak = async (text: string) => {
@@ -237,7 +232,6 @@ export function ReportStudio({
     if (!r.ok) return setNote({ ok: false, text: r.error });
     setChat(r.chat);
     setSectionsState(r.sections);
-    setRev((n) => n + 1);
     if (!built) setMessage(r.message);
     if (r.qa) setQa(r.qa);
     if (r.lesson) setNote({ ok: true, text: `Remembered for this client: ${r.lesson}` });
@@ -580,8 +574,10 @@ ${t}` : t);
                       </div>
                     )}
                     <PdfPreview
-                      url={`/api/reports/${report.id}/pdf?edit=1${joint ? "&whole=1" : ""}`}
-                      version={`${rev}:${report.status}:${JSON.stringify(report.sections)}`}
+                      source={`/api/reports/${report.id}/preview${joint ? "?whole=1" : ""}`}
+                      baseKey={`${report.status}:${JSON.stringify(report.metrics ?? null).length}`}
+                      patch={(input) => ({ ...input, parts: input.parts.map((p) => (p.platform === report.platform ? { ...p, sections: sections ?? p.sections, extras, layout } : p)) })}
+                      patchKey={JSON.stringify({ sections, extras, layout })}
                       fields={fields}
                       editable={editable}
                       onSave={(id, v) => save(id, v)}

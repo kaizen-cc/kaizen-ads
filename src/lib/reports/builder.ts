@@ -5,7 +5,7 @@ import { isExecOrLead, type Staff } from "@/lib/auth";
 import { nyParts } from "@/lib/kpi/calc";
 import { postAsApp, postAsUser } from "@/lib/slack-user";
 import { canReportOn } from "./access";
-import { renderReportPdf, type ReportPart } from "./pdf";
+import { renderReportPdf, type ReportPart, type ReportPdfInput } from "./pdf";
 import type { ReportMetrics } from "./metrics";
 import type { ReportLayout } from "./format";
 import { layoutOf } from "./share";
@@ -193,14 +193,19 @@ export async function approveMessage(admin: SupabaseClient, bundleId: string, by
 
 /** The whole report as one PDF (a cover, the whole account when there's more than one service, then each). */
 export async function builtPdf(admin: SupabaseClient, bundleId: string, edit = false) {
+  return renderReportPdf(await builtInput(admin, bundleId, edit));
+}
+
+/** The whole report's document input (every part), for the PDF and the studio's preview */
+export async function builtInput(admin: SupabaseClient, bundleId: string, edit = false): Promise<ReportPdfInput> {
   const { parts, client, ranges } = await loadParts(admin, bundleId);
-  return renderReportPdf({
+  return {
     client: client.name,
     kind: "built",
     periodLabel: rangesLabel(ranges),
     parts: parts.filter((p) => p.metrics && p.sections).map((p): ReportPart => ({ platform: p.platform === "google" ? "google" : "meta", buyer: p.profiles?.full_name ?? null, metrics: p.metrics!, sections: p.sections!, extras: p.extras, extra: p.extra_metrics, layout: layoutOf(p) })),
     edit,
-  });
+  };
 }
 
 /** Sends it: one service as its buyer (their Slack), a joint report from the Kaizen app. One message, one PDF. */

@@ -1,42 +1,47 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { ReportPdfInput } from "@/lib/reports/report-doc";
 
-// The report's preview is the PDF itself: the same file the client gets, drawn page by page, so what the buyer sees is
-// exactly what goes out. Every line the buyer writes (the headline, the summary, each point, the extras) can be
-// clicked on the page to change it; the pages are drawn again from the new PDF once it's saved.
+// The report's preview is the PDF itself: the same document the client gets, drawn in the browser from what the buyer
+// has on screen, so every change shows at once (saving happens alongside). What can change carries an invisible link
+// in the preview's PDF only: the buyer's words (headline, summary, each point, the note) open a text box; metrics, rows,
+// columns and campaigns open their menu; "View ad" and other links open.
 
 export type PdfField = { id: string; label: string; value: string; removable?: boolean };
-type Span = { left: number; top: number; width: number; height: number; text: string };
 type Box = { left: number; top: number; width: number; height: number; url: string };
-type Page = { src: string; ratio: number; spans: Span[]; links: Box[] };
+type Page = { key: string; canvas: HTMLCanvasElement; ratio: number; links: Box[] };
+type Base = { input: ReportPdfInput; images: (string | null)[][] };
 
-/** The invisible links the studio's PDF puts over each metric, row and column the buyer can change */
 const EDIT_HOST = "https://edit.kaizen.invalid/";
+const RENDER_MAX = 1400; // pixels per page at most (the page's width on screen times the screen's density)
 
-const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-const RENDER_WIDTH = 1600; // pixels per page: sharp on a retina screen at the studio's width
-
-/** Which of the buyer's lines a piece of text on the page belongs to (wrapped lines and hyphenated words included). */
-function fieldOf(text: string, fields: { id: string; n: string }[]) {
-  const t = norm(text.replace(/-\s*$/, ""));
-  if (t.length < 6) return null;
-  const hits = fields.filter((f) => f.n.includes(t));
-  if (!hits.length) return null;
-  return hits.sort((a, b) => a.n.length - b.n.length)[0].id;
+/** A drawn page, shown as it is (no image to encode) */
+function Drawn({ canvas }: { canvas: HTMLCanvasElement }) {
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    box.current?.replaceChildren(canvas);
+  }, [canvas]);
+  return <div ref={box} className="absolute inset-0 select-none" />;
 }
 
 export function PdfPreview({
-  url,
-  version,
+  source,
+  baseKey,
+  patch,
+  patchKey,
   fields,
   editable,
   onSave,
   onRemove,
   hotMenu,
 }: {
-  url: string;
-  version: string;
+  /** Where the report's document input and pictures come from (read again when baseKey changes) */
+  source: string;
+  baseKey: string;
+  /** The buyer's changes on screen, applied to the document before it's drawn (drawn again when patchKey changes) */
+  patch: (input: ReportPdfInput) => ReportPdfInput;
+  patchKey: string;
   fields: PdfField[];
   editable: boolean;
   onSave: (id: string, value: string) => void;
@@ -44,86 +49,93 @@ export function PdfPreview({
   /** The menu for a metric, row, column or campaign clicked on the page ("meta/tile/2"); close() shuts it */
   hotMenu?: (target: string, close: () => void) => React.ReactNode;
 }) {
-  const [hot, setHot] = useState<{ target: string; page: number; x: number; y: number } | null>(null);
+  const [base, setBase] = useState<Base | null>(null);
   const [pages, setPages] = useState<Page[] | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [drawing, setDrawing] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
+  const [hot, setHot] = useState<{ target: string; page: number; x: number; y: number } | null>(null);
   const [edit, setEdit] = useState<{ id: string; page: number; x: number; y: number } | null>(null);
-  const [hover, setHover] = useState<string | null>(null);
-  // Which line each piece of text on the pages belongs to, from the lines as they are now
-  const known = useMemo(() => fields.map((f) => ({ id: f.id, n: norm(f.value) })).filter((f) => f.n.length >= 6), [fields]);
-  const owner = useMemo(() => pages?.map((p) => p.spans.map((x) => fieldOf(x.text, known))) ?? [], [pages, known]);
+  const wrap = useRef<HTMLDivElement>(null);
+  const patchRef = useRef(patch);
+  useEffect(() => {
+    patchRef.current = patch;
+  });
 
+  // The document and its pictures, from the server (once, and when the report itself changes there)
   useEffect(() => {
     let live = true;
-    // A moment's wait, so a burst of edits draws the PDF once
-    const t = setTimeout(async () => {
-      setLoading(true);
+    void (async () => {
       try {
-        const res = await fetch(url, { cache: "no-store" });
-        if (!res.ok) throw new Error((await res.text()).slice(0, 200) || "The PDF couldn't be made");
-        const data = new Uint8Array(await res.arrayBuffer());
-        const pdfjs = await import("pdfjs-dist");
+        const res = await fetch(source, { cache: "no-store" });
+        if (!res.ok) throw new Error((await res.text()).slice(0, 200) || "The report couldn't be loaded");
+        const b = (await res.json()) as Base;
+        if (live) setBase(b);
+      } catch (e) {
+        if (live) setFailed(e instanceof Error ? e.message : "The report couldn't be loaded");
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, [source, baseKey]);
+
+  // Drawn here, in the browser, on every change: no trip to the server
+  useEffect(() => {
+    if (!base) return;
+    let live = true;
+    const t = setTimeout(async () => {
+      setDrawing(true);
+      try {
+        const [{ pdf }, { ReportDocument }, pdfjs] = await Promise.all([import("@react-pdf/renderer"), import("@/lib/reports/report-doc"), import("pdfjs-dist")]);
         pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
-        const task = pdfjs.getDocument({ data });
+        const blob = await pdf(<ReportDocument input={patchRef.current(base.input)} images={base.images} />).toBlob();
+        const task = pdfjs.getDocument({ data: new Uint8Array(await blob.arrayBuffer()) });
         const doc = await task.promise;
-        const out: Page[] = [];
+        const width = Math.min(RENDER_MAX, Math.round((wrap.current?.clientWidth || 800) * (window.devicePixelRatio || 1)));
+        const run = `${Date.now()}`;
+        // Each page shows the moment it's drawn (the one being edited is usually the first or second)
         for (let i = 1; i <= doc.numPages; i++) {
+          if (!live) break;
           const page = await doc.getPage(i);
-          const base = page.getViewport({ scale: 1 });
-          const viewport = page.getViewport({ scale: RENDER_WIDTH / base.width });
+          const view = page.getViewport({ scale: 1 });
+          const viewport = page.getViewport({ scale: width / view.width });
           const canvas = document.createElement("canvas");
           canvas.width = Math.floor(viewport.width);
           canvas.height = Math.floor(viewport.height);
+          canvas.style.cssText = "width:100%;height:100%;display:block";
           await page.render({ canvas, canvasContext: canvas.getContext("2d")!, viewport }).promise;
-          const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/png"));
-          const text = await page.getTextContent();
-          const spans: Span[] = [];
-          for (const item of text.items) {
-            if (!("str" in item) || !item.str.trim()) continue;
-            const tx = pdfjs.Util.transform(base.transform, item.transform) as number[];
-            const h = Math.hypot(tx[2], tx[3]);
-            spans.push({ left: tx[4] / base.width, top: (tx[5] - h) / base.height, width: item.width / base.width, height: (h * 1.25) / base.height, text: item.str });
-          }
-          // The links on the page: "View ad" opens the ad; the edit ones open a menu
+          const [m0, m1, m2, m3, m4, m5] = view.transform as number[];
+          const at = (x: number, y: number) => [m0 * x + m2 * y + m4, m1 * x + m3 * y + m5];
           const links: Box[] = [];
           for (const a of (await page.getAnnotations()) as { subtype?: string; url?: string; unsafeUrl?: string; rect?: number[] }[]) {
             const href = a.url ?? a.unsafeUrl;
             if (a.subtype !== "Link" || !href || !a.rect) continue;
-            const [m0, m1, m2, m3, m4, m5] = base.transform as number[];
-            const at = (x: number, y: number) => [m0 * x + m2 * y + m4, m1 * x + m3 * y + m5];
             const [x1, y1] = at(a.rect[0], a.rect[1]);
             const [x2, y2] = at(a.rect[2], a.rect[3]);
-            links.push({ left: Math.min(x1, x2) / base.width, top: Math.min(y1, y2) / base.height, width: Math.abs(x2 - x1) / base.width, height: Math.abs(y2 - y1) / base.height, url: href });
+            links.push({ left: Math.min(x1, x2) / view.width, top: Math.min(y1, y2) / view.height, width: Math.abs(x2 - x1) / view.width, height: Math.abs(y2 - y1) / view.height, url: href });
           }
-          out.push({ src: blob ? URL.createObjectURL(blob) : canvas.toDataURL(), ratio: base.height / base.width, spans, links });
+          const drawn: Page = { key: `${run}-${i}`, canvas, ratio: view.height / view.width, links };
+          if (live) setPages((before) => [...(before ?? []).slice(0, i - 1), drawn, ...(before ?? []).slice(i, doc.numPages)].slice(0, doc.numPages));
         }
         await task.destroy();
-        if (!live) return out.forEach((p) => URL.revokeObjectURL(p.src));
-        setPages((before) => {
-          before?.forEach((p) => URL.revokeObjectURL(p.src));
-          return out;
-        });
         setFailed(null);
       } catch (e) {
-        if (live) setFailed(e instanceof Error ? e.message : "The PDF couldn't be made");
+        if (live) setFailed(e instanceof Error ? e.message : "The PDF couldn't be drawn");
       } finally {
-        if (live) setLoading(false);
+        if (live) setDrawing(false);
       }
-    }, 500);
+    }, 60);
     return () => {
       live = false;
       clearTimeout(t);
     };
-  }, [url, version]);
+  }, [base, patchKey]);
 
   const field = edit ? fields.find((f) => f.id === edit.id) : null;
 
   return (
-    <div className="relative grid gap-4">
-      {loading && pages && (
-        <span className="pointer-events-none sticky top-20 z-10 justify-self-end rounded-full bg-fg px-3 py-1 text-[11.5px] text-bg shadow-lg">Updating the PDF…</span>
-      )}
+    <div ref={wrap} className="relative grid gap-4">
+      {drawing && pages && <span className="pointer-events-none sticky top-20 z-10 justify-self-end rounded-full bg-fg px-3 py-1 text-[11.5px] text-bg shadow-lg">Updating…</span>}
       {!pages && !failed && (
         <div className="grid aspect-[8.5/11] place-items-center rounded-[6px] bg-white">
           <span className="h-1.5 w-24 overflow-hidden rounded-full bg-[#ececee]">
@@ -133,22 +145,25 @@ export function PdfPreview({
       )}
       {failed && <p className="rounded-[12px] border border-bad/40 bg-bad-soft/40 px-4 py-3 text-[13px] text-bad">{failed}</p>}
       {pages?.map((p, i) => (
-        <div key={p.src} className="relative overflow-hidden rounded-[4px] bg-white shadow-[0_30px_80px_-30px_rgba(0,0,0,0.7)]" style={{ aspectRatio: `1 / ${p.ratio}` }}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={p.src} alt={`Page ${i + 1}`} className="absolute inset-0 h-full w-full select-none" draggable={false} />
+        <div key={i} className="relative overflow-hidden rounded-[4px] bg-white shadow-[0_30px_80px_-30px_rgba(0,0,0,0.7)]" style={{ aspectRatio: `1 / ${p.ratio}` }}>
+          <Drawn canvas={p.canvas} />
           {p.links.map((l, j) => {
             const style = { left: `${l.left * 100}%`, top: `${l.top * 100}%`, width: `${l.width * 100}%`, height: `${l.height * 100}%` };
-            if (!l.url.startsWith(EDIT_HOST))
-              return <a key={`l${j}`} href={l.url} target="_blank" rel="noreferrer" aria-label="Open the link" className="absolute z-[1] rounded-[2px] hover:bg-[#c8102e]/10" style={style} />;
-            if (!editable || !hotMenu) return null;
+            if (!l.url.startsWith(EDIT_HOST)) return <a key={j} href={l.url} target="_blank" rel="noreferrer" aria-label="Open the link" className="absolute z-[1] rounded-[2px] hover:bg-[#c8102e]/10" style={style} />;
+            if (!editable) return null;
             const target = l.url.slice(EDIT_HOST.length);
+            // The buyer's own words ("meta/text/headline", "meta/text/did/2") open a text box
+            const text = target.match(/^[a-z]+\/text\/(.+)$/);
+            const id = text ? text[1].replace("/", ".") : null;
+            if (text && !fields.some((f) => f.id === id)) return null;
+            const active = text ? edit?.id === id && edit?.page === i : hot?.target === target && hot?.page === i;
             return (
               <button
-                key={`l${j}`}
+                key={j}
                 type="button"
-                aria-label="Change this"
-                onClick={() => setHot({ target, page: i, x: l.left, y: l.top + l.height })}
-                className={`absolute z-[1] rounded-[4px] ring-[#c8102e]/50 transition-shadow hover:bg-[#c8102e]/[0.04] hover:ring-1 ${hot?.target === target && hot.page === i ? "bg-[#c8102e]/[0.06] ring-2" : ""}`}
+                aria-label={text ? "Change this text" : "Change this"}
+                onClick={() => (text ? setEdit({ id: id!, page: i, x: l.left, y: l.top + l.height }) : hotMenu && setHot({ target, page: i, x: l.left, y: l.top + l.height }))}
+                className={`absolute z-[1] rounded-[4px] ring-[#c8102e]/50 transition-shadow hover:bg-[#c8102e]/[0.05] hover:ring-1 ${text ? "cursor-text" : ""} ${active ? "bg-[#c8102e]/[0.06] ring-2" : ""}`}
                 style={style}
               />
             );
@@ -164,23 +179,6 @@ export function PdfPreview({
               </div>
             </>
           )}
-          {editable &&
-            p.spans.map((s, j) => {
-              const id = owner[i]?.[j];
-              if (!id) return null;
-              return (
-                <button
-                  key={j}
-                  type="button"
-                  aria-label={`Change: ${fields.find((f) => f.id === id)?.label ?? "this line"}`}
-                  onMouseEnter={() => setHover(id)}
-                  onMouseLeave={() => setHover(null)}
-                  onClick={() => setEdit({ id, page: i, x: s.left, y: s.top + s.height })}
-                  className={`absolute cursor-text rounded-[2px] transition-colors ${hover === id ? "bg-[#c8102e]/10 ring-1 ring-[#c8102e]/40" : ""}`}
-                  style={{ left: `${s.left * 100}%`, top: `${s.top * 100}%`, width: `${s.width * 100}%`, height: `${s.height * 100}%` }}
-                />
-              );
-            })}
           {edit && field && edit.page === i && (
             <Editor
               key={edit.id}
