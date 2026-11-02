@@ -9,7 +9,7 @@ import { PdfPreview, type PdfField } from "./pdf-preview";
 import { METRIC_KEYS, columnKeys, metricLabel, platformName, TABLE_DEFAULT, tileKeys, type MetricKey, type ReportLayout } from "@/lib/reports/format";
 import type { ReportMetrics } from "@/lib/reports/metrics";
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
-import { approveBuiltMessage, approveMyPart, builtMessage, checkAgain, loadCampaignEvents, redraft, reopenReport, reviseWithAi, saveLayout, saveReport, sendReport, skipReport } from "./actions";
+import { approveBuiltMessage, approveMyPart, builtMessage, checkAgain, loadCampaignEvents, redraft, reopenReport, reviseWithAi, saveLayout, saveReport, sendMyPartNow, sendReport, skipReport } from "./actions";
 
 // One report, start to finish, in three steps: the report (a live preview of the document: click any line to change
 // it, or ask the AI on the side and watch it change), then the Slack message (shown as it will look in the client's
@@ -765,8 +765,10 @@ ${t}` : t);
                       <button type="button" onClick={() => setStep("message")} className="underline">
                         On to the message →
                       </button>
-                    ) : (
+                    ) : built ? (
                       `${bundle?.builder ?? "Whoever built it"} sends it as one report.`
+                    ) : (
+                      `It goes to the client when ${bundle?.parts.filter((p) => !p.isMe && !["submitted", "posted", "skipped"].includes(p.status)).map((p) => `${p.owner ?? "the other buyer"} (${p.platform === "google" ? "Google" : "Meta"})`).join(" and ") || "the other part"} is approved too.`
                     )}{" "}
                     <button
                       type="button"
@@ -785,6 +787,24 @@ ${t}` : t);
                     >
                       Back to editing
                     </button>
+                    {/* Don't wait on the other buyer: this part goes now, theirs follows on its own */}
+                    {!built && report.kind === "monthly" && bundle?.parts.some((p) => !p.isMe && !["submitted", "posted", "skipped"].includes(p.status)) && (
+                      <button
+                        type="button"
+                        disabled={pending}
+                        onClick={() => {
+                          if (!confirm("Send your part to the client now, without waiting on the other buyer? Their part goes out on its own when they approve it.")) return;
+                          start(async () => {
+                            const r = await sendMyPartNow(report.id);
+                            setNote(r.ok ? { ok: true, text: r.note } : { ok: false, text: r.error });
+                            router.refresh();
+                          });
+                        }}
+                        className="mt-2 block h-10 rounded-full border border-line px-4 text-[13px] text-fg hover:border-faint disabled:opacity-50"
+                      >
+                        Send my part now →
+                      </button>
+                    )}
                   </p>
                 ) : (
                   <button type="button" disabled={pending} onClick={approve} className="h-11 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:bg-brand-hover disabled:opacity-50 max-md:h-12">

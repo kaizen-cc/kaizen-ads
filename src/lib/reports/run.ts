@@ -6,6 +6,7 @@ import { sendEmail } from "@/lib/email";
 import { postAsUser } from "@/lib/slack-user";
 import { renderReportPdf } from "./pdf";
 import { periodsFor, type ReportMetrics } from "./metrics";
+import { platformName } from "./format";
 import { draftReport, type Sections } from "./write";
 
 // The reporting cadence. Mondays: a weekly report is queued for every live account that spent in the last week, and
@@ -120,6 +121,12 @@ export async function submitMonthly(admin: SupabaseClient, id: string, by: { id:
   const r = await load(admin, id);
   if (!r.bundle_id) throw new Error("This report isn't part of a monthly recap.");
   await admin.from("reports").update({ status: "submitted", submitted_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", id);
+  // The rest of the recap already went out (another buyer sent theirs on its own): this part follows by itself
+  const { data: bundle } = await admin.from("report_bundles").select("status").eq("id", r.bundle_id).single();
+  if (bundle?.status === "sent") {
+    await deliverLatePart(admin, id, by);
+    return { sent: true, waitingOn: [] as string[] };
+  }
   const { data: parts } = await admin.from("reports").select("id, platform, status, profiles!reports_owner_id_fkey(full_name)").eq("bundle_id", r.bundle_id).neq("status", "skipped");
   const waiting = (parts ?? []).filter((p) => p.status !== "submitted" && p.status !== "posted");
   if (waiting.length)
@@ -129,6 +136,67 @@ export async function submitMonthly(admin: SupabaseClient, id: string, by: { id:
     };
   await deliverBundle(admin, r.bundle_id, by);
   return { sent: true, waitingOn: [] as string[] };
+}
+
+/**
+ * A buyer doesn't wait on the other one: the recap goes to the client now with the parts that are approved (theirs).
+ * The other part follows on its own when its buyer approves it, on the same recap link. They hear it.
+ */
+export async function sendPartNow(admin: SupabaseClient, id: string, by: { id: string; fullName: string }) {
+  const r = await load(admin, id);
+  if (!r.bundle_id) throw new Error("This report isn't part of a monthly recap.");
+  await admin.from("reports").update({ status: "submitted", submitted_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", id).neq("status", "submitted");
+  const { data: waiting } = await admin.from("reports").select("id, platform, owner_id").eq("bundle_id", r.bundle_id).not("status", "in", "(submitted,posted,skipped)");
+  await deliverBundle(admin, r.bundle_id, by);
+  const name = (p: string) => (p === "google" ? "Google" : "Meta");
+  if (waiting?.length)
+    await admin.from("notifications").upsert(
+      waiting
+        .filter((w) => w.owner_id)
+        .map((w) => ({
+          profile_id: w.owner_id,
+          kind: "report",
+          title: `${by.fullName.split(" ")[0]} sent the ${name(r.platform)} part of ${r.client.name}'s recap on its own`,
+          body: `Your ${name(w.platform)} part goes to the client by itself as soon as you approve it, on the same recap link.`,
+          href: `/reports/${w.id}`,
+          client_id: r.client_id,
+          key: `report-sent-alone:${w.id}`,
+          priority: "normal",
+        })),
+      { onConflict: "profile_id,key", ignoreDuplicates: true },
+    );
+  return { sent: true, waitingOn: [] as string[] };
+}
+
+/** A part approved after the rest of the recap went out: its own Slack post and email, on the same recap link */
+async function deliverLatePart(admin: SupabaseClient, id: string, by: { id: string }) {
+  const r = await load(admin, id);
+  const { data: b } = await admin.from("report_bundles").select("token, client_id, period_start").eq("id", r.bundle_id!).single();
+  if (!b) return;
+  const link = `${SITE()}/r/${b.token}`;
+  const month = monthOf(b.period_start);
+  const service = platformName(r.platform);
+  const bytes = await reportPdf(admin, [r]);
+  const text = `${r.message?.trim() ?? ""}\n\n*Your ${month} recap, now with ${service}:* ${link}`.trim();
+  const delivered: Record<string, unknown> = {};
+  if (r.client.slack_channel_id) {
+    const out = await postAsUser(by.id, { channel: r.client.slack_channel_id, text, pdf: { filename: `${r.client.name} - ${service} ${month}.pdf`, title: `${r.client.name} · ${service} · ${month}`, bytes } });
+    const fallback = !out.ok ? await botPost(r.client.slack_channel_id, text) : null;
+    delivered.slack = out.ok ? { channel: out.channel, ts: out.ts } : fallback?.ok ? { channel: r.client.slack_channel_id, ts: fallback.ts, as: "app" } : { error: out.error };
+  }
+  const { data: links } = await admin.from("contact_clients").select("contacts(email, full_name)").eq("client_id", b.client_id);
+  const sentTo: string[] = [];
+  for (const c of (links ?? []).map((l) => l.contacts as unknown as { email: string; full_name: string | null } | null).filter((x): x is { email: string; full_name: string | null } => Boolean(x?.email)).slice(0, 6)) {
+    const res = await sendEmail({
+      to: c.email,
+      subject: `Your ${month} recap from Kaizen: ${service} is in`,
+      text: `Hi ${c.full_name?.split(" ")[0] ?? "there"},\n\nThe ${service} part of your ${month} recap is ready: ${link}\n\n${r.sections?.headline ?? ""}\n\nThe Kaizen team`,
+      html: `<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:560px;margin:0 auto;padding:32px 24px;color:#17131a"><p style="font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:#c8102e;margin:0 0 16px">Kaizen Marketing</p><h1 style="font-size:24px;line-height:1.25;margin:0 0 12px">${service} is in your ${month} recap</h1><p style="font-size:15px;line-height:1.6;color:#4d464f;margin:0 0 24px">${(r.sections?.headline ?? "").replace(/[<>&]/g, "")}</p><a href="${link}" style="display:inline-block;background:#c8102e;color:#fff;text-decoration:none;font-weight:600;font-size:15px;padding:12px 22px;border-radius:999px">See the recap</a></div>`,
+    });
+    if (res.ok) sentTo.push(c.email);
+  }
+  delivered.email = sentTo;
+  await admin.from("reports").update({ status: "posted", posted_at: new Date().toISOString(), posted_by: by.id }).eq("id", id);
 }
 
 /** Sends the monthly recap to the client: a Slack post (as the buyer who completed it) and an email to their contacts. */

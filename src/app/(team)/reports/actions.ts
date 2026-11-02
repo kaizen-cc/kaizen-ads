@@ -131,7 +131,22 @@ export async function sendReport(id: string): Promise<Result<{ note: string; nee
     }
     const out = await submitMonthly(admin, id, ok.me);
     done(id);
-    return { ok: true, note: out.sent ? "Every part is in: the recap went to the client in Slack and by email." : `Submitted. It goes to the client as soon as ${out.waitingOn.join(" and ")} submit${out.waitingOn.length === 1 ? "s" : ""}.` };
+    return { ok: true, note: out.sent ? "It went to the client in Slack and by email." : `Submitted. It goes to the client as soon as ${out.waitingOn.join(" and ")} submit${out.waitingOn.length === 1 ? "s" : ""}.` };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't send it." };
+  }
+}
+
+/** Monthly: send my part to the client now instead of waiting on the other buyer (theirs follows on its own) */
+export async function sendMyPartNow(id: string): Promise<Result<{ note: string }>> {
+  const ok = await mine(id);
+  if (!ok) return { ok: false, error: "Not found." };
+  if (ok.r.kind !== "monthly") return { ok: false, error: "Only a monthly recap has parts to wait on." };
+  try {
+    const { sendPartNow } = await import("@/lib/reports/run");
+    await sendPartNow(createAdminClient(), id, ok.me);
+    done(id);
+    return { ok: true, note: "Sent to the client in Slack and by email. The other part goes out on its own when its buyer approves it." };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Couldn't send it." };
   }
