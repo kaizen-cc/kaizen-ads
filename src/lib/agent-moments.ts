@@ -132,6 +132,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Turns an audit action or sprint move into exact Google Ads changes (pause or enable, budgets, targets, negatives)", where: "KPIs · Google audit · sprint", trigger: "click", when: "Make this change in Google Ads", labels: ["plan a Google Ads change"] },
   ],
   reporter: [
+    { title: "Answers a client's questions about their numbers on their dashboard, and tells the buyer when it's a worry", where: "Client portal · Dashboard", trigger: "click", when: "When the client asks about their numbers", labels: ["client dashboard question "] },
     { title: "Writes the weekly and monthly client report for a Meta account, in the buyer's voice", where: "Reports · KPIs", trigger: "auto", when: "Mondays and the 1st, and when someone builds a report", labels: ["weekly report", "monthly report", "custom report", "built report"] },
     { title: "Rewrites a report from the buyer's note", where: "Reports · a report", trigger: "click", when: "When the buyer asks for changes", labels: ["revise report"] },
     { title: "Writes the message that goes with a joint report", where: "Reports · Build a report", trigger: "click", when: "When a report covers more than one service", labels: ["joint report message"] },

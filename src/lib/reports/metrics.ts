@@ -53,6 +53,8 @@ export type ReportMetrics = {
   gaps: string[]; // days in the period with no data at all (a sync gap, or the account off)
   /** Each result the campaigns are optimized for, in the main period (when read from the ad account) */
   goals?: { label: string; spend: number; results: number; costPerResult: number | null }[];
+  /** Day by day in the main period (the client dashboard's chart), when asked for */
+  daily?: { date: string; spend: number; results: number; revenue: number; clicks: number; impressions: number }[];
   /** Where performance is weak and why (set when the report is drafted) */
   diagnosis?: Diagnosis;
   /** One other Kaizen service worth raising, when the timing and the numbers make it natural */
@@ -184,7 +186,7 @@ export async function withCampaignEvents(admin: SupabaseClient, m: ReportMetrics
 }
 
 /** Every number a report shows, for one KPI target, as of `today` (New York). */
-export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "weekly" | "monthly" | "custom", today = nyParts(new Date()).date, range?: { start: string; end: string }, opts: { lite?: boolean } = {}): Promise<ReportMetrics> {
+export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "weekly" | "monthly" | "custom", today = nyParts(new Date()).date, range?: { start: string; end: string }, opts: { lite?: boolean; daily?: boolean } = {}): Promise<ReportMetrics> {
   const platform = t.platform === "google" ? "google" : "meta";
   const left = new Set(t.excluded_campaigns ?? []);
   const all = ((await accountRows(admin, t.ad_account_id ?? "", platform)) as Row[]).filter((r) => (!t.campaign_match || (r.campaign_name ?? "").toLowerCase().includes(t.campaign_match.toLowerCase())) && !left.has(String(r.campaign_id)));
@@ -308,6 +310,14 @@ export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "wee
     dataThrough: [...days].map((d) => d.date).sort().at(-1) ?? null,
     gaps,
     ...(useGoals && goalLines.length ? { goals: goalLines } : {}),
+    ...(opts.daily
+      ? {
+          daily: [...new Set(all.filter((r) => r.date >= ps.main.start && r.date <= ps.main.end).map((r) => r.date))].sort().map((d) => {
+            const p = period(all, days, { start: d, end: d, label: d }, conv, type);
+            return { date: d, spend: p.spend, results: p.results, revenue: p.revenue, clicks: p.clicks, impressions: p.impressions };
+          }),
+        }
+      : {}),
   };
 }
 

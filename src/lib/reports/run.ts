@@ -63,10 +63,10 @@ export async function draftQueued(admin: SupabaseClient, budgetMs = 600_000) {
   return done;
 }
 
-type Loaded = { id: string; kind: "weekly" | "monthly" | "custom"; platform: "meta" | "google"; period_start: string; period_end: string; message: string | null; sections: Sections | null; metrics: ReportMetrics | null; extras: string | null; client_id: string; bundle_id: string | null; owner: string | null; client: { name: string; slack_channel_id: string | null } };
+type Loaded = { id: string; kind: "weekly" | "monthly" | "custom"; platform: "meta" | "google"; period_start: string; period_end: string; message: string | null; sections: Sections | null; metrics: ReportMetrics | null; extras: string | null; client_id: string; bundle_id: string | null; owner: string | null; client: { name: string; slack_channel_id: string | null; slug?: string; portal_live?: boolean } };
 
 async function load(admin: SupabaseClient, id: string): Promise<Loaded> {
-  const { data: r } = await admin.from("reports").select("id, kind, platform, period_start, period_end, message, sections, metrics, extras, client_id, bundle_id, clients(name, slack_channel_id), profiles!reports_owner_id_fkey(full_name)").eq("id", id).single();
+  const { data: r } = await admin.from("reports").select("id, kind, platform, period_start, period_end, message, sections, metrics, extras, client_id, bundle_id, clients(name, slack_channel_id, slug, portal_live), profiles!reports_owner_id_fkey(full_name)").eq("id", id).single();
   if (!r) throw new Error("Report not found");
   return { ...(r as unknown as Loaded), owner: (r.profiles as unknown as { full_name: string } | null)?.full_name ?? null, client: r.clients as unknown as Loaded["client"] };
 }
@@ -89,6 +89,7 @@ const monthOf = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en
 export async function reportPdf(admin: SupabaseClient, reports: Loaded[]) {
   const first = reports[0];
   return renderReportPdf({
+    dashboard: dashboardUrl(first),
     client: first.client.name,
     // An on-demand recap reads like a weekly one (its period, against the days before it)
     kind: first.kind === "monthly" ? "monthly" : "weekly",
@@ -96,6 +97,13 @@ export async function reportPdf(admin: SupabaseClient, reports: Loaded[]) {
     parts: reports.filter((r) => r.metrics && r.sections).map((r) => ({ platform: r.platform, buyer: r.owner, metrics: r.metrics!, sections: r.sections!, extras: r.extras })),
   });
 }
+
+/** The client's live dashboard, linked under each report (when their portal is open) */
+const dashboardUrl = (r: { client: { slug?: string; portal_live?: boolean } }) => (r.client.portal_live && r.client.slug ? `${SITE()}/c/${r.client.slug}/dashboard` : null);
+const dashboardLine = (r: { client: { slug?: string; portal_live?: boolean } }) => {
+  const url = dashboardUrl(r);
+  return url ? `\n\n<${url}|See every number on your live dashboard>` : "";
+};
 
 /** A weekly report (or an on-demand recap) goes to the client's Slack channel, as the buyer, with its PDF. */
 export async function postWeekly(admin: SupabaseClient, id: string, by: { id: string }) {
@@ -105,7 +113,7 @@ export async function postWeekly(admin: SupabaseClient, id: string, by: { id: st
   const bytes = await reportPdf(admin, [r]);
   const out = await postAsUser(by.id, {
     channel: r.client.slack_channel_id,
-    text: r.message,
+    text: `${r.message}${dashboardLine(r)}`,
     pdf: { filename: `${r.client.name} - ${r.platform === "google" ? "Google" : "Meta"} - ${label(r.period_start, r.period_end)}.pdf`, title: `${r.client.name} · ${r.platform === "google" ? "Google" : "Meta"} Ads · ${label(r.period_start, r.period_end)}`, bytes },
   });
   if (!out.ok) return out;
@@ -211,7 +219,7 @@ export async function deliverBundle(admin: SupabaseClient, bundleId: string, by:
     const month = monthOf(b.period_start);
     const bytes = await reportPdf(admin, parts);
     const intro = parts.map((p) => p.message?.trim()).filter(Boolean).join("\n\n");
-    const text = `${intro}\n\n*Your ${month} recap:* ${link}`;
+    const text = `${intro}\n\n*Your ${month} recap:* ${link}${dashboardLine(parts[0])}`;
     const delivered: Record<string, unknown> = {};
     if (client.slack_channel_id) {
       const out = await postAsUser(by.id, { channel: client.slack_channel_id, text, pdf: { filename: `${client.name} - ${month} recap.pdf`, title: `${client.name} · ${month} recap`, bytes } });

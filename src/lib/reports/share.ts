@@ -4,11 +4,12 @@ import type { ReportMetrics } from "./metrics";
 import type { Sections } from "./write";
 import type { ReportPart } from "./pdf";
 import { monthLabel, platformName, shortRange, type ReportLayout } from "./format";
+import { siteUrl } from "@/lib/site";
 
 // Loading a report (or a client's monthly bundle) for reading: the PDF, and the live report page the client opens from
 // the link. Read-only. A bundle only shows the reports the buyers have finished (submitted or posted).
 
-const REPORT_FIELDS = "id, client_id, platform, kind, period_start, period_end, status, metrics, extra_metrics, sections, extras, layout, kpi_targets(report_layout), clients(name, slug), profiles!reports_owner_id_fkey(full_name)";
+const REPORT_FIELDS = "id, client_id, platform, kind, period_start, period_end, status, metrics, extra_metrics, sections, extras, layout, kpi_targets(report_layout), clients(name, slug, portal_live), profiles!reports_owner_id_fkey(full_name)";
 
 type Row = {
   id: string;
@@ -23,7 +24,7 @@ type Row = {
   extras: string | null;
   layout?: ReportLayout | null;
   kpi_targets?: { report_layout: ReportLayout | null } | null;
-  clients: { name: string; slug: string } | null;
+  clients: { name: string; slug: string; portal_live?: boolean } | null;
   profiles: { full_name: string | null } | null;
 };
 
@@ -47,7 +48,8 @@ export async function loadReport(admin: SupabaseClient, id: string, edit = false
   const periodLabel = r.kind === "monthly" ? monthLabel(r.period_start) : part.metrics.main.label;
   const short = r.kind === "monthly" ? monthLabel(r.period_start) : shortRange(r.period_start, r.period_end);
   const fileName = `${client} - ${platformName(part.platform).replace(" Ads", "")} ${r.kind} - ${short}.pdf`;
-  return { input: { client, kind: r.kind, periodLabel, parts: [part], edit }, fileName };
+  const dashboard = r.clients?.portal_live ? `${siteUrl()}/c/${r.clients.slug}/dashboard` : null;
+  return { input: { client, kind: r.kind, periodLabel, parts: [part], edit, dashboard }, fileName };
 }
 
 /** A client's monthly bundle by its share token: the finished reports in it, Meta first. */

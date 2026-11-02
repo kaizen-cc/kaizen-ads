@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { PortalNav } from "@/components/portal-nav";
+import { portalSections } from "@/lib/portal-sections";
 import { notFound } from "next/navigation";
 import { BrandSwitcher } from "@/components/brand-switcher";
 import { getViewer } from "@/lib/auth";
@@ -36,6 +38,7 @@ export default async function ClientHome({ params }: PageProps<"/c/[slug]">) {
   const brands = viewer.kind === "contact" ? viewer.brands : [{ name: client.name, slug: client.slug }];
   const firstName = viewer.kind === "contact" ? (viewer.fullName?.split(" ")[0] ?? null) : null;
 
+  const nav = adminConfigured() ? await portalSections(createAdminClient(), client.id) : { setup: false, plan: false };
   return (
     <div className="min-h-screen">
       <header className="pt-safe sticky top-0 z-20 border-b border-line bg-bg/90 backdrop-blur">
@@ -53,6 +56,9 @@ export default async function ClientHome({ params }: PageProps<"/c/[slug]">) {
             )}
             <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[11px] text-muted">Kaizen</span>
           </span>
+        </div>
+        <div className="mx-auto max-w-md px-4">
+          <PortalNav slug={client.slug} {...nav} />
         </div>
       </header>
       {setup && (

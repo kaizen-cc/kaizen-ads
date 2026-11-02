@@ -9,6 +9,7 @@ import { renderReportPdf, type ReportPart, type ReportPdfInput } from "./pdf";
 import type { ReportMetrics } from "./metrics";
 import type { ReportLayout } from "./format";
 import { layoutOf } from "./share";
+import { siteUrl } from "@/lib/site";
 import { draftReport, type Sections } from "./write";
 
 // The report builder. Someone builds a report for a client: one or more date ranges (the last 7 days AND the month,
@@ -123,12 +124,12 @@ type Part = { id: string; platform: string; status: string; owner_id: string | n
 
 async function loadParts(admin: SupabaseClient, bundleId: string) {
   const [{ data: b }, { data: parts }] = await Promise.all([
-    admin.from("report_bundles").select("id, token, client_id, status, ranges, created_by, message, message_approved_at, clients(name, slack_channel_id)").eq("id", bundleId).single(),
+    admin.from("report_bundles").select("id, token, client_id, status, ranges, created_by, message, message_approved_at, clients(name, slack_channel_id, slug, portal_live)").eq("id", bundleId).single(),
     admin.from("reports").select("id, platform, status, owner_id, message, sections, metrics, extra_metrics, extras, layout, kpi_targets(report_layout), profiles!reports_owner_id_fkey(full_name)").eq("bundle_id", bundleId).neq("status", "skipped"),
   ]);
   if (!b) throw new Error("Report not found");
   const sorted = ((parts ?? []) as unknown as Part[]).sort((a, c) => (a.platform === "meta" ? 0 : 1) - (c.platform === "meta" ? 0 : 1));
-  return { b, parts: sorted, client: b.clients as unknown as { name: string; slack_channel_id: string | null }, ranges: (b.ranges ?? []) as BuiltRange[] };
+  return { b, parts: sorted, client: b.clients as unknown as { name: string; slack_channel_id: string | null; slug?: string; portal_live?: boolean }, ranges: (b.ranges ?? []) as BuiltRange[] };
 }
 
 /** The Slack message: one part's own message, or (joint) the parts' messages combined into one post from Kaizen. */
@@ -205,6 +206,7 @@ export async function builtInput(admin: SupabaseClient, bundleId: string, edit =
     periodLabel: rangesLabel(ranges),
     parts: parts.filter((p) => p.metrics && p.sections).map((p): ReportPart => ({ platform: p.platform === "google" ? "google" : "meta", buyer: p.profiles?.full_name ?? null, metrics: p.metrics!, sections: p.sections!, extras: p.extras, extra: p.extra_metrics, layout: layoutOf(p) })),
     edit,
+    dashboard: client.portal_live && client.slug ? `${siteUrl()}/c/${client.slug}/dashboard` : null,
   };
 }
 

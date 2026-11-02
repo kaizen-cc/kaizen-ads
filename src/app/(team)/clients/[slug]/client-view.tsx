@@ -624,6 +624,9 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                 <a href={`/c/${client.slug}`} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center rounded-full border border-line px-4 py-1 text-xs text-muted hover:border-faint hover:text-fg md:min-h-0 md:px-3">
                   Preview ↗
                 </a>
+                <a href={`/c/${client.slug}/dashboard`} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center rounded-full border border-line px-4 py-1 text-xs text-muted hover:border-faint hover:text-fg md:min-h-0 md:px-3">
+                  Their dashboard ↗
+                </a>
                 {can.admin &&
                   (client.portal_live ? (
                     <ActionButton action={setPortalLive.bind(null, client.id, client.slug, false)} label="Turn off" confirmText="Turn the portal off? Contacts lose access." />

@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { PortalNav } from "@/components/portal-nav";
+import { portalSections } from "@/lib/portal-sections";
 import { notFound } from "next/navigation";
 import { getViewer } from "@/lib/auth";
 import type { PlanTurn } from "@/lib/plan-chat-types";
@@ -34,6 +36,7 @@ export default async function PlanPage({ params }: { params: Promise<{ slug: str
   // The first time the client opens it
   if (!team && ready && !p.viewed_at) await createAdminClient().from("client_presentations").update({ viewed_at: new Date().toISOString() }).eq("client_id", client.id);
 
+  const nav = adminConfigured() ? await portalSections(createAdminClient(), client.id) : { setup: false, plan: false };
   return (
     <div className="min-h-screen bg-bg">
       <header className="pt-safe sticky top-0 z-20 border-b border-line bg-bg/90 backdrop-blur">
@@ -42,6 +45,9 @@ export default async function PlanPage({ params }: { params: Promise<{ slug: str
             <span aria-hidden>←</span> {team ? "Back to the team view" : client.name}
           </Link>
           <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[11px] text-muted">Kaizen</span>
+        </div>
+        <div className="mx-auto max-w-4xl px-4">
+          <PortalNav slug={client.slug} {...nav} />
         </div>
       </header>
       <main className="mx-auto max-w-4xl px-4 pb-24 pt-5 md:pt-8">
