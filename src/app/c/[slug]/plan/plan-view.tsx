@@ -19,12 +19,9 @@ export function PlanView({ slug, brand, deck, reactions: initial, approved: wasA
     if (r.reactions) setReactions(r.reactions);
   };
   return (
-    <>
-      {firstAds && (
-        <div className="mb-5">
-          <FirstAdsCard slug={slug} data={firstAds} canAct={canAct} />
-        </div>
-      )}
+    <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_400px]">
+      <div className="grid min-w-0 gap-5">
+      {firstAds && <FirstAdsCard slug={slug} data={firstAds} canAct={canAct} />}
       <PresentationDeck
         brand={brand}
         deck={deck}
@@ -42,12 +39,14 @@ export function PlanView({ slug, brand, deck, reactions: initial, approved: wasA
           setApproved(true);
         }}
       />
+      </div>
+      {/* On a computer: the conversation beside the presentation. On a phone: a bar that opens it */}
       {canAct && <PlanTalk slug={slug} brand={brand} chat={chat} locked={approved} onReactions={setReactions} />}
       {error && (
         <p role="alert" className="fixed inset-x-4 bottom-[calc(5rem+env(safe-area-inset-bottom))] z-40 lg:bottom-6 mx-auto max-w-md rounded-[14px] bg-bad px-4 py-3 text-center text-[14px] text-white shadow-lg">
           {error}
         </p>
       )}
-    </>
+    </div>
   );
 }

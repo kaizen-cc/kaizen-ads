@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { PlanTurn } from "@/lib/plan-chat-types";
 import type { Reactions } from "@/lib/presentation-types";
 import { createClient } from "@/lib/supabase/client";
@@ -13,10 +13,24 @@ import { planUploadSlots, talkPlan } from "./actions";
 // the button at the bottom; in the address (?talk=1), so back closes it.
 
 const MAX_VOICE_MS = 4 * 60_000;
+
+/** A computer's width: the conversation sits beside the presentation instead of opening over it */
+function useWide() {
+  return useSyncExternalStore(
+    (cb) => {
+      const m = window.matchMedia("(min-width: 1024px)");
+      m.addEventListener("change", cb);
+      return () => m.removeEventListener("change", cb);
+    },
+    () => window.matchMedia("(min-width: 1024px)").matches,
+    () => false,
+  );
+}
 const clock = () => Date.now();
 
 export function PlanTalk({ slug, brand, chat: initial, locked, onReactions }: { slug: string; brand: string; chat: PlanTurn[]; locked: boolean; onReactions: (r: Reactions) => void }) {
-  const open = useParam("talk") === "1";
+  const wide = useWide();
+  const open = useParam("talk") === "1" || wide;
   const [chat, setChat] = useState(initial);
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -123,7 +137,7 @@ export function PlanTalk({ slug, brand, chat: initial, locked, onReactions }: { 
     <>
       {/* The way in: a bar along the bottom */}
       {!open && (
-        <div className="pointer-events-none fixed inset-x-0 bottom-[calc(58px+env(safe-area-inset-bottom))] z-30 px-4 pb-3 lg:bottom-0 lg:pb-[calc(1rem+env(safe-area-inset-bottom))] lg:pl-[264px]">
+        <div className="pointer-events-none fixed inset-x-0 bottom-[calc(58px+env(safe-area-inset-bottom))] z-30 px-4 pb-3">
           <button
             type="button"
             onClick={() => pushParams({ talk: "1" })}
@@ -141,10 +155,10 @@ export function PlanTalk({ slug, brand, chat: initial, locked, onReactions }: { 
       )}
 
       {open && (
-        <div className="fixed inset-0 z-50 flex justify-end">
-          <button type="button" aria-label="Close" onClick={() => closeParams("talk")} className="absolute inset-0 bg-black/40 backdrop-blur-[2px] max-md:hidden" />
-          <div className="relative flex h-full w-full flex-col border-l border-line bg-bg md:w-[min(560px,94vw)]">
-            <header className="pt-safe flex items-center gap-3 border-b border-line px-4 py-3">
+        <div className={wide ? "sticky top-8 h-[calc(100vh-4rem)]" : "fixed inset-0 z-50 flex justify-end"}>
+          {!wide && <button type="button" aria-label="Close" onClick={() => closeParams("talk")} className="absolute inset-0 bg-black/40 backdrop-blur-[2px] max-md:hidden" />}
+          <div className={wide ? "flex h-full flex-col overflow-hidden rounded-[24px] border border-line bg-surface" : "relative flex h-full w-full flex-col border-l border-line bg-bg md:w-[min(560px,94vw)]"}>
+            <header className={`flex items-center gap-3 border-b border-line px-4 py-3 ${wide ? "" : "pt-safe"}`}>
               <span className="grid h-9 w-9 place-items-center rounded-full bg-brand text-[13px] text-white" aria-hidden>
                 ✦
               </span>
@@ -152,9 +166,11 @@ export function PlanTalk({ slug, brand, chat: initial, locked, onReactions }: { 
                 <p className="font-heading text-[15px] leading-tight">Talk it through with Kaizen</p>
                 <p className="truncate text-[12px] text-muted">About {brand} · anything you tell us goes into the work</p>
               </div>
-              <button type="button" onClick={() => closeParams("talk")} className="grid h-11 w-11 place-items-center rounded-full text-[18px] text-muted hover:text-fg" aria-label="Close">
-                ×
-              </button>
+              {!wide && (
+                <button type="button" onClick={() => closeParams("talk")} className="grid h-11 w-11 place-items-center rounded-full text-[18px] text-muted hover:text-fg" aria-label="Close">
+                  ×
+                </button>
+              )}
             </header>
 
             <div className="grid flex-1 content-start gap-3 overflow-y-auto px-4 py-4">

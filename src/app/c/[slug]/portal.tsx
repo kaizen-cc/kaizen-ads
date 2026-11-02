@@ -293,7 +293,7 @@ function Session({ slug, clientName, item, demo, next, onSent, onNext, onClose }
 
   return (
     <div className="fixed inset-0 z-50 grid bg-bg/95 backdrop-blur sm:place-items-center sm:p-6">
-      <div className="relative flex h-full w-full flex-col overflow-hidden bg-bg sm:h-[min(880px,100%)] sm:max-w-[430px] sm:rounded-[28px] sm:border sm:border-line sm:shadow-[0_20px_60px_rgba(0,0,0,0.55)]">
+      <div className="relative flex h-full w-full flex-col overflow-hidden bg-bg sm:h-[min(880px,100%)] sm:max-w-[430px] sm:rounded-[28px] sm:border sm:border-line sm:shadow-[0_20px_60px_rgba(0,0,0,0.55)] lg:h-[min(900px,100%)] lg:max-w-[1240px]">
         {/* Top: close or back, progress, preview */}
         <div className="flex items-center gap-2 px-3 pb-2 pt-[max(12px,env(safe-area-inset-top))]">
           <button onClick={sent ? onClose : at > 0 ? () => go(at - 1) : onClose} aria-label={at > 0 && !sent ? "Back" : "Close"} className="grid h-8 w-8 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg active:bg-surface-2 max-md:-ml-1 max-md:h-11 max-md:w-11 max-md:text-lg">
@@ -382,7 +382,7 @@ function Session({ slug, clientName, item, demo, next, onSent, onNext, onClose }
             onSave={(note) => decideAd(step.index, { decision: "changes", note })}
           />
         ) : (
-          <div className="grid min-h-0 flex-1 content-start gap-3 overflow-y-auto px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-2">
+          <div className="grid min-h-0 w-full flex-1 content-start gap-3 overflow-y-auto px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-2 lg:mx-auto lg:max-w-2xl lg:pt-8">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-faint">Your review</p>
               <h3 className="text-[18px] font-semibold leading-tight">{item.title}</h3>
@@ -453,7 +453,7 @@ function Intro({ item, designs, ads, onStart }: { item: PortalItem; designs: num
   const revisedAds = item.ads.map((a, i) => ({ ...a, i })).filter((a) => a.status === "changes");
   const thumb = (d: PortalDesign) => d.files[0]?.thumbUrl ?? (d.files[0] && !isVideo(d.files[0]) ? d.files[0].url : null);
   return (
-    <div className="grid min-h-0 flex-1 content-start gap-4 overflow-y-auto px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-2">
+    <div className="grid min-h-0 w-full flex-1 content-start gap-4 overflow-y-auto px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-2 lg:mx-auto lg:max-w-2xl lg:pt-8">
       {item.revised ? (
         <div className="grid gap-3 rounded-[14px] bg-brand p-4 text-white">
           <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ink/75">Revised · round {item.revised.round + 1}</p>
@@ -579,22 +579,22 @@ function Stamps({ dx }: { dx: number }) {
   );
 }
 
-function Decide({ onApprove, onChanges }: { onApprove: () => void; onChanges: () => void }) {
+function Decide({ onApprove, onChanges, className = "" }: { onApprove: () => void; onChanges: () => void; className?: string }) {
   return (
-    <>
-      <div className="flex items-center justify-center gap-[18px] pb-1 pt-3">
-        <button onClick={onChanges} aria-label="Ask for changes" className="grid h-[54px] w-[54px] place-items-center rounded-full border border-line bg-surface text-[20px] font-semibold text-warn transition-transform active:scale-90">
-          ✎
+    <div className={className}>
+      <div className="flex items-center justify-center gap-[18px] pb-1 pt-3 lg:gap-3 lg:pt-0">
+        <button onClick={onChanges} aria-label="Ask for changes" className="grid h-[54px] w-[54px] place-items-center rounded-full border border-line bg-surface text-[20px] font-semibold text-warn transition-transform active:scale-90 lg:flex lg:h-12 lg:w-auto lg:flex-1 lg:gap-2 lg:rounded-[14px] lg:text-[15px]">
+          ✎<span className="hidden lg:inline">Ask for changes</span>
         </button>
-        <button onClick={onApprove} aria-label="Approve" className="grid h-[62px] w-[62px] place-items-center rounded-full bg-ok text-[24px] font-semibold text-white shadow-[0_10px_30px_-10px_rgba(63,178,127,0.9)] transition-transform active:scale-90">
-          ✓
+        <button onClick={onApprove} aria-label="Approve" className="grid h-[62px] w-[62px] place-items-center rounded-full bg-ok text-[24px] font-semibold text-white shadow-[0_10px_30px_-10px_rgba(63,178,127,0.9)] transition-transform active:scale-90 lg:flex lg:h-12 lg:w-auto lg:flex-1 lg:gap-2 lg:rounded-[14px] lg:text-[15px]">
+          ✓<span className="hidden lg:inline">Approve</span>
         </button>
       </div>
       <p className="pb-[max(10px,env(safe-area-inset-bottom))] text-center text-[10.5px] text-faint">
         <span className="md:hidden">Swipe left for changes · right to approve</span>
-        <span className="max-md:hidden">← changes · → approve</span>
+        <span className="max-md:hidden">Keyboard: ← changes · → approve</span>
       </p>
-    </>
+    </div>
   );
 }
 
@@ -671,8 +671,8 @@ function DesignStep({ item, step, choice, onApprove, onChanges, onMark }: { item
   });
   const label = item.format === "video" ? "Video" : "Design";
   return (
-    <>
-      <div className="flex items-center justify-between gap-2 px-4 pb-2">
+    <div className="flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_380px] lg:grid-rows-[auto_auto_minmax(0,1fr)_auto] lg:gap-x-2 lg:pb-5">
+      <div className="flex items-center justify-between gap-2 px-4 pb-2 lg:col-start-2 lg:row-start-1 lg:items-start lg:pt-2">
         <div className="min-w-0">
           <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-faint">
             {label} {step.n} of {step.of}
@@ -684,7 +684,7 @@ function DesignStep({ item, step, choice, onApprove, onChanges, onMark }: { item
           {choice && <Chip choice={choice.decision} />}
         </span>
       </div>
-      <div {...bind} style={style} className="relative mx-3 flex min-h-0 flex-1 touch-pan-y select-none flex-col overflow-hidden rounded-[14px] border border-line bg-surface">
+      <div {...bind} style={style} className="relative mx-3 flex min-h-0 flex-1 touch-pan-y select-none flex-col overflow-hidden rounded-[14px] border border-line bg-surface lg:col-start-1 lg:row-span-4 lg:row-start-1 lg:mb-0 lg:ml-5">
         <Stamps dx={dx} />
         {before && <span className="absolute left-3 top-3 z-10 rounded-full bg-black/70 px-2.5 py-1 text-[11px] text-white">Before · what you commented on</span>}
         <Media file={file} frameRef={frame}>
@@ -703,14 +703,14 @@ function DesignStep({ item, step, choice, onApprove, onChanges, onMark }: { item
         )}
       </div>
       {prev && prev.notes.length > 0 ? (
-        <div className="px-3 pt-2.5">
+        <div className="px-3 pt-2.5 lg:col-start-2 lg:row-start-2 lg:overflow-y-auto lg:px-4">
           <YouAsked notes={prev.notes.map((n) => ({ body: n.body, where: whereOf(n), changed: changedFor(item, n.body) }))} onShow={!old || before ? undefined : () => setBefore(true)} />
         </div>
       ) : (
-        !isVideo(file) && <p className="pt-2 text-center text-[11px] text-faint">Tap the design to comment on a spot</p>
+        !isVideo(file) && <p className="pt-2 text-center text-[11px] text-faint lg:col-start-2 lg:row-start-2 lg:px-4 lg:text-left lg:text-[13px]">Click the design to comment on a spot, or use the buttons below</p>
       )}
-      <Decide onApprove={onApprove} onChanges={onChanges} />
-    </>
+      <Decide onApprove={onApprove} onChanges={onChanges} className="lg:col-start-2 lg:row-start-4 lg:px-4" />
+    </div>
   );
 }
 
@@ -739,7 +739,7 @@ function CopyStep({
   const [note, setNote] = useState(choice?.decision === "changes" ? choice.note : "");
   const { bind, style, dx } = useSwipe(onApprove, onChanges);
   return (
-    <>
+    <div className="flex min-h-0 w-full flex-1 flex-col lg:mx-auto lg:max-w-2xl lg:pb-5">
       <div className="flex items-center justify-between gap-2 px-4 pb-2">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-faint">
@@ -804,7 +804,7 @@ function CopyStep({
       ) : (
         <Decide onApprove={onApprove} onChanges={onChanges} />
       )}
-    </>
+    </div>
   );
 }
 
@@ -930,8 +930,8 @@ function MarkDesign({ item, design, start, initial, onCancel, onSave }: { item: 
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center justify-between gap-2 px-4 pb-2">
+    <div className="flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_380px] lg:grid-rows-[auto_auto_minmax(0,1fr)] lg:gap-x-2 lg:pb-5">
+      <div className="flex items-center justify-between gap-2 px-4 pb-2 lg:col-start-2 lg:row-start-1 lg:pt-2">
         <div className="min-w-0">
           <p className="text-[15px] font-semibold">Mark what to change</p>
           <p className="text-[11.5px] text-muted">{isVideo(file) ? "Pause where an edit is needed, then comment at that moment." : "Tap a spot, or press and drag to box an area."}</p>
@@ -941,7 +941,7 @@ function MarkDesign({ item, design, start, initial, onCancel, onSave }: { item: 
         </button>
       </div>
       {design.files.length > 1 && (
-        <div className="flex flex-wrap gap-1.5 px-4 pb-2">
+        <div className="flex flex-wrap gap-1.5 px-4 pb-2 lg:col-start-2 lg:row-start-2">
           {design.files.map((f, i) => (
             <button key={f.id} onClick={() => (setFi(i), setDraft(null))} className={`rounded-full border px-2.5 py-0.5 text-[10.5px] ${CHIP} ${i === fi ? "border-fg bg-fg text-bg" : "border-line text-muted"}`}>
               {item.format === "carousel" ? `Card ${i + 1}` : sizeLabel(f.aspect)}
@@ -949,14 +949,14 @@ function MarkDesign({ item, design, start, initial, onCancel, onSave }: { item: 
           ))}
         </div>
       )}
-      <div className="mx-3 flex min-h-[36%] flex-1 overflow-hidden rounded-[12px] border border-line">
+      <div className="mx-3 flex min-h-[36%] flex-1 overflow-hidden rounded-[12px] border border-line lg:col-start-1 lg:row-span-3 lg:row-start-1 lg:ml-5 lg:min-h-0">
         <Media file={file} frameRef={frame} draw={draw} videoRef={video} onTime={setAt}>
           {here.map((p) => (p.x != null && p.y != null ? <Marker key={p.n} n={p.n} x={p.x} y={p.y} w={p.w ?? null} h={p.h ?? null} /> : null))}
           {box && <Marker x={Math.min(box.x0, box.x1)} y={Math.min(box.y0, box.y1)} w={Math.max(0.001, Math.abs(box.x1 - box.x0))} h={Math.max(0.001, Math.abs(box.y1 - box.y0))} live />}
           {!box && draft?.x != null && draft.y != null && <Marker n={nextN} x={draft.x} y={draft.y} w={draft.w} h={draft.h} live />}
         </Media>
       </div>
-      <div className="grid min-h-0 gap-2.5 overflow-y-auto px-4 pb-[max(14px,env(safe-area-inset-bottom))] pt-3">
+      <div className="grid min-h-0 content-start gap-2.5 overflow-y-auto px-4 pb-[max(14px,env(safe-area-inset-bottom))] pt-3 lg:col-start-2 lg:row-start-3">
         {isVideo(file) && !draft && (
           <button
             onClick={() => {
