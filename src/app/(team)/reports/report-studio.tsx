@@ -3,7 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { SlackConnect } from "@/components/slack-connect";
-import { pushParams, useParam } from "@/lib/url-state";
+import { closeParams, pushParams, useParam } from "@/lib/url-state";
+import { Layer } from "../clients/[slug]/layer";
 import { headlineTiles, kpiRows, money, platformName, type Delta } from "@/lib/reports/format";
 import type { ReportMetrics } from "@/lib/reports/metrics";
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
@@ -264,6 +265,14 @@ function SlackPreview({ from, text, file }: { from: { name: string; image: strin
   );
 }
 
+function PanelButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button type="button" aria-label={label} title={label} onClick={onClick} className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-line text-[15px] text-muted transition-colors hover:border-faint hover:text-fg md:h-9 md:w-9">
+      {children}
+    </button>
+  );
+}
+
 export function ReportStudio({
   report,
   client,
@@ -300,6 +309,12 @@ export function ReportStudio({
   const step: "report" | "message" | "done" = sent || sentHere ? "done" : asked === "report" || asked === "message" ? asked : initial;
   const setStep = (to: "report" | "message" | "done") => (to === "done" ? setSentHere(true) : pushParams({ step: to === initial ? null : to }));
   const chatEnd = useRef<HTMLDivElement>(null);
+  const bigEnd = useRef<HTMLDivElement>(null);
+  // The side panel: normal, maximized (a big panel over the page, the report still in view) or minimized (a bar at the
+  // bottom, the report full width). In the address (?chat=max|min), so back returns to how it was.
+  const view = useParam("chat");
+  const maxed = view === "max";
+  const minned = view === "min";
 
   // A fresh draft from the server (after a redraft or the first write) replaces what's shown
   const [seen, setSeen] = useState(`${report.status}:${JSON.stringify(report.sections)}`);
@@ -316,7 +331,14 @@ export function ReportStudio({
   }, [busy, bundle, router]);
   useEffect(() => {
     chatEnd.current?.scrollIntoView({ block: "nearest" });
-  }, [chat, asking]);
+    bigEnd.current?.scrollIntoView({ block: "nearest" });
+  }, [chat, asking, maxed]);
+  useEffect(() => {
+    if (!maxed) return;
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && closeParams("chat");
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [maxed]);
   // The message step of a built report: the combined (or single) message, written from the approved parts
   useEffect(() => {
     if (step !== "message" || !built || !bundle || message) return;
@@ -446,7 +468,7 @@ export function ReportStudio({
       {note && <p className={`rounded-[12px] px-4 py-3 text-sm ${note.ok ? "bg-ok-soft text-ok" : "bg-bad-soft text-bad"}`}>{note.text}</p>}
 
       {step === "report" && (
-        <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className={`grid items-start gap-5 ${minned ? "pb-20" : "lg:grid-cols-[minmax(0,1fr)_420px]"}`}>
           <div className="grid min-w-0 gap-3">
             {busy || !sections ? (
               <div className="grid place-items-center gap-3 rounded-[14px] border border-line bg-surface px-6 py-20 text-center">
@@ -490,52 +512,78 @@ export function ReportStudio({
           </div>
 
           {/* The side: ask the AI for a change (the document updates), or the QA's checks */}
-          <aside className="grid gap-3 rounded-[16px] border border-line bg-surface p-4 lg:sticky lg:top-20">
-            <div className="flex gap-1 rounded-full bg-surface-2 p-1 text-sm">
-              {(["ai", "checks"] as const).map((k) => (
-                <button key={k} type="button" onClick={() => setRail(k)} className={`h-9 flex-1 rounded-full transition-colors ${rail === k ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
-                  {k === "ai" ? "Ask the AI" : `Checks${qa?.flags.length ? ` · ${qa.flags.length}` : ""}`}
-                </button>
-              ))}
-            </div>
-            {rail === "ai" ? (
-              <div className="grid gap-3">
-                <div className="grid max-h-[46vh] content-start gap-2 overflow-y-auto">
-                  {!chat.length && <p className="text-xs leading-relaxed text-faint">Say what to change and watch the report update. What this client always wants (&ldquo;they care about lead quality&rdquo;) is remembered for next time.</p>}
-                  {chat.map((t, i) => (
-                    <p key={i} className={`max-w-[92%] whitespace-pre-wrap rounded-[12px] px-3 py-2 text-[13px] leading-relaxed ${t.role === "user" ? "justify-self-end bg-fg text-bg" : "bg-surface-2 text-fg"}`}>
-                      {t.text}
-                    </p>
+          {(() => {
+            const tabs = (
+              <div className="flex items-center gap-1.5">
+                <div className="flex flex-1 gap-1 rounded-full bg-surface-2 p-1 text-sm">
+                  {(["ai", "checks"] as const).map((k) => (
+                    <button key={k} type="button" onClick={() => setRail(k)} className={`h-9 flex-1 rounded-full px-3 transition-colors ${rail === k ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
+                      {k === "ai" ? "Ask the AI" : `Checks${qa?.flags.length ? ` · ${qa.flags.length}` : ""}`}
+                    </button>
                   ))}
-                  {asking && <p className="flex items-center gap-2 text-xs text-faint"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" /> Changing it…</p>}
-                  <div ref={chatEnd} />
                 </div>
-                {editable && (
-                  <>
-                    <div className="flex flex-wrap gap-1.5">
-                      {SUGGEST.map((s) => (
-                        <button key={s} type="button" onClick={() => tweak(s)} disabled={asking} className="rounded-full border border-line px-2.5 py-1 text-[11.5px] text-muted hover:text-fg disabled:opacity-40 max-md:min-h-9">
-                          {s}
-                        </button>
-                      ))}
-                    </div>
-                    <form
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        void tweak(ask);
+                <PanelButton label={minned ? "Restore the panel" : "Minimize"} onClick={() => (minned ? closeParams("chat") : pushParams({ chat: "min" }))}>
+                  {minned ? "▴" : "–"}
+                </PanelButton>
+                <PanelButton label={maxed ? "Restore the panel" : "Maximize"} onClick={() => (maxed ? closeParams("chat") : pushParams({ chat: "max" }))}>
+                  {maxed ? "⤡" : "⤢"}
+                </PanelButton>
+              </div>
+            );
+            const thread = (big: boolean) => (
+              <div className={`grid content-start gap-2.5 overflow-y-auto pr-1 ${big ? "min-h-0 flex-1" : "max-h-[52vh] min-h-[180px]"}`}>
+                {!chat.length && <p className={`leading-relaxed text-faint ${big ? "text-sm" : "text-xs"}`}>Say what to change and watch the report update. What this client always wants (&ldquo;they care about lead quality&rdquo;) is remembered for next time.</p>}
+                {chat.map((t, i) => (
+                  <p key={i} className={`max-w-[88%] whitespace-pre-wrap rounded-[14px] px-3.5 py-2.5 leading-relaxed ${big ? "text-[15px]" : "text-[13.5px]"} ${t.role === "user" ? "justify-self-end bg-fg text-bg" : "bg-surface-2 text-fg"}`}>
+                    {t.text}
+                  </p>
+                ))}
+                {asking && <p className="flex items-center gap-2 text-xs text-faint"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" /> Changing it…</p>}
+                <div ref={big ? bigEnd : chatEnd} />
+              </div>
+            );
+            const composer = (big: boolean) =>
+              editable && (
+                <div className="grid gap-2.5">
+                  <div className="flex flex-wrap gap-1.5">
+                    {SUGGEST.map((x) => (
+                      <button key={x} type="button" onClick={() => tweak(x)} disabled={asking} className="rounded-full border border-line px-2.5 py-1 text-[11.5px] text-muted hover:text-fg disabled:opacity-40 max-md:min-h-9">
+                        {x}
+                      </button>
+                    ))}
+                  </div>
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      void tweak(ask);
+                    }}
+                    className="grid gap-2 rounded-[14px] border border-line bg-bg p-2 focus-within:border-brand-text/60"
+                  >
+                    {/* Room to write: Enter sends, Shift+Enter starts a new line */}
+                    <textarea
+                      value={ask}
+                      onChange={(e) => setAsk(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          void tweak(ask);
+                        }
                       }}
-                      className="flex gap-2"
-                    >
-                      <input value={ask} onChange={(e) => setAsk(e.target.value)} placeholder="e.g. add the lead quality from the CRM" className="h-10 min-w-0 flex-1 rounded-brand border border-line bg-bg px-3 text-sm outline-none focus:border-brand-text/60 max-md:h-11" />
-                      <button type="submit" disabled={!ask.trim() || asking} className="h-10 shrink-0 rounded-brand bg-fg px-3.5 text-sm text-bg disabled:opacity-40 max-md:h-11">
+                      rows={big ? 4 : 3}
+                      placeholder="e.g. add the lead quality from the CRM"
+                      className={`w-full resize-none bg-transparent px-1.5 py-1 leading-relaxed outline-none ${big ? "text-[15px]" : "text-sm"} [field-sizing:content] ${big ? "max-h-[30vh] min-h-[104px]" : "max-h-[22vh] min-h-[72px]"}`}
+                    />
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] text-faint max-md:hidden">Enter to send · Shift+Enter for a new line</span>
+                      <button type="submit" disabled={!ask.trim() || asking} className="ml-auto h-9 shrink-0 rounded-full bg-fg px-4 text-sm text-bg disabled:opacity-40 max-md:h-11">
                         Change
                       </button>
-                    </form>
-                  </>
-                )}
-              </div>
-            ) : (
-              <div className="grid gap-2">
+                    </div>
+                  </form>
+                </div>
+              );
+            const checks = (
+              <div className="grid content-start gap-2 overflow-y-auto">
                 {!qa ? (
                   <p className="text-xs text-faint">Not checked yet.</p>
                 ) : qa.flags.length === 0 ? (
@@ -555,8 +603,8 @@ export function ReportStudio({
                   </button>
                 )}
               </div>
-            )}
-            {!sent && sections && !busy && (
+            );
+            const approveBlock = !sent && sections && !busy && (
               <div className="grid gap-2 border-t border-line pt-3">
                 {mineDone ? (
                   <p className="text-sm text-ok">
@@ -576,8 +624,50 @@ export function ReportStudio({
                 )}
                 {qa?.verdict === "fix" && !mineDone && <p className="text-[11.5px] text-bad">The QA found something to fix: worth a look in Checks first.</p>}
               </div>
-            )}
-          </aside>
+            );
+
+            // Minimized: a bar along the bottom, so the report has the whole width
+            if (minned)
+              return (
+                <Layer>
+                  <div className="fixed inset-x-0 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-40 px-4 md:bottom-5 md:left-auto md:right-6 md:w-[460px] md:px-0">
+                    <div className="grid gap-3 rounded-[18px] border border-line bg-surface/95 p-3 shadow-[0_18px_50px_-20px_rgba(0,0,0,0.6)] backdrop-blur-xl">
+                      {tabs}
+                      {approveBlock}
+                    </div>
+                  </div>
+                </Layer>
+              );
+            return (
+              <>
+                <aside className="grid gap-3 rounded-[16px] border border-line bg-surface p-4 lg:sticky lg:top-20">
+                  {tabs}
+                  {maxed ? <p className="text-xs text-faint">Open in the big panel.</p> : rail === "ai" ? <div className="grid gap-3">{thread(false)}{composer(false)}</div> : checks}
+                  {approveBlock}
+                </aside>
+                {/* Maximized: a big panel over the right of the page; the report stays in view on wide screens */}
+                {maxed && (
+                  <Layer>
+                    <div className="fixed inset-0 z-50 flex justify-end">
+                      <button type="button" aria-label="Restore the panel" onClick={() => closeParams("chat")} className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" />
+                      <div className="relative flex h-full w-full flex-col gap-4 border-l border-line bg-surface p-4 pt-[calc(1rem+env(safe-area-inset-top))] shadow-[0_0_80px_-20px_rgba(0,0,0,0.7)] md:w-[min(760px,92vw)] md:p-6">
+                        {tabs}
+                        {rail === "ai" ? (
+                          <>
+                            {thread(true)}
+                            {composer(true)}
+                          </>
+                        ) : (
+                          <div className="min-h-0 flex-1 overflow-y-auto">{checks}</div>
+                        )}
+                        {approveBlock}
+                      </div>
+                    </div>
+                  </Layer>
+                )}
+              </>
+            );
+          })()}
         </div>
       )}
 
