@@ -247,6 +247,22 @@ export async function approveMyPart(id: string): Promise<Result<{ sent: boolean;
   }
 }
 
+/** Approved by mistake (or something to change): back to editing, as long as nothing has gone to the client */
+export async function reopenReport(id: string): Promise<Result> {
+  const ok = await mine(id);
+  if (!ok) return { ok: false, error: "Not found." };
+  const admin = createAdminClient();
+  const { data: r } = await admin.from("reports").select("status, bundle_id, report_bundles(status)").eq("id", id).single();
+  if (!r) return { ok: false, error: "Not found." };
+  if (r.status === "posted" || (r.report_bundles as unknown as { status: string } | null)?.status === "sent") return { ok: false, error: "It's already gone to the client." };
+  if (r.status !== "submitted") return { ok: true };
+  await admin.from("reports").update({ status: "draft", submitted_at: null, updated_at: new Date().toISOString() }).eq("id", id);
+  // A message already approved would send the moment the last part is in: it waits for a fresh approval instead
+  if (r.bundle_id) await admin.from("report_bundles").update({ message_approved_at: null, message_approved_by: null }).eq("id", r.bundle_id).neq("status", "sent");
+  done(id);
+  return { ok: true };
+}
+
 /** The bundle, if this person built it or works on one of its parts. */
 async function myBundle(bundleId: string) {
   const me = await requireStaff();

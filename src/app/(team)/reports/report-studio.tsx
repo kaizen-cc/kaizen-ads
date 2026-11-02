@@ -9,7 +9,7 @@ import { PdfPreview, type PdfField } from "./pdf-preview";
 import { METRIC_KEYS, columnKeys, metricLabel, platformName, TABLE_DEFAULT, tileKeys, type MetricKey, type ReportLayout } from "@/lib/reports/format";
 import type { ReportMetrics } from "@/lib/reports/metrics";
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
-import { approveBuiltMessage, approveMyPart, builtMessage, checkAgain, loadCampaignEvents, redraft, reviseWithAi, saveLayout, saveReport, sendReport, skipReport } from "./actions";
+import { approveBuiltMessage, approveMyPart, builtMessage, checkAgain, loadCampaignEvents, redraft, reopenReport, reviseWithAi, saveLayout, saveReport, sendReport, skipReport } from "./actions";
 
 // One report, start to finish, in three steps: the report (a live preview of the document: click any line to change
 // it, or ask the AI on the side and watch it change), then the Slack message (shown as it will look in the client's
@@ -733,7 +733,24 @@ ${t}` : t);
                       </button>
                     ) : (
                       `${bundle?.builder ?? "Whoever built it"} sends it as one report.`
-                    )}
+                    )}{" "}
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() =>
+                        start(async () => {
+                          const r = await reopenReport(report.id);
+                          if (!r.ok) setNote({ ok: false, text: r.error });
+                          else {
+                            setStep("report");
+                            router.refresh();
+                          }
+                        })
+                      }
+                      className="text-muted underline hover:text-fg"
+                    >
+                      Back to editing
+                    </button>
                   </p>
                 ) : (
                   <button type="button" disabled={pending} onClick={approve} className="h-11 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:bg-brand-hover disabled:opacity-50 max-md:h-12">
@@ -809,6 +826,22 @@ ${t}` : t);
                 </button>
               )}
               <span>*bold* · _italic_ · • bullets, as Slack shows them</span>
+              {/* Approved by mistake, or one more change: back to the report (nothing has gone out) */}
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() =>
+                  start(async () => {
+                    const r = await reopenReport(report.id);
+                    if (!r.ok) return setNote({ ok: false, text: r.error });
+                    setStep("report");
+                    router.refresh();
+                  })
+                }
+                className="ml-auto text-muted hover:text-fg"
+              >
+                ← Back to editing the report
+              </button>
             </div>
           </div>
           <aside className="grid gap-3 rounded-[16px] border border-line bg-surface p-4 lg:sticky lg:top-20">
