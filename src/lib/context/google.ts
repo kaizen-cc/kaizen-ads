@@ -71,12 +71,11 @@ export async function gmailMailboxes(): Promise<string[]> {
   return out;
 }
 
-/** Client contact emails → the creative-package clients they belong to. */
+/** Client contact emails → the live clients they belong to (every active and onboarding client, creative or not). */
 export async function contactMap(admin: SupabaseClient) {
   const { data: links } = await admin
     .from("contact_clients")
-    .select("client_id, contacts(email), clients!inner(creative_package, archived_at, status)")
-    .eq("clients.creative_package", true)
+    .select("client_id, contacts(email), clients!inner(archived_at, status)")
     .is("clients.archived_at", null)
     .in("clients.status", LIVE);
   const map = new Map<string, string[]>();

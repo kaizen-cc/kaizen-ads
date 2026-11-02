@@ -61,16 +61,16 @@ const isInternal = (ch: { name: string }) => /^(wl-)?internal-/.test(ch.name);
 export async function matchSlackChannels(admin: SupabaseClient) {
   const [channels, { data: clients }] = await Promise.all([
     listChannels(),
-    admin.from("clients").select("id, name, kaizen_id, creative_package, slack_channel_id, internal_slack_channel_id").neq("status", "offboarded"),
+    admin.from("clients").select("id, name, kaizen_id, status, archived_at, slack_channel_id, internal_slack_channel_id").neq("status", "offboarded"),
   ]);
   let matched = 0;
   for (const c of clients ?? []) {
     const key = compact(c.name);
     const byId = c.kaizen_id ? channels.filter((ch) => idOf(ch) === String(c.kaizen_id)) : [];
-    // Without an ID match, fall back to the client's name in the channel name (creative clients only, to avoid look-alikes)
+    // Without an ID match, fall back to the client's name in the channel name (live clients only, to avoid look-alikes)
     const hits = byId.length
       ? byId
-      : c.creative_package && key.length >= 4
+      : !c.archived_at && (LIVE as readonly string[]).includes(c.status) && key.length >= 4
         ? channels.filter((ch) => {
             const n = compact(ch.name);
             return n.includes(key) || (n.length >= 6 && key.includes(n));
@@ -101,7 +101,7 @@ export async function matchSlackChannels(admin: SupabaseClient) {
     }
   }
 
-  const creative = (clients ?? []).filter((c) => c.creative_package);
+  const creative = (clients ?? []).filter((c) => !c.archived_at && (LIVE as readonly string[]).includes(c.status));
   const byChannel = new Map(channels.map((ch) => [ch.id, ch]));
   const needsInvite: string[] = [];
   for (const c of creative)
@@ -186,7 +186,6 @@ export async function collectSlack(admin: SupabaseClient, t?: Tracker): Promise<
   const { data: clients } = await admin
     .from("clients")
     .select("id, name, slack_channel_id, internal_slack_channel_id")
-    .eq("creative_package", true)
     .is("archived_at", null)
     .in("status", LIVE);
   let saved = 0;
