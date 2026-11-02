@@ -47,3 +47,6 @@ next-env.d.ts
 tests/.out-*
 docs/onboarding/*.pdf
 /imports/*.csv
+
+# Feedback recordings (large, local only)
+/feedback/
