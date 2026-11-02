@@ -1,5 +1,5 @@
 import "server-only";
-import { Document, Page, StyleSheet, Text, View, renderToBuffer } from "@react-pdf/renderer";
+import { Document, Link, Page, StyleSheet, Text, View, renderToBuffer } from "@react-pdf/renderer";
 import type { Style } from "@react-pdf/types";
 import { splitBible, kindOf } from "./bible-sections";
 
@@ -50,11 +50,25 @@ function Inline({ text, style }: { text: string; style?: Style }) {
             {p.slice(2, -2)}
           </Text>
         ) : (
-          p.replace(/(^|\s)\*([^*\s][^*]*)\*/g, "$1$2")
+          linked(p.replace(/(^|\s)\*([^*\s][^*]*)\*/g, "$1$2"), i)
         ),
       )}
     </Text>
   );
+}
+
+/** [text](https://…) as a link in the PDF */
+function linked(text: string, key: number) {
+  return text.split(/(\[[^\]]+\]\(https?:\/\/[^\s)]+\))/g).map((p, j) => {
+    const m = p.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/);
+    return m ? (
+      <Link key={`${key}-${j}`} src={m[2]} style={{ color: "#b21e2c", textDecoration: "none" }}>
+        {m[1]}
+      </Link>
+    ) : (
+      p
+    );
+  });
 }
 
 const cells = (row: string) =>

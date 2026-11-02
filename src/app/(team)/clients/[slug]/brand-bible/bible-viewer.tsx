@@ -19,6 +19,10 @@ type Bible = {
   version: string;
   markdown: string;
   readThisFirst: string;
+  /** The cover: their statement, mission and vision in their words, and the goal they gave us */
+  overview: { statement: string; mission: string; vision: string; goal: string } | null;
+  /** The KPI target on each ad account today */
+  targets: { platform: string; text: string }[];
   teamNotes: string[];
   openQuestions: { question: string; who: string }[];
   generatedAt: string | null;
@@ -69,13 +73,13 @@ function blocksOf(text: string): Block[] {
     if (!line || /read this first/i.test(line)) continue;
     const last = blocks[blocks.length - 1];
     // A line under a label that has nothing after its colon (or already has lines) is one of its items
-    if (last && last.label && (!last.text || last.list.length) && !/^[A-Z][A-Za-z ,&/'()-]{1,48}:\s/.test(line)) {
+    if (last && last.label && (!last.text || last.list.length) && !/^[A-Z][A-Za-z0-9 ,&/'()-]{1,64}:(?:\s|$)/.test(line)) {
       last.list.push(line.replace(/^(?:\d+[.)]|[-*•])\s+/, ""));
       continue;
     }
     // A line can carry more than one label: "Voice: … . Look: …"
-    for (const part of line.split(/(?<=[.)”"])\s+(?=[A-Z][A-Za-z ,&/'-]{1,32}:\s)/)) {
-      const m = part.match(/^([A-Z][A-Za-z ,&/'()-]{1,48}):\s*(.*)$/);
+    for (const part of line.split(/(?<=[.)”"])\s+(?=[A-Z][A-Za-z0-9 ,&/'-]{1,32}:\s)/)) {
+      const m = part.match(/^([A-Z][A-Za-z0-9 ,&/'()-]{1,64}):\s*(.*)$/);
       if (m) blocks.push({ label: m[1], text: m[2], list: [] });
       else if (blocks.length) blocks[blocks.length - 1].text += ` ${part}`;
       else blocks.push({ label: "", text: part, list: [] });
@@ -110,7 +114,7 @@ function Item({ text, n }: { text: string; n: number }) {
   );
 }
 
-function ReadThisFirst({ text }: { text: string }) {
+function ReadThisFirst({ text, onReviews }: { text: string; onReviews?: () => void }) {
   const blocks = blocksOf(text);
   if (!blocks.length) return <Prose text={text} />;
   return (
@@ -123,7 +127,17 @@ function ReadThisFirst({ text }: { text: string }) {
         const wide = items.length > 0 || b.text.length > 260 || i === 0;
         return (
           <div key={i} className={`min-w-0 rounded-[18px] border border-line bg-bg/60 p-4 md:p-5 ${wide ? "md:col-span-2" : ""}`}>
-            {b.label && <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">{b.label}</p>}
+            {b.label && (
+              <p className="mb-2 flex items-baseline gap-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">
+                <span className="min-w-0 flex-1">{b.label}</span>
+                {/* The best reviews here are picks from the review bank, not a second bank */}
+                {onReviews && /review/i.test(b.label) && (
+                  <button type="button" onClick={onReviews} className="shrink-0 normal-case tracking-normal text-brand-text hover:underline max-md:min-h-11">
+                    The full review bank →
+                  </button>
+                )}
+              </p>
+            )}
             {intro && <p className={`leading-relaxed ${i === 0 ? "text-[16px] md:text-[18px]" : "text-[14.5px] text-muted"}`}>{intro}</p>}
             {items.length > 0 && (
               <ol className={`grid gap-x-6 gap-y-2.5 md:grid-cols-2 ${intro ? "mt-3" : ""}`}>
@@ -526,7 +540,46 @@ export function BibleViewer({ client, bible, canEdit }: { client: { id: string; 
           {bible.generatedAt && ` · ${fmt(bible.generatedAt)}`}
         </p>
         <h1 className="mt-3 font-display text-[40px] leading-[1.02] tracking-tight md:text-[64px]">{client.name}</h1>
-        {whatTheySell && <p className="mt-4 max-w-[62ch] text-[15px] leading-relaxed text-muted md:text-[17px]">{whatTheySell}</p>}
+        <div className="mt-4 grid gap-5 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
+          <div className="grid gap-4">
+            {(bible.overview?.statement || whatTheySell) && <p className="max-w-[62ch] text-[15px] leading-relaxed text-muted md:text-[17px]">{bible.overview?.statement || whatTheySell}</p>}
+            {(bible.overview?.mission || bible.overview?.vision) && (
+              <div className="grid gap-3 sm:grid-cols-2">
+                {(
+                  [
+                    ["Mission", bible.overview?.mission],
+                    ["Vision", bible.overview?.vision],
+                  ] as const
+                )
+                  .filter(([, t]) => t)
+                  .map(([label, t]) => (
+                    <div key={label} className="rounded-[16px] border border-line bg-bg/40 px-4 py-3">
+                      <p className="text-[10.5px] font-semibold uppercase tracking-[0.18em] text-faint">{label}</p>
+                      <p className="mt-1.5 text-[13.5px] leading-relaxed">{t}</p>
+                    </div>
+                  ))}
+              </div>
+            )}
+          </div>
+          {/* The ball to keep an eye on: the goal they gave us, and the target each account is held to */}
+          {(bible.overview?.goal || bible.targets.length > 0) && (
+            <div className="relative overflow-hidden rounded-[20px] border border-brand/35 bg-brand/[0.07] px-5 py-4">
+              <span aria-hidden className="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full bg-brand/25 blur-2xl" />
+              <p className="text-[10.5px] font-semibold uppercase tracking-[0.18em] text-brand-text">The goal</p>
+              {bible.overview?.goal && <p className="mt-1.5 font-heading text-[16px] leading-snug">{bible.overview.goal}</p>}
+              {bible.targets.length > 0 && (
+                <ul className={`grid gap-1.5 ${bible.overview?.goal ? "mt-3 border-t border-line pt-3" : "mt-2"}`}>
+                  {bible.targets.map((t, i) => (
+                    <li key={i} className="flex items-baseline justify-between gap-3 text-[13px]">
+                      <span className="text-faint">{t.platform} target</span>
+                      <span className="tabular text-right font-medium">{t.text}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
         <dl className="mt-7 grid grid-cols-2 gap-3 md:grid-cols-5">
           {tiles.map(([label, n, id]) => (
             <button key={label} type="button" disabled={!id} onClick={() => id && jump(id)} className="grid gap-1 rounded-[18px] border border-line bg-bg/40 px-4 py-3 text-left transition-colors hover:border-faint disabled:hover:border-line">
@@ -634,7 +687,13 @@ export function BibleViewer({ client, bible, canEdit }: { client: { id: string; 
                   {kind === "first" && <span className="w-full text-[12.5px] text-faint">What every brief, script and review starts from.</span>}
                 </header>
                 {kind === "first" ? (
-                  <ReadThisFirst text={bible.readThisFirst || s.body} />
+                  <ReadThisFirst
+                    text={bible.readThisFirst || s.body}
+                    onReviews={(() => {
+                      const r = sections.find((x) => kindOf(x.title) === "reviews");
+                      return r ? () => jump(r.id) : undefined;
+                    })()}
+                  />
                 ) : (
                   <SectionBody sec={s} questions={bible.openQuestions} canEdit={canEdit} onAnswer={(q) => openChat(`About "${q.slice(0, 120)}${q.length > 120 ? "…" : ""}": `)} />
                 )}

@@ -86,6 +86,7 @@ function due(step: string | null) {
 
   if (step === "market") return hour === 8;
   if (step === "bibles") return true; // every 10 minutes (vercel.json): every client gets a Brand Bible, kept current
+  if (step === "bible_write") return true; // started by a Bible build once its research is in (?client=<id>)
   if (step === "calls") return (businessHours || hour === 18) || (hour % 3 === 0 && minute < 30);
   return false;
 }
@@ -197,6 +198,11 @@ export async function GET(request: Request) {
     if (step === "launches") return Response.json(await (await import("@/lib/launcher")).launchStep(admin));
     if (step === "audits") return Response.json(await (await import("@/lib/auto-audits")).autoAudits(admin));
     if (step === "bibles") return Response.json(await (await import("@/lib/brand-bible")).autoBibles(admin, 3));
+    if (step === "bible_write") {
+      const id = new URL(request.url).searchParams.get("client");
+      if (!id) return Response.json({ error: "client missing" }, { status: 400 });
+      return Response.json({ result: await (await import("@/lib/brand-bible")).writeBible(admin, id) });
+    }
     if (step === "ledger") return Response.json(await (await import("@/lib/ledger")).runLedger(admin));
     if (step === "owed") return Response.json(await (await import("@/lib/owed-replies")).runOwedReplies(admin));
     if (step === "market") return Response.json(await syncMarket(admin));

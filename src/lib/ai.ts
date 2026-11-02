@@ -767,6 +767,8 @@ export const SCRIPT_SCHEMA = obj({
 // ─── Brand Bible ────────────────────────────────────────────────────────────
 
 export type BrandBibleOut = {
+  /** The cover: who they are in one statement, their mission and vision (their words, "" when they have none on record) and the goal they gave us */
+  overview: { statement: string; mission: string; vision: string; goal: string };
   markdown: string;
   readThisFirst: string;
   teamNotes: string[];
@@ -774,6 +776,7 @@ export type BrandBibleOut = {
 };
 
 export const BRAND_BIBLE_SCHEMA = obj({
+  overview: obj({ statement: str, mission: str, vision: str, goal: str }),
   markdown: str,
   readThisFirst: str,
   teamNotes: strArr,

@@ -15,6 +15,8 @@ export type BrandBible = {
   openQuestions: { question: string; who: string }[];
   error: string | null;
   startedAt: string | null;
+  /** While building: research (reading the web), then write / writing (in its own run) */
+  buildStage?: string | null;
   generatedAt: string | null;
   reviewedAt: string | null;
   reviewedBy: string | null;
@@ -22,14 +24,22 @@ export type BrandBible = {
   learnings?: { at: string; kind: string; text: string }[];
 };
 
-const STEPS = [
+// The two halves: researching the brand and its market, then writing from that and everything Kaizen holds
+const RESEARCH = [
   "Reading the website",
   "Pulling reviews, word for word",
-  "Sizing up competitors",
+  "Finding competitors, their pages and their ads",
+  "Reading what buyers say in forums",
+  "Looking for studies to use in ads",
   "Checking the rules for this category",
-  "Mapping the year's marketing moments",
+];
+const WRITING = [
+  "Reading every call, Slack thread and email",
+  "Reading what the client said about our creative",
   "Writing audience profiles",
+  "Matching pains to angles",
   "Building the claims table and review bank",
+  "Mapping the year's marketing moments",
   "Writing Read this first",
 ];
 const fmt = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", year: "numeric" }).format(new Date(iso));
@@ -43,14 +53,16 @@ export function BrandBiblePanel({ clientId, slug, bible, canBuild }: { clientId:
   const [busy, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState(0);
-  // A build older than 15 minutes didn't finish
+  // A half that's run longer than 25 minutes didn't finish
   const [now] = useState(() => Date.now());
-  const building = bible?.status === "building" && bible.startedAt && now - new Date(bible.startedAt).getTime() < 15 * 60_000;
+  const building = bible?.status === "building" && bible.startedAt && now - new Date(bible.startedAt).getTime() < 25 * 60_000;
+  const writing = bible?.buildStage === "write" || bible?.buildStage === "writing";
+  const STEPS = writing ? WRITING : RESEARCH;
 
   useEffect(() => {
     if (!building) return;
     const poll = setInterval(() => router.refresh(), 8000);
-    const tick = setInterval(() => setStep((s) => (s + 1) % STEPS.length), 6000);
+    const tick = setInterval(() => setStep((s) => s + 1), 6000);
     return () => {
       clearInterval(poll);
       clearInterval(tick);
@@ -61,7 +73,7 @@ export function BrandBiblePanel({ clientId, slug, bible, canBuild }: { clientId:
   const failed = !building && (bible?.status === "failed" || (bible?.status === "building" && !has));
   // Everything it reads is already on the client page (intake form, calls, Drive, Slack, email, memory): one click
   const build = () => {
-    if (has && !confirm("Rebuild the Brand Bible from scratch? It researches the client again (a few minutes, about $2). Between intakes it keeps itself current from what their ads prove.")) return;
+    if (has && !confirm("Rebuild the Brand Bible? It researches the client again and rereads every call, message and piece of feedback (about 15 minutes, about $4). Between rebuilds it keeps itself current from what their ads prove.")) return;
     start(async () => {
       setError(null);
       const r = await buildBrandBible(clientId, slug, "");
@@ -103,8 +115,11 @@ export function BrandBiblePanel({ clientId, slug, bible, canBuild }: { clientId:
           <div className="h-1 overflow-hidden rounded-full bg-surface-2">
             <div className="h-full w-1/3 animate-[ai-sweep_2.4s_ease-in-out_infinite] rounded-full bg-brand" />
           </div>
-          <p className="text-sm">{STEPS[step]}…</p>
-          <p className="text-xs text-faint">This takes a few minutes. You can leave the page; it keeps going.</p>
+          <p className="text-sm">
+            <span className="text-faint">{writing ? "2 of 2 · " : "1 of 2 · "}</span>
+            {STEPS[step % STEPS.length]}…
+          </p>
+          <p className="text-xs text-faint">About 15 minutes in all. You can leave the page; it keeps going.</p>
         </div>
       ) : null}
 

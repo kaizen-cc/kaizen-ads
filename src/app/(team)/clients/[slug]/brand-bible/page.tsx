@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
+import { conversionFor, conversionLabel } from "@/lib/kpi/conversions";
 import { createClient } from "@/lib/supabase/server";
 import type { BibleTurn } from "../brand-bible-actions";
 import { BibleViewer } from "./bible-viewer";
@@ -17,10 +18,18 @@ export default async function BrandBiblePage({ params }: { params: Promise<{ slu
   if (!client) notFound();
   const { data: b } = await supabase
     .from("client_brand_bibles")
-    .select("status, version, markdown, read_this_first, team_notes, open_questions, generated_at, reviewed_at, learnings, review_chat, profiles!client_brand_bibles_reviewed_by_fkey(full_name)")
+    .select("status, version, markdown, read_this_first, overview, team_notes, open_questions, generated_at, reviewed_at, learnings, review_chat, profiles!client_brand_bibles_reviewed_by_fkey(full_name)")
     .eq("client_id", client.id)
     .maybeSingle();
   if (!b?.markdown) notFound();
+  // The live KPI on each account, for the cover's corner (the goal the client gave us comes from the Bible)
+  const { data: kpis } = await supabase.from("kpi_targets").select("platform, conversion, custom_action, target").eq("client_id", client.id).eq("active", true);
+  const targets = (kpis ?? [])
+    .filter((k) => k.target != null)
+    .map((k) => ({
+      platform: k.platform === "google" ? "Google" : "Meta",
+      text: conversionFor(k.conversion as string).roas ? `${Number(k.target)}x return on ad spend` : `$${Number(k.target)} per ${conversionLabel(k.conversion as string, k.custom_action as string | null).toLowerCase().replace(/s$/, "")}`,
+    }));
   return (
     <BibleViewer
       client={{ id: client.id, name: client.name, slug: client.slug }}
@@ -30,6 +39,8 @@ export default async function BrandBiblePage({ params }: { params: Promise<{ slu
         version: b.version,
         markdown: b.markdown,
         readThisFirst: b.read_this_first ?? "",
+        overview: (b.overview ?? null) as { statement: string; mission: string; vision: string; goal: string } | null,
+        targets,
         teamNotes: (b.team_notes ?? []) as string[],
         openQuestions: (b.open_questions ?? []) as { question: string; who: string }[],
         generatedAt: b.generated_at,

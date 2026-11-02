@@ -1,19 +1,36 @@
 import { Fragment } from "react";
 
 // A small Markdown renderer for AI-written documents (Brand Bibles): headings, paragraphs, bullet and numbered
-// lists, pipe tables, bold and italics. Text only; never injects HTML.
+// lists, pipe tables, bold, italics and links. Text only; never injects HTML.
+
+// Links: [text](https://…) and bare https:// addresses, opened in a new tab (only http and https)
+const LINK = /(\[[^\]]+\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s<>()|]+[^\s<>()|.,;:!?'"”])/g;
+
+function links(text: string, key: string) {
+  return text.split(LINK).map((p, i) => {
+    const md = p.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/);
+    const href = md ? md[2] : /^https?:\/\//.test(p) ? p : null;
+    if (!href) return <Fragment key={`${key}-${i}`}>{p}</Fragment>;
+    const label = md ? md[1] : p.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "");
+    return (
+      <a key={`${key}-${i}`} href={href} target="_blank" rel="noopener noreferrer" className="break-words text-brand-text underline decoration-brand-text/30 underline-offset-2 hover:decoration-brand-text">
+        {label}
+      </a>
+    );
+  });
+}
 
 function inline(text: string, key: string) {
   const parts = text.split(/(\*\*[^*]+\*\*|\*[^*\s][^*]*\*)/g);
   return parts.map((p, i) =>
     p.startsWith("**") && p.endsWith("**") ? (
       <strong key={`${key}-${i}`} className="font-semibold text-fg">
-        {p.slice(2, -2)}
+        {links(p.slice(2, -2), `${key}-${i}`)}
       </strong>
-    ) : p.startsWith("*") && p.endsWith("*") && p.length > 2 ? (
+    ) : p.startsWith("*") && p.endsWith("*") && p.length > 2 && !/https?:\/\//.test(p) ? (
       <em key={`${key}-${i}`}>{p.slice(1, -1)}</em>
     ) : (
-      <Fragment key={`${key}-${i}`}>{p}</Fragment>
+      <Fragment key={`${key}-${i}`}>{links(p, `${key}-${i}`)}</Fragment>
     ),
   );
 }

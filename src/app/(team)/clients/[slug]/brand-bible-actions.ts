@@ -27,7 +27,7 @@ export async function buildBrandBible(clientId: string, slug: string, pasted: st
 
   const admin = createAdminClient();
   // Shown as building right away; the research and the Bible run after the response
-  await admin.from("client_brand_bibles").upsert({ client_id: clientId, status: "building", error: null, started_at: new Date().toISOString(), generated_by: me.id });
+  await admin.from("client_brand_bibles").upsert({ client_id: clientId, status: "building", build_stage: "research", error: null, started_at: new Date().toISOString(), generated_by: me.id });
   after(() => buildBible(admin, clientId, { pasted, by: me.id }));
 
   revalidatePath(`/clients/${slug}`);
