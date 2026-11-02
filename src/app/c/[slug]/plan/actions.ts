@@ -79,6 +79,8 @@ export async function approvePlan(slug: string): Promise<{ ok: true } | { ok: fa
       })),
       { onConflict: "profile_id,key", ignoreDuplicates: true },
     );
+  // Their first ads are being picked from the moment they approve (the page shows it)
+  if (l.reactions.launch.choice === "engagement_first") await l.admin.from("engagement_launches").upsert({ client_id: l.client.id, status: "finding", updated_at: now });
   // Folded into the Bible, the team told, and the first round written, after the answer
   const admin = l.admin;
   const clientId = l.client.id;
@@ -136,4 +138,27 @@ export async function talkPlan(slug: string, text: string, files: { path: string
     const { AiUnavailable } = await import("@/lib/ai");
     return { ok: false as const, error: e instanceof AiUnavailable ? e.message : "Something went wrong. Try again in a moment." };
   }
+}
+
+/** The client keeps the posts for their first ads (all, or some): built, paused, for the buyer to turn on */
+export async function confirmPosts(slug: string, chosen: string[]): Promise<{ ok: true } | { ok: false; error: string }> {
+  const viewer = await getViewer();
+  if (!adminConfigured()) return { ok: false, error: "The portal isn't set up yet." };
+  const admin = createAdminClient();
+  const { data: client } = await admin.from("clients").select("id, portal_live").eq("slug", slug).maybeSingle();
+  if (!client || (viewer.kind === "contact" && (!client.portal_live || !viewer.brands.some((b) => b.slug === slug)))) return { ok: false, error: "Not found." };
+  const { data: l } = await admin.from("engagement_launches").select("status, posts").eq("client_id", client.id).maybeSingle();
+  if (!l || l.status !== "proposed") return { ok: false, error: "These are already with the team." };
+  const ids = new Set(((l.posts ?? []) as { id: string }[]).map((p) => p.id));
+  const keep = chosen.filter((x) => ids.has(x));
+  if (!keep.length) return { ok: false, error: "Keep at least one post, or tell us in the conversation what you'd rather run." };
+  const by = viewer.kind === "contact" ? (viewer.fullName ?? viewer.email) : `${viewer.fullName} (team)`;
+  await admin.from("engagement_launches").update({ status: "confirmed", chosen: keep, confirmed_at: new Date().toISOString(), confirmed_by: by, updated_at: new Date().toISOString() }).eq("client_id", client.id);
+  const clientId = client.id as string;
+  after(async () => {
+    const { buildEngagement } = await import("@/lib/engagement-launch");
+    await buildEngagement(admin, clientId);
+  });
+  revalidatePath(`/c/${slug}/plan`);
+  return { ok: true };
 }

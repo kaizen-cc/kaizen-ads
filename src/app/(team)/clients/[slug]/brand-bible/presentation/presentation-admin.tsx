@@ -67,8 +67,13 @@ export function PresentationAdmin({ client, hasBible, p }: { client: { id: strin
         </Link>
         <span className="hidden text-faint md:inline">/</span>
         <span className="hidden font-heading text-[14px] md:inline">Client presentation</span>
+        {p?.status === "approved" && (
+          <Link href={`/clients/${client.slug}/launch`} className="ml-auto inline-flex h-11 items-center gap-1.5 rounded-full border border-line px-3.5 text-[13px] text-muted hover:border-faint hover:text-fg md:h-9">
+            First ads in 48 hours →
+          </Link>
+        )}
         {p?.deck && (
-          <Link href={`/c/${client.slug}/plan`} className="ml-auto inline-flex h-11 items-center gap-1.5 rounded-full border border-line px-3.5 text-[13px] text-muted hover:border-faint hover:text-fg md:h-9">
+          <Link href={`/c/${client.slug}/plan`} className="inline-flex h-11 items-center gap-1.5 rounded-full border border-line px-3.5 text-[13px] text-muted hover:border-faint hover:text-fg md:h-9">
             Open as the client ↗
           </Link>
         )}

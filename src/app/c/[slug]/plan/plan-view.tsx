@@ -4,10 +4,11 @@ import { useState } from "react";
 import { PresentationDeck } from "@/components/presentation-deck";
 import type { PlanTurn } from "@/lib/plan-chat-types";
 import type { Deck, Reactions } from "@/lib/presentation-types";
+import { FirstAdsCard, type FirstAds } from "./first-ads";
 import { PlanTalk } from "./plan-talk";
 import { answerQuestion, approvePlan, chooseLaunch, reactPart } from "./actions";
 
-export function PlanView({ slug, brand, deck, reactions: initial, approved: wasApproved, canAct, intake, chat }: { slug: string; brand: string; deck: Deck; reactions: Reactions; approved: boolean; canAct: boolean; intake?: { clientId: number | null }; chat: PlanTurn[] }) {
+export function PlanView({ slug, brand, deck, reactions: initial, approved: wasApproved, canAct, intake, chat, firstAds }: { slug: string; brand: string; deck: Deck; reactions: Reactions; approved: boolean; canAct: boolean; intake?: { clientId: number | null }; chat: PlanTurn[]; firstAds: FirstAds | null }) {
   const [reactions, setReactions] = useState(initial);
   const [approved, setApproved] = useState(wasApproved);
   const [error, setError] = useState<string | null>(null);
@@ -19,6 +20,11 @@ export function PlanView({ slug, brand, deck, reactions: initial, approved: wasA
   };
   return (
     <>
+      {firstAds && (
+        <div className="mb-5">
+          <FirstAdsCard slug={slug} data={firstAds} canAct={canAct} />
+        </div>
+      )}
       <PresentationDeck
         brand={brand}
         deck={deck}

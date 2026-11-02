@@ -191,6 +191,11 @@ export async function afterApproval(admin: SupabaseClient, clientId: string) {
   ]);
   if (!c || !p) return;
   const reactions = (p.reactions ?? {}) as Reactions;
+  // The 48-hour launch: their best posts picked (while the Bible is updated), for them to confirm in the portal
+  const finding =
+    reactions.launch?.choice === "engagement_first"
+      ? import("@/lib/engagement-launch").then(({ proposeEngagement }) => proposeEngagement(admin, clientId)).catch((e) => console.error("[plan] finding their posts failed:", e instanceof Error ? e.message : e))
+      : null;
   const review = reviewBlock(p.deck as Deck, reactions, (p.chat ?? []) as PlanTurn[]);
   const day = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", year: "numeric" }).format(new Date());
 
@@ -235,6 +240,7 @@ export async function afterApproval(admin: SupabaseClient, clientId: string) {
     `/clients/${c.slug}/brand-bible`,
   );
 
+  await finding;
   // The first round, from the intake, the review, their winners and the playbooks
   const { writeFirstRoundJob } = await import("@/lib/onboarding");
   await writeFirstRoundJob(admin, clientId);

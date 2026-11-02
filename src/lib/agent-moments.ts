@@ -119,6 +119,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Answers an agent's chat in Settings and proposes edits to its skills", where: "Settings \u00b7 AI agents \u00b7 an agent's chat", trigger: "click", when: "With every message", labels: ["agent chat"] },
   ],
   launcher: [
+    { title: "Picks a new client's own posts for their 48-hour engagement launch, and where to target", where: "Client portal · Your first ads", trigger: "auto", when: "When the client approves their presentation and chooses the 48-hour launch", labels: ["engagement launch posts "] },
     { title: "Places approved ads in the right ad set (or a copy of one) and names them to match it, then pushes them to Meta paused", where: "Board · Ready to launch · Launch to Meta", trigger: "click", when: "When the buyer plans a launch", labels: ["place a launch"] },
     { title: "Turns an audit action or sprint move into exact Meta changes (pause or turn on, daily budgets), dry-run with Meta first", where: "KPIs · audit · sprint", trigger: "click", when: "Make this change in Meta", labels: ["plan a Meta change"] },
     { title: "Spots patterns in how buyers correct its launches and proposes a rule", where: "Settings \u00b7 AI agents \u00b7 Launcher", trigger: "auto", when: "When the same correction keeps coming up", labels: ["launch rules pattern"] },

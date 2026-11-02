@@ -200,7 +200,11 @@ export async function GET(request: Request) {
     if (step === "launches") return Response.json(await (await import("@/lib/launcher")).launchStep(admin));
     if (step === "audits") return Response.json(await (await import("@/lib/auto-audits")).autoAudits(admin));
     if (step === "bibles") return Response.json(await (await import("@/lib/brand-bible")).autoBibles(admin, 3));
-    if (step === "presentations") return Response.json(await (await import("@/lib/presentation")).keepPresentations(admin));
+    if (step === "presentations") {
+      const presentations = await (await import("@/lib/presentation")).keepPresentations(admin);
+      const launches = await (await import("@/lib/engagement-launch")).keepLaunches(admin);
+      return Response.json({ presentations, launches });
+    }
     if (step === "history") {
       const { googleConfigured, pullEmailHistory } = await import("@/lib/context/google");
       if (!googleConfigured()) return Response.json({ skipped: "Google not set up" });
