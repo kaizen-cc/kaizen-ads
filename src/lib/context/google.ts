@@ -152,6 +152,136 @@ export async function collectGmail(mailbox: string, since: Date, contacts: Map<s
   return { items, notes: { emails: ids.size } };
 }
 
+// ─── A client's whole email history ─────────────────────────────────────────
+
+// Free mail and our own domain: an address there is matched as itself, never as a whole domain
+const SHARED_DOMAINS = new Set(["gmail.com", "googlemail.com", "yahoo.com", "hotmail.com", "outlook.com", "live.com", "msn.com", "icloud.com", "me.com", "mac.com", "aol.com", "proton.me", "protonmail.com", "comcast.net", "att.net", "verizon.net", "ymail.com", "kaizenmarketing.agency"]);
+const domainOf = (s: string | null | undefined) => {
+  const host = (s ?? "").toLowerCase().trim().replace(/^[a-z]+:\/\//, "").replace(/^www\./, "").split(/[/?#]/)[0];
+  const d = host.includes("@") ? host.split("@")[1] : host;
+  return d && /^[a-z0-9.-]+\.[a-z]{2,}$/.test(d) && !SHARED_DOMAINS.has(d) ? d : null;
+};
+
+/** What a client's email is matched on: each contact's address, and their business domains (from contacts and website). */
+export async function emailKeys(admin: SupabaseClient, clientIds?: string[]) {
+  let cq = admin.from("clients").select("id, name, status, created_at, website, email_history_covered").is("archived_at", null).in("status", ["onboarding", "active", "paused"]);
+  if (clientIds) cq = cq.in("id", clientIds);
+  const [{ data: clients }, { data: links }] = await Promise.all([cq, admin.from("contact_clients").select("client_id, contacts(email)")]);
+  const keys = new Map<string, Set<string>>();
+  for (const c of clients ?? []) {
+    const d = domainOf(c.website as string | null);
+    keys.set(c.id as string, new Set(d ? [d] : []));
+  }
+  for (const l of links ?? []) {
+    const set = keys.get(l.client_id as string);
+    const email = (l.contacts as unknown as { email: string } | null)?.email?.toLowerCase().trim();
+    if (!set || !email?.includes("@")) continue;
+    set.add(email);
+    const d = domainOf(email);
+    if (d) set.add(d);
+  }
+  return (clients ?? []).map((c) => {
+    const all = [...(keys.get(c.id as string) ?? [])];
+    const covered = new Set((c.email_history_covered as string[] | null) ?? []);
+    return { id: c.id as string, name: c.name as string, onboarding: c.status === "onboarding", created: c.created_at as string, all, pending: all.filter((k) => !covered.has(k)) };
+  });
+}
+
+/** Still to pull for this client (a new contact, or never pulled): the Bible waits for it, so the sales emails are in. */
+export async function emailHistoryPending(admin: SupabaseClient, clientId: string) {
+  if (!googleConfigured()) return false;
+  const [c] = await emailKeys(admin, [clientId]);
+  return Boolean(c?.pending.length);
+}
+
+/**
+ * Every email between anyone at Kaizen and a client, as far back as the mailboxes go: the sales emails before the
+ * close included, so whoever picks the client up has the whole conversation. Runs once per address or domain (a
+ * contact added later is pulled on its own), onboarding clients first; the ongoing read keeps it current after that.
+ * Their calls from before they signed are filed to them in the same pass.
+ */
+export async function pullEmailHistory(admin: SupabaseClient, deadline: number, perMailbox = 300) {
+  const clients = (await emailKeys(admin)).filter((c) => c.pending.length);
+  clients.sort((a, b) => Number(b.onboarding) - Number(a.onboarding) || b.created.localeCompare(a.created));
+  if (!clients.length) return { pulled: {}, waiting: 0 };
+  const { pool } = await import("./run");
+  const mailboxes = await gmailMailboxes();
+  const pulled: Record<string, number> = {};
+  let done = 0;
+  for (const c of clients) {
+    if (Date.now() > deadline - 120_000) break;
+    const terms = c.pending;
+    const q = (t: string[]) => `{${["from", "to", "cc"].map((h) => `${h}:(${t.join(" OR ")})`).join(" ")}}`;
+    const items: ContextItem[] = [];
+    let complete = true;
+    await pool(mailboxes, 6, async (mailbox) => {
+      try {
+        const token = await tokenFor(mailbox, GMAIL_SCOPE);
+        const ids: string[] = [];
+        for (let i = 0; i < terms.length; i += 20) {
+          let pageToken = "";
+          do {
+            const page = await google<{ messages?: { id: string }[]; nextPageToken?: string }>(token, "https://gmail.googleapis.com/gmail/v1/users/me/messages", {
+              q: q(terms.slice(i, i + 20)),
+              maxResults: "100",
+              ...(pageToken ? { pageToken } : {}),
+            });
+            ids.push(...(page.messages ?? []).map((m) => m.id));
+            pageToken = ids.length < perMailbox ? (page.nextPageToken ?? "") : "";
+          } while (pageToken);
+        }
+        // Newest first: a mailbox with years of this client keeps its latest few hundred
+        const list = [...new Set(ids)].slice(0, perMailbox);
+        for (let i = 0; i < list.length; i += 8) {
+          const got = await Promise.all(list.slice(i, i + 8).map((id) => google<GmailMessage>(token, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}`, { format: "full" }).catch(() => null)));
+          for (const m of got) {
+            if (!m) continue;
+            const header = (n: string) => m.payload.headers.find((h) => h.name.toLowerCase() === n)?.value ?? null;
+            items.push({
+              client_id: c.id,
+              source: "gmail",
+              external_id: `${header("message-id") ?? `${mailbox}:${m.id}`}#${c.id}`,
+              thread_id: m.threadId,
+              occurred_at: new Date(Number(m.internalDate)).toISOString(),
+              author: header("from"),
+              title: header("subject"),
+              body: trimBody(withoutQuotes(plainText(m.payload) ?? m.snippet ?? "")),
+              url: `https://mail.google.com/mail/u/${mailbox}/#all/${m.id}`,
+              meta: { mailbox, to: header("to"), history: true },
+            });
+          }
+        }
+      } catch {
+        complete = false; // tried again next run: what was read is saved, and repeats are ignored
+      }
+    });
+    await saveItems(admin, items);
+    await relinkCalls(admin, c.id, c.name, c.all);
+    if (complete) {
+      const { data: now } = await admin.from("clients").select("email_history_covered").eq("id", c.id).single();
+      const covered = [...new Set([...((now?.email_history_covered as string[] | null) ?? []), ...terms])];
+      await admin.from("clients").update({ email_history_covered: covered, email_history_at: new Date().toISOString() }).eq("id", c.id);
+      done++;
+    }
+    pulled[c.name] = new Set(items.map((i) => i.external_id)).size;
+  }
+  return { pulled, waiting: clients.length - done };
+}
+
+/** A client's calls from before they signed (sales calls read as internal or unmatched): filed to them and read again. */
+async function relinkCalls(admin: SupabaseClient, clientId: string, name: string, keys: string[]) {
+  const emails = new Set(keys.filter((k) => k.includes("@")));
+  const domains = keys.filter((k) => !k.includes("@"));
+  const { data: calls } = await admin.from("client_calls").select("id, attendees, title").is("client_id", null).limit(5000);
+  const n = compact(name);
+  const ours = (calls ?? []).filter((c) => {
+    const at = ((c.attendees as string[] | null) ?? []).map((a) => a.toLowerCase());
+    return at.some((a) => emails.has(a) || domains.some((d) => a.endsWith(`@${d}`))) || (n.length >= 5 && compact(String(c.title ?? "")).includes(n));
+  });
+  for (let i = 0; i < ours.length; i += 200) await admin.from("client_calls").update({ client_id: clientId, status: "new" }).in("id", ours.slice(i, i + 200).map((c) => c.id));
+  return ours.length;
+}
+
 // ─── Drive ──────────────────────────────────────────────────────────────────
 
 type DriveFile = { id: string; name: string; mimeType: string; parents?: string[]; driveId?: string; createdTime: string; webViewLink?: string; lastModifyingUser?: { displayName?: string } };

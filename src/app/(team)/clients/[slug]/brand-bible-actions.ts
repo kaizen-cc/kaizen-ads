@@ -26,6 +26,13 @@ export async function buildBrandBible(clientId: string, slug: string, pasted: st
   if (!client || !ctx) return { ok: false, error: "You don't work on this client." };
 
   const admin = createAdminClient();
+  // A new client's Bible starts from their intake form (or their answers pasted in)
+  const [{ data: c }, { count: intakes }] = await Promise.all([
+    admin.from("clients").select("status").eq("id", clientId).single(),
+    admin.from("client_intakes").select("id", { count: "exact", head: true }).eq("client_id", clientId),
+  ]);
+  if (c?.status === "onboarding" && !intakes && pasted.trim().length < 200)
+    return { ok: false, error: "Waiting on their marketing intake form: the Bible starts on its own once it's in (or paste their answers to start now)." };
   // Shown as building right away; the research and the Bible run after the response
   await admin.from("client_brand_bibles").upsert({ client_id: clientId, status: "building", build_stage: "research", error: null, started_at: new Date().toISOString(), generated_by: me.id });
   after(() => buildBible(admin, clientId, { pasted, by: me.id }));

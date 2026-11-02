@@ -295,6 +295,26 @@ export async function autoBibles(admin: SupabaseClient, max = 1) {
     await admin.from("client_brand_bibles").update({ build_stage: "write" }).eq("client_id", b.client_id);
     return { written: await writeBible(admin, b.client_id as string) };
   }
+  // A new client's Bible starts once their intake form is read and their email history (sales emails included) is in,
+  // automatic builds on or not: it's the next step of onboarding
+  const { data: fresh } = await admin.from("clients").select("id, name").eq("status", "onboarding").is("archived_at", null);
+  if (fresh?.length) {
+    const ids = fresh.map((c) => c.id as string);
+    const [{ data: read }, { data: have }] = await Promise.all([
+      admin.from("client_intakes").select("client_id, received_at").in("client_id", ids).not("summary", "is", null),
+      admin.from("client_brand_bibles").select("client_id, status, generated_at, started_at").in("client_id", ids),
+    ]);
+    const { emailHistoryPending } = await import("@/lib/context/google");
+    for (const c of fresh) {
+      const intake = (read ?? []).filter((i) => i.client_id === c.id).map((i) => i.received_at as string).sort().pop();
+      if (!intake) continue;
+      const b = (have ?? []).find((x) => x.client_id === c.id);
+      if (b?.status === "building" || (b?.status === "failed" && Date.now() - Date.parse(b.started_at as string) < DAY)) continue;
+      if (b?.generated_at && Date.parse(b.generated_at as string) > Date.parse(intake)) continue;
+      if (await emailHistoryPending(admin, c.id as string)) continue;
+      return { onboarding: { [c.name as string]: await buildBible(admin, c.id as string, { by: null }) } };
+    }
+  }
   // Off until an exec switches it on: while the Bible is being dialed in, each one is started by hand from the client
   // page and reviewed before the next
   const { data: setting } = await admin.from("app_settings").select("value").eq("key", "brand_bibles").maybeSingle();
@@ -318,6 +338,8 @@ export async function autoBibles(admin: SupabaseClient, max = 1) {
     // A build in flight is left alone for 6 hours; a failed one waits a day before it's tried again
     if (b?.status === "building" && ago(b.started_at) < 6 * 3_600_000) continue;
     if (b?.status === "failed" && ago(b.started_at) < 24 * 3_600_000) continue;
+    // A client still onboarding waits for their intake form (handled above)
+    if (c.status === "onboarding" && !lastIntake.has(c.id)) continue;
     if (!b?.markdown) todo.push({ id: c.id, name: c.name, rank: tier, why: "new" });
     else if (lastIntake.get(c.id) && Date.parse(lastIntake.get(c.id)!) > Date.parse(b.generated_at ?? "1970-01-01")) todo.push({ id: c.id, name: c.name, rank: 2, why: "new intake" });
     // Monthly: new calls, messages, reviews and feedback in, and what's changing and the next 12 months brought current
