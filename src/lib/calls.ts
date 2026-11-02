@@ -334,25 +334,32 @@ async function collectCallsRun(admin: SupabaseClient, budgetMs: number, t: Track
   }
   // Then read as many as time allows, newest first (a history backfill never holds up today's calls); the rest wait.
   // Every call is read, internal ones too: a team meeting can carry context for several clients.
-  const { data: waiting } = await admin.from("client_calls").select("id").eq("status", "new").order("occurred_at", { ascending: false }).limit(60);
+  const { data: waiting } = await admin.from("client_calls").select("id").eq("status", "new").order("occurred_at", { ascending: false }).limit(400);
   let read = 0;
-  // Each waiting call read by the AI, then three passes over the promises
+  let pausedAi = false;
+  // Eight at a time (a history backfill is hundreds of calls), stopping in time to leave the promise passes room
+  const stopAt = deadline - 90_000;
   t.phase("Reading calls", (waiting ?? []).length + 3);
-  for (const w of waiting ?? []) {
-    if (Date.now() > deadline) {
-      t.tick(null);
-      continue;
-    }
-    try {
-      await readCall(admin, w.id, clients ?? []);
-      read++;
-      t.tick(`Call ${read} of ${(waiting ?? []).length}`);
-    } catch (e) {
-      // The AI is paused (usage limit): the call stays waiting and is read once it's back
-      if (e instanceof AiPaused) break;
-      await admin.from("client_calls").update({ status: "failed", error: (e instanceof Error ? e.message : String(e)).slice(0, 300) }).eq("id", w.id);
-      t.tick(null, false);
-    }
+  const list = waiting ?? [];
+  for (let k = 0; k < list.length && !pausedAi; k += 8) {
+    if (Date.now() > stopAt) break;
+    await Promise.all(
+      list.slice(k, k + 8).map(async (w) => {
+        try {
+          await readCall(admin, w.id, clients ?? []);
+          read++;
+          t.tick(`Call ${read} of ${list.length}`);
+        } catch (e) {
+          // The AI is paused (usage limit): the call stays waiting and is read once it's back
+          if (e instanceof AiPaused) {
+            pausedAi = true;
+            return;
+          }
+          await admin.from("client_calls").update({ status: "failed", error: (e instanceof Error ? e.message : String(e)).slice(0, 300) }).eq("id", w.id);
+          t.tick(null, false);
+        }
+      }),
+    );
   }
   t.phase("Re-checking promises against the full calls");
   const rechecked = await recheckCommitments(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
