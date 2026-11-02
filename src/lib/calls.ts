@@ -61,13 +61,18 @@ async function collectGemini(since: Date, deadline: number): Promise<NewCall[]> 
 
 /** Fireflies transcripts since the last run (summary, action items and the transcript itself). */
 async function collectFireflies(since: Date): Promise<NewCall[]> {
+  return firefliesPage({ fromDate: since.toISOString(), limit: 50 });
+}
+
+/** One page of Fireflies transcripts, newest first (fromDate / toDate / limit, as the API takes them). */
+async function firefliesPage(vars: { fromDate?: string; toDate?: string; limit: number }): Promise<NewCall[]> {
   const key = process.env.FIREFLIES_API_KEY;
   if (!key) return [];
-  const query = `query($from: DateTime) { transcripts(fromDate: $from, limit: 50) { id title date organizer_email participants transcript_url summary { overview action_items shorthand_bullet } sentences { speaker_name text } } }`;
+  const query = `query($fromDate: DateTime, $toDate: DateTime, $limit: Int) { transcripts(fromDate: $fromDate, toDate: $toDate, limit: $limit) { id title date organizer_email participants transcript_url summary { overview action_items shorthand_bullet } sentences { speaker_name text } } }`;
   const res = await fetch("https://api.fireflies.ai/graphql", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
-    body: JSON.stringify({ query, variables: { from: since.toISOString() } }),
+    body: JSON.stringify({ query, variables: vars }),
     cache: "no-store",
   });
   if (!res.ok) throw new Error(`Fireflies: ${res.status} ${(await res.text()).slice(0, 200)}`);
@@ -92,6 +97,36 @@ async function collectFireflies(since: Date): Promise<NewCall[]> {
       .join("\n\n")
       .slice(0, 60_000),
   }));
+}
+
+/**
+ * Every Fireflies call ever recorded, walked back from the newest a page at a time. Where it got to is kept in
+ * sync_state ("calls_fireflies_history"), so each run carries on, and it stops for good once the oldest is in.
+ */
+async function backfillFireflies(admin: SupabaseClient, deadline: number): Promise<NewCall[]> {
+  if (!process.env.FIREFLIES_API_KEY) return [];
+  const { data: state } = await admin.from("sync_state").select("cursor_at, last_result").eq("source", "calls_fireflies_history").maybeSingle();
+  if ((state?.last_result as { done?: boolean } | null)?.done) return [];
+  let before = state?.cursor_at ? new Date(state.cursor_at) : new Date();
+  const out: NewCall[] = [];
+  let done = false;
+  while (Date.now() < deadline) {
+    const page = await firefliesPage({ toDate: before.toISOString(), limit: 25 });
+    out.push(...page);
+    if (page.length < 25) {
+      done = true;
+      break;
+    }
+    // The next page ends just before the oldest call on this one
+    const oldest = Math.min(...page.map((c) => Date.parse(c.occurred_at)));
+    if (!(oldest < before.getTime())) {
+      done = true;
+      break;
+    }
+    before = new Date(oldest - 1);
+  }
+  await admin.from("sync_state").upsert({ source: "calls_fireflies_history", cursor_at: before.toISOString(), last_run_at: new Date().toISOString(), last_result: { done, pulled: out.length, total: ((state?.last_result as { total?: number } | null)?.total ?? 0) + out.length } });
+  return out;
 }
 
 // ─── Match and read ─────────────────────────────────────────────────────────
@@ -261,12 +296,16 @@ export async function collectCalls(admin: SupabaseClient, budgetMs = 500_000) {
 
 async function collectCallsRun(admin: SupabaseClient, budgetMs: number, t: Tracker) {
   const deadline = Date.now() + budgetMs;
-  t.phase("Finding new call notes in Gemini and Fireflies", 2);
+  t.phase("Finding new call notes in Gemini and Fireflies", 3);
   const since = await getCursor(admin, "calls", 45);
   const started = new Date();
   const errors: string[] = [];
   const found: NewCall[] = [];
-  t.on("Gemini notes in Drive");
+  // Fireflies' full history, a page at a time until it's all in (older calls are read as context, never briefed)
+  t.on("Fireflies history");
+  const history = await backfillFireflies(admin, Math.min(deadline, Date.now() + 120_000)).catch((e) => (errors.push(`Fireflies history: ${e instanceof Error ? e.message : e}`), [] as NewCall[]));
+  found.push(...history);
+  t.tick("Gemini notes in Drive");
   found.push(...(await collectGemini(since, deadline).catch((e) => (errors.push(`Gemini: ${e instanceof Error ? e.message : e}`), []))));
   t.tick("Fireflies");
   found.push(...(await collectFireflies(since).catch((e) => (errors.push(e instanceof Error ? e.message : String(e)), []))));
@@ -290,9 +329,9 @@ async function collectCallsRun(admin: SupabaseClient, budgetMs: number, t: Track
     const { error } = await admin.from("client_calls").insert({ ...call, client_id: matchCall(call, clients ?? [], contacts), status: "new" });
     if (!error) saved++;
   }
-  // Then read as many as time allows, oldest first; the rest wait for the next run.
+  // Then read as many as time allows, newest first (a history backfill never holds up today's calls); the rest wait.
   // Every call is read, internal ones too: a team meeting can carry context for several clients.
-  const { data: waiting } = await admin.from("client_calls").select("id").eq("status", "new").order("occurred_at").limit(60);
+  const { data: waiting } = await admin.from("client_calls").select("id").eq("status", "new").order("occurred_at", { ascending: false }).limit(60);
   let read = 0;
   // Each waiting call read by the AI, then three passes over the promises
   t.phase("Reading calls", (waiting ?? []).length + 3);
