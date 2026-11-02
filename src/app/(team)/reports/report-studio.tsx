@@ -6,10 +6,10 @@ import { SlackConnect } from "@/components/slack-connect";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { Layer } from "../clients/[slug]/layer";
 import { PdfPreview, type PdfField } from "./pdf-preview";
-import { METRIC_KEYS, columnKeys, metricLabel, platformName, TABLE_DEFAULT, tileKeys, type MetricKey, type ReportLayout } from "@/lib/reports/format";
+import { METRIC_KEYS, columnKeys, metricLabel, platformName, reportBasis, TABLE_DEFAULT, tileKeys, type MetricKey, type ReportLayout } from "@/lib/reports/format";
 import type { ReportMetrics } from "@/lib/reports/metrics";
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
-import { approveBuiltMessage, approveMyPart, builtMessage, checkAgain, loadCampaignEvents, redraft, reopenReport, reviseWithAi, saveLayout, saveReport, sendMyPartNow, sendReport, skipReport } from "./actions";
+import { approveBuiltMessage, approveMyPart, builtMessage, checkAgain, loadCampaignEvents, redraft, refreshSlackMessage, reopenReport, reviseWithAi, saveLayout, saveReport, sendMyPartNow, sendReport, skipReport } from "./actions";
 
 // One report, start to finish, in three steps: the report (a live preview of the document: click any line to change
 // it, or ask the AI on the side and watch it change), then the Slack message (shown as it will look in the client's
@@ -23,6 +23,8 @@ export type StudioReport = {
   status: string;
   periodLabel: string;
   message: string;
+  /** What the message was written from (reportBasis); a report edited since gets its message brought up to date */
+  messageBasis: string | null;
   sections: Sections | null;
   metrics: ReportMetrics | null;
   extraMetrics: ReportMetrics[] | null;
@@ -148,6 +150,9 @@ export function ReportStudio({
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
   const [pending, start] = useTransition();
   const [editMsg, setEditMsg] = useState(false);
+  // The message follows the report: edited by hand since it was written, it's brought up to date on the message step
+  const [basis, setBasis] = useState(report.messageBasis);
+  const [failedBasis, setFailedBasis] = useState<string | null>(null);
   const [adding, setAdding] = useState<{ key: "did" | "doing" | "next" | "extras"; text: string } | null>(null);
   // The metrics the buyer chose: saved on the report and as this client's layout for the next one
   const [layout, setLayoutState] = useState<ReportLayout | null>(report.layout);
@@ -207,6 +212,24 @@ export function ReportStudio({
       live = false;
     };
   }, [step, built, bundle, message]);
+  const nowBasis = sections ? reportBasis(sections, extras) : null;
+  const syncing = step === "message" && !built && !sent && !!message.trim() && nowBasis != null && nowBasis !== basis && nowBasis !== failedBasis;
+  useEffect(() => {
+    if (!syncing || !nowBasis) return;
+    let live = true;
+    void refreshSlackMessage(report.id).then((r) => {
+      if (!live) return;
+      if (!r.ok) setFailedBasis(nowBasis);
+      else {
+        setMessage(r.message);
+        setBasis(r.basis);
+        setNote({ ok: true, text: "The Slack message now matches the changes you made to the report." });
+      }
+    });
+    return () => {
+      live = false;
+    };
+  }, [syncing, nowBasis, report.id]);
 
   const editable = !sent && !busy && !(built && mineDone) && report.status !== "submitted";
   const setSections = (s: Sections) => {
@@ -865,15 +888,29 @@ ${t}` : t);
           <div className="grid min-w-0 gap-3">
             {!message && built ? (
               <p className="rounded-[12px] border border-line bg-surface px-4 py-10 text-center text-sm text-muted">{joint ? "Putting each buyer's message together into one…" : "Writing the message…"}</p>
-            ) : editMsg ? (
-              <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={16} className="w-full rounded-[12px] border border-line bg-surface px-4 py-3 font-mono text-[13px] leading-relaxed outline-none focus:border-brand-text/60" />
+            ) : syncing ? (
+              <p className="flex items-center justify-center gap-2 rounded-[12px] border border-line bg-surface px-4 py-10 text-center text-sm text-muted">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" /> Updating the message to match your changes to the report…
+              </p>
             ) : (
-              <SlackPreview from={from} text={message} file={fileName} />
+              <>
+                {/* What posts in Slack, and that it can be changed here before it goes */}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-[13px] text-muted">This is exactly what posts in the client&rsquo;s Slack channel, with the PDF. Change anything before you send.</p>
+                  <button type="button" onClick={() => setEditMsg((x) => !x)} className={`h-10 rounded-full px-4 text-[13px] ${editMsg ? "bg-fg text-bg" : "border border-brand/60 text-brand-text hover:bg-brand/10"}`}>
+                    {editMsg ? "✓ Done editing" : "✎ Edit the message"}
+                  </button>
+                </div>
+                {editMsg ? (
+                  <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={16} autoFocus className="w-full rounded-[12px] border border-brand/50 bg-surface px-4 py-3 font-mono text-[13px] leading-relaxed outline-none focus:border-brand-text/60" />
+                ) : (
+                  <button type="button" onClick={() => setEditMsg(true)} className="block w-full cursor-text rounded-[12px] text-left ring-brand/40 transition-shadow hover:ring-2" aria-label="Edit the message">
+                    <SlackPreview from={from} text={message} file={fileName} />
+                  </button>
+                )}
+              </>
             )}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-faint">
-              <button type="button" onClick={() => setEditMsg((x) => !x)} className="hover:text-fg">
-                {editMsg ? "See how it looks" : "Edit the message"}
-              </button>
               {built && joint && !bundle?.messageApproved && (
                 <button type="button" onClick={() => start(async () => { const r = await builtMessage(bundle!.id, true); if (r.ok) setMessage(r.message); })} className="hover:text-fg">
                   Put it together again from the parts

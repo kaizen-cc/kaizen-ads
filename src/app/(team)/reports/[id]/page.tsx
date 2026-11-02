@@ -26,7 +26,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
   const db = await createClient();
   const { data: r } = await db
     .from("reports")
-    .select("id, kind, platform, status, period_start, period_end, owner_id, viewed_at, bundle_id, message, sections, metrics, extra_metrics, extras, layout, qa, chat, error, posted_at, clients(name, slug, slack_channel_id), profiles!reports_owner_id_fkey(full_name), kpi_targets(id, client_id, platform, owner_id, report_layout)")
+    .select("id, kind, platform, status, period_start, period_end, owner_id, viewed_at, bundle_id, message, message_basis, sections, metrics, extra_metrics, extras, layout, qa, chat, error, posted_at, clients(name, slug, slack_channel_id), profiles!reports_owner_id_fkey(full_name), kpi_targets(id, client_id, platform, owner_id, report_layout)")
     .eq("id", id)
     .maybeSingle();
   if (!r) notFound();
@@ -69,6 +69,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           status: r.status,
           periodLabel,
           message: r.message ?? "",
+          messageBasis: (r.message_basis as string | null) ?? null,
           sections: (r.sections as Sections | null) ?? null,
           metrics,
           extraMetrics: (r.extra_metrics as ReportMetrics[] | null) ?? null,

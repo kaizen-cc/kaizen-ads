@@ -1,7 +1,7 @@
 "use server";
 
 import { after } from "next/server";
-import { METRIC_KEYS, type MetricKey, type ReportLayout } from "@/lib/reports/format";
+import { METRIC_KEYS, reportBasis, type MetricKey, type ReportLayout } from "@/lib/reports/format";
 import type { ReportMetrics } from "@/lib/reports/metrics";
 import { revalidatePath } from "next/cache";
 import { isExecOrLead, requireStaff, type Staff } from "@/lib/auth";
@@ -35,7 +35,12 @@ export async function saveReport(id: string, patch: { message?: string; extras?:
   if (!ok) return { ok: false, error: "Not found." };
   if (ok.r.status === "posted") return { ok: false, error: "It's already gone out." };
   const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
-  if (patch.message !== undefined) update.message = patch.message.slice(0, 12000);
+  if (patch.message !== undefined) {
+    update.message = patch.message.slice(0, 12000);
+    // Written by the buyer for the report as it stands
+    const { data: cur } = await createAdminClient().from("reports").select("sections, extras").eq("id", id).single();
+    update.message_basis = reportBasis(patch.sections ?? cur?.sections, patch.extras ?? cur?.extras);
+  }
   if (patch.extras !== undefined) update.extras = patch.extras.slice(0, 6000);
   if (patch.sections !== undefined) update.sections = patch.sections;
   await createAdminClient().from("reports").update(update).eq("id", id);
@@ -259,6 +264,20 @@ export async function approveMyPart(id: string): Promise<Result<{ sent: boolean;
     return { ok: true, ...out };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Couldn't approve it." };
+  }
+}
+
+/** The report was edited by hand since its Slack message was written: the message, brought up to date */
+export async function refreshSlackMessage(id: string): Promise<Result<{ message: string; basis: string }>> {
+  const ok = await mine(id);
+  if (!ok) return { ok: false, error: "Not found." };
+  try {
+    const { refreshMessage } = await import("@/lib/reports/write");
+    const out = await refreshMessage(createAdminClient(), id);
+    done(id);
+    return { ok: true, ...out };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't update the message." };
   }
 }
 

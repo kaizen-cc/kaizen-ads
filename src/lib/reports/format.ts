@@ -187,3 +187,12 @@ export function campaignLines(m: ReportMetrics, layout: ReportLayout | null | un
       return { ...c, results: n, costPerResult: n ? Math.round((c.spend / n) * 100) / 100 : null, result: e?.label ?? c.result };
     });
 }
+
+/** A fingerprint of a report's words (its sections and the buyer's note): when it differs from the one its Slack message
+ *  was written from, the report was edited since and the message is brought up to date before it's sent */
+export function reportBasis(sections: unknown, extras: string | null | undefined) {
+  const text = JSON.stringify({ s: sections ?? null, e: (extras ?? "").trim() });
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) | 0;
+  return `${text.length}:${(h >>> 0).toString(36)}`;
+}

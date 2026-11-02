@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson, askJsonWithTools, type AgentKey } from "@/lib/ai";
 import { reportTools, toolsLine, type Pulled } from "./tools";
 import { metricsText, reportMetrics, trendSeries, type ReportMetrics, type TrendPoint } from "./metrics";
-import { METRIC_KEYS, type MetricKey } from "./format";
+import { METRIC_KEYS, reportBasis, type MetricKey } from "./format";
 import { voiceOf, workDone } from "./work";
 import { diagnose, diagnosisText, opportunityFor } from "./diagnose";
 
@@ -175,7 +175,7 @@ export async function draftReport(admin: SupabaseClient, reportId: string) {
       prompt: `${sourcesBlock(c, metrics, work.text, voice)}\n\n${await trendsFor(admin, c, metrics)}${STORY_RULES}\n\nWrite the ${kind === "custom" || kind === "built" ? `recap for ${[metrics.main.label, ...extra.map((m) => m.main.label)].join(" and ")}` : `${kind} report`}.`,
     });
     out.sections = await fillStories(admin, c.target, out.sections, metrics.main.end);
-    await admin.from("reports").update({ message: out.message, sections: out.sections, updated_at: new Date().toISOString() }).eq("id", reportId);
+    await admin.from("reports").update({ message: out.message, sections: out.sections, message_basis: reportBasis(out.sections, c.r.extras), updated_at: new Date().toISOString() }).eq("id", reportId);
     // The QA runs before the buyer hears about it, so the note they get says whether there's anything to fix
     await qaReport(admin, reportId).catch(() => null);
     await admin.from("reports").update({ status: "draft", updated_at: new Date().toISOString() }).eq("id", reportId);
@@ -204,6 +204,27 @@ const REVISE_SYSTEM = `You revise a client report with the media buyer who will 
 ${STORY_RULES}
 reply: one or two plain sentences on what you changed. lesson: when the request is about what THIS client wants in their reports from now on ("they always want lead quality", "keep it to 5 bullets", "no CPM, they don't care"), write it as one standing preference; otherwise "". Only lasting preferences, never one-off fixes.`;
 const REVISE_SCHEMA = obj({ reply: S, message: S, sections: SECTIONS, lesson: S });
+
+/**
+ * The buyer edited the report by hand after its Slack message was written: the message is brought up to date with the
+ * report as it stands now (same format and voice; only what the edits changed), so the two never say different things.
+ */
+export async function refreshMessage(admin: SupabaseClient, reportId: string) {
+  const { data: r } = await admin.from("reports").select("platform, message, sections, extras, metrics").eq("id", reportId).single();
+  if (!r?.sections || !r.message?.trim()) return { message: r?.message ?? "", basis: reportBasis(r?.sections, r?.extras) };
+  const out = await askJson<{ message: string }>({
+    agent: agentFor(r.platform),
+    label: "refresh report message",
+    override: { model: "sonnet", effort: "low" },
+    system: "The media buyer edited their client report after its Slack message was written. Bring the Slack message up to date with the report exactly as it stands now: keep its format, structure, voice and length, and change only what the edits changed (a number, a point added or removed, a reworded line, a different plan). Every number must match the report. Slack formatting (*bold*, bullets) as it was.",
+    schema: obj({ message: S }),
+    maxTokens: 4000,
+    prompt: `<the_report_now>\n${JSON.stringify(r.sections)}${r.extras?.trim() ? `\nAlso: ${r.extras.trim()}` : ""}\n</the_report_now>\n\n<the_message_as_it_was>\n${r.message}\n</the_message_as_it_was>\n\nReturn the message, up to date.`,
+  });
+  const basis = reportBasis(r.sections, r.extras);
+  await admin.from("reports").update({ message: out.message, message_basis: basis, updated_at: new Date().toISOString() }).eq("id", reportId);
+  return { message: out.message, basis };
+}
 
 /** The buyer asks for a change; the report is rewritten, the QA runs again, and a lasting preference is remembered. */
 export async function reviseReport(admin: SupabaseClient, reportId: string, ask: string, by: string) {
@@ -235,7 +256,7 @@ export async function reviseReport(admin: SupabaseClient, reportId: string, ask:
     { role: "assistant" as const, text: out.reply, at: now, ...(pulled.length ? { pulled: pulled.map((x) => x.label), data } : {}) },
   ].slice(-40);
   out.sections = await fillStories(admin, c.target, out.sections, metrics.main.end);
-  await admin.from("reports").update({ message: out.message, sections: out.sections, chat: next, updated_at: now }).eq("id", reportId);
+  await admin.from("reports").update({ message: out.message, sections: out.sections, message_basis: reportBasis(out.sections, c.r.extras), chat: next, updated_at: now }).eq("id", reportId);
   if (out.lesson.trim()) await rememberPref(admin, c.r.client_id, out.lesson.trim());
   const qa = await qaReport(admin, reportId).catch(() => null);
   return { chat: next, message: out.message, sections: out.sections, qa, lesson: out.lesson.trim() || null };
