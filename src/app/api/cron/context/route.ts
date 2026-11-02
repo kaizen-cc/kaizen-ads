@@ -87,6 +87,7 @@ function due(step: string | null) {
   if (step === "market") return hour === 8;
   if (step === "bibles") return true; // every 10 minutes (vercel.json): every client gets a Brand Bible, kept current
   if (step === "bible_write") return true; // started by a Bible build once its research is in (?client=<id>)
+  if (step === "presentations") return true; // every 10 minutes (vercel.json): a new client's presentation, written and sent
   if (step === "history") return true; // every 10 minutes (vercel.json): a client's whole email history and earlier calls, once
   if (step === "calls") return (businessHours || hour === 18) || (hour % 3 === 0 && minute < 30);
   return false;
@@ -199,6 +200,7 @@ export async function GET(request: Request) {
     if (step === "launches") return Response.json(await (await import("@/lib/launcher")).launchStep(admin));
     if (step === "audits") return Response.json(await (await import("@/lib/auto-audits")).autoAudits(admin));
     if (step === "bibles") return Response.json(await (await import("@/lib/brand-bible")).autoBibles(admin, 3));
+    if (step === "presentations") return Response.json(await (await import("@/lib/presentation")).keepPresentations(admin));
     if (step === "history") {
       const { googleConfigured, pullEmailHistory } = await import("@/lib/context/google");
       if (!googleConfigured()) return Response.json({ skipped: "Google not set up" });

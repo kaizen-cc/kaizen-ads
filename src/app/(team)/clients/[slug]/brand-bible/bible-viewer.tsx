@@ -514,6 +514,12 @@ export function BibleViewer({ client, bible, canEdit }: { client: { id: string; 
         <span className="hidden font-heading text-[14px] md:inline">Brand Bible</span>
         <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-[11px] ${reviewed ? "bg-ok-soft text-ok" : "bg-warn-soft text-warn"}`}>{reviewed ? "Reviewed" : "Draft"}</span>
         <div className="ml-auto flex shrink-0 items-center gap-2">
+          <Link
+            href={`/clients/${client.slug}/brand-bible/presentation`}
+            className="inline-flex h-11 items-center gap-1.5 rounded-full border border-line px-3.5 text-[13px] text-muted hover:border-faint hover:text-fg md:h-9"
+          >
+            <span aria-hidden>◐</span> <span className="max-md:hidden">Client</span> presentation
+          </Link>
           <a
             href={`/api/clients/${client.id}/brand-bible/pdf`}
             className="inline-flex h-11 items-center gap-1.5 rounded-full border border-line px-3.5 text-[13px] text-muted hover:border-faint hover:text-fg md:h-9"
