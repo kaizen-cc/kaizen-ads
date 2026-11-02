@@ -9,7 +9,7 @@ import { PdfPreview, type PdfField } from "./pdf-preview";
 import { METRIC_KEYS, columnKeys, metricLabel, platformName, TABLE_DEFAULT, tileKeys, type MetricKey, type ReportLayout } from "@/lib/reports/format";
 import type { ReportMetrics } from "@/lib/reports/metrics";
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
-import { approveBuiltMessage, approveMyPart, builtMessage, checkAgain, redraft, reviseWithAi, saveLayout, saveReport, sendReport, skipReport } from "./actions";
+import { approveBuiltMessage, approveMyPart, builtMessage, checkAgain, loadCampaignEvents, redraft, reviseWithAi, saveLayout, saveReport, sendReport, skipReport } from "./actions";
 
 // One report, start to finish, in three steps: the report (a live preview of the document: click any line to change
 // it, or ask the AI on the side and watch it change), then the Slack message (shown as it will look in the client's
@@ -432,7 +432,53 @@ export function ReportStudio({
                     <>
                       {title("Campaign")}
                       <p className="px-1 text-[13.5px] leading-snug">{name}</p>
-                      {c?.result && <p className="px-1 text-[12px] text-muted">Optimized for {c.result.toLowerCase()}: its results count that, as on the KPI board.</p>}
+                      {c?.result && <p className="px-1 text-[12px] text-muted">{layout?.campaigns?.results?.[name] ? "Counting" : "Optimized for"} {c.result.toLowerCase()}{layout?.campaigns?.results?.[name] ? " (picked for this report)" : ": its results count that, as on the KPI board"}.</p>}
+                      {title("Its result")}
+                      {c?.events ? (
+                        <div className="grid max-h-56 gap-1 overflow-y-auto">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const results = { ...(layout?.campaigns?.results ?? {}) };
+                              delete results[name];
+                              setLayout({ ...layout, campaigns: { hide, add, results } });
+                              close();
+                            }}
+                            className={`flex h-10 items-center justify-between rounded-[10px] px-3 text-left text-[13px] hover:bg-surface-2 ${!layout?.campaigns?.results?.[name] ? "bg-surface-2 text-fg" : "text-muted"}`}
+                          >
+                            What it&rsquo;s optimized for
+                            {!layout?.campaigns?.results?.[name] && <span className="text-[11px] text-faint">Now</span>}
+                          </button>
+                          {c.events.map((e) => (
+                            <button
+                              key={e.type}
+                              type="button"
+                              onClick={() => {
+                                setLayout({ ...layout, campaigns: { hide, add, results: { ...(layout?.campaigns?.results ?? {}), [name]: e.type } } });
+                                close();
+                              }}
+                              className={`flex min-h-10 items-center justify-between gap-3 rounded-[10px] px-3 text-left text-[13px] hover:bg-surface-2 ${layout?.campaigns?.results?.[name] === e.type ? "bg-surface-2 text-fg" : "text-muted"}`}
+                            >
+                              <span className="min-w-0 truncate">{e.label}</span>
+                              <span className="tabular shrink-0 text-[12px] text-faint">{e.count.toLocaleString("en-US")}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            start(async () => {
+                              const r = await loadCampaignEvents(report.id);
+                              if (!r.ok) setNote({ ok: false, text: r.error });
+                              router.refresh();
+                            })
+                          }
+                          className="h-10 rounded-[10px] px-3 text-left text-[13px] text-brand-text hover:bg-surface-2"
+                        >
+                          {pending ? "Reading its conversions…" : "Pick its result (read what it counted)"}
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => {

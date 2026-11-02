@@ -107,7 +107,9 @@ export type MetricKey = (typeof METRIC_KEYS)[number];
  * next one). tiles: the headline tiles; table: the key metrics rows; columns: the campaign table's columns;
  * campaigns: lines taken out or added by name (the rest are the biggest spenders).
  */
-export type ReportLayout = { tiles?: MetricKey[]; table?: MetricKey[]; columns?: MetricKey[]; campaigns?: { hide?: string[]; add?: string[] } };
+/** campaigns.results: a campaign's result picked by hand (its name → the action type it counts), for accounts where
+ *  campaigns run for different conversions */
+export type ReportLayout = { tiles?: MetricKey[]; table?: MetricKey[]; columns?: MetricKey[]; campaigns?: { hide?: string[]; add?: string[]; results?: Record<string, string> } };
 
 type Nums = { spend: number; results: number; costPerResult: number | null; revenue?: number; roas: number | null; ctr: number | null; clicks?: number; cpc?: number | null; cpm?: number | null; impressions?: number };
 
@@ -170,5 +172,14 @@ export function campaignLines(m: ReportMetrics, layout: ReportLayout | null | un
   const add = new Set(layout?.campaigns?.add ?? []);
   const top = m.campaigns.filter((c) => !hide.has(c.name)).slice(0, limit);
   const extra = m.campaigns.filter((c) => add.has(c.name) && !hide.has(c.name) && !top.includes(c));
-  return [...top, ...extra].sort((a, b) => b.spend - a.spend);
+  const picked = layout?.campaigns?.results ?? {};
+  return [...top, ...extra]
+    .sort((a, b) => b.spend - a.spend)
+    .map((c) => {
+      // A result picked for this campaign: it counts that instead of what it's optimized for
+      const e = picked[c.name] ? c.events?.find((x) => x.type === picked[c.name]) : null;
+      if (!picked[c.name] || !c.events) return c;
+      const n = e?.count ?? 0;
+      return { ...c, results: n, costPerResult: n ? Math.round((c.spend / n) * 100) / 100 : null, result: e?.label ?? c.result };
+    });
 }

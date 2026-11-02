@@ -76,8 +76,10 @@ async function adImage(url: string | null, dark = false): Promise<Buffer | null>
     if (!res.ok) return null;
     const raw = Buffer.from(await res.arrayBuffer());
     const img = sharp(raw).resize(240, 240, { fit: "cover" });
-    // A nearly black picture (a video's first frame) isn't the ad: the next picture is tried instead
+    // A flat picture (Meta's grey stand-in for a video it has no thumbnail for) is never the ad; a nearly black one (a
+    // video's first frame) is skipped while there's another to try
     const { channels } = await img.clone().stats();
+    if (channels.slice(0, 3).every((c) => c.stdev < 3)) return null;
     if (!dark && channels.slice(0, 3).every((c) => c.mean < 14)) return null;
     return await img.jpeg({ quality: 82 }).toBuffer();
   } catch {
@@ -154,7 +156,7 @@ function Campaigns({ m, limit, layout, hot }: { m: ReportMetrics; limit: number;
   // The name takes what the numbers leave; every number column the same width, wide enough for its header on two lines
   const num = cols.length <= 3 ? 16 : cols.length === 4 ? 14 : cols.length === 5 ? 12.5 : 11;
   const nameW = `${100 - num * cols.length}%`;
-  const label = (k: MetricKey) => (k === "results" ? (rows.some((c) => c.result && c.result.toLowerCase() !== singular(m.conversion)) ? "Results" : m.conversion) : k === "cost_per_result" ? (rows.some((c) => c.result && c.result.toLowerCase() !== singular(m.conversion)) ? "Per result" : `Per ${singular(m.conversion)}`) : metricLabel(m, k, true));
+  const label = (k: MetricKey) => (k === "results" ? (rows.some((c) => c.result && singular(c.result) !== singular(m.conversion)) ? "Results" : m.conversion) : k === "cost_per_result" ? (rows.some((c) => c.result && singular(c.result) !== singular(m.conversion)) ? "Per result" : `Per ${singular(m.conversion)}`) : metricLabel(m, k, true));
   return (
     <View style={s.section} wrap={false}>
       <Text style={s.eyebrow}>Campaigns</Text>
@@ -169,7 +171,7 @@ function Campaigns({ m, limit, layout, hot }: { m: ReportMetrics; limit: number;
       </View>
       {rows.map((c) => {
         // A campaign optimized for something else (an engagement campaign) shows its own result, named
-        const own = c.result && c.result.toLowerCase() !== singular(m.conversion) ? c.result.toLowerCase() : null;
+        const own = c.result && singular(c.result) !== singular(m.conversion) ? c.result.toLowerCase() : null;
         return (
           <View key={c.name} style={s.tr}>
             <Text style={[s.td, { width: nameW, paddingRight: 8 }]}>{c.name}</Text>

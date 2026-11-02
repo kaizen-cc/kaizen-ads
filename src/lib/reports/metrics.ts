@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { pickType, resultsOf, toDays, nyParts, type Day } from "@/lib/kpi/calc";
 import { conversionFor, conversionLabel } from "@/lib/kpi/conversions";
 import { accountRows, goalsFor } from "@/lib/kpi/sync";
+import { actionLabel } from "@/lib/kpi/explore";
 import type { Diagnosis, Opportunity } from "./diagnose";
 
 // A report's numbers, from the same daily rows the KPI board reads, with the campaigns left out of the KPI left out here
@@ -29,7 +30,9 @@ export type Period = {
 };
 
 /** result: what this campaign is optimized for ("Purchase", "Post engagement"), counted the way the KPI board counts it */
-export type CampaignLine = { name: string; spend: number; results: number; costPerResult: number | null; roas: number | null; ctr: number | null; id?: string; result?: string | null; impressions?: number; clicks?: number; cpc?: number | null; cpm?: number | null; revenue?: number };
+export type CampaignLine = { name: string; spend: number; results: number; costPerResult: number | null; roas: number | null; ctr: number | null; id?: string; result?: string | null; impressions?: number; clicks?: number; cpc?: number | null; cpm?: number | null; revenue?: number; events?: CampaignEvent[] };
+/** One thing a campaign counted in the period (Meta's action type, its name, how many), for picking its result by hand */
+export type CampaignEvent = { type: string; label: string; count: number };
 export type TopAd = { id: string; name: string; campaign: string | null; spend: number; results: number; costPerResult: number | null; ctr: number | null; clicks: number; link: string | null; image: string | null };
 
 export type ReportMetrics = {
@@ -161,6 +164,24 @@ function period(rows: Row[], days: Day[], p: { start: string; end: string; label
   };
 }
 
+/** What a campaign's rows counted (every action type with a total), biggest first: the results the buyer can pick from */
+function eventsOf(rows: { actions?: unknown }[]): CampaignEvent[] {
+  const totals = new Map<string, number>();
+  for (const r of rows) for (const [k, v] of Object.entries((r.actions ?? {}) as Record<string, number>)) if (Number(v) > 0) totals.set(k, (totals.get(k) ?? 0) + Number(v));
+  return [...totals]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 24)
+    .map(([type, count]) => ({ type, label: actionLabel(type), count: Math.round(count * 10) / 10 }));
+}
+
+/** An older report's campaigns, with what each counted in its period (drafted before campaigns kept it) */
+export async function withCampaignEvents(admin: SupabaseClient, m: ReportMetrics, account: string, platform: "meta" | "google"): Promise<ReportMetrics> {
+  const rows = ((await accountRows(admin, account, platform)) as Row[]).filter((r) => r.date >= m.main.start && r.date <= m.main.end);
+  const by = new Map<string, Row[]>();
+  for (const r of rows) by.set(r.campaign_name ?? r.campaign_id, [...(by.get(r.campaign_name ?? r.campaign_id) ?? []), r]);
+  return { ...m, campaigns: m.campaigns.map((c) => ({ ...c, events: eventsOf(by.get(c.name) ?? []) })) };
+}
+
 /** Every number a report shows, for one KPI target, as of `today` (New York). */
 export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "weekly" | "monthly" | "custom", today = nyParts(new Date()).date, range?: { start: string; end: string }): Promise<ReportMetrics> {
   const platform = t.platform === "google" ? "google" : "meta";
@@ -223,7 +244,7 @@ export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "wee
       const id = String(rows[0].campaign_id);
       const mine = own?.get(id);
       const p = mine?.length ? period(rows, toDays(rows, null, null, new Map([[id, mine]]), platform), ps.main, conversionFor("campaign_goal"), "campaign_goal") : period(rows, toDays(rows, null, null, useGoals ? (goals ?? new Map()) : undefined, platform), ps.main, conv, type);
-      return { name, id, result: labels.get(id) || null, spend: p.spend, results: p.results, costPerResult: p.costPerResult, roas: p.roas, ctr: p.ctr, impressions: p.impressions, clicks: p.clicks, cpc: p.cpc, cpm: p.cpm, revenue: p.revenue };
+      return { name, id, result: labels.get(id) || null, spend: p.spend, results: p.results, costPerResult: p.costPerResult, roas: p.roas, ctr: p.ctr, impressions: p.impressions, clicks: p.clicks, cpc: p.cpc, cpm: p.cpm, revenue: p.revenue, events: eventsOf(rows) };
     })
     .filter((c) => c.spend > 0)
     .sort((a, b) => b.spend - a.spend)

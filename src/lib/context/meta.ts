@@ -820,6 +820,8 @@ export async function adPreviews(adIds: string[]) {
     image_url?: string;
     object_story_spec?: { link_data?: { picture?: string; name?: string }; video_data?: { image_url?: string; title?: string; video_id?: string } };
     effective_object_story_id?: string;
+    effective_instagram_media_id?: string;
+    video_id?: string;
     asset_feed_spec?: { videos?: { thumbnail_url?: string }[]; images?: { url?: string }[]; titles?: { text: string }[] };
   };
   // images: every picture worth trying, best first (a video's first frame is often black, so its chosen thumbnail and
@@ -827,7 +829,7 @@ export async function adPreviews(adIds: string[]) {
   const out = new Map<string, { link: string | null; image: string | null; images: string[]; headline: string | null }>();
   const ids = adIds.slice(0, 20);
   if (!ids.length) return out;
-  const fields = "creative.thumbnail_width(600).thumbnail_height(600){title,thumbnail_url,image_url,object_story_spec,asset_feed_spec,effective_object_story_id}";
+  const fields = "creative.thumbnail_width(600).thumbnail_height(600){title,thumbnail_url,image_url,video_id,object_story_spec,asset_feed_spec,effective_object_story_id,effective_instagram_media_id}";
   const [creatives, links] = await Promise.all([
     Promise.allSettled(ids.map((id) => graph<{ creative?: C }>(id, { fields }))),
     Promise.allSettled(ids.map((id) => graph<{ preview_shareable_link?: string }>(id, { fields: "preview_shareable_link" }))),
@@ -839,10 +841,20 @@ export async function adPreviews(adIds: string[]) {
   const more = await Promise.all(
     read.map(async (c) => {
       const extra: string[] = [];
-      const video = c?.object_story_spec?.video_data?.video_id;
+      const video = c?.object_story_spec?.video_data?.video_id ?? c?.video_id;
       if (video) {
-        const t = await graph<{ data?: { uri?: string; is_preferred?: boolean }[] }>(`${video}/thumbnails`, {}).catch(() => null);
+        const [t, v] = await Promise.all([
+          graph<{ data?: { uri?: string; is_preferred?: boolean }[] }>(`${video}/thumbnails`, {}).catch(() => null),
+          graph<{ picture?: string }>(video, { fields: "picture" }).catch(() => null),
+        ]);
         extra.push(...(t?.data ?? []).sort((a, b) => Number(Boolean(b.is_preferred)) - Number(Boolean(a.is_preferred))).map((x) => x.uri).filter((u): u is string => Boolean(u)).slice(0, 3));
+        if (v?.picture) extra.push(v.picture);
+      }
+      // An ad run from an Instagram post: the post's own thumbnail
+      if (c?.effective_instagram_media_id && !c.image_url) {
+        const media = await graph<{ thumbnail_url?: string; media_url?: string; media_type?: string }>(c.effective_instagram_media_id, { fields: "thumbnail_url,media_url,media_type" }).catch(() => null);
+        const pic = media?.media_type === "VIDEO" ? media.thumbnail_url : (media?.media_url ?? media?.thumbnail_url);
+        if (pic) extra.push(pic);
       }
       if (c?.effective_object_story_id && (video || !c.image_url)) {
         const post = await graph<{ full_picture?: string }>(c.effective_object_story_id, { fields: "full_picture" }).catch(() => null);

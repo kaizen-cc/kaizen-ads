@@ -2,6 +2,7 @@
 
 import { after } from "next/server";
 import { METRIC_KEYS, type MetricKey, type ReportLayout } from "@/lib/reports/format";
+import type { ReportMetrics } from "@/lib/reports/metrics";
 import { revalidatePath } from "next/cache";
 import { isExecOrLead, requireStaff, type Staff } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -53,11 +54,27 @@ export async function saveLayout(id: string, layout: ReportLayout): Promise<Resu
   const keys = new Set<string>(METRIC_KEYS);
   const clean = (l?: string[]) => (l ? [...new Set(l.filter((k) => keys.has(k)))].slice(0, 12) as MetricKey[] : undefined);
   const names = (l?: string[]) => (l ? [...new Set(l.map((x) => String(x).slice(0, 300)))].slice(0, 60) : undefined);
-  const tidy: ReportLayout = { tiles: clean(layout.tiles), table: clean(layout.table), columns: clean(layout.columns), campaigns: layout.campaigns ? { hide: names(layout.campaigns.hide), add: names(layout.campaigns.add) } : undefined };
+  const results = layout.campaigns?.results ? Object.fromEntries(Object.entries(layout.campaigns.results).slice(0, 60).map(([k, v]) => [String(k).slice(0, 300), String(v).slice(0, 200)])) : undefined;
+  const tidy: ReportLayout = { tiles: clean(layout.tiles), table: clean(layout.table), columns: clean(layout.columns), campaigns: layout.campaigns ? { hide: names(layout.campaigns.hide), add: names(layout.campaigns.add), results } : undefined };
   const admin = createAdminClient();
   await admin.from("reports").update({ layout: tidy, updated_at: new Date().toISOString() }).eq("id", id);
   const t = ok.r.kpi_targets as unknown as { id: string } | null;
   if (t) await admin.from("kpi_targets").update({ report_layout: tidy }).eq("id", t.id);
+  done(id);
+  return { ok: true };
+}
+
+/** An older report's campaigns get what each counted in the period, so a campaign's result can be picked by hand */
+export async function loadCampaignEvents(id: string): Promise<Result> {
+  const ok = await mine(id);
+  if (!ok) return { ok: false, error: "Not found." };
+  const admin = createAdminClient();
+  const { data: r } = await admin.from("reports").select("metrics, platform, kpi_targets(ad_account_id)").eq("id", id).single();
+  const account = (r?.kpi_targets as unknown as { ad_account_id: string | null } | null)?.ad_account_id;
+  if (!r?.metrics || !account) return { ok: false, error: "This report has no campaigns to read." };
+  const { withCampaignEvents } = await import("@/lib/reports/metrics");
+  const metrics = await withCampaignEvents(admin, r.metrics as ReportMetrics, account, r.platform === "google" ? "google" : "meta");
+  await admin.from("reports").update({ metrics }).eq("id", id);
   done(id);
   return { ok: true };
 }
