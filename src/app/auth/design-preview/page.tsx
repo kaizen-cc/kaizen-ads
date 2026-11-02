@@ -127,7 +127,7 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
             <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[11px] text-muted">Kaizen</span>
           </div>
         </header>
-        <Portal slug="crust-pizza-co" clientName="Crust Pizza Co." firstName="Maria" data={samplePortal} testing live={false} demo />
+        <Portal slug="crust-pizza-co" clientName="Crust Pizza Co." firstName="Maria" data={samplePortal} demo />
       </div>
     );
   }

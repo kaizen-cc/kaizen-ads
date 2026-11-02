@@ -1,7 +1,4 @@
 import type { Metadata } from "next";
-import Link from "next/link";
-import { PortalNav } from "@/components/portal-nav";
-import { portalSections } from "@/lib/portal-sections";
 import { notFound } from "next/navigation";
 import { getViewer } from "@/lib/auth";
 import type { PlanTurn } from "@/lib/plan-chat-types";
@@ -36,22 +33,9 @@ export default async function PlanPage({ params }: { params: Promise<{ slug: str
   // The first time the client opens it
   if (!team && ready && !p.viewed_at) await createAdminClient().from("client_presentations").update({ viewed_at: new Date().toISOString() }).eq("client_id", client.id);
 
-  const nav = adminConfigured() ? await portalSections(createAdminClient(), client.id) : { setup: false, plan: false };
   return (
-    <div className="min-h-screen bg-bg">
-      <header className="pt-safe sticky top-0 z-20 border-b border-line bg-bg/90 backdrop-blur">
-        <div className="mx-auto flex max-w-4xl items-center justify-between gap-3 px-4 py-2.5">
-          <Link href={team ? `/clients/${client.slug}/brand-bible/presentation` : `/c/${client.slug}`} className="inline-flex min-h-11 items-center gap-1.5 text-[13px] text-muted hover:text-fg">
-            <span aria-hidden>←</span> {team ? "Back to the team view" : client.name}
-          </Link>
-          <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[11px] text-muted">Kaizen</span>
-        </div>
-        <div className="mx-auto max-w-4xl px-4">
-          <PortalNav slug={client.slug} {...nav} />
-        </div>
-      </header>
-      <main className="mx-auto max-w-4xl px-4 pb-24 pt-5 md:pt-8">
-        {team && <p className="mb-4 rounded-[14px] border border-warn/40 bg-warn-soft/40 px-4 py-3 text-[13px] text-warn">You&rsquo;re seeing what the client sees. Anything you tap here is saved as the team testing.</p>}
+    <div>
+      <main>
         {ready ? (
           <PlanView firstAds={firstAds} chat={(p.chat ?? []) as PlanTurn[]} intake={p.without_intake && !intakes ? { clientId: client.kaizen_id ?? null } : undefined} slug={client.slug} brand={client.name} deck={p.deck as Deck} reactions={(p.reactions ?? {}) as Reactions} approved={p.status === "approved"} canAct={team ? ["sent", "approved"].includes(p.status as string) : true} />
         ) : (

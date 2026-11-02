@@ -159,7 +159,7 @@ export async function welcomeClient(admin: SupabaseClient, clientId: string) {
  */
 export async function afterOnboardingCall(admin: SupabaseClient, clientId: string, call: { id: string; title: string; at: string; summary: string }) {
   const { inNewFlow } = await import("@/lib/presentation-types");
-  const [{ data: c }, { data: o }] = await Promise.all([admin.from("clients").select("created_at, reonboarded_at, status, services").eq("id", clientId).single(), admin.from("client_onboarding").select("call_checked_at").eq("client_id", clientId).maybeSingle()]);
+  const [{ data: c }, { data: o }] = await Promise.all([admin.from("clients").select("created_at, reonboarded_at, status, services, services_extra, services_removed").eq("id", clientId).single(), admin.from("client_onboarding").select("call_checked_at").eq("client_id", clientId).maybeSingle()]);
   if (!c || c.status !== "onboarding" || !inNewFlow(c) || o?.call_checked_at) return;
   const start = (c.reonboarded_at ?? c.created_at) as string;
   if (call.at < start) return;
@@ -168,7 +168,8 @@ export async function afterOnboardingCall(admin: SupabaseClient, clientId: strin
     if (count) return; // not their first call since enrolling
   }
   const meta = await checkMeta(admin, clientId);
-  const google = (c.services as string[] | null)?.includes("google-ads") ? await checkGoogle(admin, clientId) : null;
+  const { servicesOf } = await import("@/lib/services");
+  const google = servicesOf(c).includes("google-ads") ? await checkGoogle(admin, clientId) : null;
   await admin.from("client_onboarding").upsert({ client_id: clientId, call_checked_at: new Date().toISOString(), updated_at: new Date().toISOString() });
   const missing = [meta.status !== "verified" && `Meta access (${meta.note ?? "we can't see their ad account and Page yet"})`, google && google.status !== "verified" && `Google Ads (${google.account ? `ID ${google.account}, ${google.note ?? "not linked yet"}` : "no account ID yet"})`].filter(Boolean) as string[];
   if (!missing.length) return;

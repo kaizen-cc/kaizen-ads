@@ -4,6 +4,7 @@ import { loadWatchList } from "@/lib/fatigue";
 import { loadClientMarket } from "@/lib/market";
 import type { IntakeRecord } from "./intake-panel";
 import type { ClientCall } from "./calls-panel";
+import { servicesOf } from "@/lib/services";
 import { notFound } from "next/navigation";
 import type { Digest } from "@/lib/ai";
 import { isExecOrLead, requireStaff, seesAllClients } from "@/lib/auth";
@@ -287,7 +288,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       admin.from("engagement_launches").select("status").eq("client_id", client.id).maybeSingle(),
     ]);
     const { GuidePanel } = await import("./guide-panel");
-    setup = <GuidePanel slug={client.slug} guide={await loadGuide(admin, client.id)} google={((client.services ?? []) as string[]).includes("google-ads")} welcomed={(o?.welcomed_at as string | null) ?? null} launch={(launch?.status as string | null) ?? null} />;
+    setup = <GuidePanel slug={client.slug} guide={await loadGuide(admin, client.id)} google={servicesOf(client).includes("google-ads")} welcomed={(o?.welcomed_at as string | null) ?? null} launch={(launch?.status as string | null) ?? null} />;
   }
 
   return (

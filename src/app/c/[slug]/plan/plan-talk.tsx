@@ -123,7 +123,7 @@ export function PlanTalk({ slug, brand, chat: initial, locked, onReactions }: { 
     <>
       {/* The way in: a bar along the bottom */}
       {!open && (
-        <div className="pointer-events-none fixed inset-x-0 bottom-0 z-30 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
+        <div className="pointer-events-none fixed inset-x-0 bottom-[calc(58px+env(safe-area-inset-bottom))] z-30 px-4 pb-3 lg:bottom-0 lg:pb-[calc(1rem+env(safe-area-inset-bottom))] lg:pl-[264px]">
           <button
             type="button"
             onClick={() => pushParams({ talk: "1" })}

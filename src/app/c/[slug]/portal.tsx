@@ -23,7 +23,7 @@ const HIT = "relative max-md:after:absolute max-md:after:-inset-x-1 max-md:after
 /** Phones: size and card chips big enough to tap. */
 const CHIP = "max-md:px-3.5 max-md:py-1.5 max-md:text-[12px]";
 
-export function Portal({ slug, clientName, firstName, data, testing, live, demo = false }: { slug: string; clientName: string; firstName: string | null; data: PortalData; testing: boolean; live: boolean; demo?: boolean }) {
+export function Portal({ slug, clientName, firstName, data, demo = false, aside = null }: { slug: string; clientName: string; firstName: string | null; data: PortalData; demo?: boolean; /** What sits beside the ads on a computer (below them on a phone): results, recap, setup */ aside?: React.ReactNode }) {
   const [queue, setQueue] = useState(data.items);
   const [open, setOpen] = useState<PortalItem | null>(null);
   const [look, setLook] = useState<PortalItem | null>(null); // a quick look at something already decided
@@ -33,78 +33,93 @@ export function Portal({ slug, clientName, firstName, data, testing, live, demo 
 
   return (
     <>
-      {testing && (
-        <div className="bg-brand px-4 py-2 text-center text-xs leading-relaxed text-white">
-          {live ? "You're previewing the portal as a Kaizen team member." : `The portal isn't live for ${clientName}: they can't sign in or see any of this, and nothing is sent to them.`}{" "}
-          <b>Decisions you make here are real</b>: they move the tickets as if the client made them.
-        </div>
-      )}
-
-      <main className="mx-auto grid max-w-md gap-4 px-4 pb-[max(4rem,calc(env(safe-area-inset-bottom)+2rem))] pt-4">
-        <section className={`grid gap-2.5 rounded-[12px] p-4 text-white ${queue.length ? "bg-brand" : "border border-brand/70 bg-bg"}`}>
-          <p className={`text-[11px] font-semibold uppercase tracking-[0.08em] ${queue.length ? "text-ink/75" : "text-brand-text"}`}>Waiting on you</p>
-          <h1 className="font-heading text-[20px] font-semibold leading-tight">
-            {queue.length ? `${total} ${total === 1 ? "piece is" : "pieces are"} ready for your review` : firstName ? `You're all caught up, ${firstName}` : "You're all caught up"}
-          </h1>
-          <p className={`text-[12.5px] ${queue.length ? "text-ink/90" : "text-muted"}`}>
-            {queue.length ? `${queue.length} ${queue.length === 1 ? "batch" : "batches"}. Approve or ask for changes on each design and each copy.` : "When your Kaizen team sends new ads, they'll show up here."}
-          </p>
-          {queue.length > 0 && (
-            <button onClick={() => setOpen(queue[0])} className="justify-self-start rounded-[5px] bg-white px-3.5 py-2 text-[13px] font-semibold text-[#7f1420] active:scale-[0.98] max-md:h-12 max-md:w-full max-md:text-[15px]">
-              Start reviewing →
-            </button>
-          )}
-        </section>
-
-        {queue.length > 1 && (
-          <section className="grid gap-2">
-            {queue.map((i) => (
-              <button key={i.id} onClick={() => setOpen(i)} className="flex items-center gap-2.5 rounded-[8px] border border-line bg-surface p-2.5 text-left hover:border-faint active:bg-surface-2">
-                <Thumb url={cover(i)} />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13px] font-medium">{i.title}</span>
-                  <span className="text-[11.5px] text-muted">
-                    {pieces(i)} to review{i.revised ? " · revised" : ""}
+      <main className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="grid min-w-0 gap-5">
+          {/* What's waiting on them: the one thing to do, front and centre */}
+          <section className={`relative isolate grid gap-4 overflow-hidden rounded-[28px] p-6 md:p-8 ${queue.length ? "bg-brand text-white" : "border border-line bg-surface"}`}>
+            {queue.length > 0 && <span aria-hidden className="pointer-events-none absolute -right-20 -top-24 -z-10 h-80 w-80 rounded-full bg-white/15 blur-[90px]" />}
+            <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${queue.length ? "text-white/75" : "text-faint"}`}>Waiting on you</p>
+            <div className="flex flex-wrap items-end justify-between gap-5">
+              <div className="grid max-w-xl gap-2">
+                <h2 className="font-heading text-[26px] leading-tight md:text-[34px]">
+                  {queue.length ? `${total} ${total === 1 ? "piece is" : "pieces are"} ready for your review` : firstName ? `You're all caught up, ${firstName}` : "You're all caught up"}
+                </h2>
+                <p className={`text-[14px] leading-relaxed ${queue.length ? "text-white/85" : "text-muted"}`}>
+                  {queue.length ? `${queue.length} ${queue.length === 1 ? "batch" : "batches"}: approve or ask for changes on each design and each line of copy. Swipe on your phone, or click through here.` : "When your Kaizen team sends new ads, they'll show up here."}
+                </p>
+              </div>
+              {queue.length > 0 && (
+                <div className="flex items-center gap-4">
+                  {/* The first few covers, fanned */}
+                  <span className="hidden -space-x-6 sm:flex">
+                    {queue.slice(0, 3).map((q, k) => (
+                      <span key={q.id} className="relative h-24 w-[76px] overflow-hidden rounded-[12px] border-2 border-white/80 bg-white/20 shadow-lg" style={{ transform: `rotate(${(k - 1) * 6}deg)` }}>
+                        {cover(q) && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={cover(q)!} alt="" className="absolute inset-0 h-full w-full object-cover" />
+                        )}
+                      </span>
+                    ))}
                   </span>
-                </span>
-                <span className="text-muted">→</span>
-              </button>
-            ))}
+                  <button onClick={() => setOpen(queue[0])} className="h-12 rounded-full bg-white px-6 text-[15px] font-semibold text-[#7f1420] shadow-[0_12px_30px_-12px_rgba(0,0,0,0.5)] transition-transform hover:scale-[1.02] active:scale-[0.98] max-sm:w-full">
+                    Start reviewing →
+                  </button>
+                </div>
+              )}
+            </div>
           </section>
-        )}
 
-        <Rows title="In revision" pill={data.revising.length} tone="warn" rows={data.revising} empty="Nothing in revision." onOpen={setLook} />
-
-        <section className="grid gap-2">
-          <div className="flex items-baseline justify-between">
-            <h2 className="text-[13px] font-semibold">Running now</h2>
-            {data.running.syncedAt && <span className="text-[11.5px] text-muted">synced {ago(data.running.syncedAt)}</span>}
-          </div>
-          {data.running.ads.length ? (
-            <div className="grid grid-cols-3 gap-2">
-              {data.running.ads.map((a) => (
-                <button key={a.id} onClick={() => setLiveAd(a)} className="relative aspect-[4/5] overflow-hidden rounded-[8px] bg-surface-2 text-left transition-transform hover:scale-[1.02] active:scale-[0.97]" title={a.headline ?? a.name}>
-                  {a.thumbnail ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={a.thumbnail} alt={a.headline ?? a.name} className="absolute inset-0 h-full w-full object-cover" />
-                  ) : (
-                    <span className="absolute inset-0 grid place-items-center p-2 text-center text-[10px] text-muted">{a.headline ?? a.name}</span>
-                  )}
-                  <span className="absolute left-1.5 top-1.5 flex items-center gap-1 rounded-full bg-black/55 px-1.5 py-px text-[9.5px] text-white">
-                    <i className="h-1.5 w-1.5 rounded-full bg-[#3fb27f]" />
-                    Live
+          {queue.length > 1 && (
+            <section className="grid gap-2 sm:grid-cols-2">
+              {queue.map((i) => (
+                <button key={i.id} onClick={() => setOpen(i)} className="flex items-center gap-3 rounded-[16px] border border-line bg-surface p-3 text-left transition-colors hover:border-faint active:bg-surface-2">
+                  <Thumb url={cover(i)} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[14px] font-medium">{i.title}</span>
+                    <span className="text-[12px] text-muted">
+                      {pieces(i)} to review{i.revised ? " · revised" : ""}
+                    </span>
                   </span>
-                  {a.headline && <span className="absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/75 to-transparent px-2 pb-1.5 pt-4 text-[10px] font-medium text-white">{a.headline}</span>}
+                  <span className="text-muted">→</span>
                 </button>
               ))}
-            </div>
-          ) : (
-            <Empty>Your live ads will show up here.</Empty>
+            </section>
           )}
-        </section>
 
-        <Rows title="Approved · launching soon" pill={data.approved.length} tone="ok" rows={data.approved} empty="Nothing waiting to launch." onOpen={setLook} />
-        {data.launched.length > 0 && <Rows title="Launched" pill={data.launched.length} tone="ok" rows={data.launched} empty="" onOpen={setLook} />}
+          <Rows title="In revision" pill={data.revising.length} tone="warn" rows={data.revising} empty="Nothing in revision." onOpen={setLook} />
+
+          <section className="grid gap-2">
+            <div className="flex items-baseline justify-between">
+              <h2 className="text-[13px] font-semibold">Running now</h2>
+              {data.running.syncedAt && <span className="text-[11.5px] text-muted">synced {ago(data.running.syncedAt)}</span>}
+            </div>
+            {data.running.ads.length ? (
+              <div className="grid grid-cols-3 gap-2">
+                {data.running.ads.map((a) => (
+                  <button key={a.id} onClick={() => setLiveAd(a)} className="relative aspect-[4/5] overflow-hidden rounded-[8px] bg-surface-2 text-left transition-transform hover:scale-[1.02] active:scale-[0.97]" title={a.headline ?? a.name}>
+                    {a.thumbnail ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={a.thumbnail} alt={a.headline ?? a.name} className="absolute inset-0 h-full w-full object-cover" />
+                    ) : (
+                      <span className="absolute inset-0 grid place-items-center p-2 text-center text-[10px] text-muted">{a.headline ?? a.name}</span>
+                    )}
+                    <span className="absolute left-1.5 top-1.5 flex items-center gap-1 rounded-full bg-black/55 px-1.5 py-px text-[9.5px] text-white">
+                      <i className="h-1.5 w-1.5 rounded-full bg-[#3fb27f]" />
+                      Live
+                    </span>
+                    {a.headline && <span className="absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/75 to-transparent px-2 pb-1.5 pt-4 text-[10px] font-medium text-white">{a.headline}</span>}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <Empty>Your live ads will show up here.</Empty>
+            )}
+          </section>
+
+          <Rows title="Approved · launching soon" pill={data.approved.length} tone="ok" rows={data.approved} empty="Nothing waiting to launch." onOpen={setLook} />
+          {data.launched.length > 0 && <Rows title="Launched" pill={data.launched.length} tone="ok" rows={data.launched} empty="" onOpen={setLook} />}
+        </div>
+        {aside && <div className="grid gap-4 md:grid-cols-2 xl:sticky xl:top-8 xl:grid-cols-1">{aside}</div>}
       </main>
 
       {look && (
