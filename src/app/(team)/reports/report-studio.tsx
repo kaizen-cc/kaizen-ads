@@ -5,7 +5,8 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { SlackConnect } from "@/components/slack-connect";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { Layer } from "../clients/[slug]/layer";
-import { headlineTiles, kpiRows, money, platformName, type Delta } from "@/lib/reports/format";
+import { PdfPreview, type PdfField } from "./pdf-preview";
+import { platformName } from "@/lib/reports/format";
 import type { ReportMetrics } from "@/lib/reports/metrics";
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
 import { approveBuiltMessage, approveMyPart, builtMessage, checkAgain, redraft, reviseWithAi, saveReport, sendReport, skipReport } from "./actions";
@@ -42,168 +43,10 @@ export type StudioBundle = {
   parts: { id: string; platform: string; status: string; owner: string | null; isMe: boolean }[];
 };
 
-const tone = (d: Delta | null) => (!d ? "text-[#9a9aa1]" : d.tone === "good" ? "text-[#16794c]" : d.tone === "bad" ? "text-[#c8102e]" : "text-[#5f5f66]");
 const PART_STATUS: Record<string, string> = { queued: "Queued", drafting: "Writing", draft: "To review", submitted: "Approved", posted: "Sent", failed: "Couldn't write", skipped: "Left out" };
 const SUGGEST = ["Make it shorter", "Explain why results moved", "More on what's next", "Warmer tone"];
 // Starters that reach past the numbers: the ad account, Motion, calls, Slack and earlier reports
 const LOOKUPS = ["Follow last week's report format", "Compare with the week before", "Which ads did best, and why?", "What did the client say on the last call?", "Anything in Slack this week to mention?"];
-
-/** A line of the document that turns into a text box on click. */
-function Editable({ value, onSave, className = "", placeholder, disabled, multiline = true }: { value: string; onSave: (v: string) => void; className?: string; placeholder?: string; disabled?: boolean; multiline?: boolean }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(value);
-  const box = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => {
-    if (!editing || !box.current) return;
-    box.current.focus();
-    box.current.style.height = "auto";
-    box.current.style.height = `${box.current.scrollHeight}px`;
-  }, [editing]);
-  if (editing)
-    return (
-      <textarea
-        ref={box}
-        value={draft}
-        onChange={(e) => {
-          setDraft(e.target.value);
-          e.target.style.height = "auto";
-          e.target.style.height = `${e.target.scrollHeight}px`;
-        }}
-        onBlur={() => {
-          setEditing(false);
-          if (draft.trim() !== value.trim()) onSave(draft.trim());
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") {
-            setDraft(value);
-            setEditing(false);
-          }
-          if (e.key === "Enter" && (!multiline || e.metaKey || e.ctrlKey)) {
-            e.preventDefault();
-            (e.target as HTMLTextAreaElement).blur();
-          }
-        }}
-        rows={1}
-        className={`w-full resize-none rounded-[6px] bg-[#fff8e6] px-1.5 py-0.5 outline outline-2 outline-[#f2b14c] ${className}`}
-      />
-    );
-  return (
-    <span
-      role={disabled ? undefined : "button"}
-      tabIndex={disabled ? undefined : 0}
-      onClick={() => !disabled && (setDraft(value), setEditing(true))}
-      onKeyDown={(e) => !disabled && e.key === "Enter" && (setDraft(value), setEditing(true))}
-      className={`block rounded-[6px] ${disabled ? "" : "-mx-1.5 cursor-text px-1.5 transition-colors hover:bg-[#fff8e6] hover:outline hover:outline-1 hover:outline-[#f2b14c]/60"} ${className} ${!value ? "text-[#9a9aa1]" : ""}`}
-      title={disabled ? undefined : "Click to change"}
-    >
-      {value || placeholder}
-    </span>
-  );
-}
-
-/** The report as the client will read it (light, like the PDF), every line editable in place. */
-function Document({ r, sections, setSections, extras, setExtras, client, editable }: { r: StudioReport; sections: Sections; setSections: (s: Sections) => void; extras: string; setExtras: (s: string) => void; client: string; editable: boolean }) {
-  const m = r.metrics;
-  const list = (key: "did" | "doing" | "next", title: string) => (
-    <div className="grid gap-2">
-      <p className="text-[13px] font-semibold text-[#0b0b0c]">{title}</p>
-      <ul className="grid gap-1.5">
-        {sections[key].map((x, i) => (
-          <li key={`${key}-${i}`} className="group flex gap-2 text-[13.5px] leading-relaxed text-[#2a2a30]">
-            <span className="mt-[1px] font-bold text-[#c8102e]">•</span>
-            <span className="min-w-0 flex-1">
-              <Editable value={x} disabled={!editable} onSave={(v) => setSections({ ...sections, [key]: v ? sections[key].map((y, j) => (j === i ? v : y)) : sections[key].filter((_, j) => j !== i) })} />
-            </span>
-            {editable && (
-              <button type="button" onClick={() => setSections({ ...sections, [key]: sections[key].filter((_, j) => j !== i) })} aria-label="Remove this line" className="h-6 w-6 shrink-0 rounded-full text-[#9a9aa1] opacity-0 hover:bg-[#f3f3f2] hover:text-[#0b0b0c] group-hover:opacity-100 max-md:opacity-100">
-                ×
-              </button>
-            )}
-          </li>
-        ))}
-      </ul>
-      {editable && (
-        <button type="button" onClick={() => setSections({ ...sections, [key]: [...sections[key], "New point"] })} className="justify-self-start rounded-full px-2 py-1 text-[12px] text-[#9a9aa1] hover:bg-[#f3f3f2] hover:text-[#0b0b0c]">
-          + Add a line
-        </button>
-      )}
-    </div>
-  );
-  return (
-    <article className="overflow-hidden rounded-[14px] bg-fg text-[#0b0b0c] shadow-[0_30px_80px_-30px_rgba(0,0,0,0.7)]">
-      <header className="bg-deep px-7 pb-6 pt-7 text-fg max-md:px-5">
-        <span className="mb-3 block h-[3px] w-7 bg-[#c8102e]" />
-        <p className="font-heading text-[22px] leading-tight">{client}</p>
-        <p className="mt-1 text-[13px] text-[#b4b4bb]">
-          {platformName(r.platform)} · {r.periodLabel}
-        </p>
-      </header>
-      <div className="grid gap-6 px-7 py-7 max-md:px-5">
-        <div className="grid gap-2">
-          <Editable value={sections.headline} disabled={!editable} multiline={false} onSave={(v) => setSections({ ...sections, headline: v })} className="font-heading text-[19px] leading-snug" placeholder="The main takeaway" />
-          <Editable value={sections.summary} disabled={!editable} onSave={(v) => setSections({ ...sections, summary: v })} className="text-[14px] leading-relaxed text-[#3a3a40]" placeholder="The numbers in context" />
-        </div>
-        {m && (
-          <div className="grid gap-4">
-            {[m, ...(r.extraMetrics ?? [])].map((x) => (
-              <div key={x.main.label} className="grid gap-2">
-                <p className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-[#6b6b73]">
-                  {x.main.label} vs {x.compare.label}
-                </p>
-                <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-                  {headlineTiles(x).map((t) => (
-                    <div key={t.label} className="grid gap-0.5 rounded-[8px] border border-[#e7e7ea] px-3 py-2.5">
-                      <span className="text-[10px] uppercase tracking-[0.08em] text-[#6b6b73]">{t.label}</span>
-                      <span className="tabular font-heading text-[19px] leading-tight">{t.value}</span>
-                      {t.sub && <span className="text-[11px] text-[#6b6b73]">{t.sub}</span>}
-                      <span className={`text-[11px] font-semibold ${tone(t.delta)}`}>{t.delta?.text ?? "No comparison"}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-            <details className="group">
-              <summary className="cursor-pointer list-none text-[12px] text-[#6b6b73] hover:text-[#0b0b0c]">
-                <span className="group-open:hidden">Key metrics and campaigns ▾</span>
-                <span className="hidden group-open:inline">Hide ▴</span>
-              </summary>
-              <table className="mt-3 w-full text-[12.5px]">
-                <tbody>
-                  {kpiRows(m).map((row) => (
-                    <tr key={row.label} className="border-t border-[#e7e7ea]">
-                      <td className="py-1.5 font-semibold">{row.label}</td>
-                      <td className="py-1.5 text-right tabular">{row.now}</td>
-                      <td className="py-1.5 text-right tabular text-[#6b6b73]">{row.before}</td>
-                      <td className={`py-1.5 text-right font-semibold tabular ${tone(row.delta)}`}>{row.delta?.text ?? "–"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <ul className="mt-3 grid gap-1 text-[12px] text-[#3a3a40]">
-                {m.campaigns.slice(0, 6).map((c) => (
-                  <li key={c.name} className="flex justify-between gap-3">
-                    <span className="truncate">{c.name}</span>
-                    <span className="shrink-0 tabular text-[#6b6b73]">
-                      {money(c.spend)} · {c.results} · {money(c.costPerResult)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </details>
-          </div>
-        )}
-        {list("did", "What we did")}
-        {list("doing", "What we're doing")}
-        {list("next", "What's next")}
-        <div className="grid gap-1.5 border-l-2 border-[#c8102e] pl-3">
-          <p className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-[#6b6b73]">Also (sales from their CRM, other channels…)</p>
-          <Editable value={extras} disabled={!editable} onSave={setExtras} className="text-[13.5px] leading-relaxed text-[#3a3a40]" placeholder={editable ? "Add anything the numbers don't show" : ""} />
-        </div>
-        {r.owner && <p className="text-[12px] text-[#6b6b73]">Prepared by {r.owner}, Kaizen Marketing</p>}
-      </div>
-    </article>
-  );
-}
 
 /** Slack's formatting as it shows in the channel: *bold*, _italic_, links and bullets. */
 function Mrkdwn({ text }: { text: string }) {
@@ -303,6 +146,9 @@ export function ReportStudio({
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
   const [pending, start] = useTransition();
   const [editMsg, setEditMsg] = useState(false);
+  // Bumped each time a change is saved, so the PDF preview draws the saved version
+  const [rev, setRev] = useState(0);
+  const [adding, setAdding] = useState<{ key: "did" | "doing" | "next" | "extras"; text: string } | null>(null);
   const initial: "report" | "message" | "done" = sent ? "done" : built && mineDone && bundle?.isBuilder ? "message" : "report";
   // The step is in the address (?step=), so back from the Slack message returns to the report. Once it's sent, it's
   // sent: every entry shows that.
@@ -357,12 +203,14 @@ export function ReportStudio({
     start(async () => {
       const r = await saveReport(report.id, { sections: s });
       if (!r.ok) setNote({ ok: false, text: r.error });
+      setRev((n) => n + 1);
     });
   };
   const setExtras = (v: string) => {
     setExtrasState(v);
     start(async () => {
       await saveReport(report.id, { extras: v });
+      setRev((n) => n + 1);
     });
   };
   const tweak = async (text: string) => {
@@ -375,6 +223,7 @@ export function ReportStudio({
     if (!r.ok) return setNote({ ok: false, text: r.error });
     setChat(r.chat);
     setSectionsState(r.sections);
+    setRev((n) => n + 1);
     if (!built) setMessage(r.message);
     if (r.qa) setQa(r.qa);
     if (r.lesson) setNote({ ok: true, text: `Remembered for this client: ${r.lesson}` });
@@ -493,10 +342,69 @@ export function ReportStudio({
                 )}
               </div>
             ) : (
-              <Document r={report} sections={sections} setSections={setSections} extras={extras} setExtras={setExtras} client={client.name} editable={editable} />
+              (() => {
+                // Every line the buyer writes, to click and change on the PDF itself
+                const LISTS = [["did", "What we did"], ["doing", "What we're doing"], ["next", "What's next"]] as const;
+                const fields: PdfField[] = [
+                  { id: "headline", label: "Headline", value: sections.headline },
+                  { id: "summary", label: "Summary", value: sections.summary },
+                  ...LISTS.flatMap(([k, label]) => sections[k].map((v, i) => ({ id: `${k}.${i}`, label, value: v, removable: true }))),
+                  { id: "extras", label: "Also (sales from their CRM, other channels…)", value: extras, removable: true },
+                ];
+                const save = (id: string, v: string | null) => {
+                  if (id === "extras") return setExtras(v ?? "");
+                  if (id === "headline" || id === "summary") return setSections({ ...sections, [id]: v ?? "" });
+                  const [k, n] = id.split(".") as ["did" | "doing" | "next", string];
+                  setSections({ ...sections, [k]: v ? sections[k].map((y, j) => (j === Number(n) ? v : y)) : sections[k].filter((_, j) => j !== Number(n)) });
+                };
+                return (
+                  <div className="grid gap-3">
+                    {editable && (
+                      <div className="grid gap-2 rounded-[14px] border border-line bg-surface p-3">
+                        <div className="flex flex-wrap items-center gap-1.5 text-[12.5px]">
+                          <span className="mr-1 text-faint">Add:</span>
+                          {[...LISTS, ["extras", extras.trim() ? "To the note" : "A note (CRM sales, other channels)"] as const].map(([k, label]) => (
+                            <button key={k} type="button" onClick={() => setAdding({ key: k, text: "" })} className={`h-9 rounded-full border px-3 max-md:h-10 ${adding?.key === k ? "border-fg text-fg" : "border-line text-muted hover:text-fg"}`}>
+                              + {label}
+                            </button>
+                          ))}
+                        </div>
+                        {adding && (
+                          <form
+                            onSubmit={(e) => {
+                              e.preventDefault();
+                              const t = adding.text.trim();
+                              if (!t) return;
+                              if (adding.key === "extras") setExtras(extras.trim() ? `${extras.trim()}
+${t}` : t);
+                              else setSections({ ...sections, [adding.key]: [...sections[adding.key], t] });
+                              setAdding(null);
+                            }}
+                            className="flex flex-wrap gap-2"
+                          >
+                            <textarea autoFocus value={adding.text} onChange={(e) => setAdding({ ...adding, text: e.target.value })} rows={2} placeholder="Write it as it should read in the report" className="min-w-0 flex-1 resize-none rounded-[10px] border border-line bg-bg px-3 py-2 text-sm outline-none [field-sizing:content] focus:border-brand-text/60" />
+                            <div className="flex items-end gap-1.5">
+                              <button type="button" onClick={() => setAdding(null)} className="h-10 rounded-full px-3 text-[13px] text-muted hover:text-fg">Cancel</button>
+                              <button type="submit" disabled={!adding.text.trim()} className="h-10 rounded-full bg-fg px-4 text-[13px] text-bg disabled:opacity-40">Add</button>
+                            </div>
+                          </form>
+                        )}
+                      </div>
+                    )}
+                    <PdfPreview
+                      url={`/api/reports/${report.id}/pdf${joint ? "?whole=1" : ""}`}
+                      version={`${rev}:${report.status}:${JSON.stringify(report.sections)}`}
+                      fields={fields}
+                      editable={editable}
+                      onSave={(id, v) => save(id, v)}
+                      onRemove={(id) => save(id, null)}
+                    />
+                  </div>
+                );
+              })()
             )}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-faint">
-              {editable && <span>Click any line to change it. Changes save as you go.</span>}
+              {editable && <span>This is the PDF the client gets. Click any line you wrote to change it; the pages update once it saves.</span>}
               <a href={`/api/reports/${report.id}/pdf${joint ? "?whole=1" : ""}`} target="_blank" rel="noreferrer" className="hover:text-fg">
                 {joint ? "Preview the whole report (PDF) ↗" : "Preview the PDF ↗"}
               </a>
