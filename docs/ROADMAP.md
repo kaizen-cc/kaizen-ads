@@ -49,8 +49,14 @@ Where things stand on 2026-10-31 and what comes next, in order. The target is th
 - **Onboarding, steps 1 and 2**: on enrollment the client's whole email history (sales emails included) and their calls from before they signed are filed to them; Gmail and Slack follow every active client. The Brand Bible starts once the intake form is in (or after 4 business days without it, said so plainly). The client presentation (the short Bible) is approved by the buyer or a lead, or goes out on its own after 24 hours, and the client reacts part by part in their portal.
 - **Onboarding, steps 3 to 5**: the client talks the presentation through in their portal (text, files, voice messages; customer list kept private); approving folds it into the Bible, tells the team and writes the first round; the 48-hour launch runs their own best posts as a paused engagement campaign with the checklist checked, turned on by the buyer, and the client is told it's live.
 - **Report preview is the PDF itself**, every line the buyer wrote editable on the page; tiles, key metrics, campaign columns and lines changed or added by clicking them, remembered as the client's layout. **Client IDs** on client cards and the KPI board, filled from the Account Overview sheet.
+- **Reports as stories**: trend charts (any metric, by week or month) each with what we see, why and what's next, numbers from the ad account; back to editing after approving; a buyer can send their part without waiting on the other.
+- **Client dashboard in the portal**: every account together, then Meta or Google; any dates; tiles, the day-by-day against the period before, budget split, campaigns, best ads; questions about the numbers, worries flagged to the buyer. Reports link to it.
+- **Onboarding guide in the portal**: access, Google Ads ID, assets, the look; sent at enrollment.
 
 ## Now: open items (feedback from Kyle and earlier sessions)
+
+### Client portal
+18. **The portal as the client's home**, not only creative approvals: the dashboard, reports, setup and creative in one experience, designed for the wow factor (in progress).
 
 ### Client page: one dashboard for the whole business (MER)
 3. **Shopify in Kaizen Ads** (likely as a Shopify app the client installs): orders, revenue, customers.
