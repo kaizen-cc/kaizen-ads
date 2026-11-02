@@ -47,17 +47,10 @@ Where things stand on 2026-10-31 and what comes next, in order. The target is th
 - **Clients page**: tabs by service line plus Paused; missing Slack and Drive connections filled in from the card; services added on the spot; Pause and Archive from the card; seats follow the allotment (no designer for video-only).
 - **Launcher**: approved ads pushed to Meta paused through the system user, into existing or cloned ad sets, with naming learned per account.
 - **Onboarding, steps 1 and 2**: on enrollment the client's whole email history (sales emails included) and their calls from before they signed are filed to them; Gmail and Slack follow every active client. The Brand Bible starts once the intake form is in (or after 4 business days without it, said so plainly). The client presentation (the short Bible) is approved by the buyer or a lead, or goes out on its own after 24 hours, and the client reacts part by part in their portal.
-- **Report preview is the PDF itself**, every line the buyer wrote editable on the page. **Client IDs** on client cards and the KPI board, filled from the Account Overview sheet.
+- **Onboarding, steps 3 to 5**: the client talks the presentation through in their portal (text, files, voice messages; customer list kept private); approving folds it into the Bible, tells the team and writes the first round; the 48-hour launch runs their own best posts as a paused engagement campaign with the checklist checked, turned on by the buyer, and the client is told it's live.
+- **Report preview is the PDF itself**, every line the buyer wrote editable on the page; tiles, key metrics, campaign columns and lines changed or added by clicking them, remembered as the client's layout. **Client IDs** on client cards and the KPI board, filled from the Account Overview sheet.
 
 ## Now: open items (feedback from Kyle and earlier sessions)
-
-### Onboarding (replacing the buyer's manual checklist)
-15. **Portal conversation**: the client talks the presentation through with the AI (text, files, voice messages); it fills the Bible's gaps, asks for the customer list for lookalikes, and settles the engagement-first question.
-16. **On approval**: the final Bible to the team, and the first round of requests written from the intake, the conversation, their winners and the Hall of Fame and playbooks.
-17. **Engagement ads from their own posts**: the last 30 Facebook and Instagram posts each, filtered and ranked against the Bible, the client confirms, the campaign is built paused with the launch checklist checked automatically, and the client is told it's live (replacing the "first campaign live" form).
-
-### Reports that read right and sell
-1. ~~Report on the right result~~ and 2. ~~Diagnose, then recommend~~: built. Meta reports count each campaign's own optimized result; every report names the weak link (creative, cost from fatigue or lost tests, the website) and what we're doing; another Kaizen service is raised rarely, as an idea, with cadence rules so it never feels like a pitch.
 
 ### Client page: one dashboard for the whole business (MER)
 3. **Shopify in Kaizen Ads** (likely as a Shopify app the client installs): orders, revenue, customers.
