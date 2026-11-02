@@ -1,6 +1,7 @@
 "use server";
 
 import { after } from "next/server";
+import { METRIC_KEYS, type MetricKey, type ReportLayout } from "@/lib/reports/format";
 import { revalidatePath } from "next/cache";
 import { isExecOrLead, requireStaff, type Staff } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -37,6 +38,26 @@ export async function saveReport(id: string, patch: { message?: string; extras?:
   if (patch.extras !== undefined) update.extras = patch.extras.slice(0, 6000);
   if (patch.sections !== undefined) update.sections = patch.sections;
   await createAdminClient().from("reports").update(update).eq("id", id);
+  done(id);
+  return { ok: true };
+}
+
+/**
+ * The metrics the buyer chose (tiles, key metrics rows, campaign columns and lines): kept on the report, and on its KPI
+ * as this client's layout, so the next report starts the way the buyer left this one.
+ */
+export async function saveLayout(id: string, layout: ReportLayout): Promise<Result> {
+  const ok = await mine(id);
+  if (!ok) return { ok: false, error: "Not found." };
+  if (ok.r.status === "posted") return { ok: false, error: "It's already gone out." };
+  const keys = new Set<string>(METRIC_KEYS);
+  const clean = (l?: string[]) => (l ? [...new Set(l.filter((k) => keys.has(k)))].slice(0, 12) as MetricKey[] : undefined);
+  const names = (l?: string[]) => (l ? [...new Set(l.map((x) => String(x).slice(0, 300)))].slice(0, 60) : undefined);
+  const tidy: ReportLayout = { tiles: clean(layout.tiles), table: clean(layout.table), columns: clean(layout.columns), campaigns: layout.campaigns ? { hide: names(layout.campaigns.hide), add: names(layout.campaigns.add) } : undefined };
+  const admin = createAdminClient();
+  await admin.from("reports").update({ layout: tidy, updated_at: new Date().toISOString() }).eq("id", id);
+  const t = ok.r.kpi_targets as unknown as { id: string } | null;
+  if (t) await admin.from("kpi_targets").update({ report_layout: tidy }).eq("id", t.id);
   done(id);
   return { ok: true };
 }

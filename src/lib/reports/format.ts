@@ -95,3 +95,80 @@ export function pdfDisposition(name: string, inline = false) {
   const ascii = name.replace(/[^\x20-\x7e]/g, "").replace(/["\\]/g, "");
   return `${inline ? "inline" : "attachment"}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`;
 }
+
+// ─── The report's layout: which metrics the buyer chose ─────────────────────
+
+/** Every number a report can show, in a tile, a row of the key metrics table, or a column of the campaign table */
+export const METRIC_KEYS = ["spend", "results", "cost_per_result", "revenue", "roas", "ctr", "clicks", "cpc", "cpm", "impressions"] as const;
+export type MetricKey = (typeof METRIC_KEYS)[number];
+
+/**
+ * What the buyer changed in a report's structure (kept on the report, and on its KPI as the client's layout for the
+ * next one). tiles: the headline tiles; table: the key metrics rows; columns: the campaign table's columns;
+ * campaigns: lines taken out or added by name (the rest are the biggest spenders).
+ */
+export type ReportLayout = { tiles?: MetricKey[]; table?: MetricKey[]; columns?: MetricKey[]; campaigns?: { hide?: string[]; add?: string[] } };
+
+type Nums = { spend: number; results: number; costPerResult: number | null; revenue?: number; roas: number | null; ctr: number | null; clicks?: number; cpc?: number | null; cpm?: number | null; impressions?: number };
+
+export function metricLabel(m: Pick<ReportMetrics, "conversion">, k: MetricKey, short = false) {
+  const one = singular(m.conversion);
+  return { spend: "Spend", results: m.conversion, cost_per_result: short ? `Per ${one}` : `Cost per ${one}`, revenue: "Revenue", roas: "ROAS", ctr: short ? "CTR" : "Click-through rate", clicks: "Link clicks", cpc: "CPC", cpm: "CPM", impressions: "Impressions" }[k];
+}
+
+const BETTER: Record<MetricKey, "up" | "down" | "none"> = { spend: "none", results: "up", cost_per_result: "down", revenue: "up", roas: "up", ctr: "up", clicks: "up", cpc: "down", cpm: "down", impressions: "up" };
+
+export function metricNumber(p: Nums, k: MetricKey): number | null {
+  const v = { spend: p.spend, results: p.results, cost_per_result: p.costPerResult, revenue: p.revenue ?? null, roas: p.roas, ctr: p.ctr, clicks: p.clicks ?? null, cpc: p.cpc ?? null, cpm: p.cpm ?? null, impressions: p.impressions ?? null }[k];
+  return v == null || !Number.isFinite(v) ? null : v;
+}
+
+export function metricText(p: Nums, k: MetricKey) {
+  const n = metricNumber(p, k);
+  if (["spend", "cost_per_result", "revenue", "cpc", "cpm"].includes(k)) return money(n);
+  if (k === "roas") return multiple(n);
+  if (k === "ctr") return percent(n);
+  return count(n);
+}
+
+/** The tiles a report shows now: the buyer's choice, else what it shows by default (weekly and built: headline; monthly: conversions) */
+export function tileKeys(m: ReportMetrics, layout: ReportLayout | null | undefined, monthly: boolean): MetricKey[] {
+  if (layout?.tiles?.length) return layout.tiles;
+  return monthly ? ["results", "cost_per_result", ...(hasRevenue(m) ? (["revenue", "roas"] as const) : (["spend"] as const))] : ["spend", "results", "ctr", hasRevenue(m) ? "roas" : "cost_per_result"];
+}
+
+export function tilesFor(m: ReportMetrics, keys: MetricKey[], main: Period = m.main, compare: Period = m.compare): Tile[] {
+  return keys.map((k) => {
+    const sub =
+      k === "results" && main.costPerResult != null ? `${money(main.costPerResult)} per ${singular(m.conversion)}` : k === "ctr" && main.clicks ? `${count(main.clicks)} link clicks` : k === "roas" && main.revenue ? `${money(main.revenue)} revenue` : k === "cost_per_result" && m.target != null && !m.roasKpi ? `Target ${money(m.target)}` : `${metricText(compare, k)} in ${compare.label}`;
+    return { label: metricLabel(m, k), value: metricText(main, k), sub, delta: delta(metricNumber(main, k), metricNumber(compare, k), BETTER[k]), now: metricNumber(main, k), before: metricNumber(compare, k) };
+  });
+}
+
+export const TABLE_DEFAULT: MetricKey[] = ["spend", "ctr", "cpc", "cpm", "results", "cost_per_result", "roas"];
+
+/** The key metrics rows for the chosen metrics, with the target where the KPI has one */
+export function rowsFor(m: ReportMetrics, keys: MetricKey[]): KpiRow[] {
+  return keys.map((k) => ({
+    label: metricLabel(m, k, true).replace(/^Per /, "Cost per "),
+    now: metricText(m.main, k),
+    before: metricText(m.compare, k),
+    delta: delta(metricNumber(m.main, k), metricNumber(m.compare, k), BETTER[k]),
+    target: k === "spend" && m.monthlyBudget != null ? `${money(m.monthlyBudget)} budget` : k === "cost_per_result" && m.target != null && !m.roasKpi ? money(m.target) : k === "roas" && m.target != null && m.roasKpi ? multiple(m.target) : "–",
+  }));
+}
+
+/** The campaign table's columns: the buyer's choice, else spend, results, their cost, and ROAS when any has revenue */
+export function columnKeys(m: ReportMetrics, layout: ReportLayout | null | undefined): MetricKey[] {
+  if (layout?.columns?.length) return layout.columns;
+  return ["spend", "results", "cost_per_result", ...(m.campaigns.some((c) => c.roas != null) ? (["roas"] as const) : [])];
+}
+
+/** The campaign lines a report shows: the biggest spenders (minus any taken out) and any added, by spend */
+export function campaignLines(m: ReportMetrics, layout: ReportLayout | null | undefined, limit: number) {
+  const hide = new Set(layout?.campaigns?.hide ?? []);
+  const add = new Set(layout?.campaigns?.add ?? []);
+  const top = m.campaigns.filter((c) => !hide.has(c.name)).slice(0, limit);
+  const extra = m.campaigns.filter((c) => add.has(c.name) && !hide.has(c.name) && !top.includes(c));
+  return [...top, ...extra].sort((a, b) => b.spend - a.spend);
+}

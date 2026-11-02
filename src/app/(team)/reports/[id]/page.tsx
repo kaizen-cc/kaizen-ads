@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import type { ReportLayout } from "@/lib/reports/format";
+import { layoutOf } from "@/lib/reports/share";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { requireStaff } from "@/lib/auth";
@@ -24,7 +26,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
   const db = await createClient();
   const { data: r } = await db
     .from("reports")
-    .select("id, kind, platform, status, period_start, period_end, owner_id, viewed_at, bundle_id, message, sections, metrics, extra_metrics, extras, qa, chat, error, posted_at, clients(name, slug, slack_channel_id), profiles!reports_owner_id_fkey(full_name), kpi_targets(id, client_id, platform, owner_id)")
+    .select("id, kind, platform, status, period_start, period_end, owner_id, viewed_at, bundle_id, message, sections, metrics, extra_metrics, extras, layout, qa, chat, error, posted_at, clients(name, slug, slack_channel_id), profiles!reports_owner_id_fkey(full_name), kpi_targets(id, client_id, platform, owner_id, report_layout)")
     .eq("id", id)
     .maybeSingle();
   if (!r) notFound();
@@ -71,6 +73,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           metrics,
           extraMetrics: (r.extra_metrics as ReportMetrics[] | null) ?? null,
           extras: r.extras ?? "",
+          layout: layoutOf({ status: r.status, layout: r.layout as ReportLayout | null, kpi_targets: r.kpi_targets as unknown as { report_layout: ReportLayout | null } | null }),
           qa: (r.qa as Qa | null) ?? null,
           chat: (r.chat ?? []) as ChatTurn[],
           error: r.error,

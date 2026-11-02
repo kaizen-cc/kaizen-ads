@@ -6,10 +6,10 @@ import { SlackConnect } from "@/components/slack-connect";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { Layer } from "../clients/[slug]/layer";
 import { PdfPreview, type PdfField } from "./pdf-preview";
-import { platformName } from "@/lib/reports/format";
+import { METRIC_KEYS, columnKeys, metricLabel, platformName, TABLE_DEFAULT, tileKeys, type MetricKey, type ReportLayout } from "@/lib/reports/format";
 import type { ReportMetrics } from "@/lib/reports/metrics";
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
-import { approveBuiltMessage, approveMyPart, builtMessage, checkAgain, redraft, reviseWithAi, saveReport, sendReport, skipReport } from "./actions";
+import { approveBuiltMessage, approveMyPart, builtMessage, checkAgain, redraft, reviseWithAi, saveLayout, saveReport, sendReport, skipReport } from "./actions";
 
 // One report, start to finish, in three steps: the report (a live preview of the document: click any line to change
 // it, or ask the AI on the side and watch it change), then the Slack message (shown as it will look in the client's
@@ -27,6 +27,8 @@ export type StudioReport = {
   metrics: ReportMetrics | null;
   extraMetrics: ReportMetrics[] | null;
   extras: string;
+  /** The metrics the buyer chose (or this client's layout from the last report); null: the defaults */
+  layout: ReportLayout | null;
   qa: Qa | null;
   chat: ChatTurn[];
   error: string | null;
@@ -149,6 +151,18 @@ export function ReportStudio({
   // Bumped each time a change is saved, so the PDF preview draws the saved version
   const [rev, setRev] = useState(0);
   const [adding, setAdding] = useState<{ key: "did" | "doing" | "next" | "extras"; text: string } | null>(null);
+  // The metrics the buyer chose: saved on the report and as this client's layout for the next one
+  const [layout, setLayoutState] = useState<ReportLayout | null>(report.layout);
+  const [addingMetric, setAddingMetric] = useState<"tiles" | "table" | "columns" | "campaign" | null>(null);
+  const setLayout = (next: ReportLayout) => {
+    setLayoutState(next);
+    start(async () => {
+      const r = await saveLayout(report.id, next);
+      if (!r.ok) setNote({ ok: false, text: r.error });
+      else setNote({ ok: true, text: `Saved as ${client.name}'s layout: their next report starts this way.` });
+      setRev((n) => n + 1);
+    });
+  };
   const initial: "report" | "message" | "done" = sent ? "done" : built && mineDone && bundle?.isBuilder ? "message" : "report";
   // The step is in the address (?step=), so back from the Slack message returns to the report. Once it's sent, it's
   // sent: every entry shows that.
@@ -357,11 +371,139 @@ export function ReportStudio({
                   const [k, n] = id.split(".") as ["did" | "doing" | "next", string];
                   setSections({ ...sections, [k]: v ? sections[k].map((y, j) => (j === Number(n) ? v : y)) : sections[k].filter((_, j) => j !== Number(n)) });
                 };
+                // The metrics on the page now, as the PDF draws them
+                const m = report.metrics;
+                const monthlyTiles = report.kind === "monthly";
+                const tiles = m ? tileKeys(m, layout, monthlyTiles) : [];
+                const table = layout?.table?.length ? layout.table : TABLE_DEFAULT;
+                const columns = m ? columnKeys(m, layout) : [];
+                const hasTable = report.kind !== "weekly";
+                const limit = report.kind === "weekly" ? 6 : 8;
+                const hide = layout?.campaigns?.hide ?? [];
+                const add = layout?.campaigns?.add ?? [];
+                const shownCampaigns = m ? m.campaigns.filter((c) => !hide.includes(c.name)).slice(0, limit).map((c) => c.name) : [];
+                const offPage = m ? m.campaigns.filter((c) => !shownCampaigns.includes(c.name) && !add.includes(c.name)) : [];
+                const list = { tiles, table, columns };
+                const swap = (where: "tiles" | "table" | "columns", i: number, k: MetricKey | null) => {
+                  const now = [...list[where]];
+                  if (k) now[i] = k;
+                  else now.splice(i, 1);
+                  setLayout({ ...layout, [where]: now });
+                };
+                const picker = (where: "tiles" | "table" | "columns", current: MetricKey | null, choose: (k: MetricKey) => void) =>
+                  m && (
+                    <div className="grid gap-1">
+                      {METRIC_KEYS.filter((k) => k === current || !list[where].includes(k)).map((k) => (
+                        <button key={k} type="button" onClick={() => choose(k)} className={`flex h-10 items-center justify-between rounded-[10px] px-3 text-left text-[13.5px] hover:bg-surface-2 ${k === current ? "bg-surface-2 text-fg" : "text-muted"}`}>
+                          {metricLabel(m, k)}
+                          {k === current && <span className="text-[11px] text-faint">Now</span>}
+                        </button>
+                      ))}
+                    </div>
+                  );
+                const hotMenu = (target: string, close: () => void) => {
+                  const [platform, kind, ...rest] = target.split("/");
+                  if (!m) return null;
+                  if (platform !== report.platform) return <p className="text-[13px] text-muted">This part is the other buyer&rsquo;s: they change it from their report.</p>;
+                  const title = (t: string) => <p className="px-1 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-faint">{t}</p>;
+                  if (kind === "tile" || kind === "row" || kind === "col") {
+                    const where = kind === "tile" ? "tiles" : kind === "row" ? "table" : "columns";
+                    const i = Number(rest[0]);
+                    const current = list[where][i] ?? null;
+                    return (
+                      <>
+                        {title(kind === "tile" ? "Show in this tile" : kind === "row" ? "Show in this row" : "Show in this column")}
+                        {picker(where, current, (k) => {
+                          swap(where, i, k);
+                          close();
+                        })}
+                        {list[where].length > 1 && (
+                          <button type="button" onClick={() => (swap(where, i, null), close())} className="h-10 rounded-[10px] px-3 text-left text-[13px] text-bad hover:bg-bad-soft/40">
+                            Remove this {kind === "tile" ? "tile" : kind === "row" ? "row" : "column"}
+                          </button>
+                        )}
+                      </>
+                    );
+                  }
+                  // A campaign line
+                  const name = decodeURIComponent(rest.join("/") || kind);
+                  const c = m.campaigns.find((x) => x.name === name);
+                  return (
+                    <>
+                      {title("Campaign")}
+                      <p className="px-1 text-[13.5px] leading-snug">{name}</p>
+                      {c?.result && <p className="px-1 text-[12px] text-muted">Optimized for {c.result.toLowerCase()}: its results count that, as on the KPI board.</p>}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLayout({ ...layout, campaigns: { hide: [...new Set([...hide, name])], add: add.filter((x) => x !== name) } });
+                          close();
+                        }}
+                        className="h-10 rounded-[10px] px-3 text-left text-[13px] text-bad hover:bg-bad-soft/40"
+                      >
+                        Take it out of the report
+                      </button>
+                    </>
+                  );
+                };
                 return (
                   <div className="grid gap-3">
-                    {editable && (
+                    {editable && m && (
                       <div className="grid gap-2 rounded-[14px] border border-line bg-surface p-3">
                         <div className="flex flex-wrap items-center gap-1.5 text-[12.5px]">
+                          <span className="mr-1 text-faint">Metrics:</span>
+                          {([["tiles", "+ Tile"], ...(hasTable ? [["table", "+ Key metric row"]] : []), ["columns", "+ Campaign column"], ["campaign", "+ Campaign"]] as ["tiles" | "table" | "columns" | "campaign", string][]).map(([k, label]) => (
+                            <button key={k} type="button" onClick={() => setAddingMetric(addingMetric === k ? null : k)} className={`h-9 rounded-full border px-3 max-md:h-10 ${addingMetric === k ? "border-fg text-fg" : "border-line text-muted hover:text-fg"}`}>
+                              {label}
+                            </button>
+                          ))}
+                          {layout && (
+                            <button type="button" onClick={() => setLayout({})} className="h-9 rounded-full px-3 text-faint hover:text-fg max-md:h-10">
+                              Back to the default
+                            </button>
+                          )}
+                        </div>
+                        {addingMetric && addingMetric !== "campaign" && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {METRIC_KEYS.filter((k) => !list[addingMetric].includes(k)).map((k) => (
+                              <button
+                                key={k}
+                                type="button"
+                                onClick={() => {
+                                  setLayout({ ...layout, [addingMetric]: [...list[addingMetric], k].slice(0, addingMetric === "tiles" ? 6 : 10) });
+                                  setAddingMetric(null);
+                                }}
+                                className="h-9 rounded-full bg-surface-2 px-3 text-[12.5px] hover:text-fg max-md:h-10"
+                              >
+                                {metricLabel(m, k)}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {addingMetric === "campaign" &&
+                          (offPage.length ? (
+                            <div className="grid max-h-56 gap-1 overflow-y-auto">
+                              {offPage.map((c) => (
+                                <button
+                                  key={c.name}
+                                  type="button"
+                                  onClick={() => {
+                                    setLayout({ ...layout, campaigns: { hide: hide.filter((x) => x !== c.name), add: [...add, c.name] } });
+                                    setAddingMetric(null);
+                                  }}
+                                  className="flex min-h-10 items-center justify-between gap-3 rounded-[10px] px-3 text-left text-[13px] hover:bg-surface-2"
+                                >
+                                  <span className="min-w-0 truncate">{c.name}</span>
+                                  <span className="tabular shrink-0 text-[12px] text-faint">
+                                    ${Math.round(c.spend).toLocaleString("en-US")} · {c.results} {c.result?.toLowerCase() ?? "results"}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-[12.5px] text-faint">Every campaign that spent in the period is already in the report.</p>
+                          ))}
+                        <div className="flex flex-wrap items-center gap-1.5 border-t border-line pt-2 text-[12.5px]">
                           <span className="mr-1 text-faint">Add:</span>
                           {[...LISTS, ["extras", extras.trim() ? "To the note" : "A note (CRM sales, other channels)"] as const].map(([k, label]) => (
                             <button key={k} type="button" onClick={() => setAdding({ key: k, text: "" })} className={`h-9 rounded-full border px-3 max-md:h-10 ${adding?.key === k ? "border-fg text-fg" : "border-line text-muted hover:text-fg"}`}>
@@ -392,12 +534,13 @@ ${t}` : t);
                       </div>
                     )}
                     <PdfPreview
-                      url={`/api/reports/${report.id}/pdf${joint ? "?whole=1" : ""}`}
+                      url={`/api/reports/${report.id}/pdf?edit=1${joint ? "&whole=1" : ""}`}
                       version={`${rev}:${report.status}:${JSON.stringify(report.sections)}`}
                       fields={fields}
                       editable={editable}
                       onSave={(id, v) => save(id, v)}
                       onRemove={(id) => save(id, null)}
+                      hotMenu={hotMenu}
                     />
                   </div>
                 );

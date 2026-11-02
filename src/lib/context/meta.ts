@@ -818,21 +818,41 @@ export async function adPreviews(adIds: string[]) {
     title?: string;
     thumbnail_url?: string;
     image_url?: string;
-    object_story_spec?: { link_data?: { picture?: string; name?: string }; video_data?: { image_url?: string; title?: string } };
+    object_story_spec?: { link_data?: { picture?: string; name?: string }; video_data?: { image_url?: string; title?: string; video_id?: string } };
+    effective_object_story_id?: string;
     asset_feed_spec?: { videos?: { thumbnail_url?: string }[]; images?: { url?: string }[]; titles?: { text: string }[] };
   };
-  const out = new Map<string, { link: string | null; image: string | null; headline: string | null }>();
+  // images: every picture worth trying, best first (a video's first frame is often black, so its chosen thumbnail and
+  // the post's picture come next)
+  const out = new Map<string, { link: string | null; image: string | null; images: string[]; headline: string | null }>();
   const ids = adIds.slice(0, 20);
   if (!ids.length) return out;
-  const fields = "creative.thumbnail_width(600).thumbnail_height(600){title,thumbnail_url,image_url,object_story_spec,asset_feed_spec}";
+  const fields = "creative.thumbnail_width(600).thumbnail_height(600){title,thumbnail_url,image_url,object_story_spec,asset_feed_spec,effective_object_story_id}";
   const [creatives, links] = await Promise.all([
     Promise.allSettled(ids.map((id) => graph<{ creative?: C }>(id, { fields }))),
     Promise.allSettled(ids.map((id) => graph<{ preview_shareable_link?: string }>(id, { fields: "preview_shareable_link" }))),
   ]);
   const failed = creatives.filter((r) => r.status === "rejected").length;
   if (failed) console.error(`[meta] adPreviews: ${failed} of ${ids.length} creatives couldn't be read`, (creatives.find((r) => r.status === "rejected") as PromiseRejectedResult | undefined)?.reason);
+  const read = ids.map((_, i) => (creatives[i].status === "fulfilled" ? (creatives[i] as PromiseFulfilledResult<{ creative?: C }>).value.creative : undefined));
+  // A video's thumbnails (the one chosen for it first) and the post's own picture, for ads whose image is a video frame
+  const more = await Promise.all(
+    read.map(async (c) => {
+      const extra: string[] = [];
+      const video = c?.object_story_spec?.video_data?.video_id;
+      if (video) {
+        const t = await graph<{ data?: { uri?: string; is_preferred?: boolean }[] }>(`${video}/thumbnails`, {}).catch(() => null);
+        extra.push(...(t?.data ?? []).sort((a, b) => Number(Boolean(b.is_preferred)) - Number(Boolean(a.is_preferred))).map((x) => x.uri).filter((u): u is string => Boolean(u)).slice(0, 3));
+      }
+      if (c?.effective_object_story_id && (video || !c.image_url)) {
+        const post = await graph<{ full_picture?: string }>(c.effective_object_story_id, { fields: "full_picture" }).catch(() => null);
+        if (post?.full_picture) extra.push(post.full_picture);
+      }
+      return extra;
+    }),
+  );
   ids.forEach((id, i) => {
-    const c = creatives[i].status === "fulfilled" ? (creatives[i] as PromiseFulfilledResult<{ creative?: C }>).value.creative : undefined;
+    const c = read[i];
     const link = links[i].status === "fulfilled" ? ((links[i] as PromiseFulfilledResult<{ preview_shareable_link?: string }>).value.preview_shareable_link ?? null) : null;
     // The picture by ad type: an image ad's full image, a link ad's picture, a video's poster, a dynamic ad's first asset
     const image =
@@ -844,7 +864,8 @@ export async function adPreviews(adIds: string[]) {
       c?.thumbnail_url ??
       null;
     const headline = c?.title ?? c?.object_story_spec?.link_data?.name ?? c?.object_story_spec?.video_data?.title ?? c?.asset_feed_spec?.titles?.[0]?.text ?? null;
-    if (c || link) out.set(id, { link, image, headline });
+    const images = [...new Set([image, ...more[i], c?.thumbnail_url].filter((u): u is string => Boolean(u)))];
+    if (c || link) out.set(id, { link, image, images, headline });
   });
   return out;
 }

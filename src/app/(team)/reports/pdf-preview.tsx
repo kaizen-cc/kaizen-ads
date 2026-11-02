@@ -8,7 +8,11 @@ import { useEffect, useMemo, useState } from "react";
 
 export type PdfField = { id: string; label: string; value: string; removable?: boolean };
 type Span = { left: number; top: number; width: number; height: number; text: string };
-type Page = { src: string; ratio: number; spans: Span[] };
+type Box = { left: number; top: number; width: number; height: number; url: string };
+type Page = { src: string; ratio: number; spans: Span[]; links: Box[] };
+
+/** The invisible links the studio's PDF puts over each metric, row and column the buyer can change */
+const EDIT_HOST = "https://edit.kaizen.invalid/";
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 const RENDER_WIDTH = 1600; // pixels per page: sharp on a retina screen at the studio's width
@@ -22,7 +26,25 @@ function fieldOf(text: string, fields: { id: string; n: string }[]) {
   return hits.sort((a, b) => a.n.length - b.n.length)[0].id;
 }
 
-export function PdfPreview({ url, version, fields, editable, onSave, onRemove }: { url: string; version: string; fields: PdfField[]; editable: boolean; onSave: (id: string, value: string) => void; onRemove: (id: string) => void }) {
+export function PdfPreview({
+  url,
+  version,
+  fields,
+  editable,
+  onSave,
+  onRemove,
+  hotMenu,
+}: {
+  url: string;
+  version: string;
+  fields: PdfField[];
+  editable: boolean;
+  onSave: (id: string, value: string) => void;
+  onRemove: (id: string) => void;
+  /** The menu for a metric, row, column or campaign clicked on the page ("meta/tile/2"); close() shuts it */
+  hotMenu?: (target: string, close: () => void) => React.ReactNode;
+}) {
+  const [hot, setHot] = useState<{ target: string; page: number; x: number; y: number } | null>(null);
   const [pages, setPages] = useState<Page[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState<string | null>(null);
@@ -63,7 +85,18 @@ export function PdfPreview({ url, version, fields, editable, onSave, onRemove }:
             const h = Math.hypot(tx[2], tx[3]);
             spans.push({ left: tx[4] / base.width, top: (tx[5] - h) / base.height, width: item.width / base.width, height: (h * 1.25) / base.height, text: item.str });
           }
-          out.push({ src: blob ? URL.createObjectURL(blob) : canvas.toDataURL(), ratio: base.height / base.width, spans });
+          // The links on the page: "View ad" opens the ad; the edit ones open a menu
+          const links: Box[] = [];
+          for (const a of (await page.getAnnotations()) as { subtype?: string; url?: string; unsafeUrl?: string; rect?: number[] }[]) {
+            const href = a.url ?? a.unsafeUrl;
+            if (a.subtype !== "Link" || !href || !a.rect) continue;
+            const [m0, m1, m2, m3, m4, m5] = base.transform as number[];
+            const at = (x: number, y: number) => [m0 * x + m2 * y + m4, m1 * x + m3 * y + m5];
+            const [x1, y1] = at(a.rect[0], a.rect[1]);
+            const [x2, y2] = at(a.rect[2], a.rect[3]);
+            links.push({ left: Math.min(x1, x2) / base.width, top: Math.min(y1, y2) / base.height, width: Math.abs(x2 - x1) / base.width, height: Math.abs(y2 - y1) / base.height, url: href });
+          }
+          out.push({ src: blob ? URL.createObjectURL(blob) : canvas.toDataURL(), ratio: base.height / base.width, spans, links });
         }
         await task.destroy();
         if (!live) return out.forEach((p) => URL.revokeObjectURL(p.src));
@@ -103,6 +136,34 @@ export function PdfPreview({ url, version, fields, editable, onSave, onRemove }:
         <div key={p.src} className="relative overflow-hidden rounded-[4px] bg-white shadow-[0_30px_80px_-30px_rgba(0,0,0,0.7)]" style={{ aspectRatio: `1 / ${p.ratio}` }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={p.src} alt={`Page ${i + 1}`} className="absolute inset-0 h-full w-full select-none" draggable={false} />
+          {p.links.map((l, j) => {
+            const style = { left: `${l.left * 100}%`, top: `${l.top * 100}%`, width: `${l.width * 100}%`, height: `${l.height * 100}%` };
+            if (!l.url.startsWith(EDIT_HOST))
+              return <a key={`l${j}`} href={l.url} target="_blank" rel="noreferrer" aria-label="Open the link" className="absolute z-[1] rounded-[2px] hover:bg-[#c8102e]/10" style={style} />;
+            if (!editable || !hotMenu) return null;
+            const target = l.url.slice(EDIT_HOST.length);
+            return (
+              <button
+                key={`l${j}`}
+                type="button"
+                aria-label="Change this"
+                onClick={() => setHot({ target, page: i, x: l.left, y: l.top + l.height })}
+                className={`absolute z-[1] rounded-[4px] ring-[#c8102e]/50 transition-shadow hover:bg-[#c8102e]/[0.04] hover:ring-1 ${hot?.target === target && hot.page === i ? "bg-[#c8102e]/[0.06] ring-2" : ""}`}
+                style={style}
+              />
+            );
+          })}
+          {hot && hot.page === i && hotMenu && (
+            <>
+              <button type="button" aria-label="Close" onClick={() => setHot(null)} className="fixed inset-0 z-40 cursor-default bg-black/10 md:bg-transparent" />
+              <div
+                className="z-50 grid max-h-[60vh] gap-2 overflow-y-auto rounded-[14px] border border-line bg-surface p-3 text-fg shadow-[0_24px_60px_-20px_rgba(0,0,0,0.6)] max-md:fixed max-md:inset-x-3 max-md:bottom-[calc(0.75rem+env(safe-area-inset-bottom))] md:absolute md:w-[300px]"
+                style={{ left: `min(${hot.x * 100}%, calc(100% - 312px))`, top: `${hot.y * 100}%` }}
+              >
+                {hotMenu(hot.target, () => setHot(null))}
+              </div>
+            </>
+          )}
           {editable &&
             p.spans.map((s, j) => {
               const id = owner[i]?.[j];

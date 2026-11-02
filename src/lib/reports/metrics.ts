@@ -28,7 +28,8 @@ export type Period = {
   roas: number | null;
 };
 
-export type CampaignLine = { name: string; spend: number; results: number; costPerResult: number | null; roas: number | null; ctr: number | null };
+/** result: what this campaign is optimized for ("Purchase", "Post engagement"), counted the way the KPI board counts it */
+export type CampaignLine = { name: string; spend: number; results: number; costPerResult: number | null; roas: number | null; ctr: number | null; id?: string; result?: string | null; impressions?: number; clicks?: number; cpc?: number | null; cpm?: number | null; revenue?: number };
 export type TopAd = { id: string; name: string; campaign: string | null; spend: number; results: number; costPerResult: number | null; ctr: number | null; clicks: number; link: string | null; image: string | null };
 
 export type ReportMetrics = {
@@ -170,11 +171,14 @@ export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "wee
 
   // What each campaign is optimized for, read from the ad account (Meta). Reports count those, unless it's a ROAS KPI
   let goals: Map<string, string[]> | undefined;
+  // Every campaign's own optimization, reach and engagement included (for its line in the campaign table)
+  let own: Map<string, string[]> | undefined;
   let labels = new Map<string, string>();
   if (platform === "meta" && !kpiConv.roas && t.ad_account_id) {
     const account = String(t.ad_account_id).replace(/^act_/, "");
     const [read, { data: named }] = await Promise.all([goalsFor(admin, account, platform, t.campaign_results), admin.from("campaign_goals").select("campaign_id, label").eq("ad_account_id", account)]);
     labels = new Map((named ?? []).map((g) => [String(g.campaign_id), String(g.label ?? "")]));
+    own = read;
     const spent = new Set(all.filter((r) => r.date >= ps.main.start && r.date <= ps.main.end && Number(r.spend) > 0).map((r) => String(r.campaign_id)));
     const isResult = (types: string[]) => types.some((x) => !NOT_A_RESULT.test(x));
     // Campaigns run for reach or engagement don't count as results, when others in the period run for a real one
@@ -210,17 +214,20 @@ export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "wee
   const lead = goalLines[0];
   const resultName = useGoals ? (lead && goalSpend && lead.spend / goalSpend >= 0.6 && lead.label !== "Result" ? pluralOf(lead.label) : "Results") : conversionLabel(t.conversion, t.custom_action);
 
-  // Campaigns in the main period, biggest spend first
+  // Campaigns in the main period, biggest spend first: every one with spend, so the buyer can add any to the report.
+  // Each counts what it's optimized for (an engagement campaign its engagements), as on the KPI board.
   const byCampaign = new Map<string, Row[]>();
   for (const r of all) if (r.date >= ps.main.start && r.date <= ps.main.end) byCampaign.set(r.campaign_name ?? r.campaign_id, [...(byCampaign.get(r.campaign_name ?? r.campaign_id) ?? []), r]);
   const campaigns: CampaignLine[] = [...byCampaign.entries()]
     .map(([name, rows]) => {
-      const p = period(rows, toDays(rows, null, null, useGoals ? (goals ?? new Map()) : undefined, platform), ps.main, conv, type);
-      return { name, spend: p.spend, results: p.results, costPerResult: p.costPerResult, roas: p.roas, ctr: p.ctr };
+      const id = String(rows[0].campaign_id);
+      const mine = own?.get(id);
+      const p = mine?.length ? period(rows, toDays(rows, null, null, new Map([[id, mine]]), platform), ps.main, conversionFor("campaign_goal"), "campaign_goal") : period(rows, toDays(rows, null, null, useGoals ? (goals ?? new Map()) : undefined, platform), ps.main, conv, type);
+      return { name, id, result: labels.get(id) || null, spend: p.spend, results: p.results, costPerResult: p.costPerResult, roas: p.roas, ctr: p.ctr, impressions: p.impressions, clicks: p.clicks, cpc: p.cpc, cpm: p.cpm, revenue: p.revenue };
     })
     .filter((c) => c.spend > 0)
     .sort((a, b) => b.spend - a.spend)
-    .slice(0, 10);
+    .slice(0, 40);
 
   // Top ads (Meta): the most results in the period, then the cheapest; with a preview link and image
   let topAds: TopAd[] = [];
@@ -294,7 +301,7 @@ export function metricsText(m: ReportMetrics) {
     ...(m.mtd ? [line(m.mtd)] : []),
     ...(m.mtdCompare ? [line(m.mtdCompare)] : []),
     "Campaigns (main period, by spend):",
-    ...m.campaigns.map((c) => `- ${c.name}: ${money(c.spend)}, ${c.results} results, ${money(c.costPerResult)} each${c.roas ? `, ROAS ${c.roas}` : ""}, CTR ${c.ctr ?? "—"}%`),
+    ...m.campaigns.slice(0, 15).map((c) => `- ${c.name}: ${money(c.spend)}, ${c.results} ${c.result ? `${c.result.toLowerCase()} (what it's optimized for)` : "results"}, ${money(c.costPerResult)} each${c.roas ? `, ROAS ${c.roas}` : ""}, CTR ${c.ctr ?? "—"}%`),
     ...(m.topAds.length ? ["Top ads (main period):", ...m.topAds.map((a, i) => `${i + 1}. ${a.name} (${a.campaign ?? "?"}): ${a.results} results at ${money(a.costPerResult)}, ${money(a.spend)} spent, ${a.clicks} link clicks, CTR ${a.ctr ?? "—"}%${a.link ? `, preview ${a.link}` : ""}`)] : []),
     ...(m.goals && m.goals.length > 1 ? ["Results by what the campaigns are optimized for (main period):", ...m.goals.map((g) => `- ${g.label}: ${g.results} at ${money(g.costPerResult)} each, ${money(g.spend)} spent`)] : m.goals?.length ? [`The campaigns are optimized for: ${m.goals[0].label}.`] : []),
     ...(m.gaps.length ? [`Days with no data in the main period: ${m.gaps.join(", ")}`] : []),

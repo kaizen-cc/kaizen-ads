@@ -7,6 +7,8 @@ import { postAsApp, postAsUser } from "@/lib/slack-user";
 import { canReportOn } from "./access";
 import { renderReportPdf, type ReportPart } from "./pdf";
 import type { ReportMetrics } from "./metrics";
+import type { ReportLayout } from "./format";
+import { layoutOf } from "./share";
 import { draftReport, type Sections } from "./write";
 
 // The report builder. Someone builds a report for a client: one or more date ranges (the last 7 days AND the month,
@@ -117,12 +119,12 @@ export async function draftParts(admin: SupabaseClient, ids: string[]) {
   await Promise.all(ids.map((id) => draftReport(admin, id)));
 }
 
-type Part = { id: string; platform: string; status: string; owner_id: string | null; message: string | null; sections: Sections | null; metrics: ReportMetrics | null; extra_metrics: ReportMetrics[] | null; extras: string | null; profiles: { full_name: string } | null };
+type Part = { id: string; platform: string; status: string; owner_id: string | null; message: string | null; sections: Sections | null; metrics: ReportMetrics | null; extra_metrics: ReportMetrics[] | null; extras: string | null; layout: ReportLayout | null; kpi_targets: { report_layout: ReportLayout | null } | null; profiles: { full_name: string } | null };
 
 async function loadParts(admin: SupabaseClient, bundleId: string) {
   const [{ data: b }, { data: parts }] = await Promise.all([
     admin.from("report_bundles").select("id, token, client_id, status, ranges, created_by, message, message_approved_at, clients(name, slack_channel_id)").eq("id", bundleId).single(),
-    admin.from("reports").select("id, platform, status, owner_id, message, sections, metrics, extra_metrics, extras, profiles!reports_owner_id_fkey(full_name)").eq("bundle_id", bundleId).neq("status", "skipped"),
+    admin.from("reports").select("id, platform, status, owner_id, message, sections, metrics, extra_metrics, extras, layout, kpi_targets(report_layout), profiles!reports_owner_id_fkey(full_name)").eq("bundle_id", bundleId).neq("status", "skipped"),
   ]);
   if (!b) throw new Error("Report not found");
   const sorted = ((parts ?? []) as unknown as Part[]).sort((a, c) => (a.platform === "meta" ? 0 : 1) - (c.platform === "meta" ? 0 : 1));
@@ -190,13 +192,14 @@ export async function approveMessage(admin: SupabaseClient, bundleId: string, by
 }
 
 /** The whole report as one PDF (a cover, the whole account when there's more than one service, then each). */
-export async function builtPdf(admin: SupabaseClient, bundleId: string) {
+export async function builtPdf(admin: SupabaseClient, bundleId: string, edit = false) {
   const { parts, client, ranges } = await loadParts(admin, bundleId);
   return renderReportPdf({
     client: client.name,
     kind: "built",
     periodLabel: rangesLabel(ranges),
-    parts: parts.filter((p) => p.metrics && p.sections).map((p): ReportPart => ({ platform: p.platform === "google" ? "google" : "meta", buyer: p.profiles?.full_name ?? null, metrics: p.metrics!, sections: p.sections!, extras: p.extras, extra: p.extra_metrics })),
+    parts: parts.filter((p) => p.metrics && p.sections).map((p): ReportPart => ({ platform: p.platform === "google" ? "google" : "meta", buyer: p.profiles?.full_name ?? null, metrics: p.metrics!, sections: p.sections!, extras: p.extras, extra: p.extra_metrics, layout: layoutOf(p) })),
+    edit,
   });
 }
 
