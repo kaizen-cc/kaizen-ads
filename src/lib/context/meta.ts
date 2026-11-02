@@ -889,3 +889,17 @@ export async function campaignGoals(adAccountId: string) {
     customConversion: s.promoted_object?.custom_conversion_id ? { id: s.promoted_object.custom_conversion_id, name: names.get(s.promoted_object.custom_conversion_id) ?? null } : null,
   }));
 }
+
+/** Read only: one ad account's insights for any range, level and breakdown (the report chat's "pull it from Meta"). */
+export async function metaInsights(adAccountId: string, params: Record<string, string>, maxRows = 300) {
+  const act = adAccountId.startsWith("act_") ? adAccountId : `act_${adAccountId}`;
+  const rows: InsightRow[] = [];
+  let after = "";
+  for (let page = 0; page < 10 && rows.length < maxRows; page++) {
+    const r = await graph<{ data: InsightRow[]; paging?: { cursors?: { after?: string }; next?: string } }>(`${act}/insights`, { ...params, limit: "100", ...(after ? { after } : {}) });
+    rows.push(...r.data);
+    after = r.paging?.next ? (r.paging.cursors?.after ?? "") : "";
+    if (!after) break;
+  }
+  return rows.slice(0, maxRows);
+}

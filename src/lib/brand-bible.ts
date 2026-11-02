@@ -40,7 +40,7 @@ async function bibleSources(admin: SupabaseClient, clientId: string) {
     admin.from("kpi_targets").select("platform, conversion, custom_action, target, monthly_budget").eq("client_id", clientId).eq("active", true),
     admin.from("client_calls").select("id, source, title, occurred_at, url, notes").eq("client_id", clientId).order("occurred_at", { ascending: false }).limit(60),
     admin.from("call_mentions").select("call_id, summary, client_calls(id, source, title, occurred_at, url, notes)").eq("client_id", clientId).limit(80),
-    admin.from("context_items").select("source, occurred_at, author, title, body").eq("client_id", clientId).in("source", ["slack", "slack_internal", "gmail"]).order("occurred_at", { ascending: false }).limit(500),
+    admin.from("context_items").select("source, occurred_at, author, title, body").eq("client_id", clientId).in("source", ["slack_external", "slack_internal", "gmail", "call"]).order("occurred_at", { ascending: false }).limit(500),
     admin.from("designs").select("name, client_status, client_decided_at, requests(title, number)").eq("client_id", clientId).not("client_status", "is", null).order("client_decided_at", { ascending: false }).limit(60),
     admin.from("review_comments").select("body, created_at, author_name, requests(title, number)").eq("client_id", clientId).not("author_contact_id", "is", null).order("created_at", { ascending: false }).limit(120),
   ]);
@@ -76,7 +76,7 @@ async function bibleSources(admin: SupabaseClient, clientId: string) {
   let room = 70_000;
   const messages: string[] = [];
   for (const i of items ?? []) {
-    const line = `- ${day(i.occurred_at as string)} · ${i.source === "gmail" ? "Email" : i.source === "slack_internal" ? "Slack (internal)" : "Slack (with client)"}${i.author ? ` · ${i.author}` : ""}${i.title ? ` · "${i.title}"` : ""}: ${String(i.body ?? "").replace(/\s+/g, " ").slice(0, 700)}`;
+    const line = `- ${day(i.occurred_at as string)} · ${i.source === "gmail" ? "Email" : i.source === "call" ? "Call" : i.source === "slack_internal" ? "Slack (internal)" : "Slack (with client)"}${i.author ? ` · ${i.author}` : ""}${i.title ? ` · "${i.title}"` : ""}: ${String(i.body ?? "").replace(/\s+/g, " ").slice(0, 700)}`;
     if ((room -= line.length) < 0) break;
     messages.push(line);
   }

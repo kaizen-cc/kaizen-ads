@@ -280,6 +280,105 @@ export async function askJson<T>({
   }
 }
 
+/** A tool the AI can call while it works: what it does, what it takes, and the code that answers it (as text). */
+export type AiTool = { name: string; description: string; input_schema: Record<string, unknown>; run: (input: Record<string, unknown>) => Promise<unknown> };
+
+/**
+ * A structured call where the AI can first look things up with tools (the client's ad accounts, Motion, past reports),
+ * then answers in the schema. Each round's tool calls run here and their answers go back; it stops after maxRounds.
+ */
+export async function askJsonWithTools<T>({
+  agent,
+  label,
+  system,
+  prompt,
+  schema,
+  tools,
+  maxTokens = 16000,
+  maxRounds = 6,
+  onTool,
+}: {
+  agent: AgentKey;
+  label: string;
+  system: string;
+  prompt: string;
+  schema: Record<string, unknown>;
+  tools: AiTool[];
+  maxTokens?: number;
+  maxRounds?: number;
+  /** Told about each lookup as it happens (name and input), for "Pulled from Meta…" notes */
+  onTool?: (name: string, input: Record<string, unknown>, ok: boolean) => void;
+}): Promise<T> {
+  if (!tools.length) return askJson<T>({ agent, label, system, prompt, schema, maxTokens });
+  if (!aiEnabled()) throw new AiUnavailable("AI isn't connected yet.");
+  const cfg = await getAgent(agent);
+  const started = Date.now();
+  const run = { agent_key: agent, label, model: cfg.model, effort: cfg.effort };
+  const who = adminConfigured() ? actorNow() : Promise.resolve(AUTO);
+  const used = { input_tokens: 0, output_tokens: 0, cache_write_tokens: 0, cache_read_tokens: 0 };
+  const messages: Anthropic.MessageParam[] = [{ role: "user", content: prompt }];
+  const defs = tools.map(({ name, description, input_schema }) => ({ name, description, input_schema: input_schema as Anthropic.Tool.InputSchema }));
+  try {
+    for (let round = 0; ; round++) {
+      // The last round has no tools: whatever was found, it answers now
+      const last = round >= maxRounds;
+      const res = await anthropic().messages.create({
+        model: MODEL_IDS[cfg.model],
+        max_tokens: maxTokens,
+        system: cached(withAgent(system, cfg)),
+        output_config: { effort: cfg.effort, format: { type: "json_schema" as const, schema } },
+        ...(last ? {} : { tools: defs }),
+        messages,
+      });
+      const u = usageOf(res.usage);
+      used.input_tokens += u.input_tokens;
+      used.output_tokens += u.output_tokens;
+      used.cache_write_tokens += u.cache_write_tokens;
+      used.cache_read_tokens += u.cache_read_tokens;
+      if (res.stop_reason === "tool_use" && !last) {
+        messages.push({ role: "assistant", content: res.content });
+        const calls = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+        const results = await Promise.all(
+          calls.map(async (c) => {
+            const tool = tools.find((t) => t.name === c.name);
+            const input = (c.input ?? {}) as Record<string, unknown>;
+            try {
+              if (!tool) throw new Error(`No tool called ${c.name}.`);
+              const out = await tool.run(input);
+              onTool?.(c.name, input, true);
+              const text = typeof out === "string" ? out : JSON.stringify(out);
+              return { type: "tool_result" as const, tool_use_id: c.id, content: text.length > 40_000 ? `${text.slice(0, 40_000)}\n…(cut: ask for a narrower range or fewer fields)` : text };
+            } catch (e) {
+              onTool?.(c.name, input, false);
+              return { type: "tool_result" as const, tool_use_id: c.id, is_error: true, content: e instanceof Error ? e.message : String(e) };
+            }
+          }),
+        );
+        messages.push({ role: "user", content: results });
+        continue;
+      }
+      const ms = Date.now() - started;
+      const bad = res.stop_reason === "refusal" || res.stop_reason === "max_tokens";
+      console.log(`[ai] ${label} · ${res.model} · ${ms}ms · ${round + 1} rounds · ${used.input_tokens} in / ${used.output_tokens} out`);
+      logRun({ ...run, ms, ...used, ok: !bad, error: bad ? res.stop_reason : null }, who);
+      if (res.stop_reason === "refusal") throw new AiUnavailable("The AI couldn't help with this one.");
+      if (res.stop_reason === "max_tokens") throw new AiUnavailable("The AI ran out of room. Try again.");
+      const text = res.content.find((b): b is Anthropic.TextBlock => b.type === "text");
+      if (!text?.text) throw new AiUnavailable("The AI didn't answer. Try again.");
+      return JSON.parse(text.text) as T;
+    }
+  } catch (e) {
+    if (e instanceof AiUnavailable) throw e;
+    console.error("[ai] request failed:", e instanceof Error ? e.message : e);
+    logRun({ ...run, ms: Date.now() - started, ...used, ok: false, error: (e instanceof Error ? e.message : String(e)).slice(0, 300) }, who);
+    if (paused(e)) throw new AiPaused("The AI is busy or at Kaizen's usage limit. Try again in a moment.");
+    if (e instanceof Anthropic.AuthenticationError) throw new AiUnavailable("The AI key isn't valid.");
+    if (e instanceof Anthropic.BadRequestError) throw new AiUnavailable(`The AI rejected the request: ${apiMessage(e)}`);
+    if (e instanceof Anthropic.APIError) throw new AiUnavailable(`The AI had a problem (${e.status ?? "network"}). Try again.`);
+    throw new AiUnavailable("The AI had a problem. Try again.");
+  }
+}
+
 /**
  * Web research by an agent: searches and reads pages, then returns plain-text notes with sources.
  * Server tools can pause a long turn ("pause_turn"); the paused turn is sent back to continue.

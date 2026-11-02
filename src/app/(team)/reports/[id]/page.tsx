@@ -14,7 +14,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 
 export const metadata: Metadata = { title: "Report" };
 // Revising and checking a report, putting a joint message together and posting it with its PDF can take a minute
-export const maxDuration = 300;
+export const maxDuration = 800; // a chat change can look things up (the ad account, Motion, calls, Slack) before it rewrites
 
 export default async function ReportPage({ params }: PageProps<"/reports/[id]">) {
   const { id } = await params;

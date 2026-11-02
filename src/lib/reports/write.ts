@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { askJson, type AgentKey } from "@/lib/ai";
+import { askJson, askJsonWithTools, type AgentKey } from "@/lib/ai";
+import { reportTools, toolsLine, type Pulled } from "./tools";
 import { metricsText, reportMetrics, type ReportMetrics } from "./metrics";
 import { voiceOf, workDone } from "./work";
 import { diagnose, diagnosisText, opportunityFor } from "./diagnose";
@@ -13,7 +14,8 @@ import { diagnose, diagnosisText, opportunityFor } from "./diagnose";
 export type Sections = { headline: string; summary: string; did: string[]; doing: string[]; next: string[]; highlights: string[] };
 export type QaFlag = { severity: "fix" | "check" | "alert"; issue: string; where: string; suggestion: string };
 export type Qa = { verdict: "clean" | "check" | "fix"; flags: QaFlag[]; checkedAt: string };
-export type ChatTurn = { role: "user" | "assistant"; text: string; at: string; by?: string };
+/** pulled: what the AI looked up for this answer (shown under it); data: what came back, kept so the QA can check it */
+export type ChatTurn = { role: "user" | "assistant"; text: string; at: string; by?: string; pulled?: string[]; data?: string };
 
 const S = { type: "string" };
 const LIST = { type: "array", items: S };
@@ -82,6 +84,19 @@ async function context(admin: SupabaseClient, reportId: string) {
   return { r, client, target, owner, prefs: ((prefs?.notes ?? []) as string[]).slice(-20), last };
 }
 
+/** Data the buyer had the AI pull in the chat (from the ad account, Motion, calls, Slack…): real data the report may use */
+function pulledBlock(chat: ChatTurn[] | null) {
+  const turns = (chat ?? []).filter((t) => t.data);
+  if (!turns.length) return "";
+  let room = 40_000;
+  const parts: string[] = [];
+  for (const t of turns.slice().reverse()) {
+    if ((room -= t.data!.length) < 0) break;
+    parts.unshift(`<pulled at="${t.at.slice(0, 16)}" what="${(t.pulled ?? []).join("; ").replace(/"/g, "'")}">\n${t.data}\n</pulled>`);
+  }
+  return `<data_pulled_in_the_chat note="looked up live while revising; as real as the numbers above">\n${parts.join("\n")}\n</data_pulled_in_the_chat>`;
+}
+
 function sourcesBlock(c: Awaited<ReturnType<typeof context>>, metrics: ReportMetrics, work: string, voice: string) {
   const lastNext = (c.last?.sections as Sections | null)?.next ?? [];
   return [
@@ -94,6 +109,7 @@ function sourcesBlock(c: Awaited<ReturnType<typeof context>>, metrics: ReportMet
     lastNext.length ? `<what_the_last_report_said_was_next>\n${lastNext.map((x) => `- ${x}`).join("\n")}\n</what_the_last_report_said_was_next>` : "",
     c.r.extras ? `<added_by_the_buyer>\n${c.r.extras}\n</added_by_the_buyer>` : "",
     c.prefs.length ? `<what_this_client_wants_in_a_report>\n${c.prefs.map((p) => `- ${p}`).join("\n")}\n</what_this_client_wants_in_a_report>` : "",
+    pulledBlock(c.r.chat as ChatTurn[] | null),
     voice,
   ]
     .filter(Boolean)
@@ -169,19 +185,29 @@ export async function reviseReport(admin: SupabaseClient, reportId: string, ask:
   const metrics = c.r.metrics as ReportMetrics;
   const work = ((c.r as unknown as { work?: { text?: string } }).work?.text) ?? "";
   const chat = (c.r.chat ?? []) as ChatTurn[];
-  const out = await askJson<{ reply: string; message: string; sections: Sections; lesson: string }>({
+  // What it can look up while it works: the ad account, Motion, and everything on file for the client
+  const pulled: Pulled[] = [];
+  const tools = await reportTools(admin, c.r as unknown as { client_id: string; platform: string; kpi_targets: unknown }, pulled);
+  const out = await askJsonWithTools<{ reply: string; message: string; sections: Sections; lesson: string }>({
     agent: agentFor(c.r.platform),
     label: "revise report",
-    system: `${writerSystem(c.r.kind as Kind, c.r.platform)}\n\n${REVISE_SYSTEM}`,
+    system: `${writerSystem(c.r.kind as Kind, c.r.platform)}\n\n${REVISE_SYSTEM}\n\n${toolsLine(tools)}`,
     schema: REVISE_SCHEMA,
-    maxTokens: 12000,
+    tools,
+    maxRounds: 6,
+    maxTokens: 16000,
     prompt: `${sourcesBlock(c, metrics, work, "")}\n\n<current_message>\n${c.r.message ?? ""}\n</current_message>\n<current_sections>\n${JSON.stringify(c.r.sections ?? {})}\n</current_sections>\n\n<conversation>\n${chat
       .slice(-10)
       .map((t) => `${t.role === "user" ? "Buyer" : "You"}: ${t.text}`)
       .join("\n")}\n</conversation>\n\nThe buyer asks: ${ask.trim().slice(0, 2000)}`,
   });
   const now = new Date().toISOString();
-  const next: ChatTurn[] = [...chat, { role: "user" as const, text: ask.trim(), at: now, by }, { role: "assistant" as const, text: out.reply, at: now }].slice(-40);
+  const data = pulled.map((x) => `[${x.label}]\n${x.data}`).join("\n\n").slice(0, 20_000);
+  const next: ChatTurn[] = [
+    ...chat,
+    { role: "user" as const, text: ask.trim(), at: now, by },
+    { role: "assistant" as const, text: out.reply, at: now, ...(pulled.length ? { pulled: pulled.map((x) => x.label), data } : {}) },
+  ].slice(-40);
   await admin.from("reports").update({ message: out.message, sections: out.sections, chat: next, updated_at: now }).eq("id", reportId);
   if (out.lesson.trim()) await rememberPref(admin, c.r.client_id, out.lesson.trim());
   const qa = await qaReport(admin, reportId).catch(() => null);

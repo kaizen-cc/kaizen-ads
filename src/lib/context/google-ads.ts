@@ -450,3 +450,9 @@ export async function auctionInsights(account: string) {
   const avg = (l: number[]) => (l.length ? l.reduce((a, b) => a + b, 0) / l.length : null);
   return [...by.values()].map((d) => ({ domain: d.domain, impressionShare: avg(d.impressionShare), overlap: avg(d.overlap), outranking: avg(d.outranking), above: avg(d.above), top: avg(d.top) }));
 }
+
+/** Read only: a GAQL SELECT on one client account (the report chat's "pull it from Google Ads"). */
+export async function googleQuery(account: string, query: string) {
+  if (!/^\s*select\s/i.test(query)) throw new Error("Only SELECT queries are allowed.");
+  return search(account.replace(/-/g, ""), query);
+}

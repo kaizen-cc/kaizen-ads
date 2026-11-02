@@ -45,6 +45,8 @@ export type StudioBundle = {
 const tone = (d: Delta | null) => (!d ? "text-[#9a9aa1]" : d.tone === "good" ? "text-[#16794c]" : d.tone === "bad" ? "text-[#c8102e]" : "text-[#5f5f66]");
 const PART_STATUS: Record<string, string> = { queued: "Queued", drafting: "Writing", draft: "To review", submitted: "Approved", posted: "Sent", failed: "Couldn't write", skipped: "Left out" };
 const SUGGEST = ["Make it shorter", "Explain why results moved", "More on what's next", "Warmer tone"];
+// Starters that reach past the numbers: the ad account, Motion, calls, Slack and earlier reports
+const LOOKUPS = ["Follow last week's report format", "Compare with the week before", "Which ads did best, and why?", "What did the client say on the last call?", "Anything in Slack this week to mention?"];
 
 /** A line of the document that turns into a text box on click. */
 function Editable({ value, onSave, className = "", placeholder, disabled, multiline = true }: { value: string; onSave: (v: string) => void; className?: string; placeholder?: string; disabled?: boolean; multiline?: boolean }) {
@@ -532,13 +534,36 @@ export function ReportStudio({
             );
             const thread = (big: boolean) => (
               <div className={`grid content-start gap-2.5 overflow-y-auto pr-1 ${big ? "min-h-0 flex-1" : "max-h-[52vh] min-h-[180px]"}`}>
-                {!chat.length && <p className={`leading-relaxed text-faint ${big ? "text-sm" : "text-xs"}`}>Say what to change and watch the report update. What this client always wants (&ldquo;they care about lead quality&rdquo;) is remembered for next time.</p>}
+                {!chat.length && (
+                  <div className={`grid gap-2.5 leading-relaxed text-faint ${big ? "text-sm" : "text-xs"}`}>
+                    <p>Say what to change and watch the report update. It can look things up as it goes: live numbers from the ad account, Motion, the client&apos;s calls, Slack, email and Drive, and earlier reports.</p>
+                    {editable && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {LOOKUPS.map((x) => (
+                          <button key={x} type="button" onClick={() => tweak(x)} disabled={asking} className="rounded-full border border-brand/30 bg-brand/[0.06] px-2.5 py-1 text-[11.5px] text-fg hover:border-brand/60 disabled:opacity-40 max-md:min-h-9">
+                            {x}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
                 {chat.map((t, i) => (
-                  <p key={i} className={`max-w-[88%] whitespace-pre-wrap rounded-[14px] px-3.5 py-2.5 leading-relaxed ${big ? "text-[15px]" : "text-[13.5px]"} ${t.role === "user" ? "justify-self-end bg-fg text-bg" : "bg-surface-2 text-fg"}`}>
-                    {t.text}
-                  </p>
+                  <div key={i} className={`grid max-w-[88%] gap-1.5 ${t.role === "user" ? "justify-self-end" : ""}`}>
+                    <p className={`whitespace-pre-wrap rounded-[14px] px-3.5 py-2.5 leading-relaxed ${big ? "text-[15px]" : "text-[13.5px]"} ${t.role === "user" ? "bg-fg text-bg" : "bg-surface-2 text-fg"}`}>{t.text}</p>
+                    {/* Where it looked, so the buyer knows where a number came from */}
+                    {t.pulled?.length ? (
+                      <div className="flex flex-wrap gap-1">
+                        {t.pulled.map((x, k) => (
+                          <span key={k} className="rounded-full border border-line px-2 py-0.5 text-[10.5px] text-faint">
+                            ↳ {x}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
                 ))}
-                {asking && <p className="flex items-center gap-2 text-xs text-faint"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" /> Changing it…</p>}
+                {asking && <p className="flex items-center gap-2 text-xs text-faint"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" /> Looking things up and changing it…</p>}
                 <div ref={big ? bigEnd : chatEnd} />
               </div>
             );
@@ -570,7 +595,7 @@ export function ReportStudio({
                         }
                       }}
                       rows={big ? 4 : 3}
-                      placeholder="e.g. add the lead quality from the CRM"
+                      placeholder="e.g. pull last month's top 3 ads from Motion, or add what they said on Tuesday's call"
                       className={`w-full resize-none bg-transparent px-1.5 py-1 leading-relaxed outline-none ${big ? "text-[15px]" : "text-sm"} [field-sizing:content] ${big ? "max-h-[30vh] min-h-[104px]" : "max-h-[22vh] min-h-[72px]"}`}
                     />
                     <div className="flex items-center justify-between gap-2">

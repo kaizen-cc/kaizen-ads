@@ -214,6 +214,9 @@ async function readCall(admin: SupabaseClient, id: string, clients: { id: string
   const out = await askJson<{ internal: boolean; team: string; overview: string; clients: (CallSummary & { client: string; lessons: Lesson[]; commitments: (CallSummary["commitments"][number] & { channel: string; evidence: string })[] })[] }>({
     agent: "calls",
     label: "read a call",
+    // Older calls (the history backfill) are context only, their promises never briefed or chased: the small model reads
+    // them. Recent calls stay on the agent's own model, since what was promised on them becomes work
+    ...(Date.now() - Date.parse(call.occurred_at) > 10 * 86_400_000 ? { override: { model: "haiku" as const, effort: "low" as const } } : {}),
     system: READ_SYSTEM,
     schema: READ_SCHEMA,
     prompt: `Clients:\n${clients.map((c) => c.name).join("\n")}\n\nCall: "${call.title}" on ${call.occurred_at.slice(0, 10)}${main ? `\nThis looks like a call with ${main.name}.` : ""}\n${hostOnTeam === true ? "The host is on the paid ads and creative team." : hostOnTeam === false ? "The host is NOT on the paid ads and creative team (they work on another Kaizen service)." : "Who hosted it isn't known."}\n\n<notes>\n${call.notes}\n</notes>`,
