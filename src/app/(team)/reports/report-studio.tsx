@@ -358,10 +358,19 @@ export function ReportStudio({
                   { id: "summary", label: "Summary", value: sections.summary },
                   ...LISTS.flatMap(([k, label]) => sections[k].map((v, i) => ({ id: `${k}.${i}`, label, value: v, removable: true }))),
                   { id: "extras", label: "Also (sales from their CRM, other channels…)", value: extras, removable: true },
+                  // Each trend chart's words (the chart itself is drawn from the ad account)
+                  ...(sections.stories ?? []).flatMap((st, i) => [
+                    { id: `story-${i}-title`, label: "Chart title", value: st.title },
+                    { id: `story-${i}-see`, label: "What we see", value: st.see },
+                    { id: `story-${i}-why`, label: "Why", value: st.why },
+                    { id: `story-${i}-next`, label: "What's next", value: st.next },
+                  ]),
                 ];
                 const save = (id: string, v: string | null) => {
                   if (id === "extras") return setExtras(v ?? "");
                   if (id === "headline" || id === "summary") return setSections({ ...sections, [id]: v ?? "" });
+                  const story = id.match(/^story-(\d+)-(title|see|why|next)$/);
+                  if (story) return setSections({ ...sections, stories: (sections.stories ?? []).map((st, i) => (i === Number(story[1]) ? { ...st, [story[2]]: v ?? "" } : st)) });
                   const [k, n] = id.split(".") as ["did" | "doing" | "next", string];
                   setSections({ ...sections, [k]: v ? sections[k].map((y, j) => (j === Number(n) ? v : y)) : sections[k].filter((_, j) => j !== Number(n)) });
                 };
@@ -416,6 +425,28 @@ export function ReportStudio({
                             Remove this {kind === "tile" ? "tile" : kind === "row" ? "row" : "column"}
                           </button>
                         )}
+                      </>
+                    );
+                  }
+                  // A trend chart: taken out, or redrawn by the AI with a different metric or range
+                  if (kind === "story") {
+                    const i = Number(rest[0]);
+                    const st = sections.stories?.[i];
+                    return (
+                      <>
+                        {title("Trend chart")}
+                        <p className="px-1 text-[13.5px] leading-snug">{st?.title}</p>
+                        <p className="px-1 text-[12px] text-muted">Its numbers come from the ad account. To chart something else, ask the AI (e.g. &ldquo;make it the last 8 weeks&rdquo;).</p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSections({ ...sections, stories: (sections.stories ?? []).filter((_, j) => j !== i) });
+                            close();
+                          }}
+                          className="h-10 rounded-[10px] px-3 text-left text-[13px] text-bad hover:bg-bad-soft/40"
+                        >
+                          Remove this chart
+                        </button>
                       </>
                     );
                   }
@@ -492,6 +523,9 @@ export function ReportStudio({
                       <div className="grid gap-2 rounded-[14px] border border-line bg-surface p-3">
                         <div className="flex flex-wrap items-center gap-1.5 text-[12.5px]">
                           <span className="mr-1 text-faint">Metrics:</span>
+                          <button type="button" disabled={asking} onClick={() => void tweak("Add a trend chart of the cost per result by week for the last 5 weeks, with what we see, why and what's next")} className="h-9 rounded-full border border-line px-3 text-muted hover:text-fg disabled:opacity-40 max-md:h-10">
+                            + Trend chart
+                          </button>
                           {([["tiles", "+ Tile"], ...(hasTable ? [["table", "+ Key metric row"]] : []), ["columns", "+ Campaign column"], ["campaign", "+ Campaign"]] as ["tiles" | "table" | "columns" | "campaign", string][]).map(([k, label]) => (
                             <button key={k} type="button" onClick={() => setAddingMetric(addingMetric === k ? null : k)} className={`h-9 rounded-full border px-3 max-md:h-10 ${addingMetric === k ? "border-fg text-fg" : "border-line text-muted hover:text-fg"}`}>
                               {label}

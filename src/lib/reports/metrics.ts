@@ -4,6 +4,7 @@ import { pickType, resultsOf, toDays, nyParts, type Day } from "@/lib/kpi/calc";
 import { conversionFor, conversionLabel } from "@/lib/kpi/conversions";
 import { accountRows, goalsFor } from "@/lib/kpi/sync";
 import { actionLabel } from "@/lib/kpi/explore";
+import { metricNumber, type MetricKey } from "./format";
 import type { Diagnosis, Opportunity } from "./diagnose";
 
 // A report's numbers, from the same daily rows the KPI board reads, with the campaigns left out of the KPI left out here
@@ -183,7 +184,7 @@ export async function withCampaignEvents(admin: SupabaseClient, m: ReportMetrics
 }
 
 /** Every number a report shows, for one KPI target, as of `today` (New York). */
-export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "weekly" | "monthly" | "custom", today = nyParts(new Date()).date, range?: { start: string; end: string }): Promise<ReportMetrics> {
+export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "weekly" | "monthly" | "custom", today = nyParts(new Date()).date, range?: { start: string; end: string }, opts: { lite?: boolean } = {}): Promise<ReportMetrics> {
   const platform = t.platform === "google" ? "google" : "meta";
   const left = new Set(t.excluded_campaigns ?? []);
   const all = ((await accountRows(admin, t.ad_account_id ?? "", platform)) as Row[]).filter((r) => (!t.campaign_match || (r.campaign_name ?? "").toLowerCase().includes(t.campaign_match.toLowerCase())) && !left.has(String(r.campaign_id)));
@@ -252,7 +253,7 @@ export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "wee
 
   // Top ads (Meta): the most results in the period, then the cheapest; with a preview link and image
   let topAds: TopAd[] = [];
-  if (platform === "meta" && t.ad_account_id) {
+  if (platform === "meta" && t.ad_account_id && !opts.lite) {
     const { data: ads } = await admin
       .from("meta_ad_daily")
       .select("ad_id, ad_name, campaign_id, campaign_name, metrics")
@@ -327,4 +328,41 @@ export function metricsText(m: ReportMetrics) {
     ...(m.goals && m.goals.length > 1 ? ["Results by what the campaigns are optimized for (main period):", ...m.goals.map((g) => `- ${g.label}: ${g.results} at ${money(g.costPerResult)} each, ${money(g.spend)} spent`)] : m.goals?.length ? [`The campaigns are optimized for: ${m.goals[0].label}.`] : []),
     ...(m.gaps.length ? [`Days with no data in the main period: ${m.gaps.join(", ")}`] : []),
   ].join("\n");
+}
+
+/** One point of a trend: a week or a month, and the metric's value in it */
+export type TrendPoint = { label: string; start: string; end: string; value: number | null };
+
+const ymd = (d: Date) => d.toISOString().slice(0, 10);
+const day = (s: string) => new Date(`${s}T12:00:00Z`);
+
+/**
+ * A metric week by week (the weeks ending on `end`) or month by month (the months up to and including `end`'s), counted
+ * the way the report counts it (each campaign's own result, campaigns left out of the KPI left out), for a trend chart.
+ */
+export async function trendSeries(admin: SupabaseClient, t: Target, metric: MetricKey, grain: "week" | "month", periods: number, end: string): Promise<TrendPoint[]> {
+  const n = Math.max(2, Math.min(12, Math.round(periods)));
+  const ranges: { start: string; end: string; label: string }[] = [];
+  const short = (s: string) => day(s).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+  for (let i = n - 1; i >= 0; i--) {
+    if (grain === "week") {
+      const e = day(end);
+      e.setUTCDate(e.getUTCDate() - i * 7);
+      const st = new Date(e);
+      st.setUTCDate(st.getUTCDate() - 6);
+      ranges.push({ start: ymd(st), end: ymd(e), label: short(ymd(st)) }); // the week's first day
+    } else {
+      const e = day(end);
+      const first = new Date(Date.UTC(e.getUTCFullYear(), e.getUTCMonth() - i, 1, 12));
+      const last = new Date(Date.UTC(e.getUTCFullYear(), e.getUTCMonth() - i + 1, 0, 12));
+      ranges.push({ start: ymd(first), end: ymd(last > e ? e : last), label: first.toLocaleDateString("en-US", { month: "short", timeZone: "UTC" }) });
+    }
+  }
+  const after = (d: string) => ymd(new Date(day(d).getTime() + 86_400_000));
+  const out: TrendPoint[] = [];
+  for (const r of ranges) {
+    const m = await reportMetrics(admin, t, "custom", after(r.end), { start: r.start, end: r.end }, { lite: true });
+    out.push({ label: r.label, start: r.start, end: r.end, value: metricNumber(m.main, metric) });
+  }
+  return out;
 }

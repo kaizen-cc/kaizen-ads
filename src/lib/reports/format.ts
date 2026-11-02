@@ -126,7 +126,11 @@ export function metricNumber(p: Nums, k: MetricKey): number | null {
 }
 
 export function metricText(p: Nums, k: MetricKey) {
-  const n = metricNumber(p, k);
+  return formatMetric(k, metricNumber(p, k));
+}
+
+/** A number as its metric shows it ($, %, x or a count) */
+export function formatMetric(k: MetricKey, n: number | null) {
   if (["spend", "cost_per_result", "revenue", "cpc", "cpm"].includes(k)) return money(n);
   if (k === "roas") return multiple(n);
   if (k === "ctr") return percent(n);

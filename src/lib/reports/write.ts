@@ -2,7 +2,8 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson, askJsonWithTools, type AgentKey } from "@/lib/ai";
 import { reportTools, toolsLine, type Pulled } from "./tools";
-import { metricsText, reportMetrics, type ReportMetrics } from "./metrics";
+import { metricsText, reportMetrics, trendSeries, type ReportMetrics, type TrendPoint } from "./metrics";
+import { METRIC_KEYS, type MetricKey } from "./format";
 import { voiceOf, workDone } from "./work";
 import { diagnose, diagnosisText, opportunityFor } from "./diagnose";
 
@@ -11,7 +12,12 @@ import { diagnose, diagnosisText, opportunityFor } from "./diagnose";
 // (sales from the CRM, other channels). Every draft and every revision is checked by the QA before the buyer sees it.
 // The structure is always the same: what we did, what we're doing now and why, what comes next.
 
-export type Sections = { headline: string; summary: string; did: string[]; doing: string[]; next: string[]; highlights: string[] };
+/**
+ * stories: trend charts with the story behind each (what we see, why it's happening, what we're doing next); the
+ * chart's points are filled in from the ad account, never written by the AI
+ */
+export type Story = { title: string; metric: MetricKey; grain: "week" | "month"; periods: number; see: string; why: string; next: string; points?: TrendPoint[] };
+export type Sections = { headline: string; summary: string; did: string[]; doing: string[]; next: string[]; highlights: string[]; stories?: Story[] };
 export type QaFlag = { severity: "fix" | "check" | "alert"; issue: string; where: string; suggestion: string };
 export type Qa = { verdict: "clean" | "check" | "fix"; flags: QaFlag[]; checkedAt: string };
 /** pulled: what the AI looked up for this answer (shown under it); data: what came back, kept so the QA can check it */
@@ -20,7 +26,9 @@ export type ChatTurn = { role: "user" | "assistant"; text: string; at: string; b
 const S = { type: "string" };
 const LIST = { type: "array", items: S };
 const obj = (properties: Record<string, unknown>) => ({ type: "object", properties, required: Object.keys(properties), additionalProperties: false });
-const SECTIONS = obj({ headline: S, summary: S, did: LIST, doing: LIST, next: LIST, highlights: LIST });
+const STORY = obj({ title: S, metric: { type: "string", enum: [...METRIC_KEYS] }, grain: { type: "string", enum: ["week", "month"] }, periods: { type: "integer" }, see: S, why: S, next: S });
+const SECTIONS = obj({ headline: S, summary: S, did: LIST, doing: LIST, next: LIST, highlights: LIST, stories: { type: "array", items: STORY } });
+const STORY_RULES = `stories: trend charts, each told as a story. Add one when the buyer asks for a trend, a progression, a graph or "over the last N weeks or months", or when this client always wants it (their preferences); otherwise keep the ones already there, or none. Each: title (short, e.g. "Cost per purchase, last 5 weeks"), metric (cost_per_result for CPL, CPA or cost per purchase; results for leads or purchases), grain (week or month), periods (how many, 2 to 12), see (what the chart shows, with its numbers), why (why it moved, from the work log and the data), next (what we're doing about it). Read the numbers first with the trend tool when you have it; the chart is drawn from exactly those. Never write a chart as text in the sections.`;
 const DRAFT_SCHEMA = obj({ message: S, sections: SECTIONS });
 
 const agentFor = (platform: string): AgentKey => (platform === "google" ? "google_reporter" : "reporter");
@@ -164,8 +172,9 @@ export async function draftReport(admin: SupabaseClient, reportId: string) {
       system: writerSystem(kind, c.r.platform),
       schema: DRAFT_SCHEMA,
       maxTokens: 12000,
-      prompt: `${sourcesBlock(c, metrics, work.text, voice)}\n\nWrite the ${kind === "custom" || kind === "built" ? `recap for ${[metrics.main.label, ...extra.map((m) => m.main.label)].join(" and ")}` : `${kind} report`}.`,
+      prompt: `${sourcesBlock(c, metrics, work.text, voice)}\n\n${await trendsFor(admin, c, metrics)}${STORY_RULES}\n\nWrite the ${kind === "custom" || kind === "built" ? `recap for ${[metrics.main.label, ...extra.map((m) => m.main.label)].join(" and ")}` : `${kind} report`}.`,
     });
+    out.sections = await fillStories(admin, c.target, out.sections, metrics.main.end);
     await admin.from("reports").update({ message: out.message, sections: out.sections, updated_at: new Date().toISOString() }).eq("id", reportId);
     // The QA runs before the buyer hears about it, so the note they get says whether there's anything to fix
     await qaReport(admin, reportId).catch(() => null);
@@ -175,7 +184,24 @@ export async function draftReport(admin: SupabaseClient, reportId: string) {
   }
 }
 
+/** Each story's points, from the ad account (the same count as the report), so the chart is never the AI's own numbers */
+async function fillStories(admin: SupabaseClient, target: Parameters<typeof reportMetrics>[1], sections: Sections, end: string): Promise<Sections> {
+  if (!sections.stories?.length) return { ...sections, stories: [] };
+  const stories = await Promise.all(
+    sections.stories.slice(0, 4).map(async (st) => ({ ...st, periods: Math.max(2, Math.min(12, Math.round(st.periods || 5))), points: await trendSeries(admin, target, st.metric, st.grain, st.periods || 5, end).catch(() => []) })),
+  );
+  return { ...sections, stories };
+}
+
+/** For a draft, when this client wants trends: the numbers to write them from (there's no tool while drafting) */
+async function trendsFor(admin: SupabaseClient, c: Awaited<ReturnType<typeof context>>, metrics: ReportMetrics) {
+  if (!c.prefs.some((p) => /trend|graph|chart|progress|over (the )?(last|past)|week over week|month over month/i.test(p))) return "";
+  const [weeks, months] = await Promise.all([trendSeries(admin, c.target, "cost_per_result", "week", 5, metrics.main.end).catch(() => []), trendSeries(admin, c.target, "cost_per_result", "month", 6, metrics.main.end).catch(() => [])]);
+  return `<trends metric="cost per result">\nBy week: ${weeks.map((p) => `${p.label} ${p.value ?? "-"}`).join(", ")}\nBy month: ${months.map((p) => `${p.label} ${p.value ?? "-"}`).join(", ")}\n</trends>\n\n`;
+}
+
 const REVISE_SYSTEM = `You revise a client report with the media buyer who will send it. They tell you what to change; you change exactly that, keep everything else as it was, and keep their voice. The same rules hold: every number from the data, the arc (what we did, what we're doing and why, what's next), nothing internal. If they ask for something the data or work log can't support, say so in reply and don't invent it.
+${STORY_RULES}
 reply: one or two plain sentences on what you changed. lesson: when the request is about what THIS client wants in their reports from now on ("they always want lead quality", "keep it to 5 bullets", "no CPM, they don't care"), write it as one standing preference; otherwise "". Only lasting preferences, never one-off fixes.`;
 const REVISE_SCHEMA = obj({ reply: S, message: S, sections: SECTIONS, lesson: S });
 
@@ -208,6 +234,7 @@ export async function reviseReport(admin: SupabaseClient, reportId: string, ask:
     { role: "user" as const, text: ask.trim(), at: now, by },
     { role: "assistant" as const, text: out.reply, at: now, ...(pulled.length ? { pulled: pulled.map((x) => x.label), data } : {}) },
   ].slice(-40);
+  out.sections = await fillStories(admin, c.target, out.sections, metrics.main.end);
   await admin.from("reports").update({ message: out.message, sections: out.sections, chat: next, updated_at: now }).eq("id", reportId);
   if (out.lesson.trim()) await rememberPref(admin, c.r.client_id, out.lesson.trim());
   const qa = await qaReport(admin, reportId).catch(() => null);

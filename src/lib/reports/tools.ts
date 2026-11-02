@@ -26,7 +26,7 @@ function slim(rows: Record<string, unknown>[]) {
 
 export type Pulled = { label: string; data: string };
 
-export async function reportTools(admin: SupabaseClient, r: { client_id: string; platform: string; kpi_targets: unknown }, pulled: Pulled[]): Promise<AiTool[]> {
+export async function reportTools(admin: SupabaseClient, r: { client_id: string; platform: string; kpi_targets: unknown; period_end?: string }, pulled: Pulled[]): Promise<AiTool[]> {
   const t = r.kpi_targets as { ad_account_id: string | null } | null;
   const account = t?.ad_account_id ?? null;
   const { data: client } = await admin.from("clients").select("name, motion_workspace_id").eq("id", r.client_id).maybeSingle();
@@ -36,6 +36,22 @@ export async function reportTools(admin: SupabaseClient, r: { client_id: string;
     return data;
   };
   const tools: AiTool[] = [
+    {
+      name: "trend",
+      description: "A metric week by week or month by month, counted exactly as the report counts it (each campaign's own result; CPL, CPA and cost per purchase are cost_per_result). Use it before writing a trend chart (a story), so what you say matches the chart, which is drawn from these same numbers.",
+      input_schema: {
+        type: "object",
+        properties: { metric: { type: "string", enum: ["spend", "results", "cost_per_result", "revenue", "roas", "ctr", "clicks", "cpc", "cpm", "impressions"] }, grain: { type: "string", enum: ["week", "month"] }, periods: { type: "integer", minimum: 2, maximum: 12 } },
+        required: ["metric", "grain", "periods"],
+        additionalProperties: false,
+      },
+      run: async (input) => {
+        const { trendSeries } = await import("./metrics");
+        const end = r.period_end ?? new Date().toISOString().slice(0, 10);
+        const series = await trendSeries(admin, r.kpi_targets as never, input.metric as never, input.grain === "month" ? "month" : "week", Number(input.periods) || 5, end);
+        return note(`${String(input.metric).replace(/_/g, " ")} by ${input.grain} (${series.length})`, series);
+      },
+    },
     {
       name: "earlier_reports",
       description: "This client's earlier reports that were sent (newest first): the period, the Slack message and the sections. Use it when the buyer asks to follow last week's or last month's format, or to compare with what was reported before.",
