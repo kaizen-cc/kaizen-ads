@@ -283,6 +283,7 @@ async function tellClientLive(admin: SupabaseClient, clientId: string) {
     admin.from("engagement_launches").select("ad_ids, plan").eq("client_id", clientId).single(),
   ]);
   if (!c || !l) return;
+  if (!(await (await import("@/lib/client-outreach")).autoOutreach(admin, clientId))) return;
   const n = (l.ad_ids as string[]).length;
   const plan = l.plan as EngagementPlan;
   const lines = [`Your first campaign is live: ${n} of your best posts are now running as ads on Facebook and Instagram, reaching people in ${plan.geo.label}.`, "This builds an audience and traffic for you right away, and it's the warm-up for the conversion campaigns we launch as your new creative lands. We'll keep you posted on how it's going."];

@@ -194,7 +194,10 @@ export async function keepPresentations(admin: SupabaseClient) {
     }
   }
   const { data: due } = await admin.from("client_presentations").select("client_id, clients!inner(name, status, created_at, reonboarded_at)").eq("status", "draft").eq("clients.status", "onboarding").or(inFlow, { referencedTable: "clients" }).lt("send_after", new Date().toISOString());
+  const { autoOutreach } = await import("@/lib/client-outreach");
   for (const d of due ?? []) {
+    // Not sent on its own to a real client until the portal is launched to them: it waits for a person to send it
+    if (!(await autoOutreach(admin, d.client_id as string))) continue;
     const r = await sendPresentation(admin, d.client_id as string, null);
     out[(d.clients as unknown as { name: string } | null)?.name ?? (d.client_id as string)] = r.ok ? `sent on its own (${r.sent.join(", ")})` : r.error;
     // Couldn't go: held until someone sends it by hand, so it isn't tried every 10 minutes

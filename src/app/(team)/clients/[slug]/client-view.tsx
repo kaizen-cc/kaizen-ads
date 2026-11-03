@@ -615,8 +615,8 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                 </div>
                 <div className="grid min-w-0 gap-6">
                   <Section title="Client portal" description="Where the client swipes through their ads to approve or ask for changes.">
-            <div className={`${row} max-md:flex-wrap`}>
-              <span className="grid min-w-0 gap-0.5">
+            <div className={`${row} flex-wrap`}>
+              <span className="grid min-w-[12rem] flex-1 gap-0.5">
                 <span className="flex items-center gap-2">
                   <span className={`h-2 w-2 rounded-full ${client.portal_live ? "bg-ok" : "bg-faint"}`} />
                   {client.portal_live ? "Live" : "Off"}
@@ -627,7 +627,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                     : "Contacts can't sign in or see anything, and nothing is sent to them. The team can test it from the preview."}
                 </span>
               </span>
-              <span className="flex shrink-0 items-center gap-2">
+              <span className="flex flex-wrap items-center justify-end gap-2">
                 <a href={`/c/${client.slug}`} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center rounded-full border border-line px-4 py-1 text-xs text-muted hover:border-faint hover:text-fg md:min-h-0 md:px-3">
                   Preview ↗
                 </a>

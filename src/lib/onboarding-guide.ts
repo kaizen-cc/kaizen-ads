@@ -126,6 +126,8 @@ export { setupSteps } from "@/lib/client-emails";
 export async function welcomeClient(admin: SupabaseClient, clientId: string) {
   const { data: o } = await admin.from("client_onboarding").select("welcomed_at").eq("client_id", clientId).maybeSingle();
   if (o?.welcomed_at) return "already";
+  // Not to real clients until the portal is launched to them (the sandbox always)
+  if (!(await (await import("@/lib/client-outreach")).autoOutreach(admin, clientId))) return "held";
   const { data: c } = await admin.from("clients").select("name, slug, portal_live, slack_channel_id, services, services_extra, services_removed").eq("id", clientId).single();
   if (!c) return "missing";
   // Not until Kaizen's Business Manager ID is set: the Meta step would have nothing to give them
