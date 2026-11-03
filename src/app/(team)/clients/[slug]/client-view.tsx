@@ -35,6 +35,7 @@ import type { AuditSummary } from "../../kpis/audit-panel";
 import type { ChatTurn } from "@/lib/handoff";
 import type { AccountChange } from "@/lib/account-changes";
 import { ShotListPanel, type AssetGlance, type SavedShotList } from "./shot-list-panel";
+import { MomentsPanel, type MomentRow } from "./moments-panel";
 import { ClientSections } from "./client-sections";
 import { BusinessOverview, type ServiceCard } from "./business-overview";
 import { CampaignsPanel } from "./campaigns-panel";
@@ -149,6 +150,7 @@ export type ClientViewProps = {
   reportable?: string[] | null; // the accounts this person can draft reports for (their own; their line's for a lead)
   assets?: AssetGlance | null; // what's on their Drive
   shotList?: SavedShotList | null; // next month's shot list
+  moments?: MomentRow[]; // their marketing moments, ahead and past
   chat?: { initial: ChatTurn[]; targets: AuditTarget[] } | null; // my thread with the AI about this client
   fatigue?: WatchRow[] | null; // ads wearing out
   market?: MarketAd[]; // live in this client's market (Motion)
@@ -170,7 +172,7 @@ export type ClientViewProps = {
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, docs = null, reports = null, playbook = null, setup = null, emails = null, businessAudit = null }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, docs = null, reports = null, playbook = null, setup = null, emails = null, businessAudit = null }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -847,6 +849,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                           <div className="grid min-w-0 gap-6">
                             {assets && !demo && client.creative_package && <ShotListPanel clientId={client.id} slug={client.slug} assets={assets} latest={shotList} live={live} />}
                             {!(assets && !demo && client.creative_package) && <p className="text-sm text-faint">Shot lists come with a creative package.</p>}
+                            <MomentsPanel moments={moments} />
                           </div>
                           <div className="grid min-w-0 gap-6">
                             <PackagePanel

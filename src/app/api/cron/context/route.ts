@@ -74,6 +74,7 @@ function due(step: string | null) {
   if (step === "clients") return true;
   if (step === "gtm") return true;
   if (step === "verticals") return true;
+  if (step === "creative_plan") return hour >= 6 && hour <= 22; // hourly (vercel.json): shot lists each cycle, files ticked off, marketing moments
   if (step === "sprints") return true; // hourly; each sprint's own next check decides
   if (step === "asana") return true; // every 5 minutes (vercel.json), so the mirror keeps up with Asana
   if (step === "sheet") return [12, 17].includes(hour);
@@ -167,6 +168,14 @@ export async function GET(request: Request) {
     if (step === "calls") return Response.json(await collectCalls(admin));
     if (step === "gtm") return Response.json(await autoGtm(admin, 1));
     if (step === "verticals") return Response.json(await keepVerticals(admin));
+    if (step === "creative_plan") {
+      const { keepShotLists, matchShotUploads } = await import("@/lib/shot-list");
+      const { keepMoments } = await import("@/lib/moments");
+      const shots = await keepShotLists(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+      const matched = await matchShotUploads(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+      const moments = await keepMoments(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+      return Response.json({ shots, matched, moments });
+    }
     if (step === "sheet") {
       const { sheetConfigured, syncAccountSheet } = await import("@/lib/account-sheet");
       return Response.json(sheetConfigured() ? await syncAccountSheet(admin) : { skipped: "Google isn't connected" });

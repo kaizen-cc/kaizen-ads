@@ -17,7 +17,7 @@ export type ReportPart = { platform: "meta" | "google"; buyer: string | null; me
 /** built: a report from the report builder (a cover, the whole account when it covers more than one service, then each) */
 /** edit: the studio's preview, with an invisible link over every metric, row and column the buyer can change (never sent) */
 /** dashboard: the client's live dashboard in their portal, linked from every part (when their portal is open) */
-export type ReportPdfInput = { client: string; kind: "weekly" | "monthly" | "built"; periodLabel: string; parts: ReportPart[]; edit?: boolean; dashboard?: string | null };
+export type ReportPdfInput = { client: string; kind: "weekly" | "monthly" | "built"; periodLabel: string; parts: ReportPart[]; edit?: boolean; dashboard?: string | null; /** The monthly recap's ask: next cycle's shot list (clients on a creative package) */ shots?: { month: string; items: string[]; url: string | null } | null };
 
 // Words wrap whole: no "APPLICA-TION" in a tile label or a column header
 Font.registerHyphenationCallback((word) => [word]);
@@ -798,6 +798,22 @@ function DeckClose({ input }: { input: ReportPdfInput }) {
           <Text style={{ flex: 1, fontSize: 12, lineHeight: 1.5, color: "#e4e4e7" }}>{n.x}</Text>
         </View>
       ))}
+      {input.shots?.items.length ? (
+        <View style={{ marginTop: 18, maxWidth: 620, borderLeftWidth: 3, borderLeftColor: RED, paddingLeft: 12 }}>
+          <Text style={{ fontSize: 12, fontFamily: "Helvetica-Bold", color: "#ffffff", marginBottom: 6 }}>What we need from you for {input.shots.month}</Text>
+          {input.shots.items.slice(0, 6).map((x, i) => (
+            <Text key={i} style={{ fontSize: 10.5, lineHeight: 1.5, color: "#e4e4e7" }}>
+              • {x}
+            </Text>
+          ))}
+          {input.shots.items.length > 6 ? <Text style={{ fontSize: 10, color: "#a1a1aa", marginTop: 2 }}>and {input.shots.items.length - 6} more</Text> : null}
+          {input.shots.url ? (
+            <Link src={input.shots.url} style={{ marginTop: 6, fontSize: 10.5, color: "#ffffff", fontFamily: "Helvetica-Bold", textDecoration: "none" }}>
+              Send them on your shot list →
+            </Link>
+          ) : null}
+        </View>
+      ) : null}
       {input.dashboard ? (
         <Link src={input.dashboard} style={{ marginTop: 22, fontSize: 11, color: "#ffffff", fontFamily: "Helvetica-Bold", textDecoration: "none" }}>
           Your live dashboard, any day, any dates →

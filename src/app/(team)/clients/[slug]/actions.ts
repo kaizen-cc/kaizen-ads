@@ -520,6 +520,16 @@ export async function writeClientShotList(clientId: string, slug: string): Promi
 }
 
 /** The shot list went to the client. */
+/** A shot the team knows is in (sent by email, handed over on a shoot): ticked off by hand */
+export async function markShotDone(listId: string, shotId: string, slug: string) {
+  const me = await requireStaff();
+  const { data } = await (await createClient()).from("shot_lists").select("id").eq("id", listId).maybeSingle();
+  if (!data) return;
+  const { markDelivered } = await import("@/lib/shot-list");
+  await markDelivered(createAdminClient(), listId, [{ shotId, files: [`marked by ${me.fullName ?? "the team"}`] }], me.fullName ?? "the team");
+  revalidatePath(`/clients/${slug}`);
+}
+
 export async function markShotListSent(id: string, slug: string) {
   await requireStaff();
   const { data } = await (await createClient()).from("shot_lists").select("id").eq("id", id).maybeSingle();

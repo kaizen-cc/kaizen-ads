@@ -82,6 +82,12 @@ They haven't sent their marketing intake form yet, and we didn't want to sit and
         .filter(Boolean)
         .join("\n\n"),
     });
+    // Their swipe file: what's working in their market, for them to see the look we'd build on
+    const { swipeFile } = await import("@/lib/market");
+    const swipe = await swipeFile(admin, clientId, 6).catch(() => []);
+    deck.swipe = swipe
+      .map((a) => ({ brand: a.brand, detail: a.detail, thumb: a.media[0]?.thumb ?? (a.media[0]?.type === "image" ? a.media[0].url : null), url: a.motionUrl ?? a.libraryUrl ?? a.media[0]?.url ?? "", video: a.media[0]?.type === "video", days: a.daysActive, why: a.why ?? a.angle }))
+      .filter((x) => x.url && x.thumb);
     const now = new Date();
     await admin
       .from("client_presentations")

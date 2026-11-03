@@ -82,6 +82,10 @@
       "schedule": "10 * * * *"
     },
     {
+      "path": "/api/cron/context?step=creative_plan",
+      "schedule": "47 * * * *"
+    },
+    {
       "path": "/api/cron/context?step=verticals",
       "schedule": "35 * * * *"
     },

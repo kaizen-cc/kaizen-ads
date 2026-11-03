@@ -5,6 +5,7 @@ import { loadPortal } from "@/lib/portal";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { Portal } from "./portal";
+import { ShotsBanner } from "./shots/shots-banner";
 
 // A client's portal home: a greeting, what's waiting on them (their ads to review, front and centre), and beside it how
 // their ads are doing, their latest recap, their setup while onboarding and their brand plan when it's ready.
@@ -18,11 +19,13 @@ export default async function ClientHome({ params }: { params: Promise<{ slug: s
   if (!client || (viewer.kind === "contact" && !client.portal_live)) notFound();
   const admin = createAdminClient();
 
-  const [data, { data: snaps }, { data: recap }, { data: deck }] = await Promise.all([
+  const { currentShotList } = await import("@/lib/shot-list");
+  const [data, { data: snaps }, { data: recap }, { data: deck }, shots] = await Promise.all([
     loadPortal(db, client.id),
     admin.from("kpi_snapshots").select("windows, kpi_targets!inner(platform, conversion, active)").eq("client_id", client.id).eq("kpi_targets.active", true),
     admin.from("report_bundles").select("token, kind, period_start, sent_at").eq("client_id", client.id).eq("status", "sent").order("sent_at", { ascending: false }).limit(1).maybeSingle(),
     admin.from("client_presentations").select("status").eq("client_id", client.id).maybeSingle(),
+    currentShotList(admin, client.id).catch(() => null),
   ]);
   let setup: { done: number; total: number } | null = null;
   if (client.status === "onboarding") {
@@ -42,6 +45,7 @@ export default async function ClientHome({ params }: { params: Promise<{ slug: s
 
   const aside = (
     <>
+      {shots && <ShotsBanner slug={client.slug} month={shots.list.month} open={shots.list.shots.filter((x) => !x.delivered).length} total={shots.list.shots.length} />}
       {setup && (
         <Link href={`/c/${client.slug}/start`} className="group grid gap-3 rounded-[24px] border border-brand/40 bg-brand/[0.07] p-5 transition-colors hover:border-brand">
           <div className="flex items-center gap-3">

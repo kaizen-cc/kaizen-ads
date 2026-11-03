@@ -17,6 +17,7 @@ import { ClientView } from "./client-view";
 import { latestAudits } from "@/lib/audit-summary";
 import { changeKey, loadChanges } from "@/lib/account-changes";
 import type { ShotList } from "@/lib/shot-list";
+import type { MomentRow } from "./moments-panel";
 import { assetsStale } from "@/lib/client-assets";
 import { loadSprints } from "@/lib/sprints";
 import { reportableTargets } from "@/lib/reports/access";
@@ -29,6 +30,8 @@ import type { HistoryReport } from "./reports-history";
 import { monthLabel } from "@/lib/reports/format";
 
 /** Went live again in the last two weeks (the readiness check stays up that long) */
+/** The day some days back, for loading what's recent (marketing moments from the last few months on) */
+const daysBack = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
 const lately = (iso: string | null) => Boolean(iso && Date.now() - new Date(iso).getTime() < 14 * 86_400_000);
 
 // Refreshing a briefing asks the AI to read everything new about the client
@@ -185,6 +188,13 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     supabase.from("client_assets").select("created_at").eq("client_id", client.id).in("kind", ["image", "video"]).order("created_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("shot_lists").select("id, list, created_at, sent_at").eq("client_id", client.id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
   ]);
+  const { data: momentRows } = await supabase
+    .from("client_moments")
+    .select("id, name, on_date, lead_days, angle, offer_idea, status, suggestion_id, result")
+    .eq("client_id", client.id)
+    .gte("on_date", daysBack(200))
+    .order("on_date")
+    .limit(40);
   const newest = newestAsset?.created_at ?? null;
   const assetGlance = { images: imageCount ?? 0, videos: videoCount ?? 0, designs: designs ?? 0, newest, stale: assetsStale(newest) };
   const shotList = shot ? { id: shot.id, list: shot.list as ShotList, createdAt: shot.created_at, sentAt: shot.sent_at } : null;
@@ -355,7 +365,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       sprints={sprints}
       reportable={reportable}
       assets={assetGlance}
-      shotList={shotList}
+      shotList={shotList} moments={(momentRows ?? []) as MomentRow[]}
       chat={{ initial: chatTurns, targets }}
       fatigue={fatigue}
       market={market}

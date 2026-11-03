@@ -11,10 +11,11 @@ import { FilterMenu as Menu, FilterPill as Pill } from "@/components/filters";
 import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
 import { MarketHoverCard, MarketPreview, MarketReadPanel, useMarketRead } from "./market-preview";
 
-type View = "all" | "proven" | "fresh" | "testing";
+type View = "all" | "proven" | "early" | "fresh" | "testing";
 const VIEWS: [View, string, string][] = [
   ["all", "Everything live", ""],
   ["proven", "Proven", "Still running after 30+ days"],
+  ["early", "Early success", "New ads still running after 14+ days"],
   ["fresh", "New this week", "Launched in the last 7 days"],
   ["testing", "Being tested", "Brands launching 3+ ads in two weeks"],
 ];
@@ -117,7 +118,7 @@ export function MarketLibrary({
     const term = q.trim().toLowerCase();
     const list = pool
       .filter((a) => industry === null || (byVertical ? (a.verticalId ?? "") : (a.industry ?? "")) === industry)
-      .filter((a) => view === "all" || (view === "proven" ? a.proven : view === "fresh" ? a.fresh : a.testing))
+      .filter((a) => view === "all" || (view === "proven" ? a.proven : view === "early" ? a.early : view === "fresh" ? a.fresh : a.testing))
       .filter((a) => !format || a.format === format)
       .filter((a) => !term || [a.brand, a.detail, a.headline, a.body, a.angle, a.hook, a.matchWhy, ...a.tags].some((s) => s?.toLowerCase().includes(term)));
     // A client's matches keep their ranking (most comparable brands first); otherwise by time live or newest
@@ -134,8 +135,8 @@ export function MarketLibrary({
         <p className="text-xs uppercase tracking-[0.18em] text-faint">Market · from Motion</p>
         <h1 className="font-display text-3xl tracking-tight md:text-4xl">What&apos;s live in the market</h1>
         <p className="max-w-2xl text-sm text-muted">
-          Live Meta ads from our clients&apos; competitors and the standout advertisers in every niche we serve. No numbers for other brands&apos; ads, so time is the
-          signal: still paying for it after a month usually means it works.
+          Live Meta ads from our clients&apos; competitors and the standout US advertisers in every niche we serve. No numbers for other brands&apos; ads, so time is the
+          signal: still paying for it after a month usually means it works, and a new ad still running after two weeks is finding early success.
         </p>
         {connected && (
           <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-faint">
@@ -213,7 +214,7 @@ export function MarketLibrary({
               <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-3">
                 <nav className="-mb-px flex gap-1 overflow-x-auto">
                   {VIEWS.map(([k, l, hint]) => {
-                    const n = k === "all" ? pool.length : pool.filter((a) => (k === "proven" ? a.proven : k === "fresh" ? a.fresh : a.testing)).length;
+                    const n = k === "all" ? pool.length : pool.filter((a) => (k === "proven" ? a.proven : k === "early" ? a.early : k === "fresh" ? a.fresh : a.testing)).length;
                     return (
                       <button
                         key={k}
@@ -324,6 +325,7 @@ export function AdCard({ a, sub, onOpen, onHover, onLeave }: { a: MarketAd; sub:
         )}
         <span className="absolute left-2 top-2 flex flex-wrap gap-1">
           {a.proven && <span className="rounded-full bg-ok px-2 py-0.5 text-[10px] font-semibold text-white shadow">{a.daysActive}d live</span>}
+          {a.early && <span className="rounded-full bg-ok/80 px-2 py-0.5 text-[10px] font-semibold text-white shadow">{a.daysActive}d · early</span>}
           {a.fresh && <span className="rounded-full bg-brand px-2 py-0.5 text-[10px] font-semibold text-white shadow">New</span>}
           {a.testing && !a.proven && <span className="rounded-full bg-black/60 px-2 py-0.5 text-[10px] text-white backdrop-blur">Testing</span>}
         </span>

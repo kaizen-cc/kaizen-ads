@@ -23,6 +23,9 @@ export type Deck = {
   ideas: { title: string; hook: string; why: string; format: "image" | "video" | "carousel" }[];
   launch: { fast: string; wait: string };
   questions: { question: string; why: string }[];
+  /** What's working in their market: US ads from their competitors and closest lookalikes, running long or finding
+   *  early success (from Motion; added after writing, not by the AI) */
+  swipe?: { brand: string; detail: string | null; thumb: string | null; url: string; video: boolean; days: number | null; why: string | null }[];
 };
 
 /** The sections a client reacts to, in order */

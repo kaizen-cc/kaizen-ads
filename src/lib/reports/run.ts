@@ -92,12 +92,22 @@ export async function reportPdf(admin: SupabaseClient, reports: Loaded[]) {
   const first = reports[0];
   return renderReportPdf({
     dashboard: dashboardUrl(first),
+    shots: first.kind === "monthly" ? await shotsAsk(admin, first) : null,
     client: first.client.name,
     // An on-demand recap reads like a weekly one (its period, against the days before it)
     kind: first.kind === "monthly" ? "monthly" : "weekly",
     periodLabel: first.kind === "monthly" ? monthOf(first.period_start) : label(first.period_start, first.period_end),
     parts: reports.filter((r) => r.metrics && r.sections).map((r) => ({ platform: r.platform, buyer: r.owner, metrics: r.metrics!, sections: r.sections!, extras: r.extras })),
   });
+}
+
+/** The monthly recap's ask for clients on a creative package: next cycle's shot list, still to send */
+async function shotsAsk(admin: SupabaseClient, r: Loaded) {
+  const { currentShotList } = await import("@/lib/shot-list");
+  const cur = await currentShotList(admin, r.client_id).catch(() => null);
+  const open = (cur?.list.shots ?? []).filter((s) => !s.delivered);
+  if (!cur || !open.length) return null;
+  return { month: cur.list.month, items: open.map((s) => s.what), url: r.client.portal_live && r.client.slug ? `${SITE()}/c/${r.client.slug}/shots` : null };
 }
 
 /** The client's live dashboard, linked under each report (when their portal is open) */
@@ -221,7 +231,9 @@ export async function deliverBundle(admin: SupabaseClient, bundleId: string, by:
     const month = monthOf(b.period_start);
     const bytes = await reportPdf(admin, parts);
     const intro = parts.map((p) => p.message?.trim()).filter(Boolean).join("\n\n");
-    const text = `${intro}\n\n*Your ${month} recap:* ${link}${dashboardLine(parts[0])}`;
+    const shots = await shotsAsk(admin, parts[0]);
+    const ask = shots ? `\n\n*For ${shots.month}, we need ${shots.items.length === 1 ? "one shot" : `${shots.items.length} shots`} from you* so the next round of ads stays fresh${shots.url ? `: <${shots.url}|send them on your shot list>` : ` (${shots.items.slice(0, 3).join("; ")}${shots.items.length > 3 ? "…" : ""})`}` : "";
+    const text = `${intro}\n\n*Your ${month} recap:* ${link}${dashboardLine(parts[0])}${ask}`;
     const delivered: Record<string, unknown> = {};
     if (client.slack_channel_id) {
       const out = await postAsUser(by.id, { channel: client.slack_channel_id, text, pdf: { filename: `${client.name} - ${month} recap.pdf`, title: `${client.name} · ${month} recap`, bytes } });
@@ -246,7 +258,7 @@ export async function deliverBundle(admin: SupabaseClient, bundleId: string, by:
         lines: ["Here's the short version:"],
         bullets: parts.map((x) => `${x.platform === "google" ? "Google Ads" : "Meta Ads"}: ${x.sections?.headline ?? ""}`).filter((x) => !x.endsWith(": ")),
         cta: { label: "Read the recap →", url: link },
-        note: dash ? `For every number, any dates: ${dash}` : "You can download it as a PDF from the page.",
+        note: [dash ? `For every number, any dates: ${dash}` : "You can download it as a PDF from the page.", shots ? `For ${shots.month}, we need a few photos and clips from you so your ads stay fresh: ${shots.items.slice(0, 4).join("; ")}${shots.items.length > 4 ? "…" : ""}.${shots.url ? ` Send them here: ${shots.url}` : ""}` : ""].filter(Boolean).join(" "),
       };
       const out = { subject: `Your ${month} recap from Kaizen`, text: emailText(mail), html: emailHtml(mail) };
       const res = await sendEmail({ to: c.email, ...out });

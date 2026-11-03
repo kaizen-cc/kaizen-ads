@@ -337,6 +337,35 @@ async function describeBrands(admin: SupabaseClient, max = 400) {
   return done;
 }
 
+/**
+ * Where each brand sells and advertises (a two-letter country, "US" for American brands): the creative team's
+ * inspiration is US brands only, since an ad that works overseas may not translate.
+ */
+async function placeCountries(admin: SupabaseClient, max = 240) {
+  const { data: brands } = await admin.from("market_brands").select("id, name, domain, industry_detail").is("country_at", null).eq("rejected", false).not("described_at", "is", null).limit(max);
+  if (!brands?.length) return 0;
+  let done = 0;
+  for (let i = 0; i < brands.length; i += 80) {
+    const batch = brands.slice(i, i + 80);
+    const out = await askJson<{ brands: { n: number; country: string }[] }>({
+      agent: "market",
+      label: "place market brands",
+      system: "You say where a brand is based and mainly advertises, from its name, website and what it sells. Answer the two-letter country code (US, CA, GB, AU, DE…); a global brand that clearly runs US ads is US; \"??\" only when there's no way to tell.",
+      schema: { type: "object", properties: { brands: { type: "array", items: { type: "object", properties: { n: { type: "integer" }, country: { type: "string" } }, required: ["n", "country"], additionalProperties: false } } }, required: ["brands"], additionalProperties: false },
+      prompt: batch.map((b, j) => `${j + 1}. ${b.name}${b.domain ? ` (${b.domain})` : ""}${b.industry_detail ? `: ${b.industry_detail}` : ""}`).join("\n"),
+      override: { model: "haiku", effort: "low" },
+    });
+    const now = new Date().toISOString();
+    for (const r of out.brands) {
+      const b = batch[r.n - 1];
+      const c = r.country.trim().toUpperCase().slice(0, 2);
+      if (b) await admin.from("market_brands").update({ country: /^[A-Z]{2}$/.test(c) ? c : null, country_at: now }).eq("id", b.id);
+    }
+    done += out.brands.length;
+  }
+  return done;
+}
+
 const MATCH_SCHEMA = {
   type: "object",
   properties: { brands: { type: "array", items: { type: "object", properties: { n: { type: "integer" }, score: { type: "integer" }, why: { type: "string" } }, required: ["n", "score", "why"], additionalProperties: false } } },
@@ -553,6 +582,7 @@ export async function syncMarket(admin: SupabaseClient, budgetMs = 600_000) {
     const checked = await checkBrands(admin).catch(() => 0);
     t.tick("Describing brands");
     const sorted = await describeBrands(admin).catch(() => 0);
+    await placeCountries(admin).catch((e) => console.error("[market] countries", e instanceof Error ? e.message : e));
     // Each described brand into the sub-vertical it teaches
     t.tick("Placing brands in sub-verticals");
     const { placeBrands } = await import("@/lib/verticals");
@@ -652,16 +682,18 @@ export type MarketAd = {
   verticalId: string | null; // the sub-vertical its brand teaches
   competitorOf: string[]; // client ids who named this brand
   proven: boolean; // still running after 30 days
+  early: boolean; // new and still running after 14 days: early success
   fresh: boolean; // launched in the last 7 days
+  country: string | null; // where the brand advertises (inspiration is US brands only)
   testing: boolean; // the brand launched 3+ ads in the last 14 days
   matchScore?: number; // for a client: how comparable the brand is (10 = competitor)
   matchWhy?: string | null;
 };
 
-const COLS = "id, brand_id, format, headline, body, cta, landing_url, launched_at, active, days_active, media, motion_url, library_url, page_name, rank, observation, takeaways, read_at, angle, hook, why, tags, industry, market_brands!inner(name, logo, domain, industry, industry_detail, client_ids, rejected, checked_at, vertical_id)";
+const COLS = "id, brand_id, format, headline, body, cta, landing_url, launched_at, active, days_active, media, motion_url, library_url, page_name, rank, observation, takeaways, read_at, angle, hook, why, tags, industry, market_brands!inner(name, logo, domain, industry, industry_detail, client_ids, rejected, checked_at, vertical_id, country)";
 
 function toAd(r: Obj, testingBrands: Set<string>): MarketAd {
-  const b = r.market_brands as { name: string; logo: string | null; domain: string | null; industry: string | null; industry_detail: string | null; client_ids: string[]; vertical_id: string | null };
+  const b = r.market_brands as { name: string; logo: string | null; domain: string | null; industry: string | null; industry_detail: string | null; client_ids: string[]; vertical_id: string | null; country: string | null };
   const launched = r.launched_at as string | null;
   const days = r.days_active as number | null;
   return {
@@ -694,6 +726,8 @@ function toAd(r: Obj, testingBrands: Set<string>): MarketAd {
     competitorOf: b.client_ids ?? [],
     verticalId: b.vertical_id ?? null,
     proven: r.active !== false && (days ?? 0) >= 30,
+    early: r.active !== false && (days ?? 0) >= 14 && (days ?? 0) < 30,
+    country: b.country ?? null,
     fresh: Boolean(launched && Date.now() - Date.parse(launched) < 7 * 86_400_000),
     testing: testingBrands.has(b.name),
   };
@@ -723,10 +757,13 @@ export async function loadMarket(db: SupabaseClient, opts: { industry?: string |
     }
   }
   const testing = new Set([...recent].filter(([, n]) => n >= 3).map(([k]) => k));
-  const ads = rows.map((r) => toAd(r, testing));
+  const ads = rows.map((r) => toAd(r, testing)).filter(usOnly);
   if (opts.clientId) ads.sort((a, b) => Number(b.competitorOf.includes(opts.clientId!)) - Number(a.competitorOf.includes(opts.clientId!)));
   return ads;
 }
+
+/** Inspiration is US brands only: an ad that works overseas may not translate (a brand not placed yet still counts) */
+const usOnly = (a: MarketAd) => a.country == null || a.country === "US";
 
 export async function loadMarketAd(db: SupabaseClient, id: string) {
   const { data } = await db.from("market_ads").select(COLS).eq("id", id).maybeSingle();
@@ -740,7 +777,7 @@ export async function marketBlock(db: SupabaseClient, clientId: string, industry
   // One or two per brand, best first: competitors, then the closest lookalikes
   const per = new Map<string, number>();
   const picked = ads
-    .filter((a) => a.proven || a.testing || (a.matchScore ?? 0) >= 9)
+    .filter((a) => a.proven || a.early || a.testing || (a.matchScore ?? 0) >= 9)
     .filter((a) => {
       const n = per.get(a.brand) ?? 0;
       per.set(a.brand, n + 1);
@@ -749,11 +786,11 @@ export async function marketBlock(db: SupabaseClient, clientId: string, industry
     .slice(0, max);
   if (!picked.length) return "";
   return `<in_the_market>
-Live Meta ads from brands in this client's market (from Motion). No performance numbers: "running N days" is the signal (brands rarely keep paying for an ad that loses). Use them as ideas, never copies, and never name another brand in the brief. When the request draws on one, put its link in draft.refs so the creative team can see it.
+Live Meta ads from US brands in this client's market (from Motion). No performance numbers: "running N days" is the signal (brands rarely keep paying for an ad that loses): the longest-running are working, and a new ad still running after 14+ days is finding early success. Use them as ideas, never copies, and never name another brand in the brief. When the request draws on one, put its link in draft.refs so the creative team can see it.
 ${picked
   .map(
     (a, i) =>
-      `M${i + 1}. ${a.brand}${a.detail ? ` (${a.detail})` : ""}${a.competitorOf.includes(clientId) ? " · a competitor this client tracks or named" : a.matchWhy ? ` · comparable: ${a.matchWhy}` : ""} · ${a.format ?? "ad"}${a.daysActive != null ? ` · running ${a.daysActive} days` : ""}${a.testing ? " · brand is testing a lot right now" : ""}
+      `M${i + 1}. ${a.brand}${a.detail ? ` (${a.detail})` : ""}${a.competitorOf.includes(clientId) ? " · a competitor this client tracks or named" : a.matchWhy ? ` · comparable: ${a.matchWhy}` : ""} · ${a.format ?? "ad"}${a.daysActive != null ? ` · running ${a.daysActive} days` : ""}${a.early ? " · early success" : ""}${a.testing ? " · brand is testing a lot right now" : ""}
    ${a.angle ? `Angle: ${a.angle}. ` : ""}${a.hook ? `Hook: ${a.hook}. ` : ""}${a.why ? `Why it works: ${a.why}` : ""}
    ${a.headline ? `Headline: ${a.headline}. ` : ""}${a.body ? `Copy: ${a.body.slice(0, 240)}` : ""}
    Link: ${a.motionUrl ?? a.libraryUrl ?? a.media[0]?.url ?? a.landingUrl ?? "(none)"}`,
@@ -797,5 +834,22 @@ export async function loadClientMarket(db: SupabaseClient, clientId: string, opt
       const m = fit.get(r.brand_id as string);
       return { ...a, testing: testing.has(r.brand_id as string), matchScore: m?.score ?? 0, matchWhy: m?.why ?? null };
     })
+    .filter(usOnly)
     .sort((a, b) => b.matchScore - a.matchScore || Number(b.proven) - Number(a.proven) || (a.rank ?? 99) - (b.rank ?? 99) || (b.daysActive ?? 0) - (a.daysActive ?? 0));
+}
+
+/**
+ * A swipe file for one client: what's working in their market, closest first (their competitors, then brands in their
+ * own sub-vertical, then the best lookalikes), US brands only, one ad per brand, each either long-running (working)
+ * or a new ad live 14+ days (early success). For the client presentation, shot list references and briefs.
+ */
+export async function swipeFile(db: SupabaseClient, clientId: string, max = 8) {
+  const { data: c } = await db.from("clients").select("vertical_id").eq("id", clientId).maybeSingle();
+  const ads = (await loadClientMarket(db, clientId, { limit: 300 })).filter((a) => (a.proven || a.early) && a.media.length);
+  const rank = (a: MarketAd) => (a.competitorOf.includes(clientId) ? 3 : c?.vertical_id && a.verticalId === c.vertical_id ? 2 : 0) + (a.matchScore ?? 0) / 10 + (a.proven ? 0.5 : 0);
+  const seen = new Set<string>();
+  return ads
+    .sort((a, b) => rank(b) - rank(a) || (b.daysActive ?? 0) - (a.daysActive ?? 0))
+    .filter((a) => !seen.has(a.brand) && Boolean(seen.add(a.brand)))
+    .slice(0, max);
 }

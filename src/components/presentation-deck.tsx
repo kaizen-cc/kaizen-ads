@@ -103,6 +103,8 @@ export function PresentationDeck({ brand, deck, reactions, approved, readOnly = 
         </div>
       </Card>
 
+      {(deck.swipe ?? []).length > 0 && <Swipe items={deck.swipe!} />}
+
       <Launch deck={deck} reactions={reactions} locked={locked} onLaunch={h.onLaunch} />
 
       {deck.questions.length > 0 && <Questions deck={deck} reactions={reactions} locked={locked} onAnswer={h.onAnswer} />}
@@ -126,6 +128,33 @@ export function PresentationDeck({ brand, deck, reactions, approved, readOnly = 
         )}
       </section>
     </div>
+  );
+}
+
+/** Their swipe file: ads working in their market right now, the look and ideas we'd build on (never copy) */
+function Swipe({ items }: { items: NonNullable<Deck["swipe"]> }) {
+  return (
+    <section className="grid gap-4 rounded-[24px] border border-line bg-surface p-5 md:p-8">
+      <div className="grid gap-1">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">What&rsquo;s working in your market</p>
+        <p className="font-heading text-[20px] leading-snug">Ads that brands like yours keep paying for</p>
+        <p className="text-[13.5px] leading-relaxed text-muted">Running a month or more, or new and still running after two weeks: a sign they work. We use them for the look and the ideas, never to copy.</p>
+      </div>
+      <div className="-mx-1 flex snap-x gap-3 overflow-x-auto px-1 pb-1">
+        {items.map((a) => (
+          <a key={a.url} href={a.url} target="_blank" rel="noreferrer" className="group grid w-[168px] shrink-0 snap-start content-start gap-2">
+            <span className="relative block aspect-[4/5] overflow-hidden rounded-[16px] border border-line bg-surface-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={a.thumb ?? ""} alt="" loading="lazy" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]" />
+              {a.video && <span className="absolute bottom-2 left-2 rounded-full bg-black/60 px-2 py-0.5 text-[10px] text-white">▶ Video</span>}
+              {a.days != null && <span className="absolute right-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[10px] text-white">{a.days} days live</span>}
+            </span>
+            <span className="text-[12.5px] font-medium leading-snug">{a.brand}</span>
+            {a.why && <span className="line-clamp-2 text-[12px] leading-snug text-muted">{a.why}</span>}
+          </a>
+        ))}
+      </div>
+    </section>
   );
 }
 

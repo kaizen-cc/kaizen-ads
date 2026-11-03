@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { getViewer } from "@/lib/auth";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { DashboardView } from "./dashboard-view";
+import { ShotsBanner } from "../shots/shots-banner";
 
 export const metadata: Metadata = { title: "Your dashboard · Kaizen", robots: { index: false, follow: false } };
 export const maxDuration = 120;
@@ -21,6 +22,8 @@ export default async function DashboardPage({ params }: { params: Promise<{ slug
     const { data: mine } = await (await createClient()).from("clients").select("id").eq("id", client.id).maybeSingle();
     if (!mine) notFound();
   }
+  const { currentShotList } = await import("@/lib/shot-list");
+  const shots = await currentShotList(admin, client.id).catch(() => null);
   const { data: asked } = await admin
     .from("dashboard_questions")
     .select("id, question, answer, flagged, created_at")
@@ -29,7 +32,8 @@ export default async function DashboardPage({ params }: { params: Promise<{ slug
     .limit(12);
   return (
     <div>
-      <main>
+      <main className="grid gap-4">
+        {shots && <ShotsBanner slim slug={client.slug} month={shots.list.month} open={shots.list.shots.filter((x) => !x.delivered).length} total={shots.list.shots.length} />}
         <DashboardView slug={client.slug} brand={client.name} asked={(asked ?? []).reverse() as { id: string; question: string; answer: string; flagged: boolean; created_at: string }[]} />
       </main>
     </div>

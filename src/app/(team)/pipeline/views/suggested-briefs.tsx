@@ -25,12 +25,13 @@ const KIND_TONE: Record<SuggestionKind, string> = {
   onboarding: "bg-brand text-white",
   call: "bg-warn text-black",
   market: "bg-[#6c5ce7]/15 text-[#8b7cf6]",
+  moment: "bg-brand-soft text-brand-text",
 };
 const FORMAT_LABEL = { image: "Images", video: "Videos", carousel: "Carousels" } as const;
 const FORMAT_ONE = { image: "image", video: "video", carousel: "carousel" } as const;
 // The order they're read in: accounts off target, then what clients asked for that nobody has started, then behind on
 // creative, then the rest, and ideas from the market last
-const RANK: Record<SuggestionKind, number> = { kpi: 0, offer: 1, call: 1, unhappy: 1, pacing: 2, fatigue: 3, refresh: 3, flop: 3, onboarding: 4, winner: 4, lab: 4, market: 5 };
+const RANK: Record<SuggestionKind, number> = { kpi: 0, offer: 1, call: 1, unhappy: 1, pacing: 2, fatigue: 3, refresh: 3, flop: 3, onboarding: 4, winner: 4, lab: 4, moment: 4, market: 5 };
 /** "1 new image · 5 variations": net new and variations, not one total that hides which is which */
 const countsOf = (formats: SuggestionDraft["formats"]) =>
   formats

@@ -377,9 +377,12 @@ async function promptFor(admin: SupabaseClient, clientId: string, signals: Signa
   // What's live in this client's market right now (Motion), so a brief can build on it
   const { marketBlock } = await import("@/lib/market");
   const { playbookBlock } = await import("@/lib/playbooks");
-  const [market, playbook, assets] = await Promise.all([marketBlock(admin, clientId, ctx.industry ?? null).catch(() => ""), playbookBlock(admin, clientId).catch(() => ""), loadAssets(admin, clientId).then(assetsBlock).catch(() => "")]);
+  const { momentsBlock } = await import("@/lib/moments");
+  const [market, playbook, assets, moments] = await Promise.all([marketBlock(admin, clientId, ctx.industry ?? null).catch(() => ""), playbookBlock(admin, clientId).catch(() => ""), loadAssets(admin, clientId).then(assetsBlock).catch(() => ""), momentsBlock(admin, clientId).catch(() => "")]);
   return `${contextBlock(ctx, undefined, sources)}
-${assets}
+${assets}${moments ? `
+${moments}
+` : ""}
 ${market ? `
 ${market}
 ` : ""}${playbook ? `
@@ -482,7 +485,8 @@ export async function runStrategist(admin: SupabaseClient, startedBy: string | n
       for (const d of done) if (d.status === "rejected") console.error("[strategist]", d.reason);
     }
     // Open suggestions older than two weeks have gone stale
-    await admin.from("creative_suggestions").update({ status: "expired" }).eq("status", "open").lt("created_at", new Date(Date.now() - 14 * 86_400_000).toISOString());
+    // A marketing moment's brief is written weeks ahead on purpose: it waits for its moment, not two weeks
+    await admin.from("creative_suggestions").update({ status: "expired" }).eq("status", "open").neq("kind", "moment").lt("created_at", new Date(Date.now() - 14 * 86_400_000).toISOString());
     if (run) await admin.from("suggestion_runs").update({ finished_at: new Date().toISOString(), looked_at: ranked.length, made }).eq("id", run.id);
     return { lookedAt: ranked.length, made };
   } catch (e) {
@@ -597,6 +601,41 @@ export async function loadSuggestions(db: SupabaseClient): Promise<SuggestionsSt
 }
 
 export type WinnerSource = { adId: string; client: string; detail: string | null; headline: string | null; text: string | null; thumbnail: string | null; ratio: number; result: string | null; costPerResult: number; usual: number };
+
+/**
+ * A marketing moment coming up for this client (Memorial Day, Pancake Day, storm season…), briefed its lead time
+ * ahead: the creative with every asset defined, plus the email for the email team, the promotion to ask the client
+ * for and the landing page it needs. A suggestion on Home, so a person checks it before anything is made.
+ */
+export async function suggestForMoment(admin: SupabaseClient, clientId: string, m: { id: string; name: string; on_date: string; angle: string | null; offer_idea: string | null; why: string | null }) {
+  const when = new Date(`${m.on_date}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" });
+  const prompt = await promptFor(admin, clientId, [{ kind: "offer", weight: 1, line: `Marketing moment: ${m.name} (${when})`, facts: [m.angle ?? "", m.offer_idea ? `Promotion to ask for: ${m.offer_idea}` : "", m.why ?? ""].filter(Boolean) }]);
+  if (!prompt) throw new Error("Client not found");
+  const out = await writeBrief(admin, clientId, {
+    agent: "strategist",
+    label: "marketing moment brief",
+    system: SYSTEM,
+    schema: SCHEMA,
+    prompt: `${prompt}
+
+<marketing_moment>
+${m.name} · ${when}
+Angle: ${m.angle ?? "(work it out)"}
+Promotion to ask the client for: ${m.offer_idea ?? "(work it out)"}
+Why it fits: ${m.why ?? ""}
+</marketing_moment>
+
+Write the request for this moment, made in time for it: the brief, angle, audience, formats and counts within what's left of the allotment, sizes, 2 to 4 concepts and hooks, and every asset it needs defined in draft.assets (what we have, what to ask the client to shoot). In the brief itself, after the creative, add three short plain lines: "Email:" (the email or SMS for the email team around the moment, if they do email with us), "Ask the client:" (the promotion to confirm with them, specific, by when), "Landing page:" (where it should send people, and whether a page for the moment is needed). Fit the business model and what won for similar businesses at this moment. suggest: true. kind: "offer". signal: "Marketing moment: <name>". evidence: 2 to 4 lines on why this moment fits and what won before. why: two sentences. reply: "".`,
+  });
+  const draft = clean(out.draft);
+  const { data, error } = await admin
+    .from("creative_suggestions")
+    .insert({ client_id: clientId, kind: "moment", signal: `Marketing moment: ${m.name} (${when})`, evidence: out.evidence.slice(0, 5), why: out.why, draft, original: draft, source: { momentId: m.id, headline: m.angle } })
+    .select("id")
+    .single();
+  if (error || !data) throw new Error(error?.message ?? "Couldn't save the brief");
+  return data.id as string;
+}
 
 /**
  * "Start a request from this" in the winners library: the strategist writes a full brief for the chosen client,
