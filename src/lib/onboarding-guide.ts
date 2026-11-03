@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { metaConfigured, metaGraph } from "@/lib/context/meta";
 import { sendEmail } from "@/lib/email";
-import { STYLES, type Guide, type GoogleStep, type MetaStep, type StyleLook } from "@/lib/onboarding-guide-types";
+import { STYLES, guideSteps, type Guide, type GuideHas, type GoogleStep, type MetaStep, type StyleLook } from "@/lib/onboarding-guide-types";
 import { servicesOf } from "@/lib/services";
 import { siteUrl } from "@/lib/site";
 
@@ -12,18 +12,37 @@ import { siteUrl } from "@/lib/site";
 // manager account, never taken on trust. "Let's do it on the call" flags the team; after the onboarding call, the
 // access is checked again and anything still missing goes to the team with what the call said.
 
-export type AccessSetting = { bmId: string | null; adminEmails: string[] };
+/**
+ * techEmail: the address clients add as an admin on Google Analytics, Tag Manager, Business Profile, Merchant Center,
+ * their website and email platform; klaviyoEmail: the one they add on Klaviyo
+ */
+export type AccessSetting = { bmId: string | null; adminEmails: string[]; techEmail: string | null; klaviyoEmail: string | null };
 
-/** Kaizen's Business Manager ID and the address clients add as admin (Settings → onboarding access) */
+/** Kaizen's Business Manager ID and the addresses clients add as admin (Settings → onboarding access) */
 export async function accessSetting(admin: SupabaseClient): Promise<AccessSetting> {
   const { data } = await admin.from("app_settings").select("value").eq("key", "onboarding_access").maybeSingle();
   const v = (data?.value ?? {}) as Partial<AccessSetting>;
-  return { bmId: v.bmId?.trim() || null, adminEmails: (v.adminEmails ?? []).filter(Boolean) };
+  return { bmId: v.bmId?.trim() || null, adminEmails: (v.adminEmails ?? []).filter(Boolean), techEmail: v.techEmail?.trim() || null, klaviyoEmail: v.klaviyoEmail?.trim() || v.techEmail?.trim() || null };
 }
 
 export async function loadGuide(admin: SupabaseClient, clientId: string): Promise<Guide> {
-  const { data } = await admin.from("client_onboarding").select("meta, google, assets, style").eq("client_id", clientId).maybeSingle();
-  return { meta: (data?.meta ?? {}) as MetaStep, google: (data?.google ?? {}) as GoogleStep, assets: (data?.assets ?? {}) as Guide["assets"], style: (data?.style ?? {}) as Guide["style"] };
+  const { data } = await admin.from("client_onboarding").select("meta, google, assets, style, business, ga4, gtm, gbp, merchant, website, email, tracking").eq("client_id", clientId).maybeSingle();
+  const d = (data ?? {}) as Record<string, unknown>;
+  const part = <T,>(k: string) => (d[k] ?? {}) as T;
+  return { meta: part("meta"), google: part("google"), assets: part("assets"), style: part("style"), business: part("business"), ga4: part("ga4"), gtm: part("gtm"), gbp: part("gbp"), merchant: part("merchant"), website: part("website"), email: part("email"), tracking: part("tracking") };
+}
+
+/**
+ * Which setup steps a client has: from what they buy, with our guess at whether they sell online (their industry) and
+ * where their orders, bookings or leads live (their industry and sub-vertical)
+ */
+export async function guideHas(admin: SupabaseClient, clientId: string): Promise<GuideHas> {
+  const { data: c } = await admin.from("clients").select("industry, industry_detail, vertical_id, services, services_extra, services_removed").eq("id", clientId).single();
+  const industry = (c?.industry as string | null) ?? null;
+  const { data: v } = c?.vertical_id ? await admin.from("verticals").select("name").eq("id", c.vertical_id).maybeSingle() : { data: null };
+  const ecommerce = industry ? industry === "ecommerce" : null;
+  const { trackingKind } = await import("@/lib/tracking-platforms");
+  return guideSteps(servicesOf(c ?? {}), ecommerce, trackingKind(industry, [v?.name, c?.industry_detail].filter(Boolean).join(" "), ecommerce));
 }
 
 export async function saveStep(admin: SupabaseClient, clientId: string, step: keyof Guide, value: object) {

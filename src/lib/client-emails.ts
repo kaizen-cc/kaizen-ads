@@ -27,10 +27,13 @@ const NUDGE = "A quick nudge in case this got buried.";
 /** The setup steps for what a client buys: Meta access if we run their Meta ads, Google if Google, the look if we run
  *  ads or make their creative, and their assets always */
 export function setupSteps(services: string[]) {
-  const { meta, google, looks } = guideSteps(services);
+  const { meta, google, looks, website, email } = guideSteps(services);
   return [
     ...(meta ? [{ title: "Give us access to your Facebook and Instagram ads", text: "Add Kaizen as a partner in your Business Manager. We show you every click, and how to make one if you don't have it yet." }] : []),
     ...(google ? [{ title: "Send us your Google Ads account ID", text: "We show you where to find it, or how to make an account." }] : []),
+    ...(google ? [{ title: "Add us to your Google tools", text: "Analytics, Tag Manager, and your Business Profile or Merchant Center if you have them. Don't have one? We set it up with you." }] : []),
+    ...(website ? [{ title: "Give us access to your website", text: "Shopify, WordPress, Wix or anything else: we show you exactly where." }] : []),
+    ...(email ? [{ title: "Add us to your email platform", text: "Klaviyo, Mailchimp, Attentive or whichever you use." }] : []),
     { title: "Share your brand assets", text: "Your logo, photos, videos and brand guide, or a link to them." },
     ...(looks ? [{ title: "Pick the look you want", text: "The styles and pacing you love, so your first ads feel like you." }] : []),
   ];

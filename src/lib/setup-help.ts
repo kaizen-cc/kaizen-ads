@@ -9,7 +9,8 @@ import { accessSetting } from "@/lib/onboarding-guide";
 // after about five tries on the same problem, with them getting frustrated, does it offer to save it for the
 // onboarding call (and then the team hears where they got stuck).
 
-export type HelpStep = "meta" | "google";
+/** The access steps with help: Meta, Google Ads, the Google tools, their website and their email platform */
+export type HelpStep = "meta" | "google" | "tools" | "website" | "email" | "tracking";
 export type HelpTurn = { id: string; role: "client" | "ai"; text: string; files: string[]; at: string; suggestCall: boolean };
 type Shared = { path: string; name: string; mime: string; bytes: number };
 
@@ -18,7 +19,7 @@ export const TRIES_BEFORE_CALL = 5;
 
 export async function loadHelp(admin: SupabaseClient, clientId: string): Promise<Record<HelpStep, HelpTurn[]>> {
   const { data } = await admin.from("setup_help").select("id, step, role, text, files, suggest_call, created_at").eq("client_id", clientId).order("created_at").limit(200);
-  const out: Record<HelpStep, HelpTurn[]> = { meta: [], google: [] };
+  const out: Record<HelpStep, HelpTurn[]> = { meta: [], google: [], tools: [], website: [], email: [], tracking: [] };
   for (const r of data ?? []) {
     const step = r.step as HelpStep;
     if (!out[step]) continue;
@@ -28,6 +29,29 @@ export async function loadHelp(admin: SupabaseClient, clientId: string): Promise
 }
 
 async function guideFor(admin: SupabaseClient, step: HelpStep) {
+  if (step === "tracking") {
+    const [a, { stepsText }, { TRACKING_PLATFORMS }] = await Promise.all([accessSetting(admin), import("@/lib/platform-steps"), import("@/lib/tracking-platforms")]);
+    const addr = { tech: a.techEmail ?? "the address their Kaizen contact gave them", klaviyo: a.klaviyoEmail ?? "" };
+    return `THE STEP: tell Kaizen where their orders, bookings or leads are recorded (POS and online ordering for restaurants, booking software for spas, salons and gyms, CRM, job software and call tracking for service businesses, subscription apps for online stores), then add ${addr.tech} as a user on each so our tracking team can connect sales and leads to the ads. Some platforms can't add a user: then the tracking team sets up a report export or a connection with them on the onboarding call. Never ask for or accept a password.
+${TRACKING_PLATFORMS.map((p) => `${p.name}${p.invite === "call" ? " (can't add a user: on the call)" : ""}:\n${stepsText(p.key, addr) || p.steps.map((x, i) => `${i + 1}. ${x.title}: ${x.body.replace(/\{tech\}/g, addr.tech).replace(/\*\*/g, "")}`).join("\n")}`).join("\n\n")}
+Common snags: only an owner or admin can add users; some plans charge per user (then it's fine to do it on the call instead); a manager login may hide the team settings; if they're not sure which tool records their sales, ask how a customer orders, books or gets in touch, and suggest the call.`;
+  }
+  if (step === "tools" || step === "website" || step === "email") {
+    const [a, { PLATFORM_STEPS, stepsText }, { EMAIL_PLATFORMS, GOOGLE_TOOLS, WEBSITE_PLATFORMS }] = await Promise.all([accessSetting(admin), import("@/lib/platform-steps"), import("@/lib/onboarding-guide-types")]);
+    const addr = { tech: a.techEmail ?? "the address their Kaizen contact gave them", klaviyo: a.klaviyoEmail ?? a.techEmail ?? "the address their Kaizen contact gave them" };
+    const block = (key: string, name: string) => (PLATFORM_STEPS[key] ? `${name}:\n${stepsText(key, addr)}` : "");
+    if (step === "tools")
+      return `THE STEP: give Kaizen access to their Google tools (beyond Google Ads), each by adding ${addr.tech} as an admin. Analytics and Tag Manager always; Business Profile if customers visit a location; Merchant Center if they sell products online.
+${GOOGLE_TOOLS.map((t) => block(t.key, t.name)).join("\n\n")}
+If they don't have one: they tap "I don't have one" and we set it up with them on the onboarding call. Common snags: the tool is owned by a different Google account than the one they're signed into (switch accounts top right); they need admin rights themselves to add users (ask whoever set it up: a web developer or former agency); in Analytics, Account access gives access to every property; in Business Profile, only an owner can add managers, and a listing nobody owns needs to be claimed (business.google.com/create, verified by postcard, phone or video).`;
+    if (step === "website")
+      return `THE STEP: give Kaizen access to their website. They pick their platform. Shopify: they send us their 4-digit collaborator request code and their store's myshopify.com address, and we send a collaborator request they accept. Every other platform: they invite ${addr.tech} as an admin.
+${WEBSITE_PLATFORMS.map((x) => block(x.key === "other" ? "website-other" : x.key, x.name)).join("\n\n")}
+Common snags: they're not the store owner or an admin (ask whoever built the site, often a web developer); on Shopify the collaborator code is under Settings › Users and permissions (or Users) › Collaborators, and the store address is in Settings › Domains (an admin address admin.shopify.com/store/NAME means NAME.myshopify.com); if a developer built the site, they can invite us.`;
+    return `THE STEP: give Kaizen access to their email or SMS platform as an admin: on Klaviyo they add ${addr.klaviyo}; on every other platform ${addr.tech}.
+${EMAIL_PLATFORMS.map((x) => block(x.key === "other" ? "email-other" : x.key, x.name)).join("\n\n")}
+Common snags: only an Owner or Admin can add users; seat limits on cheaper plans (Mailchimp's free plan has one seat: they may need to upgrade, or we do it on the call); the invite lands in our inbox, not theirs.`;
+  }
   if (step === "meta") {
     const a = await accessSetting(admin);
     return `THE STEP: give Kaizen access to their Facebook and Instagram ads, in Meta Business Settings (business.facebook.com/settings, on a computer).
@@ -101,7 +125,7 @@ export async function askSetupHelp(admin: SupabaseClient, clientId: string, step
   const mayOffer = tries >= TRIES_BEFORE_CALL;
 
   const out = await askJson<{ answer: string; stuck: boolean; frustration: number; topic: string; suggest_call: boolean; blocker: string; blocker_detail: string }>({
-    agent: step === "meta" ? "launcher" : "google_launcher",
+    agent: step === "google" || step === "tools" ? "google_launcher" : "launcher",
     label: `setup help ${c.name}`,
     bare: true,
     override: { model: "sonnet", effort: "low" },

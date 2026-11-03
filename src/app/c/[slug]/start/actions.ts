@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { getViewer } from "@/lib/auth";
-import { PACING, STYLES, type GoogleStep, type MetaStep, type OwnExample, type StyleStep } from "@/lib/onboarding-guide-types";
+import { EMAIL_PLATFORMS, GOOGLE_TOOLS, PACING, STEP_LABELS, STYLES, WEBSITE_PLATFORMS, googleTools, type EmailStep, type GoogleStep, type GoogleTool, type MetaStep, type OwnExample, type StyleStep, type ToolStep, type TrackingPick, type TrackingStep, type WebsiteStep } from "@/lib/onboarding-guide-types";
+import type { HelpStep } from "@/lib/setup-help";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 
 // The client's side of their onboarding guide: Meta access done (checked), Google Ads ID sent, assets shared, the look
@@ -38,16 +39,24 @@ export async function metaDone(slug: string, typed: string): Promise<{ ok: true;
 }
 
 /** "Let's do it on the call": the team hears it now, and after the call the access is checked */
-export async function onTheCall(slug: string, which: "meta" | "google", note: string): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function onTheCall(slug: string, which: HelpStep, note: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const l = await load(slug);
   if ("error" in l) return { ok: false, error: l.error! };
+  if (!(which in STEP_LABELS)) return { ok: false, error: "Not found." };
   const g = await l.guide.loadGuide(l.admin, l.client.id);
-  await l.guide.saveStep(l.admin, l.client.id, which, { ...g[which], status: "on_call", at: new Date().toISOString(), by: l.by, note: note.trim().slice(0, 600) || null });
-  await l.guide.tellGuideTeam(l.admin, l.client.id, `wants to set up ${which === "meta" ? "Meta" : "Google Ads"} access on the onboarding call`, `${l.by}${note.trim() ? `: "${note.trim().slice(0, 400)}"` : " would rather do it together on the call"}. Cover it on the onboarding call; afterwards the app checks the access and flags anything still missing.`, `on-call:${which}:${l.client.id}`, "critical");
+  const at = new Date().toISOString();
+  const saved = note.trim().slice(0, 600) || null;
+  if (which === "tools") {
+    // Every Google tool they still have to share
+    const has = await l.guide.guideHas(l.admin, l.client.id);
+    for (const t of googleTools(g, has)) if (!["done", "na"].includes(g[t].status ?? "")) await l.guide.saveStep(l.admin, l.client.id, t, { ...g[t], status: "on_call", at, by: l.by, note: saved });
+  } else await l.guide.saveStep(l.admin, l.client.id, which, { ...g[which], status: "on_call", at, by: l.by, note: saved });
+  const name = which === "meta" ? "Meta" : which === "google" ? "Google Ads" : STEP_LABELS[which];
+  await l.guide.tellGuideTeam(l.admin, l.client.id, `wants to set up ${name} access on the onboarding call`, `${l.by}${note.trim() ? `: "${note.trim().slice(0, 400)}"` : " would rather do it together on the call"}. Cover it on the onboarding call; afterwards the app checks the access and flags anything still missing.`, `on-call:${which}:${l.client.id}`, "critical");
   // The CS team's brief for the call, with everything they tried
   const admin = l.admin;
   const clientId = l.client.id as string;
-  const why = `${l.by} saved ${which === "meta" ? "Meta access" : "Google Ads"} for the onboarding call${note.trim() ? `: "${note.trim().slice(0, 200)}"` : ""}`;
+  const why = `${l.by} saved ${which === "meta" ? "Meta access" : name} for the onboarding call${note.trim() ? `: "${note.trim().slice(0, 200)}"` : ""}`;
   after(async () => {
     const { prepareCall } = await import("@/lib/call-prep");
     await prepareCall(admin, clientId, why).catch((e) => console.error("[call-prep] on call", e));
@@ -179,7 +188,7 @@ export async function helpSlots(slug: string, files: { name: string; bytes: numb
 }
 
 /** Their question in the setup guide, answered for what's on their screen */
-export async function askHelp(slug: string, step: "meta" | "google", text: string, files: { path: string; name: string; mime: string; bytes: number }[]) {
+export async function askHelp(slug: string, step: HelpStep, text: string, files: { path: string; name: string; mime: string; bytes: number }[]) {
   const l = await load(slug);
   if ("error" in l) return { ok: false as const, error: l.error! };
   if (!text.trim() && !files.length) return { ok: false as const, error: "Ask something or share a screenshot first." };
@@ -203,9 +212,163 @@ export async function askHelp(slug: string, step: "meta" | "google", text: strin
 }
 
 /** Saved for the onboarding call from the help chat: the team hears what they were stuck on */
-export async function helpToCall(slug: string, step: "meta" | "google") {
+export async function helpToCall(slug: string, step: HelpStep) {
   const l = await load(slug);
   if ("error" in l) return { ok: false as const, error: l.error! };
   const { helpSummary } = await import("@/lib/setup-help");
   return onTheCall(slug, step, await helpSummary(l.admin, l.client.id, step));
+}
+
+/** How they sell, as they tell us: decides Merchant Center (selling online) and the Business Profile (a location) */
+export async function saveBusiness(slug: string, b: { ecommerce?: boolean | null; location?: boolean | null }): Promise<{ ok: true } | { ok: false; error: string }> {
+  const l = await load(slug);
+  if ("error" in l) return { ok: false, error: l.error! };
+  const g = await l.guide.loadGuide(l.admin, l.client.id);
+  const next = { ...g.business, at: new Date().toISOString(), by: l.by };
+  if (typeof b.ecommerce === "boolean") next.ecommerce = b.ecommerce;
+  if (typeof b.location === "boolean") next.location = b.location;
+  await l.guide.saveStep(l.admin, l.client.id, "business", next);
+  done(slug);
+  return { ok: true };
+}
+
+/** A Google tool: they added our address ("done", with its ID if they have it), don't have one (we set it up on the call), or it doesn't apply */
+export async function toolStep(slug: string, tool: GoogleTool, status: "done" | "none" | "na", id = ""): Promise<{ ok: true; step: ToolStep } | { ok: false; error: string }> {
+  const l = await load(slug);
+  if ("error" in l) return { ok: false, error: l.error! };
+  const t = GOOGLE_TOOLS.find((x) => x.key === tool);
+  if (!t) return { ok: false, error: "Not found." };
+  const at = new Date().toISOString();
+  const step: ToolStep = status === "none" ? { status: "on_call", none: true, at, by: l.by } : status === "na" ? { status: "na", at, by: l.by } : { status: "done", id: id.trim().slice(0, 60) || null, at, by: l.by };
+  await l.guide.saveStep(l.admin, l.client.id, tool, step);
+  const { techEmail } = await l.guide.accessSetting(l.admin);
+  if (status === "done") await l.guide.tellGuideTeam(l.admin, l.client.id, `added Kaizen to ${t.name}`, `${l.by} says ${techEmail ?? "our tech address"} is invited${step.id ? ` (${step.id})` : ""}. Accept the invite and check the access.`, `${tool}-done:${l.client.id}`, "normal");
+  if (status === "none") await l.guide.tellGuideTeam(l.admin, l.client.id, `has no ${t.name} yet`, `${l.by} doesn't have ${t.name}. Set it up with them on the onboarding call.`, `${tool}-none:${l.client.id}`, "critical");
+  done(slug);
+  return { ok: true, step };
+}
+
+const shopifyStore = (v: string) => {
+  const m = v.trim().toLowerCase().match(/([a-z0-9][a-z0-9-]*)\.myshopify\.com/) ?? v.trim().toLowerCase().match(/admin\.shopify\.com\/store\/([a-z0-9-]+)/);
+  return m ? `${m[1]}.myshopify.com` : /^[a-z0-9][a-z0-9-]*$/.test(v.trim().toLowerCase()) ? `${v.trim().toLowerCase()}.myshopify.com` : null;
+};
+
+/**
+ * Their website: the platform, then on Shopify their collaborator request code and store address (the team sends the
+ * collaborator request from Kaizen's Shopify Partners account), elsewhere our tech address invited as an admin. "none":
+ * no website yet, talked through on the call.
+ */
+export async function websiteStep(slug: string, w: { platform: string; status: "done" | "none"; url?: string; code?: string; store?: string; other?: string }): Promise<{ ok: true; step: WebsiteStep } | { ok: false; error: string }> {
+  const l = await load(slug);
+  if ("error" in l) return { ok: false, error: l.error! };
+  const at = new Date().toISOString();
+  if (w.status === "none") {
+    const step: WebsiteStep = { status: "on_call", none: true, at, by: l.by };
+    await l.guide.saveStep(l.admin, l.client.id, "website", step);
+    await l.guide.tellGuideTeam(l.admin, l.client.id, "has no website yet", `${l.by} says they don't have a website yet. Talk it through on the onboarding call.`, `website-none:${l.client.id}`, "critical");
+    done(slug);
+    return { ok: true, step };
+  }
+  const known = WEBSITE_PLATFORMS.find((x) => x.key === w.platform);
+  if (!known) return { ok: false, error: "Pick your website platform first." };
+  const url = (w.url ?? "").trim().slice(0, 300) || null;
+  if (known.key === "shopify") {
+    const code = (w.code ?? "").replace(/\D/g, "");
+    const store = shopifyStore(w.store ?? "");
+    if (code.length !== 4) return { ok: false, error: "The collaborator request code is 4 digits (Settings › Users and permissions › Collaborators)." };
+    if (!store) return { ok: false, error: "Your store address ends in .myshopify.com (Settings › Domains)." };
+    const step: WebsiteStep = { status: "done", platform: "shopify", code, store, url, at, by: l.by };
+    await l.guide.saveStep(l.admin, l.client.id, "website", step);
+    await l.guide.tellGuideTeam(l.admin, l.client.id, "sent their Shopify collaborator code", `Store ${store}, collaborator request code ${code}. In Shopify Partners: Stores › Add store › Request access (collaborator), enter the store address and the code. They accept it in Shopify. Both are on their client page.`, `website-shopify:${l.client.id}:${code}`, "critical");
+    done(slug);
+    return { ok: true, step };
+  }
+  const name = known.key === "other" ? (w.other ?? "").trim().slice(0, 60) || "another platform" : known.name;
+  const step: WebsiteStep = { status: "done", platform: known.key === "other" ? name : known.key, url, at, by: l.by };
+  await l.guide.saveStep(l.admin, l.client.id, "website", step);
+  const { techEmail } = await l.guide.accessSetting(l.admin);
+  await l.guide.tellGuideTeam(l.admin, l.client.id, `added Kaizen to their ${name} website`, `${l.by} says ${techEmail ?? "our tech address"} is invited as an admin${url ? ` on ${url}` : ""}. Accept the invite and check the access.`, `website-done:${l.client.id}`, "normal");
+  done(slug);
+  return { ok: true, step };
+}
+
+/** Their email or SMS platform: Klaviyo adds our Klaviyo address, everything else our tech address, as an admin */
+export async function emailStep(slug: string, e: { platform: string; status: "done" | "none"; other?: string }): Promise<{ ok: true; step: EmailStep } | { ok: false; error: string }> {
+  const l = await load(slug);
+  if ("error" in l) return { ok: false, error: l.error! };
+  const at = new Date().toISOString();
+  if (e.status === "none") {
+    const step: EmailStep = { status: "on_call", none: true, at, by: l.by };
+    await l.guide.saveStep(l.admin, l.client.id, "email", step);
+    await l.guide.tellGuideTeam(l.admin, l.client.id, "has no email platform yet", `${l.by} doesn't use an email platform yet. Pick and set one up with them on the onboarding call.`, `email-none:${l.client.id}`, "critical");
+    done(slug);
+    return { ok: true, step };
+  }
+  const known = EMAIL_PLATFORMS.find((x) => x.key === e.platform);
+  if (!known) return { ok: false, error: "Pick your email platform first." };
+  const name = known.key === "other" ? (e.other ?? "").trim().slice(0, 60) || "another platform" : known.name;
+  const step: EmailStep = { status: "done", platform: known.key === "other" ? name : known.key, at, by: l.by };
+  await l.guide.saveStep(l.admin, l.client.id, "email", step);
+  const a = await l.guide.accessSetting(l.admin);
+  const who = known.key === "klaviyo" ? a.klaviyoEmail : a.techEmail;
+  await l.guide.tellGuideTeam(l.admin, l.client.id, `added Kaizen to ${name}`, `${l.by} says ${who ?? "our address"} is invited as an admin. Accept the invite and check the access.`, `email-done:${l.client.id}`, "normal");
+  done(slug);
+  return { ok: true, step };
+}
+
+/** Every pick added: done; the rest waiting on the call: on_call */
+const trackingStatus = (picks: TrackingPick[], notSure: boolean): TrackingStep["status"] =>
+  notSure ? "on_call" : !picks.length ? "todo" : picks.every((x) => x.status === "done") ? "done" : picks.every((x) => x.status !== "todo") ? "on_call" : "todo";
+
+/**
+ * Where their orders, bookings or leads live: the platforms they use (or "not sure", for the call), then each one
+ * added (our tech address invited) or saved for the call. The tracking team hears what they use and what it needs
+ * from each, on the client page, as a critical notice and by email to the tech inbox.
+ */
+export async function trackingStep(slug: string, op: { picks: string[]; other?: string; notSure?: boolean } | { done: string } | { call: string }): Promise<{ ok: true; step: TrackingStep } | { ok: false; error: string }> {
+  const l = await load(slug);
+  if ("error" in l) return { ok: false, error: l.error! };
+  const { trackingPlatform, OTHER_NEEDS } = await import("@/lib/tracking-platforms");
+  const g = await l.guide.loadGuide(l.admin, l.client.id);
+  const at = new Date().toISOString();
+  if ("picks" in op) {
+    const picks: TrackingPick[] = [];
+    // Ones already added (or saved for the call) keep where they stand
+    const had = new Map((g.tracking.picks ?? []).map((x) => [x.key, x]));
+    for (const key of [...new Set(op.picks)].slice(0, 8)) {
+      const p = trackingPlatform(key);
+      // One that can't add a user is set up with the tracking team on the call
+      if (p) picks.push(had.get(key) ?? { key, name: p.name, status: p.invite === "call" ? "on_call" : "todo", at, by: l.by });
+      else if (key.startsWith("other:") && had.has(key)) picks.push(had.get(key)!);
+    }
+    const other = (op.other ?? "").trim().slice(0, 80);
+    const otherKey = `other:${other.toLowerCase()}`;
+    if (other && !picks.some((x) => x.key === otherKey)) picks.push(had.get(otherKey) ?? { key: otherKey, name: other, status: "todo", at, by: l.by });
+    if (!picks.length && !op.notSure) return { ok: false, error: "Pick what you use, or tap \"Not sure\"." };
+    const step: TrackingStep = { status: trackingStatus(picks, Boolean(op.notSure)), picks, notSure: Boolean(op.notSure), at, by: l.by };
+    await l.guide.saveStep(l.admin, l.client.id, "tracking", step);
+    const lines = picks.map((x) => `${x.name}: ${x.status === "on_call" ? "can't add a user, so a report export or connection on the call" : "they'll invite our tech address"}. Needs: ${trackingPlatform(x.key)?.needs ?? OTHER_NEEDS}.`);
+    const body = op.notSure ? `${l.by} isn't sure where their orders, bookings or leads are recorded. Find out on the onboarding call.` : `${l.by} uses ${picks.map((x) => x.name).join(", ")}. ${lines.join(" ")}`;
+    await l.guide.tellGuideTeam(l.admin, l.client.id, op.notSure ? "isn't sure how they track orders, bookings or leads" : `tracks sales in ${picks.map((x) => x.name).join(", ")}`, body, `tracking:${l.client.id}:${at.slice(0, 16)}`, "critical");
+    // And to the tech inbox, where the tracking work happens
+    const { techEmail } = await l.guide.accessSetting(l.admin);
+    if (techEmail) {
+      const { sendEmail } = await import("@/lib/email");
+      const { siteUrl } = await import("@/lib/site");
+      const link = `${siteUrl()}/clients/${l.client.slug}`;
+      await sendEmail({ to: techEmail, subject: `${l.client.name}: where their orders, bookings or leads live`, text: `${body}\n\n${link}`, html: `<div style="font:14px/1.55 Helvetica,Arial,sans-serif;color:#222;max-width:560px"><p style="font-weight:700;font-size:16px;margin:0 0 8px">${l.client.name}: tracking platforms</p>${(op.notSure ? [body] : [`${l.by} uses ${picks.map((x) => x.name).join(", ")}.`, ...lines]).map((x) => `<p style="margin:0 0 6px">${x.replace(/[&<>]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[ch]!)}</p>`).join("")}<a href="${link}" style="color:#b21e2c">Open the client in Kaizen Ads →</a></div>` }).catch(() => null);
+    }
+    done(slug);
+    return { ok: true, step };
+  }
+  const key = "done" in op ? op.done : op.call;
+  const picks = (g.tracking.picks ?? []).map((x) => (x.key === key ? { ...x, status: ("done" in op ? "done" : "on_call") as TrackingPick["status"], at, by: l.by } : x));
+  const pick = picks.find((x) => x.key === key);
+  if (!pick) return { ok: false, error: "Not found." };
+  const step: TrackingStep = { ...g.tracking, picks, status: trackingStatus(picks, Boolean(g.tracking.notSure)) };
+  await l.guide.saveStep(l.admin, l.client.id, "tracking", step);
+  const { techEmail } = await l.guide.accessSetting(l.admin);
+  await l.guide.tellGuideTeam(l.admin, l.client.id, "done" in op ? `added Kaizen to ${pick.name}` : `wants to connect ${pick.name} on the call`, "done" in op ? `${l.by} says ${techEmail ?? "our tech address"} is invited to ${pick.name}. Accept it and set up the tracking.` : `${l.by} would rather connect ${pick.name} with the tracking team on the onboarding call.`, `tracking-${"done" in op ? "done" : "call"}:${l.client.id}:${key}`, "done" in op ? "normal" : "critical");
+  done(slug);
+  return { ok: true, step };
 }

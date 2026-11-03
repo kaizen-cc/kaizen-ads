@@ -3,28 +3,41 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
-import { PACING, STYLES, guideProgress, type Guide, type OwnExample, type StyleLook, type StyleStep } from "@/lib/onboarding-guide-types";
+import { EMAIL_PLATFORMS, PACING, STYLES, WEBSITE_PLATFORMS, googleTools, guideProgress, toolSettled, type Guide, type GuideHas, type OwnExample, type StyleLook, type StyleStep, type ToolStep } from "@/lib/onboarding-guide-types";
 import { createClient } from "@/lib/supabase/client";
 import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
-import type { HelpTurn } from "@/lib/setup-help";
+import type { HelpStep, HelpTurn } from "@/lib/setup-help";
 import { INTAKE_FORM_URL } from "@/lib/presentation-types";
+import { EmailSheet, ToolsSheet, TrackingSheet, WebsiteSheet } from "./platform-sheets";
+import { TRACKING_KINDS } from "@/lib/tracking-platforms";
 import { askHelp, assetSlots, assetsShared, googleSend, helpSlots, helpToCall, metaDone, onTheCall, saveStyle, styleSlots } from "./actions";
 
 // The client's setup, as a few short, visual steps: each opens full screen (in the address, so back closes it), walks
 // them through with pictures of the screens they'll see, and says plainly when it's done. Nothing here is a form to
 // puzzle over: copy buttons for every ID, one tap for "let's do it on our call".
 
-type Props = { slug: string; brand: string; firstName: string | null; guide: Guide; has: { meta: boolean; google: boolean; looks: boolean }; bmId: string | null; adminEmails: string[]; managerId: string | null; examples: { id: string; image: string; video: string | null }[]; /** A real ad for each style */ looks: Record<string, StyleLook>; presentation: string | null; help: Record<"meta" | "google", HelpTurn[]>; /** The marketing intake form: the step right after access */ intake: { done: boolean; clientId: number | null } };
-type StepKey = "meta" | "google" | "intake" | "assets" | "style";
+type Props = { slug: string; brand: string; firstName: string | null; guide: Guide; has: GuideHas; bmId: string | null; adminEmails: string[]; /** The address they add on Google tools, their website and email platform */ techEmail: string | null; /** The one they add on Klaviyo */ klaviyoEmail: string | null; managerId: string | null; examples: { id: string; image: string; video: string | null }[]; /** A real ad for each style */ looks: Record<string, StyleLook>; presentation: string | null; help: Record<HelpStep, HelpTurn[]>; /** The marketing intake form: the step right after access */ intake: { done: boolean; clientId: number | null } };
+export type StartProps = Props;
+type StepKey = "meta" | "google" | "tools" | "tracking" | "website" | "email" | "intake" | "assets" | "style";
+/** The access steps, listed first under their own heading */
+const ACCESS: StepKey[] = ["meta", "google", "tools", "tracking", "website", "email"];
+type State = "done" | "call" | "todo" | "wait";
+/** A tool, website or email step's state in the list */
+const settledState = (st: ToolStep[]): State => (st.every((x) => ["done", "na"].includes(x.status ?? "")) ? "done" : st.every((x) => toolSettled(x)) ? "call" : "todo");
 
 export function StartView(p: Props) {
   const step = useParam("step") as StepKey | null;
   const progress = guideProgress(p.guide, p.has);
+  const tools = googleTools(p.guide, p.has);
   const done = progress.done + (p.intake.done ? 1 : 0);
   const total = progress.total + 1;
   const steps: { key: StepKey; title: string; line: string; mins: string; state: "done" | "call" | "todo" | "wait" }[] = [
     ...(p.has.meta ? [{ key: "meta" as const, title: "Facebook & Instagram access", line: "Add Kaizen as a partner so we can run your ads", mins: "4 min", state: (p.guide.meta.status === "verified" ? "done" : p.guide.meta.status === "on_call" ? "call" : p.guide.meta.status === "done" ? "wait" : "todo") as "done" | "call" | "todo" | "wait" }] : []),
     ...(p.has.google ? [{ key: "google" as const, title: "Google Ads", line: "Send us your account ID (or make one)", mins: "2 min", state: (p.guide.google.status === "verified" ? "done" : p.guide.google.status === "on_call" ? "call" : ["sent", "invited", "none"].includes(p.guide.google.status ?? "") ? "wait" : "todo") as "done" | "call" | "todo" | "wait" }] : []),
+    ...(tools.length ? [{ key: "tools" as const, title: "Google Analytics & tools", line: `Analytics, Tag Manager${tools.includes("gbp") ? ", Business Profile" : ""}${tools.includes("merchant") ? ", Merchant Center" : ""}`, mins: `${tools.length * 1 + 1} min`, state: settledState(tools.map((t) => p.guide[t])) }] : []),
+    ...(p.has.tracking ? [{ key: "tracking" as const, title: TRACKING_KINDS[p.has.tracking].title, line: p.guide.tracking.picks?.length ? `${p.guide.tracking.picks.map((x) => x.name).join(", ")}: add Kaizen` : TRACKING_KINDS[p.has.tracking].line, mins: "3 min", state: settledState([p.guide.tracking]) }] : []),
+    ...(p.has.website ? [{ key: "website" as const, title: "Your website", line: p.guide.website.platform ? `${WEBSITE_PLATFORMS.find((x) => x.key === p.guide.website.platform)?.name ?? p.guide.website.platform}: add Kaizen` : "Shopify, WordPress, Wix or anything else", mins: "2 min", state: settledState([p.guide.website]) }] : []),
+    ...(p.has.email ? [{ key: "email" as const, title: "Your email platform", line: p.guide.email.platform ? `${EMAIL_PLATFORMS.find((x) => x.key === p.guide.email.platform)?.name ?? p.guide.email.platform}: add Kaizen` : "Klaviyo, Mailchimp, Attentive or another", mins: "2 min", state: settledState([p.guide.email]) }] : []),
     { key: "intake", title: "Tell us about your business", line: "Your marketing intake form: goals, customers, offers", mins: "10 min", state: p.intake.done ? "done" : "todo" },
     { key: "assets", title: "Your brand assets", line: "Logo, photos, videos, brand guide", mins: "3 min", state: (p.guide.assets.files ?? 0) + (p.guide.assets.links ?? 0) ? "done" : "todo" },
     ...(p.has.looks ? [{ key: "style" as const, title: "The look you want", line: "Pick the styles and pacing you love", mins: "2 min", state: (p.guide.style.styles?.length || p.guide.style.pacing ? "done" : "todo") as "done" | "todo" }] : []),
@@ -52,7 +65,13 @@ export function StartView(p: Props) {
       </section>
 
       <div className="grid gap-3">
-        {steps.map((s, i) => (
+        {steps.map((s, i) => [
+          // A heading where the access steps start and where the rest begin
+          (i === 0 || ACCESS.includes(s.key) !== ACCESS.includes(steps[i - 1].key)) && (
+            <p key={`h-${s.key}`} className={`px-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-faint ${i ? "mt-3" : ""}`}>
+              {ACCESS.includes(s.key) ? "Give us access" : "Your brand"}
+            </p>
+          ),
           <button key={s.key} type="button" onClick={() => pushParams({ step: s.key })} className="group flex items-center gap-4 rounded-[20px] border border-line bg-surface p-4 text-left transition-colors hover:border-faint md:p-5">
             <span className={`grid h-12 w-12 shrink-0 place-items-center rounded-full text-[15px] font-semibold ${s.state === "done" ? "bg-ok text-white" : s.state === "call" ? "bg-warn-soft text-warn" : s.state === "wait" ? "bg-brand/15 text-brand-text" : "bg-surface-2 text-muted"}`}>
               {s.state === "done" ? "✓" : s.state === "call" ? "☎" : s.state === "wait" ? "…" : i + 1}
@@ -62,8 +81,8 @@ export function StartView(p: Props) {
               <span className="block text-[13.5px] text-muted">{s.state === "done" ? "Done" : s.state === "call" ? "We'll do it together on our call" : s.state === "wait" ? "Checking on our side…" : s.line}</span>
             </span>
             <span className="shrink-0 text-[12px] text-faint group-hover:text-fg">{s.state === "todo" ? `${s.mins} →` : "→"}</span>
-          </button>
-        ))}
+          </button>,
+        ])}
         {p.presentation && (
           <Link href={`/c/${p.slug}/plan`} className="flex items-center gap-4 rounded-[20px] border border-brand/40 bg-brand/[0.06] p-4 md:p-5">
             <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-brand text-white">✦</span>
@@ -78,6 +97,10 @@ export function StartView(p: Props) {
 
       {step === "meta" && p.has.meta && <MetaSheet {...p} />}
       {step === "google" && p.has.google && <GoogleSheet {...p} />}
+      {step === "tools" && tools.length > 0 && <ToolsSheet {...p} />}
+      {step === "website" && p.has.website && <WebsiteSheet {...p} />}
+      {step === "email" && p.has.email && <EmailSheet {...p} />}
+      {step === "tracking" && p.has.tracking && <TrackingSheet {...p} kind={p.has.tracking} />}
       {step === "intake" && <IntakeSheet {...p} />}
       {step === "assets" && <AssetsSheet {...p} next={nextAfter("assets")} />}
       {step === "style" && p.has.looks && <StyleSheet {...p} next={nextAfter("style")} />}
@@ -100,18 +123,18 @@ function Ring({ pct }: { pct: number }) {
 }
 
 /** Full screen on a phone, a big panel on a computer */
-function Sheet({ title, kicker, children, help }: { title: string; kicker: string; children: React.ReactNode; /** The help chat: beside the steps on a computer, a button away on a phone */ help?: React.ReactNode }) {
+export function Sheet({ title, kicker, children, help }: { title: string; kicker: string; children: React.ReactNode; /** The help chat: beside the steps on a computer, a button away on a phone */ help?: React.ReactNode }) {
   const helpOpen = useParam("help") === "1";
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
-      <button type="button" aria-label="Close" onClick={() => closeParams("step", "help")} className="absolute inset-0 bg-black/50 backdrop-blur-[2px] max-md:hidden" />
+      <button type="button" aria-label="Close" onClick={() => closeParams("step", "help", "tool", "platform")} className="absolute inset-0 bg-black/50 backdrop-blur-[2px] max-md:hidden" />
       <div className={`relative flex h-full w-full flex-col overflow-hidden border-l border-line bg-bg ${help ? "md:w-[min(720px,94vw)] lg:w-[min(1180px,96vw)]" : "md:w-[min(720px,94vw)]"}`}>
         <header className="pt-safe flex items-center gap-3 border-b border-line px-4 py-3">
           <div className="min-w-0 flex-1">
             <p className="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-faint">{kicker}</p>
             <p className="truncate font-heading text-[17px]">{title}</p>
           </div>
-          <button type="button" onClick={() => closeParams("step", "help")} className="grid h-11 w-11 place-items-center rounded-full text-[20px] text-muted hover:text-fg" aria-label="Close">
+          <button type="button" onClick={() => closeParams("step", "help", "tool", "platform")} className="grid h-11 w-11 place-items-center rounded-full text-[20px] text-muted hover:text-fg" aria-label="Close">
             ×
           </button>
         </header>
@@ -138,7 +161,17 @@ function Sheet({ title, kicker, children, help }: { title: string; kicker: strin
  * Instant help while they do it: they ask in their own words, paste or share a screenshot, and get the exact next
  * click. It offers to save it for the onboarding call only after several tries with them getting frustrated.
  */
-function HelpChat({ slug, step, initial, onCall }: { slug: string; step: "meta" | "google"; initial: HelpTurn[]; onCall: boolean }) {
+/** Questions to start from, per step */
+const STARTERS: Record<HelpStep, string[]> = {
+  meta: ["I don't see Partners in the menu", "I don't have a Business Manager", "It says I don't have permission"],
+  google: ["I can't find my account ID", "I don't see the request to accept", "I have more than one account"],
+  tools: ["I can't find Admin in Analytics", "I'm not sure which Google account owns it", "Someone else set it up for us"],
+  website: ["I can't find the collaborator code", "I don't know my myshopify address", "A developer built our site"],
+  tracking: ["I'm not sure which one records our sales", "I don't see where to add users", "Our plan doesn't allow more users"],
+  email: ["I don't see a Users page", "It says I've hit my user limit", "I'm not the account owner"],
+};
+
+export function HelpChat({ slug, step, initial, onCall }: { slug: string; step: HelpStep; initial: HelpTurn[]; onCall: boolean }) {
   const router = useRouter();
   const [turns, setTurns] = useState(initial);
   const [q, setQ] = useState("");
@@ -203,7 +236,7 @@ function HelpChat({ slug, step, initial, onCall }: { slug: string; step: "meta" 
         {!turns.length && (
           <div className="grid gap-2">
             <p className="text-[13.5px] leading-relaxed text-muted">Can&rsquo;t find a button, seeing an error, or not sure you&rsquo;re in the right place? Tell us what you see, or send a screenshot, and we&rsquo;ll show you the next click.</p>
-            {(step === "meta" ? ["I don't see Partners in the menu", "I don't have a Business Manager", "It says I don't have permission"] : ["I can't find my account ID", "I don't see the request to accept", "I have more than one account"]).map((x) => (
+            {STARTERS[step].map((x) => (
               <button key={x} type="button" onClick={() => void send(x)} className="min-h-11 rounded-[14px] border border-line px-3.5 py-2 text-left text-[13.5px] text-muted hover:border-faint hover:text-fg">
                 {x}
               </button>
@@ -309,7 +342,7 @@ function HelpChat({ slug, step, initial, onCall }: { slug: string; step: "meta" 
   );
 }
 
-function Copy({ value, label }: { value: string; label?: string }) {
+export function Copy({ value, label }: { value: string; label?: string }) {
   const [done, setDone] = useState(false);
   return (
     <button
@@ -325,7 +358,7 @@ function Copy({ value, label }: { value: string; label?: string }) {
 }
 
 /** A drawing of the screen they'll see: the address, the menu with the item to pick, and the spot to click */
-function Screen({ url, menu, active, children }: { url: string; menu?: string[]; active?: string; children: React.ReactNode }) {
+export function Screen({ url, menu, active, children }: { url: string; menu?: string[]; active?: string; children: React.ReactNode }) {
   return (
     <div className="overflow-hidden rounded-[14px] border border-line bg-[#f5f6f7] text-[#1c1e21] shadow-[0_20px_50px_-24px_rgba(0,0,0,0.6)]">
       <div className="flex items-center gap-2 border-b border-[#dadde1] bg-white px-3 py-2">
@@ -357,7 +390,7 @@ function Pulse() {
   return <span aria-hidden className="pointer-events-none absolute -inset-1 animate-pulse rounded-[8px] ring-2 ring-[#c8102e]" />;
 }
 
-function Hit({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+export function Hit({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
     <span className={`relative inline-flex items-center rounded-[6px] bg-[#1877f2] px-3 py-1.5 text-[11.5px] font-semibold text-white ${className}`}>
       {children}
@@ -367,7 +400,7 @@ function Hit({ children, className = "" }: { children: React.ReactNode; classNam
 }
 
 /** Steps one at a time, with back and next and the dots */
-function Walk({ steps, last }: { steps: { title: string; body: React.ReactNode; screen: React.ReactNode }[]; last: React.ReactNode }) {
+export function Walk({ steps, last }: { steps: { title: string; body: React.ReactNode; screen: React.ReactNode }[]; last: React.ReactNode }) {
   const [i, setI] = useState(0);
   const end = i >= steps.length;
   return (
@@ -405,7 +438,7 @@ function Walk({ steps, last }: { steps: { title: string; body: React.ReactNode; 
   );
 }
 
-function OnCall({ slug, which, done }: { slug: string; which: "meta" | "google"; done: boolean }) {
+export function OnCall({ slug, which, done }: { slug: string; which: HelpStep; done: boolean }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState("");
@@ -805,7 +838,7 @@ function IntakeSheet({ intake }: Props) {
   );
 }
 
-const STEP_NAMES: Record<StepKey, string> = { meta: "Facebook & Instagram access", google: "Google Ads", intake: "Tell us about your business", assets: "Your brand assets", style: "The look you want" };
+const STEP_NAMES: Record<StepKey, string> = { meta: "Facebook & Instagram access", google: "Google Ads", tools: "Google Analytics & tools", tracking: "Orders, bookings & leads", website: "Your website", email: "Your email platform", intake: "Tell us about your business", assets: "Your brand assets", style: "The look you want" };
 
 /** On to the next step still to do (in place of this one, so back returns to the list), or back to the list */
 function goNext(next: StepKey | null) {

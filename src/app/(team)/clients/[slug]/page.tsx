@@ -282,13 +282,13 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
   let setup: React.ReactNode = null;
   if (client.status === "onboarding" && adminConfigured()) {
     const admin = createAdminClient();
-    const [{ loadGuide }, { data: o }, { data: launch }] = await Promise.all([
+    const [{ loadGuide, guideHas }, { data: o }, { data: launch }] = await Promise.all([
       import("@/lib/onboarding-guide"),
       admin.from("client_onboarding").select("welcomed_at, call_prep, blockers").eq("client_id", client.id).maybeSingle(),
       admin.from("engagement_launches").select("status").eq("client_id", client.id).maybeSingle(),
     ]);
     const { GuidePanel } = await import("./guide-panel");
-    setup = <GuidePanel slug={client.slug} guide={await loadGuide(admin, client.id)} google={servicesOf(client).includes("google-ads")} welcomed={(o?.welcomed_at as string | null) ?? null} launch={(launch?.status as string | null) ?? null} prep={(o?.call_prep as never) ?? null} blockers={(o?.blockers as never) ?? []} />;
+    setup = <GuidePanel slug={client.slug} guide={await loadGuide(admin, client.id)} has={await guideHas(admin, client.id)} google={servicesOf(client).includes("google-ads")} welcomed={(o?.welcomed_at as string | null) ?? null} launch={(launch?.status as string | null) ?? null} prep={(o?.call_prep as never) ?? null} blockers={(o?.blockers as never) ?? []} />;
   }
 
   // Every email they've had from us, and the one that fits where they are now

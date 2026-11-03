@@ -1,11 +1,9 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getViewer } from "@/lib/auth";
-import { accessSetting, industryExamples, loadGuide, styleExamples } from "@/lib/onboarding-guide";
+import { accessSetting, guideHas, industryExamples, loadGuide, styleExamples } from "@/lib/onboarding-guide";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { StartView } from "./start-view";
-import { servicesOf } from "@/lib/services";
-import { guideSteps } from "@/lib/onboarding-guide-types";
 
 export const metadata: Metadata = { title: "Get set up · Kaizen", robots: { index: false, follow: false } };
 // "I've done it" checks Meta and Google right away; sharing assets uploads and reads them
@@ -28,7 +26,7 @@ export default async function StartPage({ params }: { params: Promise<{ slug: st
     if (!mine) notFound();
   }
   const { loadHelp } = await import("@/lib/setup-help");
-  const [guide, access, examples, { data: deck }, help, { count: intakes }, looks] = await Promise.all([
+  const [guide, access, examples, { data: deck }, help, { count: intakes }, looks, has] = await Promise.all([
     loadGuide(admin, client.id),
     accessSetting(admin),
     industryExamples(admin, client.id).catch(() => []),
@@ -36,6 +34,7 @@ export default async function StartPage({ params }: { params: Promise<{ slug: st
     loadHelp(admin, client.id),
     admin.from("client_intakes").select("id", { count: "exact", head: true }).eq("client_id", client.id),
     styleExamples(admin, client.id).catch(() => ({})),
+    guideHas(admin, client.id),
   ]);
   const { managerId } = await import("@/lib/context/google-ads");
   const firstName = viewer.kind === "contact" ? (viewer.fullName?.split(" ")[0] ?? null) : null;
@@ -48,9 +47,11 @@ export default async function StartPage({ params }: { params: Promise<{ slug: st
           brand={client.name}
           firstName={firstName}
           guide={guide}
-          has={guideSteps(servicesOf(client))}
+          has={has}
           bmId={access.bmId}
           adminEmails={access.adminEmails}
+          techEmail={access.techEmail}
+          klaviyoEmail={access.klaviyoEmail}
           managerId={managerId() || null}
           examples={examples}
           looks={looks}

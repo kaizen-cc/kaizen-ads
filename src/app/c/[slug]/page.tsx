@@ -2,7 +2,6 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getViewer } from "@/lib/auth";
 import { loadPortal } from "@/lib/portal";
-import { servicesOf } from "@/lib/services";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { Portal } from "./portal";
@@ -27,8 +26,9 @@ export default async function ClientHome({ params }: { params: Promise<{ slug: s
   ]);
   let setup: { done: number; total: number } | null = null;
   if (client.status === "onboarding") {
-    const [{ loadGuide }, { guideProgress, guideSteps }] = await Promise.all([import("@/lib/onboarding-guide"), import("@/lib/onboarding-guide-types")]);
-    const p = guideProgress(await loadGuide(admin, client.id), guideSteps(servicesOf(client)));
+    const [{ guideHas, loadGuide }, { guideProgress }] = await Promise.all([import("@/lib/onboarding-guide"), import("@/lib/onboarding-guide-types")]);
+    const [g, has] = await Promise.all([loadGuide(admin, client.id), guideHas(admin, client.id)]);
+    const p = guideProgress(g, has);
     if (p.done < p.total) setup = p;
   }
   // The last 30 days across their accounts, from the KPI board's own numbers

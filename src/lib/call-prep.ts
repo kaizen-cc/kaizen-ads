@@ -2,14 +2,16 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { sendEmail } from "@/lib/email";
-import { accessSetting, loadGuide } from "@/lib/onboarding-guide";
+import { accessSetting, guideHas, loadGuide } from "@/lib/onboarding-guide";
+import { STEP_LABELS, accessLeft, callType, googleTools } from "@/lib/onboarding-guide-types";
+import type { HelpStep } from "@/lib/setup-help";
 import { siteUrl } from "@/lib/site";
 
 // Getting ready for a new client's onboarding call: when their setup hits something big (a restricted ad account,
 // no permission to give access, can't make a Business Manager, a verification wall) or they save a step for the call,
 // the CS team gets a recap of where things stand and what to prepare, on the client page and by email.
 
-export type Blocker = { step: "meta" | "google"; kind: string; detail: string; at: string };
+export type Blocker = { step: HelpStep; kind: string; detail: string; at: string };
 export type CallPrep = { recap: string[]; prepare: string[]; at: string; reason: string };
 
 export const BLOCKER_NAMES: Record<string, string> = {
@@ -30,15 +32,18 @@ const SCHEMA = {
 
 /** The recap for the call, written fresh from everything so far, kept on the client and sent to the CS team */
 export async function prepareCall(admin: SupabaseClient, clientId: string, reason: string) {
-  const [{ data: c }, { data: o }, guide, { data: help }, access] = await Promise.all([
+  const [{ data: c }, { data: o }, guide, { data: help }, access, has] = await Promise.all([
     admin.from("clients").select("name, slug").eq("id", clientId).single(),
     admin.from("client_onboarding").select("blockers").eq("client_id", clientId).maybeSingle(),
     loadGuide(admin, clientId),
     admin.from("setup_help").select("step, role, text, topic, blocker, blocker_detail, created_at").eq("client_id", clientId).order("created_at").limit(120),
     accessSetting(admin),
+    guideHas(admin, clientId),
   ]);
   if (!c) return null;
   const blockers = (o?.blockers ?? []) as Blocker[];
+  const left = accessLeft(guide, has, blockers);
+  const tools = googleTools(guide, has);
   const out = await askJson<{ recap: string[]; prepare: string[] }>({
     agent: "launcher",
     label: `setup call prep ${c.name}`,
@@ -51,8 +56,8 @@ prepare: 1 to 5 concrete things the team should have ready or do on the call (e.
     maxTokens: 2000,
     prompt: [
       `<client>${c.name}</client>`,
-      `<setup_status>\nMeta: ${JSON.stringify(guide.meta)}\nGoogle: ${JSON.stringify(guide.google)}\nAssets: ${(guide.assets.files ?? 0) + (guide.assets.links ?? 0)} shared\nThe look: ${guide.style.styles?.length || guide.style.pacing ? "picked" : "not yet"}\n</setup_status>`,
-      blockers.length ? `<big_issues>\n${blockers.map((b) => `${b.step}: ${BLOCKER_NAMES[b.kind] ?? b.kind}: ${b.detail}`).join("\n")}\n</big_issues>` : "",
+      `<setup_status>\nMeta: ${has.meta ? JSON.stringify(guide.meta) : "not theirs"}\nGoogle Ads: ${has.google ? JSON.stringify(guide.google) : "not theirs"}\n${tools.map((t) => `${STEP_LABELS[t]}: ${JSON.stringify(guide[t])}`).join("\n")}${has.tracking ? `\nWhere their orders, bookings or leads live (for the tracking team): ${JSON.stringify(guide.tracking)}` : ""}${has.website ? `\nWebsite:${JSON.stringify(guide.website)}` : ""}${has.email ? `\nEmail platform: ${JSON.stringify(guide.email)}` : ""}\nHow they sell: ${JSON.stringify(guide.business)}\nAccess still to share: ${left.items.map((k) => STEP_LABELS[k] ?? k).join(", ") || "none"} (call type: ${callType(left) === "dfy" ? "done-for-you, we take over their screen" : "done-with-you, they share their screen"})\nAssets: ${(guide.assets.files ?? 0) + (guide.assets.links ?? 0)} shared\nThe look: ${guide.style.styles?.length || guide.style.pacing ? "picked" : "not yet"}\n</setup_status>`,
+      blockers.length ? `<big_issues>\n${blockers.map((b) => `${STEP_LABELS[b.step] ?? b.step}: ${BLOCKER_NAMES[b.kind] ?? b.kind}: ${b.detail}`).join("\n")}\n</big_issues>` : "",
       help?.length ? `<help_conversations>\n${help.map((h) => `[${h.step}] ${h.role === "client" ? "Client" : "Helper"}: ${String(h.text).slice(0, 500)}`).join("\n")}\n</help_conversations>` : "",
       `Why this brief now: ${reason}`,
     ]
@@ -90,6 +95,6 @@ export async function recordBlocker(admin: SupabaseClient, clientId: string, b: 
   const list = (o?.blockers ?? []) as Blocker[];
   if (list.some((x) => x.step === b.step && x.kind === b.kind)) return false;
   await admin.from("client_onboarding").upsert({ client_id: clientId, blockers: [...list, { ...b, at: new Date().toISOString() }], updated_at: new Date().toISOString() });
-  await prepareCall(admin, clientId, `${BLOCKER_NAMES[b.kind] ?? "A big issue"} (${b.step === "meta" ? "Meta" : "Google Ads"}): ${b.detail}`);
+  await prepareCall(admin, clientId, `${BLOCKER_NAMES[b.kind] ?? "A big issue"} (${STEP_LABELS[b.step] ?? b.step}): ${b.detail}`);
   return true;
 }
