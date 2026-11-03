@@ -6,6 +6,11 @@
 export const FLOW_START = "2026-11-02";
 export const inNewFlow = (c: { created_at?: string | null; reonboarded_at?: string | null }) => (c.created_at ?? "") >= FLOW_START || (c.reonboarded_at ?? "") >= FLOW_START;
 
+/** Ready → sent to the client on its own after this many business days, unless someone holds it */
+export const SEND_AFTER_DAYS = 1;
+/** Sent → approved on its own after this many business days (72 business hours) without their answer, and the team starts */
+export const APPROVE_AFTER_DAYS = 3;
+
 export const INTAKE_FORM_URL = "https://forms.gle/m3WUwbrprQ1Fc1KF8";
 
 export type Deck = {

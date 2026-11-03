@@ -9,12 +9,13 @@ import { siteUrl } from "@/lib/site";
 // The client presentation: the Brand Bible, short and beautiful, for the client ("Here's how we see you: are we
 // getting this right?"). Written once a new client's Bible is in (from their intake form, or 4 business days in
 // without it, which it says plainly); the client's buyer or a lead approves it, or it goes
-// out on its own 24 hours after it's ready unless someone holds it. It goes to the client's contacts by email and to
+// out on its own one business day after it's ready unless someone holds it. It goes to the client's contacts by email and to
 // their Slack channel, opens in their portal, and they react section by section (spot on, or not quite and why),
 // answer what we still need, pick how we launch, and approve. What they say goes back into the Bible.
 
 export * from "@/lib/presentation-types";
-import { FLOW_START, INTAKE_FORM_URL, type Deck } from "@/lib/presentation-types";
+import { APPROVE_AFTER_DAYS, FLOW_START, INTAKE_FORM_URL, SEND_AFTER_DAYS, type Deck, type Reactions } from "@/lib/presentation-types";
+import { addBusinessDays } from "@/lib/brand-bible";
 
 const s = { type: "string" };
 const o = (properties: Record<string, unknown>) => ({ type: "object", properties, required: Object.keys(properties), additionalProperties: false });
@@ -84,7 +85,7 @@ They haven't sent their marketing intake form yet, and we didn't want to sit and
     const now = new Date();
     await admin
       .from("client_presentations")
-      .update({ status: "draft", deck, without_intake: !intake?.summary, error: null, drafted_at: now.toISOString(), send_after: new Date(now.getTime() + 24 * 3_600_000).toISOString(), updated_at: now.toISOString() })
+      .update({ status: "draft", deck, without_intake: !intake?.summary, error: null, drafted_at: now.toISOString(), send_after: addBusinessDays(now, SEND_AFTER_DAYS).toISOString(), updated_at: now.toISOString() })
       .eq("client_id", clientId);
     if (!change) await tellApprovers(admin, clientId, c.name as string);
     return "draft" as const;
@@ -116,7 +117,7 @@ async function tellApprovers(admin: SupabaseClient, clientId: string, name: stri
       profile_id: id,
       kind: "onboarding",
       title: `${name}'s client presentation is ready to approve`,
-      body: "The short version of their Brand Bible, for them to react to. Have a look and send it, or it goes out on its own in 24 hours.",
+      body: "The short version of their Brand Bible, for them to react to. Have a look and send it, or it goes out on its own in one business day.",
       href: `/clients/${c.slug}/brand-bible/presentation`,
       client_id: clientId,
       key: `presentation:${clientId}:${new Date().toISOString().slice(0, 10)}`,
@@ -167,8 +168,9 @@ When you have ten minutes, the intake form is here: ${INTAKE_FORM_URL}${c.kaizen
 }
 
 /**
- * Every 10 minutes: a new client whose Bible is in gets their presentation written; one that's been ready for 24
- * hours without anyone holding or sending it goes out (onboarding clients only: one written by hand for anyone else
+ * Every 10 minutes: a new client whose Bible is in gets their presentation written; one that's been ready for a
+ * business day without anyone holding or sending it goes out, and one the client has had for 3 business days
+ * (72 business hours) without approving is approved on its own and the team starts (onboarding clients only: one written by hand for anyone else
  * waits for a person to send it).
  */
 export async function keepPresentations(admin: SupabaseClient) {
@@ -203,5 +205,63 @@ export async function keepPresentations(admin: SupabaseClient) {
     // Couldn't go: held until someone sends it by hand, so it isn't tried every 10 minutes
     if (!r.ok) await admin.from("client_presentations").update({ status: "held", error: r.error }).eq("client_id", d.client_id);
   }
+  // Theirs for 72 business hours without an answer: taken as approved, so the team isn't kept waiting
+  const { data: waiting } = await admin.from("client_presentations").select("client_id, sent_at, clients!inner(name, status)").eq("status", "sent").eq("clients.status", "onboarding").not("sent_at", "is", null);
+  for (const w of waiting ?? []) {
+    if (addBusinessDays(w.sent_at as string, APPROVE_AFTER_DAYS) > new Date()) continue;
+    if (!(await approvePresentation(admin, w.client_id as string, { by: "Approved on its own after 3 business days", contactId: null, auto: true }))) continue;
+    out[(w.clients as unknown as { name: string } | null)?.name ?? (w.client_id as string)] = "approved on its own after 3 business days";
+    // Folded into the Bible and the first round written, as when they approve; one a run (it takes a while)
+    const { afterApproval } = await import("@/lib/plan-chat");
+    await afterApproval(admin, w.client_id as string).catch((e) => console.error("[plan] after auto-approval failed:", e instanceof Error ? e.message : e));
+    break;
+  }
   return out;
+}
+
+/**
+ * The client's plan approved, by them or on its own after 72 business hours: the team hears it (with what they marked
+ * not quite, their answers and how they want to launch), the first ads are picked, and the plan is folded into the
+ * Bible and the first round written.
+ */
+export async function approvePresentation(admin: SupabaseClient, clientId: string, o: { by: string; contactId: string | null; auto?: boolean }) {
+  const [{ data: c }, { data: p }] = await Promise.all([
+    admin.from("clients").select("name, slug").eq("id", clientId).single(),
+    admin.from("client_presentations").select("status, reactions").eq("client_id", clientId).maybeSingle(),
+  ]);
+  if (!c || !p || p.status === "approved") return false;
+  const reactions = (p.reactions ?? {}) as Reactions;
+  // No pick from them: the recommended path (live fast with their best posts)
+  const choice = reactions.launch?.choice ?? "engagement_first";
+  const now = new Date().toISOString();
+  await admin.from("client_presentations").update({ status: "approved", approved_at: now, approved_by: o.contactId, auto_approved: Boolean(o.auto), updated_at: now }).eq("client_id", clientId);
+  const off = Object.entries(reactions.sections ?? {}).filter(([, v]) => v?.verdict === "off");
+  const [{ data: buyers }, { data: leads }] = await Promise.all([
+    admin.from("client_assignments").select("profile_id").eq("client_id", clientId).eq("role", "meta_buyer"),
+    admin.from("profiles").select("id").eq("is_active", true).eq("is_lead", true),
+  ]);
+  const ids = [...new Set([...(buyers ?? []).map((b) => b.profile_id as string), ...(leads ?? []).map((x) => x.id as string)])];
+  const launch = choice === "engagement_first" ? "Go live within 48 hours with an engagement campaign" : "Wait for the conversion creative before launching";
+  if (ids.length)
+    await admin.from("notifications").upsert(
+      ids.map((id) => ({
+        profile_id: id,
+        kind: "onboarding",
+        title: o.auto ? `${c.name}: plan approved on its own, start the work` : `${c.name} approved how we see them`,
+        body: [
+          o.auto ? `No answer after 3 business days, so it's approved and the team starts. ${reactions.launch ? launch : `They didn't pick how to launch: going with the recommended path (${launch.toLowerCase()}).`}` : `${o.by}: ${launch}.`,
+          off.length ? `Not quite on ${off.map(([k]) => k).join(", ")}: their notes are on the presentation.` : o.auto ? "" : "Spot on everywhere they reacted.",
+        ]
+          .filter(Boolean)
+          .join(" "),
+        href: `/clients/${c.slug}/brand-bible/presentation`,
+        client_id: clientId,
+        key: `presentation-approved:${clientId}`,
+        priority: "critical",
+      })),
+      { onConflict: "profile_id,key", ignoreDuplicates: true },
+    );
+  // Their first ads are being picked from the moment it's approved (the page shows it)
+  if (choice === "engagement_first") await admin.from("engagement_launches").upsert({ client_id: clientId, status: "finding", updated_at: now });
+  return true;
 }

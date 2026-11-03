@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-// Whether the app may reach a client on its own (the welcome at enrollment, the presentation sent after 24 hours,
+// Whether the app may reach a client on its own (the welcome at enrollment, the presentation sent after a business day,
 // "you're live"). Off until Kaizen launches the portal to clients: until then only the sandbox client gets them, and
 // anything a person sends by hand from the app still goes. Settings → app_settings "client_outreach" {on}.
 

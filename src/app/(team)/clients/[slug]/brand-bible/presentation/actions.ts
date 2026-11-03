@@ -44,7 +44,7 @@ export async function holdPresentation(clientId: string, hold: boolean): Promise
   if ("error" in a) return { ok: false, error: a.error! };
   const { error } = await a.admin
     .from("client_presentations")
-    .update(hold ? { status: "held" } : { status: "draft", error: null, send_after: new Date(Date.now() + 24 * 3_600_000).toISOString() })
+    .update(hold ? { status: "held" } : { status: "draft", error: null, send_after: (await import("@/lib/brand-bible")).addBusinessDays(new Date(), 1).toISOString() })
     .eq("client_id", clientId)
     .in("status", hold ? ["draft"] : ["held"]);
   refresh(a.slug);

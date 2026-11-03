@@ -23,7 +23,7 @@ export default async function PlanPage({ params }: { params: Promise<{ slug: str
   const db = team ? await createClient() : createAdminClient();
   const { data: client } = await db.from("clients").select("id, name, slug, portal_live, kaizen_id").eq("slug", slug).maybeSingle();
   if (!client || (!team && !client.portal_live)) notFound();
-  const { data: p } = await db.from("client_presentations").select("status, deck, reactions, viewed_at, without_intake, chat").eq("client_id", client.id).maybeSingle();
+  const { data: p } = await db.from("client_presentations").select("status, deck, reactions, viewed_at, without_intake, chat, sent_at").eq("client_id", client.id).maybeSingle();
   // Their first ads (the 48-hour launch), once they've approved
   const { data: launch } = p?.status === "approved" ? await (team ? db : createAdminClient()).from("engagement_launches").select("status, posts, chosen, note, plan").eq("client_id", client.id).maybeSingle() : { data: null };
   const firstAds: FirstAds | null = launch ? { status: launch.status as string, posts: (launch.posts ?? []) as FirstAdsPost[], chosen: (launch.chosen ?? []) as string[], note: launch.note as string | null, geo: (launch.plan as { geo?: { label?: string } } | null)?.geo?.label ?? null } : null;
@@ -37,7 +37,7 @@ export default async function PlanPage({ params }: { params: Promise<{ slug: str
     <div>
       <main>
         {ready ? (
-          <PlanView firstAds={firstAds} chat={(p.chat ?? []) as PlanTurn[]} intake={p.without_intake && !intakes ? { clientId: client.kaizen_id ?? null } : undefined} slug={client.slug} brand={client.name} deck={p.deck as Deck} reactions={(p.reactions ?? {}) as Reactions} approved={p.status === "approved"} canAct={team ? ["sent", "approved"].includes(p.status as string) : true} />
+          <PlanView firstAds={firstAds} chat={(p.chat ?? []) as PlanTurn[]} intake={p.without_intake && !intakes ? { clientId: client.kaizen_id ?? null } : undefined} slug={client.slug} brand={client.name} deck={p.deck as Deck} reactions={(p.reactions ?? {}) as Reactions} approved={p.status === "approved"} approveBy={p.status === "sent" && p.sent_at ? (await import("@/lib/brand-bible")).addBusinessDays(p.sent_at as string, (await import("@/lib/presentation-types")).APPROVE_AFTER_DAYS).toISOString() : null} canAct={team ? ["sent", "approved"].includes(p.status as string) : true} />
         ) : (
           <div className="grid gap-2 rounded-[24px] border border-line bg-surface p-8 text-center">
             <p className="font-heading text-[18px]">Nothing to look at yet</p>

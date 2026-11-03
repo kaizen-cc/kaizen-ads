@@ -49,7 +49,7 @@ export function PresentationAdmin({ client, hasBible, p }: { client: { id: strin
     : p.status === "writing"
       ? { tone: "warn", text: "Writing it from the Brand Bible…" }
       : p.status === "draft"
-        ? { tone: "warn", text: `Ready for you · goes out on its own ${p.sendAfter ? when(p.sendAfter) : "in 24 hours"}` }
+        ? { tone: "warn", text: `Ready for you · goes out on its own ${p.sendAfter ? when(p.sendAfter) : "in one business day"}` }
         : p.status === "held"
           ? { tone: "muted", text: p.error ? `Held · ${p.error}` : "Held · it won't go out until someone sends it" }
           : p.status === "failed"
@@ -98,8 +98,8 @@ export function PresentationAdmin({ client, hasBible, p }: { client: { id: strin
                   </button>
                 )}
                 {p.status === "held" && (
-                  <button type="button" disabled={pending} onClick={() => act(() => holdPresentation(client.id, false), "Back on: it goes out on its own in 24 hours.")} className="h-11 rounded-full border border-line px-4 text-[14px] text-muted hover:text-fg disabled:opacity-50">
-                    Send on its own in 24h
+                  <button type="button" disabled={pending} onClick={() => act(() => holdPresentation(client.id, false), "Back on: it goes out on its own in one business day.")} className="h-11 rounded-full border border-line px-4 text-[14px] text-muted hover:text-fg disabled:opacity-50">
+                    Send on its own in a business day
                   </button>
                 )}
               </div>

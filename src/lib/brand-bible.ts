@@ -286,6 +286,18 @@ export function businessDaysSince(iso: string, now = new Date()) {
   for (; d <= end && n < 60; d.setDate(d.getDate() + 1)) if (d.getDay() !== 0 && d.getDay() !== 6) n++;
   return n;
 }
+/** The moment a number of business days (Monday to Friday, New York) after another: 72 business hours = 3 */
+export function addBusinessDays(iso: string | Date, days: number) {
+  const d = new Date(iso);
+  let n = 0;
+  while (n < days) {
+    d.setTime(d.getTime() + 86_400_000);
+    const day = new Date(d.toLocaleString("en-US", { timeZone: "America/New_York" })).getDay();
+    if (day !== 0 && day !== 6) n++;
+  }
+  return d;
+}
+
 /** At most this many Bibles a day (about $4 each), so the catch-up costs a predictable amount per day */
 const DAILY_CAP = 15;
 

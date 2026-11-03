@@ -56,31 +56,8 @@ export async function approvePlan(slug: string): Promise<{ ok: true } | { ok: fa
   if ("error" in l) return { ok: false, error: l.error! };
   if (l.approved) return { ok: true };
   if (!l.reactions.launch) return { ok: false, error: "Pick how you'd like us to get you live first (part 6)." };
-  const now = new Date().toISOString();
-  await l.admin.from("client_presentations").update({ status: "approved", approved_at: now, approved_by: l.contactId, updated_at: now }).eq("client_id", l.client.id);
-  const off = Object.entries(l.reactions.sections ?? {}).filter(([, v]) => v?.verdict === "off");
-  const [{ data: buyers }, { data: leads }] = await Promise.all([
-    l.admin.from("client_assignments").select("profile_id").eq("client_id", l.client.id).eq("role", "meta_buyer"),
-    l.admin.from("profiles").select("id").eq("is_active", true).eq("is_lead", true),
-  ]);
-  const ids = [...new Set([...(buyers ?? []).map((b) => b.profile_id as string), ...(leads ?? []).map((x) => x.id as string)])];
-  const launch = l.reactions.launch.choice === "engagement_first" ? "Go live within 48 hours with an engagement campaign" : "Wait for the conversion creative before launching";
-  if (ids.length)
-    await l.admin.from("notifications").upsert(
-      ids.map((id) => ({
-        profile_id: id,
-        kind: "onboarding",
-        title: `${l.client.name} approved how we see them`,
-        body: [`${l.by}: ${launch}.`, off.length ? `Not quite on ${off.map(([k]) => k).join(", ")}: their notes are on the presentation.` : "Spot on everywhere they reacted."].join(" "),
-        href: `/clients/${l.client.slug}/brand-bible/presentation`,
-        client_id: l.client.id,
-        key: `presentation-approved:${l.client.id}`,
-        priority: "critical",
-      })),
-      { onConflict: "profile_id,key", ignoreDuplicates: true },
-    );
-  // Their first ads are being picked from the moment they approve (the page shows it)
-  if (l.reactions.launch.choice === "engagement_first") await l.admin.from("engagement_launches").upsert({ client_id: l.client.id, status: "finding", updated_at: now });
+  const { approvePresentation } = await import("@/lib/presentation");
+  await approvePresentation(l.admin, l.client.id as string, { by: l.by, contactId: l.contactId });
   // Folded into the Bible, the team told, and the first round written, after the answer
   const admin = l.admin;
   const clientId = l.client.id;
