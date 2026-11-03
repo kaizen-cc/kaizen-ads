@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireStaff } from "@/lib/auth";
+import { auditRebuttals, canRebut } from "@/lib/audit-rebuttals";
+import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
+import { Rebut } from "@/components/audit-rebut";
 import type { AuditResult } from "@/lib/audit";
 import { conversionFor, conversionLabel } from "@/lib/kpi/conversions";
 import { kpiValue } from "@/lib/kpi/format";
@@ -37,7 +40,7 @@ const when = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: 
 /** One account audit in full: the verdict, why, the action plan the buyer ticks off, tests, creative, budget, and what to ask. */
 export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]">) {
   const { id } = await params;
-  await requireStaff();
+  const me = await requireStaff();
   const supabase = await createClient();
   const { data: a } = await supabase
     .from("account_audits")
@@ -50,11 +53,16 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
   // Google accounts: a buyer's action can be made in the account from here
   // Where an action can become a change made from here: Google Ads, or Meta (behind the sandbox switch)
   const writable = t.platform === "google" ? (googleAdsConfigured() ? "google" : null) : t.platform === "meta" ? (metaConfigured() ? "meta" : null) : null;
-  const [{ data: snap }, { data: history }, { data: sprint }] = await Promise.all([
+  const admin = adminConfigured() ? createAdminClient() : null;
+  const [{ data: snap }, { data: history }, { data: sprint }, pushback, mayRebut] = await Promise.all([
     supabase.from("kpi_snapshots").select("windows, deviation").eq("target_id", a.target_id).maybeSingle(),
     supabase.from("account_audits").select("id, created_at, status, result").eq("target_id", a.target_id).order("created_at", { ascending: false }).limit(10),
     supabase.from("optimization_sprints").select("id, audit_id, sprint_actions(title, status)").eq("target_id", a.target_id).eq("status", "active").maybeSingle(),
+    admin ? auditRebuttals(admin, a.id) : Promise.resolve({} as Awaited<ReturnType<typeof auditRebuttals>>),
+    admin ? canRebut(admin, me.id) : Promise.resolve(false),
   ]);
+  // Disagree with a finding: kept on the audit, read by the next one and by every agent through client memory
+  const rebut = (itemKey: string, finding: string) => <Rebut kind="account" auditId={a.id} itemKey={itemKey} finding={finding} notes={pushback[itemKey] ?? []} can={mayRebut} />;
   // Which of this audit's moves are on the account's action list, and their status there
   const replaced = Boolean(sprint?.audit_id && sprint.audit_id !== a.id);
   const onList = new Map(((sprint?.sprint_actions ?? []) as { title: string; status: string }[]).map((x) => [x.title, x.status]));
@@ -141,6 +149,7 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
                 {p}
               </p>
             ))}
+          {rebut("verdict", r.verdict.headline)}
         </div>
         <Sub title="What's behind it" sub="The root causes, most important first, with the numbers.">
           <div className="grid gap-3 md:grid-cols-2">
@@ -161,6 +170,7 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
                     </li>
                   ))}
                 </ul>
+                {rebut(`cause:${i}`, c.title)}
               </article>
             ))}
           </div>
@@ -191,7 +201,7 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
                   <p className="text-[11px] text-faint">{items.length ? hint : "Nothing here"}</p>
                 </div>
                 {items.map(({ x, i }) => (
-                  <ActionCard key={i} auditId={a.id} index={i} action={x} area={AREA[x.area] ?? x.area} done={done[String(i)] ?? null} listed={replaced ? "replaced" : (onList.get(x.title) ?? null)} writable={x.owner === "media_buyer" ? writable : null} />
+                  <ActionCard key={i} auditId={a.id} index={i} action={x} area={AREA[x.area] ?? x.area} done={done[String(i)] ?? null} listed={replaced ? "replaced" : (onList.get(x.title) ?? null)} writable={x.owner === "media_buyer" ? writable : null} rebut={rebut(`action:${i}`, x.title)} />
                 ))}
               </div>
             );
@@ -201,6 +211,7 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
         <Panel title="The budget call">
           <p className="text-sm leading-relaxed">{r.budget.call}</p>
           {r.budget.moves.length > 0 && <List items={r.budget.moves} />}
+          {rebut("budget", r.budget.call)}
         </Panel>
 
         {r.tests.length > 0 && (
@@ -274,6 +285,7 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
                   {w.title}
                 </h3>
                 <p className="pl-3.5 text-[13px] leading-relaxed text-muted">{w.why}</p>
+                {rebut(`watchout:${i}`, w.title)}
               </article>
             ))}
           </div>

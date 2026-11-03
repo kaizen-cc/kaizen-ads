@@ -12,7 +12,7 @@ import { GoogleChange } from "../../google-change";
 const OWNER: Record<string, string> = { media_buyer: "Media buyer", creative: "Creative team", client: "Client", strategist: "Strategist" };
 
 /** One action in the plan: tick it off when it's done (everyone sees who did and when). */
-export function ActionCard({ auditId, index, action, area, done, listed, writable = null }: { auditId: string; index: number; action: AuditResult["actions"][number]; area: string; done: { by: string; at: string } | null; listed: string | null; writable?: "google" | "meta" | null }) {
+export function ActionCard({ auditId, index, action, area, done, listed, writable = null, rebut = null }: { auditId: string; index: number; action: AuditResult["actions"][number]; area: string; done: { by: string; at: string } | null; listed: string | null; writable?: "google" | "meta" | null; /** Disagree with this move, for those who may */ rebut?: React.ReactNode }) {
   const router = useRouter();
   const [adding, startAdd] = useTransition();
   const [, start] = useTransition();
@@ -90,6 +90,7 @@ export function ActionCard({ auditId, index, action, area, done, listed, writabl
               </button>
             )}
           </div>
+          {rebut}
         </div>
       </div>
     </article>

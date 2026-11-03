@@ -162,10 +162,12 @@ export type ClientViewProps = {
   setup?: React.ReactNode;
   /** Their emails: the one for where they are now, to preview and push, and every one sent */
   emails?: React.ReactNode;
+  /** The full business audit panel, for the Overview */
+  businessAudit?: React.ReactNode;
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, docs = null, reports = null, playbook = null, setup = null, emails = null }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, docs = null, reports = null, playbook = null, setup = null, emails = null, businessAudit = null }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -297,6 +299,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                   <div className="grid gap-6">
                     {glance}
                     <BusinessOverview cards={cards} audits={audits ?? {}} sprints={sprints ?? {}} />
+                    {businessAudit}
                   </div>
                 ),
               },

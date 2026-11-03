@@ -109,6 +109,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Writes each sub-vertical's playbook: avatars, the angles that land, and the ads that prove them", where: "Ideas · Verticals · Playbook", trigger: "auto", when: "Hourly when something new comes in, or Rebuild", labels: ["playbook"] },
   ],
   auditor: [
+    { title: "Audits the whole business at once: Meta, Google, creative and what the client is telling us, connected, with what to do and watch", where: "Client page · Overview · Full business audit", trigger: "click", when: "When someone runs the full business audit", labels: ["business audit "] },
     { title: "Audits one ad account: why it's where it is against target, and the plan (changes, tests, creative, budget, questions for the client)", where: "KPIs · open a client · AI account audit", trigger: "click", when: "When someone runs an audit", labels: ["audit ", "audit"] },
     { title: "Checks each optimization sprint: what changed in Meta, what was ticked, and what to tell the buyer (a reminder, a wrong move, or I'll check back)", where: "KPIs · sprint page · Next for me", trigger: "auto", when: "Daily, or on the follow-up date it set", labels: ["sprint check"] },
     { title: "Writes the client-facing version of an audit for the PDF", where: "Audit · Client PDF", trigger: "click", when: "The first time someone opens the client PDF", labels: ["audit client report"] },

@@ -76,7 +76,7 @@ const PLAN_SCHEMA = obj({
 
 const BASE = `You are Kaizen Marketing's head of paid media, auditing one Meta ad account for the media buyer who runs it. This is a real audit of the account, not a creative brainstorm, and the buyer acts on it today. Speak to the buyer directly, in the first person ("I found", "I'd"), plain and specific.
 Read everything given: the target and how far off it is, 90 days of numbers by campaign, ad set and ad, the funnel, the live setup (objectives, optimization events, budgets, bidding, learning phase, audiences, placements, attribution) and its splits, the tiring ads, the client page (Brand Bible, go-to-market strategy, intake, calls, memory, what's in production), the sub-vertical playbook and benchmarks, our Hall of Fame and the market.
-Argue from this account's data, using Meta best practice as of today. Respect the client's rules (what they told us to avoid, claims never to make, special ad categories). If the data is too thin to judge something, say so instead of guessing. Refer to people by role, never by name. No em dashes.`;
+Argue from this account's data, using Meta best practice as of today. Conversation starters: a top-of-funnel ad with frequency under 1.25, good spend, an average CPM and an above-average CTR but no conversions of its own is bringing people into the funnel. Never recommend pausing it, even when other ads show better results; judge it by its ad set's and campaign's overall success, and if those are working it keeps running. Respect the client's rules (what they told us to avoid, claims never to make, special ad categories). If the data is too thin to judge something, say so instead of guessing. Refer to people by role, never by name. No em dashes.`;
 
 const GOOGLE_BASE = `You are Kaizen Marketing's head of paid media, auditing one Google Ads account for the media buyer who runs it. This is a real audit of the account and the buyer acts on it today. Speak to the buyer directly, in the first person ("I found", "I'd"), plain and specific.
 Read everything given: the target and how far off it is, 90 days of numbers by campaign, the live setup (campaign types, bidding strategies and their targets, budgets, serving status), the conversion actions and which ones count, search impression share and what's lost to budget and rank, ad groups, keywords and quality scores, search terms, devices, the client page (Brand Bible, go-to-market strategy, intake, calls, memory), the sub-vertical playbook and benchmarks, and our winners.
@@ -514,8 +514,8 @@ async function finishAudit(admin: SupabaseClient, id: string, a: { target_id: st
 
     // 5. The sub-vertical
     await m.start("vertical");
-    const [{ playbookBlock }, { marketBlock }, { industryWinners, winnersBlock }] = await Promise.all([import("@/lib/playbooks"), import("@/lib/market"), import("@/lib/industry")]);
-    const [playbook, market, winners, { data: sub }, { data: fame }] = await Promise.all([
+    const [{ playbookBlock }, { marketBlock }, { industryWinners, winnersBlock }, { rebuttalsBlock }] = await Promise.all([import("@/lib/playbooks"), import("@/lib/market"), import("@/lib/industry"), import("@/lib/audit-rebuttals")]);
+    const [playbook, market, winners, { data: sub }, { data: fame }, pushback] = await Promise.all([
       playbookBlock(admin, a.client_id).catch(() => ""),
       marketBlock(admin, a.client_id, client.industry ?? null, 8).catch(() => ""),
       client.industry && client.industry !== "other" ? industryWinners(admin, client.industry, a.client_id, 8).catch(() => []) : Promise.resolve([]),
@@ -523,6 +523,7 @@ async function finishAudit(admin: SupabaseClient, id: string, a: { target_id: st
       client.vertical_id
         ? admin.from("hall_of_fame").select("creative, value, target, roas, conversion, days_live, client_id").eq("vertical_id", client.vertical_id).gt("expires_at", new Date().toISOString()).order("beat_by", { ascending: false }).limit(10)
         : Promise.resolve({ data: [] }),
+      rebuttalsBlock(admin, a.client_id).catch(() => ""),
     ]);
     const benchmarks = (sub?.benchmarks ?? []) as Benchmark[];
     const bm = benchmarks.map((b) => `${b.metric}: good ${b.good ?? "?"}${b.unit}, great ${b.great ?? "?"}${b.unit} (${b.source} ${b.year})`).join("; ");
@@ -585,7 +586,7 @@ ${(fame ?? []).map((f) => `- ${f.client_id === a.client_id ? "THIS CLIENT: " : "
 </our_hall_of_fame_in_this_sub_vertical>
 
 ${winners.length ? winnersBlock(client.industry, client.industry_detail, winners) : ""}
-${market ? `\n${market}\n` : ""}
+${market ? `\n${market}\n` : ""}${pushback ? `\n${pushback}\n` : ""}
 Today is ${new Date().toISOString().slice(0, 10)}.`;
 
     // 6. What I found

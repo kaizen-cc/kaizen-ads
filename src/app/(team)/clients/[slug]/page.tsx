@@ -311,8 +311,27 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     emails = <EmailsPanel clientId={client.id} slug={client.slug} stage={stage} sent={sent} />;
   }
 
+  // The full business audit: the latest one, the pushback on it, and whether this person may push back
+  let businessAudit: React.ReactNode = null;
+  if (adminConfigured()) {
+    const admin = createAdminClient();
+    const { data: ba } = await supabase.from("business_audits").select("id, status, step, error, result, created_at, profiles(full_name)").eq("client_id", client.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    const { auditRebuttals, canRebut } = await import("@/lib/audit-rebuttals");
+    const [pushback, mayRebut] = await Promise.all([ba ? auditRebuttals(admin, ba.id as string) : Promise.resolve({} as Awaited<ReturnType<typeof auditRebuttals>>), canRebut(admin, me.id)]);
+    const { BusinessAuditPanel } = await import("./business-audit-panel");
+    businessAudit = (
+      <BusinessAuditPanel
+        clientId={client.id}
+        latest={ba ? { id: ba.id as string, status: ba.status as "running" | "ready" | "failed", step: (ba.step as string | null) ?? null, error: (ba.error as string | null) ?? null, result: (ba.result as never) ?? null, at: ba.created_at as string, by: (ba.profiles as unknown as { full_name: string } | null)?.full_name ?? null } : null}
+        pushback={pushback}
+        canRebut={mayRebut}
+      />
+    );
+  }
+
   return (
     <ClientView
+      businessAudit={businessAudit}
       setup={setup}
       emails={emails}
       campaigns={campaigns}
