@@ -6,7 +6,8 @@ import type { Stage } from "@/lib/stages";
 // (column, assignee, due date, Client ID, priority, description) and kept as "shadow" tickets in the matching stage.
 // Moves and edits in Asana show up here; tasks completed or removed in Asana drop off the board (completed ones are
 // kept, counted against the month's allotment with what they asked for: see countUnits). Organic social requests are
-// left out (this app is paid ads and creative). Read-only: nothing is written back to Asana.
+// left out (this app is paid ads and creative). Nothing is written back to the Creative board; the only thing written
+// to Asana is a task for teams not yet in Kaizen Ads (createAsanaTask, e.g. reviewing a new client's intake).
 
 export const asanaConfigured = () => Boolean(process.env.ASANA_TOKEN);
 const API = "https://app.asana.com/api/1.0";
@@ -24,6 +25,60 @@ async function asana<T>(path: string, params: Record<string, string> = {}): Prom
     return body;
   }
   throw new Error("Asana: rate limited");
+}
+
+async function asanaWrite<T>(path: string, data: Record<string, unknown>): Promise<T> {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const res = await fetch(`${API}${path}`, { method: "POST", headers: { Authorization: `Bearer ${process.env.ASANA_TOKEN}`, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ data }), cache: "no-store" });
+    if (res.status === 429) {
+      await new Promise((r) => setTimeout(r, Number(res.headers.get("retry-after") ?? 5) * 1000));
+      continue;
+    }
+    const body = (await res.json()) as { data: T; errors?: { message: string }[] };
+    if (!res.ok) throw new Error(`Asana: ${body.errors?.[0]?.message ?? res.status}`);
+    return body.data;
+  }
+  throw new Error("Asana: rate limited");
+}
+
+/**
+ * A task for someone on a team that isn't in Kaizen Ads yet, assigned by their email. In a project when one is given,
+ * otherwise in the workspace (it lands in their My Tasks). Someone Asana doesn't know by that email: the task is made
+ * unassigned with their name at the top, so it isn't lost.
+ */
+export async function createAsanaTask(t: { name: string; notes: string; assignee: string | null; project?: string | null; dueOn?: string | null }) {
+  const where: Record<string, unknown> = t.project ? { projects: [t.project] } : { workspace: (await asana<{ gid: string }[]>("/workspaces")).data[0]?.gid };
+  const base = { ...where, name: t.name.slice(0, 250), notes: t.notes.slice(0, 60000), ...(t.dueOn ? { due_on: t.dueOn } : {}) };
+  try {
+    const task = await asanaWrite<{ gid: string; permalink_url?: string }>("/tasks?opt_fields=permalink_url", { ...base, ...(t.assignee ? { assignee: t.assignee } : {}) });
+    return { gid: task.gid, url: task.permalink_url ?? null, assigned: Boolean(t.assignee) };
+  } catch (e) {
+    if (!t.assignee) throw e;
+    const task = await asanaWrite<{ gid: string; permalink_url?: string }>("/tasks?opt_fields=permalink_url", { ...base, notes: `For ${t.assignee} (Asana doesn't know this email)\n\n${t.notes}`.slice(0, 60000) });
+    return { gid: task.gid, url: task.permalink_url ?? null, assigned: false };
+  }
+}
+
+/**
+ * A client's own Asana project: its title carries the client's name and Kaizen Client ID. Matched on the ID first (as
+ * a whole number in the title), then on the name; null when nothing matches.
+ */
+export async function findClientProject(kaizenId: number | null, name: string) {
+  const ws = (await asana<{ gid: string }[]>("/workspaces")).data[0]?.gid;
+  if (!ws) return null;
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const search = async (query: string) => (await asana<{ gid: string; name: string }[]>(`/workspaces/${ws}/typeahead`, { resource_type: "project", query, count: "100", opt_fields: "name,archived" })).data;
+  if (kaizenId != null) {
+    const id = new RegExp(`(^|\\D)${kaizenId}(\\D|$)`);
+    const hits = (await search(String(kaizenId))).filter((p) => id.test(p.name));
+    // Several with the ID: the one that also has the name
+    const hit = hits.find((p) => norm(p.name).includes(norm(name))) ?? (hits.length === 1 ? hits[0] : null);
+    if (hit) return { gid: hit.gid, name: hit.name, by: "id" as const };
+  }
+  const n = norm(name);
+  if (n.length < 4) return null;
+  const byName = (await search(name)).filter((p) => norm(p.name).includes(n));
+  return byName.length === 1 ? { gid: byName[0].gid, name: byName[0].name, by: "name" as const } : null;
 }
 
 async function all<T>(path: string, params: Record<string, string>) {

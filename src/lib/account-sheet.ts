@@ -334,3 +334,38 @@ async function syncOnboarding(admin: SupabaseClient, tok: string, now: string) {
 }
 
 export type SheetNotes = { priority?: string; problem?: string; solution?: string; buying?: string; creative?: string; copy?: string; comments?: string; last7?: string; max30?: string; syncedAt?: string };
+
+/**
+ * The people on one account, from every tab of the Account Overview sheet: each column naming someone (Media Buyer,
+ * Account Manager, CS, Email Strategist, Web Developer…) on the client's row, matched by Client ID or business name.
+ * The tab and the column say what they do there; a name can hold several ("Ana / Luis").
+ */
+export async function accountPeople(client: { name: string; kaizenId: number | null }): Promise<{ person: string; role: string; tab: string }[]> {
+  if (!sheetConfigured()) return [];
+  const tok = await token();
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}?fields=sheets.properties.title`, { headers: { Authorization: `Bearer ${tok}` }, cache: "no-store" });
+  const tabs = res.ok ? ((await res.json()) as { sheets?: { properties: { title: string } }[] }).sheets?.map((s) => s.properties.title) ?? [] : ["Meta", "Google", "Onboarding"];
+  const PERSON = /buyer|manager|strategist|success|\bcs\b|\bam\b|specialist|designer|developer|editor|copywriter|builder|owner|assigned|lead\b|point of contact/i;
+  const NOT = /id\b|#|name of|client name|budget|kpi|update|problem|solution|priority|comment|link|url|status|date|progress|notes|email address|phone/i;
+  const out: { person: string; role: string; tab: string }[] = [];
+  for (const tab of tabs) {
+    const values = await readTab(tok, tab).catch(() => [] as string[][]);
+    // The header row: within the first rows, the one with a client column
+    const hi = values.slice(0, 6).findIndex((r) => r.some((h) => /client|business|account name/i.test(h ?? "")));
+    if (hi < 0) continue;
+    const head = values[hi].map((h) => (h ?? "").trim());
+    const nameCol = head.findIndex((h) => /^(client name|clients?|business( name)?|account name)$/i.test(h));
+    for (const row of values.slice(hi + 1)) {
+      const r = Object.fromEntries(head.map((h, i) => [h, (row[i] ?? "").trim()]));
+      const id = idOf(r);
+      const named = nameCol >= 0 && norm(row[nameCol] ?? "") && norm(row[nameCol] ?? "") === norm(client.name);
+      if (!(client.kaizenId != null && id === client.kaizenId) && !named) continue;
+      head.forEach((h, i) => {
+        const v = (row[i] ?? "").trim();
+        if (!h || !v || !PERSON.test(h) || NOT.test(h) || /^(n\/?a|none|-|tbd|yes|no)$/i.test(v)) return;
+        for (const person of v.split(/[/,&+]| and /).map((x) => x.trim()).filter((x) => x.length > 1 && !/\d/.test(x))) out.push({ person, role: h, tab });
+      });
+    }
+  }
+  return out;
+}

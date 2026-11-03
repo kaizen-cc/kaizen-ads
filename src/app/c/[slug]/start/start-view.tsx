@@ -7,7 +7,6 @@ import { EMAIL_PLATFORMS, PACING, STYLES, WEBSITE_PLATFORMS, googleTools, guideP
 import { createClient } from "@/lib/supabase/client";
 import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
 import type { HelpStep, HelpTurn } from "@/lib/setup-help";
-import { INTAKE_FORM_URL } from "@/lib/presentation-types";
 import { EmailSheet, ToolsSheet, TrackingSheet, WebsiteSheet } from "./platform-sheets";
 import { TRACKING_KINDS } from "@/lib/tracking-platforms";
 import { askHelp, assetSlots, assetsShared, googleSend, helpSlots, helpToCall, metaDone, onTheCall, saveStyle, styleSlots } from "./actions";
@@ -16,7 +15,7 @@ import { askHelp, assetSlots, assetsShared, googleSend, helpSlots, helpToCall, m
 // them through with pictures of the screens they'll see, and says plainly when it's done. Nothing here is a form to
 // puzzle over: copy buttons for every ID, one tap for "let's do it on our call".
 
-type Props = { slug: string; brand: string; firstName: string | null; guide: Guide; has: GuideHas; bmId: string | null; adminEmails: string[]; /** The address they add on Google tools, their website and email platform */ techEmail: string | null; /** The one they add on Klaviyo */ klaviyoEmail: string | null; managerId: string | null; examples: { id: string; image: string; video: string | null }[]; /** A real ad for each style */ looks: Record<string, StyleLook>; presentation: string | null; help: Record<HelpStep, HelpTurn[]>; /** The marketing intake form: the step right after access */ intake: { done: boolean; clientId: number | null } };
+type Props = { slug: string; brand: string; firstName: string | null; guide: Guide; has: GuideHas; bmId: string | null; adminEmails: string[]; /** The address they add on Google tools, their website and email platform */ techEmail: string | null; /** The one they add on Klaviyo */ klaviyoEmail: string | null; managerId: string | null; examples: { id: string; image: string; video: string | null }[]; /** A real ad for each style */ looks: Record<string, StyleLook>; presentation: string | null; help: Record<HelpStep, HelpTurn[]>; /** The marketing intake form: the step right after access */ intake: { done: boolean; clientId: number | null; slug: string; started: boolean; /** Sent in the portal: whether the onboarding call is booked (null: not sent there) */ booked: boolean | null } };
 export type StartProps = Props;
 type StepKey = "meta" | "google" | "tools" | "tracking" | "website" | "email" | "intake" | "assets" | "style";
 /** The access steps, listed first under their own heading */
@@ -800,22 +799,17 @@ function Find({ id, setId, fmt, send, busy, error }: { id: string; setId: (v: st
 
 const WANT = ["Logo", "Brand guide, fonts and colors", "Product or service photos", "Videos (any you have)", "Team and location photos", "Reviews and testimonials", "Ads that worked before"];
 
-/** Right after they share access: the marketing intake form, with their Client ID to paste in */
-function IntakeNext({ done, clientId }: Props["intake"]) {
+/** Right after they share access: their marketing intake, in the portal, then booking the onboarding call */
+function IntakeNext({ done, slug, started }: Props["intake"]) {
   if (done) return null;
   return (
     <div className="grid gap-3 rounded-[20px] border border-brand/40 bg-brand/[0.06] p-5">
       <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-brand-text">Next</p>
       <p className="font-heading text-[20px] leading-snug">Tell us about your business</p>
-      <p className="text-[14.5px] leading-relaxed text-muted">Your goals, customers and offers, in about ten minutes. It&rsquo;s what we build your brand plan and first ads from.</p>
-      {clientId != null && (
-        <div>
-          <Copy value={String(clientId)} label="Your Client ID" />
-        </div>
-      )}
-      <a href={INTAKE_FORM_URL} target="_blank" rel="noreferrer" className="grid h-12 place-items-center rounded-full bg-brand text-[15px] font-medium text-white hover:bg-brand-hover">
-        Open the intake form ↗
-      </a>
+      <p className="text-[14.5px] leading-relaxed text-muted">Your goals, customers and offers, in about ten minutes, then book your onboarding call. It&rsquo;s what we build your brand plan and first ads from.</p>
+      <Link href={`/c/${slug}/intake`} className="grid h-12 place-items-center rounded-full bg-brand text-[15px] font-medium text-white hover:bg-brand-hover">
+        {started ? "Pick up where you left off →" : "Start →"}
+      </Link>
     </div>
   );
 }
@@ -826,7 +820,12 @@ function IntakeSheet({ intake }: Props) {
       {intake.done ? (
         <div className="grid gap-3 rounded-[20px] border border-ok/40 bg-ok-soft/40 p-5">
           <p className="font-heading text-[20px] text-ok">✓ Got it, thank you</p>
-          <p className="text-[14.5px] text-muted">We have your intake form. Your brand plan is being written from it, and you&rsquo;ll hear from us when it&rsquo;s ready.</p>
+          <p className="text-[14.5px] text-muted">We have your answers. Your brand plan is being written from them, and you&rsquo;ll hear from us when it&rsquo;s ready.</p>
+          {intake.booked === false && (
+            <Link href={`/c/${intake.slug}/intake?s=call`} className="justify-self-start text-[14px] font-medium text-brand-text hover:underline">
+              Book your onboarding call →
+            </Link>
+          )}
         </div>
       ) : (
         <div className="grid gap-4">

@@ -36,6 +36,8 @@ export default async function StartPage({ params }: { params: Promise<{ slug: st
     styleExamples(admin, client.id).catch(() => ({})),
     guideHas(admin, client.id),
   ]);
+  // Their intake in the portal: started (resume it), sent, and whether the onboarding call is booked
+  const { data: form } = await admin.from("client_intake_forms").select("status, answers, call_booked_at").eq("client_id", client.id).maybeSingle();
   const { managerId } = await import("@/lib/context/google-ads");
   const firstName = viewer.kind === "contact" ? (viewer.fullName?.split(" ")[0] ?? null) : null;
 
@@ -56,7 +58,7 @@ export default async function StartPage({ params }: { params: Promise<{ slug: st
           examples={examples}
           looks={looks}
           help={help}
-          intake={{ done: (intakes ?? 0) > 0, clientId: (client.kaizen_id as number | null) ?? null }}
+          intake={{ done: (intakes ?? 0) > 0 || form?.status === "submitted", clientId: (client.kaizen_id as number | null) ?? null, slug: client.slug, started: Object.keys((form?.answers ?? {}) as object).length > 0, booked: form?.status === "submitted" ? Boolean(form.call_booked_at) : null }}
           presentation={deck && ["sent", "approved"].includes(deck.status as string) ? (deck.status as string) : null}
         />
       </main>

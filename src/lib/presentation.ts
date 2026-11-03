@@ -14,7 +14,7 @@ import { siteUrl } from "@/lib/site";
 // answer what we still need, pick how we launch, and approve. What they say goes back into the Bible.
 
 export * from "@/lib/presentation-types";
-import { APPROVE_AFTER_DAYS, FLOW_START, INTAKE_FORM_URL, SEND_AFTER_DAYS, type Deck, type Reactions } from "@/lib/presentation-types";
+import { APPROVE_AFTER_DAYS, FLOW_START, SEND_AFTER_DAYS, type Deck, type Reactions } from "@/lib/presentation-types";
 import { addBusinessDays } from "@/lib/brand-bible";
 
 const s = { type: "string" };
@@ -144,10 +144,12 @@ export async function sendPresentation(admin: SupabaseClient, clientId: string, 
   const link = `${siteUrl()}/c/${c.slug}/plan`;
   const deck = p.deck as Deck;
   const sent: string[] = [];
-  const { logClientEmail, presentationEmail } = await import("@/lib/client-emails");
+  const { intakeLink, logClientEmail, presentationEmail } = await import("@/lib/client-emails");
+  // Their portal is open from here, so the intake is the one in it (tailored, no Client ID to type)
+  const intakeUrl = intakeLink({ slug: c.slug as string, portal_live: true });
   let mail: ReturnType<typeof presentationEmail> | null = null;
   for (const x of contacts) {
-    const m = presentationEmail({ brand: c.name as string, slug: c.slug as string, headline: deck.headline, withoutIntake: Boolean(p.without_intake), clientId: (c.kaizen_id as number | null) ?? null, first: x.full_name?.split(" ")[0] ?? null });
+    const m = presentationEmail({ brand: c.name as string, slug: c.slug as string, headline: deck.headline, withoutIntake: Boolean(p.without_intake), clientId: (c.kaizen_id as number | null) ?? null, first: x.full_name?.split(" ")[0] ?? null, intakeUrl });
     mail ??= m;
     const r = await sendEmail({ to: x.email, ...m });
     if (r.ok) sent.push(x.email);
@@ -156,7 +158,7 @@ export async function sendPresentation(admin: SupabaseClient, clientId: string, 
   if (slackOn) {
     const text = p.without_intake
       ? `Hi team! We haven't received your intake form yet, but we didn't want to wait: from our conversations so far, your website and our research, here's how we see ${c.name} and the first campaigns we'd recommend. Tell us where we're spot on and where we're off, and fill in the few gaps (about five minutes): ${link}
-When you have ten minutes, the intake form is here: ${INTAKE_FORM_URL}${c.kaizen_id != null ? ` (your Client ID: ${c.kaizen_id})` : ""}`
+When you have ten minutes, tell us about your business here: ${intakeUrl}`
       : `Hi team! We've put together how we see ${c.name}: who you're for, how you sound, and the first campaigns we'd run. Before we make anything, we'd love you to tell us where we're spot on and where we're off (about five minutes): ${link}`;
     const res = await fetch("https://slack.com/api/chat.postMessage", { method: "POST", headers: { authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`, "content-type": "application/json; charset=utf-8" }, body: JSON.stringify({ channel: c.slack_channel_id, text, unfurl_links: false }) });
     const body = (await res.json().catch(() => ({}))) as { ok?: boolean };

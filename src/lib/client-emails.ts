@@ -57,24 +57,30 @@ export function welcomeEmail(p: { brand: string; slug: string; steps: { title: s
   return { subject: p.reminder ? `Reminder: ${p.brand}, a few quick steps to get set up` : `Welcome to Kaizen, ${p.brand}: let's get you set up`, text: emailText(parts), html: emailHtml(parts) };
 }
 
-export function intakeEmail(p: { brand: string; clientId: number | null; first: string | null; reminder?: boolean }) {
+/** Where their intake is: in their portal once it's open to them (tailored to them, no Client ID to type), else the Google Form */
+export const intakeLink = (c: { slug: string; portal_live?: boolean | null }) => (c.portal_live ? `${siteUrl()}/c/${c.slug}/intake` : INTAKE_FORM_URL);
+
+export function intakeEmail(p: { brand: string; clientId: number | null; first: string | null; reminder?: boolean; url?: string }) {
+  const portal = Boolean(p.url && p.url !== INTAKE_FORM_URL);
   const parts: EmailParts = {
     preheader: "Ten minutes that shape everything we make for you.",
     kicker: p.brand,
     title: "Tell us about your brand",
     highlight: "your brand",
     hello: hello(p.first),
-    lines: [...(p.reminder ? [NUDGE] : []), "Our marketing intake form is the fastest way for us to get you right. It covers:"],
+    lines: [...(p.reminder ? [NUDGE] : []), portal ? "A few questions picked for your business (we've filled in what you've already told us), then you book your onboarding call. It covers:" : "Our marketing intake form is the fastest way for us to get you right. It covers:"],
     bullets: ["What you sell, and what makes you different", "Who your best customers are", "What's worked (and hasn't) before", "Your goals for the next few months"],
-    cta: { label: "Fill in the intake form →", url: INTAKE_FORM_URL },
-    note: `About ten minutes.${p.clientId != null ? ` It asks for your Client ID: ${p.clientId}.` : ""}`,
+    cta: { label: portal ? "Tell us about your business →" : "Fill in the intake form →", url: p.url ?? INTAKE_FORM_URL },
+    note: portal ? "About ten minutes, saved as you go." : `About ten minutes.${p.clientId != null ? ` It asks for your Client ID: ${p.clientId}.` : ""}`,
   };
   return { subject: p.reminder ? `Reminder: your ${p.brand} intake form` : `${p.brand}: your marketing intake form`, text: emailText(parts), html: emailHtml(parts) };
 }
 
 /** "Are we getting this right?": how we see them, to approve or correct. As a reminder: it's waiting on their approval */
-export function presentationEmail(p: { brand: string; slug: string; headline: string; withoutIntake: boolean; clientId: number | null; first: string | null; reminder?: boolean }) {
+export function presentationEmail(p: { brand: string; slug: string; headline: string; withoutIntake: boolean; clientId: number | null; first: string | null; reminder?: boolean; intakeUrl?: string }) {
   const link = `${siteUrl()}/c/${p.slug}/plan`;
+  // Their intake: in the portal (no Client ID needed), or the Google Form with it
+  const intake = p.intakeUrl && p.intakeUrl !== INTAKE_FORM_URL ? p.intakeUrl : `${INTAKE_FORM_URL}${p.clientId != null ? ` (your Client ID: ${p.clientId})` : ""}`;
   if (p.reminder) {
     const parts: EmailParts = {
       preheader: "Your brand plan is waiting for your OK before we make your first ads.",
@@ -85,7 +91,7 @@ export function presentationEmail(p: { brand: string; slug: string; headline: st
       lines: [NUDGE, "Before we make your first ads, we'd love your OK on how we see you:"],
       bullets: ["Tap Spot on or Not quite on each part", "Or just talk it through with us, by text or a voice message", "Approve it, and we start on your first ads"],
       cta: { label: "Review your brand plan →", url: link },
-      note: [`About five minutes. "${p.headline}"`, p.withoutIntake ? `Your intake form is still open too: ${INTAKE_FORM_URL}${p.clientId != null ? ` (your Client ID: ${p.clientId})` : ""}.` : ""].filter(Boolean).join(" "),
+      note: [`About five minutes. "${p.headline}"`, p.withoutIntake ? `Your intake form is still open too: ${intake}.` : ""].filter(Boolean).join(" "),
     };
     return { subject: `Reminder: ${p.brand}, your brand plan is waiting for your OK`, text: emailText(parts), html: emailHtml(parts) };
   }
@@ -104,7 +110,7 @@ export function presentationEmail(p: { brand: string; slug: string; headline: st
     cta: { label: "See how we see you →", url: link },
     note: [
       "Tap Spot on or Not quite on each part, or just talk it through with us. About five minutes.",
-      p.withoutIntake ? `When you have ten minutes, the intake form is here: ${INTAKE_FORM_URL}${p.clientId != null ? ` (your Client ID: ${p.clientId})` : ""}.` : "",
+      p.withoutIntake ? `When you have ten minutes, the intake form is here: ${intake}.` : "",
     ]
       .filter(Boolean)
       .join(" "),
@@ -147,21 +153,22 @@ type Composer = (first: string | null) => { subject: string; html: string; text:
 
 /** The email for a stage, ready to write for each contact; null with the reason when it can't go yet */
 export async function composeClientEmail(admin: SupabaseClient, clientId: string, kind: ClientEmailKind, reminder: boolean): Promise<{ make: Composer } | { error: string }> {
-  const { data: c } = await admin.from("clients").select("name, slug, kaizen_id, services, services_extra, services_removed").eq("id", clientId).single();
+  const { data: c } = await admin.from("clients").select("name, slug, kaizen_id, portal_live, services, services_extra, services_removed").eq("id", clientId).single();
   if (!c) return { error: "Client not found." };
+  const url = intakeLink({ slug: c.slug as string, portal_live: c.portal_live as boolean | null });
   const brand = c.name as string;
   const slug = c.slug as string;
   if (kind === "welcome") {
     const steps = setupSteps(servicesOf(c));
     return { make: (first) => welcomeEmail({ brand, slug, steps, first, reminder }) };
   }
-  if (kind === "intake") return { make: (first) => intakeEmail({ brand, clientId: (c.kaizen_id as number | null) ?? null, first, reminder }) };
+  if (kind === "intake") return { make: (first) => intakeEmail({ brand, clientId: (c.kaizen_id as number | null) ?? null, first, reminder, url }) };
   if (kind === "presentation") {
     const { data: p } = await admin.from("client_presentations").select("status, deck, without_intake").eq("client_id", clientId).maybeSingle();
     if (!p?.deck) return { error: "Their brand plan presentation isn't written yet." };
     if (p.status !== "sent" && p.status !== "approved") return { error: "Their presentation hasn't been sent yet: send it from the presentation page first." };
     const deck = p.deck as Deck;
-    return { make: (first) => presentationEmail({ brand, slug, headline: deck.headline, withoutIntake: Boolean(p.without_intake), clientId: (c.kaizen_id as number | null) ?? null, first, reminder }) };
+    return { make: (first) => presentationEmail({ brand, slug, headline: deck.headline, withoutIntake: Boolean(p.without_intake), clientId: (c.kaizen_id as number | null) ?? null, first, reminder, intakeUrl: url }) };
   }
   const { data: l } = await admin.from("engagement_launches").select("status, ad_ids, plan").eq("client_id", clientId).maybeSingle();
   if (l?.status !== "live") return { error: "Their first campaign isn't live yet." };
