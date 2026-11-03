@@ -402,7 +402,7 @@ export function ReviewViewer({
             )}
             {draft && (
               <>
-                <textarea
+                <textarea data-chat
                   ref={input}
                   value={text}
                   onChange={(e) => setText(e.target.value)}

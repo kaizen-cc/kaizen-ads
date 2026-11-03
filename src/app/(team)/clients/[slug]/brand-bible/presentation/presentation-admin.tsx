@@ -111,7 +111,7 @@ export function PresentationAdmin({ client, hasBible, p }: { client: { id: strin
               }}
               className="grid gap-2 rounded-[14px] border border-line bg-bg p-2 focus-within:border-brand-text/60"
             >
-              <textarea
+              <textarea data-chat
                 value={change}
                 onChange={(e) => setChange(e.target.value)}
                 rows={2}

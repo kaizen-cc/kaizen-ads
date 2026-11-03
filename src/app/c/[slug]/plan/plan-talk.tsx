@@ -254,7 +254,7 @@ export function PlanTalk({ slug, brand, chat: initial, locked, onReactions }: { 
                     <button type="button" onClick={() => pick.current?.click()} disabled={Boolean(busy)} className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-[18px] text-muted hover:text-fg" aria-label="Share files">
                       📎
                     </button>
-                    <textarea
+                    <textarea data-chat
                       value={text}
                       onChange={(e) => setText(e.target.value)}
                       onKeyDown={(e) => {

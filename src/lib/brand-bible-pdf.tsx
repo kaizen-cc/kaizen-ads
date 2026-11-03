@@ -30,11 +30,11 @@ const s = StyleSheet.create({
   li: { flexDirection: "row", marginBottom: 4, paddingRight: 6 },
   dot: { width: 14, color: RED, fontFamily: "Helvetica-Bold", fontSize: 9.5 },
   liText: { flex: 1, fontSize: 9.5, lineHeight: 1.5, color: "#2b2b30" },
-  table: { borderWidth: 1, borderColor: LINE, borderRadius: 4, marginBottom: 10 },
+  table: { borderWidth: 1, borderColor: LINE, borderRadius: 4, marginTop: 4, marginBottom: 12 },
   tr: { flexDirection: "row", borderTopWidth: 1, borderTopColor: LINE },
   th: { flexDirection: "row", backgroundColor: SOFT },
-  cell: { flex: 1, paddingVertical: 5, paddingHorizontal: 6, fontSize: 7.5, lineHeight: 1.4, color: "#2b2b30" },
-  headCell: { flex: 1, paddingVertical: 5, paddingHorizontal: 6, fontSize: 7, fontFamily: "Helvetica-Bold", color: MUTED, textTransform: "uppercase", letterSpacing: 0.4 },
+  cell: { flex: 1, paddingVertical: 6, paddingHorizontal: 7, fontSize: 7.8, lineHeight: 1.45, color: "#2b2b30" },
+  headCell: { flex: 1, paddingVertical: 6, paddingHorizontal: 7, fontSize: 7, fontFamily: "Helvetica-Bold", color: MUTED, textTransform: "uppercase", letterSpacing: 0.4 },
   first: { backgroundColor: SOFT, borderLeftWidth: 3, borderLeftColor: RED, padding: 16, borderRadius: 4 },
   footer: { position: "absolute", bottom: 28, left: 48, right: 48, flexDirection: "row", justifyContent: "space-between", fontSize: 7.5, color: FAINT, borderTopWidth: 1, borderTopColor: LINE, paddingTop: 8 },
 });
@@ -101,17 +101,21 @@ function Body({ text }: { text: string }) {
         i++;
       }
       const [head, ...body] = rows;
+      // Columns by how much they hold (a date stays narrow, notes get the room); extra pipes join the last column
+      const len = (c: string) => c.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").length;
+      const fit = (r: string[]) => (r.length > head.length ? [...r.slice(0, head.length - 1), r.slice(head.length - 1).join(" | ")] : r);
+      const grow = head.map((_, j) => Math.max(4, Math.min(60, Math.max(len(head[j]), ...body.map((r) => len(fit(r)[j] ?? ""))))));
       out.push(
         <View key={`t${i}`} style={s.table}>
           <View style={s.th} wrap={false}>
             {head.map((c, j) => (
-              <Inline key={j} text={c} style={s.headCell} />
+              <Inline key={j} text={c} style={{ ...s.headCell, flex: grow[j] }} />
             ))}
           </View>
           {body.map((r, k) => (
-            <View key={k} style={s.tr} wrap={false}>
+            <View key={k} style={[s.tr, k % 2 ? { backgroundColor: "#fafafb" } : {}]} wrap={false}>
               {head.map((_, j) => (
-                <Inline key={j} text={r[j] ?? ""} style={s.cell} />
+                <Inline key={j} text={fit(r)[j] ?? ""} style={{ ...s.cell, flex: grow[j], ...(j === 0 ? { fontFamily: "Helvetica-Bold" } : {}) }} />
               ))}
             </View>
           ))}

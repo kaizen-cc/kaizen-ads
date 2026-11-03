@@ -73,13 +73,25 @@ export function Markdown({ text }: { text: string }) {
         i++;
       }
       const [head, ...body] = rows;
+      const cols = head?.length ?? 0;
+      // Each column gets room by how much it holds (a date column stays narrow, a notes column gets the space), and
+      // every row has as many cells as the header (extra pipes in a cell join back into its last column)
+      const len = (c: string) => c.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").length;
+      const weight = Array.from({ length: cols }, (_, j) => Math.max(len(head?.[j] ?? ""), ...body.map((r) => len(r[j] ?? ""))));
+      const total = weight.reduce((a, b) => a + Math.min(b, 120), 0) || 1;
+      const fit = (r: string[]) => (r.length > cols && cols > 0 ? [...r.slice(0, cols - 1), r.slice(cols - 1).join(" | ")] : [...r, ...Array(Math.max(0, cols - r.length)).fill("")]);
       out.push(
-        <div key={`t${i}`} className="overflow-x-auto rounded-[10px] border border-line">
-          <table className="w-full min-w-[480px] text-left text-xs">
-            <thead className="bg-surface-2/60">
+        <div key={`t${i}`} className="my-1 overflow-x-auto rounded-[12px] border border-line [overflow-wrap:normal]">
+          <table className={`w-full table-fixed border-collapse text-left text-[12.5px] ${cols > 4 ? "min-w-[760px]" : cols > 2 ? "min-w-[560px]" : ""}`}>
+            <colgroup>
+              {weight.map((w, j) => (
+                <col key={j} style={{ width: `${Math.max(9, Math.round((Math.min(w, 120) / total) * 100))}%` }} />
+              ))}
+            </colgroup>
+            <thead className="bg-surface-2/70">
               <tr>
                 {head?.map((c, j) => (
-                  <th key={j} className="px-3 py-2 font-medium text-muted">
+                  <th key={j} className="px-4 py-2.5 align-bottom text-[11px] font-semibold uppercase tracking-[0.08em] text-faint">
                     {inline(c, `th${i}${j}`)}
                   </th>
                 ))}
@@ -87,9 +99,9 @@ export function Markdown({ text }: { text: string }) {
             </thead>
             <tbody>
               {body.map((r, k) => (
-                <tr key={k} className="border-t border-line/70 align-top">
-                  {r.map((c, j) => (
-                    <td key={j} className="px-3 py-2 leading-relaxed text-muted">
+                <tr key={k} className="border-t border-line/70 align-top even:bg-surface-2/25">
+                  {fit(r).map((c, j) => (
+                    <td key={j} className={`px-4 py-3 leading-relaxed [word-break:normal] [overflow-wrap:break-word] ${j === 0 ? "font-medium text-fg" : "text-muted"}`}>
                       {inline(c, `td${i}${k}${j}`)}
                     </td>
                   ))}

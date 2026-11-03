@@ -229,7 +229,7 @@ function Chat({ ticket, demo, disabled, onRewriting }: { ticket: Ticket; demo: b
       <div className="grid gap-1.5">
         {error && <p className="text-xs text-bad">{error}</p>}
         <div className="flex items-end gap-2">
-          <textarea
+          <textarea data-chat
             value={text}
             disabled={disabled}
             onChange={(e) => setText(e.target.value)}

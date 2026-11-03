@@ -855,7 +855,7 @@ function Ask({ slug, range, asked, setAsked }: { slug: string; range: Range; ask
         className="border-t border-line p-3"
       >
         <div className="flex items-end gap-2 rounded-[20px] border border-line bg-bg p-1.5 focus-within:border-brand-text/60">
-          <textarea
+          <textarea data-chat
             value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {

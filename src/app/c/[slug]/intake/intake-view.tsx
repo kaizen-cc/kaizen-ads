@@ -241,7 +241,7 @@ function AutoText({ id, value, onChange }: { id: string; value: string; onChange
     el.style.height = "auto";
     el.style.height = `${Math.min(420, Math.max(96, el.scrollHeight))}px`;
   }, [value]);
-  return <textarea ref={ref} id={id} value={value} onChange={(e) => onChange(e.target.value)} rows={3} className="resize-none rounded-[14px] border border-line bg-ink px-4 py-3 text-[15px] leading-relaxed outline-none focus:border-brand-text/60" />;
+  return <textarea data-chat ref={ref} id={id} value={value} onChange={(e) => onChange(e.target.value)} rows={3} className="resize-none rounded-[14px] border border-line bg-ink px-4 py-3 text-[15px] leading-relaxed outline-none focus:border-brand-text/60" />;
 }
 
 /** Booking the onboarding call: the kind that fits where their setup stands, the calendar right here */

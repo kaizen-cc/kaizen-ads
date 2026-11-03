@@ -64,7 +64,7 @@ export function DraftReply({ id, source, url, initial, channel = null, tone = "l
   return (
     <div className={`grid gap-2 rounded-[14px] p-3 ${dark ? "border border-white/15 bg-white/[0.06]" : "border border-line bg-surface"}`}>
       <p className={`text-[11px] font-semibold uppercase tracking-[0.14em] ${dark ? "text-white/55" : "text-faint"}`}>Your reply, drafted</p>
-      <textarea
+      <textarea data-chat
         value={text}
         onChange={(e) => setText(e.target.value)}
         rows={Math.min(10, Math.max(3, text.split("\n").length + 1))}

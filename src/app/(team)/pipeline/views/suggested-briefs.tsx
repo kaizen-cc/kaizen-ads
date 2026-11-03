@@ -401,7 +401,7 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
                       </button>
                     ))}
                   </div>
-                  <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} placeholder="Say more, so it learns" className={`${INPUT} h-auto py-2`} />
+                  <textarea data-chat value={reason} onChange={(e) => setReason(e.target.value)} rows={2} placeholder="Say more, so it learns" className={`${INPUT} h-auto py-2`} />
                   <label className="flex min-h-11 items-center gap-2 text-xs text-muted md:min-h-0">
                     <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
                     Also remember this in {s.client}&apos;s memory (every agent reads it)

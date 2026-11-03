@@ -82,7 +82,7 @@ export function AddMove({ sprintId }: { sprintId: string }) {
     );
   return (
     <div className="grid gap-3 rounded-[16px] border border-line bg-surface p-4">
-      <textarea
+      <textarea data-chat
         value={text}
         onChange={(e) => setText(e.target.value)}
         rows={3}

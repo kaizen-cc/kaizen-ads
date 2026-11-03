@@ -210,7 +210,7 @@ function Card({ n, title, section, reactions, locked, onReact, children }: { n: 
         )}
         {open && (
           <div className="grid gap-2">
-            <textarea
+            <textarea data-chat
               value={note}
               onChange={(e) => setNote(e.target.value)}
               autoFocus
@@ -305,7 +305,7 @@ function Question({ q, saved, locked, onAnswer }: { q: { question: string; why: 
         <p className="text-[14px] text-muted">{saved || "Not answered"}</p>
       ) : (
         <>
-          <textarea
+          <textarea data-chat
             value={text}
             onChange={(e) => setText(e.target.value)}
             rows={2}

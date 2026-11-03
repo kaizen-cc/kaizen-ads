@@ -784,7 +784,7 @@ function CopyStep({
       {editing ? (
         <div className="grid gap-2 px-4 pb-[max(14px,env(safe-area-inset-bottom))] pt-3">
           <p className="text-[13px] font-semibold">What should change in this copy?</p>
-          <textarea
+          <textarea data-chat
             autoFocus
             value={note}
             onChange={(e) => setNote(e.target.value)}
@@ -1006,7 +1006,7 @@ function MarkDesign({ item, design, start, initial, onCancel, onSave }: { item: 
             ))}
           </ol>
         )}
-        <textarea
+        <textarea data-chat
           value={note}
           onChange={(e) => setNote(e.target.value)}
           placeholder={`Anything else about this ${item.format === "video" ? "video" : "design"}? (optional)`}

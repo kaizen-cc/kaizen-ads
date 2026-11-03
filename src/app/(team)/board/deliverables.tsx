@@ -494,7 +494,7 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
               </span>
             </div>
             {adjusted.on && (
-              <textarea
+              <textarea data-chat
                 autoFocus
                 value={adjusted.note}
                 onChange={(e) => setAdjusted({ on: true, note: e.target.value })}

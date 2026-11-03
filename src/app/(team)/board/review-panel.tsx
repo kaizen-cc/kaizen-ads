@@ -103,7 +103,7 @@ export function ReviewPanel({
       {reviewing &&
         (canReview ? (
           <div className="grid gap-3">
-            <textarea
+            <textarea data-chat
               value={note}
               onChange={(e) => setNote(e.target.value)}
               rows={2}

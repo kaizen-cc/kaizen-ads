@@ -432,3 +432,13 @@ html {
     opacity: 0;
   }
 }
+
+/* Chat and comment boxes grow with what's typed, up to about 40% of the screen, then scroll (never forever).
+   Outside any layer so it wins over a box's own fixed max height. Browsers without field-sizing get the same
+   behavior from <AutoGrow /> in the root layout. */
+textarea[data-chat] {
+  field-sizing: content;
+  max-height: 40vh;
+  max-height: 40dvh;
+  overflow-y: auto;
+}

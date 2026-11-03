@@ -497,7 +497,7 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources, read
 
           <div className="flex items-end gap-2">
             <div className="flex flex-1 flex-col rounded-[14px] border border-line bg-bg focus-within:border-faint">
-              <textarea
+              <textarea data-chat
                 id="lab-input"
                 value={text}
                 onChange={(e) => setText(e.target.value)}
@@ -1051,7 +1051,7 @@ function TestCard({ t, clients, tests }: { t: LabTest; clients: LabClientRow[]; 
 
       {calling ? (
         <div className="grid gap-2">
-          <textarea
+          <textarea data-chat
             value={note}
             onChange={(e) => setNote(e.target.value)}
             rows={2}

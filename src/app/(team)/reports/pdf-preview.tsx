@@ -215,7 +215,7 @@ function Editor({ field, at, onSave, onClose, onRemove }: { field: PdfField; at:
         style={{ left: `min(${at.x * 100}%, calc(100% - min(520px, 90%) - 12px))`, top: `${at.y * 100}%` }}
       >
         <p className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-faint">{field.label}</p>
-        <textarea
+        <textarea data-chat
           value={draft}
           autoFocus
           onChange={(e) => setDraft(e.target.value)}

@@ -311,7 +311,7 @@ export function HelpChat({ slug, step, initial, onCall }: { slug: string; step: 
             📎
           </button>
           <input ref={pick} type="file" multiple accept="image/*,application/pdf" hidden onChange={(e) => (setFiles([...files, ...Array.from(e.target.files ?? [])].slice(0, 6)), (e.target.value = ""))} />
-          <textarea
+          <textarea data-chat
             value={q}
             onChange={(e) => setQ(e.target.value)}
             onPaste={(e) => {
@@ -445,7 +445,7 @@ export function OnCall({ slug, which, done }: { slug: string; which: HelpStep; d
   if (done) return <p className="rounded-[14px] bg-warn-soft/50 px-4 py-3 text-[13.5px] text-warn">☎ Got it: we&rsquo;ll set this up together on our onboarding call.</p>;
   return open ? (
     <div className="grid gap-2 rounded-[16px] border border-line bg-surface p-3">
-      <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Anything we should know? (optional, e.g. 'I don't have a Business Manager')" className="w-full resize-none rounded-[10px] border border-line bg-bg px-3 py-2 text-[14px] outline-none [field-sizing:content]" />
+      <textarea data-chat value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Anything we should know? (optional, e.g. 'I don't have a Business Manager')" className="w-full resize-none rounded-[10px] border border-line bg-bg px-3 py-2 text-[14px] outline-none [field-sizing:content]" />
       <button
         type="button"
         disabled={busy}
@@ -1156,7 +1156,7 @@ function StyleSheet({ slug, guide, examples, looks, next }: Props & { next: Step
 
         <div className="grid gap-2">
           <p className="font-heading text-[18px]">Anything else?</p>
-          <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} placeholder="Brands you love, things you never want to see in your ads…" className="w-full resize-none rounded-[14px] border border-line bg-surface px-4 py-3 text-[15px] leading-relaxed outline-none [field-sizing:content] focus:border-brand-text/60" />
+          <textarea data-chat value={note} onChange={(e) => setNote(e.target.value)} rows={3} placeholder="Brands you love, things you never want to see in your ads…" className="w-full resize-none rounded-[14px] border border-line bg-surface px-4 py-3 text-[15px] leading-relaxed outline-none [field-sizing:content] focus:border-brand-text/60" />
         </div>
 
         <button type="button" disabled={Boolean(busy)} onClick={save} className="h-12 rounded-full bg-brand text-[15px] font-medium text-white disabled:opacity-50">

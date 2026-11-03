@@ -201,7 +201,7 @@ export function AccountChat({ id, client, initial, ready }: { id: string; client
           }}
           className="flex items-end gap-2 border-t border-[#e7e2e3] p-3 max-md:pb-[max(12px,env(safe-area-inset-bottom))]"
         >
-          <textarea
+          <textarea data-chat
             value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {

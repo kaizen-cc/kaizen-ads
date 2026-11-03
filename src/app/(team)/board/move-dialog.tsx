@@ -116,7 +116,7 @@ export function MoveDialog({
               </ul>
             )}
             {!check.blockers.length && (
-              <textarea
+              <textarea data-chat
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
                 rows={2}

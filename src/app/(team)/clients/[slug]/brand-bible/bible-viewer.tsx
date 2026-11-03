@@ -55,7 +55,7 @@ function Tier({ tier }: { tier: string | null }) {
 /** Bigger, easier reading than the compact Markdown defaults */
 function Prose({ text }: { text: string }) {
   return (
-    <div className="max-w-[78ch] [&_li]:text-[14.5px] [&_li]:leading-[1.7] [&_p]:text-[14.5px] [&_p]:leading-[1.7] [&_table]:text-[12.5px]">
+    <div className="[&>div>p]:max-w-[78ch] [&>div>ul]:max-w-[78ch] [&>div>ol]:max-w-[78ch] [&_li]:text-[14.5px] [&_li]:leading-[1.7] [&_p]:text-[14.5px] [&_p]:leading-[1.7]">
       <Markdown text={text} />
     </div>
   );
@@ -397,7 +397,7 @@ function BibleChat({
           )}
           {error && <p className="px-1 text-[12px] text-bad">{error}</p>}
           <div className="flex items-end gap-2 rounded-[18px] border border-line bg-bg px-3 py-2 focus-within:border-faint">
-            <textarea
+            <textarea data-chat
               ref={box}
               value={text}
               onChange={(e) => setText(e.target.value)}
