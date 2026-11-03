@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { AiPaused, askJson } from "@/lib/ai";
 import { describeIntake, type IntakeSummary } from "@/lib/intake-format";
 import { sendEmail } from "@/lib/email";
-import { emailHtml, emailText, type EmailParts } from "@/lib/email-layout";
+
 import { siteUrl } from "@/lib/site";
 
 // The client presentation: the Brand Bible, short and beautiful, for the client ("Here's how we see you: are we
@@ -126,31 +126,6 @@ async function tellApprovers(admin: SupabaseClient, clientId: string, name: stri
   );
 }
 
-function touchpointEmail(p: { firstName: string | null; brand: string; headline: string; link: string; withoutIntake: boolean; clientId: number | null }) {
-  const subject = p.withoutIntake ? `${p.brand}: we got started, here's what we've got` : `${p.brand}: are we getting this right?`;
-  const parts: EmailParts = {
-    preheader: p.headline,
-    kicker: p.brand,
-    title: p.withoutIntake ? "We got started for you" : "Are we getting this right?",
-    highlight: p.withoutIntake ? "started" : "right",
-    hello: p.firstName ? `Hi ${p.firstName},` : "Hi there,",
-    lines: [
-      p.withoutIntake
-        ? "We haven't received your intake form yet, but we didn't want to wait. From our conversations, your website and our own research, here's how we see you:"
-        : "Thanks for your intake form. From everything you told us, plus our own research, here's how we see you:",
-    ],
-    bullets: ["Who you are and what makes you different", "Who we'll be speaking to, and what stops them scrolling", "How you sound", "The first campaigns we'd run", "How we get you live"],
-    cta: { label: "See how we see you →", url: p.link },
-    note: [
-      "Tap Spot on or Not quite on each part, or just talk it through with us. About five minutes.",
-      p.withoutIntake ? `When you have ten minutes, the intake form is here: ${INTAKE_FORM_URL}${p.clientId != null ? ` (your Client ID: ${p.clientId})` : ""}.` : "",
-    ]
-      .filter(Boolean)
-      .join(" "),
-  };
-  return { subject, text: emailText(parts), html: emailHtml(parts) };
-}
-
 /** Send it: the client's contacts by email and their Slack channel, and their portal switched on so they can open it. */
 export async function sendPresentation(admin: SupabaseClient, clientId: string, by: string | null) {
   const [{ data: c }, { data: p }, { data: links }] = await Promise.all([
@@ -168,10 +143,15 @@ export async function sendPresentation(admin: SupabaseClient, clientId: string, 
   const link = `${siteUrl()}/c/${c.slug}/plan`;
   const deck = p.deck as Deck;
   const sent: string[] = [];
+  const { logClientEmail, presentationEmail } = await import("@/lib/client-emails");
+  let mail: ReturnType<typeof presentationEmail> | null = null;
   for (const x of contacts) {
-    const r = await sendEmail({ to: x.email, ...touchpointEmail({ firstName: x.full_name?.split(" ")[0] ?? null, brand: c.name as string, headline: deck.headline, link, withoutIntake: Boolean(p.without_intake), clientId: (c.kaizen_id as number | null) ?? null }) });
+    const m = presentationEmail({ brand: c.name as string, slug: c.slug as string, headline: deck.headline, withoutIntake: Boolean(p.without_intake), clientId: (c.kaizen_id as number | null) ?? null, first: x.full_name?.split(" ")[0] ?? null });
+    mail ??= m;
+    const r = await sendEmail({ to: x.email, ...m });
     if (r.ok) sent.push(x.email);
   }
+  if (mail) await logClientEmail(admin, { clientId, kind: "presentation", ...mail, to: sent, by });
   if (slackOn) {
     const text = p.without_intake
       ? `Hi team! We haven't received your intake form yet, but we didn't want to wait: from our conversations so far, your website and our research, here's how we see ${c.name} and the first campaigns we'd recommend. Tell us where we're spot on and where we're off, and fill in the few gaps (about five minutes): ${link}

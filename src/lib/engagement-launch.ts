@@ -287,21 +287,17 @@ async function tellClientLive(admin: SupabaseClient, clientId: string) {
   const plan = l.plan as EngagementPlan;
   const lines = [`Your first campaign is live: ${n} of your best posts are now running as ads on Facebook and Instagram, reaching people in ${plan.geo.label}.`, "This builds an audience and traffic for you right away, and it's the warm-up for the conversion campaigns we launch as your new creative lands. We'll keep you posted on how it's going."];
   const { sendEmail } = await import("@/lib/email");
-  const { emailHtml, emailText } = await import("@/lib/email-layout");
+  const { liveEmail, logClientEmail } = await import("@/lib/client-emails");
+  const sent: string[] = [];
+  let mail: ReturnType<typeof liveEmail> | null = null;
   for (const x of (links ?? []).map((k) => k.contacts as unknown as { email: string; full_name: string | null; is_active: boolean } | null)) {
     if (!x?.is_active || !x.email) continue;
-    const parts = {
-      preheader: `${n} of your best posts are running as ads now.`,
-      kicker: c.name as string,
-      title: "You're live 🎉",
-      hello: x.full_name ? `Hi ${x.full_name.split(" ")[0]},` : "Hi there,",
-      lines: ["Your first campaign is running:"],
-      bullets: [`${n} of your best posts, now ads on Facebook and Instagram`, `Reaching people in ${plan.geo.label}`, "Building your audience and site traffic from today", "The warm-up for the conversion campaigns that follow as your new creative lands"],
-      cta: { label: "See it on your dashboard →", url: `${(await import("@/lib/site")).siteUrl()}/c/${c.slug}/dashboard` },
-      note: "We'll keep you posted on how it's going.",
-    };
-    await sendEmail({ to: x.email, subject: `${c.name}: your first campaign is live`, text: emailText(parts), html: emailHtml(parts) }).catch(() => null);
+    const m = liveEmail({ brand: c.name as string, slug: c.slug as string, posts: n, geo: plan.geo.label, first: x.full_name?.split(" ")[0] ?? null });
+    mail ??= m;
+    const r = await sendEmail({ to: x.email, ...m }).catch(() => null);
+    if (r?.ok) sent.push(x.email);
   }
+  if (mail) await logClientEmail(admin, { clientId, kind: "live", ...mail, to: sent });
   if (process.env.SLACK_BOT_TOKEN && c.slack_channel_id)
     await fetch("https://slack.com/api/chat.postMessage", { method: "POST", headers: { authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`, "content-type": "application/json; charset=utf-8" }, body: JSON.stringify({ channel: c.slack_channel_id, text: `🎉 ${lines.join(" ")}`, unfurl_links: false }) }).catch(() => null);
 }

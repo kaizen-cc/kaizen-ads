@@ -291,9 +291,30 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     setup = <GuidePanel slug={client.slug} guide={await loadGuide(admin, client.id)} google={servicesOf(client).includes("google-ads")} welcomed={(o?.welcomed_at as string | null) ?? null} launch={(launch?.status as string | null) ?? null} />;
   }
 
+  // Every email they've had from us, and the one that fits where they are now
+  let emails: React.ReactNode = null;
+  if (adminConfigured()) {
+    const admin = createAdminClient();
+    const { emailStage, kindName } = await import("@/lib/client-emails");
+    const [stage, { data: rows }, { data: o }, { data: pres }] = await Promise.all([
+      emailStage(admin, client.id),
+      admin.from("client_emails").select("id, kind, subject, sent_to, manual, sent_at, profiles(full_name)").eq("client_id", client.id).order("sent_at", { ascending: false }).limit(40),
+      admin.from("client_onboarding").select("welcomed_at").eq("client_id", client.id).maybeSingle(),
+      admin.from("client_presentations").select("sent_at, sent_to").eq("client_id", client.id).maybeSingle(),
+    ]);
+    const sent = (rows ?? []).map((r) => ({ id: r.id as string, kind: r.kind as string, name: kindName(r.kind as string), subject: r.subject as string, to: (r.sent_to as string[]) ?? [], manual: Boolean(r.manual), by: (r.profiles as unknown as { full_name: string } | null)?.full_name ?? null, at: r.sent_at as string }));
+    // Sent by the flow before each email was kept: listed, without a preview
+    if (o?.welcomed_at && !sent.some((x) => x.kind === "welcome")) sent.push({ id: null as unknown as string, kind: "welcome", name: kindName("welcome"), subject: `Welcome to Kaizen, ${client.name}: let's get you set up`, to: [], manual: false, by: null, at: o.welcomed_at as string });
+    if (pres?.sent_at && !sent.some((x) => x.kind === "presentation")) sent.push({ id: null as unknown as string, kind: "presentation", name: kindName("presentation"), subject: "How we see you", to: ((pres.sent_to as string[] | null) ?? []).filter((x) => x.includes("@")), manual: false, by: null, at: pres.sent_at as string });
+    sent.sort((a, b) => b.at.localeCompare(a.at));
+    const { EmailsPanel } = await import("./emails-panel");
+    emails = <EmailsPanel clientId={client.id} slug={client.slug} stage={stage} sent={sent} />;
+  }
+
   return (
     <ClientView
       setup={setup}
+      emails={emails}
       campaigns={campaigns}
       docs={docs}
       playbook={{ items: await loadLedger(supabase, client.id), learnings: ((await supabase.from("client_brand_bibles").select("learnings").eq("client_id", client.id).maybeSingle()).data?.learnings ?? []) as { at: string; kind: string; text: string }[] }}

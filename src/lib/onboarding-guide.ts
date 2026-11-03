@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { metaConfigured, metaGraph } from "@/lib/context/meta";
 import { sendEmail } from "@/lib/email";
-import { guideSteps, type Guide, type GoogleStep, type MetaStep } from "@/lib/onboarding-guide-types";
+import { type Guide, type GoogleStep, type MetaStep } from "@/lib/onboarding-guide-types";
 import { servicesOf } from "@/lib/services";
 import { siteUrl } from "@/lib/site";
 
@@ -120,50 +120,32 @@ async function tellTeam(admin: SupabaseClient, clientId: string, what: string, b
 }
 export { tellTeam as tellGuideTeam };
 
-/** The setup steps for what a client buys: Meta access if we run their Meta ads, Google if Google, the look if we run
- *  ads or make their creative, and their assets always */
-export function setupSteps(services: string[]) {
-  const { meta, google, looks } = guideSteps(services);
-  return [
-    ...(meta ? [{ title: "Give us access to your Facebook and Instagram ads", text: "Add Kaizen as a partner in your Business Manager. We show you every click." }] : []),
-    ...(google ? [{ title: "Send us your Google Ads account ID", text: "We show you where to find it, or how to make an account." }] : []),
-    { title: "Share your brand assets", text: "Your logo, photos, videos and brand guide, or a link to them." },
-    ...(looks ? [{ title: "Pick the look you want", text: "The styles and pacing you love, so your first ads feel like you." }] : []),
-  ];
-}
+export { setupSteps } from "@/lib/client-emails";
 
 /** The welcome, at enrollment: their portal opened, an email to each contact and a post in their Slack channel */
 export async function welcomeClient(admin: SupabaseClient, clientId: string) {
   const { data: o } = await admin.from("client_onboarding").select("welcomed_at").eq("client_id", clientId).maybeSingle();
   if (o?.welcomed_at) return "already";
-  const [{ data: c }, { data: links }] = await Promise.all([
-    admin.from("clients").select("name, slug, portal_live, slack_channel_id, services, services_extra, services_removed").eq("id", clientId).single(),
-    admin.from("contact_clients").select("contacts(email, full_name, is_active)").eq("client_id", clientId),
-  ]);
+  const { data: c } = await admin.from("clients").select("name, slug, portal_live, slack_channel_id, services, services_extra, services_removed").eq("id", clientId).single();
   if (!c) return "missing";
   // Not until Kaizen's Business Manager ID is set: the Meta step would have nothing to give them
   if (!(await accessSetting(admin)).bmId) return "no business id";
-  const contacts = (links ?? []).map((l) => l.contacts as unknown as { email: string; full_name: string | null; is_active: boolean } | null).filter((x): x is NonNullable<typeof x> => Boolean(x?.is_active && x.email));
+  const { clientRecipients, logClientEmail, setupSteps, welcomeEmail } = await import("@/lib/client-emails");
+  const contacts = await clientRecipients(admin, clientId);
   if (!contacts.length && !c.slack_channel_id) return "no contact";
   if (!c.portal_live) await admin.from("clients").update({ portal_live: true, portal_live_at: new Date().toISOString() }).eq("id", clientId);
   const link = `${siteUrl()}/c/${c.slug}/start`;
   // Only the steps for what they buy from us
   const steps = setupSteps(servicesOf(c));
-  const { emailHtml, emailText } = await import("@/lib/email-layout");
+  const sent: string[] = [];
+  let mail: ReturnType<typeof welcomeEmail> | null = null;
   for (const x of contacts) {
-    const parts = {
-      preheader: `${steps.length} quick steps so we can start building your ads.`,
-      kicker: c.name as string,
-      title: "Welcome to Kaizen",
-      highlight: "Kaizen",
-      hello: x.full_name ? `Hi ${x.full_name.split(" ")[0]},` : "Hi there,",
-      lines: ["We're excited to get started. Your Kaizen portal is where everything with us happens: getting set up, seeing how we see your brand, and approving every ad before it runs.", `First, ${steps.length} quick step${steps.length === 1 ? "" : "s"} so we can start building (about ${steps.length * 3} minutes, and each one walks you through it):`],
-      steps,
-      cta: { label: "Start setup →", url: link },
-      note: "The button opens your Kaizen portal. If it asks, enter this email and we'll send you a one-tap sign-in.",
-    };
-    await sendEmail({ to: x.email, subject: `Welcome to Kaizen, ${c.name}: let's get you set up`, text: emailText(parts), html: emailHtml(parts) }).catch(() => null);
+    const m = welcomeEmail({ brand: c.name as string, slug: c.slug as string, steps, first: x.first });
+    mail ??= m;
+    const r = await sendEmail({ to: x.email, ...m }).catch(() => null);
+    if (r?.ok) sent.push(x.email);
   }
+  if (mail) await logClientEmail(admin, { clientId, kind: "welcome", ...mail, to: sent });
   if (process.env.SLACK_BOT_TOKEN && c.slack_channel_id)
     await fetch("https://slack.com/api/chat.postMessage", {
       method: "POST",

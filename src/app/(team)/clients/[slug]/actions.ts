@@ -531,3 +531,30 @@ export async function setOngoingPackage(clientId: string, slug: string, pkg: str
   const { error } = await supabase.rpc("set_ongoing_package", { p_client: clientId, p_package: pkg });
   return done(slug, error);
 }
+
+/** The client emails: what would go out now for a stage, to every contact as of now */
+export async function previewStageEmail(clientId: string, kind: import("@/lib/client-emails").ClientEmailKind) {
+  await requireStaff();
+  // Only a client this person can see
+  const { data: c } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
+  if (!c) return { ok: false as const, error: "Not found." };
+  const { previewClientEmail } = await import("@/lib/client-emails");
+  return previewClientEmail(createAdminClient(), clientId, kind);
+}
+
+export async function pushStageEmail(clientId: string, slug: string, kind: import("@/lib/client-emails").ClientEmailKind) {
+  const me = await requireStaff();
+  const { data: c } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
+  if (!c) return { ok: false as const, error: "Not found." };
+  const { pushClientEmail } = await import("@/lib/client-emails");
+  const out = await pushClientEmail(createAdminClient(), clientId, kind, me.id);
+  revalidatePath(`/clients/${slug}`);
+  return out;
+}
+
+/** A sent email, as it looked */
+export async function sentEmail(id: string) {
+  await requireStaff();
+  const { data } = await (await createClient()).from("client_emails").select("subject, html, text").eq("id", id).maybeSingle();
+  return data ? { ok: true as const, subject: data.subject as string, html: (data.html as string | null) ?? null, text: (data.text as string | null) ?? null } : { ok: false as const, error: "Not found." };
+}

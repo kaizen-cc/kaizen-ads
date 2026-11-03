@@ -160,10 +160,12 @@ export type ClientViewProps = {
   playbook?: { items: LedgerItem[]; learnings: { at: string; kind: string; text: string }[] } | null; // everything they've run, and what it taught
   /** A new client's setup (their onboarding guide's steps), shown above the intake */
   setup?: React.ReactNode;
+  /** Their emails: the one for where they are now, to preview and push, and every one sent */
+  emails?: React.ReactNode;
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, docs = null, reports = null, playbook = null, setup = null }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, docs = null, reports = null, playbook = null, setup = null, emails = null }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -605,6 +607,11 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
               </ActionForm>
             )}
           </Section>
+                  {emails && (
+                    <Section title="Client emails" description="Push the email for where they are now, see exactly what it says first, and every email they've had from us.">
+                      {emails}
+                    </Section>
+                  )}
                 </div>
                 <div className="grid min-w-0 gap-6">
                   <Section title="Client portal" description="Where the client swipes through their ads to approve or ask for changes.">

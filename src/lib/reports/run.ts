@@ -4,6 +4,7 @@ import { nyParts } from "@/lib/kpi/calc";
 import { LIVE } from "@/lib/live";
 import { sendEmail } from "@/lib/email";
 import { emailHtml, emailText } from "@/lib/email-layout";
+import { logClientEmail } from "@/lib/client-emails";
 import { postAsUser } from "@/lib/slack-user";
 import { renderReportPdf } from "./pdf";
 import { periodsFor, type ReportMetrics } from "./metrics";
@@ -195,11 +196,15 @@ async function deliverLatePart(admin: SupabaseClient, id: string, by: { id: stri
   }
   const { data: links } = await admin.from("contact_clients").select("contacts(email, full_name)").eq("client_id", b.client_id);
   const sentTo: string[] = [];
+  let logged: { subject: string; text: string; html: string } | null = null;
   for (const c of (links ?? []).map((l) => l.contacts as unknown as { email: string; full_name: string | null } | null).filter((x): x is { email: string; full_name: string | null } => Boolean(x?.email)).slice(0, 6)) {
     const parts = { kicker: r.client.name, title: `${service} is in your ${month} recap`, hello: `Hi ${c.full_name?.split(" ")[0] ?? "there"},`, lines: [r.sections?.headline ?? `The ${service} part of your ${month} recap is ready.`], cta: { label: "See the recap →", url: link } };
-    const res = await sendEmail({ to: c.email, subject: `Your ${month} recap from Kaizen: ${service} is in`, text: emailText(parts), html: emailHtml(parts) });
+    const mail = { subject: `Your ${month} recap from Kaizen: ${service} is in`, text: emailText(parts), html: emailHtml(parts) };
+    const res = await sendEmail({ to: c.email, ...mail });
     if (res.ok) sentTo.push(c.email);
+    if (res.ok && sentTo.length === 1) logged = mail;
   }
+  if (logged) await logClientEmail(admin, { clientId: b.client_id as string, kind: "recap", ...logged, to: sentTo, by: by.id });
   delivered.email = sentTo;
   await admin.from("reports").update({ status: "posted", posted_at: new Date().toISOString(), posted_by: by.id }).eq("id", id);
 }
@@ -229,6 +234,7 @@ export async function deliverBundle(admin: SupabaseClient, bundleId: string, by:
     const to = (links ?? []).map((l) => l.contacts as unknown as { email: string; full_name: string | null } | null).filter((c): c is { email: string; full_name: string | null } => Boolean(c?.email));
     const headline = parts.map((p) => p.sections?.headline).filter(Boolean).join(" · ");
     const sentTo: string[] = [];
+    let logged: { subject: string; text: string; html: string } | null = null;
     for (const c of to.slice(0, 6)) {
       const dash = dashboardUrl(parts[0]);
       const mail = {
@@ -242,9 +248,12 @@ export async function deliverBundle(admin: SupabaseClient, bundleId: string, by:
         cta: { label: "Read the recap →", url: link },
         note: dash ? `For every number, any dates: ${dash}` : "You can download it as a PDF from the page.",
       };
-      const res = await sendEmail({ to: c.email, subject: `Your ${month} recap from Kaizen`, text: emailText(mail), html: emailHtml(mail) });
+      const out = { subject: `Your ${month} recap from Kaizen`, text: emailText(mail), html: emailHtml(mail) };
+      const res = await sendEmail({ to: c.email, ...out });
       if (res.ok) sentTo.push(c.email);
+      if (res.ok && sentTo.length === 1) logged = out;
     }
+    if (logged) await logClientEmail(admin, { clientId: b.client_id as string, kind: "recap", ...logged, to: sentTo, by: by.id });
     delivered.email = sentTo;
     await admin.from("report_bundles").update({ status: "sent", sent_at: new Date().toISOString(), delivered }).eq("id", bundleId);
     await admin.from("reports").update({ status: "posted", posted_at: new Date().toISOString(), posted_by: by.id }).eq("bundle_id", bundleId).eq("status", "submitted");
