@@ -52,7 +52,7 @@ const decode = (t: string) =>
     .replace(/&gt;/g, ">");
 
 /** Visible text of an HTML page, without scripts, styles or markup. */
-function pageText(html: string) {
+export function pageText(html: string) {
   const meta = (name: string) => decode(html.match(new RegExp(`<meta[^>]+(?:name|property)=["']${name}["'][^>]*content=["']([^"']+)`, "i"))?.[1] ?? "");
   const title = decode(html.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1]?.trim() ?? "");
   const body = html
@@ -70,7 +70,7 @@ function pageText(html: string) {
 }
 
 /** Only public websites: never the server's own network. */
-function isPublicHost(url: string) {
+export function isPublicHost(url: string) {
   const host = new URL(url).hostname.toLowerCase();
   if (host === "localhost" || host.endsWith(".local") || host.endsWith(".internal") || !host.includes(".")) return false;
   if (/^[\d.]+$/.test(host) || host.includes(":")) return false; // raw IPs (incl. private and metadata addresses)

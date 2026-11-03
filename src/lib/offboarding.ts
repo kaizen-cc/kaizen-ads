@@ -85,6 +85,8 @@ async function archive(admin: SupabaseClient, clientId: string, name: string, re
     const { error } = await admin.rpc("system_archive_client", { p_client: clientId, p_reason: reason, p_source: "zapier" });
     if (error) throw new Error(error.message);
   }
+  // The whole account, packaged (Bible, change log, where we left off), for whenever they come back
+  await (await import("@/lib/client-export")).makeExport(admin, clientId, "offboarding", null).catch((e) => console.error("[offboarding] export failed", name, e instanceof Error ? e.message : e));
   await tell(admin, clientId, { title: `${name} offboarded`, body: `Archived from the offboarding form. ${reason} Nothing was deleted: Restore on their page brings everything back.`, key: `offboarded:${key}`, priority: "normal" });
 }
 

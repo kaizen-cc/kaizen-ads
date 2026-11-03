@@ -23,6 +23,8 @@ export async function backInCycle(admin: SupabaseClient, clientId: string, byId?
   let { data: c } = await admin.from("clients").select("id, name, slug, status, archived_at, meta_ad_account_id").eq("id", clientId).maybeSingle();
   if (!c || c.archived_at || !["active", "onboarding"].includes(c.status)) return { skipped: "not live" };
   const out: Record<string, unknown> = {};
+  // Where we left off when they left (the account package made at offboarding) goes into their memory first
+  out.restored = await (await import("@/lib/client-export")).restoreExport(admin, clientId).catch(() => false);
 
   // No ad account yet: link Meta by name, and read the sheets (they add KPI rows, buyers and missing IDs)
   const { count: rows } = await admin.from("kpi_targets").select("id", { count: "exact", head: true }).eq("client_id", clientId).eq("active", true);

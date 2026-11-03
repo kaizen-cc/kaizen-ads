@@ -162,3 +162,52 @@ export async function passBibleQuestion(clientId: string, slug: string, id: stri
   revalidatePath(`/clients/${slug}/brand-bible`);
   return next ? { ok: true as const, stage: next } : { ok: false as const, error: "That question isn't open anymore." };
 }
+
+/** The account packaged now (Bible, change log, where we left off, everything they ran), ready to download */
+export async function exportAccount(clientId: string, slug: string) {
+  const me = await requireStaff();
+  if (!isExecOrLead(me)) return { ok: false as const, error: "Only execs and leads can package an account." };
+  if (!adminConfigured()) return { ok: false as const, error: "Server key missing." };
+  const { data: client } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
+  if (!client) return { ok: false as const, error: "You don't work on this client." };
+  const { makeExport } = await import("@/lib/client-export");
+  const r = await makeExport(createAdminClient(), clientId, "on demand", me.id);
+  revalidatePath(`/clients/${slug}/brand-bible`);
+  return r ? { ok: true as const } : { ok: false as const, error: "Couldn't package it. Try again." };
+}
+
+/** The website suggestions sent to the client's contacts now (when the app isn't sending to them on its own yet) */
+export async function sendWebsiteSuggestions(clientId: string, slug: string) {
+  const me = await requireStaff();
+  if (!isExecOrLead(me)) return { ok: false as const, error: "Only execs and leads can email the client from here." };
+  if (!adminConfigured()) return { ok: false as const, error: "Server key missing." };
+  const { data: client } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
+  if (!client) return { ok: false as const, error: "You don't work on this client." };
+  const { sendSuggestions } = await import("@/lib/website-issues");
+  const r = await sendSuggestions(createAdminClient(), clientId, me.id);
+  revalidatePath(`/clients/${slug}/brand-bible`);
+  return r;
+}
+
+/** A website or data issue marked fixed or not worth raising */
+export async function closeWebsiteIssue(clientId: string, slug: string, id: string, status: "fixed" | "dismissed") {
+  await requireStaff();
+  if (!adminConfigured()) return { ok: false as const, error: "Server key missing." };
+  const { data: client } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
+  if (!client) return { ok: false as const, error: "You don't work on this client." };
+  await createAdminClient().from("website_issues").update({ status }).eq("id", id).eq("client_id", clientId);
+  revalidatePath(`/clients/${slug}/brand-bible`);
+  return { ok: true as const };
+}
+
+/** The Bible's pages read again now */
+export async function recheckLinks(clientId: string, slug: string) {
+  await requireStaff();
+  if (!adminConfigured()) return { ok: false as const, error: "Server key missing." };
+  const { data: client } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
+  if (!client) return { ok: false as const, error: "You don't work on this client." };
+  const { checkLinks } = await import("@/lib/bible-links");
+  const r = await checkLinks(createAdminClient(), clientId, { before: true, max: 25 });
+  revalidatePath(`/clients/${slug}/brand-bible`);
+  return { ok: true as const, ...r };
+}

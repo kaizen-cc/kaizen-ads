@@ -10,6 +10,8 @@ import { clarifyBrandBible, clearBibleChat, markBrandBibleReviewed, type BibleTu
 import { Layer } from "../layer";
 import type { BibleQuestion } from "@/lib/bible-questions";
 import { BibleQuestions } from "./bible-questions";
+import type { WebsiteIssue } from "@/lib/website-issues";
+import { ExportButton, IssuesPanel, LinksPanel, type BibleLink } from "./bible-upkeep";
 
 // The Brand Bible, laid out to be read: a cover with what's in it, a contents rail that follows you down the page,
 // each section in its own card (audience profiles as cards, the review bank as quotes, open questions you can answer),
@@ -29,6 +31,12 @@ type Bible = {
   openQuestions: { question: string; who: string }[];
   /** The open questions as routed rows (label, who answers, the conversation on each) */
   questions: BibleQuestion[];
+  /** What it found wrong on their site and in our numbers, each on its page and sorted for the client or for us */
+  issues: WebsiteIssue[];
+  /** The pages it sends people to, and whether they're still live */
+  links: BibleLink[];
+  /** The account, last packaged */
+  lastExport: { at: string; reason: string } | null;
   generatedAt: string | null;
   reviewedAt: string | null;
   reviewedBy: string | null;
@@ -506,6 +514,7 @@ export function BibleViewer({ client, bible, canEdit }: { client: { id: string; 
           >
             <span aria-hidden>◐</span> <span className="max-md:hidden">Client</span> presentation
           </Link>
+          {canEdit && <ExportButton clientId={client.id} slug={client.slug} last={bible.lastExport} />}
           <a
             href={`/api/clients/${client.id}/brand-bible/pdf`}
             className="inline-flex h-11 items-center gap-1.5 rounded-full border border-line px-3.5 text-[13px] text-muted hover:border-faint hover:text-fg md:h-9"
@@ -707,6 +716,24 @@ export function BibleViewer({ client, bible, canEdit }: { client: { id: string; 
                   </li>
                 ))}
               </ul>
+            </section>
+          )}
+
+          {/* Keeping it true: what's wrong on their site and in our numbers, and the pages it sends people to */}
+          <section id="issues" className="scroll-mt-32 rounded-[24px] border border-line bg-surface p-5 md:p-8">
+            <h2 className="font-heading text-[22px]">Website &amp; data issues</h2>
+            <p className="mt-1 text-[12.5px] text-faint">Each on the page it was found. For the client: suggestions, sent when their portal is live (or by you). For us: alerts, and context for audits and briefs.</p>
+            <div className="mt-5">
+              <IssuesPanel issues={bible.issues} clientId={client.id} slug={client.slug} canEdit={canEdit} />
+            </div>
+          </section>
+          {bible.links.length > 0 && (
+            <section id="pages" className="scroll-mt-32 rounded-[24px] border border-line bg-surface p-5 md:p-8">
+              <h2 className="font-heading text-[22px]">Pages we send people to</h2>
+              <p className="mt-1 text-[12.5px] text-faint">Kept live: a page that breaks or changes (a new offer, a price, sold out) is flagged to the buyers and the head of creative.</p>
+              <div className="mt-5">
+                <LinksPanel links={bible.links} clientId={client.id} slug={client.slug} />
+              </div>
             </section>
           )}
 

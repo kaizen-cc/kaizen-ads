@@ -464,6 +464,7 @@ export type ClientContext = {
   name: string;
   documents?: string; // the files and links shared about the client, with their summaries
   reports?: string; // what the latest reports told the client, and what they said comes next
+  siteIssues?: string; // website and data issues the Bible found, and pages that went dead or changed
   playbook?: string; // the client playbook: what won and lost, dated, and the Brand Bible's learnings
   peers?: string; // winning angles and audiences from similar clients
   website: string | null;
@@ -530,6 +531,8 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
       bible?.markdown || bible?.read_this_first
         ? `${bible.read_this_first ? `Read this first:\n${bible.read_this_first}\n\n` : ""}${learned.length ? `What their ads proved since (living learnings, newer than the Bible's text where they disagree):\n${learned.map((l) => `- ${l.at} ${l.kind === "avoid" ? "AVOID" : "WORKS"}: ${l.text}`).join("\n")}\n\n` : ""}${bible.markdown ? `The full Brand Bible:\n${bible.markdown.slice(0, 40000)}` : ""}\n(Brand Bible ${bible.version}${bible.status === "reviewed" ? ", reviewed by Kaizen" : ", a draft the Head of Creative hasn't reviewed yet"})`
         : null,
+    // What the Bible and the page checks found wrong on their site and in our numbers (pages gone, offers changed)
+    siteIssues: await import("@/lib/website-issues").then(({ issuesBlock }) => issuesBlock(supabase, clientId)).catch(() => ""),
     // Loaded here, not at the top: the strategy module uses this one
     gtm: await import("@/lib/gtm").then(({ gtmForContext }) => gtmForContext(supabase, clientId)),
     // Files and links the team shared about the client, with what's in them
@@ -620,6 +623,7 @@ export function contextBlock(ctx: ClientContext, request?: { images: number; vid
   if (ctx.gtm)
     lines.push("<go_to_market_strategy>", "The client's Meta go-to-market strategy: the angles, offers, customer and KPI targets the team works from. Stay inside it unless the data says otherwise, and never treat an unconfirmed item as confirmed.", ctx.gtm, "</go_to_market_strategy>");
   if (ctx.documents) lines.push(ctx.documents);
+  if (ctx.siteIssues) lines.push(ctx.siteIssues);
   if (ctx.playbook) lines.push(ctx.playbook);
   if (ctx.peers) lines.push(ctx.peers);
   if (ctx.reports) lines.push("<recent_reports>", "What our latest reports told the client, and what we said comes next. Keep those promises, and don't contradict what was reported.", ctx.reports, "</recent_reports>");

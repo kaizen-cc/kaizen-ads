@@ -340,6 +340,17 @@ export async function createBatch(draft: Draft, review: Review | null, decisions
   const landing = draft.landing?.trim();
   if (landing && /^https?:\/\/\S+\.\S+/i.test(landing) && rows?.length && adminConfigured())
     await createAdminClient().from("requests").update({ landing_url: landing.slice(0, 500) }).in("id", rows.map((r) => r.id));
+  // Before the creative is made: the landing page joins the Bible's pages, and the client's pages are read again, so a
+  // changed offer or a dead page is caught now (the buyers and the head of creative hear)
+  if (adminConfigured() && rows?.length) {
+    const clientId = draft.clientId;
+    const page = landing && /^https?:\/\/\S+\.\S+/i.test(landing) ? landing : null;
+    after(async () => {
+      const links = await import("@/lib/bible-links");
+      const admin = createAdminClient();
+      await (page ? links.landingFromRequest(admin, clientId, page, null) : links.checkLinks(admin, clientId, { before: true, max: 8 })).catch((e) => console.error("[links] before the brief failed:", e instanceof Error ? e.message : e));
+    });
+  }
 
   // On each ticket's history: who went past which heads-ups and similar tickets, so it can be looked back on
   if (decisions && adminConfigured() && rows?.length) {

@@ -41,6 +41,8 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
   ],
   scripts: [{ title: "Writes the video script: three hooks, the beats and the shot list", where: "Board · Video tickets", trigger: "click", when: "When someone writes the script on a video ticket", labels: ["script"] }],
   brandbible: [
+    { title: "Reads the Bible's pages again and says what changed that matters for ads (an offer, a price, sold out)", where: "Client page · Brand Bible · Pages we send people to", trigger: "auto", when: "Every 90 days, before each new creative request, and on Check now", labels: ["bible link check "] },
+    { title: "Sorts what the Bible found wrong into suggestions for the client and alerts for the team, each on its page", where: "Client page · Brand Bible · Website & data issues", trigger: "auto", when: "Hourly, for each Bible written or rebuilt", labels: ["website issues "] },
     { title: "Researches the client on the web", where: "Client page · Brand Bible", trigger: "click", when: "When someone builds or updates the Brand Bible", labels: ["brand bible research"] },
     { title: "Writes the Brand Bible from the research and everything known", where: "Client page · Brand Bible", trigger: "click", when: "Right after the research", labels: ["brand bible "] },
     { title: "Answers the review chat and edits the Bible from the team's answers", where: "Client page \u00b7 Brand Bible \u00b7 Clarify", trigger: "click", when: "When someone answers in the review chat", labels: ["brand bible review"] },
@@ -52,6 +54,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
   creativecheck: [{ title: "Sorts uploaded designs into net new and variations, and checks sizes", where: "Board · Upload", trigger: "auto", when: "As a designer or editor uploads", labels: ["creative check"] }],
   creativereview: [{ title: "Reviews each design against the brief, the brand and Meta policy", where: "Board · Before internal review", trigger: "click", when: "When the maker runs the AI review", labels: ["creative review"] }],
   strategist: [
+    { title: "Writes \"where we left off\" for the account package: what worked and why, where it stands, what was next", where: "Client page · Brand Bible · Account package", trigger: "auto", when: "At offboarding, and when someone packages the account", labels: ["client export "] },
     { title: "Suggests briefs from the data (ads tiring, KPIs off, behind on creative, offers, unhappy clients)", where: "Overview · Suggested briefs", trigger: "auto", when: "Weekdays 8:30am, and on Look again", labels: ["suggested brief"] },
     { title: "Rewrites a suggested brief in its chat", where: "Any brief sheet", trigger: "click", when: "When someone talks a brief through", labels: ["suggested brief chat"] },
     { title: "Writes the first round for a new client", where: "Overview · Onboarding", trigger: "auto", when: "When the intake is in, or on Write the first round", labels: ["onboarding first round"] },

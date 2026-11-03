@@ -9,7 +9,7 @@ import type { CreativeDb } from "@/lib/creative-db";
 type Result = { ok: true } | { ok: false; error: string };
 export type PackageOption = { key: string; label: string; images: number; videos: number };
 /** The billing cycle the allotment counts in: the day they're billed (null: the calendar month), where that day came from, and this cycle's first day and reset day */
-export type Cycle = { billingDay: number | null; source: string | null; start: string | null; end: string | null };
+export type Cycle = { billingDay: number | null; source: string | null; start: string | null; end: string | null; /** A paid period with nothing made, or this one far along with nothing started */ gap?: { missed: { start: string; end: string } | null; atRisk: { start: string; end: string; elapsed: number } | null } | null };
 
 const ordinal = (n: number) => `${n}${n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th"}`;
 
@@ -252,6 +252,16 @@ export function PackagePanel({
         </div>
         {sprint && note && <p className="-mt-2 text-xs leading-relaxed text-muted">{note}</p>}
 
+        {cycle?.gap?.missed && (
+          <p className="rounded-[12px] border border-bad/40 bg-bad-soft px-3.5 py-2.5 text-[13px] leading-relaxed text-bad">
+            Nothing was made for them from {untilLabel(cycle.gap.missed.start)} to {untilLabel(cycle.gap.missed.end)}, a period they paid for. Make it up this cycle, or talk to them before they ask for a refund.
+          </p>
+        )}
+        {!cycle?.gap?.missed && cycle?.gap?.atRisk && (
+          <p className="rounded-[12px] border border-warn/40 bg-warn-soft px-3.5 py-2.5 text-[13px] leading-relaxed text-warn">
+            {cycle.gap.atRisk.elapsed}% through this billing period and nothing has been made yet.
+          </p>
+        )}
         <p className="-mb-1 flex flex-wrap items-baseline justify-between gap-x-3 text-xs font-medium uppercase tracking-[0.12em] text-faint">
           <span>{cycle?.billingDay ? "This billing cycle" : "This month"}</span>
           {cycle?.start && cycle.end && <span className="normal-case tracking-normal">{untilLabel(cycle.start)} · resets {untilLabel(cycle.end)}</span>}

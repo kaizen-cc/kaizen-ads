@@ -73,14 +73,17 @@ export function parseQuestion(raw: { question: string; who?: string }) {
   return { qid: qidOf(text), question: text, category: category ?? classify(text, raw.who ?? ""), options, multi };
 }
 
-/** Untagged questions, labeled by what they ask about (no AI needed: the words say it) */
+/** Untagged questions, labeled by what they ask about (no AI needed: the words say it). Order matters: what ads may
+ *  say is creative even when it's about an offer; KPIs and where traffic goes are media even when they mention creative */
 export function classify(text: string, who: string): QCategory {
   const t = text.toLowerCase();
   const w = who.toLowerCase();
-  if (/\boffer|promotion|discount|sale\b|black friday|cyber monday|holiday|gift (box|card)|price|pricing|coupon|in stock|stock|sold out|bundle|free (shipping|trial|gift)|subscription discount/.test(t)) return "offer";
-  if (/\bclaim|wording|messag|tone|voice|brand guide|guideline|logo|font|colou?r|photo|video|footage|creative|chef|face|testimonial|review|may (ads|we) (use|say|show|name)|never frozen|tagline|hex/.test(t)) return "creative";
-  if (/landing|url|link|page\b|point to|traffic|kpi|cpa|cpl|roas|breakeven|break-even|cost per|budget|pixel|tracking|conversion|event|platform|campaign|keyword|geo|radius|zip|bid/.test(t) || /media buyer/.test(w)) return "media";
-  if (/kaizen/.test(w)) return "media";
+  if (/brand guide|guideline|\blogo|\bfonts?\b|colou?rs?\b|\bhex\b/.test(t)) return "creative";
+  if (/\b(may|should|can) (ads|we) (say|state|use|show|name|carry|feature|mention)|appear in (the )?ads|\bclaims?\b|wording|never frozen|tagline/.test(t)) return "creative";
+  if (/\bkpi|\bcpa\b|\bcpl\b|roas|break-?even|cost per|budget|pixel|tracking|conversion event|landing|\burl|point to|traffic|keyword|\bgeo|radius|zip code|\bbids?\b|platforms? (will|to) run/.test(t)) return "media";
+  if (/\boffers?\b|promotion|discount|\bsale\b|black friday|cyber monday|thanksgiving|holiday|gift (box|card)|\bprices?\b|pricing|coupon|in stock|sold out|bundle|free (shipping|trial|gift)/.test(t)) return "offer";
+  if (/photo|video|footage|creative|\bchef|\bface\b|testimonial|review|\btone\b|\bvoice\b|messag/.test(t)) return "creative";
+  if (/media buyer|kaizen/.test(w)) return "media";
   return "business";
 }
 

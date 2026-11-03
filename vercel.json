@@ -112,6 +112,10 @@
     {
       "path": "/api/cron/context?step=presentations",
       "schedule": "7-59/10 * * * *"
+    },
+    {
+      "path": "/api/cron/context?step=bible_upkeep",
+      "schedule": "41 * * * *"
     }
   ]
 }

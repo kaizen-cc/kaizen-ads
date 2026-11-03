@@ -83,3 +83,6 @@ alter table public.client_exports enable row level security;
 drop policy if exists client_exports_read on public.client_exports;
 create policy client_exports_read on public.client_exports for select to authenticated
   using (private.staff_can_see_client(client_id));
+
+-- When the Bible's notes were last read into website issues (again after each rebuild)
+alter table public.client_brand_bibles add column if not exists issues_read_at timestamptz;
