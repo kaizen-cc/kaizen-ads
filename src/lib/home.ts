@@ -1,4 +1,5 @@
 import "server-only";
+import { cycleElapsed } from "@/lib/allotment";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { LIVE } from "@/lib/live";
 import type { Staff } from "@/lib/auth";
@@ -97,7 +98,7 @@ export async function loadHome(db: SupabaseClient, me: Staff) {
   const [{ data: open }, { data: rounds }, { data: usageAll }, { data: people }, { data: events }, { data: copyDone }, { data: liveRows }] = await Promise.all([
     db.from("board_requests").select(cols).neq("stage", "launched").limit(2000),
     db.from("client_rounds").select("request_id, round, decision, created_at, requests(created_at, client_id)").gte("created_at", since30 > month ? month : since30).order("round"),
-    db.from("client_allotment_usage").select("client_id, images_per_month, videos_per_month, images_used, videos_used"),
+    db.from("client_allotment_usage").select("client_id, images_per_month, videos_per_month, images_used, videos_used, period_start, period_end"),
     db.from("profiles").select("id, full_name, role").eq("is_active", true),
     db.from("request_events").select("request_id, kind, to_stage, data, actor_id, created_at").gte("created_at", since30).in("kind", ["review", "stage"]).limit(5000),
     db.from("copy_sets").select("request_id, approved_by, approved_at").gte("approved_at", since7),
@@ -131,7 +132,9 @@ export async function loadHome(db: SupabaseClient, me: Staff) {
 
   // ─── Clients: allotment pace and approvals ───
   const now = new Date();
-  const monthElapsed = now.getDate() / new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const monthElapsed = cycleElapsed(null, now);
+  // Each client's own billing cycle (the calendar month when none is set)
+  const elapsedOf = new Map((usage ?? []).map((u) => [u.client_id as string, cycleElapsed(u.period_start && u.period_end ? { start: u.period_start, end: u.period_end } : null)]));
   const byClient = new Map<string, Row[]>();
   for (const r of rows) byClient.set(r.client_id, [...(byClient.get(r.client_id) ?? []), r]);
   const revisesBy = new Map<string, number>();
@@ -143,10 +146,11 @@ export async function loadHome(db: SupabaseClient, me: Staff) {
       const used = u.images_used + u.videos_used;
       const waiting = list.filter((r) => r.stage === "client_review").length;
       const revisions = Math.round(((revisesBy.get(u.client_id) ?? 0) / Math.max(1, list.length || 1)) * 10) / 10;
-      const pace = allotment ? used / allotment - monthElapsed : 0;
+      const cycleGone = elapsedOf.get(u.client_id) ?? monthElapsed;
+      const pace = allotment ? used / allotment - cycleGone : 0;
       // The risk is under-delivering, not giving a client more: nothing made a third of the way into the month, or far
       // behind where they should be by today. Being over the allotment is noted, not flagged.
-      const nothing = allotment > 0 && used === 0 && monthElapsed >= 1 / 3;
+      const nothing = allotment > 0 && used === 0 && cycleGone >= 1 / 3;
       const behind = allotment > 0 && pace < -0.35;
       const tone: ClientPulse["tone"] = nothing ? "bad" : behind ? "warn" : revisions >= 2 ? "warn" : "ok";
       const note = nothing
@@ -160,7 +164,7 @@ export async function loadHome(db: SupabaseClient, me: Staff) {
               : waiting
                 ? `${waiting} with the client`
                 : "On pace";
-      return { name: list[0]?.client_name ?? "", slug: list[0]?.client_slug ?? "", clientId: u.client_id, tone, used, allotment, revisionsPerItem: revisions, waiting, note };
+      return { name: list[0]?.client_name ?? "", slug: list[0]?.client_slug ?? "", clientId: u.client_id, tone, used, allotment, revisionsPerItem: revisions, waiting, note, elapsed: cycleGone };
     })
     .filter((c) => c.allotment > 0 || c.waiting > 0)
     .sort((a, b) => ({ bad: 0, warn: 1, brand: 2, ok: 3, muted: 4 })[a.tone] - ({ bad: 0, warn: 1, brand: 2, ok: 3, muted: 4 })[b.tone] || b.used - a.used);
@@ -190,7 +194,7 @@ export async function loadHome(db: SupabaseClient, me: Staff) {
   for (const r of rows.filter((x) => x.client_rounds >= 2).slice(0, 3))
     attention.push({ id: `rev-${r.id}`, tone: "warn", kind: "Revisions", client: r.client_name, title: r.title, detail: `Client round ${r.client_rounds}${r.internal_rounds ? ` · ${r.internal_rounds} internal` : ""}`, owner: r.assignee_name ?? undefined, href: `/board?t=${r.number}` });
   for (const c of clients.filter((x) => x.note === "Nothing delivered yet" || x.note === "Behind on creative").slice(0, 6))
-    attention.push({ id: `allot-${c.clientId}`, tone: c.note === "Nothing delivered yet" ? "bad" : "warn", kind: "Allotment", client: c.name, title: c.note, detail: `${c.used} of ${c.allotment} made with ${Math.round(monthElapsed * 100)}% of the month gone`, href: `/clients/${c.slug}` });
+    attention.push({ id: `allot-${c.clientId}`, tone: c.note === "Nothing delivered yet" ? "bad" : "warn", kind: "Allotment", client: c.name, title: c.note, detail: `${c.used} of ${c.allotment} made with ${Math.round((c.elapsed ?? monthElapsed) * 100)}% of their billing cycle gone`, href: `/clients/${c.slug}` });
   attention.sort((a, b) => (a.tone === b.tone ? 0 : a.tone === "bad" ? -1 : 1));
 
   // ─── Who carries what ───

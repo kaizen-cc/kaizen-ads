@@ -8,6 +8,7 @@ import { dismissOwed, doneOwed } from "@/app/today/actions";
 import { HideForMe } from "./hide-for-me";
 import { SourceChip } from "@/components/source-logo";
 import { completeCard, refreshInPlace } from "@/lib/complete-card";
+import { DraftReply } from "@/components/draft-reply";
 
 // Messages nobody answered (Slack tags, a client's message in their channel, emails written to someone), once the
 // person has had a notice: theirs to answer or set aside, and for leads and execs, the ones that were escalated.
@@ -51,6 +52,19 @@ export function OwedReplies({ items, me }: { items: OwedReply[]; me: string }) {
               <p className={`text-xs text-faint ${open ? "whitespace-pre-line" : "line-clamp-2"}`}>&ldquo;{open ? o.body.trim() : o.body.replace(/\s+/g, " ")}&rdquo;</p>
               {second && !mine && <p className="text-xs text-bad">They had a notice and still haven&apos;t answered.</p>}
             </div>
+            {mine && (
+              <DraftReply
+                id={o.id}
+                source={o.source}
+                url={o.url}
+                initial={o.draft}
+                channel={o.channelName}
+                onSent={() => {
+                  setGone((g) => new Set(g).add(o.id));
+                  refreshInPlace(router);
+                }}
+              />
+            )}
             <div className="flex flex-wrap gap-2">
               {!openable && o.source === "gmail" && (
                 <button

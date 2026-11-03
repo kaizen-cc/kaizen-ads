@@ -89,6 +89,7 @@ export async function mirrorTrack(admin: SupabaseClient) {
       out.errors.push(`${t.name}: ${e instanceof Error ? e.message : e}`);
     }
   }
+  await billingDays(admin, track).catch((e) => console.error("[track] billing days", e));
   await admin.from("sync_state").upsert({ source: "track-status", cursor_at: now, last_run_at: now, last_result: Object.fromEntries(((theirs ?? []) as TrackClient[]).map((t) => [t.id, t.status])) });
   return out;
 }
@@ -101,4 +102,29 @@ export async function welcomeBack(admin: SupabaseClient, clientId: string) {
   await admin.from("clients").update({ reonboarded_at: new Date().toISOString() }).eq("id", clientId);
   after(() => backInCycle(admin, clientId).catch((e) => console.error("backInCycle", clientId, e)));
   return true;
+}
+
+/**
+ * The day each client is billed, from when their first sold service started in Kaizen Track: the creative allotment
+ * starts again that day each month. A day the team set by hand is never overwritten. If Track doesn't keep service
+ * start dates, nothing changes (the enrollment day, or the calendar month, stays).
+ */
+async function billingDays(admin: SupabaseClient, track: SupabaseClient) {
+  const { data: rows, error } = await track.from("client_services").select("client_id, started_at, services!inner(kind)").is("ended_at", null).eq("services.kind", "sold");
+  if (error || !rows?.length) return;
+  const first = new Map<string, string>();
+  for (const r of rows as { client_id: string; started_at: string | null }[]) {
+    if (!r.started_at) continue;
+    const cur = first.get(r.client_id);
+    if (!cur || r.started_at < cur) first.set(r.client_id, r.started_at);
+  }
+  if (!first.size) return;
+  const { data: ours } = await admin.from("clients").select("id, track_client_id, billing_day, billing_day_source").not("track_client_id", "is", null);
+  for (const c of ours ?? []) {
+    const at = first.get(c.track_client_id as string);
+    if (!at || c.billing_day_source === "set") continue;
+    const day = Math.min(28, Number(new Date(at.length === 10 ? `${at}T12:00:00` : at).toLocaleDateString("en-US", { timeZone: "America/New_York", day: "numeric" })));
+    if (!day || (c.billing_day === day && c.billing_day_source === "track")) continue;
+    await admin.from("clients").update({ billing_day: day, billing_day_source: "track" }).eq("id", c.id);
+  }
 }

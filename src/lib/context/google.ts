@@ -143,7 +143,7 @@ export async function collectGmail(mailbox: string, since: Date, contacts: Map<s
         author: header("from"),
         title: header("subject"),
         body,
-        url: `https://mail.google.com/mail/u/${mailbox}/#all/${m.id}`,
+        url: `https://mail.google.com/mail/u/${mailbox}/#all/${m.threadId}`,
         meta: { mailbox, to: header("to") },
       });
     }
@@ -245,7 +245,7 @@ export async function pullEmailHistory(admin: SupabaseClient, deadline: number, 
               author: header("from"),
               title: header("subject"),
               body: trimBody(withoutQuotes(plainText(m.payload) ?? m.snippet ?? "")),
-              url: `https://mail.google.com/mail/u/${mailbox}/#all/${m.id}`,
+              url: `https://mail.google.com/mail/u/${mailbox}/#all/${m.threadId}`,
               meta: { mailbox, to: header("to"), history: true },
             });
           }

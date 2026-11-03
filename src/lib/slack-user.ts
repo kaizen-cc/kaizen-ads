@@ -97,11 +97,11 @@ type PostResult = { ok: true; ts: string; channel: string; permalink?: string } 
  */
 export async function postAsUser(
   profileId: string,
-  { channel, text, pdf }: { channel: string; text: string; pdf?: { filename: string; title: string; bytes: Uint8Array } },
+  { channel, text, pdf, thread }: { channel: string; text: string; pdf?: { filename: string; title: string; bytes: Uint8Array }; /** Reply in this thread */ thread?: string },
 ): Promise<PostResult> {
   const { data: row } = await createAdminClient().from("slack_user_tokens").select("token").eq("profile_id", profileId).maybeSingle();
-  if (!row?.token) return { ok: false, error: "Connect your Slack first, so the report goes out from you.", needsConnect: true };
-  return postWith(row.token as string, { channel, text, pdf });
+  if (!row?.token) return { ok: false, error: "Connect your Slack first, so it goes out from you.", needsConnect: true };
+  return postWith(row.token as string, { channel, text, pdf, thread });
 }
 
 /** Post as the Kaizen app itself (its bot): a joint report, or when a person can't. Needs chat:write (files:write for a PDF). */
@@ -123,10 +123,10 @@ export async function slackIdentity(profileId: string): Promise<{ name: string; 
   return { name: p.display_name || p.real_name || body.user.real_name || "", image: p.image_192 || p.image_72 || null };
 }
 
-async function postWith(token: string, { channel, text, pdf }: { channel: string; text: string; pdf?: { filename: string; title: string; bytes: Uint8Array } }): Promise<PostResult> {
+async function postWith(token: string, { channel, text, pdf, thread }: { channel: string; text: string; pdf?: { filename: string; title: string; bytes: Uint8Array }; thread?: string }): Promise<PostResult> {
   try {
     if (!pdf) {
-      const sent = await call(token, "chat.postMessage", { channel, text, unfurl_links: "false", unfurl_media: "false" });
+      const sent = await call(token, "chat.postMessage", { channel, text, unfurl_links: "false", unfurl_media: "false", ...(thread ? { thread_ts: thread } : {}) });
       if (!sent.ok) return explain(sent.error);
       const ts = String(sent.ts ?? "");
       const ch = String(sent.channel ?? channel);

@@ -120,7 +120,7 @@ async function countUnits(admin: SupabaseClient, max = 60) {
     .select("gid, name, notes, format, units_key")
     .is("request_id", null)
     .not("client_id", "is", null)
-    .or(`counted_month.eq.${monthOf(new Date().toISOString())},and(open.eq.true,counted_month.is.null)`)
+    .or(`counted_at.gte.${new Date(Date.now() - 35 * 86_400_000).toISOString()},and(open.eq.true,counted_month.is.null)`)
     .limit(400);
   const keyOf = (t: { name: string; notes: string | null }) => createHash("sha1").update(`${t.name}\n${t.notes ?? ""}`).digest("hex");
   const todo = (data ?? []).filter((t) => t.units_key !== keyOf(t)).slice(0, max);
@@ -190,7 +190,7 @@ export async function syncAsana(admin: SupabaseClient) {
     const [{ data: clients }, { data: people }, { data: mirror }] = await Promise.all([
       admin.from("clients").select("id, name, kaizen_id").is("archived_at", null),
       admin.from("profiles").select("id, email, full_name").eq("is_active", true),
-      admin.from("asana_tasks").select("gid, section, moves, request_id, counted_month"),
+      admin.from("asana_tasks").select("gid, section, moves, request_id, counted_month, counted_at"),
     ]);
     const byKaizen = new Map((clients ?? []).filter((c) => c.kaizen_id != null).map((c) => [String(c.kaizen_id), c.id as string]));
     const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -225,6 +225,8 @@ export async function syncAsana(admin: SupabaseClient) {
       const stage = stageForColumn(section);
       const inProduction = task.completed || stage !== "requested";
       const countedMonth = (prev?.counted_month as string | null) ?? (inProduction ? monthOf(task.completed ? (task.completed_at ?? task.modified_at) : task.modified_at) : null);
+      // The moment it counted, so it falls in the client's billing cycle (not just the calendar month)
+      const countedAt = (prev?.counted_at as string | null) ?? (inProduction ? (task.completed ? (task.completed_at ?? task.modified_at) : task.modified_at) : null);
       await admin.from("asana_tasks").upsert({
         gid: task.gid,
         name: task.name,
@@ -232,6 +234,7 @@ export async function syncAsana(admin: SupabaseClient) {
         section,
         stage,
         counted_month: countedMonth,
+        counted_at: countedAt,
         client_id: clientId ?? null,
         client_ref: idField ? String(idField) : null,
         platform,

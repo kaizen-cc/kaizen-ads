@@ -43,7 +43,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
   const { data: client } = await supabase
     .from("clients")
     .select(
-      "id, name, slug, status, client_type, archived_at, archive_reason, archive_source, portal_live, portal_live_at, industry, industry_detail, industry_source, website, meta_ad_account_id, url_tags, slack_channel_id, internal_slack_channel_id, drive_folder_id, kaizen_id, auto_approve_opt_in, creative_package, creative_package_key, creative_package_until, creative_package_note, creative_db, reactivated_at, reactivated_by, services, services_extra, services_removed, creative_packages(label)",
+      "id, name, slug, status, client_type, archived_at, archive_reason, archive_source, portal_live, portal_live_at, industry, industry_detail, industry_source, website, meta_ad_account_id, url_tags, slack_channel_id, internal_slack_channel_id, drive_folder_id, kaizen_id, auto_approve_opt_in, creative_package, creative_package_key, creative_package_until, creative_package_note, creative_db, billing_day, billing_day_source, reactivated_at, reactivated_by, services, services_extra, services_removed, creative_packages(label)",
     )
     .eq("slug", slug)
     .maybeSingle();
@@ -379,6 +379,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       imagesUsed={usage?.images_used ?? 0}
       videosUsed={usage?.videos_used ?? 0}
       fromAsana={{ images: usage?.asana_images ?? 0, videos: usage?.asana_videos ?? 0, waitingImages: usage?.asana_waiting_images ?? 0, waitingVideos: usage?.asana_waiting_videos ?? 0 }}
+      cycle={{ billingDay: (client.billing_day as number | null) ?? null, source: (client.billing_day_source as string | null) ?? null, start: (usage?.period_start as string | null) ?? null, end: (usage?.period_end as string | null) ?? null }}
       creativeDb={(client.creative_db as CreativeDb | null) ?? null}
       can={{ admin: me.isExec, contacts: seesAllClients(me), allot: me.isExec || me.isLead, assign: isExecOrLead(me) }}
     />

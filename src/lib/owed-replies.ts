@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { LIVE, isLive } from "@/lib/live";
 import { getCursor, setCursor, trimBody } from "@/lib/context/shared";
-import { listChannels, permalink, slack, slackConfigured, type SlackMessage } from "@/lib/context/slack";
+import { listChannels, openableLink, permalink, slack, slackConfigured, type SlackMessage } from "@/lib/context/slack";
 import { addresses, gmailToken, google, googleConfigured, plainText, withoutQuotes, type GmailMessage } from "@/lib/context/google";
 import { APPROVE_EMOJI, COMMIT, REQUESTISH, clearNotices, followPromises, recordPromises, type Candidate } from "@/lib/message-promises";
 
@@ -178,7 +178,7 @@ async function scanSlack(admin: Admin) {
               channel_name: ch.name,
               thread_ts: m.thread_ts ?? null,
               message_ts: m.ts,
-              url: permalink(ch.id, m.ts),
+              url: permalink(ch.id, m.ts, m.thread_ts),
               channel_url: `https://slack.com/app_redirect?channel=${ch.id}`,
               said_at: new Date(Number(m.ts) * 1000).toISOString(),
               said: plain(m.text, who.nameOf).slice(0, 1500),
@@ -207,7 +207,7 @@ async function scanSlack(admin: Admin) {
             mentioned: tagged.length > 0,
             asked_at: new Date(Number(m.ts) * 1000).toISOString(),
             body: trimBody(plain(m.text, who.nameOf), 1500),
-            url: permalink(ch.id, m.ts),
+            url: permalink(ch.id, m.ts, m.thread_ts),
             channel_url: `https://slack.com/app_redirect?channel=${ch.id}`,
           });
       }
@@ -230,7 +230,7 @@ async function scanSlack(admin: Admin) {
               channel_name: ch.name,
               thread_ts: x.thread_ts ?? null,
               message_ts: x.ts,
-              url: permalink(ch.id, x.ts),
+              url: permalink(ch.id, x.ts, x.thread_ts),
               channel_url: `https://slack.com/app_redirect?channel=${ch.id}`,
               said_at: new Date(Math.max(Number(x.ts) * 1000, Date.now() - 3_600_000)).toISOString(),
               said: `(reacted :${r.name}: to ${who.nameOf.get(x.user) ?? "their"} message)`,
@@ -306,6 +306,12 @@ export async function closeByHand(admin: Admin, id: string, profileId: string, h
   return true;
 }
 
+/** Answered from Kaizen Ads itself (the drafted reply, sent): closed the same way as a reply seen in Slack. */
+export async function markReplied(admin: Admin, id: string, profileId: string) {
+  const { data: o } = await admin.from("owed_replies").select("*").eq("id", id).eq("target_id", profileId).in("status", OPEN).maybeSingle();
+  if (o) await closeAnswered(admin, o as Row, new Date().toISOString(), "replied");
+}
+
 /** The definitive look before a notice: everything said after it in its thread (or the channel), and reactions on it. */
 async function slackSince(o: Row) {
   const channel = o.channel_id as string;
@@ -371,7 +377,7 @@ async function scanGmail(admin: Admin) {
           asked_at: new Date(Number(m.internalDate)).toISOString(),
           subject: header("subject"),
           body: trimBody(withoutQuotes(plainText(m.payload) ?? m.snippet ?? ""), 1500),
-          url: `https://mail.google.com/mail/u/${mailbox}/#all/${m.id}`,
+          url: `https://mail.google.com/mail/u/${mailbox}/#all/${m.threadId}`,
         });
       }
       if (rows.length) {
@@ -424,7 +430,7 @@ async function sentMail(admin: Admin, token: string, mailbox: string, me: string
       client_id: client?.clientId ?? null,
       mailbox,
       gmail_thread_id: m.threadId,
-      url: `https://mail.google.com/mail/u/${mailbox}/#all/${m.id}`,
+      url: `https://mail.google.com/mail/u/${mailbox}/#all/${m.threadId}`,
       said_at: sentAt,
       said: `(email "${header("subject") ?? ""}") ${body.replace(/\s+/g, " ").slice(0, 1200)}`,
       before: before.join("\n"),
@@ -553,6 +559,8 @@ export async function runOwedReplies(admin: Admin) {
     } else due.push(o);
   }
   const verdicts = new Map<string, Verdict>();
+  // Whoever gets a notice has a reply drafted for them, ready in their day
+  const drafts: string[] = [];
   for (let i = 0; i < due.length; i += 15) for (const [k, v] of await judge(due.slice(i, i + 15), context, names)) verdicts.set(k, v);
   for (const o of due) {
     const v = verdicts.get(o.id);
@@ -577,6 +585,7 @@ export async function runOwedReplies(admin: Admin) {
       priority: "normal",
     });
     tally.nudged++;
+    drafts.push(o.id as string);
   }
 
   // Ones that went out without the AI's read (it was down): read now, and dropped quietly if nothing's owed
@@ -659,6 +668,10 @@ export async function runOwedReplies(admin: Admin) {
       tally.answered++;
     } else await admin.from("owed_replies").update({ checked_at: stamp }).eq("id", o.id);
   }
+  if (drafts.length) {
+    const { draftOwedReply } = await import("@/lib/reply-drafts");
+    for (const id of drafts.slice(0, 15)) await draftOwedReply(admin, id).catch(() => null);
+  }
   // Too old to chase any more: two weeks on, it's let go quietly
   await admin.from("owed_replies").update({ status: "not_needed", dismiss_reason: "Two weeks old" }).eq("status", "watching").lt("asked_at", cutoff);
 
@@ -692,6 +705,9 @@ export type OwedReply = {
   client: string | null;
   clientSlug: string | null;
   clientId: string | null;
+  /** The reply drafted for them (their own only), and the channel to send it in */
+  draft: string | null;
+  channelName: string | null;
 };
 
 /**
@@ -701,11 +717,12 @@ export type OwedReply = {
 export async function loadOwedReplies(db: SupabaseClient, me: { id: string; role: string; isExec: boolean; isLead: boolean }, others = me.isExec || me.isLead): Promise<OwedReply[]> {
   const { data } = await db
     .from("owed_replies")
-    .select("id, source, status, target_id, from_name, from_team, channel_name, subject, gist, body, asked_at, url, channel_url, client_id, clients(name, slug, status, archived_at), target:profiles!owed_replies_target_id_fkey(full_name, role)")
+    .select("id, source, status, target_id, from_name, from_team, channel_name, subject, gist, body, asked_at, url, channel_url, client_id, draft, clients(name, slug, status, archived_at), target:profiles!owed_replies_target_id_fkey(full_name, role)")
     .in("status", ["nudged", "escalated"])
     .order("asked_at")
     .limit(80);
-  return (data ?? [])
+  const rows = await Promise.all((data ?? []).map(async (o) => ({ ...o, url: await openableLink((o.url as string | null) ?? null) })));
+  return rows
     .filter((o) => {
       // A paused or archived client's messages aren't chased on the board
       const c = o.clients as unknown as { status?: string | null; archived_at?: string | null } | null;
@@ -736,6 +753,8 @@ export async function loadOwedReplies(db: SupabaseClient, me: { id: string; role
         client: c?.name ?? null,
         clientSlug: c?.slug ?? null,
         clientId: (o.client_id as string | null) ?? null,
+        draft: o.target_id === me.id ? ((o.draft as string | null) ?? null) : null,
+        channelName: (o.channel_name as string | null) ?? null,
       };
     });
 }

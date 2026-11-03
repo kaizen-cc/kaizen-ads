@@ -8,6 +8,10 @@ import type { CreativeDb } from "@/lib/creative-db";
 
 type Result = { ok: true } | { ok: false; error: string };
 export type PackageOption = { key: string; label: string; images: number; videos: number };
+/** The billing cycle the allotment counts in: the day they're billed (null: the calendar month), where that day came from, and this cycle's first day and reset day */
+export type Cycle = { billingDay: number | null; source: string | null; start: string | null; end: string | null };
+
+const ordinal = (n: number) => `${n}${n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th"}`;
 
 const addDays = (day: string, n: number) => {
   const d = new Date(`${day}T12:00:00`);
@@ -165,6 +169,8 @@ export function PackagePanel({
   imagesUsed,
   videosUsed,
   fromAsana,
+  cycle = null,
+  saveBillingDay,
   creativeDb,
   packages,
   can,
@@ -183,6 +189,8 @@ export function PackagePanel({
   imagesUsed: number;
   videosUsed: number;
   fromAsana?: { images: number; videos: number; waitingImages?: number; waitingVideos?: number };
+  cycle?: Cycle | null;
+  saveBillingDay?: (form: FormData) => Promise<Result>;
   creativeDb?: CreativeDb | null;
   packages: PackageOption[];
   can: { exec: boolean; allot: boolean };
@@ -244,12 +252,15 @@ export function PackagePanel({
         </div>
         {sprint && note && <p className="-mt-2 text-xs leading-relaxed text-muted">{note}</p>}
 
-        <p className="-mb-1 text-xs font-medium uppercase tracking-[0.12em] text-faint">This month</p>
+        <p className="-mb-1 flex flex-wrap items-baseline justify-between gap-x-3 text-xs font-medium uppercase tracking-[0.12em] text-faint">
+          <span>{cycle?.billingDay ? "This billing cycle" : "This month"}</span>
+          {cycle?.start && cycle.end && <span className="normal-case tracking-normal">{untilLabel(cycle.start)} · resets {untilLabel(cycle.end)}</span>}
+        </p>
         <Meter name="Images & carousels" cap={images} used={imagesUsed} />
         <Meter name="Videos" cap={videos} used={videosUsed} />
         {fromAsana && (fromAsana.images > 0 || fromAsana.videos > 0) && (
           <p className="-mt-1 text-[11px] text-faint">
-            Includes {both(fromAsana.images, fromAsana.videos)} in production or delivered in Asana this month
+            Includes {both(fromAsana.images, fromAsana.videos)} in production or delivered in Asana this {cycle?.billingDay ? "cycle" : "month"}
           </p>
         )}
         {fromAsana && ((fromAsana.waitingImages ?? 0) > 0 || (fromAsana.waitingVideos ?? 0) > 0) && (
@@ -272,6 +283,27 @@ export function PackagePanel({
               <input name="videos" type="number" min={0} defaultValue={videos} className={`${field} tabular`} />
             </label>
           </div>
+        </ActionForm>
+      )}
+
+      {can.allot && !editing && saveBillingDay && (
+        <ActionForm action={saveBillingDay} submitLabel="Save billing day" autosave className="grid gap-2 border-t border-line pt-5">
+          <label className={label}>
+            Billed on
+            <select name="day" defaultValue={cycle?.billingDay ?? ""} className={field}>
+              <option value="">Not set: count by the calendar month</option>
+              {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
+                <option key={d} value={d}>
+                  The {ordinal(d)} of each month
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="text-[11px] text-faint">
+            {cycle?.billingDay
+              ? `The allotment starts again on the ${ordinal(cycle.billingDay)}${cycle.source === "track" ? " (from Kaizen Track)" : cycle.source === "enrolled" ? " (the day they enrolled; change it if they're billed another day)" : ""}.`
+              : "Set the day they're billed so the allotment resets with their billing, not on the 1st."}
+          </p>
         </ActionForm>
       )}
 

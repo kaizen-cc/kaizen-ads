@@ -251,6 +251,8 @@ export function Queue({ items, empty }: { items: QueueItem[]; empty: { title: st
 }
 
 export type ClientPulse = {
+  /** How far through their billing cycle they are (0 to 1); the month's share when unknown */
+  elapsed?: number;
   name: string;
   slug: string;
   tone: Tone; // overall health
@@ -287,11 +289,11 @@ export function ClientHealth({ clients, monthElapsed }: { clients: ClientPulse[]
             <div className="grid gap-1.5">
               <div className="relative h-1.5 rounded-full bg-surface-2">
                 <div className={`h-full rounded-full ${c.tone === "bad" ? "bg-bad" : c.tone === "warn" ? "bg-warn" : "bg-fg/70"}`} style={{ width: `${pct}%` }} />
-                <span aria-hidden className="absolute -top-1 h-3.5 w-px bg-fg/60" style={{ left: `${monthElapsed * 100}%` }} />
+                <span aria-hidden className="absolute -top-1 h-3.5 w-px bg-fg/60" style={{ left: `${(c.elapsed ?? monthElapsed) * 100}%` }} />
               </div>
               <div className="tabular flex flex-wrap justify-between gap-x-3 gap-y-1 text-[11px] text-faint">
                 <span>
-                  {c.used} of {c.allotment} this month
+                  {c.used} of {c.allotment} this cycle
                 </span>
                 <span>
                   <span className={c.revisionsPerItem >= 2 ? "text-bad" : c.revisionsPerItem >= 1.2 ? "text-warn" : "text-muted"}>{c.revisionsPerItem.toFixed(1)}×</span> revisions ·{" "}
@@ -332,7 +334,7 @@ export function ClientHealth({ clients, monthElapsed }: { clients: ClientPulse[]
                 <td className="px-4 py-3">
                   <div className="relative h-1.5 rounded-full bg-surface-2">
                     <div className={`h-full rounded-full ${c.tone === "bad" ? "bg-bad" : c.tone === "warn" ? "bg-warn" : "bg-fg/70"}`} style={{ width: `${pct}%` }} />
-                    <span aria-hidden className="absolute -top-1 h-3.5 w-px bg-fg/60" style={{ left: `${monthElapsed * 100}%` }} title="Expected by today" />
+                    <span aria-hidden className="absolute -top-1 h-3.5 w-px bg-fg/60" style={{ left: `${(c.elapsed ?? monthElapsed) * 100}%` }} title="Expected by today" />
                   </div>
                   <p className="tabular mt-1.5 text-[11px] text-faint">
                     {c.used} of {c.allotment}

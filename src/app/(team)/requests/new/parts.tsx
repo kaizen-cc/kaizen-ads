@@ -16,7 +16,8 @@ export function allotmentSummary(a: Allotment | undefined) {
   };
   const sprint = a.until ? `Sprint until ${untilLabel(a.until)}` : null;
   const waiting = a.waiting && a.waiting.images + a.waiting.videos > 0 ? `${a.waiting.images + a.waiting.videos} more briefed in Asana` : null;
-  return [sprint, part(a.images, a.imagesUsed, "images"), part(a.videos, a.videosUsed, "videos"), waiting].filter(Boolean).join(" · ");
+  const resets = !a.until && a.cycle ? `resets ${untilLabel(a.cycle.end)}` : null;
+  return [sprint, part(a.images, a.imagesUsed, "images"), part(a.videos, a.videosUsed, "videos"), waiting, resets].filter(Boolean).join(" · ");
 }
 
 /** The AI mark: a small four-point spark. */

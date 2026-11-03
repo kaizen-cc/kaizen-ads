@@ -12,6 +12,8 @@ export type Allotment = {
   until: string | null;
   /** Briefed in Asana, production not started: not counted yet, but spoken for */
   waiting?: { images: number; videos: number };
+  /** The billing cycle being counted (YYYY-MM-DD; the end is the day it resets) */
+  cycle?: { start: string; end: string } | null;
 };
 
 /** until: a sprint package's last day (YYYY-MM-DD); null = ongoing. */
@@ -24,6 +26,8 @@ export type UsageRow = {
   package_until?: string | null;
   asana_waiting_images?: number;
   asana_waiting_videos?: number;
+  period_start?: string | null;
+  period_end?: string | null;
 };
 
 export const toAllotment = (r: UsageRow): Allotment => ({
@@ -33,7 +37,16 @@ export const toAllotment = (r: UsageRow): Allotment => ({
   videosUsed: r.videos_used,
   until: r.package_until ?? null,
   waiting: r.asana_waiting_images || r.asana_waiting_videos ? { images: r.asana_waiting_images ?? 0, videos: r.asana_waiting_videos ?? 0 } : undefined,
+  cycle: r.period_start && r.period_end ? { start: r.period_start, end: r.period_end } : null,
 });
+
+/** How far through its billing cycle a client is (0 to 1); the calendar month when no cycle is known. */
+export function cycleElapsed(cycle: { start: string; end: string } | null | undefined, now = new Date()) {
+  if (!cycle) return now.getDate() / new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const a = new Date(`${cycle.start}T00:00:00`).getTime();
+  const b = new Date(`${cycle.end}T00:00:00`).getTime();
+  return Math.max(0, Math.min(1, (now.getTime() - a) / Math.max(1, b - a)));
+}
 
 /** "Nov 30" (or "Nov 30, 2027" outside this year) for a YYYY-MM-DD day. */
 export function untilLabel(day: string) {
@@ -55,10 +68,11 @@ export const left = (cap: number | null, used: number) => (cap === null ? null :
 /** For the AI: one line per pool, with what this request would take if given. */
 export function describeAllotment(a: Allotment | null, request?: { images: number; videos: number }) {
   if (!a || (a.images === null && a.videos === null)) return "No monthly allotment is set for this client yet, so you can't check it.";
+  const cycle = a.cycle ? ` (this billing cycle, ${untilLabel(a.cycle.start)} to ${untilLabel(a.cycle.end)}, when it resets)` : "";
   const line = (label: string, cap: number | null, used: number, req?: number) =>
     cap === null
       ? `${label}: not set`
-      : `${label}: ${cap} per month, ${used} used, ${cap - used} left${req !== undefined ? `; this request takes ${req}, leaving ${cap - used - req}` : ""}`;
+      : `${label}: ${cap} per month${cycle}, ${used} used, ${cap - used} left${req !== undefined ? `; this request takes ${req}, leaving ${cap - used - req}` : ""}`;
   const lines = [line("Images and carousels", a.images, a.imagesUsed, request?.images), line("Videos", a.videos, a.videosUsed, request?.videos)];
   if (a.waiting) lines.push(`Also briefed in Asana and not started yet (they'll count once production starts): ${a.waiting.images} images, ${a.waiting.videos} videos. Treat them as spoken for.`);
   return lines.join("\n");

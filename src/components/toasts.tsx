@@ -49,9 +49,16 @@ function ToastCard({ t, onClose }: { t: Required<Pick<Toast, "id">> & Toast; onC
         <div className="grid gap-1.5 pl-[18px]">
           {t.actions.map((a) =>
             a.href ? (
-              <Link key={a.label} href={a.href} onClick={onClose} className={`rounded-full px-3 py-3 text-center text-sm md:py-1.5 md:text-xs ${a.primary ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
-                {a.label}
-              </Link>
+              // Slack and email open in their own tab, at the message; ours open here
+              a.href.startsWith("http") ? (
+                <a key={a.label} href={a.href} target="_blank" rel="noreferrer" onClick={onClose} className={`rounded-full px-3 py-3 text-center text-sm md:py-1.5 md:text-xs ${a.primary ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
+                  {a.label} ↗
+                </a>
+              ) : (
+                <Link key={a.label} href={a.href} onClick={onClose} className={`rounded-full px-3 py-3 text-center text-sm md:py-1.5 md:text-xs ${a.primary ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
+                  {a.label}
+                </Link>
+              )
             ) : (
               <button
                 key={a.label}

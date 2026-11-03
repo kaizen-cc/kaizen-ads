@@ -54,6 +54,37 @@ export async function doneOwed(id: string) {
   await closeOwed(id, me.id, "done");
 }
 
+/** The reply drafted for a message waiting on you (from the thread as it is now; `fresh` writes a new one). */
+export async function draftReply(id: string, fresh = false): Promise<{ ok: true; draft: string } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  if (!adminConfigured()) return { ok: false, error: "Not available here." };
+  const admin = createAdminClient();
+  const { data: o } = await admin.from("owed_replies").select("target_id").eq("id", id).maybeSingle();
+  if (!o || o.target_id !== me.id) return { ok: false, error: "Only the person it's waiting on can draft the reply." };
+  const { draftOwedReply } = await import("@/lib/reply-drafts");
+  return draftOwedReply(admin, id, { force: fresh });
+}
+
+/** Sends your reply in the Slack thread, as you, and closes it (anyone it went up to hears it's answered). */
+export async function sendReply(id: string, text: string): Promise<{ ok: true } | { ok: false; error: string; needsConnect?: boolean }> {
+  const me = await requireStaff();
+  if (!adminConfigured()) return { ok: false, error: "Not available here." };
+  const body = text.trim();
+  if (!body) return { ok: false, error: "Write the reply first." };
+  const admin = createAdminClient();
+  const { data: o } = await admin.from("owed_replies").select("target_id, source, channel_id, thread_ts, message_ts, status").eq("id", id).maybeSingle();
+  if (!o || o.target_id !== me.id) return { ok: false, error: "Only the person it's waiting on can answer it from here." };
+  if (o.source !== "slack" || !o.channel_id) return { ok: false, error: "Emails are answered in Gmail: copy the draft and open the email." };
+  const { postAsUser } = await import("@/lib/slack-user");
+  const sent = await postAsUser(me.id, { channel: o.channel_id as string, text: body.slice(0, 3900), thread: ((o.thread_ts as string | null) ?? (o.message_ts as string)) || undefined });
+  if (!sent.ok) return sent;
+  const { markReplied } = await import("@/lib/owed-replies");
+  await markReplied(admin, id, me.id);
+  await admin.from("owed_replies").update({ draft: body.slice(0, 4000) }).eq("id", id);
+  revalidatePath("/pipeline");
+  return { ok: true };
+}
+
 async function closeOwed(id: string, meId: string, how: "done" | "not_needed") {
   if (!adminConfigured()) return;
   const { closeByHand } = await import("@/lib/owed-replies");

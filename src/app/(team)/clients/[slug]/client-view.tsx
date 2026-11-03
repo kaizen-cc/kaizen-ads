@@ -18,11 +18,12 @@ import { setPortalLive,
   refreshClientBriefing,
   removeContact,
   saveAllotment,
+  saveBillingDay,
   saveClientDetails,
   setAngleStatus,
   setSprintPackage,
 } from "./actions";
-import { PackagePanel, type PackageOption } from "./package-panel";
+import { PackagePanel, type Cycle, type PackageOption } from "./package-panel";
 import { ReadinessCheck } from "./readiness-check";
 import { LaunchRules, type LaunchRule } from "./launch-rules";
 import { ServicesPanel, type Tier } from "./services-panel";
@@ -134,6 +135,8 @@ export type ClientViewProps = {
   imagesUsed: number;
   videosUsed: number;
   fromAsana?: { images: number; videos: number; waitingImages?: number; waitingVideos?: number };
+  /** The billing cycle the allotment counts in */
+  cycle?: Cycle | null;
   creativeDb?: CreativeDb | null;
   can: { admin: boolean; contacts: boolean; allot: boolean; assign: boolean };
   demo?: boolean; // design preview: the refresh only plays its animation
@@ -167,7 +170,7 @@ export type ClientViewProps = {
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, docs = null, reports = null, playbook = null, setup = null, emails = null, businessAudit = null }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, docs = null, reports = null, playbook = null, setup = null, emails = null, businessAudit = null }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -829,7 +832,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                   id: "creative",
                   label: "Creative",
                   tone: creativeTone,
-                  note: images + videos > 0 ? `${imagesUsed + videosUsed}/${images + videos} this month` : packageLabel,
+                  note: images + videos > 0 ? `${imagesUsed + videosUsed}/${images + videos} this ${cycle?.billingDay ? "cycle" : "month"}` : packageLabel,
                   tabs: [
                     { id: "production", label: "Production", hint: "Creative in motion, launched and live; what's working in the market", content: (<div className="grid gap-6">
                 {creative && <CreativePanel data={creative} />}
@@ -858,6 +861,8 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
             imagesUsed={imagesUsed}
             videosUsed={videosUsed}
             fromAsana={fromAsana}
+            cycle={cycle}
+            saveBillingDay={saveBillingDay.bind(null, client.id, client.slug)}
             creativeDb={creativeDb}
             packages={packages}
             can={{ exec: can.admin, allot: can.allot }}

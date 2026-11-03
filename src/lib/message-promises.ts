@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { isLive } from "@/lib/live";
 import { askJson } from "@/lib/ai";
 import { asanaSince } from "@/lib/calls";
-import { slack } from "@/lib/context/slack";
+import { openableLink, slack } from "@/lib/context/slack";
 import { addresses, gmailToken, google, plainText, withoutQuotes, type GmailMessage } from "@/lib/context/google";
 import { LEAD_OF, notify, plain, workingHours, type Msg, type SlackWho } from "@/lib/owed-replies";
 import { loadGroups, shadowedMessages, type PromiseGroup } from "@/lib/promise-groups";
@@ -419,6 +419,7 @@ export async function loadSaidPromises(db: SupabaseClient, me: { id: string; rol
     .limit(80);
   const shadow = await shadowedMessages(db, (data ?? []) as { id: string; group_id: string | null; due_at: string | null }[]);
   const groups = await loadGroups(db, (data ?? []).map((p) => p.group_id as string));
+  const links = new Map(await Promise.all((data ?? []).map(async (p) => [p.id as string, await openableLink((p.url as string | null) ?? null)] as const)));
   return (data ?? [])
     .filter((p) => !shadow.has(p.id as string))
     // A paused or archived client's yeses aren't chased on the board
@@ -447,7 +448,7 @@ export async function loadSaidPromises(db: SupabaseClient, me: { id: string; rol
         saidAt: p.said_at as string,
         dueAt: p.due_at as string,
         where: whereOf(p),
-        url: (p.url as string | null) ?? null,
+        url: links.get(p.id as string) ?? null,
         channelUrl: (p.channel_url as string | null) ?? null,
         kind: (p.kind as string | null) ?? null,
         client: c?.name ?? null,

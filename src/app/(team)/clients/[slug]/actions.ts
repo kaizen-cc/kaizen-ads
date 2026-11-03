@@ -273,6 +273,16 @@ export async function saveAllotment(clientId: string, slug: string, form: FormDa
   return done(slug, error);
 }
 
+/** Execs and leads: the day of the month the client is billed, which is when their creative allotment starts again. */
+export async function saveBillingDay(clientId: string, slug: string, form: FormData): Promise<ActionResult> {
+  const me = await requireStaff();
+  if (!isExecOrLead(me)) return { ok: false, error: "Only execs and leads can change the billing day." };
+  const raw = Number(form.get("day"));
+  const day = Number.isInteger(raw) && raw >= 1 && raw <= 28 ? raw : null;
+  const { error } = await createAdminClient().from("clients").update({ billing_day: day, billing_day_source: day ? "set" : null }).eq("id", clientId);
+  return done(slug, error);
+}
+
 /** Execs: put a client on a sprint package until a date (or change one). The database checks it's an exec. */
 export async function setSprintPackage(clientId: string, slug: string, form: FormData): Promise<ActionResult> {
   await requireStaff();

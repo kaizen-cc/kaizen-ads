@@ -1,5 +1,6 @@
 "use client";
 
+import { DraftReply } from "@/components/draft-reply";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -591,6 +592,11 @@ function Overview({ i, status, dive, onChoose, onAct, onNext }: { i: TodayItem; 
             </li>
           ))}
         </ul>
+      )}
+      {i.reply && (
+        <div className="relative">
+          <DraftReply id={i.reply.id} source={i.reply.source} url={i.reply.url} initial={i.reply.draft} channel={i.reply.channel} tone="dark" onSent={() => onChoose("done")} />
+        </div>
       )}
       <p className="relative text-xs text-white/45">Why it&apos;s here: {i.why}</p>
       <div className="relative flex flex-wrap items-center gap-2">

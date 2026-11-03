@@ -48,7 +48,7 @@ export async function gatherSignals(admin: SupabaseClient): Promise<Map<string, 
   const since7 = new Date(Date.now() - 7 * 86_400_000).toISOString();
   const since30 = new Date(Date.now() - 30 * 86_400_000).toISOString();
   const [{ data: allUsage }, { data: open }, { data: kpis }, { data: snaps }, { data: items }, { data: rounds }, { data: recentReqs }, { data: watched }, { data: live }] = await Promise.all([
-    admin.from("client_allotment_usage").select("client_id, images_per_month, videos_per_month, images_used, videos_used"),
+    admin.from("client_allotment_usage").select("client_id, images_per_month, videos_per_month, images_used, videos_used, period_start, period_end"),
     admin.from("board_requests").select("client_id, stage, new_count").neq("stage", "launched"),
     admin.from("kpi_snapshots").select("client_id, status, trend, deviation, kpi_targets(label)"),
     admin.from("meta_snapshots").select("client_id, ads, weekly, fetched_at").gte("fetched_at", since7).order("fetched_at", { ascending: false }).limit(1000),

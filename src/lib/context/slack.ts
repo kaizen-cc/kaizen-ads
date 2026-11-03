@@ -149,7 +149,31 @@ async function personName(id: string | undefined) {
   return names.get(id)!;
 }
 
-export const permalink = (channel: string, ts: string) => `https://slack.com/archives/${channel}/p${ts.replace(".", "")}`;
+/** A message's link. A reply inside a thread needs the thread too, or Slack opens the channel and the reply isn't there. */
+export const permalink = (channel: string, ts: string, threadTs?: string | null) => `https://slack.com/archives/${channel}/p${ts.replace(".", "")}${threadTs && threadTs !== ts ? `?thread_ts=${threadTs}&cid=${channel}` : ""}`;
+
+let workspace: Promise<string | null> | null = null;
+/** Our workspace's own address (https://name.slack.com/), asked of Slack once per server */
+export function slackWorkspace(): Promise<string | null> {
+  if (!slackConfigured()) return Promise.resolve(null);
+  workspace ??= slack<{ url?: string }>("auth.test", {})
+    .then((r) => (r.url ? r.url.replace(/\/?$/, "/") : null))
+    .catch(() => {
+      workspace = null;
+      return null;
+    });
+  return workspace;
+}
+
+/**
+ * A link that opens the exact message: a bare slack.com/archives link doesn't know which workspace to open, so it
+ * lands on a picker or the wrong place. Ours get the workspace's own address. Anything else is left as it is.
+ */
+export async function openableLink<T extends string | null>(href: T): Promise<T> {
+  if (!href || !href.startsWith("https://slack.com/archives/")) return href;
+  const base = await slackWorkspace();
+  return (base ? href.replace("https://slack.com/", base) : href) as T;
+}
 
 export async function readChannel(channel: string, since: Date, clientId: string, source: ContextItem["source"]) {
   const oldest = (since.getTime() / 1000).toFixed(6);
@@ -166,7 +190,7 @@ export async function readChannel(channel: string, since: Date, clientId: string
       author: m.bot_id ? "bot" : await personName(m.user),
       title: null,
       body: trimBody(m.text),
-      url: permalink(channel, m.ts),
+      url: permalink(channel, m.ts, m.thread_ts),
       meta: {},
     });
   };

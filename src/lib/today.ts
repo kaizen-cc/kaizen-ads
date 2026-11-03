@@ -46,6 +46,8 @@ export type TodayItem = {
   alt?: { label: string; href: string };
   /** What setting it aside means here, when it's more than "not for me" */
   dismiss?: string;
+  /** A message waiting on this person: the reply drafted for them */
+  reply?: { id: string; source: "slack" | "gmail"; url: string | null; draft: string | null; channel: string | null };
   state: "new" | "seen" | "saved"; // what this person has done with it so far
   carried: boolean; // came up on an earlier day and is still open
   image?: string | null;
@@ -196,7 +198,7 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
       evidence: [],
       action: { label: where, href: o.url ?? o.channelUrl ?? "/today" },
       ...(o.channelUrl ? { alt: { label: "Open the channel", href: o.channelUrl } } : {}),
-      ...(mineToo ? { dismiss: "Doesn't need a reply" } : {}),
+      ...(mineToo ? { dismiss: "Doesn't need a reply", reply: { id: o.id, source: o.source, url: o.url, draft: o.draft, channel: o.channelName } } : {}),
     });
   }
 
@@ -408,9 +410,9 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
         client: c.name,
         clientSlug: c.slug,
         clientId: null,
-        stat: { value: `${c.used}/${c.allotment}`, label: "creatives this month" },
-        title: c.note === "Nothing delivered yet" ? `Nothing made for ${c.name} yet this month` : `${c.name} is behind on creative`,
-        story: `${c.used} of ${c.allotment} made with ${Math.round(elapsed * 100)}% of the month gone. They're paying for more than they're getting.`,
+        stat: { value: `${c.used}/${c.allotment}`, label: "creatives this billing cycle" },
+        title: c.note === "Nothing delivered yet" ? `Nothing made for ${c.name} yet this billing cycle` : `${c.name} is behind on creative`,
+        story: `${c.used} of ${c.allotment} made with ${Math.round((c.elapsed ?? elapsed) * 100)}% of their billing cycle gone. They're paying for more than they're getting.`,
         why: "Under-delivering on what they pay for",
         evidence: [],
         action: { label: "New request", href: `/requests/new?client=${c.slug}` },

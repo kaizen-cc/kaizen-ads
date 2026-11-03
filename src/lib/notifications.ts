@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendEmail } from "@/lib/email";
+import { openableLink } from "@/lib/context/slack";
 
 // Notifications are made by the database where things happen (see the notifications migration). This file reads
 // them for the bell, reminds people who haven't been through their daily recap, and emails the critical ones that
@@ -14,14 +15,16 @@ export async function loadNotifications(db: SupabaseClient, limit = 40): Promise
     db.from("notifications").select("id, kind, title, body, href, priority, created_at, read_at, actor:profiles!notifications_actor_id_fkey(full_name)").eq("alert", true).is("cleared_at", null).order("created_at", { ascending: false }).limit(limit),
     db.from("notifications").select("id", { count: "exact", head: true }).eq("alert", true).is("read_at", null).is("cleared_at", null),
   ]);
+  // Slack links get our workspace's address, so a click opens the message itself
+  const hrefs = await Promise.all((data ?? []).map((n) => openableLink((n.href as string | null) ?? null)));
   return {
     unread: count ?? 0,
-    items: (data ?? []).map((n) => ({
+    items: (data ?? []).map((n, i) => ({
       id: n.id as string,
       kind: n.kind as string,
       title: n.title as string,
       body: (n.body as string | null) ?? null,
-      href: (n.href as string | null) ?? null,
+      href: hrefs[i],
       priority: n.priority as Notice["priority"],
       createdAt: n.created_at as string,
       read: Boolean(n.read_at),
@@ -119,6 +122,8 @@ export async function emailNotifications(admin: SupabaseClient) {
   const { data: prefs } = await admin.from("notification_prefs").select("profile_id, settings").in("profile_id", ids);
   const prefOf = (id: string) => withDefaults(prefs?.find((p) => p.profile_id === id)?.settings);
   const base = process.env.NEXT_PUBLIC_SITE_URL || "https://ads.kaizenmarketing.agency";
+  const opened = new Map(await Promise.all(data.map(async (n) => [n.id as string, await openableLink((n.href as string | null) ?? null)] as const)));
+  for (const n of data) n.href = opened.get(n.id as string) ?? n.href;
   const linkOf = (href: string | null) => (href ? (href.startsWith("http") ? href : `${base}${href}`) : base);
   let sent = 0;
   for (const id of ids) {
