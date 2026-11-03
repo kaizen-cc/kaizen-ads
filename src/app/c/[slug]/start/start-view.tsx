@@ -6,13 +6,14 @@ import { useRef, useState } from "react";
 import { PACING, STYLES, guideProgress, type Guide, type StyleStep } from "@/lib/onboarding-guide-types";
 import { createClient } from "@/lib/supabase/client";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
-import { assetSlots, assetsShared, googleSend, metaDone, onTheCall, saveStyle } from "./actions";
+import type { HelpTurn } from "@/lib/setup-help";
+import { askHelp, assetSlots, assetsShared, googleSend, helpSlots, helpToCall, metaDone, onTheCall, saveStyle } from "./actions";
 
 // The client's setup, as a few short, visual steps: each opens full screen (in the address, so back closes it), walks
 // them through with pictures of the screens they'll see, and says plainly when it's done. Nothing here is a form to
 // puzzle over: copy buttons for every ID, one tap for "let's do it on our call".
 
-type Props = { slug: string; brand: string; firstName: string | null; guide: Guide; has: { meta: boolean; google: boolean; looks: boolean }; bmId: string | null; adminEmails: string[]; managerId: string | null; examples: { id: string; image: string; video: boolean }[]; presentation: string | null };
+type Props = { slug: string; brand: string; firstName: string | null; guide: Guide; has: { meta: boolean; google: boolean; looks: boolean }; bmId: string | null; adminEmails: string[]; managerId: string | null; examples: { id: string; image: string; video: boolean }[]; presentation: string | null; help: Record<"meta" | "google", HelpTurn[]> };
 type StepKey = "meta" | "google" | "assets" | "style";
 
 export function StartView(p: Props) {
@@ -89,23 +90,212 @@ function Ring({ pct }: { pct: number }) {
 }
 
 /** Full screen on a phone, a big panel on a computer */
-function Sheet({ title, kicker, children }: { title: string; kicker: string; children: React.ReactNode }) {
+function Sheet({ title, kicker, children, help }: { title: string; kicker: string; children: React.ReactNode; /** The help chat: beside the steps on a computer, a button away on a phone */ help?: React.ReactNode }) {
+  const helpOpen = useParam("help") === "1";
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
-      <button type="button" aria-label="Close" onClick={() => closeParams("step")} className="absolute inset-0 bg-black/50 backdrop-blur-[2px] max-md:hidden" />
-      <div className="relative flex h-full w-full flex-col overflow-hidden border-l border-line bg-bg md:w-[min(720px,94vw)]">
+      <button type="button" aria-label="Close" onClick={() => closeParams("step", "help")} className="absolute inset-0 bg-black/50 backdrop-blur-[2px] max-md:hidden" />
+      <div className={`relative flex h-full w-full flex-col overflow-hidden border-l border-line bg-bg ${help ? "md:w-[min(720px,94vw)] lg:w-[min(1180px,96vw)]" : "md:w-[min(720px,94vw)]"}`}>
         <header className="pt-safe flex items-center gap-3 border-b border-line px-4 py-3">
           <div className="min-w-0 flex-1">
             <p className="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-faint">{kicker}</p>
             <p className="truncate font-heading text-[17px]">{title}</p>
           </div>
-          <button type="button" onClick={() => closeParams("step")} className="grid h-11 w-11 place-items-center rounded-full text-[20px] text-muted hover:text-fg" aria-label="Close">
+          <button type="button" onClick={() => closeParams("step", "help")} className="grid h-11 w-11 place-items-center rounded-full text-[20px] text-muted hover:text-fg" aria-label="Close">
             ×
           </button>
         </header>
-        <div className="flex-1 overflow-y-auto px-4 py-5 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:px-6">{children}</div>
+        <div className={`min-h-0 flex-1 ${help ? "lg:grid lg:grid-cols-[minmax(0,1fr)_420px]" : ""}`}>
+          <div className={`h-full overflow-y-auto px-4 py-5 md:px-6 ${help ? "pb-28 lg:pb-8" : "pb-[calc(1.5rem+env(safe-area-inset-bottom))]"}`}>{children}</div>
+          {help && <aside className="hidden h-full min-h-0 flex-col border-l border-line bg-surface lg:flex">{help}</aside>}
+        </div>
+        {help && !helpOpen && (
+          <button type="button" onClick={() => pushParams({ help: "1" })} className="absolute bottom-[calc(1rem+env(safe-area-inset-bottom))] left-4 right-4 flex h-14 items-center gap-3 rounded-full bg-brand pl-2 pr-5 text-left text-white shadow-[0_18px_40px_-14px_rgba(178,30,44,0.9)] lg:hidden">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white/15">✦</span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-[15px] font-medium">Stuck? Ask us anything</span>
+              <span className="block truncate text-[12px] text-white/75">Instant help, screenshots welcome</span>
+            </span>
+          </button>
+        )}
+        {help && helpOpen && <div className="absolute inset-0 z-10 flex flex-col bg-surface lg:hidden">{help}</div>}
       </div>
     </div>
+  );
+}
+
+/**
+ * Instant help while they do it: they ask in their own words, paste or share a screenshot, and get the exact next
+ * click. It offers to save it for the onboarding call only after several tries with them getting frustrated.
+ */
+function HelpChat({ slug, step, initial, onCall }: { slug: string; step: "meta" | "google"; initial: HelpTurn[]; onCall: boolean }) {
+  const router = useRouter();
+  const [turns, setTurns] = useState(initial);
+  const [q, setQ] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(onCall);
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  const pick = useRef<HTMLInputElement>(null);
+  const end = useRef<HTMLDivElement>(null);
+  const last = turns.at(-1);
+  const offer = !saved && last?.role === "ai" && last.suggestCall && dismissed !== last.id;
+  const scroll = () => requestAnimationFrame(() => end.current?.scrollIntoView({ block: "end", behavior: "smooth" }));
+  const send = async (text: string) => {
+    if (busy || (!text.trim() && !files.length)) return;
+    setError(null);
+    const sending = files;
+    setBusy(sending.length ? "Looking at your screenshot…" : "Thinking…");
+    try {
+      let shared: { path: string; name: string; mime: string; bytes: number }[] = [];
+      if (sending.length) {
+        const slots = await helpSlots(slug, sending.map((f) => ({ name: f.name, bytes: f.size })));
+        if (!slots.ok) throw new Error(slots.error);
+        const supabase = createClient();
+        shared = await Promise.all(
+          sending.map(async (f, i) => {
+            const { error: e } = await supabase.storage.from("client-docs").uploadToSignedUrl(slots.slots[i].path, slots.slots[i].token, f, { contentType: f.type || "application/octet-stream" });
+            if (e) throw new Error(`${f.name} didn't upload. Try again.`);
+            return { path: slots.slots[i].path, name: f.name, mime: f.type, bytes: f.size };
+          }),
+        );
+      }
+      setTurns((t) => [...t, { id: `me-${Date.now()}`, role: "client", text: text.trim(), files: sending.map((f) => f.name), at: new Date().toISOString(), suggestCall: false }]);
+      setQ("");
+      setFiles([]);
+      scroll();
+      const r = await askHelp(slug, step, text, shared);
+      if (!r.ok) throw new Error(r.error);
+      setTurns((t) => [...t.filter((x) => !x.id.startsWith("me-")), ...r.turns]);
+      scroll();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong. Try again.");
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <>
+      <div className="flex items-center gap-3 border-b border-line px-4 py-3.5">
+        <button type="button" onClick={() => closeParams("help")} className="grid h-10 w-10 place-items-center rounded-full text-muted hover:text-fg lg:hidden" aria-label="Back to the steps">
+          ←
+        </button>
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand text-white" aria-hidden>
+          ✦
+        </span>
+        <div className="min-w-0">
+          <p className="font-heading text-[16px]">Stuck? Ask us anything</p>
+          <p className="text-[12.5px] leading-snug text-muted">Instant help for what&rsquo;s on your screen. Share or paste a screenshot.</p>
+        </div>
+      </div>
+      <div className="grid min-h-0 flex-1 content-start gap-3.5 overflow-y-auto px-4 py-4">
+        {!turns.length && (
+          <div className="grid gap-2">
+            <p className="text-[13.5px] leading-relaxed text-muted">Can&rsquo;t find a button, seeing an error, or not sure you&rsquo;re in the right place? Tell us what you see, or send a screenshot, and we&rsquo;ll show you the next click.</p>
+            {(step === "meta" ? ["I don't see Partners in the menu", "I don't have a Business Manager", "It says I don't have permission"] : ["I can't find my account ID", "I don't see the request to accept", "I have more than one account"]).map((x) => (
+              <button key={x} type="button" onClick={() => void send(x)} className="min-h-11 rounded-[14px] border border-line px-3.5 py-2 text-left text-[13.5px] text-muted hover:border-faint hover:text-fg">
+                {x}
+              </button>
+            ))}
+          </div>
+        )}
+        {turns.map((t) =>
+          t.role === "client" ? (
+            <div key={t.id} className="grid justify-items-end gap-1">
+              {t.text && <p className="max-w-[88%] whitespace-pre-line rounded-[18px] rounded-br-[6px] bg-fg px-4 py-2.5 text-[14px] leading-relaxed text-bg">{t.text}</p>}
+              {t.files.length > 0 && <p className="text-[11.5px] text-faint">📎 {t.files.join(", ")}</p>}
+            </div>
+          ) : (
+            <p key={t.id} className="max-w-[94%] whitespace-pre-line rounded-[18px] rounded-bl-[6px] bg-bg px-4 py-3 text-[14px] leading-relaxed">
+              {t.text}
+            </p>
+          ),
+        )}
+        {busy && (
+          <p className="flex items-center gap-2 text-[13px] text-faint">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" /> {busy}
+          </p>
+        )}
+        {offer && (
+          <div className="grid gap-2 rounded-[16px] border border-warn/40 bg-warn-soft/30 p-3.5">
+            <p className="text-[13.5px]">Want to save this for our onboarding call? We&rsquo;ll do it together in a couple of minutes, and you can move on.</p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  setBusy("Saving it for our call…");
+                  const r = await helpToCall(slug, step);
+                  setBusy(null);
+                  if (!r.ok) return setError(r.error);
+                  setSaved(true);
+                  router.refresh();
+                }}
+                className="h-11 rounded-full bg-fg px-4 text-[14px] text-bg"
+              >
+                ☎ Save it for our call
+              </button>
+              <button type="button" onClick={() => setDismissed(last!.id)} className="h-11 rounded-full border border-line px-4 text-[14px] text-muted hover:text-fg">
+                Keep trying
+              </button>
+            </div>
+          </div>
+        )}
+        {saved && <p className="rounded-[14px] bg-warn-soft/50 px-3.5 py-2.5 text-[13px] text-warn">☎ Saved for our onboarding call. Your team knows where you got stuck.</p>}
+        {error && <p className="text-[13px] text-bad">{error}</p>}
+        <div ref={end} />
+      </div>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void send(q);
+        }}
+        className="pb-safe border-t border-line p-3"
+      >
+        {files.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {files.map((f, i) => (
+              <span key={`${f.name}-${i}`} className="inline-flex max-w-full items-center gap-1 rounded-full bg-bg px-3 py-1 text-[12px]">
+                <span className="truncate">📎 {f.name}</span>
+                <button type="button" onClick={() => setFiles(files.filter((_, j) => j !== i))} className="grid h-6 w-6 place-items-center text-muted hover:text-fg" aria-label={`Remove ${f.name}`}>
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="flex items-end gap-1.5 rounded-[20px] border border-line bg-bg p-1.5 focus-within:border-brand-text/60">
+          <button type="button" onClick={() => pick.current?.click()} className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-[18px] text-muted hover:bg-surface hover:text-fg" aria-label="Share a screenshot or file">
+            📎
+          </button>
+          <input ref={pick} type="file" multiple accept="image/*,application/pdf" hidden onChange={(e) => (setFiles([...files, ...Array.from(e.target.files ?? [])].slice(0, 6)), (e.target.value = ""))} />
+          <textarea
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onPaste={(e) => {
+              // A screenshot pasted straight in
+              const pasted = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith("image/"));
+              if (pasted.length) {
+                e.preventDefault();
+                setFiles([...files, ...pasted.map((f, i) => new File([f], f.name && f.name !== "image.png" ? f.name : `screenshot-${i + 1}.png`, { type: f.type }))].slice(0, 6));
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void send(q);
+              }
+            }}
+            rows={1}
+            placeholder="What do you see?"
+            className="max-h-36 min-h-11 w-full resize-none bg-transparent px-1.5 py-2.5 text-[15px] outline-none [field-sizing:content]"
+          />
+          <button type="submit" disabled={Boolean(busy) || (!q.trim() && !files.length)} className="h-11 shrink-0 rounded-full bg-brand px-4 text-[14px] font-medium text-white disabled:opacity-40">
+            Send
+          </button>
+        </div>
+      </form>
+    </>
   );
 }
 
@@ -237,8 +427,9 @@ function OnCall({ slug, which, done }: { slug: string; which: "meta" | "google";
 
 const META_MENU = ["Users", "  People", "  Partners", "  System users", "Accounts", "  Pages", "  Ad accounts", "  Instagram accounts", "Data sources", "  Datasets"];
 
-function MetaSheet({ slug, guide, bmId, adminEmails }: Props) {
+function MetaSheet({ slug, guide, bmId, adminEmails, help }: Props) {
   const router = useRouter();
+  const [none, setNone] = useState(false);
   const [typed, setTyped] = useState(guide.meta.typed ?? "");
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState(guide.meta);
@@ -253,7 +444,7 @@ function MetaSheet({ slug, guide, bmId, adminEmails }: Props) {
           <a href="https://business.facebook.com/settings" target="_blank" rel="noreferrer" className="relative rounded-[6px] bg-[#1877f2] px-4 py-2 text-[12px] font-semibold text-white">
             Open Business Settings ↗<Pulse />
           </a>
-          <p className="text-[11px] text-[#65676b]">Don&rsquo;t have one? Meta makes it when you create an ad account, or tap &ldquo;Let&rsquo;s do it on our call&rdquo;.</p>
+          <p className="text-[11px] text-[#65676b]">No Business Manager yet? Tap &ldquo;I don&rsquo;t have a Business Manager&rdquo; below and we&rsquo;ll walk you through making one.</p>
         </div>
       </Screen>
     ) },
@@ -305,12 +496,25 @@ function MetaSheet({ slug, guide, bmId, adminEmails }: Props) {
     ) },
   ];
   return (
-    <Sheet kicker="Step 1" title="Facebook & Instagram access">
+    <Sheet kicker="Step 1" title="Facebook & Instagram access" help={<HelpChat slug={slug} step="meta" initial={help.meta} onCall={guide.meta.status === "on_call"} />}>
       {verified ? (
         <div className="grid gap-3 rounded-[20px] border border-ok/40 bg-ok-soft/40 p-5">
           <p className="font-heading text-[20px] text-ok">✓ We&rsquo;re connected</p>
           <p className="text-[14.5px] text-muted">We can see {result.accountName ?? "your ad account"} and {result.pageName ?? "your Page"}. Nothing else to do here.</p>
         </div>
+      ) : none ? (
+        <Walk
+          steps={MAKE_META}
+          last={
+            <div className="grid gap-4">
+              <p className="font-heading text-[20px]">You&rsquo;re set up on Meta</p>
+              <p className="text-[14.5px] leading-relaxed text-muted">Your business portfolio, Page, Instagram and ad account are ready. Now give Kaizen access to them: five quick steps.</p>
+              <button type="button" onClick={() => setNone(false)} className="h-12 rounded-full bg-brand text-[15px] font-medium text-white">
+                Now give Kaizen access →
+              </button>
+            </div>
+          }
+        />
       ) : (
         <Walk
           steps={steps}
@@ -340,6 +544,16 @@ function MetaSheet({ slug, guide, bmId, adminEmails }: Props) {
           }
         />
       )}
+      {!verified && !none && (
+        <button type="button" onClick={() => setNone(true)} className="mt-5 justify-self-start text-[13.5px] text-brand-text hover:underline">
+          I don&rsquo;t have a Business Manager or ad account yet →
+        </button>
+      )}
+      {!verified && none && (
+        <button type="button" onClick={() => setNone(false)} className="mt-5 justify-self-start text-[13.5px] text-muted hover:text-fg">
+          ← I already have one
+        </button>
+      )}
       {!verified && (
         <div className="mt-6 grid">
           <OnCall slug={slug} which="meta" done={guide.meta.status === "on_call"} />
@@ -349,7 +563,89 @@ function MetaSheet({ slug, guide, bmId, adminEmails }: Props) {
   );
 }
 
-function GoogleSheet({ slug, guide, managerId }: Props) {
+/** No business portfolio (Business Manager) yet: make one, add the Page and Instagram, and make the ad account */
+const MAKE_META: { title: string; body: React.ReactNode; screen: React.ReactNode }[] = [
+  {
+    title: "Make a business portfolio",
+    body: <>On a computer, go to <a className="text-brand-text underline" href="https://business.facebook.com/overview" target="_blank" rel="noreferrer">business.facebook.com/overview</a>, signed in with your own Facebook account, and click <b className="text-fg">Create a business portfolio</b>. (Meta used to call this Business Manager.)</>,
+    screen: (
+      <Screen url="business.facebook.com/overview">
+        <div className="grid place-items-center gap-2 py-6 text-center">
+          <p className="text-[13px] font-semibold">Meta Business Suite</p>
+          <Hit>Create a business portfolio</Hit>
+        </div>
+      </Screen>
+    ),
+  },
+  {
+    title: "Name it and add your details",
+    body: <>Type your <b className="text-fg">business name</b> (as customers know it), <b className="text-fg">your name</b> and your <b className="text-fg">business email</b>, then <b className="text-fg">Create</b>. Meta emails you to confirm: click the link in that email.</>,
+    screen: (
+      <Screen url="business.facebook.com/overview">
+        <div className="mx-auto grid max-w-[300px] gap-1.5 rounded-[10px] bg-white p-3 text-[11.5px] shadow">
+          <p className="text-[12.5px] font-semibold">Create a business portfolio</p>
+          {["Business portfolio name", "Your name", "Business email"].map((x) => (
+            <p key={x} className="rounded-[6px] border border-[#dadde1] px-2 py-1.5 text-[#65676b]">{x}</p>
+          ))}
+          <div className="text-right"><Hit>Create</Hit></div>
+        </div>
+      </Screen>
+    ),
+  },
+  {
+    title: "Add your Facebook Page",
+    body: <>Open <a className="text-brand-text underline" href="https://business.facebook.com/settings" target="_blank" rel="noreferrer">Business Settings</a>, then <b className="text-fg">Accounts › Pages › Add › Add a Page</b>, and pick your business&rsquo;s Page. No Page yet? Choose <b className="text-fg">Create a new Page</b>.</>,
+    screen: (
+      <Screen url="business.facebook.com/settings/pages" menu={META_MENU} active="  Pages">
+        <p className="text-[13px] font-semibold">Pages</p>
+        <div className="mt-3 grid gap-1.5 text-[11.5px]">
+          <Hit>+ Add</Hit>
+          <p className="rounded-[6px] bg-white px-2 py-1.5">Add a Page</p>
+          <p className="rounded-[6px] bg-white px-2 py-1.5 text-[#65676b]">Create a new Page</p>
+        </div>
+      </Screen>
+    ),
+  },
+  {
+    title: "Connect Instagram",
+    body: <>Still in Business Settings: <b className="text-fg">Accounts › Instagram accounts › Add</b>, and log in to your business&rsquo;s Instagram.</>,
+    screen: (
+      <Screen url="business.facebook.com/settings/instagram-accounts" menu={META_MENU} active="  Instagram accounts">
+        <p className="text-[13px] font-semibold">Instagram accounts</p>
+        <div className="mt-3"><Hit>+ Add</Hit></div>
+      </Screen>
+    ),
+  },
+  {
+    title: "Make your ad account",
+    body: <><b className="text-fg">Accounts › Ad accounts › Add › Create a new ad account</b>. Name it after your business, and pick your <b className="text-fg">time zone</b> and <b className="text-fg">currency</b> carefully (they can&rsquo;t change later). Choose <b className="text-fg">My business</b>, then <b className="text-fg">Create</b>.</>,
+    screen: (
+      <Screen url="business.facebook.com/settings/ad-accounts" menu={META_MENU} active="  Ad accounts">
+        <div className="mx-auto grid max-w-[300px] gap-1.5 rounded-[10px] bg-white p-3 text-[11.5px] shadow">
+          <p className="text-[12.5px] font-semibold">Create a new ad account</p>
+          {["Ad account name: Your business", "Time zone: (GMT-05:00) Eastern", "Currency: USD"].map((x) => (
+            <p key={x} className="rounded-[6px] border border-[#dadde1] px-2 py-1.5">{x}</p>
+          ))}
+          <div className="text-right"><Hit>Create</Hit></div>
+        </div>
+      </Screen>
+    ),
+  },
+  {
+    title: "Add a payment method",
+    body: <>Open <a className="text-brand-text underline" href="https://business.facebook.com/billing_hub/payment_settings" target="_blank" rel="noreferrer">Billing &amp; payments</a>, pick your new ad account, and <b className="text-fg">Add payment method</b>. Your ads are billed to you directly by Meta.</>,
+    screen: (
+      <Screen url="business.facebook.com/billing_hub/payment_settings">
+        <div className="grid place-items-center gap-2 py-6 text-center">
+          <p className="text-[13px] font-semibold">Payment methods</p>
+          <Hit>Add payment method</Hit>
+        </div>
+      </Screen>
+    ),
+  },
+];
+
+function GoogleSheet({ slug, guide, managerId, help }: Props) {
   const router = useRouter();
   const [id, setId] = useState(guide.google.account ?? "");
   const [busy, setBusy] = useState(false);
@@ -370,7 +666,7 @@ function GoogleSheet({ slug, guide, managerId }: Props) {
     router.refresh();
   };
   return (
-    <Sheet kicker="Step 2" title="Google Ads">
+    <Sheet kicker="Step 2" title="Google Ads" help={<HelpChat slug={slug} step="google" initial={help.google} onCall={guide.google.status === "on_call"} />}>
       {result.status === "verified" ? (
         <div className="grid gap-3 rounded-[20px] border border-ok/40 bg-ok-soft/40 p-5">
           <p className="font-heading text-[20px] text-ok">✓ Connected</p>

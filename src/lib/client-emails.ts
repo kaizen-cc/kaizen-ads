@@ -29,7 +29,7 @@ const NUDGE = "A quick nudge in case this got buried.";
 export function setupSteps(services: string[]) {
   const { meta, google, looks } = guideSteps(services);
   return [
-    ...(meta ? [{ title: "Give us access to your Facebook and Instagram ads", text: "Add Kaizen as a partner in your Business Manager. We show you every click." }] : []),
+    ...(meta ? [{ title: "Give us access to your Facebook and Instagram ads", text: "Add Kaizen as a partner in your Business Manager. We show you every click, and how to make one if you don't have it yet." }] : []),
     ...(google ? [{ title: "Send us your Google Ads account ID", text: "We show you where to find it, or how to make an account." }] : []),
     { title: "Share your brand assets", text: "Your logo, photos, videos and brand guide, or a link to them." },
     ...(looks ? [{ title: "Pick the look you want", text: "The styles and pacing you love, so your first ads feel like you." }] : []),

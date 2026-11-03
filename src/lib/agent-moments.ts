@@ -119,6 +119,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Answers an agent's chat in Settings and proposes edits to its skills", where: "Settings \u00b7 AI agents \u00b7 an agent's chat", trigger: "click", when: "With every message", labels: ["agent chat"] },
   ],
   launcher: [
+    { title: "Helps a new client give us Meta access in their setup guide, from their words and screenshots; offers the onboarding call only after several frustrated tries", where: "Client portal · Setup", trigger: "click", when: "When the client asks for help in a setup step", labels: ["setup help "] },
     { title: "Picks a new client's own posts for their 48-hour engagement launch, and where to target", where: "Client portal · Your first ads", trigger: "auto", when: "When the client approves their presentation and chooses the 48-hour launch", labels: ["engagement launch posts "] },
     { title: "Places approved ads in the right ad set (or a copy of one) and names them to match it, then pushes them to Meta paused", where: "Board · Ready to launch · Launch to Meta", trigger: "click", when: "When the buyer plans a launch", labels: ["place a launch"] },
     { title: "Turns an audit action or sprint move into exact Meta changes (pause or turn on, daily budgets), dry-run with Meta first", where: "KPIs · audit · sprint", trigger: "click", when: "Make this change in Meta", labels: ["plan a Meta change"] },
@@ -129,6 +130,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Checks each Google optimization sprint: what changed in Google Ads, what was ticked, and what to tell the buyer", where: "KPIs · sprint page · Next for me", trigger: "auto", when: "Daily, or on the follow-up date it set", labels: ["sprint check"] },
   ],
   google_launcher: [
+    { title: "Helps a new client send their Google Ads ID or make an account in their setup guide, from their words and screenshots", where: "Client portal · Setup", trigger: "click", when: "When the client asks for help in a setup step", labels: ["setup help "] },
     { title: "Turns an audit action or sprint move into exact Google Ads changes (pause or enable, budgets, targets, negatives)", where: "KPIs · Google audit · sprint", trigger: "click", when: "Make this change in Google Ads", labels: ["plan a Google Ads change"] },
   ],
   reporter: [

@@ -27,11 +27,13 @@ export default async function StartPage({ params }: { params: Promise<{ slug: st
     const { data: mine } = await (await createClient()).from("clients").select("id").eq("id", client.id).maybeSingle();
     if (!mine) notFound();
   }
-  const [guide, access, examples, { data: deck }] = await Promise.all([
+  const { loadHelp } = await import("@/lib/setup-help");
+  const [guide, access, examples, { data: deck }, help] = await Promise.all([
     loadGuide(admin, client.id),
     accessSetting(admin),
     industryExamples(admin, client.id).catch(() => []),
     admin.from("client_presentations").select("status").eq("client_id", client.id).maybeSingle(),
+    loadHelp(admin, client.id),
   ]);
   const { managerId } = await import("@/lib/context/google-ads");
   const firstName = viewer.kind === "contact" ? (viewer.fullName?.split(" ")[0] ?? null) : null;
@@ -49,6 +51,7 @@ export default async function StartPage({ params }: { params: Promise<{ slug: st
           adminEmails={access.adminEmails}
           managerId={managerId() || null}
           examples={examples}
+          help={help}
           presentation={deck && ["sent", "approved"].includes(deck.status as string) ? (deck.status as string) : null}
         />
       </main>

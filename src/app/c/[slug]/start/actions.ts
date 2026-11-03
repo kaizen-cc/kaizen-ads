@@ -121,3 +121,42 @@ export async function saveStyle(slug: string, style: StyleStep): Promise<{ ok: t
   done(slug);
   return { ok: true };
 }
+
+/** Screenshots and files for the help chat: signed upload slots in the client's own folder */
+export async function helpSlots(slug: string, files: { name: string; bytes: number }[]): Promise<{ ok: true; slots: { path: string; token: string }[] } | { ok: false; error: string }> {
+  const l = await load(slug);
+  if ("error" in l) return { ok: false, error: l.error! };
+  if (files.length > 6) return { ok: false, error: "Up to 6 files at a time." };
+  if (files.some((f) => f.bytes > 25_000_000)) return { ok: false, error: "Screenshots and files up to 25 MB." };
+  const slots: { path: string; token: string }[] = [];
+  for (const f of files) {
+    const path = `${l.client.id}/setup-help/${crypto.randomUUID()}-${safe(f.name)}`;
+    const { data, error } = await l.admin.storage.from("client-docs").createSignedUploadUrl(path);
+    if (error || !data) return { ok: false, error: "Uploads aren't working right now. Try again in a minute." };
+    slots.push({ path, token: data.token });
+  }
+  return { ok: true, slots };
+}
+
+/** Their question in the setup guide, answered for what's on their screen */
+export async function askHelp(slug: string, step: "meta" | "google", text: string, files: { path: string; name: string; mime: string; bytes: number }[]) {
+  const l = await load(slug);
+  if ("error" in l) return { ok: false as const, error: l.error! };
+  if (!text.trim() && !files.length) return { ok: false as const, error: "Ask something or share a screenshot first." };
+  try {
+    const { askSetupHelp } = await import("@/lib/setup-help");
+    const turns = await askSetupHelp(l.admin, l.client.id, step, { name: l.by, contactId: l.contactId }, { text, files });
+    return { ok: true as const, turns };
+  } catch (e) {
+    const { AiUnavailable } = await import("@/lib/ai");
+    return { ok: false as const, error: e instanceof AiUnavailable ? e.message : "Something went wrong. Try again in a moment." };
+  }
+}
+
+/** Saved for the onboarding call from the help chat: the team hears what they were stuck on */
+export async function helpToCall(slug: string, step: "meta" | "google") {
+  const l = await load(slug);
+  if ("error" in l) return { ok: false as const, error: l.error! };
+  const { helpSummary } = await import("@/lib/setup-help");
+  return onTheCall(slug, step, await helpSummary(l.admin, l.client.id, step));
+}
