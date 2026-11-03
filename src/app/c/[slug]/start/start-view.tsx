@@ -7,21 +7,25 @@ import { PACING, STYLES, guideProgress, type Guide, type StyleStep } from "@/lib
 import { createClient } from "@/lib/supabase/client";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import type { HelpTurn } from "@/lib/setup-help";
+import { INTAKE_FORM_URL } from "@/lib/presentation-types";
 import { askHelp, assetSlots, assetsShared, googleSend, helpSlots, helpToCall, metaDone, onTheCall, saveStyle } from "./actions";
 
 // The client's setup, as a few short, visual steps: each opens full screen (in the address, so back closes it), walks
 // them through with pictures of the screens they'll see, and says plainly when it's done. Nothing here is a form to
 // puzzle over: copy buttons for every ID, one tap for "let's do it on our call".
 
-type Props = { slug: string; brand: string; firstName: string | null; guide: Guide; has: { meta: boolean; google: boolean; looks: boolean }; bmId: string | null; adminEmails: string[]; managerId: string | null; examples: { id: string; image: string; video: boolean }[]; presentation: string | null; help: Record<"meta" | "google", HelpTurn[]> };
-type StepKey = "meta" | "google" | "assets" | "style";
+type Props = { slug: string; brand: string; firstName: string | null; guide: Guide; has: { meta: boolean; google: boolean; looks: boolean }; bmId: string | null; adminEmails: string[]; managerId: string | null; examples: { id: string; image: string; video: boolean }[]; presentation: string | null; help: Record<"meta" | "google", HelpTurn[]>; /** The marketing intake form: the step right after access */ intake: { done: boolean; clientId: number | null } };
+type StepKey = "meta" | "google" | "intake" | "assets" | "style";
 
 export function StartView(p: Props) {
   const step = useParam("step") as StepKey | null;
-  const { done, total } = guideProgress(p.guide, p.has);
+  const progress = guideProgress(p.guide, p.has);
+  const done = progress.done + (p.intake.done ? 1 : 0);
+  const total = progress.total + 1;
   const steps: { key: StepKey; title: string; line: string; mins: string; state: "done" | "call" | "todo" | "wait" }[] = [
     ...(p.has.meta ? [{ key: "meta" as const, title: "Facebook & Instagram access", line: "Add Kaizen as a partner so we can run your ads", mins: "4 min", state: (p.guide.meta.status === "verified" ? "done" : p.guide.meta.status === "on_call" ? "call" : p.guide.meta.status === "done" ? "wait" : "todo") as "done" | "call" | "todo" | "wait" }] : []),
     ...(p.has.google ? [{ key: "google" as const, title: "Google Ads", line: "Send us your account ID (or make one)", mins: "2 min", state: (p.guide.google.status === "verified" ? "done" : p.guide.google.status === "on_call" ? "call" : ["sent", "invited", "none"].includes(p.guide.google.status ?? "") ? "wait" : "todo") as "done" | "call" | "todo" | "wait" }] : []),
+    { key: "intake", title: "Tell us about your business", line: "Your marketing intake form: goals, customers, offers", mins: "10 min", state: p.intake.done ? "done" : "todo" },
     { key: "assets", title: "Your brand assets", line: "Logo, photos, videos, brand guide", mins: "3 min", state: (p.guide.assets.files ?? 0) + (p.guide.assets.links ?? 0) ? "done" : "todo" },
     ...(p.has.looks ? [{ key: "style" as const, title: "The look you want", line: "Pick the styles and pacing you love", mins: "2 min", state: (p.guide.style.styles?.length || p.guide.style.pacing ? "done" : "todo") as "done" | "todo" }] : []),
   ];
@@ -69,6 +73,7 @@ export function StartView(p: Props) {
 
       {step === "meta" && p.has.meta && <MetaSheet {...p} />}
       {step === "google" && p.has.google && <GoogleSheet {...p} />}
+      {step === "intake" && <IntakeSheet {...p} />}
       {step === "assets" && <AssetsSheet {...p} />}
       {step === "style" && p.has.looks && <StyleSheet {...p} />}
     </div>
@@ -427,7 +432,7 @@ function OnCall({ slug, which, done }: { slug: string; which: "meta" | "google";
 
 const META_MENU = ["Users", "  People", "  Partners", "  System users", "Accounts", "  Pages", "  Ad accounts", "  Instagram accounts", "Data sources", "  Datasets"];
 
-function MetaSheet({ slug, guide, bmId, adminEmails, help }: Props) {
+function MetaSheet({ slug, guide, bmId, adminEmails, help, intake }: Props) {
   const router = useRouter();
   const [none, setNone] = useState(false);
   const [typed, setTyped] = useState(guide.meta.typed ?? "");
@@ -498,9 +503,12 @@ function MetaSheet({ slug, guide, bmId, adminEmails, help }: Props) {
   return (
     <Sheet kicker="Step 1" title="Facebook & Instagram access" help={<HelpChat slug={slug} step="meta" initial={help.meta} onCall={guide.meta.status === "on_call"} />}>
       {verified ? (
-        <div className="grid gap-3 rounded-[20px] border border-ok/40 bg-ok-soft/40 p-5">
-          <p className="font-heading text-[20px] text-ok">✓ We&rsquo;re connected</p>
-          <p className="text-[14.5px] text-muted">We can see {result.accountName ?? "your ad account"} and {result.pageName ?? "your Page"}. Nothing else to do here.</p>
+        <div className="grid gap-4">
+          <div className="grid gap-3 rounded-[20px] border border-ok/40 bg-ok-soft/40 p-5">
+            <p className="font-heading text-[20px] text-ok">✓ We&rsquo;re connected</p>
+            <p className="text-[14.5px] text-muted">We can see {result.accountName ?? "your ad account"} and {result.pageName ?? "your Page"}. Nothing else to do here.</p>
+          </div>
+          <IntakeNext {...intake} />
         </div>
       ) : none ? (
         <Walk
@@ -538,7 +546,10 @@ function MetaSheet({ slug, guide, bmId, adminEmails, help }: Props) {
                 {checking ? "Checking on our side…" : "Check my access"}
               </button>
               {result.status === "done" && !checking && (
-                <p className="rounded-[14px] bg-surface px-4 py-3 text-[13.5px] text-muted">{result.note ?? "We can't see it yet."} Meta can take a few minutes; we keep checking and your team will see the moment it lands. You can close this.</p>
+                <>
+                  <p className="rounded-[14px] bg-surface px-4 py-3 text-[13.5px] text-muted">{result.note ?? "We can't see it yet."} Meta can take a few minutes; we keep checking and your team will see the moment it lands.</p>
+                  <IntakeNext {...intake} />
+                </>
               )}
             </div>
           }
@@ -645,7 +656,7 @@ const MAKE_META: { title: string; body: React.ReactNode; screen: React.ReactNode
   },
 ];
 
-function GoogleSheet({ slug, guide, managerId, help }: Props) {
+function GoogleSheet({ slug, guide, managerId, help, intake }: Props) {
   const router = useRouter();
   const [id, setId] = useState(guide.google.account ?? "");
   const [busy, setBusy] = useState(false);
@@ -671,6 +682,7 @@ function GoogleSheet({ slug, guide, managerId, help }: Props) {
         <div className="grid gap-3 rounded-[20px] border border-ok/40 bg-ok-soft/40 p-5">
           <p className="font-heading text-[20px] text-ok">✓ Connected</p>
           <p className="text-[14.5px] text-muted">Your account {result.account} is linked to Kaizen. Nothing else to do here.</p>
+          <IntakeNext {...intake} />
         </div>
       ) : result.status === "invited" || result.status === "sent" ? (
         <div className="grid gap-4">
@@ -690,6 +702,7 @@ function GoogleSheet({ slug, guide, managerId, help }: Props) {
             </div>
           </Screen>
           {result.note && <p className="text-[12.5px] text-faint">{result.note}</p>}
+          <IntakeNext {...intake} />
         </div>
       ) : none ? (
         <Walk
@@ -748,6 +761,44 @@ function Find({ id, setId, fmt, send, busy, error }: { id: string; setId: (v: st
 }
 
 const WANT = ["Logo", "Brand guide, fonts and colors", "Product or service photos", "Videos (any you have)", "Team and location photos", "Reviews and testimonials", "Ads that worked before"];
+
+/** Right after they share access: the marketing intake form, with their Client ID to paste in */
+function IntakeNext({ done, clientId }: Props["intake"]) {
+  if (done) return null;
+  return (
+    <div className="grid gap-3 rounded-[20px] border border-brand/40 bg-brand/[0.06] p-5">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-brand-text">Next</p>
+      <p className="font-heading text-[20px] leading-snug">Tell us about your business</p>
+      <p className="text-[14.5px] leading-relaxed text-muted">Your goals, customers and offers, in about ten minutes. It&rsquo;s what we build your brand plan and first ads from.</p>
+      {clientId != null && (
+        <div>
+          <Copy value={String(clientId)} label="Your Client ID" />
+        </div>
+      )}
+      <a href={INTAKE_FORM_URL} target="_blank" rel="noreferrer" className="grid h-12 place-items-center rounded-full bg-brand text-[15px] font-medium text-white hover:bg-brand-hover">
+        Open the intake form ↗
+      </a>
+    </div>
+  );
+}
+
+function IntakeSheet({ intake }: Props) {
+  return (
+    <Sheet kicker="Your business" title="Tell us about your business">
+      {intake.done ? (
+        <div className="grid gap-3 rounded-[20px] border border-ok/40 bg-ok-soft/40 p-5">
+          <p className="font-heading text-[20px] text-ok">✓ Got it, thank you</p>
+          <p className="text-[14.5px] text-muted">We have your intake form. Your brand plan is being written from it, and you&rsquo;ll hear from us when it&rsquo;s ready.</p>
+        </div>
+      ) : (
+        <div className="grid gap-4">
+          <p className="text-[14.5px] leading-relaxed text-muted">The questions we&rsquo;d ask on a long call: what you sell, who buys it, what makes you different, your offers and what success looks like. Answer what you can; anything you skip, we&rsquo;ll fill in from our research and our calls.</p>
+          <IntakeNext {...intake} />
+        </div>
+      )}
+    </Sheet>
+  );
+}
 
 function AssetsSheet({ slug, guide }: Props) {
   const router = useRouter();

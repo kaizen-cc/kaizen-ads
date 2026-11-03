@@ -19,7 +19,7 @@ export default async function StartPage({ params }: { params: Promise<{ slug: st
   const team = viewer.kind === "staff";
   if (!adminConfigured() || (!team && !viewer.brands.some((b) => b.slug === slug))) notFound();
   const admin = createAdminClient();
-  const { data: client } = await admin.from("clients").select("id, name, slug, portal_live, services, services_extra, services_removed").eq("slug", slug).maybeSingle();
+  const { data: client } = await admin.from("clients").select("id, name, slug, kaizen_id, portal_live, services, services_extra, services_removed").eq("slug", slug).maybeSingle();
   if (!client || (!team && !client.portal_live)) notFound();
   if (team) {
     // The team's own access rules decide whether they may open it
@@ -28,12 +28,13 @@ export default async function StartPage({ params }: { params: Promise<{ slug: st
     if (!mine) notFound();
   }
   const { loadHelp } = await import("@/lib/setup-help");
-  const [guide, access, examples, { data: deck }, help] = await Promise.all([
+  const [guide, access, examples, { data: deck }, help, { count: intakes }] = await Promise.all([
     loadGuide(admin, client.id),
     accessSetting(admin),
     industryExamples(admin, client.id).catch(() => []),
     admin.from("client_presentations").select("status").eq("client_id", client.id).maybeSingle(),
     loadHelp(admin, client.id),
+    admin.from("client_intakes").select("id", { count: "exact", head: true }).eq("client_id", client.id),
   ]);
   const { managerId } = await import("@/lib/context/google-ads");
   const firstName = viewer.kind === "contact" ? (viewer.fullName?.split(" ")[0] ?? null) : null;
@@ -52,6 +53,7 @@ export default async function StartPage({ params }: { params: Promise<{ slug: st
           managerId={managerId() || null}
           examples={examples}
           help={help}
+          intake={{ done: (intakes ?? 0) > 0, clientId: (client.kaizen_id as number | null) ?? null }}
           presentation={deck && ["sent", "approved"].includes(deck.status as string) ? (deck.status as string) : null}
         />
       </main>
