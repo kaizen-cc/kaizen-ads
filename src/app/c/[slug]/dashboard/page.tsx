@@ -30,11 +30,14 @@ export default async function DashboardPage({ params }: { params: Promise<{ slug
     .eq("client_id", client.id)
     .order("created_at", { ascending: false })
     .limit(12);
+  // What their own store or CRM recorded, when it's connected
+  const s = await (await import("@/lib/integrations")).businessSummary(admin, client.id).catch(() => null);
+  const business = s ? { store: s.store, crm: s.crm, month: { newCustomers: s.month.newCustomers, subscriptions: s.month.subscriptions, revenue: s.month.revenue, leads: s.month.leads, booked: s.month.booked, won: s.month.won }, last30: { newCustomers: s.last30.newCustomers, leads: s.last30.leads, fromMeta: s.last30.fromMeta, fromGoogle: s.last30.fromGoogle }, prior30: { newCustomers: s.prior30.newCustomers, leads: s.prior30.leads } } : null;
   return (
     <div>
       <main className="grid gap-4">
         {shots && <ShotsBanner slim slug={client.slug} month={shots.list.month} open={shots.list.shots.filter((x) => !x.delivered).length} total={shots.list.shots.length} />}
-        <DashboardView slug={client.slug} brand={client.name} asked={(asked ?? []).reverse() as { id: string; question: string; answer: string; flagged: boolean; created_at: string }[]} />
+        <DashboardView business={business} slug={client.slug} brand={client.name} asked={(asked ?? []).reverse() as { id: string; question: string; answer: string; flagged: boolean; created_at: string }[]} />
       </main>
     </div>
   );

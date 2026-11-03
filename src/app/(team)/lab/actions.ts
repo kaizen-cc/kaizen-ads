@@ -116,6 +116,33 @@ export async function deleteSource(id: string): Promise<Result> {
   return error ? { ok: false, error: error.message } : { ok: true };
 }
 
+/**
+ * Loom videos into the library in one go (a list of share links, one per line or space): each is saved and read in the
+ * background (the transcript from Loom when it's shared with captions, else the share page), and the table reads them
+ * in every conversation after.
+ */
+export async function addLoomLinks(text: string): Promise<Result<{ added: number; skipped: number }>> {
+  const me = await lead();
+  const { loomId } = await import("@/lib/loom");
+  const links = [...new Set((text.match(/https?:\/\/\S+/g) ?? []).map((u) => u.replace(/[),.;]+$/, "")).filter((u) => loomId(u)))].slice(0, 50);
+  if (!links.length) return { ok: false, error: "Paste Loom share links (loom.com/share/…)." };
+  const supabase = await createClient();
+  const { data: have } = await supabase.from("lab_sources").select("url").in("url", links);
+  const fresh = links.filter((u) => !(have ?? []).some((h) => h.url === u));
+  if (!fresh.length) return { ok: true, added: 0, skipped: links.length };
+  const db = admin();
+  const { data: saved, error } = await supabase
+    .from("lab_sources")
+    .insert(fresh.map((url) => ({ kind: "video", title: "Loom video", url, body: "", status: "reading", added_by: me.id })))
+    .select("id");
+  if (error) return { ok: false, error: error.message };
+  after(async () => {
+    for (const x of saved ?? []) await readSource(db, x.id as string);
+  });
+  revalidatePath("/lab");
+  return { ok: true, added: fresh.length, skipped: links.length - fresh.length };
+}
+
 // ─── Tests ───
 
 /**

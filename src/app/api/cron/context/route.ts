@@ -58,6 +58,7 @@ function nyNow() {
  * - calls: every 30 minutes on weekdays 8am to 7pm, every 3 hours otherwise (Gemini and Fireflies notes, promises watched)
  * - clients: every hour (new, archived and upgraded clients from Kaizen Track)
  * - suggest: weekdays at 8:30am (the strategist's suggested briefs, ready for the morning)
+ * - integrations: every hour (each client's Shopify, WooCommerce, GoHighLevel or HubSpot read; at 9am, the buyers' notes)
  * - bible_upkeep: every hour (the Bible's pages checked every 90 days, website issues read from new Bibles; at 9am,
  *   clients paid for creative and given nothing)
  */
@@ -91,6 +92,7 @@ function due(step: string | null) {
   if (step === "bibles") return true; // every 10 minutes (vercel.json): every client gets a Brand Bible, kept current
   if (step === "bible_write") return true; // started by a Bible build once its research is in (?client=<id>)
   if (step === "presentations") return true; // every 10 minutes (vercel.json): a new client's presentation, written and sent
+  if (step === "integrations") return true; // hourly (vercel.json): stores and CRMs read, and at 9am the notes to the buyers
   if (step === "bible_upkeep") return true; // hourly (vercel.json): links, website issues, creative packages with nothing made
   if (step === "history") return true; // every 10 minutes (vercel.json): a client's whole email history and earlier calls, once
   if (step === "calls") return (businessHours || hour === 18) || (hour % 3 === 0 && minute < 30);
@@ -228,6 +230,7 @@ export async function GET(request: Request) {
       if (!id) return Response.json({ error: "client missing" }, { status: 400 });
       return Response.json({ result: await (await import("@/lib/brand-bible")).writeBible(admin, id) });
     }
+    if (step === "integrations") return Response.json(await (await import("@/lib/integrations")).keepIntegrations(admin));
     if (step === "bible_upkeep") {
       const links = await (await import("@/lib/bible-links")).keepLinks(admin).catch((e) => String(e));
       const issues = await (await import("@/lib/website-issues")).keepIssues(admin).catch((e) => String(e));

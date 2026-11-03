@@ -298,6 +298,14 @@ export async function readSource(admin: SupabaseClient, id: string) {
   if (!s) return;
   try {
     let body = s.body;
+    // A Loom video: its transcript straight from Loom when it's shared publicly with captions
+    if (s.url && !body.trim()) {
+      const { isLoom, readLoom } = await import("@/lib/loom");
+      if (isLoom(s.url)) {
+        const l = await readLoom(s.url);
+        if (l.transcript) body = `${l.title ? `${l.title}\n` : ""}${l.description ? `${l.description}\n\n` : ""}Transcript:\n${l.transcript}`;
+      }
+    }
     if (s.url && !body.trim()) {
       body = await researchWeb({
         agent: "lab",

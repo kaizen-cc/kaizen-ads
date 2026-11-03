@@ -158,7 +158,10 @@ export function GoogleAdsLogo({ className = "h-4 w-4" }: { className?: string })
 }
 const Logo = ({ platform, className }: { platform: string; className?: string }) => (platform === "google" ? <GoogleAdsLogo className={className} /> : <MetaLogo className={className} />);
 
-export function DashboardView({ slug, brand, asked: initial, demo }: { slug: string; brand: string; asked: Asked[]; /** Sample numbers instead of the live ones (design previews) */ demo?: { history: DashboardHistory; detail: DashboardPart[] } }) {
+/** What their own store or CRM recorded: this month, and the last 30 days against the 30 before */
+export type BusinessStrip = { store: boolean; crm: boolean; month: { newCustomers: number; subscriptions: number; revenue: number; leads: number; booked: number; won: number }; last30: { newCustomers: number; leads: number; fromMeta: number; fromGoogle: number }; prior30: { newCustomers: number; leads: number } };
+
+export function DashboardView({ slug, brand, asked: initial, demo, business = null }: { slug: string; brand: string; asked: Asked[]; business?: BusinessStrip | null; /** Sample numbers instead of the live ones (design previews) */ demo?: { history: DashboardHistory; detail: DashboardPart[] } }) {
   const [preset, setPreset] = useState("30");
   const [range, setRange] = useState<Range>(PRESETS[1].range(""));
   const [history, setHistory] = useState<DashboardHistory | null>(demo?.history ?? null);
@@ -255,6 +258,7 @@ export function DashboardView({ slug, brand, asked: initial, demo }: { slug: str
         {view && history && (
           <>
             <Hero brand={brand} view={view} roas={roas} range={range} />
+            {business && <Business b={business} />}
             <Tiles view={view} roas={roas} chart={chart} setChart={setChart} />
             <Trend history={history} view={view} metric={chart} range={range} />
             {view.key === "all" && view.split.length > 1 && <Split view={view} />}
@@ -627,6 +631,47 @@ function Split({ view }: { view: View }) {
 
 function Loading({ h }: { h: string }) {
   return <div className={`${h} animate-pulse rounded-[16px] bg-surface-2/60`} />;
+}
+
+/** Their store or CRM, this month: the customers and leads that really came in, and how many from Meta and Google */
+function Business({ b }: { b: BusinessStrip }) {
+  const n = (x: number) => Math.round(x).toLocaleString("en-US");
+  const vs = (a: number, p: number) => (p ? Math.round(((a - p) / p) * 100) : null);
+  const items: [string, string, number | null][] = [
+    ...(b.store
+      ? ([
+          ["New customers this month", n(b.month.newCustomers), vs(b.last30.newCustomers, b.prior30.newCustomers)],
+          ["Subscriptions started", n(b.month.subscriptions), null],
+          ["Store revenue this month", `$${n(b.month.revenue)}`, null],
+        ] as [string, string, number | null][])
+      : []),
+    ...(b.crm
+      ? ([
+          ["Leads this month", n(b.month.leads), vs(b.last30.leads, b.prior30.leads)],
+          ["Booked", n(b.month.booked), null],
+          ["Won", n(b.month.won), null],
+        ] as [string, string, number | null][])
+      : []),
+  ];
+  return (
+    <section className="grid gap-3 rounded-[24px] border border-line bg-surface p-5 md:p-6">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="font-heading text-[17px]">{b.store ? "From your store" : "From your CRM"}</p>
+        <p className="text-[12px] text-faint">
+          Last 30 days: {n(b.last30.fromMeta)} from Meta, {n(b.last30.fromGoogle)} from Google
+        </p>
+      </div>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+        {items.map(([k, v, d]) => (
+          <div key={k} className="rounded-[16px] bg-bg p-4">
+            <p className="text-[11px] uppercase tracking-[0.12em] text-faint">{k}</p>
+            <p className="tabular mt-1 font-heading text-[24px] leading-tight">{v}</p>
+            {d != null && <p className={`mt-0.5 text-[12px] ${d >= 0 ? "text-ok" : "text-bad"}`}>{d >= 0 ? "▲" : "▼"} {Math.abs(d)}% vs the 30 days before</p>}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function Campaigns({ view, roas }: { view: View; roas: boolean }) {

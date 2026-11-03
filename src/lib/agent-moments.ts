@@ -96,6 +96,8 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
   gtm: [
     { title: "Researches the client for the Meta go-to-market strategy", where: "Client page · Go-to-market", trigger: "auto", when: "At onboarding once the intake, call notes and website are in, or on Build it now", labels: ["gtm research"] },
     { title: "Writes the Meta go-to-market strategy", where: "Client page · Go-to-market", trigger: "auto", when: "Right after the research", labels: ["gtm strategy"] },
+    { title: "Researches the client for the Google Ads go-to-market strategy: their pages, Business Profile, who shows up for their searches, Google benchmarks", where: "Client page · Google Ads · Strategy", trigger: "auto", when: "Once the intake, call notes and website are in for a Google client, or on Build it now", labels: ["google gtm research"] },
+    { title: "Writes the Google Ads go-to-market strategy: campaigns, keyword groups and negatives, geo, ad copy, the asset library, the 90-day roadmap", where: "Client page · Google Ads · Strategy", trigger: "auto", when: "Right after the research", labels: ["google gtm strategy"] },
   ],
   market: [
     { title: "Reads each live market ad: why it works and what to take from it", where: "Ideas · In the market", trigger: "auto", when: "After each Motion sync (8:30am), or the first time someone hovers an ad", labels: ["read a market ad"] },

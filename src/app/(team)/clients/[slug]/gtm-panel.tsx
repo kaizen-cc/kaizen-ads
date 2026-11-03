@@ -20,6 +20,17 @@ export type GtmStrategy = {
   reviewedBy: string | null;
 };
 
+const GOOGLE_STEPS = [
+  "Reading the intake form and call notes",
+  "Reading the Google Ads account: campaigns, keywords, search terms",
+  "Scrubbing the website: offers, landing pages, tracking",
+  "Checking who shows up for their searches",
+  "Finding sourced Google benchmarks",
+  "Grouping keywords and the negatives plan",
+  "Writing headlines and descriptions",
+  "Checking the asset library",
+  "Running the quality gate",
+];
 const STEPS = [
   "Reading the intake form and call notes",
   "Scrubbing the website: offers, pricing, funnel",
@@ -42,7 +53,9 @@ const GATE = [
  * The client's Meta go-to-market strategy: written once the intake form, call notes and website are in (the hard
  * gate), every fact sourced, open items in plain sight. Its summary joins what every agent reads for this client.
  */
-export function GtmPanel({ clientId, slug, gtm, canReview, readOnly = false }: { clientId: string; slug: string; gtm: GtmStrategy | null; canReview: boolean; readOnly?: boolean }) {
+export function GtmPanel({ clientId, slug, gtm, canReview, readOnly = false, platform = "meta" }: { clientId: string; slug: string; gtm: GtmStrategy | null; canReview: boolean; readOnly?: boolean; /** Meta's strategy, or Google's (same gate and review) */ platform?: "meta" | "google" }) {
+  const google = platform === "google";
+  const steps = google ? GOOGLE_STEPS : STEPS;
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, start] = useTransition();
@@ -55,17 +68,17 @@ export function GtmPanel({ clientId, slug, gtm, canReview, readOnly = false }: {
   useEffect(() => {
     if (!building) return;
     const poll = setInterval(() => router.refresh(), 8000);
-    const tick = setInterval(() => setStep((s) => (s + 1) % STEPS.length), 7000);
+    const tick = setInterval(() => setStep((s) => (s + 1) % steps.length), 7000);
     return () => {
       clearInterval(poll);
       clearInterval(tick);
     };
-  }, [building, router]);
+  }, [building, router, steps.length]);
 
   const build = () =>
     start(async () => {
       setError(null);
-      const r = await buildGtmNow(clientId, slug);
+      const r = await buildGtmNow(clientId, slug, platform);
       if (!r.ok) setError(r.error);
       router.refresh();
     });
@@ -80,14 +93,16 @@ export function GtmPanel({ clientId, slug, gtm, canReview, readOnly = false }: {
       <div className="relative flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="font-heading text-[17px]">Meta go-to-market strategy</h2>
+            <h2 className="font-heading text-[17px]">{google ? "Google Ads go-to-market strategy" : "Meta go-to-market strategy"}</h2>
             {gtm?.status === "reviewed" && <span className="rounded-full bg-ok-soft px-2.5 py-0.5 text-[11px] text-ok">Reviewed · every agent reads it</span>}
             {gtm?.status === "draft" && <span className="rounded-full bg-warn-soft px-2.5 py-0.5 text-[11px] text-warn">Draft · agents read it as a draft until it&apos;s reviewed</span>}
             {has && gtm && <span className="text-[11px] text-faint">{gtm.version}{gtm.generatedAt && ` · ${fmt(gtm.generatedAt)}`}</span>}
           </div>
           <p className="mt-1 text-sm leading-relaxed text-muted">
             {has
-              ? "Business, customer, competitors on Meta, angles with ad copy, the campaign plan and the 90-day profitability roadmap. Every fact sourced."
+              ? google
+                ? "Campaign structure, keyword groups and negatives, geo and bid adjustments, ad copy, the asset library and the 90-day roadmap. Every fact sourced."
+                : "Business, customer, competitors on Meta, angles with ad copy, the campaign plan and the 90-day profitability roadmap. Every fact sourced."
               : "Written at onboarding once the intake form, call notes and website are in. Every fact is sourced; nothing is invented."}
           </p>
         </div>
@@ -103,7 +118,7 @@ export function GtmPanel({ clientId, slug, gtm, canReview, readOnly = false }: {
           <div className="h-1 overflow-hidden rounded-full bg-surface-2">
             <div className="h-full w-1/3 animate-[ai-sweep_2.4s_ease-in-out_infinite] rounded-full bg-brand" />
           </div>
-          <p className="text-sm">{STEPS[step]}…</p>
+          <p className="text-sm">{steps[step % steps.length]}…</p>
           <p className="text-xs text-faint">Research and writing take several minutes. You can leave the page; it keeps going.</p>
         </div>
       ) : !has ? (
@@ -177,7 +192,7 @@ export function GtmPanel({ clientId, slug, gtm, canReview, readOnly = false }: {
                 disabled={busy}
                 onClick={() =>
                   start(async () => {
-                    const r = await markGtmReviewed(clientId, slug);
+                    const r = await markGtmReviewed(clientId, slug, platform);
                     if (r.ok) router.refresh();
                     else setError(r.error);
                   })

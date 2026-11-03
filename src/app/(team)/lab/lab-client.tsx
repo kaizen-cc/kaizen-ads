@@ -7,7 +7,7 @@ import { createPortal } from "react-dom";
 import { METRIC_LABEL, SEATS, TURNS_PER_ROUND, type Metric, type Seat } from "@/lib/lab-seats";
 import type { ClientNumbers, ProposedTest } from "@/lib/lab";
 import { pushParams, useParam } from "@/lib/url-state";
-import { addTestNote, followTest, createTest, decideTest, deleteSource, deleteThread, deployLearning, draftDeploy, dropTest, iterateTest, sendToTable, startTest, tableSpeaks, type Attachment } from "./actions";
+import { addLoomLinks, addTestNote, followTest, createTest, decideTest, deleteSource, deleteThread, deployLearning, draftDeploy, dropTest, iterateTest, sendToTable, startTest, tableSpeaks, type Attachment } from "./actions";
 
 export type LabClientRow = { id: string; name: string; slug: string; industry: string | null; spend30: number };
 export type LabMessage = { id: string; role: "user" | "agent"; seat: Seat | null; author: string | null; body: string; tests: ProposedTest[]; attachments: { id: string; kind: string; title: string; url: string | null; failed?: boolean }[]; at: string };
@@ -292,11 +292,9 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources, read
     <div className="grid gap-4 lg:grid-cols-[272px_minmax(0,1fr)] lg:items-start">
       <aside className="grid min-w-0 content-start gap-5 lg:sticky lg:top-6">
         <Conversations threads={threads} active={readOnly ? null : tid} />
-        {sources.length > 0 && (
-          <div className="hidden lg:block">
-            <SharedMemory sources={sources} />
-          </div>
-        )}
+        <div className="hidden lg:block">
+          <SharedMemory sources={sources} />
+        </div>
       </aside>
 
       <section
@@ -706,6 +704,7 @@ function SharedMemory({ sources }: { sources: LabSource[] }) {
   return (
     <div className="grid gap-2">
       <p className="px-1 text-[11px] uppercase tracking-[0.14em] text-faint">The table remembers</p>
+      <LoomImport />
       <div className="grid gap-1">
         {shown.map((s) => (
           <div key={s.id} className="group flex items-start gap-2 rounded-[10px] px-2 py-1.5 hover:bg-surface-2/60" title={s.summary ?? undefined}>
@@ -732,6 +731,49 @@ function SharedMemory({ sources }: { sources: LabSource[] }) {
           {open ? "Show less" : `All ${sources.length}`}
         </button>
       )}
+    </div>
+  );
+}
+
+/** Loom videos in bulk: paste share links, each is read into the library */
+function LoomImport() {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [note, setNote] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+  if (!open)
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="w-fit px-2 text-[11px] text-brand-text hover:underline">
+        + Add Loom videos
+      </button>
+    );
+  return (
+    <div className="grid gap-2 rounded-[12px] border border-line bg-surface p-2.5">
+      <textarea data-chat value={text} onChange={(e) => setText(e.target.value)} rows={3} placeholder="Paste Loom share links, one per line" className="w-full resize-none rounded-[8px] border border-line bg-surface-2 px-2.5 py-2 text-xs outline-none focus:border-brand-text/60" />
+      <p className="text-[10.5px] leading-snug text-faint">Read from Loom&rsquo;s transcript when the video is shared publicly with captions; otherwise from its share page.</p>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          disabled={pending || !text.trim()}
+          onClick={() =>
+            start(async () => {
+              const r = await addLoomLinks(text);
+              if (!r.ok) return setNote(r.error);
+              setNote(r.added ? `Reading ${r.added} video${r.added === 1 ? "" : "s"}${r.skipped ? ` (${r.skipped} already in)` : ""}.` : "Those are already in.");
+              setText("");
+              router.refresh();
+            })
+          }
+          className="h-8 rounded-full bg-brand px-3 text-[11.5px] font-medium text-white disabled:opacity-50"
+        >
+          {pending ? "Adding…" : "Add"}
+        </button>
+        <button type="button" onClick={() => setOpen(false)} className="text-[11px] text-faint hover:text-fg">
+          Close
+        </button>
+      </div>
+      {note && <p className="text-[11px] text-muted">{note}</p>}
     </div>
   );
 }

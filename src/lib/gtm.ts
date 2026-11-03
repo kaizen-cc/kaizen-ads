@@ -10,6 +10,10 @@ import { LIVE } from "@/lib/live";
 // campaign structure, the test plan and retargeting, and the hypotheses. What its execution proves again and again
 // goes back into the Bible; a hypothesis never does until it has.
 
+/** Which strategy: Meta's (client_gtm_strategies) or Google's (client_google_gtm), the same shape */
+export type GtmPlatform = "meta" | "google";
+export const GTM_TABLE: Record<GtmPlatform, string> = { meta: "client_gtm_strategies", google: "client_google_gtm" };
+
 const today = () => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", year: "numeric" }).format(new Date());
 
 export type GtmGate = { intake: boolean; calls: boolean; website: boolean; missing: string[] };
@@ -68,25 +72,77 @@ readThisFirst: under 350 words, plain text, for the team's agents (brief strateg
 openItems: every open item with who answers it: "client", "media buyer" or "Kaizen".
 quality: the quality gate, one entry per check, honestly: "Why this client is profitable within 60 days is answered", "At least one evidence-backed competitive advantage", "ICP consistent across sections", "90-day roadmap uses the client's real numbers", "KPI targets are sourced", "Client-ready: clear, digestible in about 15 minutes, no internal jargon", "Every number, quote, competitor claim and offer traces to a source", "Open items are visibly flagged". pass is false when it doesn't hold, and note says what's needed.`;
 
+
+const GOOGLE_SYSTEM = `You are Kaizen Marketing's Google Ads Go-to-Market Strategy Builder. You write the client's Google Ads go-to-market strategy: the Google team's foundational reference for the client, good enough to put in front of the client without a rewrite. Google Ads only (Search, Performance Max, Shopping, YouTube, Demand Gen, Local): no Meta or TikTok plans.
+
+The prime directive, above being complete: never invent anything.
+- Never invent an offer, discount, guarantee, price, product name, keyword volume or CPC that isn't stated in the intake form, the call notes, the client's website, the Google Ads account data or the research. If you don't have a number, don't write one.
+- Never invent competitor data, customer language or reviews. Only what traces to a source.
+- When something is missing, the section says so plainly and it goes in openItems. A visibly incomplete section is always better than a plausible placeholder.
+Every number, quote, competitor claim and offer carries its source in brackets: [intake], [call: <title> <date>], [website], [research: <url>], [Google Ads account].
+Rule one: if it isn't profitable, it isn't working. Brand searches always look like winners: never count brand campaigns or branded search terms as proof of what works; judge non-brand on its own, and flag brand spend above 10% of the month's budget.
+
+The document, in Markdown, with these exact headings:
+Cover: "Go-To-Market Strategy: Google Ads Strategy & Roadmap", the client name, prepared for, prepared by (the Google buyer, from the team, else "[Google buyer]"), the date, status "Draft".
+## 01 Executive Summary: The Opportunity (the search demand and why now). Kaizen's Recommended Strategy (plain language). The Competitive Edge. The 60-Day Bet (why this account will be profitable within 60 days). At a Glance: Target CPA / ROAS, Campaign types, Launch Date.
+## 02 Business & Account Overview: What They Sell (prices only as stated). Profitability Snapshot: Avg. Order / Job Value, Customer LTV, Break-even CPA, Current CAC ("unknown" when it is). Existing Account Findings (from the Google Ads account data when there is some: what's spending, what converts, brand vs non-brand share, impression share and what it's lost to, conversion actions and whether they're the right ones). Tracking & Attribution: the conversion actions that matter for each goal (purchase, lead form, call, booking), how they're tracked (Google tag, GA4 import, Tag Manager, call tracking), and what's missing. Connections: Google Analytics 4, Tag Manager, Business Profile (local businesses), Merchant Center (stores), YouTube channel: linked, missing or not relevant.
+## 03 Search Demand & Customer: who searches, with what intent (problem, solution, brand, competitor, local "near me"), in their words; buying triggers and objections; geography (where customers come from and where they don't).
+## 04 Competitive Landscape: competitors on Google (who shows up for the core searches, their positioning, offers, ad copy themes where found), the gap we exploit, their recurring complaints from reviews (real reviews only).
+## 05 Campaign Structure: the campaigns, each with type (Search, Performance Max, Shopping, YouTube, Demand Gen, Local Services where relevant), goal, bidding strategy and its target, daily budget and share of the monthly budget, and why. Brand kept in its own campaign and capped. Where the business model calls for it: Performance Max with asset groups by product line or service (stores), Shopping feeds, call-only or call assets for local services, location-based campaigns for multi-location businesses, YouTube for awareness only when the budget supports it.
+## 06 Keyword Strategy: consolidated keyword groups (theme, example keywords, match types, intent, which campaign; with spend and winners from the account when it has data: non-brand winners only), the negative keywords plan (lists to add at launch, and how search terms are reviewed weekly), and keywords to test next.
+## 07 Geo Targeting & Bid Adjustments: the locations (zip, city, state or radius around each location), locations to exclude, and the bid adjustments by location, device and schedule, with the reason for each.
+## 08 Ad Copy: at least three angles, each rooted in a finding (pain, benefit, offer, proof, comparison). For each: 5 headlines under 30 characters covering statistical, review, benefit and promotional styles, 2 descriptions under 90 characters, the call to action, and the trust phrases to use (guarantees, years in business, ratings: sourced only). Confirmed offers only; else "pending offer confirmation from client".
+## 09 Asset Library: a checklist of what the account needs and whether it exists: sitelinks (4+ with the pages they go to), callouts, structured snippets, call asset, location asset, price and promotion assets, lead form where relevant, logos (square and landscape), images (square 1:1, landscape 1.91:1, portrait 4:5), videos for PMax/YouTube. Mark each "in place", "missing" or "not relevant", and what's missing goes in openItems.
+## 10 Landing Pages: where each campaign sends people (real URLs only), the funnel for each goal step by step, and the landing page fixes that would lift conversion rate (flag a site conversion rate under 2% for a store or 5% for lead gen).
+## 11 Benchmarks & Profitability: industry benchmarks for this category on Google (CPC, CTR, conversion rate, CPA or ROAS) with source and year, and The Math (at our target CPA of $X with a $Y average order or job, we need Z% conversion rate), from the client's own numbers only.
+## 12 90-Day Roadmap: 30, 60 and 90 days (what's tested, what scales, expected CPA range), and Gap Analysis (what would need to be true for this NOT to work, and the plan).
+## 13 Open Items & Confirmations Needed, then the Internal Quality Gate results.
+Copy rules: never use em dashes anywhere. Confident and direct, professional: no internal slang.
+
+readThisFirst: under 350 words, plain text, for the team's agents: the core searches and intent, the campaign structure in two lines, the angles that lead, confirmed offers and prices, claims never to make, the KPI targets, brand cap, and what's still unconfirmed.
+openItems: every open item with who answers it: "client", "Google buyer" or "Kaizen".
+quality: one entry per check, honestly: "Why this account is profitable within 60 days is answered", "Brand kept separate and not counted as proof", "Keyword groups and negatives are concrete", "Geo targeting matches where customers really are", "Asset library checklist complete", "KPI targets are sourced", "Every number, quote, competitor claim and offer traces to a source", "Open items are visibly flagged". pass is false when it doesn't hold, and note says what's needed.`;
+
+/** What the Google Ads account shows today (campaigns, conversion actions, keywords, search terms, impression share), for the Google strategy */
+async function googleAccountData(admin: SupabaseClient, clientId: string) {
+  const { data: t } = await admin.from("kpi_targets").select("ad_account_id").eq("client_id", clientId).eq("platform", "google").not("ad_account_id", "is", null).limit(1).maybeSingle();
+  if (!t?.ad_account_id) return "No Google Ads account is linked yet: this is a new account, built from research and benchmarks.";
+  const { googleAdsConfigured, googleSetup, googleAuditDetail } = await import("@/lib/context/google-ads");
+  if (!googleAdsConfigured()) return "The Google Ads connection isn't set up here, so the account couldn't be read.";
+  const account = String(t.ad_account_id);
+  const [setup, detail] = await Promise.all([googleSetup(account).catch(() => null), googleAuditDetail(account).catch(() => null)]);
+  const lines: string[] = [`Google Ads account ${account}`];
+  if (setup) {
+    lines.push("CAMPAIGNS (as set up now)");
+    for (const c of setup.campaigns) lines.push(`- ${c.name} [${c.status}, ${c.type}, ${c.bidding}${c.targetCpa ? `, target CPA $${c.targetCpa}` : ""}${c.targetRoas ? `, target ROAS ${c.targetRoas}` : ""}${c.budget ? `, $${c.budget}/day` : ""}]`);
+    lines.push("CONVERSION ACTIONS");
+    for (const c of setup.conversions) lines.push(`- ${c.name} (${c.category}${c.primary ? ", primary" : ""}${c.counted ? ", counted" : ", not counted"})`);
+  }
+  if (detail?.text) lines.push(detail.text);
+  return lines.join("\n").slice(0, 20000);
+}
+
 /**
- * Builds (or rebuilds) a client's Meta go-to-market strategy: web research first (their site, reviews, competitors and
+ * Builds (or rebuilds) a client's Meta (or Google) go-to-market strategy: web research first (their site, reviews, competitors and
  * their Meta presence, Meta benchmarks), then the document from that research and everything on the client page.
  * Waits (and says what's missing) until the intake form, call notes and website are all in.
  */
-export async function buildGtm(admin: SupabaseClient, clientId: string, by: string | null = null) {
+export async function buildGtm(admin: SupabaseClient, clientId: string, by: string | null = null, platform: GtmPlatform = "meta") {
+  const table = GTM_TABLE[platform];
+  const google = platform === "google";
   const gate = await gtmGate(admin, clientId);
   if (gate.missing.length) {
-    await admin.from("client_gtm_strategies").upsert({ client_id: clientId, status: "waiting", missing: gate.missing, error: null }, { onConflict: "client_id" });
+    await admin.from(table).upsert({ client_id: clientId, status: "waiting", missing: gate.missing, error: null }, { onConflict: "client_id" });
     return { status: "waiting" as const, missing: gate.missing };
   }
   const [{ data: client }, { data: prev }, ctx] = await Promise.all([
     admin.from("clients").select("name, website").eq("id", clientId).single(),
-    admin.from("client_gtm_strategies").select("markdown, version").eq("client_id", clientId).maybeSingle(),
+    admin.from(table).select("markdown, version").eq("client_id", clientId).maybeSingle(),
     clientContext(admin, clientId),
   ]);
   if (!client || !ctx) throw new Error("Client not found");
   await admin
-    .from("client_gtm_strategies")
+    .from(table)
     .upsert({ client_id: clientId, status: "building", missing: [], error: null, started_at: new Date().toISOString(), generated_by: by }, { onConflict: "client_id" });
 
   try {
@@ -94,7 +150,7 @@ export async function buildGtm(admin: SupabaseClient, clientId: string, by: stri
     const [{ data: intake }, { data: mentions }, { data: buyers }] = await Promise.all([
       admin.from("client_intakes").select("answers, received_at").eq("client_id", clientId).not("summary", "is", null).order("received_at", { ascending: false }).limit(1).single(),
       admin.from("call_mentions").select("summary, client_calls(title, occurred_at, status)").eq("client_id", clientId).limit(20),
-      admin.from("client_assignments").select("profiles(full_name)").eq("client_id", clientId).eq("role", "meta_buyer"),
+      admin.from("client_assignments").select("profiles(full_name)").eq("client_id", clientId).eq("role", google ? "google_buyer" : "meta_buyer"),
     ]);
     // "Prepared by" on the cover: the client's media buyer
     const preparedBy = (buyers ?? []).map((b) => (b.profiles as unknown as { full_name: string } | null)?.full_name).filter(Boolean).join(" and ");
@@ -112,6 +168,8 @@ export async function buildGtm(admin: SupabaseClient, clientId: string, by: stri
     // The foundation it's built on, and how this kind of business makes money
     const [{ data: bible }, { businessModelOf, modelBlock }] = await Promise.all([admin.from("client_brand_bibles").select("read_this_first, markdown, version").eq("client_id", clientId).maybeSingle(), import("@/lib/business-model")]);
     const model = await businessModelOf(admin, clientId).catch(() => null);
+    // Google: what the account shows today
+    const accountData = google ? await googleAccountData(admin, clientId).catch(() => "The Google Ads account couldn't be read.") : "";
 
     const research = await researchWeb({
       agent: "gtm",
@@ -120,9 +178,20 @@ export async function buildGtm(admin: SupabaseClient, clientId: string, by: stri
       maxSearches: 6,
       maxFetches: 5,
       maxTurns: 3,
-      label: `gtm research ${client.name}`,
-      system: "You research a client for Kaizen Marketing's Meta go-to-market strategy. Report only what you actually found, every fact with its source URL. Meta only: no Google Ads or TikTok research.",
-      prompt: `Research ${client.name} (website: ${client.website}) for their Meta go-to-market strategy. Today is ${today()}.
+      label: `${google ? "google gtm research" : "gtm research"} ${client.name}`,
+      system: google
+        ? "You research a client for Kaizen Marketing's Google Ads go-to-market strategy. Report only what you actually found, every fact with its source URL. Google Ads only."
+        : "You research a client for Kaizen Marketing's Meta go-to-market strategy. Report only what you actually found, every fact with its source URL. Meta only: no Google Ads or TikTok research.",
+      prompt: google
+        ? `Research ${client.name} (website: ${client.website}) for their Google Ads go-to-market strategy. Today is ${today()}.
+
+Report, with a source URL on every line:
+1. Their website: what they sell with prices and offers exactly as shown, claims, guarantees, the pages ads could send people to (real URLs), the funnel for each goal, and whether a Google tag, Tag Manager or call tracking is visible.
+2. Their Google Business Profile (rating, review count, categories, locations) and 6 to 10 verbatim Google reviews with dates.
+3. Who shows up on Google for their core searches (the products, services and locations they sell): competitors' positioning, offers and any ad copy themes visible (Google Ads Transparency Center if reachable), and competitors' complaints in reviews, word for word.
+4. Google Ads benchmarks for this category (CPC, CTR, conversion rate, cost per lead or acquisition), WordStream first, with source and year.
+If something can't be read or found, say so instead of guessing.`
+        : `Research ${client.name} (website: ${client.website}) for their Meta go-to-market strategy. Today is ${today()}.
 
 Report, with a source URL on every line:
 1. Their website: what they sell, products and services with prices and offers exactly as shown, claims, guarantees, the funnel (how someone buys or becomes a lead), and testimonials word for word.
@@ -142,8 +211,8 @@ ${calls.slice(0, 10000)}
 
     const out = await askJson<Out>({
       agent: "gtm",
-      label: `gtm strategy ${client.name}`,
-      system: SYSTEM,
+      label: `${google ? "google gtm strategy" : "gtm strategy"} ${client.name}`,
+      system: google ? GOOGLE_SYSTEM : SYSTEM,
       schema: SCHEMA,
       prompt: `${context}
 
@@ -158,7 +227,7 @@ ${calls}
 <web_research date="${today()}" source="research">
 ${research || "No research came back."}
 </web_research>
-${model ? `
+${google ? `\n<google_ads_account source="Google Ads account">\n${accountData}\n</google_ads_account>\n` : ""}${model ? `
 ${modelBlock(model)}
 ` : ""}${bible?.markdown ? `
 <brand_bible version="${bible.version}" note="the foundation: build on it, never contradict it; rule one, if it isn't profitable it isn't working">
@@ -170,14 +239,14 @@ ${bible.markdown.slice(0, 24000)}
 ${playbook}
 The playbook is what we've learned across this sub-vertical: use its avatars and proven angles where this client's research backs them up.
 ` : ""}${prev?.markdown ? `\n<current_strategy version="${prev.version}">\n${prev.markdown.slice(0, 30000)}\n</current_strategy>\nUpdate it with what's new: keep what still holds, and add a short change-log line at the end.\n` : ""}
-Write ${client.name}'s Meta Go-to-Market strategy. Today is ${today()}. Prepared by: ${preparedBy || "[media buyer not assigned yet]"}.`,
+Write ${client.name}'s ${google ? "Google Ads" : "Meta"} Go-to-Market strategy. Today is ${today()}. Prepared by: ${preparedBy || (google ? "[Google buyer not assigned yet]" : "[media buyer not assigned yet]")}.`,
     });
 
     const version = prev?.markdown ? bump(prev.version) : "v1.0";
     // Never an em dash, whatever the model wrote
     const clean = (s: string) => s.replace(/\s*—\s*/g, ", ");
     await admin
-      .from("client_gtm_strategies")
+      .from(table)
       .update({
         status: "draft",
         version,
@@ -195,7 +264,7 @@ Write ${client.name}'s Meta Go-to-Market strategy. Today is ${today()}. Prepared
     return { status: "draft" as const };
   } catch (e) {
     await admin
-      .from("client_gtm_strategies")
+      .from(table)
       .update({ status: prev?.markdown ? "draft" : "failed", error: e instanceof AiUnavailable ? e.message : "The build didn't finish. Try again." })
       .eq("client_id", clientId);
     return { status: "failed" as const, error: e instanceof Error ? e.message : String(e) };
@@ -212,11 +281,27 @@ function bump(v: string) {
  * (waiting until then, with what's missing on their page). One build per run; each is a few minutes of research.
  */
 export async function autoGtm(admin: SupabaseClient, max = 1) {
+  const meta = await autoGtmFor(admin, "meta", max);
+  // Google clients get theirs the same way, once the Meta one has had its turn this run
+  const google = meta.built ? { candidates: 0, built: 0 } : await autoGtmFor(admin, "google", max);
+  return { meta, google };
+}
+
+async function autoGtmFor(admin: SupabaseClient, platform: GtmPlatform, max: number) {
+  const table = GTM_TABLE[platform];
   const since = new Date(Date.now() - 60 * 86_400_000).toISOString();
   const { data: intakes } = await admin.from("client_intakes").select("client_id, clients!inner(archived_at, status, paid_ads)").gte("received_at", since).not("client_id", "is", null).not("summary", "is", null).is("clients.archived_at", null).eq("clients.paid_ads", true);
-  const ids = [...new Set((intakes ?? []).filter((i) => (LIVE as readonly string[]).includes((i.clients as unknown as { status: string }).status)).map((i) => i.client_id as string))];
+  let ids = [...new Set((intakes ?? []).filter((i) => (LIVE as readonly string[]).includes((i.clients as unknown as { status: string }).status)).map((i) => i.client_id as string))];
+  // Each platform only for the clients who buy it
+  if (ids.length) {
+    const { servicesOf } = await import("@/lib/services");
+    const { data: cs } = await admin.from("clients").select("id, services, services_extra, services_removed").in("id", ids);
+    const want = platform === "google" ? "google-ads" : "facebook-ads";
+    const buys = new Set((cs ?? []).filter((c) => (servicesOf(c) as string[]).includes(want)).map((c) => c.id as string));
+    ids = ids.filter((id) => buys.has(id));
+  }
   if (!ids.length) return { candidates: 0, built: 0 };
-  const { data: have } = await admin.from("client_gtm_strategies").select("client_id, status, started_at").in("client_id", ids);
+  const { data: have } = await admin.from(table).select("client_id, status, started_at").in("client_id", ids);
   const state = new Map((have ?? []).map((h) => [h.client_id, h]));
   // A build that died mid-way (the function timed out) is tried again after an hour
   const stale = (h: { status: string; started_at: string | null }) => h.status === "building" && (!h.started_at || Date.now() - Date.parse(h.started_at) > 3_600_000);
@@ -230,10 +315,10 @@ export async function autoGtm(admin: SupabaseClient, max = 1) {
     if (built >= max) {
       // Still record who's waiting on what, so the page says it
       const gate = await gtmGate(admin, id);
-      if (gate.missing.length) await admin.from("client_gtm_strategies").upsert({ client_id: id, status: "waiting", missing: gate.missing }, { onConflict: "client_id" });
+      if (gate.missing.length) await admin.from(table).upsert({ client_id: id, status: "waiting", missing: gate.missing }, { onConflict: "client_id" });
       continue;
     }
-    const r = await buildGtm(admin, id);
+    const r = await buildGtm(admin, id, null, platform);
     results[id] = r.status;
     if (r.status !== "waiting") built++;
   }
@@ -241,8 +326,8 @@ export async function autoGtm(admin: SupabaseClient, max = 1) {
 }
 
 /** The strategy as the agents read it: the summary once reviewed; a draft only as a draft. */
-export async function gtmForContext(db: SupabaseClient, clientId: string) {
-  const { data } = await db.from("client_gtm_strategies").select("status, version, read_this_first, markdown").eq("client_id", clientId).in("status", ["draft", "reviewed"]).maybeSingle();
+export async function gtmForContext(db: SupabaseClient, clientId: string, platform: GtmPlatform = "meta") {
+  const { data } = await db.from(GTM_TABLE[platform]).select("status, version, read_this_first, markdown").eq("client_id", clientId).in("status", ["draft", "reviewed"]).maybeSingle();
   if (!data?.markdown && !data?.read_this_first) return null;
-  return `${data.read_this_first ? `In short:\n${data.read_this_first}\n\n` : ""}${data.markdown ? `The full strategy:\n${data.markdown.slice(0, 40000)}` : ""}\n(Meta go-to-market strategy ${data.version}${data.status === "reviewed" ? ", reviewed by Kaizen" : ", a draft the team hasn't reviewed yet: treat anything unconfirmed as unconfirmed"})`;
+  return `${data.read_this_first ? `In short:\n${data.read_this_first}\n\n` : ""}${data.markdown ? `The full strategy:\n${data.markdown.slice(0, 40000)}` : ""}\n(${platform === "google" ? "Google Ads" : "Meta"} go-to-market strategy ${data.version}${data.status === "reviewed" ? ", reviewed by Kaizen" : ", a draft the team hasn't reviewed yet: treat anything unconfirmed as unconfirmed"})`;
 }

@@ -120,6 +120,10 @@
     {
       "path": "/api/cron/context?step=bible_upkeep",
       "schedule": "41 * * * *"
+    },
+    {
+      "path": "/api/cron/context?step=integrations",
+      "schedule": "52 * * * *"
     }
   ]
 }

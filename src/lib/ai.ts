@@ -480,6 +480,8 @@ export type ClientContext = {
   kpis?: string | null; // the KPI targets and how each account is doing against them (refreshed every 30 minutes in business hours, hourly otherwise)
   brandBible: string | null; // the whole Brand Bible ("Read this first", then the full document; a draft marked as a draft)
   gtm?: string | null; // the whole Meta go-to-market strategy (reviewed, or marked as a draft)
+  googleGtm?: string | null; // the Google Ads go-to-market strategy, the same way
+  business?: string; // real revenue, customers and lead outcomes from their store or CRM (Shopify, WooCommerce, GoHighLevel…)
   sinceBriefing: { source: string; at: string; author: string | null; title: string | null; body: string | null }[]; // newer than the briefing
   angles: { name: string; kind: string; description: string | null }[];
   memory: { kind: "avoid" | "prefer" | "note"; body: string; source: string; dated?: string | null }[]; // dated: true as of that day (background, not a standing rule)
@@ -535,6 +537,9 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
     siteIssues: await import("@/lib/website-issues").then(({ issuesBlock }) => issuesBlock(supabase, clientId)).catch(() => ""),
     // Loaded here, not at the top: the strategy module uses this one
     gtm: await import("@/lib/gtm").then(({ gtmForContext }) => gtmForContext(supabase, clientId)),
+    googleGtm: await import("@/lib/gtm").then(({ gtmForContext }) => gtmForContext(supabase, clientId, "google")).catch(() => null),
+    // What actually happened in their business (store orders, CRM outcomes): rule one, profitability, is read from here
+    business: await import("@/lib/integrations").then(({ businessBlock }) => businessBlock(supabase, clientId)).catch(() => ""),
     // Files and links the team shared about the client, with what's in them
     documents: await import("@/lib/client-docs").then(({ docsBlock }) => docsBlock(supabase, clientId, 10)).catch(() => ""),
     // Everything they've run and how it did (the playbook), and what won for similar clients
@@ -622,6 +627,9 @@ export function contextBlock(ctx: ClientContext, request?: { images: number; vid
   if (ctx.brandBible) lines.push("<brand_bible>", "The client's Brand Bible. Its audience profiles, voice, banned claims and rules are hard limits.", ctx.brandBible, "</brand_bible>");
   if (ctx.gtm)
     lines.push("<go_to_market_strategy>", "The client's Meta go-to-market strategy: the angles, offers, customer and KPI targets the team works from. Stay inside it unless the data says otherwise, and never treat an unconfirmed item as confirmed.", ctx.gtm, "</go_to_market_strategy>");
+  if (ctx.googleGtm)
+    lines.push("<google_go_to_market_strategy>", "The client's Google Ads go-to-market strategy: campaign structure, keyword groups, geo and copy the Google team works from. Same rules: stay inside it unless the data says otherwise.", ctx.googleGtm, "</google_go_to_market_strategy>");
+  if (ctx.business) lines.push(ctx.business);
   if (ctx.documents) lines.push(ctx.documents);
   if (ctx.siteIssues) lines.push(ctx.siteIssues);
   if (ctx.playbook) lines.push(ctx.playbook);

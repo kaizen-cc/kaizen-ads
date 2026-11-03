@@ -86,12 +86,14 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
         learnings: (bibleRow.learnings ?? []) as { at: string; kind: string; text: string }[],
       }
     : null;
-  const { data: gtmRow } = await supabase
-    .from("client_gtm_strategies")
-    .select("status, missing, version, markdown, read_this_first, open_items, quality, error, started_at, generated_at, reviewed_at, profiles!client_gtm_strategies_reviewed_by_fkey(full_name)")
-    .eq("client_id", client.id)
-    .maybeSingle();
-  const gtm = gtmRow
+  // The Meta and the Google go-to-market strategies, the same shape
+  const gtmOf = async (table: "client_gtm_strategies" | "client_google_gtm") => {
+    const { data: gtmRow } = await supabase
+      .from(table)
+      .select(`status, missing, version, markdown, read_this_first, open_items, quality, error, started_at, generated_at, reviewed_at, profiles!${table}_reviewed_by_fkey(full_name)`)
+      .eq("client_id", client.id)
+      .maybeSingle();
+    return gtmRow
     ? {
         status: gtmRow.status,
         missing: (gtmRow.missing ?? []) as string[],
@@ -107,6 +109,8 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
         reviewedBy: (gtmRow.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
       }
     : null;
+  };
+  const [gtm, googleGtm] = await Promise.all([gtmOf("client_gtm_strategies"), gtmOf("client_google_gtm")]);
   const { data: packages } = await supabase.from("creative_packages").select("key, label, images, videos").neq("key", "custom").order("sort_order");
   const { data: allotment } = usage ? { data: null } : await supabase.from("client_allotments").select("images_per_month, videos_per_month").eq("client_id", client.id).maybeSingle();
   const images = usage?.images_per_month ?? allotment?.images_per_month ?? 0;
@@ -339,8 +343,30 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     );
   }
 
+  // Their store and CRM: the real customers and lead outcomes, and the team's connections
+  let business: React.ReactNode = null;
+  if (adminConfigured()) {
+    const admin = createAdminClient();
+    const [{ data: conns }, { businessSummary }, { businessModelOf }] = await Promise.all([
+      supabase.from("client_integrations").select("id, kind, account, label, status, last_synced_at, last_error").eq("client_id", client.id).order("created_at"),
+      import("@/lib/integrations"),
+      import("@/lib/business-model"),
+    ]);
+    const [summary, model] = await Promise.all([businessSummary(supabase, client.id).catch(() => null), businessModelOf(admin, client.id).catch(() => null)]);
+    const { IntegrationsPanel } = await import("./integrations-panel");
+    business = (
+      <IntegrationsPanel
+        clientId={client.id}
+        connections={(conns ?? []).map((c) => ({ id: c.id as string, kind: c.kind as never, account: c.account as string, label: (c.label as string | null) ?? null, status: c.status as string, lastSyncedAt: (c.last_synced_at as string | null) ?? null, lastError: (c.last_error as string | null) ?? null }))}
+        summary={summary}
+        suggest={model?.model === "ecommerce" ? "shopify" : "gohighlevel"}
+      />
+    );
+  }
+
   return (
     <ClientView
+      business={business}
       businessAudit={businessAudit}
       setup={setup}
       emails={emails}
@@ -376,6 +402,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       packages={packages ?? []}
       brandBible={brandBible}
       gtm={gtm}
+      googleGtm={googleGtm}
       today={nyToday()}
       team={Object.fromEntries(SLOTS.map((slot) => [slot.value, { current: currentIn(slot.value), options: optionsFor(slot) }]))}
       contacts={contacts}
