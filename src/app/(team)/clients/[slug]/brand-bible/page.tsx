@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
 import { conversionFor, conversionLabel } from "@/lib/kpi/conversions";
 import { createClient } from "@/lib/supabase/server";
+import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import type { BibleTurn } from "../brand-bible-actions";
 import { BibleViewer } from "./bible-viewer";
 
@@ -30,6 +31,9 @@ export default async function BrandBiblePage({ params }: { params: Promise<{ slu
       platform: k.platform === "google" ? "Google" : "Meta",
       text: conversionFor(k.conversion as string).roas ? `${Number(k.target)}x return on ad spend` : `$${Number(k.target)} per ${conversionLabel(k.conversion as string, k.custom_action as string | null).toLowerCase().replace(/s$/, "")}`,
     }));
+  // The open questions, routed (new ones start with whoever answers first; settled ones close)
+  const { syncQuestions } = await import("@/lib/bible-questions");
+  const questions = adminConfigured() ? await syncQuestions(createAdminClient(), client.id).catch(() => []) : [];
   return (
     <BibleViewer
       client={{ id: client.id, name: client.name, slug: client.slug }}
@@ -43,6 +47,7 @@ export default async function BrandBiblePage({ params }: { params: Promise<{ slu
         targets,
         teamNotes: (b.team_notes ?? []) as string[],
         openQuestions: (b.open_questions ?? []) as { question: string; who: string }[],
+        questions,
         generatedAt: b.generated_at,
         reviewedAt: b.reviewed_at,
         reviewedBy: (b.profiles as unknown as { full_name: string } | null)?.full_name ?? null,

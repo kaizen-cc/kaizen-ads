@@ -15,7 +15,7 @@ import { askHelp, assetSlots, assetsShared, googleSend, helpSlots, helpToCall, m
 // them through with pictures of the screens they'll see, and says plainly when it's done. Nothing here is a form to
 // puzzle over: copy buttons for every ID, one tap for "let's do it on our call".
 
-type Props = { slug: string; brand: string; firstName: string | null; guide: Guide; has: GuideHas; bmId: string | null; adminEmails: string[]; /** The address they add on Google tools, their website and email platform */ techEmail: string | null; /** The one they add on Klaviyo */ klaviyoEmail: string | null; managerId: string | null; examples: { id: string; image: string; video: string | null }[]; /** A real ad for each style */ looks: Record<string, StyleLook>; presentation: string | null; help: Record<HelpStep, HelpTurn[]>; /** The marketing intake form: the step right after access */ intake: { done: boolean; clientId: number | null; slug: string; started: boolean; /** Sent in the portal: whether the onboarding call is booked (null: not sent there) */ booked: boolean | null } };
+type Props = { slug: string; brand: string; firstName: string | null; guide: Guide; has: GuideHas; bmId: string | null; adminEmails: string[]; /** The address they add on Google tools, their website and email platform */ techEmail: string | null; /** The one they add on Klaviyo */ klaviyoEmail: string | null; managerId: string | null; examples: { id: string; image: string; video: string | null }[]; /** A real ad for each style */ looks: Record<string, StyleLook>; presentation: string | null; /** Brand plan questions waiting on them */ questions?: number; help: Record<HelpStep, HelpTurn[]>; /** The marketing intake form: the step right after access */ intake: { done: boolean; clientId: number | null; slug: string; started: boolean; /** Sent in the portal: whether the onboarding call is booked (null: not sent there) */ booked: boolean | null } };
 export type StartProps = Props;
 type StepKey = "meta" | "google" | "tools" | "tracking" | "website" | "email" | "intake" | "assets" | "style";
 /** The access steps, listed first under their own heading */
@@ -82,6 +82,16 @@ export function StartView(p: Props) {
             <span className="shrink-0 text-[12px] text-faint group-hover:text-fg">{s.state === "todo" ? `${s.mins} →` : "→"}</span>
           </button>,
         ])}
+        {(p.questions ?? 0) > 0 && (
+          <Link href={`/c/${p.slug}/questions`} className="flex items-center gap-4 rounded-[20px] border border-warn/40 bg-warn-soft/40 p-4 md:p-5">
+            <span className="tabular grid h-12 w-12 shrink-0 place-items-center rounded-full bg-warn text-[15px] font-semibold text-white">{p.questions}</span>
+            <span className="min-w-0 flex-1">
+              <span className="block font-heading text-[17px]">A few questions only you can answer</span>
+              <span className="block text-[13.5px] text-muted">Offers, claims and details for your brand plan. Most are one tap.</span>
+            </span>
+            <span className="text-[12px] text-brand-text">Answer →</span>
+          </Link>
+        )}
         {p.presentation && (
           <Link href={`/c/${p.slug}/plan`} className="flex items-center gap-4 rounded-[20px] border border-brand/40 bg-brand/[0.06] p-4 md:p-5">
             <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-brand text-white">✦</span>

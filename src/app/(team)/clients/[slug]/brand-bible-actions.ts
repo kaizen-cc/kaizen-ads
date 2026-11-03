@@ -135,3 +135,30 @@ export async function clearBibleChat(clientId: string, slug: string): Promise<Ac
   revalidatePath(`/clients/${slug}/brand-bible`);
   return { ok: true };
 }
+
+/** Someone on the team answers (or adds to) one open question, in the question itself: folded into the Bible when settled */
+export async function discussBibleQuestion(clientId: string, slug: string, id: string, text: string) {
+  const me = await requireStaff();
+  if (!adminConfigured()) return { ok: false as const, error: "Server key missing." };
+  const { data: client } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
+  if (!client) return { ok: false as const, error: "You don't work on this client." };
+  const { discussQuestion } = await import("@/lib/bible-questions");
+  const r = await discussQuestion(createAdminClient(), clientId, id, { text, by: me.fullName ?? "Team", via: "team" });
+  if (r.ok && r.answered) {
+    revalidatePath(`/clients/${slug}`);
+    revalidatePath(`/clients/${slug}/brand-bible`);
+  }
+  return r;
+}
+
+/** Hands a question on: to the next who should answer, or up to the execs */
+export async function passBibleQuestion(clientId: string, slug: string, id: string, toExecs: boolean) {
+  const me = await requireStaff();
+  if (!adminConfigured()) return { ok: false as const, error: "Server key missing." };
+  const { data: client } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
+  if (!client) return { ok: false as const, error: "You don't work on this client." };
+  const { passOn } = await import("@/lib/bible-questions");
+  const next = await passOn(createAdminClient(), clientId, id, me.fullName ?? "Team", toExecs ? "exec" : undefined);
+  revalidatePath(`/clients/${slug}/brand-bible`);
+  return next ? { ok: true as const, stage: next } : { ok: false as const, error: "That question isn't open anymore." };
+}

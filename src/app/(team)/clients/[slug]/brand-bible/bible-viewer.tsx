@@ -8,6 +8,8 @@ import { audiencesOf, kindOf, quotesOf, splitBible, statsOf, type BibleSection, 
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { clarifyBrandBible, clearBibleChat, markBrandBibleReviewed, type BibleTurn } from "../brand-bible-actions";
 import { Layer } from "../layer";
+import type { BibleQuestion } from "@/lib/bible-questions";
+import { BibleQuestions } from "./bible-questions";
 
 // The Brand Bible, laid out to be read: a cover with what's in it, a contents rail that follows you down the page,
 // each section in its own card (audience profiles as cards, the review bank as quotes, open questions you can answer),
@@ -25,6 +27,8 @@ type Bible = {
   targets: { platform: string; text: string }[];
   teamNotes: string[];
   openQuestions: { question: string; who: string }[];
+  /** The open questions as routed rows (label, who answers, the conversation on each) */
+  questions: BibleQuestion[];
   generatedAt: string | null;
   reviewedAt: string | null;
   reviewedBy: string | null;
@@ -206,7 +210,7 @@ const withoutTables = (body: string) =>
     .filter((l) => !l.trim().startsWith("|"))
     .join("\n");
 
-function SectionBody({ sec, onAnswer, questions, canEdit }: { sec: BibleSection; onAnswer: (q: string) => void; questions: Bible["openQuestions"]; canEdit: boolean }) {
+function SectionBody({ sec, questions, client }: { sec: BibleSection; questions: BibleQuestion[]; client: { id: string; slug: string } }) {
   const kind = kindOf(sec.title);
   if (kind === "audiences") {
     const { intro, list } = audiencesOf(sec.body);
@@ -238,27 +242,8 @@ function SectionBody({ sec, onAnswer, questions, canEdit }: { sec: BibleSection;
       </div>
     );
   }
-  if (kind === "questions") {
-    if (!questions.length) return <p className="rounded-[18px] border border-ok/30 bg-ok-soft px-4 py-3 text-[14px] text-ok">Nothing open. The Bible is ready for review.</p>;
-    return (
-      <ol className="grid gap-3">
-        {questions.map((q, i) => (
-          <li key={i} className="flex flex-wrap items-start gap-3 rounded-[18px] border border-line bg-bg/60 p-4 md:flex-nowrap md:p-5">
-            <span className="tabular grid h-8 w-8 shrink-0 place-items-center rounded-full bg-warn-soft font-heading text-[13px] text-warn">{i + 1}</span>
-            <div className="min-w-0 flex-1">
-              <p className="text-[14.5px] leading-relaxed">{q.question}</p>
-              <p className="mt-1 text-[12px] text-faint">Answered by: {q.who}</p>
-            </div>
-            {canEdit && (
-              <button type="button" onClick={() => onAnswer(q.question)} className="h-11 w-full shrink-0 rounded-full border border-line px-4 text-[13px] text-muted hover:border-faint hover:text-fg md:h-9 md:w-auto">
-                Answer
-              </button>
-            )}
-          </li>
-        ))}
-      </ol>
-    );
-  }
+  // Answered in place: each question has its own conversation, label and who answers it
+  if (kind === "questions") return <BibleQuestions questions={questions} clientId={client.id} slug={client.slug} />;
   return <Prose text={sec.body} />;
 }
 
@@ -478,6 +463,7 @@ export function BibleViewer({ client, bible, canEdit }: { client: { id: string; 
   const qSection = sections.find((s) => kindOf(s.title) === "questions");
   const whatTheySell = blocksOf(bible.readThisFirst).find((b) => /what they sell|the business|who they are/i.test(b.label))?.text;
   const reviewed = bible.status === "reviewed";
+  const openCount = bible.questions.length ? bible.questions.filter((q) => q.stage !== "answered").length : bible.openQuestions.length;
 
   const chat = (
     <BibleChat
@@ -532,7 +518,7 @@ export function BibleViewer({ client, bible, canEdit }: { client: { id: string; 
             className={`relative inline-flex h-11 items-center gap-2 rounded-full px-4 text-[13px] md:h-9 ${asking ? "bg-surface-2 text-fg" : "bg-fg text-bg"}`}
           >
             <span aria-hidden>✦</span> Clarify
-            {bible.openQuestions.length > 0 && <span className="tabular grid h-5 min-w-5 place-items-center rounded-full bg-brand px-1.5 text-[11px] font-medium text-white">{bible.openQuestions.length}</span>}
+            {openCount > 0 && <span className="tabular grid h-5 min-w-5 place-items-center rounded-full bg-brand px-1.5 text-[11px] font-medium text-white">{openCount}</span>}
           </button>
         </div>
       </div>
@@ -596,10 +582,10 @@ export function BibleViewer({ client, bible, canEdit }: { client: { id: string; 
           <button
             type="button"
             onClick={() => (qSection ? jump(qSection.id) : openChat())}
-            className={`col-span-2 grid gap-1 rounded-[18px] border px-4 py-3 text-left md:col-span-1 ${bible.openQuestions.length ? "border-warn/40 bg-warn-soft/60" : "border-ok/30 bg-ok-soft/60"}`}
+            className={`col-span-2 grid gap-1 rounded-[18px] border px-4 py-3 text-left md:col-span-1 ${openCount ? "border-warn/40 bg-warn-soft/60" : "border-ok/30 bg-ok-soft/60"}`}
           >
-            <dd className={`tabular font-display text-[28px] leading-none ${bible.openQuestions.length ? "text-warn" : "text-ok"}`}>{bible.openQuestions.length}</dd>
-            <dt className="text-[11.5px] text-faint">{bible.openQuestions.length ? "Open questions" : "Nothing open"}</dt>
+            <dd className={`tabular font-display text-[28px] leading-none ${openCount ? "text-warn" : "text-ok"}`}>{openCount}</dd>
+            <dt className="text-[11.5px] text-faint">{openCount ? "Open questions" : "Nothing open"}</dt>
           </button>
         </dl>
         <div className="mt-6 flex flex-wrap items-center gap-3 text-[12.5px] text-faint">
@@ -656,7 +642,7 @@ export function BibleViewer({ client, bible, canEdit }: { client: { id: string; 
                 >
                   <span className="tabular w-6 shrink-0 font-heading text-[11px] text-faint">{s.num ? pad(s.num) : "·"}</span>
                   <span className="min-w-0">{s.title}</span>
-                  {kindOf(s.title) === "questions" && bible.openQuestions.length > 0 && <span className="ml-auto h-1.5 w-1.5 shrink-0 self-center rounded-full bg-warn" />}
+                  {kindOf(s.title) === "questions" && openCount > 0 && <span className="ml-auto h-1.5 w-1.5 shrink-0 self-center rounded-full bg-warn" />}
                 </button>
               </li>
             ))}
@@ -701,7 +687,7 @@ export function BibleViewer({ client, bible, canEdit }: { client: { id: string; 
                     })()}
                   />
                 ) : (
-                  <SectionBody sec={s} questions={bible.openQuestions} canEdit={canEdit} onAnswer={(q) => openChat(`About "${q.slice(0, 120)}${q.length > 120 ? "…" : ""}": `)} />
+                  <SectionBody sec={s} questions={bible.questions} client={client} />
                 )}
               </section>
             );

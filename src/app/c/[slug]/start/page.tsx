@@ -58,6 +58,7 @@ export default async function StartPage({ params }: { params: Promise<{ slug: st
           examples={examples}
           looks={looks}
           help={help}
+          questions={await (await import("@/lib/bible-questions")).clientQuestions(admin, client.id).then((q) => q.length).catch(() => 0)}
           intake={{ done: (intakes ?? 0) > 0 || form?.status === "submitted", clientId: (client.kaizen_id as number | null) ?? null, slug: client.slug, started: Object.keys((form?.answers ?? {}) as object).length > 0, booked: form?.status === "submitted" ? Boolean(form.call_booked_at) : null }}
           presentation={deck && ["sent", "approved"].includes(deck.status as string) ? (deck.status as string) : null}
         />
