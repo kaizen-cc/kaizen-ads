@@ -44,6 +44,14 @@ export async function onTheCall(slug: string, which: "meta" | "google", note: st
   const g = await l.guide.loadGuide(l.admin, l.client.id);
   await l.guide.saveStep(l.admin, l.client.id, which, { ...g[which], status: "on_call", at: new Date().toISOString(), by: l.by, note: note.trim().slice(0, 600) || null });
   await l.guide.tellGuideTeam(l.admin, l.client.id, `wants to set up ${which === "meta" ? "Meta" : "Google Ads"} access on the onboarding call`, `${l.by}${note.trim() ? `: "${note.trim().slice(0, 400)}"` : " would rather do it together on the call"}. Cover it on the onboarding call; afterwards the app checks the access and flags anything still missing.`, `on-call:${which}:${l.client.id}`, "critical");
+  // The CS team's brief for the call, with everything they tried
+  const admin = l.admin;
+  const clientId = l.client.id as string;
+  const why = `${l.by} saved ${which === "meta" ? "Meta access" : "Google Ads"} for the onboarding call${note.trim() ? `: "${note.trim().slice(0, 200)}"` : ""}`;
+  after(async () => {
+    const { prepareCall } = await import("@/lib/call-prep");
+    await prepareCall(admin, clientId, why).catch((e) => console.error("[call-prep] on call", e));
+  });
   done(slug);
   return { ok: true };
 }
@@ -145,7 +153,16 @@ export async function askHelp(slug: string, step: "meta" | "google", text: strin
   if (!text.trim() && !files.length) return { ok: false as const, error: "Ask something or share a screenshot first." };
   try {
     const { askSetupHelp } = await import("@/lib/setup-help");
-    const turns = await askSetupHelp(l.admin, l.client.id, step, { name: l.by, contactId: l.contactId }, { text, files });
+    const { turns, blocker } = await askSetupHelp(l.admin, l.client.id, step, { name: l.by, contactId: l.contactId }, { text, files });
+    // A big issue: the CS team gets the brief for the call, after the client has their answer
+    if (blocker) {
+      const admin = l.admin;
+      const clientId = l.client.id as string;
+      after(async () => {
+        const { recordBlocker } = await import("@/lib/call-prep");
+        await recordBlocker(admin, clientId, { step, ...blocker }).catch((e) => console.error("[call-prep] blocker", e));
+      });
+    }
     return { ok: true as const, turns };
   } catch (e) {
     const { AiUnavailable } = await import("@/lib/ai");

@@ -119,6 +119,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Answers an agent's chat in Settings and proposes edits to its skills", where: "Settings \u00b7 AI agents \u00b7 an agent's chat", trigger: "click", when: "With every message", labels: ["agent chat"] },
   ],
   launcher: [
+    { title: "Briefs the CS team before a new client's onboarding call: where setup stands, the big issues and what to prepare", where: "Client page · Their setup", trigger: "auto", when: "When the setup help finds a big issue or the client saves a step for the call", labels: ["setup call prep "] },
     { title: "Helps a new client give us Meta access in their setup guide, from their words and screenshots; offers the onboarding call only after several frustrated tries", where: "Client portal · Setup", trigger: "click", when: "When the client asks for help in a setup step", labels: ["setup help "] },
     { title: "Picks a new client's own posts for their 48-hour engagement launch, and where to target", where: "Client portal · Your first ads", trigger: "auto", when: "When the client approves their presentation and chooses the 48-hour launch", labels: ["engagement launch posts "] },
     { title: "Places approved ads in the right ad set (or a copy of one) and names them to match it, then pushes them to Meta paused", where: "Board · Ready to launch · Launch to Meta", trigger: "click", when: "When the buyer plans a launch", labels: ["place a launch"] },

@@ -60,8 +60,10 @@ const SCHEMA = {
     frustration: { type: "integer", minimum: 0, maximum: 5 },
     topic: { type: "string" },
     suggest_call: { type: "boolean" },
+    blocker: { type: "string", enum: ["", "restricted", "no_permission", "cant_create", "verification", "billing", "other"] },
+    blocker_detail: { type: "string" },
   },
-  required: ["answer", "stuck", "frustration", "topic", "suggest_call"],
+  required: ["answer", "stuck", "frustration", "topic", "suggest_call", "blocker", "blocker_detail"],
   additionalProperties: false,
 };
 
@@ -98,7 +100,7 @@ export async function askSetupHelp(admin: SupabaseClient, clientId: string, step
   const lastFrustration = [...turns].reverse().find((t) => t.role === "ai")?.frustration ?? 0;
   const mayOffer = tries >= TRIES_BEFORE_CALL;
 
-  const out = await askJson<{ answer: string; stuck: boolean; frustration: number; topic: string; suggest_call: boolean }>({
+  const out = await askJson<{ answer: string; stuck: boolean; frustration: number; topic: string; suggest_call: boolean; blocker: string; blocker_detail: string }>({
     agent: step === "meta" ? "launcher" : "google_launcher",
     label: `setup help ${c.name}`,
     bare: true,
@@ -106,6 +108,8 @@ export async function askSetupHelp(admin: SupabaseClient, clientId: string, step
     system: `You're Kaizen Marketing's setup helper inside a new client's onboarding guide, chatting with someone at ${c.name} who is trying to give us access to their ad accounts. Help them finish it now, step by step, like a patient expert sitting beside them.
 How to answer: short and concrete (two to six sentences, or a few numbered clicks), one step at a time, using the exact names of the buttons and menus they'll see. When they share a screenshot, look at it closely: say what you see and exactly where to click next ("top left, the gear icon labeled Settings"). Ask for a screenshot when it would help. Warm, never condescending, no jargon without a plain explanation. Never ask for passwords or codes, and never tell them to share a login.
 stuck: true when their message shows the same problem still isn't solved (it didn't work, they can't find it, an error); false when they're moving forward or asking something new.
+blocker: a big issue they can't fix with clicks, from their words or screenshot: "restricted" (ad account restricted, disabled or under review; Account Quality warnings), "no_permission" (they're not an admin of the Business Manager / ad account / Page, or Google says they lack admin access; someone else owns it), "cant_create" (Meta or Google won't let them create a Business Manager or ad account, a limit, a block), "verification" (stuck on identity, business or two-factor verification), "billing" (payment method declined, unpaid balance blocking the account), "other" (anything else only our team can sort out). "" for ordinary how-do-I questions. blocker_detail: one plain sentence on exactly what's wrong (the account, the message they see), else "".
+When there IS a blocker: don't keep them clicking around. Say plainly what it means, the one thing they can do now if any (e.g. who to ask for admin access, where Account Quality is), that our team has been told and will be ready for it on the onboarding call, and set suggest_call true.
 frustration: 0 calm to 5 very frustrated, from their words and how they've changed over the conversation.
 topic: a few words for what they're stuck on ("adding the partner", "can't find the Business ID field"), else "".
 suggest_call: ${mayOffer ? `allowed now (this is try ${tries} on the same problem). Set it true only if they're clearly getting frustrated (around 3 or more, and rising) or ask to stop; then, after one last concrete tip, gently offer to save this for the onboarding call so it doesn't take more of their time ("we can do this together on our call, it takes two minutes there"). Otherwise keep helping and set false.` : "always false for now: keep helping (it's only offered after several tries and real frustration)."}`,
@@ -123,17 +127,19 @@ suggest_call: ${mayOffer ? `allowed now (this is try ${tries} on the same proble
       .filter(Boolean)
       .join("\n\n"),
   });
-  const suggest = mayOffer && out.suggest_call;
+  const blocker = out.blocker && out.blocker_detail ? { kind: out.blocker, detail: out.blocker_detail.slice(0, 400) } : null;
+  // A big issue can go to the call right away; otherwise only after several frustrated tries
+  const suggest = (mayOffer || Boolean(blocker)) && out.suggest_call;
   const files = mine.map((f) => ({ path: f.path, name: f.name }));
   const now = Date.now();
   const { data: rows } = await admin
     .from("setup_help")
     .insert([
       { client_id: clientId, step, role: "client", text: msg.text.trim().slice(0, 4000), files, by_name: by.name, contact_id: by.contactId, created_at: new Date(now).toISOString() },
-      { client_id: clientId, step, role: "ai", text: out.answer, stuck: out.stuck, frustration: Math.max(0, Math.min(5, out.frustration)), suggest_call: suggest, topic: out.topic || null, created_at: new Date(now + 1).toISOString() },
+      { client_id: clientId, step, role: "ai", text: out.answer, stuck: out.stuck, frustration: Math.max(0, Math.min(5, out.frustration)), suggest_call: suggest, topic: out.topic || null, blocker: blocker?.kind ?? null, blocker_detail: blocker?.detail ?? null, created_at: new Date(now + 1).toISOString() },
     ])
     .select("id, role, text, files, suggest_call, created_at");
-  return (rows ?? []).map((r) => ({ id: r.id as string, role: r.role as "client" | "ai", text: r.text as string, files: ((r.files ?? []) as { name: string }[]).map((f) => f.name), at: r.created_at as string, suggestCall: Boolean(r.suggest_call) }));
+  return { turns: (rows ?? []).map((r) => ({ id: r.id as string, role: r.role as "client" | "ai", text: r.text as string, files: ((r.files ?? []) as { name: string }[]).map((f) => f.name), at: r.created_at as string, suggestCall: Boolean(r.suggest_call) })), blocker };
 }
 
 /** What they were stuck on, for the team's note when it's saved for the call */
