@@ -105,26 +105,40 @@ export async function welcomeBack(admin: SupabaseClient, clientId: string) {
 }
 
 /**
- * The day each client is billed, from when their first sold service started in Kaizen Track: the creative allotment
- * starts again that day each month. A day the team set by hand is never overwritten. If Track doesn't keep service
- * start dates, nothing changes (the enrollment day, or the calendar month, stays).
+ * The day each client is billed, from their Stripe subscription as Kaizen Track keeps it (Track syncs Stripe and
+ * matches each subscription to a client by contact email and name; a match set by hand there wins): the next charge's
+ * day of the month, capped at the 28th. The creative allotment starts again that day each month. Clients Track has no
+ * subscription for fall back to when their first sold service started. A day the team set by hand is never overwritten.
  */
 async function billingDays(admin: SupabaseClient, track: SupabaseClient) {
-  const { data: rows, error } = await track.from("client_services").select("client_id, started_at, services!inner(kind)").is("ended_at", null).eq("services.kind", "sold");
-  if (error || !rows?.length) return;
+  const dayOf = (at: string) => Math.min(28, Number(new Date(at.length === 10 ? `${at}T12:00:00` : at).toLocaleDateString("en-US", { timeZone: "America/New_York", day: "numeric" })));
+  const fromStripe = new Map<string, { day: number; amount: number }>();
+  const [{ data: subs }, { data: manual }] = await Promise.all([
+    track.from("stripe_subscriptions").select("id, client_id, next_at, amount, status, interval").in("status", ["active", "past_due", "trialing"]),
+    track.from("stripe_subscription_clients").select("subscription_id, client_id"),
+  ]);
+  const setByHand = new Map((manual ?? []).map((m) => [m.subscription_id as string, m.client_id as string]));
+  for (const r of (subs ?? []) as { id: string; client_id: string | null; next_at: string | null; amount: number | null; interval: string | null }[]) {
+    const client = setByHand.get(r.id) ?? r.client_id;
+    if (!client || !r.next_at || (r.interval && r.interval !== "month")) continue;
+    // Several subscriptions: the biggest is the retainer the allotment follows
+    const cur = fromStripe.get(client);
+    if (!cur || Number(r.amount ?? 0) > cur.amount) fromStripe.set(client, { day: dayOf(r.next_at), amount: Number(r.amount ?? 0) });
+  }
+  const { data: rows } = await track.from("client_services").select("client_id, started_at, services!inner(kind)").is("ended_at", null).eq("services.kind", "sold");
   const first = new Map<string, string>();
-  for (const r of rows as { client_id: string; started_at: string | null }[]) {
+  for (const r of (rows ?? []) as { client_id: string; started_at: string | null }[]) {
     if (!r.started_at) continue;
     const cur = first.get(r.client_id);
     if (!cur || r.started_at < cur) first.set(r.client_id, r.started_at);
   }
-  if (!first.size) return;
   const { data: ours } = await admin.from("clients").select("id, track_client_id, billing_day, billing_day_source").not("track_client_id", "is", null);
   for (const c of ours ?? []) {
-    const at = first.get(c.track_client_id as string);
-    if (!at || c.billing_day_source === "set") continue;
-    const day = Math.min(28, Number(new Date(at.length === 10 ? `${at}T12:00:00` : at).toLocaleDateString("en-US", { timeZone: "America/New_York", day: "numeric" })));
-    if (!day || (c.billing_day === day && c.billing_day_source === "track")) continue;
-    await admin.from("clients").update({ billing_day: day, billing_day_source: "track" }).eq("id", c.id);
+    if (c.billing_day_source === "set") continue;
+    const stripe = fromStripe.get(c.track_client_id as string);
+    const started = first.get(c.track_client_id as string);
+    const [day, source] = stripe ? [stripe.day, "stripe"] : started ? [dayOf(started), "track"] : [0, ""];
+    if (!day || (c.billing_day === day && c.billing_day_source === source)) continue;
+    await admin.from("clients").update({ billing_day: day, billing_day_source: source }).eq("id", c.id);
   }
 }

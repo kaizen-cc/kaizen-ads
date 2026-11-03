@@ -301,7 +301,7 @@ export function PackagePanel({
           </label>
           <p className="text-[11px] text-faint">
             {cycle?.billingDay
-              ? `The allotment starts again on the ${ordinal(cycle.billingDay)}${cycle.source === "track" ? " (from Kaizen Track)" : cycle.source === "enrolled" ? " (the day they enrolled; change it if they're billed another day)" : ""}.`
+              ? `The allotment starts again on the ${ordinal(cycle.billingDay)}${cycle.source === "stripe" ? " (their Stripe billing date)" : cycle.source === "track" ? " (from Kaizen Track)" : cycle.source === "enrolled" ? " (the day they enrolled; change it if they're billed another day)" : ""}.`
               : "Set the day they're billed so the allotment resets with their billing, not on the 1st."}
           </p>
         </ActionForm>
