@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { metaConfigured, metaGraph } from "@/lib/context/meta";
 import { sendEmail } from "@/lib/email";
-import { type Guide, type GoogleStep, type MetaStep } from "@/lib/onboarding-guide-types";
+import { STYLES, type Guide, type GoogleStep, type MetaStep, type StyleLook } from "@/lib/onboarding-guide-types";
 import { servicesOf } from "@/lib/services";
 import { siteUrl } from "@/lib/site";
 
@@ -210,40 +210,64 @@ export async function keepGuides(admin: SupabaseClient) {
   return checked;
 }
 
-/** Their uploads into the client's Drive folder ("Client uploads"), when Kaizen's Google service account may write */
-export async function filesToDrive(admin: SupabaseClient, clientId: string, files: { path: string; name: string; mime: string }[]) {
+/** A Drive folder ID from what's saved: an ID, or a folder link pasted on the client page */
+const folderId = (v: string) => v.match(/folders\/([\w-]{10,})/)?.[1] ?? v.match(/[?&]id=([\w-]{10,})/)?.[1] ?? v.trim();
+
+/**
+ * Their uploads into the client's Drive folder ("Client uploads"), when Kaizen's Google service account may write. Works
+ * in a shared drive as well as My Drive, uploads any size (resumable, not the 5 MB multipart limit), keeps going when one
+ * file fails, and says what went wrong instead of failing quietly.
+ */
+export async function filesToDrive(admin: SupabaseClient, clientId: string, files: { path: string; name: string; mime: string }[]): Promise<{ drive: "saved" | "partly" | "kept here"; note: string | null }> {
   const { data: c } = await admin.from("clients").select("drive_folder_id").eq("id", clientId).single();
   const user = process.env.GOOGLE_DRIVE_USER;
-  if (!c?.drive_folder_id || !user || !process.env.GOOGLE_SERVICE_ACCOUNT_JSON) return "kept here" as const;
+  if (!c?.drive_folder_id) return { drive: "kept here", note: "No Drive folder on their client page" };
+  if (!user || !process.env.GOOGLE_SERVICE_ACCOUNT_JSON) return { drive: "kept here", note: "Drive isn't connected for uploads" };
+  const parent = folderId(c.drive_folder_id as string);
   try {
     const { JWT } = await import("google-auth-library");
     const key = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON) as { client_email: string; private_key: string };
     const token = (await new JWT({ email: key.client_email, key: key.private_key, scopes: ["https://www.googleapis.com/auth/drive"], subject: user }).getAccessToken()).token!;
     const auth = { authorization: `Bearer ${token}` };
-    const q = encodeURIComponent(`'${c.drive_folder_id}' in parents and name = 'Client uploads' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`);
-    const found = (await (await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=files(id)`, { headers: auth })).json()) as { files?: { id: string }[] };
-    let folder = found.files?.[0]?.id;
+    // corpora=allDrives: without it a folder in a shared drive is never found, and a new "Client uploads" is made each time
+    const q = encodeURIComponent(`'${parent}' in parents and name = 'Client uploads' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`);
+    const list = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&corpora=allDrives&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=files(id)`, { headers: auth });
+    if (!list.ok) return { drive: "kept here", note: list.status === 404 ? "Their Drive folder wasn't found (check the folder on their client page)" : `Drive said no (${list.status}): can the Kaizen account open their folder?` };
+    let folder = ((await list.json()) as { files?: { id: string }[] }).files?.[0]?.id;
     if (!folder) {
-      const made = await fetch("https://www.googleapis.com/drive/v3/files?supportsAllDrives=true", { method: "POST", headers: { ...auth, "content-type": "application/json" }, body: JSON.stringify({ name: "Client uploads", mimeType: "application/vnd.google-apps.folder", parents: [c.drive_folder_id] }) });
-      if (!made.ok) throw new Error(`Drive ${made.status}`);
+      const made = await fetch("https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&fields=id", { method: "POST", headers: { ...auth, "content-type": "application/json" }, body: JSON.stringify({ name: "Client uploads", mimeType: "application/vnd.google-apps.folder", parents: [parent] }) });
+      if (!made.ok) return { drive: "kept here", note: `Couldn't make "Client uploads" in their folder (${made.status})` };
       folder = ((await made.json()) as { id: string }).id;
     }
+    let saved = 0;
+    const failed: string[] = [];
     for (const f of files) {
-      const { data } = await admin.storage.from("client-docs").download(f.path);
-      if (!data) continue;
-      const boundary = `kaizen${Math.random().toString(36).slice(2)}`;
-      const body = Buffer.concat([
-        Buffer.from(`--${boundary}\r\ncontent-type: application/json\r\n\r\n${JSON.stringify({ name: f.name, parents: [folder] })}\r\n--${boundary}\r\ncontent-type: ${f.mime || "application/octet-stream"}\r\n\r\n`),
-        Buffer.from(await data.arrayBuffer()),
-        Buffer.from(`\r\n--${boundary}--`),
-      ]);
-      const up = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true", { method: "POST", headers: { ...auth, "content-type": `multipart/related; boundary=${boundary}` }, body });
-      if (!up.ok) throw new Error(`Drive upload ${up.status}`);
+      try {
+        const { data } = await admin.storage.from("client-docs").download(f.path);
+        if (!data) throw new Error("not in storage");
+        const bytes = Buffer.from(await data.arrayBuffer());
+        const mime = f.mime || "application/octet-stream";
+        // Resumable: one session per file, then the bytes (any size)
+        const start = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true", {
+          method: "POST",
+          headers: { ...auth, "content-type": "application/json; charset=UTF-8", "x-upload-content-type": mime, "x-upload-content-length": String(bytes.length) },
+          body: JSON.stringify({ name: f.name, parents: [folder] }),
+        });
+        const session = start.headers.get("location");
+        if (!start.ok || !session) throw new Error(`session ${start.status}`);
+        const up = await fetch(session, { method: "PUT", headers: { "content-type": mime }, body: bytes });
+        if (!up.ok) throw new Error(`upload ${up.status}`);
+        saved++;
+      } catch (e) {
+        console.error("[guide] Drive upload failed:", f.name, e instanceof Error ? e.message : e);
+        failed.push(f.name);
+      }
     }
-    return "saved" as const;
+    if (!failed.length) return { drive: "saved", note: null };
+    return { drive: saved ? "partly" : "kept here", note: `${failed.length} file${failed.length === 1 ? "" : "s"} didn't copy to Drive (${failed.slice(0, 3).join(", ")}${failed.length > 3 ? "…" : ""}); they're on the client page` };
   } catch (e) {
     console.error("[guide] Drive upload failed (is Drive write allowed for the service account?):", e instanceof Error ? e.message : e);
-    return "kept here" as const;
+    return { drive: "kept here", note: "Drive refused the upload (is Drive write allowed for Kaizen's service account?)" };
   }
 }
 
@@ -258,8 +282,54 @@ export async function industryExamples(admin: SupabaseClient, clientId: string) 
   return (data ?? [])
     .map((h) => {
       const cr = (h.creative ?? {}) as { image?: string; poster?: string; video?: string };
-      return { id: h.ad_id as string, image: cr.poster ?? cr.image ?? null, video: Boolean(cr.video) };
+      return { id: h.ad_id as string, image: cr.poster ?? cr.image ?? null, video: cr.video ?? null };
     })
-    .filter((x): x is { id: string; image: string; video: boolean } => Boolean(x.image))
+    .filter((x): x is { id: string; image: string; video: string | null } => Boolean(x.image))
     .slice(0, 12);
+}
+
+/** What each style is tagged as in the market ads we track (Motion) */
+const STYLE_TAGS: Record<(typeof STYLES)[number]["key"], { tags: string[]; format?: "image" | "video" }> = {
+  ugc: { tags: ["ugc"], format: "video" },
+  founder: { tags: ["founder"] },
+  testimonial: { tags: ["testimonial", "social proof", "before-after"] },
+  demo: { tags: ["product demo"], format: "video" },
+  lifestyle: { tags: ["lifestyle"], format: "video" },
+  studio: { tags: ["product demo", "lifestyle"], format: "image" },
+  bold: { tags: ["offer", "urgency"] },
+  trend: { tags: ["humor"] },
+};
+
+/**
+ * A real ad for each style, so "Real people, phone-shot" shows one: a market ad running a while, in their industry when
+ * there is one, a looping video where the style moves. Missing styles fall back to their drawing.
+ */
+export async function styleExamples(admin: SupabaseClient, clientId: string): Promise<Record<string, StyleLook>> {
+  const { data: c } = await admin.from("clients").select("industry").eq("id", clientId).maybeSingle();
+  const out: Record<string, StyleLook> = {};
+  const used = new Set<string>();
+  type Row = { id: string; media: { url?: string; type?: string; thumb?: string }[] | null };
+  const rows = async (key: keyof typeof STYLE_TAGS, industry: string | null) => {
+    const t = STYLE_TAGS[key];
+    let q = admin.from("market_ads").select("id, media").overlaps("tags", t.tags).gte("days_active", 7).order("days_active", { ascending: false }).limit(8);
+    if (t.format) q = q.eq("format", t.format);
+    if (industry) q = q.eq("industry", industry);
+    const { data } = await q;
+    return (data ?? []) as Row[];
+  };
+  // Every style at once (their industry and any industry), then one ad each, never the same ad twice
+  const found = await Promise.all(STYLES.map(async (x) => [...(c?.industry ? await rows(x.key, c.industry as string).catch(() => []) : []), ...(await rows(x.key, null).catch(() => []))]));
+  STYLES.forEach((x, i) => {
+    for (const r of found[i]) {
+      if (used.has(r.id)) continue;
+      const m = (r.media ?? [])[0];
+      const video = m?.type === "video" && m.url && /^https:\/\//.test(m.url) ? m.url : null;
+      const image = m?.thumb ?? (m?.type !== "video" ? m?.url : null);
+      if (!image || !/^https:\/\//.test(image)) continue;
+      used.add(r.id);
+      out[x.key] = { image, video };
+      break;
+    }
+  });
+  return out;
 }

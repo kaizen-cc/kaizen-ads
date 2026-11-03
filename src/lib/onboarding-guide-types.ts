@@ -3,8 +3,13 @@
 
 export type MetaStep = { status?: "todo" | "done" | "verified" | "on_call"; at?: string; by?: string; account?: string | null; accountName?: string | null; page?: string | null; pageName?: string | null; typed?: string | null; note?: string | null; checkedAt?: string };
 export type GoogleStep = { status?: "todo" | "sent" | "invited" | "verified" | "on_call" | "none"; account?: string | null; at?: string; by?: string; note?: string | null; checkedAt?: string };
-export type AssetsStep = { files?: number; links?: number; at?: string; by?: string; drive?: "saved" | "kept here" | null };
-export type StyleStep = { styles?: string[]; pacing?: string | null; liked?: { image: string; label: string }[]; note?: string; at?: string; by?: string };
+/** drive: whether their files were copied into their Drive folder ("partly": some were; driveNote says what went wrong) */
+export type AssetsStep = { files?: number; links?: number; at?: string; by?: string; drive?: "saved" | "partly" | "kept here" | null; driveNote?: string | null };
+/** An example of their own: an ad or post they love, as a link or a file they uploaded (url: a long-lived link to it) */
+export type OwnExample = { kind: "link" | "file"; url: string; name: string; video?: boolean };
+export type StyleStep = { styles?: string[]; pacing?: string | null; liked?: { image: string; label: string }[]; own?: OwnExample[]; note?: string; at?: string; by?: string };
+/** A real ad in each style, to show what it means (a looping video when there is one) */
+export type StyleLook = { image: string; video: string | null };
 export type Guide = { meta: MetaStep; google: GoogleStep; assets: AssetsStep; style: StyleStep };
 
 /** The looks a client can pick (as many as fit), each with what it means for the creative team */

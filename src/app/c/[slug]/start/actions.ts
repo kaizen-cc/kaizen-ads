@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { getViewer } from "@/lib/auth";
-import { PACING, STYLES, type GoogleStep, type MetaStep, type StyleStep } from "@/lib/onboarding-guide-types";
+import { PACING, STYLES, type GoogleStep, type MetaStep, type OwnExample, type StyleStep } from "@/lib/onboarding-guide-types";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 
 // The client's side of their onboarding guide: Meta access done (checked), Google Ads ID sent, assets shared, the look
@@ -110,22 +110,54 @@ export async function assetsShared(slug: string, files: { path: string; name: st
     await summarizeDocs(admin, clientId, (docs ?? []).map((d) => d.id as string)).catch(() => null);
     const drive = mine.length ? await l.guide.filesToDrive(admin, clientId, mine) : null;
     const now = await l.guide.loadGuide(admin, clientId);
-    if (drive) await l.guide.saveStep(admin, clientId, "assets", { ...now.assets, drive });
-    await l.guide.tellGuideTeam(admin, clientId, "shared their assets", `${mine.length ? `${mine.length} file${mine.length === 1 ? "" : "s"}${drive === "saved" ? " (in their Drive folder, Client uploads)" : ""}` : ""}${mine.length && urls.length ? " and " : ""}${urls.length ? `${urls.length} link${urls.length === 1 ? "" : "s"}` : ""}, on ${name}'s page under documents.`, `assets:${clientId}:${new Date().toISOString().slice(0, 13)}`, "normal");
+    if (drive) await l.guide.saveStep(admin, clientId, "assets", { ...now.assets, drive: drive.drive, driveNote: drive.note });
+    // Where the files went, and if Drive didn't take them, why (so someone moves them by hand)
+    await l.guide.tellGuideTeam(admin, clientId, "shared their assets", `${mine.length ? `${mine.length} file${mine.length === 1 ? "" : "s"}${drive?.drive === "saved" ? " (in their Drive folder, Client uploads)" : ""}` : ""}${mine.length && urls.length ? " and " : ""}${urls.length ? `${urls.length} link${urls.length === 1 ? "" : "s"}` : ""}, on ${name}'s page under documents.${drive?.note ? ` Not in Drive: ${drive.note}.` : ""}`, `assets:${clientId}:${new Date().toISOString().slice(0, 13)}`, drive && drive.drive !== "saved" ? "critical" : "normal");
   });
   done(slug);
   return { ok: true };
 }
 
-/** The look they want: styles, pacing, the examples they liked and a note, for the creative team's first round */
-export async function saveStyle(slug: string, style: StyleStep): Promise<{ ok: true } | { ok: false; error: string }> {
+/** Their own examples (ads or posts they love): upload slots in their folder */
+export async function styleSlots(slug: string, files: { name: string; bytes: number }[]): Promise<{ ok: true; slots: { path: string; token: string }[] } | { ok: false; error: string }> {
+  const l = await load(slug);
+  if ("error" in l) return { ok: false, error: l.error! };
+  if (files.length > 8) return { ok: false, error: "Up to 8 examples at a time." };
+  if (files.some((f) => f.bytes > 100_000_000)) return { ok: false, error: "Examples up to 100 MB (share a link for anything bigger)." };
+  const slots: { path: string; token: string }[] = [];
+  for (const f of files) {
+    const path = `${l.client.id}/style-examples/${crypto.randomUUID()}-${safe(f.name)}`;
+    const { data, error } = await l.admin.storage.from("client-docs").createSignedUploadUrl(path);
+    if (error || !data) return { ok: false, error: "Uploads aren't working right now. Try again in a minute." };
+    slots.push({ path, token: data.token });
+  }
+  return { ok: true, slots };
+}
+
+/**
+ * The look they want: styles, pacing, the examples they liked, their own examples (links, or files they just uploaded:
+ * given a year-long link so the creative team and briefs can open them) and a note, for the creative team's first round
+ */
+export async function saveStyle(slug: string, style: StyleStep & { uploaded?: { path: string; name: string; mime: string }[] }): Promise<{ ok: true } | { ok: false; error: string }> {
   const l = await load(slug);
   if ("error" in l) return { ok: false, error: l.error! };
   const styles = (style.styles ?? []).filter((k) => STYLES.some((x) => x.key === k)).slice(0, 8);
   const pacing = PACING.some((x) => x.key === style.pacing) ? style.pacing! : null;
   const liked = (style.liked ?? []).filter((x) => /^https:\/\/\S+$/.test(x.image)).slice(0, 12).map((x) => ({ image: x.image, label: String(x.label ?? "").slice(0, 80) }));
-  if (!styles.length && !pacing && !liked.length && !style.note?.trim()) return { ok: false, error: "Pick at least one look first." };
-  await l.guide.saveStep(l.admin, l.client.id, "style", { styles, pacing, liked, note: (style.note ?? "").trim().slice(0, 1500), at: new Date().toISOString(), by: l.by });
+  const g = await l.guide.loadGuide(l.admin, l.client.id);
+  // Kept: links they pasted, and files already saved (only ones we gave them)
+  const had = new Set((g.style.own ?? []).map((x) => x.url));
+  const kept: OwnExample[] = (style.own ?? [])
+    .filter((x) => (x.kind === "link" ? /^https?:\/\/\S+$/i.test(x.url) : had.has(x.url)))
+    .map((x) => ({ kind: x.kind, url: x.url.trim().slice(0, 1000), name: String(x.name ?? "").slice(0, 120) || "Example", video: Boolean(x.video) }));
+  const fresh: OwnExample[] = [];
+  for (const f of (style.uploaded ?? []).filter((f) => f.path.startsWith(`${l.client.id}/style-examples/`)).slice(0, 8)) {
+    const { data } = await l.admin.storage.from("client-docs").createSignedUrl(f.path, 365 * 24 * 3600);
+    if (data?.signedUrl) fresh.push({ kind: "file", url: data.signedUrl, name: f.name.slice(0, 120), video: /^video\//.test(f.mime) });
+  }
+  const own = [...kept, ...fresh].slice(0, 16);
+  if (!styles.length && !pacing && !liked.length && !own.length && !style.note?.trim()) return { ok: false, error: "Pick at least one look first." };
+  await l.guide.saveStep(l.admin, l.client.id, "style", { styles, pacing, liked, own, note: (style.note ?? "").trim().slice(0, 1500), at: new Date().toISOString(), by: l.by });
   done(slug);
   return { ok: true };
 }

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getViewer } from "@/lib/auth";
-import { accessSetting, industryExamples, loadGuide } from "@/lib/onboarding-guide";
+import { accessSetting, industryExamples, loadGuide, styleExamples } from "@/lib/onboarding-guide";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { StartView } from "./start-view";
 import { servicesOf } from "@/lib/services";
@@ -28,13 +28,14 @@ export default async function StartPage({ params }: { params: Promise<{ slug: st
     if (!mine) notFound();
   }
   const { loadHelp } = await import("@/lib/setup-help");
-  const [guide, access, examples, { data: deck }, help, { count: intakes }] = await Promise.all([
+  const [guide, access, examples, { data: deck }, help, { count: intakes }, looks] = await Promise.all([
     loadGuide(admin, client.id),
     accessSetting(admin),
     industryExamples(admin, client.id).catch(() => []),
     admin.from("client_presentations").select("status").eq("client_id", client.id).maybeSingle(),
     loadHelp(admin, client.id),
     admin.from("client_intakes").select("id", { count: "exact", head: true }).eq("client_id", client.id),
+    styleExamples(admin, client.id).catch(() => ({})),
   ]);
   const { managerId } = await import("@/lib/context/google-ads");
   const firstName = viewer.kind === "contact" ? (viewer.fullName?.split(" ")[0] ?? null) : null;
@@ -52,6 +53,7 @@ export default async function StartPage({ params }: { params: Promise<{ slug: st
           adminEmails={access.adminEmails}
           managerId={managerId() || null}
           examples={examples}
+          looks={looks}
           help={help}
           intake={{ done: (intakes ?? 0) > 0, clientId: (client.kaizen_id as number | null) ?? null }}
           presentation={deck && ["sent", "approved"].includes(deck.status as string) ? (deck.status as string) : null}

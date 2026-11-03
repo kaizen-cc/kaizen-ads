@@ -91,8 +91,17 @@ export function GuidePanel({ slug, guide, google, welcomed, launch, prep = null,
           )}
         </div>
       )}
-      {row("Assets", files ? "ok" : "todo", files ? `${guide.assets.files ?? 0} files, ${guide.assets.links ?? 0} links${guide.assets.drive === "saved" ? " (in their Drive folder, Client uploads)" : ""}: in their documents below` : "Nothing shared yet")}
-      {row("The look", looks.length || pace ? "ok" : "todo", looks.length || pace ? [looks.join(", "), pace && `${pace} pacing`, guide.style.liked?.length && `${guide.style.liked.length} examples liked`, guide.style.note && `"${guide.style.note.slice(0, 120)}"`].filter(Boolean).join(" · ") : "Not picked yet")}
+      {row("Assets", files ? (guide.assets.driveNote ? "warn" : "ok") : "todo", files ? `${guide.assets.files ?? 0} files, ${guide.assets.links ?? 0} links${guide.assets.drive === "saved" ? " (in their Drive folder, Client uploads)" : ""}: in their documents below${guide.assets.driveNote ? `. Not in Drive: ${guide.assets.driveNote}` : ""}` : "Nothing shared yet")}
+      {row("The look", looks.length || pace || guide.style.own?.length ? "ok" : "todo", looks.length || pace || guide.style.own?.length ? [looks.join(", "), pace && `${pace} pacing`, guide.style.liked?.length && `${guide.style.liked.length} examples liked`, guide.style.own?.length && `${guide.style.own.length} of their own examples`, guide.style.note && `"${guide.style.note.slice(0, 120)}"`].filter(Boolean).join(" · ") : "Not picked yet")}
+      {(guide.style.own?.length ?? 0) > 0 && (
+        <div className="flex flex-wrap gap-1.5 pb-2 pl-8">
+          {guide.style.own!.map((x, i) => (
+            <a key={`${x.url}-${i}`} href={x.url} target="_blank" rel="noreferrer" className="max-w-[240px] truncate rounded-full border border-line px-2.5 py-1 text-[11.5px] text-muted hover:text-fg">
+              {x.kind === "link" ? "↗" : x.video ? "▶" : "▣"} {x.name}
+            </a>
+          ))}
+        </div>
+      )}
     </section>
   );
 }

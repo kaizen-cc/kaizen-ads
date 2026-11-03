@@ -764,11 +764,12 @@ export async function suggestOnboarding(admin: SupabaseClient, clientId: string)
   // The look they picked in their setup guide (styles, pacing, the ads they liked): the creative team's first visual brief
   const { data: guide } = await admin.from("client_onboarding").select("style").eq("client_id", clientId).maybeSingle();
   const { STYLES, PACING } = await import("@/lib/onboarding-guide-types");
-  const style = (guide?.style ?? {}) as { styles?: string[]; pacing?: string | null; liked?: { image: string }[]; note?: string };
+  const style = (guide?.style ?? {}) as { styles?: string[]; pacing?: string | null; liked?: { image: string }[]; own?: { url: string }[]; note?: string };
   const looks = (style.styles ?? []).map((k) => STYLES.find((x) => x.key === k)?.brief).filter(Boolean);
   const pace = PACING.find((x) => x.key === style.pacing)?.brief;
-  const liked = (style.liked ?? []).map((l) => l.image).filter((u) => /^https:\/\//.test(u));
-  const lookBlock = looks.length || pace || liked.length || style.note ? `<the_look_they_picked>\n${[looks.length && `Styles: ${looks.join("; ")}`, pace && `Pacing: ${pace}`, liked.length && `They liked ${liked.length} example ads (in refs)`, style.note && `In their words: ${style.note}`].filter(Boolean).join("\n")}\n</the_look_they_picked>\nBuild the concepts in these styles and this pacing, and say in the brief which concept uses which style.` : "";
+  // The industry ads they liked and their own examples (links and uploads)
+  const liked = [...(style.own ?? []).map((o) => o.url), ...(style.liked ?? []).map((l) => l.image)].filter((u) => /^https:\/\//.test(u));
+  const lookBlock = looks.length || pace || liked.length || style.note ? `<the_look_they_picked>\n${[looks.length && `Styles: ${looks.join("; ")}`, pace && `Pacing: ${pace}`, liked.length && `${liked.length} example ads they love (in refs${style.own?.length ? `, ${style.own.length} of them their own picks` : ""})`, style.note && `In their words: ${style.note}`].filter(Boolean).join("\n")}\n</the_look_they_picked>\nBuild the concepts in these styles and this pacing, and say in the brief which concept uses which style.` : "";
   const prompt = await promptFor(admin, clientId, [
     { kind: "onboarding", weight: 1, line: c.reonboarded_at ? "Returning client: their first round back" : "New client: their first round of creative", facts: intake ? ["The marketing intake form is in"] : ["No marketing intake form yet: work from what's known and list what to confirm"] },
   ]);

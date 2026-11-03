@@ -1,10 +1,13 @@
+import { Fragment } from "react";
 import { Document, Font, Image, Link, Page, StyleSheet, Text, View } from "@react-pdf/renderer";
 import type { ReportMetrics, TopAd } from "./metrics";
 import type { Sections, Story } from "./write";
 import { campaignLines, columnKeys, conversionTiles, formatMetric, count, headlineTiles, kpiRows, metricLabel, metricText, money, percent, multiple, platformName, rowsFor, singular, tilesFor, type Delta, type MetricKey, type ReportLayout, type Tile } from "./format";
 
-// The client report as a PDF document: the weekly recap (one platform, a page or two) and the monthly recap (a cover,
-// then each platform: the conversion summary, the KPI table, top ads, campaigns and the notes). Helvetica, lots of
+// The client report as a PDF document: the weekly recap (one platform, a page or two), the monthly recap as a landscape
+// slide deck (one idea per slide: the cover, the month at a glance, then for each platform where it stands against its
+// target, the numbers, each trend as its own story, the best ads, the campaigns and the plan, and a closing slide), and a
+// built report (a cover, then each platform). Helvetica, lots of
 // white, Kaizen red only where the eye should go. The same document on the server (the PDF the client gets) and in the
 // studio's browser (the preview, drawn as the buyer edits, so a change shows at once); ad images come in ready-made.
 
@@ -435,7 +438,7 @@ function Cover({ input }: { input: ReportPdfInput }) {
         <View style={{ width: 40, height: 4, backgroundColor: RED, marginBottom: 22 }} />
         <Text style={{ fontSize: 40, fontFamily: "Helvetica-Bold", letterSpacing: -1, lineHeight: 1.1 }}>{input.client}</Text>
         <Text style={{ fontSize: 16, color: "#b4b4bb", marginTop: 12 }}>
-          {input.kind === "built" ? "Report" : "Monthly recap"} · {input.periodLabel}
+          Report · {input.periodLabel}
         </Text>
         <Text style={{ fontSize: 10, color: "#7a7a82", marginTop: 26 }}>{input.parts.map((p) => platformName(p.platform)).join("  ·  ")}</Text>
       </View>
@@ -479,6 +482,356 @@ function MonthlyPart({ input, part, images }: { input: ReportPdfInput; part: Rep
   );
 }
 
+// ---- The monthly recap as a deck: landscape slides, one idea each ----
+
+const SLIDE_W = 842;
+const SLIDE_H = 595;
+const PAD = 48;
+const d = StyleSheet.create({
+  slide: { fontFamily: "Helvetica", fontSize: 11, color: INK, paddingTop: PAD, paddingBottom: PAD + 18, paddingHorizontal: PAD },
+  dark: { backgroundColor: INK, color: "#ffffff" },
+  kicker: { fontSize: 8.5, letterSpacing: 1.6, color: RED, textTransform: "uppercase", fontFamily: "Helvetica-Bold", marginBottom: 10 },
+  title: { fontSize: 26, fontFamily: "Helvetica-Bold", letterSpacing: -0.6, lineHeight: 1.15, marginBottom: 18 },
+  footer: { position: "absolute", bottom: 24, left: PAD, right: PAD, flexDirection: "row", justifyContent: "space-between", fontSize: 7.5, color: FAINT, lineHeight: 1.2 },
+  pageNumber: { position: "absolute", bottom: 24, left: PAD, width: SLIDE_W - PAD * 2, textAlign: "right", fontSize: 7.5, color: FAINT },
+  bigTile: { flex: 1, borderWidth: 1, borderColor: LINE, borderRadius: 10, paddingVertical: 18, paddingHorizontal: 18 },
+  bigLabel: { fontSize: 8, color: MUTED, textTransform: "uppercase", letterSpacing: 0.9, marginBottom: 8 },
+  bigValue: { fontSize: 30, fontFamily: "Helvetica-Bold", letterSpacing: -0.8, lineHeight: 1.1 },
+});
+
+function SlideFooter({ client, dark }: { client: string; dark?: boolean }) {
+  return (
+    <>
+      <View style={d.footer} fixed>
+        <Text style={dark ? { color: "#7a7a82" } : undefined}>Kaizen Marketing · {client}</Text>
+      </View>
+      <Text style={[d.pageNumber, dark ? { color: "#7a7a82" } : {}]} fixed render={({ pageNumber, totalPages }) => `${pageNumber} / ${totalPages}`} />
+    </>
+  );
+}
+
+function Slide({ input, children, dark, kicker }: { input: ReportPdfInput; children: React.ReactNode; dark?: boolean; kicker?: string }) {
+  return (
+    <Page size={[SLIDE_W, SLIDE_H]} style={[d.slide, dark ? d.dark : {}]}>
+      <SlideFooter client={input.client} dark={dark} />
+      {kicker ? <Text style={d.kicker}>{kicker}</Text> : null}
+      {children}
+    </Page>
+  );
+}
+
+function DeckCover({ input }: { input: ReportPdfInput }) {
+  const buyers = [...new Set(input.parts.map((p) => p.buyer).filter(Boolean))];
+  return (
+    <Page size={[SLIDE_W, SLIDE_H]} style={[d.slide, d.dark, { justifyContent: "space-between", paddingTop: 56, paddingBottom: 48 }]}>
+      <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+        <Text style={{ fontSize: 10, fontFamily: "Helvetica-Bold", letterSpacing: 2.4 }}>KAIZEN MARKETING</Text>
+        <Text style={{ fontSize: 10, color: "#7a7a82" }}>{input.parts.map((p) => platformName(p.platform)).join("  ·  ")}</Text>
+      </View>
+      <View>
+        <View style={{ width: 56, height: 5, backgroundColor: RED, marginBottom: 26 }} />
+        <Text style={{ fontSize: 54, fontFamily: "Helvetica-Bold", letterSpacing: -1.6, lineHeight: 1.05 }}>{input.client}</Text>
+        <Text style={{ fontSize: 20, color: "#b4b4bb", marginTop: 14 }}>Monthly recap · {input.periodLabel}</Text>
+      </View>
+      <Text style={{ fontSize: 10, color: "#7a7a82" }}>{buyers.length ? `Prepared by ${buyers.join(" and ")}` : "Prepared by Kaizen Marketing"}</Text>
+    </Page>
+  );
+}
+
+/** Where a platform stands against its target: the KPI, the target, and spend against the budget */
+function TargetCard({ m }: { m: ReportMetrics }) {
+  const one = singular(m.conversion);
+  const value = m.roasKpi ? m.main.roas : m.main.costPerResult;
+  const show = (n: number | null) => (m.roasKpi ? multiple(n) : money(n));
+  const on = m.target == null || value == null ? null : m.roasKpi ? value >= m.target : value <= m.target;
+  return (
+    <View style={{ width: 270, alignSelf: "flex-start", backgroundColor: SOFT, borderRadius: 12, padding: 22, gap: 16 }}>
+      <View>
+        <Text style={d.bigLabel}>{m.roasKpi ? "ROAS" : `Cost per ${one}`}</Text>
+        <Text style={[d.bigValue, { fontSize: 38, color: on == null ? INK : on ? GOOD : BAD }]}>{show(value)}</Text>
+        <Text style={{ fontSize: 9.5, color: MUTED, marginTop: 6 }}>
+          {m.target != null ? `Target ${show(m.target)}${on == null ? "" : on ? " · on target" : " · off target"}` : "No target set yet"}
+        </Text>
+      </View>
+      <View style={{ height: 1, backgroundColor: LINE }} />
+      <View style={{ flexDirection: "row", gap: 16 }}>
+        <View style={{ flex: 1 }}>
+          <Text style={d.bigLabel}>{m.conversion}</Text>
+          <Text style={{ fontSize: 18, fontFamily: "Helvetica-Bold" }}>{count(m.main.results)}</Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={d.bigLabel}>Spend</Text>
+          <Text style={{ fontSize: 18, fontFamily: "Helvetica-Bold" }}>{money(m.main.spend)}</Text>
+          {m.monthlyBudget ? <Text style={{ fontSize: 8.5, color: MUTED, marginTop: 3 }}>of {money(m.monthlyBudget)} budget</Text> : null}
+        </View>
+      </View>
+    </View>
+  );
+}
+
+/** More than one platform: each side by side, with its headline */
+function DeckGlance({ input }: { input: ReportPdfInput }) {
+  return (
+    <Slide input={input} kicker="The month at a glance">
+      <Text style={d.title}>{input.periodLabel}</Text>
+      <View style={{ flexDirection: "row", gap: 16 }}>
+        {input.parts.map((p) => {
+          const m = p.metrics;
+          return (
+            <View key={p.platform} style={{ flex: 1, borderTopWidth: 3, borderTopColor: RED, paddingTop: 14 }}>
+              <Text style={{ fontSize: 15, fontFamily: "Helvetica-Bold", marginBottom: 12 }}>{platformName(p.platform)}</Text>
+              <View style={{ flexDirection: "row", gap: 12, marginBottom: 14 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={d.bigLabel}>Spend</Text>
+                  <Text style={{ fontSize: 20, fontFamily: "Helvetica-Bold" }}>{money(m.main.spend)}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={d.bigLabel}>{m.conversion}</Text>
+                  <Text style={{ fontSize: 20, fontFamily: "Helvetica-Bold" }}>{count(m.main.results)}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={d.bigLabel}>{m.roasKpi ? "ROAS" : `Per ${singular(m.conversion)}`}</Text>
+                  <Text style={{ fontSize: 20, fontFamily: "Helvetica-Bold" }}>{m.roasKpi ? multiple(m.main.roas) : money(m.main.costPerResult)}</Text>
+                </View>
+              </View>
+              <Text style={{ fontSize: 11, lineHeight: 1.5, color: "#3a3a40" }}>{p.sections.headline}</Text>
+            </View>
+          );
+        })}
+      </View>
+    </Slide>
+  );
+}
+
+/** A platform's opening slide: the headline and summary beside where it stands against target */
+function DeckIntro({ input, part }: { input: ReportPdfInput; part: ReportPart }) {
+  const hot = hotFor<string>(input, part, null);
+  const m = part.metrics;
+  return (
+    <Slide input={input} kicker={`${platformName(part.platform)} · ${m.main.label} vs ${m.compare.label}`}>
+      <View style={{ flexDirection: "row", gap: 36, flexGrow: 1 }}>
+        <View style={{ flex: 1 }}>
+          <View>
+            <Text style={[d.title, { fontSize: 28 }]}>{part.sections.headline}</Text>
+            <Hot href={hot?.("text/headline") ?? null} />
+          </View>
+          {part.sections.summary ? (
+            <View>
+              <Text style={{ fontSize: 12, lineHeight: 1.6, color: "#3a3a40" }}>{part.sections.summary}</Text>
+              <Hot href={hot?.("text/summary") ?? null} />
+            </View>
+          ) : null}
+          {input.dashboard ? (
+            <Link src={input.dashboard} style={{ marginTop: 18, fontSize: 10, color: RED, fontFamily: "Helvetica-Bold", textDecoration: "none" }}>
+              See every number, any dates, on your live dashboard →
+            </Link>
+          ) : null}
+        </View>
+        <TargetCard m={m} />
+      </View>
+    </Slide>
+  );
+}
+
+/** The numbers: the conversion tiles, big, then the key metrics against last month and the target */
+function DeckNumbers({ input, part }: { input: ReportPdfInput; part: ReportPart }) {
+  const m = part.metrics;
+  const tiles = part.layout?.tiles?.length ? tilesFor(m, part.layout.tiles) : conversionTiles(m);
+  const hot = hotFor<number>(input, part, "tile");
+  return (
+    <Slide input={input} kicker={`${platformName(part.platform)} · The numbers`}>
+      <View style={{ flexDirection: "row", gap: 12, marginBottom: 22 }}>
+        {tiles.map((t, i) => (
+          <View key={`${t.label}-${i}`} style={d.bigTile}>
+            <Text style={d.bigLabel}>{t.label}</Text>
+            <Text style={d.bigValue}>{t.value}</Text>
+            {t.sub ? <Text style={{ fontSize: 8.5, color: MUTED, marginTop: 4 }}>{t.sub}</Text> : null}
+            <Text style={{ fontSize: 10, fontFamily: "Helvetica-Bold", marginTop: 10, color: toneColor(t.delta) }}>{t.delta ? t.delta.text : "No comparison"}</Text>
+            <Hot href={hot?.(i) ?? null} />
+          </View>
+        ))}
+      </View>
+      <KpiTable m={m} layout={part.layout} hot={hotFor(input, part, "row")} />
+    </Slide>
+  );
+}
+
+/** One trend, one slide: the chart large on the left, what we see, why and what's next on the right */
+function DeckStory({ input, part, story, i }: { input: ReportPdfInput; part: ReportPart; story: Story; i: number }) {
+  const hot = hotFor<string>(input, part, null);
+  const pts = story.points ?? [];
+  const max = Math.max(...pts.map((p) => p.value ?? 0), 0) || 1;
+  const fmt = (v: number | null) => formatMetric(story.metric, v);
+  const lines = [
+    ["What we see", story.see, "see"],
+    ["Why", story.why, "why"],
+    ["What's next", story.next, "next"],
+  ].filter(([, t]) => t?.trim());
+  return (
+    <Slide input={input} kicker={`${platformName(part.platform)} · Trend`}>
+      <View>
+        <Text style={d.title}>{story.title}</Text>
+        <Hot href={hot?.(`text/story-${i}-title`) ?? null} />
+      </View>
+      <View style={{ flexDirection: "row", gap: 32 }}>
+        <View style={{ flex: 1.4 }}>
+          <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 10, height: 290, borderBottomWidth: 1, borderBottomColor: LINE, paddingTop: 18 }}>
+            {pts.map((p, k) => {
+              const last = k === pts.length - 1;
+              return (
+                <View key={k} style={{ flex: 1, alignItems: "center", justifyContent: "flex-end", height: "100%" }}>
+                  <Text style={{ fontSize: 9, color: last ? INK : MUTED, fontFamily: last ? "Helvetica-Bold" : "Helvetica", marginBottom: 4 }}>{fmt(p.value)}</Text>
+                  <View style={{ width: "64%", height: `${Math.max(2, ((p.value ?? 0) / max) * 86)}%`, backgroundColor: last ? RED : "#d4d4d8", borderTopLeftRadius: 4, borderTopRightRadius: 4 }} />
+                </View>
+              );
+            })}
+            <Hot href={hot?.(`story/${i}`) ?? null} />
+          </View>
+          <View style={{ flexDirection: "row", gap: 10, marginTop: 6 }}>
+            {pts.map((p, k) => (
+              <Text key={k} style={{ flex: 1, fontSize: 8, color: MUTED, textAlign: "center" }}>
+                {p.label}
+              </Text>
+            ))}
+          </View>
+        </View>
+        <View style={{ flex: 1, gap: 16 }}>
+          {lines.map(([label, text, key]) => (
+            <View key={key}>
+              <Text style={{ fontSize: 8.5, fontFamily: "Helvetica-Bold", color: key === "next" ? RED : INK, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 5 }}>{label}</Text>
+              <View>
+                <Text style={{ fontSize: 11.5, lineHeight: 1.55, color: "#3a3a40" }}>{text}</Text>
+                <Hot href={hot?.(`text/story-${i}-${key}`) ?? null} />
+              </View>
+            </View>
+          ))}
+        </View>
+      </View>
+    </Slide>
+  );
+}
+
+/** The best ads, as the creative: up to three side by side */
+function DeckAds({ input, part, images }: { input: ReportPdfInput; part: ReportPart; images: (string | null)[] }) {
+  const m = part.metrics;
+  const ads = m.topAds.slice(0, 3);
+  if (!ads.length) return null;
+  const one = singular(m.conversion);
+  return (
+    <Slide input={input} kicker={`${platformName(part.platform)} · What worked`}>
+      <Text style={d.title}>The ads that carried the month</Text>
+      <View style={{ flexDirection: "row", gap: 18 }}>
+        {ads.map((a, i) => (
+          <View key={a.id} style={{ flex: 1, maxWidth: 236 }}>
+            {/* eslint-disable-next-line jsx-a11y/alt-text -- a PDF image, no alt prop */}
+            {images[i] ? <Image style={{ width: "100%", height: 200, borderRadius: 8, objectFit: "cover" }} src={images[i]!} /> : <View style={{ width: "100%", height: 200, borderRadius: 8, backgroundColor: SOFT }} />}
+            <Text style={{ fontSize: 10.5, fontFamily: "Helvetica-Bold", marginTop: 10, marginBottom: 4 }}>{a.name}</Text>
+            <Text style={{ fontSize: 9.5, color: MUTED, lineHeight: 1.45 }}>
+              {count(a.results)} {m.conversion.toLowerCase()} · {money(a.costPerResult)} per {one}
+            </Text>
+            <Text style={{ fontSize: 9.5, color: MUTED, lineHeight: 1.45 }}>
+              {money(a.spend)} spent{a.ctr != null ? ` · ${percent(a.ctr)} CTR` : ""}
+            </Text>
+            {a.copy?.body ? <Text style={{ fontSize: 9, color: "#3a3a40", lineHeight: 1.45, marginTop: 6 }}>{a.copy.body.length > 150 ? `${a.copy.body.slice(0, 147).trimEnd()}…` : a.copy.body}</Text> : null}
+            {a.link ? (
+              <Link src={a.link} style={[s.link, { marginTop: 8 }]}>
+                View ad →
+              </Link>
+            ) : null}
+          </View>
+        ))}
+      </View>
+    </Slide>
+  );
+}
+
+/** The plan: what we did, what we're doing and what's next, side by side, then anything else this month */
+function DeckPlan({ input, part }: { input: ReportPdfInput; part: ReportPart }) {
+  const hot = hotFor<string>(input, part, null);
+  const groups = [
+    { key: "did", title: "What we did", items: part.sections.did },
+    { key: "doing", title: "What we're doing", items: part.sections.doing },
+    { key: "next", title: "What's next", items: part.sections.next },
+  ].filter((g) => g.items?.length);
+  if (!groups.length && !part.extras?.trim()) return null;
+  return (
+    <Slide input={input} kicker={`${platformName(part.platform)} · The plan`}>
+      <View style={{ flexDirection: "row", gap: 22 }}>
+        {groups.map((g) => (
+          <View key={g.key} style={{ flex: 1, borderTopWidth: 3, borderTopColor: g.key === "next" ? RED : INK, paddingTop: 12 }}>
+            <Text style={{ fontSize: 14, fontFamily: "Helvetica-Bold", marginBottom: 10 }}>{g.title}</Text>
+            {g.items.map((x, i) => (
+              <View key={i} style={[s.bullet, { marginBottom: 7 }]}>
+                <Text style={s.dot}>•</Text>
+                <Text style={[s.bulletText, { fontSize: 10.5 }]}>{x}</Text>
+                <Hot href={hot?.(`text/${g.key}/${i}`) ?? null} />
+              </View>
+            ))}
+          </View>
+        ))}
+      </View>
+      {part.extras?.trim() ? (
+        <View style={{ marginTop: 22 }}>
+          <Text style={s.eyebrow}>Also this month</Text>
+          <View>
+            <Text style={[s.extras, { fontSize: 10.5 }]}>{part.extras.trim()}</Text>
+            <Hot href={hot?.("text/extras") ?? null} />
+          </View>
+        </View>
+      ) : null}
+      {part.buyer ? <Text style={{ fontSize: 9, color: MUTED, marginTop: 18 }}>Prepared by {part.buyer}, Kaizen Marketing</Text> : null}
+    </Slide>
+  );
+}
+
+/** The close: next month in a line per platform, and where to see it live */
+function DeckClose({ input }: { input: ReportPdfInput }) {
+  const next = input.parts.flatMap((p) => p.sections.next.slice(0, 3).map((x) => ({ p: p.platform, x })));
+  return (
+    <Page size={[SLIDE_W, SLIDE_H]} style={[d.slide, d.dark, { justifyContent: "center" }]}>
+      <SlideFooter client={input.client} dark />
+      <View style={{ width: 56, height: 5, backgroundColor: RED, marginBottom: 22 }} />
+      <Text style={{ fontSize: 34, fontFamily: "Helvetica-Bold", letterSpacing: -0.8, marginBottom: 20 }}>Next month</Text>
+      {next.map((n, i) => (
+        <View key={i} style={{ flexDirection: "row", marginBottom: 8, maxWidth: 620 }}>
+          <Text style={{ width: 70, fontSize: 9, color: "#7a7a82", paddingTop: 2 }}>{platformName(n.p)}</Text>
+          <Text style={{ flex: 1, fontSize: 12, lineHeight: 1.5, color: "#e4e4e7" }}>{n.x}</Text>
+        </View>
+      ))}
+      {input.dashboard ? (
+        <Link src={input.dashboard} style={{ marginTop: 22, fontSize: 11, color: "#ffffff", fontFamily: "Helvetica-Bold", textDecoration: "none" }}>
+          Your live dashboard, any day, any dates →
+        </Link>
+      ) : null}
+    </Page>
+  );
+}
+
+function MonthlyDeck({ input, images }: { input: ReportPdfInput; images: (string | null)[][] }) {
+  return (
+    <>
+      <DeckCover input={input} />
+      {input.parts.length > 1 ? <DeckGlance input={input} /> : null}
+      {input.parts.map((p, i) => (
+        <Fragment key={i}>
+          <DeckIntro input={input} part={p} />
+          <DeckNumbers input={input} part={p} />
+          {(p.sections.stories ?? []).map((st, k) => (st.points?.length ? <DeckStory key={k} input={input} part={p} story={st} i={k} /> : null))}
+          {p.platform === "meta" ? <DeckAds input={input} part={p} images={images[i] ?? []} /> : null}
+          {campaignLines(p.metrics, p.layout, 10).length ? (
+            <Slide input={input} kicker={platformName(p.platform)}>
+              <Text style={d.title}>Where the budget went</Text>
+              <Campaigns m={p.metrics} limit={10} layout={p.layout} hot={hotFor(input, p, null)} />
+            </Slide>
+          ) : null}
+          <DeckPlan input={input} part={p} />
+        </Fragment>
+      ))}
+      <DeckClose input={input} />
+    </>
+  );
+}
+
 /** The click targets for one part in the studio's preview: "<platform>/tile/2", "<platform>/col/1", "<platform>/camp/<name>" */
 function hotFor<T extends number | string>(input: ReportPdfInput, part: ReportPart, kind: "tile" | "row" | null): ((x: T) => string | null) | undefined {
   if (!input.edit) return undefined;
@@ -492,6 +845,8 @@ export function ReportDocument({ input, images }: { input: ReportPdfInput; image
     <Document title={title} author="Kaizen Marketing" creator="Kaizen Marketing" producer="Kaizen Marketing">
       {input.kind === "weekly" ? (
         input.parts.map((p, i) => <Weekly key={i} input={input} part={p} images={images[i] ?? []} />)
+      ) : input.kind === "monthly" ? (
+        <MonthlyDeck input={input} images={images} />
       ) : (
         <>
           <Cover input={input} />

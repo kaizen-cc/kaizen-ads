@@ -3,18 +3,18 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
-import { PACING, STYLES, guideProgress, type Guide, type StyleStep } from "@/lib/onboarding-guide-types";
+import { PACING, STYLES, guideProgress, type Guide, type OwnExample, type StyleLook, type StyleStep } from "@/lib/onboarding-guide-types";
 import { createClient } from "@/lib/supabase/client";
-import { closeParams, pushParams, useParam } from "@/lib/url-state";
+import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
 import type { HelpTurn } from "@/lib/setup-help";
 import { INTAKE_FORM_URL } from "@/lib/presentation-types";
-import { askHelp, assetSlots, assetsShared, googleSend, helpSlots, helpToCall, metaDone, onTheCall, saveStyle } from "./actions";
+import { askHelp, assetSlots, assetsShared, googleSend, helpSlots, helpToCall, metaDone, onTheCall, saveStyle, styleSlots } from "./actions";
 
 // The client's setup, as a few short, visual steps: each opens full screen (in the address, so back closes it), walks
 // them through with pictures of the screens they'll see, and says plainly when it's done. Nothing here is a form to
 // puzzle over: copy buttons for every ID, one tap for "let's do it on our call".
 
-type Props = { slug: string; brand: string; firstName: string | null; guide: Guide; has: { meta: boolean; google: boolean; looks: boolean }; bmId: string | null; adminEmails: string[]; managerId: string | null; examples: { id: string; image: string; video: boolean }[]; presentation: string | null; help: Record<"meta" | "google", HelpTurn[]>; /** The marketing intake form: the step right after access */ intake: { done: boolean; clientId: number | null } };
+type Props = { slug: string; brand: string; firstName: string | null; guide: Guide; has: { meta: boolean; google: boolean; looks: boolean }; bmId: string | null; adminEmails: string[]; managerId: string | null; examples: { id: string; image: string; video: string | null }[]; /** A real ad for each style */ looks: Record<string, StyleLook>; presentation: string | null; help: Record<"meta" | "google", HelpTurn[]>; /** The marketing intake form: the step right after access */ intake: { done: boolean; clientId: number | null } };
 type StepKey = "meta" | "google" | "intake" | "assets" | "style";
 
 export function StartView(p: Props) {
@@ -30,6 +30,11 @@ export function StartView(p: Props) {
     ...(p.has.looks ? [{ key: "style" as const, title: "The look you want", line: "Pick the styles and pacing you love", mins: "2 min", state: (p.guide.style.styles?.length || p.guide.style.pacing ? "done" : "todo") as "done" | "todo" }] : []),
   ];
   const pct = Math.round((done / Math.max(1, total)) * 100);
+  // After a step: the next one still to do, else back to the list
+  const nextAfter = (key: StepKey) => {
+    const i = steps.findIndex((x) => x.key === key);
+    return [...steps.slice(i + 1), ...steps.slice(0, i)].find((x) => x.state === "todo")?.key ?? null;
+  };
 
   return (
     <div className="grid gap-5">
@@ -74,8 +79,8 @@ export function StartView(p: Props) {
       {step === "meta" && p.has.meta && <MetaSheet {...p} />}
       {step === "google" && p.has.google && <GoogleSheet {...p} />}
       {step === "intake" && <IntakeSheet {...p} />}
-      {step === "assets" && <AssetsSheet {...p} />}
-      {step === "style" && p.has.looks && <StyleSheet {...p} />}
+      {step === "assets" && <AssetsSheet {...p} next={nextAfter("assets")} />}
+      {step === "style" && p.has.looks && <StyleSheet {...p} next={nextAfter("style")} />}
     </div>
   );
 }
@@ -800,7 +805,15 @@ function IntakeSheet({ intake }: Props) {
   );
 }
 
-function AssetsSheet({ slug, guide }: Props) {
+const STEP_NAMES: Record<StepKey, string> = { meta: "Facebook & Instagram access", google: "Google Ads", intake: "Tell us about your business", assets: "Your brand assets", style: "The look you want" };
+
+/** On to the next step still to do (in place of this one, so back returns to the list), or back to the list */
+function goNext(next: StepKey | null) {
+  if (next) replaceParams({ step: next });
+  else closeParams("step");
+}
+
+function AssetsSheet({ slug, guide, next }: Props & { next: StepKey | null }) {
   const router = useRouter();
   const pick = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<File[]>([]);
@@ -841,7 +854,16 @@ function AssetsSheet({ slug, guide }: Props) {
   return (
     <Sheet kicker="Step 3" title="Your brand assets">
       <div className="grid gap-5">
-        {(sent || had > 0) && <p className="rounded-[14px] bg-ok-soft/50 px-4 py-3 text-[13.5px] text-ok">✓ {sent ? "Got them, thank you! They're with the team now." : `You've shared ${had} so far.`} Add more any time.</p>}
+        {(sent || had > 0) && (
+          <div className="grid gap-3 rounded-[14px] bg-ok-soft/50 px-4 py-3">
+            <p className="text-[13.5px] text-ok">✓ {sent ? "Got them, thank you! They're with the team now." : `You've shared ${had} so far.`} Add more any time.</p>
+            {sent && (
+              <button type="button" onClick={() => goNext(next)} className="h-11 justify-self-start rounded-full bg-brand px-5 text-[14px] font-medium text-white">
+                {next ? `Next: ${STEP_NAMES[next]} →` : "Back to my steps"}
+              </button>
+            )}
+          </div>
+        )}
         <div className="grid gap-2">
           <p className="text-[14.5px] leading-relaxed text-muted">Whatever you have helps the first ads look like you. Great to have:</p>
           <div className="flex flex-wrap gap-1.5">
@@ -911,35 +933,94 @@ function AssetsSheet({ slug, guide }: Props) {
   );
 }
 
-function StyleSheet({ slug, guide, examples }: Props) {
+/** An example as it plays: a muted looping video, or the picture */
+function Clip({ image, video, className }: { image: string; video: string | null; className: string }) {
+  return video ? (
+    <video src={video} poster={image} autoPlay muted loop playsInline preload="metadata" className={className} />
+  ) : (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={image} alt="" loading="lazy" className={className} />
+  );
+}
+
+function StyleSheet({ slug, guide, examples, looks, next }: Props & { next: StepKey | null }) {
   const router = useRouter();
+  const pick = useRef<HTMLInputElement>(null);
   const [styles, setStyles] = useState<string[]>(guide.style.styles ?? []);
   const [pacing, setPacing] = useState<string | null>(guide.style.pacing ?? null);
   const [liked, setLiked] = useState<StyleStep["liked"]>(guide.style.liked ?? []);
+  const [own, setOwn] = useState<OwnExample[]>(guide.style.own ?? []);
+  const [files, setFiles] = useState<File[]>([]);
+  const [link, setLink] = useState("");
   const [note, setNote] = useState(guide.style.note ?? "");
-  const [busy, setBusy] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const toggle = (k: string) => setStyles(styles.includes(k) ? styles.filter((x) => x !== k) : [...styles, k]);
   const tint = ["#b21e2c", "#5b8def", "#16794c", "#c98a14", "#8b5cf6", "#0ea5e9", "#e0505c", "#f97316"];
+  const addLink = () => {
+    const u = link.trim();
+    if (!/^https?:\/\/\S+$/i.test(u)) return setError("Paste the full link, starting with https://");
+    setError(null);
+    setOwn([...own, { kind: "link" as const, url: u, name: u.replace(/^https?:\/\/(www\.)?/i, "").slice(0, 60) }].slice(0, 16));
+    setLink("");
+  };
+  const save = async () => {
+    setError(null);
+    try {
+      const uploaded: { path: string; name: string; mime: string }[] = [];
+      if (files.length) {
+        const slots = await styleSlots(slug, files.map((f) => ({ name: f.name, bytes: f.size })));
+        if (!slots.ok) throw new Error(slots.error);
+        const supabase = createClient();
+        for (let i = 0; i < files.length; i++) {
+          setBusy(`Uploading ${i + 1} of ${files.length}…`);
+          const { error: e } = await supabase.storage.from("client-docs").uploadToSignedUrl(slots.slots[i].path, slots.slots[i].token, files[i], { contentType: files[i].type || "application/octet-stream" });
+          if (e) throw new Error(`${files[i].name} didn't upload. Try again.`);
+          uploaded.push({ path: slots.slots[i].path, name: files[i].name, mime: files[i].type });
+        }
+      }
+      setBusy("Saving…");
+      const r = await saveStyle(slug, { styles, pacing, liked, own, note, uploaded });
+      if (!r.ok) throw new Error(r.error);
+      setFiles([]);
+      router.refresh();
+      // Saved: on to what's left
+      goNext(next);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong. Try again.");
+    } finally {
+      setBusy(null);
+    }
+  };
   return (
     <Sheet kicker="Step 4" title="The look you want">
       <div className="grid gap-6">
         <div className="grid gap-3">
           <p className="font-heading text-[18px]">Which styles feel like you?</p>
-          <p className="-mt-2 text-[13.5px] text-muted">Pick as many as you like.</p>
+          <p className="-mt-2 text-[13.5px] text-muted">Pick as many as you like. Each one plays a real ad in that style.</p>
           <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
             {STYLES.map((x, k) => {
               const on = styles.includes(x.key);
+              const look = looks[x.key];
               return (
-                <button key={x.key} type="button" onClick={() => toggle(x.key)} className={`grid content-start gap-2 overflow-hidden rounded-[18px] border p-0 text-left transition-colors ${on ? "border-brand ring-1 ring-brand" : "border-line"}`}>
-                  {/* A phone-sized frame in the style's colour: a picture of the kind of ad, not a real one */}
-                  <span className="relative block aspect-[4/5] w-full" style={{ background: `linear-gradient(160deg, ${tint[k]}55, ${tint[k]}11 70%)` }}>
-                    <span aria-hidden className="absolute inset-0 grid place-items-center text-[44px] md:text-[52px]">{["🤳", "🎙️", "⭐", "▶️", "🌴", "✨", "Aa", "😂"][k]}</span>
-                    <span className="absolute inset-x-3 bottom-3 grid gap-1">
-                      <span className="h-1.5 w-2/3 rounded-full bg-white/70" />
-                      <span className="h-1.5 w-1/2 rounded-full bg-white/40" />
-                    </span>
+                <button key={x.key} type="button" onClick={() => toggle(x.key)} aria-pressed={on} className={`grid content-start gap-2 overflow-hidden rounded-[18px] border p-0 text-left transition-colors ${on ? "border-brand ring-1 ring-brand" : "border-line"}`}>
+                  <span className="relative block aspect-[4/5] w-full overflow-hidden" style={{ background: `linear-gradient(160deg, ${tint[k]}55, ${tint[k]}11 70%)` }}>
+                    {look ? (
+                      <>
+                        <Clip image={look.image} video={look.video} className="absolute inset-0 h-full w-full object-cover" />
+                        <span aria-hidden className="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-black/50 to-transparent" />
+                      </>
+                    ) : (
+                      // No real ad for this one yet: a drawing of the kind of ad
+                      <>
+                        <span aria-hidden className="absolute inset-0 grid place-items-center text-[44px] md:text-[52px]">{["🤳", "🎙️", "⭐", "▶️", "🌴", "✨", "Aa", "😂"][k]}</span>
+                        <span className="absolute inset-x-3 bottom-3 grid gap-1">
+                          <span className="h-1.5 w-2/3 rounded-full bg-white/70" />
+                          <span className="h-1.5 w-1/2 rounded-full bg-white/40" />
+                        </span>
+                      </>
+                    )}
+                    {look?.video && <span className="absolute bottom-2 left-2 rounded-full bg-black/50 px-2 py-0.5 text-[10.5px] text-white">▶ Motion</span>}
                     {on && <span className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-brand text-[13px] text-white">✓</span>}
                   </span>
                   <span className="grid gap-0.5 px-3 pb-3">
@@ -979,8 +1060,7 @@ function StyleSheet({ slug, guide, examples }: Props) {
                 const on = (liked ?? []).some((l) => l.image === x.image);
                 return (
                   <button key={x.id} type="button" onClick={() => setLiked(on ? (liked ?? []).filter((l) => l.image !== x.image) : [...(liked ?? []), { image: x.image, label: x.video ? "Video" : "Image" }])} className={`relative overflow-hidden rounded-[14px] border ${on ? "border-brand ring-2 ring-brand" : "border-line"}`}>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={x.image} alt="" className="aspect-[4/5] w-full object-cover" loading="lazy" />
+                    <Clip image={x.image} video={x.video} className="aspect-[4/5] w-full object-cover" />
                     <span className={`absolute right-1.5 top-1.5 grid h-8 w-8 place-items-center rounded-full text-[15px] ${on ? "bg-brand text-white" : "bg-black/40 text-white"}`}>{on ? "♥" : "♡"}</span>
                     {x.video && <span className="absolute bottom-1.5 left-1.5 rounded-full bg-black/50 px-2 py-0.5 text-[10.5px] text-white">▶ Video</span>}
                   </button>
@@ -990,26 +1070,65 @@ function StyleSheet({ slug, guide, examples }: Props) {
           </div>
         )}
 
-        <div className="grid gap-2">
-          <p className="font-heading text-[18px]">Anything else?</p>
-          <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} placeholder="Brands or ads you love, things you never want to see, a link to an ad you saw…" className="w-full resize-none rounded-[14px] border border-line bg-surface px-4 py-3 text-[15px] leading-relaxed outline-none [field-sizing:content] focus:border-brand-text/60" />
+        <div className="grid gap-3">
+          <p className="font-heading text-[18px]">Ads or posts you love</p>
+          <p className="-mt-2 text-[13.5px] text-muted">Yours or anyone&rsquo;s: paste a link (Instagram, TikTok, the Ad Library, YouTube…) or upload a screenshot or video.</p>
+          <div className="flex gap-2">
+            <input
+              value={link}
+              onChange={(e) => setLink(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addLink();
+                }
+              }}
+              inputMode="url"
+              placeholder="https://"
+              className="h-12 min-w-0 flex-1 rounded-[14px] border border-line bg-surface px-4 text-[14.5px] outline-none focus:border-brand-text/60"
+            />
+            <button type="button" onClick={addLink} disabled={!link.trim()} className="h-12 shrink-0 rounded-full border border-line px-4 text-[14px] disabled:opacity-40">
+              Add
+            </button>
+            <button type="button" onClick={() => pick.current?.click()} className="grid h-12 w-12 shrink-0 place-items-center rounded-full border border-line text-[18px]" aria-label="Upload an example">
+              ⇪
+            </button>
+          </div>
+          <input ref={pick} type="file" accept="image/*,video/*" multiple hidden onChange={(e) => setFiles([...files, ...Array.from(e.target.files ?? [])].slice(0, 8))} />
+          {(own.length > 0 || files.length > 0) && (
+            <div className="grid gap-1.5">
+              {own.map((x, i) => (
+                <div key={`${x.url}-${i}`} className="flex items-center gap-3 rounded-[12px] bg-surface px-3 py-2 text-[13.5px]">
+                  <span className="shrink-0 text-faint">{x.kind === "link" ? "↗" : x.video ? "▶" : "▣"}</span>
+                  <a href={x.url} target="_blank" rel="noreferrer" className="min-w-0 flex-1 truncate hover:underline">
+                    {x.name}
+                  </a>
+                  <button type="button" onClick={() => setOwn(own.filter((_, j) => j !== i))} className="grid h-9 w-9 place-items-center rounded-full text-muted hover:text-fg" aria-label={`Remove ${x.name}`}>
+                    ×
+                  </button>
+                </div>
+              ))}
+              {files.map((f, i) => (
+                <div key={`${f.name}-${i}`} className="flex items-center gap-3 rounded-[12px] bg-surface px-3 py-2 text-[13.5px]">
+                  <span className="shrink-0 text-faint">{f.type.startsWith("video/") ? "▶" : "▣"}</span>
+                  <span className="min-w-0 flex-1 truncate">{f.name}</span>
+                  <span className="tabular shrink-0 text-[12px] text-faint">uploads when you save</span>
+                  <button type="button" onClick={() => setFiles(files.filter((_, j) => j !== i))} className="grid h-9 w-9 place-items-center rounded-full text-muted hover:text-fg" aria-label={`Remove ${f.name}`}>
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
-        <button
-          type="button"
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            setError(null);
-            const r = await saveStyle(slug, { styles, pacing, liked, note });
-            setBusy(false);
-            if (!r.ok) return setError(r.error);
-            setSaved(true);
-            router.refresh();
-          }}
-          className="h-12 rounded-full bg-brand text-[15px] font-medium text-white disabled:opacity-50"
-        >
-          {busy ? "Saving…" : saved ? "Saved ✓ (save again to update)" : "Save my look"}
+        <div className="grid gap-2">
+          <p className="font-heading text-[18px]">Anything else?</p>
+          <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} placeholder="Brands you love, things you never want to see in your ads…" className="w-full resize-none rounded-[14px] border border-line bg-surface px-4 py-3 text-[15px] leading-relaxed outline-none [field-sizing:content] focus:border-brand-text/60" />
+        </div>
+
+        <button type="button" disabled={Boolean(busy)} onClick={save} className="h-12 rounded-full bg-brand text-[15px] font-medium text-white disabled:opacity-50">
+          {busy ?? (guide.style.at ? "Update my look" : "Save my look")}
         </button>
         {error && <p className="text-[13px] text-bad">{error}</p>}
       </div>
