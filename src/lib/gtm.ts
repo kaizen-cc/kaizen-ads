@@ -6,6 +6,9 @@ import { LIVE } from "@/lib/live";
 // The Meta go-to-market strategy (Kaizen's GTM Strategy Builder, from the Market Research Playbook, Division 1: Paid
 // Media Research, Meta only). Built once a client's intake form, call notes and website are all in; the team reviews
 // it on the client page, and from then on its summary feeds every agent with the rest of the client page.
+// It's built from the Brand Bible (the foundation, reviewed once and stored) and is where the testing lives: the
+// campaign structure, the test plan and retargeting, and the hypotheses. What its execution proves again and again
+// goes back into the Bible; a hypothesis never does until it has.
 
 const today = () => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", year: "numeric" }).format(new Date());
 
@@ -53,7 +56,7 @@ Cover: "Go-To-Market Strategy: Meta Advertising Strategy & Roadmap", the client 
 ## 03 Ideal Customer Profile: Demographics (age, gender split, income, geography). Psychographics (values, lifestyle, aspirations, buying motivations). Pain Points (in the customer's own words). Buying Triggers. Objections (price, trust, skepticism, alternatives). Voice of Customer: real customer language, direct quotes from real reviews, testimonials or the intake form only.
 ## 04 Competitive Landscape: Competitor 1, 2 and 3 (up to 5): name, positioning, strength, weakness, and their Meta presence. The Gap We're Exploiting (what competitors aren't saying or doing that Kaizen will own). Recurring Competitor Weakness (from review mining, real reviews only). Our Proof Point (from real client reviews only).
 ## 05 Messaging Strategy: at least three angles, numbered, each named and rooted in a specific finding: 1 Pain Point, 2 Transformation, 3 Offer / Value (confirmed real offers only, else "pending offer confirmation from client"), plus social proof, comparison or urgency where warranted. Each with Headlines (3, under 40 characters each) and Primary Text (3, each 2 to 4 sentences: hook, problem or benefit, CTA).
-## 06 Meta Advertising Strategy: Recommended Meta Campaign Structure (campaign types including Advantage+, ad sets, objectives). Initial Testing Sequence (what's tested first, budget allocation). Benchmarks: Industry Avg. CPM, Industry Avg. CTR, Industry Avg. CPA / ROAS, each with its cited source. Profitability Scenario: The Math ("At our target CPA of $X with a $Y average order, we need a Z% conversion rate to be profitable", and why that's achievable, from the client's numbers). Offer Positioning (discount, guarantee, bundle or full price; confirmed only). Funnel Recommendation (website, GHL landing page or lead form).
+## 06 Meta Advertising Strategy: Recommended Meta Campaign Structure (campaign types including Advantage+, ad sets, objectives). Initial Testing Sequence (what's tested first, budget allocation). Benchmarks: Industry Avg. CPM, Industry Avg. CTR, Industry Avg. CPA / ROAS, each with its cited source. Profitability Scenario: The Math ("At our target CPA of $X with a $Y average order, we need a Z% conversion rate to be profitable", and why that's achievable, from the client's numbers). Offer Positioning (discount, guarantee, bundle or full price; confirmed only). Funnel Recommendation (website, GHL landing page or lead form), with the funnel mapped step by step for each goal the client has (a store: page → product → add to cart → checkout → purchase; lead gen: landing page → form or call → thank-you; a restaurant can have both, online orders and event inquiries). Retargeting Plan (who is retargeted, windows, the message and offer for each). Tracking: the pixel or dataset events each funnel step fires, including custom events, so the team knows which event is which.
 ## 07 90-Day Profitability Roadmap: 30 Days (what's being tested, what data we'll have, expected CPA range). 60 Days (expected CPA confidence, what's scaling). 90 Days (target ROAS / CPA / lead volume for profitable scale). Projected Return: monthly ROI on ad spend at target CPA, from the client's own numbers only, breakeven CPA math shown. Gap Analysis: what would need to be true for this NOT to work, honest risks and the plan if they happen.
 ## 08 Open Items & Confirmations Needed: Unconfirmed or Estimated Figures. Information Still Needed From Client. Research Still Pending (team side, e.g. Meta Ad Library pulls, a Motion board, swipe file examples). Then the Internal Quality Gate results.
 Where a field has no sourced answer, write what's missing in the field itself and list it under 08; never leave a template placeholder in brackets and never fill it with a guess.
@@ -106,6 +109,9 @@ export async function buildGtm(admin: SupabaseClient, clientId: string, by: stri
     const context = contextBlock(ctx);
     const { playbookBlock } = await import("@/lib/playbooks");
     const playbook = await playbookBlock(admin, clientId).catch(() => "");
+    // The foundation it's built on, and how this kind of business makes money
+    const [{ data: bible }, { businessModelOf, modelBlock }] = await Promise.all([admin.from("client_brand_bibles").select("read_this_first, markdown, version").eq("client_id", clientId).maybeSingle(), import("@/lib/business-model")]);
+    const model = await businessModelOf(admin, clientId).catch(() => null);
 
     const research = await researchWeb({
       agent: "gtm",
@@ -152,7 +158,15 @@ ${calls}
 <web_research date="${today()}" source="research">
 ${research || "No research came back."}
 </web_research>
-${playbook ? `
+${model ? `
+${modelBlock(model)}
+` : ""}${bible?.markdown ? `
+<brand_bible version="${bible.version}" note="the foundation: build on it, never contradict it; rule one, if it isn't profitable it isn't working">
+${(bible.read_this_first ?? "").slice(0, 6000)}
+
+${bible.markdown.slice(0, 24000)}
+</brand_bible>
+` : ""}${playbook ? `
 ${playbook}
 The playbook is what we've learned across this sub-vertical: use its avatars and proven angles where this client's research backs them up.
 ` : ""}${prev?.markdown ? `\n<current_strategy version="${prev.version}">\n${prev.markdown.slice(0, 30000)}\n</current_strategy>\nUpdate it with what's new: keep what still holds, and add a short change-log line at the end.\n` : ""}

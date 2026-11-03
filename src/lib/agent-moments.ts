@@ -44,6 +44,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Researches the client on the web", where: "Client page · Brand Bible", trigger: "click", when: "When someone builds or updates the Brand Bible", labels: ["brand bible research"] },
     { title: "Writes the Brand Bible from the research and everything known", where: "Client page · Brand Bible", trigger: "click", when: "Right after the research", labels: ["brand bible "] },
     { title: "Answers the review chat and edits the Bible from the team's answers", where: "Client page \u00b7 Brand Bible \u00b7 Clarify", trigger: "click", when: "When someone answers in the review chat", labels: ["brand bible review"] },
+    { title: "Logs the client's standing dos and don'ts; one becomes a rule after about three mentions or a stern one, and is lifted when they open the door", where: "Client page · Brand Bible", trigger: "auto", when: "Every few days for each client, and before the Bible is written", labels: ["bible rules log "] },
     { title: "Writes the client presentation: the short Brand Bible the client reacts to", where: "Brand Bible · Client presentation", trigger: "auto", when: "Once a new client's Brand Bible is in, or when the buyer or a lead asks for a change", labels: ["client presentation "] },
     { title: "Talks the presentation through with the client and saves what they settle", where: "Client portal · How we see you", trigger: "click", when: "When the client writes, shares a file or sends a voice message", labels: ["client portal chat "] },
   ],

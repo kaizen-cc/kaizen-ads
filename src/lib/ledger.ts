@@ -245,11 +245,19 @@ export async function labelAngles(admin: Admin, clientId: string, max = 40) {
   return out.items.length;
 }
 
-/** What the playbook taught since last time, added to the Brand Bible's living learnings (dated, never rewritten). */
+/** A result only counts as proven when it held: profitable (a winner against the target) for at least this many days */
+const PROVEN_DAYS = 21;
+
+/**
+ * What the playbook taught since last time, added to the Brand Bible's living learnings (dated, never rewritten). Rule
+ * one: if it isn't profitable, it isn't working. Only winners that held against the target for three weeks or more,
+ * and losers that had a fair run, become learnings; a good first week is still a test.
+ */
 export async function writeLearnings(admin: Admin, clientId: string, changed: string[]) {
   if (!changed.length) return 0;
   const { data: rows } = await admin.from("client_ledger").select("kind, key, title, detail, verdict, verdict_reason, first_seen, last_seen, spend").eq("client_id", clientId).in("verdict", ["winner", "loser"]);
-  const fresh = (rows ?? []).filter((r) => changed.includes(`${r.kind}|${r.key}`)).slice(0, 25);
+  const span = (r: { first_seen: string; last_seen: string }) => (Date.parse(r.last_seen) - Date.parse(r.first_seen)) / 86_400_000;
+  const fresh = (rows ?? []).filter((r) => changed.includes(`${r.kind}|${r.key}`) && (r.verdict === "loser" || span(r as { first_seen: string; last_seen: string }) >= PROVEN_DAYS)).slice(0, 25);
   if (!fresh.length) return 0;
   const out = await askJson<{ learnings: { kind: "works" | "avoid"; text: string }[] }>({
     agent: "winners",
@@ -258,7 +266,7 @@ export async function writeLearnings(admin: Admin, clientId: string, changed: st
     maxTokens: 3000,
     override: { model: "haiku", effort: "low" },
     system:
-      "You keep a client's Brand Bible current with what their ads proved. From the new winners and losers, write the lessons a creative team should act on: what works (angle, hook, audience, format, offer) and what to avoid. One sentence each, specific (name the angle, the audience, the numbers), at most 6. Skip anything that doesn't teach something.",
+      "You keep a client's Brand Bible current with what their ads proved. Rule one: if it isn't profitable, it isn't working. From the new winners (profitable against the target for three weeks or more) and losers, write the lessons a creative team and the media buyers should act on: what works (angle, hook, audience, format, offer) and what to avoid. One sentence each, specific (name the angle, the audience, the numbers), at most 6. Skip anything that doesn't teach something, and anything that only looks good on early results.",
     schema: { type: "object", properties: { learnings: { type: "array", items: { type: "object", properties: { kind: { type: "string", enum: ["works", "avoid"] }, text: { type: "string" } }, required: ["kind", "text"], additionalProperties: false } } }, required: ["learnings"], additionalProperties: false },
     prompt: fresh
       .map((r) => {

@@ -871,7 +871,8 @@ export type BrandBibleOut = {
   markdown: string;
   readThisFirst: string;
   teamNotes: string[];
-  openQuestions: { question: string; who: string }[];
+  /** category routes it (offer: client then media buyer; creative: client then head of creative; media: media buyer; business: client); options when there are natural choices, multi when several can be picked */
+  openQuestions: { question: string; who: string; category?: "offer" | "creative" | "media" | "business"; options?: string[]; multi?: boolean }[];
 };
 
 export const BRAND_BIBLE_SCHEMA = obj({
@@ -879,7 +880,7 @@ export const BRAND_BIBLE_SCHEMA = obj({
   markdown: str,
   readThisFirst: str,
   teamNotes: strArr,
-  openQuestions: { type: "array", items: obj({ question: str, who: str }) },
+  openQuestions: { type: "array", items: obj({ question: str, who: str, category: { type: "string", enum: ["offer", "creative", "media", "business"] }, options: strArr, multi: { type: "boolean" } }) },
 });
 
 // ─── Copy (Kaizen's copy standard) ──────────────────────────────────────────

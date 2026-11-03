@@ -11,6 +11,10 @@ import { AiUnavailable, askJson, BRAND_BIBLE_SCHEMA, clientContext, contextBlock
 // dated lessons from what their ads proved (what worked, what to avoid) to its living learnings, which agents and the
 // team read as part of the Bible. Execs and leads can still rebuild it by hand from the client page. A built Bible is a
 // draft until the head of creative marks it reviewed; agents read drafts as drafts.
+// Rule one: if it isn't profitable, it isn't working. The Bible is the "how to win" document: it is reviewed once and
+// stored, the Meta and Google go-to-market strategies are built from it and executed, and only what their logs prove
+// again and again (profitable, consistent) comes back into it. Hypotheses go into the next brief, never the Bible.
+// Everything is tailored to how the client makes money (src/lib/business-model.ts), not one kind of business.
 
 const today = () => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", year: "numeric" }).format(new Date());
 
@@ -35,14 +39,16 @@ const day = (iso: string) => String(iso).slice(0, 10);
  * Each block is capped so the whole stays readable in one go.
  */
 async function bibleSources(admin: SupabaseClient, clientId: string) {
-  const [{ data: c }, { data: kpis }, { data: own }, { data: mentioned }, { data: items }, { data: decided }, { data: said }] = await Promise.all([
-    admin.from("clients").select("website, drive_folder_id, creative_db, onboarding_sheet, services").eq("id", clientId).maybeSingle(),
+  const [{ data: c }, { data: kpis }, { data: own }, { data: mentioned }, { data: items }, { data: decided }, { data: said }, { data: setup }, { data: bible }] = await Promise.all([
+    admin.from("clients").select("website, drive_folder_id, creative_db, onboarding_sheet, services, services_extra, services_removed, creative_package, creative_package_key, creative_package_note, creative_packages(label, images, videos)").eq("id", clientId).maybeSingle(),
     admin.from("kpi_targets").select("platform, conversion, custom_action, target, monthly_budget").eq("client_id", clientId).eq("active", true),
     admin.from("client_calls").select("id, source, title, occurred_at, url, notes").eq("client_id", clientId).order("occurred_at", { ascending: false }).limit(60),
     admin.from("call_mentions").select("call_id, summary, client_calls(id, source, title, occurred_at, url, notes)").eq("client_id", clientId).limit(80),
     admin.from("context_items").select("source, occurred_at, author, title, body").eq("client_id", clientId).in("source", ["slack_external", "slack_internal", "gmail", "call"]).order("occurred_at", { ascending: false }).limit(500),
     admin.from("designs").select("name, client_status, client_decided_at, requests(title, number)").eq("client_id", clientId).not("client_status", "is", null).order("client_decided_at", { ascending: false }).limit(60),
     admin.from("review_comments").select("body, created_at, author_name, requests(title, number)").eq("client_id", clientId).not("author_contact_id", "is", null).order("created_at", { ascending: false }).limit(120),
+    admin.from("client_onboarding").select("meta, google, ga4, gtm, gbp, merchant, website, email, tracking, business, assets, style").eq("client_id", clientId).maybeSingle(),
+    admin.from("client_brand_bibles").select("learnings").eq("client_id", clientId).maybeSingle(),
   ]);
 
   const links = [
@@ -90,7 +96,25 @@ async function bibleSources(admin: SupabaseClient, clientId: string) {
     return `- ${day(x.created_at as string)} · ${x.author_name ?? "Client"}${r ? ` on #${r.number} ${r.title}` : ""}: "${String(x.body).replace(/\s+/g, " ").slice(0, 500)}"`;
   });
 
+  // How they make money, the industry benchmark that stands in for missing data, and what the client has told us to do
+  const [{ businessModelOf, modelBlock }, { benchmarksFor }, { rulesBlock }, { servicesOf, SERVICES }] = await Promise.all([import("@/lib/business-model"), import("@/lib/kpi/benchmark"), import("@/lib/bible-rules"), import("@/lib/services")]);
+  const [model, benches, rules] = await Promise.all([businessModelOf(admin, clientId), benchmarksFor(admin, [clientId]), rulesBlock(admin, clientId).catch(() => "")]);
+  const bench = benches.get(clientId);
+  const benchLines = bench ? [...bench.meta.map((b) => ({ ...b, p: "Meta" })), ...bench.google.map((b) => ({ ...b, p: "Google" }))].map((b) => `- ${b.p} ${b.metric}: good ${b.good ?? "?"}${b.great != null ? `, great ${b.great}` : ""} ${b.unit} (${b.source}, ${b.year})`) : [];
+  const pkg = c?.creative_packages as unknown as { label: string; images: number; videos: number } | null;
+  const scope = c ? servicesOf(c).map((k) => SERVICES.find((x) => x.slug === k)?.label ?? k) : [];
+  const creative = c?.creative_package
+    ? `${pkg ? `${pkg.label} creative package: ${pkg.images} images and ${pkg.videos} videos a month` : "On a creative package"}${pkg?.label === "MVP" ? ' (MVP is the grandfathered package: write it as "grandfathered creative package" with the monthly count)' : ""}${c.creative_package_note ? `. Note: ${c.creative_package_note}` : ""}`
+    : "No creative package (Kaizen doesn't make their monthly creative; the client's own content and organic posts are what the media buyers work with)";
+  const proven = ((bible?.learnings ?? []) as { at: string; kind: string; text: string }[]).slice(-40);
+
   return [
+    modelBlock(model),
+    `<scope_of_work note="the services Kaizen provides today; a change agreed in a call, email or Slack since (a service cut or added) wins over this list, dated">\nServices: ${scope.join(", ") || "none recorded"}\nCreative: ${creative}\n</scope_of_work>`,
+    setup && `<setup_and_access note="what the client shared in their onboarding setup: account IDs, pixel, tools and the platforms their revenue or leads live in; for the media buyer section">\n${JSON.stringify(setup).slice(0, 6000)}\n</setup_and_access>`,
+    benchLines.length ? `<industry_benchmarks sub_vertical="${bench!.vertical}" note="the expected results for their category; with no ad data of their own, these are the targets and expectations, labeled as benchmarks with the source">\n${benchLines.join("\n")}\n</industry_benchmarks>` : "",
+    rules,
+    proven.length ? `<proven_in_their_ads note="from the client playbook: only results that held, profitable against the target over a real window. These alone feed Creative learnings and the offer history's wins and losses">\n${proven.map((l) => `- ${l.at} · ${l.kind === "works" ? "Works" : "Avoid"}: ${l.text}`).join("\n")}\n</proven_in_their_ads>` : "",
     links.length && `<client_links note="link these wherever the Bible mentions them">\n${links.join("\n")}\n</client_links>`,
     kpis?.length && `<kpi_targets note="what the account is measured on today">\n${kpis.map((k) => `- ${k.platform === "google" ? "Google" : "Meta"}: ${k.conversion}${k.custom_action ? ` (${k.custom_action})` : ""}${k.target != null ? `, target ${k.target}` : ", no target set"}${k.monthly_budget ? `, monthly budget $${k.monthly_budget}` : ""}`).join("\n")}\n</kpi_targets>`,
     c?.services && `<services_kaizen_provides>${JSON.stringify(c.services)}</services_kaizen_provides>`,
@@ -126,6 +150,10 @@ export async function buildBible(admin: SupabaseClient, clientId: string, opts: 
   });
 
   const context = contextBlock(ctx);
+  const { businessModelOf, MODEL_GUIDE } = await import("@/lib/business-model");
+  const model = await businessModelOf(admin, clientId).catch(() => null);
+  const guide = model ? MODEL_GUIDE[model.model] : null;
+  const reviewSources = guide ? [guide.reviews, model?.also ? MODEL_GUIDE[model.also].reviews : ""].filter(Boolean).join("; and ") : "Google Business Profile, the website, Trustpilot, Facebook, and the review sites of their industry";
   try {
     // Research is the expensive half: kept as soon as it's done, and reused for 30 days (a retry or an update within
     // the month doesn't pay for it again). Gathering pages runs on Sonnet with a few searches; the strategy is Opus.
@@ -146,11 +174,13 @@ export async function buildBible(admin: SupabaseClient, clientId: string, opts: 
               prompt: `Research ${client.name}${client.website ? ` (website: ${client.website})` : ""}: the brand itself. Today is ${today()}.
 
 Find and report, with a full source URL on every line:
-1. Who they are in their own words: the description they use, mission, vision and values (quote them; say so when the site has none).
-2. What makes them different and how it actually works (their process, where the product comes from, how it's made or delivered): the unique selling proposition in their words.
-3. Every product or service with exact prices and offers as shown, and every landing page ads could send people to: the page URL, what it promises, the price shown, the action it asks for.
-4. Their socials and listings: Instagram, Facebook, TikTok, YouTube, Google Business, marketplace and review-site profile URLs.
-5. Reviews: count and star rating per source, then 15-25 verbatim quotes (word for word, first name + last initial, source, date, link). Prefer reviews of 15-40 words that say something specific (a result, a feeling, a comparison, a moment, the words buyers search with). Include complaints. If a review page can't be read, say so.
+This is ${guide ? `a ${guide.label.toLowerCase()} business` : "a business whose model isn't set yet"}${model?.also ? ` that also runs ${MODEL_GUIDE[model.also].label.toLowerCase()}` : ""}: aim every point at that.
+1. Who they are in their own words: the description they use, mission, vision and core values (quote them; say so when the site has none).
+2. What makes them different and how it actually works, in detail: where the product or service comes from, how it's sourced, made, prepared or delivered, how long it takes, who does it, any generations, certifications or awards: the unique selling proposition in their words. Note every small fact that changes the economics or the story (a region they're more profitable in, a delivery promise, a guarantee).
+3. Every product or service with exact prices and offers as shown, including what's sold individually vs only in bundles or boxes, gift cards, memberships or subscriptions; the offer front and center for new customers and any sign-up (pop-up) offer; and every landing page ads could send people to: the page URL, what it promises, the price shown, the action it asks for.
+4. Their socials and listings: Instagram, Facebook, TikTok, YouTube, Google Business Profile, marketplace and review-site profile URLs.
+5. Reviews, from where this kind of business gets them: ${reviewSources}. For Google, search Google Maps or the Business Profile for "${client.name}" (with the city when there's a location) and report the rating and count; if Maps can't be read, use a page that shows their Google reviews. Count and star rating per source, then 15-25 verbatim quotes (word for word, first name + last initial, source, date, link). Prefer reviews of 15-40 words that say something specific (a result, a feeling, a comparison, a moment, the words buyers search with). Add long, positive comments from their own Facebook and Instagram posts. Include complaints. If a source can't be read, say which.
+6. Press: national or local news, press releases or features about them or that back up how they do business, with links and dates.
 
 ${aim}`,
             }),
@@ -165,10 +195,11 @@ ${aim}`,
               prompt: `Research the market around ${client.name}${client.website ? ` (${client.website})` : ""}. Today is ${today()}.
 
 Find and report, with a full source URL on every line:
-1. Competitors: 4-6 direct ones (the ones the client named first, if any are in the notes below). For each: website URL, main landing or offer page URL, Instagram, Facebook and TikTok URLs, positioning line, price, key claims, look and tone, and a Meta Ad Library search link (https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&q=<brand name>). Note any of their ads you can see: the promise, the angle, how long it has run.
-2. What competitors' customers complain about: 5-10 negative reviews of competitors, word for word, with the competitor, source and link. These are angles our client can answer.
+1. Competitors: 4-6 direct ones (the ones the client named first, if any are in the notes below), in the same market and, for a local business, the same area. For each: website URL, main landing or offer page URL, Instagram, Facebook and TikTok URLs, their unique selling proposition, mission and vision as their site states them, positioning line, price, key claims, offer, look and tone, and a Meta Ad Library search link (https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&q=<brand name>). Note any of their ads you can see: the promise, the angle, how long it has run, and what people say in the comments (praise and complaints).
+2. What competitors' customers say: 5-10 negative reviews of competitors (the complaints our client can answer: callouts and hooks) and 3-5 positive ones (what people love, that our client must match or beat), word for word, with the competitor, source and link.
 3. The buyer's own words about the category from forums, Reddit, Q&A sites and review sites: 10-15 quotes, each tagged pain, desire, objection or regret, with source, date and link. These are themes, never reviews of the client.
-4. Market: category size and trends, buyer behavior, and studies, surveys, white papers or research reports with numbers creative could use (the stat, its source and link), tagged [certain] / [likely] / [guessing].
+4. Market: category size and trends, buyer behavior, and studies, surveys, white papers or research reports with numbers creative could use (the stat, its source and link), tagged [certain] / [likely] / [guessing]. National news and press from the last 12 months that legitimize the category or how this client does business (a health finding, a trend, a public figure), with how creative could use it.
+4b. Benchmarks for the category in their market: typical cost per lead or purchase, conversion rate and CTR on Meta and Google (WordStream and similar, with year and link), so a client with no ad data of their own has expectations.
 5. Rules: regulation and ad-platform policy that limit what ads in this category can say or show.
 6. Calendar: holidays, seasons, industry dates and buying windows for the next 12 months.
 
@@ -216,6 +247,9 @@ export async function writeBible(admin: SupabaseClient, clientId: string): Promi
   const { data: took } = await admin.from("client_brand_bibles").update({ build_stage: "writing", started_at: new Date().toISOString() }).eq("client_id", clientId).eq("build_stage", "write").select("client_id");
   if (!took?.length) return "busy";
   try {
+    // The client's dos and don'ts brought current first, so the table is built from the log
+    const { logClientRules } = await import("@/lib/bible-rules");
+    await logClientRules(admin, clientId).catch((e) => console.error("[bible] rules log", e instanceof Error ? e.message : e));
     const held = await bibleSources(admin, clientId);
     const bible = await askJson<BrandBibleOut>({
       agent: "brandbible",
@@ -239,12 +273,15 @@ ${(row.research || "No research came back.").slice(0, 90000)}
 ${row.sources_pasted || "None. There's no intake form or sales call yet: say so in section 1 and make the gaps tests."}
 </sources_pasted_by_the_team>
 ${row.markdown ? `\n<current_brand_bible version="${row.version}">\n${row.markdown.slice(0, 40000)}\n</current_brand_bible>\nUpdate it: keep what still holds, bring it up to the current structure, bump the minor version, add a change-log line.\n` : ""}
-Build ${client.name}'s Brand Bible following the Brand Bible structure skill. Today is ${today()}.
+Build ${client.name}'s Brand Bible following the Brand Bible structure skill, tailored to their business model above (their funnels, KPIs, review sources, offers and tracking platforms), never to another kind of business. Today is ${today()}.
+- Rule one: if it isn't profitable, it isn't working. Nothing goes in as proven unless it was profitable and held over a real window; a few first results or a good week are not proven. With no ad data, say so and use the industry benchmarks as the expectations, labeled as benchmarks.
+- The top of the Bible (Read this first and the cover) is broad and 100% factual: mission, vision, core values, what success looks like, tone and the creative look. Its foundational rules are never one comment, one test or one conversation turned into a rule. The Do / Don't table comes from the dos-and-don'ts log: the rules in force, each with its source and date.
+- Hypotheses and test ideas ("this angle should crush") never go in the Bible: they go to the tests the creative will answer.
 - overview: the cover. statement: who they are in one or two sentences a stranger understands; mission and vision: the client's own words, quoted, or "" when they have none on record (never write one for them); goal: the business goal they gave us, in their words with the source (a revenue goal, a return, a cost per lead), or "" when none.
 - markdown: the full Brand Bible in Markdown (headings, bullet lists and pipe tables), every fact with its source tag, and every page, profile, ad, review, file and folder you mention as a Markdown link [name](url) when you have its URL.
 - readThisFirst: the "Read this first" page on its own, plain text, under 600 words, one labeled block per line ("Label: text", or a label line ending in a colon followed by its numbered or lettered lines). The brief strategist, copywriter and reviewer read this on every request.
 - teamNotes: the "For the team" list: gaps, sensitive items left out, and today's problems in the business or on the site (sold-out notices, broken pages, prices that disagree), each starting "Current issue:". Those stay out of the Bible, which holds only what's true of the brand.
-- openQuestions: only true blockers, each with who answers (client, media buyer or Kaizen).`,
+- openQuestions: only true blockers. category: offer (offers and promotions: the client answers, then the media buyer), creative (claims, messaging, products to feature, the brand guideline: the client, then the head of creative), media (where traffic goes, KPIs, break-even: the media buyer), business (facts only the client knows). who: who answers first. options: the natural choices when there are some (the claims to approve, the products to feature), else []; multi: true when several can be picked. Keep them few and easy: this is part of the client's onboarding. In the markdown's Open questions section write each as one bullet, exactly: "- [category] Question {options: A | B | C}{multi}", leaving out {options: ...} when there are none and {multi} when only one can be picked.`,
     });
 
     await admin
@@ -257,7 +294,7 @@ Build ${client.name}'s Brand Bible following the Brand Bible structure skill. To
         markdown: bible.markdown,
         read_this_first: bible.readThisFirst,
         team_notes: bible.teamNotes,
-        open_questions: bible.openQuestions,
+        open_questions: bible.openQuestions.map((q) => ({ ...q, options: (q.options ?? []).filter(Boolean).slice(0, 12) })),
         generated_at: new Date().toISOString(),
         reviewed_at: null,
         reviewed_by: null,
@@ -308,6 +345,9 @@ const DAILY_CAP = 15;
  * reviews and feedback). Between those the playbook adds what their ads prove. A failed build waits a day.
  */
 export async function autoBibles(admin: SupabaseClient, max = 1) {
+  // The dos-and-don'ts logs, a couple of clients a run, each every few days
+  const { keepRulesLogs } = await import("@/lib/bible-rules");
+  await keepRulesLogs(admin, 2).catch((e) => console.error("[bible] rules logs", e instanceof Error ? e.message : e));
   // A Bible whose writing half never started (the start was lost) or died part way is written now, automatic or not
   const { data: stuck } = await admin
     .from("client_brand_bibles")
