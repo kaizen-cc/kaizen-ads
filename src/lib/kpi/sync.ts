@@ -5,6 +5,9 @@ import { accountActivity, asyncReport, linkAdAccounts, metaConfigured, type Insi
 import { digits, googleActivity, googleAdsConfigured, googleAdsMissing, syncGoogleCampaigns } from "@/lib/context/google-ads";
 import { pool } from "@/lib/context/run";
 import { computeSnapshot, nyParts, toDays } from "./calc";
+import { benchmarkTarget, benchmarksFor } from "./benchmark";
+import { conversionFor } from "./conversions";
+import { businessModel, googleHealth } from "@/lib/google-flags";
 import { LIVE } from "@/lib/live";
 
 // Pulls Meta and Google Ads numbers per campaign per day for every ad account with a KPI target, then recomputes
@@ -127,12 +130,25 @@ async function saveSnapshot(admin: SupabaseClient, t: Target, fields: Record<str
 export async function computeAccount(admin: SupabaseClient, account: string, targets: Target[], error?: string, platform = "meta") {
   const rows = await accountRows(admin, account, platform);
   const now = new Date();
+  // No target: the client's industry benchmark stands in, said so
+  const benches = targets.some((t) => t.target == null) ? await benchmarksFor(admin, [...new Set(targets.map((t) => t.client_id))]).catch(() => new Map()) : new Map();
+  const since30 = ymd(new Date(now.getTime() - 30 * 86_400_000));
   for (const t of targets) {
     const goals = t.conversion === "campaign_goal" ? await goalsFor(admin, account, platform, t.campaign_results) : undefined;
+    const roas = Boolean(conversionFor(t.conversion).roas);
+    const benchmark = t.target == null ? benchmarkTarget(benches.get(t.client_id), platform, roas) : null;
+    // Google: brand share, search impression share, conversion rate and CTR over the last 30 days
+    const health =
+      platform === "google"
+        ? googleHealth(
+            rows.filter((r) => r.date >= since30 && (!t.campaign_match || (r.campaign_name ?? "").toLowerCase().includes(t.campaign_match.toLowerCase())) && !(t.excluded_campaigns ?? []).includes(String(r.campaign_id))),
+            businessModel(t.conversion, roas),
+          )
+        : null;
     const s = computeSnapshot(toDays(rows, t.campaign_match, t.excluded_campaigns, goals, platform), {
       conversion: t.conversion,
       custom: t.custom_action,
-      target: t.target == null ? null : Number(t.target),
+      target: t.target == null ? (benchmark?.value ?? null) : Number(t.target),
       budget: t.monthly_budget == null ? null : Number(t.monthly_budget),
       now,
     });
@@ -147,6 +163,8 @@ export async function computeAccount(admin: SupabaseClient, account: string, tar
       trend: s.trend,
       budget: s.budget ?? {},
       daily: s.daily,
+      benchmark,
+      google_health: health,
       error: error ?? (rows.length ? null : platform === "google" ? "No data from Google Ads yet" : "No data from Meta yet"),
     });
   }

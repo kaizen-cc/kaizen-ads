@@ -1,4 +1,6 @@
 import "server-only";
+import { businessModel, googleHealth, googleHealthText, type GoogleHealth } from "@/lib/google-flags";
+import type { BenchmarkTarget } from "@/lib/kpi/success";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { pickType, resultsOf, toDays, nyParts, type Day } from "@/lib/kpi/calc";
 import { conversionFor, conversionLabel } from "@/lib/kpi/conversions";
@@ -59,6 +61,10 @@ export type ReportMetrics = {
   diagnosis?: Diagnosis;
   /** One other Kaizen service worth raising, when the timing and the numbers make it natural */
   opportunity?: Opportunity | null;
+  /** Google: brand share, search impression share, conversion rate and CTR in the main period, with what's flagged */
+  google?: GoogleHealth;
+  /** No target set: the industry benchmark it's judged against instead */
+  benchmark?: BenchmarkTarget | null;
 };
 
 type Target = { id: string; client_id: string; platform: string; ad_account_id: string | null; conversion: string; custom_action: string | null; campaign_match: string | null; target: number | null; monthly_budget: number | null; excluded_campaigns?: string[] | null; campaign_results?: Record<string, string> | null };
@@ -294,6 +300,10 @@ export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "wee
     });
   }
 
+  // Google's lines, over the main period (brand campaigns set aside for CTR and conversion rate)
+  const google = platform === "google" ? googleHealth(all.filter((r) => r.date >= ps.main.start && r.date <= ps.main.end), businessModel(t.conversion, Boolean(kpiConv.roas))) : undefined;
+  const benchmark = t.target == null && !opts.lite ? (((await admin.from("kpi_snapshots").select("benchmark").eq("target_id", t.id).maybeSingle()).data?.benchmark ?? null) as BenchmarkTarget | null) : null;
+
   const dates = new Set(days.filter((d) => d.date >= ps.main.start && d.date <= ps.main.end).map((d) => d.date));
   const gaps: string[] = [];
   for (let d = ps.main.start; d <= ps.main.end; d = shift(d, 1)) if (!dates.has(d)) gaps.push(d);
@@ -312,6 +322,8 @@ export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "wee
     topAds,
     dataThrough: [...days].map((d) => d.date).sort().at(-1) ?? null,
     gaps,
+    ...(google ? { google } : {}),
+    ...(benchmark ? { benchmark } : {}),
     ...(useGoals && goalLines.length ? { goals: goalLines } : {}),
     ...(opts.daily
       ? {
@@ -330,7 +342,7 @@ export function metricsText(m: ReportMetrics) {
   const line = (p: Period) =>
     `${p.label}: spend ${money(p.spend)}, ${p.results} ${m.conversion.toLowerCase()}, cost per result ${money(p.costPerResult)}${p.revenue ? `, revenue ${money(p.revenue)}, ROAS ${p.roas ?? "—"}` : ""}, impressions ${p.impressions.toLocaleString("en-US")}, link clicks ${p.clicks.toLocaleString("en-US")}, CTR ${p.ctr ?? "—"}%, CPC ${money(p.cpc)}, CPM ${money(p.cpm)} (${p.days} days with data)`;
   return [
-    `Platform: ${m.platform === "google" ? "Google Ads" : "Meta Ads"}. KPI: ${m.conversion}${m.roasKpi ? " (judged on ROAS)" : ""}${m.target != null ? `, target ${m.roasKpi ? `${m.target}x ROAS` : money(m.target)}` : ", no target set"}${m.monthlyBudget ? `, monthly budget ${money(m.monthlyBudget)}` : ""}. Data through ${m.dataThrough ?? "?"}.`,
+    `Platform: ${m.platform === "google" ? "Google Ads" : "Meta Ads"}. KPI: ${m.conversion}${m.roasKpi ? " (judged on ROAS)" : ""}${m.target != null ? `, target ${m.roasKpi ? `${m.target}x ROAS` : money(m.target)}` : m.benchmark ? `, no target set: judged against the ${m.benchmark.vertical} industry benchmark of ${m.roasKpi ? `${m.benchmark.value}x ROAS` : money(m.benchmark.value)} (${m.benchmark.source} ${m.benchmark.year}); aim to beat it` : ", no target set"}${m.monthlyBudget ? `, monthly budget ${money(m.monthlyBudget)}` : ""}. Data through ${m.dataThrough ?? "?"}.`,
     line(m.main),
     line(m.compare),
     ...(m.mtd ? [line(m.mtd)] : []),
@@ -340,6 +352,7 @@ export function metricsText(m: ReportMetrics) {
     ...(m.topAds.length ? ["Top ads (main period):", ...m.topAds.map((a, i) => `${i + 1}. ${a.name} (${a.campaign ?? "?"}): ${a.results} results at ${money(a.costPerResult)}, ${money(a.spend)} spent, ${a.clicks} link clicks, CTR ${a.ctr ?? "—"}%${a.link ? `, preview ${a.link}` : ""}`)] : []),
     ...(m.goals && m.goals.length > 1 ? ["Results by what the campaigns are optimized for (main period):", ...m.goals.map((g) => `- ${g.label}: ${g.results} at ${money(g.costPerResult)} each, ${money(g.spend)} spent`)] : m.goals?.length ? [`The campaigns are optimized for: ${m.goals[0].label}.`] : []),
     ...(m.gaps.length ? [`Days with no data in the main period: ${m.gaps.join(", ")}`] : []),
+    ...(m.google ? [googleHealthText(m.google)] : []),
   ].join("\n");
 }
 

@@ -2,6 +2,8 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Agg, Pacing, Status, Trend } from "./calc";
 import { conversionFor, conversionLabel } from "./conversions";
+import { successOf, successLine, type BenchmarkTarget, type Success, type TargetFrom } from "./success";
+import type { GoogleHealth } from "@/lib/google-flags";
 
 // One client's KPI targets as the tracker last computed them (every 30 minutes in business hours, hourly otherwise): for the client page and for every
 // agent that reads the client, so a brief for an off-target account knows it's off target.
@@ -19,6 +21,13 @@ export type ClientKpi = {
   roas: boolean;
   target: number | null;
   source: "strategy" | "client";
+  /** Where the target came from; "benchmark" when there's none and the industry benchmark stands in */
+  targetFrom: TargetFrom | null;
+  benchmark: BenchmarkTarget | null;
+  /** Trending toward the target (or the benchmark)? */
+  success: Success | null;
+  /** Google: brand share, impression share, conversion rate and CTR, last 30 days, with what's flagged */
+  google?: GoogleHealth | null;
   owner: string | null;
   status: Status;
   deviation: number | null; // 14 days vs target; positive = worse
@@ -44,6 +53,8 @@ export async function loadClientKpis(db: SupabaseClient, clientId: string): Prom
   return targets
     .map((t) => {
       const s = (snaps ?? []).find((x) => x.target_id === t.id);
+      const benchmark = t.target == null ? ((s?.benchmark ?? null) as BenchmarkTarget | null) : null;
+      const status = (s?.status ?? "setup") as Status;
       return {
         id: t.id,
         label: t.label,
@@ -55,10 +66,14 @@ export async function loadClientKpis(db: SupabaseClient, clientId: string): Prom
         campaignMatch: (t.campaign_match as string | null) ?? null,
         extraMetrics: (t.extra_metrics ?? []) as string[],
         roas: Boolean(conversionFor(t.conversion).roas),
-        target: t.target == null ? null : Number(t.target),
+        target: t.target == null ? (benchmark?.value ?? null) : Number(t.target),
         source: t.source as "strategy" | "client",
+        targetFrom: (t.target != null ? (t.source as "strategy" | "client") : benchmark ? "benchmark" : null) as TargetFrom | null,
+        benchmark,
+        success: successOf(status, s?.trend ?? null, s?.vs_month == null ? null : Number(s.vs_month)),
+        google: (s?.google_health ?? null) as GoogleHealth | null,
         owner: (t.profiles as unknown as { full_name: string } | null)?.full_name ?? t.owner_name ?? null,
-        status: (s?.status ?? "setup") as Status,
+        status,
         deviation: s?.deviation == null ? null : Number(s.deviation),
         vsMonth: s?.vs_month == null ? null : Number(s.vs_month),
         trend: s?.trend ?? null,
@@ -91,14 +106,16 @@ export function describeKpis(kpis: ClientKpi[]) {
       if (k.status === "setup" || k.status === "idle") return `- ${name}: ${STATUS_WORDS[k.status]}.`;
       const parts = [
         `${STATUS_WORDS[k.status]}`,
-        k.target != null && `target ${v(k.target, k.roas)} (set by ${k.source === "client" ? "the client" : "Kaizen"})`,
+        k.target != null && (k.targetFrom === "benchmark" && k.benchmark ? `no target set; judged against the ${k.benchmark.vertical} industry benchmark of ${v(k.target, k.roas)} (${k.benchmark.source} ${k.benchmark.year})` : `target ${v(k.target, k.roas)} (set by ${k.source === "client" ? "the client" : "Kaizen"})`),
+        k.success && `${successLine(k.success, k.targetFrom ?? "strategy").toLowerCase()}`,
         `last 7 days ${v(kpiOf(k.windows.d7, k.roas), k.roas)}, last 14 days ${v(kpiOf(k.windows.d14, k.roas), k.roas)}, last 30 days ${v(kpiOf(k.windows.d30, k.roas), k.roas)}`,
         k.deviation != null && `14 days are ${pctWorse(k.deviation)} than target`,
         k.vsMonth != null && `${pctWorse(k.vsMonth)} than last month`,
         k.trend && `trend: ${k.trend}`,
         k.pace && k.budget && `budget pacing ${k.pace.status} (${Math.round(k.pace.pace * 100)}% of the $${Math.round(k.budget).toLocaleString("en-US")} month)`,
       ].filter(Boolean);
-      return `- ${name}: ${parts.join("; ")}.`;
+      const flags = k.google?.flags.length ? ` Google flags: ${k.google.flags.map((f) => `${f.title} (${f.fix.toLowerCase()})`).join("; ")}.` : "";
+      return `- ${name}: ${parts.join("; ")}.${flags}`;
     })
     .join("\n");
 }

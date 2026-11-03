@@ -1,6 +1,7 @@
 import type { KpiRow } from "@/app/(team)/kpis/kpi-board";
 import { computeSnapshot, type Day } from "@/lib/kpi/calc";
 import { conversionFor, conversionLabel } from "@/lib/kpi/conversions";
+import { successOf } from "@/lib/kpi/success";
 
 // Design preview only: realistic rows built by running the real KPI math over made-up daily numbers.
 
@@ -61,6 +62,10 @@ const make = (
     budget,
     budgetNote: null,
     source: "strategy",
+    targetFrom: "strategy",
+    benchmark: null,
+    success: successOf(s.status, s.trend, s.vsMonth),
+    googleFlags: [],
     ownerId: owner,
     owner,
     status: s.status,

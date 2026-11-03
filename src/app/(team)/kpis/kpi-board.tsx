@@ -24,6 +24,8 @@ import { kpiCreative, type KpiCreative } from "./creative-actions";
 import { QuickActions } from "./quick-actions";
 import { Layer } from "../clients/[slug]/layer";
 import { GoogleAdsMark, MetaMark } from "@/components/source-logo";
+import { SUCCESS, TARGET_FROM, successLine, type BenchmarkTarget, type Success, type TargetFrom } from "@/lib/kpi/success";
+import type { GoogleFlag } from "@/lib/google-flags";
 import { kpiCampaigns, setCampaignCounted, setCampaignResult, setCardMetric, type CampaignPerf } from "./campaign-actions";
 
 export type KpiRow = {
@@ -42,7 +44,14 @@ export type KpiRow = {
   customAction: string | null;
   campaignMatch: string | null;
   roas: boolean;
+  /** The target, or the industry benchmark standing in for a missing one (targetFrom says which) */
   target: number | null;
+  targetFrom: TargetFrom | null;
+  benchmark: BenchmarkTarget | null;
+  /** Trending toward the target? */
+  success: Success | null;
+  /** Google's lines crossed (brand share, impression share, conversion rate, CTR), last 30 days */
+  googleFlags: GoogleFlag[];
   budget: number | null;
   budgetNote: string | null;
   source: "strategy" | "client";
@@ -122,7 +131,7 @@ function TargetFields({ row, buyers, platform, ctl }: { row?: KpiRow; buyers: Pe
       </label>
       <label className={label}>
         {conv === "roas" ? "Target ROAS" : "Target cost per result"}
-        <input name="target" inputMode="decimal" defaultValue={row?.target ?? ""} placeholder={conv === "roas" ? "3.0" : "$45"} className={`${field} tabular`} />
+        <input name="target" inputMode="decimal" defaultValue={row?.targetFrom === "benchmark" ? "" : (row?.target ?? "")} placeholder={conv === "roas" ? "3.0" : "$45"} className={`${field} tabular`} />
       </label>
       <label className={label}>
         Monthly budget
@@ -694,7 +703,7 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
                 {r.kaizenId != null && <span className="tabular">ID {r.kaizenId} · </span>}
                 {r.platform === "google" ? "Google Ads" : "Meta"} · {r.conversionLabel}
                 {r.owner && ` · ${r.owner}`}
-                {r.source === "client" && " · client's target"}
+                {r.targetFrom && ` · ${TARGET_FROM[r.targetFrom].toLowerCase()}`}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-1">
@@ -717,12 +726,19 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
                   <span className="tabular font-display text-[34px] leading-none tracking-tight" style={{ color }}>
                     {kpiValue(d14?.value, r.roas)}
                   </span>
-                  <span className="tabular text-sm text-faint">/ {kpiValue(r.target, r.roas)} target · 14 days</span>
+                  <span className="tabular text-sm text-faint">/ {kpiValue(r.target, r.roas)} {r.targetFrom === "benchmark" ? "industry benchmark" : "target"} · 14 days</span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusPill status={r.status} />
+                  {r.success && <SuccessTag r={r} />}
                   {gap && <span className="text-xs text-muted">{gap}</span>}
                 </div>
+                {r.benchmark && r.targetFrom === "benchmark" && (
+                  <p className="text-[11.5px] text-faint">
+                    No target set yet: judged against the {r.benchmark.vertical} benchmark ({r.benchmark.source.replace(/^https?:\/\/(www\.)?/, "").split("/")[0]}, {r.benchmark.year}). Beat the industry, then set a real target.
+                  </p>
+                )}
+                {r.googleFlags.length > 0 && <GoogleFlags flags={r.googleFlags} full />}
               </div>
             )}
             <div className="flex flex-wrap items-center gap-2">
@@ -809,7 +825,7 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
                   </div>
                 </div>
                 <NextMove r={r} moves={moves} onActions={() => setTab("actions")} onNotes={() => setTab("notes")} />
-                {r.accountId && <Campaigns key={`${r.id}:${r.conversion}:${r.target}`} id={r.id} target={r.target} conversion={r.conversion} platform={r.platform} />}
+                {r.accountId && <Campaigns key={`${r.id}:${r.conversion}:${r.target}`} id={r.id} target={r.targetFrom === "benchmark" ? null : r.target} conversion={r.conversion} platform={r.platform} />}
                 {r.audit?.status === "ready" && r.audit.quick && r.audit.quick.length > 0 && (
                   <section className="grid gap-1 rounded-[20px] border border-line bg-surface px-4 pb-4 md:px-5 md:pb-5">
                     <QuickActions key={r.audit.id} auditId={r.audit.id} items={r.audit.quick} platform={r.audit.platform ?? r.platform} />
@@ -1381,10 +1397,11 @@ function Card({ r, active, onOpen, onMove }: { r: KpiRow; active: boolean; onOpe
               <span className="tabular truncate text-xs text-faint">/ {kpiValue(r.target, r.roas)}</span>
             </div>
             <TargetGauge value={d14?.value} target={r.target} roas={r.roas} />
-            <span className="flex items-center gap-2">
+            <span className="flex min-w-0 items-center gap-2">
               <StatusPill status={r.status} />
-              {gap && <span className="truncate text-[11px] text-muted">{gap}</span>}
+              {r.success ? <SuccessTag r={r} /> : gap && <span className="truncate text-[11px] text-muted">{gap}</span>}
             </span>
+            {r.targetFrom === "benchmark" && <span className="truncate text-[11px] text-faint">vs industry benchmark{r.benchmark ? ` · ${r.benchmark.vertical}` : ""}</span>}
           </div>
         )}
 
@@ -1422,6 +1439,7 @@ function Card({ r, active, onOpen, onMove }: { r: KpiRow; active: boolean; onOpe
           ) : idle ? (
             <span className="inline-flex rounded-full border border-dashed border-bad/50 px-2 py-0.5 text-[10.5px] text-bad">Nobody&apos;s on it</span>
           ) : null}
+          {r.googleFlags.length > 0 && <GoogleFlags flags={r.googleFlags} />}
           {(r.audit?.status === "running" || r.audit?.status === "queued") && <span className="rounded-full bg-brand-soft px-2 py-0.5 text-[10.5px] text-brand-text">{r.audit.status === "running" ? `Auditing ${r.audit.progress}%` : "Audit queued"}</span>}
           {moves > 0 && (
             <ChipTip tip={<MovesTip items={(r.audit?.quick ?? []).filter((q) => !q.done)} google={r.platform === "google"} onMove={onMove} />} className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface-2 px-2 py-0.5 text-[10.5px] text-fg/85">
@@ -1440,6 +1458,51 @@ function Card({ r, active, onOpen, onMove }: { r: KpiRow; active: boolean; onOpe
  * A chip on a card with a read of its own on hover, drawn above the page so the card's edges don't cut it off. The
  * pointer can travel into it and pick something there; it closes a moment after the pointer leaves both.
  */
+/** Are we trending toward the target (or the benchmark): the last days and the month-over-month move, against the gap */
+function SuccessTag({ r }: { r: KpiRow }) {
+  if (!r.success) return null;
+  const s = SUCCESS[r.success];
+  return (
+    <span title={successLine(r.success, r.targetFrom ?? "strategy")} className={`inline-flex h-6 shrink-0 items-center gap-1 rounded-full px-2.5 text-[11px] font-medium ${s.tone}`}>
+      {r.success === "on_track" ? "↗" : r.success === "close" ? "→" : "↘"} {s.label}
+    </span>
+  );
+}
+
+const FLAG_SHORT: Record<GoogleFlag["key"], string> = { brand_share: "Brand", impression_share: "Imp. share", conversion_rate: "Conv. rate", ctr: "CTR" };
+
+/** Google's lines crossed: brand over 10% of spend, impression share under 10%, a weak conversion rate, a low CTR */
+function GoogleFlags({ flags, full = false }: { flags: GoogleFlag[]; full?: boolean }) {
+  if (full)
+    return (
+      <ul className="grid gap-1.5">
+        {flags.map((f) => (
+          <li key={f.key} className={`rounded-[12px] px-3 py-2 text-[12.5px] leading-snug ${f.level === "bad" ? "bg-bad-soft" : "bg-warn-soft"}`}>
+            <span className={`font-medium ${f.level === "bad" ? "text-bad" : "text-warn"}`}>{f.title}.</span> <span className="text-fg/85">{f.detail}</span> <span className="text-muted">→ {f.fix}.</span>
+          </li>
+        ))}
+      </ul>
+    );
+  return (
+    <ChipTip
+      tip={
+        <span className="grid gap-2 text-left">
+          {flags.map((f) => (
+            <span key={f.key} className="grid gap-0.5 text-[12px] leading-snug">
+              <span className={`font-medium ${f.level === "bad" ? "text-bad" : "text-warn"}`}>{f.title}</span>
+              <span className="text-muted">{f.detail}</span>
+              <span className="text-fg/85">→ {f.fix}</span>
+            </span>
+          ))}
+        </span>
+      }
+      className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10.5px] ${flags.some((f) => f.level === "bad") ? "bg-bad-soft text-bad" : "bg-warn-soft text-warn"}`}
+    >
+      ⚑ {flags.map((f) => FLAG_SHORT[f.key]).join(" · ")}
+    </ChipTip>
+  );
+}
+
 function ChipTip({ tip, className, children }: { tip: React.ReactNode; className: string; children: React.ReactNode }) {
   const [at, setAt] = useState<{ x: number; y: number; up: boolean } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1890,7 +1953,7 @@ export function KpiBoard({
  * campaign's result, which ones count). The same parts as the KPI board's card, saved to the same KPI, so a change in
  * either place shows in both.
  */
-export function KpiExtras({ k }: { k: { id: string; target: number | null; conversion: string; customAction: string | null; campaignMatch: string | null; platform: "meta" | "google"; extraMetrics: string[] } }) {
+export function KpiExtras({ k }: { k: { id: string; target: number | null; targetFrom?: TargetFrom | null; conversion: string; customAction: string | null; campaignMatch: string | null; platform: "meta" | "google"; extraMetrics: string[] } }) {
   const router = useRouter();
   const [ex, setEx] = useState<Explore | null>(null);
   const [nonce, setNonce] = useState(0);
@@ -1912,7 +1975,7 @@ export function KpiExtras({ k }: { k: { id: string; target: number | null; conve
           router.refresh();
         }}
       />
-      <Campaigns key={`${k.id}:${k.conversion}:${k.target}`} id={k.id} target={k.target} conversion={k.conversion} platform={k.platform} />
+      <Campaigns key={`${k.id}:${k.conversion}:${k.target}`} id={k.id} target={k.targetFrom === "benchmark" ? null : k.target} conversion={k.conversion} platform={k.platform} />
     </div>
   );
 }

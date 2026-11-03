@@ -281,6 +281,49 @@ Find: typical cost per ${s.conversion ?? "result"} (and what counts as strong), 
   return done;
 }
 
+/**
+ * The same for Google Ads (search): WordStream's industry averages first, then others, so an account with no target is
+ * judged against its industry's cost per lead or acquisition, CTR and conversion rate. A few sub-verticals per run.
+ */
+export async function researchGoogleBenchmarks(admin: SupabaseClient, max = 2) {
+  const stale = new Date(Date.now() - 90 * 86_400_000).toISOString();
+  const { data: subs } = await admin
+    .from("verticals")
+    .select("id, name, description, conversion, parent_id")
+    .not("parent_id", "is", null)
+    .eq("active", true)
+    .or(`google_benchmarks_at.is.null,google_benchmarks_at.lt.${stale}`)
+    .order("google_benchmarks_at", { ascending: true, nullsFirst: true })
+    .limit(max);
+  let done = 0;
+  const parents = await parentNames(admin, (subs ?? []).map((s) => s.parent_id));
+  for (const s of subs ?? []) {
+    const parent = parents.get(s.parent_id) ?? "";
+    const research = await researchWeb({
+      agent: "verticals",
+      model: "sonnet",
+      maxSearches: 6,
+      maxFetches: 5,
+      maxTurns: 3,
+      label: `google benchmarks ${s.name}`,
+      system: "You research Google Ads (search) benchmarks for a marketing agency. Start with WordStream's Google Ads industry benchmarks (the latest year), then other reputable sources. Report only figures you actually found, each with its source URL and year; say when a figure is for a broader industry.",
+      prompt: `Google Ads search benchmarks for: ${s.name} (${parent}). ${s.description ?? ""} A result here is a ${s.conversion ?? "conversion"}.
+Find: average cost per lead or cost per acquisition, conversion rate, click-through rate and cost per click, and ROAS if it's e-commerce.`,
+    }).catch(() => "");
+    if (!research) continue;
+    const out = await askJson<{ benchmarks: Benchmark[] }>({
+      agent: "verticals",
+      label: `google benchmarks table ${s.name}`,
+      system: `You turn research into a Google Ads benchmark table for a paid search agency. good: the industry average (a solid result); great: clearly beating it (top quartile when the source gives it, else null). For costs, lower is better (great < good); for ROAS, CTR and conversion rate, higher is better. cost_per_result is the cost per lead or per acquisition. Only figures from the research, with their source and year; null when the research doesn't support a number. unit: "$", "x" or "%".`,
+      schema: BENCH_SCHEMA,
+      prompt: `Sub-vertical: ${s.name} (${parent}); a result is a ${s.conversion ?? "conversion"}.\n\n<research>\n${research.slice(0, 20000)}\n</research>`,
+    });
+    await admin.from("verticals").update({ google_benchmarks: out.benchmarks, google_benchmarks_at: new Date().toISOString() }).eq("id", s.id);
+    done++;
+  }
+  return done;
+}
+
 /** Hourly upkeep: a taxonomy when there's none (and weekly), new clients placed, benchmarks researched and playbooks written a few at a time. */
 export async function keepVerticals(admin: SupabaseClient) {
   const { tracker } = await import("@/lib/progress");
@@ -305,7 +348,7 @@ async function keepVerticalsRun(admin: SupabaseClient, t: import("@/lib/progress
   t.tick("Placing new clients");
   const placed = await placeNewClients(admin);
   t.tick("Researching benchmarks");
-  const benchmarks = built ? 0 : await researchBenchmarks(admin, 2).catch(() => 0);
+  const benchmarks = built ? 0 : (await researchBenchmarks(admin, 2).catch(() => 0)) + (await researchGoogleBenchmarks(admin, 2).catch(() => 0));
   // The Hall of Fame before the playbooks (they're built from it); the Meta sync updates it too
   t.tick("Updating the Hall of Fame");
   const { updateHallOfFame } = await import("@/lib/hall-of-fame");

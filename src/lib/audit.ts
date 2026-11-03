@@ -1,4 +1,5 @@
 import "server-only";
+import { businessModel, googleHealth, googleHealthText } from "@/lib/google-flags";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson, clientContext, contextBlock } from "@/lib/ai";
 import { aggregate, pickType, type Day } from "@/lib/kpi/calc";
@@ -519,13 +520,14 @@ async function finishAudit(admin: SupabaseClient, id: string, a: { target_id: st
       playbookBlock(admin, a.client_id).catch(() => ""),
       marketBlock(admin, a.client_id, client.industry ?? null, 8).catch(() => ""),
       client.industry && client.industry !== "other" ? industryWinners(admin, client.industry, a.client_id, 8).catch(() => []) : Promise.resolve([]),
-      client.vertical_id ? admin.from("verticals").select("name, benchmarks").eq("id", client.vertical_id).maybeSingle() : Promise.resolve({ data: null }),
+      client.vertical_id ? admin.from("verticals").select("name, benchmarks, google_benchmarks").eq("id", client.vertical_id).maybeSingle() : Promise.resolve({ data: null }),
       client.vertical_id
         ? admin.from("hall_of_fame").select("creative, value, target, roas, conversion, days_live, client_id").eq("vertical_id", client.vertical_id).gt("expires_at", new Date().toISOString()).order("beat_by", { ascending: false }).limit(10)
         : Promise.resolve({ data: [] }),
       rebuttalsBlock(admin, a.client_id).catch(() => ""),
     ]);
-    const benchmarks = (sub?.benchmarks ?? []) as Benchmark[];
+    // The platform's own benchmarks (Google's are researched separately, WordStream first)
+    const benchmarks = ((x.platform === "google" ? sub?.google_benchmarks : sub?.benchmarks) ?? []) as Benchmark[];
     const bm = benchmarks.map((b) => `${b.metric}: good ${b.good ?? "?"}${b.unit}, great ${b.great ?? "?"}${b.unit} (${b.source} ${b.year})`).join("; ");
     const marketCount = (market.match(/\n- /g) ?? []).length;
     await m.finish(
@@ -541,8 +543,10 @@ async function finishAudit(admin: SupabaseClient, id: string, a: { target_id: st
     );
 
     const label = conversionLabel(t.conversion, t.custom_action);
-    const target = t.target == null ? null : Number(t.target);
     const roas = Boolean(conv.roas);
+    // No target: the sub-vertical's benchmark stands in for it, said so
+    const bench = t.target == null ? benchmarks.find((b) => b.metric === (roas ? "roas" : "cost_per_result") && b.good != null && b.good > 0) : undefined;
+    const target = t.target == null ? (bench ? Number(bench.good) : null) : Number(t.target);
     // Every campaign judged on its own result, with purchases and ROAS, and which ones the client runs themselves
     const { campaignScorecard, campaignsText } = await import("@/lib/kpi/campaigns");
     const { data: st } = await admin.from("kpi_targets").select("platform, ad_account_id, conversion, custom_action, campaign_match, target, excluded_campaigns, campaign_results").eq("id", a.target_id).maybeSingle();
@@ -551,7 +555,7 @@ async function finishAudit(admin: SupabaseClient, id: string, a: { target_id: st
     const context = `${contextBlock(ctx)}
 
 <target>
-${client.name}: ${label}. Target: ${target == null ? "not set" : roas ? `${target}x ROAS` : `$${target} per result`}. Last 14 days: ${x.last14 == null ? "no results" : roas ? `${x.last14}x` : `$${x.last14}`} (${gap == null ? "?" : gap > 0 ? `${gap}% worse than target` : `${-gap}% better than target`}); the 14 days before: ${x.prev14 ?? "no results"}.
+${client.name}: ${label}. Target: ${target == null ? "not set" : `${roas ? `${target}x ROAS` : `$${target} per result`}${bench ? ` (no target set: the ${sub?.name ?? "industry"} benchmark, ${bench.source} ${bench.year}; beat the industry)` : ""}`}. Last 14 days: ${x.last14 == null ? "no results" : roas ? `${x.last14}x` : `$${x.last14}`} (${gap == null ? "?" : gap > 0 ? `${gap}% worse than target` : `${-gap}% better than target`}); the 14 days before: ${x.prev14 ?? "no results"}.
 Monthly budget: ${t.monthly_budget ? `$${t.monthly_budget}` : "not set"}${t.budget_note ? ` (${t.budget_note})` : ""}.${t.campaign_match ? ` Only campaigns containing "${t.campaign_match}" count toward this KPI.` : ""} Results are counted as ${x.platform === "google" ? "Google's" : "Meta's"} "${type ?? "?"}".
 </target>
 
@@ -577,7 +581,7 @@ ${x.setupBlock}
 ${(fatigue ?? []).map((f) => `- ${f.ad_name}: ${f.severity}, ${JSON.stringify(f.signals).slice(0, 300)}`).join("\n") || "(none flagged)"}
 </ads_tiring>
 
-<benchmarks sub_vertical="${sub?.name ?? "not placed"}">
+<benchmarks platform="${x.platform}" sub_vertical="${sub?.name ?? "not placed"}">
 ${bm || "(not researched yet)"}
 </benchmarks>
 ${playbook ? `\n${playbook}\n` : ""}
@@ -686,6 +690,9 @@ async function runGoogleAudit(admin: SupabaseClient, id: string, a: { target_id:
     const type = pickType(days, conv, t.custom_action);
     const today = rows.reduce((x, r) => (r.date > x ? r.date : x), rows[0].date);
     const d = googleDigest(rows, conv, type, today);
+    // Kaizen's Google lines (brand share, impression share, conversion rate, CTR), last 30 days
+    const since30 = new Date(Date.parse(today) - 30 * DAY).toISOString().slice(0, 10);
+    const health = googleHealthText(googleHealth(rows.filter((r) => r.date > since30), businessModel(t.conversion, Boolean(conv.roas))));
     await m.finish("numbers", `${d.days} days · ${d.campaigns} campaigns · $${n0(rows.reduce((x, r) => x + n(r.spend), 0))} spent`);
 
     await m.start("setup");
@@ -697,7 +704,7 @@ async function runGoogleAudit(admin: SupabaseClient, id: string, a: { target_id:
       t,
       conv,
       type,
-      numbersText: d.text,
+      numbersText: `${d.text}\n\n${health}`,
       last14: d.last14.value,
       prev14: d.prev14.value,
       setupBlock: googleSetupText(setup, detail.text),

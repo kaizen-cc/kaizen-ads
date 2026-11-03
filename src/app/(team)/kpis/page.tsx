@@ -9,6 +9,8 @@ import { KpiBoard, type KpiRow } from "./kpi-board";
 import { latestAudits } from "@/lib/audit-summary";
 import { changeKey, loadChanges } from "@/lib/account-changes";
 import { loadSprints } from "@/lib/sprints";
+import { successOf, type BenchmarkTarget } from "@/lib/kpi/success";
+import type { GoogleHealth } from "@/lib/google-flags";
 
 // Pulling one client's numbers from Meta on demand can take a minute; an audit runs a few minutes after the click
 export const maxDuration = 800;
@@ -26,6 +28,8 @@ type Snap = {
   error: string | null;
   computed_at: string;
   data_through: string | null;
+  benchmark: BenchmarkTarget | null;
+  google_health: GoogleHealth | null;
 };
 
 
@@ -64,6 +68,9 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
       const c = t.clients as unknown as { name: string; slug: string; status: string; kaizen_id: number | null } | null;
       const s = snapBy.get(t.id);
       const pace = s?.budget && "pace" in s.budget ? (s.budget as Pacing) : null;
+      const benchmark = t.target == null ? (s?.benchmark ?? null) : null;
+      const status = (s?.status ?? "setup") as Status;
+      const vsMonth = s?.vs_month == null ? null : Number(s.vs_month);
       return {
         id: t.id,
         clientId: t.client_id,
@@ -79,15 +86,19 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
         customAction: t.custom_action,
         campaignMatch: t.campaign_match,
         roas: Boolean(conversionFor(t.conversion).roas),
-        target: t.target == null ? null : Number(t.target),
+        target: t.target == null ? (benchmark?.value ?? null) : Number(t.target),
+        targetFrom: t.target != null ? (t.source as "strategy" | "client") : benchmark ? ("benchmark" as const) : null,
+        benchmark,
+        success: successOf(status, s?.trend ?? null, vsMonth),
+        googleFlags: s?.google_health?.flags ?? [],
         budget: t.monthly_budget == null ? null : Number(t.monthly_budget),
         budgetNote: t.budget_note,
         source: t.source as "strategy" | "client",
         ownerId: t.owner_id,
         owner: (t.profiles as unknown as { full_name: string } | null)?.full_name ?? t.owner_name ?? null,
-        status: (s?.status ?? "setup") as Status,
+        status,
         deviation: s?.deviation == null ? null : Number(s.deviation),
-        vsMonth: s?.vs_month == null ? null : Number(s.vs_month),
+        vsMonth,
         vsQuarter: s?.vs_quarter == null ? null : Number(s.vs_quarter),
         trend: s?.trend ?? null,
         windows: (s?.windows ?? {}) as KpiRow["windows"],

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Section } from "@/components/ui";
 import type { ClientKpi } from "@/lib/kpi/client";
 import { STATUS, kpiValue } from "@/lib/kpi/format";
+import { SUCCESS, successLine } from "@/lib/kpi/success";
 import { HealthChart, PaceBar } from "../../kpis/kpi-charts";
 import { KpiExtras } from "../../kpis/kpi-board";
 import { AuditPanel, type AuditSummary } from "../../kpis/audit-panel";
@@ -58,6 +59,11 @@ export function KpiPanel({ kpis, audits, changes }: { kpis: ClientKpi[]; audits?
                   <div className="grid min-w-0 gap-1">
                     <span className="flex flex-wrap items-center gap-2">
                       <span className={`inline-flex h-6 items-center rounded-full px-2.5 text-[11px] font-medium ${s.tone}`}>{s.label}</span>
+                      {k.success && (
+                        <span title={successLine(k.success, k.targetFrom ?? "strategy")} className={`inline-flex h-6 items-center rounded-full px-2.5 text-[11px] font-medium ${SUCCESS[k.success].tone}`}>
+                          {k.success === "on_track" ? "↗" : k.success === "close" ? "→" : "↘"} {SUCCESS[k.success].label}
+                        </span>
+                      )}
                       <span className="text-xs text-muted">
                         {k.platform === "google" ? "Google" : "Meta"}
                         {k.label ? ` · ${k.label}` : ""} · {k.conversionLabel}
@@ -74,13 +80,22 @@ export function KpiPanel({ kpis, audits, changes }: { kpis: ClientKpi[]; audits?
                     <div className="max-md:basis-full md:text-right">
                       <p className={`tabular font-display text-3xl leading-none ${s.text}`}>{kpiValue(k.windows.d14?.value, k.roas)}</p>
                       <p className="mt-1 text-[11px] text-faint">
-                        last 14 days · target <span className="tabular text-muted">{kpiValue(k.target, k.roas)}</span>
-                        {k.source === "client" ? " (client's)" : ""}
+                        last 14 days · {k.targetFrom === "benchmark" ? "industry benchmark" : "target"} <span className="tabular text-muted">{kpiValue(k.target, k.roas)}</span>
+                        {k.targetFrom === "client" ? " (client's)" : k.targetFrom === "benchmark" && k.benchmark ? ` (${k.benchmark.vertical}, ${k.benchmark.year})` : ""}
                       </p>
                     </div>
                   )}
                 </div>
 
+                {k.google?.flags.length ? (
+                  <ul className="grid gap-1.5">
+                    {k.google.flags.map((f) => (
+                      <li key={f.key} className={`rounded-[12px] px-3 py-2 text-[12.5px] leading-snug ${f.level === "bad" ? "bg-bad-soft" : "bg-warn-soft"}`}>
+                        <span className={`font-medium ${f.level === "bad" ? "text-bad" : "text-warn"}`}>{f.title}.</span> <span className="text-fg/85">{f.detail}</span> <span className="text-muted">→ {f.fix}.</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
                 {live ? (
                   <>
                     <div className="grid grid-cols-2 gap-2 @lg:grid-cols-4">
@@ -114,7 +129,7 @@ export function KpiPanel({ kpis, audits, changes }: { kpis: ClientKpi[]; audits?
                   <p className="text-sm text-muted">{k.status === "idle" ? "Not spending right now." : k.error ?? "Waiting for its first sync."}</p>
                 )}
                 {/* The same metric boxes and campaigns as the KPI board's card: changed here or there, it's the same KPI */}
-                {k.accountId && k.status !== "setup" && <KpiExtras k={{ id: k.id, target: k.target, conversion: k.conversion, customAction: k.customAction, campaignMatch: k.campaignMatch, platform: k.platform, extraMetrics: k.extraMetrics }} />}
+                {k.accountId && k.status !== "setup" && <KpiExtras k={{ id: k.id, target: k.target, targetFrom: k.targetFrom, conversion: k.conversion, customAction: k.customAction, campaignMatch: k.campaignMatch, platform: k.platform, extraMetrics: k.extraMetrics }} />}
                 {audits && k.accountId && <AuditPanel targetId={k.id} audit={audits[k.id] ?? null} platform={k.platform} />}
                 {changes && k.accountId && <ChangeLog changes={changes[k.id] ?? []} platform={k.platform} limit={30} collapsed={5} />}
               </article>
