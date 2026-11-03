@@ -816,20 +816,26 @@ export type AccountActivity = Awaited<ReturnType<typeof accountActivity>>;
 export async function adPreviews(adIds: string[]) {
   type C = {
     title?: string;
+    body?: string;
+    call_to_action_type?: string;
+    link_url?: string;
     thumbnail_url?: string;
     image_url?: string;
-    object_story_spec?: { link_data?: { picture?: string; name?: string }; video_data?: { image_url?: string; title?: string; video_id?: string } };
+    object_story_spec?: {
+      link_data?: { picture?: string; name?: string; message?: string; link?: string; call_to_action?: { type?: string; value?: { link?: string } } };
+      video_data?: { image_url?: string; title?: string; video_id?: string; message?: string; call_to_action?: { type?: string; value?: { link?: string } } };
+    };
     effective_object_story_id?: string;
     effective_instagram_media_id?: string;
     video_id?: string;
-    asset_feed_spec?: { videos?: { thumbnail_url?: string }[]; images?: { url?: string }[]; titles?: { text: string }[] };
+    asset_feed_spec?: { videos?: { thumbnail_url?: string }[]; images?: { url?: string }[]; titles?: { text: string }[]; bodies?: { text: string }[]; link_urls?: { website_url?: string }[]; call_to_action_types?: string[] };
   };
   // images: every picture worth trying, best first (a video's first frame is often black, so its chosen thumbnail and
   // the post's picture come next)
-  const out = new Map<string, { link: string | null; image: string | null; images: string[]; headline: string | null }>();
+  const out = new Map<string, { link: string | null; image: string | null; images: string[]; headline: string | null; body: string | null; cta: string | null; url: string | null }>();
   const ids = adIds.slice(0, 20);
   if (!ids.length) return out;
-  const fields = "creative.thumbnail_width(600).thumbnail_height(600){title,thumbnail_url,image_url,video_id,object_story_spec,asset_feed_spec,effective_object_story_id,effective_instagram_media_id}";
+  const fields = "creative.thumbnail_width(600).thumbnail_height(600){title,body,call_to_action_type,link_url,thumbnail_url,image_url,video_id,object_story_spec,asset_feed_spec,effective_object_story_id,effective_instagram_media_id}";
   const [creatives, links] = await Promise.all([
     Promise.allSettled(ids.map((id) => graph<{ creative?: C }>(id, { fields }))),
     Promise.allSettled(ids.map((id) => graph<{ preview_shareable_link?: string }>(id, { fields: "preview_shareable_link" }))),
@@ -877,7 +883,13 @@ export async function adPreviews(adIds: string[]) {
       null;
     const headline = c?.title ?? c?.object_story_spec?.link_data?.name ?? c?.object_story_spec?.video_data?.title ?? c?.asset_feed_spec?.titles?.[0]?.text ?? null;
     const images = [...new Set([image, ...more[i], c?.thumbnail_url].filter((u): u is string => Boolean(u)))];
-    if (c || link) out.set(id, { link, image, images, headline });
+    // The copy as it runs: primary text, the button and where it goes
+    const ld = c?.object_story_spec?.link_data;
+    const vd = c?.object_story_spec?.video_data;
+    const body = c?.body ?? ld?.message ?? vd?.message ?? c?.asset_feed_spec?.bodies?.[0]?.text ?? null;
+    const cta = c?.call_to_action_type ?? ld?.call_to_action?.type ?? vd?.call_to_action?.type ?? c?.asset_feed_spec?.call_to_action_types?.[0] ?? null;
+    const url = ld?.call_to_action?.value?.link ?? ld?.link ?? vd?.call_to_action?.value?.link ?? c?.link_url ?? c?.asset_feed_spec?.link_urls?.[0]?.website_url ?? null;
+    if (c || link) out.set(id, { link, image, images, headline, body, cta, url });
   });
   return out;
 }

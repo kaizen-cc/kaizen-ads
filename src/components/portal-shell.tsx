@@ -120,7 +120,8 @@ export function PortalShell({
         </div>
       </header>
 
-      <div className="mx-auto w-full max-w-6xl px-4 pb-[calc(6rem+env(safe-area-inset-bottom))] pt-5 md:px-8 lg:pb-16 lg:pt-10">{children}</div>
+      {/* The dashboard takes the whole width (its conversation docks beside it) */}
+      <div className={`mx-auto w-full px-4 pb-[calc(6rem+env(safe-area-inset-bottom))] pt-5 md:px-8 lg:pb-16 ${path.endsWith("/dashboard") ? "max-w-[1680px] lg:pt-6" : "max-w-6xl lg:pt-10"}`}>{children}</div>
 
       {/* Phone: the tab bar */}
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-bg/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl lg:hidden" aria-label="Your portal">

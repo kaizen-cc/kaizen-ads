@@ -34,7 +34,7 @@ export type Period = {
 export type CampaignLine = { name: string; spend: number; results: number; costPerResult: number | null; roas: number | null; ctr: number | null; id?: string; result?: string | null; impressions?: number; clicks?: number; cpc?: number | null; cpm?: number | null; revenue?: number; events?: CampaignEvent[] };
 /** One thing a campaign counted in the period (Meta's action type, its name, how many), for picking its result by hand */
 export type CampaignEvent = { type: string; label: string; count: number };
-export type TopAd = { id: string; name: string; campaign: string | null; spend: number; results: number; costPerResult: number | null; ctr: number | null; clicks: number; link: string | null; image: string | null };
+export type TopAd = { id: string; name: string; campaign: string | null; spend: number; results: number; costPerResult: number | null; ctr: number | null; clicks: number; link: string | null; image: string | null; copy?: { body: string | null; headline: string | null; cta: string | null; url: string | null } };
 
 export type ReportMetrics = {
   platform: "meta" | "google";
@@ -288,7 +288,10 @@ export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "wee
       .slice(0, kind === "monthly" ? 3 : 3);
     const { adPreviews } = await import("@/lib/context/meta");
     const previews = await adPreviews(ranked.map((a) => a.id)).catch(() => new Map());
-    topAds = ranked.map(({ impressions: _i, ...a }) => ({ ...a, link: previews.get(a.id)?.link ?? null, image: previews.get(a.id)?.image ?? null }));
+    topAds = ranked.map(({ impressions: _i, ...a }) => {
+      const v = previews.get(a.id);
+      return { ...a, link: v?.link ?? null, image: v?.image ?? null, copy: v ? { body: v.body ?? null, headline: v.headline ?? null, cta: v.cta ?? null, url: v.url ?? null } : undefined };
+    });
   }
 
   const dates = new Set(days.filter((d) => d.date >= ps.main.start && d.date <= ps.main.end).map((d) => d.date));

@@ -17,8 +17,11 @@ export type DashboardPart = {
   compare: ReportMetrics["compare"];
   daily: NonNullable<ReportMetrics["daily"]>;
   campaigns: { name: string; spend: number; results: number; costPerResult: number | null; roas: number | null; ctr: number | null; result: string | null }[];
-  topAds: { id: string; name: string; spend: number; results: number; costPerResult: number | null; ctr: number | null; link: string | null; image: string | null }[];
+  topAds: { id: string; name: string; spend: number; results: number; costPerResult: number | null; ctr: number | null; link: string | null; image: string | null; body: string | null; headline: string | null; cta: string | null; url: string | null }[];
 };
+
+/** Every day we have, per account: any range's hero, tiles and chart are drawn from this in the browser, instantly */
+export type DashboardHistory = { start: string; firstData: string | null; parts: { platform: "meta" | "google"; conversion: string; target: number | null; roasKpi: boolean; daily: DashboardPart["daily"] }[] };
 
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 const after = (d: string) => ymd(new Date(Date.parse(`${d}T12:00:00Z`) + 86_400_000));
@@ -43,11 +46,50 @@ export async function dashboardData(admin: SupabaseClient, clientId: string, ran
         compare: m.compare,
         daily: m.daily ?? [],
         campaigns: m.campaigns.slice(0, 25).map((c) => ({ name: c.name, spend: c.spend, results: c.results, costPerResult: c.costPerResult, roas: c.roas, ctr: c.ctr, result: c.result ?? null })),
-        topAds: m.topAds.map((a) => ({ id: a.id, name: a.name, spend: a.spend, results: a.results, costPerResult: a.costPerResult, ctr: a.ctr, link: a.link, image: a.image })),
+        topAds: m.topAds.map((a) => ({ id: a.id, name: a.name, spend: a.spend, results: a.results, costPerResult: a.costPerResult, ctr: a.ctr, link: a.link, image: a.image, body: a.copy?.body ?? null, headline: a.copy?.headline ?? null, cta: a.copy?.cta ?? null, url: a.copy?.url ?? null })),
       } satisfies DashboardPart;
     }),
   );
   return parts.filter((p): p is DashboardPart => Boolean(p)).sort((a, b) => (a.platform === "meta" ? -1 : 1) - (b.platform === "meta" ? -1 : 1));
+}
+
+/**
+ * Two years of days (or since the data starts), per account, and when we started with them: the first day a campaign
+ * we named (Kaizen in its name) spent, else the first day of data, else when they were added.
+ */
+export async function dashboardHistory(admin: SupabaseClient, clientId: string): Promise<DashboardHistory> {
+  const { accountRows } = await import("@/lib/kpi/sync");
+  const [{ data: c }, { data: targets }] = await Promise.all([
+    admin.from("clients").select("created_at, reonboarded_at").eq("id", clientId).single(),
+    admin
+      .from("kpi_targets")
+      .select("id, client_id, platform, ad_account_id, conversion, custom_action, campaign_match, target, monthly_budget, excluded_campaigns, campaign_results")
+      .eq("client_id", clientId)
+      .eq("active", true)
+      .not("ad_account_id", "is", null),
+  ]);
+  const yesterday = ymd(new Date(Date.now() - 86_400_000));
+  const from = ymd(new Date(Date.now() - 730 * 86_400_000));
+  let ours: string | null = null;
+  let first: string | null = null;
+  const parts = await Promise.all(
+    (targets ?? []).map(async (t) => {
+      const rows = (await accountRows(admin, t.ad_account_id as string, t.platform === "google" ? "google" : "meta").catch(() => [])) as { date: string; spend: number | string; campaign_name: string | null }[];
+      for (const r of rows) {
+        if (!(Number(r.spend) > 0) || r.date < from) continue;
+        if (!first || r.date < first) first = r.date;
+        if (/kaizen|kzn/i.test(r.campaign_name ?? "") && (!ours || r.date < ours)) ours = r.date;
+      }
+      const m = await reportMetrics(admin, t as never, "custom", after(yesterday), { start: from, end: yesterday }, { lite: true, daily: true }).catch(() => null);
+      return m ? { platform: m.platform, conversion: m.conversion, target: m.target, roasKpi: m.roasKpi, daily: m.daily ?? [] } : null;
+    }),
+  );
+  const added = ((c?.reonboarded_at ?? c?.created_at) as string | undefined)?.slice(0, 10) ?? yesterday;
+  return {
+    start: ours ?? first ?? added,
+    firstData: first,
+    parts: parts.filter((p): p is NonNullable<typeof p> => Boolean(p)).sort((a, b) => (a.platform === "meta" ? -1 : 1) - (b.platform === "meta" ? -1 : 1)),
+  };
 }
 
 const S = { type: "string" };

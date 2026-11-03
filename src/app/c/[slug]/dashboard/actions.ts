@@ -21,21 +21,29 @@ async function load(slug: string) {
   return { admin, client, who: viewer.kind === "contact" ? { name: viewer.fullName ?? viewer.email, contactId: viewer.id } : { name: `${viewer.fullName} (team)`, contactId: null } } as const;
 }
 
-const valid = (r: { start: string; end: string }) => /^\d{4}-\d{2}-\d{2}$/.test(r.start) && /^\d{4}-\d{2}-\d{2}$/.test(r.end) && r.start <= r.end && Date.parse(r.end) - Date.parse(r.start) <= 190 * 86_400_000;
+const valid = (r: { start: string; end: string }) => /^\d{4}-\d{2}-\d{2}$/.test(r.start) && /^\d{4}-\d{2}-\d{2}$/.test(r.end) && r.start <= r.end && Date.parse(r.end) - Date.parse(r.start) <= 740 * 86_400_000;
 
 export async function dashboardFor(slug: string, range: { start: string; end: string }) {
   const l = await load(slug);
   if ("error" in l) return { ok: false as const, error: l.error! };
-  if (!valid(range)) return { ok: false as const, error: "Pick dates up to six months apart." };
+  if (!valid(range)) return { ok: false as const, error: "Pick dates up to two years apart." };
   const { dashboardData } = await import("@/lib/client-dashboard");
   return { ok: true as const, parts: await dashboardData(l.admin, l.client.id, range) };
+}
+
+/** Every day of their accounts, once: the page draws any dates from it without asking again */
+export async function dashboardHistoryFor(slug: string) {
+  const l = await load(slug);
+  if ("error" in l) return { ok: false as const, error: l.error! };
+  const { dashboardHistory } = await import("@/lib/client-dashboard");
+  return { ok: true as const, history: await dashboardHistory(l.admin, l.client.id) };
 }
 
 export async function askAboutNumbers(slug: string, question: string, range: { start: string; end: string }) {
   const l = await load(slug);
   if ("error" in l) return { ok: false as const, error: l.error! };
   if (!question.trim()) return { ok: false as const, error: "Ask something first." };
-  if (!valid(range)) return { ok: false as const, error: "Pick dates up to six months apart." };
+  if (!valid(range)) return { ok: false as const, error: "Pick dates up to two years apart." };
   try {
     const { askDashboard } = await import("@/lib/client-dashboard");
     const row = await askDashboard(l.admin, l.client.id, l.who, question, range);
