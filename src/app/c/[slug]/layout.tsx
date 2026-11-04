@@ -34,7 +34,7 @@ export default async function PortalLayout({ children, params }: { children: Rea
       waiting={waiting ?? 0}
       setup={nav.setup}
       plan={nav.plan}
-      chat={client.slack_channel_id ? { unread } : null}
+      chat={client.slack_channel_id ? { unread, me: viewer.kind === "contact" ? viewer.fullName || viewer.email.split("@")[0]! : viewer.fullName, hasChannel: Boolean(process.env.SLACK_BOT_TOKEN), slackLink: `https://slack.com/app_redirect?channel=${client.slack_channel_id}` } : null}
     >
       {children}
     </PortalShell>

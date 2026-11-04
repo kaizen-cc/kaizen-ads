@@ -27,9 +27,14 @@ export type ChatMessage = {
   latestReply: string | null;
   edited: boolean;
   at: string;
+  /** Emoji reactions, as Slack has them; mine: one this reader added from the portal */
+  reactions: ChatReaction[];
 };
+export type ChatReaction = { name: string; emoji: string | null; count: number; mine: boolean };
 
 type Admin = SupabaseClient;
+/** users: Slack's; contacts: the portal readers who added it (Slack sees those as the Kaizen app) */
+type StoredReaction = { name: string; count: number; users: string[]; contacts?: string[] };
 type StoredFile = ChatFile & { url: string | null; thumb: string | null };
 type Row = {
   client_id: string;
@@ -49,6 +54,7 @@ type Row = {
   edited: boolean;
   deleted: boolean;
   sent_at: string;
+  reactions: StoredReaction[];
 };
 
 type SlackFile = { id: string; name?: string; title?: string; mimetype?: string; size?: number; url_private?: string; thumb_720?: string; thumb_480?: string; original_w?: number; original_h?: number; mode?: string };
@@ -60,22 +66,23 @@ type FullMessage = SlackMessage & {
   metadata?: { event_type?: string; event_payload?: Record<string, unknown> };
   bot_profile?: { name?: string; icons?: { image_72?: string } };
   user_profile?: { real_name?: string; display_name?: string; image_72?: string; team?: string };
+  reactions?: { name: string; count?: number; users?: string[] }[];
 };
 
 const PORTAL_EVENT = "kaizen_portal";
-const FIELDS = "ts, thread_ts, author_name, author_avatar, from_team, from_portal, contact_id, text, files, reply_count, latest_reply, edited, sent_at";
+const FIELDS = "ts, thread_ts, author_name, author_avatar, from_team, from_portal, contact_id, text, files, reply_count, latest_reply, edited, sent_at, reactions";
 
 // ─── Who wrote it ───
 
 type Person = { name: string; avatar: string | null; team: boolean };
 const people = new Map<string, { at: number; p: Person }>();
-let ourTeam: { at: number; id: string | null; bot: string | null } | null = null;
+let ourTeam: { at: number; id: string | null; bot: string | null; user: string | null } | null = null;
 
 /** Our workspace, and the Kaizen app's own bot (its posts are ours, or a client's from the portal) */
 async function workspace() {
   if (ourTeam && Date.now() - ourTeam.at < 3_600_000) return ourTeam;
-  const r = await slack<{ team_id?: string; bot_id?: string }>("auth.test", {}).catch(() => null);
-  ourTeam = { at: Date.now(), id: r?.team_id ?? null, bot: r?.bot_id ?? null };
+  const r = await slack<{ team_id?: string; bot_id?: string; user_id?: string }>("auth.test", {}).catch(() => null);
+  ourTeam = { at: Date.now(), id: r?.team_id ?? null, bot: r?.bot_id ?? null, user: r?.user_id ?? null };
   return ourTeam;
 }
 const workspaceId = async () => (await workspace()).id;
@@ -105,6 +112,9 @@ const EMOJI: Record<string, string> = {
   sweat_smile: "😅", blush: "😊", heart_eyes: "😍", sob: "😭", partying_face: "🥳", money_with_wings: "💸", chart_with_upwards_trend: "📈",
   calendar: "📅", memo: "📝", bulb: "💡", camera: "📷", movie_camera: "🎥", link: "🔗", phone: "📞", email: "📧", gift: "🎁", shrimp: "🦐", fish: "🐟",
 };
+
+/** An emoji code as the emoji, or null for one we don't know (a workspace's custom emoji) */
+const emojiOf = (code: string) => EMOJI[code.replace(/::skin-tone-\d$/, "")] ?? null;
 
 /** Slack's markup made readable: people and channels by name, emoji as emoji (links stay as <url|label> for the page to draw) */
 async function readable(text: string) {
@@ -180,11 +190,22 @@ async function toRow(clientId: string, channel: string, m: FullMessage): Promise
     edited: Boolean(m.edited),
     deleted: false,
     sent_at: new Date(Number(m.ts) * 1000).toISOString(),
+    reactions: (m.reactions ?? []).filter((r) => r.name).map((r) => ({ name: r.name, count: r.count ?? r.users?.length ?? 1, users: r.users ?? [] })),
   };
 }
 
 async function save(admin: Admin, rows: Row[]) {
   if (!rows.length) return;
+  // Reactions added from the portal: Slack only knows the app added them, so who did is kept from what we had
+  const bot = (await workspace()).user;
+  const { data: had } = await admin.from("portal_chat_messages").select("ts, reactions").eq("channel", rows[0]!.channel).in("ts", rows.map((r) => r.ts));
+  for (const r of rows) {
+    const before = ((had ?? []).find((h) => h.ts === r.ts)?.reactions ?? []) as StoredReaction[];
+    for (const x of r.reactions) {
+      const kept = before.find((b) => b.name === x.name)?.contacts ?? [];
+      if (kept.length && bot && x.users.includes(bot)) x.contacts = kept;
+    }
+  }
   // A portal post read back from Slack without its mark (files) keeps who sent it, as saved when it was sent
   const blind = rows.filter((r) => r.from_portal && !r.contact_id);
   if (blind.length) {
@@ -270,7 +291,7 @@ export async function loadOlder(admin: Admin, clientId: string, channel: string)
 
 // ─── What the portal reads ───
 
-type Stored = { ts: string; thread_ts: string | null; author_name: string | null; author_avatar: string | null; from_team: boolean; from_portal: boolean; contact_id: string | null; text: string; files: StoredFile[]; reply_count: number; latest_reply: string | null; edited: boolean; sent_at: string };
+type Stored = { ts: string; thread_ts: string | null; author_name: string | null; author_avatar: string | null; from_team: boolean; from_portal: boolean; contact_id: string | null; text: string; files: StoredFile[]; reply_count: number; latest_reply: string | null; edited: boolean; sent_at: string; reactions: StoredReaction[] | null };
 
 function view(r: Stored, readerId: string | null): ChatMessage {
   return {
@@ -288,6 +309,7 @@ function view(r: Stored, readerId: string | null): ChatMessage {
     latestReply: r.latest_reply,
     edited: r.edited,
     at: r.sent_at,
+    reactions: (r.reactions ?? []).filter((x) => x.count > 0).map((x) => ({ name: x.name, emoji: emojiOf(x.name), count: x.count, mine: Boolean(readerId && x.contacts?.includes(readerId)) })),
   };
 }
 
@@ -339,7 +361,51 @@ export async function botScopes() {
   scopes = { at: Date.now(), list };
   return list;
 }
-export const PORTAL_SCOPES = ["chat:write", "chat:write.customize", "files:write", "files:read", "channels:history", "groups:history", "users:read"];
+export const PORTAL_SCOPES = ["chat:write", "chat:write.customize", "files:write", "files:read", "reactions:write", "channels:history", "groups:history", "users:read"];
+
+/** Whether the portal can add reactions (the app needs reactions:write; without it the portal only shows them) */
+export const canReact = async () => (await botScopes()).includes("reactions:write");
+
+/** The reactions the portal offers (Slack's names) */
+export const QUICK_REACTIONS = ["+1", "heart", "joy", "tada", "raised_hands", "eyes", "white_check_mark", "fire"];
+
+/**
+ * A reaction from the portal: added in Slack as the Kaizen app (Slack can't add it as the client), and remembered as
+ * theirs here. Taking it off removes the app's reaction only when no one else in the portal still has it.
+ */
+export async function reactFromPortal(admin: Admin, c: { id: string; channel: string }, contactId: string, ts: string, name: string, on: boolean): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!QUICK_REACTIONS.includes(name)) return { ok: false, error: "Pick one of the reactions shown." };
+  if (!(await canReact())) return { ok: false, error: "Reactions aren't switched on for the chat yet." };
+  const { data: row } = await admin.from("portal_chat_messages").select("reactions").eq("client_id", c.id).eq("channel", c.channel).eq("ts", ts).eq("deleted", false).maybeSingle();
+  if (!row) return { ok: false, error: "That message isn't here anymore." };
+  const bot = (await workspace()).user ?? "app";
+  const list = ((row.reactions ?? []) as StoredReaction[]).map((x) => ({ ...x, users: [...x.users], contacts: [...(x.contacts ?? [])] }));
+  let x = list.find((r) => r.name === name);
+  if (on) {
+    if (x?.contacts?.includes(contactId)) return { ok: true };
+    if (!x?.users.includes(bot)) {
+      const r = await post("reactions.add", { channel: c.channel, timestamp: ts, name });
+      if (!r.ok && r.error !== "already_reacted") return { ok: false, error: explain(r.error) };
+    }
+    if (!x) list.push((x = { name, count: 0, users: [], contacts: [] }));
+    if (!x.users.includes(bot)) {
+      x.users.push(bot);
+      x.count += 1;
+    }
+    x.contacts = [...(x.contacts ?? []), contactId];
+  } else {
+    if (!x?.contacts?.includes(contactId)) return { ok: true };
+    x.contacts = x.contacts.filter((id) => id !== contactId);
+    if (!x.contacts.length && x.users.includes(bot)) {
+      const r = await post("reactions.remove", { channel: c.channel, timestamp: ts, name });
+      if (!r.ok && r.error !== "no_reaction") return { ok: false, error: explain(r.error) };
+      x.users = x.users.filter((u) => u !== bot);
+      x.count = Math.max(0, x.count - 1);
+    }
+  }
+  await admin.from("portal_chat_messages").update({ reactions: list.filter((r) => r.count > 0) }).eq("channel", c.channel).eq("ts", ts);
+  return { ok: true };
+}
 
 async function post(method: string, body: Record<string, unknown>) {
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -432,6 +498,7 @@ export async function postFromPortal(
         edited: false,
         deleted: false,
         sent_at: now,
+        reactions: [],
       },
       { onConflict: "channel,ts" },
     );
@@ -471,7 +538,9 @@ function explain(error?: string) {
 // ─── Slack's events (when switched on) ───
 
 /** A message event from Slack: saved straight away, so the portal shows it without waiting for the next read */
-export async function onSlackEvent(admin: Admin, e: { type: string; subtype?: string; channel?: string; ts?: string; message?: FullMessage; previous_message?: FullMessage; deleted_ts?: string } & FullMessage) {
+export async function onSlackEvent(admin: Admin, e: { type: string; subtype?: string; channel?: string; ts?: string; message?: FullMessage; previous_message?: FullMessage; deleted_ts?: string; item?: { type?: string; channel?: string; ts?: string } } & FullMessage) {
+  // A reaction added or taken off: that message read again
+  if ((e.type === "reaction_added" || e.type === "reaction_removed") && e.item?.type === "message" && e.item.channel && e.item.ts) return reread(admin, e.item.channel, e.item.ts);
   if (e.type !== "message" || !e.channel) return;
   const { data: c } = await admin.from("clients").select("id").eq("slack_channel_id", e.channel).maybeSingle();
   if (!c) return;
@@ -487,6 +556,17 @@ export async function onSlackEvent(admin: Admin, e: { type: string; subtype?: st
   if (row) await save(admin, [row]);
   // A reply: the thread's count and latest reply on its first message
   if (row?.thread_ts) await syncThread(admin, c.id as string, e.channel, row.thread_ts).catch(() => null);
+}
+
+/** One message read again from Slack (its reactions changed): a thread's reply through its thread */
+async function reread(admin: Admin, channel: string, ts: string) {
+  const { data: row } = await admin.from("portal_chat_messages").select("client_id, thread_ts").eq("channel", channel).eq("ts", ts).maybeSingle();
+  if (!row) return;
+  if (row.thread_ts) return syncThread(admin, row.client_id as string, channel, row.thread_ts as string);
+  const page = await slack<{ messages: FullMessage[] }>("conversations.history", { channel, latest: ts, inclusive: "true", limit: "1", include_all_metadata: "true" });
+  const m = page.messages.find((x) => x.ts === ts);
+  const r = m ? await toRow(row.client_id as string, channel, m) : null;
+  if (r) await save(admin, [r]);
 }
 
 /**

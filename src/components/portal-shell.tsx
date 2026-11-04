@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { ChatDock } from "@/app/c/[slug]/chat/chat-dock";
 import { BrandSwitcher, type BrandLink } from "@/components/brand-switcher";
+import { pushParams } from "@/lib/url-state";
 
 // The client portal's frame, on every page of it. On a computer: a sidebar (the brand, every section, who's signed in)
 // and a wide page beside it. On a phone: a slim bar on top and the sections as an app's tab bar along the bottom.
@@ -51,7 +53,7 @@ export function PortalShell({
   setup: boolean;
   plan: boolean;
   /** Their team chat (their Slack channel with us), when it's set up: messages from us they haven't read */
-  chat?: { unread: number } | null;
+  chat?: { unread: number; me: string; hasChannel: boolean; slackLink: string | null } | null;
   children: React.ReactNode;
 }) {
   const path = usePathname();
@@ -137,7 +139,17 @@ export function PortalShell({
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-bg/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl lg:hidden" aria-label="Your portal">
         <div className="mx-auto flex max-w-md">
           {items.map((i) => (
-            <Link key={i.href} href={i.href} className={`relative flex min-h-[58px] flex-1 flex-col items-center justify-center gap-0.5 text-[10.5px] ${on(i.href) ? "text-fg" : "text-faint"}`}>
+            <Link
+              key={i.href}
+              href={i.href}
+              // Chat opens over the page they're on (back closes it), not as a page of its own
+              onClick={(e) => {
+                if (i.icon !== "chat" || path.endsWith("/chat")) return;
+                e.preventDefault();
+                pushParams({ chat: "1" });
+              }}
+              className={`relative flex min-h-[58px] flex-1 flex-col items-center justify-center gap-0.5 text-[10.5px] ${on(i.href) ? "text-fg" : "text-faint"}`}
+            >
               <Icon name={i.icon} className={on(i.href) ? "text-brand-text" : ""} />
               <span className="max-w-full truncate px-1">{i.label === "How we see you" ? "Your plan" : i.label}</span>
               {i.badge ? <span className="tabular absolute right-[calc(50%-20px)] top-1.5 grid h-4 min-w-4 place-items-center rounded-full bg-brand px-1 text-[9.5px] font-semibold text-white">{i.badge}</span> : null}
@@ -145,6 +157,9 @@ export function PortalShell({
           ))}
         </div>
       </nav>
+
+      {/* The team chat from any page: docked beside it on a computer, the whole screen on a phone */}
+      {chat && !path.endsWith("/chat") && <ChatDock slug={slug} brand={brand} me={chat.me} team={team} hasChannel={chat.hasChannel} slackLink={chat.slackLink} unread={chat.unread} />}
     </div>
   );
 }

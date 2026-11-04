@@ -266,11 +266,11 @@ export async function checkSlack() {
   if (missing.length) throw new Error(`Connected to ${body.team} as @${body.user}, but missing scopes: ${missing.join(", ")}. Add them under Bot Token Scopes and reinstall the app.`);
   const channels = await listChannels();
   // The clients' portal chat posts as the app under each client's name (chat:write.customize) and sends their files
-  const chatMissing = header ? ["chat:write", "chat:write.customize", "files:write", "files:read"].filter((s) => !scopes.includes(s)) : [];
+  const chatMissing = header ? ["chat:write", "chat:write.customize", "files:write", "files:read", "reactions:write"].filter((s) => !scopes.includes(s)) : [];
   const chat = chatMissing.length
-    ? ` Portal chat: add ${chatMissing.join(", ")} under Bot Token Scopes and reinstall${chatMissing.includes("chat:write.customize") ? " (until then, a client's portal messages show in Slack starting with their name)" : ""}.`
+    ? ` Portal chat: add ${chatMissing.join(", ")} under Bot Token Scopes and reinstall${chatMissing.includes("chat:write.customize") ? " (until then, a client's portal messages show in Slack starting with their name)" : ""}${chatMissing.includes("reactions:write") ? " (until then, clients see reactions but can't add them)" : ""}.`
     : "";
-  const events = process.env.SLACK_SIGNING_SECRET ? "" : " Portal chat replies show within a few seconds; set SLACK_SIGNING_SECRET and turn on Event Subscriptions for instant.";
+  const events = process.env.SLACK_SIGNING_SECRET ? " For reactions to show instantly too, subscribe to reaction_added and reaction_removed under Event Subscriptions." : " Portal chat replies show within a few seconds; set SLACK_SIGNING_SECRET and turn on Event Subscriptions for instant.";
   return `Connected to ${body.team} as @${body.user}${header ? ", all scopes in place" : ""}. Sees ${channels.length} channels and is a member of ${channels.filter((c) => c.is_member).length}.${chat}${events}`;
 }
 

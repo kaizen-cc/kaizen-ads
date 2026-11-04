@@ -1,4 +1,4 @@
-import { listMessages, listThread, loadOlder, markRead, postFromPortal, syncChannel, syncThread, type Upload } from "@/lib/portal-chat";
+import { canReact, listMessages, listThread, loadOlder, markRead, postFromPortal, reactFromPortal, syncChannel, syncThread, unreadCount, type Upload } from "@/lib/portal-chat";
 import { chatAccess, tooFast } from "../access";
 
 // The portal chat, as plain requests (not server actions, which run one at a time and would queue behind the page).
@@ -20,10 +20,16 @@ export async function GET(request: Request, ctx: RouteContext<"/api/portal-chat/
   const before = url.searchParams.get("before");
   const thread = url.searchParams.get("thread");
   const clientId = a.client.id as string;
+  // The floating chat's badge: what our team wrote since they last looked
+  if (url.searchParams.get("unread")) {
+    await syncChannel(a.admin, clientId, channel).catch(() => null);
+    return Response.json({ unread: await unreadCount(a.admin, clientId, a.readerId).catch(() => 0) }, { headers: NO_STORE });
+  }
+  const react = !a.team && Boolean(a.contactId) && (await canReact().catch(() => false));
   try {
     if (thread) {
       await syncThread(a.admin, clientId, channel, thread).catch(() => null);
-      return Response.json({ channel: true, messages: await listThread(a.admin, clientId, thread, a.contactId), canPost: !a.team, team: a.team }, { headers: NO_STORE });
+      return Response.json({ channel: true, messages: await listThread(a.admin, clientId, thread, a.contactId), canPost: !a.team, canReact: react, team: a.team }, { headers: NO_STORE });
     }
     let hasMore = true;
     if (before) {
@@ -32,9 +38,9 @@ export async function GET(request: Request, ctx: RouteContext<"/api/portal-chat/
       if (page.length < 50) {
         hasMore = await loadOlder(a.admin, clientId, channel).catch(() => false);
         const more = await listMessages(a.admin, clientId, { before, readerId: a.contactId });
-        return Response.json({ channel: true, messages: more, hasMore: hasMore || more.length >= 50, canPost: !a.team, team: a.team }, { headers: NO_STORE });
+        return Response.json({ channel: true, messages: more, hasMore: hasMore || more.length >= 50, canPost: !a.team, canReact: react, team: a.team }, { headers: NO_STORE });
       }
-      return Response.json({ channel: true, messages: page, hasMore: true, canPost: !a.team, team: a.team }, { headers: NO_STORE });
+      return Response.json({ channel: true, messages: page, hasMore: true, canPost: !a.team, canReact: react, team: a.team }, { headers: NO_STORE });
     }
     await syncChannel(a.admin, clientId, channel).catch((e) => console.error("[portal chat] sync", e instanceof Error ? e.message : e));
     const messages = await listMessages(a.admin, clientId, { after, readerId: a.contactId });
@@ -43,7 +49,7 @@ export async function GET(request: Request, ctx: RouteContext<"/api/portal-chat/
     // Read up to the newest they've been shown
     const newest = messages.at(-1)?.ts;
     if (newest) await markRead(a.admin, clientId, a.readerId, newest);
-    return Response.json({ channel: true, messages, hasMore, canPost: !a.team, team: a.team }, { headers: NO_STORE });
+    return Response.json({ channel: true, messages, hasMore, canPost: !a.team, canReact: react, team: a.team }, { headers: NO_STORE });
   } catch (e) {
     console.error("[portal chat] read", e instanceof Error ? e.message : e);
     return Response.json({ error: "The chat couldn't load right now." }, { status: 502 });
@@ -61,8 +67,17 @@ export async function POST(request: Request, ctx: RouteContext<"/api/portal-chat
   // The team answers in Slack itself; the portal shows them what the client sees
   if (a.team) return Response.json({ error: "Reply in Slack: the portal chat is the client's side." }, { status: 403 });
   const clientId = a.client.id as string;
-  const body = (await request.json().catch(() => null)) as { op?: string; files?: { name: string; bytes: number; mime?: string }[]; text?: string; thread?: string | null; paths?: { path: string; name: string; mime: string }[] } | null;
+  const body = (await request.json().catch(() => null)) as { op?: string; files?: { name: string; bytes: number; mime?: string }[]; text?: string; thread?: string | null; paths?: { path: string; name: string; mime: string }[]; ts?: string; name?: string; on?: boolean } | null;
   if (!body) return Response.json({ error: "Nothing to send." }, { status: 400 });
+
+  // A reaction on a message (added in Slack as the Kaizen app, remembered as theirs)
+  if (body.op === "react") {
+    if (!a.contactId) return Response.json({ error: "Not found" }, { status: 404 });
+    if (!body.ts || !/^\d+\.\d+$/.test(body.ts) || !body.name) return Response.json({ error: "Not found" }, { status: 404 });
+    if (await tooFast(a.admin, clientId, a.name)) return Response.json({ error: "Slow down a little: try again in a minute." }, { status: 429 });
+    const r = await reactFromPortal(a.admin, { id: clientId, channel }, a.contactId, body.ts, body.name, body.on !== false);
+    return r.ok ? Response.json({ ok: true }) : Response.json({ error: r.error }, { status: 400 });
+  }
 
   // 1. Where the browser puts the files (our storage, signed slots in this client's own folder)
   if (body.op === "slots") {

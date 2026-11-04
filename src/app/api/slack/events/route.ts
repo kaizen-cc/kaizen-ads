@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-// Slack's Events API: new, edited and deleted messages in client channels, pushed the moment they happen, so a
+// Slack's Events API: new, edited and deleted messages (and reactions) in client channels, pushed the moment they happen, so a
 // client's portal chat shows our team's reply within a second instead of on the next read. Every request is checked
 // against Slack's signature (SLACK_SIGNING_SECRET) and anything older than five minutes is refused (replays).
 // Answered at once; the saving happens after (Slack wants an answer within three seconds).
@@ -21,7 +21,7 @@ export async function POST(request: Request) {
   const body = JSON.parse(raw) as { type: string; challenge?: string; event?: Record<string, unknown> & { type: string } };
   // Slack checking the address when it's first saved
   if (body.type === "url_verification") return Response.json({ challenge: body.challenge });
-  if (body.type === "event_callback" && body.event?.type === "message") {
+  if (body.type === "event_callback" && ["message", "reaction_added", "reaction_removed"].includes(body.event?.type ?? "")) {
     const event = body.event;
     after(async () => {
       const { onSlackEvent } = await import("@/lib/portal-chat");

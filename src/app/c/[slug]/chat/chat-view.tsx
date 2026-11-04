@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { ChatFile, ChatMessage } from "@/lib/portal-chat";
+import type { ChatFile, ChatMessage, ChatReaction } from "@/lib/portal-chat";
 import { createClient } from "@/lib/supabase/client";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 
@@ -11,9 +11,18 @@ import { closeParams, pushParams, useParam } from "@/lib/url-state";
 // scroll up, and sends what they write into their Slack channel with Kaizen (under their name). A team member opening
 // a client's portal sees it exactly as the client does, without the box to write in (the team answers in Slack).
 
-type Props = { slug: string; brand: string; me: string; team: boolean; hasChannel: boolean; slackLink: string | null };
+type Props = { slug: string; brand: string; me: string; team: boolean; hasChannel: boolean; slackLink: string | null; /** Docked beside a page (the floating chat): fills its panel, threads open over it */ compact?: boolean; onClose?: () => void };
 type Pending = { id: string; text: string; files: string[]; thread: string | null; error?: string };
-type Read = { channel: boolean; messages: ChatMessage[]; hasMore?: boolean; canPost: boolean; team: boolean; error?: string };
+type Read = { channel: boolean; messages: ChatMessage[]; hasMore?: boolean; canPost: boolean; canReact?: boolean; team: boolean; error?: string };
+type ReactFn = ((ts: string, name: string, on: boolean) => Promise<void>) | null;
+
+/** The reactions the portal offers (Slack's names), and how they look */
+const QUICK: [string, string][] = [["+1", "👍"], ["heart", "❤️"], ["joy", "😂"], ["tada", "🎉"], ["raised_hands", "🙌"], ["eyes", "👀"], ["white_check_mark", "✅"], ["fire", "🔥"]];
+
+async function sendReaction(slug: string, ts: string, name: string, on: boolean) {
+  const res = await fetch(`/api/portal-chat/${slug}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "react", ts, name, on }) });
+  if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? "Couldn't react.");
+}
 
 const POLL = 4000;
 
@@ -31,8 +40,9 @@ function merge(had: ChatMessage[], page: ChatMessage[]) {
   return [...had.filter((m) => m.ts < from), ...page];
 }
 
-export function ChatView({ slug, brand, me, team, hasChannel, slackLink }: Props) {
+export function ChatView({ slug, brand, me, team, hasChannel, slackLink, compact = false, onClose }: Props) {
   const thread = useParam("thread");
+  const [canReact, setCanReact] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [hasMore, setHasMore] = useState(true);
   const [loaded, setLoaded] = useState(false);
@@ -61,6 +71,7 @@ export function ChatView({ slug, brand, me, team, hasChannel, slackLink }: Props
         if (!was) setHasMore(Boolean(r.hasMore));
         return true;
       });
+      setCanReact(Boolean(r.canReact));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "The chat couldn't load right now.");
@@ -136,9 +147,16 @@ export function ChatView({ slug, brand, me, team, hasChannel, slackLink }: Props
     }
   };
 
+  const react: ReactFn = canReact
+    ? async (ts, name, on) => {
+        await sendReaction(slug, ts, name, on).catch((e) => setError(e instanceof Error ? e.message : "Couldn't react."));
+        void refresh();
+      }
+    : null;
+
   if (!hasChannel)
     return (
-      <div className="grid min-h-[60vh] place-items-center">
+      <div className={`grid place-items-center ${compact ? "h-full px-6" : "min-h-[60vh]"}`}>
         <div className="max-w-md text-center">
           <span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-brand/10 text-2xl">💬</span>
           <h1 className="mt-4 font-heading text-2xl">Your team chat is almost here</h1>
@@ -154,15 +172,21 @@ export function ChatView({ slug, brand, me, team, hasChannel, slackLink }: Props
 
   const shown = messages;
   return (
-    <div className="-mx-4 flex h-[calc(100dvh-115px-env(safe-area-inset-bottom))] min-h-[420px] md:-mx-8 lg:mx-0 lg:h-[calc(100dvh-3rem)] lg:gap-4">
-      <section className={`relative flex min-w-0 flex-1 flex-col overflow-hidden bg-bg lg:rounded-[24px] lg:border lg:border-line lg:bg-surface ${thread ? "max-lg:hidden" : ""}`}>
+    <div className={compact ? "relative flex h-full min-h-0" : "-mx-4 flex h-[calc(100dvh-115px-env(safe-area-inset-bottom))] min-h-[420px] md:-mx-8 lg:mx-0 lg:h-[calc(100dvh-3rem)] lg:gap-4"}>
+      <section className={`relative flex min-w-0 flex-1 flex-col overflow-hidden bg-bg ${compact ? `lg:bg-surface ${thread ? "hidden" : ""}` : `lg:rounded-[24px] lg:border lg:border-line lg:bg-surface ${thread ? "max-lg:hidden" : ""}`}`}>
         <header className="flex items-center gap-3 border-b border-line px-4 py-3 md:px-5">
+          {onClose && (
+            <button type="button" onClick={onClose} aria-label="Close the chat" className="-ml-2 grid h-11 w-11 shrink-0 place-items-center rounded-full text-muted hover:text-fg lg:order-last lg:-mr-2 lg:ml-0">
+              <span className="text-[20px] leading-none lg:hidden">←</span>
+              <span className="hidden text-[22px] leading-none lg:inline">×</span>
+            </button>
+          )}
           <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand font-heading text-[15px] text-white">K</span>
           <div className="min-w-0 flex-1">
             <p className="truncate font-heading text-[16px] leading-tight">Kaizen × {brand}</p>
             <p className="truncate text-[12px] text-faint">{team ? "What the client sees. Reply in Slack." : "Your team, all in one place"}</p>
           </div>
-          {slackLink && (
+          {slackLink && !compact && (
             <a href={slackLink} target="_blank" rel="noreferrer" className="inline-flex min-h-10 shrink-0 items-center rounded-full border border-line px-3 text-[12px] text-muted hover:text-fg">
               {team ? "Open in Slack ↗" : "Prefer Slack? ↗"}
             </a>
@@ -182,7 +206,7 @@ export function ChatView({ slug, brand, me, team, hasChannel, slackLink }: Props
               </div>
             </div>
           )}
-          <Messages slug={slug} messages={shown} onThread={(ts) => pushParams({ thread: ts })} />
+          <Messages slug={slug} messages={shown} onThread={(ts) => pushParams({ thread: ts })} react={react} />
           {pending
             .filter((p) => !p.thread)
             .map((p) => (
@@ -211,7 +235,7 @@ export function ChatView({ slug, brand, me, team, hasChannel, slackLink }: Props
         )}
       </section>
 
-      {thread && <Thread slug={slug} ts={thread} me={me} team={team} pending={pending.filter((p) => p.thread === thread)} onSend={(t, f) => send(t, f, thread)} />}
+      {thread && <Thread slug={slug} ts={thread} me={me} team={team} compact={compact} react={react} pending={pending.filter((p) => p.thread === thread)} onSend={(t, f) => send(t, f, thread)} />}
     </div>
   );
 }
@@ -310,8 +334,9 @@ function Composer({ onSend, placeholder }: { onSend: (text: string, files: File[
 
 // ─── A thread: beside the chat on a computer, the whole screen on a phone ───
 
-function Thread({ slug, ts, me, team, pending, onSend }: { slug: string; ts: string; me: string; team: boolean; pending: Pending[]; onSend: (t: string, f: File[]) => Promise<boolean> }) {
+function Thread({ slug, ts, me, team, compact, react, pending, onSend }: { slug: string; ts: string; me: string; team: boolean; compact: boolean; react: ReactFn; pending: Pending[]; onSend: (t: string, f: File[]) => Promise<boolean> }) {
   const [messages, setMessages] = useState<ChatMessage[] | null>(null);
+  const [nonce, setNonce] = useState(0);
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let live = true;
@@ -325,29 +350,33 @@ function Thread({ slug, ts, me, team, pending, onSend }: { slug: string; ts: str
       live = false;
       clearInterval(t);
     };
-  }, [slug, ts]);
+  }, [slug, ts, nonce]);
+  // A reaction in the thread: read the thread again right after
+  const reactHere: ReactFn = react ? (t, name, on) => react(t, name, on).then(() => setNonce((n) => n + 1)) : null;
   useLayoutEffect(() => {
     box.current?.scrollTo({ top: box.current.scrollHeight });
   }, [messages, pending]);
   return (
-    <aside className="fixed inset-0 z-40 flex flex-col bg-bg lg:static lg:z-auto lg:w-[400px] lg:shrink-0 lg:overflow-hidden lg:rounded-[24px] lg:border lg:border-line lg:bg-surface">
-      <header className="pt-safe flex items-center gap-2 border-b border-line px-2 py-2 lg:px-4">
-        <button type="button" onClick={() => closeParams("thread")} aria-label="Back to the chat" className="grid h-11 w-11 place-items-center rounded-full text-muted hover:text-fg lg:hidden">
+    <aside className={compact ? "absolute inset-0 z-10 flex flex-col bg-bg lg:bg-surface" : "fixed inset-0 z-40 flex flex-col bg-bg lg:static lg:z-auto lg:w-[400px] lg:shrink-0 lg:overflow-hidden lg:rounded-[24px] lg:border lg:border-line lg:bg-surface"}>
+      <header className={`flex items-center gap-2 border-b border-line px-2 py-2 lg:px-4 ${compact ? "" : "pt-safe"}`}>
+        <button type="button" onClick={() => closeParams("thread")} aria-label="Back to the chat" className={`grid h-11 w-11 place-items-center rounded-full text-muted hover:text-fg ${compact ? "" : "lg:hidden"}`}>
           ←
         </button>
         <p className="flex-1 font-heading text-[16px]">Thread</p>
-        <button type="button" onClick={() => closeParams("thread")} aria-label="Close the thread" className="hidden h-10 w-10 place-items-center rounded-full text-muted hover:text-fg lg:grid">
-          ×
-        </button>
+        {!compact && (
+          <button type="button" onClick={() => closeParams("thread")} aria-label="Close the thread" className="hidden h-10 w-10 place-items-center rounded-full text-muted hover:text-fg lg:grid">
+            ×
+          </button>
+        )}
       </header>
       <div ref={box} className="flex-1 overflow-y-auto overscroll-contain px-3 py-4 md:px-4">
-        {messages == null ? <Skeleton /> : <Messages slug={slug} messages={messages} inThread />}
+        {messages == null ? <Skeleton /> : <Messages slug={slug} messages={messages} inThread react={reactHere} />}
         {pending.map((p) => (
           <PendingBubble key={p.id} p={p} me={me} />
         ))}
       </div>
       {!team && <Composer onSend={onSend} placeholder="Reply in the thread" />}
-      <div className="pb-[env(safe-area-inset-bottom)] lg:hidden" />
+      {!compact && <div className="pb-[env(safe-area-inset-bottom)] lg:hidden" />}
     </aside>
   );
 }
@@ -365,7 +394,7 @@ function dayLabel(iso: string) {
 }
 const timeOf = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 
-function Messages({ slug, messages, onThread, inThread }: { slug: string; messages: ChatMessage[]; onThread?: (ts: string) => void; inThread?: boolean }) {
+function Messages({ slug, messages, onThread, inThread, react = null }: { slug: string; messages: ChatMessage[]; onThread?: (ts: string) => void; inThread?: boolean; react?: ReactFn }) {
   return (
     <div className="grid gap-0.5">
       {messages.map((m, i) => {
@@ -406,6 +435,7 @@ function Messages({ slug, messages, onThread, inThread }: { slug: string; messag
                     ))}
                   </div>
                 )}
+                {(m.reactions.length > 0 || react) && <Reactions key={JSON.stringify(m.reactions)} ts={m.ts} list={m.reactions} react={react} right={right} />}
                 {!inThread && m.replyCount > 0 && onThread && (
                   <button type="button" onClick={() => onThread(m.ts)} className="mt-1 inline-flex min-h-9 items-center gap-1.5 rounded-full px-2 text-[12.5px] font-medium text-brand-text hover:bg-brand/10">
                     {m.replyCount} {m.replyCount === 1 ? "reply" : "replies"}
@@ -422,6 +452,60 @@ function Messages({ slug, messages, onThread, inThread }: { slug: string; messag
           </Fragment>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * A message's reactions: each emoji with its count, theirs highlighted. Tapping one of the portal's reactions adds or
+ * takes off theirs (it shows in Slack as from the Kaizen app); the + opens the few the portal offers.
+ */
+function Reactions({ ts, list: initial, react, right }: { ts: string; list: ChatReaction[]; react: ReactFn; right: boolean }) {
+  const [list, setList] = useState(initial);
+  const [picking, setPicking] = useState(false);
+  const quick = new Map(QUICK);
+  const toggle = (name: string) => {
+    if (!react || !quick.has(name)) return;
+    const had = list.find((r) => r.name === name);
+    const on = !had?.mine;
+    // Shown at once; the next read brings Slack's own counts
+    setList((l) => {
+      const x = l.find((r) => r.name === name);
+      if (!x) return [...l, { name, emoji: quick.get(name) ?? null, count: 1, mine: true }];
+      return l.map((r) => (r.name === name ? { ...r, mine: on, count: Math.max(0, r.count + (on ? 1 : -1)) } : r)).filter((r) => r.count > 0);
+    });
+    setPicking(false);
+    void react(ts, name, on);
+  };
+  return (
+    <div className={`relative mt-1 flex flex-wrap items-center gap-1 ${right ? "justify-end" : ""}`}>
+      {list.map((r) => (
+        <button
+          key={r.name}
+          type="button"
+          disabled={!react || !quick.has(r.name)}
+          onClick={() => toggle(r.name)}
+          title={r.mine ? "You reacted (shows in Slack as from the Kaizen app)" : undefined}
+          className={`inline-flex min-h-8 items-center gap-1 rounded-full border px-2 text-[12.5px] transition-colors disabled:cursor-default ${r.mine ? "border-brand/50 bg-brand/10 text-fg" : "border-line bg-surface text-muted enabled:hover:border-faint"}`}
+        >
+          <span className="text-[14px] leading-none">{r.emoji ?? `:${r.name}:`}</span>
+          <span className="tabular">{r.count}</span>
+        </button>
+      ))}
+      {react && (
+        <button type="button" onClick={() => setPicking((p) => !p)} aria-label="Add a reaction" aria-expanded={picking} className="grid h-8 w-8 place-items-center rounded-full text-[14px] text-faint opacity-70 hover:bg-surface-2 hover:text-fg hover:opacity-100">
+          ☺<span className="sr-only">+</span>
+        </button>
+      )}
+      {picking && react && (
+        <div className={`absolute top-full z-20 mt-1 flex gap-0.5 rounded-full border border-line bg-surface p-1 shadow-lg ${right ? "right-0" : "left-0"}`}>
+          {QUICK.map(([name, e]) => (
+            <button key={name} type="button" onClick={() => toggle(name)} aria-label={name.replace(/_/g, " ")} className="grid h-10 w-10 place-items-center rounded-full text-[19px] hover:bg-surface-2">
+              {e}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
