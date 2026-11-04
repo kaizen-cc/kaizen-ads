@@ -73,11 +73,11 @@ export async function openSprint(admin: SupabaseClient, auditId: string) {
     sprintId = data.id as string;
   }
 
-  // A new audit replaces the plan: moves still to do from the last one go, so there's never two plans at once.
-  // Moves already done stay as the record of what was done.
+  // A new audit refreshes the plan without resetting the buyer's progress: moves in progress stay, and so do moves a
+  // business audit or the buyer added; only untouched moves from the last account audit come off. Moves already done stay as the record.
   let replaced = 0;
   if (open) {
-    const { data: gone } = await admin.from("sprint_actions").delete().eq("sprint_id", sprintId).in("status", ["todo", "doing"]).select("id");
+    const { data: gone } = await admin.from("sprint_actions").delete().eq("sprint_id", sprintId).eq("status", "todo").or("source.is.null,source.eq.audit").select("id");
     replaced = gone?.length ?? 0;
   }
   const { data: have } = await admin.from("sprint_actions").select("title, sort_order").eq("sprint_id", sprintId);
@@ -92,7 +92,7 @@ export async function openSprint(admin: SupabaseClient, auditId: string) {
     sprint_id: sprintId,
     verdict: "started",
     message: open
-      ? `A new audit replaced the plan: ${replaced} open ${replaced === 1 ? "move" : "moves"} from the last one came off and ${fresh.length} new ${fresh.length === 1 ? "one is" : "ones are"} on the list (moves already done stay). ${r.verdict.headline} I'll check the account tomorrow morning.`
+      ? `A new audit refreshed the plan: ${replaced} untouched ${replaced === 1 ? "move" : "moves"} from the last one came off and ${fresh.length} new ${fresh.length === 1 ? "one is" : "ones are"} on the list (moves in progress, done, or added by the buyer or the business audit stay). ${r.verdict.headline} I'll check the account tomorrow morning.`
       : `Sprint started from the audit with ${fresh.length} ${fresh.length === 1 ? "move" : "moves"} on the action list. ${r.verdict.headline} I'll check the account tomorrow morning and every day after until it's back on target.`,
     kpi,
     next_check_at: checkAt(1),
