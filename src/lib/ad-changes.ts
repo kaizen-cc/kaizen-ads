@@ -4,7 +4,7 @@ import { askJson } from "@/lib/ai";
 import type { Staff } from "@/lib/auth";
 import { googleMutate, googleWritableSetup, type WritableSetup } from "@/lib/context/google-ads";
 import { metaGraph } from "@/lib/context/meta";
-import { metaWritableSetup, metaWrite, type MetaSetup } from "@/lib/meta-write";
+import { diagnoseAccess, metaWritableSetup, metaWrite, type MetaSetup } from "@/lib/meta-write";
 import { replaceLinks, type ObjRef } from "@/lib/chat-change-core";
 
 // Changes made to an ad account from Kaizen Ads. An audit action or a sprint move is turned into specific changes by
@@ -381,12 +381,18 @@ export async function checkOps(admin: SupabaseClient, platform: string, account:
 
 async function check(admin: SupabaseClient, platform: string, account: string, ops: PlannedOp[]): Promise<PlannedOp[]> {
   const out: PlannedOp[] = [];
+  let why: string | null = null;
   for (const op of ops) {
     try {
       await send(admin, platform, account, op, true);
       out.push({ ...op, check: { ok: true, error: null } });
     } catch (e) {
-      out.push({ ...op, check: { ok: false, error: e instanceof Error ? e.message : String(e) } });
+      const m = e instanceof Error ? e.message : String(e);
+      // Meta's permission errors don't say what's missing: ask once what the system user may do on this account
+      if (platform === "meta" && why === null && /permission|not authorized|\(#200\)|\(#10\)/i.test(m)) why = await diagnoseAccess(account).catch(() => "");
+      out.push({ ...op, check: { ok: false, error: why && /permission|not authorized|\(#200\)|\(#10\)/i.test(m) ? `${m}
+
+Why: ${why}` : m } });
     }
   }
   return out;

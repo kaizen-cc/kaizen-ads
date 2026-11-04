@@ -71,6 +71,29 @@ export async function tokenScopes() {
   return { granted, missing: r ? NEEDED.filter((n) => !granted.includes(n)) : [] };
 }
 
+const TASKS: Record<string, string> = { MANAGE: "manage the account", ADVERTISE: "manage campaigns", ANALYZE: "view performance", DRAW: "create ads (no publishing)" };
+
+/** Meta's permission errors are vague: ask Meta what the token's user may do on this account, and who owns it, in plain words. */
+export async function diagnoseAccess(account: string): Promise<string> {
+  const id = bare(account);
+  type Acct = { name?: string; user_tasks?: string[]; business?: { name?: string; id?: string } };
+  const [acct, me, scopes] = await Promise.all([
+    metaGraph<Acct>(`act_${id}`, { fields: "name,user_tasks,business{name,id}" }).catch((e) => ({ error: e instanceof Error ? e.message : String(e) })),
+    metaGraph<{ name?: string; id?: string }>("me", { fields: "id,name" }).catch(() => null),
+    tokenScopes(),
+  ]);
+  const who = me?.name ? `The system user "${me.name}" (${me.id})` : "The system user";
+  if (scopes.missing.includes("ads_management"))
+    return `${who}'s token was generated without ads_management (it has ${scopes.granted.join(", ") || "nothing readable"}). In Business Manager: Users → System users → Generate new token with ads_management ticked, then replace META_SYSTEM_USER_TOKEN in Vercel and redeploy.`;
+  if ("error" in acct) return `${who} can't even read ad account ${id}: ${acct.error}`;
+  const tasks = acct.user_tasks ?? [];
+  const owner = acct.business?.name ? `owned by the business "${acct.business.name}" (${acct.business.id})` : "owner not visible";
+  const can = tasks.length ? tasks.map((t) => TASKS[t] ?? t.toLowerCase()).join(", ") : "nothing";
+  if (!tasks.includes("ADVERTISE") && !tasks.includes("MANAGE"))
+    return `${who} can only ${can} on "${acct.name ?? id}" (${id}, ${owner}). It needs Manage campaigns: Business settings → Accounts → Ad accounts → this account → Assign people → the system user → turn on Manage campaigns. If the account is shared to us as a partner, the partner share must include Manage campaigns first (the owner raises it). No new token is needed.`;
+  return `${who} has ${can} on "${acct.name ?? id}" (${id}, ${owner}) and the token has ads_management, so Meta is refusing for another reason: often the app itself isn't approved for ads_management (Advanced Access) or the system user's role in our Business Manager is Employee instead of Admin.`;
+}
+
 export async function writeAccess(admin: SupabaseClient, account: string): Promise<{ ok: boolean; detail: string }> {
   const blocked = await writeBlocked(admin, account);
   if (blocked) return { ok: false, detail: blocked };
@@ -90,7 +113,9 @@ export async function writeAccess(admin: SupabaseClient, account: string): Promi
       : /disabled|unsettled|closed/i.test(m)
         ? " The ad account isn't active (billing or a restriction)."
         : "";
-    return { ok: false, detail: `${m}${hint}` };
+    return { ok: false, detail: `${m}${hint}${/permission|not authorized|\(#200\)|\(#10\)/i.test(m) ? `
+
+${await diagnoseAccess(account).catch(() => "")}` : ""}` };
   }
 }
 
