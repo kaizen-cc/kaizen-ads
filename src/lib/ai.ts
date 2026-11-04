@@ -331,9 +331,12 @@ export async function askJsonWithTools<T>({
   maxTokens = 16000,
   maxRounds = 6,
   onTool,
+  clientId = null,
 }: {
   agent: AgentKey;
   label: string;
+  /** The client the call is about: their own team learnings come with it */
+  clientId?: string | null;
   system: string;
   prompt: string;
   schema: Record<string, unknown>;
@@ -343,10 +346,10 @@ export async function askJsonWithTools<T>({
   /** Told about each lookup as it happens (name and input), for "Pulled from Meta…" notes */
   onTool?: (name: string, input: Record<string, unknown>, ok: boolean) => void;
 }): Promise<T> {
-  if (!tools.length) return askJson<T>({ agent, label, system, prompt, schema, maxTokens });
+  if (!tools.length) return askJson<T>({ agent, label, system, prompt, schema, maxTokens, clientId });
   if (!aiEnabled()) throw new AiUnavailable("AI isn't connected yet.");
   const cfg = await getAgent(agent);
-  prompt = await withKnowledge(agent, label, prompt);
+  prompt = await withKnowledge(agent, label, prompt, clientId);
   const started = Date.now();
   const run = { agent_key: agent, label, model: cfg.model, effort: cfg.effort };
   const who = adminConfigured() ? actorNow() : Promise.resolve(AUTO);
@@ -518,6 +521,7 @@ export type ClientContext = {
   gtm?: string | null; // the whole Meta go-to-market strategy (reviewed, or marked as a draft)
   googleGtm?: string | null; // the Google Ads go-to-market strategy, the same way
   business?: string; // real revenue, customers and lead outcomes from their store or CRM (Shopify, WooCommerce, GoHighLevel…)
+  activity?: string; // what's happening in the app now: tickets, review comments, approvals, overrides, plan, owed replies, promises
   sinceBriefing: { source: string; at: string; author: string | null; title: string | null; body: string | null }[]; // newer than the briefing
   angles: { name: string; kind: string; description: string | null }[];
   memory: { kind: "avoid" | "prefer" | "note"; body: string; source: string; dated?: string | null }[]; // dated: true as of that day (background, not a standing rule)
@@ -534,9 +538,16 @@ export type ClientContext = {
   }[];
 };
 
-/** Everything the AI should know about a client. Reads through the caller's RLS. */
-export async function clientContext(supabase: SupabaseClient, clientId: string): Promise<ClientContext | null> {
-  const [{ data: c }, { data: usage }, { data: briefing }, { data: snap }, { data: angles }, { data: memory }, { data: recent }] = await Promise.all([
+/**
+ * Everything the AI should know about a client. Reads through the caller's RLS, all in one parallel round.
+ * `fresh`: first read any Slack messages newer than what's saved (at most ~2s; for conversations about the client).
+ */
+export async function clientContext(supabase: SupabaseClient, clientId: string, opts: { fresh?: boolean } = {}): Promise<ClientContext | null> {
+  if (opts.fresh && adminConfigured()) {
+    const { freshenClient } = await import("@/lib/client-activity");
+    await freshenClient(createAdminClient(), clientId).catch(() => undefined);
+  }
+  const [{ data: c }, { data: usage }, { data: briefing }, { data: snap }, { data: angles }, { data: memory }, { data: recent }, { data: bible }] = await Promise.all([
     supabase.from("clients").select("name, website, meta_ad_account_id, industry, industry_detail").eq("id", clientId).maybeSingle(),
     supabase.from("client_allotment_usage").select("*").eq("client_id", clientId).maybeSingle(),
     supabase.from("client_briefings").select("digest, generated_at").eq("client_id", clientId).maybeSingle(),
@@ -549,42 +560,39 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
       .eq("client_id", clientId)
       .order("created_at", { ascending: false })
       .limit(25),
+    // The whole Brand Bible, for the most context (a draft is read as a draft)
+    supabase.from("client_brand_bibles").select("status, markdown, read_this_first, version, learnings").eq("client_id", clientId).in("status", ["draft", "reviewed"]).maybeSingle(),
   ]);
   if (!c) return null;
-  // The whole Brand Bible, for the most context (a draft is read as a draft)
-  const { data: bible } = await supabase.from("client_brand_bibles").select("status, markdown, read_this_first, version, learnings").eq("client_id", clientId).in("status", ["draft", "reviewed"]).maybeSingle();
   // The Bible's living learnings: what their ads proved since it was written, newest first
   const learned = ((bible?.learnings ?? []) as { at: string; kind: string; text: string }[]).slice(-30).reverse();
-  // Slack and email that came in after the briefing was written, so suggestions and the review are current
-  const { data: newer } = await supabase
-    .from("context_items")
-    .select("source, occurred_at, author, title, body")
-    .eq("client_id", clientId)
-    .neq("source", "drive")
-    .gt("created_at", briefing?.generated_at ?? new Date(Date.now() - 2 * 86_400_000).toISOString())
-    .order("occurred_at", { ascending: false })
-    .limit(40);
-  return {
-    brandBible:
-      bible?.markdown || bible?.read_this_first
-        ? `${bible.read_this_first ? `Read this first:\n${bible.read_this_first}\n\n` : ""}${learned.length ? `What their ads proved since (living learnings, newer than the Bible's text where they disagree):\n${learned.map((l) => `- ${l.at} ${l.kind === "avoid" ? "AVOID" : "WORKS"}: ${l.text}`).join("\n")}\n\n` : ""}${bible.markdown ? `The full Brand Bible:\n${bible.markdown.slice(0, 40000)}` : ""}\n(Brand Bible ${bible.version}${bible.status === "reviewed" ? ", reviewed by Kaizen" : ", a draft the Head of Creative hasn't reviewed yet"})`
-        : null,
+  const [newer, siteIssues, gtm, googleGtm, business, documents, playbook, peers, patterns, reports, winners, kpis, intake, tiring, activity] = await Promise.all([
+    // Slack and email that came in after the briefing was written, so suggestions and the review are current
+    supabase
+      .from("context_items")
+      .select("source, occurred_at, author, title, body")
+      .eq("client_id", clientId)
+      .neq("source", "drive")
+      .gt("created_at", briefing?.generated_at ?? new Date(Date.now() - 2 * 86_400_000).toISOString())
+      .order("occurred_at", { ascending: false })
+      .limit(40)
+      .then(({ data }) => data ?? []),
     // What the Bible and the page checks found wrong on their site and in our numbers (pages gone, offers changed)
-    siteIssues: await import("@/lib/website-issues").then(({ issuesBlock }) => issuesBlock(supabase, clientId)).catch(() => ""),
+    import("@/lib/website-issues").then(({ issuesBlock }) => issuesBlock(supabase, clientId)).catch(() => ""),
     // Loaded here, not at the top: the strategy module uses this one
-    gtm: await import("@/lib/gtm").then(({ gtmForContext }) => gtmForContext(supabase, clientId)),
-    googleGtm: await import("@/lib/gtm").then(({ gtmForContext }) => gtmForContext(supabase, clientId, "google")).catch(() => null),
+    import("@/lib/gtm").then(({ gtmForContext }) => gtmForContext(supabase, clientId)),
+    import("@/lib/gtm").then(({ gtmForContext }) => gtmForContext(supabase, clientId, "google")).catch(() => null),
     // What actually happened in their business (store orders, CRM outcomes): rule one, profitability, is read from here
-    business: await import("@/lib/integrations").then(({ businessBlock }) => businessBlock(supabase, clientId)).catch(() => ""),
+    import("@/lib/integrations").then(({ businessBlock }) => businessBlock(supabase, clientId)).catch(() => ""),
     // Files and links the team shared about the client, with what's in them
-    documents: await import("@/lib/client-docs").then(({ docsBlock }) => docsBlock(supabase, clientId, 10)).catch(() => ""),
+    import("@/lib/client-docs").then(({ docsBlock }) => docsBlock(supabase, clientId, 10)).catch(() => ""),
     // Everything they've run and how it did (the playbook), and what won for similar clients
-    playbook: await import("@/lib/ledger").then(({ playbookBlock }) => playbookBlock(supabase, clientId)).catch(() => ""),
-    peers: await import("@/lib/ledger").then(({ peersBlock }) => peersBlock(supabase, clientId, c.industry ?? null, c.industry_detail ?? null)).catch(() => ""),
+    import("@/lib/ledger").then(({ playbookBlock }) => playbookBlock(supabase, clientId)).catch(() => ""),
+    import("@/lib/ledger").then(({ peersBlock }) => peersBlock(supabase, clientId, c.industry ?? null, c.industry_detail ?? null)).catch(() => ""),
     // Patterns across clients: what works (or fails) for most businesses like this one, and what this client isn't using yet
-    patterns: await import("@/lib/patterns").then(({ patternsBlock }) => patternsBlock(supabase, clientId)).catch(() => ""),
+    import("@/lib/patterns").then(({ patternsBlock }) => patternsBlock(supabase, clientId)).catch(() => ""),
     // What we last told the client in reports: the takeaway, and what we said comes next (so the next piece of work keeps that promise)
-    reports: await supabase
+    supabase
       .from("reports")
       .select("kind, platform, period_start, period_end, sections")
       .eq("client_id", clientId)
@@ -600,23 +608,14 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
           })
           .join("\n"),
       ),
-    industry: c.industry,
-    industryDetail: c.industry_detail,
-    winners: await (async () => {
+    (async () => {
       if (!c.industry || c.industry === "other") return "";
       // Loaded here, not at the top: the industry module uses this one
       const { industryWinners, winnersBlock } = await import("@/lib/industry");
       return winnersBlock(c.industry, c.industry_detail, await industryWinners(supabase, c.industry, clientId, 5));
     })(),
-    sinceBriefing: (newer ?? []).map((i) => ({ source: i.source, at: i.occurred_at, author: i.author, title: i.title, body: i.body?.slice(0, 800) ?? null })),
-    name: c.name,
-    website: c.website,
-    adAccountConnected: Boolean(c.meta_ad_account_id),
-    allotment: usage ? toAllotment(usage as UsageRow) : null,
-    digest: briefing?.digest && Object.keys(briefing.digest).length ? (briefing.digest as Digest) : null,
-    meta: snap ? describeMeta(snap as Parameters<typeof describeMeta>[0]) : null,
-    kpis: await loadClientKpis(supabase, clientId).then((k) => (k.length ? describeKpis(k) : null)),
-    intake: await supabase
+    loadClientKpis(supabase, clientId).then((k) => (k.length ? describeKpis(k) : null)),
+    supabase
       .from("client_intakes")
       .select("summary")
       .eq("client_id", clientId)
@@ -625,7 +624,7 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
       .limit(1)
       .maybeSingle()
       .then(({ data }) => (data?.summary ? describeIntake(data.summary as IntakeSummary) : undefined)),
-    tiring: await supabase
+    supabase
       .from("ad_fatigue")
       .select("ad_name, headline, severity, signals")
       .eq("client_id", clientId)
@@ -633,6 +632,37 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
       .order("severity", { ascending: false })
       .limit(8)
       .then(({ data }) => describeFatigue((data ?? []) as Parameters<typeof describeFatigue>[0])),
+    // What's happening with them in the app right now: tickets, comments, approvals, overrides, plan, promises
+    import("@/lib/client-activity").then(({ activityBlock }) => activityBlock(supabase, clientId)).catch(() => ""),
+  ]);
+  return {
+    brandBible:
+      bible?.markdown || bible?.read_this_first
+        ? `${bible.read_this_first ? `Read this first:\n${bible.read_this_first}\n\n` : ""}${learned.length ? `What their ads proved since (living learnings, newer than the Bible's text where they disagree):\n${learned.map((l) => `- ${l.at} ${l.kind === "avoid" ? "AVOID" : "WORKS"}: ${l.text}`).join("\n")}\n\n` : ""}${bible.markdown ? `The full Brand Bible:\n${bible.markdown.slice(0, 40000)}` : ""}\n(Brand Bible ${bible.version}${bible.status === "reviewed" ? ", reviewed by Kaizen" : ", a draft the Head of Creative hasn't reviewed yet"})`
+        : null,
+    siteIssues,
+    gtm,
+    googleGtm,
+    business,
+    documents,
+    playbook,
+    peers,
+    patterns,
+    reports,
+    industry: c.industry,
+    industryDetail: c.industry_detail,
+    winners,
+    sinceBriefing: newer.map((i) => ({ source: i.source, at: i.occurred_at, author: i.author, title: i.title, body: i.body?.slice(0, 800) ?? null })),
+    name: c.name,
+    website: c.website,
+    adAccountConnected: Boolean(c.meta_ad_account_id),
+    allotment: usage ? toAllotment(usage as UsageRow) : null,
+    digest: briefing?.digest && Object.keys(briefing.digest).length ? (briefing.digest as Digest) : null,
+    meta: snap ? describeMeta(snap as Parameters<typeof describeMeta>[0]) : null,
+    kpis,
+    intake,
+    tiring,
+    activity,
     angles: angles ?? [],
     memory: (memory ?? []) as ClientContext["memory"],
     recent: (recent ?? []).map((r) => ({
@@ -694,6 +724,7 @@ export function contextBlock(ctx: ClientContext, request?: { images: number; vid
       "</kpi_targets>",
     );
   if (ctx.digest) lines.push("<briefing from Slack, email and Drive>", describeDigest(ctx.digest), "</briefing>");
+  if (on("recent_messages") && ctx.activity) lines.push(ctx.activity);
   if (ctx.sinceBriefing.length)
     lines.push(
       "<newer_than_the_briefing>",

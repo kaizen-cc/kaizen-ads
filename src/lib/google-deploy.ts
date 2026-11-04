@@ -188,6 +188,7 @@ export async function draftDeploy(admin: SupabaseClient, deployId: string, chang
     const out = await askJson<DeployPlan>({
       agent: "google_launcher",
       label: `deploy a Google idea ${(d.clients as { name: string } | null)?.name ?? ""}`,
+      clientId,
       system: SYSTEM,
       schema: SCHEMA,
       maxTokens: 6000,

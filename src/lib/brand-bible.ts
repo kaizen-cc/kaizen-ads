@@ -264,6 +264,7 @@ export async function writeBible(admin: SupabaseClient, clientId: string): Promi
     const bible = await askJson<BrandBibleOut>({
       agent: "brandbible",
       label: `brand bible ${client.name}`,
+      clientId,
       // A full Bible runs 25-40k tokens of writing. Medium effort keeps the thinking before it short enough that the whole
       // run fits the server's time limit (high effort spent the 64k ceiling on thinking and ran out before finishing)
       maxTokens: 100000,

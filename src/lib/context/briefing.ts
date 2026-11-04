@@ -82,6 +82,7 @@ export async function refreshBriefing(admin: SupabaseClient, clientId: string, f
   const result = await askJson<{ digest: Digest; suggestions: Suggestions }>({
     agent: "briefing", // model and effort come from Settings → AI agents (Haiku, low by default)
     label: `briefing ${ctx.name}`,
+    clientId,
     system: AGENCY_SYSTEM,
     schema: { type: "object", properties: { digest: DIGEST_SCHEMA, suggestions: SUGGESTIONS_SCHEMA }, required: ["digest", "suggestions"], additionalProperties: false },
     prompt: `${contextBlock(ctx, undefined, sources)}

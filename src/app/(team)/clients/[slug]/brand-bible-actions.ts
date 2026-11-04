@@ -87,8 +87,9 @@ export async function clarifyBrandBible(clientId: string, slug: string, message:
   const { data: b } = await admin.from("client_brand_bibles").select("markdown, read_this_first, open_questions, review_chat").eq("client_id", clientId).maybeSingle();
   if (!b?.markdown) return { ok: false, error: "There's no Brand Bible yet." };
 
-  const { askJson, AiUnavailable } = await import("@/lib/ai");
+  const { askJson, AiUnavailable, contextBlock } = await import("@/lib/ai");
   const { applyEdits, logChange } = await import("@/lib/bible-sections");
+  const ctx = await clientContext(admin, clientId, { fresh: true }).catch(() => null);
   const now = new Date().toISOString();
   const day = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", year: "numeric" }).format(new Date());
   const chat = (b.review_chat ?? []) as BibleTurn[];
@@ -99,9 +100,10 @@ export async function clarifyBrandBible(clientId: string, slug: string, message:
     const out = await askJson<Clarified>({
       agent: "brandbible",
       label: `brand bible review ${client.name}`,
+      clientId,
       override: { model: "sonnet", effort: "medium" },
       system: `${CLARIFY_RULES}\n\n<brand_bible client="${client.name}">\n${b.markdown}\n</brand_bible>\n\n<read_this_first>\n${b.read_this_first ?? ""}\n</read_this_first>`,
-      prompt: `Open questions right now:\n${questions.map((q, i) => `${i + 1}. ${q.question} (${q.who})`).join("\n") || "None."}\n\nThe chat so far:\n${[...chat.slice(-16), mine].map((t) => `${t.role === "user" ? (t.by ?? "Team") : "You"}: ${t.text}`).join("\n\n")}\n\nToday is ${day}. Answer the last message.`,
+      prompt: `${ctx ? `${contextBlock({ ...ctx, brandBible: null }, undefined, { allotment: false })}\n\n` : ""}Open questions right now:\n${questions.map((q, i) => `${i + 1}. ${q.question} (${q.who})`).join("\n") || "None."}\n\nThe chat so far:\n${[...chat.slice(-16), mine].map((t) => `${t.role === "user" ? (t.by ?? "Team") : "You"}: ${t.text}`).join("\n\n")}\n\nToday is ${day}. Answer the last message.`,
       schema: CLARIFY_SCHEMA,
       // Whole sections come back, so there has to be room (streamed)
       maxTokens: 32000,

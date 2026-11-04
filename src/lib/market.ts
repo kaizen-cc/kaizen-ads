@@ -393,6 +393,7 @@ export async function matchClient(admin: SupabaseClient, clientId: string) {
   const out = await askJson<{ brands: { n: number; score: number; why: string }[] }>({
     agent: "market",
     label: "match market brands to a client",
+    clientId,
     system:
       "You pick which brands' Meta ads a paid social agency's client can learn the most from: brands that sell something comparable, to a comparable customer, in a comparable way (online vs in store, price point, subscription vs one-off, local vs national). Industry labels are broad; judge by what they actually sell. Fewer strong matches beat many weak ones.",
     schema: MATCH_SCHEMA,

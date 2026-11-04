@@ -1,6 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { askJson } from "@/lib/ai";
+import { askJson, clientContext, contextBlock } from "@/lib/ai";
 import { slack, slackConfigured } from "@/lib/context/slack";
 import { addresses, gmailToken, google, googleConfigured, plainText, withoutQuotes, type GmailMessage } from "@/lib/context/google";
 
@@ -91,18 +91,20 @@ export async function draftOwedReply(admin: SupabaseClient, id: string, opts: { 
   if (!opts.force && o.draft && o.draft_basis === thread.basis) return { ok: true, draft: o.draft as string };
   const email = o.source === "gmail";
   const client = (o.clients as { name: string } | null)?.name ?? null;
+  // Everything we know about the client, current to the minute, so the draft answers from it (never contradicts it)
+  const ctx = o.client_id ? await clientContext(admin, o.client_id as string, { fresh: true }).catch(() => null) : null;
   try {
     const out = await askJson<{ reply: string }>({
       agent: "calls",
       label: "draft owed reply",
-      bare: true,
+      clientId: (o.client_id as string | null) ?? null,
       override: { model: "sonnet", effort: "low" },
       maxTokens: 1200,
       system: `You draft the next reply for a teammate at Kaizen, a paid ads and creative agency, to a message that's waiting on them. Write it as them, in their voice: match how they write in their own messages below (length, greeting or none, punctuation, emoji, how casual). ${email ? "It's an email: the body only (no subject), with the greeting and sign-off they'd use." : "It's a Slack reply in the thread: short and plain, no greeting line or sign-off unless they write that way, no markdown headings."}
-Answer what's actually asked, using only what the conversation shows. Never invent dates, numbers, prices, results or commitments: where the reply needs something only they know or decide, put a short placeholder in square brackets, e.g. [the new launch date]. If it's work shared for feedback and there's nothing to judge from the text, acknowledge it and say when they'll look, with a bracketed placeholder for the time. Keep it to what a busy person would send.`,
+Answer what's actually asked, using only what the conversation and the client context show. Never invent dates, numbers, prices, results or commitments: where the reply needs something only they know or decide, put a short placeholder in square brackets, e.g. [the new launch date]. If it's work shared for feedback and there's nothing to judge from the text, acknowledge it and say when they'll look, with a bracketed placeholder for the time. Keep it to what a busy person would send.`,
       schema: SCHEMA,
       prompt: [
-        client ? `<client>${client}</client>` : "",
+        ctx ? contextBlock(ctx, undefined, { allotment: false }) : client ? `<client>${client}</client>` : "",
         thread.subject ? `<subject>${thread.subject}</subject>` : "",
         `<conversation>\n${thread.lines.join("\n")}\n</conversation>`,
         `<waiting>${o.from_name}${o.from_team ? " (a teammate)" : " (a client or someone outside the team)"} is waiting on them: ${o.gist ?? String(o.body ?? "").slice(0, 300)}</waiting>`,

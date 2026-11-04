@@ -90,6 +90,7 @@ export async function processIntake(admin: SupabaseClient, intakeId: string, opt
     const summary = await askJson<IntakeSummary>({
       agent: "briefing",
       label: "marketing intake",
+      clientId: intake.client_id,
       system:
         "You read a new client's marketing intake form for a paid social agency and pull out what the creative team needs. Use only what they wrote; where a field wasn't answered, say \"Not given\" (or an empty list). Plain, specific, no hype.",
       schema: SUMMARY_SCHEMA,

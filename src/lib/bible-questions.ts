@@ -212,6 +212,7 @@ export async function discussQuestion(admin: SupabaseClient, clientId: string, i
     const out = await askJson<Folded>({
       agent: "brandbible",
       label: `bible question ${c.name}`,
+      clientId,
       override: { model: "sonnet", effort: "low" },
       system: `You keep this client's Brand Bible. One open question is being answered${msg.via === "client" ? " by the client, in their portal" : " by the Kaizen team"}.
 - answered: true when the message (with the earlier turns) settles the question; false when something's missing or unclear.

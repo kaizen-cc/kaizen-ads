@@ -87,6 +87,7 @@ export async function draftCopy(admin: SupabaseClient, requestId: string, actorI
     const out = await askJson<{ ads: Ad[]; notes: string }>({
       agent: "copy",
       label: `copy ${ctx.name}`,
+      clientId: r.client_id,
       system: AGENCY_SYSTEM,
       schema: COPY_SCHEMA,
       images: [...creative, ...refs.images].slice(0, 8),
@@ -185,6 +186,7 @@ export async function learnFromCopy(admin: SupabaseClient, requestId: string, ac
   const out = await askJson<{ lessons: CopyLesson[] }>({
     agent: "copy",
     label: "copy lessons",
+    clientId: set.client_id,
     system: COPY_LESSONS_SYSTEM,
     schema: COPY_LESSONS_SCHEMA,
     prompt: `<client_memory>\n${(memory ?? []).map((m) => `- [${m.kind}] ${m.body}`).join("\n") || "(none yet)"}\n</client_memory>\n\n<edits>\n${pairs.slice(0, 20).join("\n")}\n</edits>`,
@@ -219,6 +221,7 @@ export async function checkAgainstClient(admin: SupabaseClient, clientId: string
   const out = await askJson<{ violations: CopyViolation[] }>({
     agent: "copy",
     label: "copy check against client",
+    clientId,
     system: COPY_GUARD_SYSTEM,
     schema: COPY_GUARD_SCHEMA,
     prompt: `<client_said_avoid>

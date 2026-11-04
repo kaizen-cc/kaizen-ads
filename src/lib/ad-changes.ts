@@ -396,14 +396,16 @@ type Source = { title: string; steps: string[]; why: string };
 
 /** Plans the change for an action (in the background of the request that asked): reads the account, asks the Google Buyer, checks it. */
 export async function planChange(admin: SupabaseClient, changeId: string, source: Source) {
-  const { data: ch } = await admin.from("ad_changes").select("account, platform").eq("id", changeId).single();
+  const { data: ch } = await admin.from("ad_changes").select("account, platform, client_id").eq("id", changeId).single();
   if (!ch) return;
-  if (ch.platform === "meta") return planMetaChange(admin, changeId, ch.account, source);
+  const clientId = (ch.client_id as string | null) ?? null;
+  if (ch.platform === "meta") return planMetaChange(admin, changeId, ch.account, source, clientId);
   try {
     const setup = await googleWritableSetup(ch.account);
     const out = await askJson<{ note: string; ops: Parameters<typeof buildGoogle>[0] }>({
       agent: "google_launcher",
       label: "plan a Google Ads change",
+      clientId,
       system: PLAN_SYSTEM,
       schema: PLAN_SCHEMA,
       maxTokens: 6000,
@@ -422,12 +424,13 @@ export async function planChange(admin: SupabaseClient, changeId: string, source
 }
 
 /** The Meta side of planning: the live setup, the Media Buyer's picks, Meta's dry run of each. */
-async function planMetaChange(admin: SupabaseClient, changeId: string, account: string, source: Source) {
+async function planMetaChange(admin: SupabaseClient, changeId: string, account: string, source: Source, clientId: string | null = null) {
   try {
     const setup = await metaWritableSetup(admin, account);
     const out = await askJson<{ note: string; ops: MetaRaw[] }>({
       agent: "launcher",
       label: "plan a Meta change",
+      clientId,
       system: META_SYSTEM,
       schema: META_SCHEMA,
       maxTokens: 6000,

@@ -155,7 +155,7 @@ export async function askAboutClient(
   const reads: DocRead[] = await Promise.all(docs.map((d) => readDoc(admin, d).catch((e) => ({ id: d.id, label: d.name, text: null, pdf: null, image: null, note: e instanceof Error ? e.message : "Couldn't read it" }))));
   // The brief includes the documents shared before (their summaries)
   const [brief, audits, chat, route, { data: memory }, campaigns] = await Promise.all([
-    accountBrief(admin, clientId, null),
+    accountBrief(admin, clientId, null, true),
     auditsText(admin, clientId),
     loadClientChat(admin, clientId, profileId),
     routeMessage(q || "Read what I shared", ceiling, goDeep),
@@ -197,6 +197,7 @@ export async function askAboutClient(
   const out = await askJson<{ answer: string; docs: { n: number; title: string; summary: string }[]; actions: Action[]; change?: { wanted: boolean; platform: string; instruction: string } }>({
     agent: "strategist",
     label: `client desk (${level}${docs.length ? `, ${docs.length} shared` : ""})`,
+    clientId,
     system: SYSTEM + (level === "deep" ? "\nThis is a big question: think it through, use the market and research you're given (say where a point comes from), and give a clear recommendation with the reasoning; up to 12 sentences or a short structured list." : level === "quick" ? "\nThis is a quick question: answer it directly in 1 to 3 sentences." : ""),
     schema: SCHEMA,
     maxTokens: level === "deep" || docs.length ? 16000 : 8000,

@@ -105,6 +105,7 @@ async function fromAsana(gid: string, me: Awaited<ReturnType<typeof requireStaff
     read = await askJson<Read>({
       agent: "suggest",
       label: "asana migration",
+      clientId: (t.client_id as string | null) ?? null,
       system:
         "You turn an Asana creative request (made from Kaizen's Google Form: client, platform, format, iteration or new, audience, angle, the request, a Drive link for iterations, what to change) into the fields of a Kaizen Ads request. Use only what's in it; leave a field empty if it isn't there. formats: one entry per format asked for, with 1 net new unless it says otherwise (an iteration is 0 new and 1 variation). sizes from 4x5, 9x16 (both if unsaid; Kaizen no longer makes 1x1, so a 1x1 asked for becomes 4x5). brief: the request in full, tidied but not shortened, including what to change for an iteration. refs: every link in it. title: short and specific.",
       schema: {

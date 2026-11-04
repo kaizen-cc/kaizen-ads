@@ -433,6 +433,7 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
       const out = await askJson<{ adsetId: string; mode: "existing" | "clone"; newAdsetName: string; adNames: { designId: string; name: string }[]; reason: string; dailyBudget: number; budgetWhy: string }>({
         agent: "launcher",
         label: "place a launch",
+        clientId: ticket.client_id,
         system: PROPOSE_SYSTEM,
         schema: PROPOSE_SCHEMA,
         maxTokens: 4000,

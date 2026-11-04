@@ -81,6 +81,7 @@ export async function writePresentation(admin: SupabaseClient, clientId: string,
     const deck = await askJson<Deck>({
       agent: "brandbible",
       label: `client presentation ${c.name}`,
+      clientId,
       override: { model: "sonnet", effort: "medium" },
       system: SYSTEM,
       schema: SCHEMA,

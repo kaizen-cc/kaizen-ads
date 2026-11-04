@@ -201,8 +201,8 @@ async function gather(admin: SupabaseClient, clientId: string, buyerId: string |
 }
 
 /** The client context plus the last 45 days and what's open; with a buyer, also their other accounts (for a handoff). */
-export async function accountBrief(admin: SupabaseClient, clientId: string, buyerId: string | null) {
-  const ctx = await clientContext(admin, clientId);
+export async function accountBrief(admin: SupabaseClient, clientId: string, buyerId: string | null, fresh = false) {
+  const ctx = await clientContext(admin, clientId, { fresh });
   if (!ctx) throw new Error("Client not found");
   const g = await gather(admin, clientId, buyerId);
   return { name: g.name, text: `${contextBlock(ctx)}\n\n${g.extra}` };
@@ -219,6 +219,7 @@ export async function writeHandoff(admin: SupabaseClient, id: string) {
     const doc = await askJson<HandoffDoc>({
       agent: "strategist",
       label: "account handoff",
+      clientId: h.client_id,
       system: SYSTEM,
       schema: SCHEMA,
       maxTokens: 24000,
@@ -293,6 +294,7 @@ async function writeComeback(admin: SupabaseClient, id: string, clientId: string
     const doc = await askJson<ComebackDoc>({
       agent: "strategist",
       label: "comeback brief",
+      clientId,
       system: COMEBACK_SYSTEM,
       schema: COMEBACK_SCHEMA,
       maxTokens: 24000,
@@ -327,11 +329,12 @@ const CHAT_SYSTEM = `You answer a Kaizen media buyer's questions about one clien
 export async function askAboutAccount(admin: SupabaseClient, handoffId: string, question: string, by: string) {
   const { data: h } = await admin.from("account_handoffs").select("client_id, to_id, doc, chat").eq("id", handoffId).single();
   if (!h) throw new Error("Handoff not found");
-  const b = await accountBrief(admin, h.client_id, h.to_id);
+  const b = await accountBrief(admin, h.client_id, h.to_id, true);
   const chat = (h.chat ?? []) as ChatTurn[];
   const out = await askJson<{ answer: string }>({
     agent: "strategist",
     label: "account question",
+    clientId: h.client_id,
     system: CHAT_SYSTEM,
     schema: obj({ answer: S }),
     maxTokens: 6000,

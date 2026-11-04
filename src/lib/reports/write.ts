@@ -169,6 +169,7 @@ export async function draftReport(admin: SupabaseClient, reportId: string) {
     const out = await askJson<{ message: string; sections: Sections }>({
       agent: agentFor(c.r.platform),
       label: `${kind} report`,
+      clientId: c.r.client_id,
       system: writerSystem(kind, c.r.platform),
       schema: DRAFT_SCHEMA,
       maxTokens: 12000,
@@ -238,6 +239,7 @@ export async function reviseReport(admin: SupabaseClient, reportId: string, ask:
   const out = await askJsonWithTools<{ reply: string; message: string; sections: Sections; lesson: string }>({
     agent: agentFor(c.r.platform),
     label: "revise report",
+    clientId: c.r.client_id,
     system: `${writerSystem(c.r.kind as Kind, c.r.platform)}\n\n${REVISE_SYSTEM}\n\n${toolsLine(tools)}`,
     schema: REVISE_SCHEMA,
     tools,

@@ -30,6 +30,7 @@ export async function makeExport(admin: SupabaseClient, clientId: string, reason
     const out = await askJson<{ summary: string }>({
       agent: "strategist",
       label: `client export ${c.name}`,
+      clientId,
       override: { model: "sonnet", effort: "low" },
       system: `You write the handoff for a client the agency is ${reason === "offboarding" ? "parting with" : "documenting"}: "where we left off", for whoever picks the account up again, possibly years from now. Plain words, specific, under 400 words:
 - the business and its goal, in a line;

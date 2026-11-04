@@ -37,6 +37,7 @@ export async function writeScript(requestId: string, note?: string): Promise<{ o
     const content = await askJson<Script>({
       agent: "scripts",
       label: `script ${ctx.name}`,
+      clientId: r.client_id,
       system: AGENCY_SYSTEM,
       schema: SCRIPT_SCHEMA,
       images: refs.images,

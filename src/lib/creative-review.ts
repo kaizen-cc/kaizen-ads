@@ -283,6 +283,7 @@ ${r.brief ?? "(no brief)"}
           const out = await askJson<{ notes: (Omit<CreativeNote, "design"> & { picture: number; x: number; y: number; w: number; h: number })[]; fixed: number[] }>({
             agent: "creativereview",
             label: `creative review #${r.number} D${d.position}`,
+            clientId: r.client_id,
             system: CREATIVE_REVIEW_SYSTEM,
             schema: DESIGN_NOTES_SCHEMA,
             maxTokens: 16000,

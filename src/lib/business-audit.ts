@@ -118,6 +118,7 @@ Tiring ads: ${(fatigue ?? []).map((f) => `${f.ad_name} (${f.severity})`).join(";
     const out = await askJson<BusinessAuditResult>({
       agent: "auditor",
       label: `business audit ${client.name}`,
+      clientId,
       system: SYSTEM,
       schema: SCHEMA,
       maxTokens: 24000,

@@ -47,7 +47,7 @@ export async function prepareCall(admin: SupabaseClient, clientId: string, reaso
   const out = await askJson<{ recap: string[]; prepare: string[] }>({
     agent: "launcher",
     label: `setup call prep ${c.name}`,
-    bare: true,
+    clientId,
     override: { model: "sonnet", effort: "low" },
     system: `You brief Kaizen's client success team before a new client's onboarding call. From the client's setup progress and their help conversations, write:
 recap: 2 to 6 short bullets on where setup stands and what went wrong, specific (what they tried, the exact error or wall, which account), no fluff.

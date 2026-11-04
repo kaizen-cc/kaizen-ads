@@ -212,6 +212,7 @@ async function planMeta(admin: SupabaseClient, clientId: string, account: string
   const out = await askJson<{ note: string; ops: MetaChatRaw[] }>({
     agent: "launcher",
     label: "chat ad change meta",
+    clientId,
     system: META_SYSTEM,
     schema: META_SCHEMA,
     maxTokens: 8000,
@@ -367,6 +368,7 @@ async function planGoogle(admin: SupabaseClient, clientId: string, account: stri
   const out = await askJson<{ note: string; ops: GoogleChatRaw[] }>({
     agent: "google_launcher",
     label: "chat ad change google",
+    clientId,
     system: GOOGLE_SYSTEM,
     schema: GOOGLE_SCHEMA,
     maxTokens: 8000,

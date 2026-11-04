@@ -49,6 +49,7 @@ export async function draftCards(admin: SupabaseClient, requestId: string, only?
     const out = await askJson<{ cards: Card[] }>({
       agent: "copy",
       label: `carousel cards ${ctx.name}`,
+      clientId: r.client_id as string,
       system: AGENCY_SYSTEM,
       schema: SCHEMA,
       images,

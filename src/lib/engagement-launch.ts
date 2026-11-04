@@ -113,6 +113,7 @@ export async function proposeEngagement(admin: SupabaseClient, clientId: string)
     const out = await askJson<{ picks: { id: string; why: string }[]; none: string; geo: { query: string; type: "city" | "region" | "zip" | "country"; radiusMiles: number }[]; geoLabel: string; ageMin: number }>({
       agent: "launcher",
       label: `engagement launch posts ${c.name}`,
+      clientId,
       override: { model: "sonnet", effort: "low" },
       system: `You pick a new client's own social posts to run as their first engagement ads, so they're live within 48 hours. Never boost something random or wrong.
 Drop: anything out of date (a promotion, price, event or holiday that's over by ${today}), hiring, "closed today", memes or reposts that aren't about the business, low-quality or off-brand posts, and anything against the Brand Bible's rules. Keep: posts that show what they sell or do, their proof (results, reviews, before and after), their people and place, with a clear reason a stranger would stop.

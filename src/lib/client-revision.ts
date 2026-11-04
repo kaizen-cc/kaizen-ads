@@ -53,6 +53,7 @@ export async function amendCopy(admin: SupabaseClient, requestId: string, notes:
     const out = await askJson<CopyAmend>({
       agent: "copy",
       label: `copy revision #${r.number}`,
+      clientId: r.client_id,
       system: COPY_AMEND_SYSTEM,
       schema: COPY_AMEND_SCHEMA,
       onText,
@@ -107,6 +108,7 @@ export async function learnFromClient(admin: SupabaseClient, clientId: string, n
   const out = await askJson<{ lessons: CopyLesson[] }>({
     agent: "review",
     label: "client lessons",
+    clientId,
     system: CLIENT_LESSONS_SYSTEM,
     schema: COPY_LESSONS_SCHEMA,
     prompt: `<client_memory>\n${(memory ?? []).map((m) => `- [${m.kind}] ${m.body}`).join("\n") || "(none yet)"}\n</client_memory>\n\n<client_revision_notes>\n${text.map((t) => `- ${t}`).join("\n")}\n</client_revision_notes>`,
@@ -189,6 +191,7 @@ export async function writeClientSummary(admin: SupabaseClient, requestId: strin
   const summary = await askJson<ClientSummary>({
     agent: "review",
     label: `client summary #${r.number}`,
+    clientId: r.client_id,
     system: CLIENT_SUMMARY_SYSTEM,
     schema: CLIENT_SUMMARY_SCHEMA,
     prompt: `<client>${ctx?.name ?? "the client"}</client>

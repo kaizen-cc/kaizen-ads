@@ -69,7 +69,7 @@ export async function reportTools(admin: SupabaseClient, r: { client_id: string;
       input_schema: { type: "object", properties: {}, additionalProperties: false },
       run: async () => {
         const { clientContext, contextBlock } = await import("@/lib/ai");
-        const ctx = await clientContext(admin, r.client_id);
+        const ctx = await clientContext(admin, r.client_id, { fresh: true });
         if (!ctx) throw new Error("Client not found.");
         return note("Client overview", contextBlock(ctx, undefined, { allotment: false }).slice(0, 60_000));
       },

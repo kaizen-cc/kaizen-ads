@@ -346,6 +346,7 @@ export async function checkSprint(admin: SupabaseClient, sprintId: string) {
   }>({
     agent: google ? "google_auditor" : "auditor",
     label: `sprint check ${(s.clients as unknown as { name: string } | null)?.name ?? ""}`,
+    clientId: s.client_id as string,
     system: google ? CHECK_SYSTEM.replace(/\bMeta\b/g, "Google Ads").replace(/resetting learning on a winner, starving the best ad set, splitting budget thinner/, "resetting smart bidding by changing the target too far at once, cutting the budget of the campaign that converts, broadening match types without negatives") : CHECK_SYSTEM,
     schema: CHECK_SCHEMA,
     prompt: `<sprint client="${(s.clients as unknown as { name: string } | null)?.name ?? ""}" day="${days}">

@@ -263,7 +263,7 @@ fixes: one short line per change you made (empty when it already met the standar
  * changed after.
  */
 async function writeBrief(admin: SupabaseClient, clientId: string, opts: Parameters<typeof askJson<Out>>[0]): Promise<Out> {
-  const out = await askJson<Out>({ ...opts, system: `${opts.system}\n\n${BRIEF_STANDARD}` });
+  const out = await askJson<Out>({ ...opts, clientId, system: `${opts.system}\n\n${BRIEF_STANDARD}` });
   if (!out.suggest || !out.draft?.brief) return out;
   try {
     const ctx = await clientContext(admin, clientId);
@@ -271,6 +271,7 @@ async function writeBrief(admin: SupabaseClient, clientId: string, opts: Paramet
     const r = await askJson<{ fixes: string[]; draft: SuggestionDraft }>({
       agent: "review",
       label: "brief self-review",
+      clientId,
       system: REPAIR_SYSTEM,
       schema: REPAIR_SCHEMA,
       maxTokens: 12000,
@@ -372,8 +373,8 @@ function workloadBlock(w: Workload, clientId: string) {
   return `<work_in_motion>\n${lines.join("\n")}\n</work_in_motion>`;
 }
 
-async function promptFor(admin: SupabaseClient, clientId: string, signals: Signal[], load?: Workload) {
-  const [ctx, { sources }, decisions, w] = await Promise.all([clientContext(admin, clientId), getAgent("strategist"), teamDecisions(admin, clientId), load ?? workload(admin)]);
+async function promptFor(admin: SupabaseClient, clientId: string, signals: Signal[], load?: Workload, fresh = false) {
+  const [ctx, { sources }, decisions, w] = await Promise.all([clientContext(admin, clientId, { fresh }), getAgent("strategist"), teamDecisions(admin, clientId), load ?? workload(admin)]);
   if (!ctx) return null;
   // What's live in this client's market right now (Motion), so a brief can build on it
   const { marketBlock } = await import("@/lib/market");
@@ -1113,7 +1114,7 @@ const TALK_SCHEMA = {
  * one or two questions at a time. Every turn returns the brief as it stands, so it's built in front of them.
  */
 export async function talkBrief(admin: SupabaseClient, clientId: string, turns: TalkTurn[], current: SuggestionDraft | null, force = false): Promise<TalkOut & { building: boolean; conflicts: string[] }> {
-  const prompt = await promptFor(admin, clientId, [{ kind: "kpi", weight: 1, line: "A team member's own creative idea", facts: [] }]);
+  const prompt = await promptFor(admin, clientId, [{ kind: "kpi", weight: 1, line: "A team member's own creative idea", facts: [] }], undefined, true);
   if (!prompt) throw new Error("Client not found");
   const convo = `<conversation>\n${turns.map((t) => `${t.role === "user" ? "Team member" : "You"}: ${t.text}`).join("\n\n")}\n</conversation>`;
   // First, quickly: is anything unclear or in conflict with what the client told us? Then nothing is written yet: the

@@ -252,7 +252,7 @@ ${lines.join("\n")}
 Classify every S design.`;
 
   try {
-    const check = await askJson<CreativeCheck>({ agent: "creativecheck", label: `creative check #${r.number}`, system: CREATIVE_CHECK_SYSTEM, prompt, schema: CREATIVE_CHECK_SCHEMA, images: pictures });
+    const check = await askJson<CreativeCheck>({ agent: "creativecheck", label: `creative check #${r.number}`, clientId: r.client_id, system: CREATIVE_CHECK_SYSTEM, prompt, schema: CREATIVE_CHECK_SCHEMA, images: pictures });
     // Keep only answers about designs in this upload that point somewhere real
     const refs = new Set([...list.map((_, i) => `S${i + 1}`), ...existing.map((d) => `D${d.position}`)]);
     check.designs = check.designs

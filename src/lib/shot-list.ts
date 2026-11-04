@@ -79,6 +79,7 @@ export async function writeShotList(admin: SupabaseClient, clientId: string, by:
   const out = await askJson<{ intro: string; shots: (Omit<Shot, "id" | "refs" | "delivered"> & { refs: number[] })[]; have: string[]; closing: string }>({
     agent: "strategist",
     label: "monthly shot list",
+    clientId,
     system: SYSTEM,
     schema: SCHEMA,
     maxTokens: 7000,
@@ -220,6 +221,7 @@ export async function matchShotUploads(admin: SupabaseClient, max = 6) {
     const r = await askJson<{ matches: { file: number; shot: string }[] }>({
       agent: "strategist",
       label: "shot list delivered",
+      clientId: l.client_id as string,
       system: "You match files a client sent to the shots on their shot list, from each file's name, folder and type. Match only when the file clearly is that shot (the subject and the format fit); a vague name like IMG_2041.jpg matches only if its folder names the subject. Several files can match one shot; a file matches at most one shot. Return only real matches.",
       schema: MATCH_SCHEMA,
       override: { model: "haiku", effort: "low" },

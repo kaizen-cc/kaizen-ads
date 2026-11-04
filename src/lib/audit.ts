@@ -600,6 +600,7 @@ Today is ${new Date().toISOString().slice(0, 10)}.`;
     const found = await askJson<Pick<AuditResult, "verdict" | "diagnosis" | "causes" | "tracking"> & { learnings: { kind: "avoid" | "prefer" | "note"; body: string; resurfaced: boolean }[] }>({
       agent: x.platform === "google" ? "google_auditor" : "auditor",
       label: `audit ${client.name} · findings`,
+      clientId: a.client_id,
       system: x.platform === "google" ? swapBase(FOUND_SYSTEM) : FOUND_SYSTEM,
       schema: FOUND_SCHEMA,
       maxTokens: 32000,
@@ -638,6 +639,7 @@ Today is ${new Date().toISOString().slice(0, 10)}.`;
     const plan = await askJson<Omit<AuditResult, "verdict" | "diagnosis" | "causes" | "tracking">>({
       agent: x.platform === "google" ? "google_auditor" : "auditor",
       label: `audit ${client.name} · plan`,
+      clientId: a.client_id,
       system: x.platform === "google" ? swapBase(PLAN_SYSTEM) : PLAN_SYSTEM,
       schema: PLAN_SCHEMA,
       maxTokens: 32000,

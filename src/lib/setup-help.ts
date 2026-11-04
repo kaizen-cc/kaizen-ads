@@ -127,7 +127,7 @@ export async function askSetupHelp(admin: SupabaseClient, clientId: string, step
   const out = await askJson<{ answer: string; stuck: boolean; frustration: number; topic: string; suggest_call: boolean; blocker: string; blocker_detail: string }>({
     agent: step === "google" || step === "tools" ? "google_launcher" : "launcher",
     label: `setup help ${c.name}`,
-    bare: true,
+    clientId,
     override: { model: "sonnet", effort: "low" },
     system: `You're Kaizen Marketing's setup helper inside a new client's onboarding guide, chatting with someone at ${c.name} who is trying to give us access to their ad accounts. Help them finish it now, step by step, like a patient expert sitting beside them.
 How to answer: short and concrete (two to six sentences, or a few numbered clicks), one step at a time, using the exact names of the buttons and menus they'll see. When they share a screenshot, look at it closely: say what you see and exactly where to click next ("top left, the gear icon labeled Settings"). Ask for a screenshot when it would help. Warm, never condescending, no jargon without a plain explanation. Never ask for passwords or codes, and never tell them to share a login.

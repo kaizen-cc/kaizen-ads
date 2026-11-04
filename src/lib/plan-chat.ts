@@ -87,6 +87,7 @@ export async function talkPlan(admin: SupabaseClient, clientId: string, by: { na
   const out = await askJson<Out>({
     agent: "brandbible",
     label: `client portal chat ${c.name}`,
+    clientId,
     override: { model: "sonnet", effort: "low" },
     system: SYSTEM,
     schema: SCHEMA,
@@ -210,6 +211,7 @@ export async function afterApproval(admin: SupabaseClient, clientId: string) {
       const out = await askJson<{ edits: { section: string; markdown: string }[]; readThisFirst: string; changeNote: string; resolved: string[] }>({
         agent: "brandbible",
         label: `brand bible review ${c.name} (client approval)`,
+        clientId,
         override: { model: "sonnet", effort: "medium" },
         system: `The client reviewed the short presentation of their Brand Bible in their portal and approved it. Fold everything they told us into the Bible: what they marked not quite (correct it), their answers, the facts from the conversation, how they want to launch, and the success targets (the targets section: each number with its source, client confirmed or adjusted, our estimate, or benchmark). Return each changed section whole, as it should now read, Markdown, starting with its exact heading line; keep everything that still holds. Tag new facts [Client, portal review, ${day}]. List the open questions their answers settle in resolved (exact text). Return the whole new Read this first in readThisFirst if anything it covers changed, else "". changeNote: one line for the change log.\n\n<brand_bible>\n${b.markdown}\n</brand_bible>\n\n<read_this_first>\n${b.read_this_first ?? ""}\n</read_this_first>`,
         prompt: `${review}\n\nOpen questions in the Bible:\n${((b.open_questions ?? []) as { question: string }[]).map((q) => `- ${q.question}`).join("\n") || "None."}`,

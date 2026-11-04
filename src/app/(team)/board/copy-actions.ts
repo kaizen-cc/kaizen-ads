@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
-import { AiUnavailable, askJson, clientContext, COPY_CHAT_SCHEMA, COPY_CHAT_SYSTEM, type CopyLesson, type CopyViolation } from "@/lib/ai";
+import { AiUnavailable, askJson, clientContext, contextBlock, COPY_CHAT_SCHEMA, COPY_CHAT_SYSTEM, type CopyLesson, type CopyViolation } from "@/lib/ai";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
 import { adsHash, blockers, isDismissed, type Ad, type Dismissed } from "@/lib/copy";
 import { draftCopy, learnFromCopy, storeCopyCheck } from "@/lib/copy-draft";
@@ -344,7 +344,7 @@ export async function chatWithCopywriter(requestId: string, text: string): Promi
   const [{ data: set }, history, ctx] = await Promise.all([
     admin.from("copy_sets").select("ads, notes, status").eq("request_id", requestId).maybeSingle(),
     copyChat(requestId),
-    clientContext(admin, r.client_id),
+    clientContext(admin, r.client_id, { fresh: true }),
   ]);
   const ads = (set?.ads ?? []) as Ad[];
   const now = new Date().toISOString();
@@ -355,12 +355,10 @@ export async function chatWithCopywriter(requestId: string, text: string): Promi
     out = await askJson({
       agent: "copy",
       label: `copy chat #${r.number}`,
+      clientId: r.client_id,
       system: COPY_CHAT_SYSTEM,
       schema: COPY_CHAT_SCHEMA,
-      prompt: `<client>${ctx?.name ?? "the client"}</client>
-${ctx?.brandBible ? `<brand_bible>\n${ctx.brandBible.slice(0, 40000)}\n</brand_bible>\n` : ""}<client_memory>
-${(ctx?.memory ?? []).map((m) => `- [${m.kind}] ${m.body}`).join("\n") || "(none)"}
-</client_memory>
+      prompt: `${ctx ? contextBlock(ctx, undefined, { allotment: false }) : "<client>the client</client>"}
 
 <ticket>
 #${r.number} · ${r.title} · angle: ${r.angle_name ?? "not set"}

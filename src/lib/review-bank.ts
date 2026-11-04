@@ -320,6 +320,7 @@ export async function collectReviewBank(admin: SupabaseClient, clientId: string,
   const out = await askJson<{ sources: SourceNote[]; picks: BankPick[]; critical: BankCritical[] }>({
     agent: "brandbible",
     label: `brand bible reviews ${c.name}`,
+    clientId,
     override: { model: "sonnet", effort: "low" },
     maxTokens: 12000,
     system:

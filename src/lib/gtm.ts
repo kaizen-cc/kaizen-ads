@@ -216,6 +216,7 @@ ${calls.slice(0, 10000)}
     const out = await askJson<Out>({
       agent: "gtm",
       label: `${google ? "google gtm strategy" : "gtm strategy"} ${client.name}`,
+      clientId,
       system: google ? GOOGLE_SYSTEM : SYSTEM,
       schema: SCHEMA,
       prompt: `${context}

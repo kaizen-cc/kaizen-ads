@@ -108,6 +108,7 @@ export async function askDashboard(admin: SupabaseClient, clientId: string, who:
   const out = await askJson<{ answer: string; flag: boolean; topic: string }>({
     agent: "reporter",
     label: `client dashboard question ${c.name}`,
+    clientId,
     override: { model: "sonnet", effort: "low" },
     system: `You answer a client's question about their own ad results on their Kaizen dashboard, from the numbers given only. Plain, warm, short (two to five sentences), specific (use the numbers), honest when something is down, and never blame the client. Explain what the number means and the likely reason when the data shows it; don't promise results, dates or changes, and don't invent anything that isn't in the numbers. If it's something only their team can answer (strategy, budget, what's changing next), say their media buyer will follow up.
 flag: true when the question shows a concern, frustration, confusion about performance or a request for change ("why did conversions drop?", "this seems expensive", "can we try X?"), so their buyer hears it today; false for a plain look-up. topic: when flagged, a few words for the buyer ("conversion rate drop"), else "".`,

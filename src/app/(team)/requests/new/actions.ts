@@ -134,6 +134,7 @@ export async function suggestForRequest(draft: Draft): Promise<SuggestResult> {
     const raw = await askJson<Suggestions>({
       agent: "suggest",
       label: "suggest",
+      clientId: draft.clientId ?? null,
       system: AGENCY_SYSTEM,
       schema: SUGGESTIONS_SCHEMA,
       images: refs.images,
@@ -165,6 +166,7 @@ export async function reviewRequest(draft: Draft): Promise<ReviewResult> {
     const review = await askJson<Review>({
       agent: "review",
       label: "review",
+      clientId: draft.clientId ?? null,
       system: AGENCY_SYSTEM,
       schema: REVIEW_SCHEMA,
       images: refs.images,
@@ -241,6 +243,7 @@ export async function applyFixes(draft: Draft, issues: { field: string; issue: s
     const patch = await askJson<DraftPatch>({
       agent: "suggest",
       label: "apply fix",
+      clientId: draft.clientId ?? null,
       system: AGENCY_SYSTEM,
       schema: PATCH_SCHEMA,
       images: refs.images,
@@ -575,6 +578,7 @@ export async function ideaPreviews(clientId: string, sources: IdeaSource[]): Pro
     const r = await askJson<{ items: (IdeaPreview & { key: string })[] }>({
       agent: "strategist",
       label: "idea previews",
+      clientId,
       system: AGENCY_SYSTEM,
       schema: PREVIEW_SCHEMA,
       maxTokens: 3000,

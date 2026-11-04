@@ -172,6 +172,7 @@ export async function applyPackageText(admin: SupabaseClient, clientId: string, 
       const out = await askJson<{ standard: string; images: number; videos: number; summary: string }>({
         agent: "briefing",
         label: "package from a form",
+        clientId,
         system: "You read what a paid social agency sold a client for creative, from one form answer, and turn it into monthly deliverables. Carousels count as images. Be literal: never invent deliverables the text doesn't support.",
         schema: PACKAGE_SCHEMA,
         prompt: `The agency's set packages (per month):

@@ -29,6 +29,7 @@ export async function importCopy(admin: SupabaseClient, requestId: string, text:
   const out = await askJson<{ ads: Omit<Ad, "formula" | "angle">[] }>({
     agent: "copy",
     label: "copy import",
+    clientId: r.client_id,
     system: `You split ad copy that was already written and approved into separate Meta ads, without changing a word. Each ad: primaryText, headline, linkDescription (empty if there isn't one), cta (one of ${CTA_BUTTONS.join(", ")}; "Learn More" if none is given), kind short (under 300 characters of primary text) or long. Copy the text exactly, including line breaks and emojis. Never rewrite, shorten, fix or add anything. Up to 5 ads; if it's one block of copy, it's one ad.`,
     schema: SCHEMA,
     maxTokens: 8000,

@@ -70,7 +70,7 @@ export async function prepareIntakeForm(admin: SupabaseClient, clientId: string,
     const out = await askJson<Tailored>({
       agent: "strategist",
       label: `intake questions ${c.name}`,
-      bare: true,
+      clientId,
       override: { model: "sonnet", effort: "low" },
       maxTokens: 8000,
       system: `You tailor a new client's marketing intake form for a performance marketing agency. The form fills the gaps in what the team needs to know to run their ads and creative well, for the services they bought. Keep it short and specific to their business; never ask what we already know: fill it in instead, for them to confirm.
