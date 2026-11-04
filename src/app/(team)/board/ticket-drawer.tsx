@@ -42,6 +42,10 @@ function BriefAdjustments({ ticketId }: { ticketId: string }) {
 }
 import { Deliverables, type UploadState } from "./deliverables";
 import { ScriptPanel } from "./script-panel";
+import { addTicketRef } from "../media-actions";
+import { HiggsfieldPanel } from "@/components/media/higgsfield-panel";
+import { MotionReferences } from "@/components/media/motion-references";
+import { VoiceoverPanel } from "@/components/media/voiceover-panel";
 import { ReviewPanel } from "./review-panel";
 import { AiGate } from "./ai-review";
 import { CopyPanel } from "./copy-panel";
@@ -677,9 +681,12 @@ export function TicketDrawer({
                 ))}
               </ul>
             )}
+            {!demo && <MotionReferences clientId={ticket.clientId} name={`t${ticket.number}`} picked={ticket.refs} onPick={(r) => addTicketRef(ticket.id, r.url)} />}
           </section>
 
           {ticket.format === "video" && <ScriptPanel requestId={ticket.id} demo={demo ? null : undefined} />}
+          {!demo && ticket.format === "video" && <VoiceoverPanel requestId={ticket.id} fromScript />}
+          {!demo && <HiggsfieldPanel requestId={ticket.id} />}
 
           {!making && !filesFirst && <Deliverables ticket={ticket} demoDesigns={demo ? DEMO_DESIGNS : undefined} onState={onUploads} canDisagree={can.review} />}
 

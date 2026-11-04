@@ -41,7 +41,10 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Writes the headline and description for each carousel card", where: "Board \u00b7 Copy studio (carousels)", trigger: "click", when: "When someone writes the carousel cards", labels: ["carousel cards"] },
     { title: "Reads copy brought in from a ticket moved over from Asana", where: "Board \u00b7 Migrated tickets", trigger: "auto", when: "When a migrated ticket has copy", labels: ["copy import"] },
   ],
-  scripts: [{ title: "Writes the video script: three hooks, the beats and the shot list", where: "Board · Video tickets", trigger: "click", when: "When someone writes the script on a video ticket", labels: ["script"] }],
+  scripts: [
+    { title: "Writes the video script: three hooks, the beats and the shot list", where: "Board · Video tickets", trigger: "click", when: "When someone writes the script on a video ticket", labels: ["script"] },
+    { title: "Writes the Higgsfield prompt for an AI image or video from the ticket's brief and script", where: "Board · Ticket · AI images and video", trigger: "click", when: "When someone clicks Write it from the brief", labels: ["media prompt"] },
+  ],
   brandbible: [
     { title: "Reads the team's Client Onboarding Sheet and sorts it: brand facts for the Bible, Meta planning for the Meta strategy, Google planning for the Google one", where: "Client page · Brand Bible", trigger: "auto", when: "Within the hour of a sheet being found or edited, or pointed to on the Bible", labels: ["read onboarding sheet "] },
     { title: "Reads the Bible's pages again and says what changed that matters for ads (an offer, a price, sold out)", where: "Client page · Brand Bible · Pages we send people to", trigger: "auto", when: "Every 90 days, before each new creative request, and on Check now", labels: ["bible link check "] },

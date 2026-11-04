@@ -1,4 +1,5 @@
 import { GoogleWriteCard, MetaWriteCard } from "./meta-write-card";
+import { Connections } from "./connections";
 import { DEFAULT_URL_TAGS, metaWriteSetting } from "@/lib/meta-write";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -31,11 +32,12 @@ const TABS = [
   ["team", "Team"],
   ["data", "Raw data"],
   ["sync", "Sync health"],
+  ["connections", "Connections"],
   ["errors", "Errors"],
   ["deleted", "Deleted"],
 ] as const;
 // Leads see the team and the deleted log; execs see everything
-const LEAD_TABS = ["team", "deleted"];
+const LEAD_TABS = ["team", "connections", "deleted"];
 
 const day = (offset: number) => {
   const d = new Date(`${nyParts(new Date()).date}T12:00:00Z`);
@@ -842,6 +844,7 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
       {tab === "team" && <Team />}
       {tab === "data" && <Data target={typeof sp.target === "string" ? sp.target : null} from={from} to={to} />}
       {tab === "sync" && <Sync motion={typeof sp.motion === "string" ? sp.motion : null} />}
+      {tab === "connections" && <Connections />}
       {tab === "errors" && <Errors all={sp.show === "all"} />}
       {tab === "deleted" && <Deleted />}
     </div>

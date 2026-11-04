@@ -237,7 +237,15 @@ const folderId = (v: string) => v.match(/folders\/([\w-]{10,})/)?.[1] ?? v.match
  * in a shared drive as well as My Drive, uploads any size (resumable, not the 5 MB multipart limit), keeps going when one
  * file fails, and says what went wrong instead of failing quietly.
  */
-export async function filesToDrive(admin: SupabaseClient, clientId: string, files: { path: string; name: string; mime: string }[]): Promise<{ drive: "saved" | "partly" | "kept here"; note: string | null }> {
+export async function filesToDrive(
+  admin: SupabaseClient,
+  clientId: string,
+  files: { path: string; name: string; mime: string }[],
+  /** Another storage bucket and Drive subfolder (AI media goes from "ai-media" into "Kaizen AI media") */
+  opts: { bucket?: string; folder?: string } = {},
+): Promise<{ drive: "saved" | "partly" | "kept here"; note: string | null }> {
+  const bucket = opts.bucket ?? "client-docs";
+  const sub = (opts.folder ?? "Client uploads").replace(/'/g, "");
   const { data: c } = await admin.from("clients").select("drive_folder_id").eq("id", clientId).single();
   const user = process.env.GOOGLE_DRIVE_USER;
   if (!c?.drive_folder_id) return { drive: "kept here", note: "No Drive folder on their client page" };
@@ -249,20 +257,20 @@ export async function filesToDrive(admin: SupabaseClient, clientId: string, file
     const token = (await new JWT({ email: key.client_email, key: key.private_key, scopes: ["https://www.googleapis.com/auth/drive"], subject: user }).getAccessToken()).token!;
     const auth = { authorization: `Bearer ${token}` };
     // corpora=allDrives: without it a folder in a shared drive is never found, and a new "Client uploads" is made each time
-    const q = encodeURIComponent(`'${parent}' in parents and name = 'Client uploads' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`);
+    const q = encodeURIComponent(`'${parent}' in parents and name = '${sub}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`);
     const list = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&corpora=allDrives&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=files(id)`, { headers: auth });
     if (!list.ok) return { drive: "kept here", note: list.status === 404 ? "Their Drive folder wasn't found (check the folder on their client page)" : `Drive said no (${list.status}): can the Kaizen account open their folder?` };
     let folder = ((await list.json()) as { files?: { id: string }[] }).files?.[0]?.id;
     if (!folder) {
-      const made = await fetch("https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&fields=id", { method: "POST", headers: { ...auth, "content-type": "application/json" }, body: JSON.stringify({ name: "Client uploads", mimeType: "application/vnd.google-apps.folder", parents: [parent] }) });
-      if (!made.ok) return { drive: "kept here", note: `Couldn't make "Client uploads" in their folder (${made.status})` };
+      const made = await fetch("https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&fields=id", { method: "POST", headers: { ...auth, "content-type": "application/json" }, body: JSON.stringify({ name: sub, mimeType: "application/vnd.google-apps.folder", parents: [parent] }) });
+      if (!made.ok) return { drive: "kept here", note: `Couldn't make "${sub}" in their folder (${made.status})` };
       folder = ((await made.json()) as { id: string }).id;
     }
     let saved = 0;
     const failed: string[] = [];
     for (const f of files) {
       try {
-        const { data } = await admin.storage.from("client-docs").download(f.path);
+        const { data } = await admin.storage.from(bucket).download(f.path);
         if (!data) throw new Error("not in storage");
         const bytes = Buffer.from(await data.arrayBuffer());
         const mime = f.mime || "application/octet-stream";

@@ -219,7 +219,9 @@ export async function GET(request: Request) {
     if (step === "launches") {
       // Every 5 minutes: also pick up background briefs a cut-off server left queued or half-written
       const briefJobs = await (await import("@/lib/brief-jobs")).pickUpBriefJobs(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
-      return Response.json({ ...(await (await import("@/lib/launcher")).launchStep(admin)), briefJobs });
+      // …and finish Higgsfield images and videos nobody's page is waiting on (copied in, the person told)
+      const mediaJobs = await (await import("@/lib/ai-media-jobs")).pickUpMediaJobs(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+      return Response.json({ ...(await (await import("@/lib/launcher")).launchStep(admin)), briefJobs, mediaJobs });
     }
     if (step === "audits") return Response.json(await (await import("@/lib/auto-audits")).autoAudits(admin));
     if (step === "bibles") return Response.json(await (await import("@/lib/brand-bible")).autoBibles(admin, 3));

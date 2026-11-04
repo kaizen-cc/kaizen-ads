@@ -8,6 +8,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { NotificationBell } from "./notification-bell";
 import { BriefJobsIndicator, BriefJobsRoot } from "./brief-jobs";
+import { MediaJobsIndicator, MediaJobsRoot } from "./media-jobs";
 import { PersonAvatar } from "@/components/person-avatar";
 
 type Tier = "exec" | "lead" | "member";
@@ -105,6 +106,7 @@ export function TeamShell({ name, roles, tier, theme = null, children }: { name:
   return (
     <div className="relative min-h-screen md:grid md:grid-cols-[240px_1fr]">
       <BriefJobsRoot />
+      <MediaJobsRoot />
       {/* A faint brand glow behind the top of every page (first, so everything after it paints above) */}
       <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-80 bg-[radial-gradient(60%_100%_at_15%_0%,rgba(178,30,44,0.16),transparent_70%)] md:left-[240px]" />
       <aside className="pt-safe hidden border-r border-line bg-surface md:sticky md:top-0 md:flex md:h-screen md:flex-col">
@@ -115,6 +117,7 @@ export function TeamShell({ name, roles, tier, theme = null, children }: { name:
           </Link>
           <span className="flex items-center gap-1.5">
             <BriefJobsIndicator compact />
+            <MediaJobsIndicator compact />
             <NotificationBell placement="side" />
           </span>
         </div>
@@ -156,6 +159,7 @@ export function TeamShell({ name, roles, tier, theme = null, children }: { name:
           </Link>
           <span className="flex h-11 items-center justify-end gap-1">
             <BriefJobsIndicator compact />
+            <MediaJobsIndicator compact />
             <span className="flex h-11 w-11 items-center justify-center">
               <NotificationBell placement="top" />
             </span>

@@ -5,6 +5,10 @@ import { useState, useTransition } from "react";
 import { Section } from "@/components/ui";
 import type { ShotList } from "@/lib/shot-list";
 import { markShotDone, markShotListSent, writeClientShotList } from "./actions";
+import { addShotRef } from "../../media-actions";
+import { HiggsfieldPanel } from "@/components/media/higgsfield-panel";
+import { MotionReferences } from "@/components/media/motion-references";
+import { VoiceoverPanel } from "@/components/media/voiceover-panel";
 
 // What the client has on Drive to make creative from, and next cycle's shot list: the photos and clips to ask them
 // for, written from what's planned and winning, minus what's already there, each with a reference from their market.
@@ -82,6 +86,20 @@ export function ShotListPanel({ clientId, slug, assets, latest, live }: { client
                         ))}
                       </span>
                     )}
+                    {live && !s.delivered && (
+                      <MotionReferences
+                        compact
+                        label={(s.refs ?? []).length ? "Add another reference" : "Add a reference from Motion"}
+                        clientId={clientId}
+                        name={`shot-${s.id ?? i}`}
+                        picked={(s.refs ?? []).map((r) => r.url)}
+                        onPick={async (r) => {
+                          const res = await addShotRef(latest.id, s.id ?? `s${i}`, r, slug);
+                          if (res.ok) router.refresh();
+                          return res;
+                        }}
+                      />
+                    )}
                     {s.delivered ? (
                       <span className="text-[11px] text-ok">
                         In {day(s.delivered.at)}
@@ -133,6 +151,22 @@ export function ShotListPanel({ clientId, slug, assets, latest, live }: { client
           )
         )}
         {error && <p className="text-sm text-bad">{error}</p>}
+
+        {live && (
+          <details className="group rounded-[14px] border border-line">
+            <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm">
+              <span className="grid gap-0.5">
+                <span>Creative workspace</span>
+                <span className="text-xs text-muted">Voiceovers with ElevenLabs, images and video with Higgsfield, for this client</span>
+              </span>
+              <span aria-hidden className="text-faint transition-transform group-open:rotate-180">⌄</span>
+            </summary>
+            <div className="grid gap-6 border-t border-line px-4 py-4">
+              <VoiceoverPanel clientId={clientId} />
+              <HiggsfieldPanel clientId={clientId} deliverables={false} />
+            </div>
+          </details>
+        )}
       </div>
     </Section>
   );
