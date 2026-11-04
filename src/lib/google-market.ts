@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { auctionInsights, keywordIdeas } from "@/lib/context/google-ads";
 import { LIVE } from "@/lib/live";
+import { looksLikeChain } from "@/lib/keyword-research";
 
 // Google in the market, by industry (sub-vertical), straight from Google through our own Google Ads access:
 // - What people search: Keyword Planner ideas around what converts for our clients there (their winning search terms
@@ -51,10 +52,15 @@ export async function updateGoogleMarket(admin: SupabaseClient, deadline = Date.
     const account = [...v.accounts][0];
     if (withSearches && seeds.length) {
       try {
-        const ideas = (await keywordIdeas(account, seeds)).filter((i) => i.searches > 0).sort((a, b) => b.searches - a.searches).slice(0, KEEP_SEARCHES);
+        const ideas = (await keywordIdeas(account, seeds)).filter((i) => i.searches > 0).sort((a, b) => b.searches - a.searches).slice(0, KEEP_SEARCHES + 30);
         if (ideas.length) {
+          // Other businesses' names ("mcdonald's near me") and off-topic searches are kept apart, not shown as the market
+          const { sortIdeas } = await import("@/lib/keyword-research");
+          const name = nameOf.get(verticalId) ?? "this industry";
+          const { map } = await sortIdeas(`Businesses in ${name}${v.details.size ? ` (${[...v.details].slice(0, 5).join("; ")})` : ""}, as a category, not one brand.${seeds.length ? ` Searches that convert for our clients here: ${seeds.slice(0, 10).join(", ")}.` : ""}`, name, ideas.map((i) => i.text));
+          const kept = ideas.map((i) => ({ ...i, group: map.get(i.text)?.group ?? "relevant", theme: map.get(i.text)?.theme ?? "" })).filter((i) => i.group !== "irrelevant").slice(0, KEEP_SEARCHES);
           await admin.from("google_market").delete().eq("vertical_id", verticalId).eq("kind", "search");
-          const { error } = await admin.from("google_market").insert(ideas.map((i) => ({ vertical_id: verticalId, kind: "search", key: i.text.toLowerCase(), data: { ...i, seeded: seeds.includes(i.text.toLowerCase()) }, updated_at: now })));
+          const { error } = await admin.from("google_market").insert(kept.map((i) => ({ vertical_id: verticalId, kind: "search", key: i.text.toLowerCase(), data: { ...i, seeded: seeds.includes(i.text.toLowerCase()) }, updated_at: now })));
           if (error) throw new Error(error.message);
           searches += ideas.length;
         }
@@ -97,7 +103,7 @@ export async function updateGoogleMarket(admin: SupabaseClient, deadline = Date.
   return { industries: byVertical.size, searches, competitors, failed: failed.slice(0, 5), auctionInsights: !AUCTION_INSIGHTS ? "off (Google only opens these to allowlisted developers)" : auctionsBlocked.length ? `not readable on ${auctionsBlocked.length} account(s): ${auctionsBlocked[0]}` : "ok" };
 }
 
-export type MarketSearch = { text: string; searches: number; competition: string; competitionIndex: number; bidLow: number; bidHigh: number; months: number[]; seeded: boolean };
+export type MarketSearch = { text: string; searches: number; competition: string; competitionIndex: number; bidLow: number; bidHigh: number; months: number[]; seeded: boolean; group?: "relevant" | "competitor" | "irrelevant"; theme?: string };
 export type MarketCompetitor = { domain: string; accounts: number; impressionShare: number | null; overlap: number | null; outranking: number | null; above: number | null; top: number | null };
 export type MarketIndustry = { id: string; name: string; parent: string | null; clients: string[]; searches: MarketSearch[]; competitors: MarketCompetitor[]; updatedAt: string | null };
 
@@ -122,7 +128,12 @@ export async function loadGoogleMarket(db: SupabaseClient): Promise<MarketIndust
         name: v?.name ?? "Industry",
         parent: v?.parent_id ? (parentName.get(v.parent_id) ?? null) : null,
         clients: (clients ?? []).filter((c) => c.vertical_id === id).map((c) => c.name as string).sort(),
-        searches: mine.filter((r) => r.kind === "search").map((r) => r.data as MarketSearch).sort((a, b) => b.searches - a.searches),
+        // Another business's name is never "the market" (reads before the relevance pass: the chain list catches the big ones)
+        searches: mine
+          .filter((r) => r.kind === "search")
+          .map((r) => r.data as MarketSearch)
+          .filter((x) => (x.group ? x.group === "relevant" : !looksLikeChain(x.text)))
+          .sort((a, b) => b.searches - a.searches),
         competitors: mine.filter((r) => r.kind === "competitor").map((r) => r.data as MarketCompetitor).sort((a, b) => (b.impressionShare ?? 0) - (a.impressionShare ?? 0)),
         updatedAt: mine.map((r) => r.updated_at as string).sort().at(-1) ?? null,
       };

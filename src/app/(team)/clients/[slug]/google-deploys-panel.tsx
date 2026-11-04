@@ -3,7 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
-import type { Deploy, DeployPlan, Kw } from "@/lib/google-deploy";
+import type { Deploy, DeployPlan, DeployTarget, Kw } from "@/lib/google-deploy";
 import { decideDeploy, deployState, deployTargets, editDeploy, markDeployApplied, pushDeployAction, rewriteDeploy } from "../../ideas/google-actions";
 
 // Google ideas taken to this client from Ideas › Google: copy, a campaign or keywords around a winner from another
@@ -78,7 +78,7 @@ function Item({ d, open, canAct, onChange }: { d: Deploy; open: boolean; canAct:
           </span>
           <span className="font-heading text-[16px] leading-snug">{d.plan?.summary ?? (d.status === "drafting" ? "Writing it for this client…" : "From a Google winner")}</span>
           <span className="line-clamp-2 text-[12.5px] text-muted">
-            From {d.idea.kind === "ad" ? "a winning ad" : d.idea.kind === "keyword" ? "a winning keyword" : "a winning search term"}: {d.idea.text}
+            {d.idea.kind === "research" ? d.idea.text : `From ${d.idea.kind === "ad" ? "a winning ad" : d.idea.kind === "keyword" ? "a winning keyword" : "a winning search term"}: ${d.idea.text}`}
           </span>
         </span>
         <span className={`mt-1 shrink-0 text-faint transition-transform ${open ? "rotate-180" : ""}`}>⌄</span>
@@ -122,7 +122,7 @@ function Body({ d, canAct, onChange }: { d: Deploy; canAct: boolean; onChange: (
   return (
     <div className="grid gap-5 border-t border-line px-4 py-5 md:px-5">
       <div className="grid gap-1 rounded-[14px] border border-line/70 bg-bg/50 p-3.5">
-        <span className="text-[10px] uppercase tracking-[0.14em] text-faint">The winner it&apos;s built on</span>
+        <span className="text-[10px] uppercase tracking-[0.14em] text-faint">{d.idea.kind === "research" ? "Picked in keyword research" : "The winner it\u2019s built on"}</span>
         <p className="text-[13px] [overflow-wrap:anywhere]">{d.idea.text}</p>
         <p className="text-[12px] text-ok">{d.idea.result}</p>
       </div>
@@ -405,10 +405,15 @@ function Editor({ plan, pending, onSave, onCancel }: { plan: DeployPlan; pending
 }
 
 /** Where it goes in Google Ads: the ad group (for the ad or keywords) and the campaign (for negatives). */
-function Push({ d, pending, onPush, onCancel }: { d: Deploy; pending: boolean; onPush: (t: { campaignId: string | null; adGroupId: string | null; campaign: string | null; adGroup: string | null }) => void; onCancel: () => void }) {
+const NEW_GROUP = "__new";
+
+function Push({ d, pending, onPush, onCancel }: { d: Deploy; pending: boolean; onPush: (t: DeployTarget) => void; onCancel: () => void }) {
   const [t, setT] = useState<Awaited<ReturnType<typeof deployTargets>> | null>(null);
-  const [group, setGroup] = useState("");
-  const [camp, setCamp] = useState("");
+  // Picked ahead in keyword research: that ad group, or the new one to make
+  const ahead = d.plan?.target ?? null;
+  const [group, setGroup] = useState(ahead?.newAdGroup && ahead.campaignId ? NEW_GROUP : (ahead?.adGroupId ?? ""));
+  const [camp, setCamp] = useState(ahead?.campaignId ?? "");
+  const status = ahead?.status === "ENABLED" ? "ENABLED" : "PAUSED";
   useEffect(() => {
     let live = true;
     deployTargets(d.id).then((r) => live && setT(r));
@@ -421,22 +426,28 @@ function Push({ d, pending, onPush, onCancel }: { d: Deploy; pending: boolean; o
   if (!t.writes)
     return (
       <div className="grid gap-2 rounded-[14px] border border-line bg-bg/50 p-3.5 text-[13px] text-muted">
-        <p>Changes in Google Ads are switched off (an exec turns them on in Settings › Sync health). Until then, apply it by hand from the checklist above and mark it applied.</p>
+        <p>Live changes are off for this client (an exec switches them on in their Team &amp; setup). Until then, apply it by hand from the checklist above and mark it applied.</p>
         <button type="button" onClick={onCancel} className="min-h-11 justify-self-start rounded-full px-4 text-sm text-muted hover:text-fg">
           Back
         </button>
       </div>
     );
+  const making = group === NEW_GROUP && Boolean(ahead?.newAdGroup);
   const g = t.adGroups.find((x) => x.id === group) ?? null;
-  const c = t.campaigns.find((x) => x.id === (camp || g?.campaignId)) ?? null;
+  const c = t.campaigns.find((x) => x.id === (making ? ahead?.campaignId : camp || g?.campaignId)) ?? null;
   const sel = "h-11 w-full rounded-[12px] border border-line bg-bg px-3 text-[16px] outline-none focus:border-brand/60 md:text-sm";
   return (
     <div className="grid gap-3 rounded-[16px] border border-line bg-bg/50 p-4">
-      <p className="text-[13px] text-muted">Everything goes in paused. Google checks it first; nothing changes if it refuses.</p>
+      <p className="text-[13px] text-muted">{status === "ENABLED" ? "The keywords go in enabled, as picked." : "Everything goes in paused."} Google checks it first; nothing changes if it refuses.</p>
       <label className="grid gap-1">
         <Label>{d.kind === "copy" ? "Ad group for the ad" : "Ad group for the keywords"}</Label>
         <select value={group} onChange={(e) => setGroup(e.target.value)} className={sel}>
           <option value="">Pick an ad group</option>
+          {d.kind === "keywords" && ahead?.newAdGroup && ahead.campaignId && (
+            <option value={NEW_GROUP}>
+              New: {ahead.campaign ?? "the campaign"} › {ahead.newAdGroup}
+            </option>
+          )}
           {t.adGroups.map((x) => (
             <option key={x.id} value={x.id}>
               {x.campaign} › {x.name}
@@ -458,8 +469,19 @@ function Push({ d, pending, onPush, onCancel }: { d: Deploy; pending: boolean; o
         </label>
       )}
       <div className="flex flex-wrap gap-2">
-        <button type="button" disabled={pending || !group} onClick={() => onPush({ adGroupId: group || null, adGroup: g?.name ?? null, campaignId: d.kind === "keywords" ? (c?.id ?? null) : null, campaign: c?.name ?? null })} className="min-h-11 rounded-full bg-fg px-5 text-sm text-bg disabled:opacity-50">
-          {pending ? "Sending…" : "Push it, paused"}
+        <button
+          type="button"
+          disabled={pending || !group}
+          onClick={() =>
+            onPush(
+              making
+                ? { adGroupId: null, adGroup: null, campaignId: ahead?.campaignId ?? null, campaign: ahead?.campaign ?? c?.name ?? null, newAdGroup: ahead?.newAdGroup ?? null, status }
+                : { adGroupId: group || null, adGroup: g?.name ?? null, campaignId: d.kind === "keywords" ? (c?.id ?? null) : null, campaign: c?.name ?? null, status },
+            )
+          }
+          className="min-h-11 rounded-full bg-fg px-5 text-sm text-bg disabled:opacity-50"
+        >
+          {pending ? "Sending…" : status === "ENABLED" ? "Push it" : "Push it, paused"}
         </button>
         <button type="button" onClick={onCancel} className="min-h-11 rounded-full px-4 text-sm text-muted hover:text-fg">
           Cancel

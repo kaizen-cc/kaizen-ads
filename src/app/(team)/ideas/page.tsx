@@ -28,7 +28,7 @@ export const maxDuration = 300;
 const GOOGLE_TABS = [
   ["fame", "Hall of Fame", "Our search ads, keywords and search terms that beat their target over six months"],
   ["winners", "Live winners", "What's converting cheapest in our Google accounts right now"],
-  ["market", "In the market", "What people search in each industry, and who's in our clients' auctions"],
+  ["market", "In the market", "Keyword research for a client, and what people search in each industry"],
   ["verticals", "Verticals", "A Google playbook for each market we serve"],
 ] as const;
 
@@ -133,7 +133,15 @@ async function GoogleIdeas({ mode }: { mode: "fame" | "live" }) {
 async function GoogleMarket() {
   const me = await requireStaff();
   const db = adminConfigured() ? createAdminClient() : await createClient();
-  return <GoogleMarketView industries={await loadGoogleMarket(db)} canRead={me.isExec} />;
+  // Keyword research: any client the person can see, Google clients first; the Google team, execs and leads add keywords
+  const [industries, { data: mine }] = await Promise.all([
+    loadGoogleMarket(db),
+    (await createClient()).from("clients").select("id, name, services, services_extra, services_removed, verticals(name)").is("archived_at", null).in("status", LIVE).order("name"),
+  ]);
+  const { servicesOf } = await import("@/lib/services");
+  const clients = (mine ?? []).map((c) => ({ id: c.id as string, name: c.name as string, google: servicesOf(c).includes("google-ads"), vertical: (c.verticals as unknown as { name: string } | null)?.name ?? null }));
+  const canAdd = me.isExec || me.isLead || me.role === "google_buyer" || me.role === "head_of_google";
+  return <GoogleMarketView industries={industries} canRead={me.isExec} clients={clients} canAdd={canAdd} canEnable={me.isExec || me.isLead} />;
 }
 
 /** Google playbooks by sub-vertical: written from our Google winners in each market (brand searches left out). */

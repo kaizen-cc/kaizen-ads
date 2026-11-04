@@ -110,11 +110,13 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       }
     : null;
   };
-  const [gtm, googleGtm, googleDeploys] = await Promise.all([
+  const [gtm, googleGtm, googleDeploys, keywordLists] = await Promise.all([
     gtmOf("client_gtm_strategies"),
     gtmOf("client_google_gtm"),
     // Google ideas taken to this client from Ideas › Google
     import("@/lib/google-deploy").then(({ loadDeploys }) => loadDeploys(supabase, [client.id])).catch(() => []),
+    // Keyword lists saved for them from keyword research
+    import("@/lib/keyword-research").then(({ loadLists }) => loadLists(supabase, client.id)).catch(() => []),
   ]);
   const { data: packages } = await supabase.from("creative_packages").select("key, label, images, videos").neq("key", "custom").order("sort_order");
   const { data: allotment } = usage ? { data: null } : await supabase.from("client_allotments").select("images_per_month, videos_per_month").eq("client_id", client.id).maybeSingle();
@@ -437,6 +439,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       gtm={gtm}
       googleGtm={googleGtm}
       googleDeploys={googleDeploys}
+      keywordLists={keywordLists}
       canDeployGoogle={me.isExec || me.isLead || me.role === "google_buyer" || me.role === "head_of_google"}
       today={nyToday()}
       team={Object.fromEntries(SLOTS.map((slot) => [slot.value, { current: currentIn(slot.value), options: optionsFor(slot) }]))}

@@ -17,6 +17,11 @@ import { askJson, clientContext, contextBlock } from "@/lib/ai";
 export type DeployKind = "copy" | "campaign" | "keywords";
 export type Match = "exact" | "phrase" | "broad";
 export type Kw = { text: string; match: Match };
+/**
+ * Where it goes in Google Ads: an ad group (and its campaign), or a new ad group made in a campaign; keywords go in
+ * paused unless an exec or lead chose enabled. Kept on the plan when it's picked ahead (keyword research).
+ */
+export type DeployTarget = { campaignId: string | null; adGroupId: string | null; campaign: string | null; adGroup: string | null; newAdGroup?: string | null; status?: "PAUSED" | "ENABLED" };
 export type DeployPlan = {
   summary: string;
   why: string;
@@ -31,6 +36,8 @@ export type DeployPlan = {
   negatives: Kw[];
   settings: string[];
   checklist: string[];
+  /** Picked ahead (keyword research); the push picker starts from it */
+  target?: DeployTarget;
 };
 export type Deploy = {
   id: string;
@@ -48,7 +55,7 @@ export type Deploy = {
   createdAt: string;
   decidedAt: string | null;
   declineReason: string | null;
-  applied: { target?: { campaignId?: string | null; adGroupId?: string | null; campaign?: string | null; adGroup?: string | null }; results: { what: string; ok: boolean; error: string | null }[] } | null;
+  applied: { target?: Partial<DeployTarget>; results: { what: string; ok: boolean; error: string | null }[] } | null;
 };
 
 export const KIND_LABEL: Record<DeployKind, string> = { copy: "Ad copy around it", campaign: "A campaign around it", keywords: "Keywords to add" };
@@ -239,11 +246,11 @@ const HEAD_PIN = ["", "HEADLINE_1", "HEADLINE_2", "HEADLINE_3"] as const;
 const DESC_PIN = ["", "DESCRIPTION_1", "DESCRIPTION_2"] as const;
 
 /**
- * Pushes an approved deploy to Google Ads, paused: the ad and keywords into the ad group picked, negatives onto the
- * campaign picked. Each part is checked by Google first (validate only), then sent on its own so one refusal doesn't
- * stop the rest. Only with Google writes switched on.
+ * Pushes an approved deploy to Google Ads, paused: the ad and keywords into the ad group picked (or a new ad group made
+ * in the campaign picked), negatives onto the campaign picked. Each part is checked by Google first (validate only),
+ * then sent on its own so one refusal doesn't stop the rest. Only with live changes on for the client (or everyone).
  */
-export async function pushDeploy(admin: SupabaseClient, deployId: string, target: { campaignId: string | null; adGroupId: string | null; campaign: string | null; adGroup: string | null }) {
+export async function pushDeploy(admin: SupabaseClient, deployId: string, target: DeployTarget) {
   const { googleWritesOn } = await import("@/lib/ad-changes");
   const { data: d } = await admin.from("google_deploys").select("client_id, kind, plan, status").eq("id", deployId).single();
   if (!d?.plan || !["approved", "partial", "failed"].includes(d.status as string)) throw new Error("Approve it first.");
@@ -253,6 +260,28 @@ export async function pushDeploy(admin: SupabaseClient, deployId: string, target
   if (!(await googleWritesOn(admin, account))) throw new Error("Live changes are off for this client's Google Ads: an exec switches them on in the client's Team & setup; until then, apply it by hand from the checklist.");
   const plan = d.plan as DeployPlan;
   const cust = `customers/${account}`;
+  const state = target.status === "ENABLED" ? "ENABLED" : "PAUSED";
+  const { googleMutate } = await import("@/lib/context/google-ads");
+  const results: { what: string; ok: boolean; error: string | null }[] = [];
+  // A new ad group first (keywords only), made in the campaign picked; its ID is what the keywords go into
+  if (d.kind === "keywords" && !target.adGroupId && target.newAdGroup?.trim()) {
+    if (!target.campaignId) throw new Error("Pick the campaign the new ad group goes into.");
+    const name = target.newAdGroup.trim().slice(0, 120);
+    const op = [{ create: { name, campaign: `${cust}/campaigns/${target.campaignId}`, status: state, type: "SEARCH_STANDARD" } }];
+    try {
+      await googleMutate(account, "adGroups", op, true);
+      const made = await googleMutate(account, "adGroups", op, false);
+      const id = made.results?.[0]?.resourceName?.split("/").pop() ?? null;
+      if (!id) throw new Error("Google didn't say which ad group it made.");
+      target = { ...target, adGroupId: id, adGroup: name };
+      results.push({ what: `New ad group "${name}" (${state.toLowerCase()}) in "${target.campaign ?? "the campaign"}"`, ok: true, error: null });
+    } catch (e) {
+      const error = (e instanceof Error ? e.message : String(e)).slice(0, 400);
+      const now = new Date().toISOString();
+      await admin.from("google_deploys").update({ status: "failed", applied: { target, results: [{ what: `New ad group "${name}"`, ok: false, error }] }, error, updated_at: now }).eq("id", deployId);
+      return { status: "failed", results: [{ what: `New ad group "${name}"`, ok: false, error }] };
+    }
+  }
   const parts: { what: string; service: "adGroupAds" | "adGroupCriteria" | "campaignCriteria"; ops: unknown[] }[] = [];
   if (d.kind === "copy") {
     if (!target.adGroupId) throw new Error("Pick the ad group the ad goes into.");
@@ -281,14 +310,14 @@ export async function pushDeploy(admin: SupabaseClient, deployId: string, target
   }
   if (d.kind === "keywords" && plan.keywords.length) {
     if (!target.adGroupId) throw new Error("Pick the ad group the keywords go into.");
-    parts.push({ what: `${plan.keywords.length} keywords (paused) in "${target.adGroup ?? "the ad group"}"`, service: "adGroupCriteria", ops: plan.keywords.map((k) => ({ create: { adGroup: `${cust}/adGroups/${target.adGroupId}`, status: "PAUSED", keyword: { text: k.text, matchType: MATCH_API[k.match] } } })) });
+    const adGroup = `${cust}/adGroups/${target.adGroupId}`;
+    // The final URL, when one was given, sits on each keyword (it wins over the ad's for clicks on that keyword)
+    parts.push({ what: `${plan.keywords.length} keywords (${state.toLowerCase()}) in "${target.adGroup ?? "the ad group"}"`, service: "adGroupCriteria", ops: plan.keywords.map((k) => ({ create: { adGroup, status: state, keyword: { text: k.text, matchType: MATCH_API[k.match] }, ...(plan.finalUrl ? { finalUrls: [plan.finalUrl] } : {}) } })) });
   }
   if (plan.negatives.length && target.campaignId && d.kind === "keywords") {
     parts.push({ what: `${plan.negatives.length} negative keywords on "${target.campaign ?? "the campaign"}"`, service: "campaignCriteria", ops: plan.negatives.map((k) => ({ create: { campaign: `${cust}/campaigns/${target.campaignId}`, negative: true, keyword: { text: k.text, matchType: MATCH_API[k.match] } } })) });
   }
-  if (!parts.length) throw new Error("Nothing in it can be pushed.");
-  const { googleMutate } = await import("@/lib/context/google-ads");
-  const results: { what: string; ok: boolean; error: string | null }[] = [];
+  if (!parts.length && !results.length) throw new Error("Nothing in it can be pushed.");
   for (const p of parts) {
     try {
       await googleMutate(account, p.service, p.ops, true);

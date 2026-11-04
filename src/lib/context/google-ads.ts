@@ -104,7 +104,13 @@ async function search(customer: string, query: string): Promise<Row[]> {
  * fully and says whether it would go through, without changing anything.
  */
 export async function googleMutate(customer: string, service: "campaigns" | "campaignBudgets" | "adGroups" | "campaignCriteria" | "adGroupCriteria" | "adGroupAds", operations: unknown[], validateOnly: boolean) {
-  await post(customer, `${service}:mutate`, { operations, validateOnly, partialFailure: false });
+  const text = await post(customer, `${service}:mutate`, { operations, validateOnly, partialFailure: false });
+  // What was created (resource names), e.g. a new ad group the keywords then go into
+  try {
+    return JSON.parse(text) as { results?: { resourceName?: string }[] };
+  } catch {
+    return {};
+  }
 }
 
 export type WritableSetup = {
@@ -409,18 +415,24 @@ export async function googleIdeaRows(account: string) {
 }
 export type GoogleIdeaRow = Row;
 
+/** The whole US, Keyword Planner's default market */
+export const US_GEO = "geoTargetConstants/2840";
+
 /**
- * Keyword Planner: ideas around some seed searches, in the US and in English, with their average monthly searches, the
- * last 12 months, how competitive they are and what advertisers bid for the top of the page.
+ * Keyword Planner: ideas around some seed searches (and/or a page of the client's site), in English, in the places
+ * given (the US unless the client's own locations are known), with their average monthly searches, the last 12 months,
+ * how competitive they are and what advertisers bid for the top of the page.
  */
-export async function keywordIdeas(account: string, seeds: string[]) {
+export async function keywordIdeas(account: string, seeds: string[], o: { url?: string | null; geo?: string[] } = {}) {
+  const keywords = seeds.map((x) => x.trim()).filter(Boolean).slice(0, 20);
+  const url = o.url?.trim() || null;
   const body = {
     language: "languageConstants/1000",
-    geoTargetConstants: ["geoTargetConstants/2840"],
+    geoTargetConstants: (o.geo?.length ? o.geo : [US_GEO]).slice(0, 10),
     includeAdultKeywords: false,
     keywordPlanNetwork: "GOOGLE_SEARCH",
-    keywordSeed: { keywords: seeds.slice(0, 20) },
-    pageSize: 150,
+    ...(url && keywords.length ? { keywordAndUrlSeed: { url, keywords } } : url ? { urlSeed: { url } } : { keywordSeed: { keywords } }),
+    pageSize: 200,
   };
   const out = JSON.parse(await post(account, ":generateKeywordIdeas", body)) as {
     results?: { text: string; keywordIdeaMetrics?: { avgMonthlySearches?: string; competition?: string; competitionIndex?: string; lowTopOfPageBidMicros?: string; highTopOfPageBidMicros?: string; monthlySearchVolumes?: { month: string; year: string; monthlySearches?: string }[] } }[];
@@ -434,6 +446,69 @@ export async function keywordIdeas(account: string, seeds: string[]) {
     bidHigh: Number(r.keywordIdeaMetrics?.highTopOfPageBidMicros ?? 0) / 1e6,
     months: (r.keywordIdeaMetrics?.monthlySearchVolumes ?? []).map((m) => Number(m.monthlySearches ?? 0)),
   }));
+}
+
+/** The places a client's live Google campaigns target (geo target constants, not radiuses), most used first */
+export async function campaignLocations(account: string) {
+  const rows = await search(
+    digits(account),
+    "SELECT campaign_criterion.location.geo_target_constant FROM campaign_criterion WHERE campaign_criterion.type = 'LOCATION' AND campaign_criterion.negative = FALSE AND campaign.status = 'ENABLED'",
+  );
+  const count = new Map<string, number>();
+  for (const r of rows) {
+    const g = String((r.campaignCriterion as { location?: { geoTargetConstant?: string } } | undefined)?.location?.geoTargetConstant ?? "");
+    if (g) count.set(g, (count.get(g) ?? 0) + 1);
+  }
+  return [...count].sort((a, b) => b[1] - a[1]).map(([g]) => g);
+}
+
+/** The names of geo target constants ("Houston, Texas, United States"), read through any account we can see */
+export async function geoNames(account: string, geo: string[]) {
+  if (!geo.length) return new Map<string, string>();
+  const list = geo.slice(0, 20).map((g) => `'${g.replace(/'/g, "")}'`).join(", ");
+  const rows = await search(digits(account), `SELECT geo_target_constant.resource_name, geo_target_constant.canonical_name FROM geo_target_constant WHERE geo_target_constant.resource_name IN (${list})`).catch(() => [] as Row[]);
+  return new Map(rows.map((r) => [String(r.geoTargetConstant?.resourceName ?? ""), String(r.geoTargetConstant?.canonicalName ?? "")]));
+}
+
+/** Google's best match for place names ("Houston", "Katy TX", "New Jersey"): their geo target constants, US first */
+export async function suggestGeo(names: string[]) {
+  const clean = [...new Set(names.map((n) => n.trim()).filter((n) => n.length >= 2 && n.length <= 80))].slice(0, 10);
+  if (!clean.length) return [] as { geo: string; name: string }[];
+  const token = await accessToken();
+  const res = await fetch(`https://googleads.googleapis.com/${VERSION}/geoTargetConstants:suggestGeoTargetConstants`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(env("GOOGLE_ADS_DEVELOPER_TOKEN") ? { "developer-token": env("GOOGLE_ADS_DEVELOPER_TOKEN") } : {}),
+      "login-customer-id": digits(env("GOOGLE_ADS_LOGIN_CUSTOMER_ID")),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ locale: "en", countryCode: "US", locationNames: { names: clean } }),
+    cache: "no-store",
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(explain(text, res.status));
+  const out = JSON.parse(text) as { geoTargetConstantSuggestions?: { searchTerm?: string; geoTargetConstant?: { resourceName?: string; canonicalName?: string; status?: string } }[] };
+  // The first (best) suggestion for each name asked
+  const seen = new Set<string>();
+  const picked: { geo: string; name: string }[] = [];
+  for (const sgg of out.geoTargetConstantSuggestions ?? []) {
+    const term = (sgg.searchTerm ?? "").toLowerCase();
+    const g = sgg.geoTargetConstant;
+    if (!g?.resourceName || seen.has(term) || (g.status && g.status !== "ENABLED")) continue;
+    seen.add(term);
+    picked.push({ geo: g.resourceName, name: g.canonicalName ?? term });
+  }
+  return picked;
+}
+
+/** The keywords already in an account (any status but removed), lower case, to mark ideas "in their account" */
+export async function accountKeywordTexts(account: string) {
+  const rows = await search(
+    digits(account),
+    "SELECT ad_group_criterion.keyword.text FROM ad_group_criterion WHERE ad_group_criterion.type = 'KEYWORD' AND ad_group_criterion.status != 'REMOVED' AND ad_group_criterion.negative = FALSE AND campaign.status != 'REMOVED'",
+  );
+  return new Set(rows.map((r) => String((r.adGroupCriterion as { keyword?: { text?: string } } | undefined)?.keyword?.text ?? "").toLowerCase()).filter(Boolean));
 }
 
 /** Auction Insights: the other advertisers in one account's search auctions over the last 30 days (when the account's access allows it). */

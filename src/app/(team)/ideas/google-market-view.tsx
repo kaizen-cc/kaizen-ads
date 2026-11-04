@@ -3,34 +3,15 @@
 import { useState } from "react";
 import { pushParams, useParam } from "@/lib/url-state";
 import { readGoogleMarketNow } from "./google-actions";
+import { KeywordResearch, ResearchBar, type ResearchClient } from "./keyword-research";
+import { Competition, Trend, big, bid } from "./market-bits";
 import type { MarketCompetitor, MarketIndustry, MarketSearch } from "@/lib/google-market";
 
-// Google in the market, one industry at a time: what people search there (from Keyword Planner) and the advertisers in
-// our clients' auctions (from Auction Insights), straight from Google through our own access.
+// Google in the market: keyword research for a client (or seed keywords) on top, and by default one industry at a time,
+// what people search there (from Keyword Planner, other businesses' names left out) and the advertisers in our
+// clients' auctions (from Auction Insights), straight from Google through our own access.
 
 const pct = (x: number | null) => (x == null ? "–" : `${Math.round(x * 100)}%`);
-const big = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 10_000 ? `${Math.round(n / 1000)}K` : n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n));
-const COMP: Record<string, string> = { high: "bg-bad-soft text-bad", medium: "bg-warn-soft text-warn", low: "bg-ok-soft text-ok" };
-
-/** The last 12 months as a small line, and how the last three compare with the three before. */
-function Trend({ months }: { months: number[] }) {
-  const m = months.slice(-12);
-  if (m.length < 4) return <span className="text-xs text-faint">–</span>;
-  const max = Math.max(...m, 1);
-  const pts = m.map((v, i) => `${(i / (m.length - 1)) * 100},${28 - (v / max) * 26}`).join(" ");
-  const recent = m.slice(-3).reduce((a, b) => a + b, 0);
-  const before = m.slice(-6, -3).reduce((a, b) => a + b, 0);
-  const change = before ? (recent - before) / before : null;
-  const up = (change ?? 0) >= 0;
-  return (
-    <span className="flex items-center gap-2">
-      <svg viewBox="0 0 100 30" preserveAspectRatio="none" className="h-7 w-20" aria-hidden>
-        <polyline points={pts} fill="none" stroke="currentColor" strokeWidth="2" vectorEffect="non-scaling-stroke" className={up ? "text-ok" : "text-bad"} strokeLinejoin="round" strokeLinecap="round" />
-      </svg>
-      {change != null && <span className={`tabular w-12 text-xs ${up ? "text-ok" : "text-bad"}`}>{`${up ? "+" : ""}${Math.round(change * 100)}%`}</span>}
-    </span>
-  );
-}
 
 function SearchRow({ s, rank }: { s: MarketSearch; rank: number }) {
   return (
@@ -48,9 +29,9 @@ function SearchRow({ s, rank }: { s: MarketSearch; rank: number }) {
         <Trend months={s.months} />
       </span>
       <span className="max-md:hidden">
-        <span className={`rounded-full px-2 py-0.5 text-[11px] capitalize ${COMP[s.competition] ?? "bg-surface-2 text-muted"}`}>{s.competition === "unspecified" ? "unknown" : s.competition}</span>
+        <Competition value={s.competition} />
       </span>
-      <span className="tabular text-right text-sm text-muted max-md:hidden">{s.bidHigh ? `$${s.bidLow.toFixed(2)}–$${s.bidHigh.toFixed(2)}` : "–"}</span>
+      <span className="tabular text-right text-sm text-muted max-md:hidden">{bid(s.bidLow, s.bidHigh)}</span>
     </li>
   );
 }
@@ -108,7 +89,20 @@ function ReadNow() {
   );
 }
 
-export function GoogleMarketView({ industries, canRead = false }: { industries: MarketIndustry[]; canRead?: boolean }) {
+export function GoogleMarketView({ industries, canRead = false, clients = [], canAdd = false, canEnable = false }: { industries: MarketIndustry[]; canRead?: boolean; clients?: ResearchClient[]; canAdd?: boolean; canEnable?: boolean }) {
+  const client = useParam("client");
+  const seeds = useParam("q");
+  const researching = Boolean(client || seeds);
+  return (
+    <div className="mx-auto grid w-full max-w-6xl gap-6">
+      <ResearchBar clients={clients} />
+      {researching ? <KeywordResearch clients={clients} canAdd={canAdd} canEnable={canEnable} /> : <Industries industries={industries} canRead={canRead} />}
+    </div>
+  );
+}
+
+/** By industry: what people search where we run Google, and who's in our clients' auctions */
+function Industries({ industries, canRead }: { industries: MarketIndustry[]; canRead: boolean }) {
   const wanted = useParam("gm");
   const current = industries.find((i) => i.id === wanted) ?? industries[0] ?? null;
   const [all, setAll] = useState(false);
@@ -129,7 +123,7 @@ export function GoogleMarketView({ industries, canRead = false }: { industries: 
   const updated = current.updatedAt ? new Date(current.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : null;
 
   return (
-    <div className="mx-auto grid w-full max-w-6xl gap-6">
+    <div className="grid gap-6">
       {/* The industries */}
       <nav className="no-scrollbar -mx-4 flex w-[calc(100%+2rem)] items-center gap-1.5 overflow-x-auto px-4 md:mx-0 md:w-auto md:flex-wrap md:px-0" aria-label="Industry">
         {industries.map((i) => (
