@@ -26,6 +26,17 @@ export default async function Board({ searchParams }: PageProps<"/board">) {
       </div>
     );
   }
+  // The copy team's KPIs: execs and leads only
+  if (view === "copy-kpis" && lead) {
+    const [{ loadCopyKpis }, { CopyKpisView }] = await Promise.all([import("@/lib/copy-kpis"), import("./copy-kpis")]);
+    const k = await loadCopyKpis(supabase, period === "30" || period === "90" ? period : "cycle");
+    return (
+      <div className="grid gap-5">
+        <BoardTabs active="copy-kpis" />
+        <CopyKpisView k={k} />
+      </div>
+    );
+  }
   const asked = typeof t === "string" && /^\d+$/.test(t) ? Number(t) : null;
 
   const [{ data: moving }, { data: one }, { data: clients }, { data: people }] = await Promise.all([

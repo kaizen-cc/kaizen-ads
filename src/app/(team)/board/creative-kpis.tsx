@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { PERIODS, type ClientAllotment, type CreativeKpis, type Headline, type Maker } from "@/lib/creative-kpis";
 import { untilLabel } from "@/lib/allotment";
+import { LiveRefresh, Tween } from "./live-kpis";
 
 // The creative team's KPIs (execs and leads, a tab on the Board): what to act on first, the headline numbers against
 // the period before with a plain verdict, each maker's card, every creative-package client's allotment this cycle,
@@ -9,19 +10,20 @@ import { untilLabel } from "@/lib/allotment";
 const TONE_TEXT = { ok: "text-ok", warn: "text-warn", bad: "text-bad" } as const;
 const TONE_SOFT = { ok: "bg-ok-soft", warn: "bg-warn-soft", bad: "bg-bad-soft" } as const;
 const TONE_BAR = { ok: "bg-ok", warn: "bg-warn", bad: "bg-bad" } as const;
-const fmt = (v: number | null, unit: string) => (v == null ? "—" : unit === "d" ? `${v.toFixed(1)}` : `${v}`);
+export const TONES = { TONE_TEXT, TONE_SOFT, TONE_BAR };
 
 /** The Board's two views, in the address */
-export function BoardTabs({ active }: { active: "board" | "kpis" }) {
+export function BoardTabs({ active }: { active: "board" | "kpis" | "copy-kpis" }) {
   return (
     <nav aria-label="Board views" className="flex w-full rounded-full border border-line bg-surface p-0.5 text-sm md:w-auto md:self-start">
       {(
         [
           ["board", "Board", "/board"],
           ["kpis", "Creative KPIs", "/board?view=kpis"],
+          ["copy-kpis", "Copy KPIs", "/board?view=copy-kpis"],
         ] as const
       ).map(([k, label, href]) => (
-        <Link key={k} href={href} aria-current={active === k ? "page" : undefined} className={`grid h-10 flex-1 place-items-center rounded-full px-4 md:h-8 md:flex-initial ${active === k ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
+        <Link key={k} href={href} aria-current={active === k ? "page" : undefined} className={`grid h-10 flex-1 place-items-center whitespace-nowrap rounded-full px-3 md:h-8 md:flex-initial md:px-4 ${active === k ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
           {label}
         </Link>
       ))}
@@ -29,7 +31,7 @@ export function BoardTabs({ active }: { active: "board" | "kpis" }) {
   );
 }
 
-function Delta({ h }: { h: Headline }) {
+export function Delta({ h }: { h: Headline }) {
   if (h.value == null || h.previous == null) return <span className="text-[11px] text-faint">no comparison yet</span>;
   const diff = Math.round((h.value - h.previous) * 10) / 10;
   if (Math.abs(diff) < (h.unit === "%" ? 2 : 0.2)) return <span className="text-[11px] text-muted">steady</span>;
@@ -42,7 +44,7 @@ function Delta({ h }: { h: Headline }) {
   );
 }
 
-function HeadlineCard({ h }: { h: Headline }) {
+export function HeadlineCard({ h }: { h: Headline }) {
   return (
     <div className="relative isolate grid content-between gap-3 overflow-hidden rounded-[20px] border border-line bg-surface p-4 md:p-5">
       {h.tone && <span aria-hidden className={`pointer-events-none absolute -right-10 -top-12 -z-10 h-32 w-32 rounded-full opacity-70 blur-[50px] ${TONE_SOFT[h.tone]}`} />}
@@ -51,7 +53,7 @@ function HeadlineCard({ h }: { h: Headline }) {
         <Delta h={h} />
       </div>
       <div className="flex items-baseline gap-1">
-        <span className={`tabular font-display text-[40px] leading-none tracking-tight md:text-[44px] ${h.tone ? TONE_TEXT[h.tone] : "text-fg"}`}>{fmt(h.value, h.unit)}</span>
+        <span className={`tabular font-display text-[40px] leading-none tracking-tight md:text-[44px] ${h.tone ? TONE_TEXT[h.tone] : "text-fg"}`}>{h.value == null ? "—" : <Tween value={h.value} decimals={h.unit === "d" || !Number.isInteger(h.value) ? 1 : 0} />}</span>
         {h.value != null && <span className="text-[15px] text-muted">{h.unit === "d" ? "days" : h.unit}</span>}
       </div>
       <div className="grid gap-1">
@@ -63,7 +65,7 @@ function HeadlineCard({ h }: { h: Headline }) {
 }
 
 /** Pieces passed on per week, as a little line */
-function Spark({ data }: { data: number[] }) {
+export function Spark({ data }: { data: number[] }) {
   if (data.length < 2) return null;
   const w = 96;
   const h = 28;
@@ -77,7 +79,7 @@ function Spark({ data }: { data: number[] }) {
   );
 }
 
-function Meter({ value, target, label }: { value: number | null; target: number; label: string }) {
+export function Meter({ value, target, label }: { value: number | null; target: number; label: string }) {
   const tone = value == null ? null : value >= target ? "ok" : value >= target * 0.75 ? "warn" : "bad";
   return (
     <div className="grid gap-1">
@@ -112,7 +114,7 @@ function MakerCard({ m }: { m: Maker }) {
       </div>
       <div className="flex items-end justify-between gap-3">
         <div className="grid gap-0.5">
-          <span className="tabular text-[22px] font-medium leading-none">{m.pieces}</span>
+          <span className="tabular text-[22px] font-medium leading-none"><Tween value={m.pieces} /></span>
           <span className="text-[11px] text-muted">pieces passed on</span>
         </div>
         <Spark data={m.weekly} />
@@ -178,7 +180,7 @@ function AllotmentRow({ a }: { a: ClientAllotment }) {
   );
 }
 
-function Section({ title, kicker, children, aside }: { title: string; kicker?: string; children: React.ReactNode; aside?: React.ReactNode }) {
+export function Section({ title, kicker, children, aside }: { title: string; kicker?: string; children: React.ReactNode; aside?: React.ReactNode }) {
   return (
     <section className="grid gap-3">
       <div className="flex flex-wrap items-end justify-between gap-2">
@@ -200,6 +202,7 @@ export function CreativeKpisView({ k }: { k: CreativeKpis }) {
   for (const a of k.allotments) counts[a.status]++;
   return (
     <div className="grid gap-8">
+      <LiveRefresh />
       {/* Header: what this is, and the period */}
       <div className="relative isolate grid gap-5 overflow-hidden rounded-[28px] border border-line bg-deep px-5 pb-6 pt-7 md:px-8 md:pb-8 md:pt-9">
         <span aria-hidden className="pointer-events-none absolute -right-24 -top-32 -z-10 h-80 w-80 rounded-full bg-brand/25 blur-[110px]" />
@@ -301,7 +304,7 @@ export function CreativeKpisView({ k }: { k: CreativeKpis }) {
               {total ? (
                 <>
                   <div className="flex items-baseline justify-between">
-                    <span className="tabular font-display text-[32px] leading-none">{total}</span>
+                    <span className="tabular font-display text-[32px] leading-none"><Tween value={total} /></span>
                     <span className="text-[12px] text-muted">changes asked for</span>
                   </div>
                   <span className="flex h-2.5 overflow-hidden rounded-full bg-ink/[0.07]">

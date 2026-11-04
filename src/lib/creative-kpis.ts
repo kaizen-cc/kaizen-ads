@@ -18,7 +18,7 @@ export const PERIODS: { key: Period; label: string }[] = [
   { key: "90", label: "Last 90 days" },
 ];
 
-type Tone = "ok" | "warn" | "bad" | null;
+export type Tone = "ok" | "warn" | "bad" | null;
 export type Headline = { key: string; label: string; value: number | null; unit: "d" | "%" | ""; previous: number | null; better: "down" | "up"; tone: Tone; verdict: string; hint: string };
 export type Maker = Scorecard & { role: string; open: number; late: number; act: string | null };
 export type ClientAllotment = {
@@ -52,7 +52,7 @@ const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.le
 const r1 = (x: number | null) => (x == null ? null : Math.round(x * 10) / 10);
 
 /** How many days "this billing month" covers: the median creative client's days into their cycle (at least a week). */
-function cycleDays(rows: { period_start: string | null }[]) {
+export function cycleDays(rows: { period_start: string | null }[]) {
   const into = rows
     .map((r) => (r.period_start ? (Date.now() - Date.parse(`${r.period_start}T00:00:00`)) / 86_400_000 : null))
     .filter((x): x is number => x != null && x >= 0)
@@ -62,7 +62,7 @@ function cycleDays(rows: { period_start: string | null }[]) {
 }
 
 /** "Turnaround is 1.2 days faster than the period before" */
-function verdictOf(label: string, value: number | null, previous: number | null, unit: string, better: "up" | "down", noun: string) {
+export function verdictOf(label: string, value: number | null, previous: number | null, unit: string, better: "up" | "down", noun: string) {
   if (value == null) return `No ${noun} in this period yet.`;
   if (previous == null) return `${label} is ${value}${unit}. Nothing to compare with yet.`;
   const diff = r1(value - previous) ?? 0;
