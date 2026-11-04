@@ -5,6 +5,9 @@ import { AiProgress, AiProgressButton } from "@/components/ai-progress";
 import { useRouter } from "next/navigation";
 import { IdeasPanel } from "./ideas-panel";
 import { PromisesStrip } from "./promises-strip";
+import { StartPanel } from "./start-panel";
+import { RequestChat } from "./request-chat";
+import { AsanaSend, BriefPdfButton } from "@/components/asana-send";
 import Link from "next/link";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { PersonAvatar } from "@/components/person-avatar";
@@ -13,12 +16,12 @@ import type { DraftPatch, Review, ReviewIssue, Suggestions } from "@/lib/ai";
 import { draws, type Allotment } from "@/lib/allotment";
 import { FORMAT_LABEL, type Format, type Priority } from "@/lib/stages";
 import { ClientTag, FormatIcon } from "@/app/(team)/board/ticket-card";
-import { applyFixes, createBatch, fulfilPromise, loadBriefing, reviewRequest, suggestForRequest, type ContextSummary, type RefSummary, type ReviewDecisions, type ReviewResult, type SimilarCard, type SuggestResult } from "./actions";
+import { applyFixes, asanaPreview, createBatch, fulfilPromise, loadBriefing, reviewRequest, sendToAsana, suggestForRequest, type ContextSummary, type RefSummary, type ReviewDecisions, type ReviewResult, type SimilarCard, type SuggestResult } from "./actions";
 import { ReviewWorkspace, startHandled, type Handled } from "./review-workspace";
 import { FORMATS, INSPIRE_KEY, MAX_VARIATIONS, SIZES, emptyDraft, selectedFormats, totalFor, type Draft, type Size } from "./draft";
 import { AllotmentMeter, AspectOption, Chip, ClientSearch, Progress, Spark, Stepper, Thinking, type ClientOption } from "./parts";
 
-const STEPS = ["Client", "Formats", "Direction", "Brief", "Review"];
+const STEPS = ["Client", "Start", "Formats", "Direction", "Brief", "Review"];
 // Each step in the address (?step=formats), so back returns to the step before
 const STEP_KEYS = STEPS.map((x) => x.toLowerCase());
 const TURNAROUND: Record<Format, number> = { image: 2, video: 4, carousel: 2 };
@@ -27,7 +30,7 @@ const MAKER: Record<Format, { role: string; label: string }> = {
   carousel: { role: "graphic_designer", label: "designer" },
   video: { role: "video_editor", label: "video editor" },
 };
-const FIELD_STEP: Record<ReviewIssue["field"], number> = { formats: 1, sizes: 1, title: 2, angle: 2, audience: 2, brief: 3, references: 3 };
+const FIELD_STEP: Record<ReviewIssue["field"], number> = { formats: 2, sizes: 2, title: 3, angle: 3, audience: 3, brief: 4, references: 4 };
 const input =
   "h-12 w-full rounded-[8px] border border-line bg-surface px-4 text-[15px] outline-none transition-colors placeholder:text-faint focus:border-brand-text/70";
 
@@ -128,6 +131,9 @@ export function RequestForm({
   const [handled, setHandled] = useState<Handled | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<number[] | null>(null);
+  const [asanaSent, setAsanaSent] = useState<{ name: string; url: string | null }[] | null>(null);
+  // Start: talking the idea through with the strategist (in the address, so back returns to the cards)
+  const talking = useParam("path") === "talk";
   // Phones: the winners and market ideas open as a bottom sheet instead of pushing the form down
   const ideasOpen = useParam("ideas") === "1";
   const [pending, start] = useTransition();
@@ -253,6 +259,7 @@ export function RequestForm({
 
   const blocked = [
     !draft.clientId && "Pick a client to continue.",
+    false,
     (formats.length === 0 && "Pick at least one format.") ||
       (formats.some((f) => totalFor(draft.formats[f]) === 0) && "Each format needs at least one creative.") ||
       (draft.sizes.length === 0 && "Pick at least one size."),
@@ -264,7 +271,7 @@ export function RequestForm({
   function go(i: number) {
     setError(null);
     // From the ideas sheet, the step takes the sheet's place: back doesn't open it again
-    (ideasOpen ? replaceParams : pushParams)({ step: STEP_KEYS[i], ideas: null });
+    (ideasOpen ? replaceParams : pushParams)({ step: STEP_KEYS[i], ideas: null, path: null });
     reveal(topRef, "start");
   }
 
@@ -460,6 +467,9 @@ export function RequestForm({
 
   const heading = [
     ["Who’s it for?", "Search by name. The work goes to that client’s designer or editor."],
+    talking
+      ? ["Talk it through", "Tell the strategist what you want to make. It asks only what it needs and builds the brief as you go."]
+      : ["How do you want to start?", "Briefs ready for this client, what works for similar clients and in their market, or your own idea."],
     ["What are we making?", "Pick every format you need. Each one becomes its own ticket for the right person."],
     ["What’s the direction?", "Name it and set the angle, so the team and the copy agent aim the same way."],
     ["Brief the team", "What to show, what to say, and what to stay away from."],
@@ -497,14 +507,31 @@ export function RequestForm({
           {!created && <AiStrip aiOn={aiOn} ai={ai} clientName={client?.name ?? null} onRefresh={() => suggest(draft, true)} />}
         </div>
 
-        {created ? (
+        {asanaSent ? (
+          <div className="grid gap-4 rounded-[20px] border border-ok/40 bg-ok-soft/30 p-6">
+            <p className="font-heading text-[24px]">Sent to Asana</p>
+            <p className="text-sm text-muted">On the Creative board in the Creative Brief column, built like a form request, and on our Board too.</p>
+            <ul className="grid gap-2">
+              {asanaSent.map((t) => (
+                <li key={t.name} className="text-[14px]">
+                  ✓ {t.url ? <a href={t.url} target="_blank" rel="noreferrer" className="underline">{t.name}</a> : t.name}
+                </li>
+              ))}
+            </ul>
+            <div>
+              <button type="button" onClick={() => { setAsanaSent(null); reset(); }} className="min-h-11 rounded-full border border-line px-5 text-[14px] hover:border-faint">
+                Start another request
+              </button>
+            </div>
+          </div>
+        ) : created ? (
           <Done numbers={created} formats={formats} team={team} clientName={client?.name ?? ""} onAgain={reset} />
         ) : (
           <form
             key={step}
             onSubmit={(e) => {
               e.preventDefault();
-              if (step < 4 && !blocked) go(step + 1);
+              if (step < STEPS.length - 1 && !blocked) go(step + 1);
             }}
             className="grid gap-8 animate-[step-in_.35s_cubic-bezier(.2,.8,.2,1)]"
           >
@@ -523,60 +550,36 @@ export function RequestForm({
 
             {step === 0 && <ClientSearch clients={clients} allotments={allotments} onPick={pickClient} />}
 
-            {step === 1 && (
+            {step === 1 && draft.clientId && client && (
+              talking ? (
+                <RequestChat clientId={draft.clientId} clientName={client.name} onUse={applyIdea} onBack={() => closeParams("path")} />
+              ) : (
+                <StartPanel
+                  clientId={draft.clientId}
+                  clientName={client.name}
+                  aiOn={aiOn && !demo}
+                  onBrief={applyIdea}
+                  onManual={() => go(2)}
+                  onTalk={() => pushParams({ path: "talk" })}
+                  promises={
+                    demo ? null : (
+                      <PromisesStrip
+                        clientId={draft.clientId}
+                        used={promise?.clientId === draft.clientId ? promise.id : null}
+                        onUse={(id, patch) => {
+                          set(patch);
+                          setPromise({ id, clientId: draft.clientId ?? "" });
+                          go(STEPS.length - 1);
+                        }}
+                      />
+                    )
+                  }
+                />
+              )
+            )}
+
+            {step === 2 && (
               <div className="grid gap-8">
-                {draft.clientId && !demo && (
-                  <PromisesStrip
-                    clientId={draft.clientId}
-                    used={promise?.clientId === draft.clientId ? promise.id : null}
-                    onUse={(id, patch) => {
-                      set(patch);
-                      setPromise({ id, clientId: draft.clientId ?? "" });
-                    }}
-                  />
-                )}
-                {draft.clientId && !demo && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => pushParams({ ideas: "1" })}
-                      className="flex min-h-12 items-center gap-3 rounded-[10px] border border-line bg-surface px-4 py-3 text-left active:bg-surface-2 md:hidden"
-                    >
-                      <Spark size={14} className="shrink-0 text-brand-text" />
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-medium">Start from an idea</span>
-                        <span className="block truncate text-xs text-faint">Our winners and the market, written up as a brief</span>
-                      </span>
-                      <span aria-hidden className="text-faint">
-                        →
-                      </span>
-                    </button>
-                    {/* One panel, loaded once: a section from tablet up to the wide layout, a bottom sheet on phones */}
-                    <div
-                      className={`${ideasOpen ? "fixed inset-0 z-50 flex flex-col justify-end" : "hidden"} md:static md:z-auto md:block xl:hidden`}
-                      role={ideasOpen ? "dialog" : undefined}
-                      aria-modal={ideasOpen || undefined}
-                      aria-label={ideasOpen ? "Start from an idea" : undefined}
-                    >
-                      <button type="button" aria-label="Close" onClick={() => closeParams("ideas")} className="absolute inset-0 bg-black/70 backdrop-blur-sm animate-[sheet-fade_.2s_ease-out] md:hidden" />
-                      <div className="relative grid max-h-[88dvh] min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-t-[20px] border-t border-line bg-bg animate-[sheet-up_.28s_cubic-bezier(.2,.8,.2,1)] md:block md:max-h-none md:animate-none md:overflow-visible md:rounded-none md:border-0 md:bg-transparent">
-                        <div className="flex items-center justify-between gap-3 border-b border-line py-1 pl-4 pr-2 md:hidden">
-                          <p className="text-sm font-medium">Start from an idea</p>
-                          <button type="button" onClick={() => closeParams("ideas")} className="h-11 rounded-full px-3 text-sm text-muted active:bg-surface-2">
-                            Done
-                          </button>
-                        </div>
-                        <div className="min-h-0 overflow-y-auto overscroll-contain px-4 pb-[calc(16px+env(safe-area-inset-bottom))] pt-4 md:overflow-visible md:p-0">
-                          <IdeasPanel
-                            clientId={draft.clientId}
-                            formats={selectedFormats(draft)}
-                            onBrief={applyIdea}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </>
-                )}
                 <div className="grid gap-3 sm:grid-cols-3">
                   {FORMATS.map((f) => {
                     const on = Boolean(draft.formats[f]);
@@ -689,7 +692,7 @@ export function RequestForm({
               </div>
             )}
 
-            {step === 2 && (
+            {step === 3 && (
               <div className="grid gap-8">
                 <Field id="title" label="Title">
                   <input id="title" autoFocus value={draft.title} onChange={(e) => set({ title: e.target.value })} placeholder="e.g. BFCM · Buy More, Save More" className={input} />
@@ -760,7 +763,7 @@ export function RequestForm({
               </div>
             )}
 
-            {step === 3 && (
+            {step === 4 && (
               <div className="grid gap-8">
                 <Field
                   id="brief"
@@ -853,7 +856,7 @@ export function RequestForm({
               </div>
             )}
 
-            {step === 4 && (
+            {step === 5 && (
               <div className="grid gap-6">
                 <div className="grid gap-px overflow-hidden rounded-[10px] border border-line bg-line">
                   {formats.map((f) => {
@@ -888,13 +891,13 @@ export function RequestForm({
 
                 <dl className="grid gap-x-6 gap-y-4 rounded-[10px] border border-line bg-surface p-5 text-sm sm:grid-cols-2">
                   {[
-                    ["Title", draft.title, 2],
-                    ["Angle", draft.angle || "—", 2],
-                    ["Audience", draft.audience || "—", 2],
-                    ["Priority", draft.priority[0].toUpperCase() + draft.priority.slice(1), 2],
-                    ["Sizes", draft.sizes.map((z) => z.replace("x", ":")).join(", "), 1],
-                    ["Landing page", draft.landing?.trim() || "—", 3],
-                    ["References", `${draft.refs.split(/\s+/).filter((u) => /^https?:\/\//i.test(u)).length || "None"}`, 3],
+                    ["Title", draft.title, 3],
+                    ["Angle", draft.angle || "—", 3],
+                    ["Audience", draft.audience || "—", 3],
+                    ["Priority", draft.priority[0].toUpperCase() + draft.priority.slice(1), 3],
+                    ["Sizes", draft.sizes.map((z) => z.replace("x", ":")).join(", "), 2],
+                    ["Landing page", draft.landing?.trim() || "—", 4],
+                    ["References", `${draft.refs.split(/\s+/).filter((u) => /^https?:\/\//i.test(u)).length || "None"}`, 4],
                   ].map(([k, v, to]) => (
                     <div key={k as string} className="group min-w-0">
                       <dt className="flex items-center gap-2 text-xs text-faint">
@@ -909,7 +912,7 @@ export function RequestForm({
                   <div className="group sm:col-span-2">
                     <dt className="flex items-center gap-2 text-xs text-faint">
                       Brief
-                      <button type="button" onClick={() => go(3)} className="-my-2 px-2 py-2 text-muted transition-opacity hover:text-fg md:my-0 md:px-0 md:py-0 md:text-inherit md:opacity-0 md:group-hover:opacity-100 md:focus:opacity-100">
+                      <button type="button" onClick={() => go(4)} className="-my-2 px-2 py-2 text-muted transition-opacity hover:text-fg md:my-0 md:px-0 md:py-0 md:text-inherit md:opacity-0 md:group-hover:opacity-100 md:focus:opacity-100">
                         Edit
                       </button>
                     </dt>
@@ -943,6 +946,26 @@ export function RequestForm({
               </div>
             )}
 
+            {step === STEPS.length - 1 && draft.clientId && !demo && (
+              <div className="grid gap-3 rounded-[18px] border border-line bg-surface p-4 md:p-5">
+                <div>
+                  <p className="text-sm font-medium">Where should it go?</p>
+                  <p className="text-[13px] text-muted">Create it here (the Board, the allotment and the AI review), send it to the Creative board in Asana exactly like a form request, or download it as a branded PDF.</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <AsanaSend
+                    preview={() => asanaPreview(draft)}
+                    send={() => sendToAsana(draft)}
+                    onSent={(tasks) => {
+                      writeSaved(null, saveKey);
+                      setAsanaSent(tasks.map((t) => ({ name: t.name, url: t.url })));
+                    }}
+                  />
+                  <BriefPdfButton body={() => ({ ...draft, clientId: draft.clientId })} />
+                </div>
+              </div>
+            )}
+
             {/* Footer */}
             {/* Phones: Back and Continue stay under the thumb, just above the tab bar */}
             <div
@@ -957,7 +980,7 @@ export function RequestForm({
               </div>
               <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-x-3 gap-y-1 md:flex-none md:gap-3">
                 {(error || (blocked && step > 0)) && <span className={`text-right text-xs md:text-left md:text-sm ${error ? "text-brand-text" : "text-faint"}`}>{error ?? blocked}</span>}
-                {step < 4 ? (
+                {step < STEPS.length - 1 ? (
                   step > 0 && (
                     <button disabled={Boolean(blocked)} className="h-12 rounded-brand md:h-11 bg-brand px-6 text-sm font-medium text-white shadow-[0_8px_30px_-8px_rgba(178,30,44,0.7)] transition-colors hover:bg-brand-hover disabled:bg-surface-2 disabled:text-faint disabled:shadow-none">
                       Continue

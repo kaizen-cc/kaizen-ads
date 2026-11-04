@@ -1091,3 +1091,43 @@ Someone on the team wants a request for this client built on this live ad from t
   if (error || !data) throw new Error(error?.message ?? "Couldn't save the brief");
   return data.id as string;
 }
+
+export type TalkTurn = { role: "user" | "ai"; text: string };
+export type TalkOut = { reply: string; questions: string[]; ready: boolean; draft: SuggestionDraft };
+
+const TALK_SCHEMA = {
+  type: "object",
+  properties: {
+    reply: { type: "string" },
+    questions: { type: "array", items: { type: "string" } },
+    ready: { type: "boolean" },
+    draft: SCHEMA.properties.draft,
+  },
+  required: ["reply", "questions", "ready", "draft"],
+  additionalProperties: false,
+};
+
+/**
+ * "Talk it through" on the request form: someone on the team explains the creative they want, in their own words, and
+ * the strategist turns it into a full request (the same brief the standard checks), asking only what it truly needs,
+ * one or two questions at a time. Every turn returns the brief as it stands, so it's built in front of them.
+ */
+export async function talkBrief(admin: SupabaseClient, clientId: string, turns: TalkTurn[], current: SuggestionDraft | null): Promise<TalkOut> {
+  const prompt = await promptFor(admin, clientId, [{ kind: "kpi", weight: 1, line: "A team member's own creative idea", facts: [] }]);
+  if (!prompt) throw new Error("Client not found");
+  const out = await askJson<TalkOut>({
+    agent: "strategist",
+    label: "request chat",
+    system: `${SYSTEM}\n\n${BRIEF_STANDARD}\n\nThis time you're not watching the accounts: a member of the team is telling you, in a conversation, the creative idea they want made for this client. Build their idea, not yours: keep what they asked for (the idea, the format, the counts they named), and make it complete and strong with the client's context (Brand Bible, KPIs, what's working, the patterns across clients, assets on Drive, the allotment). Ask a question only when the answer would change the request and the context can't answer it (which offer, which product, how many); at most two at a time, short and plain, never one the context already answers. Otherwise fill the gaps yourself and say what you assumed. reply: a short, warm message to them (what you built or changed, any assumption, then your questions if any). questions: the questions you asked, if any. ready: true when the request is complete enough to send. draft: the full request as it stands now, always complete (title, angle, audience, brief, hooks, concepts, formats within what's left of the allotment, sizes, landing, refs, assets).`,
+    schema: TALK_SCHEMA,
+    maxTokens: 12000,
+    prompt: `${prompt}
+
+${current ? `<request_so_far>\n${JSON.stringify(current, null, 1)}\n</request_so_far>\n\n` : ""}<conversation>
+${turns.map((t) => `${t.role === "user" ? "Team member" : "You"}: ${t.text}`).join("\n\n")}
+</conversation>
+
+Answer the team member's last message.`,
+  });
+  return { reply: out.reply, questions: (out.questions ?? []).slice(0, 2), ready: Boolean(out.ready), draft: clean(out.draft) };
+}

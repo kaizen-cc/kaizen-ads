@@ -10,6 +10,8 @@ import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import type { OpenSuggestion, SuggestionDraft, SuggestionsState } from "@/lib/suggestions";
 import { approveSuggestion, chatSuggestion, declineSuggestion, refreshSuggestions, saveSuggestion } from "../suggestion-actions";
 import { SectionTitle } from "./shared";
+import { AsanaSend } from "@/components/asana-send";
+import { sendSuggestionToAsana, suggestionAsanaPreview } from "@/app/(team)/requests/new/actions";
 
 const KIND_TONE: Record<SuggestionKind, string> = {
   fatigue: "bg-warn-soft text-warn",
@@ -425,6 +427,16 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
                   <button onClick={() => setDeclining(true)} disabled={busy} className="h-12 rounded-brand border border-line px-4 text-sm text-muted hover:text-fg md:h-10">
                     {s.kind === "winner" || s.kind === "refresh" || s.kind === "call" || s.kind === "market" ? "Discard" : "Decline"}
                   </button>
+                  {/* The same brief to the Creative board in Asana, laid out like a form request (the edits above are saved first) */}
+                  <AsanaSend
+                    className="inline-flex h-12 items-center gap-2 rounded-brand border border-line px-4 text-sm text-muted hover:text-fg md:h-10"
+                    preview={async () => {
+                      await saveSuggestion(s.id, draft);
+                      return suggestionAsanaPreview(s.id);
+                    }}
+                    send={() => sendSuggestionToAsana(s.id)}
+                    onSent={() => router.refresh()}
+                  />
                   <span className="hidden text-[11px] text-faint md:ml-auto md:inline">Edits save as you go</span>
                 </div>
               )}

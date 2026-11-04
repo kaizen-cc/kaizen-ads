@@ -600,3 +600,171 @@ Only facts from the context: no invented prices or offers. Return every key.`,
   }
   return out;
 }
+
+// ─── The ways in: briefs ready for this client, from similar clients, and talking it through ──────────────────
+
+/** A brief ready to use for this client, as a card on the request form */
+export type BriefCard = { id: string; kind: string; signal: string; why: string; title: string; angle: string; thumb: string | null; formats: string; createdAt: string };
+
+const FMT_WORD = { image: "image", video: "video", carousel: "carousel" } as const;
+const formatsLine = (d: import("@/lib/suggestions").SuggestionDraft) =>
+  (d.formats ?? []).map((f) => `${f.new + f.variations} ${FMT_WORD[f.format]}${f.new + f.variations === 1 ? "" : "s"}`).join(" + ");
+
+/** This client's open suggested briefs: tiring ads, performance, moments, patterns, call promises, offers (newest first) */
+export async function clientBriefs(clientId: string): Promise<BriefCard[]> {
+  await requireStaff();
+  const db = await createClient();
+  const { data } = await db
+    .from("creative_suggestions")
+    .select("id, kind, signal, why, draft, source, created_at")
+    .eq("client_id", clientId)
+    .eq("status", "open")
+    .neq("kind", "onboarding")
+    .order("created_at", { ascending: false })
+    .limit(12);
+  return (data ?? []).map((r) => {
+    const d = r.draft as import("@/lib/suggestions").SuggestionDraft;
+    const src = r.source as { thumbnail?: string | null } | null;
+    return { id: r.id as string, kind: r.kind as string, signal: r.signal as string, why: r.why as string, title: d?.title ?? "", angle: d?.angle ?? "", thumb: src?.thumbnail ?? null, formats: d ? formatsLine(d) : "", createdAt: r.created_at as string };
+  });
+}
+
+/** A suggested brief dropped into the form, with where it came from (sending it marks the brief used) */
+export async function suggestionPatch(id: string): Promise<{ ok: true; patch: Partial<Draft> } | Fail> {
+  await requireStaff();
+  const db = await createClient();
+  const { data: r } = await db.from("creative_suggestions").select("signal, draft, source, status").eq("id", id).maybeSingle();
+  if (!r || r.status !== "open") return { ok: false, error: "That brief isn't open any more." };
+  const src = r.source as { thumbnail?: string | null } | null;
+  return { ok: true, patch: { ...toPatch(r.draft as import("@/lib/suggestions").SuggestionDraft), origin: { kind: "brief", label: String(r.signal).slice(0, 200), thumb: src?.thumbnail ?? null, suggestionId: id } } };
+}
+
+/** What works across businesses like this client, for the "from similar clients" cards (works only, ones it isn't using first) */
+export async function clientPatterns(clientId: string) {
+  await requireStaff();
+  const db = await createClient();
+  const { patternsForClient } = await import("@/lib/patterns");
+  const { patterns } = await patternsForClient(db, clientId).catch(() => ({ patterns: [] as Awaited<ReturnType<typeof patternsForClient>>["patterns"] }));
+  return patterns
+    .filter((p) => p.verdict === "works")
+    .slice(0, 6)
+    .map((p) => ({ id: p.id, title: p.title, detail: p.detail, group: p.group, kind: p.kind, clients: p.evidence.clients, of: p.evidence.of, confidence: p.confidence, uses: p.uses }));
+}
+
+/** A pattern across clients, written up as this client's brief by the strategist */
+export async function patternPatch(patternId: string, clientId: string): Promise<{ ok: true; patch: Partial<Draft> } | Fail> {
+  const me = await requireStaff();
+  if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
+  {
+    const why = await notLive(await createClient(), clientId);
+    if (why) return { ok: false, error: why };
+  }
+  try {
+    const admin = createAdminClient();
+    const { patternById } = await import("@/lib/patterns");
+    const p = await patternById(admin, patternId);
+    if (!p) return { ok: false, error: "That pattern isn't there any more." };
+    const { suggestForPattern } = await import("@/lib/suggestions");
+    const id = await suggestForPattern(admin, clientId, p, me.id);
+    const { data: s } = await admin.from("creative_suggestions").select("draft").eq("id", id).single();
+    return { ok: true, patch: { ...toPatch(s?.draft as import("@/lib/suggestions").SuggestionDraft), origin: { kind: "brief", label: `Works for ${p.group.toLowerCase()}: ${p.title}`.slice(0, 200), suggestionId: id } } };
+  } catch (e) {
+    return { ok: false, error: e instanceof AiUnavailable ? e.message : "The strategist couldn't write it. Try again." };
+  }
+}
+
+export type TalkResult = { ok: true; reply: string; questions: string[]; ready: boolean; draft: import("@/lib/suggestions").SuggestionDraft; patch: Partial<Draft> } | Fail;
+
+/** "Talk it through": the strategist's next turn, and the request as it stands */
+export async function talkRequest(clientId: string, turns: import("@/lib/suggestions").TalkTurn[], current: import("@/lib/suggestions").SuggestionDraft | null): Promise<TalkResult> {
+  await requireStaff();
+  if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
+  const db = await createClient();
+  const { data: mine } = await db.from("clients").select("id").eq("id", clientId).maybeSingle();
+  if (!mine) return { ok: false, error: "Not found." };
+  const clean = turns.filter((t) => t.text.trim()).slice(-24).map((t) => ({ role: t.role, text: t.text.trim().slice(0, 4000) }));
+  if (!clean.length || clean[clean.length - 1].role !== "user") return { ok: false, error: "Say what you have in mind first." };
+  try {
+    const { talkBrief } = await import("@/lib/suggestions");
+    const r = await talkBrief(createAdminClient(), clientId, clean, current);
+    return { ok: true, reply: r.reply, questions: r.questions, ready: r.ready, draft: r.draft, patch: toPatch(r.draft) };
+  } catch (e) {
+    return { ok: false, error: e instanceof AiUnavailable ? e.message : "The strategist couldn't answer. Try again." };
+  }
+}
+
+// ─── Send to Asana: the brief as the Creative board's usual task(s) ──────────────────────────────────────────
+
+const toAsana = (d: Draft): import("@/lib/asana-request").AsanaDraft => ({
+  clientId: d.clientId!,
+  title: d.title,
+  formats: d.formats,
+  sizes: d.sizes,
+  angle: d.angle,
+  audience: d.audience,
+  brief: d.brief,
+  refs: d.refs,
+  landing: d.landing,
+  priority: d.priority,
+});
+
+/** What would land in Asana: one task per format, exactly as it will read there */
+export async function asanaPreview(draft: Draft): Promise<{ ok: true; tasks: import("@/lib/asana-request").PlannedTask[] } | Fail> {
+  await requireStaff();
+  if (!draft.clientId) return { ok: false, error: "Pick a client." };
+  if (!adminConfigured()) return { ok: false, error: "Not connected here." };
+  const db = await createClient();
+  const { data: mine } = await db.from("clients").select("id").eq("id", draft.clientId).maybeSingle();
+  if (!mine) return { ok: false, error: "Not found." };
+  try {
+    const { planAsanaRequest } = await import("@/lib/asana-request");
+    const tasks = await planAsanaRequest(createAdminClient(), toAsana(draft));
+    return tasks.length ? { ok: true, tasks } : { ok: false, error: "Pick at least one format." };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't build the Asana task." };
+  }
+}
+
+/** Sends the request to the Creative board in Asana (instead of tickets here); the brief it came from is done */
+export async function sendToAsana(draft: Draft): Promise<{ ok: true; tasks: import("@/lib/asana-request").SentTask[] } | Fail> {
+  const me = await requireStaff();
+  if (!draft.clientId) return { ok: false, error: "Pick a client." };
+  {
+    const why = await notLive(await createClient(), draft.clientId);
+    if (why) return { ok: false, error: why };
+  }
+  if (!draft.title.trim()) return { ok: false, error: "Give the request a title." };
+  if (!selectedFormats(draft).length) return { ok: false, error: "Pick at least one format." };
+  const { asanaConfigured } = await import("@/lib/asana");
+  if (!asanaConfigured() || !adminConfigured()) return { ok: false, error: "Asana isn't connected." };
+  try {
+    const { sendAsanaRequest } = await import("@/lib/asana-request");
+    const { suggestionId, ...origin } = draft.origin ?? {};
+    const r = await sendAsanaRequest(createAdminClient(), toAsana(draft), { id: me.id, email: me.email ?? null }, { suggestionId: suggestionId ?? null, origin: draft.origin ? origin : null });
+    revalidatePath("/board");
+    revalidatePath("/pipeline");
+    return { ok: true, tasks: r.tasks };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't send it to Asana." };
+  }
+}
+
+/** A suggested brief (Home, Next for me, a refresh, a pattern, a moment) as the Asana task(s) it would become */
+export async function suggestionAsanaPreview(id: string) {
+  const r = await suggestionPatch(id);
+  if (!r.ok) return r;
+  const db = await createClient();
+  const { data: s } = await db.from("creative_suggestions").select("client_id").eq("id", id).single();
+  return asanaPreview({ ...emptyFor(s?.client_id as string), ...r.patch } as Draft);
+}
+
+/** Sends a suggested brief to the Creative board in Asana, as written */
+export async function sendSuggestionToAsana(id: string) {
+  const r = await suggestionPatch(id);
+  if (!r.ok) return r;
+  const db = await createClient();
+  const { data: s } = await db.from("creative_suggestions").select("client_id").eq("id", id).single();
+  return sendToAsana({ ...emptyFor(s?.client_id as string), ...r.patch } as Draft);
+}
+
+const emptyFor = (clientId: string): Draft => ({ clientId, formats: {}, sizes: ["4x5", "9x16"], title: "", angle: "", audience: "", priority: "normal", brief: "", refs: "", landing: "" });

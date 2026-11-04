@@ -6,13 +6,14 @@ import type { Stage } from "@/lib/stages";
 // (column, assignee, due date, Client ID, priority, description) and kept as "shadow" tickets in the matching stage.
 // Moves and edits in Asana show up here; tasks completed or removed in Asana drop off the board (completed ones are
 // kept, counted against the month's allotment with what they asked for: see countUnits). Organic social requests are
-// left out (this app is paid ads and creative). Nothing is written back to the Creative board; the only thing written
-// to Asana is a task for teams not yet in Kaizen Ads (createAsanaTask, e.g. reviewing a new client's intake).
+// left out (this app is paid ads and creative). Written to Asana: tasks for teams not yet in Kaizen Ads (createAsanaTask,
+// e.g. reviewing a new client's intake), and creative requests briefed in Kaizen Ads and sent to the Creative board built
+// exactly like the Google Form's (src/lib/asana-request.ts).
 
 export const asanaConfigured = () => Boolean(process.env.ASANA_TOKEN);
 const API = "https://app.asana.com/api/1.0";
 
-async function asana<T>(path: string, params: Record<string, string> = {}): Promise<{ data: T; next_page?: { offset: string } | null }> {
+export async function asana<T>(path: string, params: Record<string, string> = {}): Promise<{ data: T; next_page?: { offset: string } | null }> {
   const url = `${API}${path}${Object.keys(params).length ? `?${new URLSearchParams(params)}` : ""}`;
   for (let attempt = 0; attempt < 4; attempt++) {
     const res = await fetch(url, { headers: { Authorization: `Bearer ${process.env.ASANA_TOKEN}`, Accept: "application/json" }, cache: "no-store" });
@@ -27,7 +28,7 @@ async function asana<T>(path: string, params: Record<string, string> = {}): Prom
   throw new Error("Asana: rate limited");
 }
 
-async function asanaWrite<T>(path: string, data: Record<string, unknown>): Promise<T> {
+export async function asanaWrite<T>(path: string, data: Record<string, unknown>): Promise<T> {
   for (let attempt = 0; attempt < 4; attempt++) {
     const res = await fetch(`${API}${path}`, { method: "POST", headers: { Authorization: `Bearer ${process.env.ASANA_TOKEN}`, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ data }), cache: "no-store" });
     if (res.status === 429) {
@@ -111,7 +112,7 @@ export const COLUMN_STAGE: [RegExp, Stage | null][] = [
 export const stageForColumn = (name: string | null) => (name ? (COLUMN_STAGE.find(([re]) => re.test(name.trim()))?.[1] ?? null) : null);
 
 /** The Creative project: ASANA_PROJECT_GID, or the project named "Creative" in the token's workspaces. */
-async function projectGid(admin: SupabaseClient) {
+export async function projectGid(admin: SupabaseClient) {
   if (process.env.ASANA_PROJECT_GID) return process.env.ASANA_PROJECT_GID;
   const { data: state } = await admin.from("sync_state").select("cursor_at, last_result").eq("source", "asana").maybeSingle();
   const known = (state?.last_result as { project?: string } | null)?.project;
