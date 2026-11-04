@@ -1,6 +1,8 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { cycleDays, verdictOf, type Headline, type Period, type Tone } from "@/lib/creative-kpis";
+import { cycleDays, verdictOf, type Headline, type Period, type Tone, type Winner } from "@/lib/creative-kpis";
+import { loadWatchList, type WatchRow } from "@/lib/fatigue";
+import { cleanTitle } from "@/lib/task-title";
 
 // The copy team's KPIs for execs and leads, on the Board's Copy KPIs tab: how fast copy moves from approved creative to
 // an AI draft to approved, how often it's approved first time (by us and by the client), what the client-rule check
@@ -23,6 +25,8 @@ export type Copywriter = {
 };
 export type CopyClient = { id: string; name: string; slug: string; sets: number; sendbacks: number; open: number; topRules: { rule: string; n: number }[] };
 export type Framework = { name: string; winners: number; judged: number; rate: number | null };
+/** A winning ad shown for its copy: the words that carried it, its click-through and angle */
+export type CopyWinner = Winner & { ctr: number | null; angle: string | null };
 export type CopyKpis = {
   period: Period;
   days: number;
@@ -31,10 +35,16 @@ export type CopyKpis = {
   clients: CopyClient[];
   frameworks: Framework[];
   angles: { title: string; client: string; slug: string; verdict: string; ads: number }[];
-  late: { number: number; title: string; client: string; stage: string; hoursOver: number }[];
+  late: { id: string; number: number; title: string; urgent: boolean; client: string; stage: string; hoursOver: number; assignee: string | null; due: string | null }[];
   overrides: { kind: "force" | "rebut"; rule: string; reason: string | null; client: string; slug: string; number: number | null; by: string | null; at: string }[];
   actions: CopyAction[];
   split: { copy: number; creative: number };
+  /** Ads whose copy is carrying them (profitable winners with their words) */
+  copyWinners: CopyWinner[];
+  /** Ads whose clicks are falling while the creative still stops people: the words are wearing out */
+  copyTiring: WatchRow[];
+  /** Angles a client's copy has leaned on again and again lately */
+  repeated: { client: string; slug: string; angle: string; sets: number }[];
 };
 
 type SetRow = {
@@ -98,10 +108,14 @@ export async function loadCopyKpis(db: SupabaseClient, period: Period): Promise<
     db.from("copy_rule_overrides").select("client_id, request_id, rule, reason, kind, created_by, created_at").gte("created_at", before).order("created_at", { ascending: false }).limit(500),
     db.from("clients").select("id, name, slug").is("archived_at", null),
     db.from("profiles").select("id, full_name, role").eq("is_active", true),
-    db.from("board_requests").select("id, number, title, client_name, client_slug, stage, minutes_over").is("deleted_at", null).in("stage", ["copy", "copy_review"]).limit(500),
+    db.from("board_requests").select("id, number, title, client_name, client_slug, stage, minutes_over, assignee_name, stage_due_at").is("deleted_at", null).in("stage", ["copy", "copy_review"]).limit(500),
     db.from("client_ledger").select("client_id, key, title, verdict, ads, first_seen").eq("kind", "angle").in("verdict", ["winner", "loser"]).gte("first_seen", new Date(Date.now() - Math.max(90, 2 * days) * 86_400_000).toISOString().slice(0, 10)).limit(3000),
     db.from("angles").select("id, client_id, name"),
     db.from("review_comments").select("request_id, design_id, author_contact_id, created_at").not("author_contact_id", "is", null).gte("created_at", before).limit(5000),
+  ]);
+  const [{ data: winRows }, watch] = await Promise.all([
+    db.from("client_ledger").select("key, client_id, title, detail, cost_per_result, target, roas, spend, results, result_label, impressions, clicks, first_seen, last_seen").eq("kind", "creative").eq("verdict", "winner").not("detail->>text", "is", null).order("verdict_at", { ascending: false }).limit(9),
+    loadWatchList(db, { limit: 40 }).catch(() => [] as WatchRow[]),
   ]);
   const rows = (sets ?? []) as SetRow[];
   const clientById = new Map((clients ?? []).map((c) => [c.id as string, c]));
@@ -241,7 +255,10 @@ export async function loadCopyKpis(db: SupabaseClient, period: Period): Promise<
     .filter((t) => (t.minutes_over as number) > 0)
     .sort((a, b) => (b.minutes_over as number) - (a.minutes_over as number))
     .slice(0, 8)
-    .map((t) => ({ number: t.number as number, title: t.title as string, client: (t.client_name as string) ?? "", stage: t.stage as string, hoursOver: Math.round((t.minutes_over as number) / 60) }));
+    .map((t) => {
+      const c = cleanTitle(t.title as string);
+      return { id: t.id as string, number: t.number as number, title: c.title, urgent: c.urgent, client: (t.client_name as string) ?? "", stage: t.stage === "copy_review" ? "Copy review" : "Copy", hoursOver: Math.round((t.minutes_over as number) / 60), assignee: (t.assignee_name as string | null) ?? null, due: (t.stage_due_at as string | null) ?? null };
+    });
   const recentOverrides = (overrides ?? [])
     .filter((o) => (o.created_at as string) >= since)
     .slice(0, 10)
@@ -264,5 +281,55 @@ export async function loadCopyKpis(db: SupabaseClient, period: Period): Promise<
   if (backClient) actions.push({ key: "sendbacks", tone: "warn", title: `${backClient.name} sent copy back ${backClient.sendbacks} times`, detail: backClient.topRules[0] ? `Most flagged: "${backClient.topRules[0].rule}"` : "Look at what they changed before the next set", href: `/clients/${backClient.slug}` });
   for (const w of writers.filter((x) => x.act && /late|waiting/.test(x.act)).slice(0, 1)) actions.push({ key: `w-${w.id}`, tone: "warn", title: `${w.name}: ${w.act}`, detail: `${w.open} open sets`, href: `/board?person=${w.id}` });
 
-  return { period, days, headlines, writers, clients: clientRows, frameworks: frameworks.slice(0, 8), angles: angleRows.slice(0, 8), late, overrides: recentOverrides, actions: actions.slice(0, 6), split: { copy: copyChanges, creative: designChanges } };
+  // ─── Copy in the feed: winners carried by their words, and copy wearing out ───
+  const copyWinners: CopyWinner[] = (winRows ?? [])
+    .filter((w) => clientById.has(w.client_id as string))
+    .slice(0, 6)
+    .map((w) => {
+      const d = (w.detail ?? {}) as { image?: string; text?: string; headline?: string; cta?: string; name?: string; angle?: string };
+      const c = clientById.get(w.client_id as string)!;
+      const first = w.first_seen ? Date.parse(`${w.first_seen}T00:00:00`) : Date.now();
+      const last = w.last_seen ? Date.parse(`${w.last_seen}T00:00:00`) : Date.now();
+      const key = w.key as string;
+      return {
+        key,
+        clientId: w.client_id as string,
+        client: c.name as string,
+        slug: c.slug as string,
+        name: d.name ?? (w.title as string),
+        image: /^\d{5,25}$/.test(key) ? `/api/ad-media/${key}` : (d.image ?? null),
+        text: d.text ?? null,
+        headline: d.headline ?? (w.title as string) ?? null,
+        cta: d.cta ?? null,
+        result: (w.result_label as string | null) ?? null,
+        costPerResult: w.cost_per_result == null ? null : Number(w.cost_per_result),
+        target: w.target == null ? null : Number(w.target),
+        roas: w.roas == null ? null : Number(w.roas),
+        spend: Number(w.spend ?? 0),
+        results: Number(w.results ?? 0),
+        days: Math.max(1, Math.round((last - first) / 86_400_000) + 1),
+        ctr: Number(w.impressions ?? 0) > 0 ? Math.round((Number(w.clicks ?? 0) / Number(w.impressions)) * 10000) / 100 : null,
+        angle: d.angle ?? null,
+      };
+    });
+  // Clicks falling while the creative still stops people (the hook holds, or it's a still): the words have worn out
+  const copyTiring = watch
+    .filter((r) => r.signals.ctrChange <= -0.15 && (r.signals.hookChange == null || r.signals.hookChange > -0.1))
+    .slice(0, 6);
+  // An angle a client's copy has used in 4+ sets in the last 60 days
+  const since60 = new Date(Date.now() - 60 * 86_400_000).toISOString();
+  const angleUse = new Map<string, { client: string; angle: string; n: number }>();
+  for (const s of rows.filter((x) => x.created_at >= since60)) {
+    const a = s.angle_id ? angleName.get(s.angle_id) : null;
+    if (!a?.key) continue;
+    const k = `${s.client_id}|${a.key}`;
+    angleUse.set(k, { client: s.client_id, angle: (angles ?? []).find((x) => x.id === s.angle_id)?.name ?? a.key, n: (angleUse.get(k)?.n ?? 0) + 1 });
+  }
+  const repeated = [...angleUse.values()]
+    .filter((x) => x.n >= 4 && clientById.has(x.client))
+    .sort((a, b) => b.n - a.n)
+    .slice(0, 6)
+    .map((x) => ({ client: clientById.get(x.client)!.name as string, slug: clientById.get(x.client)!.slug as string, angle: x.angle as string, sets: x.n }));
+
+  return { copyWinners, copyTiring, repeated, period, days, headlines, writers, clients: clientRows, frameworks: frameworks.slice(0, 8), angles: angleRows.slice(0, 8), late, overrides: recentOverrides, actions: actions.slice(0, 6), split: { copy: copyChanges, creative: designChanges } };
 }

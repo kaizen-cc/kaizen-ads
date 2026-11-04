@@ -202,7 +202,11 @@ async function countUnits(admin: SupabaseClient, max = 60) {
   return todo.length;
 }
 
-export type HistoryEvent = { at: string; kind: "moved"; from: string | null; to: string | null; by: string | null } | { at: string; kind: "assigned"; to: string | null; by: string | null };
+export type HistoryEvent =
+  | { at: string; kind: "moved"; from: string | null; to: string | null; by: string | null }
+  | { at: string; kind: "assigned"; to: string | null; by: string | null }
+  /** The due date changed (from → to, YYYY-MM-DD), and who changed it */
+  | { at: string; kind: "due"; from: string | null; to: string | null; by: string | null };
 /** A comment on the task (the team's or the client's feedback), kept to read for real errors */
 export type TaskComment = { at: string; by: string | null; text: string };
 
@@ -213,15 +217,16 @@ export type TaskComment = { at: string; by: string | null; text: string };
 async function readHistory(admin: SupabaseClient, max = 60) {
   const { data } = await admin.from("asana_tasks").select("gid, asana_modified_at, history_read_at").order("asana_modified_at", { ascending: false }).limit(1000);
   const todo = (data ?? []).filter((t) => !t.history_read_at || (t.asana_modified_at && t.asana_modified_at > t.history_read_at)).slice(0, max);
-  type Story = { created_at: string; resource_subtype: string; created_by: { name: string } | null; old_section?: { name: string } | null; new_section?: { name: string } | null; assignee?: { name: string } | null; text?: string };
+  type Story = { created_at: string; resource_subtype: string; created_by: { name: string } | null; old_section?: { name: string } | null; new_section?: { name: string } | null; assignee?: { name: string } | null; text?: string; old_dates?: { due_on?: string | null } | null; new_dates?: { due_on?: string | null } | null };
   for (const t of todo) {
     try {
-      const stories = await all<Story>(`/tasks/${t.gid}/stories`, { opt_fields: "created_at,resource_subtype,created_by.name,old_section.name,new_section.name,assignee.name,text" });
+      const stories = await all<Story>(`/tasks/${t.gid}/stories`, { opt_fields: "created_at,resource_subtype,created_by.name,old_section.name,new_section.name,assignee.name,text,old_dates.due_on,new_dates.due_on" });
       const history: HistoryEvent[] = stories.flatMap((s): HistoryEvent[] => {
         const by = s.created_by?.name ?? null;
         if (s.resource_subtype === "section_changed") return [{ at: s.created_at, kind: "moved", from: s.old_section?.name ?? null, to: s.new_section?.name ?? null, by }];
         if (s.resource_subtype === "assigned") return [{ at: s.created_at, kind: "assigned", to: s.assignee?.name ?? null, by }];
         if (s.resource_subtype === "unassigned") return [{ at: s.created_at, kind: "assigned", to: null, by }];
+        if (s.resource_subtype === "due_date_changed") return [{ at: s.created_at, kind: "due", from: s.old_dates?.due_on ?? null, to: s.new_dates?.due_on ?? null, by }];
         return [];
       });
       const comments: TaskComment[] = stories.filter((s) => s.resource_subtype === "comment_added" && s.text?.trim()).map((s) => ({ at: s.created_at, by: s.created_by?.name ?? null, text: s.text!.trim().slice(0, 2000) }));

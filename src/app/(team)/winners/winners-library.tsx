@@ -1,5 +1,6 @@
 "use client";
 
+import { AdImg } from "@/components/ad-img";
 import { AiProgress } from "@/components/ai-progress";
 
 import Link from "next/link";
@@ -211,9 +212,8 @@ export function WinnersLibrary({ winners, industries, clients, scope }: { winner
                   className="group grid min-w-0 content-start gap-2.5 rounded-[14px] border border-line bg-surface p-2 text-left transition-all hover:border-faint active:scale-[0.98] md:active:scale-100"
                 >
                   <span className="relative aspect-[4/5] overflow-hidden rounded-[10px] bg-surface-2">
-                    {w.thumbnail ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={w.thumbnail} alt="" loading="lazy" className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]" />
+                    {w.thumbnail || /^\d{5,25}$/.test(w.id) ? (
+                      <AdImg src={w.thumbnail} adId={w.id} className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]" />
                     ) : (
                       <span className="absolute inset-0 grid place-items-center p-3 text-center text-xs text-faint">{w.headline ?? w.name}</span>
                     )}

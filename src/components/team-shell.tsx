@@ -7,6 +7,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { NotificationBell } from "./notification-bell";
+import { BriefJobsIndicator, BriefJobsRoot } from "./brief-jobs";
 import { PersonAvatar } from "@/components/person-avatar";
 
 type Tier = "exec" | "lead" | "member";
@@ -103,6 +104,7 @@ export function TeamShell({ name, roles, tier, theme = null, children }: { name:
 
   return (
     <div className="relative min-h-screen md:grid md:grid-cols-[240px_1fr]">
+      <BriefJobsRoot />
       {/* A faint brand glow behind the top of every page (first, so everything after it paints above) */}
       <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-80 bg-[radial-gradient(60%_100%_at_15%_0%,rgba(178,30,44,0.16),transparent_70%)] md:left-[240px]" />
       <aside className="pt-safe hidden border-r border-line bg-surface md:sticky md:top-0 md:flex md:h-screen md:flex-col">
@@ -111,7 +113,10 @@ export function TeamShell({ name, roles, tier, theme = null, children }: { name:
             <Image src="/kaizen-logo.png" alt="Kaizen" width={110} height={26} priority />
             <span className="mt-1 font-display text-sm tracking-wide text-muted">ads</span>
           </Link>
-          <NotificationBell placement="side" />
+          <span className="flex items-center gap-1.5">
+            <BriefJobsIndicator compact />
+            <NotificationBell placement="side" />
+          </span>
         </div>
         <nav className="grid gap-5 px-3" aria-label="Main">
           {groups.map((g) => (
@@ -149,8 +154,11 @@ export function TeamShell({ name, roles, tier, theme = null, children }: { name:
             <Image src="/kaizen-logo.png" alt="Kaizen" width={92} height={21} priority />
             <span className="mt-1 font-display text-xs tracking-wide text-muted">ads</span>
           </Link>
-          <span className="flex h-11 w-11 items-center justify-center">
-            <NotificationBell placement="top" />
+          <span className="flex h-11 items-center justify-end gap-1">
+            <BriefJobsIndicator compact />
+            <span className="flex h-11 w-11 items-center justify-center">
+              <NotificationBell placement="top" />
+            </span>
           </span>
         </div>
       </header>

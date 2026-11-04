@@ -1,5 +1,6 @@
 "use client";
 
+import { AdImg } from "@/components/ad-img";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { HoverCard } from "@/components/hover-card";
@@ -67,6 +68,8 @@ function MetricsTable({ ref7, ref30, r }: { ref7: Metrics | null | undefined; re
 /** What the buyer sees on hover (or tap): the object's creative, copy, numbers and where it lives. */
 function Preview({ r, newId }: { r: ObjRef; newId?: string | null }) {
   const c = r.creative;
+  // A Meta ad's picture is kept for good (Meta's own links expire), so an old plan still shows it
+  const metaAd = r.platform === "meta" && r.level === "ad" ? r.id : null;
   const link = verifyLink(r);
   return (
     <div className="grid gap-2.5">
@@ -94,10 +97,9 @@ function Preview({ r, newId }: { r: ObjRef; newId?: string | null }) {
                 </span>
               ))}
             </div>
-          ) : c.thumb ? (
+          ) : c.thumb || metaAd ? (
             <span className="relative block">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={c.thumb} alt="" className="max-h-56 w-full rounded-[8px] object-cover" />
+              <AdImg src={c.thumb} adId={metaAd} className="max-h-56 w-full rounded-[8px] object-cover" />
               {c.video && <span className="absolute left-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[10px] text-white">▶ Video</span>}
             </span>
           ) : null}
@@ -133,12 +135,12 @@ function Preview({ r, newId }: { r: ObjRef; newId?: string | null }) {
 /** An object by name, with its preview on hover (a sheet on a phone). Never just a bare title. */
 function Obj({ r, newId }: { r: ObjRef; newId?: string | null }) {
   const thumb = r.creative?.thumb ?? r.creative?.cards?.[0]?.thumb ?? null;
+  const metaAd = r.platform === "meta" && r.level === "ad" ? r.id : null;
   return (
     <HoverCard width={340} content={<Preview r={r} newId={newId} />}>
       <button type="button" className="inline-flex max-w-full items-center gap-2 rounded-[10px] border border-ink/10 bg-ink/[0.04] py-1 pl-1 pr-2.5 text-left text-[12.5px] transition-colors hover:border-ink/25 max-md:min-h-11">
-        {thumb ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={thumb} alt="" className="h-8 w-8 shrink-0 rounded-[7px] object-cover" />
+        {thumb || metaAd ? (
+          <AdImg src={thumb} adId={metaAd} className="h-8 w-8 shrink-0 rounded-[7px] object-cover" />
         ) : (
           <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[7px] bg-ink/10 text-[10px] text-ink/60">{LEVEL[r.level].slice(0, 2)}</span>
         )}

@@ -1,5 +1,6 @@
 "use client";
 
+import { AdImg } from "@/components/ad-img";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -83,10 +84,7 @@ function WatchCard({ r, showClient, onGone }: { r: WatchRow; showClient: boolean
     <article className={`grid content-start gap-3 rounded-[16px] border bg-surface p-4 ${tired && r.state === "open" ? "border-bad/35" : "border-line"}`}>
       <div className="flex gap-3">
         <span className="relative h-20 w-16 shrink-0 overflow-hidden rounded-[10px] bg-surface-2">
-          {r.thumbnail && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={r.thumbnail} alt="" className="absolute inset-0 h-full w-full object-cover" />
-          )}
+          <AdImg src={r.thumbnail} adId={r.adId} className="absolute inset-0 h-full w-full object-cover" />
         </span>
         <div className="grid min-w-0 flex-1 content-start gap-1">
           <span className="flex flex-wrap items-center gap-2">

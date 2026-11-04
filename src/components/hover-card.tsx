@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 // A summary that opens on hover (or keyboard focus) and stays open while the pointer is on it, so the links inside it
@@ -9,9 +9,13 @@ import { createPortal } from "react-dom";
 // On touch screens there's no hover: a tap opens the same summary as a sheet from the bottom, with the tapped link as
 // its main action, so nothing is lost on a phone.
 
-export function HoverCard({ content, children, width = 340, className = "" }: { content: React.ReactNode; children: React.ReactNode; width?: number; className?: string }) {
+export function HoverCard({ content, children, width = 380, className = "" }: { content: React.ReactNode; children: React.ReactNode; width?: number; className?: string }) {
   const anchor = useRef<HTMLSpanElement>(null);
-  const [at, setAt] = useState<{ left: number; top: number; above: boolean } | null>(null);
+  const card = useRef<HTMLDivElement>(null);
+  // Where the anchor sits when it opens; the card is then measured and placed (below, or above when there's more
+  // room there), kept inside the screen, and scrolls inside when it's taller than the room it has
+  const [at, setAt] = useState<{ left: number; top: number; bottom: number } | null>(null);
+  const [pos, setPos] = useState<{ left: number; top: number; maxH: number; w: number } | null>(null);
   const [sheet, setSheet] = useState<{ href: string | null } | null>(null);
   const close = useRef<ReturnType<typeof setTimeout> | null>(null);
   const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -25,15 +29,29 @@ export function HoverCard({ content, children, width = 340, className = "" }: { 
     openTimer.current = setTimeout(() => {
       const r = anchor.current?.getBoundingClientRect();
       if (!r) return;
-      const above = r.bottom + 260 > window.innerHeight && r.top > 280;
-      const left = Math.max(12, Math.min(r.left, window.innerWidth - width - 12));
-      setAt({ left, top: above ? r.top - 8 : r.bottom + 8, above });
+      setPos(null);
+      setAt({ left: r.left, top: r.top, bottom: r.bottom });
     }, 120);
   };
   const hide = () => {
     if (openTimer.current) clearTimeout(openTimer.current);
     close.current = setTimeout(() => setAt(null), 160);
   };
+  useLayoutEffect(() => {
+    if (!at || !card.current) return;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const w = Math.min(Math.max(width, 360), 420, Math.round(vw * 0.9), vw - 24);
+    const h = card.current.scrollHeight;
+    const below = vh - at.bottom - 16;
+    const above = at.top - 16;
+    const down = h <= below || below >= above;
+    const maxH = Math.max(160, Math.min(vh * 0.7, down ? below : above));
+    const shown = Math.min(h, maxH);
+    const top = down ? at.bottom + 8 : Math.max(12, at.top - 8 - shown);
+    const left = Math.max(12, Math.min(at.left, vw - w - 12));
+    setPos({ left, top, maxH, w });
+  }, [at, width]);
   useEffect(() => {
     if (!at) return;
     const off = () => setAt(null);
@@ -80,11 +98,12 @@ export function HoverCard({ content, children, width = 340, className = "" }: { 
       {at &&
         createPortal(
           <div
+            ref={card}
             onMouseEnter={show}
             onMouseLeave={hide}
             role="tooltip"
-            className="fixed z-[95] grid gap-2 rounded-[16px] border border-ink/10 bg-deep-2/95 p-3.5 text-left text-fg shadow-[0_24px_60px_-20px_rgba(0,0,0,0.9)] backdrop-blur-xl"
-            style={{ left: at.left, top: at.top, width, transform: at.above ? "translateY(-100%)" : undefined, animation: "card-in-hover .14s ease-out" }}
+            className="fixed z-[120] grid min-w-0 content-start gap-2 overflow-x-hidden overflow-y-auto overscroll-contain rounded-[16px] border border-ink/15 bg-deep-2 p-4 text-left text-[13px] leading-snug text-fg shadow-[0_28px_70px_-18px_rgba(0,0,0,0.75),0_0_0_1px_rgba(0,0,0,0.04)] [overflow-wrap:anywhere] [&_*]:min-w-0"
+            style={pos ? { left: pos.left, top: pos.top, width: pos.w, maxHeight: pos.maxH, animation: "card-in-hover .14s ease-out" } : { left: 0, top: 0, width: Math.min(width, typeof window === "undefined" ? width : window.innerWidth - 24), visibility: "hidden" }}
           >
             <style>{`@keyframes card-in-hover { from { opacity: 0; } to { opacity: 1; } }`}</style>
             {content}
@@ -93,7 +112,7 @@ export function HoverCard({ content, children, width = 340, className = "" }: { 
         )}
       {sheet &&
         createPortal(
-          <div className="fixed inset-0 z-[95]" role="dialog" aria-modal="true">
+          <div className="fixed inset-0 z-[120]" role="dialog" aria-modal="true">
             <style>{`@keyframes sheet-up-hover { from { transform: translateY(100%); } to { transform: none; } }`}</style>
             <div className="absolute inset-0 bg-black/60" onClick={() => setSheet(null)} aria-hidden />
             <div

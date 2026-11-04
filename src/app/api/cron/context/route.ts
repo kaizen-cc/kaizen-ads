@@ -215,7 +215,11 @@ export async function GET(request: Request) {
       return Response.json(asanaConfigured() ? await syncAsana(admin) : { skipped: "ASANA_TOKEN not set" });
     }
     if (step === "sprints") return Response.json(await (await import("@/lib/sprints")).checkDueSprints(admin));
-    if (step === "launches") return Response.json(await (await import("@/lib/launcher")).launchStep(admin));
+    if (step === "launches") {
+      // Every 5 minutes: also pick up background briefs a cut-off server left queued or half-written
+      const briefJobs = await (await import("@/lib/brief-jobs")).pickUpBriefJobs(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+      return Response.json({ ...(await (await import("@/lib/launcher")).launchStep(admin)), briefJobs });
+    }
     if (step === "audits") return Response.json(await (await import("@/lib/auto-audits")).autoAudits(admin));
     if (step === "bibles") return Response.json(await (await import("@/lib/brand-bible")).autoBibles(admin, 3));
     if (step === "presentations") {

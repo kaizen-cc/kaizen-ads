@@ -7,6 +7,8 @@ import { roleLabel, type TeamRole } from "@/lib/roles";
 import type { HistoryEvent, TaskComment } from "@/lib/asana";
 import { loadErrors, type ErrorItem } from "@/lib/creative-errors";
 import { loadWatchList, type WatchRow } from "@/lib/fatigue";
+import { bizDays } from "@/lib/production";
+import { cleanTitle } from "@/lib/task-title";
 
 // The creative team's KPIs for execs and leads, on the Board's KPIs tab: speed, quality and volume against the period
 // before, each maker's card, every creative-package client's allotment this billing cycle, how the new creative is
@@ -24,7 +26,7 @@ export const PERIODS: { key: Period; label: string }[] = [
 export type Tone = "ok" | "warn" | "bad" | null;
 export type Headline = { key: string; label: string; value: number | null; unit: "d" | "%" | ""; previous: number | null; better: "down" | "up"; tone: Tone; verdict: string; hint: string };
 /** A piece of work shown anywhere on the tab: a Board ticket (opens its drawer) or an Asana task (opens Asana) */
-export type TaskRef = { key: string; title: string; client: string | null; stage: string | null; late: boolean; due: string | null; href: string; external: boolean; note: string | null; at: string | null };
+export type TaskRef = { key: string; title: string; urgent?: boolean; client: string | null; stage: string | null; late: boolean; due: string | null; href: string; external: boolean; note: string | null; at: string | null };
 export type Sendbacks = { internal: number; client: number; pieces: number };
 export type Maker = Scorecard & {
   role: string;
@@ -38,7 +40,17 @@ export type Maker = Scorecard & {
   revisions: TaskRef[];
   sendbacks: { d45: Sendbacks; d90: Sendbacks };
   errors: { d45: number; d90: number; items: ErrorItem[] };
+  /** Business days from the brief to the piece first reaching the client (their pieces, last 90 days) */
+  briefToDone: number | null;
+  /** % of their pieces that reached the client by the due date first set */
+  metDue: { pct: number | null; of: number; missed: TaskRef[] };
+  /** % of the pieces they held whose due date they moved later, and which */
+  pushedBack: { pct: number | null; of: number; items: TaskRef[] };
+  /** Profitable winners made from their work */
+  winners: WinnerAd[];
 };
+/** A winner credited to whoever made it: from a ticket launched in Kaizen Ads (certain) or matched by name (likely) */
+export type WinnerAd = Winner & { how: "launched" | "name"; task: string | null };
 export type ClientAllotment = {
   id: string;
   name: string;
@@ -62,7 +74,9 @@ export type CreativeKpis = {
   allotments: ClientAllotment[];
   revisionClients: (Production["revisions"][number] & { recent: TaskRef[] })[];
   slowClients: Production["slow"];
-  late: { number: number; title: string; client: string; stage: string; hoursOver: number; assignee: string | null }[];
+  late: { id: string; number: number; title: string; urgent: boolean; client: string; stage: string; hoursOver: number; assignee: string | null; due: string | null }[];
+  /** Team averages for the per-person numbers */
+  teamAvg: { briefToDone: number | null; metDue: number | null; pushedBack: number | null; revisionTurnaround: number | null; winners: number };
   teamSendbacks: { d45: Sendbacks; d90: Sendbacks };
   winners: Winner[];
   watch: WatchRow[];
@@ -130,7 +144,7 @@ export async function loadCreativeKpis(db: SupabaseClient, period: Period): Prom
     loadProduction(db, days).catch(() => null),
     loadProduction(db, days, days).catch(() => null),
     db.from("clients").select("id, name, slug, creative_package, status").is("archived_at", null).in("status", ["active", "onboarding"]),
-    db.from("board_requests").select("number, title, client_name, client_slug, stage, assignee_id, assignee_name, creative_id, minutes_over, stage_due_at, created_at, launched_at, internal_rounds, client_rounds, updated_at").is("deleted_at", null).gte("updated_at", d90).limit(2000),
+    db.from("board_requests").select("id, number, title, client_name, client_slug, client_id, stage, assignee_id, assignee_name, creative_id, minutes_over, stage_due_at, created_at, launched_at, internal_rounds, client_rounds, updated_at").is("deleted_at", null).gte("updated_at", d90).limit(2000),
     db.from("profiles").select("id, full_name, role").eq("is_active", true),
     packageGaps(db).catch(() => new Map()),
     db.from("client_ledger").select("client_id, verdict, first_seen").eq("kind", "creative").gte("first_seen", before.slice(0, 10)).limit(5000),
@@ -140,6 +154,13 @@ export async function loadCreativeKpis(db: SupabaseClient, period: Period): Prom
     db.from("client_ledger").select("key, client_id, title, detail, cost_per_result, target, roas, spend, results, result_label, first_seen, last_seen, verdict_at").eq("kind", "creative").eq("verdict", "winner").order("verdict_at", { ascending: false }).limit(12),
     loadWatchList(db, { limit: 9 }).catch(() => [] as WatchRow[]),
   ]);
+  // Every profitable winner (to credit its maker), the tickets they came from, and due-date changes on the Board
+  const [{ data: allWins }, { data: dueEvents }] = await Promise.all([
+    db.from("client_ledger").select("key, client_id, title, detail, cost_per_result, target, roas, spend, results, result_label, first_seen, last_seen").eq("kind", "creative").eq("verdict", "winner").order("first_seen", { ascending: false }).limit(1500),
+    db.from("request_events").select("request_id, actor_id, data, created_at").eq("kind", "due").gte("created_at", d90).limit(3000),
+  ]);
+  const winTickets = [...new Set((allWins ?? []).map((w) => (w.detail as { ticket?: number } | null)?.ticket).filter((n): n is number => typeof n === "number"))];
+  const { data: winTicketRows } = winTickets.length ? await db.from("board_requests").select("number, creative_id, assignee_id, title").in("number", winTickets) : { data: [] };
   const clientById = new Map((clients ?? []).map((c) => [c.id as string, c]));
   const team_ = (people ?? []) as { id: string; full_name: string; role: string }[];
   const personFor = (name: string | null) => (name ? team_.find((p) => p.full_name.toLowerCase().startsWith(name.toLowerCase()) || name.toLowerCase().startsWith(p.full_name.toLowerCase())) : undefined);
@@ -178,7 +199,7 @@ export async function loadCreativeKpis(db: SupabaseClient, period: Period): Prom
   ];
 
   // ─── Each Asana task's life (90 days), read once for plates, sendbacks and clients' revisions ───
-  type T = { gid: string; name: string; url: string | null; clientId: string | null; client: string | null; open: boolean; section: string | null; due: string | null; profileId: string | null; assignee: string | null; spans: Span[]; comments: TaskComment[] };
+  type T = { gid: string; name: string; url: string | null; clientId: string | null; client: string | null; open: boolean; section: string | null; due: string | null; profileId: string | null; assignee: string | null; spans: Span[]; comments: TaskComment[]; dues: { at: string; from: string | null; to: string | null; by: string | null }[]; createdAt: string };
   const tasks: T[] = (asanaRows ?? []).map((r) => ({
     gid: r.gid as string,
     name: r.name as string,
@@ -192,11 +213,13 @@ export async function loadCreativeKpis(db: SupabaseClient, period: Period): Prom
     assignee: (r.assignee_name as string | null) ?? null,
     spans: spansOf((r.asana_created_at as string) ?? new Date().toISOString(), (r.history ?? []) as HistoryEvent[], r.section as string | null, r.assignee_name as string | null),
     comments: (r.comments ?? []) as TaskComment[],
+    dues: ((r.history ?? []) as HistoryEvent[]).filter((e): e is Extract<HistoryEvent, { kind: "due" }> => e.kind === "due").sort((a, b) => a.at.localeCompare(b.at)),
+    createdAt: (r.asana_created_at as string) ?? new Date().toISOString(),
   }));
-  const asanaRef = (t: T, note: string | null, at: string | null): TaskRef => ({ key: `a:${t.gid}:${at ?? ""}`, title: t.name, client: t.client, stage: t.section, late: Boolean(t.open && t.due && t.due < today), due: t.due, href: t.url ?? "#", external: true, note, at });
+  const asanaRef = (t: T, note: string | null, at: string | null): TaskRef => ({ key: `a:${t.gid}:${at ?? ""}`, ...cleanTitle(t.name), client: t.client, stage: t.section, late: Boolean(t.open && t.due && t.due < today), due: t.due, href: t.url ?? "#", external: true, note, at });
   const ticketRef = (r: Record<string, unknown>, note: string | null = null, at: string | null = null): TaskRef => ({
     key: `t:${r.number}:${at ?? ""}`,
-    title: r.title as string,
+    ...cleanTitle(r.title as string),
     client: (r.client_name as string | null) ?? null,
     stage: STAGE_NAME[r.stage as string] ?? (r.stage as string),
     late: (r.minutes_over as number) > 0,
@@ -264,6 +287,122 @@ export async function loadCreativeKpis(db: SupabaseClient, period: Period): Prom
       teamSendbacks[w].pieces += b[w].pieces;
     }
 
+  // ─── Per person: brief to the client, due dates met and pushed back (Asana pieces, and the Board's tickets) ───
+  const fmtDay = (x: string) => new Date(x.length === 10 ? `${x}T12:00:00` : x).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" });
+  type Per = { done: number[]; met: number; dueOf: number; missed: TaskRef[]; held: Set<string>; pushed: Map<string, TaskRef> };
+  const per = new Map<string, Per>();
+  const perOf = (id: string) => {
+    if (!per.has(id)) per.set(id, { done: [], met: 0, dueOf: 0, missed: [], held: new Set(), pushed: new Map() });
+    return per.get(id)!;
+  };
+  for (const t of tasks) {
+    for (const s of t.spans) {
+      if (!s.holder || !(makes(s) || s.col === "copy") || (s.to ?? new Date().toISOString()) < d90) continue;
+      const p = personFor(s.holder);
+      if (p) perOf(p.id).held.add(`a:${t.gid}`);
+    }
+    const firstClient = t.spans.find((s) => s.col === "client");
+    const made = t.spans.filter((s) => s.holder && makes(s)).at(-1);
+    const maker = made ? personFor(made.holder) : undefined;
+    if (maker && firstClient && firstClient.from >= d90) {
+      const p = perOf(maker.id);
+      p.done.push(bizDays(t.createdAt, firstClient.from));
+      // Against the due date first set (a later push doesn't make it on time)
+      const due = t.dues[0]?.from ?? t.dues[0]?.to ?? t.due;
+      if (due) {
+        p.dueOf++;
+        if (ymdNY(new Date(firstClient.from)) <= due.slice(0, 10)) p.met++;
+        else p.missed.push(asanaRef(t, `Reached the client ${fmtDay(firstClient.from)}, due ${fmtDay(due)}`, firstClient.from));
+      }
+    }
+    for (const e of t.dues) {
+      if (e.at < d90 || !e.from || !e.to || e.to <= e.from) continue;
+      const who = personFor(e.by);
+      // Counted only when they held the piece at that moment
+      const holding = t.spans.find((s) => s.from <= e.at && (!s.to || s.to >= e.at));
+      if (!who || !holding?.holder || personFor(holding.holder)?.id !== who.id) continue;
+      perOf(who.id).pushed.set(`a:${t.gid}`, asanaRef(t, `Due ${fmtDay(e.from)} → ${fmtDay(e.to)}`, e.at));
+    }
+  }
+  const ticketById = new Map((tickets ?? []).map((r) => [r.id as string, r]));
+  for (const r of tickets ?? []) {
+    const owner = (r.creative_id ?? r.assignee_id) as string | null;
+    if (owner && (r.updated_at as string) >= d90) perOf(owner).held.add(`t:${r.number}`);
+  }
+  for (const e of dueEvents ?? []) {
+    const r = ticketById.get(e.request_id as string);
+    const d = (e.data ?? {}) as { from?: string | null; to?: string | null };
+    const owner = r ? ((r.creative_id ?? r.assignee_id) as string | null) : null;
+    if (!r || !owner || e.actor_id !== owner || !d.from || !d.to || d.to <= d.from) continue;
+    perOf(owner).pushed.set(`t:${r.number}`, ticketRef(r, `Due ${fmtDay(d.from)} → ${fmtDay(d.to)}`, e.created_at as string));
+  }
+
+  // ─── Winners, credited to whoever made them ───
+  const kept = (key: string, image: string | null) => (/^\d{5,25}$/.test(key) ? `/api/ad-media/${key}` : image);
+  const toWinner = (w: Record<string, unknown>): Winner => {
+    const d = (w.detail ?? {}) as { image?: string; text?: string; headline?: string; cta?: string; name?: string };
+    const c = clientById.get(w.client_id as string)!;
+    const first = w.first_seen ? Date.parse(`${w.first_seen}T00:00:00`) : Date.now();
+    const last = w.last_seen ? Date.parse(`${w.last_seen}T00:00:00`) : Date.now();
+    return {
+      key: w.key as string,
+      clientId: w.client_id as string,
+      client: c.name as string,
+      slug: c.slug as string,
+      name: d.name ?? (w.title as string),
+      image: kept(w.key as string, d.image ?? null),
+      text: d.text ?? null,
+      headline: d.headline ?? (w.title as string) ?? null,
+      cta: d.cta ?? null,
+      result: (w.result_label as string | null) ?? null,
+      costPerResult: w.cost_per_result == null ? null : Number(w.cost_per_result),
+      target: w.target == null ? null : Number(w.target),
+      roas: w.roas == null ? null : Number(w.roas),
+      spend: Number(w.spend ?? 0),
+      results: Number(w.results ?? 0),
+      days: Math.max(1, Math.round((last - first) / 86_400_000) + 1),
+    };
+  };
+  const ticketMaker = new Map((winTicketRows ?? []).map((r) => [r.number as number, { id: ((r.creative_id ?? r.assignee_id) as string | null) ?? null, title: r.title as string }]));
+  const STOP = new Set(["meta", "ads", "need", "new", "creative", "creatives", "image", "images", "video", "videos", "carousel", "urgent", "static", "statics", "round", "post", "boosted", "copy", "with", "from", "this", "that", "variation", "variations", "version", "final", "launch"]);
+  const words = (x: string) => new Set(x.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 4 && !STOP.has(w) && !/^\d+$/.test(w)));
+  const winsBy = new Map<string, WinnerAd[]>();
+  for (const w of allWins ?? []) {
+    const c = clientById.get(w.client_id as string);
+    if (!c) continue;
+    const d = (w.detail ?? {}) as { ticket?: number; name?: string };
+    let who: string | null = null;
+    let how: WinnerAd["how"] = "launched";
+    let task: string | null = null;
+    const fromTicket = typeof d.ticket === "number" ? ticketMaker.get(d.ticket) : undefined;
+    if (fromTicket?.id) {
+      who = fromTicket.id;
+      task = `#${d.ticket} ${cleanTitle(fromTicket.title).title}`;
+    } else {
+      // Conservative: the client's Asana piece whose title shares two or more real words with the ad's name, made
+      // before the ad started (within 75 days), and clearly the best match
+      const clientWords = words(c.name as string);
+      const adWords = [...words(`${d.name ?? ""} ${w.title ?? ""}`)].filter((x) => !clientWords.has(x));
+      const seen = w.first_seen as string;
+      const found = tasks
+        .filter((t) => t.clientId === w.client_id && t.createdAt.slice(0, 10) <= seen && Date.parse(`${seen}T00:00:00`) - Date.parse(t.createdAt) <= 75 * 86_400_000)
+        .map((t) => ({ t, hits: [...words(cleanTitle(t.name).title)].filter((x) => !clientWords.has(x) && adWords.includes(x)).length }))
+        .filter((x) => x.hits >= 2)
+        .sort((a, b) => b.hits - a.hits);
+      if (found.length && (found.length === 1 || found[0].hits > found[1].hits)) {
+        const made = found[0].t.spans.filter((s) => s.holder && makes(s)).at(-1);
+        const p = made ? personFor(made.holder) : undefined;
+        if (p) {
+          who = p.id;
+          how = "name";
+          task = cleanTitle(found[0].t.name).title;
+        }
+      }
+    }
+    if (!who) continue;
+    winsBy.set(who, [...(winsBy.get(who) ?? []), { ...toWinner(w), how, task }]);
+  }
+
   // ─── Makers ───
   const openBy = new Map<string, { open: number; late: number; plate: TaskRef[] }>();
   const live = (tickets ?? []).filter((t) => t.stage !== "launched");
@@ -305,6 +444,8 @@ export async function loadCreativeKpis(db: SupabaseClient, period: Period): Prom
     const b = sb.get(s.profileId ?? "") ?? { d45: { internal: 0, client: 0, pieces: 0 }, d90: { internal: 0, client: 0, pieces: 0 }, items: [] };
     const errs = errors.byPerson.get(s.profileId ?? "") ?? [];
     const plate = o.plate.sort((a, b2) => Number(b2.late) - Number(a.late) || (a.due ?? "9").localeCompare(b2.due ?? "9"));
+    const pp = per.get(s.profileId ?? "");
+    const doneAvg = pp?.done.length ? r1(avg(pp.done)) : null;
     return {
       ...s,
       role: roleLabel(key as TeamRole),
@@ -316,8 +457,23 @@ export async function loadCreativeKpis(db: SupabaseClient, period: Period): Prom
       revisions: b.items.sort((a, b2) => (b2.at ?? "").localeCompare(a.at ?? "")).slice(0, 12),
       sendbacks: { d45: b.d45, d90: b.d90 },
       errors: { d45: errs.filter((e) => e.at >= d45).length, d90: errs.length, items: errs.slice(0, 12) },
+      briefToDone: doneAvg,
+      metDue: { pct: pp?.dueOf ? Math.round((pp.met / pp.dueOf) * 100) : null, of: pp?.dueOf ?? 0, missed: (pp?.missed ?? []).sort((a, b2) => (b2.at ?? "").localeCompare(a.at ?? "")).slice(0, 12) },
+      pushedBack: { pct: pp?.held.size ? Math.round((pp.pushed.size / pp.held.size) * 100) : null, of: pp?.held.size ?? 0, items: [...(pp?.pushed.values() ?? [])].sort((a, b2) => (b2.at ?? "").localeCompare(a.at ?? "")).slice(0, 12) },
+      winners: (winsBy.get(s.profileId ?? "") ?? []).sort((a, b2) => b2.spend - a.spend),
     };
   });
+  const mean = (xs: (number | null)[]) => {
+    const v = xs.filter((x): x is number => x != null);
+    return v.length ? r1(v.reduce((a, b) => a + b, 0) / v.length) : null;
+  };
+  const teamAvg = {
+    briefToDone: mean(makers.map((m) => m.briefToDone)),
+    metDue: mean(makers.map((m) => m.metDue.pct)),
+    pushedBack: mean(makers.map((m) => m.pushedBack.pct)),
+    revisionTurnaround: mean(makers.map((m) => m.revisionTurnaround)),
+    winners: makers.reduce((n, m) => n + m.winners.length, 0),
+  };
 
   // ─── Allotments, per creative-package client, this billing cycle ───
   const dismissedOf = new Map((dismissals ?? []).map((d) => [`${d.client_id}:${d.period_start}`, { reason: (d.reason as string | null) ?? null, by: (d.profiles as unknown as { full_name: string } | null)?.full_name ?? null, at: d.dismissed_at as string }]));
@@ -343,7 +499,10 @@ export async function loadCreativeKpis(db: SupabaseClient, period: Period): Prom
     .filter((t) => (t.minutes_over as number) > 0)
     .sort((a, b) => (b.minutes_over as number) - (a.minutes_over as number))
     .slice(0, 8)
-    .map((t) => ({ number: t.number as number, title: t.title as string, client: (t.client_name as string) ?? "", stage: STAGE_NAME[t.stage as string] ?? (t.stage as string), hoursOver: Math.round((t.minutes_over as number) / 60), assignee: (t.assignee_name as string | null) ?? null }));
+    .map((t) => {
+      const c = cleanTitle(t.title as string);
+      return { id: t.id as string, number: t.number as number, title: c.title, urgent: c.urgent, client: (t.client_name as string) ?? "", stage: STAGE_NAME[t.stage as string] ?? (t.stage as string), hoursOver: Math.round((t.minutes_over as number) / 60), assignee: (t.assignee_name as string | null) ?? null, due: (t.stage_due_at as string | null) ?? null };
+    });
 
   // ─── Creative in the ad accounts ───
   const byClient = new Map<string, { w: number; j: number }>();
@@ -362,30 +521,7 @@ export async function loadCreativeKpis(db: SupabaseClient, period: Period): Prom
   const winners: Winner[] = (winnersRaw ?? [])
     .filter((w) => clientById.has(w.client_id as string))
     .slice(0, 6)
-    .map((w) => {
-      const d = (w.detail ?? {}) as { image?: string; text?: string; headline?: string; cta?: string; name?: string };
-      const c = clientById.get(w.client_id as string)!;
-      const first = w.first_seen ? Date.parse(`${w.first_seen}T00:00:00`) : Date.now();
-      const last = w.last_seen ? Date.parse(`${w.last_seen}T00:00:00`) : Date.now();
-      return {
-        key: w.key as string,
-        clientId: w.client_id as string,
-        client: c.name as string,
-        slug: c.slug as string,
-        name: d.name ?? (w.title as string),
-        image: d.image ?? null,
-        text: d.text ?? null,
-        headline: d.headline ?? (w.title as string) ?? null,
-        cta: d.cta ?? null,
-        result: (w.result_label as string | null) ?? null,
-        costPerResult: w.cost_per_result == null ? null : Number(w.cost_per_result),
-        target: w.target == null ? null : Number(w.target),
-        roas: w.roas == null ? null : Number(w.roas),
-        spend: Number(w.spend ?? 0),
-        results: Number(w.results ?? 0),
-        days: Math.max(1, Math.round((last - first) / 86_400_000) + 1),
-      };
-    });
+    .map((w) => toWinner(w));
 
   // ─── Act on this: the few things that matter most, each linking to where it's handled ───
   const actions: Action[] = [];
@@ -413,6 +549,7 @@ export async function loadCreativeKpis(db: SupabaseClient, period: Period): Prom
     revisionClients: (now?.revisions ?? []).map((r) => ({ ...r, recent: (recentByClient.get(slugToId.get(r.slug ?? "") ?? "") ?? []).sort((a, b) => (b.at ?? "").localeCompare(a.at ?? "")).slice(0, 5) })),
     slowClients: now?.slow ?? [],
     late,
+    teamAvg,
     teamSendbacks,
     winners,
     watch: watch ?? [],

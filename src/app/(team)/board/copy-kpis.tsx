@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Copywriter, CopyKpis } from "@/lib/copy-kpis";
 import { HeadlineCard, KpiHeader, Meter, Section, TONES } from "./creative-kpis";
 import { LiveRefresh, Tween } from "./live-kpis";
+import { LateRow, TiringCard, WinnerCard } from "./kpi-parts";
 
 // The copy team's KPIs (execs and leads, a tab on the Board): what to act on first, how fast copy moves from approved
 // creative to an AI draft to approved, how often it's approved first time by us and by the client, what the client-rule
@@ -182,17 +183,9 @@ export function CopyKpisView({ k }: { k: CopyKpis }) {
 
           <Section kicker="On the Board" title="Copy late right now">
             {k.late.length ? (
-              <ul className="grid gap-1 rounded-[20px] border border-line bg-surface p-2">
+              <ul className="grid rounded-[20px] border border-line bg-surface p-1.5">
                 {k.late.map((t) => (
-                  <li key={t.number}>
-                    <Link href={`/board?t=${t.number}`} className="flex items-baseline justify-between gap-3 rounded-[12px] px-2.5 py-2 text-[13px] hover:bg-ink/[0.04]">
-                      <span className="min-w-0 truncate">
-                        <span className="text-faint">#{t.number}</span> {t.client && <span className="text-muted">{t.client} · </span>}
-                        {t.title}
-                      </span>
-                      <span className="tabular shrink-0 text-[12px] text-bad">{t.hoursOver}h over</span>
-                    </Link>
-                  </li>
+                  <LateRow key={t.number} t={t} />
                 ))}
               </ul>
             ) : (
@@ -201,6 +194,43 @@ export function CopyKpisView({ k }: { k: CopyKpis }) {
           </Section>
         </div>
       </div>
+
+      <Section kicker="In the feed" title="Copy that's winning" aside={<span className="text-[12px] text-faint">Profitable winners, read for their words</span>}>
+        {k.copyWinners.length ? (
+          <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+            {k.copyWinners.map((w) => (
+              <WinnerCard key={w.key} w={w} copy={{ ctr: w.ctr, angle: w.angle }} />
+            ))}
+          </div>
+        ) : (
+          <p className="rounded-[18px] border border-line bg-surface px-4 py-6 text-center text-[14px] text-muted">No profitable winner with its copy read yet.</p>
+        )}
+      </Section>
+
+      <Section kicker="In the feed" title="Copy wearing out" aside={<span className="text-[12px] text-faint">Clicks falling while the creative still stops people</span>}>
+        {k.copyTiring.length ? (
+          <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+            {k.copyTiring.map((r) => (
+              <TiringCard key={`${r.clientId}:${r.adId}`} r={r} copy />
+            ))}
+          </div>
+        ) : (
+          <p className="rounded-[18px] bg-ok-soft px-4 py-3 text-[13px] text-ok">No ad&apos;s words are wearing out.</p>
+        )}
+        {k.repeated.length > 0 && (
+          <div className="grid gap-1 rounded-[20px] border border-line bg-surface p-3">
+            <p className="px-1.5 pb-1 text-[12px] font-medium">Angles leaned on again and again (60 days)</p>
+            {k.repeated.map((r) => (
+              <Link key={`${r.slug}${r.angle}`} href={`/clients/${r.slug}`} className="flex items-baseline justify-between gap-3 rounded-[12px] px-1.5 py-1.5 text-[13px] hover:bg-ink/[0.04]">
+                <span className="min-w-0 truncate">
+                  {r.angle} <span className="text-muted">· {r.client}</span>
+                </span>
+                <span className="tabular shrink-0 text-[12px] text-warn">{r.sets} sets</span>
+              </Link>
+            ))}
+          </div>
+        )}
+      </Section>
 
       <Section kicker="In the ad accounts" title="Copy that won" aside={<span className="text-[12px] text-faint">Each set&apos;s angle judged in the ad account: profitable winners only</span>}>
         <div className="grid gap-3 lg:grid-cols-2">

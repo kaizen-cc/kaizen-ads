@@ -5,14 +5,15 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { HoverCard } from "@/components/hover-card";
 import { AdPreview } from "@/components/ad-preview";
-import type { ClientAllotment, Maker, Sendbacks, TaskRef, Winner } from "@/lib/creative-kpis";
+import type { ClientAllotment, CreativeKpis, Maker, Sendbacks, TaskRef, Winner, WinnerAd } from "@/lib/creative-kpis";
+import { adMediaUrl } from "@/components/ad-img";
 import type { ErrorItem } from "@/lib/creative-errors";
 import type { WatchRow } from "@/lib/fatigue";
 import type { OpenSuggestion } from "@/lib/suggestions";
 import { closeParams, closeThen, pushParams, useParam } from "@/lib/url-state";
 import { SuggestionSheet } from "@/app/(team)/pipeline/views/suggested-briefs";
-import { briefFromWinner } from "@/app/(team)/winners/actions";
-import { briefRefresh } from "@/app/(team)/fatigue/actions";
+import { startRefreshBrief, startWinnerBrief } from "@/app/(team)/brief-job-actions";
+import { BriefProgress, trackJob, useJobFor } from "@/components/brief-jobs";
 import { checkErrorsNow, dismissAllotment, restoreAllotment } from "./kpi-actions";
 
 // The interactive pieces of the KPI tabs: tasks you can open from anywhere (a Board ticket opens its drawer, an Asana
@@ -35,7 +36,10 @@ export function TaskRow({ t, compact = false }: { t: TaskRef; compact?: boolean 
     <>
       <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${t.late ? "bg-bad" : "bg-ink/25"}`} aria-hidden />
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[13.5px] leading-snug text-fg">{t.title}</span>
+        <span className="flex min-w-0 items-start gap-1.5">
+          {t.urgent && <span className="mt-0.5 shrink-0 rounded-full bg-bad-soft px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-bad">Urgent</span>}
+          <span className="line-clamp-2 min-w-0 text-[13.5px] leading-snug text-fg [overflow-wrap:anywhere]">{t.title}</span>
+        </span>
         <span className="block truncate text-[11.5px] text-muted">
           {[t.client, t.stage, t.late ? "late" : t.due ? `due ${when(t.due)}` : null].filter(Boolean).join(" · ")}
         </span>
@@ -146,6 +150,32 @@ function Rate({ label, s, kind }: { label: string; s: { d45: Sendbacks; d90: Sen
   );
 }
 
+/** How a person's 0–100 score is worked out, with their own numbers */
+function ScoreExplained({ m }: { m: Maker }) {
+  const parts: [string, string, string][] = [
+    ["First-pass approval", "40%", m.firstPass == null ? "not enough yet" : `${m.firstPass}% went through with no changes`],
+    ["Turnaround vs target", "30%", m.turnaround == null ? "not enough yet" : `${m.turnaround}d per piece, target ${m.turnaroundTarget}d`],
+    ["Revision turnaround", "15%", m.revisionTurnaround == null ? "no revisions yet" : `${m.revisionTurnaround}d to send a revision back, target 1d`],
+    ["Nothing left sitting", "15%", m.sitting.length ? `${m.sitting.length} ${m.sitting.length === 1 ? "piece" : "pieces"} on them 2+ business days` : "nothing waiting on them"],
+  ];
+  return (
+    <div className="grid gap-2">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">Score · {m.score ?? "not yet"}{m.level ? ` · ${m.level}` : ""}</p>
+      <p className="text-[12.5px] leading-snug text-muted">Out of 100, from their own work in this period:</p>
+      <ul className="grid gap-1.5">
+        {parts.map(([k, w, v]) => (
+          <li key={k} className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 text-[12.5px]">
+            <span className="text-fg">{k}</span>
+            <span className="tabular text-faint">{w}</span>
+            <span className="col-span-2 text-[11.5px] text-muted">{v}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="text-[11px] text-faint">90+ on fire · 75+ strong · 60+ steady. The ▲▼ is against the period before.</p>
+    </div>
+  );
+}
+
 /** A person on the team: tap the card for everything on their plate; glance into the counts without leaving */
 export function PersonCard({ m }: { m: Maker }) {
   const tone = m.score == null ? "text-faint" : m.score >= 75 ? "text-ok" : m.score >= 60 ? "text-warn" : "text-bad";
@@ -165,10 +195,15 @@ export function PersonCard({ m }: { m: Maker }) {
             <p className="truncate font-heading text-[17px] leading-tight">{m.name}</p>
             <p className="text-[12px] text-muted">{m.level}</p>
           </div>
-          <div className="text-right">
-            <p className={`tabular font-display text-[28px] leading-none ${tone}`}>{m.score ?? "—"}</p>
-            {trend != null && trend !== 0 && <p className={`tabular text-[11px] ${trend > 0 ? "text-ok" : "text-bad"}`}>{trend > 0 ? "▲" : "▼"} {Math.abs(trend)}</p>}
-          </div>
+          <span onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+            <HoverCard width={380} content={<ScoreExplained m={m} />}>
+              <button type="button" className="grid justify-items-end rounded-[12px] px-1.5 py-1 text-right hover:bg-ink/[0.05]" aria-label={`Score ${m.score ?? "not yet"}: how it's worked out`}>
+                <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-faint">Score</span>
+                <span className={`tabular font-display text-[28px] leading-none ${tone}`}>{m.score ?? "—"}</span>
+                {trend != null && trend !== 0 && <span className={`tabular text-[11px] ${trend > 0 ? "text-ok" : "text-bad"}`}>{trend > 0 ? "▲" : "▼"} {Math.abs(trend)}</span>}
+              </button>
+            </HoverCard>
+          </span>
         </div>
 
         <dl className="grid grid-cols-3 gap-3">
@@ -176,7 +211,7 @@ export function PersonCard({ m }: { m: Maker }) {
             [
               ["Passed on", String(m.pieces), null],
               ["First pass", m.firstPass == null ? "—" : `${m.firstPass}%`, m.firstPass == null ? null : m.firstPass >= 70 ? "text-ok" : m.firstPass >= 50 ? "text-warn" : "text-bad"],
-              ["On time", m.onTime == null ? "—" : `${m.onTime}%`, m.onTime == null ? null : m.onTime >= 80 ? "text-ok" : m.onTime >= 60 ? "text-warn" : "text-bad"],
+              ["Met due date", m.metDue.pct == null ? "—" : `${m.metDue.pct}%`, m.metDue.pct == null ? null : m.metDue.pct >= 80 ? "text-ok" : m.metDue.pct >= 60 ? "text-warn" : "text-bad"],
             ] as const
           ).map(([k, v, c]) => (
             <div key={k} className="grid gap-0.5">
@@ -184,6 +219,17 @@ export function PersonCard({ m }: { m: Maker }) {
               <dd className={`tabular text-[20px] font-semibold leading-none ${c ?? "text-fg"}`}>{v}</dd>
             </div>
           ))}
+        </dl>
+
+        <dl className="grid grid-cols-2 gap-3 border-t border-line pt-3">
+          <div className="grid gap-0.5">
+            <dt className="text-[11px] text-muted">Brief → client</dt>
+            <dd className="tabular text-[15px] font-semibold leading-tight">{m.briefToDone == null ? "—" : `${m.briefToDone}d`}</dd>
+          </div>
+          <div className="grid gap-0.5">
+            <dt className="text-[11px] text-muted">Revision back in</dt>
+            <dd className={`tabular text-[15px] font-semibold leading-tight ${m.revisionTurnaround == null ? "" : m.revisionTurnaround <= 1 ? "text-ok" : m.revisionTurnaround <= 2 ? "text-warn" : "text-bad"}`}>{m.revisionTurnaround == null ? "—" : `${m.revisionTurnaround}d`}</dd>
+          </div>
         </dl>
 
         <div className="grid grid-cols-2 gap-3 rounded-[14px] bg-ink/[0.035] p-3">
@@ -201,6 +247,20 @@ export function PersonCard({ m }: { m: Maker }) {
           <Peek label={m.errors.d90 === 1 ? "error" : "errors"} n={m.errors.d90} tone={m.errors.d45 >= 3 ? "bad" : m.errors.d90 ? "warn" : null} title={`Real errors · ${m.errors.d45} in 45 days, ${m.errors.d90} in 90`}>
             <ErrorList items={m.errors.items} />
           </Peek>
+          <Peek label={`pushed back${m.pushedBack.pct != null ? ` · ${m.pushedBack.pct}%` : ""}`} n={m.pushedBack.items.length} tone={(m.pushedBack.pct ?? 0) >= 25 ? "warn" : null} title={`Due dates they moved later · ${m.pushedBack.items.length} of ${m.pushedBack.of} pieces, 90 days`}>
+            <TaskList items={m.pushedBack.items} empty="They haven't moved a due date later in the last 90 days." />
+          </Peek>
+          <span onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              disabled={!m.winners.length || !m.profileId}
+              onClick={() => m.profileId && pushParams({ winners: m.profileId })}
+              className={`inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-[12.5px] transition-colors max-md:min-h-11 ${m.winners.length ? "border-ok/30 bg-ok-soft text-ok hover:border-ok/60" : "border-line text-faint"}`}
+            >
+              <span className="tabular font-semibold">{m.winners.length}</span> winning {m.winners.length === 1 ? "ad" : "ads"}
+              {m.winners.length > 0 && <span aria-hidden>→</span>}
+            </button>
+          </span>
         </div>
 
         {m.act && <p className="rounded-[12px] bg-warn-soft px-3 py-2 text-[12.5px] leading-snug text-warn">{m.act}</p>}
@@ -261,10 +321,34 @@ export function PersonSheet({ makers }: { makers: Maker[] }) {
               </div>
             ))}
           </div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {(
+              [
+                ["Brief → client", m.briefToDone == null ? "—" : `${m.briefToDone}d`, "business days"],
+                ["Met due date", m.metDue.pct == null ? "—" : `${m.metDue.pct}%`, `of ${m.metDue.of} with a due date`],
+                ["Pushed back", m.pushedBack.pct == null ? "—" : `${m.pushedBack.pct}%`, `${m.pushedBack.items.length} of ${m.pushedBack.of} pieces`],
+                ["Revision back in", m.revisionTurnaround == null ? "—" : `${m.revisionTurnaround}d`, "business days"],
+              ] as const
+            ).map(([k, v, sub]) => (
+              <div key={k} className="grid gap-1 rounded-[16px] border border-line bg-surface p-3">
+                <span className="text-[11px] text-muted">{k}</span>
+                <span className="tabular font-display text-[22px] leading-none">{v}</span>
+                <span className="text-[11px] text-faint">{sub}</span>
+              </div>
+            ))}
+          </div>
           <div className="grid grid-cols-2 gap-3 rounded-[16px] border border-line bg-surface p-4">
             <Rate label="Sent back internally" s={m.sendbacks} kind="internal" />
             <Rate label="Sent back by clients" s={m.sendbacks} kind="client" />
           </div>
+          {m.winners.length > 0 && m.profileId && (
+            <button type="button" onClick={() => pushParams({ winners: m.profileId, person: null })} className="flex min-h-12 items-center justify-between rounded-[16px] border border-ok/30 bg-ok-soft px-4 text-[14px] text-ok">
+              <span>
+                <b className="tabular">{m.winners.length}</b> winning {m.winners.length === 1 ? "ad" : "ads"} from their work
+              </span>
+              <span aria-hidden>See them →</span>
+            </button>
+          )}
           {m.act && <p className="rounded-[14px] bg-warn-soft px-4 py-3 text-[13px] text-warn">{m.act}</p>}
           <section className="grid gap-2">
             <h3 className="font-heading text-[16px]">On their plate right now</h3>
@@ -278,6 +362,26 @@ export function PersonSheet({ makers }: { makers: Maker[] }) {
               {m.revisions.length ? m.revisions.map((t) => <TaskRow key={t.key} t={t} />) : <p className="px-3 py-3 text-[13px] text-muted">Nothing came back.</p>}
             </div>
           </section>
+          {m.pushedBack.items.length > 0 && (
+            <section className="grid gap-2">
+              <h3 className="font-heading text-[16px]">Due dates they moved later</h3>
+              <div className="rounded-[16px] border border-line bg-surface p-1.5">
+                {m.pushedBack.items.map((t) => (
+                  <TaskRow key={t.key} t={t} />
+                ))}
+              </div>
+            </section>
+          )}
+          {m.metDue.missed.length > 0 && (
+            <section className="grid gap-2">
+              <h3 className="font-heading text-[16px]">Reached the client after the due date</h3>
+              <div className="rounded-[16px] border border-line bg-surface p-1.5">
+                {m.metDue.missed.map((t) => (
+                  <TaskRow key={t.key} t={t} />
+                ))}
+              </div>
+            </section>
+          )}
           <section className="grid gap-2">
             <h3 className="font-heading text-[16px]">Real errors, last 90 days</h3>
             <p className="text-[12px] text-faint">Objective mistakes only (a typo, a missing button, the wrong size, logo, offer or link), not changes of taste.</p>
@@ -288,6 +392,134 @@ export function PersonSheet({ makers }: { makers: Maker[] }) {
         </div>
       </aside>
     </div>
+  );
+}
+
+/** A person's winning ads, as they run in the feed (?winners=<profile id>) */
+export function WinnersSheet({ makers }: { makers: Maker[] }) {
+  const id = useParam("winners");
+  const m = makers.find((x) => x.profileId === id);
+  useEffect(() => {
+    if (!m) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && closeParams("winners");
+    window.addEventListener("keydown", onKey);
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = overflow;
+    };
+  }, [m]);
+  if (!m) return null;
+  const launched = m.winners.filter((w) => w.how === "launched").length;
+  return (
+    <div className="fixed inset-0 z-[90]" role="dialog" aria-modal="true" aria-label={`${m.name}'s winning ads`}>
+      <div className="absolute inset-0 bg-black/55 backdrop-blur-[2px]" onClick={() => closeParams("winners")} aria-hidden />
+      <aside className="pb-safe absolute inset-x-0 bottom-0 top-[5vh] grid grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-t-[26px] border border-line bg-bg shadow-[0_-30px_80px_-30px_rgba(0,0,0,0.8)] md:inset-6 md:rounded-[26px]">
+        <header className="flex items-center gap-3 border-b border-line px-5 py-4">
+          <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-ok-soft text-[14px] font-semibold text-ok">{initials(m.name)}</span>
+          <div className="min-w-0 flex-1">
+            <p className="truncate font-heading text-[20px] leading-tight">{m.name}&rsquo;s winning ads</p>
+            <p className="text-[12.5px] text-muted">
+              {m.winners.length} profitable {m.winners.length === 1 ? "winner" : "winners"} · {launched} launched from Kaizen Ads{m.winners.length - launched ? `, ${m.winners.length - launched} matched to their Asana work by name` : ""}
+            </p>
+          </div>
+          <button type="button" onClick={() => closeParams("winners")} aria-label="Close" className="grid h-11 w-11 place-items-center rounded-full text-muted hover:bg-ink/[0.06] hover:text-fg">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </header>
+        <div className="overflow-y-auto overscroll-contain px-5 py-6">
+          <div className="mx-auto grid max-w-6xl gap-6 sm:grid-cols-2 xl:grid-cols-3">
+            {m.winners.map((w) => (
+              <WinnerCard key={w.key} w={w} credit={w} />
+            ))}
+          </div>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+/** A late ticket at a glance: its newest creative, where it is, who has it, and the last comment (loaded on hover) */
+function TicketPeek({ t }: { t: CreativeKpis["late"][number] }) {
+  const [media, setMedia] = useState<{ thumb: string | null; comment: { body: string; author: string | null } | null } | "loading" | null>("loading");
+  useEffect(() => {
+    let off = false;
+    fetch(`/api/board/media/${t.id}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { designs?: { versions: { files: { thumbUrl: string | null; url: string | null }[] }[] }[]; comments?: { body: string; author: string | null; at: string }[] } | null) => {
+        if (off) return;
+        const file = j?.designs?.[0]?.versions?.[0]?.files?.[0];
+        const last = [...(j?.comments ?? [])].sort((a, b) => b.at.localeCompare(a.at))[0];
+        setMedia({ thumb: file?.thumbUrl ?? file?.url ?? null, comment: last ? { body: last.body, author: last.author } : null });
+      })
+      .catch(() => !off && setMedia(null));
+    return () => {
+      off = true;
+    };
+  }, [t.id]);
+  const m = media === "loading" ? null : media;
+  return (
+    <div className="grid gap-2.5">
+      <div className="grid gap-0.5">
+        <span className="flex items-center gap-1.5 text-[11px] text-faint">
+          #{t.number}
+          {t.urgent && <span className="rounded-full bg-bad-soft px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-bad">Urgent</span>}
+        </span>
+        <span className="text-[14px] font-medium leading-snug [overflow-wrap:anywhere]">{t.title}</span>
+      </div>
+      <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[12px]">
+        {(
+          [
+            ["Client", t.client || "—"],
+            ["Stage", t.stage],
+            ["With", t.assignee ?? "nobody yet"],
+            ["Late by", `${t.hoursOver}h`],
+          ] as const
+        ).map(([k, v]) => (
+          <div key={k} className="grid">
+            <dt className="text-faint">{k}</dt>
+            <dd className={k === "Late by" ? "text-bad" : "text-fg"}>{v}</dd>
+          </div>
+        ))}
+      </dl>
+      {media === "loading" ? (
+        <span className="h-28 animate-pulse rounded-[10px] bg-ink/[0.06]" />
+      ) : m?.thumb ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={m.thumb} alt="" className="max-h-40 w-full rounded-[10px] object-cover" />
+      ) : null}
+      {m?.comment && (
+        <p className="rounded-[10px] bg-ink/[0.04] px-2.5 py-2 text-[12px] leading-snug text-muted">
+          <span className="text-fg">{m.comment.author ?? "Last comment"}:</span> {m.comment.body.slice(0, 220)}
+        </p>
+      )}
+      <p className="text-[11px] text-faint">Click to open the ticket</p>
+    </div>
+  );
+}
+
+/** A late ticket in the list: hover for the ticket, click to open it on the Board */
+export function LateRow({ t }: { t: CreativeKpis["late"][number] }) {
+  return (
+    <li>
+      <HoverCard width={400} className="block" content={<TicketPeek t={t} />}>
+        <Link href={`/board?t=${t.number}`} className="flex items-start gap-3 rounded-[14px] px-3 py-2.5 hover:bg-ink/[0.04]">
+          <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-bad" />
+          <span className="min-w-0 flex-1">
+            <span className="flex min-w-0 items-start gap-1.5 text-[13.5px]">
+              <span className="shrink-0 text-faint">#{t.number}</span>
+              {t.urgent && <span className="mt-0.5 shrink-0 rounded-full bg-bad-soft px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-bad">Urgent</span>}
+              <span className="line-clamp-2 min-w-0 [overflow-wrap:anywhere]">{t.title}</span>
+            </span>
+            <span className="block truncate text-[11.5px] text-muted">{[t.client, t.stage, t.assignee].filter(Boolean).join(" · ")}</span>
+          </span>
+          <span className="tabular shrink-0 text-[12px] text-bad">{t.hoursOver}h over</span>
+        </Link>
+      </HoverCard>
+    </li>
   );
 }
 
@@ -468,37 +700,61 @@ export function ClientRevisions({ c }: { c: { client: string; slug: string | nul
   );
 }
 
+/** The ad's picture for a preview: the kept copy (Meta's own links expire), else the link we have */
+export function pictureOf(adId: string | null | undefined, image: string | null) {
+  const url = adMediaUrl(adId) ?? image;
+  return url ? ({ kind: "single", feed: { thumb: url, url, mime: "image/jpeg", aspect: "4x5" }, story: null } as const) : null;
+}
+
+/** The ad a background brief is written from */
+const jobKey = (j: { key?: string | null }) => j.key ?? null;
+
 const money = (n: number | null) => (n == null ? "—" : `$${n.toLocaleString("en-US", { maximumFractionDigits: n < 100 ? 2 : 0 })}`);
 
 /** A winning ad as it runs in the feed, why it wins, and a brief for more like it */
-export function WinnerCard({ w }: { w: Winner }) {
+export function WinnerCard({ w, credit, copy }: { w: Winner; credit?: WinnerAd; /** Shown for its copy: click-through and angle, and a copy-led brief */ copy?: { ctr: number | null; angle: string | null } }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [brief, setBrief] = useState<OpenSuggestion | null>(null);
   const open = useParam("brief");
+  const job = useJobFor("winner", (j) => (j.status === "queued" || j.status === "writing") && jobKey(j) === w.key);
   const better = w.target && w.costPerResult ? Math.round(((w.target - w.costPerResult) / w.target) * 100) : null;
   const go = async () => {
     setBusy(true);
     setError(null);
-    const r = await briefFromWinner(
+    const r = await startWinnerBrief(
       { adId: w.key, client: w.client, detail: null, headline: w.headline, text: w.text, thumbnail: w.image, ratio: w.target && w.costPerResult ? Math.round((w.target / w.costPerResult) * 10) / 10 : 1, result: w.result, costPerResult: w.costPerResult ?? 0, usual: w.target ?? w.costPerResult ?? 0 },
       w.clientId,
-    );
+      `${window.location.pathname}${window.location.search}`,
+    ).catch(() => ({ ok: false as const, error: "Couldn't start the brief. Try again." }));
     setBusy(false);
     if (!r.ok) return setError(r.error);
+    if ("job" in r) return trackJob(r.job);
     setBrief(r.suggestion);
     pushParams({ brief: r.suggestion.id });
   };
   return (
     <article className="grid content-start gap-3">
       <div className="pointer-events-none">
-        <AdPreview page={w.client} primaryText={w.text ?? ""} headline={w.headline ?? ""} description="" cta={w.cta ?? "Learn more"} media={w.image ? { kind: "single", feed: { thumb: w.image, url: w.image, mime: "image/jpeg", aspect: "4x5" }, story: null } : null} />
+        <AdPreview page={w.client} primaryText={w.text ?? ""} headline={w.headline ?? ""} description="" cta={w.cta ?? "Learn more"} media={pictureOf(w.key, w.image)} />
       </div>
       <div className="grid gap-2 rounded-[16px] border border-line bg-surface p-3.5">
         <p className="text-[12px] text-muted">
           <span className="font-medium text-ok">Why it wins</span> · {w.client} · {w.days} days live
         </p>
+        {copy && (
+          <p className="flex flex-wrap items-center gap-1.5 text-[11.5px] text-muted">
+            {copy.angle && <span className="rounded-full bg-brand/10 px-2 py-0.5 font-medium text-brand-text">{copy.angle}</span>}
+            {copy.ctr != null && <span className="rounded-full bg-ink/[0.05] px-2 py-0.5">CTR {copy.ctr}%</span>}
+          </p>
+        )}
+        {credit && (
+          <p className="flex flex-wrap items-center gap-1.5 text-[11.5px] text-muted">
+            <span className={`rounded-full px-2 py-0.5 font-medium ${credit.how === "launched" ? "bg-ok-soft text-ok" : "bg-warn-soft text-warn"}`}>{credit.how === "launched" ? "Launched from Kaizen Ads" : "Matched by name"}</span>
+            {credit.task && <span className="min-w-0 truncate">{credit.task}</span>}
+          </p>
+        )}
         <dl className="tabular grid grid-cols-3 gap-2 text-center">
           {(
             [
@@ -515,9 +771,13 @@ export function WinnerCard({ w }: { w: Winner }) {
           ))}
         </dl>
         {error && <p className="text-[12px] text-bad">{error}</p>}
-        <button type="button" onClick={go} disabled={busy} className="h-11 rounded-full bg-fg text-[14px] font-medium text-bg disabled:opacity-60">
-          {busy ? "Writing the brief…" : "Brief more like this"}
-        </button>
+        {job ? (
+          <BriefProgress job={job} />
+        ) : (
+          <button type="button" onClick={go} disabled={busy} className="h-11 rounded-full bg-fg text-[14px] font-medium text-bg disabled:opacity-60">
+            {busy ? "Starting…" : copy ? "Brief new copy like this" : "Brief more like this"}
+          </button>
+        )}
         <p className="text-center text-[11px] text-faint">Approve it, create it here, or send it to Asana</p>
       </div>
       {brief && open === brief.id && <SuggestionSheet s={brief} onClose={() => closeThen(() => router.refresh(), "brief")} />}
@@ -528,12 +788,13 @@ export function WinnerCard({ w }: { w: Winner }) {
 const pctChange = (x: number | null) => (x == null ? null : `${x > 0 ? "+" : "−"}${Math.round(Math.abs(x) * 100)}%`);
 
 /** A tiring ad as it runs, what's wearing out, and three ways to replace it */
-export function TiringCard({ r }: { r: WatchRow }) {
+export function TiringCard({ r, copy = false }: { r: WatchRow; /** Shown as copy wearing out (clicks falling, the creative still stopping people) */ copy?: boolean }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [brief, setBrief] = useState<OpenSuggestion | null>(null);
   const open = useParam("refresh");
+  const job = useJobFor("refresh", (j) => (j.status === "queued" || j.status === "writing") && jobKey(j) === r.adId);
   const s = r.signals;
   const tired = r.severity === "tired";
   const chips = [
@@ -545,9 +806,10 @@ export function TiringCard({ r }: { r: WatchRow }) {
   const refresh = async () => {
     setBusy(true);
     setError(null);
-    const res = await briefRefresh(r.clientId, r.adId);
+    const res = await startRefreshBrief(r.clientId, r.adId, r.headline ?? r.adName, `${window.location.pathname}${window.location.search}`).catch(() => ({ ok: false as const, error: "Couldn't start the brief. Try again." }));
     setBusy(false);
     if (!res.ok) return setError(res.error);
+    if ("job" in res) return trackJob(res.job);
     setBrief(res.suggestion);
     pushParams({ refresh: res.suggestion.id });
   };
@@ -555,10 +817,10 @@ export function TiringCard({ r }: { r: WatchRow }) {
     <article className="grid content-start gap-3">
       <div className="relative">
         <div className="pointer-events-none">
-          <AdPreview page={r.client} primaryText="" headline={r.headline ?? r.adName} description="" cta="Learn more" media={r.thumbnail ? { kind: "single", feed: { thumb: r.thumbnail, url: r.thumbnail, mime: "image/jpeg", aspect: "4x5" }, story: null } : null} />
+          <AdPreview page={r.client} primaryText="" headline={r.headline ?? r.adName} description="" cta="Learn more" media={pictureOf(r.adId, r.thumbnail)} />
         </div>
         <span className={`absolute left-3 top-3 rounded-full px-2.5 py-1 text-[11px] font-semibold shadow ${r.state === "refreshing" ? "bg-ok text-white" : tired ? "bg-bad text-white" : "bg-warn text-white"}`}>
-          {r.state === "refreshing" ? "Being refreshed" : tired ? "Tired: replace it" : "Tiring"}
+          {r.state === "refreshing" ? "Being refreshed" : copy ? "Copy wearing out" : tired ? "Tired: replace it" : "Tiring"}
         </span>
       </div>
       <div className="grid gap-2.5 rounded-[16px] border border-line bg-surface p-3.5">
@@ -589,9 +851,13 @@ export function TiringCard({ r }: { r: WatchRow }) {
           </p>
         ) : (
           <div className="grid gap-1.5">
-            <button type="button" onClick={refresh} disabled={busy} className="h-11 rounded-full bg-fg text-[14px] font-medium text-bg disabled:opacity-60">
-              {busy ? "Writing the refresh…" : r.briefId ? "Open the refresh brief" : "Brief a refresh"}
-            </button>
+            {job ? (
+              <BriefProgress job={job} />
+            ) : (
+              <button type="button" onClick={refresh} disabled={busy} className="h-11 rounded-full bg-fg text-[14px] font-medium text-bg disabled:opacity-60">
+                {busy ? "Starting…" : r.briefId ? "Open the refresh brief" : copy ? "Write new copy for this" : "Brief a refresh"}
+              </button>
+            )}
             <div className="grid grid-cols-2 gap-1.5">
               <Link href={`/requests/new?client=${r.clientSlug}`} className="grid h-10 place-items-center rounded-full border border-line text-[12.5px] text-muted hover:text-fg">
                 Brief from a winner

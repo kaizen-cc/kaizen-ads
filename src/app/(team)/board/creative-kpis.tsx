@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { PERIODS, type CreativeKpis, type Headline, type Maker, type Period } from "@/lib/creative-kpis";
 import { LiveRefresh, Tween } from "./live-kpis";
-import { AllotmentList, CheckErrors, ClientRevisions, PersonCard, PersonSheet, TiringCard, WinnerCard } from "./kpi-parts";
+import { AllotmentList, CheckErrors, ClientRevisions, LateRow, PersonCard, PersonSheet, TiringCard, WinnerCard, WinnersSheet } from "./kpi-parts";
 
 // The creative team's KPIs (execs and leads, a tab on the Board), built to read top to bottom: how it's going in six
 // numbers, the few things to act on, the team by role (tap anyone for everything on their plate, glance into what came
@@ -141,6 +141,7 @@ export function CreativeKpisView({ k, canDismiss }: { k: CreativeKpis; canDismis
     <div className="grid gap-12">
       <LiveRefresh />
       <PersonSheet makers={k.makers as Maker[]} />
+      <WinnersSheet makers={k.makers as Maker[]} />
       <KpiHeader active="kpis" period={k.period} base="/board?view=kpis" />
 
       {/* How it's going */}
@@ -195,6 +196,23 @@ export function CreativeKpisView({ k, canDismiss }: { k: CreativeKpis; canDismis
       >
         {groups.length ? (
           <div className="grid gap-8">
+            <dl className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+              {(
+                [
+                  ["Brief → client", k.teamAvg.briefToDone == null ? "—" : `${k.teamAvg.briefToDone}d`, "team average"],
+                  ["Met due date", k.teamAvg.metDue == null ? "—" : `${k.teamAvg.metDue}%`, "team average"],
+                  ["Due dates pushed back", k.teamAvg.pushedBack == null ? "—" : `${k.teamAvg.pushedBack}%`, "of pieces held"],
+                  ["Revision back in", k.teamAvg.revisionTurnaround == null ? "—" : `${k.teamAvg.revisionTurnaround}d`, "team average"],
+                  ["Winning ads", String(k.teamAvg.winners), "credited to the team"],
+                ] as const
+              ).map(([label, v, sub]) => (
+                <div key={label} className="grid gap-1 rounded-[18px] border border-line bg-surface px-4 py-3">
+                  <dt className="text-[11.5px] text-muted">{label}</dt>
+                  <dd className="tabular font-display text-[24px] leading-none">{v}</dd>
+                  <span className="text-[11px] text-faint">{sub}</span>
+                </div>
+              ))}
+            </dl>
             {groups.map((g) => (
               <div key={g.key} className="grid gap-3">
                 <p className="text-[13px] font-medium text-muted">
@@ -207,7 +225,7 @@ export function CreativeKpisView({ k, canDismiss }: { k: CreativeKpis; canDismis
                 </ul>
               </div>
             ))}
-            <p className="text-[11.5px] text-faint">Tap a card for everything on their plate. Score weighs first pass, turnaround, revisions and nothing left sitting. Errors are objective mistakes only, read from internal and client feedback.</p>
+            <p className="text-[11.5px] text-faint">Tap a card for everything on their plate. Hover the score for how it&apos;s worked out (first pass 40%, turnaround 30%, revision turnaround 15%, nothing left sitting 15%). Errors are objective mistakes only, read from internal and client feedback.</p>
           </div>
         ) : (
           <p className="rounded-[18px] border border-line bg-surface px-4 py-8 text-center text-[14px] text-muted">No designer, editor or copywriter passed work on in this period yet.</p>
@@ -269,18 +287,7 @@ export function CreativeKpisView({ k, canDismiss }: { k: CreativeKpis; canDismis
             {k.late.length ? (
               <ul className="grid rounded-[22px] border border-line bg-surface p-1.5">
                 {k.late.map((t) => (
-                  <li key={t.number}>
-                    <Link href={`/board?t=${t.number}`} className="flex items-start gap-3 rounded-[14px] px-3 py-2.5 hover:bg-ink/[0.04]">
-                      <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-bad" />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[13.5px]">
-                          <span className="text-faint">#{t.number}</span> {t.title}
-                        </span>
-                        <span className="block truncate text-[11.5px] text-muted">{[t.client, t.stage, t.assignee].filter(Boolean).join(" · ")}</span>
-                      </span>
-                      <span className="tabular shrink-0 text-[12px] text-bad">{t.hoursOver}h over</span>
-                    </Link>
-                  </li>
+                  <LateRow key={t.number} t={t} />
                 ))}
               </ul>
             ) : (
