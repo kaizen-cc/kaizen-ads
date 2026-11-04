@@ -54,7 +54,11 @@ export function HoverCard({ content, children, width = 380, className = "" }: { 
   }, [at, width]);
   useEffect(() => {
     if (!at) return;
-    const off = () => setAt(null);
+    // The page scrolling moves the anchor away: close. Scrolling inside the card itself (a long list) keeps it open
+    const off = (e: Event) => {
+      if (card.current && e.target instanceof Node && card.current.contains(e.target)) return;
+      setAt(null);
+    };
     window.addEventListener("scroll", off, true);
     return () => window.removeEventListener("scroll", off, true);
   }, [at]);
