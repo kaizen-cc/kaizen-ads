@@ -54,6 +54,8 @@ export type ChatTurn = {
   attachments?: { id: string; name: string; kind: "file" | "link" }[];
   /** What the desk changed in the knowledge base */
   done?: DeskAction[];
+  /** A change in the ad account (or the buyer) it planned: the plan card follows it there, to confirm */
+  plan?: { id: string };
 };
 
 const S = { type: "string" };

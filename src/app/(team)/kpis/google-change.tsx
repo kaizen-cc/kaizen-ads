@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import type { PlannedOp } from "@/lib/ad-changes";
+import { lineOf } from "@/lib/chat-change-core";
 import { applyPlanned, changeFor, discardPlanned, loadChange, planFrom, type ChangeView } from "./change-actions";
 
 // "Make this change in Google Ads / Meta" on an audit action or a sprint move: the buyer agent turns it into the exact
@@ -39,6 +40,8 @@ function Line({ op, platform }: { op: PlannedOp; platform: Platform }) {
         return [`${op.level === "adset" ? "Ad set" : op.level === "ad" ? "Ad" : "Campaign"} "${op.name}"${op.parent ? ` · ${op.parent}` : ""}`, op.from === "ACTIVE" ? "on" : op.from.toLowerCase(), op.to === "PAUSED" ? "paused" : "on"];
       case "meta_budget":
         return [`Daily budget · ${op.level === "adset" ? "ad set" : "campaign"} "${op.name}"`, money(op.from), money(op.to)];
+      default:
+        return lineOf(op);
     }
   })();
   const state = op.result ? (op.result.ok ? "applied" : "refused") : op.check ? (op.check.ok ? "checked" : "won't go through") : null;

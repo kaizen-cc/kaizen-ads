@@ -3,7 +3,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import type { Staff } from "@/lib/auth";
 import { googleMutate, googleWritableSetup, type WritableSetup } from "@/lib/context/google-ads";
+import { metaGraph } from "@/lib/context/meta";
 import { metaWritableSetup, metaWrite, type MetaSetup } from "@/lib/meta-write";
+import { replaceLinks, type ObjRef } from "@/lib/chat-change-core";
 
 // Changes made to an ad account from Kaizen Ads. An audit action or a sprint move is turned into specific changes by
 // the buyer agent (from the account's live setup), each one checked with the platform without being applied (Google's
@@ -21,10 +23,30 @@ export type ChangeOp =
   | { kind: "target_roas"; campaignId: string; campaign: string; bidding: string; from: number | null; to: number }
   | { kind: "negative_keywords"; campaignId: string; campaign: string; keywords: { text: string; match: "EXACT" | "PHRASE" | "BROAD" }[] }
   | { kind: "meta_status"; level: "campaign" | "adset" | "ad"; objectId: string; name: string; parent: string | null; from: string; to: "PAUSED" | "ACTIVE" }
-  | { kind: "meta_budget"; level: "campaign" | "adset"; objectId: string; name: string; parent: string | null; from: number | null; to: number };
+  | { kind: "meta_budget"; level: "campaign" | "adset"; objectId: string; name: string; parent: string | null; from: number | null; to: number }
+  // From the chat: rename, copy an ad into another ad set, swap an ad's link or UTMs (a new creative swapped in)
+  | { kind: "meta_rename"; level: "campaign" | "adset" | "ad"; objectId: string; name: string; parent: string | null; from: string; to: string }
+  | { kind: "meta_copy_ad"; objectId: string; name: string; parent: string | null; targetAdsetId: string; targetAdset: string; status: "PAUSED" | "ACTIVE" }
+  | { kind: "meta_link"; objectId: string; name: string; parent: string | null; from: string | null; to: string; only: string | null; tags: string | null }
+  | { kind: "google_ad_status"; adGroupId: string; adId: string; name: string; campaign: string; from: string; to: "PAUSED" | "ENABLED" }
+  | { kind: "google_keyword_status"; adGroupId: string; criterionId: string; name: string; campaign: string; from: string; to: "PAUSED" | "ENABLED" }
+  | { kind: "google_ad_url"; adGroupId: string; adId: string; name: string; campaign: string; from: string | null; to: string }
+  // The client's media buyer, through the same assignment and handoff as the client page
+  | { kind: "assign_buyer"; slot: "meta_buyer" | "google_buyer"; fromId: string | null; from: string | null; toId: string; to: string };
 
 /** Each change with what the platform said when it was checked, and what happened when it was applied. */
-export type PlannedOp = ChangeOp & { why: string; warning: string | null; check: { ok: boolean; error: string | null } | null; result: { ok: boolean; error: string | null } | null };
+export type PlannedOp = ChangeOp & {
+  why: string;
+  warning: string | null;
+  check: { ok: boolean; error: string | null } | null;
+  /** newId: what the change created (a copied ad, a new creative) */
+  result: { ok: boolean; error: string | null; newId?: string | null } | null;
+  /** From the chat: the object it touches as the buyer sees it (its creative, numbers and place), and where a copy goes */
+  ref?: ObjRef | null;
+  dest?: ObjRef | null;
+  /** From the chat: ticked to go ahead (a winner's runner-up candidates come unticked) */
+  selected?: boolean;
+};
 
 /** Who can apply a change: execs, the head of the account's platform, and the account's own buyer. */
 export function canApply(me: Staff, ownerId: string | null, platform: string = "google") {
@@ -75,10 +97,10 @@ function metaSetupText(s: MetaSetup) {
   ].join("\n");
 }
 
-type MetaRaw = { kind: string; level: string; id: string; status: string; amount: number; why: string };
+export type MetaRaw = { kind: string; level: string; id: string; status: string; amount: number; why: string };
 
 /** The AI's picks against the live setup: unknown IDs dropped, "from" read from Meta, no-ops skipped, big moves flagged. */
-function buildMeta(raw: MetaRaw[], s: MetaSetup): { ops: PlannedOp[]; dropped: string[] } {
+export function buildMeta(raw: MetaRaw[], s: MetaSetup): { ops: PlannedOp[]; dropped: string[] } {
   const ops: PlannedOp[] = [];
   const dropped: string[] = [];
   const base = { check: null, result: null };
@@ -168,7 +190,7 @@ const money = (n: number | null) => (n == null ? "not set" : `$${n.toFixed(2)}`)
 const pctChange = (from: number | null, to: number) => (from ? Math.round(((to - from) / from) * 100) : null);
 
 /** The AI's picks, made real against the live setup: unknown IDs dropped, "from" values read from Google, big moves flagged. */
-function build(raw: { kind: string; id: string; status: string; amount: number; keywords: { text: string; match: "EXACT" | "PHRASE" | "BROAD" }[]; why: string }[], s: WritableSetup): { ops: PlannedOp[]; dropped: string[] } {
+export function buildGoogle(raw: { kind: string; id: string; status: string; amount: number; keywords: { text: string; match: "EXACT" | "PHRASE" | "BROAD" }[]; why: string }[], s: WritableSetup): { ops: PlannedOp[]; dropped: string[] } {
   const ops: PlannedOp[] = [];
   const dropped: string[] = [];
   const base = { check: null, result: null };
@@ -218,7 +240,7 @@ function build(raw: { kind: string; id: string; status: string; amount: number; 
 }
 
 /** One change as Google's API operation. */
-function operation(account: string, op: ChangeOp): { service: "campaigns" | "campaignBudgets" | "adGroups" | "campaignCriteria"; ops: unknown[] } {
+function operation(account: string, op: ChangeOp): { service: "campaigns" | "campaignBudgets" | "adGroups" | "campaignCriteria" | "adGroupAds" | "adGroupCriteria" | "ads"; ops: unknown[] } {
   const cust = `customers/${account}`;
   const micros = (n: number) => String(Math.round(n * 1_000_000));
   switch (op.kind) {
@@ -238,6 +260,12 @@ function operation(account: string, op: ChangeOp): { service: "campaigns" | "cam
         : { service: "campaigns", ops: [{ update: { resourceName: `${cust}/campaigns/${op.campaignId}`, maximizeConversionValue: { targetRoas: op.to } }, updateMask: "maximize_conversion_value.target_roas" }] };
     case "negative_keywords":
       return { service: "campaignCriteria", ops: op.keywords.map((k) => ({ create: { campaign: `${cust}/campaigns/${op.campaignId}`, negative: true, keyword: { text: k.text, matchType: k.match } } })) };
+    case "google_ad_status":
+      return { service: "adGroupAds", ops: [{ update: { resourceName: `${cust}/adGroupAds/${op.adGroupId}~${op.adId}`, status: op.to }, updateMask: "status" }] };
+    case "google_keyword_status":
+      return { service: "adGroupCriteria", ops: [{ update: { resourceName: `${cust}/adGroupCriteria/${op.adGroupId}~${op.criterionId}`, status: op.to }, updateMask: "status" }] };
+    case "google_ad_url":
+      return { service: "ads", ops: [{ update: { resourceName: `${cust}/ads/${op.adId}`, finalUrls: [op.to] }, updateMask: "final_urls" }] };
     default:
       throw new Error("Not a Google change");
   }
@@ -262,21 +290,95 @@ export function describeOp(op: ChangeOp): string {
       return `${op.to === "PAUSED" ? "Pause" : "Turn on"} ${op.level === "adset" ? "ad set" : op.level} "${op.name}"${op.parent ? ` (${op.parent})` : ""}`;
     case "meta_budget":
       return `Daily budget of ${op.level === "adset" ? "ad set" : "campaign"} "${op.name}": ${money(op.from)} → ${money(op.to)}`;
+    case "meta_rename":
+      return `Rename ${op.level === "adset" ? "ad set" : op.level} "${op.from}" → "${op.to}"`;
+    case "meta_copy_ad":
+      return `Copy ad "${op.name}" into ad set "${op.targetAdset}" (${op.status === "PAUSED" ? "paused" : "on"}); the original stays`;
+    case "meta_link":
+      return `${op.to ? `Point ad "${op.name}" to ${op.to}` : `New UTMs on ad "${op.name}"`}${op.tags ? ` (UTMs: ${op.tags})` : ""}`;
+    case "google_ad_status":
+      return `${op.to === "PAUSED" ? "Pause" : "Turn on"} ad "${op.name}" (${op.campaign})`;
+    case "google_keyword_status":
+      return `${op.to === "PAUSED" ? "Pause" : "Turn on"} keyword "${op.name}" (${op.campaign})`;
+    case "google_ad_url":
+      return `Final URL of ad "${op.name}": ${op.from ?? "–"} → ${op.to}`;
+    case "assign_buyer":
+      return `${op.slot === "meta_buyer" ? "Meta" : "Google"} buyer: ${op.from ?? "nobody"} → ${op.to}`;
   }
 }
 
-/** Sends one change to the platform: for real, or as a dry run that checks it and changes nothing. */
-async function send(admin: SupabaseClient, platform: string, account: string, op: PlannedOp, validateOnly: boolean) {
+/**
+ * A new link (or new UTMs) on a running Meta ad. Meta doesn't edit a live ad's link: a new creative is made from the
+ * ad's own (same text, media and button, the link or UTMs swapped) and put on the ad, which goes back through review.
+ * An ad that runs an existing Page post can't be changed this way.
+ */
+async function metaReplaceLink(admin: SupabaseClient, account: string, op: Extract<ChangeOp, { kind: "meta_link" }>, validateOnly: boolean): Promise<string | null> {
+  const ad = await metaGraph<{ creative?: { id: string; name?: string; object_story_spec?: unknown; asset_feed_spec?: unknown; url_tags?: string } }>(op.objectId, { fields: "creative{id,name,object_story_spec,asset_feed_spec,url_tags}" });
+  const c = ad.creative;
+  if (!c) throw new Error("Couldn't read this ad's creative.");
+  if (!c.object_story_spec && !c.asset_feed_spec) throw new Error("This ad runs an existing Page post, so its link can't be swapped here: duplicate it with the new link in Ads Manager.");
+  const params: Record<string, string> = { name: `${c.name ?? op.name} · ${op.to ? "new link" : "new UTMs"}`.slice(0, 100) };
+  let changed = 0;
+  for (const key of ["object_story_spec", "asset_feed_spec"] as const) {
+    const spec = c[key];
+    if (!spec) continue;
+    if (op.to) {
+      const r = replaceLinks(spec, op.to, op.only);
+      changed += r.changed;
+      params[key] = JSON.stringify(r.spec);
+    } else params[key] = JSON.stringify(spec);
+  }
+  if (op.to && !changed) throw new Error("No link in this ad's creative matches the one to replace.");
+  const tags = op.tags ?? c.url_tags ?? null;
+  if (tags) params.url_tags = tags;
+  const created = await metaWrite<{ id?: string }>(admin, account, `act_${account.replace(/\D/g, "")}/adcreatives`, params, validateOnly);
+  if (validateOnly) return null;
+  if (!created.id) throw new Error("Meta didn't return the new creative.");
+  await metaWrite(admin, account, op.objectId, { creative: JSON.stringify({ creative_id: created.id }) }, false);
+  return created.id;
+}
+
+/** Sends one change to the platform: for real, or as a dry run that checks it and changes nothing. Returns what it created. */
+async function send(admin: SupabaseClient, platform: string, account: string, op: PlannedOp, validateOnly: boolean): Promise<string | null> {
+  if (op.kind === "assign_buyer") return null;
   if (platform === "meta") {
+    if (op.kind === "meta_link") return metaReplaceLink(admin, account, op, validateOnly);
+    if (op.kind === "meta_rename") {
+      await metaWrite(admin, account, op.objectId, { name: op.to }, validateOnly);
+      return null;
+    }
+    if (op.kind === "meta_copy_ad") {
+      const r = await metaWrite<{ copied_ad_id?: string }>(admin, account, `${op.objectId}/copies`, { adset_id: op.targetAdsetId, status_option: op.status }, validateOnly);
+      return r.copied_ad_id ?? null;
+    }
     const m = metaParams(op);
     await metaWrite(admin, account, m.path, m.params, validateOnly);
-    return;
+    return null;
   }
   const o = operation(account, op);
   await googleMutate(account, o.service, o.ops, validateOnly);
+  return null;
+}
+
+/** A new media buyer for the client: the same assignment (and, for Meta, the same handoff) as the client page. */
+async function assignBuyer(admin: SupabaseClient, clientId: string, op: Extract<ChangeOp, { kind: "assign_buyer" }>, me: Staff) {
+  const { data: before } = await admin.from("client_assignments").select("profile_id").eq("client_id", clientId).eq("role", op.slot);
+  const { error: delError } = await admin.from("client_assignments").delete().eq("client_id", clientId).eq("role", op.slot);
+  if (delError) throw new Error(delError.message);
+  const { error } = await admin.from("client_assignments").insert({ client_id: clientId, role: op.slot, profile_id: op.toId });
+  if (error) throw new Error(error.message);
+  if (op.slot === "meta_buyer" && !(before ?? []).some((b) => b.profile_id === op.toId)) {
+    const { handOff, writeHandoff } = await import("@/lib/handoff");
+    const id = await handOff(admin, clientId, (before?.[0]?.profile_id as string | undefined) ?? null, op.toId, me.id, "app");
+    if (id) await writeHandoff(admin, id).catch(() => null);
+  }
 }
 
 /** Checks each change with the platform without applying it. */
+export async function checkOps(admin: SupabaseClient, platform: string, account: string, ops: PlannedOp[]) {
+  return check(admin, platform, account, ops);
+}
+
 async function check(admin: SupabaseClient, platform: string, account: string, ops: PlannedOp[]): Promise<PlannedOp[]> {
   const out: PlannedOp[] = [];
   for (const op of ops) {
@@ -299,7 +401,7 @@ export async function planChange(admin: SupabaseClient, changeId: string, source
   if (ch.platform === "meta") return planMetaChange(admin, changeId, ch.account, source);
   try {
     const setup = await googleWritableSetup(ch.account);
-    const out = await askJson<{ note: string; ops: Parameters<typeof build>[0] }>({
+    const out = await askJson<{ note: string; ops: Parameters<typeof buildGoogle>[0] }>({
       agent: "google_launcher",
       label: "plan a Google Ads change",
       system: PLAN_SYSTEM,
@@ -307,7 +409,7 @@ export async function planChange(admin: SupabaseClient, changeId: string, source
       maxTokens: 6000,
       prompt: `<action>\n${source.title}\nSteps:\n${source.steps.map((s) => `- ${s}`).join("\n")}\nWhy: ${source.why}\n</action>\n\n<account_setup>\n${setupText(setup)}\n</account_setup>`,
     });
-    const { ops, dropped } = build(out.ops, setup);
+    const { ops, dropped } = buildGoogle(out.ops, setup);
     const checked = await check(admin, "google", ch.account, ops);
     const note = [out.note, dropped.length ? `Left out (can't be done this way): ${dropped.join("; ")}.` : ""].filter(Boolean).join(" ");
     await admin
@@ -360,7 +462,7 @@ export async function googleWritesOn(admin: SupabaseClient, account?: string | n
 }
 
 export async function applyChange(admin: SupabaseClient, changeId: string, me: Staff, pick?: number[]) {
-  const { data: ch } = await admin.from("ad_changes").select("account, platform, ops, sprint_action_id, status").eq("id", changeId).single();
+  const { data: ch } = await admin.from("ad_changes").select("account, platform, client_id, ops, sprint_action_id, status").eq("id", changeId).single();
   if (!ch || !["ready", "partial", "failed"].includes(ch.status)) throw new Error("Nothing to apply.");
   if (ch.platform === "google" && !(await googleWritesOn(admin, ch.account as string))) throw new Error("Live changes are off for this client's Google Ads: an exec switches them on in the client's Team & setup (or for everyone in Settings → Sync health); Google's check above already ran.");
   await admin.from("ad_changes").update({ status: "applying", updated_at: new Date().toISOString() }).eq("id", changeId);
@@ -372,8 +474,8 @@ export async function applyChange(admin: SupabaseClient, changeId: string, me: S
       continue;
     }
     try {
-      await send(admin, ch.platform as string, ch.account, op, false);
-      out.push({ ...op, result: { ok: true, error: null } });
+      const newId = op.kind === "assign_buyer" ? (await assignBuyer(admin, ch.client_id as string, op, me), null) : await send(admin, ch.platform as string, ch.account, op, false);
+      out.push({ ...op, result: { ok: true, error: null, newId } });
     } catch (e) {
       out.push({ ...op, result: { ok: false, error: e instanceof Error ? e.message : String(e) } });
     }
@@ -384,7 +486,7 @@ export async function applyChange(admin: SupabaseClient, changeId: string, me: S
   const now = new Date().toISOString();
   await admin
     .from("ad_changes")
-    .update({ status, ops: out, applied_by: me.id, applied_at: now, error: status === "failed" ? (tried.find((o) => o.result?.error)?.result?.error ?? `${ch.platform === "meta" ? "Meta" : "Google"} refused the change`).slice(0, 400) : null, updated_at: now })
+    .update({ status, ops: out, applied_by: me.id, applied_at: now, error: status === "failed" ? (tried.find((o) => o.result?.error)?.result?.error ?? `${ch.platform === "meta" ? "Meta" : ch.platform === "team" ? "The change" : "Google"} refused the change`).slice(0, 400) : null, updated_at: now })
     .eq("id", changeId);
   if (ch.sprint_action_id && ok.length) {
     const note = `Applied in ${ch.platform === "meta" ? "Meta" : "Google Ads"} by ${me.fullName}: ${ok.map((o) => describeOp(o)).join("; ")}`.slice(0, 1500);

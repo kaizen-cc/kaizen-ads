@@ -103,7 +103,7 @@ async function search(customer: string, query: string): Promise<Row[]> {
  * A change to the account (campaigns, campaignBudgets, adGroups, campaignCriteria). validateOnly: Google checks it
  * fully and says whether it would go through, without changing anything.
  */
-export async function googleMutate(customer: string, service: "campaigns" | "campaignBudgets" | "adGroups" | "campaignCriteria" | "adGroupCriteria" | "adGroupAds", operations: unknown[], validateOnly: boolean) {
+export async function googleMutate(customer: string, service: "campaigns" | "campaignBudgets" | "adGroups" | "campaignCriteria" | "adGroupCriteria" | "adGroupAds" | "ads", operations: unknown[], validateOnly: boolean) {
   const text = await post(customer, `${service}:mutate`, { operations, validateOnly, partialFailure: false });
   // What was created (resource names), e.g. a new ad group the keywords then go into
   try {

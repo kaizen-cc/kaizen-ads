@@ -9,6 +9,7 @@ import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { askClientAi, clearClientAi, loadClientAi, openClientDoc, undoClientDesk } from "./actions";
 import { createClient } from "@/lib/supabase/client";
 import { Layer } from "./layer";
+import { ChatPlan } from "./chat-plan";
 
 // The client desk: a button in the corner that opens a drawer, so the page itself doesn't get longer. Ask a question,
 // strategize, get a summary, share files and links (filed in the client's documents and read), tell it what to
@@ -21,7 +22,7 @@ const STARTERS = [
   "Summarize where this account stands",
   "What should we test next, and why?",
   "What has the client told us lately?",
-  "What's in the files we have for them?",
+  "Pause the ads that spent with no results this week",
 ];
 const MAX_FILE = 50 * 1024 * 1024;
 const safe = (n: string) => n.normalize("NFKD").replace(/[^\w.\-]+/g, "-").replace(/-+/g, "-").slice(-120);
@@ -64,6 +65,8 @@ function Bubble({ t, onUndo }: { t: ChatTurn; onUndo?: (i: number) => void }) {
           ))}
         </ul>
       )}
+      {/* A change in the ad account (or the buyer) it planned: check the exact objects, then confirm */}
+      {!me && t.plan && <ChatPlan id={t.plan.id} />}
       {!me && t.level && (
         <span className="flex items-center gap-1.5 px-1 text-[10px] text-ink/40">
           <span className={`h-1.5 w-1.5 rounded-full ${LEVEL[t.level].dot}`} />
@@ -241,7 +244,7 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
           <div className="grid min-w-0 gap-1">
             <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-ink/50">Client desk</p>
             <h2 className="font-display text-2xl leading-tight tracking-tight [overflow-wrap:anywhere]">{client}</h2>
-            <p className="text-xs text-ink/50">Ask anything, share files and links (they&apos;re filed in the client&apos;s documents), or tell it what to remember or change. It reads everything Kaizen Ads knows about the client.</p>
+            <p className="text-xs text-ink/50">Ask anything, share files and links (they&apos;re filed in the client&apos;s documents), tell it what to remember, or ask for a change in the ad account (it shows exactly what it will touch for you to confirm).</p>
           </div>
           <span className="flex shrink-0 gap-1.5">
             {chat.length > 0 && (
@@ -405,7 +408,7 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
               }
             }}
             rows={2}
-            placeholder="Ask, update, paste a link or drop a file…"
+            placeholder="Ask, make a change, paste a link or drop a file…"
             className="min-h-[46px] min-w-0 flex-1 resize-none rounded-[12px] border border-ink/10 bg-ink/[0.03] px-3 py-2.5 text-[13.5px] outline-none placeholder:text-ink/35 focus:border-brand/50"
           />
           <button type="submit" disabled={(!q.trim() && !files.length) || Boolean(pending)} className="h-11 shrink-0 rounded-full bg-fg px-5 text-sm text-bg disabled:opacity-40">

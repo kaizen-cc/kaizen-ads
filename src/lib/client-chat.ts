@@ -31,7 +31,9 @@ Only act on what the teammate asked for or what a shared file plainly says; when
 Leave fields you don't need as "" (or false, 0).
 
 Keep it short: 1 to 8 sentences or a short list, longer only for a summary they asked for. Plain text, no markdown (no asterisks or headings); start list lines with "- ". No emojis.
-If they ask you to run an audit, say they can start one with the "Run an audit" button above the chat (it's the same audit as on the KPI board and shows in both places).`;
+If they ask you to run an audit, say they can start one with the "Run an audit" button above the chat (it's the same audit as on the KPI board and shows in both places).
+
+Changes in the ad account: when the teammate asks you to change something in the client's Meta or Google Ads account (pause or turn on campaigns, ad sets, ads or keywords, change budgets or targets, rename, swap links, final URLs or UTMs, copy or move an ad to another campaign or ad set, add negative keywords) or to change the client's media buyer, set change: wanted true, platform "meta", "google" or "team" (the buyer), and instruction: their full request in one or two sentences with every name, number and condition they gave (resolve "it" and "that one" from the conversation). Never say it's done or that you can't: say you're pulling the exact campaigns and ads from the live account so they can check them and confirm before anything changes. Only when they clearly ask for a change; a question about the account is not a change. Otherwise change is wanted false with "" fields. One change request per message; for both platforms, do the one they named first and say you'll do the other next.`;
 
 const SCHEMA = {
   type: "object",
@@ -47,8 +49,9 @@ const SCHEMA = {
         additionalProperties: false,
       },
     },
+    change: { type: "object", properties: { wanted: { type: "boolean" }, platform: { type: "string", enum: ["meta", "google", "team", ""] }, instruction: S }, required: ["wanted", "platform", "instruction"], additionalProperties: false },
   },
-  required: ["answer", "docs", "actions"],
+  required: ["answer", "docs", "actions", "change"],
   additionalProperties: false,
 };
 
@@ -191,7 +194,7 @@ export async function askAboutClient(
         .join("\n\n")}\n</shared>`
     : "";
 
-  const out = await askJson<{ answer: string; docs: { n: number; title: string; summary: string }[]; actions: Action[] }>({
+  const out = await askJson<{ answer: string; docs: { n: number; title: string; summary: string }[]; actions: Action[]; change?: { wanted: boolean; platform: string; instruction: string } }>({
     agent: "strategist",
     label: `client desk (${level}${docs.length ? `, ${docs.length} shared` : ""})`,
     system: SYSTEM + (level === "deep" ? "\nThis is a big question: think it through, use the market and research you're given (say where a point comes from), and give a clear recommendation with the reasoning; up to 12 sentences or a short structured list." : level === "quick" ? "\nThis is a quick question: answer it directly in 1 to 3 sentences." : ""),
@@ -212,12 +215,27 @@ export async function askAboutClient(
   await Promise.all(reads.map((r, i) => finishDoc(admin, r, out.docs.find((d) => d.n === i + 1) ?? null)));
   const done = await act(admin, clientId, profileId, out.actions ?? [], mem, docs.length > 0);
 
+  // A change in the ad account (or the buyer): the buyer agent plans it from the live account in the background, and
+  // the plan card under the answer shows it to check and confirm. Nothing is written until someone allowed confirms.
+  let plan: { id: string } | undefined;
+  let answer = out.answer;
+  const c = out.change;
+  if (c?.wanted && ["meta", "google", "team"].includes(c.platform) && c.instruction.trim()) {
+    const { startChatChange, planChatChange } = await import("@/lib/chat-changes");
+    const r = await startChatChange(admin, clientId, profileId, c.platform as "meta" | "google" | "team", c.instruction.trim());
+    if ("id" in r) {
+      plan = { id: r.id };
+      const { after } = await import("next/server");
+      after(() => planChatChange(admin, r.id));
+    } else answer = `${answer}\n\n${r.error}`;
+  }
+
   const now = new Date().toISOString();
   const attachments = docs.map((d) => ({ id: d.id as string, name: d.kind === "link" ? (out.docs.find((x) => x.n === docs.indexOf(d) + 1)?.title ?? (d.name as string)) : (d.name as string), kind: d.kind as "file" | "link" }));
   const next: ChatTurn[] = [
     ...chat,
     { role: "user" as const, text: q, at: now, ...(attachments.length ? { attachments } : {}) },
-    { role: "assistant" as const, text: out.answer, at: now, level, researched: Boolean(extra.includes("<web_research>")), ...(done.length ? { done } : {}) },
+    { role: "assistant" as const, text: answer, at: now, level, researched: Boolean(extra.includes("<web_research>")), ...(done.length ? { done } : {}), ...(plan ? { plan } : {}) },
   ].slice(-60);
   await admin.from("client_chats").upsert({ client_id: clientId, profile_id: profileId, turns: next, updated_at: now });
   return next;
