@@ -119,6 +119,11 @@ ${a.role.core.trim()}
  * The knowledge documents (PDFs and the like added in Settings, the Lab or a client's page) that match this task: only
  * the few best excerpts, added after the task's own text. Nothing when nothing matches.
  */
+/** Text cut mid-emoji leaves half a character, which the API rejects as invalid JSON: drop those halves */
+export function wellFormed(s: string) {
+  return s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "");
+}
+
 async function withKnowledge(agent: AgentKey, label: string, prompt: string, clientId?: string | null) {
   if (!adminConfigured()) return prompt;
   const { knowledgeBlock } = await import("@/lib/knowledge");
@@ -247,6 +252,8 @@ export async function askJson<T>({
   const base = await getAgent(agent);
   const cfg = { ...base, model: override?.model ?? base.model, effort: override?.effort ?? base.effort };
   if (!bare) prompt = await withKnowledge(agent, label, prompt, clientId);
+  prompt = wellFormed(prompt);
+  system = wellFormed(system);
   const started = Date.now();
   const request = {
     model: MODEL_IDS[cfg.model],
@@ -355,7 +362,7 @@ export async function askJsonWithTools<T>({
   const run = { agent_key: agent, label, model: cfg.model, effort: cfg.effort };
   const who = adminConfigured() ? actorNow() : Promise.resolve(AUTO);
   const used = { input_tokens: 0, output_tokens: 0, cache_write_tokens: 0, cache_read_tokens: 0 };
-  const messages: Anthropic.MessageParam[] = [{ role: "user", content: prompt }];
+  const messages: Anthropic.MessageParam[] = [{ role: "user", content: wellFormed(prompt) }];
   const defs = tools.map(({ name, description, input_schema }) => ({ name, description, input_schema: input_schema as Anthropic.Tool.InputSchema }));
   try {
     for (let round = 0; ; round++) {
@@ -440,7 +447,7 @@ export async function researchWeb({ agent, label, system, prompt, maxSearches = 
   const base = await getAgent(agent);
   const cfg = { ...base, model: model ?? base.model };
   const started = Date.now();
-  const messages: Anthropic.MessageParam[] = [{ role: "user", content: prompt }];
+  const messages: Anthropic.MessageParam[] = [{ role: "user", content: wellFormed(prompt) }];
   const run = { agent_key: agent, label, model: cfg.model, effort: cfg.effort };
   let inTok = 0;
   let outTok = 0;
