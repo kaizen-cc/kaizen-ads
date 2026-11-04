@@ -37,7 +37,7 @@ export default async function PlanPage({ params }: { params: Promise<{ slug: str
     <div>
       <main>
         {ready ? (
-          <PlanView firstAds={firstAds} chat={(p.chat ?? []) as PlanTurn[]} intake={p.without_intake && !intakes ? { clientId: client.kaizen_id ?? null } : undefined} slug={client.slug} brand={client.name} deck={p.deck as Deck} reactions={(p.reactions ?? {}) as Reactions} approved={p.status === "approved"} approveBy={p.status === "sent" && p.sent_at ? (await import("@/lib/brand-bible")).addBusinessDays(p.sent_at as string, (await import("@/lib/presentation-types")).APPROVE_AFTER_DAYS).toISOString() : null} canAct={team ? ["sent", "approved"].includes(p.status as string) : true} />
+          <PlanView measure={adminConfigured() ? await (await import("@/lib/success-measure")).measureFor(createAdminClient(), client.id as string).catch(() => null) : null} firstAds={firstAds} chat={(p.chat ?? []) as PlanTurn[]} intake={p.without_intake && !intakes ? { clientId: client.kaizen_id ?? null } : undefined} slug={client.slug} brand={client.name} deck={p.deck as Deck} reactions={(p.reactions ?? {}) as Reactions} approved={p.status === "approved"} approveBy={p.status === "sent" && p.sent_at ? (await import("@/lib/brand-bible")).addBusinessDays(p.sent_at as string, (await import("@/lib/presentation-types")).APPROVE_AFTER_DAYS).toISOString() : null} canAct={team ? ["sent", "approved"].includes(p.status as string) : true} />
         ) : (
           <div className="grid gap-2 rounded-[24px] border border-line bg-surface p-8 text-center">
             <p className="font-heading text-[18px]">Nothing to look at yet</p>

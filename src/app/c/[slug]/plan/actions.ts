@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { getViewer } from "@/lib/auth";
-import type { Reactions, Section } from "@/lib/presentation-types";
+import type { MeasureChoice, Reactions, Section } from "@/lib/presentation-types";
 import { SECTIONS } from "@/lib/presentation-types";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 
@@ -50,12 +50,29 @@ export async function chooseLaunch(slug: string, choice: "engagement_first" | "w
   return save(slug, (r, by, at) => ({ ...r, launch: { choice, at, by } }));
 }
 
+/** "Here's how we'll measure success": they confirm our targets, adjust them, or leave them to us */
+export async function chooseMeasure(slug: string, choice: MeasureChoice, values: Record<string, number | null>, note: string) {
+  if (!["right", "adjust", "unsure"].includes(choice)) return { ok: false as const, error: "Not found." };
+  const l = await load(slug);
+  if ("error" in l) return { ok: false as const, error: l.error! };
+  const { measureFor } = await import("@/lib/success-measure");
+  const { rows } = await measureFor(l.admin, l.client.id as string);
+  const clean: Record<string, number | null> = {};
+  for (const r of rows) {
+    const v = values[r.key];
+    clean[r.key] = typeof v === "number" && Number.isFinite(v) && v > 0 && v < 10_000_000 ? Math.round(v * 100) / 100 : null;
+  }
+  if (choice === "adjust" && !Object.values(clean).some((v) => v != null)) return { ok: false as const, error: "Put in the numbers you'd change, or tap Looks right." };
+  return save(slug, (r, by, at) => ({ ...r, measure: { choice, values: choice === "adjust" ? clean : {}, note: note.trim().slice(0, 2000), at, by, shown: rows } }));
+}
+
 /** Approved: the team hears it (with what they marked not quite, their answers and how they want to launch). */
 export async function approvePlan(slug: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const l = await load(slug);
   if ("error" in l) return { ok: false, error: l.error! };
   if (l.approved) return { ok: true };
   if (!l.reactions.launch) return { ok: false, error: "Pick how you'd like us to get you live first (part 6)." };
+  if (!l.reactions.measure) return { ok: false, error: "Tell us if our targets look right first (part 7: how we'll measure success)." };
   const { approvePresentation } = await import("@/lib/presentation");
   await approvePresentation(l.admin, l.client.id as string, { by: l.by, contactId: l.contactId });
   // Folded into the Bible, the team told, and the first round written, after the answer

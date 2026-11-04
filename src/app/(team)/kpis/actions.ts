@@ -48,7 +48,7 @@ export async function saveKpiTarget(id: string, clientId: string, form: FormData
   const supabase = await createClient();
   const { error } = await supabase
     .from("kpi_targets")
-    .update({ ...fields(form), updated_by: me.id, updated_at: new Date().toISOString() })
+    .update({ ...((f) => (f.source === "client" ? f : { ...f, client_confirmed_at: null }))(fields(form)), updated_by: me.id, updated_at: new Date().toISOString() })
     .eq("id", id);
   if (error) return { ok: false, error: error.message };
   await recompute(clientId);

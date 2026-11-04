@@ -142,7 +142,7 @@ export async function fillReadiness(clientId: string, slug: string, form: FormDa
       errors.push("A target is a number above zero.");
       continue;
     }
-    const { error } = await supabase.from("kpi_targets").update({ target: n, updated_by: me.id, updated_at: new Date().toISOString() }).eq("id", k.slice(7)).eq("client_id", clientId);
+    const { error } = await supabase.from("kpi_targets").update({ target: n, client_confirmed_at: null, updated_by: me.id, updated_at: new Date().toISOString() }).eq("id", k.slice(7)).eq("client_id", clientId);
     if (error) errors.push(error.message);
   }
 

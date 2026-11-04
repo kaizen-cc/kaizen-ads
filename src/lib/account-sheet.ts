@@ -80,7 +80,7 @@ export async function syncAccountSheet(admin: SupabaseClient) {
     t.total(rows.length);
 
     const [{ data: targets }, { data: people }] = await Promise.all([
-      admin.from("kpi_targets").select("id, client_id, platform, ad_account_id, conversion, target, monthly_budget, owner_id, sheet").eq("active", true),
+      admin.from("kpi_targets").select("id, client_id, platform, ad_account_id, conversion, target, monthly_budget, owner_id, sheet, client_confirmed_at").eq("active", true),
       admin.from("profiles").select("id, full_name").eq("is_active", true),
     ]);
     const person = (name: string) => {
@@ -145,7 +145,7 @@ export async function syncAccountSheet(admin: SupabaseClient) {
         const { data: made } = await admin
           .from("kpi_targets")
           .insert({ client_id: c.id, platform, ad_account_id: account, conversion: platform === "google" ? "conversions" : "purchases", target: money(r["KPI"]), monthly_budget: budgetOf(r["Budget"]), owner_id: buyer?.id ?? null })
-          .select("id, client_id, platform, ad_account_id, conversion, target, monthly_budget, owner_id, sheet")
+          .select("id, client_id, platform, ad_account_id, conversion, target, monthly_budget, owner_id, sheet, client_confirmed_at")
           .single();
         if (!made) {
           out.noKpi.push(`${name} (${platform})`);
@@ -169,8 +169,9 @@ export async function syncAccountSheet(admin: SupabaseClient) {
         } else delete edits[k];
       }
       const patch: Record<string, unknown> = { sheet: { ...sheet, edits, name, platform, syncedAt: now }, sheet_synced_at: now };
-      // A ROAS KPI isn't a dollar target: the sheet's dollar KPI doesn't replace it
-      if (kpi != null && target.conversion !== "roas" && Number(target.target) !== kpi) patch.target = kpi;
+      // A ROAS KPI isn't a dollar target: the sheet's dollar KPI doesn't replace it. Nor one the client confirmed in their
+      // plan review: it's theirs until the team changes it in Kaizen Ads
+      if (kpi != null && target.conversion !== "roas" && !target.client_confirmed_at && Number(target.target) !== kpi) patch.target = kpi;
       if (budget != null && Number(target.monthly_budget) !== budget) patch.monthly_budget = budget;
       if (buyer && target.owner_id !== buyer.id) patch.owner_id = buyer.id;
       const changed = "target" in patch || "monthly_budget" in patch || "owner_id" in patch;

@@ -244,6 +244,10 @@ export async function approvePresentation(admin: SupabaseClient, clientId: strin
   const now = new Date().toISOString();
   await admin.from("client_presentations").update({ status: "approved", approved_at: now, approved_by: o.contactId, auto_approved: Boolean(o.auto), updated_at: now }).eq("client_id", clientId);
   const off = Object.entries(reactions.sections ?? {}).filter(([, v]) => v?.verdict === "off");
+  const targets = await import("@/lib/success-measure").then(({ applyMeasure }) => applyMeasure(admin, clientId, reactions)).catch((e) => {
+    console.error("[plan] applying the targets failed:", e instanceof Error ? e.message : e);
+    return "";
+  });
   const [{ data: buyers }, { data: leads }] = await Promise.all([
     admin.from("client_assignments").select("profile_id").eq("client_id", clientId).eq("role", "meta_buyer"),
     admin.from("profiles").select("id").eq("is_active", true).eq("is_lead", true),
@@ -259,6 +263,7 @@ export async function approvePresentation(admin: SupabaseClient, clientId: strin
         body: [
           o.auto ? `No answer after 3 business days, so it's approved and the team starts. ${reactions.launch ? launch : `They didn't pick how to launch: going with the recommended path (${launch.toLowerCase()}).`}` : `${o.by}: ${launch}.`,
           off.length ? `Not quite on ${off.map(([k]) => k).join(", ")}: their notes are on the presentation.` : o.auto ? "" : "Spot on everywhere they reacted.",
+          targets,
         ]
           .filter(Boolean)
           .join(" "),

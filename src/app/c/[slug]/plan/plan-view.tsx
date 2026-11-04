@@ -3,12 +3,12 @@
 import { useState } from "react";
 import { PresentationDeck } from "@/components/presentation-deck";
 import type { PlanTurn } from "@/lib/plan-chat-types";
-import type { Deck, Reactions } from "@/lib/presentation-types";
+import type { Deck, Measure, Reactions } from "@/lib/presentation-types";
 import { FirstAdsCard, type FirstAds } from "./first-ads";
 import { PlanTalk } from "./plan-talk";
-import { answerQuestion, approvePlan, chooseLaunch, reactPart } from "./actions";
+import { answerQuestion, approvePlan, chooseLaunch, chooseMeasure, reactPart } from "./actions";
 
-export function PlanView({ slug, brand, deck, reactions: initial, approved: wasApproved, approveBy = null, canAct, intake, chat, firstAds }: { /** Taken as approved on its own then, without their answer (72 business hours) */ approveBy?: string | null; slug: string; brand: string; deck: Deck; reactions: Reactions; approved: boolean; canAct: boolean; intake?: { clientId: number | null }; chat: PlanTurn[]; firstAds: FirstAds | null }) {
+export function PlanView({ slug, brand, deck, reactions: initial, approved: wasApproved, approveBy = null, canAct, intake, chat, firstAds, measure = null }: { /** The targets we'll judge their ads by */ measure?: Measure | null; /** Taken as approved on its own then, without their answer (72 business hours) */ approveBy?: string | null; slug: string; brand: string; deck: Deck; reactions: Reactions; approved: boolean; canAct: boolean; intake?: { clientId: number | null }; chat: PlanTurn[]; firstAds: FirstAds | null }) {
   const [reactions, setReactions] = useState(initial);
   const [approved, setApproved] = useState(wasApproved);
   const [error, setError] = useState<string | null>(null);
@@ -34,6 +34,8 @@ export function PlanView({ slug, brand, deck, reactions: initial, approved: wasA
         approved={approved}
         readOnly={!canAct}
         intake={intake}
+        measure={measure}
+        onMeasure={(choice, values, note) => run(chooseMeasure(slug, choice, values, note))}
         onReact={(section, verdict, note) => run(reactPart(slug, section, verdict, note))}
         onAnswer={(q, a) => run(answerQuestion(slug, q, a))}
         onLaunch={(choice) => run(chooseLaunch(slug, choice))}

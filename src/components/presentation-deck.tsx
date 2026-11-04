@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { INTAKE_FORM_URL, type Deck, type Reactions, type Section } from "@/lib/presentation-types";
+import { INTAKE_FORM_URL, measureValue, type Deck, type Measure, type MeasureChoice, type MeasureRow, type Reactions, type Section } from "@/lib/presentation-types";
 
 // The client presentation, as the client sees it (and the team previews it): a cover, then one card per part of how
 // we see them, each with "Spot on" / "Not quite", how we launch, the few things only they can tell us, and approve.
@@ -10,12 +10,13 @@ type Handlers = {
   onReact?: (section: Section, verdict: "right" | "off", note: string) => Promise<void>;
   onAnswer?: (question: string, answer: string) => Promise<void>;
   onLaunch?: (choice: "engagement_first" | "wait") => Promise<void>;
+  onMeasure?: (choice: MeasureChoice, values: Record<string, number | null>, note: string) => Promise<void>;
   onApprove?: () => Promise<void>;
 };
 
 const FORMAT = { image: "Image", video: "Video", carousel: "Carousel" } as const;
 
-export function PresentationDeck({ brand, deck, reactions, approved, readOnly = false, intake, ...h }: { brand: string; deck: Deck; reactions: Reactions; approved: boolean; readOnly?: boolean; /** Written without their intake form: a way to send it, with their Client ID */ intake?: { clientId: number | null } } & Handlers) {
+export function PresentationDeck({ brand, deck, reactions, approved, readOnly = false, intake, measure, ...h }: { brand: string; deck: Deck; reactions: Reactions; approved: boolean; readOnly?: boolean; /** Written without their intake form: a way to send it, with their Client ID */ intake?: { clientId: number | null }; /** The targets we'll judge their ads by, for them to confirm */ measure?: Measure | null } & Handlers) {
   const locked = readOnly || approved;
   const offCount = Object.values(reactions.sections ?? {}).filter((r) => r?.verdict === "off").length;
   return (
@@ -107,7 +108,9 @@ export function PresentationDeck({ brand, deck, reactions, approved, readOnly = 
 
       <Launch deck={deck} reactions={reactions} locked={locked} onLaunch={h.onLaunch} />
 
-      {deck.questions.length > 0 && <Questions deck={deck} reactions={reactions} locked={locked} onAnswer={h.onAnswer} />}
+      {measure && measure.rows.length > 0 && <MeasureCard measure={measure} reactions={reactions} locked={locked} onMeasure={h.onMeasure} />}
+
+      {deck.questions.length > 0 && <Questions n={measure?.rows.length ? 8 : 7} deck={deck} reactions={reactions} locked={locked} onAnswer={h.onAnswer} />}
 
       {/* Approve */}
       <section className="grid gap-3 rounded-[24px] border border-line bg-surface p-5 md:p-8">
@@ -117,7 +120,11 @@ export function PresentationDeck({ brand, deck, reactions, approved, readOnly = 
           <>
             <p className="font-heading text-[20px]">Is this you?</p>
             <p className="text-[14px] leading-relaxed text-muted">
-              {offCount ? `You marked ${offCount} part${offCount > 1 ? "s" : ""} as not quite: we'll fix ${offCount > 1 ? "those" : "that"} with what you told us.` : "Approve it and we start on your first creative."}
+              {measure?.rows.length && !reactions.measure
+                ? "One thing first: tell us if our targets look right (part 7), then approve."
+                : offCount
+                  ? `You marked ${offCount} part${offCount > 1 ? "s" : ""} as not quite: we'll fix ${offCount > 1 ? "those" : "that"} with what you told us.`
+                  : "Approve it and we start on your first creative."}
             </p>
             {!readOnly && (
               <Busy onClick={h.onApprove} className="h-12 justify-self-start rounded-full bg-brand px-6 text-[15px] font-medium text-white hover:bg-brand-hover disabled:opacity-50">
@@ -307,11 +314,112 @@ function Launch({ deck, reactions, locked, onLaunch }: { deck: Deck; reactions: 
   );
 }
 
-function Questions({ deck, reactions, locked, onAnswer }: { deck: Deck; reactions: Reactions; locked: boolean; onAnswer?: Handlers["onAnswer"] }) {
+const FROM: Record<NonNullable<MeasureRow["from"]>, string> = { theirs: "Your number", ours: "Our estimate", benchmark: "Industry benchmark" };
+
+/**
+ * "Here's how we'll measure success": the numbers we'll judge their ads by, each with where it came from, for them to
+ * confirm, adjust, or leave to us. Approving needs an answer here.
+ */
+function MeasureCard({ measure, reactions, locked, onMeasure }: { measure: Measure; reactions: Reactions; locked: boolean; onMeasure?: Handlers["onMeasure"] }) {
+  const m = reactions.measure;
+  const [adjusting, setAdjusting] = useState(false);
+  const [vals, setVals] = useState<Record<string, string>>(() => Object.fromEntries(measure.rows.map((r) => [r.key, m?.values[r.key] != null ? String(m.values[r.key]) : r.value != null ? String(r.value) : ""])));
+  const [note, setNote] = useState(m?.note ?? "");
+  const shown = (r: MeasureRow) => (m?.choice === "adjust" && m.values[r.key] != null ? m.values[r.key]! : r.value);
+  const parsed = () => Object.fromEntries(measure.rows.map((r) => [r.key, vals[r.key]?.trim() ? Number(vals[r.key].replace(/[$,x\s]/gi, "")) : null]));
+  return (
+    <section className={`grid gap-4 rounded-[24px] border bg-surface p-5 md:p-8 ${m ? (m.choice === "unsure" ? "border-warn/50" : "border-ok/40") : "border-brand/40"}`}>
+      <p className="flex items-center gap-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">
+        <span className="tabular grid h-6 w-6 place-items-center rounded-full bg-surface-2 text-[11px] tracking-normal text-muted">7</span>
+        How we&rsquo;ll measure success
+      </p>
+      <div className="grid gap-1">
+        <p className="font-heading text-[20px] leading-snug md:text-[24px]">The numbers we&rsquo;ll hold your ads to</p>
+        <p className="text-[14px] leading-relaxed text-muted">If an ad isn&rsquo;t profitable, it isn&rsquo;t working. These are the lines we judge every ad and campaign against. Do they look right to you?</p>
+      </div>
+      <div className="grid gap-2.5 md:grid-cols-2">
+        {measure.rows.map((r) => (
+          <div key={r.key} className="grid content-start gap-1.5 rounded-[18px] border border-line bg-bg p-4">
+            <p className="text-[13px] text-muted">{r.label}</p>
+            {adjusting ? (
+              <label className="flex items-center gap-2 rounded-[12px] border border-line bg-surface px-3 focus-within:border-brand-text/60">
+                {r.unit === "$" && <span className="text-faint">$</span>}
+                <input
+                  inputMode="decimal"
+                  value={vals[r.key] ?? ""}
+                  onChange={(e) => setVals({ ...vals, [r.key]: e.target.value })}
+                  placeholder={r.value == null ? "Leave empty if you're not sure" : ""}
+                  className="tabular h-11 min-w-0 flex-1 bg-transparent text-[16px] outline-none"
+                />
+                {r.unit === "x" && <span className="text-faint">x</span>}
+              </label>
+            ) : (
+              <p className={`tabular font-heading text-[26px] leading-tight ${shown(r) == null ? "text-faint" : ""}`}>{measureValue(r, shown(r))}</p>
+            )}
+            <p className="flex flex-wrap items-center gap-1.5 text-[12px] text-faint">
+              {m?.choice === "adjust" && m.values[r.key] != null ? <span className="rounded-full bg-ok-soft px-2 py-0.5 text-ok">Yours</span> : r.from && <span className="rounded-full bg-surface-2 px-2 py-0.5 text-muted">{FROM[r.from]}</span>}
+              <span>{r.hint}</span>
+            </p>
+          </div>
+        ))}
+      </div>
+      {adjusting && (
+        <textarea data-chat
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          rows={2}
+          placeholder="Anything we should know about these numbers? (optional)"
+          className="w-full resize-none rounded-[14px] border border-line bg-bg px-3.5 py-3 text-[15px] leading-relaxed outline-none [field-sizing:content] focus:border-brand-text/60"
+        />
+      )}
+      <div className="grid gap-2.5 border-t border-line pt-4">
+        {m && !adjusting && (
+          <p className={`text-[13px] ${m.choice === "unsure" ? "text-warn" : "text-ok"}`}>
+            {m.choice === "right" ? "✓ Looks right" : m.choice === "adjust" ? "✓ Adjusted to your numbers" : "You left these to us: your media buyer will set them from your first weeks of data"} <span className="text-faint">· {m.by}</span>
+          </p>
+        )}
+        {!locked && !adjusting && (
+          <div className="flex flex-wrap gap-2">
+            <Busy onClick={onMeasure && (() => onMeasure("right", {}, ""))} className={`h-11 rounded-full px-5 text-[14px] ${m?.choice === "right" ? "bg-ok text-white" : "border border-line hover:border-faint"}`}>
+              Looks right
+            </Busy>
+            <button type="button" onClick={() => setAdjusting(true)} className={`h-11 rounded-full px-5 text-[14px] ${m?.choice === "adjust" ? "bg-ok text-white" : "border border-line hover:border-faint"}`}>
+              Adjust
+            </button>
+            <Busy onClick={onMeasure && (() => onMeasure("unsure", {}, ""))} className={`h-11 rounded-full px-5 text-[14px] ${m?.choice === "unsure" ? "bg-warn text-white" : "border border-line hover:border-faint"}`}>
+              Not sure, you decide
+            </Busy>
+          </div>
+        )}
+        {adjusting && (
+          <div className="flex gap-2">
+            <Busy
+              onClick={
+                onMeasure &&
+                (async () => {
+                  await onMeasure("adjust", parsed(), note.trim());
+                  setAdjusting(false);
+                })
+              }
+              className="h-11 rounded-full bg-fg px-5 text-[14px] text-bg disabled:opacity-40"
+            >
+              Save my numbers
+            </Busy>
+            <button type="button" onClick={() => setAdjusting(false)} className="h-11 rounded-full px-4 text-[14px] text-muted hover:text-fg">
+              Cancel
+            </button>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function Questions({ n, deck, reactions, locked, onAnswer }: { n: number; deck: Deck; reactions: Reactions; locked: boolean; onAnswer?: Handlers["onAnswer"] }) {
   return (
     <section className="grid gap-4 rounded-[24px] border border-line bg-surface p-5 md:p-8">
       <p className="flex items-center gap-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">
-        <span className="tabular grid h-6 w-6 place-items-center rounded-full bg-surface-2 text-[11px] tracking-normal text-muted">7</span>
+        <span className="tabular grid h-6 w-6 place-items-center rounded-full bg-surface-2 text-[11px] tracking-normal text-muted">{n}</span>
         A few things only you can tell us
       </p>
       <div className="grid gap-5">

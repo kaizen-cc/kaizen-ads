@@ -196,7 +196,9 @@ export async function afterApproval(admin: SupabaseClient, clientId: string) {
     reactions.launch?.choice === "engagement_first"
       ? import("@/lib/engagement-launch").then(({ proposeEngagement }) => proposeEngagement(admin, clientId)).catch((e) => console.error("[plan] finding their posts failed:", e instanceof Error ? e.message : e))
       : null;
-  const review = reviewBlock(p.deck as Deck, reactions, (p.chat ?? []) as PlanTurn[]);
+  const { measureBlock, measureFor } = await import("@/lib/success-measure");
+  const targets = measureBlock(reactions.measure?.shown ? { rows: reactions.measure.shown } : await measureFor(admin, clientId).catch(() => null), reactions);
+  const review = `${reviewBlock(p.deck as Deck, reactions, (p.chat ?? []) as PlanTurn[])}${targets ? `\n\n${targets}` : ""}`;
   const day = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", year: "numeric" }).format(new Date());
 
   // Lasting facts into the client's memory, so every agent works from them
@@ -209,7 +211,7 @@ export async function afterApproval(admin: SupabaseClient, clientId: string) {
         agent: "brandbible",
         label: `brand bible review ${c.name} (client approval)`,
         override: { model: "sonnet", effort: "medium" },
-        system: `The client reviewed the short presentation of their Brand Bible in their portal and approved it. Fold everything they told us into the Bible: what they marked not quite (correct it), their answers, the facts from the conversation, and how they want to launch. Return each changed section whole, as it should now read, Markdown, starting with its exact heading line; keep everything that still holds. Tag new facts [Client, portal review, ${day}]. List the open questions their answers settle in resolved (exact text). Return the whole new Read this first in readThisFirst if anything it covers changed, else "". changeNote: one line for the change log.\n\n<brand_bible>\n${b.markdown}\n</brand_bible>\n\n<read_this_first>\n${b.read_this_first ?? ""}\n</read_this_first>`,
+        system: `The client reviewed the short presentation of their Brand Bible in their portal and approved it. Fold everything they told us into the Bible: what they marked not quite (correct it), their answers, the facts from the conversation, how they want to launch, and the success targets (the targets section: each number with its source, client confirmed or adjusted, our estimate, or benchmark). Return each changed section whole, as it should now read, Markdown, starting with its exact heading line; keep everything that still holds. Tag new facts [Client, portal review, ${day}]. List the open questions their answers settle in resolved (exact text). Return the whole new Read this first in readThisFirst if anything it covers changed, else "". changeNote: one line for the change log.\n\n<brand_bible>\n${b.markdown}\n</brand_bible>\n\n<read_this_first>\n${b.read_this_first ?? ""}\n</read_this_first>`,
         prompt: `${review}\n\nOpen questions in the Bible:\n${((b.open_questions ?? []) as { question: string }[]).map((q) => `- ${q.question}`).join("\n") || "None."}`,
         schema: FOLD_SCHEMA,
         maxTokens: 32000,

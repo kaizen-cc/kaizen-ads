@@ -39,4 +39,18 @@ export type Reactions = {
   customerList?: { name: string; rows: number | null; at: string; by: string };
   /** Lasting facts from the conversation, for the Bible and the client's memory */
   facts?: { kind: "prefer" | "avoid" | "note"; text: string; at: string }[];
+  /** How we'll measure success: they confirm our targets, adjust them, or leave them to us (the media buyer decides) */
+  measure?: { choice: MeasureChoice; values: Record<string, number | null>; note: string; at: string; by: string; /** What we showed them, for the Bible */ shown?: MeasureRow[] };
 };
+
+export type MeasureChoice = "right" | "adjust" | "unsure";
+/**
+ * One number we'll judge the ads by, shown to the client to confirm: a platform's KPI (a cost per result or a ROAS),
+ * the blended target across platforms, or the volume goal (monthly revenue, leads or bookings). key: the KPI target's
+ * id, or "blended" / "volume". from: their own number, ours, the industry benchmark, or not set yet.
+ */
+export type MeasureRow = { key: string; label: string; unit: "$" | "x" | "#"; value: number | null; from: "theirs" | "ours" | "benchmark" | null; hint: string };
+export type Measure = { rows: MeasureRow[] };
+
+/** "$150", "3.2x", "40" */
+export const measureValue = (r: { unit: MeasureRow["unit"] }, v: number | null) => (v == null ? "Not set yet" : r.unit === "$" ? `$${v.toLocaleString("en-US", { maximumFractionDigits: v < 100 ? 2 : 0 })}` : r.unit === "x" ? `${v}x` : v.toLocaleString("en-US"));
