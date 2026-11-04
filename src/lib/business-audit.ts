@@ -138,6 +138,9 @@ Today is ${new Date().toISOString().slice(0, 10)}. Audit ${client.name}'s whole 
       .from("business_audits")
       .update({ status: "ready", step: null, result: clean(out), inputs: { kpis: kpis.length, accountAudits: latest.size, requests: reqs.length, fatigue: fatigue?.length ?? 0 }, finished_at: new Date().toISOString() })
       .eq("id", id);
+    // Its moves go to the teams: each paid channel's sprint (added to one being worked, never reset) and the rest as tasks
+    const { routeBusinessAudit } = await import("@/lib/business-audit-route");
+    await routeBusinessAudit(admin, id).catch((e) => console.error("[business audit] routing", e instanceof Error ? e.message : e));
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     await admin.from("business_audits").update({ status: "failed", step: null, error: message, finished_at: new Date().toISOString() }).eq("id", id);

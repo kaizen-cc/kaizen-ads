@@ -1,8 +1,10 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import type { BusinessAuditResult } from "@/lib/business-audit";
+import type { BusinessRouting, RoutedAction } from "@/lib/business-audit-route";
 import { Rebut, type RebutNote } from "@/components/audit-rebut";
 
 // The full business audit on the client page: one button that audits every channel together (Meta, Google, creative,
@@ -22,10 +24,32 @@ const TONE: Record<string, { label: string; chip: string; dot: string }> = {
 const WHEN: Record<string, string> = { now: "Today", this_week: "This week", next: "Next" };
 const SEV: Record<string, string> = { high: "border-l-bad", medium: "border-l-warn", low: "border-l-line" };
 
-export function BusinessAuditPanel({ clientId, latest, pushback, canRebut }: { clientId: string; latest: BusinessAuditView | null; pushback: Record<string, RebutNote[]>; canRebut: boolean }) {
+export function BusinessAuditPanel({ clientId, slug: given = null, latest, pushback, canRebut }: { clientId: string; /** For links to the client's tasks (read from the address when not given) */ slug?: string | null; latest: BusinessAuditView | null; pushback: Record<string, RebutNote[]>; canRebut: boolean }) {
   const router = useRouter();
+  const path = usePathname();
+  const slug = given ?? (path.startsWith("/clients/") ? (path.split("/")[2] ?? null) : null);
   const [running, setRunning] = useState<{ id: string; step: string | null } | null>(latest?.status === "running" ? { id: latest.id, step: latest.step } : null);
   const [error, setError] = useState<string | null>(null);
+  // Where its moves went (each paid channel's sprint, the rest as tasks), read once it's in
+  const [routing, setRouting] = useState<BusinessRouting | null>(null);
+  const readyId = latest?.status === "ready" ? latest.id : null;
+  useEffect(() => {
+    if (!readyId) return;
+    let alive = true;
+    let tries = 0;
+    const read = async () => {
+      const res = await fetch(`/api/business-audits?id=${readyId}`, { cache: "no-store" }).catch(() => null);
+      const j = (await res?.json().catch(() => null)) as { routing?: BusinessRouting | null } | null;
+      if (!alive) return;
+      if (j?.routing) setRouting(j.routing);
+      // Routing runs right after the audit: look again for a minute while it's on its way
+      else if (++tries < 6) setTimeout(read, 10_000);
+    };
+    void read();
+    return () => {
+      alive = false;
+    };
+  }, [readyId]);
 
   // Follow a running audit until it's done, then show it
   useEffect(() => {
@@ -99,6 +123,8 @@ export function BusinessAuditPanel({ clientId, latest, pushback, canRebut }: { c
             ))}
           </div>
 
+          {routing && <Routed routing={routing} slug={slug} />}
+
           <Block title="Here's what I found">
             <div className="grid gap-3 text-[14px] leading-relaxed">
               {r.diagnosis
@@ -149,6 +175,7 @@ export function BusinessAuditPanel({ clientId, latest, pushback, canRebut }: { c
                     ))}
                   </ol>
                   <p className="text-[12px] leading-relaxed text-muted">{x.why}</p>
+                  {routing?.actions[i] && <WentTo r={routing.actions[i]} slug={slug} />}
                   {rebut(`action:${i}`, x.title)}
                 </article>
               ))}
@@ -173,6 +200,68 @@ export function BusinessAuditPanel({ clientId, latest, pushback, canRebut }: { c
         </div>
       )}
     </section>
+  );
+}
+
+/** Per channel: the sprint it opened or added to (never reset), or the tasks it made */
+function Routed({ routing, slug }: { routing: BusinessRouting; slug: string | null }) {
+  const rows = Object.entries(routing.channels).filter(([, c]) => c);
+  if (!rows.length) return null;
+  return (
+    <div className="grid gap-2.5 rounded-[16px] border border-line bg-bg/40 p-4">
+      <p className="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-faint">Sent to the teams</p>
+      <div className="grid gap-2 md:grid-cols-2">
+        {rows.map(([ch, c]) => {
+          const label = c!.kind === "created" ? "Sprint started" : c!.kind === "added" ? `Added ${c!.added} ${c!.added === 1 ? "move" : "moves"} to the open sprint` : c!.kind === "unchanged" ? "Open sprint already covers it" : `${c!.added} ${c!.added === 1 ? "task" : "tasks"}`;
+          const href = c!.sprintId ? `/kpis/sprint/${c!.sprintId}` : slug ? `/clients/${slug}?tab=plan` : null;
+          return (
+            <div key={ch} className="grid gap-1 rounded-[12px] border border-line bg-surface px-3.5 py-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[13px] font-medium">{CHANNEL[ch] ?? ch}</span>
+                {href && (
+                  <Link href={href} className="text-[12px] text-brand-text hover:underline">
+                    {c!.sprintId ? "Open the sprint →" : "Open the tasks →"}
+                  </Link>
+                )}
+              </div>
+              <p className="text-[12.5px] text-muted">
+                {label}
+                {c!.kind === "added" || c!.kind === "unchanged" ? ". Progress already made stays." : ""}
+                {c!.duplicates ? ` ${c!.duplicates} already on it.` : ""}
+              </p>
+              {c!.conflicts.length > 0 && (
+                <ul className="grid gap-1 text-[12px] text-warn">
+                  {c!.conflicts.map((x, i) => (
+                    <li key={i}>
+                      For the buyer to decide: &ldquo;{x.title}&rdquo; pulls against &ldquo;{x.of}&rdquo; ({x.note})
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Where one action went */
+function WentTo({ r, slug }: { r: RoutedAction; slug: string | null }) {
+  const text =
+    r.to === "sprint" ? "On the sprint" : r.to === "task" ? "A task for the team" : r.to === "duplicate" ? (r.note ?? "Already covered") : r.to === "conflict" ? `Set aside for the buyer: ${r.note ?? "pulls against a move in progress"}` : "Later: not sent yet";
+  const href = r.sprintId ? `/kpis/sprint/${r.sprintId}` : r.taskKey && slug ? `/clients/${slug}?tab=plan` : null;
+  const tone = r.to === "conflict" ? "border-warn/40 text-warn" : r.to === "later" ? "border-line text-faint" : "border-ok/30 text-ok";
+  return (
+    <p className={`justify-self-start rounded-full border px-2.5 py-1 text-[11.5px] ${tone}`}>
+      {href ? (
+        <Link href={href} className="hover:underline">
+          {text} →
+        </Link>
+      ) : (
+        text
+      )}
+    </p>
   );
 }
 

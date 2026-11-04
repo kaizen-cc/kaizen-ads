@@ -29,7 +29,7 @@ export async function GET(request: Request) {
   await requireStaff();
   const id = new URL(request.url).searchParams.get("id");
   if (!id) return Response.json({ error: "Which audit?" }, { status: 400 });
-  const { data } = await (await createClient()).from("business_audits").select("id, status, step, error").eq("id", id).maybeSingle();
+  const { data } = await (await createClient()).from("business_audits").select("id, status, step, error, routing").eq("id", id).maybeSingle();
   if (!data) return Response.json({ error: "Not found." }, { status: 404 });
   return Response.json(data);
 }

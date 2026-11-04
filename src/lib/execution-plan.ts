@@ -221,7 +221,7 @@ export function planMarkdown(p: ExecutionPlan) {
 }
 
 /** Who holds each role on this client (the seats, then the leads), for task owners */
-async function owners(admin: SupabaseClient, clientId: string): Promise<Partial<Record<OwnerRole, string>>> {
+export async function owners(admin: SupabaseClient, clientId: string): Promise<Partial<Record<OwnerRole, string>>> {
   const [{ data: seats }, { data: leads }] = await Promise.all([
     admin.from("client_assignments").select("role, profile_id").eq("client_id", clientId),
     admin.from("profiles").select("id, role").eq("is_active", true).in("role", ["head_of_creative", "head_of_meta", "head_of_google"]),
@@ -273,7 +273,8 @@ export async function signOffPlan(admin: SupabaseClient, clientId: string, by: s
   );
   // Steps a rebuilt plan dropped are set aside, never deleted
   const keys = new Set(tasks.map((t) => t.key));
-  const dropped = (existing ?? []).filter((t) => !keys.has(t.key as string) && !["done", "skipped"].includes(t.status as string)).map((t) => t.key as string);
+  // (a business audit's tasks, ba:…, aren't part of the plan: they stay)
+  const dropped = (existing ?? []).filter((t) => !keys.has(t.key as string) && !String(t.key).startsWith("ba:") && !["done", "skipped"].includes(t.status as string)).map((t) => t.key as string);
   if (dropped.length) await admin.from("client_tasks").update({ status: "skipped", updated_at: now.toISOString() }).eq("client_id", clientId).in("key", dropped);
   await refreshTasks(admin, clientId);
   return { ok: true as const };

@@ -36,7 +36,7 @@ export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id
     .maybeSingle();
   if (!s) notFound();
   const [{ data: actions }, { data: checks }, { data: watchers }] = await Promise.all([
-    supabase.from("sprint_actions").select("id, title, area, owner, \"when\", steps, why, impact, status, note, ai_note, done_at, source, watch, questions, learned, profiles!sprint_actions_done_by_fkey(full_name), adder:profiles!sprint_actions_added_by_fkey(full_name)").eq("sprint_id", id).order("sort_order"),
+    supabase.from("sprint_actions").select("id, title, area, owner, \"when\", steps, why, impact, status, note, ai_note, done_at, source, created_at, watch, questions, learned, profiles!sprint_actions_done_by_fkey(full_name), adder:profiles!sprint_actions_added_by_fkey(full_name)").eq("sprint_id", id).order("sort_order"),
     supabase.from("sprint_checks").select("id, verdict, message, changes, kpi, next_check_at, created_at").eq("sprint_id", id).order("created_at", { ascending: false }).limit(60),
     (s.watcher_ids as string[]).length ? supabase.from("profiles").select("full_name").in("id", s.watcher_ids as string[]) : Promise.resolve({ data: [] }),
   ]);
@@ -61,6 +61,7 @@ export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id
     doneAt: a.done_at,
     doneBy: (a.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
     source: (a.source ?? "audit") as SprintAction["source"],
+    addedOn: a.source === "business_audit" ? ((a.created_at as string | null) ?? null) : null,
     addedBy: (a.adder as unknown as { full_name: string } | null)?.full_name ?? null,
     watch: a.watch,
     questions: (a.questions ?? []) as string[],

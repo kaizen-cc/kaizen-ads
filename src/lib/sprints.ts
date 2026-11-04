@@ -100,6 +100,67 @@ export async function openSprint(admin: SupabaseClient, auditId: string) {
   return sprintId;
 }
 
+/** A move from a business audit, ready for a sprint's action list */
+export type BusinessMove = { index: number; title: string; area: string; owner: string; when: string; steps: string[]; why: string; impact: string };
+
+/**
+ * Opens a sprint on an account from a business audit (when the account has none): the buyer works it like any audit's
+ * sprint and the daily check follows it. Returns the sprint and its moves' ids, in the order given.
+ */
+export async function openBusinessSprint(admin: SupabaseClient, o: { targetId: string; clientId: string; businessAuditId: string; buyer: string | null; watchers: string[]; createdBy: string | null; moves: BusinessMove[]; headline: string }) {
+  const { data: t } = await admin.from("kpi_targets").select("ad_account_id, platform").eq("id", o.targetId).single();
+  const kpi = await kpiNow(admin, o.targetId);
+  const setup = await liveSetup(t?.platform ?? "meta", t?.ad_account_id ?? null).catch(() => null);
+  const { data, error } = await admin
+    .from("optimization_sprints")
+    .insert({ target_id: o.targetId, client_id: o.clientId, business_audit_id: o.businessAuditId, buyer_id: o.buyer, watcher_ids: o.watchers, created_by: o.createdBy, baseline: kpi, latest: kpi, setup, next_check_at: checkAt(1) })
+    .select("id")
+    .single();
+  if (error || !data) throw new Error(error?.message ?? "Couldn't open the sprint");
+  const sprintId = data.id as string;
+  const ids = await insertBusinessMoves(admin, sprintId, o.businessAuditId, o.moves, 1);
+  await admin.from("sprint_checks").insert({
+    sprint_id: sprintId,
+    verdict: "started",
+    message: `Sprint started from the full business audit with ${o.moves.length} ${o.moves.length === 1 ? "move" : "moves"} on the action list. ${o.headline} I'll check the account tomorrow morning and every day after until it's back on target.`,
+    kpi,
+    next_check_at: checkAt(1),
+  });
+  return { sprintId, ids };
+}
+
+/**
+ * Adds a business audit's new moves to a sprint already being worked, at the end of its list. Nothing already on it
+ * changes (status, progress, notes): the plan grows, it never resets. The sprint's feed gets one line on what was
+ * added (and what was set aside for the buyer to decide), keeping its latest verdict.
+ */
+export async function appendBusinessMoves(admin: SupabaseClient, sprintId: string, businessAuditId: string, moves: BusinessMove[], conflicts: { title: string; of: string; note: string }[], dated: string) {
+  const { data: have } = await admin.from("sprint_actions").select("sort_order").eq("sprint_id", sprintId);
+  const start = Math.max(0, ...(have ?? []).map((x) => x.sort_order as number)) + 1;
+  const ids = moves.length ? await insertBusinessMoves(admin, sprintId, businessAuditId, moves, start) : [];
+  if (moves.length || conflicts.length) {
+    const { data: last } = await admin.from("sprint_checks").select("verdict, kpi, next_check_at").eq("sprint_id", sprintId).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    const parts = [
+      moves.length ? `The full business audit on ${dated} added ${moves.length} new ${moves.length === 1 ? "move" : "moves"} at the end of the list: ${moves.map((m) => m.title).join("; ")}.` : "",
+      conflicts.length ? `It also suggested ${conflicts.length === 1 ? "something that pulls" : "things that pull"} against moves in progress, left off the list for you to decide: ${conflicts.map((c) => `"${c.title}" vs "${c.of}" (${c.note})`).join("; ")}.` : "",
+      "Everything already on the list stays as it was.",
+    ].filter(Boolean);
+    await admin.from("sprint_checks").insert({ sprint_id: sprintId, verdict: (last?.verdict as string | undefined) ?? "started", message: parts.join(" "), kpi: last?.kpi ?? {}, next_check_at: last?.next_check_at ?? null });
+  }
+  return ids;
+}
+
+async function insertBusinessMoves(admin: SupabaseClient, sprintId: string, businessAuditId: string, moves: BusinessMove[], start: number) {
+  if (!moves.length) return [];
+  const { data, error } = await admin
+    .from("sprint_actions")
+    .insert(moves.map((m, i) => ({ sprint_id: sprintId, source: "business_audit", business_audit_id: businessAuditId, audit_index: m.index, title: m.title, area: m.area, owner: m.owner, when: m.when, steps: m.steps, why: m.why, impact: m.impact, sort_order: start + i })))
+    .select("id, audit_index");
+  if (error) throw new Error(error.message);
+  const byIndex = new Map((data ?? []).map((r) => [r.audit_index as number, r.id as string]));
+  return moves.map((m) => byIndex.get(m.index) ?? null);
+}
+
 /** Adds one of an audit's actions (usually a "next" one) to the account's sprint, opening it if needed. */
 export async function addAuditAction(admin: SupabaseClient, auditId: string, index: number) {
   const { data: a } = await admin.from("account_audits").select("target_id, result").eq("id", auditId).single();
