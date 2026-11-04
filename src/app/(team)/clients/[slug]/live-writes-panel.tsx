@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { AudienceTermsCheck } from "@/components/audience-terms";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -8,7 +9,7 @@ type Result = { ok: true } | { ok: false; error: string };
  * Live changes in this client's ad accounts: while the global switch is off, an exec turns them on for one client at a
  * time to prove the recommendations and the launcher on real accounts before everyone gets them.
  */
-export function LiveWritesPanel({ on, by, at, globalOn, canEdit, toggle }: { on: boolean; by: string | null; at: string | null; globalOn: boolean; canEdit: boolean; toggle: (on: boolean) => Promise<Result> }) {
+export function LiveWritesPanel({ clientId, on, by, at, globalOn, canEdit, toggle }: { clientId: string; on: boolean; by: string | null; at: string | null; globalOn: boolean; canEdit: boolean; toggle: (on: boolean) => Promise<Result> }) {
   const [live, setLive] = useState(on);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -47,6 +48,7 @@ export function LiveWritesPanel({ on, by, at, globalOn, canEdit, toggle }: { on:
           {error && <p className="mt-2 text-[12.5px] text-bad">{error}</p>}
         </div>
       )}
+      {(globalOn || live) && <AudienceTermsCheck clientId={clientId} />}
     </div>
   );
 }

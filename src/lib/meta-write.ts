@@ -172,3 +172,31 @@ export async function metaWritableSetup(admin: SupabaseClient, account: string):
     }),
   };
 }
+
+/** Where an admin of the ad account accepts Meta's Custom Audience terms (needed to edit anything using a customer list) */
+export const audienceTermsUrl = (account: string) => `https://business.facebook.com/ads/manage/customaudiences/tos/?act=${bare(account)}`;
+
+export type AudienceTerms = { account: string; name: string | null; accepted: boolean | null; error: string | null; url: string };
+
+/**
+ * Has each ad account accepted Meta's Custom Audience terms? Without them Meta refuses any change to an ad set that
+ * targets an uploaded customer list, pausing included. Read from the account's tos_accepted, a few at a time.
+ */
+export async function audienceTerms(accounts: string[]): Promise<AudienceTerms[]> {
+  const ids = [...new Set(accounts.map(bare).filter(Boolean))];
+  const out: AudienceTerms[] = [];
+  for (let i = 0; i < ids.length; i += 8)
+    out.push(
+      ...(await Promise.all(
+        ids.slice(i, i + 8).map(async (id) => {
+          try {
+            const r = await metaGraph<{ name?: string; tos_accepted?: Record<string, number> }>(`act_${id}`, { fields: "name,tos_accepted" });
+            return { account: id, name: r.name ?? null, accepted: Boolean(r.tos_accepted?.custom_audience_tos), error: null, url: audienceTermsUrl(id) };
+          } catch (e) {
+            return { account: id, name: null, accepted: null, error: (e instanceof Error ? e.message : String(e)).slice(0, 200), url: audienceTermsUrl(id) };
+          }
+        }),
+      )),
+    );
+  return out;
+}

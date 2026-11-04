@@ -620,7 +620,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                   )}
                   {liveWrites && (
                     <Section title="Live changes in their ad accounts" description="Test client by client: execs switch it on here before it's on for everyone.">
-                      <LiveWritesPanel {...liveWrites} canEdit={can.admin && !demo} toggle={setLiveAdWrites.bind(null, client.id, client.slug)} />
+                      <LiveWritesPanel {...liveWrites} clientId={client.id} canEdit={can.admin && !demo} toggle={setLiveAdWrites.bind(null, client.id, client.slug)} />
                     </Section>
                   )}
                   <Section title="Creative billing date" description="When their creative allotment starts again: the day the Creative Package is billed in Stripe. Execs can set it by hand; every change is kept.">

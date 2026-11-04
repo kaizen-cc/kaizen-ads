@@ -1,4 +1,5 @@
 import { GoogleWriteCard, MetaWriteCard } from "./meta-write-card";
+import { AudienceTermsCheck } from "@/components/audience-terms";
 import { Connections } from "./connections";
 import { DEFAULT_URL_TAGS, metaWriteSetting } from "@/lib/meta-write";
 import Link from "next/link";
@@ -676,6 +677,9 @@ async function Sync({ motion }: { motion: string | null }) {
             canEdit={me.isExec}
             updated={gw?.updated_at ? `${new Date(gw.updated_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })}${gwBy ? ` by ${gwBy}` : ""}` : null}
           />
+          <div className="rounded-[20px] border border-line bg-surface p-5">
+            <AudienceTermsCheck />
+          </div>
         </div>
       </section>
 
