@@ -6,7 +6,7 @@ import type { HistoryEvent } from "@/lib/asana";
 // and, per designer, editor and copywriter, a scorecard of their own work. Business days throughout (weekdays, New
 // York). While the team works in Asana this is the source; tickets in Kaizen Ads join it as they move over.
 
-type Col = "brief" | "make" | "creative_review" | "copy" | "copy_review" | "client" | "client_revision" | "launch" | "done";
+export type Col = "brief" | "make" | "creative_review" | "copy" | "copy_review" | "client" | "client_revision" | "launch" | "done";
 const COLS: [RegExp, Col][] = [
   [/^creative brief/i, "brief"],
   [/^in progress/i, "make"],
@@ -19,7 +19,7 @@ const COLS: [RegExp, Col][] = [
   [/^ready for launch/i, "launch"],
   [/^launched/i, "done"],
 ];
-const colOf = (s: string | null): Col | null => (s ? (COLS.find(([re]) => re.test(s.trim()))?.[1] ?? null) : null);
+export const colOf = (s: string | null): Col | null => (s ? (COLS.find(([re]) => re.test(s.trim()))?.[1] ?? null) : null);
 
 /** Weekday time between two moments, in days (New York weekends don't count). */
 export function bizDays(fromIso: string, toIso: string) {
@@ -36,11 +36,11 @@ export function bizDays(fromIso: string, toIso: string) {
   return ms / 86_400_000;
 }
 
-type Span = { col: Col; from: string; to: string | null; holder: string | null; next: Col | null };
+export type Span = { col: Col; from: string; to: string | null; holder: string | null; next: Col | null };
 type Task = { gid: string; name: string; clientId: string | null; client: string | null; slug: string | null; createdAt: string; open: boolean; section: string | null; assignee: string | null; url: string | null; spans: Span[] };
 
 /** The task's life as spans: which column, from when to when, who held it, and where it went next. */
-function spansOf(createdAt: string, history: HistoryEvent[], section: string | null, assignee: string | null): Span[] {
+export function spansOf(createdAt: string, history: HistoryEvent[], section: string | null, assignee: string | null): Span[] {
   const moves = history.filter((e): e is Extract<HistoryEvent, { kind: "moved" }> => e.kind === "moved").sort((a, b) => a.at.localeCompare(b.at));
   const assigns = history.filter((e) => e.kind === "assigned").sort((a, b) => a.at.localeCompare(b.at));
   const holderAt = (iso: string) => {

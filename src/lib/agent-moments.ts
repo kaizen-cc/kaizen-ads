@@ -57,6 +57,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
   creativecheck: [{ title: "Sorts uploaded designs into net new and variations, and checks sizes", where: "Board · Upload", trigger: "auto", when: "As a designer or editor uploads", labels: ["creative check"] }],
   creativereview: [
     { title: "Reviews each design against the brief, the brand and Meta policy", where: "Board · Before internal review", trigger: "click", when: "When the maker runs the AI review", labels: ["creative review"] },
+    { title: "Sorts feedback on each maker's work into real errors (a typo, a missing button, the wrong size or offer) or preferences, for the Creative KPIs", where: "Board · Creative KPIs", trigger: "auto", when: "Every hour, or on Check now", labels: ["creative error check "] },
     { title: "Turns a lead disagreeing with a review note into a conditional learning, and keeps its learnings tidy (merges, settles contradictions, retires stale ones)", where: "Settings · AI agents · What it has learned", trigger: "auto", when: "When an exec or lead disagrees with a note; nightly", labels: ["learning scope ", "learning consolidate "] },
   ],
   strategist: [

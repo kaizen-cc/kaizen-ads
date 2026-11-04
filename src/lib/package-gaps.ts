@@ -28,10 +28,13 @@ export async function packageGaps(admin: SupabaseClient, onlyClient?: string): P
   if (!clients?.length) return out;
   const ids = clients.map((c) => c.id as string);
   const since = new Date(Date.now() - 70 * 86_400_000).toISOString();
-  const [{ data: reqs }, { data: tasks }] = await Promise.all([
+  const [{ data: reqs }, { data: tasks }, { data: dismissed }] = await Promise.all([
     admin.from("requests").select("client_id, created_at").in("client_id", ids).is("deleted_at", null).gte("created_at", since),
     admin.from("asana_tasks").select("client_id, counted_at").in("client_id", ids).gte("counted_at", since),
+    // A cycle an exec or lead set aside (a delay, billing dates out of step) is never flagged
+    admin.from("allotment_dismissals").select("client_id, period_start").in("client_id", ids),
   ]);
+  const setAside = new Set((dismissed ?? []).map((d) => `${d.client_id}:${d.period_start}`));
   const made = new Map<string, number[]>();
   for (const r of reqs ?? []) made.set(r.client_id as string, [...(made.get(r.client_id as string) ?? []), Date.parse(r.created_at as string)]);
   for (const t of tasks ?? []) made.set(t.client_id as string, [...(made.get(t.client_id as string) ?? []), Date.parse(t.counted_at as string)]);
@@ -45,8 +48,8 @@ export async function packageGaps(admin: SupabaseClient, onlyClient?: string): P
     const covered = Date.parse(c.created_at as string) <= prev.start.getTime() && (!c.creative_package_until || String(c.creative_package_until) >= ymd(prev.end));
     const elapsed = (now.getTime() - cur.start.getTime()) / (cur.end.getTime() - cur.start.getTime());
     const gap: PackageGap = {
-      missed: covered && !inside(prev) ? { start: ymd(prev.start), end: ymd(prev.end) } : null,
-      atRisk: elapsed >= 0.6 && !inside(cur) ? { start: ymd(cur.start), end: ymd(cur.end), elapsed: Math.round(elapsed * 100) } : null,
+      missed: covered && !inside(prev) && !setAside.has(`${c.id}:${ymd(prev.start)}`) ? { start: ymd(prev.start), end: ymd(prev.end) } : null,
+      atRisk: elapsed >= 0.6 && !inside(cur) && !setAside.has(`${c.id}:${ymd(cur.start)}`) ? { start: ymd(cur.start), end: ymd(cur.end), elapsed: Math.round(elapsed * 100) } : null,
     };
     if (gap.missed || gap.atRisk) out.set(c.id as string, gap);
   }

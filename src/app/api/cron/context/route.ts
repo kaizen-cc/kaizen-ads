@@ -249,7 +249,9 @@ export async function GET(request: Request) {
       const chat = await (await import("@/lib/portal-chat")).chatDigest(admin).catch((e) => String(e));
       // Knowledge files left half read (the server stopped mid-read): read again
       const knowledge = await (await import("@/lib/knowledge")).keepKnowledge(admin).catch((e) => String(e));
-      return Response.json({ links, issues, packages, sheets, chat, knowledge });
+      // Feedback on the makers' work (review and client comments, Asana comments) sorted into real errors
+      const errors = await (await import("@/lib/creative-errors")).keepCreativeErrors(admin).catch((e) => String(e));
+      return Response.json({ links, issues, packages, sheets, chat, knowledge, errors });
     }
     if (step === "ledger") return Response.json(await (await import("@/lib/ledger")).runLedger(admin));
     if (step === "learnings") return Response.json(await (await import("@/lib/learnings")).consolidateLearnings(admin));

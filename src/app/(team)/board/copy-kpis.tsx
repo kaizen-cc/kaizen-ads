@@ -1,7 +1,6 @@
 import Link from "next/link";
-import { PERIODS } from "@/lib/creative-kpis";
 import type { Copywriter, CopyKpis } from "@/lib/copy-kpis";
-import { HeadlineCard, Meter, Section, Spark, TONES } from "./creative-kpis";
+import { HeadlineCard, KpiHeader, Meter, Section, TONES } from "./creative-kpis";
 import { LiveRefresh, Tween } from "./live-kpis";
 
 // The copy team's KPIs (execs and leads, a tab on the Board): what to act on first, how fast copy moves from approved
@@ -13,7 +12,8 @@ const { TONE_TEXT } = TONES;
 
 function WriterCard({ w }: { w: Copywriter }) {
   return (
-    <li className="grid content-start gap-4 rounded-[20px] border border-line bg-surface p-4 md:p-5">
+    <li className="relative grid content-start gap-4 rounded-[22px] border border-line bg-surface p-5 transition-[border-color,transform] hover:-translate-y-0.5 hover:border-faint">
+      <Link href={`/board?view=kpis&person=${w.id}`} className="absolute inset-0 rounded-[22px]" aria-label={`Everything on ${w.name}'s plate`} />
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate font-heading text-[17px] leading-tight">{w.name}</p>
@@ -26,12 +26,9 @@ function WriterCard({ w }: { w: Copywriter }) {
           <p className="text-[11px] text-muted">sets approved</p>
         </div>
       </div>
-      <div className="flex items-end justify-between gap-3">
-        <div className="grid gap-0.5">
-          <span className={`tabular text-[22px] font-medium leading-none ${w.turnaround != null && w.turnaround > 1 ? "text-warn" : ""}`}>{w.turnaround == null ? "—" : `${w.turnaround}d`}</span>
-          <span className="text-[11px] text-muted">draft → approved</span>
-        </div>
-        <Spark data={w.weekly} />
+      <div className="grid gap-0.5">
+        <span className={`tabular text-[22px] font-medium leading-none ${w.turnaround != null && w.turnaround > 1 ? "text-warn" : ""}`}>{w.turnaround == null ? "—" : `${w.turnaround}d`}</span>
+        <span className="text-[11px] text-muted">draft → approved</span>
       </div>
       <Meter value={w.firstPass} target={70} label="AI draft approved without a rewrite" />
       <dl className="tabular grid grid-cols-3 gap-2 text-center">
@@ -49,9 +46,7 @@ function WriterCard({ w }: { w: Copywriter }) {
         ))}
       </dl>
       {w.act ? (
-        <Link href={`/board?person=${w.id}`} className="rounded-[12px] bg-warn-soft px-3 py-2.5 text-[12.5px] leading-snug text-warn hover:underline">
-          → {w.act}
-        </Link>
+        <p className="rounded-[12px] bg-warn-soft px-3 py-2.5 text-[12.5px] leading-snug text-warn">{w.act}</p>
       ) : (
         <p className="rounded-[12px] bg-ok-soft px-3 py-2.5 text-[12.5px] text-ok">{w.open ? `${w.open} open, nothing late.` : "On track: nothing to act on."}</p>
       )}
@@ -63,57 +58,42 @@ export function CopyKpisView({ k }: { k: CopyKpis }) {
   const total = k.split.copy + k.split.creative;
   const copyShare = total ? Math.round((k.split.copy / total) * 100) : 0;
   return (
-    <div className="grid gap-8">
+    <div className="grid gap-12">
       <LiveRefresh />
-      <div className="relative isolate grid gap-5 overflow-hidden rounded-[28px] border border-line bg-deep px-5 pb-6 pt-7 md:px-8 md:pb-8 md:pt-9">
-        <span aria-hidden className="pointer-events-none absolute -right-24 -top-32 -z-10 h-80 w-80 rounded-full bg-brand/25 blur-[110px]" />
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-faint">Copy team</p>
-            <h1 className="mt-1.5 font-heading text-[30px] leading-[1.05] tracking-tight md:text-[40px]">How copy is going</h1>
-            <p className="mt-2 max-w-xl text-[14px] text-muted">
-              From approved creative to approved copy over the last {k.days} days against the {k.days} before: speed, first-time approvals, what the client&apos;s rules flag, and which copy rode into profitable winners.
-            </p>
-          </div>
-          <nav aria-label="Period" className="flex w-full rounded-full border border-line bg-surface p-0.5 text-[13px] md:w-auto">
-            {PERIODS.map((p) => (
-              <Link key={p.key} href={`/board?view=copy-kpis${p.key === "cycle" ? "" : `&period=${p.key}`}`} aria-current={k.period === p.key ? "true" : undefined} className={`grid h-10 flex-1 place-items-center whitespace-nowrap rounded-full px-3 md:h-8 md:flex-initial ${k.period === p.key ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
-                {p.label}
-              </Link>
-            ))}
-          </nav>
+      <KpiHeader active="copy-kpis" period={k.period} base="/board?view=copy-kpis" />
+      <section className="grid gap-5">
+        <div className="max-w-2xl">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">Copy · last {k.days} days</p>
+          <h2 className="mt-1 font-heading text-[32px] leading-[1.05] tracking-tight md:text-[40px]">How copy is going</h2>
         </div>
-
-        <div className="grid gap-2">
-          <p className="text-[12px] font-medium text-fg">{k.actions.length ? "Act on this first" : "Nothing urgent"}</p>
-          {k.actions.length ? (
-            <ul className="grid gap-2 md:grid-cols-2">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+          {k.headlines.map((h) => (
+            <HeadlineCard key={h.key} h={h} />
+          ))}
+        </div>
+        {k.actions.length ? (
+          <div className="grid gap-2 rounded-[22px] border border-line bg-surface p-2">
+            <p className="px-3 pt-2 text-[12px] font-medium text-fg">Act on this first</p>
+            <ul className="grid md:grid-cols-2">
               {k.actions.map((a) => (
                 <li key={a.key}>
-                  <Link href={a.href} className={`group flex h-full items-start gap-3 rounded-[16px] border px-4 py-3 transition-colors ${a.tone === "bad" ? "border-bad/30 bg-bad-soft hover:border-bad/60" : "border-warn/30 bg-warn-soft hover:border-warn/60"}`}>
+                  <Link href={a.href} className="group flex h-full items-start gap-3 rounded-[16px] px-3 py-3 hover:bg-ink/[0.04]">
                     <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${a.tone === "bad" ? "bg-bad" : "bg-warn"}`} />
                     <span className="min-w-0 flex-1">
-                      <span className="block text-[14px] font-medium leading-snug text-fg">{a.title}</span>
+                      <span className="block text-[14px] font-medium leading-snug">{a.title}</span>
                       <span className="block truncate text-[12px] text-muted">{a.detail}</span>
                     </span>
-                    <span className="shrink-0 text-[12px] text-muted group-hover:text-fg">→</span>
+                    <span className="shrink-0 text-[12px] text-faint group-hover:text-fg">→</span>
                   </Link>
                 </li>
               ))}
             </ul>
-          ) : (
-            <p className="rounded-[16px] bg-ok-soft px-4 py-3 text-[14px] text-ok">No late copy, nothing blocked by a client&apos;s rules, nothing forced through. Keep it going.</p>
-          )}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {k.headlines.map((h) => (
-          <HeadlineCard key={h.key} h={h} />
-        ))}
-      </div>
-
-      <Section kicker="The team" title="Each copywriter" aside={<span className="text-[12px] text-faint">Sets approved, how fast, how often first time, what came back</span>}>
+          </div>
+        ) : (
+          <p className="rounded-[18px] bg-ok-soft px-5 py-3.5 text-[14px] text-ok">No late copy, nothing blocked by a client&apos;s rules, nothing forced through.</p>
+        )}
+      </section>
+      <Section kicker="The team" title="Copywriters" aside={<span className="text-[12px] text-faint">Tap a card for everything on their plate</span>}>
         {k.writers.length ? (
           <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {k.writers.map((w) => (
@@ -128,7 +108,7 @@ export function CopyKpisView({ k }: { k: CopyKpis }) {
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <Section kicker="Clients" title="Copy by client">
           {k.clients.length ? (
-            <ul className="grid gap-1 rounded-[20px] border border-line bg-surface p-1.5 md:p-2">
+            <ul className="grid max-h-[440px] gap-1 overflow-y-auto overscroll-contain rounded-[22px] border border-line bg-surface p-1.5 md:p-2">
               {k.clients.map((c) => (
                 <li key={c.id}>
                   <Link href={`/clients/${c.slug}`} className="grid gap-1.5 rounded-[14px] px-3 py-3 hover:bg-ink/[0.04] md:grid-cols-[minmax(0,1.2fr)_auto] md:items-center md:gap-4">

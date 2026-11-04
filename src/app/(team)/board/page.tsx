@@ -20,10 +20,7 @@ export default async function Board({ searchParams }: PageProps<"/board">) {
     const { loadCreativeKpis } = await import("@/lib/creative-kpis");
     const k = await loadCreativeKpis(supabase, period === "30" || period === "90" ? period : "cycle");
     return (
-      <div className="grid gap-5">
-        <BoardTabs active="kpis" />
-        <CreativeKpisView k={k} />
-      </div>
+      <CreativeKpisView k={k} canDismiss={lead} />
     );
   }
   // The copy team's KPIs: execs and leads only
@@ -31,10 +28,7 @@ export default async function Board({ searchParams }: PageProps<"/board">) {
     const [{ loadCopyKpis }, { CopyKpisView }] = await Promise.all([import("@/lib/copy-kpis"), import("./copy-kpis")]);
     const k = await loadCopyKpis(supabase, period === "30" || period === "90" ? period : "cycle");
     return (
-      <div className="grid gap-5">
-        <BoardTabs active="copy-kpis" />
-        <CopyKpisView k={k} />
-      </div>
+      <CopyKpisView k={k} />
     );
   }
   const asked = typeof t === "string" && /^\d+$/.test(t) ? Number(t) : null;
@@ -105,14 +99,8 @@ export default async function Board({ searchParams }: PageProps<"/board">) {
       can={{ review: isExecOrLead(me), approveCopy: isExecOrLead(me) || me.isCopywriter, exec: me.isExec }}
       shadows={shadows}
       me={{ id: me.id, lead: isExecOrLead(me) }}
+      tabs={lead ? <BoardTabs active="board" /> : null}
     />
   );
-  return lead ? (
-    <div className="grid gap-5">
-      <BoardTabs active="board" />
-      {board}
-    </div>
-  ) : (
-    board
-  );
+  return board;
 }

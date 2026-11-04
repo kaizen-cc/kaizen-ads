@@ -38,6 +38,7 @@ export function BoardClient({
   demo = false,
   shadows = [],
   me = null,
+  tabs = null,
 }: {
   tickets: Ticket[];
   clients: ClientOption[];
@@ -49,6 +50,8 @@ export function BoardClient({
   /** Open Asana tasks not migrated yet (outline cards) */
   shadows?: ShadowTicket[];
   me?: { id: string; lead: boolean } | null;
+  /** The Board's views (execs and leads), beside the title */
+  tabs?: React.ReactNode;
 }) {
   const router = useRouter();
   const params = useSearchParams();
@@ -227,7 +230,10 @@ export function BoardClient({
       {/* Header */}
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="font-heading text-3xl">Board</h1>
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="font-heading text-3xl">Board</h1>
+            {tabs}
+          </div>
           <p className="mt-1 text-sm text-muted">
             {selectedClient ? (
               <>
