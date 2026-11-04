@@ -81,9 +81,12 @@ export function TicketCard({
   dragging,
   onDragStart,
   onDragEnd,
+  arrived = false,
 }: {
   ticket: Ticket;
   onOpen: () => void;
+  /** It just moved here (someone else's move, a client's approval): it slides in and glows for a moment */
+  arrived?: boolean;
   dragging?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
   onDragEnd?: () => void;
@@ -101,7 +104,7 @@ export function TicketCard({
       onClick={() => (prefetchMedia(ticket.id), onOpen())}
       className={`group relative grid w-full gap-2.5 overflow-hidden rounded-brand border border-line bg-surface p-3 text-left transition duration-150 before:absolute before:inset-y-0 before:left-0 before:w-[3px] hover:-translate-y-px hover:border-faint hover:shadow-[0_10px_30px_-12px_rgba(0,0,0,0.8)] max-md:p-3.5 max-md:active:scale-[0.985] focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-text ${EDGE[h]} ${
         dragging ? "opacity-40" : ""
-      }`}
+      } ${arrived ? "animate-[step-in_.45s_cubic-bezier(.2,.8,.2,1)] shadow-[0_0_0_2px_var(--color-ok),0_14px_36px_-14px_var(--color-ok)]" : ""}`}
     >
       <div className="flex items-center justify-between gap-2">
         <ClientTag name={ticket.clientName} small />

@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { Combobox } from "@/components/combobox";
 import { tintFor } from "@/lib/colors";
 import { closeParams, pushParams, replaceParams } from "@/lib/url-state";
+import { toast } from "@/components/toasts";
 import { BOARD_ORDER, PHASE_LABEL, health, stageInfo, type Format, type Health, type Phase, type Stage } from "@/lib/stages";
 import { TicketCard } from "./ticket-card";
 import { MoveDialog } from "./move-dialog";
@@ -53,17 +54,55 @@ export function BoardClient({
   const params = useSearchParams();
   const [tickets, setTickets] = useState(initial);
 
-  // Fresh data from the server replaces local (optimistic) state
+  // Fresh data from the server replaces local (optimistic) state; a ticket that moved since glows in its new column
   const [prevInitial, setPrevInitial] = useState(initial);
   if (initial !== prevInitial) {
     setPrevInitial(initial);
     setTickets(initial);
   }
-  // Timers keep moving: refresh quietly every minute
+  // A ticket that moved since the last refresh glows in its new column; a client's approval is said out loud
+  const [moved, setMoved] = useState<Set<string>>(new Set());
+  const lastServer = useRef(initial);
+  useEffect(() => {
+    const before = new Map(lastServer.current.map((t) => [t.id, t.stage]));
+    lastServer.current = initial;
+    const changed = initial.filter((t) => before.has(t.id) && before.get(t.id) !== t.stage);
+    if (!changed.length) return;
+    setMoved(new Set(changed.map((t) => t.id)));
+    for (const t of changed)
+      if (t.stage === "ready_for_launch" && before.get(t.id) === "client_review")
+        toast({ tone: "ok", title: `${t.clientName} approved "${t.title}"`, body: "→ Ready to launch", actions: [{ label: "Open", run: () => pushParams({ t: String(t.number) }) }] });
+    const clear = setTimeout(() => setMoved(new Set()), 4000);
+    return () => clearTimeout(clear);
+  }, [initial]);
+
+  // Live: while the board is on screen it asks every few seconds whether anything changed (a fingerprint, not the
+  // board) and refreshes only then; coming back to the tab checks at once. The minute timer keeps the clocks moving.
   useEffect(() => {
     if (demo) return;
-    const t = setInterval(() => router.refresh(), 60_000);
-    return () => clearInterval(t);
+    let last: string | null = null;
+    let busy = false;
+    const check = async () => {
+      if (busy || document.visibilityState !== "visible") return;
+      busy = true;
+      const r = await fetch("/api/board/version", { cache: "no-store" }).catch(() => null);
+      const v = r?.ok ? ((await r.json()) as { v: string }).v : null;
+      if (v && last !== null && v !== last) router.refresh();
+      if (v) last = v;
+      busy = false;
+    };
+    void check();
+    const poll = setInterval(check, 10_000);
+    const tick = setInterval(() => router.refresh(), 60_000);
+    const back = () => document.visibilityState === "visible" && void check();
+    document.addEventListener("visibilitychange", back);
+    window.addEventListener("focus", back);
+    return () => {
+      clearInterval(poll);
+      clearInterval(tick);
+      document.removeEventListener("visibilitychange", back);
+      window.removeEventListener("focus", back);
+    };
   }, [router, demo]);
 
   // Filters, the open ticket and the move dialog live in the URL: a filtered board can be shared, and back and forward
@@ -394,6 +433,7 @@ export function BoardClient({
                     <TicketCard
                       key={t.id}
                       ticket={t}
+                      arrived={moved.has(t.id)}
                       onOpen={() => pushParams({ t: String(t.number) })}
                       onDragStart={
                         demo
