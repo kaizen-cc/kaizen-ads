@@ -7,6 +7,7 @@ import { stageInfo } from "@/lib/stages";
 import { draftCopy } from "@/lib/copy-draft";
 import { AiUnavailable, type CreativeNotes } from "@/lib/ai";
 import { currentCreative, runCreativeReview, startRun, videosToPrepare, type ReviewProgress } from "@/lib/creative-review";
+import { creativeMissing } from "@/lib/creative-complete";
 import { onReachedClient } from "@/lib/client-revision";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -30,6 +31,8 @@ export type ReviewComment = {
   /** Left by the AI review (fix or worth a look), and resolved by a later AI review that saw it fixed */
   ai?: "fix" | "watch" | null;
   resolvedByAi?: boolean;
+  /** An exec or lead disagreed with this AI note (it's set aside, and the AI learns from it) */
+  disagreed?: { reason: string | null } | null;
   at: string;
 };
 
@@ -38,7 +41,7 @@ export async function ticketComments(requestId: string): Promise<ReviewComment[]
   const supabase = await createClient();
   const { data } = await supabase
     .from("review_comments")
-    .select("id, design_id, version, file_id, x, y, w, h, t_ms, body, round, remembered, resolved_at, created_at, author_name, ai_review_id, severity, resolved_by_ai, profiles!review_comments_author_id_fkey(full_name)")
+    .select("id, design_id, version, file_id, x, y, w, h, t_ms, body, round, remembered, resolved_at, created_at, author_name, ai_review_id, severity, resolved_by_ai, disagreed_at, disagree_reason, profiles!review_comments_author_id_fkey(full_name)")
     .eq("request_id", requestId)
     .order("created_at");
   return (data ?? []).map((c) => ({
@@ -58,6 +61,7 @@ export async function ticketComments(requestId: string): Promise<ReviewComment[]
     resolved: Boolean(c.resolved_at),
     ai: c.ai_review_id ? ((c.severity as "fix" | "watch" | null) ?? "watch") : null,
     resolvedByAi: Boolean(c.resolved_by_ai),
+    disagreed: c.disagreed_at ? { reason: c.disagree_reason ?? null } : null,
     at: c.created_at,
   }));
 }
@@ -136,6 +140,35 @@ export async function setCommentResolved(id: string, requestId: string, resolved
   return { ok: true, comments: await ticketComments(requestId) };
 }
 
+/**
+ * An exec or lead disagrees with an AI review note: it's set aside (resolved, marked disagreed) and kept as a learning
+ * that every later creative review of this client (and, unnamed, of every client) and the strategist read.
+ */
+export async function disagreeAiComment(id: string, requestId: string, reason: string): Promise<{ ok: true; comments: ReviewComment[] } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  if (!isExecOrLead(me)) return { ok: false, error: "Only execs and leads can disagree with the AI review." };
+  const supabase = await createClient();
+  const { data: c } = await supabase.from("review_comments").select("id, request_id, client_id, body, area, severity, ai_review_id").eq("id", id).maybeSingle();
+  if (!c || c.request_id !== requestId) return { ok: false, error: "Comment not found." };
+  if (!c.ai_review_id) return { ok: false, error: "Only the AI's notes can be disagreed with." };
+  if (!adminConfigured()) return { ok: false, error: "Server key missing." };
+  const admin = createAdminClient();
+  const now = new Date().toISOString();
+  const why = reason.trim().slice(0, 600) || null;
+  await admin.from("review_comments").update({ disagreed_at: now, disagreed_by: me.id, disagree_reason: why, resolved_at: now, resolved_by: me.id }).eq("id", id);
+  await admin.from("creative_review_disagreements").insert({
+    comment_id: id,
+    request_id: requestId,
+    client_id: c.client_id,
+    area: c.area,
+    severity: c.severity,
+    note: String(c.body).replace(/^(Fix|Worth a look)( · [^:]+)?: /, "").slice(0, 1000),
+    reason: why,
+    created_by: me.id,
+  });
+  return { ok: true, comments: await ticketComments(requestId) };
+}
+
 /** Save a review comment as an "avoid" rule in client memory, so every agent and future brief knows it. */
 export async function rememberComment(id: string, requestId: string): Promise<{ ok: true; comments: ReviewComment[] } | { ok: false; error: string }> {
   const me = await requireStaff();
@@ -211,7 +244,7 @@ const FORCED = ["past_ai_fixes", "skipped_ai"];
 export async function aiReview(requestId: string): Promise<AiReviewState> {
   const me = await requireStaff();
   const supabase = await createClient();
-  const [{ data: rows, count }, { signature, designs }, { data: r }] = await Promise.all([
+  const [{ data: rows, count }, { signature, legacy, designs }, { data: r }] = await Promise.all([
     supabase
       .from("creative_ai_reviews")
       .select("id, status, progress, content, error, signature, started_at, updated_at, profiles(full_name)", { count: "exact" })
@@ -234,7 +267,8 @@ export async function aiReview(requestId: string): Promise<AiReviewState> {
       startedAt: row.started_at,
       updatedAt: row.updated_at,
       by: (row.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
-      current: row.signature === signature,
+      // A run saved before signatures counted files compares in the older form
+      current: row.signature === signature || (!/:\d+:\d+/.test(row.signature ?? "") && row.signature === legacy),
     };
   }
 
@@ -259,14 +293,28 @@ export async function aiReview(requestId: string): Promise<AiReviewState> {
   return { latest, runs: count ?? 0, hasCreative: designs.some((d) => d.files.length), forced };
 }
 
-/** Start an AI review of the current files. It runs in the background; aiReview shows its progress. */
-export async function startAiReview(requestId: string): Promise<{ ok: true; state: AiReviewState } | { ok: false; error: string }> {
+/**
+ * Start an AI review of the current files. It runs in the background; aiReview shows its progress.
+ * auto: the ticket asks on its own the moment everything asked for is in. It only ever starts the first review (later
+ * ones are the maker's "Send for revision review"), and only once nothing is missing.
+ */
+export async function startAiReview(requestId: string, opts: { auto?: boolean } = {}): Promise<{ ok: true; state: AiReviewState } | { ok: false; error: string }> {
   const me = await requireStaff();
   const supabase = await createClient();
-  const { data: r } = await supabase.from("requests").select("stage").eq("id", requestId).maybeSingle();
+  const { data: r } = await supabase.from("requests").select("stage, format, sizes, new_count, variation_count, cards").eq("id", requestId).maybeSingle();
   if (!r) return { ok: false, error: "Ticket not found." };
   if (!adminConfigured()) return { ok: false, error: "Server key missing." };
   const admin = createAdminClient();
+  if (opts.auto) {
+    const { count } = await admin.from("creative_ai_reviews").select("id", { count: "exact", head: true }).eq("request_id", requestId);
+    if (count) return { ok: true, state: await aiReview(requestId) };
+    const { designs } = await currentCreative(admin, requestId);
+    const missing = creativeMissing(
+      { format: r.format, sizes: (r.sizes ?? []) as string[], newCount: r.new_count ?? 0, variationCount: r.variation_count ?? 0, cards: r.cards ?? null },
+      designs.map((d) => ({ position: d.position, isVariation: d.is_variation, files: d.files })),
+    );
+    if (missing.length) return { ok: false, error: missing.join(" · ") };
+  }
   const { data: busy } = await admin
     .from("creative_ai_reviews")
     .select("id")
@@ -277,7 +325,7 @@ export async function startAiReview(requestId: string): Promise<{ ok: true; stat
     .maybeSingle();
   if (!busy) {
     try {
-      const id = await startRun(admin, requestId, me.id);
+      const id = await startRun(admin, requestId, me.id, Boolean(opts.auto));
       after(() => runCreativeReview(admin, id));
     } catch (e) {
       return { ok: false, error: e instanceof AiUnavailable ? e.message : "Couldn't start the review." };

@@ -5,17 +5,23 @@ import { useRouter } from "next/navigation";
 import { useUploads } from "@/components/upload-provider";
 import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
 import { aspectLabel, aspectOf, filesFromDrop, groupFiles, isMedia, probe, safeName, smallJpeg, type Picked, type StagedDesign, type StagedFile } from "@/lib/uploads/media";
-import type { CreativeCheck } from "@/lib/ai";
-import { checkCreative, noteBriefChange, setTicketCounts, startDesigns, startVersion, ticketDesigns, type Design } from "./design-actions";
+import { creativeMissing } from "@/lib/creative-complete";
+import { carryCards, checkCreative, deleteDesign, deleteFile, deleteVersion, noteBriefChange, setTicketCounts, startDesigns, startVersion, type Design } from "./design-actions";
 import { CarouselBuilder } from "./carousel-builder";
 import { FormatIcon } from "./ticket-card";
 import type { Ticket } from "./types";
 import { ReviewViewer } from "./review-viewer";
-import { ticketComments, type ReviewComment } from "./review-actions";
+import type { ReviewComment } from "./review-actions";
+import { cachedMedia, loadMedia, updateMedia } from "./media-cache";
+
+// The ticket's creative. Dropping or picking files IS the upload: they go up at once (grouped into designs by name,
+// with the AI telling net new from variations on the way), a carousel's cards go up as each card is filled, and a
+// design, a version or a card can be deleted. What's still missing for the AI review is said under the files; the
+// review starts on its own once nothing is.
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-/** Read and preview dropped files before anything uploads. */
+/** Read and preview dropped files before they go up. */
 async function stage(picked: Picked[]): Promise<StagedFile[]> {
   const out: StagedFile[] = [];
   for (const p of picked.filter((x) => isMedia(x.file))) {
@@ -39,14 +45,6 @@ const metaOf = (f: StagedFile, card: number | null) => ({
 // A staged design can be a variation of a design already on the ticket (its id) or of another one in this upload
 const STAGED = "staged:";
 
-/** What the AI said about one staged design, keyed by the staged design's key. */
-type Verdict = { kind: CreativeCheck["designs"][number]["kind"]; of: { staged: string } | { design: string } | null; reason: string };
-type CheckState =
-  | { status: "idle" }
-  | { status: "running" }
-  | { status: "failed"; error: string }
-  | { status: "done"; summary: string; verdicts: Record<string, Verdict>; left: number | null; applied: boolean };
-
 /** Parents before their variations, so the database can link a variation to a design in the same upload. */
 function uploadOrder(staged: StagedDesign[]) {
   const done: StagedDesign[] = [];
@@ -58,8 +56,8 @@ function uploadOrder(staged: StagedDesign[]) {
   return done;
 }
 
-/** uploaded: designs with at least one finished file. uploading: files still on their way. */
-export type UploadState = { uploaded: number; uploading: number; loaded: boolean };
+/** uploaded: designs with at least one finished file. uploading: files still on their way. missing: what the AI review waits for. */
+export type UploadState = { uploaded: number; uploading: number; loaded: boolean; missing: string[] };
 
 const VIDEO_EXT = /\.(mp4|mov|m4v|webm|avi|mkv)$/i;
 const IMAGE_EXT = /\.(jpe?g|png|gif|webp|heic|psd|tiff?|svg)$/i;
@@ -77,13 +75,19 @@ function wrongFormat(files: File[], format: Ticket["format"]) {
   return format === "video" ? `This is a video ticket, so only video files go up. Left out: ${names}.` : `This is an image ticket, so only image files go up (no videos). Left out: ${names}.`;
 }
 
-export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket; demoDesigns?: Design[]; onState?: (s: UploadState) => void }) {
+type Busy = null | "reading" | "grouping" | "starting";
+
+export function Deliverables({ ticket, demoDesigns, onState, canDisagree = false }: { ticket: Ticket; demoDesigns?: Design[]; onState?: (s: UploadState) => void; canDisagree?: boolean }) {
   const uploads = useUploads();
-  const [designs, setDesigns] = useState<Design[] | null>(demoDesigns ?? null);
-  const [staged, setStaged] = useState<StagedDesign[] | null>(null);
-  const [reading, setReading] = useState(false);
+  const demo = Boolean(demoDesigns);
+  // What was loaded before shows at once; it refreshes behind
+  const [designs, setDesigns] = useState<Design[] | null>(demoDesigns ?? cachedMedia(ticket.id)?.designs ?? null);
+  const [comments, setComments] = useState<ReviewComment[]>(cachedMedia(ticket.id)?.comments ?? []);
+  const [busy, setBusy] = useState<Busy>(null);
   const [over, setOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<{ label: string; run: () => Promise<{ ok: true } | { ok: false; error: string }> } | null>(null);
   // The creative open in the viewer is in the address (?design=&ver=&pin=), so back closes it and a link opens it
   const viewId = useParam("design");
   const viewVer = Number(useParam("ver")) || null;
@@ -104,14 +108,10 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
       } catch {}
       return next;
     });
-  const [comments, setComments] = useState<ReviewComment[]>([]);
-  const [replacing, setReplacing] = useState<{ design: Design; files: StagedFile[]; note: string } | null>(null);
   const filesInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
   const replaceInput = useRef<HTMLInputElement>(null);
-  const replaceFor = useRef<Design | null>(null);
-  const [check, setCheck] = useState<CheckState>({ status: "idle" });
-  const [adjusted, setAdjusted] = useState<{ on: boolean; note: string }>({ on: false, note: "" });
+  const replaceFor = useRef<{ design: Design; card: number | null } | null>(null);
   const [counts, setCounts] = useState<{ new: number; variations: number } | null>(null); // after correcting the ticket here
   const router = useRouter();
   const asked = counts ?? { new: ticket.newCount, variations: ticket.variationCount };
@@ -119,51 +119,44 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
   const viewing = viewDesign ? { design: viewDesign, version: viewDesign.versions.some((x) => x.version === viewVer) ? viewVer! : viewDesign.currentVersion, focus: viewPin } : null;
 
   const finished = uploads?.finished[ticket.id] ?? 0;
-  const demo = Boolean(demoDesigns);
+  const reload = (force = true) =>
+    demo
+      ? Promise.resolve()
+      : loadMedia(ticket.id, force).then((m) => {
+          if (!m) return;
+          setDesigns(m.designs);
+          setComments(m.comments);
+        });
   useEffect(() => {
-    if (demo) return;
-    let live = true;
-    ticketDesigns(ticket.id).then((d) => live && setDesigns(d));
-    return () => {
-      live = false;
-    };
+    void reload(finished > 0 || !cachedMedia(ticket.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticket.id, finished, demo]);
 
   const designsRef = useRef(designs);
   useEffect(() => {
     designsRef.current = designs;
   }, [designs]);
-  // Review comments (pins), refreshed whenever the viewer or the review panel changes them
+  // Review comments (pins), refreshed whenever the viewer, the review panel or the AI review changes them
   useEffect(() => {
     if (demo) return;
-    let live = true;
-    const load = () => ticketComments(ticket.id).then((c) => live && setComments(c));
-    load();
-    const on = (e: Event) => (e as CustomEvent).detail === ticket.id && load();
+    const on = (e: Event) => (e as CustomEvent).detail === ticket.id && void reload();
     window.addEventListener("kz:comments", on);
-    // The AI review's notes open the creative at their comment
-    const open = (e: Event) => {
+    // An AI note (or the finished review) opens the creative at its comment
+    const open = async (e: Event) => {
       const { requestId, designId, commentId } = (e as CustomEvent<{ requestId: string; designId: string; commentId: string | null }>).detail;
-      const d = requestId === ticket.id ? designsRef.current?.find((x) => x.id === designId) : null;
+      if (requestId !== ticket.id) return;
+      await reload();
+      const d = designsRef.current?.find((x) => x.id === designId);
       if (!d) return;
-      load();
       pushParams({ design: d.id, ver: null, pin: commentId });
       markSeen(d.id);
     };
     window.addEventListener("kz:open-comment", open);
-    // A review just finished: bring the creative into view (its new comments glow on it)
-    const reviewed = (e: Event) => {
-      if ((e as CustomEvent).detail !== ticket.id) return;
-      load();
-      document.querySelector("[data-deliverables]")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    };
-    window.addEventListener("kz:review-done", reviewed);
     return () => {
-      live = false;
       window.removeEventListener("kz:comments", on);
       window.removeEventListener("kz:open-comment", open);
-      window.removeEventListener("kz:review-done", reviewed);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticket.id, demo]);
 
   // Folder inputs need a non-standard attribute
@@ -172,48 +165,54 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
   }, []);
 
   const pending = (uploads?.jobs ?? []).filter((j) => j.requestId === ticket.id && j.status !== "done" && j.status !== "failed");
+  const missing = designs ? creativeMissing({ ...ticket, newCount: asked.new, variationCount: asked.variations }, designs.map((d) => ({ position: d.position, isVariation: d.isVariation, files: d.versions[0]?.files ?? [] }))) : [];
+  const missingKey = missing.join("|");
 
-  // Tell the drawer whether there's a finished creative (it gates moving past production)
+  // Tell the drawer whether there's a finished creative (it gates moving past production) and what's still missing
   const uploadedCount = (designs ?? []).filter((d) => d.versions[0]?.files.length).length;
   useEffect(() => {
-    onState?.({ uploaded: uploadedCount, uploading: pending.length, loaded: designs !== null });
-  }, [onState, uploadedCount, pending.length, designs]);
+    onState?.({ uploaded: uploadedCount, uploading: pending.length, loaded: designs !== null, missing: missingKey ? missingKey.split("|") : [] });
+  }, [onState, uploadedCount, pending.length, designs, missingKey]);
 
+  /** Files into storage: each design's files under its own version, carousel cards numbered in order. */
+  const send = (d: { name: string; files: StagedFile[] }, s: { versionId: string; designId: string; version: number }, prefix: string, cardFrom = 1) => {
+    if (!uploads) return;
+    const dir = `${prefix}/${s.designId}/v${s.version}`;
+    uploads.enqueue({
+      requestId: ticket.id,
+      label: `#${ticket.number} · ${d.name}`,
+      versionId: s.versionId,
+      items: d.files.map((f, n) => {
+        const name = `${String(n + cardFrom).padStart(2, "0")}-${crypto.randomUUID().slice(0, 4)}-${safeName(f.file.name)}`;
+        return { file: f.file, path: `${dir}/${name}`, thumb: f.thumb, thumbPath: f.thumb ? `${dir}/${name}.thumb.webp` : null, meta: metaOf(f, ticket.format === "carousel" ? n + cardFrom : null) };
+      }),
+    });
+  };
+
+  /** Dropped or picked: read, grouped (the AI says what's net new, a variation or the same design in another size), up. */
   const take = async (all: Picked[]) => {
     setError(null);
     const picked = all.filter((p) => fitsFormat(p.file, ticket.format));
     const off = wrongFormat(all.map((p) => p.file), ticket.format);
-    if (!picked.length) return off ? setError(off) : undefined;
-    setReading(true);
-    const files = await stage(picked);
-    setReading(false);
-    if (!files.length) return setError("Those files aren't images or videos.");
-    // Another drop adds to what's already staged (it never replaces it); the same file dropped twice counts once
-    const before = (staged ?? []).flatMap((d) => d.files);
-    const fresh = files.filter((f) => !before.some((b) => b.file.name === f.file.name && b.file.size === f.file.size));
-    const grouped = groupFiles([...before, ...fresh], ticket.format);
-    setStaged(grouped);
-    runCheck(grouped);
     if (off) setError(off);
+    if (!picked.length) return;
+    setBusy("reading");
+    const files = await stage(picked);
+    if (!files.length) {
+      setBusy(null);
+      return setError("Those files aren't images or videos.");
+    }
+    let list = groupFiles(files, ticket.format);
+    setBusy("grouping");
+    list = await grouped(list);
+    setBusy("starting");
+    await upload(list);
+    setBusy(null);
   };
 
-  /** The AI looks at the staged designs next to what's on the ticket. */
-  const checkRun = useRef(0);
-  const runCheck = async (list: StagedDesign[]) => {
-    const id = ++checkRun.current;
-    setCheck({ status: "running" });
-    if (demo) {
-      await new Promise((r) => setTimeout(r, 900));
-      if (id !== checkRun.current) return;
-      const verdicts: Record<string, Verdict> = {};
-      list.forEach((d, i) => {
-        verdicts[d.key] =
-          i === 0
-            ? { kind: "new", of: null, reason: "Its own layout and main visual." }
-            : { kind: "variation", of: { staged: list[0].key }, reason: `Same layout and photo as ${list[0].name}; only the headline and colours change.` };
-      });
-      return setCheck({ status: "done", summary: list.length > 1 ? `One design and ${plural(list.length - 1, "variation")} of it.` : "One net new design.", verdicts, left: 3, applied: false });
-    }
+  /** The AI's read of new vs variation vs another size, applied; if it can't run, the files go up grouped by name. */
+  const grouped = async (list: StagedDesign[]): Promise<StagedDesign[]> => {
+    if (demo || list.length < 2) return list;
     const inputs = await Promise.all(
       list.map(async (d) => ({
         name: d.name,
@@ -221,112 +220,82 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
         image: await smallJpeg((d.files.find((f) => f.aspect === "4x5" && f.thumb) ?? d.files.find((f) => f.thumb))?.thumb ?? null),
       })),
     );
-    const res = await checkCreative(ticket.id, inputs);
-    if (id !== checkRun.current) return;
-    if (!res.ok) return setCheck({ status: "failed", error: res.error });
+    const res = await checkCreative(ticket.id, inputs).catch(() => null);
+    if (!res?.ok) return list;
     const byPosition = new Map((designs ?? []).map((d) => [`D${d.position}`, d.id]));
-    const verdicts: Record<string, Verdict> = {};
+    let next = [...list];
     for (const v of res.check.designs) {
       const d = list[Number(v.ref.slice(1)) - 1];
       if (!d) continue;
       const target = v.of.startsWith("S") ? list[Number(v.of.slice(1)) - 1] : null;
-      const of = target ? { staged: target.key } : byPosition.has(v.of) ? { design: byPosition.get(v.of)! } : null;
-      verdicts[d.key] = { kind: of || v.kind === "new" ? v.kind : "new", of, reason: v.reason };
+      if (v.kind === "same_design" && target && next.some((x) => x.key === target.key)) {
+        next = next.filter((x) => x.key !== d.key).map((x) => (x.key === target.key ? { ...x, files: [...x.files, ...d.files] } : x));
+      } else if (v.kind === "variation") {
+        const of = target ? STAGED + target.key : (byPosition.get(v.of) ?? null);
+        next = next.map((x) => (x.key === d.key ? { ...x, variationOf: of } : x));
+      }
     }
-    setCheck({ status: "done", summary: res.check.summary, verdicts, left: res.left, applied: false });
+    return next;
   };
 
-  /** Take what the AI said: mark variations, put the same design's other sizes together. */
-  const applyCheck = () => {
-    if (!staged || check.status !== "done") return;
-    let next = staged.map((d) => {
-      const v = check.verdicts[d.key];
-      if (!v || v.kind === "same_design") return d;
-      if (v.kind === "new") return { ...d, variationOf: null };
-      return { ...d, variationOf: v.of ? ("staged" in v.of ? STAGED + v.of.staged : v.of.design) : null };
-    });
-    for (const d of staged) {
-      const v = check.verdicts[d.key];
-      if (v?.kind !== "same_design" || !v.of || !("staged" in v.of)) continue;
-      const into = (v.of as { staged: string }).staged;
-      if (!next.some((x) => x.key === into)) continue;
-      next = next.filter((x) => x.key !== d.key).map((x) => (x.key === into ? { ...x, files: [...x.files, ...d.files] } : x));
-      next = next.map((x) => (x.variationOf === STAGED + d.key ? { ...x, variationOf: STAGED + into } : x));
-    }
-    setStaged(next);
-    setCheck({ ...check, applied: true });
+  const upload = async (list: StagedDesign[]) => {
+    if (!list.length) return;
+    const ordered = uploadOrder(list);
+    const res = demo
+      ? { ok: true as const, prefix: "demo", started: ordered.map((_, i) => ({ designId: `d${i}`, versionId: `v${i}`, version: 1 })) }
+      : await startDesigns(
+          ticket.id,
+          ordered.map((d) => (d.variationOf?.startsWith(STAGED) ? { name: d.name, variationOf: null, variationOfIndex: ordered.findIndex((x) => STAGED + x.key === d.variationOf) } : { name: d.name, variationOf: d.variationOf })),
+        );
+    if (!res.ok) return setError(res.error);
+    ordered.forEach((d, i) => send(d, res.started[i], res.prefix));
+    void reload();
   };
 
   const correctCounts = async (n: number, v: number) => {
-    const reason = "Corrected at upload to match the creative";
     if (!demo) {
-      const res = await setTicketCounts(ticket.id, n, v, reason);
+      const res = await setTicketCounts(ticket.id, n, v, "Corrected at upload to match the creative");
       if (!res.ok) return setError(res.error);
       router.refresh();
     }
     setCounts({ new: n, variations: v });
   };
 
-  const fromInput = (list: FileList | null, folders: boolean) =>
-    take([...(list ?? [])].map((file) => ({ file, folder: folders ? (file.webkitRelativePath.split("/")[0] ?? null) : null })));
-
-  const upload = async () => {
-    if (!staged?.length || !uploads) return;
-    setError(null);
-    const ordered = uploadOrder(staged);
-    const res = demo
-      ? { ok: true as const, prefix: "demo", started: ordered.map((_, i) => ({ designId: `d${i}`, versionId: `v${i}`, version: 1 })) }
-      : await startDesigns(
-          ticket.id,
-          ordered.map((d) =>
-            d.variationOf?.startsWith(STAGED)
-              ? { name: d.name, variationOf: null, variationOfIndex: ordered.findIndex((x) => STAGED + x.key === d.variationOf) }
-              : { name: d.name, variationOf: d.variationOf },
-          ),
-        );
-    if (!res.ok) return setError(res.error);
-    if (adjusted.on && adjusted.note.trim() && !demo) {
-      const r = await noteBriefChange(ticket.id, adjusted.note);
-      if (!r.ok) setError(r.error);
-      window.dispatchEvent(new CustomEvent("kz:brief", { detail: ticket.id }));
+  /** A new version: the files picked replace the design (or, on a carousel, just the card picked; the rest carry over). */
+  const replace = async (files: File[]) => {
+    const target = replaceFor.current;
+    if (!target || !uploads) return;
+    const list = files.filter((f) => fitsFormat(f, ticket.format));
+    setError(wrongFormat(files, ticket.format));
+    if (!list.length) return;
+    setBusy("reading");
+    const staged = await stage(list.map((file) => ({ file, folder: null })));
+    setBusy("starting");
+    const res = demo ? { ok: true as const, prefix: "demo", started: { designId: target.design.id, versionId: "v", version: target.design.currentVersion + 1 } } : await startVersion(target.design.id, "");
+    if (!res.ok) {
+      setBusy(null);
+      return setError(res.error);
     }
-    setAdjusted({ on: false, note: "" });
-    ordered.forEach((d, i) => {
-      const s = res.started[i];
-      const dir = `${res.prefix}/${s.designId}/v${s.version}`;
-      uploads.enqueue({
-        requestId: ticket.id,
-        label: `#${ticket.number} · ${d.name}`,
-        versionId: s.versionId,
-        items: d.files.map((f, n) => {
-          const name = `${String(n + 1).padStart(2, "0")}-${safeName(f.file.name)}`;
-          return { file: f.file, path: `${dir}/${name}`, thumb: f.thumb, thumbPath: f.thumb ? `${dir}/${name}.thumb.webp` : null, meta: metaOf(f, ticket.format === "carousel" ? n + 1 : null) };
-        }),
-      });
-    });
-    setStaged(null);
-    setCheck({ status: "idle" });
+    if (target.card != null && !demo) {
+      const kept = await carryCards(res.started.versionId, staged.map((_, i) => target.card! + i));
+      if (!kept.ok) setError(kept.error);
+    }
+    send({ name: `${target.design.name} v${res.started.version}`, files: staged }, res.started, res.prefix, target.card ?? 1);
+    setBusy(null);
+    void reload();
   };
 
-  const replace = async () => {
-    if (!replacing || !uploads) return;
-    const { design, files, note } = replacing;
-    const res = demo
-      ? { ok: true as const, prefix: "demo", started: { designId: design.id, versionId: "v", version: design.currentVersion + 1 } }
-      : await startVersion(design.id, note);
-    if (!res.ok) return setError(res.error);
-    const dir = `${res.prefix}/${res.started.designId}/v${res.started.version}`;
-    uploads.enqueue({
-      requestId: ticket.id,
-      label: `#${ticket.number} · ${design.name} v${res.started.version}`,
-      versionId: res.started.versionId,
-      items: files.map((f, n) => {
-        const name = `${String(n + 1).padStart(2, "0")}-${safeName(f.file.name)}`;
-        return { file: f.file, path: `${dir}/${name}`, thumb: f.thumb, thumbPath: f.thumb ? `${dir}/${name}.thumb.webp` : null, meta: metaOf(f, ticket.format === "carousel" ? n + 1 : null) };
-      }),
-    });
-    setReplacing(null);
+  /** A card into an empty slot of a carousel already on the ticket: added to its current version. */
+  const addCard = async (design: Design, card: number, file: File) => {
+    const v = design.versions[0];
+    if (!v || !uploads) return;
+    const staged = await stage([{ file, folder: null }]);
+    if (!staged.length) return;
+    // Storage folders are client/request/design/vN
+    send({ name: `${design.name} · card ${card}`, files: staged }, { designId: design.id, versionId: v.id, version: v.version }, `${ticket.clientId}/${ticket.id}`, card);
   };
+
+  const remove = (label: string, run: () => Promise<{ ok: true } | { ok: false; error: string }>) => setConfirm({ label, run });
 
   /** Open comments on a design's current version added since this person last opened it */
   const unreadOf = (d: Design) => comments.filter((c) => c.designId === d.id && c.version === d.currentVersion && !c.resolved && (!seen[d.id] || c.at > seen[d.id])).length;
@@ -335,6 +304,8 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
   const canAdd = ["requested", "in_production", "client_revision"].includes(ticket.stage) || !(designs ?? []).length;
   const net = (designs ?? []).filter((d) => !d.isVariation).length;
   const vars = (designs ?? []).filter((d) => d.isVariation).length;
+  const making = ["requested", "in_production", "client_revision"].includes(ticket.stage);
+  const tooMany = net > asked.new || vars > asked.variations;
 
   return (
     <section
@@ -348,262 +319,104 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
       onDrop={async (e) => {
         e.preventDefault();
         setOver(false);
-        // Carousels take their files in the card slots (they keep the order); a drop elsewhere would guess it
-        if (ticket.format === "carousel" && !staged) return;
+        // Carousels take their files in the card slots (they keep the order)
+        if (ticket.format === "carousel" || busy) return;
         await take(await filesFromDrop(e.dataTransfer.items));
       }}
     >
-      <div className="flex items-baseline justify-between gap-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <h3 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">Deliverables</h3>
-        <span className="text-xs text-faint">
+        <span className="flex flex-wrap items-center gap-2 text-xs text-faint">
           <span className={net >= asked.new ? "text-ok" : "text-muted"}>
             {net} of {asked.new} new
           </span>
           {asked.variations > 0 && (
-            <>
-              {" · "}
-              <span className={vars >= asked.variations ? "text-ok" : "text-muted"}>
-                {vars} of {plural(asked.variations, "variation")}
-              </span>
-            </>
+            <span className={vars >= asked.variations ? "text-ok" : "text-muted"}>
+              · {vars} of {plural(asked.variations, "variation")}
+            </span>
+          )}
+          {tooMany && making && (
+            <button type="button" onClick={() => void correctCounts(Math.max(net, asked.new), Math.max(vars, asked.variations))} className="rounded-full border border-line px-2.5 py-0.5 text-muted hover:text-fg max-md:min-h-10 max-md:px-3.5" title="More designs are here than the ticket asked for: make the ticket match (net new counts toward the allotment)">
+              Make it {Math.max(net, asked.new)} new{Math.max(vars, asked.variations) ? ` + ${Math.max(vars, asked.variations)} var.` : ""}
+            </button>
           )}
         </span>
       </div>
 
-      <input ref={filesInput} type="file" multiple accept={ACCEPT[ticket.format]} className="hidden" onChange={(e) => (fromInput(e.target.files, false), (e.target.value = ""))} />
-      <input ref={folderInput} type="file" multiple className="hidden" onChange={(e) => (fromInput(e.target.files, true), (e.target.value = ""))} />
+      <input ref={filesInput} type="file" multiple accept={ACCEPT[ticket.format]} className="hidden" onChange={(e) => (take([...(e.target.files ?? [])].map((file) => ({ file, folder: null }))), (e.target.value = ""))} />
+      <input ref={folderInput} type="file" multiple className="hidden" onChange={(e) => (take([...(e.target.files ?? [])].map((file) => ({ file, folder: file.webkitRelativePath.split("/")[0] ?? null }))), (e.target.value = ""))} />
       <input
         ref={replaceInput}
         type="file"
         multiple
         accept={ACCEPT[ticket.format]}
         className="hidden"
-        onChange={async (e) => {
-          const design = replaceFor.current;
-          const all = [...(e.target.files ?? [])];
+        onChange={(e) => {
+          const files = [...(e.target.files ?? [])];
           e.target.value = "";
-          const list = all.filter((f) => fitsFormat(f, ticket.format));
-          setError(wrongFormat(all, ticket.format));
-          if (!design || !list.length) return;
-          setReading(true);
-          const files = await stage(list.map((file) => ({ file, folder: null })));
-          setReading(false);
-          setReplacing({ design, files, note: "" });
+          void replace(files);
         }}
       />
 
-      {/* Staging: what the drop will become, before anything uploads */}
-      {staged ? (
-        <div className="grid gap-3 rounded-[10px] border border-brand-text/30 bg-surface p-4 animate-[step-in_.25s_ease-out] max-md:p-3">
-          <div className="flex items-baseline justify-between gap-3 max-md:flex-wrap">
-            <p className="text-sm font-medium">
-              {plural(staged.length, "design")} · {plural(staged.reduce((n, d) => n + d.files.length, 0), "file")}
-            </p>
-            <p className="text-xs text-faint">Grouped by name. Rename or mark variations before uploading.</p>
-          </div>
-          <CheckPanel
-            ticket={ticket}
-            staged={staged}
-            designs={designs ?? []}
-            check={check}
-            asked={asked}
-            onApply={applyCheck}
-            onRetry={() => runCheck(staged)}
-            onCounts={correctCounts}
+      {canAdd &&
+        (ticket.format === "carousel" ? (
+          // Carousels: a slot for each card; a file in its slot is uploaded, no extra step
+          <CarouselBuilder
+            cards={ticket.cards ?? 5}
+            next={(designs ?? []).length + 1}
+            show={(designs ?? []).length < asked.new + asked.variations || !(designs ?? []).length}
+            read={(files) => stage(files.map((file) => ({ file, folder: null })))}
+            onCreate={async (name) => {
+              const res = demo ? { ok: true as const, prefix: "demo", started: [{ designId: "d", versionId: "v", version: 1 }] } : await startDesigns(ticket.id, [{ name, variationOf: null }]);
+              if (!res.ok) {
+                setError(res.error);
+                return null;
+              }
+              return { ...res.started[0], prefix: res.prefix };
+            }}
+            onUpload={(s, card, file) => send({ name: `card ${card}`, files: [file] }, s, s.prefix, card)}
+            onDone={() => void reload()}
           />
-          <ul className="grid gap-2">
-            {staged.map((d, i) => {
-              const sizes = [...new Set(d.files.map((f) => f.aspect).filter(Boolean))] as string[];
-              const missing = ticket.format !== "carousel" ? ticket.sizes.filter((s) => !sizes.includes(s)) : [];
-              return (
-                <li key={d.key} className="grid gap-2.5 rounded-[8px] bg-surface-2 p-3">
-                  <div className="flex items-center gap-3">
-                    <div className="flex shrink-0 -space-x-3">
-                      {d.files.slice(0, 4).map((f) => (
-                        <Thumb key={f.id} src={f.preview} format={ticket.format} className="h-12 w-12 rounded-[6px] ring-2 ring-surface-2" />
-                      ))}
-                    </div>
-                    <input
-                      value={d.name}
-                      onChange={(e) => setStaged(staged.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
-                      aria-label="Design name"
-                      className="h-9 min-w-0 flex-1 rounded-brand border border-transparent bg-transparent px-2 text-sm outline-none hover:border-line focus:border-brand-text/60 max-md:h-11 max-md:border-line/60"
-                    />
-                    <button onClick={() => setStaged(staged.filter((_, j) => j !== i).length ? staged.filter((_, j) => j !== i) : null)} className="text-xs text-faint hover:text-fg max-md:-mr-2 max-md:grid max-md:h-11 max-md:w-11 max-md:shrink-0 max-md:place-items-center max-md:text-sm" aria-label="Remove">
-                      ✕
-                    </button>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                    {ticket.format === "carousel" ? (
-                      <span className="rounded-full border border-line px-2 py-0.5 text-muted">{plural(d.files.length, "card")}</span>
-                    ) : (
-                      sizes.map((s) => (
-                        <span key={s} className="tabular rounded-full border border-line px-2 py-0.5 text-muted">
-                          {aspectLabel(s)}
-                        </span>
-                      ))
-                    )}
-                    {missing.length > 0 && <span className="text-warn">No {missing.map((m) => aspectLabel(m)).join(", ")} yet</span>}
-                    {((designs ?? []).some((x) => !x.isVariation) || staged.length > 1) && (
-                      <select
-                        value={d.variationOf ?? ""}
-                        onChange={(e) => setStaged(staged.map((x, j) => (j === i ? { ...x, variationOf: e.target.value || null } : x)))}
-                        aria-label="Variation of"
-                        className="ml-auto h-7 rounded-full border border-line bg-bg px-2 text-xs text-muted max-md:ml-0 max-md:h-11 max-md:w-full max-md:px-3"
-                      >
-                        <option value="">Net new design</option>
-                        {staged
-                          .filter((x) => x.key !== d.key && !x.variationOf)
-                          .map((x) => (
-                            <option key={x.key} value={STAGED + x.key}>
-                              Variation of {x.name}
-                            </option>
-                          ))}
-                        {(designs ?? [])
-                          .filter((x) => !x.isVariation)
-                          .map((x) => (
-                            <option key={x.id} value={x.id}>
-                              Variation of D{x.position} · {x.name}
-                            </option>
-                          ))}
-                      </select>
-                    )}
-                  </div>
-                  {check.status === "done" && check.verdicts[d.key] && (
-                    <p className="flex items-start gap-1.5 text-xs text-muted">
-                      <EyeIcon className="mt-px h-3.5 w-3.5 shrink-0 text-[#6c7ee1]" />
-                      <span>
-                        <span className="text-fg">{verdictLabel(check.verdicts[d.key], staged, designs ?? [])}</span> · {check.verdicts[d.key].reason}
-                      </span>
-                    </p>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-          {/* Anything in the brief that couldn't be done as asked: said here, so the lead sees it before reviewing */}
-          <div className="grid gap-2 rounded-[8px] border border-line bg-bg/40 p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm">Did you have to change anything from the brief?</p>
-              <span className="flex gap-1">
-                {([false, true] as const).map((v) => (
-                  <button key={String(v)} type="button" onClick={() => setAdjusted(v ? { on: true, note: adjusted.note } : { on: false, note: "" })} className={`h-7 rounded-full px-3 text-xs transition-colors max-md:h-11 max-md:px-5 ${adjusted.on === v ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
-                    {v ? "Yes" : "No"}
+        ) : (
+          <div className={`grid place-items-center gap-2 rounded-[10px] border border-dashed px-6 py-7 text-center transition-colors ${over ? "border-brand-text bg-brand-soft" : "border-line"}`}>
+            {busy ? (
+              <p className="flex items-center gap-2 text-sm text-muted">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#6c7ee1]" />
+                {busy === "reading" ? "Reading the files…" : busy === "grouping" ? "Sorting them into designs…" : "Uploading…"}
+              </p>
+            ) : (
+              <>
+                <p className="text-sm text-muted max-md:hidden">{over ? "Drop to upload" : "Drop files or a folder here: they upload right away"}</p>
+                <p className="flex items-center gap-2 text-xs text-faint">
+                  <button onClick={() => filesInput.current?.click()} className="text-fg underline-offset-4 hover:underline max-md:h-11 max-md:rounded-full max-md:border max-md:border-line max-md:bg-surface max-md:px-5 max-md:text-sm max-md:font-medium">
+                    Choose files
                   </button>
-                ))}
-              </span>
-            </div>
-            {adjusted.on && (
-              <textarea data-chat
-                autoFocus
-                value={adjusted.note}
-                onChange={(e) => setAdjusted({ on: true, note: e.target.value })}
-                rows={2}
-                placeholder="What wasn't possible and what you did instead (e.g. no lifestyle photo of the product, so used the studio shot with a kitchen background)"
-                className="rounded-[8px] border border-line bg-bg px-3 py-2 text-sm outline-none placeholder:text-faint focus:border-brand-text/60"
-              />
+                  <span className="max-md:hidden">·</span>
+                  <button onClick={() => folderInput.current?.click()} className="text-fg underline-offset-4 hover:underline max-md:hidden">
+                    Choose a folder
+                  </button>
+                </p>
+                <p className="text-[11px] text-faint">Sizes of the same idea group into one design automatically.</p>
+              </>
             )}
           </div>
-          <div className="flex items-center justify-end gap-2 max-md:flex-wrap max-md:[&>button]:h-11">
-            <button type="button" onClick={() => filesInput.current?.click()} className="mr-auto h-9 max-md:h-11 rounded-brand px-3 text-sm text-muted hover:text-fg">
-              + Add more files
-            </button>
-            <button
-              onClick={() => {
-                checkRun.current++;
-                setStaged(null);
-                setCheck({ status: "idle" });
-                setAdjusted({ on: false, note: "" });
-              }}
-              className="h-9 max-md:h-11 rounded-brand px-3 text-sm text-muted hover:text-fg"
-            >
-              Cancel
-            </button>
-            <button onClick={upload} disabled={adjusted.on && !adjusted.note.trim()} className="h-9 max-md:h-11 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:bg-brand-hover disabled:opacity-50 max-md:order-last max-md:w-full">
-              Upload {plural(staged.length, "design")}
-            </button>
-          </div>
-        </div>
-      ) : replacing ? (
-        <div className="grid gap-3 rounded-[10px] border border-brand-text/30 bg-surface p-4 animate-[step-in_.25s_ease-out] max-md:p-3">
-          <p className="text-sm font-medium">
-            New version of D{replacing.design.position} · {replacing.design.name}
-            <span className="font-normal text-muted"> → v{replacing.design.currentVersion + 1}</span>
-          </p>
-          <div className="flex gap-2 max-md:flex-wrap">
-            {replacing.files.slice(0, 6).map((f) => (
-              <Thumb key={f.id} src={f.preview} format={ticket.format} className="h-14 w-14 rounded-[6px]" />
-            ))}
-          </div>
-          <input
-            autoFocus
-            value={replacing.note}
-            onChange={(e) => setReplacing({ ...replacing, note: e.target.value })}
-            placeholder="What changed? e.g. Bigger logo, price moved to the top"
-            className="h-10 rounded-brand border border-line bg-bg px-3 text-sm outline-none placeholder:text-faint focus:border-brand-text/60 max-md:h-11"
-          />
-          <div className="flex items-center justify-end gap-2 max-md:[&>button]:h-11 max-md:[&>button]:flex-1">
-            <button onClick={() => setReplacing(null)} className="h-9 max-md:h-11 rounded-brand px-3 text-sm text-muted hover:text-fg">
-              Cancel
-            </button>
-            <button onClick={replace} className="h-9 max-md:h-11 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:bg-brand-hover">
-              Upload v{replacing.design.currentVersion + 1}
-            </button>
-          </div>
-        </div>
-      ) : !canAdd ? null : ticket.format === "carousel" ? (
-        // Carousels: a slot for each card, in order, instead of a drop zone that guesses
-        <CarouselBuilder
-          cards={ticket.cards ?? 5}
-          next={(designs ?? []).length + 1}
-          asked={asked.new + asked.variations - (designs ?? []).length}
-          read={(files) => stage(files.map((file) => ({ file, folder: null })))}
-          onReady={(list) => {
-            setStaged(list);
-            runCheck(list);
-          }}
-        />
-      ) : (
-        <div
-          className={`grid place-items-center gap-2 rounded-[10px] border border-dashed px-6 py-7 text-center transition-colors ${
-            over ? "border-brand-text bg-brand-soft" : "border-line"
-          }`}
-        >
-          {reading ? (
-            <p className="text-sm text-muted">Reading files…</p>
-          ) : (
-            <>
-              <p className="text-sm text-muted max-md:hidden">{over ? "Drop to add" : "Drop files or a folder here"}</p>
-              {/* Phones: one big button that opens the photo library / files (no drag and drop, and no folders, on a phone) */}
-              <p className="flex items-center gap-2 text-xs text-faint">
-                <button
-                  onClick={() => filesInput.current?.click()}
-                  className="text-fg underline-offset-4 hover:underline max-md:h-11 max-md:rounded-full max-md:border max-md:border-line max-md:bg-surface max-md:px-5 max-md:text-sm max-md:font-medium"
-                >
-                  Choose files
-                </button>
-                <span className="max-md:hidden">·</span>
-                <button onClick={() => folderInput.current?.click()} className="text-fg underline-offset-4 hover:underline max-md:hidden">
-                  Choose a folder
-                </button>
-              </p>
-              <p className="text-[11px] text-faint">Sizes of the same idea group into one design automatically.</p>
-            </>
-          )}
-        </div>
-      )}
+        ))}
       {error && <p className="text-sm text-brand-text">{error}</p>}
 
       {/* What's here */}
       {designs === null ? (
-        <p className="text-xs text-faint">Loading…</p>
+        <ul className="grid grid-cols-2 gap-3" aria-label="Loading the creative">
+          {[0, 1].map((i) => (
+            <li key={i} className="aspect-[4/5] animate-pulse rounded-[10px] bg-surface-2" />
+          ))}
+        </ul>
       ) : designs.length + pending.length > 0 ? (
         <ul className="grid grid-cols-2 gap-3">
           {pending.map((j) => (
             <li key={j.id} className="grid gap-2 rounded-[10px] border border-line bg-surface p-2.5">
               <div className="relative grid aspect-[4/5] place-items-center overflow-hidden rounded-[7px] bg-surface-2">
-                <span className="absolute inset-y-0 left-0 w-1/2 bg-gradient-to-r from-transparent via-fg/10 to-transparent animate-[ai-sweep_1.4s_ease-in-out_infinite]" />
-                <span className="text-xs tabular text-muted">{j.status === "saving" ? "Saving…" : `${Math.round((j.sent / j.total) * 100)}%`}</span>
+                <span className="absolute inset-y-0 left-0 w-1/2 animate-[ai-sweep_1.4s_ease-in-out_infinite] bg-gradient-to-r from-transparent via-fg/10 to-transparent" />
+                <span className="tabular text-xs text-muted">{j.status === "saving" ? "Saving…" : `${Math.round((j.sent / j.total) * 100)}%`}</span>
               </div>
               <p className="truncate text-xs text-muted">{j.label.split(" · ").slice(1).join(" · ")}</p>
             </li>
@@ -613,31 +426,25 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
             const cover = v?.files.find((f) => f.aspect === "4x5") ?? v?.files[0];
             const sizes = [...new Set((v?.files ?? []).map((f) => f.aspect).filter(Boolean))] as string[];
             const of = d.variationOf ? designs.find((x) => x.id === d.variationOf) : null;
+            const open = comments.filter((c) => c.designId === d.id && c.version === d.currentVersion && !c.resolved).length;
+            const fresh = unreadOf(d);
+            const wantCards = Math.max(2, ticket.cards ?? 5);
             return (
-              <li
-                key={d.id}
-                className={`group grid gap-2 rounded-[10px] border bg-surface p-2.5 transition-colors hover:border-faint ${unreadOf(d) ? "border-[#6c7ee1] shadow-[0_0_0_3px_rgba(108,126,225,0.25),0_12px_32px_-12px_rgba(108,126,225,0.8)]" : "border-line"}`}
-              >
+              <li key={d.id} className={`group grid content-start gap-2 rounded-[10px] border bg-surface p-2.5 transition-colors hover:border-faint ${fresh ? "border-[#6c7ee1] shadow-[0_0_0_3px_rgba(108,126,225,0.25),0_12px_32px_-12px_rgba(108,126,225,0.8)]" : "border-line"}`}>
                 <button onClick={() => (pushParams({ design: d.id, ver: null, pin: null }), markSeen(d.id))} className="relative block overflow-hidden rounded-[7px]" aria-label={`Open ${d.name}`}>
-                  {(() => {
-                    const open = comments.filter((c) => c.designId === d.id && c.version === d.currentVersion && !c.resolved).length;
-                    const fresh = unreadOf(d);
-                    if (fresh)
-                      return (
-                        <span className="absolute inset-x-2 bottom-2 z-10 flex items-center justify-center gap-1.5 rounded-full bg-[#6c7ee1] px-2.5 py-1.5 text-[11px] font-semibold text-white shadow-lg">
-                          <span className="h-1.5 w-1.5 animate-ping rounded-full bg-white" />
-                          {fresh} new comment{fresh === 1 ? "" : "s"} · {cover?.mime.startsWith("video/") ? "Watch" : "Open"}
-                        </span>
-                      );
-                    return open ? (
-                      <span className="absolute right-1 top-1 z-10 grid h-5 min-w-5 place-items-center rounded-full bg-brand px-1.5 text-[10px] font-semibold text-white shadow" title={`${open} open comment${open === 1 ? "" : "s"}`}>
-                        {open}
-                      </span>
-                    ) : null;
-                  })()}
+                  {fresh ? (
+                    <span className="absolute inset-x-2 bottom-2 z-10 flex items-center justify-center gap-1.5 rounded-full bg-[#6c7ee1] px-2.5 py-1.5 text-[11px] font-semibold text-white shadow-lg">
+                      <span className="h-1.5 w-1.5 animate-ping rounded-full bg-white" />
+                      {fresh} new comment{fresh === 1 ? "" : "s"} · {cover?.mime.startsWith("video/") ? "Watch" : "Open"}
+                    </span>
+                  ) : open ? (
+                    <span className="absolute right-1 top-1 z-10 grid h-5 min-w-5 place-items-center rounded-full bg-brand px-1.5 text-[10px] font-semibold text-white shadow" title={`${open} open comment${open === 1 ? "" : "s"}`}>
+                      {open}
+                    </span>
+                  ) : null}
                   <Thumb src={cover?.thumbUrl ?? null} format={ticket.format} video={cover?.mime.startsWith("video/")} className="aspect-[4/5] w-full" />
                   <span className="absolute left-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur">D{d.position}</span>
-                  {d.currentVersion > 1 && <span className="absolute right-2 top-2 rounded-full bg-brand px-2 py-0.5 text-[11px] font-medium text-white">v{d.currentVersion}</span>}
+                  {d.currentVersion > 1 && !open && <span className="absolute right-2 top-2 rounded-full bg-brand px-2 py-0.5 text-[11px] font-medium text-white">v{d.currentVersion}</span>}
                   {!v?.files.length && <span className="absolute inset-x-2 bottom-2 rounded-full bg-black/60 px-2 py-0.5 text-center text-[11px] text-warn">Upload didn&apos;t finish</span>}
                 </button>
                 <div className="grid gap-1 px-0.5">
@@ -647,26 +454,143 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
                     {ticket.format === "carousel" ? <span>{plural(v?.files.length ?? 0, "card")}</span> : sizes.map((s) => <span key={s} className="tabular">{aspectLabel(s)}</span>)}
                   </div>
                 </div>
+                {/* A carousel's cards: replace one (the rest carry over), delete one, or fill an empty slot */}
+                {ticket.format === "carousel" && v && !d.clientApproved && (
+                  <div className="-mx-0.5 flex gap-1 overflow-x-auto px-0.5 pb-0.5">
+                    {Array.from({ length: Math.max(wantCards, v.files.length) }, (_, i) => {
+                      const f = v.files.find((x) => x.card === i + 1) ?? (v.files.every((x) => x.card == null) ? v.files[i] : undefined);
+                      return f ? (
+                        <span key={i} className="group/card relative h-12 w-10 shrink-0 overflow-hidden rounded-[5px] bg-surface-2 max-md:h-14 max-md:w-11">
+                          {f.thumbUrl && (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={f.thumbUrl} alt={`Card ${i + 1}`} className="h-full w-full object-cover" />
+                          )}
+                          <span className="absolute inset-0 hidden flex-col items-stretch justify-center gap-0.5 bg-black/70 p-0.5 group-hover/card:flex [@media(hover:none)]:flex [@media(hover:none)]:bg-black/40">
+                            <button type="button" title={`Replace card ${i + 1}`} onClick={() => ((replaceFor.current = { design: d, card: i + 1 }), replaceInput.current?.click())} className="rounded bg-white/90 text-[9px] font-medium text-black">
+                              ↻
+                            </button>
+                            <button type="button" title={`Delete card ${i + 1}`} onClick={() => remove(`card ${i + 1} of ${d.name}`, () => deleteFile(f.id))} className="rounded bg-white/90 text-[9px] font-medium text-bad">
+                              ✕
+                            </button>
+                          </span>
+                        </span>
+                      ) : (
+                        <label key={i} className="grid h-12 w-10 shrink-0 cursor-pointer place-items-center rounded-[5px] border border-dashed border-line text-[11px] text-faint hover:border-brand-text/60 hover:text-fg max-md:h-14 max-md:w-11" title={`Add card ${i + 1}`}>
+                          +{i + 1}
+                          <input type="file" accept={ACCEPT.carousel} className="hidden" onChange={(e) => (e.target.files?.[0] && void addCard(d, i + 1, e.target.files[0]), (e.target.value = ""))} />
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
                 {d.clientApproved ? (
                   <span className="grid h-8 place-items-center rounded-brand bg-ok/10 text-xs text-ok max-md:h-auto max-md:min-h-11 max-md:px-1 max-md:text-center" title="The client approved this design; it can't be changed">
                     ✓ Client approved · locked
                   </span>
                 ) : (
-                  <button
-                    onClick={() => {
-                      replaceFor.current = d;
-                      replaceInput.current?.click();
-                    }}
-                    className="h-8 rounded-brand border border-line text-xs text-muted transition-colors hover:border-faint hover:text-fg max-md:h-11 max-md:text-sm"
-                  >
-                    Replace
-                  </button>
+                  <div className="flex gap-1.5">
+                    <button
+                      onClick={() => {
+                        replaceFor.current = { design: d, card: null };
+                        replaceInput.current?.click();
+                      }}
+                      className="h-8 flex-1 rounded-brand border border-line text-xs text-muted transition-colors hover:border-faint hover:text-fg max-md:h-11 max-md:text-sm"
+                    >
+                      Replace
+                    </button>
+                    <button
+                      onClick={() => remove(d.currentVersion > 1 ? `v${d.currentVersion} of ${d.name} (v${d.currentVersion - 1} becomes current again)` : d.name, () => (d.currentVersion > 1 ? deleteVersion(d.id) : deleteDesign(d.id)))}
+                      aria-label={`Delete ${d.name}`}
+                      title={d.currentVersion > 1 ? `Delete v${d.currentVersion}` : "Delete this design"}
+                      className="grid h-8 w-8 shrink-0 place-items-center rounded-brand border border-line text-xs text-faint transition-colors hover:border-bad/50 hover:text-bad max-md:h-11 max-md:w-11"
+                    >
+                      <TrashIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                 )}
               </li>
             );
           })}
         </ul>
       ) : null}
+
+      {/* What the AI review is waiting for: it starts on its own once nothing is missing */}
+      {making && designs !== null && designs.length > 0 && missing.length > 0 && !pending.length && (
+        <p className="flex items-start gap-2 rounded-[8px] bg-surface-2/70 px-3 py-2 text-xs text-muted">
+          <EyeIcon className="mt-px h-3.5 w-3.5 shrink-0 text-[#6c7ee1]" />
+          <span>
+            <span className="text-fg">Before the AI review:</span> {missing.join(" · ")}
+          </span>
+        </p>
+      )}
+
+      {/* Anything in the brief that couldn't be done as asked, said for the lead (optional) */}
+      {making && designs !== null && designs.length > 0 && !demo && (
+        <div className="grid gap-2">
+          {note === null ? (
+            <button type="button" onClick={() => setNote("")} className="justify-self-start text-xs text-faint hover:text-fg max-md:min-h-11">
+              Had to change something from the brief? Tell the lead →
+            </button>
+          ) : (
+            <div className="grid gap-2 rounded-[8px] border border-line bg-bg/40 p-3">
+              <textarea
+                data-chat
+                autoFocus
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                rows={2}
+                placeholder="What wasn't possible and what you did instead (e.g. no lifestyle photo of the product, so used the studio shot with a kitchen background)"
+                className="rounded-[8px] border border-line bg-bg px-3 py-2 text-sm outline-none placeholder:text-faint focus:border-brand-text/60"
+              />
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={!note.trim()}
+                  onClick={async () => {
+                    const r = await noteBriefChange(ticket.id, note);
+                    if (!r.ok) return setError(r.error);
+                    window.dispatchEvent(new CustomEvent("kz:brief", { detail: ticket.id }));
+                    setNote(null);
+                  }}
+                  className="h-9 rounded-brand bg-fg px-4 text-sm font-medium text-bg disabled:opacity-40 max-md:h-11"
+                >
+                  Save
+                </button>
+                <button type="button" onClick={() => setNote(null)} className="h-9 rounded-brand px-3 text-sm text-muted hover:text-fg max-md:h-11">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {confirm && (
+        <div className="grid gap-2.5 rounded-[10px] border border-bad/30 bg-bad-soft/30 p-3.5">
+          <p className="text-sm">Delete {confirm.label}? The files are removed for good.</p>
+          <div className="flex gap-2 max-md:[&>button]:h-11 max-md:[&>button]:flex-1">
+            <button
+              type="button"
+              onClick={async () => {
+                const job = confirm;
+                setConfirm(null);
+                if (demo) return;
+                const r = await job.run();
+                if (!r.ok) return setError(r.error);
+                closeParams("design", "ver", "pin");
+                void reload();
+                router.refresh();
+              }}
+              className="h-9 rounded-brand bg-bad px-4 text-sm font-medium text-white"
+            >
+              Delete
+            </button>
+            <button type="button" onClick={() => setConfirm(null)} className="h-9 rounded-brand px-3 text-sm text-muted hover:text-fg">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {viewing && (
         <ReviewViewer
@@ -676,11 +600,12 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
           version={viewing.version}
           format={ticket.format}
           comments={comments}
-          onComments={setComments}
+          onComments={(c) => (setComments(c), updateMedia(ticket.id, { comments: c }))}
           onVersion={(n) => replaceParams({ ver: n === viewing.design.currentVersion ? null : String(n) })}
           onClose={() => (markSeen(viewing.design.id), closeParams("design", "ver", "pin"))}
           focus={viewing.focus ?? null}
           demo={demo}
+          canDisagree={canDisagree}
         />
       )}
     </section>
@@ -688,17 +613,17 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
 }
 
 function Thumb({ src, format, video = false, className = "" }: { src: string | null; format: Ticket["format"]; video?: boolean; className?: string }) {
+  const [loaded, setLoaded] = useState(false);
   return (
     <span className={`relative grid place-items-center overflow-hidden bg-gradient-to-br from-surface-2 to-bg text-faint ${className}`}>
       {src ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={src} alt="" className="h-full w-full object-cover" />
+        <img src={src} alt="" decoding="async" onLoad={() => setLoaded(true)} className={`h-full w-full object-cover transition-opacity duration-300 ${loaded ? "opacity-100" : "opacity-0"}`} />
       ) : (
         <FormatIcon format={format} size={20} />
       )}
-      {video && src && (
-        <span className="absolute bottom-1.5 right-1.5 grid h-6 w-6 place-items-center rounded-full bg-black/60 text-[10px] text-white">▶</span>
-      )}
+      {src && !loaded && <span className="absolute inset-0 animate-pulse bg-surface-2" />}
+      {video && src && <span className="absolute bottom-1.5 right-1.5 grid h-6 w-6 place-items-center rounded-full bg-black/60 text-[10px] text-white">▶</span>}
     </span>
   );
 }
@@ -711,161 +636,10 @@ function EyeIcon({ className = "" }: { className?: string }) {
   );
 }
 
-function verdictLabel(v: Verdict, staged: StagedDesign[], designs: Design[]) {
-  const name = !v.of ? "" : "staged" in v.of ? (staged.find((x) => x.key === (v.of as { staged: string }).staged)?.name ?? "another design") : `D${designs.find((x) => x.id === (v.of as { design: string }).design)?.position ?? "?"}`;
-  return v.kind === "new" ? "Net new" : v.kind === "variation" ? `Variation of ${name}` : `Same design as ${name}, another size`;
-}
-
-/** The creative check: sizes that came in and are missing, what's new vs a variation, and whether that matches the ticket. */
-function CheckPanel({
-  ticket,
-  staged,
-  designs,
-  check,
-  asked,
-  onApply,
-  onRetry,
-  onCounts,
-}: {
-  ticket: Ticket;
-  staged: StagedDesign[];
-  designs: Design[];
-  check: CheckState;
-  asked: { new: number; variations: number };
-  onApply: () => void;
-  onRetry: () => void;
-  onCounts: (n: number, v: number) => Promise<void>;
-}) {
-  const [saving, setSaving] = useState(false);
-
-  // Sizes: measured from the files themselves, against what the ticket asked for
-  const carousel = ticket.format === "carousel";
-  const sizesOf = (d: StagedDesign) => new Set(d.files.map((f) => f.aspect).filter(Boolean) as string[]);
-  const all = [...new Set(staged.flatMap((d) => [...sizesOf(d)]))];
-  const missing = ticket.sizes
-    .map((s) => ({ size: s, lacking: staged.filter((d) => !sizesOf(d).has(s)) }))
-    .filter((m) => m.lacking.length);
-  const extra = all.filter((s) => ticket.sizes.length && !ticket.sizes.includes(s));
-  const everyone = (n: number) => (staged.length === 1 ? "" : n === staged.length ? (staged.length === 2 ? " on both" : " on all") : "");
-
-  // Counts: what this upload makes, with what's already on the ticket
-  const existingNew = designs.filter((d) => !d.isVariation).length;
-  const existingVar = designs.length - existingNew;
-  const planNew = existingNew + staged.filter((d) => !d.variationOf).length;
-  const planVar = existingVar + staged.filter((d) => d.variationOf).length;
-  const overNew = planNew > asked.new;
-  const overVar = planVar > asked.variations;
-  const proposed = {
-    new: overNew ? planNew : overVar ? Math.max(planNew, asked.new - (planVar - asked.variations)) : asked.new,
-    variations: Math.max(planVar, asked.variations),
-  };
-  const mismatch = (overNew || overVar) && (proposed.new !== asked.new || proposed.variations !== asked.variations);
-  const freed = asked.new - proposed.new;
-  const extraNew = proposed.new - asked.new;
-  const left = check.status === "done" ? check.left : null;
-  const pending =
-    check.status === "done" &&
-    !check.applied &&
-    staged.some((d) => {
-      const v = check.verdicts[d.key];
-      if (!v) return false;
-      if (v.kind === "same_design") return Boolean(v.of && "staged" in v.of);
-      const want = v.kind === "new" || !v.of ? null : "staged" in v.of ? STAGED + v.of.staged : v.of.design;
-      return want !== d.variationOf;
-    });
-
+function TrashIcon({ className = "" }: { className?: string }) {
   return (
-    <div className="grid gap-2.5 rounded-[8px] border border-line bg-bg/60 p-3 text-xs">
-      <div className="flex items-center justify-between gap-2">
-        <p className="flex items-center gap-1.5 font-medium text-fg">
-          <EyeIcon className="h-4 w-4 text-[#6c7ee1]" />
-          Creative check
-        </p>
-        {check.status === "running" ? (
-          <span className="flex items-center gap-1.5 text-faint">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#6c7ee1]" />
-            Looking at the designs…
-          </span>
-        ) : (
-          check.status !== "idle" && (
-            <button onClick={onRetry} className="text-faint hover:text-fg max-md:-my-2.5 max-md:py-2.5">
-              Check again
-            </button>
-          )
-        )}
-      </div>
-
-      {!carousel && (
-        <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-x-2 gap-y-1">
-          <span className="text-faint">Sizes</span>
-          <span className="text-muted">
-            {all.length
-              ? all.map((s, i) => (
-                  <span key={s}>
-                    {i > 0 && ", "}
-                    <span className="tabular text-fg">{aspectLabel(s)}</span>
-                    {extra.includes(s) && <span className="text-faint"> (not on the ticket)</span>}
-                  </span>
-                ))
-              : "Couldn't read the sizes"}
-          </span>
-          <span className="text-faint">Missing</span>
-          {missing.length ? (
-            <span className="text-warn">
-              {missing.every((m) => m.lacking.length === staged.length)
-                ? `${missing.map((m) => aspectLabel(m.size)).join(", ")}${everyone(staged.length)}`
-                : missing.map((m) => `${aspectLabel(m.size)} on ${m.lacking.length === staged.length ? "all" : m.lacking.map((d) => d.name).join(", ")}`).join(" · ")}
-            </span>
-          ) : (
-            <span className="text-ok">Every size asked for is here</span>
-          )}
-        </div>
-      )}
-
-      {check.status === "failed" && <p className="text-faint">{check.error}</p>}
-      {check.status === "done" && (
-        <div className="grid gap-2 border-t border-line pt-2.5">
-          <p className="text-muted">{check.summary}</p>
-          {pending && (
-            <button onClick={onApply} className="justify-self-start rounded-full bg-[#6c7ee1]/15 px-3 py-1.5 font-medium text-[#9aa7f0] hover:bg-[#6c7ee1]/25 max-md:min-h-11 max-md:px-4 max-md:text-sm">
-              Use the AI&apos;s grouping
-            </button>
-          )}
-        </div>
-      )}
-
-      <div className="grid gap-2 border-t border-line pt-2.5">
-        <p className="text-muted">
-          With this upload: <span className="text-fg tabular">{plural(planNew, "net new", "net new")}</span>
-          {planVar > 0 && <span className="text-fg tabular"> · {plural(planVar, "variation")}</span>}
-          <span className="text-faint">
-            {" "}
-            · ticket is for {asked.new} new{asked.variations ? ` + ${plural(asked.variations, "variation")}` : ""}
-          </span>
-        </p>
-        {mismatch && (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-[6px] bg-warn/10 px-2.5 py-2">
-            <span className={extraNew > 0 && left !== null && extraNew > left ? "text-bad" : "text-warn"}>
-              {extraNew > 0
-                ? `${plural(extraNew, "more net new design")} would count toward the allotment${left !== null ? ` (${left} left${extraNew > left ? `, over by ${extraNew - left}` : ""})` : ""}.`
-                : freed > 0
-                  ? `Variations don't count toward the allotment: correcting the ticket gives ${freed} back.`
-                  : "Variations don't count toward the allotment."}
-            </span>
-            <button
-              disabled={saving}
-              onClick={async () => {
-                setSaving(true);
-                await onCounts(proposed.new, proposed.variations);
-                setSaving(false);
-              }}
-              className="rounded-full border border-line px-3 py-1 text-muted hover:border-faint hover:text-fg disabled:opacity-60 max-md:min-h-11 max-md:w-full"
-            >
-              {saving ? "Saving…" : `Make it ${proposed.new} new${proposed.variations ? ` + ${proposed.variations} var.` : ""}`}
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+      <path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3" />
+    </svg>
   );
 }

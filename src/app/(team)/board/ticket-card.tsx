@@ -4,6 +4,7 @@ import { PersonAvatar } from "@/components/person-avatar";
 import { tintFor } from "@/lib/colors";
 import { businessDuration, FORMAT_LABEL, health, type Health } from "@/lib/stages";
 import type { Ticket } from "./types";
+import { prefetchMedia } from "./media-cache";
 
 const STAMP: Record<Health, string> = {
   ok: "bg-ok-soft text-ok",
@@ -94,7 +95,10 @@ export function TicketCard({
       draggable={Boolean(onDragStart)}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
-      onClick={onOpen}
+      // Its files and comments are fetched as the pointer arrives, so they're there when it opens
+      onPointerEnter={() => prefetchMedia(ticket.id)}
+      onFocus={() => prefetchMedia(ticket.id)}
+      onClick={() => (prefetchMedia(ticket.id), onOpen())}
       className={`group relative grid w-full gap-2.5 overflow-hidden rounded-brand border border-line bg-surface p-3 text-left transition duration-150 before:absolute before:inset-y-0 before:left-0 before:w-[3px] hover:-translate-y-px hover:border-faint hover:shadow-[0_10px_30px_-12px_rgba(0,0,0,0.8)] max-md:p-3.5 max-md:active:scale-[0.985] focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-text ${EDGE[h]} ${
         dragging ? "opacity-40" : ""
       }`}

@@ -1,7 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireStaff } from "@/lib/auth";
+import { isExecOrLead, requireStaff } from "@/lib/auth";
+import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { AiUnavailable, askJson, CREATIVE_CHECK_SCHEMA, CREATIVE_CHECK_SYSTEM, type CreativeCheck } from "@/lib/ai";
 import { aspectLabel } from "@/lib/uploads/media";
@@ -261,6 +262,119 @@ Classify every S design.`;
   } catch (e) {
     return { ok: false, error: e instanceof AiUnavailable ? e.message : "The creative check didn't work this time." };
   }
+}
+
+// ─── Deleting creative ──────────────────────────────────────────────────────
+
+// Makers can take files off while the work is being made; past that (in review, with the client, launched) or once
+// the client approved a design, only a lead or an exec can.
+const MAKER_STAGES = ["requested", "in_production", "client_revision"];
+
+type FileRef = { path: string; thumb_path: string | null; frames: { path: string }[] | null; audio_path: string | null };
+const storagePaths = (files: FileRef[]) => files.flatMap((f) => [f.path, f.thumb_path, f.audio_path, ...(f.frames ?? []).map((x) => x.path)].filter((p): p is string => Boolean(p)));
+
+/** The design, if this person may delete its files now (RLS decides whether they can see it at all). */
+async function deletable(designId: string) {
+  const me = await requireStaff();
+  const supabase = await createClient();
+  const { data: d } = await supabase.from("designs").select("id, name, request_id, client_status, current_version, requests(stage)").eq("id", designId).maybeSingle();
+  if (!d) return { ok: false as const, error: "Design not found." };
+  const stage = (d.requests as unknown as { stage: string } | null)?.stage ?? "";
+  const lead = isExecOrLead(me);
+  if (!lead && d.client_status === "approved") return { ok: false as const, error: "The client approved this design. Only a lead can delete it." };
+  if (!lead && !MAKER_STAGES.includes(stage)) return { ok: false as const, error: "Past production, only a lead can delete creative." };
+  if (!adminConfigured()) return { ok: false as const, error: "Server key missing." };
+  return { ok: true as const, me, design: d, admin: createAdminClient() };
+}
+
+async function logDelete(admin: ReturnType<typeof createAdminClient>, requestId: string, actor: string, body: string) {
+  await admin.from("request_events").insert({ request_id: requestId, kind: "upload", actor_id: actor, body, data: { action: "deleted_creative" } });
+}
+
+/** Delete a whole design: every version, its files in storage and its comments. */
+export async function deleteDesign(designId: string): Promise<{ ok: true } | Fail> {
+  const c = await deletable(designId);
+  if (!c.ok) return c;
+  const { data: files } = await c.admin.from("design_files").select("path, thumb_path, frames, audio_path").eq("design_id", designId);
+  const paths = storagePaths((files ?? []) as FileRef[]);
+  for (let i = 0; i < paths.length; i += 900) await c.admin.storage.from(BUCKET).remove(paths.slice(i, i + 900));
+  const { error } = await c.admin.from("designs").delete().eq("id", designId);
+  if (error) return { ok: false, error: error.message };
+  await logDelete(c.admin, c.design.request_id, c.me.id, `Deleted ${c.design.name}`);
+  revalidatePath("/board");
+  return { ok: true };
+}
+
+/** Delete the newest version of a design; the one before it is current again (the only version: the whole design). */
+export async function deleteVersion(designId: string): Promise<{ ok: true } | Fail> {
+  const c = await deletable(designId);
+  if (!c.ok) return c;
+  const n = c.design.current_version as number;
+  if (n <= 1) return deleteDesign(designId);
+  const { data: v } = await c.admin.from("design_versions").select("id").eq("design_id", designId).eq("version", n).maybeSingle();
+  if (v) {
+    const { data: files } = await c.admin.from("design_files").select("path, thumb_path, frames, audio_path").eq("version_id", v.id);
+    const paths = storagePaths((files ?? []) as FileRef[]);
+    if (paths.length) await c.admin.storage.from(BUCKET).remove(paths);
+    await c.admin.from("design_versions").delete().eq("id", v.id);
+    await c.admin.from("review_comments").delete().eq("design_id", designId).eq("version", n);
+  }
+  const { data: prev } = await c.admin.from("design_versions").select("version").eq("design_id", designId).order("version", { ascending: false }).limit(1).maybeSingle();
+  await c.admin.from("designs").update({ current_version: prev?.version ?? 1 }).eq("id", designId);
+  await logDelete(c.admin, c.design.request_id, c.me.id, `Deleted v${n} of ${c.design.name}`);
+  revalidatePath("/board");
+  return { ok: true };
+}
+
+/** Delete one file of a design (a size, or a carousel card). */
+export async function deleteFile(fileId: string): Promise<{ ok: true } | Fail> {
+  await requireStaff();
+  const supabase = await createClient();
+  const { data: f } = await supabase.from("design_files").select("id, design_id, original_name, card").eq("id", fileId).maybeSingle();
+  if (!f) return { ok: false, error: "File not found." };
+  const c = await deletable(f.design_id);
+  if (!c.ok) return c;
+  const { data: row } = await c.admin.from("design_files").select("path, thumb_path, frames, audio_path").eq("id", fileId).single();
+  const paths = storagePaths([row as FileRef]);
+  if (paths.length) await c.admin.storage.from(BUCKET).remove(paths);
+  await c.admin.from("design_files").delete().eq("id", fileId);
+  await logDelete(c.admin, c.design.request_id, c.me.id, `Deleted ${f.card ? `card ${f.card}` : f.original_name} from ${c.design.name}`);
+  revalidatePath("/board");
+  return { ok: true };
+}
+
+/**
+ * Replacing one or two cards of a carousel: the new version keeps every other card as it was (copied into the new
+ * version's folder), so only the cards being replaced are uploaded.
+ */
+export async function carryCards(versionId: string, replacing: number[]): Promise<{ ok: true } | Fail> {
+  await requireStaff();
+  const supabase = await createClient();
+  const { data: v } = await supabase.from("design_versions").select("id, version, design_id, designs(client_id, request_id)").eq("id", versionId).maybeSingle();
+  if (!v || !adminConfigured()) return { ok: false, error: "Version not found." };
+  const admin = createAdminClient();
+  const { data: prev } = await admin.from("design_versions").select("id").eq("design_id", v.design_id).eq("version", v.version - 1).maybeSingle();
+  if (!prev) return { ok: true };
+  const { data: files } = await admin.from("design_files").select("path, thumb_path, original_name, mime, bytes, width, height, duration_ms, aspect, card").eq("version_id", prev.id);
+  const d = v.designs as unknown as { client_id: string; request_id: string };
+  const dir = `${d.client_id}/${d.request_id}/${v.design_id}/v${v.version}`;
+  const rows = [];
+  for (const f of (files ?? []).filter((x) => x.card == null || !replacing.includes(x.card))) {
+    const to = `${dir}/${f.path.split("/").pop()}`;
+    const { error } = await admin.storage.from(BUCKET).copy(f.path, to);
+    if (error) return { ok: false, error: `Couldn't keep ${f.original_name}: ${error.message}` };
+    let thumb: string | null = null;
+    if (f.thumb_path) {
+      thumb = `${dir}/${f.thumb_path.split("/").pop()}`;
+      await admin.storage.from(BUCKET).copy(f.thumb_path, thumb);
+    }
+    rows.push({ version_id: versionId, design_id: v.design_id, path: to, thumb_path: thumb, original_name: f.original_name, mime: f.mime, bytes: f.bytes, width: f.width, height: f.height, duration_ms: f.duration_ms, aspect: f.aspect, card: f.card });
+  }
+  if (rows.length) {
+    const { error } = await admin.from("design_files").insert(rows);
+    if (error) return { ok: false, error: error.message };
+  }
+  return { ok: true };
 }
 
 /** Correct how many net new and variations a ticket is for. Net new is what counts toward the allotment. */

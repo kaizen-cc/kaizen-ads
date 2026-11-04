@@ -32,6 +32,19 @@ export type Ad = {
   cta: string;
 };
 
+/** A flag from the client-rule check that the copywriter or a lead rebutted for this copy, with why */
+export type Dismissed = { rule: string; quote: string; reason: string; by: string; at: string };
+/** A flag is set aside when someone rebutted the same rule on the same words */
+export const isDismissed = (v: { rule: string; quote: string }, list: Dismissed[]) => list.some((d) => d.rule === v.rule && d.quote.trim().toLowerCase() === v.quote.trim().toLowerCase());
+
+/** A short fingerprint of the copy's words: the client-rule check is kept for the exact text it read */
+export function adsHash(ads: Ad[]) {
+  const s = ads.map((a) => [a.primaryText, a.headline, a.linkDescription, a.cta].join("\u0001")).join("\u0002");
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+  return (h >>> 0).toString(36) + s.length.toString(36);
+}
+
 export const LIMITS = {
   visible: 125, // characters shown before "See more"
   shortMax: 300, // short-form primary text, hard cap

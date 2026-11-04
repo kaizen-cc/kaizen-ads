@@ -4,8 +4,8 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { AiUnavailable, askJson, clientContext, COPY_CHAT_SCHEMA, COPY_CHAT_SYSTEM, type CopyLesson, type CopyViolation } from "@/lib/ai";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
-import { blockers, type Ad } from "@/lib/copy";
-import { checkAgainstClient, draftCopy, learnFromCopy } from "@/lib/copy-draft";
+import { adsHash, blockers, isDismissed, type Ad, type Dismissed } from "@/lib/copy";
+import { draftCopy, learnFromCopy, storeCopyCheck } from "@/lib/copy-draft";
 import { onReachedClient } from "@/lib/client-revision";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -27,6 +27,12 @@ export type CopySet = {
   changes: { ad: number; what: string }[] | null;
   scope: "amend" | "rewrite" | null;
   clientStatus: { status: "approved" | "changes" | null; note?: string | null }[]; // per ad; approved = locked
+  /** The check against what the client told us, for the exact words it read (hash); null until it has run */
+  check: { violations: CopyViolation[]; hash: string; at: string } | null;
+  /** Flags the copywriter or a lead rebutted for this copy (by rule and quote), with why */
+  dismissed: Dismissed[];
+  /** Carousels: each carousel's card headlines and descriptions, by design */
+  cards: Record<string, { headline: string; description: string }[]>;
 };
 export type CopyState = { set: CopySet | null; reusable: { id: string; title: string; approvedAt: string | null; ads: Ad[] } | null };
 
@@ -47,6 +53,9 @@ const toSet = (s: Record<string, unknown>): CopySet => ({
   changes: (s.changes as CopySet["changes"]) ?? null,
   scope: (s.scope as CopySet["scope"]) ?? null,
   clientStatus: (s.client_status ?? []) as CopySet["clientStatus"],
+  check: s.checked_hash ? { violations: (s.violations ?? []) as CopyViolation[], hash: s.checked_hash as string, at: s.checked_at as string } : null,
+  dismissed: (s.dismissed ?? []) as Dismissed[],
+  cards: (s.cards ?? {}) as CopySet["cards"],
 });
 
 /** The ticket's copy set, and an approved set for the same angle that could be reused instead of re-asking. */
@@ -110,29 +119,122 @@ export async function saveCopy(setId: string, ads: Ad[]): Promise<{ ok: true } |
 }
 
 /**
- * Approve: saves the final edits and moves the ticket to Ready for client. Being a little off the length standard doesn't
- * stop it; missing copy does, and so does anything that goes against what the client told us (checked by the AI).
+ * The check against what the client told us, for these exact words: kept with the copy, so the studio, the ticket and
+ * approving all show the same thing. Runs when the studio opens and again after edits; returns the kept result when the
+ * words haven't changed since.
  */
-export async function approveCopy(setId: string, ads: Ad[]): Promise<{ ok: true } | { ok: false; error: string; violations?: CopyViolation[] }> {
+export async function checkCopy(setId: string, ads: Ad[]): Promise<{ ok: true; violations: CopyViolation[]; hash: string } | { ok: false; error: string }> {
   await requireStaff();
+  const supabase = await createClient();
+  const { data: s } = await supabase.from("copy_sets").select("request_id, client_id, violations, checked_hash, status").eq("id", setId).maybeSingle();
+  if (!s) return { ok: false, error: "Copy not found." };
+  const hash = adsHash(ads);
+  if (s.checked_hash === hash) return { ok: true, violations: (s.violations ?? []) as CopyViolation[], hash };
+  if (!adminConfigured()) return { ok: false, error: "Server key missing." };
+  try {
+    const violations = await storeCopyCheck(createAdminClient(), s.request_id, s.client_id, ads);
+    return { ok: true, violations, hash };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "The check didn't run." };
+  }
+}
+
+/**
+ * The copywriter (or a lead) says a flag reads the client's rule too strictly ("the client approved 'fresh, never frozen'
+ * on the Oct 12 call"): set aside for this copy, logged on the ticket, kept as a learning the copy check, the copywriter
+ * and the client's rules log read; the head of creative and the leads hear about it.
+ */
+export async function rebutFlag(setId: string, flag: { rule: string; quote: string; field: string }, reason: string): Promise<{ ok: true; dismissed: Dismissed[] } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  if (!(isExecOrLead(me) || me.isCopywriter)) return { ok: false, error: "Only the copywriter or a lead can rebut a flag." };
+  const why = reason.trim().slice(0, 600);
+  if (why.length < 4) return { ok: false, error: "Say why it's fine, e.g. what the client allowed and when." };
+  const supabase = await createClient();
+  const { data: s } = await supabase.from("copy_sets").select("id, request_id, client_id, dismissed, requests(number, title), clients(name)").eq("id", setId).maybeSingle();
+  if (!s || !adminConfigured()) return { ok: false, error: "Copy not found." };
+  const admin = createAdminClient();
+  const now = new Date().toISOString();
+  const dismissed = [...((s.dismissed ?? []) as Dismissed[]).filter((d) => !(d.rule === flag.rule && d.quote === flag.quote)), { rule: flag.rule, quote: flag.quote, reason: why, by: me.fullName, at: now }];
+  await admin.from("copy_sets").update({ dismissed }).eq("id", setId);
+  await admin.from("copy_rule_overrides").insert({ client_id: s.client_id, request_id: s.request_id, set_id: setId, kind: "rebut", rule: flag.rule.slice(0, 400), quote: flag.quote.slice(0, 400), field: flag.field, reason: why, created_by: me.id });
+  const { data: req } = await admin.from("requests").select("stage").eq("id", s.request_id).maybeSingle();
+  await admin.from("request_events").insert({ request_id: s.request_id, kind: "copy", from_stage: req?.stage ?? null, to_stage: req?.stage ?? null, actor_id: me.id, body: why, data: { action: "rebutted_flag", rule: flag.rule, quote: flag.quote } });
+  // Not silent: a client rule may be loosening
+  const t = s.requests as unknown as { number: number; title: string } | null;
+  const { data: heads } = await admin.from("profiles").select("id").eq("is_active", true).or("is_lead.eq.true,role.eq.head_of_creative");
+  const ids = (heads ?? []).map((h) => h.id as string).filter((id) => id !== me.id);
+  if (ids.length)
+    await admin.from("notifications").upsert(
+      ids.map((id) => ({
+        profile_id: id,
+        kind: "ticket",
+        title: `${(s.clients as unknown as { name: string } | null)?.name ?? "A client"}: a client rule was rebutted on #${t?.number ?? ""}`,
+        body: `${me.fullName} says the copy check read "${flag.rule}" too strictly on "${flag.quote}": ${why}`.slice(0, 600),
+        href: `/board?t=${t?.number ?? ""}&copy=1`,
+        client_id: s.client_id,
+        key: `copy-rebut:${setId}:${flag.rule}:${flag.quote}`.slice(0, 300),
+        priority: "normal",
+        actor_id: me.id,
+      })),
+      { onConflict: "profile_id,key", ignoreDuplicates: true },
+    );
+  revalidatePath("/board");
+  return { ok: true, dismissed };
+}
+
+/**
+ * Approve: saves the final edits and moves the ticket to Ready for client. Being a little off the length standard doesn't
+ * stop it; missing copy does, and so does anything that goes against what the client told us (the check kept with the
+ * copy, or run now if the words changed), unless the copywriter rebutted it. An exec or lead can force it past the
+ * flags with a reason: logged, the media buyer told, and kept as a learning for later checks.
+ */
+export async function approveCopy(setId: string, ads: Ad[], force?: { reason: string }): Promise<{ ok: true } | { ok: false; error: string; violations?: CopyViolation[] }> {
+  const me = await requireStaff();
   const missing = blockers(ads);
   if (missing.length) return { ok: false, error: missing[0] };
+  if (force && !isExecOrLead(me)) return { ok: false, error: "Only execs and leads can force approve." };
+  if (force && force.reason.trim().length < 4) return { ok: false, error: "Say why it's fine to approve it anyway." };
   const saved = await saveCopy(setId, ads);
   if (!saved.ok) return saved;
   const supabase = await createClient();
-  const { data: owner } = await supabase.from("copy_sets").select("client_id").eq("id", setId).maybeSingle();
+  const { data: owner } = await supabase.from("copy_sets").select("client_id, request_id, violations, checked_hash, dismissed").eq("id", setId).maybeSingle();
+  let open: CopyViolation[] = [];
   if (owner && adminConfigured()) {
     try {
-      const violations = await checkAgainstClient(createAdminClient(), owner.client_id, ads);
-      if (violations.length) return { ok: false, error: "This goes against what the client told us. Fix it before it's approved.", violations };
+      const kept = owner.checked_hash === adsHash(ads) ? ((owner.violations ?? []) as CopyViolation[]) : await storeCopyCheck(createAdminClient(), owner.request_id, owner.client_id, ads);
+      open = kept.filter((v) => !isDismissed(v, (owner.dismissed ?? []) as Dismissed[]));
+      if (open.length && !force) return { ok: false, error: "This goes against what the client told us. Fix it before it's approved.", violations: open };
     } catch (e) {
       // If the check itself can't run, it doesn't hold the copy hostage
       console.error("[copy] client check failed:", e instanceof Error ? e.message : e);
     }
   }
+  if (force && open.length && owner && adminConfigured()) {
+    const admin = createAdminClient();
+    const why = force.reason.trim().slice(0, 600);
+    await admin.from("copy_rule_overrides").insert(open.map((v) => ({ client_id: owner.client_id, request_id: owner.request_id, set_id: setId, kind: "force", rule: v.rule.slice(0, 400), quote: v.quote.slice(0, 400), field: v.field, reason: why, created_by: me.id })));
+    const { data: req } = await admin.from("requests").select("stage, number, title").eq("id", owner.request_id).maybeSingle();
+    await admin.from("request_events").insert({ request_id: owner.request_id, kind: "copy", from_stage: req?.stage ?? null, to_stage: req?.stage ?? null, actor_id: me.id, body: why, data: { action: "force_approved", flags: open.map((v) => ({ ad: v.ad, rule: v.rule, quote: v.quote })) } });
+    const { data: buyers } = await admin.from("client_assignments").select("profile_id").eq("client_id", owner.client_id).in("role", ["meta_buyer", "google_buyer"]);
+    const ids = [...new Set((buyers ?? []).map((b) => b.profile_id as string))].filter((id) => id !== me.id);
+    if (ids.length)
+      await admin.from("notifications").upsert(
+        ids.map((id) => ({
+          profile_id: id,
+          kind: "ticket",
+          title: `#${req?.number ?? ""} copy approved over ${open.length} flagged client rule${open.length === 1 ? "" : "s"}`,
+          body: `${me.fullName}: ${why} · Flagged: ${open.map((v) => `Ad ${v.ad} "${v.quote}" (${v.rule})`).join("; ")}`.slice(0, 900),
+          href: `/board?t=${req?.number ?? ""}&copy=1`,
+          client_id: owner.client_id,
+          key: `copy-force:${setId}:${Date.now()}`,
+          priority: "normal",
+          actor_id: me.id,
+        })),
+        { onConflict: "profile_id,key", ignoreDuplicates: true },
+      );
+  }
   const { error } = await supabase.rpc("approve_copy", { p_set: setId });
   if (!error && adminConfigured()) {
-    const me = await requireStaff();
     const { data: set } = await supabase.from("copy_sets").select("request_id").eq("id", setId).maybeSingle();
     const { data: now } = set ? await supabase.from("requests").select("stage").eq("id", set.request_id).maybeSingle() : { data: null };
     if (set)

@@ -58,6 +58,9 @@ async function statementsSince(admin: SupabaseClient, clientId: string, since: s
   }
   const r = (plan?.reactions ?? null) as { sections?: Record<string, { verdict: string; note?: string; at?: string }> } | null;
   for (const [k, v] of Object.entries(r?.sections ?? {})) if (v?.note) lines.push(`- ${String(v.at ?? plan?.updated_at).slice(0, 10)} · their plan review (${k}): "${v.note.slice(0, 500)}"`);
+  // Our copy check flagged something and the copywriter or a lead rebutted it, citing what the client allowed
+  const { data: rebuttals } = await admin.from("copy_rule_overrides").select("rule, quote, reason, created_at").eq("client_id", clientId).eq("kind", "rebut").gt("created_at", since).limit(30);
+  for (const x of rebuttals ?? []) lines.push(`- ${String(x.created_at).slice(0, 10)} · team rebuttal citing the client · the copy check flagged "${x.quote ?? ""}" under the rule "${x.rule}"; the team says: "${String(x.reason).slice(0, 400)}"`);
   return lines.join("\n").slice(0, 40000);
 }
 
@@ -95,7 +98,7 @@ export async function logClientRules(admin: SupabaseClient, clientId: string) {
 - stern: true only when they were emphatic (never, always, under no circumstances, must, absolutely not).
 - lifts: true when they're opening the door on an existing rule ("let's test single items after all"): use that rule's key.
 - quote: their words, short. source: where (creative feedback, Slack, email, call title, plan review). at: the date (YYYY-MM-DD).
-Never log: one-off logistics or launch-day details ("the offer must match the landing page on launch day"), a single campaign's settings, our team's ideas, test hypotheses or performance opinions ("a protein angle would crush"), or anything said by our own team. When nothing qualifies, return no mentions.`,
+Never log: one-off logistics or launch-day details ("the offer must match the landing page on launch day"), a single campaign's settings, our team's ideas, test hypotheses or performance opinions ("a protein angle would crush"), or anything said by our own team. The one exception: a "team rebuttal citing the client" reports what the client allowed (e.g. "the client approved 'fresh, never frozen' on the Oct 12 call"): treat it as the client opening the door on that rule (lifts true, its key) when it names what they allowed. When nothing qualifies, return no mentions.`,
     prompt: `<logged_preferences>\n${rules.map((r) => `- ${r.key} (${r.polarity}, ${r.status}, ${r.count}x): ${r.rule}`).join("\n") || "None yet."}\n</logged_preferences>\n\n<what_the_client_said since="${since.slice(0, 10)}">\n${said}\n</what_the_client_said>`,
   });
   const byKey = new Map(rules.map((r) => [r.key, { ...r }]));

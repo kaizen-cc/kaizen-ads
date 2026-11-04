@@ -263,6 +263,9 @@ const DEMO_COPY = {
     scope: null,
     clientStatus: [],
     reusedFrom: null,
+    check: { violations: [], hash: "", at: new Date().toISOString() },
+    dismissed: [],
+    cards: {},
   },
 };
 
@@ -294,7 +297,7 @@ export function TicketDrawer({
   const [moveNote, setMoveNote] = useState("");
   // The move dialog is a place of its own (?move=number), so back closes it before the ticket
   const moving = useParam("move") === String(ticket.number);
-  const [uploads, setUploads] = useState<UploadState>({ uploaded: 0, uploading: 0, loaded: false });
+  const [uploads, setUploads] = useState<UploadState>({ uploaded: 0, uploading: 0, loaded: false, missing: [] });
   const onUploads = useCallback((u: UploadState) => setUploads(u), []);
   const hasCreative = uploads.uploaded > 0 || demo;
   const making = MAKING.includes(ticket.stage);
@@ -311,7 +314,11 @@ export function TicketDrawer({
   useEffect(() => {
     reload();
     // Escape closes what's on top: the move dialog handles its own
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && !new URLSearchParams(window.location.search).has("move") && onClose();
+    // Escape closes what's on top: the move dialog, the copy studio and the creative viewer handle their own
+    const esc = (e: KeyboardEvent) => {
+      const q = new URLSearchParams(window.location.search);
+      if (e.key === "Escape" && !q.has("move") && !q.has("copy") && !q.has("design")) onClose();
+    };
     window.addEventListener("keydown", esc);
     return () => window.removeEventListener("keydown", esc);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -460,12 +467,13 @@ export function TicketDrawer({
             </div>
             {making && (
               <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 border-t border-line px-5 py-5 max-md:px-3 max-md:py-4">
-                <Deliverables ticket={ticket} demoDesigns={demo ? DEMO_DESIGNS : undefined} onState={onUploads} />
+                <Deliverables ticket={ticket} demoDesigns={demo ? DEMO_DESIGNS : undefined} onState={onUploads} canDisagree={can.review} />
                 {hasCreative && uploads.uploading === 0 ? (
                   // Remounts after each upload, so it always knows whether the review is about the current files
                   <AiGate
                     ticket={ticket}
                     demo={demo}
+                    missing={uploads.missing}
                     onSent={moved}
                     back={
                       back && (
@@ -531,10 +539,10 @@ export function TicketDrawer({
           {!demo && (ticket.stage === "ready_for_launch" || ticket.stage === "launched") && <LaunchPanel requestId={ticket.id} isExec={Boolean(can.exec)} launched={ticket.stage === "launched"} />}
 
           {/* Once there's creative, the files come first */}
-          {filesFirst && <Deliverables ticket={ticket} demoDesigns={demo ? DEMO_DESIGNS : undefined} onState={onUploads} />}
+          {filesFirst && <Deliverables ticket={ticket} demoDesigns={demo ? DEMO_DESIGNS : undefined} onState={onUploads} canDisagree={can.review} />}
 
           <ReviewPanel ticket={ticket} canReview={can.review} onMoved={moved} demo={demo} />
-          {(COPY_STAGES.includes(ticket.stage)) && <CopyPanel ticket={ticket} canApprove={can.approveCopy} onMoved={moved} demo={demo ? DEMO_COPY : undefined} />}
+          {(COPY_STAGES.includes(ticket.stage)) && <CopyPanel ticket={ticket} canApprove={can.approveCopy} canForce={can.review} onMoved={moved} demo={demo ? DEMO_COPY : undefined} />}
 
           {/* Properties: label on the left, editable value on the right */}
           <section className={section}>
@@ -673,7 +681,7 @@ export function TicketDrawer({
 
           {ticket.format === "video" && <ScriptPanel requestId={ticket.id} demo={demo ? null : undefined} />}
 
-          {!making && !filesFirst && <Deliverables ticket={ticket} demoDesigns={demo ? DEMO_DESIGNS : undefined} onState={onUploads} />}
+          {!making && !filesFirst && <Deliverables ticket={ticket} demoDesigns={demo ? DEMO_DESIGNS : undefined} onState={onUploads} canDisagree={can.review} />}
 
           {can.review && <DeleteTicket ticket={ticket} onDeleted={onClose} />}
 

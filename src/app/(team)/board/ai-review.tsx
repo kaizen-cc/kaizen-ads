@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CreativeNote, CreativeNotes } from "@/lib/ai";
 import type { ReviewProgress } from "@/lib/creative-review";
 import { stageInfo } from "@/lib/stages";
@@ -211,8 +211,12 @@ const fmtAgo = (iso: string) => {
   return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
 };
 
-/** Loads the review state and keeps it fresh while a run is going. */
-function useReview(ticketId: string, demo: boolean) {
+/** The first note on the creative (by design, then time): where the creative opens when a review finishes */
+const firstPinned = (notes: CreativeNotes) =>
+  [...notes.notes.filter((n) => n.commentId && n.designId && n.severity !== "good")].sort((a, b) => (a.severity === "fix" ? 0 : 1) - (b.severity === "fix" ? 0 : 1) || (Number(a.design.slice(1)) || 0) - (Number(b.design.slice(1)) || 0) || (a.atMs ?? 0) - (b.atMs ?? 0))[0] ?? null;
+
+/** Loads the review state and keeps it fresh while a run is going. openWhenDone: the maker's side opens the creative at the first note. */
+function useReview(ticketId: string, demo: boolean, openWhenDone = false) {
   const [state, setState] = useState<AiReviewState | null>(demo ? { latest: null, runs: 0, hasCreative: true, forced: null } : null);
   const running = state?.latest?.status === "running";
   useEffect(() => {
@@ -229,16 +233,18 @@ function useReview(ticketId: string, demo: boolean) {
       () =>
         void aiReview(ticketId).then((s) => {
           setState(s);
-          // Done: its comments are on the creative now; the page shows them at once and takes you to the creative
+          // Done: its comments are on the creative now; the creative opens at the first one, with every note pinned on it
           if (s.latest?.status === "done") {
             window.dispatchEvent(new CustomEvent("kz:comments", { detail: ticketId }));
             window.dispatchEvent(new CustomEvent("kz:review-done", { detail: ticketId }));
+            const first = openWhenDone && s.latest.notes ? firstPinned(s.latest.notes) : null;
+            if (first) openComment(ticketId, first);
           }
         }),
       1500,
     );
     return () => clearInterval(t);
-  }, [ticketId, demo, running]);
+  }, [ticketId, demo, running, openWhenDone]);
   return [state, setState] as const;
 }
 
@@ -275,8 +281,8 @@ function useDemoRun(setState: (s: AiReviewState) => void) {
  * The maker's side, in the stage card once the files are up: run the AI review, see its notes, fix and replace, run it
  * again, then send it on. Sending past open fixes (or without a review) is allowed and flagged for their lead.
  */
-export function AiGate({ ticket, onSent, back, demo = false }: { ticket: Ticket; onSent: (stage: Ticket["stage"]) => void; back?: React.ReactNode; demo?: boolean }) {
-  const [state, setState] = useReview(ticket.id, demo);
+export function AiGate({ ticket, onSent, back, demo = false, missing = [] }: { ticket: Ticket; onSent: (stage: Ticket["stage"]) => void; back?: React.ReactNode; demo?: boolean; /** What's still to upload before the first review starts on its own */ missing?: string[] }) {
+  const [state, setState] = useReview(ticket.id, demo, true);
   const demoRun = useDemoRun(setState);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -287,20 +293,31 @@ export function AiGate({ ticket, onSent, back, demo = false }: { ticket: Ticket;
   const where = info.next === "internal_review" ? "creative review" : "the client";
 
   const [prep, setPrep] = useState("");
-  const review = async () => {
+  const review = async (auto = false) => {
     setError(null);
     setConfirm(false);
     if (demo) return demoRun();
     setBusy(true);
     // Videos are watched here first (frames and audio), so the review sees the whole thing
     const problem = await prepareVideos(ticket.id, setPrep).catch(() => null);
-    const r = await startAiReview(ticket.id);
+    const r = await startAiReview(ticket.id, { auto });
     setBusy(false);
     setPrep("");
-    if (!r.ok) return setError(r.error);
+    if (!r.ok) return auto ? undefined : setError(r.error);
     if (problem) setError(problem);
     setState(r.state);
   };
+
+  // The first review starts on its own the moment everything asked for is in: no button. Later ones are the maker's
+  // call ("Send for revision review"), so a carousel can change a card or two without a new round each time.
+  const started = useRef(false);
+  const ready = Boolean(state) && state!.runs === 0 && !missing.length && !state!.latest;
+  useEffect(() => {
+    if (!ready || started.current || demo) return;
+    started.current = true;
+    void review(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, demo]);
   const send = async (force: boolean) => {
     setError(null);
     setBusy(true);
@@ -340,7 +357,7 @@ export function AiGate({ ticket, onSent, back, demo = false }: { ticket: Ticket;
         <div className="grid gap-3">
           {run?.status === "done" && run.notes && !run.current ? (
             <>
-              <p className="text-sm text-muted">You replaced files since the last review. Run it again to check the new version.</p>
+              <p className="text-sm text-muted">You changed files since the last review. When you&apos;re done with the changes, send it for a revision review: the AI looks at what changed and whether its notes were addressed.</p>
               <details className="text-xs text-faint">
                 <summary className="cursor-pointer hover:text-fg max-md:py-2.5">What the last review said</summary>
                 <div className="mt-2">
@@ -348,10 +365,16 @@ export function AiGate({ ticket, onSent, back, demo = false }: { ticket: Ticket;
                 </div>
               </details>
             </>
+          ) : run?.status === "failed" ? (
+            <p className="text-sm text-muted">{run.error ?? "The last review didn't finish."}</p>
+          ) : busy || ready ? (
+            <p className="flex items-center gap-2 text-sm text-muted">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#6c7ee1]" />
+              {prep || "Everything's in: the AI review is starting…"}
+            </p>
           ) : (
             <p className="text-sm text-muted">
-              {run?.status === "failed" ? `${run.error ?? "The last review didn't finish."} ` : ""}
-              Before it goes to {where}, the AI checks every file: typos, the offer against the brief, brand rules, Meta safe zones and sizes. Fix what it finds first and there&apos;s less back and forth.
+              {missing.length ? <>Once everything&apos;s in, the AI checks it on its own before it goes to {where}. Still to come: {missing.join(" · ")}.</> : <>The AI checks every file before it goes to {where}: typos, the offer against the brief, brand rules, Meta safe zones and sizes.</>}
             </p>
           )}
         </div>
@@ -374,9 +397,6 @@ export function AiGate({ ticket, onSent, back, demo = false }: { ticket: Ticket;
                   className="h-10 rounded-brand bg-brand px-4 text-sm font-medium text-white shadow-[0_8px_24px_-10px_rgba(178,30,44,0.9)] hover:bg-brand-hover disabled:opacity-60 max-md:h-12 max-md:w-full"
                 >
                   {busy ? "Sending…" : `${nextLabel} →`}
-                </button>
-                <button disabled={busy} onClick={review} className="h-10 rounded-brand px-3 text-sm text-muted hover:text-fg disabled:opacity-60 max-md:h-11">
-                  Review again
                 </button>
                 {back}
               </div>
@@ -406,15 +426,19 @@ export function AiGate({ ticket, onSent, back, demo = false }: { ticket: Ticket;
             </div>
           ) : (
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                disabled={busy}
-                onClick={review}
-                className="h-10 rounded-brand px-4 text-sm font-medium text-white disabled:opacity-60 max-md:h-12 max-md:w-full"
-                style={{ background: ACCENT, boxShadow: "0 8px 24px -10px rgba(108,126,225,0.9)" }}
-              >
-                {busy ? prep || "Starting…" : current ? "Review again" : run ? "Review the new files" : "Review creative"}
-              </button>
-              {fixes > 0 && <span className="text-xs text-faint">Fix the notes, Replace the files, then review again.</span>}
+              {/* A revision review is the maker's call, once their changes are all in; the first review needs no button */}
+              {run && (!current || run.status === "failed") && (
+                <button
+                  disabled={busy || missing.length > 0}
+                  onClick={() => review(false)}
+                  className="h-10 rounded-brand px-4 text-sm font-medium text-white disabled:opacity-60 max-md:h-12 max-md:w-full"
+                  style={{ background: ACCENT, boxShadow: "0 8px 24px -10px rgba(108,126,225,0.9)" }}
+                  title={missing.length ? `Still to come: ${missing.join(" · ")}` : undefined}
+                >
+                  {busy ? prep || "Starting…" : run.status === "failed" ? "Run the review again" : "Send for revision review"}
+                </button>
+              )}
+              {fixes > 0 && current && <span className="text-xs text-faint">Replace what the notes ask for (a single card is fine), then send it for a revision review.</span>}
               <button disabled={busy} onClick={() => setConfirm(true)} className="ml-auto h-10 rounded-brand px-3 text-xs text-faint hover:text-fg disabled:opacity-60 max-md:ml-0 max-md:h-11">
                 Send anyway
               </button>

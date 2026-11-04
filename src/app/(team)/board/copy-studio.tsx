@@ -2,10 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { CTA_BUTTONS, LIMITS, meters, type Ad, type Meter } from "@/lib/copy";
+import { CTA_BUTTONS, meters, type Ad, type Meter } from "@/lib/copy";
 import { chatWithCopywriter, copyChat, reopenCopy, setLandingUrl, type ChatMessage, type CopyState } from "./copy-actions";
 import type { CopyViolation } from "@/lib/ai";
-import { ticketDesigns, type Design } from "./design-actions";
+import type { Design } from "./design-actions";
+import { cachedMedia, loadMedia } from "./media-cache";
+import { AdPreview, previewMedia } from "@/components/ad-preview";
+import type { Dismissed } from "@/lib/copy";
 import type { Ticket } from "./types";
 
 // The copy studio: copy review works here, not inside the ticket. The creative sits at the top, the five ads on the left,
@@ -37,8 +40,19 @@ const worst = (ad: Ad) => {
   return tones.includes("bad") ? "bad" : tones.includes("warn") || m.hook.tone === "warn" ? "warn" : "ok";
 };
 
-function Editor({ ad, ai, editable, onChange }: { ad: Ad; ai?: Ad; editable: boolean; onChange: (ad: Ad) => void }) {
+function Editor({ ad, ai, editable, onChange, highlight }: { ad: Ad; ai?: Ad; editable: boolean; onChange: (ad: Ad) => void; /** A flagged phrase to jump to: its field is focused with the words selected */ highlight?: { field: string; quote: string; n: number } | null }) {
   const m = meters(ad);
+  const refs = useRef<Record<string, HTMLTextAreaElement | HTMLInputElement | null>>({});
+  useEffect(() => {
+    if (!highlight) return;
+    const el = refs.current[highlight.field];
+    if (!el) return;
+    const at = el.value.toLowerCase().indexOf(highlight.quote.trim().toLowerCase());
+    el.focus();
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (at >= 0) el.setSelectionRange(at, at + highlight.quote.trim().length);
+  }, [highlight]);
+  const flagged = (f: string) => (highlight?.field === f ? "ring-2 ring-bad/50" : "");
   const edited = (k: keyof Ad) => ai && ai[k] !== ad[k];
   const field = "w-full rounded-[10px] border border-line bg-bg px-3.5 py-2.5 text-sm leading-relaxed outline-none transition-colors focus:border-brand-text/60 disabled:opacity-80";
   return (
@@ -53,7 +67,7 @@ function Editor({ ad, ai, editable, onChange }: { ad: Ad; ai?: Ad; editable: boo
           <span>Primary text {edited("primaryText") && <span className="text-[10px] text-brand-text">edited</span>}</span>
           <Count m={m.primary} />
         </span>
-        <textarea value={ad.primaryText} disabled={!editable} onChange={(e) => onChange({ ...ad, primaryText: e.target.value })} rows={ad.kind === "short" ? 5 : 16} className={field} />
+        <textarea ref={(el) => void (refs.current.primaryText = el)} value={ad.primaryText} disabled={!editable} onChange={(e) => onChange({ ...ad, primaryText: e.target.value })} rows={ad.kind === "short" ? 5 : 16} className={`${field} ${flagged("primaryText")}`} />
         <span className="flex items-center justify-between text-[11px] text-faint">
           <span>Hook shown before &ldquo;See more&rdquo;</span>
           <Count m={m.hook} />
@@ -64,7 +78,7 @@ function Editor({ ad, ai, editable, onChange }: { ad: Ad; ai?: Ad; editable: boo
           <span>Headline {edited("headline") && <span className="text-[10px] text-brand-text">edited</span>}</span>
           <Count m={m.headline} />
         </span>
-        <input value={ad.headline} disabled={!editable} onChange={(e) => onChange({ ...ad, headline: e.target.value })} className={field} />
+        <input ref={(el) => void (refs.current.headline = el)} value={ad.headline} disabled={!editable} onChange={(e) => onChange({ ...ad, headline: e.target.value })} className={`${field} ${flagged("headline")}`} />
       </label>
       <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_170px]">
         <label className="grid gap-1.5">
@@ -72,7 +86,7 @@ function Editor({ ad, ai, editable, onChange }: { ad: Ad; ai?: Ad; editable: boo
             <span>Link description {edited("linkDescription") && <span className="text-[10px] text-brand-text">edited</span>}</span>
             <Count m={m.description} />
           </span>
-          <input value={ad.linkDescription} disabled={!editable} onChange={(e) => onChange({ ...ad, linkDescription: e.target.value })} className={field} />
+          <input ref={(el) => void (refs.current.linkDescription = el)} value={ad.linkDescription} disabled={!editable} onChange={(e) => onChange({ ...ad, linkDescription: e.target.value })} className={`${field} ${flagged("linkDescription")}`} />
         </label>
         <label className="grid gap-1.5">
           <span className="text-xs text-muted">CTA button</span>
@@ -84,60 +98,6 @@ function Editor({ ad, ai, editable, onChange }: { ad: Ad; ai?: Ad; editable: boo
             ))}
           </select>
         </label>
-      </div>
-    </div>
-  );
-}
-
-/** How the ad looks in the Facebook feed: primary text cut at "See more", the creative, then headline, description and CTA. */
-function FeedPreview({ ad, client, image, landing }: { ad: Ad; client: string; image: { url: string | null; aspect: string | null } | null; landing?: string | null }) {
-  const [more, setMore] = useState(false);
-  const cut = ad.primaryText.length > LIMITS.visible && !more;
-  const ratio = image?.aspect === "1x1" ? "1 / 1" : image?.aspect === "9x16" ? "9 / 16" : "4 / 5";
-  return (
-    <div className="mx-auto w-full max-w-[340px] overflow-hidden rounded-[14px] bg-fg text-[#050505] shadow-[0_20px_60px_-25px_rgba(0,0,0,0.9)]">
-      <div className="flex items-center gap-2 px-3 pt-3">
-        <span className="grid h-9 w-9 place-items-center rounded-full bg-[#1d1d1f] text-sm font-semibold text-white">{client.charAt(0)}</span>
-        <span className="grid leading-tight">
-          <span className="text-[13px] font-semibold">{client}</span>
-          <span className="text-[11px] text-[#65676b]">Sponsored · ◍</span>
-        </span>
-        <span className="ml-auto text-[#65676b]">···</span>
-      </div>
-      <p className="whitespace-pre-wrap px-3 py-2 text-[13px] leading-[1.35]">
-        {cut ? ad.primaryText.slice(0, LIMITS.visible).trimEnd() : ad.primaryText}
-        {cut && (
-          <button onClick={() => setMore(true)} className="text-[#65676b]">
-            … See more
-          </button>
-        )}
-      </p>
-      <div className="relative w-full bg-[#e4e6eb]" style={{ aspectRatio: ratio }}>
-        {image?.url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={image.url} alt="" className="absolute inset-0 h-full w-full object-cover" />
-        ) : (
-          <span className="absolute inset-0 grid place-items-center text-xs text-[#65676b]">Creative preview</span>
-        )}
-      </div>
-      <a
-        href={landing ?? undefined}
-        target="_blank"
-        rel="noreferrer"
-        title={landing ? `Opens ${landing}` : "No landing page set"}
-        className={`flex items-center gap-3 bg-[#f0f2f5] px-3 py-2.5 ${landing ? "hover:bg-[#e8eaed]" : "pointer-events-none"}`}
-      >
-        <span className="grid min-w-0 flex-1 leading-tight">
-          <span className="truncate text-[11px] uppercase text-[#65676b]">{landing ? landing.replace(/^https?:\/\/(www\.)?/, "").split("/")[0] : `${client.replace(/\s+/g, "").toLowerCase()}.com`}</span>
-          <span className="truncate text-[14px] font-semibold">{ad.headline || "Headline"}</span>
-          {ad.linkDescription && <span className="truncate text-[12px] text-[#65676b]">{ad.linkDescription}</span>}
-        </span>
-        <span className="shrink-0 rounded-[6px] bg-[#e4e6eb] px-3 py-1.5 text-[13px] font-semibold">{ad.cta}</span>
-      </a>
-      <div className="flex justify-around border-t border-[#e4e6eb] py-2 text-[12px] font-medium text-[#65676b]">
-        <span>Like</span>
-        <span>Comment</span>
-        <span>Share</span>
       </div>
     </div>
   );
@@ -294,12 +254,18 @@ export function CopyStudio({
   missing,
   notes,
   violations,
+  rebutted = [],
+  dismissed = [],
+  checking = false,
   busy,
   error,
   canApprove,
+  canForce = false,
   demo,
   onChange,
   onApprove,
+  onForce,
+  onRebut,
   onRewrite,
   onRewriting,
   onClose,
@@ -310,13 +276,22 @@ export function CopyStudio({
   dirty: boolean;
   missing: string[];
   notes: string[];
+  /** Open conflicts with what the client told us (rebutted ones left out) */
   violations: CopyViolation[];
+  /** Conflicts the copywriter or a lead rebutted for this copy, shown with why */
+  rebutted?: CopyViolation[];
+  dismissed?: Dismissed[];
+  /** The check against the client's rules is running for the current words */
+  checking?: boolean;
   busy: boolean;
   error: string | null;
   canApprove: boolean;
+  canForce?: boolean;
   demo: boolean;
   onChange: (i: number, ad: Ad) => void;
   onApprove: () => void;
+  onForce?: (reason: string) => void;
+  onRebut?: (v: CopyViolation, reason: string) => Promise<void>;
   onRewrite: (note: string) => void;
   onRewriting: () => void;
   onClose: () => void;
@@ -326,7 +301,17 @@ export function CopyStudio({
   const [side, setSide] = useState<"preview" | "chat">("preview");
   // Phones have no room for three panes: one at a time, picked from tabs under the header
   const [pane, setPane] = useState<"edit" | "preview" | "chat">("edit");
-  const [designs, setDesigns] = useState<Design[] | null>(null);
+  const [designs, setDesigns] = useState<Design[] | null>(cachedMedia(ticket.id)?.designs ?? null);
+  const [highlight, setHighlight] = useState<{ field: string; quote: string; n: number } | null>(null);
+  const [rebutting, setRebutting] = useState<{ key: string; reason: string } | null>(null);
+  const [forcing, setForcing] = useState<string | null>(null);
+  const jumps = useRef(0);
+  const jump = (v: CopyViolation) => {
+    setPick(v.ad - 1);
+    setPane("edit");
+    jumps.current += 1;
+    setHighlight({ field: v.field, quote: v.quote, n: jumps.current });
+  };
   const [designIx, setDesignIx] = useState(0);
   const [note, setNote] = useState("");
   const [reopening, setReopening] = useState(false);
@@ -341,7 +326,8 @@ export function CopyStudio({
   useEffect(() => {
     if (demo) return;
     let live = true;
-    ticketDesigns(ticket.id).then((d) => live && setDesigns(d));
+    // The same cached request the ticket made: the creative is usually here already, its covers preloaded
+    loadMedia(ticket.id).then((m) => live && m && setDesigns(m.designs));
     return () => {
       live = false;
     };
@@ -360,7 +346,8 @@ export function CopyStudio({
     const files = d.versions[0]?.files ?? [];
     return files.find((f) => f.aspect === "4x5") ?? files[0] ?? null;
   };
-  const chosen = designs?.[designIx] ? cover(designs[designIx]) : null;
+  const chosenDesign = designs?.[designIx] ?? null;
+  const media = chosenDesign ? previewMedia(ticket.format, chosenDesign.versions[0]?.files ?? [], set.cards?.[chosenDesign.id] ?? []) : null;
 
   // Rendered at the page level, over everything (the ticket drawer would otherwise contain it)
   return createPortal(
@@ -501,6 +488,69 @@ export function CopyStudio({
               </div>
             ) : ad ? (
               <div className="grid gap-5">
+                {(violations.length > 0 || rebutted.length > 0) && (
+                  <div className={`grid gap-2 rounded-[12px] border px-4 py-3 ${violations.length ? "border-bad/30 bg-bad-soft/30" : "border-line bg-surface"}`}>
+                    {violations.length > 0 && (
+                      <p className="text-xs font-medium text-bad">
+                        {violations.length} thing{violations.length === 1 ? "" : "s"} go{violations.length === 1 ? "es" : ""} against what {ticket.clientName} told us. Fix {violations.length === 1 ? "it" : "them"} before approving:
+                      </p>
+                    )}
+                    <ul className="grid gap-2">
+                      {[...violations, ...rebutted].map((v) => {
+                        const key = `${v.ad}:${v.field}:${v.quote}`;
+                        const done = dismissed.find((d) => d.rule === v.rule && d.quote.trim().toLowerCase() === v.quote.trim().toLowerCase());
+                        return (
+                          <li key={key} className={`grid gap-1.5 text-xs ${done ? "opacity-70" : ""}`}>
+                            <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                              <button type="button" onClick={() => jump(v)} className="rounded-full bg-bg px-2 py-0.5 text-faint hover:text-fg max-md:py-2">
+                                Ad {v.ad} · {v.field === "primaryText" ? "primary text" : v.field === "linkDescription" ? "link description" : v.field} →
+                              </button>
+                              <span className="text-fg">&ldquo;{v.quote}&rdquo;</span>
+                              <span className="text-muted">· {v.rule}</span>
+                              {done ? (
+                                <span className="text-ok">Rebutted by {done.by}: {done.reason}</span>
+                              ) : (
+                                canApprove &&
+                                onRebut &&
+                                rebutting?.key !== key && (
+                                  <button type="button" onClick={() => setRebutting({ key, reason: "" })} className="text-faint underline-offset-2 hover:text-fg hover:underline max-md:py-2">
+                                    Disagree
+                                  </button>
+                                )
+                              )}
+                            </span>
+                            {rebutting?.key === key && (
+                              <span className="flex flex-wrap gap-1.5">
+                                <input
+                                  autoFocus
+                                  value={rebutting.reason}
+                                  onChange={(e) => setRebutting({ key, reason: e.target.value })}
+                                  placeholder="Why it's fine, e.g. the client approved this wording on the Oct 12 call"
+                                  className="h-8 min-w-0 flex-1 rounded-full border border-line bg-bg px-3 outline-none focus:border-brand-text/60 max-md:h-11 max-md:basis-full max-md:text-base"
+                                />
+                                <button
+                                  type="button"
+                                  disabled={rebutting.reason.trim().length < 4}
+                                  onClick={async () => {
+                                    const reason = rebutting.reason;
+                                    setRebutting(null);
+                                    await onRebut!(v, reason);
+                                  }}
+                                  className="h-8 rounded-full bg-fg px-3 font-medium text-bg disabled:opacity-40 max-md:h-11"
+                                >
+                                  Set it aside
+                                </button>
+                                <button type="button" onClick={() => setRebutting(null)} className="h-8 rounded-full px-2.5 text-muted hover:text-fg max-md:h-11">
+                                  Cancel
+                                </button>
+                              </span>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                )}
                 {pick === 0 && set.clientNotes && (
                   <div className="grid gap-2 rounded-[12px] border border-brand-text/30 bg-brand-soft/30 px-4 py-3 text-sm">
                     <p className="flex flex-wrap items-center gap-2">
@@ -536,14 +586,14 @@ export function CopyStudio({
                 {set.clientStatus?.[pick]?.status === "changes" && set.clientStatus[pick].note && (
                   <p className="rounded-[10px] bg-warn-soft/50 px-3.5 py-2 text-xs text-warn">The client asked: {set.clientStatus[pick].note}</p>
                 )}
-                <Editor ad={ad} ai={set.aiAds[pick]} editable={editable} onChange={(a) => onChange(pick, a)} />
+                <Editor ad={ad} ai={set.aiAds[pick]} editable={editable} onChange={(a) => onChange(pick, a)} highlight={highlight && highlight.n && ads[pick] === ad ? highlight : null} />
               </div>
             ) : null}
           </div>
 
           <aside className="hidden min-h-0 border-l border-line bg-surface/40 p-5 lg:grid">
             {side === "preview" ? (
-              <div className="min-h-0 overflow-y-auto">{ad && <FeedPreview ad={ad} client={ticket.clientName} landing={landing} image={chosen ? { url: chosen.thumbUrl ?? chosen.url, aspect: chosen.aspect } : null} />}</div>
+              <div className="min-h-0 overflow-y-auto">{ad && <AdPreview page={ticket.clientName} primaryText={ad.primaryText} headline={ad.headline} description={ad.linkDescription} cta={ad.cta} landing={landing} media={media} />}</div>
             ) : (
               <Chat ticket={ticket} demo={demo} disabled={set.status === "approved"} onRewriting={onRewriting} />
             )}
@@ -552,7 +602,7 @@ export function CopyStudio({
           {/* Phones: the preview and the chat take the editor's place */}
           {pane === "preview" && (
             <div className={`min-h-0 flex-1 overflow-y-auto overscroll-contain bg-surface/40 px-4 py-4 md:hidden ${set.status === "approved" ? "pb-[calc(1.5rem+env(safe-area-inset-bottom))]" : ""}`}>
-              {ad && <FeedPreview ad={ad} client={ticket.clientName} landing={landing} image={chosen ? { url: chosen.thumbUrl ?? chosen.url, aspect: chosen.aspect } : null} />}
+              {ad && <AdPreview page={ticket.clientName} primaryText={ad.primaryText} headline={ad.headline} description={ad.linkDescription} cta={ad.cta} landing={landing} media={media} />}
             </div>
           )}
           {pane === "chat" && (
@@ -570,18 +620,27 @@ export function CopyStudio({
             }`}
           >
             {violations.length > 0 && (
-              <div className="grid gap-1.5 rounded-[10px] border border-bad/30 bg-bad-soft/40 px-3.5 py-2.5">
-                <p className="text-xs font-medium text-bad">Goes against what {ticket.clientName} told us. Fix before approving:</p>
-                <ul className="grid gap-1">
-                  {violations.map((v, i) => (
-                    <li key={i} className="text-xs text-fg">
-                      <button onClick={() => setPick(v.ad - 1)} className="mr-1.5 text-faint hover:text-fg">
-                        Ad {v.ad} · {v.field === "primaryText" ? "primary text" : v.field === "linkDescription" ? "link description" : v.field}
-                      </button>
-                      &ldquo;{v.quote}&rdquo; <span className="text-muted">· {v.rule}</span>
-                    </li>
-                  ))}
-                </ul>
+              <p className="text-xs text-bad">
+                {violations.length} thing{violations.length === 1 ? "" : "s"} go{violations.length === 1 ? "es" : ""} against what {ticket.clientName} told us: listed above the ad.
+                {canForce && !forcing && (
+                  <button type="button" onClick={() => setForcing("")} className="ml-2 text-muted underline-offset-2 hover:text-fg hover:underline">
+                    Force approve
+                  </button>
+                )}
+              </p>
+            )}
+            {forcing !== null && (
+              <div className="grid gap-2 rounded-[10px] border border-warn/40 bg-warn-soft/30 px-3.5 py-3">
+                <p className="text-xs">Approve over {violations.map((v) => `Ad ${v.ad} "${v.quote}" (${v.rule})`).join("; ")}? It&apos;s logged on the ticket, the media buyer is told, and the copy check learns the rule was read too strictly.</p>
+                <div className="flex flex-wrap gap-1.5">
+                  <input autoFocus value={forcing} onChange={(e) => setForcing(e.target.value)} placeholder="Why it's fine" className="h-9 min-w-0 flex-1 rounded-brand border border-line bg-bg px-3 text-sm outline-none focus:border-brand-text/60 max-md:h-11 max-md:basis-full" />
+                  <button type="button" disabled={busy || forcing.trim().length < 4} onClick={() => (onForce?.(forcing), setForcing(null))} className="h-9 rounded-brand bg-fg px-4 text-sm font-medium text-bg disabled:opacity-40 max-md:h-11">
+                    Force approve
+                  </button>
+                  <button type="button" onClick={() => setForcing(null)} className="h-9 rounded-brand px-3 text-sm text-muted hover:text-fg max-md:h-11">
+                    Cancel
+                  </button>
+                </div>
               </div>
             )}
             {missing.length > 0 ? (
@@ -593,12 +652,12 @@ export function CopyStudio({
                 <span className="text-faint"> · you can still approve</span>
               </p>
             ) : (
-              violations.length === 0 && <p className="text-xs text-ok">On Kaizen&apos;s copy standard.</p>
+              violations.length === 0 && (checking ? <p className="text-xs text-faint">Checking against what {ticket.clientName} told us…</p> : <p className="text-xs text-ok">On Kaizen&apos;s copy standard, and nothing against what {ticket.clientName} told us.</p>)
             )}
             <div className="flex flex-wrap items-center gap-2">
               {canApprove && (
-                <button disabled={busy || drafting || missing.length > 0} onClick={onApprove} title={missing[0]} className="h-10 rounded-brand bg-ok px-5 text-sm font-medium text-white disabled:opacity-40 max-md:order-3 max-md:h-11 max-md:flex-1">
-                  {busy ? "Checking against client feedback…" : "Approve copy"}
+                <button disabled={busy || drafting || missing.length > 0 || violations.length > 0 || checking} onClick={onApprove} title={missing[0] ?? (violations.length ? "Fix or rebut the conflicts first" : undefined)} className="h-10 rounded-brand bg-ok px-5 text-sm font-medium text-white disabled:opacity-40 max-md:order-3 max-md:h-11 max-md:flex-1">
+                  {busy ? "Approving…" : "Approve copy"}
                 </button>
               )}
               <input

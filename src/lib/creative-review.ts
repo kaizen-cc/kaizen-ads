@@ -22,14 +22,14 @@ const PARALLEL = 3;
 const AI_NAME = "Kaizen AI";
 
 type Frame = { ms: number; path: string };
-type FileRow = { id: string; path: string; thumb_path: string | null; mime: string; aspect: string | null; width: number | null; height: number | null; duration_ms: number | null; original_name: string; card: number | null; frames: Frame[] | null; audio_path: string | null; transcript: Line[] | null; transcript_status: string | null };
+type FileRow = { id: string; bytes: number | null; path: string; thumb_path: string | null; mime: string; aspect: string | null; width: number | null; height: number | null; duration_ms: number | null; original_name: string; card: number | null; frames: Frame[] | null; audio_path: string | null; transcript: Line[] | null; transcript_status: string | null };
 type DesignRow = { id: string; position: number; name: string; is_variation: boolean; variation_of: string | null; current_version: number; design_versions: { version: number; design_files: FileRow[] }[] };
 type Pic = { label: string; data: string; fileId: string; ms: number | null };
 
 export type DesignProgress = { ref: string; name: string; status: "waiting" | "checking" | "done" | "failed"; fixes: number; watch: number; startedAt?: number };
 export type ReviewProgress = { phase: "files" | "designs" | "done"; files: { done: number; total: number; label: string }; designs: DesignProgress[] };
 
-const FILE_COLS = "id, path, thumb_path, mime, aspect, width, height, duration_ms, original_name, card, frames, audio_path, transcript, transcript_status";
+const FILE_COLS = "id, bytes, path, thumb_path, mime, aspect, width, height, duration_ms, original_name, card, frames, audio_path, transcript, transcript_status";
 
 /** What's on the ticket now: the designs with their current files, and a signature that changes on any re-upload. */
 export async function currentCreative(admin: SupabaseClient, requestId: string) {
@@ -42,8 +42,11 @@ export async function currentCreative(admin: SupabaseClient, requestId: string) 
     ...d,
     files: (d.design_versions.find((v) => v.version === d.current_version)?.design_files ?? []).sort((a, b) => (a.card ?? 0) - (b.card ?? 0) || a.original_name.localeCompare(b.original_name)),
   }));
-  const signature = designs.map((d) => `${d.id}:${d.current_version}`).join(",");
-  return { designs, signature };
+  // Changes on any re-upload, a card added or a file deleted; legacy is the older form (a design's version only), so a
+  // review run before files could be added to a version still counts as current
+  const signature = designs.map((d) => `${d.id}:${d.current_version}:${d.files.length}`).join(",");
+  const legacy = designs.map((d) => `${d.id}:${d.current_version}`).join(",");
+  return { designs, signature, legacy };
 }
 
 const isVideo = (f: FileRow) => f.mime.startsWith("video/");
@@ -56,19 +59,44 @@ const picturesOf = (files: FileRow[]) => {
   return frames + Math.min(files.filter((f) => f !== main || !frames).length, MAX_PER_DESIGN);
 };
 
+/**
+ * The designs a review looks at. The first review: all of them. A revision review (after the maker replaced some
+ * files and sent it for review again): only the designs that changed since the last finished review, so a carousel
+ * with one card replaced isn't reviewed from scratch and the rest keep their notes.
+ */
+async function scopeOf(admin: SupabaseClient, requestId: string, designs: Awaited<ReturnType<typeof currentCreative>>["designs"]) {
+  const { data: last } = await admin.from("creative_ai_reviews").select("signature").eq("request_id", requestId).eq("status", "done").order("started_at", { ascending: false }).limit(1).maybeSingle();
+  if (!last?.signature) return null;
+  const before = new Map(
+    (last.signature as string).split(",").map((s) => {
+      const [id, ...rest] = s.split(":");
+      return [id, rest.join(":")] as const;
+    }),
+  );
+  const changed = designs.filter((d) => d.files.length).filter((d) => {
+    const was = before.get(d.id);
+    if (was == null) return true;
+    // An older signature has only the version
+    return was.includes(":") ? was !== `${d.current_version}:${d.files.length}` : was !== String(d.current_version);
+  });
+  return changed.length ? changed.map((d) => `D${d.position}`) : null;
+}
+
 /** Start a run: saved as running with its plan, so the progress shows from the first second. Returns its id. */
-export async function startRun(admin: SupabaseClient, requestId: string, by: string | null) {
+export async function startRun(admin: SupabaseClient, requestId: string, by: string | null, auto = false) {
   const [{ designs, signature }, { data: t }] = await Promise.all([currentCreative(admin, requestId), admin.from("requests").select("client_id").eq("id", requestId).single()]);
   if (!t) throw new AiUnavailable("Ticket not found.");
   if (!designs.some((d) => d.files.length)) throw new AiUnavailable("Upload the creative first.");
+  const scope = await scopeOf(admin, requestId, designs);
+  const inScope = designs.filter((d) => d.files.length && (!scope || scope.includes(`D${d.position}`)));
   const progress: ReviewProgress = {
     phase: "files",
-    files: { done: 0, total: designs.reduce((n, d) => n + picturesOf(d.files), 0), label: "Opening the files" },
-    designs: designs.filter((d) => d.files.length).map((d) => ({ ref: `D${d.position}`, name: d.name, status: "waiting", fixes: 0, watch: 0 })),
+    files: { done: 0, total: inScope.reduce((n, d) => n + picturesOf(d.files), 0), label: "Opening the files" },
+    designs: inScope.map((d) => ({ ref: `D${d.position}`, name: d.name, status: "waiting", fixes: 0, watch: 0 })),
   };
   const { data, error } = await admin
     .from("creative_ai_reviews")
-    .insert({ request_id: requestId, client_id: t.client_id, signature, status: "running", progress, requested_by: by })
+    .insert({ request_id: requestId, client_id: t.client_id, signature, status: "running", progress, requested_by: by, auto, scope })
     .select("id")
     .single();
   if (error) throw new AiUnavailable(error.message);
@@ -134,9 +162,10 @@ type Earlier = { id: string; version: number; body: string; t_ms: number | null;
 
 /** Run a review that startRun created. Uses the server's rights; callers check access. */
 export async function runCreativeReview(admin: SupabaseClient, runId: string) {
-  const { data: run } = await admin.from("creative_ai_reviews").select("request_id, progress").eq("id", runId).single();
+  const { data: run } = await admin.from("creative_ai_reviews").select("request_id, progress, scope, requested_by").eq("id", runId).single();
   if (!run) return;
   const requestId = run.request_id as string;
+  const scope = (run.scope as string[] | null) ?? null;
   const progress = run.progress as ReviewProgress;
   let saving = Promise.resolve();
   const save = (extra: Record<string, unknown> = {}) =>
@@ -153,7 +182,23 @@ export async function runCreativeReview(admin: SupabaseClient, runId: string) {
     if (!r) throw new AiUnavailable("Ticket not found.");
     const [{ designs }, ctx, { sources, model }] = await Promise.all([currentCreative(admin, requestId), clientContext(admin, r.client_id), getAgent("creativereview")]);
     if (!ctx) throw new AiUnavailable("Client not found.");
-    const withFiles = designs.filter((d) => d.files.length);
+    const allWithFiles = designs.filter((d) => d.files.length);
+    // A revision review looks only at the designs that changed; the others keep their notes as they were
+    const withFiles = scope ? allWithFiles.filter((d) => scope.includes(`D${d.position}`)) : allWithFiles;
+    const [{ count: before }, learned] = await Promise.all([
+      admin.from("creative_ai_reviews").select("id", { count: "exact", head: true }).eq("request_id", requestId).eq("status", "done"),
+      disagreementsBlock(admin, r.client_id),
+    ]);
+    const round = (before ?? 0) + 1;
+    /** A carousel's new version: the cards that changed from the one before (the others were carried over as they were) */
+    const changedCards = (d: (typeof allWithFiles)[number]) => {
+      if (r.format !== "carousel" || d.current_version < 2) return null;
+      const prev = d.design_versions.find((v) => v.version === d.current_version - 1)?.design_files ?? [];
+      if (!prev.length) return null;
+      const changed = d.files.filter((f) => !prev.some((p) => p.card === f.card && p.bytes === f.bytes && p.original_name === f.original_name)).map((f) => f.card).filter((c): c is number => c != null);
+      if (!changed.length || changed.length === d.files.length) return null;
+      return changed.length === 1 ? `card ${changed[0]}` : `cards ${changed.slice(0, -1).join(", ")} and ${changed.at(-1)}`;
+    };
 
     // 1. Open every file, and every frame of a video (real progress: one step per picture)
     const pics = new Map<string, Pic[]>();
@@ -261,6 +306,8 @@ ${(() => {
     ? `\n<client_asked_for_changes>\nThe client reviewed the previous version and asked for these changes. For each one, add a note with area "Client ask": severity "good" if it's clearly done, "fix" if it isn't (or only partly), saying what you see.\n${[...mine, ...overall].join("\n")}\n</client_asked_for_changes>\n`
     : "";
 })()}
+${changedCards(d) ? `\nThis is a revision: only ${changedCards(d)} changed from the previous version. Focus on ${changedCards(d)!.includes(",") || changedCards(d)!.includes(" and ") ? "those" : "that"} and on whether the earlier comments were addressed; don't re-review the cards that didn't change.\n` : ""}${learned}
+This is review round ${round} of this ticket.${round > 1 ? " Past the first round, only raise what still clearly needs fixing; never add new nitpicks the earlier rounds didn't need." : ""}
 Review it and leave your notes, each placed on the creative.`,
           });
           const now = new Date().toISOString();
@@ -317,12 +364,29 @@ Review it and leave your notes, each placed on the creative.`,
     await Promise.all(Array.from({ length: Math.min(PARALLEL, withFiles.length) }, worker));
     if (progress.designs.every((x) => x.status === "failed")) throw new AiUnavailable("The AI couldn't review the designs. Try again.");
 
+    // A revision review: the designs it didn't look at keep their open AI notes, so the verdict counts them too
+    const untouched = allWithFiles.filter((d) => !withFiles.includes(d));
+    if (untouched.length) {
+      const { data: still } = await admin
+        .from("review_comments")
+        .select("id, design_id, version, body, severity, area, file_id, t_ms")
+        .eq("request_id", requestId)
+        .not("ai_review_id", "is", null)
+        .is("resolved_at", null)
+        .in("design_id", untouched.map((d) => d.id));
+      for (const c of still ?? []) {
+        const d = untouched.find((x) => x.id === c.design_id);
+        if (!d || c.version !== d.current_version) continue;
+        notes.push({ severity: (c.severity as "fix" | "watch") ?? "watch", size: "", area: (c.area as string) ?? "", note: String(c.body).replace(/^(Fix|Worth a look)( · [^:]+)?: /, ""), design: `D${d.position}`, designId: d.id, fileId: c.file_id, atMs: c.t_ms, box: null, commentId: c.id });
+      }
+    }
     const order = { fix: 0, watch: 1, good: 2 } as const;
     const pos = (ref: string) => Number(ref.slice(1)) || 0;
     notes.sort((a, b) => order[a.severity] - order[b.severity] || pos(a.design) - pos(b.design) || (a.atMs ?? 0) - (b.atMs ?? 0));
-    const content: CreativeNotes = { ...summarize(notes, withFiles.length), notes };
+    const content: CreativeNotes = { ...summarize(notes, allWithFiles.length), notes };
     progress.phase = "done";
     await save({ status: "done", content, model });
+    await tellReviewed(admin, r, runId, run.requested_by as string | null, content).catch(() => null);
     return content;
   } catch (e) {
     await saving;
@@ -334,6 +398,46 @@ Review it and leave your notes, each placed on the creative.`,
 }
 
 const clamp = (n: number) => Math.min(1, Math.max(0, Number(n) || 0));
+
+/**
+ * What the team disagreed with in past AI reviews (execs and leads, with their reasons): this client's, and the most
+ * recent across every client, unnamed. The review doesn't raise the same kind of note again; the strategist reads it
+ * too, so briefs don't push what the team doesn't hold creative to.
+ */
+export async function disagreementsBlock(admin: SupabaseClient, clientId: string) {
+  const [{ data: mine }, { data: all }] = await Promise.all([
+    admin.from("creative_review_disagreements").select("area, note, reason").eq("client_id", clientId).order("created_at", { ascending: false }).limit(12),
+    admin.from("creative_review_disagreements").select("area, note, reason").neq("client_id", clientId).order("created_at", { ascending: false }).limit(12),
+  ]);
+  const line = (x: { area: string | null; note: string; reason: string | null }) => `- ${x.area ? `${x.area}: ` : ""}"${x.note.slice(0, 240)}"${x.reason ? ` · why the team disagreed: ${x.reason.slice(0, 200)}` : ""}`;
+  if (!mine?.length && !all?.length) return "";
+  return `<team_disagreed_with_ai_review>
+Notes from earlier AI reviews that the team's leads disagreed with. Don't raise these again, or anything like them, unless this design is clearly different.${mine?.length ? `\nFor this client:\n${mine.map(line).join("\n")}` : ""}${all?.length ? `\nAcross other clients:\n${all.map(line).join("\n")}` : ""}
+</team_disagreed_with_ai_review>\n`;
+}
+
+/** The review finished: the person who started it and the maker hear it, with a link that opens the creative at its first note. */
+async function tellReviewed(admin: SupabaseClient, r: { id: string; number: number; client_id: string; title: string }, runId: string, by: string | null, content: CreativeNotes) {
+  const { data: t } = await admin.from("requests").select("assignee_id").eq("id", r.id).maybeSingle();
+  const to = [...new Set([by, t?.assignee_id as string | null].filter((x): x is string => Boolean(x)))];
+  if (!to.length) return;
+  const first = content.notes.find((n) => n.severity !== "good" && n.commentId && n.designId);
+  const fixes = content.notes.filter((n) => n.severity === "fix").length;
+  const href = `/board?t=${r.number}${first ? `&design=${first.designId}&pin=${first.commentId}` : ""}`;
+  await admin.from("notifications").upsert(
+    to.map((id) => ({
+      profile_id: id,
+      kind: "ticket",
+      title: `#${r.number} reviewed: ${content.verdict === "fix" ? `${fixes} thing${fixes === 1 ? "" : "s"} to fix` : content.verdict === "minor" ? "a couple of things worth a look" : "looks ready to send"}`,
+      body: `${r.title}. ${content.headline}`.slice(0, 600),
+      href,
+      client_id: r.client_id,
+      key: `ai-review:${runId}`,
+      priority: "normal",
+    })),
+    { onConflict: "profile_id,key", ignoreDuplicates: true },
+  );
+}
 
 /** At most MAX_FRAMES, keeping all of the hook and spreading the rest evenly */
 function pickFrames(frames: Frame[]) {

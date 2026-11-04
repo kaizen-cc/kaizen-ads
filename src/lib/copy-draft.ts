@@ -75,7 +75,14 @@ export async function draftCopy(admin: SupabaseClient, requestId: string, actorI
   };
 
   try {
-    const [{ sources, model }, refs, creative] = await Promise.all([getAgent("copy"), readReferences(r.refs ?? []), creativeImages(admin, requestId)]);
+    const [{ sources, model }, refs, creative, { data: allowed }] = await Promise.all([
+      getAgent("copy"),
+      readReferences(r.refs ?? []),
+      creativeImages(admin, requestId),
+      admin.from("copy_rule_overrides").select("rule, quote, reason").eq("client_id", r.client_id).order("created_at", { ascending: false }).limit(10),
+    ]);
+    // What the team established the client does allow (a copy check read their rule too strictly before)
+    const allowedBlock = allowed?.length ? `\n<client_allows>\nThe client's rules were read too strictly on these before; the team confirmed they're fine:\n${allowed.map((a) => `- ${a.quote ? `"${a.quote}" ` : ""}(rule: ${a.rule}): ${a.reason}`).join("\n")}\n</client_allows>\n` : "";
     const out = await askJson<{ ads: Ad[]; notes: string }>({
       agent: "copy",
       label: `copy ${ctx.name}`,
@@ -84,7 +91,7 @@ export async function draftCopy(admin: SupabaseClient, requestId: string, actorI
       images: [...creative, ...refs.images].slice(0, 8),
       onText,
       prompt: `${contextBlock(ctx, undefined, sources)}
-${referencesBlock(refs.reads)}
+${referencesBlock(refs.reads)}${allowedBlock}
 
 <ticket>
 Title: ${r.title}
@@ -114,6 +121,9 @@ Count characters and words before answering; these are hard limits.`,
       .from("copy_sets")
       .update({ status: "review", ads, ai_ads: ads, notes: out.notes, model, progress: {}, version: (existing?.version ?? 0) + 1, updated_by: actorId, updated_at: new Date().toISOString(), approved_at: null, approved_by: null })
       .eq("request_id", requestId);
+
+    // Checked against what the client told us right away, so copy review sees any conflict before approving
+    await storeCopyCheck(admin, requestId, r.client_id, ads).catch((e) => console.error("[copy] client check", e instanceof Error ? e.message : e));
 
     // Carousels: each card's headline and description too, written to the cards themselves
     if (r.format === "carousel") {
@@ -187,12 +197,24 @@ export async function learnFromCopy(admin: SupabaseClient, requestId: string, ac
  * Before copy is approved: does it say anything the client explicitly told us not to? Only that blocks approval.
  * No "avoid" memory and no reviewed brand bible = nothing to check against.
  */
+/** Run the client-rule check and keep it with the copy (for the exact words it read), so every view shows the same status */
+export async function storeCopyCheck(admin: SupabaseClient, requestId: string, clientId: string, ads: Ad[]) {
+  const violations = await checkAgainstClient(admin, clientId, ads);
+  const { adsHash } = await import("@/lib/copy");
+  await admin.from("copy_sets").update({ violations, checked_hash: adsHash(ads), checked_at: new Date().toISOString() }).eq("request_id", requestId);
+  return violations;
+}
+
 export async function checkAgainstClient(admin: SupabaseClient, clientId: string, ads: Ad[]): Promise<CopyViolation[]> {
-  const [{ data: memory }, { data: bible }] = await Promise.all([
+  const [{ data: memory }, { data: bible }, { data: overrides }] = await Promise.all([
     admin.from("client_memory").select("body").eq("client_id", clientId).eq("status", "active").eq("kind", "avoid").limit(80),
     admin.from("client_brand_bibles").select("read_this_first").eq("client_id", clientId).eq("status", "reviewed").maybeSingle(),
+    admin.from("copy_rule_overrides").select("rule, quote, reason, kind").eq("client_id", clientId).order("created_at", { ascending: false }).limit(15),
   ]);
   if (!memory?.length && !bible?.read_this_first) return [];
+  const overridden = overrides?.length
+    ? `<team_approved_past_these>\nThe copywriter rebutted these flags, or an exec or lead approved copy past them, with their reason: the rule was read too strictly. Don't flag the same kind of wording again unless it clearly breaks what the client said in a way the reason doesn't cover.\n${overrides.map((o) => `- Rule "${o.rule}"${o.quote ? ` on "${o.quote}"` : ""} · ${o.reason}`).join("\n")}\n</team_approved_past_these>\n`
+    : "";
   const out = await askJson<{ violations: CopyViolation[] }>({
     agent: "copy",
     label: "copy check against client",
@@ -201,7 +223,7 @@ export async function checkAgainstClient(admin: SupabaseClient, clientId: string
     prompt: `<client_said_avoid>
 ${(memory ?? []).map((m) => `- ${m.body}`).join("\n") || "(nothing)"}
 </client_said_avoid>
-${bible?.read_this_first ? `<brand_bible>\n${bible.read_this_first.slice(0, 6000)}\n</brand_bible>\n` : ""}
+${bible?.read_this_first ? `<brand_bible>\n${bible.read_this_first.slice(0, 6000)}\n</brand_bible>\n` : ""}${overridden}
 <copy>
 ${ads.map((a, i) => `Ad ${i + 1}\nprimaryText: ${a.primaryText}\nheadline: ${a.headline}\nlinkDescription: ${a.linkDescription}\ncta: ${a.cta}`).join("\n\n")}
 </copy>`,

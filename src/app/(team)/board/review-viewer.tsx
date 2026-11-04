@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { aspectLabel } from "@/lib/uploads/media";
 import { FORMAT_LABEL, type Format } from "@/lib/stages";
 import type { Design, DesignFile } from "./design-actions";
-import { addComment, rememberComment, setCommentResolved, type ReviewComment } from "./review-actions";
+import { addComment, disagreeAiComment, rememberComment, setCommentResolved, type ReviewComment } from "./review-actions";
 
 const fmtWhen = (iso: string) => new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }).format(new Date(iso));
 const clock = (ms: number) => {
@@ -43,6 +43,7 @@ export function ReviewViewer({
   onClose,
   focus = null,
   demo = false,
+  canDisagree = false,
 }: {
   /** A comment to open on: its file, its moment in a video, lit up */
   focus?: string | null;
@@ -55,8 +56,11 @@ export function ReviewViewer({
   onVersion: (n: number) => void;
   onClose: () => void;
   demo?: boolean;
+  /** Execs and leads: disagree with an AI note (the AI learns from it) */
+  canDisagree?: boolean;
 }) {
   const v = design.versions.find((x) => x.version === version) ?? design.versions[0];
+  const [disagreeing, setDisagreeing] = useState<{ id: string; reason: string } | null>(null);
   const [fileId, setFileId] = useState<string | null>(null);
   // Opened at a comment: its file until someone picks another, lit up, and a video paused at its moment
   const focusC = useMemo(() => (focus ? (comments.find((c) => c.id === focus) ?? null) : null), [focus, comments]);
@@ -361,12 +365,18 @@ export function ReviewViewer({
                     </p>
                     <p className={`mt-1 whitespace-pre-wrap text-sm leading-relaxed text-white/90 ${c.resolved ? "line-through" : ""}`}>{c.body}</p>
                     {c.resolved && c.resolvedByAi && <p className="mt-1 text-[11px] text-[#b4beff]">Resolved by Kaizen AI: the next version fixed it</p>}
+                    {c.disagreed && <p className="mt-1 text-[11px] text-white/55">Set aside: a lead disagreed{c.disagreed.reason ? ` · ${c.disagreed.reason}` : ""}. The AI won&apos;t raise this again.</p>}
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5 pl-8 max-md:[&>*]:inline-flex max-md:[&>*]:min-h-10 max-md:[&>*]:items-center max-md:[&>*]:px-3.5 max-md:[&>*]:text-xs">
                   <button onClick={() => act(() => setCommentResolved(c.id, requestId, !c.resolved))} className="rounded-full px-2.5 py-1 text-[11px] text-white/60 hover:bg-white/10 hover:text-white max-md:bg-white/[0.06]">
                     {c.resolved ? "Reopen" : "Resolve"}
                   </button>
+                  {canDisagree && c.ai && !c.resolved && !c.disagreed && !demo && (
+                    <button onClick={(e) => (e.stopPropagation(), setDisagreeing({ id: c.id, reason: "" }))} className="rounded-full px-2.5 py-1 text-[11px] text-[#b4beff] hover:bg-white/10 hover:text-white max-md:bg-white/[0.06]" title="The AI is wrong here: set it aside, and it learns not to raise this again">
+                      Disagree
+                    </button>
+                  )}
                   {c.remembered ? (
                     <span className="rounded-full bg-white/10 px-2.5 py-1 text-[11px] text-white/60">In client memory</span>
                   ) : (
@@ -375,6 +385,33 @@ export function ReviewViewer({
                     </button>
                   )}
                 </div>
+                {disagreeing?.id === c.id && (
+                  <div className="grid gap-2 pl-8" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      autoFocus
+                      value={disagreeing.reason}
+                      onChange={(e) => setDisagreeing({ id: c.id, reason: e.target.value })}
+                      placeholder="Why it's fine (optional), e.g. the client asked for the price this small"
+                      className="h-9 rounded-[8px] border border-white/15 bg-white/[0.04] px-3 text-sm text-white outline-none placeholder:text-white/35 focus:border-[#6c7ee1] max-md:h-11 max-md:text-base"
+                    />
+                    <div className="flex gap-1.5">
+                      <button
+                        disabled={busy}
+                        onClick={() => {
+                          const reason = disagreeing.reason;
+                          setDisagreeing(null);
+                          act(() => disagreeAiComment(c.id, requestId, reason));
+                        }}
+                        className="h-8 rounded-full bg-[#6c7ee1] px-3.5 text-xs font-medium text-white disabled:opacity-60 max-md:h-10"
+                      >
+                        Set it aside
+                      </button>
+                      <button onClick={() => setDisagreeing(null)} className="h-8 rounded-full px-3 text-xs text-white/55 hover:text-white max-md:h-10">
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
               </li>
             ))}
             {older.length > 0 && <li className="pt-2 text-[11px] text-white/35">{older.length} comment{older.length === 1 ? "" : "s"} on other versions</li>}
