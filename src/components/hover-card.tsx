@@ -83,7 +83,7 @@ export function HoverCard({ content, children, width = 340, className = "" }: { 
             onMouseEnter={show}
             onMouseLeave={hide}
             role="tooltip"
-            className="fixed z-[95] grid gap-2 rounded-[16px] border border-ink/10 bg-deep-2/95 p-3.5 text-left text-white shadow-[0_24px_60px_-20px_rgba(0,0,0,0.9)] backdrop-blur-xl"
+            className="fixed z-[95] grid gap-2 rounded-[16px] border border-ink/10 bg-deep-2/95 p-3.5 text-left text-fg shadow-[0_24px_60px_-20px_rgba(0,0,0,0.9)] backdrop-blur-xl"
             style={{ left: at.left, top: at.top, width, transform: at.above ? "translateY(-100%)" : undefined, animation: "card-in-hover .14s ease-out" }}
           >
             <style>{`@keyframes card-in-hover { from { opacity: 0; } to { opacity: 1; } }`}</style>
@@ -97,7 +97,7 @@ export function HoverCard({ content, children, width = 340, className = "" }: { 
             <style>{`@keyframes sheet-up-hover { from { transform: translateY(100%); } to { transform: none; } }`}</style>
             <div className="absolute inset-0 bg-black/60" onClick={() => setSheet(null)} aria-hidden />
             <div
-              className="pb-safe absolute inset-x-0 bottom-0 grid max-h-[85vh] grid-rows-[auto_minmax(0,1fr)_auto] rounded-t-[22px] border-t border-ink/10 bg-deep-2 text-left text-white shadow-[0_-24px_60px_-20px_rgba(0,0,0,0.9)]"
+              className="pb-safe absolute inset-x-0 bottom-0 grid max-h-[85vh] grid-rows-[auto_minmax(0,1fr)_auto] rounded-t-[22px] border-t border-ink/10 bg-deep-2 text-left text-fg shadow-[0_-24px_60px_-20px_rgba(0,0,0,0.9)]"
               style={{ animation: "sheet-up-hover .22s ease-out" }}
             >
               <div className="relative flex justify-end pr-1 pt-1">

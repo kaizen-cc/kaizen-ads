@@ -29,29 +29,39 @@
   --warn-soft: rgba(224, 166, 58, 0.15);
   --bad: #e0505c;
   --bad-soft: rgba(224, 80, 92, 0.15);
+  --lift-1: none;
+  --lift-2: none;
+  --lift-3: none;
 }
 
 /* Light: chosen in the profile menu, or the device's setting when the choice is System (dark is the default) */
 :root[data-theme="light"] {
   color-scheme: light;
-  --brand-text: #b21e2c;
-  --brand-soft: rgba(178, 30, 44, 0.08);
-  --bg: #f6f5f4;
+  /* Warm, premium neutrals: a soft paper canvas, white cards that lift off it with layered shadows, hairline borders,
+     ink-dark type with AA contrast at every level, the brand red kept for accents */
+  --brand-hover: #9e1826;
+  --brand-text: #a51b29;
+  --brand-soft: rgba(178, 30, 44, 0.07);
+  --bg: #f4f2ee;
   --surface: #ffffff;
-  --surface-2: #efeeec;
-  --border: #e2e0de;
-  --fg: #111014;
-  --fg-muted: #55535c;
-  --fg-faint: #8a8790;
-  --ink: #16141a;
+  --surface-2: #f7f5f1;
+  --border: #e5e1da;
+  --fg: #17151a;
+  --fg-muted: #56525b;
+  --fg-faint: #78737e;
+  --ink: #1b1820;
   --deep: #ffffff;
-  --deep-2: #f3f1f0;
-  --ok: #1a8553;
-  --ok-soft: rgba(26, 133, 83, 0.11);
-  --warn: #a2690a;
-  --warn-soft: rgba(162, 105, 10, 0.12);
-  --bad: #c0283a;
-  --bad-soft: rgba(192, 40, 58, 0.09);
+  --deep-2: #f6f3ee;
+  --ok: #13804d;
+  --ok-soft: rgba(19, 128, 77, 0.09);
+  --warn: #9a5f00;
+  --warn-soft: rgba(214, 146, 24, 0.13);
+  --bad: #be2433;
+  --bad-soft: rgba(190, 36, 51, 0.08);
+  /* Elevation: light needs shadows where dark relies on contrast */
+  --lift-1: 0 1px 2px rgba(28, 22, 18, 0.04), 0 1px 1px rgba(28, 22, 18, 0.03);
+  --lift-2: 0 1px 2px rgba(28, 22, 18, 0.04), 0 6px 20px -8px rgba(28, 22, 18, 0.1);
+  --lift-3: 0 1px 2px rgba(28, 22, 18, 0.05), 0 18px 44px -18px rgba(28, 22, 18, 0.18);
   & .text-\[\#7aa7ff\] { color: #0b5bd3; }
   & .text-\[\#5be3a5\] { color: #11804f; }
   & .text-\[\#ff4d5e\] { color: #c41e30; }
@@ -65,41 +75,170 @@
   & .text-\[\#ababad\] { color: #6a6870; }
   & .text-\[\#9a9aa1\] { color: #5f5d66; }
   & .text-\[\#6b6b73\] { color: #7a7880; }
+  & .text-\[\#5b8def\] { color: #2f63c9; }
+
+  /* The page: a faint warm wash from the top so the canvas isn't flat */
+  & body:not(.force-dark) {
+    background:
+      radial-gradient(1200px 520px at 12% -8%, rgba(178, 30, 44, 0.045), transparent 70%),
+      radial-gradient(900px 480px at 100% 0%, rgba(91, 141, 239, 0.05), transparent 70%),
+      var(--bg);
+  }
+  & ::selection { background: rgba(178, 30, 44, 0.16); }
+
+  /* Cards lift off the canvas: every bordered card gets a soft shadow, big panels a deeper one */
+  & :is(.bg-surface, .bg-deep, .bg-deep-2):is([class~="border"], [class*="border-line"]):not([class*="shadow"]):not(.force-dark *) {
+    box-shadow: var(--lift-1);
+  }
+  & :is(.bg-surface, .bg-deep):not([class*="shadow"]):is([class*="rounded-[18px]"], [class*="rounded-[20px]"], [class*="rounded-[22px]"], [class*="rounded-[24px]"], [class*="rounded-[26px]"], [class*="rounded-[28px]"], [class*="rounded-[32px]"], [class*="rounded-2xl"], [class*="rounded-3xl"]):not(.force-dark *) {
+    box-shadow: var(--lift-2);
+  }
+  /* The hero "stage" panels: white with a soft paper gradient instead of a flat sheet */
+  & .bg-deep:not([class*="shadow"]):is([class*="rounded-[24px]"], [class*="rounded-[28px]"], [class*="rounded-[32px]"]):not(.force-dark *) {
+    background-image: linear-gradient(180deg, #ffffff 0%, #fbfaf7 100%);
+    box-shadow: var(--lift-3);
+  }
+  /* Hover on clickable cards: a touch more lift instead of a border flash */
+  & :is(a, button):is(.bg-surface, .bg-deep)[class*="hover:border"]:hover:not(.force-dark *) {
+    box-shadow: var(--lift-2);
+  }
+
+  /* Glows: the blurred color blobs read as smudges on white at dark-theme strength; here they're a soft tint */
+  & .rounded-full.pointer-events-none[class*="blur-["]:not([class*="opacity-"]):not(.force-dark *) {
+    opacity: 0.5;
+  }
+
+  /* Overview topics set their accent and glow inline, tuned for dark: darker accents that read on white, softer glows */
+  & :is([style*="--accent:#ff4d5e"], [style*="--accent: #ff4d5e"]) { --accent: #c41e30 !important; }
+  & :is([style*="--accent:#ff6b78"], [style*="--accent: #ff6b78"]) { --accent: #b21e2c !important; }
+  & :is([style*="--accent:#f2b14c"], [style*="--accent: #f2b14c"]) { --accent: #9a6200 !important; }
+  & :is([style*="--accent:#5be3a5"], [style*="--accent: #5be3a5"]) { --accent: #11804f !important; }
+  & :is([style*="--accent:#9aa8ff"], [style*="--accent: #9aa8ff"]) { --accent: #4250c4 !important; }
+  & [style*="var(--glow)"].rounded-full:not(.force-dark *) { opacity: 0.35 !important; }
+
+  /* The app shell's red wash at the top: half strength on white (the page has its own warm wash) */
+  & [class*="rgba(178,30,44,0.16)"].pointer-events-none { opacity: 0.45; }
+
+  /* Inputs: white wells with a crisp border and a brand focus ring */
+  & :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea):is(.bg-surface, .bg-surface-2, .bg-bg):not(.force-dark *) {
+    background-color: var(--surface);
+  }
+  & :is(input, select, textarea):focus-visible:not(.force-dark *) {
+    box-shadow: 0 0 0 3px rgba(178, 30, 44, 0.12);
+  }
+  & input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+  & input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: none;
+    opacity: 0.55;
+  }
+
+  /* The board's scrollbar, readable on light */
+  & .board-scroll { scrollbar-color: rgba(28, 22, 18, 0.22) transparent; }
+  & .board-scroll::-webkit-scrollbar-thumb { background: rgba(28, 22, 18, 0.16); }
+  & .board-scroll::-webkit-scrollbar-thumb:hover { background: rgba(28, 22, 18, 0.3); }
 }
 @media (prefers-color-scheme: light) {
   :root[data-theme="system"] {
-  color-scheme: light;
-  --brand-text: #b21e2c;
-  --brand-soft: rgba(178, 30, 44, 0.08);
-  --bg: #f6f5f4;
-  --surface: #ffffff;
-  --surface-2: #efeeec;
-  --border: #e2e0de;
-  --fg: #111014;
-  --fg-muted: #55535c;
-  --fg-faint: #8a8790;
-  --ink: #16141a;
-  --deep: #ffffff;
-  --deep-2: #f3f1f0;
-  --ok: #1a8553;
-  --ok-soft: rgba(26, 133, 83, 0.11);
-  --warn: #a2690a;
-  --warn-soft: rgba(162, 105, 10, 0.12);
-  --bad: #c0283a;
-  --bad-soft: rgba(192, 40, 58, 0.09);
-  & .text-\[\#7aa7ff\] { color: #0b5bd3; }
-  & .text-\[\#5be3a5\] { color: #11804f; }
-  & .text-\[\#ff4d5e\] { color: #c41e30; }
-  & .text-\[\#9aa8ff\] { color: #4250c4; }
-  & .text-\[\#9aa7f0\] { color: #4250c4; }
-  & .text-\[\#f2b14c\] { color: #9a6200; }
-  & .text-\[\#8ab4f8\] { color: #1a5fd0; }
-  & .text-\[\#e0505c\] { color: #c0283a; }
-  & .text-\[\#3fb27f\] { color: #1a8553; }
-  & .text-\[\#e0a63a\] { color: #a2690a; }
-  & .text-\[\#ababad\] { color: #6a6870; }
-  & .text-\[\#9a9aa1\] { color: #5f5d66; }
-  & .text-\[\#6b6b73\] { color: #7a7880; }
+    color-scheme: light;
+    /* Warm, premium neutrals: a soft paper canvas, white cards that lift off it with layered shadows, hairline borders,
+       ink-dark type with AA contrast at every level, the brand red kept for accents */
+    --brand-hover: #9e1826;
+    --brand-text: #a51b29;
+    --brand-soft: rgba(178, 30, 44, 0.07);
+    --bg: #f4f2ee;
+    --surface: #ffffff;
+    --surface-2: #f7f5f1;
+    --border: #e5e1da;
+    --fg: #17151a;
+    --fg-muted: #56525b;
+    --fg-faint: #78737e;
+    --ink: #1b1820;
+    --deep: #ffffff;
+    --deep-2: #f6f3ee;
+    --ok: #13804d;
+    --ok-soft: rgba(19, 128, 77, 0.09);
+    --warn: #9a5f00;
+    --warn-soft: rgba(214, 146, 24, 0.13);
+    --bad: #be2433;
+    --bad-soft: rgba(190, 36, 51, 0.08);
+    /* Elevation: light needs shadows where dark relies on contrast */
+    --lift-1: 0 1px 2px rgba(28, 22, 18, 0.04), 0 1px 1px rgba(28, 22, 18, 0.03);
+    --lift-2: 0 1px 2px rgba(28, 22, 18, 0.04), 0 6px 20px -8px rgba(28, 22, 18, 0.1);
+    --lift-3: 0 1px 2px rgba(28, 22, 18, 0.05), 0 18px 44px -18px rgba(28, 22, 18, 0.18);
+    & .text-\[\#7aa7ff\] { color: #0b5bd3; }
+    & .text-\[\#5be3a5\] { color: #11804f; }
+    & .text-\[\#ff4d5e\] { color: #c41e30; }
+    & .text-\[\#9aa8ff\] { color: #4250c4; }
+    & .text-\[\#9aa7f0\] { color: #4250c4; }
+    & .text-\[\#f2b14c\] { color: #9a6200; }
+    & .text-\[\#8ab4f8\] { color: #1a5fd0; }
+    & .text-\[\#e0505c\] { color: #c0283a; }
+    & .text-\[\#3fb27f\] { color: #1a8553; }
+    & .text-\[\#e0a63a\] { color: #a2690a; }
+    & .text-\[\#ababad\] { color: #6a6870; }
+    & .text-\[\#9a9aa1\] { color: #5f5d66; }
+    & .text-\[\#6b6b73\] { color: #7a7880; }
+    & .text-\[\#5b8def\] { color: #2f63c9; }
+
+    /* The page: a faint warm wash from the top so the canvas isn't flat */
+    & body:not(.force-dark) {
+      background:
+        radial-gradient(1200px 520px at 12% -8%, rgba(178, 30, 44, 0.045), transparent 70%),
+        radial-gradient(900px 480px at 100% 0%, rgba(91, 141, 239, 0.05), transparent 70%),
+        var(--bg);
+    }
+    & ::selection { background: rgba(178, 30, 44, 0.16); }
+
+    /* Cards lift off the canvas: every bordered card gets a soft shadow, big panels a deeper one */
+    & :is(.bg-surface, .bg-deep, .bg-deep-2):is([class~="border"], [class*="border-line"]):not([class*="shadow"]):not(.force-dark *) {
+      box-shadow: var(--lift-1);
+    }
+    & :is(.bg-surface, .bg-deep):not([class*="shadow"]):is([class*="rounded-[18px]"], [class*="rounded-[20px]"], [class*="rounded-[22px]"], [class*="rounded-[24px]"], [class*="rounded-[26px]"], [class*="rounded-[28px]"], [class*="rounded-[32px]"], [class*="rounded-2xl"], [class*="rounded-3xl"]):not(.force-dark *) {
+      box-shadow: var(--lift-2);
+    }
+    /* The hero "stage" panels: white with a soft paper gradient instead of a flat sheet */
+    & .bg-deep:not([class*="shadow"]):is([class*="rounded-[24px]"], [class*="rounded-[28px]"], [class*="rounded-[32px]"]):not(.force-dark *) {
+      background-image: linear-gradient(180deg, #ffffff 0%, #fbfaf7 100%);
+      box-shadow: var(--lift-3);
+    }
+    /* Hover on clickable cards: a touch more lift instead of a border flash */
+    & :is(a, button):is(.bg-surface, .bg-deep)[class*="hover:border"]:hover:not(.force-dark *) {
+      box-shadow: var(--lift-2);
+    }
+
+    /* Glows: the blurred color blobs read as smudges on white at dark-theme strength; here they're a soft tint */
+    & .rounded-full.pointer-events-none[class*="blur-["]:not([class*="opacity-"]):not(.force-dark *) {
+      opacity: 0.5;
+    }
+
+    /* Overview topics set their accent and glow inline, tuned for dark: darker accents that read on white, softer glows */
+    & :is([style*="--accent:#ff4d5e"], [style*="--accent: #ff4d5e"]) { --accent: #c41e30 !important; }
+    & :is([style*="--accent:#ff6b78"], [style*="--accent: #ff6b78"]) { --accent: #b21e2c !important; }
+    & :is([style*="--accent:#f2b14c"], [style*="--accent: #f2b14c"]) { --accent: #9a6200 !important; }
+    & :is([style*="--accent:#5be3a5"], [style*="--accent: #5be3a5"]) { --accent: #11804f !important; }
+    & :is([style*="--accent:#9aa8ff"], [style*="--accent: #9aa8ff"]) { --accent: #4250c4 !important; }
+    & [style*="var(--glow)"].rounded-full:not(.force-dark *) { opacity: 0.35 !important; }
+
+    /* The app shell's red wash at the top: half strength on white (the page has its own warm wash) */
+    & [class*="rgba(178,30,44,0.16)"].pointer-events-none { opacity: 0.45; }
+
+    /* Inputs: white wells with a crisp border and a brand focus ring */
+    & :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea):is(.bg-surface, .bg-surface-2, .bg-bg):not(.force-dark *) {
+      background-color: var(--surface);
+    }
+    & :is(input, select, textarea):focus-visible:not(.force-dark *) {
+      box-shadow: 0 0 0 3px rgba(178, 30, 44, 0.12);
+    }
+    & input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+    & input[type="date"]::-webkit-calendar-picker-indicator {
+      filter: none;
+      opacity: 0.55;
+    }
+
+    /* The board's scrollbar, readable on light */
+    & .board-scroll { scrollbar-color: rgba(28, 22, 18, 0.22) transparent; }
+    & .board-scroll::-webkit-scrollbar-thumb { background: rgba(28, 22, 18, 0.16); }
+    & .board-scroll::-webkit-scrollbar-thumb:hover { background: rgba(28, 22, 18, 0.3); }
   }
 }
 
@@ -130,6 +269,9 @@
   --warn-soft: rgba(224, 166, 58, 0.15);
   --bad: #e0505c;
   --bad-soft: rgba(224, 80, 92, 0.15);
+  --lift-1: none;
+  --lift-2: none;
+  --lift-3: none;
   color: var(--fg);
 }
 
