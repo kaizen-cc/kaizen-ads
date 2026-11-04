@@ -1,7 +1,7 @@
 import "server-only";
 import { tracker, type Tracker } from "@/lib/progress";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { accountActivity, asyncReport, linkAdAccounts, metaConfigured, type InsightRow } from "@/lib/context/meta";
+import { REVISE_DAYS, accountActivity, asyncReport, linkAdAccounts, metaConfigured, type InsightRow } from "@/lib/context/meta";
 import { digits, googleActivity, googleAdsConfigured, googleAdsMissing, syncGoogleCampaigns } from "@/lib/context/google-ads";
 import { pool } from "@/lib/context/run";
 import { computeSnapshot, nyParts, toDays } from "./calc";
@@ -13,7 +13,7 @@ import { LIVE } from "@/lib/live";
 // Pulls Meta and Google Ads numbers per campaign per day for every ad account with a KPI target, then recomputes
 // each target (the same math for both; Google's days live in google_campaign_daily).
 // About six months is kept so the quarter comparison always has a full last quarter. After the first pull,
-// only the last 3 days are re-read (Meta keeps revising them). No AI is involved, so running often costs nothing extra.
+// only the last REVISE_DAYS are re-read (Meta keeps revising them: purchases land on the click's day up to 7 days later). No AI is involved, so running often costs nothing extra.
 
 const BACKFILL_DAYS = 200;
 const FIELDS = "campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,unique_inline_link_clicks,actions,action_values";
@@ -30,7 +30,7 @@ const ymd = (d: Date) => d.toISOString().slice(0, 10);
 export async function syncMetaCampaigns(admin: SupabaseClient, account: string) {
   const { data: last } = await admin.from("meta_campaign_daily").select("date").eq("ad_account_id", account).order("date", { ascending: false }).limit(1).maybeSingle();
   const now = new Date();
-  const since = last ? new Date(new Date(`${last.date}T12:00:00Z`).getTime() - 3 * 86_400_000) : new Date(now.getTime() - BACKFILL_DAYS * 86_400_000);
+  const since = last ? new Date(new Date(`${last.date}T12:00:00Z`).getTime() - REVISE_DAYS * 86_400_000) : new Date(now.getTime() - BACKFILL_DAYS * 86_400_000);
   const rows: InsightRow[] = await asyncReport(`act_${account}`, {
     level: "campaign",
     time_increment: "1",

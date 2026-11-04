@@ -6,6 +6,7 @@ import { googleMutate, googleWritableSetup, type WritableSetup } from "@/lib/con
 import { metaGraph } from "@/lib/context/meta";
 import { diagnoseAccess, metaWritableSetup, metaWrite, type MetaSetup } from "@/lib/meta-write";
 import { replaceLinks, type ObjRef } from "@/lib/chat-change-core";
+import { adStats, statsText, targetOf, windowLabel, type AdStats } from "@/lib/ad-stats";
 
 // Changes made to an ad account from Kaizen Ads. An audit action or a sprint move is turned into specific changes by
 // the buyer agent (from the account's live setup), each one checked with the platform without being applied (Google's
@@ -83,17 +84,27 @@ const META_SCHEMA = {
 const META_SYSTEM = `You turn one action from a Meta ad account's optimization plan into the exact changes to make in the account through the Marketing API. You're given the action and the account's live setup with IDs, each ad's last 14 days.
 Only these changes exist: meta_status (pause or turn on a campaign, ad set or ad: level, id, status PAUSED or ACTIVE) and meta_budget (a campaign's or ad set's DAILY budget in dollars: level campaign or adset, id, amount). Leave unused fields empty: status "", amount 0.
 Make only what the action actually asks for, with the amounts it names or clearly implies; never invent a change it doesn't call for. Match loosely named campaigns, ad sets or ads to the setup by name; when it's ambiguous, make nothing and say so. A budget goes where the budget lives: on the campaign when it has a daily budget (Advantage campaign budget), else on the ad set; never on a lifetime budget. Pausing an ad that's the only active one in its ad set stops that ad set: only if the action says so.
-If nothing in the action can be done with these changes (new creative, audiences, targeting, bidding, tracking, a new campaign or ad set), return no ops and say in note, in one plain sentence, what has to be done by hand. Otherwise note is one sentence on what the changes do together. why: a few words per change.`;
+If nothing in the action can be done with these changes (new creative, audiences, targeting, bidding, tracking, a new campaign or ad set), return no ops and say in note, in one plain sentence, what has to be done by hand. Otherwise note is one sentence on what the changes do together. why: a few words per change; any number in it comes from the account setup's numbers now (the action's own numbers can be days old), and if the numbers now no longer back the action, say so in note.`;
 
-function metaSetupText(s: MetaSetup) {
+function metaSetupText(s: MetaSetup, stats?: AdStats) {
   const $ = (n: number | null) => (n == null ? "" : `$${n}`);
+  const now = (id: string) => {
+    if (!stats) return "";
+    const { m7 } = stats.of(id);
+    return ` · last 7 days: ${statsText(m7, stats.roas)}`;
+  };
   return [
+    ...(stats
+      ? [
+          `NUMBERS NOW (KPI: ${stats.result}; last 7 days = ${windowLabel(stats.d7)}, complete days counted the way Ads Manager does). The action was written earlier and its numbers may be out of date: every number in why comes from here, never from the action.\n`,
+        ]
+      : []),
     "CAMPAIGNS",
-    ...s.campaigns.map((c) => `- id ${c.id} "${c.name}" [${c.status}${c.effective !== c.status ? `, delivering: ${c.effective}` : ""}] ${c.objective}${c.dailyBudget != null ? `, daily budget ${$(c.dailyBudget)}` : c.lifetimeBudget != null ? `, lifetime budget ${$(c.lifetimeBudget)}` : ", budget on the ad sets"}`),
+    ...s.campaigns.map((c) => `- id ${c.id} "${c.name}" [${c.status}${c.effective !== c.status ? `, delivering: ${c.effective}` : ""}] ${c.objective}${c.dailyBudget != null ? `, daily budget ${$(c.dailyBudget)}` : c.lifetimeBudget != null ? `, lifetime budget ${$(c.lifetimeBudget)}` : ", budget on the ad sets"}${now(c.id)}`),
     "\nAD SETS",
-    ...s.adsets.map((a) => `- id ${a.id} "${a.name}" [${a.status}${a.effective !== a.status ? `, delivering: ${a.effective}` : ""}] in "${a.campaign}"${a.dailyBudget != null ? `, daily budget ${$(a.dailyBudget)}` : a.lifetimeBudget != null ? `, lifetime budget ${$(a.lifetimeBudget)}` : ""}${a.optimization ? `, optimizing for ${a.optimization}` : ""}`),
+    ...s.adsets.map((a) => `- id ${a.id} "${a.name}" [${a.status}${a.effective !== a.status ? `, delivering: ${a.effective}` : ""}] in "${a.campaign}"${a.dailyBudget != null ? `, daily budget ${$(a.dailyBudget)}` : a.lifetimeBudget != null ? `, lifetime budget ${$(a.lifetimeBudget)}` : ""}${a.optimization ? `, optimizing for ${a.optimization}` : ""}${now(a.id)}`),
     "\nADS (last 14 days)",
-    ...s.ads.slice(0, 250).map((a) => `- id ${a.id} "${a.name}" [${a.status}${a.effective !== a.status ? `, delivering: ${a.effective}` : ""}] in "${a.adset}": $${a.spend14} spent, ${a.clicks14} link clicks${a.ctr14 != null ? `, CTR ${a.ctr14}%` : ""}${a.frequency14 != null ? `, frequency ${a.frequency14}` : ""}`),
+    ...s.ads.slice(0, 250).map((a) => `- id ${a.id} "${a.name}" [${a.status}${a.effective !== a.status ? `, delivering: ${a.effective}` : ""}] in "${a.adset}": $${a.spend14} spent, ${a.clicks14} link clicks${a.ctr14 != null ? `, CTR ${a.ctr14}%` : ""}${a.frequency14 != null ? `, frequency ${a.frequency14}` : ""}${now(a.id)}`),
   ].join("\n");
 }
 
@@ -402,10 +413,10 @@ type Source = { title: string; steps: string[]; why: string };
 
 /** Plans the change for an action (in the background of the request that asked): reads the account, asks the Google Buyer, checks it. */
 export async function planChange(admin: SupabaseClient, changeId: string, source: Source) {
-  const { data: ch } = await admin.from("ad_changes").select("account, platform, client_id").eq("id", changeId).single();
+  const { data: ch } = await admin.from("ad_changes").select("account, platform, client_id, target_id").eq("id", changeId).single();
   if (!ch) return;
   const clientId = (ch.client_id as string | null) ?? null;
-  if (ch.platform === "meta") return planMetaChange(admin, changeId, ch.account, source, clientId);
+  if (ch.platform === "meta") return planMetaChange(admin, changeId, ch.account, source, clientId, (ch.target_id as string | null) ?? null);
   try {
     const setup = await googleWritableSetup(ch.account);
     const out = await askJson<{ note: string; ops: Parameters<typeof buildGoogle>[0] }>({
@@ -430,9 +441,11 @@ export async function planChange(admin: SupabaseClient, changeId: string, source
 }
 
 /** The Meta side of planning: the live setup, the Media Buyer's picks, Meta's dry run of each. */
-async function planMetaChange(admin: SupabaseClient, changeId: string, account: string, source: Source, clientId: string | null = null) {
+async function planMetaChange(admin: SupabaseClient, changeId: string, account: string, source: Source, clientId: string | null = null, targetId: string | null = null) {
   try {
-    const setup = await metaWritableSetup(admin, account);
+    const [setup, target] = await Promise.all([metaWritableSetup(admin, account), targetOf(admin, targetId)]);
+    // Today's numbers, so each change's why quotes them and not the (days old) numbers the action was written with
+    const stats = await adStats(admin, account, target).catch(() => undefined);
     const out = await askJson<{ note: string; ops: MetaRaw[] }>({
       agent: "launcher",
       label: "plan a Meta change",
@@ -440,7 +453,7 @@ async function planMetaChange(admin: SupabaseClient, changeId: string, account: 
       system: META_SYSTEM,
       schema: META_SCHEMA,
       maxTokens: 6000,
-      prompt: `<action>\n${source.title}\nSteps:\n${source.steps.map((s) => `- ${s}`).join("\n")}\nWhy: ${source.why}\n</action>\n\n<account_setup>\n${metaSetupText(setup)}\n</account_setup>`,
+      prompt: `<action>\n${source.title}\nSteps:\n${source.steps.map((s) => `- ${s}`).join("\n")}\nWhy: ${source.why}\n</action>\n\n<account_setup>\n${metaSetupText(setup, stats)}\n</account_setup>`,
     });
     const { ops, dropped } = buildMeta(out.ops, setup);
     const checked = await check(admin, "meta", account, ops);

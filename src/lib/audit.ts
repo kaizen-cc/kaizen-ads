@@ -2,8 +2,8 @@ import "server-only";
 import { businessModel, googleHealth, googleHealthText } from "@/lib/google-flags";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson, clientContext, contextBlock } from "@/lib/ai";
-import { aggregate, pickType, type Day } from "@/lib/kpi/calc";
-import { conversionFor, conversionLabel, type Conversion } from "@/lib/kpi/conversions";
+import { aggregate, completeDays, pickType, type Day } from "@/lib/kpi/calc";
+import { PURCHASE_TYPES, conversionFor, conversionLabel, countResult, type Conversion } from "@/lib/kpi/conversions";
 import { accountSetup, metaConfigured, syncClientAds, type AccountSetup } from "@/lib/context/meta";
 import { googleAuditDetail, googleSetup, googleWritableSetup, type GoogleSetup } from "@/lib/context/google-ads";
 import { accountRows, type CampaignRow } from "@/lib/kpi/sync";
@@ -124,8 +124,9 @@ function stats(rows: Row[], conv: Conversion, type: string | null) {
   let thru = 0;
   let freqW = 0;
   const funnel: Record<string, number> = {};
-  let purchases = 0;
-  let purchaseValue = 0;
+  // Purchases by the one shared counter (one purchase type for the whole period, never its aliases added together)
+  const { type: pType, count: purchases } = countResult(days.map((d) => d.actions), PURCHASE_TYPES);
+  const purchaseValue = pType ? days.reduce((s, d) => s + (d.values[pType] ?? 0), 0) : 0;
   for (const r of rows) {
     const imp = n(r.metrics.impressions);
     impressions += imp;
@@ -135,9 +136,6 @@ function stats(rows: Row[], conv: Conversion, type: string | null) {
     freqW += n(r.metrics.frequency) * imp;
     const a = acts(r.metrics.actions);
     for (const k of ["landing_page_view", "omni_view_content", "view_content", "omni_add_to_cart", "add_to_cart", "omni_initiated_checkout", "initiate_checkout", "lead", "onsite_conversion.lead_grouped"]) if (a[k]) funnel[k] = (funnel[k] ?? 0) + a[k];
-    const v = acts(r.metrics.action_values);
-    purchases += a.omni_purchase ?? a.purchase ?? a["offsite_conversion.fb_pixel_purchase"] ?? 0;
-    purchaseValue += v.omni_purchase ?? v.purchase ?? v["offsite_conversion.fb_pixel_purchase"] ?? 0;
   }
   // Gross profit per transaction: revenue per purchase minus what each purchase cost (AOV minus CPA)
   const aov = purchases ? purchaseValue / purchases : null;
@@ -461,7 +459,11 @@ export async function runAudit(admin: SupabaseClient, id: string) {
       );
     const days: Day[] = scoped.map((r) => ({ date: r.date, spend: n(r.metrics.spend), actions: acts(r.metrics.actions), values: acts(r.metrics.action_values) }));
     const type = pickType(days, conv, t.custom_action);
-    const today = scoped[scoped.length - 1].date;
+    // Windows end on the last complete day (yesterday), like Ads Manager: today's part day has its spend but not yet
+    // its purchases, and in a 7-day window that alone can double an ad's cost per purchase
+    const yesterday = completeDays(1, new Date()).to;
+    const last = scoped[scoped.length - 1].date;
+    const today = last < yesterday ? last : yesterday;
     const d = digest(scoped, conv, type, today);
     const { data: changes } = await admin.from("ad_account_changes").select("at, who, what, object, object_type").eq("ad_account_id", account).gte("at", new Date(Date.now() - 45 * DAY).toISOString()).order("at", { ascending: false }).limit(80);
     if (changes?.length)

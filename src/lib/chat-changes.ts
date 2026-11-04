@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { buildGoogle, buildMeta, checkOps, type MetaRaw, type PlannedOp } from "@/lib/ad-changes";
+import { adStats, statsText, targetOf, windowLabel, type StatsTarget } from "@/lib/ad-stats";
 import { findLinks, type Metrics, type ObjRef } from "@/lib/chat-change-core";
 import { googleQuery, googleWritableSetup, type WritableSetup } from "@/lib/context/google-ads";
 import { metaGraph } from "@/lib/context/meta";
@@ -63,54 +64,14 @@ export async function planChatChange(admin: SupabaseClient, id: string) {
 
 // ─── Numbers ────────────────────────────────────────────────────────────────
 
-type Target = { conversion: string; custom_action: string | null; target: number | null } | null;
-
-async function targetOf(admin: SupabaseClient, targetId: string | null): Promise<Target> {
-  if (!targetId) return null;
-  const { data } = await admin.from("kpi_targets").select("conversion, custom_action, target").eq("id", targetId).maybeSingle();
-  return data ? { conversion: data.conversion as string, custom_action: (data.custom_action as string | null) ?? null, target: data.target == null ? null : Number(data.target) } : null;
-}
+type Target = StatsTarget;
 
 const n = (v: unknown) => Number(v) || 0;
 const r2 = (x: number | null) => (x == null || !Number.isFinite(x) ? null : Math.round(x * 100) / 100);
 
-/** Each ad's, ad set's and campaign's last 7 and 30 days from our Meta sync, counted by the account's own KPI. */
-async function metaStats(admin: SupabaseClient, account: string, t: Target) {
-  const since = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
-  const since7 = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
-  const { data: rows } = await admin.from("meta_ad_daily").select("date, ad_id, adset_id, campaign_id, metrics").in("ad_account_id", [account, `act_${account}`]).gte("date", since).limit(20000);
-  const conv = conversionFor(t?.conversion ?? "purchases");
-  const types = conv.key === "custom" && t?.custom_action ? [t.custom_action] : conv.types?.filter((x) => x !== "campaign_goal").length ? conv.types!.filter((x) => x !== "campaign_goal") : ["omni_purchase", "purchase", "offsite_conversion.fb_pixel_lead", "lead", "onsite_conversion.lead_grouped"];
-  type Acc = { spend: number; results: number; value: number; imp: number; clicks: number; reach: number };
-  const blank = (): Acc => ({ spend: 0, results: 0, value: 0, imp: 0, clicks: 0, reach: 0 });
-  const by = { d7: new Map<string, Acc>(), d30: new Map<string, Acc>() };
-  for (const r of (rows ?? []) as { date: string; ad_id: string; adset_id: string | null; campaign_id: string | null; metrics: Record<string, unknown> }[]) {
-    const m = r.metrics ?? {};
-    const acts = Object.fromEntries(((m.actions ?? []) as { action_type: string; value: string }[]).map((a) => [a.action_type, n(a.value)]));
-    const vals = Object.fromEntries(((m.action_values ?? []) as { action_type: string; value: string }[]).map((a) => [a.action_type, n(a.value)]));
-    const type = types.find((x) => acts[x]) ?? null;
-    const add = (map: Map<string, Acc>, key: string | null) => {
-      if (!key) return;
-      const a = map.get(key) ?? blank();
-      a.spend += n(m.spend);
-      a.results += conv.field ? n(m.inline_link_clicks) : type ? acts[type] : 0;
-      a.value += type ? (vals[type] ?? 0) : 0;
-      a.imp += n(m.impressions);
-      a.clicks += n(m.inline_link_clicks);
-      a.reach += n(m.reach);
-      map.set(key, a);
-    };
-    for (const k of [r.ad_id, r.adset_id, r.campaign_id]) {
-      add(by.d30, k);
-      if (r.date >= since7) add(by.d7, k);
-    }
-  }
-  const metrics = (a: Acc | undefined): Metrics | null =>
-    a ? { spend: r2(a.spend) ?? 0, results: Math.round(a.results * 10) / 10, cpr: conv.roas ? r2(a.spend ? a.value / a.spend : null) : r2(a.results ? a.spend / a.results : null), ctr: r2(a.imp ? (a.clicks / a.imp) * 100 : null), freq: r2(a.reach ? a.imp / a.reach : null) } : null;
-  return { of: (id: string) => ({ m7: metrics(by.d7.get(id)), m30: metrics(by.d30.get(id)) }), result: conv.label, roas: Boolean(conv.roas) };
-}
-
-const mtext = (m: Metrics | null, roas: boolean) => (m ? `$${m.spend} spent, ${m.results} results, ${roas ? "ROAS" : "cost per result"} ${m.cpr ?? "–"}, CTR ${m.ctr ?? "–"}%, frequency ${m.freq ?? "–"}` : "no spend");
+// Each object's last 7 and 30 complete days, counted by the account's own KPI (src/lib/ad-stats.ts)
+const metaStats = adStats;
+const mtext = statsText;
 
 // ─── Meta ───────────────────────────────────────────────────────────────────
 
@@ -169,6 +130,7 @@ function metaSetupText(s: MetaSetup, stats: Awaited<ReturnType<typeof metaStats>
   };
   return [
     `KPI: ${stats.result}${target?.target != null ? `, target ${stats.roas ? `ROAS ${target.target}` : `$${target.target} per result`}` : ", no target set"}`,
+    `Windows (complete days, today left out as Ads Manager does): 7 days = ${windowLabel(stats.d7)}, 30 days = ${windowLabel(stats.d30)}. Quote numbers only from here.`,
     "\nCAMPAIGNS",
     ...s.campaigns.map((c) => `- id ${c.id} "${c.name}" [${c.status}] ${c.objective}${c.dailyBudget != null ? `, daily budget ${$(c.dailyBudget)}` : c.lifetimeBudget != null ? ", lifetime budget" : ", budget on the ad sets"} · ${line(c.id)}`),
     "\nAD SETS",

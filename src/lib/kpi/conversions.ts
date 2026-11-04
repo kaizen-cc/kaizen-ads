@@ -36,6 +36,47 @@ export const CONVERSIONS: Conversion[] = [
 
 export const conversionFor = (key: string) => CONVERSIONS.find((c) => c.key === key) ?? CONVERSIONS[0];
 
+// ─── Counting a result ────────────────────────────────────────────────────────
+
+/**
+ * The purchase action types, best first. Meta reports ONE purchase under all of them at once (omni_purchase, purchase,
+ * offsite_conversion.fb_pixel_purchase, onsite_web_purchase, web_in_store_purchase...), so they are never added together.
+ */
+export const PURCHASE_TYPES = ["omni_purchase", "purchase", "offsite_conversion.fb_pixel_purchase"];
+
+/** Kaizen's attribution standard for every Meta insights request: 7-day click, 1-day view (what Ads Manager shows by default). */
+export const META_ATTRIBUTION = ["7d_click", "1d_view"] as const;
+
+/** Meta's actions list ([{ action_type, value }]) or an already-built map, as action_type → number. */
+export function actionMap(list: unknown): Record<string, number> {
+  if (!list) return {};
+  if (!Array.isArray(list)) return Object.fromEntries(Object.entries(list as Record<string, unknown>).map(([k, v]) => [k, Number(v) || 0]));
+  const out: Record<string, number> = {};
+  for (const a of list as { action_type?: string; value?: unknown }[]) if (a?.action_type) out[a.action_type] = Number(a.value) || 0;
+  return out;
+}
+
+/**
+ * Which one of `types` a set of rows reports: the first, in order of preference, with any count over the whole period.
+ * Chosen once for the whole period so every day (and every ad) is counted the same way.
+ */
+export function reportedType(rows: Record<string, number>[], types: string[] = PURCHASE_TYPES): string | null {
+  for (const t of types) if (rows.some((r) => (r[t] ?? 0) > 0)) return t;
+  return null;
+}
+
+/**
+ * The one count of a result over some rows (days or ads): the type the rows report (see reportedType), summed. The
+ * aliases of the same purchase are never added together, and a type is never mixed with another from day to day.
+ */
+export function countResult(rows: Record<string, number>[], types: string[] = PURCHASE_TYPES): { type: string | null; count: number } {
+  const type = reportedType(rows, types);
+  return { type, count: type ? rows.reduce((s, r) => s + (r[type] ?? 0), 0) : 0 };
+}
+
+/** Purchases over some rows of Meta actions. */
+export const countPurchases = (rows: Record<string, number>[]) => countResult(rows, PURCHASE_TYPES).count;
+
 /** The label a target shows: "Purchases", or "ROAS", or the custom action when it's custom. */
 export function conversionLabel(key: string, custom?: string | null) {
   const c = conversionFor(key);

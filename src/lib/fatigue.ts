@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { totals, type InsightRow, type MetaAd } from "@/lib/context/meta";
 import { LIVE } from "@/lib/live";
+import { completeDays } from "@/lib/kpi/calc";
 
 // The fatigue watcher. After each Meta sync, every ad still spending is compared with its own previous three weeks:
 // click-through falling, cost per result rising, people seeing it more often, and for video, fewer people stopping
@@ -42,13 +43,17 @@ const ymd = (t: number) => new Date(t).toISOString().slice(0, 10);
 const change = (now: number | null, before: number | null) => (now == null || before == null || !before ? null : Math.round((now / before - 1) * 1000) / 1000);
 
 /** The tiring ads in one account, from its daily rows. */
-export function detect(clientId: string, rows: { date: string; ad_id: string; ad_name: string; campaign_name: string | null; adset_name: string | null; metrics: InsightRow }[]): FatigueRow[] {
+export function detect(clientId: string, rows: { date: string; ad_id: string; ad_name: string; campaign_name: string | null; adset_name: string | null; metrics: InsightRow }[], at = new Date()): FatigueRow[] {
   if (!rows.length) return [];
-  const today = Date.now();
-  const nowFrom = ymd(today - 7 * DAY);
-  const beforeFrom = ymd(today - 28 * DAY);
-  const inNow = (d: string) => d > nowFrom;
-  const inBefore = (d: string) => d > beforeFrom && d <= nowFrom;
+  const today = at.getTime();
+  // Complete days only, like Ads Manager's "last 7 days": this week is the 7 days ending yesterday, before it the 21
+  // days before that. Today's part day used to sit in "this week" (its spend in, its purchases not yet), which is how
+  // an ad with 2 purchases at $299 was reported at $598 per purchase.
+  const week = completeDays(7, at);
+  const prior = completeDays(21, at, 7);
+  const inNow = (d: string) => d >= week.from && d <= week.to;
+  const inBefore = (d: string) => d >= prior.from && d <= prior.to;
+  const beforeFrom = ymd(Date.parse(`${prior.from}T12:00:00Z`) - DAY);
   const kind = totals(rows.map((r) => r.metrics)).result ?? undefined;
   const account = {
     now: totals(rows.filter((r) => inNow(r.date)).map((r) => r.metrics), kind),

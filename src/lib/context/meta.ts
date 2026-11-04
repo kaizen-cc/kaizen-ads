@@ -4,6 +4,8 @@ import { createHmac } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { compact } from "./shared";
 import { isLive, LIVE } from "@/lib/live";
+import { META_ATTRIBUTION, PURCHASE_TYPES } from "@/lib/kpi/conversions";
+import { videoMetrics } from "@/lib/kpi/video";
 
 // Reads ad performance with the CommandCenter system user (META_SYSTEM_USER_TOKEN, ads_read).
 // Every metric is pulled per ad per day through Meta's async report jobs, which handle heavy fields
@@ -17,8 +19,17 @@ const proof = (): Record<string, string> => {
   return process.env.META_APP_SECRET ? { appsecret_proof: createHmac("sha256", process.env.META_APP_SECRET).update(token).digest("hex") } : {};
 };
 
+/**
+ * Every insights request on an ad account asks for Kaizen's attribution explicitly (7-day click, 1-day view), so our
+ * purchases match Ads Manager's default columns whatever the ad sets' own settings or Meta's API default.
+ */
+export function withAttribution(path: string, params: Record<string, string>): Record<string, string> {
+  if (!/^act_\d+\/insights$/.test(path) || params.action_attribution_windows) return params;
+  return { ...params, action_attribution_windows: JSON.stringify(META_ATTRIBUTION) };
+}
+
 async function graph<T>(path: string, params: Record<string, string> = {}, method: "GET" | "POST" = "GET"): Promise<T> {
-  const query = new URLSearchParams({ ...params, ...proof(), access_token: process.env.META_SYSTEM_USER_TOKEN! });
+  const query = new URLSearchParams({ ...withAttribution(path, params), ...proof(), access_token: process.env.META_SYSTEM_USER_TOKEN! });
   for (let attempt = 0; attempt < 4; attempt++) {
     const res = await fetch(`https://graph.facebook.com/${VERSION}/${path}${method === "GET" ? `?${query}` : ""}`, {
       method,
@@ -179,7 +190,7 @@ const firstOf = (m: Map<string, number>, types: string[]) => types.map((t) => m.
 
 // The result a client is buying, in order of what usually matters most
 const RESULTS: [string, string[]][] = [
-  ["purchase", ["omni_purchase", "purchase", "offsite_conversion.fb_pixel_purchase"]],
+  ["purchase", PURCHASE_TYPES],
   ["lead", ["lead", "onsite_conversion.lead_grouped", "offsite_conversion.fb_pixel_lead"]],
   ["registration", ["omni_complete_registration", "complete_registration", "offsite_conversion.fb_pixel_complete_registration"]],
   ["link click", ["link_click"]],
@@ -244,23 +255,33 @@ export type MetaAd = MetaSummary & {
   format?: "image" | "video" | "carousel" | null;
   live?: boolean; // delivering now (effective status ACTIVE)
   rankings: { quality: string | null; engagement: string | null; conversion: string | null };
+  /** Video ads: average watch time in seconds, the video's length, and the share of it watched */
+  avgWatchSec?: number | null;
+  videoSeconds?: number | null;
+  watchPct?: number | null;
 };
 
 // ─── Sync one ad account ────────────────────────────────────────────────────
 
 /**
- * Daily rows since the last sync (the last 3 days, which Meta keeps revising). The first time for an account, and
- * once for accounts synced before, the last 180 days: the Hall of Fame looks back six months.
+ * How many days back every sync reads again. Meta books a purchase on the day of the click or view that led to it, up
+ * to 7 days later (7-day click), so the last week keeps changing: re-reading only 3 days left late purchases out.
+ */
+export const REVISE_DAYS = 8;
+
+/**
+ * Daily rows since the last sync, re-reading the last REVISE_DAYS (Meta keeps revising them). The first time for an
+ * account, and once for accounts synced before, the last 180 days: the Hall of Fame looks back six months.
  */
 async function syncDaily(admin: SupabaseClient, clientId: string, adAccountId: string) {
   const act = `act_${adAccountId}`;
   const [{ data: last }, { data: c }] = await Promise.all([
-    admin.from("meta_ad_daily").select("date").eq("client_id", clientId).order("date", { ascending: false }).limit(1).maybeSingle(),
+    admin.from("meta_ad_daily").select("date").eq("client_id", clientId).eq("ad_account_id", adAccountId).order("date", { ascending: false }).limit(1).maybeSingle(),
     admin.from("clients").select("meta_backfilled_at").eq("id", clientId).single(),
   ]);
   const today = new Date();
   const backfill = !c?.meta_backfilled_at;
-  const since = !last || backfill ? new Date(today.getTime() - 180 * 86_400_000) : new Date(new Date(last.date).getTime() - 3 * 86_400_000);
+  const since = !last || backfill ? new Date(today.getTime() - 180 * 86_400_000) : new Date(Math.min(Date.parse(`${last.date}T12:00:00Z`), today.getTime()) - REVISE_DAYS * 86_400_000);
   const rows = await asyncReport(act, {
     level: "ad",
     time_increment: "1",
@@ -402,11 +423,19 @@ async function snapshot(admin: SupabaseClient, clientId: string, adAccountId: st
       .sort((a, b) => b.date_start.localeCompare(a.date_start))
       .map((r) => r[key] as string | undefined)
       .find((v) => v && v !== "UNKNOWN") as string | undefined) ?? null;
+  // Video ads: how much of the video people watch needs its length (read from Meta once, then kept)
+  const video = new Map(top.map(({ id, list }) => [id, videoMetrics(list)]));
+  const { videoLengths } = await import("@/lib/video-length");
+  const lengths = await videoLengths(admin, top.filter(({ id }) => (video.get(id)?.plays ?? 0) > 0).map(({ id }) => id)).catch(() => new Map<string, number>());
   const ads: MetaAd[] = top.map(({ id, list, t }) => {
     const c = creatives[id]?.creative;
     const latest = list[list.length - 1];
+    const v = videoMetrics(list, lengths.get(id) ?? null);
     return {
       ...t,
+      avgWatchSec: v.avgWatchSec,
+      videoSeconds: v.videoSeconds,
+      watchPct: v.watchPct,
       id,
       name: String(latest.ad_name ?? ""),
       campaign: String(latest.campaign_name ?? ""),

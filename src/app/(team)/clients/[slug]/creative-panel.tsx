@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { VideoMetrics } from "@/components/video-metrics";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import type { ClientCreative, CreativeRow, MetaRow } from "@/lib/client-creative";
 import { Layer } from "./layer";
@@ -123,6 +124,7 @@ function Ads({ ads, paused, onOpen }: { ads: MetaRow[]; paused: boolean; onOpen:
               {money(a.spend)}
               {a.costPerResult != null ? ` · ${money(a.costPerResult)}/${a.result ?? "result"}` : ""}
             </span>
+            <VideoMetrics v={a} focusable={false} />
           </span>
         </button>
       ))}
@@ -165,6 +167,11 @@ function AdSheet({ ad, onClose }: { ad: MetaRow; onClose: () => void }) {
             </div>
           ))}
         </dl>
+        {(ad.hookRate != null || ad.watchPct != null) && (
+          <div className="flex justify-center">
+            <VideoMetrics v={ad} size="md" />
+          </div>
+        )}
         <p className="text-center text-[11px] text-faint">Numbers from the last Meta sync window.</p>
       </div>
     </div>

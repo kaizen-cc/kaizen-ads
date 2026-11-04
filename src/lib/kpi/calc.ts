@@ -1,4 +1,4 @@
-import { MAIN_RESULTS, conversionFor, type Conversion } from "./conversions";
+import { MAIN_RESULTS, conversionFor, reportedType, type Conversion } from "./conversions";
 
 /** One day of an ad account (campaigns already filtered and summed). */
 export type Day = {
@@ -55,14 +55,23 @@ const shift = (day: string, n: number) => {
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
 };
+/**
+ * The last n complete days, ending yesterday in New York: the same "last 7 days" Ads Manager shows. Today is never in
+ * it (it's still filling in: spend lands within the hour, purchases can take a day or more), so a part day's spend
+ * can't sit over a whole day's purchases.
+ */
+export function completeDays(n: number, now: Date, endOffset = 0): { from: string; to: string } {
+  const to = shift(nyParts(now).date, -1 - endOffset);
+  return { from: shift(to, -(n - 1)), to };
+}
+
 const ymd = (y: number, m: number, d: number) => new Date(Date.UTC(y, m - 1, d, 12)).toISOString().slice(0, 10);
 const daysIn = (y: number, m: number) => new Date(Date.UTC(y, m, 0)).getUTCDate();
 
 /** Which action type this account reports for the conversion (the first one with any results). */
 export function pickType(days: Day[], conv: Conversion, custom?: string | null): string | null {
   if (conv.key === "custom") return custom ?? null;
-  for (const t of conv.types ?? []) if (days.some((d) => (d.actions[t] ?? 0) > 0)) return t;
-  return conv.types?.[0] ?? null;
+  return reportedType(days.map((d) => d.actions), conv.types ?? []) ?? conv.types?.[0] ?? null;
 }
 
 export function resultsOf(day: Day, conv: Conversion, type: string | null) {
