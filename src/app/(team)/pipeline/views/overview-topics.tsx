@@ -14,6 +14,8 @@ import type { Theme } from "./themes";
 import { ProductionPanel } from "@/components/production";
 import type { Production } from "@/lib/production";
 import { Topic, type TopicTile } from "./topics";
+import type { PatternsState } from "@/lib/patterns";
+import { PatternsPanel } from "@/components/patterns-view";
 
 // The topics execs and leads share on the Overview, each with its tile (what's in it, at a glance) and its panel
 // (the detail to act on). Only topics with something in them are shown; what's all clear is said in one line.
@@ -30,6 +32,8 @@ export type SharedTopics = {
   clients?: ClientPulse[];
   monthElapsed?: number;
   clientOptions?: { id: string; name: string }[];
+  /** What works (or fails) across every client of a kind, and who isn't using it yet */
+  patterns?: { state: PatternsState; canBrief: boolean; canRefresh: boolean } | null;
 };
 
 type Built = { tile: TopicTile | null; panel: React.ReactNode; clear?: string };
@@ -162,6 +166,31 @@ export function accountTopics(d: SharedTopics): Built[] {
     });
   } else if (d.fatigue) out.push({ tile: null, panel: null, clear: "no ads wearing out" });
 
+  // Patterns across clients: an idea for the clients not using what's proven for their kind of business
+  const pat = d.patterns;
+  if (pat && pat.state.groups.length) {
+    const all = pat.state.groups.flatMap((g) => g.patterns);
+    const works = all.filter((p) => p.verdict === "works");
+    const open = works.reduce((n, p) => n + p.missing.filter((id) => pat.state.clients[id]).length, 0);
+    out.push({
+      tile: { id: "patterns", label: "Patterns", value: open, sub: `${s(works.length, "pattern")} proven across clients`, tone: "quiet" },
+      panel: (
+        <Topic key="patterns" id="patterns" title="Patterns across clients" summary={`${s(works.length, "thing")} that work for a whole kind of business${open ? ` · ${s(open, "client")} not using one yet` : ""}`} count={open || undefined} tone="quiet">
+          <PatternsPanel state={pat.state} canBrief={pat.canBrief} canRefresh={pat.canRefresh} />
+        </Topic>
+      ),
+    });
+  } else if (pat?.canRefresh) {
+    out.push({
+      tile: null,
+      panel: (
+        <Topic key="patterns" id="patterns" title="Patterns across clients" summary="Not read yet: refresh to read every account together" tone="quiet">
+          <PatternsPanel state={{ groups: [], clients: {}, generatedAt: null }} canBrief={false} canRefresh />
+        </Topic>
+      ),
+    });
+  }
+
   const clients = (d.clients ?? []).filter((c) => c.allotment > 0);
   if (clients.length) {
     // Under-delivering is the risk; a client getting more than their allotment is only noted
@@ -201,14 +230,17 @@ export function AllClear({ items }: { items: string[] }) {
  * team passed in). Each theme carries its count, a one-line headline, a few points, and its topic panels.
  */
 export function buildThemes(d: SharedTopics, extra: { first?: Theme | null; delivery?: { content: React.ReactNode; points: string[]; count: number } | null; production?: Production | null } = {}): Theme[] {
-  const built = [...actTopics(d), ...accountTopics(d)].filter((b) => b.tile && b.panel);
+  const topics = [...actTopics(d), ...accountTopics(d)];
+  const built = topics.filter((b) => b.tile && b.panel);
+  // A topic with nothing counted yet (patterns before their first read) still shows in its theme
+  const quiet = topics.filter((b) => !b.tile && b.panel);
   const by = (...ids: string[]) => built.filter((b) => ids.includes(b.tile!.id));
   const sum = (bs: Built[]) => bs.reduce((n, b) => n + (Number(b.tile!.value) || 0), 0);
-  const SAY: Record<string, string> = { promises: "waiting on us", attention: "stuck, late or behind", "kpis-meta": "Meta accounts off target", "kpis-google": "Google accounts off target", "kpis-all": "accounts off target", briefs: "brief ideas", fatigue: "ads due a refresh", allotments: "behind on creative" };
+  const SAY: Record<string, string> = { promises: "waiting on us", attention: "stuck, late or behind", "kpis-meta": "Meta accounts off target", "kpis-google": "Google accounts off target", "kpis-all": "accounts off target", briefs: "brief ideas", fatigue: "ads due a refresh", allotments: "behind on creative", patterns: "clients missing a proven idea" };
   const points = (bs: Built[]) => bs.filter((b) => Number(b.tile!.value)).map((b) => `${b.tile!.value} ${SAY[b.tile!.id] ?? b.tile!.label.toLowerCase()}`);
 
   const risk = by("promises", "attention", "kpis-meta", "kpis-google", "kpis-all");
-  const growth = by("briefs", "fatigue");
+  const growth = by("briefs", "fatigue", "patterns");
   const fresh = by("onboarding");
   const allot = by("allotments");
   // Creative production (execs and the Head of Creative): clients whose pieces take longest are what needs a look
@@ -237,9 +269,9 @@ export function buildThemes(d: SharedTopics, extra: { first?: Theme | null; deli
     title: "Ideas for clients",
     tone: sum(growth) ? "quiet" : "ok",
     count: sum(growth),
-    headline: sum(growth) ? "Briefs the strategist suggests and ads ready for a refresh, when you have a moment" : "No new ideas waiting",
+    headline: sum(growth) ? "Briefs the strategist suggests, ads ready for a refresh and what works across clients, when you have a moment" : "No new ideas waiting",
     points: points(growth),
-    content: growth.map((b) => b.panel),
+    content: [...growth.map((b) => b.panel), ...quiet.map((b) => b.panel)],
   });
   themes.push({
     id: "new",

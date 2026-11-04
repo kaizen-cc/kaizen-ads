@@ -122,6 +122,10 @@
       "schedule": "41 * * * *"
     },
     {
+      "path": "/api/cron/context?step=patterns",
+      "schedule": "20 * * * 1"
+    },
+    {
       "path": "/api/cron/context?step=integrations",
       "schedule": "52 * * * *"
     }

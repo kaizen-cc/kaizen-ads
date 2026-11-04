@@ -467,6 +467,7 @@ export type ClientContext = {
   siteIssues?: string; // website and data issues the Bible found, and pages that went dead or changed
   playbook?: string; // the client playbook: what won and lost, dated, and the Brand Bible's learnings
   peers?: string; // winning angles and audiences from similar clients
+  patterns?: string; // what's proven across several clients like this one (business model and sub-vertical), unnamed
   website: string | null;
   industry?: string | null; // e.g. "restaurant"
   industryDetail?: string | null; // e.g. "Pizza restaurant"
@@ -545,6 +546,8 @@ export async function clientContext(supabase: SupabaseClient, clientId: string):
     // Everything they've run and how it did (the playbook), and what won for similar clients
     playbook: await import("@/lib/ledger").then(({ playbookBlock }) => playbookBlock(supabase, clientId)).catch(() => ""),
     peers: await import("@/lib/ledger").then(({ peersBlock }) => peersBlock(supabase, clientId, c.industry ?? null, c.industry_detail ?? null)).catch(() => ""),
+    // Patterns across clients: what works (or fails) for most businesses like this one, and what this client isn't using yet
+    patterns: await import("@/lib/patterns").then(({ patternsBlock }) => patternsBlock(supabase, clientId)).catch(() => ""),
     // What we last told the client in reports: the takeaway, and what we said comes next (so the next piece of work keeps that promise)
     reports: await supabase
       .from("reports")
@@ -634,6 +637,7 @@ export function contextBlock(ctx: ClientContext, request?: { images: number; vid
   if (ctx.siteIssues) lines.push(ctx.siteIssues);
   if (ctx.playbook) lines.push(ctx.playbook);
   if (ctx.peers) lines.push(ctx.peers);
+  if (ctx.patterns) lines.push(ctx.patterns);
   if (ctx.reports) lines.push("<recent_reports>", "What our latest reports told the client, and what we said comes next. Keep those promises, and don't contradict what was reported.", ctx.reports, "</recent_reports>");
   if (ctx.intake)
     lines.push("<marketing_intake>", "What the client told us in their marketing intake form. Their offer, audience, voice and what to avoid are hard rules.", ctx.intake, "</marketing_intake>");

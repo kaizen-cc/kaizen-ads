@@ -638,6 +638,38 @@ Write the request for this moment, made in time for it: the brief, angle, audien
 }
 
 /**
+ * "Brief it for …" on a pattern across clients: the strategist writes this client's version of what's proven for
+ * businesses like it (never naming the others).
+ */
+export async function suggestForPattern(admin: SupabaseClient, clientId: string, p: { id: string; group: string; kind: string; title: string; detail: string; evidence: { clients: number; of: number; items: string[] } }, by: string | null) {
+  const prompt = await promptFor(admin, clientId, [{ kind: "winner", weight: 1, line: `Proven across ${p.evidence.clients} of ${p.evidence.of} ${p.group.toLowerCase()}: ${p.title}`, facts: p.evidence.items.slice(0, 4) }]);
+  if (!prompt) throw new Error("Client not found");
+  const out = await writeBrief(admin, clientId, {
+    agent: "strategist",
+    label: "brief from a pattern",
+    system: SYSTEM,
+    schema: SCHEMA,
+    prompt: `${prompt}
+
+<pattern_across_clients>
+${p.title} (${p.kind}) · proven for ${p.evidence.clients} of ${p.evidence.of} ${p.group.toLowerCase()}
+${p.detail}
+${p.evidence.items.map((e) => `- ${e}`).join("\n")}
+</pattern_across_clients>
+
+Write this client's version of the pattern: what's proven for businesses like it, made theirs (their offer, their voice, their customers, their Brand Bible), never a copy and never naming another client. The brief, angle, audience, formats and counts within what's left of the allotment, sizes, 2 to 4 concepts and hooks, and every asset in draft.assets. suggest: true. kind: "winner". signal: "Works for ${p.group.toLowerCase()}: <the pattern>". evidence: 2 to 4 lines on how it was proven across clients (counts, no names) and why it fits this client. why: two sentences. reply: "".`,
+  });
+  const draft = clean(out.draft);
+  const { data, error } = await admin
+    .from("creative_suggestions")
+    .insert({ client_id: clientId, kind: "pattern", signal: `Works for ${p.group.toLowerCase()}: ${p.title}`.slice(0, 300), evidence: out.evidence.slice(0, 5), why: out.why, draft, original: draft, source: { patternId: p.id, headline: p.title }, created_by: by })
+    .select("id")
+    .single();
+  if (error || !data) throw new Error(error?.message ?? "Couldn't save the brief");
+  return data.id as string;
+}
+
+/**
  * "Start a request from this" in the winners library: the strategist writes a full brief for the chosen client,
  * built on what made the winning ad work. Saved as a draft only its author (and execs and leads) can see.
  */

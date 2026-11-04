@@ -325,6 +325,12 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     emails = <EmailsPanel clientId={client.id} slug={client.slug} stage={stage} sent={sent} />;
   }
 
+  // What works for businesses like this one, across every client of its kind
+  const { MODEL_NAMES, patternsForClient } = await import("@/lib/patterns");
+  const pat = await patternsForClient(supabase, client.id).catch(() => null);
+  const { ClientPatterns } = await import("@/components/patterns-view");
+  const patterns = pat?.model && pat.patterns.length ? <ClientPatterns patterns={pat.patterns} label={MODEL_NAMES[pat.model]} /> : null;
+
   // The full business audit: the latest one, the pushback on it, and whether this person may push back
   let businessAudit: React.ReactNode = null;
   if (adminConfigured()) {
@@ -368,6 +374,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     <ClientView
       business={business}
       businessAudit={businessAudit}
+      patterns={patterns}
       setup={setup}
       emails={emails}
       campaigns={campaigns}

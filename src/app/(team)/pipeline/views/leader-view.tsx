@@ -26,6 +26,7 @@ export type LeaderData = {
   owed?: { items: import("@/lib/owed-replies").OwedReply[]; said: import("@/lib/message-promises").SaidPromise[]; me: string } | null;
   clientOptions?: { id: string; name: string }[];
   suggestions?: SuggestionsState | null;
+  patterns?: import("./overview-topics").SharedTopics["patterns"];
 };
 
 /** Leaders (Head of Creative / Meta / Google): their queue first, then the same themes as execs, their team in Delivery. */

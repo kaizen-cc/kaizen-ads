@@ -79,6 +79,9 @@ export default async function Home() {
     ]);
     onboarding.clients = onboarding.clients.filter((c) => on.has(c.clientId));
   }
+  // What works across every client of a kind (execs and leads), and who isn't using it yet
+  const patternState = await import("@/lib/patterns").then(({ loadPatterns }) => loadPatterns(db)).catch(() => null);
+  const patterns = patternState ? { state: patternState, canBrief: true, canRefresh: me.isExec } : null;
   // How creative production is going (speed, revisions, the team): execs and the Head of Creative
   const production = me.isExec || me.role === "head_of_creative" ? await loadProduction(db).catch(() => null) : null;
 
@@ -94,7 +97,7 @@ export default async function Home() {
   );
 
   if (me.isExec) {
-    return <PulseView {...base} vitals={h.vitals} attention={h.attention} phases={h.phases} clients={h.clients} team={h.team} monthElapsed={h.monthElapsed} kpis={kpis} production={production} suggestions={suggestions} fatigue={fatigue} onboarding={onboarding} clientOptions={clientOptions} callPromises={callPromises} owed={owed} handoffs={<HandoffCallout db={db} me={me.id} />} recap={recap} />;
+    return <PulseView {...base} vitals={h.vitals} attention={h.attention} phases={h.phases} clients={h.clients} team={h.team} monthElapsed={h.monthElapsed} kpis={kpis} production={production} suggestions={suggestions} fatigue={fatigue} onboarding={onboarding} clientOptions={clientOptions} callPromises={callPromises} owed={owed} patterns={patterns} handoffs={<HandoffCallout db={db} me={me.id} />} recap={recap} />;
   }
 
   if (me.isLead) {
@@ -130,6 +133,7 @@ export default async function Home() {
         clientOptions={clientOptions}
         callPromises={callPromises}
         owed={owed}
+        patterns={patterns}
         handoffs={<HandoffCallout db={db} me={me.id} />}
         recap={recap}
       />

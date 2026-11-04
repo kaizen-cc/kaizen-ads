@@ -30,6 +30,7 @@ export type PulseData = {
   owed?: { items: import("@/lib/owed-replies").OwedReply[]; said: import("@/lib/message-promises").SaidPromise[]; me: string } | null;
   clientOptions?: { id: string; name: string }[];
   suggestions?: SuggestionsState | null;
+  patterns?: import("./overview-topics").SharedTopics["patterns"];
   handoffs?: React.ReactNode;
   recap?: React.ReactNode;
 };
