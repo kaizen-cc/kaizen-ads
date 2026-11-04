@@ -12,7 +12,7 @@ import { Spark } from "./parts";
  * where every field can still be changed. Kept in this browser per client, so a refresh doesn't lose the conversation.
  */
 
-type Saved = { turns: TalkTurn[]; draft: SuggestionDraft | null; ready: boolean; patch: Partial<Draft> | null };
+type Saved = { turns: TalkTurn[]; draft: SuggestionDraft | null; ready: boolean; patch: Partial<Draft> | null; open?: { questions: string[]; conflicts: string[] } | null };
 const key = (clientId: string) => `kz:request-chat:${clientId}`;
 const FMT = { image: "image", video: "video", carousel: "carousel" } as const;
 
@@ -39,21 +39,30 @@ export function RequestChat({ clientId, clientName, onUse, onBack }: { clientId:
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [state, clientId]);
 
-  const send = async () => {
-    const t = text.trim();
+  const [phase, setPhase] = useState<"checking" | "writing" | null>(null);
+  const send = async (force = false) => {
+    const t = force ? "Go ahead and write it with what we have." : text.trim();
     if (!t || busy) return;
     const turns: TalkTurn[] = [...state.turns, { role: "user", text: t }];
     setState((s) => ({ ...s, turns }));
-    setText("");
+    if (!force) setText("");
     setBusy(true);
+    setPhase(force ? "writing" : "checking");
     setError(null);
-    const r = await talkRequest(clientId, turns, state.draft).catch(() => ({ ok: false as const, error: "Something went wrong. Try again." }));
+    const r = await talkRequest(clientId, turns, state.draft, force).catch(() => ({ ok: false as const, error: "Something went wrong. Try again." }));
     setBusy(false);
+    setPhase(null);
     if (!r.ok) {
       setError(r.error);
       return;
     }
-    setState({ turns: [...turns, { role: "ai", text: r.reply }], draft: r.draft, ready: r.ready, patch: r.patch });
+    setState((s) => ({
+      turns: [...turns, { role: "ai", text: r.reply }],
+      draft: r.draft ?? s.draft,
+      ready: r.ready,
+      patch: r.patch ?? s.patch,
+      open: r.building ? null : { questions: r.questions, conflicts: r.conflicts },
+    }));
   };
 
   const use = () => {
@@ -99,7 +108,7 @@ export function RequestChat({ clientId, clientName, onUse, onBack }: { clientId:
               {t.text}
             </div>
           ))}
-          {busy && <div className="justify-self-start rounded-[16px] bg-surface-2 px-4 py-2.5 text-[14px] text-muted">Writing the brief…</div>}
+          {busy && <div className="justify-self-start rounded-[16px] bg-surface-2 px-4 py-2.5 text-[14px] text-muted">{phase === "writing" ? "Writing the brief…" : "Reading it through…"}</div>}
           {error && <p className="rounded-[12px] border border-bad/30 bg-bad-soft px-3 py-2 text-[13px] text-bad">{error}</p>}
           <div ref={endRef} />
         </div>
@@ -166,8 +175,29 @@ export function RequestChat({ clientId, clientName, onUse, onBack }: { clientId:
             </button>
             <p className="text-[12px] text-faint">Every field can still be changed before it goes out.</p>
           </>
+        ) : state.open && (state.open.questions.length > 0 || state.open.conflicts.length > 0) ? (
+          <div className="grid gap-3">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-warn">To settle before it&rsquo;s written</p>
+            {state.open.conflicts.length > 0 && (
+              <ul className="grid gap-1.5 text-[13px]">
+                {state.open.conflicts.map((c, i) => (
+                  <li key={i} className="rounded-[10px] border border-warn/30 bg-warn-soft/40 px-3 py-2">{c}</li>
+                ))}
+              </ul>
+            )}
+            {state.open.questions.length > 0 && (
+              <ol className="grid list-decimal gap-1.5 pl-5 text-[13px] text-muted">
+                {state.open.questions.map((q, i) => (
+                  <li key={i}>{q}</li>
+                ))}
+              </ol>
+            )}
+            <button type="button" disabled={busy} onClick={() => void send(true)} className="min-h-11 rounded-full border border-line px-4 text-[13.5px] text-muted hover:text-fg disabled:opacity-60">
+              Write it with what we have
+            </button>
+          </div>
         ) : (
-          <p className="text-[13.5px] text-muted">It builds here as you talk.</p>
+          <p className="text-[13.5px] text-muted">{phase === "writing" ? "Writing the brief…" : "It builds here once everything's clear."}</p>
         )}
       </aside>
     </div>

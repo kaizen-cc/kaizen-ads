@@ -119,11 +119,18 @@ ${a.role.core.trim()}
  * The knowledge documents (PDFs and the like added in Settings, the Lab or a client's page) that match this task: only
  * the few best excerpts, added after the task's own text. Nothing when nothing matches.
  */
-async function withKnowledge(agent: AgentKey, label: string, prompt: string) {
+async function withKnowledge(agent: AgentKey, label: string, prompt: string, clientId?: string | null) {
   if (!adminConfigured()) return prompt;
   const { knowledgeBlock } = await import("@/lib/knowledge");
   const block = await knowledgeBlock({ agent, label, prompt }).catch((e) => (console.error("[ai] knowledge", e instanceof Error ? e.message : e), ""));
-  return block ? `${prompt}\n\n${block}` : prompt;
+  // What the team taught this agent (rebuttals, disagreements, overrides), on every call: the lessons that hold for
+  // everyone, and the client's own when the call is about a client. Calls that already carry them are left as they are.
+  let learned = "";
+  if (!prompt.includes("<learned_from_the_team")) {
+    const { learningsBlock } = await import("@/lib/learnings");
+    learned = await learningsBlock(createAdminClient(), [agent], clientId ?? null, prompt.slice(-4000)).catch(() => "");
+  }
+  return [prompt, block, learned].filter(Boolean).join("\n\n");
 }
 
 /** Who set an AI call off: the signed-in team member, or Kaizen Ads itself (a scheduled job, no one signed in) */
@@ -210,8 +217,11 @@ export async function askJson<T>({
   bare = false,
   systemOverride,
   noSample = false,
+  clientId = null,
 }: {
   agent: AgentKey;
+  /** The client the call is about: their own team learnings come with it */
+  clientId?: string | null;
   label: string; // for the timing log
   system: string;
   prompt: string;
@@ -236,7 +246,7 @@ export async function askJson<T>({
   if (!aiEnabled()) throw new AiUnavailable("AI isn't connected yet.");
   const base = await getAgent(agent);
   const cfg = { ...base, model: override?.model ?? base.model, effort: override?.effort ?? base.effort };
-  if (!bare) prompt = await withKnowledge(agent, label, prompt);
+  if (!bare) prompt = await withKnowledge(agent, label, prompt, clientId);
   const started = Date.now();
   const request = {
     model: MODEL_IDS[cfg.model],

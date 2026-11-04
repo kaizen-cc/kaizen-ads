@@ -673,10 +673,10 @@ export async function patternPatch(patternId: string, clientId: string): Promise
   }
 }
 
-export type TalkResult = { ok: true; reply: string; questions: string[]; ready: boolean; draft: import("@/lib/suggestions").SuggestionDraft; patch: Partial<Draft> } | Fail;
+export type TalkResult = { ok: true; reply: string; questions: string[]; conflicts: string[]; ready: boolean; building: boolean; draft: import("@/lib/suggestions").SuggestionDraft | null; patch: Partial<Draft> | null } | Fail;
 
 /** "Talk it through": the strategist's next turn, and the request as it stands */
-export async function talkRequest(clientId: string, turns: import("@/lib/suggestions").TalkTurn[], current: import("@/lib/suggestions").SuggestionDraft | null): Promise<TalkResult> {
+export async function talkRequest(clientId: string, turns: import("@/lib/suggestions").TalkTurn[], current: import("@/lib/suggestions").SuggestionDraft | null, force = false): Promise<TalkResult> {
   await requireStaff();
   if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
   const db = await createClient();
@@ -686,8 +686,8 @@ export async function talkRequest(clientId: string, turns: import("@/lib/suggest
   if (!clean.length || clean[clean.length - 1].role !== "user") return { ok: false, error: "Say what you have in mind first." };
   try {
     const { talkBrief } = await import("@/lib/suggestions");
-    const r = await talkBrief(createAdminClient(), clientId, clean, current);
-    return { ok: true, reply: r.reply, questions: r.questions, ready: r.ready, draft: r.draft, patch: toPatch(r.draft) };
+    const r = await talkBrief(createAdminClient(), clientId, clean, current, force);
+    return { ok: true, reply: r.reply, questions: r.questions, conflicts: r.conflicts, ready: r.ready, building: r.building, draft: r.draft ?? null, patch: r.draft ? toPatch(r.draft) : null };
   } catch (e) {
     return { ok: false, error: e instanceof AiUnavailable ? e.message : "The strategist couldn't answer. Try again." };
   }

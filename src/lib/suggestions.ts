@@ -1112,12 +1112,29 @@ const TALK_SCHEMA = {
  * the strategist turns it into a full request (the same brief the standard checks), asking only what it truly needs,
  * one or two questions at a time. Every turn returns the brief as it stands, so it's built in front of them.
  */
-export async function talkBrief(admin: SupabaseClient, clientId: string, turns: TalkTurn[], current: SuggestionDraft | null): Promise<TalkOut> {
+export async function talkBrief(admin: SupabaseClient, clientId: string, turns: TalkTurn[], current: SuggestionDraft | null, force = false): Promise<TalkOut & { building: boolean; conflicts: string[] }> {
   const prompt = await promptFor(admin, clientId, [{ kind: "kpi", weight: 1, line: "A team member's own creative idea", facts: [] }]);
   if (!prompt) throw new Error("Client not found");
+  const convo = `<conversation>\n${turns.map((t) => `${t.role === "user" ? "Team member" : "You"}: ${t.text}`).join("\n\n")}\n</conversation>`;
+  // First, quickly: is anything unclear or in conflict with what the client told us? Then nothing is written yet: the
+  // questions go back, and the brief is only built once it's settled (or the team member says to go ahead)
+  if (!force) {
+    const check = await askJson<{ reply: string; questions: string[]; conflicts: string[]; build: boolean }>({
+      agent: "strategist",
+      label: "request chat check",
+      clientId,
+      override: { model: "sonnet", effort: "low" },
+      maxTokens: 3000,
+      system: `${SYSTEM}\n\nA member of the team is telling you, in a conversation, the creative they want made for this client. Before anything is written, decide whether you can build it well right now. Look for: (1) conflicts with what the client told us or approved (offers, prices, discounts, claims, dates, rules in the Brand Bible and client memory, what's been rejected), and (2) missing details that would change the brief and that the context can't answer (which offer exactly, which product, the dates, the format or counts, the landing page). If there are any, ask about them: at most three short, plain questions, and list each conflict in one line with what the client said and when. Never ask what the context already answers, and never ask for the sake of asking. If everything needed is clear, or the team member already answered or said to go ahead with assumptions, build: true. reply: a short, warm message (what's unclear or conflicting and the questions; or that you're writing it now). questions: the questions. conflicts: the conflicts. build: true only when it's ready to write.`,
+      schema: { type: "object", properties: { reply: { type: "string" }, questions: { type: "array", items: { type: "string" } }, conflicts: { type: "array", items: { type: "string" } }, build: { type: "boolean" } }, required: ["reply", "questions", "conflicts", "build"], additionalProperties: false },
+      prompt: `${prompt}\n\n${current ? `<request_so_far>\n${JSON.stringify(current, null, 1)}\n</request_so_far>\n\n` : ""}${convo}\n\nAnswer the team member's last message.`,
+    });
+    if (!check.build) return { reply: check.reply, questions: (check.questions ?? []).slice(0, 3), conflicts: (check.conflicts ?? []).slice(0, 4), ready: false, draft: current ?? (null as unknown as SuggestionDraft), building: false };
+  }
   const out = await askJson<TalkOut>({
     agent: "strategist",
     label: "request chat",
+    clientId,
     system: `${SYSTEM}\n\n${BRIEF_STANDARD}\n\nThis time you're not watching the accounts: a member of the team is telling you, in a conversation, the creative idea they want made for this client. Build their idea, not yours: keep what they asked for (the idea, the format, the counts they named), and make it complete and strong with the client's context (Brand Bible, KPIs, what's working, the patterns across clients, assets on Drive, the allotment). Ask a question only when the answer would change the request and the context can't answer it (which offer, which product, how many); at most two at a time, short and plain, never one the context already answers. Otherwise fill the gaps yourself and say what you assumed. reply: a short, warm message to them (what you built or changed, any assumption, then your questions if any). questions: the questions you asked, if any. ready: true when the request is complete enough to send. draft: the full request as it stands now, always complete (title, angle, audience, brief, hooks, concepts, formats within what's left of the allotment, sizes, landing, refs, assets).`,
     schema: TALK_SCHEMA,
     maxTokens: 12000,
@@ -1129,5 +1146,5 @@ ${turns.map((t) => `${t.role === "user" ? "Team member" : "You"}: ${t.text}`).jo
 
 Answer the team member's last message.`,
   });
-  return { reply: out.reply, questions: (out.questions ?? []).slice(0, 2), ready: Boolean(out.ready), draft: clean(out.draft) };
+  return { reply: out.reply, questions: (out.questions ?? []).slice(0, 2), ready: Boolean(out.ready), draft: clean(out.draft), building: true, conflicts: [] };
 }
