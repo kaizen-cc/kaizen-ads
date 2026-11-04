@@ -46,6 +46,7 @@ async function upload(file: File, path: string, token: string, onBytes: (n: numb
 const size = (b: number | null) => (b == null ? "" : b >= 1_048_576 ? `${(b / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
 const when = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 const kindOf = (d: KnowledgeDoc) => {
+  if (d.mime === "text/x-loom") return "Loom";
   const ext = d.name.toLowerCase().split(".").pop() ?? "";
   if (ext === "pdf" || d.mime === "application/pdf") return "PDF";
   if (ext === "docx") return "Word";
@@ -223,7 +224,20 @@ function DocRow({ d, target, canEdit, compact }: { d: KnowledgeDoc; target: Know
               ))}
             </ul>
           )}
-          {d.method && d.status === "ready" && <p className="text-[11.5px] text-faint">{d.method === "ai" ? "Read by the AI page by page (a scan or picture)" : "Read from the file's own text"}{d.name !== name ? ` · ${d.name}` : ""}</p>}
+          {d.method && d.status === "ready" && (
+            <p className="text-[11.5px] text-faint">
+              {d.method === "loom" ? "From the Loom's transcript" : d.method === "ai" ? "Read by the AI page by page (a scan or picture)" : "Read from the file's own text"}
+              {d.name !== name ? ` · ${d.name}` : ""}
+              {d.url && (
+                <>
+                  {" · "}
+                  <a href={d.url.replace(/#.*$/, "")} target="_blank" rel="noreferrer" className="text-brand-text hover:underline">
+                    Watch
+                  </a>
+                </>
+              )}
+            </p>
+          )}
           {canEdit && (
             <div className="flex flex-wrap gap-2">
               <button type="button" disabled={busy || d.status === "reading"} onClick={() => act(rereadKnowledge(d.id))} className="min-h-11 rounded-full border border-line px-4 text-[13px] text-muted hover:text-fg disabled:opacity-50 md:min-h-9">

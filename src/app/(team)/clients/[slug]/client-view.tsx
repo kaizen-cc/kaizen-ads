@@ -45,6 +45,8 @@ import { CampaignsPanel } from "./campaigns-panel";
 import { DocsPanel } from "./docs-panel";
 import { KnowledgePanel } from "@/components/knowledge-panel";
 import type { KnowledgeDoc } from "@/lib/knowledge";
+import { LoomPanel } from "@/components/loom-panel";
+import type { LoomStatus } from "@/lib/loom-intake";
 import { ReportsHistory, type HistoryReport } from "./reports-history";
 import { PlaybookPanel } from "./playbook-panel";
 import type { LedgerItem } from "@/lib/ledger";
@@ -187,6 +189,8 @@ export type ClientViewProps = {
   docs?: ClientDoc[] | null; // every file and link shared about them
   /** Knowledge files the agents read for this client only */
   knowledge?: KnowledgeDoc[];
+  /** Their Loom videos (queue, waiting, failed), on Documents */
+  loom?: LoomStatus | null;
   reports?: HistoryReport[] | null; // every report made for them
   playbook?: { items: LedgerItem[]; learnings: { at: string; kind: string; text: string }[] } | null; // everything they've run, and what it taught
   /** A new client's setup (their onboarding guide's steps), shown above the intake */
@@ -200,7 +204,7 @@ export type ClientViewProps = {
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], keywordLists = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], liveWrites = null, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, docs = null, reports = null, playbook = null, setup = null, emails = null, businessAudit = null, patterns = null, knowledge = [] }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], keywordLists = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], liveWrites = null, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, docs = null, reports = null, playbook = null, setup = null, emails = null, businessAudit = null, patterns = null, knowledge = [], loom = null }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -387,6 +391,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                             title="Knowledge for the agents"
                             description="Their playbooks, brand guides, case studies and research as PDFs or documents. Every agent working on this client looks things up in them (only the parts that match its task); other clients never see them. Nothing is deleted: set an old one as background."
                           />
+                          {loom && live && !demo && <LoomPanel status={loom} clientId={client.id} />}
                           <DocsPanel clientId={client.id} slug={client.slug} docs={docs} live={live && !demo} />
                         </div>
                       ),

@@ -150,7 +150,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     [{ data: tierList }, { data: tierPicks }],
     { data: ruleRows },
     campaigns,
-    [{ data: docRows }, knowledge, { data: repRows }],
+    [{ data: docRows }, knowledge, { data: repRows }, loom],
     ledger,
     liveWrites,
     { data: billingLog },
@@ -236,6 +236,8 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
         .eq("client_id", client.id)
         .order("period_start", { ascending: false })
         .limit(300),
+      // Their Loom videos: what's in the queue, waiting or couldn't be read
+      admin ? import("@/lib/loom-intake").then(({ loomStatus }) => loomStatus(admin, client.id)).catch(() => null) : Promise.resolve(null),
     ])),
     t("playbook", loadLedger(supabase, client.id)),
     t("live writes", liveWritesChain),
@@ -413,6 +415,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       campaigns={campaigns}
       docs={docs}
       knowledge={knowledge}
+      loom={loom}
       playbook={{ items: ledger, learnings: brandBible?.learnings ?? [] }}
       reports={reportHistory}
       launchRules={launchRules}

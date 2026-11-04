@@ -38,9 +38,11 @@ export type KnowledgeDoc = {
   mime: string | null;
   by: string | null;
   at: string;
+  /** Where it came from when it's text from a link (a Loom video), not an uploaded file */
+  url: string | null;
 };
 
-const SELECT = "id, name, title, summary, key_points, pages, status, progress, note, method, background, bytes, mime, created_at, profiles:uploaded_by(full_name)";
+const SELECT = "id, name, title, summary, key_points, pages, status, progress, note, method, background, bytes, mime, source_url, created_at, profiles:uploaded_by(full_name)";
 
 /** The knowledge added to one place, newest first (removed agent, shared and Lab files are left out) */
 export async function listKnowledge(db: SupabaseClient, t: KnowledgeTarget): Promise<KnowledgeDoc[]> {
@@ -64,6 +66,7 @@ export async function listKnowledge(db: SupabaseClient, t: KnowledgeTarget): Pro
     mime: (d.mime as string | null) ?? null,
     by: (d.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
     at: d.created_at as string,
+    url: (d.source_url as string | null) ?? null,
   }));
 }
 
@@ -109,6 +112,44 @@ export async function addKnowledge(admin: SupabaseClient, t: KnowledgeTarget, by
       if (s) await admin.from("knowledge_docs").update({ lab_source_id: s.id }).eq("id", d.id);
     }
   return (data ?? []).map((d) => d.id as string);
+}
+
+/** Text-only documents (a Loom's transcript) keep their text in the row: their path says so */
+const TEXT_PATH = "text:";
+
+/**
+ * Knowledge that's text rather than a file (a Loom video's transcript and what was learned from it): saved like an
+ * upload, then read the same way (chunks, and the title and summary when they aren't given). Returns its id.
+ */
+export async function addKnowledgeText(
+  admin: SupabaseClient,
+  t: KnowledgeTarget,
+  by: string | null,
+  doc: { name: string; text: string; url?: string | null; mime?: string; title?: string | null; summary?: string | null; keyPoints?: string[]; method?: string },
+) {
+  const { data, error } = await admin
+    .from("knowledge_docs")
+    .insert({
+      scope: t.scope,
+      agent_key: t.scope === "agent" ? t.agentKey : null,
+      client_id: t.scope === "client" ? t.clientId : null,
+      name: doc.name.slice(0, 200),
+      path: `${TEXT_PATH}${folderOf(t)}/${crypto.randomUUID()}`,
+      mime: doc.mime ?? "text/plain",
+      bytes: Buffer.byteLength(doc.text, "utf8"),
+      text: doc.text.slice(0, MAX_TEXT),
+      title: doc.title?.slice(0, 200) || null,
+      summary: doc.summary?.slice(0, 2000) || null,
+      key_points: (doc.keyPoints ?? []).map((k) => k.trim()).filter(Boolean).slice(0, 8),
+      method: doc.method ?? "text",
+      source_url: doc.url ?? null,
+      uploaded_by: by,
+    })
+    .select("id")
+    .single();
+  if (error || !data) throw new Error(error?.message ?? "Couldn't save it.");
+  await readKnowledge(admin, data.id as string);
+  return data.id as string;
 }
 
 // ─── Reading a file ─────────────────────────────────────────────────────────
@@ -170,7 +211,7 @@ async function progress(admin: SupabaseClient, id: string, p: number) {
  * (every page, page numbers kept); a scan, a picture or a PDF without text is read by the AI page by page.
  */
 export async function readKnowledge(admin: SupabaseClient, id: string) {
-  const { data: d } = await admin.from("knowledge_docs").select("id, scope, name, path, mime, lab_source_id").eq("id", id).single();
+  const { data: d } = await admin.from("knowledge_docs").select("id, scope, name, path, mime, lab_source_id, text, title, summary, key_points, method").eq("id", id).single();
   if (!d) return;
   const fail = async (note: string) => {
     await admin.from("knowledge_docs").update({ status: "failed", note: note.slice(0, 300), progress: 100, updated_at: new Date().toISOString() }).eq("id", id);
@@ -178,18 +219,28 @@ export async function readKnowledge(admin: SupabaseClient, id: string) {
   };
   try {
     await admin.from("knowledge_docs").update({ status: "reading", progress: 5, note: null, updated_at: new Date().toISOString() }).eq("id", id);
-    const { data: file } = await admin.storage.from(KNOWLEDGE_BUCKET).download(d.path as string);
-    if (!file) return fail("The file is missing.");
-    const buf = Buffer.from(await file.arrayBuffer());
+    // Text from a link (a Loom's transcript) is in the row; a file is in storage
+    const isText = (d.path as string).startsWith(TEXT_PATH);
+    let buf: Buffer;
+    if (isText) {
+      if (!(d.text as string | null)?.trim()) return fail("There's no text to read.");
+      buf = Buffer.from(d.text as string, "utf8");
+    } else {
+      const { data: file } = await admin.storage.from(KNOWLEDGE_BUCKET).download(d.path as string);
+      if (!file) return fail("The file is missing.");
+      buf = Buffer.from(await file.arrayBuffer());
+    }
     const name = d.name as string;
-    const ext = name.toLowerCase().split(".").pop() ?? "";
-    const mime = (d.mime as string | null) ?? "";
+    const ext = isText ? "txt" : (name.toLowerCase().split(".").pop() ?? "");
+    const mime = isText ? "text/plain" : ((d.mime as string | null) ?? "");
     await progress(admin, id, 15);
 
     let sections: Section[] = [];
     let pages: number | null = null;
-    let method = "text";
-    let about: { title: string; summary: string; key_points: string[] } | null = null;
+    let method = isText ? ((d.method as string | null) ?? "text") : "text";
+    // A text document saved with its title and summary already written isn't summarized again
+    let about: { title: string; summary: string; key_points: string[] } | null =
+      isText && d.title && d.summary ? { title: d.title as string, summary: d.summary as string, key_points: Array.isArray(d.key_points) ? (d.key_points as string[]) : [] } : null;
     const isPdf = mime === "application/pdf" || ext === "pdf";
     const isImage = mime.startsWith("image/") || ["png", "jpg", "jpeg", "webp", "gif", "heic"].includes(ext);
 

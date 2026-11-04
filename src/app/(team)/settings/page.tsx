@@ -16,6 +16,7 @@ import { addUsage, costOf, emptyUsage, type ModelKey, type Usage } from "@/lib/a
 import { roleLabel, type TeamRole } from "@/lib/roles";
 import { DataInspector } from "./data-inspector";
 import { KnowledgePanel } from "@/components/knowledge-panel";
+import { BuyerInsightsPanel, LoomPanel } from "@/components/loom-panel";
 import { listKnowledge } from "@/lib/knowledge";
 import { AGENT_MOMENTS, momentOf } from "@/lib/agent-moments";
 import Team from "../team/page";
@@ -205,6 +206,7 @@ async function Agents({ open, role: openRole, section, range, by }: { open: stri
               title="Files every agent can use"
               description="Playbooks, SOPs, research and guides as PDFs or documents. Each one is read once; a call gets only the excerpts that match its task, with the file's title, so the agents stay sharp however much is added."
             />
+            <LoomBlocks />
           </>
         ) : section === "expenses" ? (
           <Expenses
@@ -246,6 +248,24 @@ async function Agents({ open, role: openRole, section, range, by }: { open: stri
         description="PDFs and documents only this skill reads. Each call gets the parts that match its task, never the whole file."
       />
     </div>
+  );
+}
+
+/** Settings › AI agents › Knowledge: every Loom video and where it went, and what the senior buyer's Looms taught */
+async function LoomBlocks() {
+  if (!adminConfigured()) return null;
+  const admin = createAdminClient();
+  const [{ loomStatus }, { insightsStatus }, { data: clients }] = await Promise.all([
+    import("@/lib/loom-intake"),
+    import("@/lib/buying-insights"),
+    admin.from("clients").select("id, name").is("archived_at", null).order("name"),
+  ]);
+  const [loom, insights] = await Promise.all([loomStatus(admin), insightsStatus(admin)]);
+  return (
+    <>
+      <LoomPanel status={loom} clients={(clients ?? []).map((c) => ({ id: c.id as string, name: c.name as string }))} />
+      <BuyerInsightsPanel status={insights} canRule />
+    </>
   );
 }
 

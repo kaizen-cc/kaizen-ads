@@ -205,6 +205,18 @@ export async function readChannel(channel: string, since: Date, clientId: string
   return items;
 }
 
+/** Loom links in Slack messages, queued for the agents' knowledge (about the channel's client when there is one) */
+export async function queueSlackLooms(admin: SupabaseClient, messages: { body: string | null; url?: string | null; occurred_at?: string }[], clientId: string | null) {
+  const { loomLinks } = await import("@/lib/loom-links");
+  const withLoom = messages.filter((m) => m.body && /loom\.com\//i.test(m.body));
+  if (!withLoom.length) return;
+  const { queueLooms } = await import("@/lib/loom-intake");
+  for (const m of withLoom) {
+    const links = loomLinks(m.body ?? "");
+    if (links.length) await queueLooms(admin, links, { source: "slack", clientId, sourceRef: m.url ?? null, recordedAt: m.occurred_at ?? null }).catch((e) => console.error("[slack] loom", e instanceof Error ? e.message : e));
+  }
+}
+
 export async function collectSlack(admin: SupabaseClient, t?: Tracker): Promise<CollectResult> {
   const access = await matchSlackChannels(admin);
   const { data: clients } = await admin
@@ -228,6 +240,8 @@ export async function collectSlack(admin: SupabaseClient, t?: Tracker): Promise<
         // Save before moving the channel's bookmark, so a failure never skips messages
         const read = await readChannel(channel, await getCursor(admin, key), c.id, source);
         await saveItems(admin, read);
+        // A Loom posted in the client's channel: into the knowledge, as about this client
+        await queueSlackLooms(admin, read, c.id);
         await setCursor(admin, key, new Date(started.getTime() - 5 * 60_000), { ok: true, items: read.length });
         saved += read.length;
         t?.tick(`${c.name} (${source === "slack_internal" ? "internal" : "client"} channel)`);

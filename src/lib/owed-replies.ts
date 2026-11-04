@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { LIVE, isLive } from "@/lib/live";
 import { getCursor, setCursor, trimBody } from "@/lib/context/shared";
-import { listChannels, openableLink, permalink, slack, slackConfigured, type SlackMessage } from "@/lib/context/slack";
+import { listChannels, openableLink, permalink, queueSlackLooms, slack, slackConfigured, type SlackMessage } from "@/lib/context/slack";
 import { addresses, gmailToken, google, googleConfigured, plainText, withoutQuotes, type GmailMessage } from "@/lib/context/google";
 import { APPROVE_EMOJI, COMMIT, REQUESTISH, clearNotices, followPromises, recordPromises, type Candidate } from "@/lib/message-promises";
 
@@ -156,6 +156,14 @@ async function scanSlack(admin: Admin) {
       fresh.sort((a, b) => Number(a.ts) - Number(b.ts));
       read += fresh.length;
       const client = clientOf.get(ch.id) ?? null;
+      // A Loom posted in a team channel (client channels are picked up by the Slack sync): into the knowledge, the
+      // AI working out which client, if any, it's about
+      if (!client)
+        await queueSlackLooms(
+          admin,
+          fresh.map((m) => ({ body: m.text ?? null, url: permalink(ch.id, m.ts, m.thread_ts), occurred_at: new Date(Number(m.ts) * 1000).toISOString() })),
+          null,
+        );
       const rows: Row[] = [];
       const { data: waiting } = fresh.length ? await admin.from("owed_replies").select("id, status, target_id, from_name, client_id, url, thread_ts, message_ts, mentioned").eq("source", "slack").eq("channel_id", ch.id).in("status", OPEN) : { data: [] };
       const stillOpen = (waiting ?? []) as Row[];

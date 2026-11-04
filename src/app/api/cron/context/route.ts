@@ -81,6 +81,7 @@ function due(step: string | null) {
   if (step === "asana") return true; // every 5 minutes (vercel.json), so the mirror keeps up with Asana
   if (step === "sheet") return [12, 17].includes(hour);
   if (step === "docs") return true; // every 30 minutes (vercel.json)
+  if (step === "loom") return true; // every 15 minutes (vercel.json): the Loom queue, shared folders daily, the senior buyer's teachings consolidated
   if (step === "remind") return !["Sat", "Sun"].includes(weekday) && [11, 15].includes(hour);
   if (step === "notify") return true; // every 10 minutes (vercel.json): critical notifications still unread go out by email
   if (step === "reports") return true; // every 15 minutes (vercel.json): queues on Mondays and the 1st, drafts what's queued
@@ -206,6 +207,18 @@ export async function GET(request: Request) {
       const remindNow = minute < 15 && ((weekday === "Mon" && hour === 14) || (weekday === "Tue" && hour === 10));
       const reminded = remindNow ? await remindReports(admin, date) : 0;
       return Response.json({ queued, drafted, reminded });
+    }
+    if (step === "loom") {
+      const { aiEnabled } = await import("@/lib/ai");
+      if (!aiEnabled()) return Response.json({ skipped: "The AI isn't connected" });
+      const loom = await import("@/lib/loom-intake");
+      // Shared folders not read for a day: new recordings queued
+      const folders = await loom.recheckLoomFolders(admin).catch((e) => String(e));
+      const queue = await loom.processLoomQueue(admin, { budgetMs: 480_000, parallel: 4 });
+      // New teachings distilled since the last run: merged, contradictions flagged, the skills rewritten
+      const { count } = await admin.from("media_buying_insights").select("id", { count: "exact", head: true }).is("consolidated_at", null).is("merged_into", null);
+      const insights = count ? await (await import("@/lib/buying-insights")).consolidateInsights(admin, { budgetMs: 180_000 }).catch((e) => String(e)) : { new: 0 };
+      return Response.json({ folders, queue, insights });
     }
     if (step === "docs") {
       const { watchDocs } = await import("@/lib/context/docs");
