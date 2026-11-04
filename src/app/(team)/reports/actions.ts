@@ -366,3 +366,26 @@ export async function removeGenerated(kind: "bundle" | "report", id: string): Pr
   revalidatePath("/reports");
   return { ok: true, deleted: ok.r.status !== "posted" };
 }
+
+/**
+ * Fill our PowerPoint template with this monthly recap: a copy in the client's Drive (Monthly recaps), filled with the
+ * report's numbers, story, charts and top ads. Returns the Slides link and the PPTX download.
+ */
+export async function fillTemplateDeck(id: string, remap = false): Promise<Result<{ url: string; pptx: string; notes: string[] }>> {
+  const ok = await mine(id);
+  if (!ok) return { ok: false, error: "Not found." };
+  if (ok.r.kind !== "monthly") return { ok: false, error: "Only a monthly recap fills the template." };
+  const { fillRecapDeck } = await import("@/lib/ai-tools/recap-deck");
+  const r = await fillRecapDeck(createAdminClient(), id, ok.me.id, { remap });
+  if (!r.ok) return r;
+  return { ok: true, url: r.url, pptx: r.pptx, notes: r.notes };
+}
+
+/** The filled template for this recap, if there is one */
+export async function deckForReport(id: string): Promise<{ url: string; pptx: string; notes: string[]; at: string | null } | null> {
+  const ok = await mine(id);
+  if (!ok) return null;
+  const { data } = await createAdminClient().from("recap_decks").select("url, status, notes, updated_at").eq("report_id", id).maybeSingle();
+  if (!data?.url || data.status !== "done") return null;
+  return { url: data.url as string, pptx: `/api/reports/${id}/deck`, notes: (data.notes ?? []) as string[], at: (data.updated_at as string) ?? null };
+}

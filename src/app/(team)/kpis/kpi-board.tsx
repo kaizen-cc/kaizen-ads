@@ -14,6 +14,7 @@ import { ClientChat } from "../clients/[slug]/client-chat";
 import type { Explore } from "@/lib/kpi/explore";
 import { HealthChart, PaceBar, TargetGauge, healthHex, healthOf, paceMeta } from "./kpi-charts";
 import { AuditPanel, agoText, type AuditSummary, type QuickAction } from "./audit-panel";
+import { PolicyPanel } from "./policy-panel";
 import { ChangeLog } from "@/components/change-log";
 import type { AccountChange } from "@/lib/account-changes";
 import type { SprintSummary } from "@/lib/sprints";
@@ -560,9 +561,9 @@ function SprintStrip({ s }: { s: SprintSummary }) {
   );
 }
 
-type Tab = "overview" | "numbers" | "actions" | "creative" | "notes" | "settings";
+type Tab = "overview" | "numbers" | "actions" | "policy" | "creative" | "notes" | "settings";
 
-const TABS: Tab[] = ["overview", "numbers", "actions", "creative", "notes", "settings"];
+const TABS: Tab[] = ["overview", "numbers", "actions", "policy", "creative", "notes", "settings"];
 
 function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers: Person[]; tab: Tab; setTab: (t: Tab) => void; onClose: () => void; onStep: (dir: 1 | -1) => void }) {
   const router = useRouter();
@@ -661,6 +662,7 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
     { id: "overview", label: "Overview", hint: "Where it stands, the 30 days, budget and the next move" },
     { id: "numbers", label: "Numbers", hint: "Every window, month and quarter, and the metrics Meta reports" },
     { id: "actions", label: "Actions", count: moves || null, hint: "The audit and the moves to make in the ad account" },
+    ...(r.platform === "google" ? [{ id: "policy" as const, label: "Policy", hint: "Disapproved and limited ads, assets and keywords: the trigger, Google's policy and the fix" }] : []),
     { id: "creative", label: "Creative", hint: "Ads wearing out, what has worked for them, and what's live in their market" },
     { id: "notes", label: "Notes", count: notes || null, hint: "The #1 problem, the plan, this week's updates and every change in the account" },
     { id: "settings", label: "Settings", hint: "What's counted, the target and the budget" },
@@ -891,6 +893,13 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
                 </>
               ) : (
                 <p className="rounded-[14px] border border-dashed border-line px-5 py-10 text-center text-sm text-muted">Link the ad account (in Settings) and the audit can read it.</p>
+              ))}
+
+            {tab === "policy" &&
+              (r.platform === "google" && r.accountId ? (
+                <PolicyPanel clientId={r.clientId} />
+              ) : (
+                <p className="rounded-[14px] border border-dashed border-line px-5 py-10 text-center text-sm text-muted">Link the Google Ads account (in Settings) and the policy check can read it.</p>
               ))}
 
             {tab === "creative" && <CreativeTab r={r} />}

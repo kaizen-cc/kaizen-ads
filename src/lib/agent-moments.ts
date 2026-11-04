@@ -163,6 +163,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
   google_auditor: [
     { title: "Audits a Google Ads account against its KPI target: campaigns, bidding, budgets, impression share, keywords and search terms, conversion tracking (with every campaign's scorecard)", where: "KPIs · a Google card · AI account audit", trigger: "click", when: "When someone runs an audit, or on its own when the account goes off target", labels: ["audit"] },
     { title: "Checks each Google optimization sprint: what changed in Google Ads, what was ticked, and what to tell the buyer", where: "KPIs · sprint page · Next for me", trigger: "auto", when: "Daily, or on the follow-up date it set", labels: ["sprint check"] },
+    { title: "Checks every disapproved or limited Google ad, asset and keyword: the exact trigger, Google's policy article quoted, the landing page read, and the fix (a compliant rewrite or the page change), an appeal and how to request review", where: "Client page · Google Ads · Policy; KPIs · a Google card · Policy", trigger: "click", when: "When someone clicks Check everything", labels: ["google policy check "] },
   ],
   google_launcher: [
     { title: "Turns a change asked for in the client chat into the exact Google Ads changes (campaigns, ad groups, ads, keywords, budgets, targets, negatives, final URLs) from the live account, to confirm", where: "Client page and KPI board · client chat", trigger: "click", when: "When someone asks the chat to change the Google Ads account", labels: ["chat ad change google"] },
@@ -177,6 +178,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Rewrites a report from the buyer's note", where: "Reports · a report", trigger: "click", when: "When the buyer asks for changes", labels: ["revise report"] },
     { title: "Brings the Slack message up to date when the buyer edited the report after it was written", where: "Reports · a report", trigger: "auto", when: "On the message step, when the report changed since", labels: ["refresh report message"] },
     { title: "Writes the message that goes with a joint report", where: "Reports · Build a report", trigger: "click", when: "When a report covers more than one service", labels: ["joint report message"] },
+    { title: "Reads the team's monthly recap template once and says where each piece of the recap goes (kept per template)", where: "Reports · a monthly recap · Fill our PowerPoint template", trigger: "click", when: "The first time a template without {{placeholders}} is filled, or on Map the template again", labels: ["recap deck map "] },
   ],
   google_reporter: [
     { title: "Writes the weekly and monthly client report for a Google Ads account, the same way as the Meta one", where: "Reports · KPIs", trigger: "auto", when: "Mondays and the 1st, and when someone builds a report", labels: ["weekly report", "monthly report", "custom report", "built report"] },

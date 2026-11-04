@@ -6,6 +6,7 @@ import { SlackConnect } from "@/components/slack-connect";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { Layer } from "../clients/[slug]/layer";
 import { PdfPreview, type PdfField } from "./pdf-preview";
+import { RecapDeckButton } from "./recap-deck-button";
 import { METRIC_KEYS, columnKeys, metricLabel, platformName, reportBasis, TABLE_DEFAULT, tileKeys, type MetricKey, type ReportLayout } from "@/lib/reports/format";
 import type { ReportMetrics } from "@/lib/reports/metrics";
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
@@ -650,6 +651,7 @@ ${t}` : t);
               <a href={`/api/reports/${report.id}/pdf${joint ? "?whole=1" : ""}`} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center md:min-h-0 hover:text-fg">
                 {joint ? "Preview the whole report (PDF) ↗" : "Preview the PDF ↗"}
               </a>
+              {report.kind === "monthly" && <RecapDeckButton reportId={report.id} />}
               {!sent && (
                 <button type="button" onClick={() => start(async () => void (await redraft(report.id), router.refresh()))} className="hover:text-fg">
                   Write it again from scratch

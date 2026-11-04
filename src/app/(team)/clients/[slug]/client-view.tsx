@@ -71,6 +71,7 @@ import { Fold } from "./knowledge-fold";
 import { GtmPanel, type GtmStrategy } from "./gtm-panel";
 import { GoogleDeploysPanel } from "./google-deploys-panel";
 import { KeywordListsPanel } from "./keyword-lists-panel";
+import { PolicyPanel } from "../../kpis/policy-panel";
 import type { KeywordList } from "@/lib/keyword-research";
 import type { Deploy } from "@/lib/google-deploy";
 import { untilLabel } from "@/lib/allotment";
@@ -888,6 +889,12 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                       label: "Strategy",
                       hint: "The Google Ads go-to-market strategy: campaigns, keywords, geo, copy and assets",
                       content: <div className="grid gap-6">{!demo ? <GtmPanel clientId={client.id} slug={client.slug} gtm={googleGtm} canReview={can.assign} readOnly={!live} platform="google" /> : <p className="text-sm text-faint">Not in the demo.</p>}</div>,
+                    },
+                    {
+                      id: "policy",
+                      label: "Policy",
+                      hint: "Disapproved and limited ads, assets and keywords: the exact trigger, Google's policy article, the landing page and the fix",
+                      content: !demo ? <PolicyPanel clientId={client.id} /> : <p className="text-sm text-faint">Not in the demo.</p>,
                     },
                     {
                       id: "ideas",
