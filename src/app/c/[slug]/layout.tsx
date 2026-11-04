@@ -13,12 +13,15 @@ export default async function PortalLayout({ children, params }: { children: Rea
   if (!adminConfigured()) notFound();
   if (viewer.kind === "contact" && !viewer.brands.some((b) => b.slug === slug)) notFound();
   const db = viewer.kind === "contact" ? createAdminClient() : await createClient();
-  const { data: client } = await db.from("clients").select("id, name, slug, portal_live").eq("slug", slug).maybeSingle();
+  const { data: client } = await db.from("clients").select("id, name, slug, portal_live, slack_channel_id").eq("slug", slug).maybeSingle();
   if (!client || (viewer.kind === "contact" && !client.portal_live)) notFound();
   const admin = createAdminClient();
-  const [nav, { count: waiting }] = await Promise.all([
+  const { unreadCount } = await import("@/lib/portal-chat");
+  const [nav, { count: waiting }, unread] = await Promise.all([
     portalSections(admin, client.id),
     admin.from("requests").select("id", { count: "exact", head: true }).eq("client_id", client.id).eq("stage", "client_review").is("deleted_at", null),
+    // Their team chat: what our team wrote since they last looked
+    client.slack_channel_id ? unreadCount(admin, client.id, viewer.id).catch(() => 0) : Promise.resolve(0),
   ]);
   return (
     <PortalShell
@@ -31,6 +34,7 @@ export default async function PortalLayout({ children, params }: { children: Rea
       waiting={waiting ?? 0}
       setup={nav.setup}
       plan={nav.plan}
+      chat={client.slack_channel_id ? { unread } : null}
     >
       {children}
     </PortalShell>

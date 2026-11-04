@@ -159,11 +159,16 @@ async function scanSlack(admin: Admin) {
       const rows: Row[] = [];
       const { data: waiting } = fresh.length ? await admin.from("owed_replies").select("id, status, target_id, from_name, client_id, url, thread_ts, message_ts, mentioned").eq("source", "slack").eq("channel_id", ch.id).in("status", OPEN) : { data: [] };
       const stillOpen = (waiting ?? []) as Row[];
+      // A client writing in their portal chat is posted by the Kaizen app under their name: still the client speaking
+      const portal = fresh.length && client?.external ? await (await import("@/lib/portal-chat")).portalMessagesIn(admin, ch.id, new Date(since)) : new Map<string, string>();
       for (const m of fresh) {
-        if (!m.user || m.bot_id || (m.subtype && m.subtype !== "thread_broadcast") || !m.text?.trim()) continue;
-        const fromTeam = who.team.has(m.user);
+        const fromPortal = portal.get(m.ts);
+        if (fromPortal && m.text?.trim()) m.user = `portal:${m.ts}`;
+        else if (!m.user || m.bot_id || (m.subtype && m.subtype !== "thread_broadcast") || !m.text?.trim()) continue;
+        if (fromPortal) who.nameOf.set(m.user!, fromPortal);
+        const fromTeam = !fromPortal && who.team.has(m.user!);
         // Someone speaking in a thread (or the channel) answers what was asked of them there before
-        const authorProfile = who.profileOf.get(m.user);
+        const authorProfile = fromPortal ? undefined : who.profileOf.get(m.user!);
         if (fromTeam) await answeredBy(admin, stillOpen, m, authorProfile ?? null);
         // Something taken on ("I'll get that over", "love it, let's run it"): handed to the promise reader with what came before
         if (fromTeam && authorProfile && COMMIT.test(m.text)) {

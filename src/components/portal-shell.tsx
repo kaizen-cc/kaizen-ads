@@ -16,6 +16,7 @@ const ICONS: Record<string, string> = {
   setup: "M12 3l2.5 5 5.5.8-4 3.9.9 5.5L12 15.7 7.1 18.2l.9-5.5-4-3.9 5.5-.8z",
   plan: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M12 8v4l3 2",
   report: "M7 3h7l5 5v13H7z M14 3v5h5 M10 13h6 M10 17h6",
+  chat: "M4 5h16v11H9l-5 4z M8 10h8 M8 13h5",
 };
 
 function Icon({ name, className = "" }: { name: string; className?: string }) {
@@ -36,6 +37,7 @@ export function PortalShell({
   waiting,
   setup,
   plan,
+  chat = null,
   children,
 }: {
   slug: string;
@@ -48,11 +50,14 @@ export function PortalShell({
   waiting: number;
   setup: boolean;
   plan: boolean;
+  /** Their team chat (their Slack channel with us), when it's set up: messages from us they haven't read */
+  chat?: { unread: number } | null;
   children: React.ReactNode;
 }) {
   const path = usePathname();
   const items: Item[] = [
     { href: `/c/${slug}`, label: "Home", icon: "home", badge: waiting || null },
+    ...(chat ? [{ href: `/c/${slug}/chat`, label: "Chat", icon: "chat", badge: path.endsWith("/chat") ? null : chat.unread || null }] : []),
     { href: `/c/${slug}/dashboard`, label: "Dashboard", icon: "chart" },
     { href: `/c/${slug}/reports`, label: "Reports", icon: "report" },
     ...(setup ? [{ href: `/c/${slug}/start`, label: "Setup", icon: "setup" }] : []),
@@ -121,7 +126,12 @@ export function PortalShell({
       </header>
 
       {/* The dashboard takes the whole width (its conversation docks beside it) */}
-      <div className={`mx-auto w-full px-4 pb-[calc(6rem+env(safe-area-inset-bottom))] pt-5 md:px-8 lg:pb-16 ${path.endsWith("/dashboard") ? "max-w-[1680px] lg:pt-6" : "max-w-6xl lg:pt-10"}`}>{children}</div>
+      {/* The chat fills the screen between the bars, like a messaging app */}
+      <div
+        className={`mx-auto w-full px-4 md:px-8 ${path.endsWith("/chat") ? "max-w-[1400px] pb-[calc(58px+env(safe-area-inset-bottom))] pt-0 lg:py-6" : `pb-[calc(6rem+env(safe-area-inset-bottom))] pt-5 lg:pb-16 ${path.endsWith("/dashboard") ? "max-w-[1680px] lg:pt-6" : "max-w-6xl lg:pt-10"}`}`}
+      >
+        {children}
+      </div>
 
       {/* Phone: the tab bar */}
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-bg/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl lg:hidden" aria-label="Your portal">

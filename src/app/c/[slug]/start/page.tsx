@@ -17,7 +17,7 @@ export default async function StartPage({ params }: { params: Promise<{ slug: st
   const team = viewer.kind === "staff";
   if (!adminConfigured() || (!team && !viewer.brands.some((b) => b.slug === slug))) notFound();
   const admin = createAdminClient();
-  const { data: client } = await admin.from("clients").select("id, name, slug, kaizen_id, portal_live, services, services_extra, services_removed").eq("slug", slug).maybeSingle();
+  const { data: client } = await admin.from("clients").select("id, name, slug, kaizen_id, portal_live, slack_channel_id, services, services_extra, services_removed").eq("slug", slug).maybeSingle();
   if (!client || (!team && !client.portal_live)) notFound();
   if (team) {
     // The team's own access rules decide whether they may open it
@@ -61,6 +61,7 @@ export default async function StartPage({ params }: { params: Promise<{ slug: st
           questions={await (await import("@/lib/bible-questions")).clientQuestions(admin, client.id).then((q) => q.length).catch(() => 0)}
           intake={{ done: (intakes ?? 0) > 0 || form?.status === "submitted", clientId: (client.kaizen_id as number | null) ?? null, slug: client.slug, started: Object.keys((form?.answers ?? {}) as object).length > 0, booked: form?.status === "submitted" ? Boolean(form.call_booked_at) : null }}
           presentation={deck && ["sent", "approved"].includes(deck.status as string) ? (deck.status as string) : null}
+          chat={client.slack_channel_id && process.env.SLACK_BOT_TOKEN ? { slack: `https://slack.com/app_redirect?channel=${client.slack_channel_id}` } : null}
         />
       </main>
     </div>

@@ -15,7 +15,7 @@ import { askHelp, assetSlots, assetsShared, googleSend, helpSlots, helpToCall, m
 // them through with pictures of the screens they'll see, and says plainly when it's done. Nothing here is a form to
 // puzzle over: copy buttons for every ID, one tap for "let's do it on our call".
 
-type Props = { slug: string; brand: string; firstName: string | null; guide: Guide; has: GuideHas; bmId: string | null; adminEmails: string[]; /** The address they add on Google tools, their website and email platform */ techEmail: string | null; /** The one they add on Klaviyo */ klaviyoEmail: string | null; managerId: string | null; examples: { id: string; image: string; video: string | null }[]; /** A real ad for each style */ looks: Record<string, StyleLook>; presentation: string | null; /** Brand plan questions waiting on them */ questions?: number; help: Record<HelpStep, HelpTurn[]>; /** The marketing intake form: the step right after access */ intake: { done: boolean; clientId: number | null; slug: string; started: boolean; /** Sent in the portal: whether the onboarding call is booked (null: not sent there) */ booked: boolean | null } };
+type Props = { slug: string; brand: string; firstName: string | null; guide: Guide; has: GuideHas; bmId: string | null; adminEmails: string[]; /** The address they add on Google tools, their website and email platform */ techEmail: string | null; /** The one they add on Klaviyo */ klaviyoEmail: string | null; managerId: string | null; examples: { id: string; image: string; video: string | null }[]; /** A real ad for each style */ looks: Record<string, StyleLook>; presentation: string | null; /** Brand plan questions waiting on them */ questions?: number; help: Record<HelpStep, HelpTurn[]>; /** The marketing intake form: the step right after access */ intake: { done: boolean; clientId: number | null; slug: string; started: boolean; /** Sent in the portal: whether the onboarding call is booked (null: not sent there) */ booked: boolean | null }; /** Their team chat in the portal (their Slack channel with us), when it's set up */ chat?: { slack: string | null } | null };
 export type StartProps = Props;
 type StepKey = "meta" | "google" | "tools" | "tracking" | "website" | "email" | "intake" | "assets" | "style";
 /** The access steps, listed first under their own heading */
@@ -101,6 +101,25 @@ export function StartView(p: Props) {
             </span>
             <span className="text-[12px] text-brand-text">Open →</span>
           </Link>
+        )}
+        {p.chat && (
+          <div className="flex flex-wrap items-center gap-4 rounded-[20px] border border-line bg-surface p-4 md:p-5">
+            <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-surface-2 text-xl">💬</span>
+            <span className="min-w-0 flex-1">
+              <span className="block font-heading text-[17px]">Your team chat is right here</span>
+              <span className="block text-[13.5px] text-muted">Questions, files, screenshots: message the Kaizen team any time in the portal.</span>
+            </span>
+            <span className="flex w-full flex-wrap items-center gap-3 sm:w-auto">
+              <Link href={`/c/${p.slug}/chat`} className="inline-flex min-h-11 items-center rounded-full bg-fg px-4 text-[13.5px] font-medium text-bg">
+                Open chat
+              </Link>
+              {p.chat.slack && (
+                <a href={p.chat.slack} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center text-[12.5px] text-muted hover:text-fg">
+                  Prefer Slack? Join the channel ↗
+                </a>
+              )}
+            </span>
+          </div>
         )}
       </div>
 

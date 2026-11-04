@@ -243,7 +243,9 @@ export async function GET(request: Request) {
       const issues = await (await import("@/lib/website-issues")).keepIssues(admin).catch((e) => String(e));
       const packages = nyNow().hour === 9 ? await (await import("@/lib/package-gaps")).flagPackageGaps(admin).catch((e) => String(e)) : "not the hour";
       const sheets = await (await import("@/lib/onboarding-sheet")).keepOnboardingSheets(admin).catch((e) => String(e));
-      return Response.json({ links, issues, packages, sheets });
+      // Portal chat: an email for team messages left unread (off until switched on)
+      const chat = await (await import("@/lib/portal-chat")).chatDigest(admin).catch((e) => String(e));
+      return Response.json({ links, issues, packages, sheets, chat });
     }
     if (step === "ledger") return Response.json(await (await import("@/lib/ledger")).runLedger(admin));
     if (step === "patterns") {

@@ -265,7 +265,13 @@ export async function checkSlack() {
   const missing = header ? NEEDED_SCOPES.filter((s) => !scopes.includes(s)) : [];
   if (missing.length) throw new Error(`Connected to ${body.team} as @${body.user}, but missing scopes: ${missing.join(", ")}. Add them under Bot Token Scopes and reinstall the app.`);
   const channels = await listChannels();
-  return `Connected to ${body.team} as @${body.user}${header ? ", all scopes in place" : ""}. Sees ${channels.length} channels and is a member of ${channels.filter((c) => c.is_member).length}.`;
+  // The clients' portal chat posts as the app under each client's name (chat:write.customize) and sends their files
+  const chatMissing = header ? ["chat:write", "chat:write.customize", "files:write", "files:read"].filter((s) => !scopes.includes(s)) : [];
+  const chat = chatMissing.length
+    ? ` Portal chat: add ${chatMissing.join(", ")} under Bot Token Scopes and reinstall${chatMissing.includes("chat:write.customize") ? " (until then, a client's portal messages show in Slack starting with their name)" : ""}.`
+    : "";
+  const events = process.env.SLACK_SIGNING_SECRET ? "" : " Portal chat replies show within a few seconds; set SLACK_SIGNING_SECRET and turn on Event Subscriptions for instant.";
+  return `Connected to ${body.team} as @${body.user}${header ? ", all scopes in place" : ""}. Sees ${channels.length} channels and is a member of ${channels.filter((c) => c.is_member).length}.${chat}${events}`;
 }
 
 /**

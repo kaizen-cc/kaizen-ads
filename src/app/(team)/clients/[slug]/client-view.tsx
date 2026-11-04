@@ -203,7 +203,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
     ...(assets?.stale && active ? [{ tone: "info" as const, text: "No new footage on Drive in 45 days: time for a shot list", href: `/clients/${client.slug}?service=creative&tab=package` }] : []),
     ...(!(kpis ?? []).length ? [{ tone: "warn" as const, text: "No KPI target set", href: "/kpis" }] : []),
     ...(!contacts.length ? [{ tone: "warn" as const, text: "No client contact: nobody can approve ads", href: tab("team") }] : []),
-    ...(!client.slack_channel_id ? [{ tone: "info" as const, text: "No client Slack channel linked", href: tab("team") }] : []),
+    ...(!client.slack_channel_id ? [{ tone: "info" as const, text: "Connect their Slack channel: it's their portal chat too", href: tab("team") }] : []),
   ];
   const needsSetup = [!contacts.length, !client.slack_channel_id, !client.drive_folder_id].filter(Boolean).length;
   const sprintMoves = Object.values(sprints ?? {}).reduce((n, s) => n + Math.max(0, s.total - s.done), 0);
