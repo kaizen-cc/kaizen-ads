@@ -23,6 +23,12 @@ export default async function NextForMe() {
   const [data, { data: mine }] = await Promise.all([loadNextForMe(db, me), db.from("client_assignments").select("client_id").eq("profile_id", me.id)]);
   // What works across businesses like the ones they work on: the same patterns the audits and refresh briefs build on
   const patterns = mine?.length ? await loadPatterns(db, [...new Set(mine.map((m) => m.client_id as string))]).catch(() => null) : null;
+  // The Google team: ideas taken to their clients from Ideas › Google, waiting on a decision or to be applied
+  const google = me.role === "google_buyer" || me.role === "head_of_google";
+  const deploys =
+    google && mine?.length
+      ? (await import("@/lib/google-deploy").then(({ loadDeploys }) => loadDeploys(db, [...new Set(mine.map((m) => m.client_id as string))], { open: true })).catch(() => [])).filter((d) => d.status === "open" || d.status === "approved")
+      : [];
   const now = new Date();
   const first = me.fullName.split(" ")[0];
   const n = data.now.length + data.decide.length;
@@ -40,6 +46,29 @@ export default async function NextForMe() {
       </Suspense>
       <HandoffCallout db={db} me={me.id} />
       <NextList data={data} />
+      {deploys.length > 0 && (
+        <section className="grid gap-3">
+          <div>
+            <h2 className="font-heading text-[20px] tracking-tight">Google ideas for your clients</h2>
+            <p className="text-sm text-muted">Winners from other accounts, written for your clients: approve, edit or decline, then apply.</p>
+          </div>
+          <ul className="grid gap-2">
+            {deploys.map((d) => (
+              <li key={d.id}>
+                <a href={`/clients/${d.clientSlug}?service=google&tab=ideas&deploy=${d.id}`} className="flex min-h-14 items-center gap-3 rounded-[16px] border border-line bg-surface px-4 py-3 transition-colors hover:border-faint">
+                  <span className="grid min-w-0 flex-1 gap-0.5">
+                    <span className="text-[12px] text-faint">
+                      {d.client} · {d.kind === "copy" ? "Ad copy" : d.kind === "campaign" ? "Campaign" : "Keywords"}
+                    </span>
+                    <span className="truncate text-[14px]">{d.plan?.summary ?? "From a Google winner"}</span>
+                  </span>
+                  <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-[11px] ${d.status === "open" ? "bg-warn-soft text-warn" : "bg-ok-soft text-ok"}`}>{d.status === "open" ? "To decide" : "To apply"}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {patterns && patterns.groups.length > 0 && (
         <section className="grid gap-3">
           <div>

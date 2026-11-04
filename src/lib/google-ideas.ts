@@ -199,7 +199,7 @@ export type GoogleIdea = {
 
 const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 /** Whether a winner is the client's own brand: a brand campaign or ad group, or a search with the client's name in it. */
-function isBranded(client: string, kind: string, campaign: string | null, adGroup: string | null, text: string | undefined) {
+export function isBranded(client: string, kind: string, campaign: string | null, adGroup: string | null, text: string | undefined) {
   if (/(^|[^a-z])brand(ed)?([^a-z]|$)/i.test(`${campaign ?? ""} ${adGroup ?? ""}`)) return true;
   if (kind === "ad" || !text) return false;
   const t = squash(text);

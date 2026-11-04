@@ -124,6 +124,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Researches Google Ads benchmarks for each sub-vertical (WordStream first), the stand-in target for accounts without one", where: "Ideas · Verticals · KPI board", trigger: "auto", when: "Hourly until done, then every 90 days", labels: ["google benchmarks"] },
     { title: "Decides whether a lesson that worked for one client truly applies to others in its sub-vertical (product, buyer, sales motion, price point) and shares it, reworded and unnamed", where: "Client pages · client memory", trigger: "auto", when: "When an audit or a sprint learns what works", labels: ["share lesson"] },
     { title: "Writes each sub-vertical's playbook: avatars, the angles that land, and the ads that prove them", where: "Ideas · Verticals · Playbook", trigger: "auto", when: "Hourly when something new comes in, or Rebuild", labels: ["playbook"] },
+    { title: "Writes each sub-vertical's Google playbook from our non-brand Google winners: the searches that convert, the copy that wins, the structures, landing pages and what fails", where: "Ideas · Google · Verticals", trigger: "auto", when: "Hourly when new Google winners come in, or Rebuild", labels: ["google playbook "] },
   ],
   auditor: [
     { title: "Audits the whole business at once: Meta, Google, creative and what the client is telling us, connected, with what to do and watch", where: "Client page · Overview · Full business audit", trigger: "click", when: "When someone runs the full business audit", labels: ["business audit "] },
@@ -151,6 +152,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
   google_launcher: [
     { title: "Helps a new client send their Google Ads ID or make an account in their setup guide, from their words and screenshots", where: "Client portal · Setup", trigger: "click", when: "When the client asks for help in a setup step", labels: ["setup help "] },
     { title: "Turns an audit action or sprint move into exact Google Ads changes (pause or enable, budgets, targets, negatives)", where: "KPIs · Google audit · sprint", trigger: "click", when: "Make this change in Google Ads", labels: ["plan a Google Ads change"] },
+    { title: "Takes a winning Google ad, keyword or search term to another client: ad copy, a campaign or keywords around it, in their voice and from their strategy", where: "Ideas · Google · Use it on a client; Client page · Google Ads · Ideas to use", trigger: "click", when: "When a Google buyer uses an idea on a client, or asks for a rewrite", labels: ["deploy a Google idea "] },
   ],
   reporter: [
     { title: "Answers a client's questions about their numbers on their dashboard, and tells the buyer when it's a worry", where: "Client portal · Dashboard", trigger: "click", when: "When the client asks about their numbers", labels: ["client dashboard question "] },

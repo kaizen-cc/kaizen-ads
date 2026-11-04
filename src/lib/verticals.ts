@@ -359,8 +359,12 @@ async function keepVerticalsRun(admin: SupabaseClient, t: import("@/lib/progress
   const left = 640_000 - (Date.now() - start);
   // About a minute each: as many as the run has time for (up to 10)
   const playbooks = left > 90_000 ? await keepPlaybooks(admin, Math.min(10, Math.floor((left - 30_000) / 60_000))).catch(() => 0) : 0;
+  // And a Google playbook or two (from our Google winners), with what's left
+  const { keepGooglePlaybooks } = await import("@/lib/google-playbooks");
+  const leftG = 640_000 - (Date.now() - start);
+  const googlePlaybooks = leftG > 90_000 ? await keepGooglePlaybooks(admin, Math.min(4, Math.floor((leftG - 30_000) / 60_000))).catch(() => 0) : 0;
   t.tick(null);
-  return { built, placed, benchmarks, fame, playbooks };
+  return { built, placed, benchmarks, fame, playbooks, googlePlaybooks };
 }
 
 /** Parent vertical names by id (a self-join PostgREST can't embed by itself). */

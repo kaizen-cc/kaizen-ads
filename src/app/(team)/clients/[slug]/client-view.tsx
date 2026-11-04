@@ -64,6 +64,8 @@ import type { ClientCreative } from "@/lib/client-creative";
 import { BrandBiblePanel, type BrandBible } from "./brand-bible-panel";
 import { Fold } from "./knowledge-fold";
 import { GtmPanel, type GtmStrategy } from "./gtm-panel";
+import { GoogleDeploysPanel } from "./google-deploys-panel";
+import type { Deploy } from "@/lib/google-deploy";
 import { untilLabel } from "@/lib/allotment";
 import { isLive } from "@/lib/live";
 
@@ -123,6 +125,9 @@ export type ClientViewProps = {
   brandBible?: BrandBible | null;
   gtm?: GtmStrategy | null; // the Meta go-to-market strategy
   googleGtm?: GtmStrategy | null; // the Google Ads go-to-market strategy
+  /** Google ideas taken to this client from Ideas › Google, to approve and apply */
+  googleDeploys?: Deploy[];
+  canDeployGoogle?: boolean;
   /** Their store or CRM: connections, real customers and lead outcomes (team side) */
   business?: React.ReactNode;
   today: string; // YYYY-MM-DD in New York
@@ -177,7 +182,7 @@ export type ClientViewProps = {
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, business = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, docs = null, reports = null, playbook = null, setup = null, emails = null, businessAudit = null, patterns = null }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], canDeployGoogle = false, business = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, docs = null, reports = null, playbook = null, setup = null, emails = null, businessAudit = null, patterns = null }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -836,6 +841,12 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                       label: "Strategy",
                       hint: "The Google Ads go-to-market strategy: campaigns, keywords, geo, copy and assets",
                       content: <div className="grid gap-6">{!demo ? <GtmPanel clientId={client.id} slug={client.slug} gtm={googleGtm} canReview={can.assign} readOnly={!live} platform="google" /> : <p className="text-sm text-faint">Not in the demo.</p>}</div>,
+                    },
+                    {
+                      id: "ideas",
+                      label: googleDeploys.some((x) => x.status === "open") ? `Ideas to use · ${googleDeploys.filter((x) => x.status === "open").length}` : "Ideas to use",
+                      hint: "Winners from other accounts made into copy, campaigns or keywords for this client: approve, edit, apply",
+                      content: <GoogleDeploysPanel deploys={googleDeploys} canAct={canDeployGoogle && live} />,
                     },
                   ],
                 },

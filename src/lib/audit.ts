@@ -517,7 +517,8 @@ async function finishAudit(admin: SupabaseClient, id: string, a: { target_id: st
     await m.start("vertical");
     const [{ playbookBlock }, { marketBlock }, { industryWinners, winnersBlock }, { rebuttalsBlock }] = await Promise.all([import("@/lib/playbooks"), import("@/lib/market"), import("@/lib/industry"), import("@/lib/audit-rebuttals")]);
     const [playbook, market, winners, { data: sub }, { data: fame }, pushback] = await Promise.all([
-      playbookBlock(admin, a.client_id).catch(() => ""),
+      // Google audits read the Google playbook (our Google winners in this sub-vertical); Meta audits the Meta one
+      x.platform === "google" ? import("@/lib/google-playbooks").then(({ googlePlaybookBlock }) => googlePlaybookBlock(admin, a.client_id)).catch(() => "") : playbookBlock(admin, a.client_id).catch(() => ""),
       marketBlock(admin, a.client_id, client.industry ?? null, 8).catch(() => ""),
       client.industry && client.industry !== "other" ? industryWinners(admin, client.industry, a.client_id, 8).catch(() => []) : Promise.resolve([]),
       client.vertical_id ? admin.from("verticals").select("name, benchmarks, google_benchmarks").eq("id", client.vertical_id).maybeSingle() : Promise.resolve({ data: null }),

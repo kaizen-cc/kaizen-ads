@@ -163,8 +163,10 @@ export async function buildGtm(admin: SupabaseClient, clientId: string, by: stri
       })
       .join("\n\n");
     const context = contextBlock(ctx);
-    const { playbookBlock } = await import("@/lib/playbooks");
-    const playbook = await playbookBlock(admin, clientId).catch(() => "");
+    // The sub-vertical's playbook: Google's (our Google winners) for a Google strategy, Meta's for Meta
+    const playbook = google
+      ? await import("@/lib/google-playbooks").then(({ googlePlaybookBlock }) => googlePlaybookBlock(admin, clientId)).catch(() => "")
+      : await import("@/lib/playbooks").then(({ playbookBlock }) => playbookBlock(admin, clientId)).catch(() => "");
     // The foundation it's built on, and how this kind of business makes money
     const [{ data: bible }, { businessModelOf, modelBlock }] = await Promise.all([admin.from("client_brand_bibles").select("read_this_first, markdown, version").eq("client_id", clientId).maybeSingle(), import("@/lib/business-model")]);
     const model = await businessModelOf(admin, clientId).catch(() => null);

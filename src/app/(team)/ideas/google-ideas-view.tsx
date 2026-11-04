@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { tintFor } from "@/lib/colors";
 import type { GoogleIdea, GoogleInsight, GoogleKind } from "@/lib/google-ideas";
-import { googleIdeaInsight } from "./google-actions";
+import { deployIdea, googleIdeaInsight } from "./google-actions";
 import { SHEET_BACKDROP, SHEET_PANEL, SheetBar } from "../winners/winners-library";
 
 // Google's Hall of Fame and live winners: our search ads, keywords and search terms that convert cheaper than their
@@ -46,7 +46,9 @@ const resultOf = (i: GoogleIdea, mode: "fame" | "live") => (mode === "live" ? (i
 const fmt = (i: GoogleIdea, x: number | null) => (x == null ? "–" : i.roas ? `${x.toFixed(1)}x` : money(x));
 const textOf = (i: GoogleIdea) => (i.kind === "keyword" ? (MATCH[String(i.content.match)] ?? ((t: string) => t))(i.content.text ?? "") : (i.content.text ?? (i.content.headlines ?? [])[0] ?? ""));
 
-export function GoogleIdeasView({ items, mode, verticals }: { items: GoogleIdea[]; mode: "fame" | "live"; verticals: string[] }) {
+type DeployTo = { clients: { id: string; name: string; slug: string; vertical: string | null }[] } | null;
+
+export function GoogleIdeasView({ items, mode, verticals, deploy = null }: { items: GoogleIdea[]; mode: "fame" | "live"; verticals: string[]; /** Google buyers, the Head of Google and execs: take an idea to a client */ deploy?: DeployTo }) {
   const kind = (useParam("gk") as GoogleKind | null) ?? null;
   const vertical = useParam("gv");
   const withBrand = useParam("gb") === "1";
@@ -205,7 +207,7 @@ export function GoogleIdeasView({ items, mode, verticals }: { items: GoogleIdea[
       )}
 
       {hover && !opened && <Hover i={hover.i} rect={hover.rect} mode={mode} onEnter={keep} onLeave={hoverOut} />}
-      {opened && <Sheet i={opened} mode={mode} onClose={() => closeParams("gi")} />}
+      {opened && <Sheet i={opened} mode={mode} deploy={deploy} onClose={() => closeParams("gi")} />}
     </div>
   );
 }
@@ -480,7 +482,7 @@ function Hover({ i, rect, mode, onEnter, onLeave }: { i: GoogleIdea; rect: DOMRe
   );
 }
 
-function Sheet({ i, mode, onClose }: { i: GoogleIdea; mode: "fame" | "live"; onClose: () => void }) {
+function Sheet({ i, mode, deploy, onClose }: { i: GoogleIdea; mode: "fame" | "live"; deploy: DeployTo; onClose: () => void }) {
   const insight = useRead(i);
   return (
     <div className={SHEET_BACKDROP} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -519,7 +521,81 @@ function Sheet({ i, mode, onClose }: { i: GoogleIdea; mode: "fame" | "live"; onC
           ))}
         </span>
         <Read i={i} insight={insight} />
+        {deploy && !i.branded && <UseIt i={i} clients={deploy.clients} />}
       </div>
+    </div>
+  );
+}
+
+const MAKE = [
+  ["copy", "Ad copy", "A responsive search ad around it, in their voice"],
+  ["campaign", "A campaign", "Ad groups, keywords, negatives and settings"],
+  ["keywords", "Keywords", "Keywords to add, with the negatives that keep them clean"],
+] as const;
+
+/** Take it to a client: pick the client and what to make; it's written for them and lands on their page to approve. */
+function UseIt({ i, clients }: { i: GoogleIdea; clients: NonNullable<DeployTo>["clients"] }) {
+  const others = clients.filter((c) => c.id !== i.clientId);
+  // The same industry first: that's where an idea travels best
+  const same = (c: { vertical: string | null }) => Number(Boolean(i.vertical) && c.vertical === i.vertical);
+  const sorted = [...others].sort((a, b) => same(b) - same(a) || a.name.localeCompare(b.name));
+  const [client, setClient] = useState("");
+  const [kind, setKind] = useState<(typeof MAKE)[number][0]>(i.kind === "ad" ? "copy" : "keywords");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<{ id: string; slug: string; name: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  if (!others.length) return null;
+  if (done)
+    return (
+      <div className="grid gap-2 rounded-[18px] border border-ok/40 bg-ok-soft/40 p-4">
+        <p className="font-heading text-[17px] text-ok">✓ Writing it for {done.name}</p>
+        <p className="text-[13px] text-muted">It lands on their page under Google Ads › Ideas to use in a minute, to approve, edit or decline.</p>
+        <a href={`/clients/${done.slug}?service=google&tab=ideas&deploy=${done.id}`} className="inline-flex min-h-11 items-center justify-self-start rounded-full bg-fg px-5 text-sm text-bg">
+          Open it on their page →
+        </a>
+      </div>
+    );
+  return (
+    <div className="grid gap-3 rounded-[18px] border border-line bg-surface p-4">
+      <div className="grid gap-0.5">
+        <span className="text-[10px] uppercase tracking-[0.14em] text-brand-text">Use it on a client</span>
+        <p className="text-[13px] text-muted">Written from their Brand Bible, Google strategy and their industry&apos;s Google playbook: the idea&apos;s intent and angle, never its words.</p>
+      </div>
+      <select value={client} onChange={(e) => setClient(e.target.value)} aria-label="Client" className="h-11 w-full rounded-[12px] border border-line bg-bg px-3 text-[16px] outline-none focus:border-brand/60 md:text-sm">
+        <option value="">Pick a Google client</option>
+        {sorted.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name}
+            {same(c) ? " · same industry" : ""}
+          </option>
+        ))}
+      </select>
+      <div className="grid gap-2 sm:grid-cols-3">
+        {MAKE.map(([k, label, hint]) => (
+          <button key={k} type="button" onClick={() => setKind(k)} aria-pressed={kind === k} className={`grid min-h-11 gap-0.5 rounded-[14px] border px-3 py-2.5 text-left transition-colors ${kind === k ? "border-fg bg-fg text-bg" : "border-line text-muted hover:border-faint hover:text-fg"}`}>
+            <span className="text-[13.5px] font-medium">{label}</span>
+            <span className={`text-[11px] leading-snug ${kind === k ? "text-bg/70" : "text-faint"}`}>{hint}</span>
+          </button>
+        ))}
+      </div>
+      <textarea data-chat value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Anything to aim it (optional): a service, a city, an offer they have" className="w-full rounded-[14px] border border-line bg-bg px-3.5 py-2.5 text-[16px] outline-none focus:border-brand/60 md:text-sm" />
+      <button
+        type="button"
+        disabled={busy || !client}
+        onClick={async () => {
+          setBusy(true);
+          setError(null);
+          const r = await deployIdea(i.id, client, kind, note);
+          setBusy(false);
+          if (!r.ok) return setError(r.error);
+          setDone({ id: r.id, slug: r.slug, name: others.find((c) => c.id === client)?.name ?? "them" });
+        }}
+        className="min-h-11 rounded-full bg-brand px-5 text-sm font-medium text-white hover:bg-brand-hover disabled:opacity-50"
+      >
+        {busy ? "Starting…" : "Write it for them"}
+      </button>
+      {error && <p className="text-[12.5px] text-bad">{error}</p>}
     </div>
   );
 }

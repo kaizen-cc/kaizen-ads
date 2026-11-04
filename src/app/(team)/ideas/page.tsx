@@ -17,6 +17,7 @@ import { GoogleIdeasView } from "./google-ideas-view";
 import { loadGoogleIdeas } from "@/lib/google-ideas";
 import { loadGoogleMarket } from "@/lib/google-market";
 import { GoogleMarketView } from "./google-market-view";
+import { GoogleVerticalsView } from "./google-verticals-view";
 import { GoogleAdsMark, MetaMark } from "@/components/source-logo";
 
 export const metadata: Metadata = { title: "Ideas" };
@@ -95,7 +96,7 @@ export default async function Ideas({ searchParams }: PageProps<"/ideas">) {
         tab === "market" ? (
           <GoogleMarket />
         ) : tab === "verticals" ? (
-          <GoogleSoon title="Google playbooks by vertical" body="For each industry we serve: the search ads, keywords and search terms that won for our clients, the intents that convert, and the campaign structure behind them. It's written from the Hall of Fame below as it fills." />
+          <GoogleVerticals />
         ) : (
           <GoogleIdeas mode={tab === "winners" ? "live" : "fame"} />
         )
@@ -113,11 +114,20 @@ export default async function Ideas({ searchParams }: PageProps<"/ideas">) {
 }
 
 async function GoogleIdeas({ mode }: { mode: "fame" | "live" }) {
-  await requireStaff();
+  const me = await requireStaff();
   const db = adminConfigured() ? createAdminClient() : await createClient();
-  const items = await loadGoogleIdeas(db, mode);
+  // Google buyers, the Head of Google and execs take an idea to a client: the Google clients they can see
+  const canDeploy = me.isExec || me.role === "google_buyer" || me.role === "head_of_google";
+  const [items, { data: mine }] = await Promise.all([
+    loadGoogleIdeas(db, mode),
+    canDeploy ? (await createClient()).from("clients").select("id, name, slug, services, services_extra, services_removed, verticals(name)").is("archived_at", null).in("status", LIVE).order("name") : Promise.resolve({ data: [] }),
+  ]);
+  const { servicesOf } = await import("@/lib/services");
+  const clients = (mine ?? [])
+    .filter((c) => servicesOf(c).includes("google-ads"))
+    .map((c) => ({ id: c.id as string, name: c.name as string, slug: c.slug as string, vertical: (c.verticals as unknown as { name: string } | null)?.name ?? null }));
   const verticals = [...new Set(items.map((i) => i.vertical).filter((v): v is string => Boolean(v)))].sort();
-  return <GoogleIdeasView items={items} mode={mode} verticals={verticals} />;
+  return <GoogleIdeasView items={items} mode={mode} verticals={verticals} deploy={canDeploy ? { clients } : null} />;
 }
 
 async function GoogleMarket() {
@@ -126,15 +136,34 @@ async function GoogleMarket() {
   return <GoogleMarketView industries={await loadGoogleMarket(db)} />;
 }
 
-function GoogleSoon({ title, body }: { title: string; body: string }) {
-  return (
-    <div className="mx-auto grid w-full max-w-3xl place-items-center gap-3 rounded-[22px] border border-dashed border-line px-6 py-16 text-center">
-      <GoogleAdsMark size={28} />
-      <p className="font-heading text-2xl">{title}</p>
-      <p className="max-w-lg text-sm text-muted">{body}</p>
-      <span className="rounded-full bg-surface-2 px-3 py-1 text-xs text-faint">Coming next</span>
-    </div>
-  );
+/** Google playbooks by sub-vertical: written from our Google winners in each market (brand searches left out). */
+async function GoogleVerticals() {
+  const me = await requireStaff();
+  const db = adminConfigured() ? createAdminClient() : await createClient();
+  const { loadGooglePlaybooks, googlePlaybookExamples } = await import("@/lib/google-playbooks");
+  const [{ data: subs }, playbooks, { data: clients }, { data: ideas }] = await Promise.all([
+    db.from("verticals").select("id, name, parent_id, google_benchmarks").not("parent_id", "is", null).eq("active", true).order("sort_order"),
+    loadGooglePlaybooks(db),
+    db.from("clients").select("vertical_id").is("archived_at", null).in("status", LIVE).not("vertical_id", "is", null),
+    db.from("google_ideas").select("clients!inner(vertical_id)").or("fame.eq.true,live.eq.true").limit(3000),
+  ]);
+  const { parentNames } = await import("@/lib/verticals");
+  const parents = await parentNames(db, (subs ?? []).map((s) => s.parent_id as string));
+  const count = (rows: { v: string | null }[], id: string) => rows.filter((r) => r.v === id).length;
+  const cl = (clients ?? []).map((c) => ({ v: c.vertical_id as string | null }));
+  const wi = (ideas ?? []).map((r) => ({ v: (r.clients as unknown as { vertical_id: string | null } | null)?.vertical_id ?? null }));
+  const markets = (subs ?? []).map((s) => ({
+    id: s.id as string,
+    name: s.name as string,
+    parent: parents.get(s.parent_id as string) ?? "Other",
+    clients: count(cl, s.id as string),
+    winners: count(wi, s.id as string),
+    benchmarks: (s.google_benchmarks ?? []) as import("@/lib/verticals").Benchmark[],
+    playbook: playbooks.find((p) => p.verticalId === s.id) ?? null,
+  }));
+  const examples: Record<string, { kind: string; text: string; result: string }> = {};
+  for (const p of playbooks) for (const [k, v] of await googlePlaybookExamples(db, p)) examples[k] = v;
+  return <GoogleVerticalsView markets={markets} examples={examples} canRebuild={me.isExec} />;
 }
 
 async function Verticals() {
