@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { pushParams, useParam } from "@/lib/url-state";
+import { readGoogleMarketNow } from "./google-actions";
 import type { MarketCompetitor, MarketIndustry, MarketSearch } from "@/lib/google-market";
 
 // Google in the market, one industry at a time: what people search there (from Keyword Planner) and the advertisers in
@@ -88,7 +89,26 @@ function Competitor({ c }: { c: MarketCompetitor }) {
   );
 }
 
-export function GoogleMarketView({ industries }: { industries: MarketIndustry[] }) {
+/** Execs: read it now instead of waiting for Monday */
+function ReadNow() {
+  const [state, setState] = useState<string | null>(null);
+  return (
+    <button
+      type="button"
+      disabled={Boolean(state)}
+      onClick={async () => {
+        setState("Reading Google…");
+        const r = await readGoogleMarketNow();
+        setState(r.ok ? "Reading Google: back in a few minutes" : r.error);
+      }}
+      className="inline-flex min-h-11 items-center justify-self-center rounded-full border border-line px-4 text-[13px] text-muted hover:text-fg disabled:opacity-70 md:min-h-9"
+    >
+      {state ?? "Read the market now"}
+    </button>
+  );
+}
+
+export function GoogleMarketView({ industries, canRead = false }: { industries: MarketIndustry[]; canRead?: boolean }) {
   const wanted = useParam("gm");
   const current = industries.find((i) => i.id === wanted) ?? industries[0] ?? null;
   const [all, setAll] = useState(false);
@@ -100,6 +120,7 @@ export function GoogleMarketView({ industries }: { industries: MarketIndustry[] 
         <p className="max-w-lg text-sm text-muted">
           What people search in each industry we run Google for (volume, trend, competition and what the top spot costs), and the advertisers in our clients&apos; auctions. It&apos;s read straight from Google every Monday morning; the first read fills this in.
         </p>
+        {canRead && <ReadNow />}
       </div>
     );
 

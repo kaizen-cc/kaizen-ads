@@ -179,3 +179,19 @@ export async function rebuildGooglePlaybook(subId: string): Promise<{ ok: true; 
   after(() => buildGooglePlaybook(admin, subId).catch((e) => console.error("[google playbook]", e instanceof Error ? e.message : e)));
   return { ok: true, built: true };
 }
+
+/** Execs: read Google in the market now instead of waiting for Monday (Keyword Planner per industry, in the background) */
+export async function readGoogleMarketNow(): Promise<{ ok: true } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  if (!me.isExec) return { ok: false, error: "Only execs can start a read." };
+  if (!adminConfigured()) return { ok: false, error: "Not connected." };
+  const { googleAdsConfigured } = await import("@/lib/context/google-ads");
+  if (!googleAdsConfigured()) return { ok: false, error: "Google Ads isn't connected." };
+  const admin = createAdminClient();
+  after(async () => {
+    const { updateGoogleMarket } = await import("@/lib/google-market");
+    await updateGoogleMarket(admin).catch((e) => console.error("[google market] read now", e instanceof Error ? e.message : e));
+    revalidatePath("/ideas");
+  });
+  return { ok: true };
+}

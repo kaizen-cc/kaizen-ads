@@ -131,9 +131,9 @@ async function GoogleIdeas({ mode }: { mode: "fame" | "live" }) {
 }
 
 async function GoogleMarket() {
-  await requireStaff();
+  const me = await requireStaff();
   const db = adminConfigured() ? createAdminClient() : await createClient();
-  return <GoogleMarketView industries={await loadGoogleMarket(db)} />;
+  return <GoogleMarketView industries={await loadGoogleMarket(db)} canRead={me.isExec} />;
 }
 
 /** Google playbooks by sub-vertical: written from our Google winners in each market (brand searches left out). */
