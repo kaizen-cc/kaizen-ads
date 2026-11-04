@@ -270,10 +270,11 @@ export async function askJson<T>({
   const who = adminConfigured() ? actorNow() : Promise.resolve(AUTO);
   try {
     let res;
-    if (onText) {
-      // Streamed, so the caller can show what's been written so far
+    if (onText || maxTokens > 16000) {
+      // Streamed, so the caller can show what's been written so far; long answers always stream (the SDK refuses a
+      // plain request that could run past 10 minutes)
       const stream = anthropic().messages.stream(request);
-      stream.on("text", (_delta, soFar) => onText(soFar));
+      if (onText) stream.on("text", (_delta, soFar) => onText(soFar));
       res = await stream.finalMessage();
     } else if (cfg.model === "haiku") {
       // Haiku has no server-side fallback model, so it's a plain request
@@ -360,14 +361,16 @@ export async function askJsonWithTools<T>({
     for (let round = 0; ; round++) {
       // The last round has no tools: whatever was found, it answers now
       const last = round >= maxRounds;
-      const res = await anthropic().messages.create({
+      const res = await anthropic()
+        .messages.stream({
         model: MODEL_IDS[cfg.model],
         max_tokens: maxTokens,
         system: cached(withAgent(system, cfg)),
         output_config: { effort: cfg.effort, format: { type: "json_schema" as const, schema } },
         ...(last ? {} : { tools: defs }),
         messages,
-      });
+      })
+        .finalMessage();
       const u = usageOf(res.usage);
       used.input_tokens += u.input_tokens;
       used.output_tokens += u.output_tokens;
