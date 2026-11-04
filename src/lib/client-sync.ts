@@ -105,7 +105,8 @@ export async function welcomeBack(admin: SupabaseClient, clientId: string) {
 }
 
 /**
- * The day each client is billed, from their Stripe subscription as Kaizen Track keeps it (Track syncs Stripe and
+ * The day each client's creative is billed, from Stripe as Kaizen Track keeps it: the bill with the creative package on it
+ * (its subscription's renewal, or the day its own invoice went out), else their biggest monthly subscription (Track syncs Stripe and
  * matches each subscription to a client by contact email and name; a match set by hand there wins): the next charge's
  * day of the month, capped at the 28th. The creative allotment starts again that day each month. Clients Track has no
  * subscription for fall back to when their first sold service started. A day the team set by hand is never overwritten.
@@ -118,13 +119,39 @@ async function billingDays(admin: SupabaseClient, track: SupabaseClient) {
     track.from("stripe_subscription_clients").select("subscription_id, client_id"),
   ]);
   const setByHand = new Map((manual ?? []).map((m) => [m.subscription_id as string, m.client_id as string]));
+  const subOf = new Map<string, { client: string; next_at: string | null }>();
   for (const r of (subs ?? []) as { id: string; client_id: string | null; next_at: string | null; amount: number | null; interval: string | null }[]) {
     const client = setByHand.get(r.id) ?? r.client_id;
     if (!client || !r.next_at || (r.interval && r.interval !== "month")) continue;
-    // Several subscriptions: the biggest is the retainer the allotment follows
+    subOf.set(r.id, { client, next_at: r.next_at });
+    // Several subscriptions: the biggest is the retainer the allotment follows (unless creative is billed on its own, below)
     const cur = fromStripe.get(client);
     if (!cur || Number(r.amount ?? 0) > cur.amount) fromStripe.set(client, { day: dayOf(r.next_at), amount: Number(r.amount ?? 0) });
   }
+  // The creative allotment follows the bill the creative package is on, not the ads retainer: the latest payment or open
+  // invoice with a creative line. If that's part of a subscription, its renewal day; if it's billed on its own invoice
+  // (as many are), the day that invoice went out.
+  const since = new Date(Date.now() - 120 * 86_400_000).toISOString();
+  const [{ data: pays }, { data: open }] = await Promise.all([
+    track.from("stripe_payments").select("client_id, subscription_id, paid_at, lines, memo, refunded, ignored").gte("paid_at", since).order("paid_at", { ascending: false }),
+    track.from("stripe_open_invoices").select("client_id, subscription_id, created_at, lines, memo"),
+  ]);
+  const creative = (x: { lines?: unknown; memo?: string | null }) => /creative|ugc|content package/i.test(`${typeof x.lines === "string" ? x.lines : JSON.stringify(x.lines ?? "")} ${x.memo ?? ""}`);
+  const creativeDay = new Map<string, { day: number; at: string }>();
+  const bills = [
+    ...((pays ?? []) as { client_id: string | null; subscription_id: string | null; paid_at: string; lines: unknown; memo: string | null; refunded?: boolean | null; ignored?: boolean | null }[]).filter((x) => !x.refunded && !x.ignored).map((x) => ({ ...x, at: x.paid_at })),
+    ...((open ?? []) as { client_id: string | null; subscription_id: string | null; created_at: string; lines: unknown; memo: string | null }[]).map((x) => ({ ...x, at: x.created_at })),
+  ];
+  for (const x of bills) {
+    if (!creative(x)) continue;
+    const sub = x.subscription_id ? subOf.get(x.subscription_id) : undefined;
+    const client = (x.subscription_id && setByHand.get(x.subscription_id)) || sub?.client || x.client_id;
+    if (!client) continue;
+    const cur = creativeDay.get(client);
+    if (cur && cur.at >= x.at) continue;
+    creativeDay.set(client, { day: dayOf(sub?.next_at ?? x.at), at: x.at });
+  }
+  for (const [client, c] of creativeDay) fromStripe.set(client, { day: c.day, amount: Number.MAX_SAFE_INTEGER });
   const { data: rows } = await track.from("client_services").select("client_id, started_at, services!inner(kind)").is("ended_at", null).eq("services.kind", "sold");
   const first = new Map<string, string>();
   for (const r of (rows ?? []) as { client_id: string; started_at: string | null }[]) {
