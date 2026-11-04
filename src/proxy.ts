@@ -4,7 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
 // /api/cron/ (Vercel Cron) and /api/zapier/ (Zapier) check their own secrets; /p/ is a playbook share link (secret token, no names);
 // /r/ is a client's monthly report link (secret token, read-only); /api/slack/events is Slack's (it checks Slack's
 // signature); /api/portal-chat/avatar draws initials for Slack to show beside a client's portal message
-const PUBLIC_PATHS = ["/login", "/auth/", "/p/", "/r/", "/api/cron/", "/api/zapier/", "/api/slack/events", "/api/portal-chat/avatar", "/manifest.webmanifest"];
+const PUBLIC_PATHS = ["/login", "/about", "/privacy", "/terms", "/auth/", "/p/", "/r/", "/api/cron/", "/api/zapier/", "/api/slack/events", "/api/portal-chat/avatar", "/manifest.webmanifest"];
 
 // Refreshes the Supabase session cookie on every request and sends signed-out
 // visitors to /login (keeping where they were headed). Real authorization is RLS.
