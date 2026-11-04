@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import type { WebsiteIssue } from "@/lib/website-issues";
-import { closeWebsiteIssue, exportAccount, recheckLinks, sendWebsiteSuggestions } from "../brand-bible-actions";
+import { closeWebsiteIssue, exportAccount, pointOnboardingSheet, recheckLinks, sendWebsiteSuggestions } from "../brand-bible-actions";
 
 // Keeping the Bible true: what it found wrong on the client's site and in our numbers (each on its page, sorted for
 // the client or for us), the pages it sends people to and whether they're still live, and the account packaged to
@@ -163,5 +163,70 @@ export function ExportButton({ clientId, slug, last }: { clientId: string; slug:
         {busy ? "Packaging…" : last ? "↻" : "Package the account"}
       </button>
     </span>
+  );
+}
+
+export type OnboardingSheetInfo = { url: string; name: string; editedAt: string | null; readAt: string | null; error: string | null; parts: ("bible" | "meta" | "google")[] };
+
+const PART_NAMES = { bible: "Brand facts → the Bible", meta: "Meta planning → Meta strategy", google: "Google planning → Google strategy" } as const;
+
+/** Where the client's onboarding sheet stands, and pointing to it by link when it wasn't found by name */
+export function SheetPanel({ sheet, clientId, slug, canEdit }: { sheet: OnboardingSheetInfo | null; clientId: string; slug: string; canEdit: boolean }) {
+  const router = useRouter();
+  const [busy, start] = useTransition();
+  const [url, setUrl] = useState("");
+  const [note, setNote] = useState<string | null>(null);
+  return (
+    <div className="grid gap-3">
+      {sheet ? (
+        <div className="grid gap-2 rounded-[14px] border border-line px-4 py-3 text-[13px]">
+          <a href={sheet.url} target="_blank" rel="noreferrer" className="truncate font-medium hover:text-brand-text">
+            {sheet.name} ↗
+          </a>
+          <p className="text-[12px] text-faint">
+            {sheet.editedAt ? `Edited ${fmt(sheet.editedAt)}` : ""}
+            {sheet.readAt ? ` · read ${fmt(sheet.readAt)}` : " · not read yet"}
+          </p>
+          {sheet.error ? (
+            <p className="text-[12.5px] text-bad">Couldn&apos;t read it: {sheet.error}</p>
+          ) : sheet.readAt ? (
+            sheet.parts.length ? (
+              <div className="flex flex-wrap gap-1.5">
+                {sheet.parts.map((p) => (
+                  <span key={p} className="rounded-full bg-surface-2 px-2.5 py-1 text-[11.5px] text-muted">
+                    {PART_NAMES[p]}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="text-[12.5px] text-muted">Only the template so far: nothing filled in for this client.</p>
+            )
+          ) : null}
+        </div>
+      ) : (
+        <p className="text-[13px] text-muted">None found in Drive by name (&ldquo;{"<Client>"} - Client Onboarding Sheet&rdquo;). It&apos;s looked for every hour.</p>
+      )}
+      {canEdit && (
+        <form
+          className="flex flex-col gap-2 sm:flex-row"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!url.trim()) return;
+            start(async () => {
+              const r = await pointOnboardingSheet(clientId, slug, url.trim());
+              setNote(r.ok ? (r.result === "read" ? "Read: it goes into the next Bible and strategy builds." : "Read, but it's only the template.") : r.error);
+              if (r.ok) setUrl("");
+              router.refresh();
+            })
+          }}
+        >
+          <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder={sheet ? "A different sheet? Paste its link" : "Paste the sheet's link"} className="h-11 min-w-0 flex-1 rounded-full border border-line bg-surface px-4 text-[13.5px] outline-none focus:border-brand-text/60" />
+          <button type="submit" disabled={busy || !url.trim()} className="h-11 rounded-full border border-line px-4 text-[13px] text-muted hover:text-fg disabled:opacity-50">
+            {busy ? "Reading…" : "Use this sheet"}
+          </button>
+        </form>
+      )}
+      {note && <p className="text-[12.5px] text-muted">{note}</p>}
+    </div>
   );
 }

@@ -211,3 +211,16 @@ export async function recheckLinks(clientId: string, slug: string) {
   revalidatePath(`/clients/${slug}/brand-bible`);
   return { ok: true as const, ...r };
 }
+
+/** The client's Client Onboarding Sheet, by its link (when it isn't found by name in Drive): read right away */
+export async function pointOnboardingSheet(clientId: string, slug: string, url: string): Promise<{ ok: true; result: string } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  if (!isExecOrLead(me)) return { ok: false, error: "Only execs and leads can set the onboarding sheet." };
+  if (!adminConfigured()) return { ok: false, error: "Server key missing." };
+  const { data: client } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
+  if (!client) return { ok: false, error: "You don't work on this client." };
+  const { setOnboardingSheet } = await import("@/lib/onboarding-sheet");
+  const r = await setOnboardingSheet(createAdminClient(), clientId, url).catch((e) => ({ ok: false as const, error: e instanceof Error ? e.message : String(e) }));
+  revalidatePath(`/clients/${slug}/brand-bible`);
+  return r;
+}

@@ -35,10 +35,11 @@ export default async function BrandBiblePage({ params }: { params: Promise<{ slu
   const { syncQuestions } = await import("@/lib/bible-questions");
   const questions = adminConfigured() ? await syncQuestions(createAdminClient(), client.id).catch(() => []) : [];
   const { loadIssues } = await import("@/lib/website-issues");
-  const [issues, { data: links }, { data: pack }] = await Promise.all([
+  const [issues, { data: links }, { data: pack }, { data: sheet }] = await Promise.all([
     adminConfigured() ? loadIssues(createAdminClient(), client.id).catch(() => []) : Promise.resolve([]),
     supabase.from("bible_links").select("url, label, source, ok, status, title, checked_at, change_note, changed_at").eq("client_id", client.id).order("source").limit(60),
     supabase.from("client_exports").select("created_at, reason").eq("client_id", client.id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("client_onboarding_sheets").select("url, name, modified_at, read_at, error, bible, meta, google").eq("client_id", client.id).maybeSingle(),
   ]);
   return (
     <BibleViewer
@@ -57,6 +58,7 @@ export default async function BrandBiblePage({ params }: { params: Promise<{ slu
         issues,
         links: (links ?? []).map((l) => ({ url: l.url, label: l.label, source: l.source, ok: l.ok, status: l.status, title: l.title, checkedAt: l.checked_at, change: l.change_note, changedAt: l.changed_at })),
         lastExport: pack ? { at: pack.created_at, reason: pack.reason } : null,
+        sheet: sheet ? { url: sheet.url as string, name: sheet.name as string, editedAt: sheet.modified_at as string | null, readAt: sheet.read_at as string | null, error: sheet.error as string | null, parts: (["bible", "meta", "google"] as const).filter((k) => Boolean(sheet[k])) } : null,
         generatedAt: b.generated_at,
         reviewedAt: b.reviewed_at,
         reviewedBy: (b.profiles as unknown as { full_name: string } | null)?.full_name ?? null,

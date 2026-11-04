@@ -41,6 +41,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
   ],
   scripts: [{ title: "Writes the video script: three hooks, the beats and the shot list", where: "Board · Video tickets", trigger: "click", when: "When someone writes the script on a video ticket", labels: ["script"] }],
   brandbible: [
+    { title: "Reads the team's Client Onboarding Sheet and sorts it: brand facts for the Bible, Meta planning for the Meta strategy, Google planning for the Google one", where: "Client page · Brand Bible", trigger: "auto", when: "Within the hour of a sheet being found or edited, or pointed to on the Bible", labels: ["read onboarding sheet "] },
     { title: "Reads the Bible's pages again and says what changed that matters for ads (an offer, a price, sold out)", where: "Client page · Brand Bible · Pages we send people to", trigger: "auto", when: "Every 90 days, before each new creative request, and on Check now", labels: ["bible link check "] },
     { title: "Sorts what the Bible found wrong into suggestions for the client and alerts for the team, each on its page", where: "Client page · Brand Bible · Website & data issues", trigger: "auto", when: "Hourly, for each Bible written or rebuilt", labels: ["website issues "] },
     { title: "Researches the client on the web", where: "Client page · Brand Bible", trigger: "click", when: "When someone builds or updates the Brand Bible", labels: ["brand bible research"] },

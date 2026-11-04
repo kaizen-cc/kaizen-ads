@@ -55,7 +55,6 @@ async function bibleSources(admin: SupabaseClient, clientId: string) {
     c?.website && `Website: ${c.website}`,
     c?.drive_folder_id && `Client Drive folder (asset library, brand files): https://drive.google.com/drive/folders/${c.drive_folder_id}`,
     c?.creative_db && `Creative database: ${c.creative_db}`,
-    c?.onboarding_sheet && `Onboarding sheet: ${c.onboarding_sheet}`,
   ].filter(Boolean);
 
   // Calls: the client's own, and team calls that mentioned them, one entry per call
@@ -98,7 +97,8 @@ async function bibleSources(admin: SupabaseClient, clientId: string) {
 
   // How they make money, the industry benchmark that stands in for missing data, and what the client has told us to do
   const [{ businessModelOf, modelBlock }, { benchmarksFor }, { rulesBlock }, { servicesOf, SERVICES }] = await Promise.all([import("@/lib/business-model"), import("@/lib/kpi/benchmark"), import("@/lib/bible-rules"), import("@/lib/services")]);
-  const [model, benches, rules] = await Promise.all([businessModelOf(admin, clientId), benchmarksFor(admin, [clientId]), rulesBlock(admin, clientId).catch(() => "")]);
+  const { sheetBlock } = await import("@/lib/onboarding-sheet");
+  const [model, benches, rules, sheet] = await Promise.all([businessModelOf(admin, clientId), benchmarksFor(admin, [clientId]), rulesBlock(admin, clientId).catch(() => ""), sheetBlock(admin, clientId, "bible").catch(() => "")]);
   const bench = benches.get(clientId);
   const benchLines = bench ? [...bench.meta.map((b) => ({ ...b, p: "Meta" })), ...bench.google.map((b) => ({ ...b, p: "Google" }))].map((b) => `- ${b.p} ${b.metric}: good ${b.good ?? "?"}${b.great != null ? `, great ${b.great}` : ""} ${b.unit} (${b.source}, ${b.year})`) : [];
   const pkg = c?.creative_packages as unknown as { label: string; images: number; videos: number } | null;
@@ -114,6 +114,7 @@ async function bibleSources(admin: SupabaseClient, clientId: string) {
     setup && `<setup_and_access note="what the client shared in their onboarding setup: account IDs, pixel, tools and the platforms their revenue or leads live in; for the media buyer section">\n${JSON.stringify(setup).slice(0, 6000)}\n</setup_and_access>`,
     benchLines.length ? `<industry_benchmarks sub_vertical="${bench!.vertical}" note="the expected results for their category; with no ad data of their own, these are the targets and expectations, labeled as benchmarks with the source">\n${benchLines.join("\n")}\n</industry_benchmarks>` : "",
     rules,
+    sheet,
     proven.length ? `<proven_in_their_ads note="from the client playbook: only results that held, profitable against the target over a real window. These alone feed Creative learnings and the offer history's wins and losses">\n${proven.map((l) => `- ${l.at} · ${l.kind === "works" ? "Works" : "Avoid"}: ${l.text}`).join("\n")}\n</proven_in_their_ads>` : "",
     links.length && `<client_links note="link these wherever the Bible mentions them">\n${links.join("\n")}\n</client_links>`,
     kpis?.length && `<kpi_targets note="what the account is measured on today">\n${kpis.map((k) => `- ${k.platform === "google" ? "Google" : "Meta"}: ${k.conversion}${k.custom_action ? ` (${k.custom_action})` : ""}${k.target != null ? `, target ${k.target}` : ", no target set"}${k.monthly_budget ? `, monthly budget $${k.monthly_budget}` : ""}`).join("\n")}\n</kpi_targets>`,

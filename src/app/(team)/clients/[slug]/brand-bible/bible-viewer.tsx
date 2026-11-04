@@ -11,7 +11,7 @@ import { Layer } from "../layer";
 import type { BibleQuestion } from "@/lib/bible-questions";
 import { BibleQuestions } from "./bible-questions";
 import type { WebsiteIssue } from "@/lib/website-issues";
-import { ExportButton, IssuesPanel, LinksPanel, type BibleLink } from "./bible-upkeep";
+import { ExportButton, IssuesPanel, LinksPanel, SheetPanel, type BibleLink, type OnboardingSheetInfo } from "./bible-upkeep";
 
 // The Brand Bible, laid out to be read: a cover with what's in it, a contents rail that follows you down the page,
 // each section in its own card (audience profiles as cards, the review bank as quotes, open questions you can answer),
@@ -35,6 +35,8 @@ type Bible = {
   issues: WebsiteIssue[];
   /** The pages it sends people to, and whether they're still live */
   links: BibleLink[];
+  /** The team's Client Onboarding Sheet, read as a source */
+  sheet?: OnboardingSheetInfo | null;
   /** The account, last packaged */
   lastExport: { at: string; reason: string } | null;
   generatedAt: string | null;
@@ -725,6 +727,13 @@ export function BibleViewer({ client, bible, canEdit }: { client: { id: string; 
             <p className="mt-1 text-[12.5px] text-faint">Each on the page it was found. For the client: suggestions, sent when their portal is live (or by you). For us: alerts, and context for audits and briefs.</p>
             <div className="mt-5">
               <IssuesPanel issues={bible.issues} clientId={client.id} slug={client.slug} canEdit={canEdit} />
+            </div>
+          </section>
+          <section id="onboarding-sheet" className="scroll-mt-32 rounded-[24px] border border-line bg-surface p-5 md:p-8">
+            <h2 className="font-heading text-[22px]">Onboarding sheet</h2>
+            <p className="mt-1 text-[12.5px] text-faint">The team&apos;s Client Onboarding Sheet, read as a source: brand facts into the Bible, Meta and Google planning into their go-to-market strategies. Read again whenever it&apos;s edited.</p>
+            <div className="mt-5">
+              <SheetPanel sheet={bible.sheet ?? null} clientId={client.id} slug={client.slug} canEdit={canEdit} />
             </div>
           </section>
           {bible.links.length > 0 && (

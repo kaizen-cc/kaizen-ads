@@ -168,6 +168,8 @@ export async function buildGtm(admin: SupabaseClient, clientId: string, by: stri
     // The foundation it's built on, and how this kind of business makes money
     const [{ data: bible }, { businessModelOf, modelBlock }] = await Promise.all([admin.from("client_brand_bibles").select("read_this_first, markdown, version").eq("client_id", clientId).maybeSingle(), import("@/lib/business-model")]);
     const model = await businessModelOf(admin, clientId).catch(() => null);
+    // The team's onboarding sheet: its Meta or Google planning
+    const sheet = await (await import("@/lib/onboarding-sheet")).sheetBlock(admin, clientId, platform).catch(() => "");
     // Google: what the account shows today
     const accountData = google ? await googleAccountData(admin, clientId).catch(() => "The Google Ads account couldn't be read.") : "";
 
@@ -227,7 +229,7 @@ ${calls}
 <web_research date="${today()}" source="research">
 ${research || "No research came back."}
 </web_research>
-${google ? `\n<google_ads_account source="Google Ads account">\n${accountData}\n</google_ads_account>\n` : ""}${model ? `
+${google ? `\n<google_ads_account source="Google Ads account">\n${accountData}\n</google_ads_account>\n` : ""}${sheet ? `\n${sheet}\n` : ""}${model ? `
 ${modelBlock(model)}
 ` : ""}${bible?.markdown ? `
 <brand_bible version="${bible.version}" note="the foundation: build on it, never contradict it; rule one, if it isn't profitable it isn't working">

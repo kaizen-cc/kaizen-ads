@@ -59,7 +59,8 @@ function nyNow() {
  * - clients: every hour (new, archived and upgraded clients from Kaizen Track)
  * - suggest: weekdays at 8:30am (the strategist's suggested briefs, ready for the morning)
  * - integrations: every hour (each client's Shopify, WooCommerce, GoHighLevel or HubSpot read; at 9am, the buyers' notes)
- * - bible_upkeep: every hour (the Bible's pages checked every 90 days, website issues read from new Bibles; at 9am,
+ * - bible_upkeep: every hour (the Bible's pages checked every 90 days, website issues read from new Bibles, each
+ *   client's onboarding sheet read when it's new or changed; at 9am,
  *   clients paid for creative and given nothing)
  */
 function due(step: string | null) {
@@ -235,7 +236,8 @@ export async function GET(request: Request) {
       const links = await (await import("@/lib/bible-links")).keepLinks(admin).catch((e) => String(e));
       const issues = await (await import("@/lib/website-issues")).keepIssues(admin).catch((e) => String(e));
       const packages = nyNow().hour === 9 ? await (await import("@/lib/package-gaps")).flagPackageGaps(admin).catch((e) => String(e)) : "not the hour";
-      return Response.json({ links, issues, packages });
+      const sheets = await (await import("@/lib/onboarding-sheet")).keepOnboardingSheets(admin).catch((e) => String(e));
+      return Response.json({ links, issues, packages, sheets });
     }
     if (step === "ledger") return Response.json(await (await import("@/lib/ledger")).runLedger(admin));
     if (step === "owed") return Response.json(await (await import("@/lib/owed-replies")).runOwedReplies(admin));
