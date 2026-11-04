@@ -77,7 +77,7 @@ const PLAN_SCHEMA = obj({
 
 const BASE = `You are Kaizen Marketing's head of paid media, auditing one Meta ad account for the media buyer who runs it. This is a real audit of the account, not a creative brainstorm, and the buyer acts on it today. Speak to the buyer directly, in the first person ("I found", "I'd"), plain and specific.
 Read everything given: the target and how far off it is, 90 days of numbers by campaign, ad set and ad, the funnel, the live setup (objectives, optimization events, budgets, bidding, learning phase, audiences, placements, attribution) and its splits, the tiring ads, the client page (Brand Bible, go-to-market strategy, intake, calls, memory, what's in production), the sub-vertical playbook and benchmarks, our Hall of Fame and the market.
-Argue from this account's data, using Meta best practice as of today. Conversation starters: a top-of-funnel ad with frequency under 1.25, good spend, an average CPM and an above-average CTR but no conversions of its own is bringing people into the funnel. Never recommend pausing it, even when other ads show better results; judge it by its ad set's and campaign's overall success, and if those are working it keeps running. Patterns across clients (patterns_across_clients): what's proven profitable for several businesses like this one. When one answers a root cause you found, recommend it as an action and cite it ("works for 3 of 4 home services businesses"), above all one this client isn't using yet; when this account is doing something marked Fails across clients, call it out. Respect the client's rules (what they told us to avoid, claims never to make, special ad categories). If the data is too thin to judge something, say so instead of guessing. Refer to people by role, never by name. No em dashes.`;
+Argue from this account's data, using Meta best practice as of today. Read campaigns, then ad sets, then ads, and apply the keep-or-cut reads in your skills to every ad set and ad you'd turn on or off: say which read it falls under, with its numbers (CPM and CTR against the account averages, frequency, funnel movement, ROAS, GPT). Conversation starters: a top-of-funnel ad with frequency under 1.5, good or acceptable CPM and a good CTR, moving people down the funnel, but no conversions of its own, is feeding the ads that close. Never recommend pausing it, even when other ads show better results; judge it by its ad set's and campaign's overall success. Judge money by ROAS and GPT (gross profit per transaction), not cost per result alone. When something that was winning stopped, check the change history for what was turned off or changed before blaming fatigue. When the account also runs Google, say what one platform's winning regions, audiences and messaging mean for the other. Patterns across clients (patterns_across_clients): what's proven profitable for several businesses like this one. When one answers a root cause you found, recommend it as an action and cite it ("works for 3 of 4 home services businesses"), above all one this client isn't using yet; when this account is doing something marked Fails across clients, call it out. Respect the client's rules (what they told us to avoid, claims never to make, special ad categories). If the data is too thin to judge something, say so instead of guessing. Refer to people by role, never by name. No em dashes.`;
 
 const GOOGLE_BASE = `You are Kaizen Marketing's head of paid media, auditing one Google Ads account for the media buyer who runs it. This is a real audit of the account and the buyer acts on it today. Speak to the buyer directly, in the first person ("I found", "I'd"), plain and specific.
 Read everything given: the target and how far off it is, 90 days of numbers by campaign, the live setup (campaign types, bidding strategies and their targets, budgets, serving status), the conversion actions and which ones count, search impression share and what's lost to budget and rank, ad groups, keywords and quality scores, search terms, devices, the client page (Brand Bible, go-to-market strategy, intake, calls, memory), the sub-vertical playbook and benchmarks, and our winners.
@@ -121,6 +121,8 @@ function stats(rows: Row[], conv: Conversion, type: string | null) {
   let thru = 0;
   let freqW = 0;
   const funnel: Record<string, number> = {};
+  let purchases = 0;
+  let purchaseValue = 0;
   for (const r of rows) {
     const imp = n(r.metrics.impressions);
     impressions += imp;
@@ -129,8 +131,14 @@ function stats(rows: Row[], conv: Conversion, type: string | null) {
     thru += n(((r.metrics.video_thruplay_watched_actions ?? []) as { value: string }[])[0]?.value);
     freqW += n(r.metrics.frequency) * imp;
     const a = acts(r.metrics.actions);
-    for (const k of ["landing_page_view", "omni_add_to_cart", "add_to_cart", "omni_initiated_checkout", "initiate_checkout", "lead", "onsite_conversion.lead_grouped"]) if (a[k]) funnel[k] = (funnel[k] ?? 0) + a[k];
+    for (const k of ["landing_page_view", "omni_view_content", "view_content", "omni_add_to_cart", "add_to_cart", "omni_initiated_checkout", "initiate_checkout", "lead", "onsite_conversion.lead_grouped"]) if (a[k]) funnel[k] = (funnel[k] ?? 0) + a[k];
+    const v = acts(r.metrics.action_values);
+    purchases += a.omni_purchase ?? a.purchase ?? a["offsite_conversion.fb_pixel_purchase"] ?? 0;
+    purchaseValue += v.omni_purchase ?? v.purchase ?? v["offsite_conversion.fb_pixel_purchase"] ?? 0;
   }
+  // Gross profit per transaction: revenue per purchase minus what each purchase cost (AOV minus CPA)
+  const aov = purchases ? purchaseValue / purchases : null;
+  const cpa = purchases ? agg.spend / purchases : null;
   const lpv = funnel.landing_page_view ?? 0;
   return {
     spend: agg.spend,
@@ -144,14 +152,24 @@ function stats(rows: Row[], conv: Conversion, type: string | null) {
     hookRate: plays ? pct(plays, impressions) : null,
     holdRate: plays ? pct(thru, plays) : null,
     freq: impressions ? r2(freqW / impressions) : null,
-    funnel: { linkClicks: clicks, landingPageViews: lpv, addToCart: funnel.omni_add_to_cart ?? funnel.add_to_cart ?? 0, checkout: funnel.omni_initiated_checkout ?? funnel.initiate_checkout ?? 0 },
+    funnel: { linkClicks: clicks, landingPageViews: lpv, viewContent: funnel.omni_view_content ?? funnel.view_content ?? 0, addToCart: funnel.omni_add_to_cart ?? funnel.add_to_cart ?? 0, checkout: funnel.omni_initiated_checkout ?? funnel.initiate_checkout ?? 0, leads: funnel.lead ?? funnel["onsite_conversion.lead_grouped"] ?? 0 },
+    purchases,
+    purchaseValue: r2(purchaseValue),
+    purchaseRoas: purchases && agg.spend ? r2(purchaseValue / agg.spend) : null,
+    aov: r2(aov),
+    gpt: aov != null && cpa != null ? r2(aov - cpa) : null,
+    lpvToPurchase: pct(purchases, lpv),
   };
 }
 type Stats = ReturnType<typeof stats>;
 
 function line(name: string, s: Stats, roas: boolean, extra = "") {
   const kpi = s.value == null ? "no results" : roas ? `${s.value}x ROAS` : `$${s.value} per result`;
-  return `${name}: $${Math.round(s.spend)} spend, ${s.results} results, ${kpi}, CTR ${s.ctr ?? "?"}%, CPM $${s.cpm ?? "?"}, CPC $${s.cpc ?? "?"}, click→result ${s.clickToResult ?? "?"}%${s.hookRate != null ? `, hook ${s.hookRate}%, hold ${s.holdRate}%` : ""}${s.freq ? `, freq ~${s.freq}` : ""}${extra}`;
+  const f = s.funnel;
+  // How far people get: the funnel movement the keep-or-cut reads depend on
+  const moved = [f.landingPageViews && `${f.landingPageViews} LPV ($${r2(s.spend / f.landingPageViews)} each)`, f.viewContent && `${f.viewContent} view content`, f.addToCart && `${f.addToCart} ATC`, f.checkout && `${f.checkout} checkout`, f.leads && `${f.leads} leads`].filter(Boolean).join(" > ");
+  const money = s.purchases ? `, ${s.purchases} purchases worth $${Math.round(s.purchaseValue ?? 0)} (ROAS ${s.purchaseRoas ?? "?"}x, AOV $${s.aov ?? "?"}, GPT $${s.gpt ?? "?"}, LPV→purchase ${s.lpvToPurchase ?? "?"}%)` : "";
+  return `${name}: $${Math.round(s.spend)} spend, ${s.results} results, ${kpi}${money}, CTR ${s.ctr ?? "?"}%, CPM $${s.cpm ?? "?"}, CPC $${s.cpc ?? "?"}, click→result ${s.clickToResult ?? "?"}%${s.hookRate != null ? `, hook ${s.hookRate}%, hold ${s.holdRate}%` : ""}${s.freq ? `, daily freq ~${s.freq}` : ""}${moved ? `, funnel: ${moved}` : ""}${extra}`;
 }
 
 /** The account in numbers, written for the auditor. */
@@ -172,7 +190,9 @@ function digest(rows: Row[], conv: Conversion, type: string | null, today: strin
   out.push(line("The 30 before", stats(prev30, conv, type), roas));
   out.push(line("Last 90 days", stats(last90, conv, type), roas));
   const f = stats(last30, conv, type).funnel;
-  out.push(`Funnel, last 30 days: ${f.linkClicks} link clicks → ${f.landingPageViews} landing page views → ${f.addToCart} adds to cart → ${f.checkout} checkouts → ${stats(last30, conv, type).results} results`);
+  out.push(`Funnel, last 30 days: ${f.linkClicks} link clicks → ${f.landingPageViews} landing page views → ${f.viewContent} view content → ${f.addToCart} adds to cart → ${f.checkout} checkouts → ${stats(last30, conv, type).results} results`);
+  const av = stats(last30, conv, type);
+  out.push(`Account averages, last 30 days (what "high" and "low" mean in this account): CPM $${av.cpm ?? "?"}, CTR ${av.ctr ?? "?"}%, daily frequency ~${av.freq ?? "?"}${av.hookRate != null ? `, hook ${av.hookRate}%` : ""}${av.gpt != null ? `, GPT $${av.gpt}` : ""}. Note: "daily freq" is the average daily frequency; frequency over a whole window runs higher, so weigh it with the trend.`);
 
   // Week by week, to see when it turned
   out.push("\nWEEK BY WEEK (newest first)");
@@ -213,7 +233,10 @@ function digest(rows: Row[], conv: Conversion, type: string | null, today: strin
   ads.sort((a, b) => b.s.spend - a.s.spend);
   const top3 = ads.slice(0, 3).reduce((x, a) => x + a.s.spend, 0);
   out.push(`\nADS, last 30 days: ${ads.filter((a) => a.s.spend > 0).length} ads spent; the top 3 took ${Math.round((top3 / total30) * 100)}% of spend; ${ads.filter((a) => a.age <= 30).length} launched in the last 30 days`);
-  for (const a of ads.slice(0, 30)) out.push(line(`${a.name} (${a.age} days old)`, a.s, roas, ` · ${Math.round((a.s.spend / total30) * 100)}% of spend · last 14: ${a.s14.value ?? "no results"}`));
+  for (const a of ads.slice(0, 30)) {
+    const s7 = stats(last30.filter((r) => r.ad_id === a.id && r.date > since(7)), conv, type);
+    out.push(line(`${a.name} [${a.id}] (${a.age} days old)`, a.s, roas, ` · ${Math.round((a.s.spend / total30) * 100)}% of spend · last 14: ${a.s14.value ?? "no results"} · last 7: $${Math.round(s7.spend)} spend, ${s7.results} results, ${s7.value == null ? "no results" : roas ? `${s7.value}x` : `$${s7.value} each`}${s7.purchases ? `, ${s7.purchases} purchases, ROAS ${s7.purchaseRoas}x` : ""}`));
+  }
   const burners = ads.filter((a) => a.s.results === 0 && a.s.spend > 0).sort((a, b) => b.s.spend - a.s.spend).slice(0, 8);
   if (burners.length) out.push(`Spent with no results: ${burners.map((a) => `${a.name} $${Math.round(a.s.spend)}`).join("; ")}`);
   const fresh = ads.filter((a) => a.age <= 30);
@@ -437,6 +460,9 @@ export async function runAudit(admin: SupabaseClient, id: string) {
     const type = pickType(days, conv, t.custom_action);
     const today = scoped[scoped.length - 1].date;
     const d = digest(scoped, conv, type, today);
+    const { data: changes } = await admin.from("ad_account_changes").select("at, who, what, object, object_type").eq("ad_account_id", account).gte("at", new Date(Date.now() - 45 * DAY).toISOString()).order("at", { ascending: false }).limit(80);
+    if (changes?.length)
+      d.text += `\n\nCHANGE HISTORY, last 45 days (newest first; when a winner stopped, look here first for what was turned off, turned on or changed)\n${changes.map((c) => `- ${String(c.at).slice(0, 16).replace("T", " ")} · ${c.what}${c.object ? ` · ${c.object_type ? `${String(c.object_type).toLowerCase()} ` : ""}${c.object}` : ""}`).join("\n")}`;
     const spend90 = scoped.reduce((x, r) => x + n(r.metrics.spend), 0);
     await m.finish("numbers", `${d.days} days · ${new Set(scoped.map((r) => r.campaign_id)).size} campaigns · ${new Set(scoped.map((r) => r.adset_id)).size} ad sets · ${d.ads} ads · $${n0(spend90)} spent`);
 
