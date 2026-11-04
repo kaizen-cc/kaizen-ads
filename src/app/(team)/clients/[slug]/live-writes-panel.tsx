@@ -48,7 +48,7 @@ export function LiveWritesPanel({ clientId, on, by, at, globalOn, canEdit, toggl
           {error && <p className="mt-2 text-[12.5px] text-bad">{error}</p>}
         </div>
       )}
-      {(globalOn || live) && <AudienceTermsCheck clientId={clientId} />}
+      <AudienceTermsCheck clientId={clientId} />
     </div>
   );
 }

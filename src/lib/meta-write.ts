@@ -176,7 +176,14 @@ export async function metaWritableSetup(admin: SupabaseClient, account: string):
 /** Where an admin of the ad account accepts Meta's Custom Audience terms (needed to edit anything using a customer list) */
 export const audienceTermsUrl = (account: string) => `https://business.facebook.com/ads/manage/customaudiences/tos/?act=${bare(account)}`;
 
-export type AudienceTerms = { account: string; name: string | null; accepted: boolean | null; error: string | null; url: string };
+/**
+ * access: what our system user may do on the account. "manage" (Manage campaigns or full control: changes go through),
+ * "view" (assigned but view-only: Meta refuses every change), "none" (not assigned: Meta won't even show it to us)
+ */
+export type AudienceTerms = { account: string; name: string | null; accepted: boolean | null; error: string | null; url: string; access: "manage" | "view" | "none"; tasks: string[]; owner: string | null; assignUrl: string };
+
+/** Business settings for the ad account, where the system user is assigned (Assign people → Manage campaigns) */
+export const assignUrl = (account: string) => `https://business.facebook.com/settings/ad-accounts/${bare(account)}`;
 
 /**
  * Has each ad account accepted Meta's Custom Audience terms? Without them Meta refuses any change to an ad set that
@@ -190,10 +197,13 @@ export async function audienceTerms(accounts: string[]): Promise<AudienceTerms[]
       ...(await Promise.all(
         ids.slice(i, i + 8).map(async (id) => {
           try {
-            const r = await metaGraph<{ name?: string; tos_accepted?: Record<string, number> }>(`act_${id}`, { fields: "name,tos_accepted" });
-            return { account: id, name: r.name ?? null, accepted: Boolean(r.tos_accepted?.custom_audience_tos), error: null, url: audienceTermsUrl(id) };
+            const r = await metaGraph<{ name?: string; tos_accepted?: Record<string, number>; user_tasks?: string[]; business?: { name?: string } }>(`act_${id}`, { fields: "name,tos_accepted,user_tasks,business{name}" });
+            const tasks = r.user_tasks ?? [];
+            const access = tasks.includes("ADVERTISE") || tasks.includes("MANAGE") ? ("manage" as const) : ("view" as const);
+            return { account: id, name: r.name ?? null, accepted: Boolean(r.tos_accepted?.custom_audience_tos), error: null, url: audienceTermsUrl(id), access, tasks, owner: r.business?.name ?? null, assignUrl: assignUrl(id) };
           } catch (e) {
-            return { account: id, name: null, accepted: null, error: (e instanceof Error ? e.message : String(e)).slice(0, 200), url: audienceTermsUrl(id) };
+            // Unreadable: almost always the system user isn't assigned to the account (or it was removed)
+            return { account: id, name: null, accepted: null, error: (e instanceof Error ? e.message : String(e)).slice(0, 200), url: audienceTermsUrl(id), access: "none" as const, tasks: [], owner: null, assignUrl: assignUrl(id) };
           }
         }),
       )),

@@ -52,7 +52,7 @@ export async function checkMetaWrite(account: string): Promise<{ ok: boolean; de
 export type TermsRow = import("@/lib/meta-write").AudienceTerms & { client: string | null; slug: string | null; live: boolean };
 
 /** Custom Audience terms for one client's Meta ad accounts, or (no client) every active client's, missing ones first. */
-export async function checkAudienceTerms(clientId?: string): Promise<{ ok: true; rows: TermsRow[] } | { ok: false; error: string }> {
+export async function checkAudienceTerms(clientId?: string): Promise<{ ok: true; rows: TermsRow[]; tokenMissing: string[] } | { ok: false; error: string }> {
   const { requireStaff } = await import("@/lib/auth");
   await requireStaff();
   if (!adminConfigured()) return { ok: false, error: "Can't check here." };
@@ -64,18 +64,21 @@ export async function checkAudienceTerms(clientId?: string): Promise<{ ok: true;
   if (clientId) cq = cq.eq("id", clientId);
   const { data: clients } = await cq;
   const byId = new Map((clients ?? []).map((c) => [c.id as string, c]));
-  if (!byId.size) return { ok: true, rows: [] };
+  if (!byId.size) return { ok: true, rows: [], tokenMissing: [] };
   const { data: t } = await admin.from("kpi_targets").select("client_id, ad_account_id").eq("platform", "meta").in("client_id", [...byId.keys()]);
   const owner = new Map<string, string>();
   for (const x of t ?? []) {
     const a = String(x.ad_account_id ?? "").replace(/^act_/, "").replace(/\D/g, "");
     if (a && !owner.has(a)) owner.set(a, x.client_id as string);
   }
-  const rows: TermsRow[] = (await audienceTerms([...owner.keys()])).map((r) => {
+  const { tokenScopes } = await import("@/lib/meta-write");
+  const [terms, scopes] = await Promise.all([audienceTerms([...owner.keys()]), tokenScopes()]);
+  const rows: TermsRow[] = terms.map((r) => {
     const c = byId.get(owner.get(r.account) ?? "");
     return { ...r, client: (c?.name as string) ?? null, slug: (c?.slug as string) ?? null, live: c?.live_ad_writes === true };
   });
-  const rank = (r: TermsRow) => (r.accepted === false ? 0 : r.accepted === null ? 1 : 2);
+  // Worst first: not assigned, view-only, terms missing, all good
+  const rank = (r: TermsRow) => (r.access === "none" ? 0 : r.access === "view" ? 1 : r.accepted === false ? 2 : 3);
   rows.sort((a, b) => rank(a) - rank(b) || Number(b.live) - Number(a.live) || (a.client ?? "").localeCompare(b.client ?? ""));
-  return { ok: true, rows };
+  return { ok: true, rows, tokenMissing: scopes.missing };
 }
