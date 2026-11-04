@@ -88,7 +88,7 @@ async function groupClient(admin: Admin, clientId: string) {
       agent: "calls",
       label: "group promises",
       bare: true,
-      maxTokens: 6000,
+      maxTokens: 16000,
       system:
         "You sort the promises Kaizen (a paid ads and creative agency) made to one client into groups, one per piece of work. Promises are the same when they'd be done by the same work: the same deliverables (\"3 videos and 10 images\" said on two calls), the same change (\"point the campaigns to the new landing page\" and \"redirect Google to the new landing page with call tracking\"), the same test. The same call is often read twice (two note-takers), so near-identical lines from calls with the same name on the same day are always the same. Related but separate work stays apart (making the creative vs launching it; a Meta test vs a Google change). Put every promise in exactly one group. title: the promise in one line covering everything said about it (keep the numbers and specifics). context: two to four short sentences on what each conversation added (deadlines, details, conditions, who asked), naming where it came from (the call, Slack, email) and when; leave it empty for a group of one with nothing to add.",
       schema: SCHEMA,
