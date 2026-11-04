@@ -187,7 +187,7 @@ export async function runCreativeReview(admin: SupabaseClient, runId: string) {
     const withFiles = scope ? allWithFiles.filter((d) => scope.includes(`D${d.position}`)) : allWithFiles;
     const [{ count: before }, learned] = await Promise.all([
       admin.from("creative_ai_reviews").select("id", { count: "exact", head: true }).eq("request_id", requestId).eq("status", "done"),
-      disagreementsBlock(admin, r.client_id),
+      disagreementsBlock(admin, r.client_id, [r.title, r.format, r.angle_name, r.audience, r.brief].filter(Boolean).join(" · ")),
     ]);
     const round = (before ?? 0) + 1;
     /** A carousel's new version: the cards that changed from the one before (the others were carried over as they were) */
@@ -400,20 +400,13 @@ Review it and leave your notes, each placed on the creative.`,
 const clamp = (n: number) => Math.min(1, Math.max(0, Number(n) || 0));
 
 /**
- * What the team disagreed with in past AI reviews (execs and leads, with their reasons): this client's, and the most
- * recent across every client, unnamed. The review doesn't raise the same kind of note again; the strategist reads it
- * too, so briefs don't push what the team doesn't hold creative to.
+ * What the team taught the review by disagreeing with its notes (execs and leads, with their reasons), as conditional
+ * learnings: only the few that fit this client and this ticket, each with when it holds. A disagreement reaches other
+ * clients only once three clients back it (src/lib/learnings.ts).
  */
-export async function disagreementsBlock(admin: SupabaseClient, clientId: string) {
-  const [{ data: mine }, { data: all }] = await Promise.all([
-    admin.from("creative_review_disagreements").select("area, note, reason").eq("client_id", clientId).order("created_at", { ascending: false }).limit(12),
-    admin.from("creative_review_disagreements").select("area, note, reason").neq("client_id", clientId).order("created_at", { ascending: false }).limit(12),
-  ]);
-  const line = (x: { area: string | null; note: string; reason: string | null }) => `- ${x.area ? `${x.area}: ` : ""}"${x.note.slice(0, 240)}"${x.reason ? ` · why the team disagreed: ${x.reason.slice(0, 200)}` : ""}`;
-  if (!mine?.length && !all?.length) return "";
-  return `<team_disagreed_with_ai_review>
-Notes from earlier AI reviews that the team's leads disagreed with. Don't raise these again, or anything like them, unless this design is clearly different.${mine?.length ? `\nFor this client:\n${mine.map(line).join("\n")}` : ""}${all?.length ? `\nAcross other clients:\n${all.map(line).join("\n")}` : ""}
-</team_disagreed_with_ai_review>\n`;
+export async function disagreementsBlock(admin: SupabaseClient, clientId: string, task?: string) {
+  const { learningsBlock } = await import("@/lib/learnings");
+  return learningsBlock(admin, ["creativereview"], clientId, task);
 }
 
 /** The review finished: the person who started it and the maker hear it, with a link that opens the creative at its first note. */

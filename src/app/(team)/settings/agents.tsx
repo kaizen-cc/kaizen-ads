@@ -28,6 +28,11 @@ import {
   type ChatMessage,
   type RoleChatMessage,
 } from "./actions";
+import { TestChange } from "./agent-test";
+import { LearnedView, type ChangeRow } from "./agent-learned";
+import { proposalOf, changeTarget } from "@/lib/agent-change";
+import type { EvalRow } from "@/lib/agent-evals";
+import type { LearningView } from "@/lib/learnings";
 
 type Result = { ok: true } | { ok: false; error: string };
 export type AgentKey = import("@/lib/ai").AgentKey;
@@ -330,6 +335,7 @@ function ItemCard({ item, readOnly = false }: { item: Item; readOnly?: boolean }
           <input value={title} onChange={(e) => setTitle(e.target.value)} className={field} />
         </div>
         <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={Math.min(22, Math.max(8, body.split("\n").length + 2))} className={`${field} h-auto py-3 text-[13px] font-normal leading-relaxed`} />
+        {dirty && item.agentKey && <TestChange agentKey={item.agentKey} target={`item:${item.id}`} proposal={{ items: [{ id: item.id, kind, title, body, active: true }] }} />}
         <div className="flex flex-wrap items-center gap-2">
           <button
             disabled={busy || !dirty}
@@ -622,6 +628,7 @@ function Setup({ a }: { a: Agent }) {
           className={`${field} h-auto py-4 text-[13.5px] font-normal leading-relaxed`}
         />
       </div>
+      {dirty && <TestChange agentKey={a.key} target="setup" proposal={{ instructions, model, effort }} />}
     </div>
   );
 }
@@ -635,7 +642,7 @@ const CHANGE_LABEL: Record<Change["op"], string> = {
   set_core: "Rewrite core",
 };
 
-function ChangeCard({ c, onApply, items, skill = null }: { c: Change; onApply: () => Promise<void>; items: Item[]; skill?: string | null }) {
+function ChangeCard({ c, onApply, items, skill = null, test = null }: { c: Change; onApply: () => Promise<void>; items: Item[]; skill?: string | null; /** Who to test this edit on: the skill, or the agent (a core edit) */ test?: { agentKey?: string | null; roleKey?: string | null } | null }) {
   const [open, setOpen] = useState(false);
   const [busy, start] = useTransition();
   const target = items.find((i) => i.id === c.item_id);
@@ -677,6 +684,9 @@ function ChangeCard({ c, onApply, items, skill = null }: { c: Change; onApply: (
           </button>
           {open && <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-[8px] bg-surface p-3 font-sans text-xs leading-relaxed text-muted">{c.body}</pre>}
         </>
+      )}
+      {!c.applied && test && (test.agentKey || test.roleKey) && (
+        <TestChange agentKey={test.agentKey ?? null} roleKey={test.roleKey ?? null} target={changeTarget(c.op, c.item_id)} proposal={proposalOf(c, target ? { title: target.title, kind: target.kind } : null)} />
       )}
     </div>
   );
@@ -723,6 +733,7 @@ function ChatPanel({
   initial,
   items,
   skillName,
+  testFor,
   onSend,
   onApply,
   onClear,
@@ -740,6 +751,8 @@ function ChatPanel({
   items: Item[];
   /** In the agent chat: the name of the skill (or "Core") each change touches */
   skillName?: (c: Change) => string | null;
+  /** Who a proposed edit is tested on */
+  testFor?: (c: Change) => { agentKey?: string | null; roleKey?: string | null } | null;
   onSend: (msg: string, files: AgentFile[]) => Promise<{ ok: true; messages: ChatMsg[] } | { ok: false; error: string }>;
   onApply: (chatId: number, index: number) => Promise<Result>;
   onClear: () => Promise<Result>;
@@ -896,6 +909,7 @@ function ChatPanel({
                             c={c}
                             items={items}
                             skill={skillName?.(c) ?? null}
+                            test={testFor?.(c) ?? null}
                             onApply={async () => {
                               const r = await onApply(m.id, i);
                               if (!r.ok) return setError(r.error);
@@ -1064,6 +1078,7 @@ function Coach({ a, initial, items }: { a: Agent; initial: ChatMessage[]; items:
       onSend={(msg, files) => chatWithCoach(a.key, msg, files)}
       onApply={(id, i) => applyChange(a.key, id, i)}
       onClear={() => clearChat(a.key)}
+      testFor={() => ({ agentKey: a.key })}
     />
   );
 }
@@ -1074,9 +1089,10 @@ const TABS = [
   ["playbook", "Skills & knowledge"],
   ["coach", "Tune this skill"],
   ["runs", "Runs"],
+  ["learned", "What it has learned"],
 ] as const;
 
-export function AgentDetail({ a, items, chat }: { a: Agent; items: Item[]; chat: ChatMessage[] }) {
+export function AgentDetail({ a, items, chat, learned = null }: { a: Agent; items: Item[]; chat: ChatMessage[]; /** Its learnings from the team, and its changes and their tests */ learned?: { learnings: LearningView[]; changes: ChangeRow[]; evals: EvalRow[] } | null }) {
   // The skill's tab is in the address (?view=), so back returns to the tab read before
   const asked = useParam("view");
   const tab = TABS.find(([k]) => k === asked)?.[0] ?? "use";
@@ -1147,6 +1163,7 @@ export function AgentDetail({ a, items, chat }: { a: Agent; items: Item[]; chat:
               )}
               {name}
               {k === "playbook" && <span className="tabular opacity-60">{mine.length}</span>}
+              {k === "learned" && (learned?.learnings.filter((l) => l.status === "conflict").length ?? 0) > 0 && <span className="h-1.5 w-1.5 rounded-full bg-warn" aria-label="Contradictions to decide" />}
             </button>
           ))}
         </nav>
@@ -1241,6 +1258,9 @@ export function AgentDetail({ a, items, chat }: { a: Agent; items: Item[]; chat:
               </ul>
             )}
           </div>
+        </section>
+        <section className={tab === "learned" ? "grid" : "hidden"}>
+          <LearnedView agentKey={a.key} learnings={learned?.learnings ?? []} changes={learned?.changes ?? []} evals={learned?.evals ?? []} />
         </section>
         <section className={tab === "coach" ? "grid" : "hidden"}>
           <Coach a={a} initial={chat} items={items} />
@@ -1564,6 +1584,7 @@ function CoreEditor({ role }: { role: Role }) {
         </span>
       </div>
       <textarea value={core} onChange={(e) => setCore(e.target.value)} rows={Math.min(24, Math.max(8, core.split("\n").length + 2))} className={`${field} h-auto py-4 text-[13.5px] font-normal leading-relaxed`} />
+      {core !== role.core && <TestChange roleKey={role.key} target="core" proposal={{ core }} />}
     </section>
   );
 }
@@ -1605,6 +1626,7 @@ function TalkToAgent({ role, skills, items, chat }: { role: Role; skills: Agent[
         onSend={(msg, files) => chatWithAgent(role.key, msg, files)}
         onApply={(id, i) => applyRoleChange(role.key, id, i)}
         onClear={() => clearRoleChat(role.key)}
+        testFor={(c) => (c.op === "set_core" ? { roleKey: role.key } : { agentKey: c.op === "update_item" || c.op === "turn_off_item" ? (items.find((k) => k.id === c.item_id)?.agentKey ?? null) : (c.skill ?? null) })}
       />
     </section>
   );

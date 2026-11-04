@@ -22,13 +22,14 @@ export async function auditRebuttals(admin: SupabaseClient, auditId: string): Pr
   return out;
 }
 
-/** What the team has pushed back on in this client's past audits, for the next audit to read */
-export async function rebuttalsBlock(admin: SupabaseClient, clientId: string) {
-  const { data } = await admin.from("audit_rebuttals").select("audit_kind, finding, reason, created_at").eq("client_id", clientId).order("created_at", { ascending: false }).limit(25);
-  if (!data?.length) return "";
-  return `<team_pushback note="senior media buyers disagreed with these findings in earlier audits of this client, and why. Don't draw the same conclusion again unless the data has clearly changed; if you still think it holds, say what's new">
-${data.map((r) => `- ${String(r.created_at).slice(0, 10)} (${r.audit_kind === "business" ? "business audit" : "account audit"}) Finding: "${String(r.finding).slice(0, 300)}". Pushback: ${String(r.reason).slice(0, 600)}`).join("\n")}
-</team_pushback>`;
+/**
+ * What senior buyers taught the audits by pushing back on findings, as conditional learnings: only the few that fit
+ * this client (and, once three clients back one, their sub-vertical or kind of business), each with when it holds.
+ * The audit doesn't draw the same conclusion again unless the data has clearly changed.
+ */
+export async function rebuttalsBlock(admin: SupabaseClient, clientId: string, task?: string) {
+  const { learningsBlock } = await import("@/lib/learnings");
+  return learningsBlock(admin, ["auditor", "google_auditor"], clientId, task);
 }
 
 /** Save one pushback, and teach it to client memory */
@@ -51,5 +52,12 @@ export async function saveRebuttal(
     created_by: r.by,
     body: `A senior buyer disagreed with an audit finding ("${finding.slice(0, 200)}"): ${reason}`.replace(/\s*—\s*/g, ", ").slice(0, 1000),
   });
-  return data.id as string;
+  // A conditional learning for the audits, classified after the answer
+  const id = data.id as string;
+  const { after } = await import("next/server");
+  after(async () => {
+    const { recordLearning } = await import("@/lib/learnings");
+    await recordLearning(admin, { table: "audit_rebuttals", id, clientId: r.clientId, text: `Finding pushed back on (${r.kind} audit): "${finding}" · why: ${reason}` });
+  });
+  return id;
 }

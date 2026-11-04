@@ -112,7 +112,7 @@ Last 30 days: ${recent.length} requests, ${clientRounds} rounds of client change
 ${usage ? `This month's allotment: ${usage.images_used}/${usage.images_per_month ?? "no cap"} images, ${usage.videos_used}/${usage.videos_per_month ?? "no cap"} videos.` : "No creative allotment set."}
 Tiring ads: ${(fatigue ?? []).map((f) => `${f.ad_name} (${f.severity})`).join("; ") || "none flagged"}.
 </creative_production>`;
-    const pushback = await rebuttalsBlock(admin, clientId).catch(() => "");
+    const pushback = await rebuttalsBlock(admin, clientId, "whole business audit across meta google creative").catch(() => "");
 
     await step("Auditing the whole business");
     const out = await askJson<BusinessAuditResult>({

@@ -208,6 +208,8 @@ export async function askJson<T>({
   maxTokens = 16000,
   override,
   bare = false,
+  systemOverride,
+  noSample = false,
 }: {
   agent: AgentKey;
   label: string; // for the timing log
@@ -226,6 +228,10 @@ export async function askJson<T>({
   override?: { model?: ModelKey; effort?: Effort };
   /** Only the system given, without the agent's core and playbook (a small utility call, e.g. sorting a message) */
   bare?: boolean;
+  /** The whole system prompt, already built (a test replaying a call with proposed instructions) */
+  systemOverride?: string;
+  /** Don't keep this call as a sample for agent testing (a replay, a judge) */
+  noSample?: boolean;
 }): Promise<T> {
   if (!aiEnabled()) throw new AiUnavailable("AI isn't connected yet.");
   const base = await getAgent(agent);
@@ -235,7 +241,7 @@ export async function askJson<T>({
   const request = {
     model: MODEL_IDS[cfg.model],
     max_tokens: maxTokens,
-    system: cached(bare ? system : withAgent(system, cfg)),
+    system: cached(systemOverride ?? (bare ? system : withAgent(system, cfg))),
     output_config: { effort: cfg.effort, format: { type: "json_schema" as const, schema } },
     messages: [
       {
@@ -279,7 +285,13 @@ export async function askJson<T>({
     if (res.stop_reason === "max_tokens") throw new AiUnavailable("The AI ran out of room. Try again.");
     const text = (res.content as { type: string; text?: string }[]).find((b) => b.type === "text");
     if (!text?.text) throw new AiUnavailable("The AI didn't answer. Try again.");
-    return JSON.parse(text.text) as T;
+    const parsed = JSON.parse(text.text) as T;
+    // Kept as a sample (the last 30 per place in the app), so a change to this agent can be replayed and judged first
+    if (!bare && !systemOverride && !noSample && adminConfigured())
+      void import("@/lib/agent-evals")
+        .then(({ captureSample }) => captureSample({ agent, label, system, prompt, schema, output: text.text!, model: cfg.model, effort: cfg.effort, hadMedia: images.length + pdfs.length > 0 }))
+        .catch(() => undefined);
+    return parsed;
   } catch (e) {
     if (e instanceof AiUnavailable) throw e;
     console.error("[ai] request failed:", e instanceof Error ? e.message : e);

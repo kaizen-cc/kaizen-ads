@@ -219,9 +219,22 @@ async function Agents({ open, role: openRole, section, range, by }: { open: stri
     );
   const { data: chat } = await supabase.from("ai_agent_chats").select("id, role, content, changes, created_at").eq("agent_key", agent.key).order("created_at").limit(200);
   const messages: ChatMessage[] = (chat ?? []).map((m) => ({ id: m.id, role: m.role, content: m.content, changes: (m.changes ?? []) as Change[], at: m.created_at }));
+  // What it has learned from the team, and its changes and their tests (its own and its agent's core)
+  const admin = createAdminClient();
+  const [{ loadLearnings }, { toEval }, { data: changeRows }, { data: evalRows }] = await Promise.all([
+    import("@/lib/learnings"),
+    import("@/lib/agent-evals"),
+    admin.from("agent_changes").select("changed_at, target, eval_summary, profiles:changed_by(full_name)").or(`agent_key.eq.${agent.key}${agent.roleKey ? `,role_key.eq.${agent.roleKey}` : ""}`).order("changed_at", { ascending: false }).limit(30),
+    admin.from("agent_evals").select("*, profiles:created_by(full_name)").or(`agent_key.eq.${agent.key}${agent.roleKey ? `,role_key.eq.${agent.roleKey}` : ""}`).order("created_at", { ascending: false }).limit(15),
+  ]);
+  const learned = {
+    learnings: await loadLearnings(admin, agent.key).catch(() => []),
+    changes: (changeRows ?? []).map((c) => ({ at: c.changed_at as string, target: c.target as string, evalSummary: (c.eval_summary as string | null) ?? null, by: (c.profiles as unknown as { full_name: string } | null)?.full_name ?? null })),
+    evals: (evalRows ?? []).map((e) => toEval(e as Record<string, unknown>)),
+  };
   return (
     <div className="grid gap-6">
-      <AgentDetail key={agent.key} a={agent} items={items} chat={messages} />
+      <AgentDetail key={agent.key} a={agent} items={items} chat={messages} learned={learned} />
       <KnowledgePanel
         target={{ scope: "agent", agentKey: agent.key }}
         docs={await listKnowledge(supabase, { scope: "agent", agentKey: agent.key })}

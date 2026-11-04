@@ -96,6 +96,8 @@ function due(step: string | null) {
   if (step === "integrations") return true; // hourly (vercel.json): stores and CRMs read, and at 9am the notes to the buyers
   if (step === "patterns") return weekday === "Mon" && hour >= 5 && hour <= 10; // Mondays early (vercel.json): patterns across clients, a group or two a run
   if (step === "bible_upkeep") return true; // hourly (vercel.json): links, website issues, creative packages with nothing made
+  if (step === "learnings") return true; // nightly (vercel.json): the team's learnings classified, merged, settled and retired
+  if (step === "drift") return true; // weekly (vercel.json): replay what the week's learning changes did to each agent
   if (step === "history") return true; // every 10 minutes (vercel.json): a client's whole email history and earlier calls, once
   if (step === "calls") return (businessHours || hour === 18) || (hour % 3 === 0 && minute < 30);
   return false;
@@ -250,6 +252,8 @@ export async function GET(request: Request) {
       return Response.json({ links, issues, packages, sheets, chat, knowledge });
     }
     if (step === "ledger") return Response.json(await (await import("@/lib/ledger")).runLedger(admin));
+    if (step === "learnings") return Response.json(await (await import("@/lib/learnings")).consolidateLearnings(admin));
+    if (step === "drift") return Response.json(await (await import("@/lib/agent-evals")).driftCheck(admin));
     if (step === "patterns") {
       // Only groups not done this week
       const { data: st } = await admin.from("sync_state").select("last_result").eq("source", "patterns").maybeSingle();

@@ -156,7 +156,17 @@ export async function rebutFlag(setId: string, flag: { rule: string; quote: stri
   const now = new Date().toISOString();
   const dismissed = [...((s.dismissed ?? []) as Dismissed[]).filter((d) => !(d.rule === flag.rule && d.quote === flag.quote)), { rule: flag.rule, quote: flag.quote, reason: why, by: me.fullName, at: now }];
   await admin.from("copy_sets").update({ dismissed }).eq("id", setId);
-  await admin.from("copy_rule_overrides").insert({ client_id: s.client_id, request_id: s.request_id, set_id: setId, kind: "rebut", rule: flag.rule.slice(0, 400), quote: flag.quote.slice(0, 400), field: flag.field, reason: why, created_by: me.id });
+  const { data: saved } = await admin
+    .from("copy_rule_overrides")
+    .insert({ client_id: s.client_id, request_id: s.request_id, set_id: setId, kind: "rebut", rule: flag.rule.slice(0, 400), quote: flag.quote.slice(0, 400), field: flag.field, reason: why, created_by: me.id })
+    .select("id")
+    .single();
+  // A conditional learning for the copy check (the rule was read too strictly, and when), classified after the answer
+  if (saved?.id)
+    after(async () => {
+      const { recordLearning } = await import("@/lib/learnings");
+      await recordLearning(admin, { table: "copy_rule_overrides", id: saved.id as string, clientId: s.client_id as string, text: `Rule read too strictly: "${flag.rule}" on "${flag.quote}" · why: ${why}` });
+    });
   const { data: req } = await admin.from("requests").select("stage").eq("id", s.request_id).maybeSingle();
   await admin.from("request_events").insert({ request_id: s.request_id, kind: "copy", from_stage: req?.stage ?? null, to_stage: req?.stage ?? null, actor_id: me.id, body: why, data: { action: "rebutted_flag", rule: flag.rule, quote: flag.quote } });
   // Not silent: a client rule may be loosening
@@ -212,7 +222,15 @@ export async function approveCopy(setId: string, ads: Ad[], force?: { reason: st
   if (force && open.length && owner && adminConfigured()) {
     const admin = createAdminClient();
     const why = force.reason.trim().slice(0, 600);
-    await admin.from("copy_rule_overrides").insert(open.map((v) => ({ client_id: owner.client_id, request_id: owner.request_id, set_id: setId, kind: "force", rule: v.rule.slice(0, 400), quote: v.quote.slice(0, 400), field: v.field, reason: why, created_by: me.id })));
+    const { data: saved } = await admin
+      .from("copy_rule_overrides")
+      .insert(open.map((v) => ({ client_id: owner.client_id, request_id: owner.request_id, set_id: setId, kind: "force", rule: v.rule.slice(0, 400), quote: v.quote.slice(0, 400), field: v.field, reason: why, created_by: me.id })))
+      .select("id, rule, quote");
+    // Each flag approved past becomes a conditional learning for the copy check, classified after the answer
+    after(async () => {
+      const { recordLearning } = await import("@/lib/learnings");
+      for (const o of saved ?? []) await recordLearning(admin, { table: "copy_rule_overrides", id: o.id as string, clientId: owner.client_id as string, text: `Rule read too strictly (approved past it by an exec or lead): "${o.rule}" on "${o.quote}" · why: ${why}` });
+    });
     const { data: req } = await admin.from("requests").select("stage, number, title").eq("id", owner.request_id).maybeSingle();
     await admin.from("request_events").insert({ request_id: owner.request_id, kind: "copy", from_stage: req?.stage ?? null, to_stage: req?.stage ?? null, actor_id: me.id, body: why, data: { action: "force_approved", flags: open.map((v) => ({ ad: v.ad, rule: v.rule, quote: v.quote })) } });
     const { data: buyers } = await admin.from("client_assignments").select("profile_id").eq("client_id", owner.client_id).in("role", ["meta_buyer", "google_buyer"]);

@@ -126,6 +126,14 @@
       "schedule": "20 * * * 1"
     },
     {
+      "path": "/api/cron/context?step=learnings",
+      "schedule": "15 7 * * *"
+    },
+    {
+      "path": "/api/cron/context?step=drift",
+      "schedule": "45 12 * * 1"
+    },
+    {
       "path": "/api/cron/context?step=integrations",
       "schedule": "52 * * * *"
     }

@@ -525,7 +525,7 @@ async function finishAudit(admin: SupabaseClient, id: string, a: { target_id: st
       client.vertical_id
         ? admin.from("hall_of_fame").select("creative, value, target, roas, conversion, days_live, client_id").eq("vertical_id", client.vertical_id).gt("expires_at", new Date().toISOString()).order("beat_by", { ascending: false }).limit(10)
         : Promise.resolve({ data: [] }),
-      rebuttalsBlock(admin, a.client_id).catch(() => ""),
+      rebuttalsBlock(admin, a.client_id, `${x.platform === "google" ? "google ads search" : "meta facebook instagram"} account audit`).catch(() => ""),
     ]);
     // The platform's own benchmarks (Google's are researched separately, WordStream first)
     const benchmarks = ((x.platform === "google" ? sub?.google_benchmarks : sub?.benchmarks) ?? []) as Benchmark[];

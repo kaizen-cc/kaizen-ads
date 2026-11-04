@@ -75,14 +75,15 @@ export async function draftCopy(admin: SupabaseClient, requestId: string, actorI
   };
 
   try {
-    const [{ sources, model }, refs, creative, { data: allowed }] = await Promise.all([
+    const [{ sources, model }, refs, creative, team] = await Promise.all([
       getAgent("copy"),
       readReferences(r.refs ?? []),
       creativeImages(admin, requestId),
-      admin.from("copy_rule_overrides").select("rule, quote, reason").eq("client_id", r.client_id).order("created_at", { ascending: false }).limit(10),
+      // What the team established the client does allow (a copy check read their rule too strictly before), as
+      // conditional learnings: only the few that fit this ticket
+      import("@/lib/learnings").then(({ learningsBlock }) => learningsBlock(admin, ["copy"], r.client_id, [r.title, r.angle_name, r.audience, r.brief].filter(Boolean).join(" · "))),
     ]);
-    // What the team established the client does allow (a copy check read their rule too strictly before)
-    const allowedBlock = allowed?.length ? `\n<client_allows>\nThe client's rules were read too strictly on these before; the team confirmed they're fine:\n${allowed.map((a) => `- ${a.quote ? `"${a.quote}" ` : ""}(rule: ${a.rule}): ${a.reason}`).join("\n")}\n</client_allows>\n` : "";
+    const allowedBlock = team ? `\n${team}` : "";
     const out = await askJson<{ ads: Ad[]; notes: string }>({
       agent: "copy",
       label: `copy ${ctx.name}`,
@@ -206,15 +207,15 @@ export async function storeCopyCheck(admin: SupabaseClient, requestId: string, c
 }
 
 export async function checkAgainstClient(admin: SupabaseClient, clientId: string, ads: Ad[]): Promise<CopyViolation[]> {
-  const [{ data: memory }, { data: bible }, { data: overrides }] = await Promise.all([
+  const copyText = ads.map((a) => [a.primaryText, a.headline, a.linkDescription].join(" ")).join(" ");
+  const [{ data: memory }, { data: bible }, learned] = await Promise.all([
     admin.from("client_memory").select("body").eq("client_id", clientId).eq("status", "active").eq("kind", "avoid").limit(80),
     admin.from("client_brand_bibles").select("read_this_first").eq("client_id", clientId).eq("status", "reviewed").maybeSingle(),
-    admin.from("copy_rule_overrides").select("rule, quote, reason, kind").eq("client_id", clientId).order("created_at", { ascending: false }).limit(15),
+    // Flags the copywriter rebutted or an exec or lead approved past (a rule read too strictly), as conditional learnings
+    import("@/lib/learnings").then(({ learningsBlock }) => learningsBlock(admin, ["copy"], clientId, copyText)),
   ]);
   if (!memory?.length && !bible?.read_this_first) return [];
-  const overridden = overrides?.length
-    ? `<team_approved_past_these>\nThe copywriter rebutted these flags, or an exec or lead approved copy past them, with their reason: the rule was read too strictly. Don't flag the same kind of wording again unless it clearly breaks what the client said in a way the reason doesn't cover.\n${overrides.map((o) => `- Rule "${o.rule}"${o.quote ? ` on "${o.quote}"` : ""} · ${o.reason}`).join("\n")}\n</team_approved_past_these>\n`
-    : "";
+  const overridden = learned ? `${learned}Don't flag the same kind of wording again where a learning above covers it, unless it clearly breaks what the client said in a way it doesn't cover.\n` : "";
   const out = await askJson<{ violations: CopyViolation[] }>({
     agent: "copy",
     label: "copy check against client",

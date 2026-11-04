@@ -32,6 +32,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Decides how much thought a chat message needs (quick, considered, deep)", where: "Client desk \u00b7 Agent chats", trigger: "auto", when: "With every chat message", labels: ["route a chat message"] },
   ],
   copy: [
+    { title: "Turns a rebutted or approved-past copy flag into a conditional learning, and keeps its learnings tidy (merges, settles contradictions, retires stale ones)", where: "Settings · AI agents · What it has learned", trigger: "auto", when: "When the copywriter rebuts a flag or an exec or lead approves past it; nightly", labels: ["learning scope ", "learning consolidate "] },
     { title: "Writes Kaizen's copy set for approved creative", where: "Board · Copy studio", trigger: "auto", when: "When creative is approved", labels: ["copy "] },
     { title: "Rewrites copy in the copy studio chat", where: "Board · Copy studio", trigger: "click", when: "When someone asks it to change the copy", labels: ["copy chat"] },
     { title: "Checks copy against what the client told us", where: "Board · Copy studio", trigger: "auto", when: "Before copy can be approved", labels: ["copy check against client"] },
@@ -54,7 +55,10 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Talks the presentation through with the client and saves what they settle", where: "Client portal · How we see you", trigger: "click", when: "When the client writes, shares a file or sends a voice message", labels: ["client portal chat "] },
   ],
   creativecheck: [{ title: "Sorts uploaded designs into net new and variations, and checks sizes", where: "Board · Upload", trigger: "auto", when: "As a designer or editor uploads", labels: ["creative check"] }],
-  creativereview: [{ title: "Reviews each design against the brief, the brand and Meta policy", where: "Board · Before internal review", trigger: "click", when: "When the maker runs the AI review", labels: ["creative review"] }],
+  creativereview: [
+    { title: "Reviews each design against the brief, the brand and Meta policy", where: "Board · Before internal review", trigger: "click", when: "When the maker runs the AI review", labels: ["creative review"] },
+    { title: "Turns a lead disagreeing with a review note into a conditional learning, and keeps its learnings tidy (merges, settles contradictions, retires stale ones)", where: "Settings · AI agents · What it has learned", trigger: "auto", when: "When an exec or lead disagrees with a note; nightly", labels: ["learning scope ", "learning consolidate "] },
+  ],
   strategist: [
     { title: "Folds the team's strategy review (notes or the internal strategy call) into the final execution plan: what launches, testing, the 30/60/90 days and the tasks that wait on each other", where: "Client page · Plan & tasks", trigger: "auto", when: "Once the client approves their plan and the strategies are in, when an internal call about them comes in, or on Fold into the plan", labels: ["execution plan "] },
     { title: "Writes the go-to-market and 90-day roadmap message for the client's Slack channel, for a buyer or lead to send", where: "Client page · Plan & tasks", trigger: "auto", when: "Once the intake form is in, the plan is approved and the internal strategy meeting has happened", labels: ["kickoff message "] },
@@ -130,6 +134,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Writes each sub-vertical's Google playbook from our non-brand Google winners: the searches that convert, the copy that wins, the structures, landing pages and what fails", where: "Ideas · Google · Verticals", trigger: "auto", when: "Hourly when new Google winners come in, or Rebuild", labels: ["google playbook "] },
   ],
   auditor: [
+    { title: "Turns a senior buyer's pushback on an audit finding into a conditional learning, and keeps its learnings tidy (merges, settles contradictions, retires stale ones)", where: "Settings · AI agents · What it has learned", trigger: "auto", when: "When someone pushes back on a finding; nightly", labels: ["learning scope ", "learning consolidate "] },
     { title: "Audits the whole business at once: Meta, Google, creative and what the client is telling us, connected, with what to do and watch", where: "Client page · Overview · Full business audit", trigger: "click", when: "When someone runs the full business audit", labels: ["business audit "] },
     { title: "Audits one ad account: why it's where it is against target, and the plan (changes, tests, creative, budget, questions for the client)", where: "KPIs · open a client · AI account audit", trigger: "click", when: "When someone runs an audit", labels: ["audit ", "audit"] },
     { title: "Checks each optimization sprint: what changed in Meta, what was ticked, and what to tell the buyer (a reminder, a wrong move, or I'll check back)", where: "KPIs · sprint page · Next for me", trigger: "auto", when: "Daily, or on the follow-up date it set", labels: ["sprint check"] },
@@ -137,6 +142,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Adds a move to a sprint from an audit or the buyer's note", where: "KPIs \u00b7 sprint page", trigger: "click", when: "When someone adds a move", labels: ["sprint add move"] },
   ],
   coach: [
+    { title: "Judges a proposed change to an agent: replays recent real calls with and without it and says better, same or worse", where: "Settings · AI agents · Test this change", trigger: "click", when: "When someone tests a change; weekly drift check", labels: ["agent eval"] },
     { title: "Edits another agent's playbook from your feedback", where: "Settings · AI agents · Coach", trigger: "click", when: "When someone coaches an agent", labels: ["coach"] },
     { title: "Answers an agent's chat in Settings and proposes edits to its skills", where: "Settings \u00b7 AI agents \u00b7 an agent's chat", trigger: "click", when: "With every message", labels: ["agent chat"] },
   ],

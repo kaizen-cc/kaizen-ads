@@ -7,6 +7,13 @@ import { requireExec } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readShared, SHARED_RULES, type AgentFile, type Attachment } from "@/lib/agent-docs";
+import { changeTarget } from "@/lib/agent-change";
+
+/** Kept in the agent's history: who changed what and when, with the test it had just before (if any) */
+async function logChange(c: { agentKey?: string | null; roleKey?: string | null; target: string; by: string }) {
+  const { recordChange } = await import("@/lib/agent-evals");
+  await recordChange(createAdminClient(), c);
+}
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 type Kind = "knowledge" | "skill" | "example";
@@ -31,6 +38,7 @@ export async function saveAgentSetup(key: AgentKey, v: { model: string; effort: 
     .from("ai_agents")
     .update({ model: v.model, effort: v.effort, instructions: v.instructions.trim().slice(0, 20000), updated_by: me.id, updated_at: new Date().toISOString() })
     .eq("key", key);
+  if (!error) await logChange({ agentKey: key, target: "setup", by: me.id });
   return done(error);
 }
 
@@ -47,17 +55,22 @@ export async function addItem(v: { agentKey: string | null; kind: Kind; title: s
     file_name: v.fileName ?? null,
     created_by: me.id,
   });
+  if (!error) await logChange({ agentKey: v.agentKey, target: "item:new", by: me.id });
   return done(error);
 }
 
 export async function updateItem(id: string, v: { kind: Kind; title: string; body: string }): Promise<ActionResult> {
-  await requireExec();
+  const me = await requireExec();
   if (!v.title.trim() || !v.body.trim()) return { ok: false, error: "Give it a title and some content." };
   const supabase = await createClient();
   const { error } = await supabase
     .from("ai_knowledge")
     .update({ kind: KINDS.includes(v.kind) ? v.kind : "knowledge", title: v.title.trim().slice(0, 200), body: v.body.trim().slice(0, 60000), updated_at: new Date().toISOString() })
     .eq("id", id);
+  if (!error) {
+    const { data: it } = await supabase.from("ai_knowledge").select("agent_key").eq("id", id).maybeSingle();
+    await logChange({ agentKey: (it?.agent_key as string | null) ?? null, target: `item:${id}`, by: me.id });
+  }
   return done(error);
 }
 
@@ -267,6 +280,7 @@ export async function applyChange(key: AgentKey, chatId: number, index: number):
   if (error) return { ok: false, error: error.message };
   changes[index] = { ...c, applied: true };
   await supabase.from("ai_agent_chats").update({ changes }).eq("id", chatId);
+  await logChange({ agentKey: key, target: changeTarget(c.op, c.item_id), by: me.id });
   return done();
 }
 
@@ -459,6 +473,7 @@ export async function applyRoleChange(roleKey: string, chatId: number, index: nu
   if (error) return { ok: false, error: error.message };
   changes[index] = { ...c, applied: true };
   await supabase.from("ai_role_chats").update({ changes }).eq("id", chatId);
+  await logChange(c.op === "set_core" ? { roleKey, target: "core", by: me.id } : { agentKey: key, target: changeTarget(c.op, c.item_id), by: me.id });
   return done();
 }
 
@@ -474,6 +489,7 @@ export async function saveRoleCore(key: string, core: string): Promise<ActionRes
   const me = await requireExec();
   const supabase = await createClient();
   const { error } = await supabase.from("ai_roles").update({ core: core.trim().slice(0, 20000), updated_by: me.id, updated_at: new Date().toISOString() }).eq("key", key);
+  if (!error) await logChange({ roleKey: key, target: "core", by: me.id });
   return done(error);
 }
 

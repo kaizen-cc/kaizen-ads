@@ -156,16 +156,18 @@ export async function disagreeAiComment(id: string, requestId: string, reason: s
   const now = new Date().toISOString();
   const why = reason.trim().slice(0, 600) || null;
   await admin.from("review_comments").update({ disagreed_at: now, disagreed_by: me.id, disagree_reason: why, resolved_at: now, resolved_by: me.id }).eq("id", id);
-  await admin.from("creative_review_disagreements").insert({
-    comment_id: id,
-    request_id: requestId,
-    client_id: c.client_id,
-    area: c.area,
-    severity: c.severity,
-    note: String(c.body).replace(/^(Fix|Worth a look)( · [^:]+)?: /, "").slice(0, 1000),
-    reason: why,
-    created_by: me.id,
-  });
+  const note = String(c.body).replace(/^(Fix|Worth a look)( · [^:]+)?: /, "").slice(0, 1000);
+  const { data: saved } = await admin
+    .from("creative_review_disagreements")
+    .insert({ comment_id: id, request_id: requestId, client_id: c.client_id, area: c.area, severity: c.severity, note, reason: why, created_by: me.id })
+    .select("id")
+    .single();
+  // A conditional learning for the review (what it shouldn't raise, and when), classified after the answer
+  if (saved?.id && c.client_id)
+    after(async () => {
+      const { recordLearning } = await import("@/lib/learnings");
+      await recordLearning(admin, { table: "creative_review_disagreements", id: saved.id as string, clientId: c.client_id as string, text: `Don't raise${c.area ? ` (${c.area})` : ""}: "${note}"${why ? ` · the team disagreed: ${why}` : ""}` });
+    });
   return { ok: true, comments: await ticketComments(requestId) };
 }
 
