@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Ad } from "@/lib/copy";
+import { AdPreview, previewMedia } from "@/components/ad-preview";
 import type { PastNote, PortalData, PortalDesign, PortalFile, PortalItem, PortalRow, RunningAd } from "@/lib/portal";
 import { submitReview, type Pin, type PieceDecision } from "./actions";
 
@@ -358,6 +359,7 @@ function Session({ slug, clientName, item, demo, next, onSent, onNext, onClose }
           ) : (
             <DesignStep
               key={step.design.id}
+              clientName={clientName}
               item={item}
               step={step}
               choice={dChoice[step.design.id]}
@@ -372,6 +374,7 @@ function Session({ slug, clientName, item, demo, next, onSent, onNext, onClose }
         ) : step.kind === "copy" ? (
           <CopyStep
             key={step.index}
+            clientName={clientName}
             item={item}
             step={step}
             choice={aChoice[step.index]}
@@ -583,10 +586,10 @@ function Decide({ onApprove, onChanges, className = "" }: { onApprove: () => voi
   return (
     <div className={className}>
       <div className="flex items-center justify-center gap-[18px] pb-1 pt-3 lg:gap-3 lg:pt-0">
-        <button onClick={onChanges} aria-label="Ask for changes" className="grid h-[54px] w-[54px] place-items-center rounded-full border border-line bg-surface text-[20px] font-semibold text-warn transition-transform active:scale-90 lg:flex lg:h-12 lg:w-auto lg:flex-1 lg:gap-2 lg:rounded-[14px] lg:text-[15px]">
+        <button onClick={onChanges} aria-label="Ask for changes" className="grid h-[54px] w-[54px] place-items-center rounded-full border border-line bg-surface text-[20px] font-semibold text-warn transition-transform active:scale-90 lg:flex lg:h-12 lg:w-auto lg:flex-1 lg:items-center lg:justify-center lg:gap-2 lg:rounded-[14px] lg:px-5 lg:text-[15px]">
           ✎<span className="hidden lg:inline">Ask for changes</span>
         </button>
-        <button onClick={onApprove} aria-label="Approve" className="grid h-[62px] w-[62px] place-items-center rounded-full bg-ok text-[24px] font-semibold text-white shadow-[0_10px_30px_-10px_rgba(63,178,127,0.9)] transition-transform active:scale-90 lg:flex lg:h-12 lg:w-auto lg:flex-1 lg:gap-2 lg:rounded-[14px] lg:text-[15px]">
+        <button onClick={onApprove} aria-label="Approve" className="grid h-[62px] w-[62px] place-items-center rounded-full bg-ok text-[24px] font-semibold text-white shadow-[0_10px_30px_-10px_rgba(63,178,127,0.9)] transition-transform active:scale-90 lg:flex lg:h-12 lg:w-auto lg:flex-1 lg:items-center lg:justify-center lg:gap-2 lg:rounded-[14px] lg:px-5 lg:text-[15px]">
           ✓<span className="hidden lg:inline">Approve</span>
         </button>
       </div>
@@ -652,7 +655,7 @@ function changedFor(item: PortalItem, note: string) {
 
 const whereOf = (n: PastNote) => (n.tMs != null ? `at ${clock(n.tMs)}` : n.w != null ? "the area you boxed" : n.x != null ? "the spot you marked" : undefined);
 
-function DesignStep({ item, step, choice, onApprove, onChanges, onMark }: { item: PortalItem; step: Extract<Step, { kind: "design" }>; choice?: DesignChoice; onApprove: () => void; onChanges: () => void; onMark: (m: Mark) => void }) {
+function DesignStep({ clientName, item, step, choice, onApprove, onChanges, onMark }: { clientName: string; item: PortalItem; step: Extract<Step, { kind: "design" }>; choice?: DesignChoice; onApprove: () => void; onChanges: () => void; onMark: (m: Mark) => void }) {
   const [fi, setFi] = useState(0);
   const [before, setBefore] = useState(false);
   const frame = useRef<HTMLDivElement>(null);
@@ -687,12 +690,18 @@ function DesignStep({ item, step, choice, onApprove, onChanges, onMark }: { item
       <div {...bind} style={style} className="relative mx-3 flex min-h-0 flex-1 touch-pan-y select-none flex-col overflow-hidden rounded-[14px] border border-line bg-surface lg:col-start-1 lg:row-span-4 lg:row-start-1 lg:mb-0 lg:ml-5">
         <Stamps dx={dx} />
         {before && <span className="absolute left-3 top-3 z-10 rounded-full bg-black/70 px-2.5 py-1 text-[11px] text-white">Before · what you commented on</span>}
-        <Media file={file} frameRef={frame}>
-          {pins.map((n, i) => (
-            <Marker key={i} n={prev!.notes.indexOf(n) + 1} x={n.x!} y={n.y!} w={n.w} h={n.h} />
-          ))}
-        </Media>
-        {d.files.length > 1 && (
+        {before && old ? (
+          <Media file={file} frameRef={frame}>
+            {pins.map((n, i) => (
+              <Marker key={i} n={prev!.notes.indexOf(n) + 1} x={n.x!} y={n.y!} w={n.w} h={n.h} />
+            ))}
+          </Media>
+        ) : (
+          <div className="min-h-0 flex-1 overflow-y-auto bg-surface-2/40 px-3 py-4" onPointerDown={(e) => e.stopPropagation()}>
+            <WholeAd page={clientName} item={item} design={d} onMark={(fileIndex, x, y) => onMark({ fileIndex, x, y, w: null, h: null })} />
+          </div>
+        )}
+        {before && d.files.length > 1 && (
           <div className="flex flex-wrap justify-center gap-1.5 px-3 py-2.5">
             {d.files.map((f, i) => (
               <button key={f.id} aria-pressed={i === fi} onClick={() => setFi(i)} className={`rounded-full border px-2.5 py-0.5 text-[10.5px] ${CHIP} ${i === fi ? "border-fg bg-fg text-bg" : "border-line text-muted"}`}>
@@ -707,14 +716,43 @@ function DesignStep({ item, step, choice, onApprove, onChanges, onMark }: { item
           <YouAsked notes={prev.notes.map((n) => ({ body: n.body, where: whereOf(n), changed: changedFor(item, n.body) }))} onShow={!old || before ? undefined : () => setBefore(true)} />
         </div>
       ) : (
-        !isVideo(file) && <p className="pt-2 text-center text-[11px] text-faint lg:col-start-2 lg:row-start-2 lg:px-4 lg:text-left lg:text-[13px]">Click the design to comment on a spot, or use the buttons below</p>
+        !isVideo(file) && <p className="pt-2 text-center text-[11px] text-faint lg:col-start-2 lg:row-start-2 lg:px-4 lg:text-left lg:text-[13px]">This is your ad as it will run. Tap the creative to comment on a spot, or use the buttons below</p>
       )}
-      <Decide onApprove={onApprove} onChanges={onChanges} className="lg:col-start-2 lg:row-start-4 lg:px-4" />
+      <Decide onApprove={onApprove} onChanges={onChanges} className="px-3 lg:col-start-2 lg:row-start-4 lg:px-4" />
     </div>
   );
 }
 
+/** The ad as it will run, for the client: the design with the copy (or a quiet "copy coming" while it's written) */
+function WholeAd({ page, item, design, ad: chosen, onMark }: { page: string; item: PortalItem; design: PortalDesign; ad?: Ad; onMark?: (fileIndex: number, x: number, y: number) => void }) {
+  const ad = chosen ?? item.ads[0]?.ad ?? null;
+  const media = previewMedia(item.format, design.files, []);
+  // Which of the design's files a tap landed on: the carousel's card, or the size shown
+  const fileOf = (card: number) => {
+    if (item.format === "carousel") {
+      const sorted = [...design.files].sort((a, b) => (a.card ?? 0) - (b.card ?? 0));
+      return design.files.indexOf(sorted[card]);
+    }
+    const feed = design.files.find((f) => f.aspect === "4x5") ?? design.files.find((f) => f.aspect !== "9x16") ?? design.files[0];
+    return design.files.indexOf(feed);
+  };
+  return (
+    <AdPreview
+      page={page}
+      primaryText={ad?.primaryText ?? ""}
+      headline={ad?.headline ?? ""}
+      description={ad?.linkDescription ?? ""}
+      cta={ad?.cta ?? "Learn More"}
+      landing={item.landingUrl}
+      media={media}
+      copyPending={!ad}
+      onMediaClick={onMark ? (at) => (design.files[fileOf(at.card)] && !isVideo(design.files[fileOf(at.card)]) ? onMark(fileOf(at.card), at.x, at.y) : undefined) : undefined}
+    />
+  );
+}
+
 function CopyStep({
+  clientName,
   item,
   step,
   choice,
@@ -724,6 +762,7 @@ function CopyStep({
   onCancel,
   onSave,
 }: {
+  clientName: string;
   item: PortalItem;
   step: Extract<Step, { kind: "copy" }>;
   choice?: AdChoice;
@@ -752,15 +791,20 @@ function CopyStep({
           {choice && <Chip choice={choice.decision} />}
         </span>
       </div>
-      <div {...bind} style={style} className="relative mx-3 flex min-h-0 flex-1 touch-pan-y select-none flex-col overflow-hidden rounded-[14px] border border-line bg-surface">
+      <div {...bind} style={style} className="relative mx-3 flex min-h-0 touch-pan-y select-none flex-col overflow-hidden rounded-[14px] border border-line bg-surface">
         <Stamps dx={dx} />
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+        <div className="min-h-0 overflow-y-auto px-4 py-4">
           {asked && (
             <div className="mb-3.5">
               <YouAsked notes={[{ body: asked, changed: changedFor(item, asked) }]} />
             </div>
           )}
           {showBefore && <p className="mb-2 inline-block rounded-full bg-surface-3 px-2.5 py-0.5 text-[11px] text-muted">Before · what you commented on</p>}
+          {!showBefore && item.designs[0] && (
+            <div className="mb-4" onPointerDown={(e) => e.stopPropagation()}>
+              <WholeAd page={clientName} item={item} design={item.designs.find((x) => !x.context) ?? item.designs[0]} ad={ad} />
+            </div>
+          )}
           <p className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-faint">Primary text</p>
           <p className="whitespace-pre-wrap text-[13.5px] leading-[1.55] [overflow-wrap:anywhere] max-md:text-[15px]">{ad.primaryText}</p>
           <div className="mt-4 grid gap-3 border-t border-line pt-3.5">
@@ -802,7 +846,7 @@ function CopyStep({
           </div>
         </div>
       ) : (
-        <Decide onApprove={onApprove} onChanges={onChanges} />
+        <Decide onApprove={onApprove} onChanges={onChanges} className="px-3" />
       )}
     </div>
   );
