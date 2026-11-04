@@ -40,7 +40,7 @@ function Bubble({ t, onUndo }: { t: ChatTurn; onUndo?: (i: number) => void }) {
       {t.attachments && t.attachments.length > 0 && (
         <span className={`flex max-w-[92%] flex-wrap gap-1.5 ${me ? "justify-end" : ""}`}>
           {t.attachments.map((a) => (
-            <button key={a.id} type="button" onClick={() => void openDoc(a.id)} className="inline-flex min-h-9 max-w-full items-center gap-1.5 truncate rounded-full border border-ink/10 bg-ink/[0.04] px-3 text-[11.5px] text-ink/75 hover:text-fg md:min-h-7" title="Open it (it's in the client's documents)">
+            <button key={a.id} type="button" onClick={() => void openDoc(a.id)} className="inline-flex min-h-9 max-md:h-11 max-w-full items-center gap-1.5 truncate rounded-full border border-ink/10 bg-ink/[0.04] px-3 text-[11.5px] text-ink/75 hover:text-fg md:min-h-7" title="Open it (it's in the client's documents)">
               <span aria-hidden>{a.kind === "link" ? "↗" : "📄"}</span>
               <span className="truncate">{a.name}</span>
             </button>
@@ -207,7 +207,7 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
   return (
     <>
       {variant === "inline" ? (
-        <button type="button" onClick={() => setOpen(true)} className="inline-flex h-9 shrink-0 items-center gap-2 rounded-full border border-line px-4 text-sm text-muted transition-colors hover:border-brand/50 hover:text-fg">
+        <button type="button" onClick={() => setOpen(true)} className="inline-flex h-9 max-md:h-11 shrink-0 items-center gap-2 rounded-full border border-line px-4 text-sm text-muted transition-colors hover:border-brand/50 hover:text-fg">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" />
           </svg>
@@ -354,7 +354,7 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
               {files.map((f, i) => (
                 <span key={`${f.name}-${i}`} className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-ink/10 bg-ink/[0.05] py-1 pl-3 pr-1 text-[11.5px] text-ink/80">
                   <span className="truncate">{f.name}</span>
-                  <button type="button" onClick={() => setFiles((cur) => cur.filter((_, j) => j !== i))} aria-label={`Remove ${f.name}`} className="grid h-7 w-7 place-items-center rounded-full text-ink/50 hover:bg-ink/10 hover:text-fg md:h-5 md:w-5">
+                  <button type="button" onClick={() => setFiles((cur) => cur.filter((_, j) => j !== i))} aria-label={`Remove ${f.name}`} className="grid h-7 max-md:h-11 w-7 max-md:w-11 place-items-center rounded-full text-ink/50 hover:bg-ink/10 hover:text-fg md:h-5 md:w-5">
                     ×
                   </button>
                 </span>

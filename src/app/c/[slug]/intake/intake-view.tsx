@@ -145,7 +145,7 @@ function Form(p: Props & { form: IntakeForm; setAnswers: React.Dispatch<React.Se
           const qs = form.questions.filter((q) => q.section === s.key);
           const full = qs.every((q) => !q.required || valueOf(q, answers).trim());
           return (
-            <button key={s.key} type="button" onClick={() => void go(s.key)} className={`shrink-0 rounded-full px-3.5 py-2 text-[12.5px] transition-colors ${s.key === section.key ? "bg-fg text-ink" : full && qs.some((q) => valueOf(q, answers).trim()) ? "bg-ok-soft text-ok" : "bg-surface-2 text-muted hover:text-fg"}`}>
+            <button key={s.key} type="button" onClick={() => void go(s.key)} className={`min-h-11 shrink-0 rounded-full px-3.5 py-2 text-[12.5px] transition-colors md:min-h-9 ${s.key === section.key ? "bg-fg text-bg" : full && qs.some((q) => valueOf(q, answers).trim()) ? "bg-ok-soft text-ok" : "bg-surface-2 text-muted hover:text-fg"}`}>
               {i + 1}. {s.title}
             </button>
           );
@@ -170,7 +170,7 @@ function Form(p: Props & { form: IntakeForm; setAnswers: React.Dispatch<React.Se
       {error && <p className="rounded-[14px] border border-bad/40 bg-bad-soft/40 px-4 py-3 text-[13.5px] text-bad">{error}</p>}
 
       {/* Back and next, always in reach on a phone */}
-      <div className="sticky bottom-3 z-10 flex items-center gap-3 rounded-full border border-line bg-surface/95 p-2 shadow-[0_18px_40px_-20px_rgba(0,0,0,0.5)] backdrop-blur">
+      <div className="sticky bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-10 flex items-center gap-3 rounded-full border border-line bg-surface/95 p-2 shadow-[0_18px_40px_-20px_rgba(0,0,0,0.5)] backdrop-blur">
         <button type="button" disabled={index <= 0} onClick={() => void go(sections[index - 1].key)} className="h-12 rounded-full px-5 text-[14.5px] text-muted hover:text-fg disabled:opacity-30">
           ← Back
         </button>

@@ -100,7 +100,7 @@ function LinkFix({ clientId, slug, link, canEdit }: { clientId: string; slug: st
       <button
         type="button"
         onClick={(e) => (at ? close() : show(e.currentTarget.parentElement!))}
-        className="inline-flex min-h-8 items-center gap-1 rounded-full border border-dashed border-warn/50 px-2 text-[11px] text-warn transition-colors hover:border-warn hover:bg-warn-soft md:min-h-0 md:py-px"
+        className="inline-flex min-h-8 max-md:h-11 items-center gap-1 rounded-full border border-dashed border-warn/50 px-2 text-[11px] text-warn transition-colors hover:border-warn hover:bg-warn-soft md:min-h-0 md:py-px"
       >
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden>
           <path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" />
@@ -224,7 +224,7 @@ export function AddServices({ clientId, slug, canEdit, onAdded }: { clientId: st
       <button
         type="button"
         onClick={(e) => (at ? done() : show(e.currentTarget.parentElement!))}
-        className="inline-flex min-h-8 items-center gap-1.5 rounded-full border border-dashed border-warn/40 px-2.5 py-1 text-[11.5px] text-warn transition-colors hover:border-warn hover:bg-warn-soft md:min-h-0"
+        className="inline-flex min-h-8 max-md:h-11 items-center gap-1.5 rounded-full border border-dashed border-warn/40 px-2.5 py-1 text-[11.5px] text-warn transition-colors hover:border-warn hover:bg-warn-soft md:min-h-0"
       >
         No services on file
         {canEdit && <span aria-hidden className="text-[13px] leading-none">+</span>}

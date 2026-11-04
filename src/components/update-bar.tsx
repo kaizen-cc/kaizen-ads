@@ -49,7 +49,7 @@ export function UpdateBar({ preview = false }: { preview?: boolean } = {}) {
         ✦
       </span>
       <p className="min-w-0 flex-1">Kaizen Ads was updated. Refresh to get the latest version.</p>
-      <button onClick={() => window.location.reload()} className="h-8 shrink-0 rounded-brand bg-brand px-3 text-xs font-medium text-white hover:bg-brand-hover">
+      <button onClick={() => window.location.reload()} className="h-8 max-md:h-11 shrink-0 rounded-brand bg-brand px-3 text-xs font-medium text-white hover:bg-brand-hover">
         Refresh
       </button>
       <button onClick={() => setHidden(true)} aria-label="Later" className="shrink-0 text-faint hover:text-fg">

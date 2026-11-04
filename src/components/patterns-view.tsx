@@ -35,7 +35,7 @@ function Card({ p, names, canBrief, uses }: { p: Pattern; names?: Record<string,
             <b className="tabular text-fg">{p.evidence.clients}</b> of {p.evidence.of} clients · {CONF[p.confidence]}
           </span>
           {p.evidence.items.length > 0 && (
-            <button type="button" onClick={() => setOpen(!open)} className="min-h-9 px-1 text-faint hover:text-fg">
+            <button type="button" onClick={() => setOpen(!open)} className="min-h-9 max-md:h-11 px-1 text-faint hover:text-fg">
               {open ? "Hide the proof" : "The proof"}
             </button>
           )}
@@ -116,7 +116,7 @@ export function PatternsPanel({ state, canBrief, canRefresh }: { state: Patterns
                 const r = await refreshPatterns();
                 setRefreshing(r.ok ? "Reading every account: back in a few minutes" : r.error);
               }}
-              className="min-h-9 rounded-full border border-line px-3 text-muted hover:text-fg disabled:opacity-70"
+              className="min-h-9 max-md:h-11 rounded-full border border-line px-3 text-muted hover:text-fg disabled:opacity-70"
             >
               {refreshing ?? "Refresh"}
             </button>

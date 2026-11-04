@@ -222,7 +222,7 @@ export function PlanTalk({ slug, brand, chat: initial, locked, onReactions }: { 
                     {files.map((f, i) => (
                       <span key={`${f.name}-${i}`} className="inline-flex items-center gap-1 rounded-full bg-surface-2 py-1 pl-3 pr-1 text-[12px]">
                         {f.name}
-                        <button type="button" onClick={() => setFiles(files.filter((_, j) => j !== i))} className="grid h-6 w-6 place-items-center rounded-full text-muted hover:text-fg" aria-label={`Remove ${f.name}`}>
+                        <button type="button" onClick={() => setFiles(files.filter((_, j) => j !== i))} className="grid h-6 max-md:h-11 w-6 max-md:w-11 place-items-center rounded-full text-muted hover:text-fg" aria-label={`Remove ${f.name}`}>
                           ×
                         </button>
                       </span>

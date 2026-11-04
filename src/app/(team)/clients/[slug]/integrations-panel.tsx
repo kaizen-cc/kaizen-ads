@@ -160,7 +160,7 @@ export function IntegrationsPanel({ clientId, connections, summary, suggest }: {
         <div className="grid gap-3 rounded-[12px] border border-line bg-bg p-4">
           <div className="flex flex-wrap gap-1.5">
             {(Object.keys(NAMES) as IntegrationKind[]).map((k) => (
-              <button key={k} type="button" onClick={() => setKind(k)} className={`h-9 rounded-full border px-3.5 text-[13px] ${kind === k ? "border-brand bg-brand/10 text-fg" : "border-line text-muted hover:text-fg"}`}>
+              <button key={k} type="button" onClick={() => setKind(k)} className={`h-9 max-md:h-11 rounded-full border px-3.5 text-[13px] ${kind === k ? "border-brand bg-brand/10 text-fg" : "border-line text-muted hover:text-fg"}`}>
                 {NAMES[k]}
               </button>
             ))}

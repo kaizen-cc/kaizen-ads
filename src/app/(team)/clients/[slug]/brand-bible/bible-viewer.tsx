@@ -354,7 +354,7 @@ function BibleChat({
               {t.role === "assistant" && ((t.changed?.length ?? 0) > 0 || (t.resolved?.length ?? 0) > 0) && (
                 <div className="flex max-w-[92%] flex-wrap gap-1.5">
                   {t.changed?.map((c) => (
-                    <button key={c} type="button" onClick={() => onJump(c)} className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-ok/30 bg-ok-soft px-3 text-[11.5px] capitalize text-ok md:min-h-7">
+                    <button key={c} type="button" onClick={() => onJump(c)} className="inline-flex min-h-9 max-md:h-11 items-center gap-1.5 rounded-full border border-ok/30 bg-ok-soft px-3 text-[11.5px] capitalize text-ok md:min-h-7">
                       ✓ Updated: {c}
                     </button>
                   ))}
@@ -633,7 +633,7 @@ export function BibleViewer({ client, bible, canEdit }: { client: { id: string; 
       {/* Contents on phones: a strip under the bar */}
       <nav aria-label="Sections" className="no-scrollbar sticky top-[calc(3.5rem+env(safe-area-inset-top))] z-20 -mx-4 flex gap-1.5 overflow-x-auto border-b border-line bg-bg/85 px-4 py-2 backdrop-blur-xl md:top-[68px] md:-mx-10 md:px-10 lg:hidden">
         {sections.map((s) => (
-          <button key={s.id} type="button" onClick={() => jump(s.id)} className={`min-h-9 shrink-0 rounded-full px-3 text-[12.5px] ${active === s.id ? "bg-fg text-bg" : "text-muted"}`}>
+          <button key={s.id} type="button" onClick={() => jump(s.id)} className={`min-h-9 max-md:h-11 shrink-0 rounded-full px-3 text-[12.5px] ${active === s.id ? "bg-fg text-bg" : "text-muted"}`}>
             {s.title}
           </button>
         ))}

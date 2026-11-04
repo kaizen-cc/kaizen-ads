@@ -130,7 +130,7 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-label={unread ? `${unread} new notifications` : "Notifications"}
-        className={`relative grid place-items-center rounded-full text-muted transition-colors hover:bg-surface-2 hover:text-fg ${placement === "top" ? "h-11 w-11" : "h-9 w-9"}`}
+        className={`relative grid place-items-center rounded-full text-muted transition-colors hover:bg-surface-2 hover:text-fg ${placement === "top" ? "h-11 w-11" : "h-9 max-md:h-11 w-9 max-md:w-11"}`}
       >
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
@@ -169,7 +169,7 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
                     router.push("/notifications");
                   }}
                   aria-label="Notification settings"
-                  className={`grid place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg ${sheet ? "h-11 w-11" : "h-7 w-7"}`}
+                  className={`grid place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg ${sheet ? "h-11 w-11" : "h-7 max-md:h-11 w-7 max-md:w-11"}`}
                 >
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                     <circle cx="12" cy="12" r="3" />
@@ -240,7 +240,7 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
                             type="button"
                             onClick={() => void clear([n.id])}
                             aria-label="Clear this notification"
-                            className={`absolute right-1.5 grid place-items-center rounded-full text-faint transition hover:bg-surface-3 hover:text-fg ${sheet ? "top-1.5 h-11 w-11" : "top-2 h-8 w-8 opacity-0 focus-visible:opacity-100 group-hover:opacity-100"}`}
+                            className={`absolute right-1.5 grid place-items-center rounded-full text-faint transition hover:bg-surface-3 hover:text-fg ${sheet ? "top-1.5 h-11 w-11" : "top-2 h-8 max-md:h-11 w-8 max-md:w-11 opacity-0 focus-visible:opacity-100 group-hover:opacity-100 max-md:opacity-100"}`}
                           >
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden>
                               <path d="M18 6 6 18M6 6l12 12" />

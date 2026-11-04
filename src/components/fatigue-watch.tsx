@@ -140,16 +140,16 @@ function WatchCard({ r, showClient, onGone }: { r: WatchRow; showClient: boolean
         <div className="grid gap-2">
           <div className="flex flex-wrap gap-1.5">
             {REASONS.map((x) => (
-              <button key={x} onClick={() => setReason(x)} className={`h-7 rounded-full px-3 text-xs ${reason === x ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
+              <button key={x} onClick={() => setReason(x)} className={`h-7 max-md:h-11 rounded-full px-3 text-xs ${reason === x ? "bg-fg text-bg" : "border border-line text-muted hover:text-fg"}`}>
                 {x}
               </button>
             ))}
           </div>
           <div className="flex gap-2">
-            <button onClick={dismiss} disabled={!reason.trim()} className="h-8 rounded-brand bg-fg px-3 text-xs text-bg disabled:opacity-40">
+            <button onClick={dismiss} disabled={!reason.trim()} className="h-8 max-md:h-11 rounded-brand bg-fg px-3 text-xs text-bg disabled:opacity-40">
               Take it off the list
             </button>
-            <button onClick={() => setStep("idle")} className="h-8 px-2 text-xs text-faint">
+            <button onClick={() => setStep("idle")} className="h-8 max-md:h-11 px-2 text-xs text-faint">
               Back
             </button>
           </div>
@@ -161,7 +161,7 @@ function WatchCard({ r, showClient, onGone }: { r: WatchRow; showClient: boolean
             {step === "writing" ? r.briefId ? "Opening…" : <Writing /> : r.briefId ? "Open the brief" : "Brief a refresh"}
           </button>
           {r.briefId && step !== "writing" && <span className="text-[11px] text-ok">Brief ready</span>}
-          <button onClick={() => setStep("dismiss")} disabled={step === "writing"} className="h-9 px-3 text-sm text-faint hover:text-fg">
+          <button onClick={() => setStep("dismiss")} disabled={step === "writing"} className="h-9 max-md:h-11 px-3 text-sm text-faint hover:text-fg">
             Dismiss
           </button>
         </div>

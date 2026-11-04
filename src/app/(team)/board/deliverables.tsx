@@ -505,7 +505,7 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
             )}
           </div>
           <div className="flex items-center justify-end gap-2 max-md:flex-wrap max-md:[&>button]:h-11">
-            <button type="button" onClick={() => filesInput.current?.click()} className="mr-auto h-9 rounded-brand px-3 text-sm text-muted hover:text-fg">
+            <button type="button" onClick={() => filesInput.current?.click()} className="mr-auto h-9 max-md:h-11 rounded-brand px-3 text-sm text-muted hover:text-fg">
               + Add more files
             </button>
             <button
@@ -515,11 +515,11 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
                 setCheck({ status: "idle" });
                 setAdjusted({ on: false, note: "" });
               }}
-              className="h-9 rounded-brand px-3 text-sm text-muted hover:text-fg"
+              className="h-9 max-md:h-11 rounded-brand px-3 text-sm text-muted hover:text-fg"
             >
               Cancel
             </button>
-            <button onClick={upload} disabled={adjusted.on && !adjusted.note.trim()} className="h-9 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:bg-brand-hover disabled:opacity-50 max-md:order-last max-md:w-full">
+            <button onClick={upload} disabled={adjusted.on && !adjusted.note.trim()} className="h-9 max-md:h-11 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:bg-brand-hover disabled:opacity-50 max-md:order-last max-md:w-full">
               Upload {plural(staged.length, "design")}
             </button>
           </div>
@@ -543,10 +543,10 @@ export function Deliverables({ ticket, demoDesigns, onState }: { ticket: Ticket;
             className="h-10 rounded-brand border border-line bg-bg px-3 text-sm outline-none placeholder:text-faint focus:border-brand-text/60 max-md:h-11"
           />
           <div className="flex items-center justify-end gap-2 max-md:[&>button]:h-11 max-md:[&>button]:flex-1">
-            <button onClick={() => setReplacing(null)} className="h-9 rounded-brand px-3 text-sm text-muted hover:text-fg">
+            <button onClick={() => setReplacing(null)} className="h-9 max-md:h-11 rounded-brand px-3 text-sm text-muted hover:text-fg">
               Cancel
             </button>
-            <button onClick={replace} className="h-9 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:bg-brand-hover">
+            <button onClick={replace} className="h-9 max-md:h-11 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:bg-brand-hover">
               Upload v{replacing.design.currentVersion + 1}
             </button>
           </div>

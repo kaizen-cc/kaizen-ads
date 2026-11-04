@@ -39,10 +39,10 @@ export function IssuesPanel({ issues, clientId, slug, canEdit }: { issues: Websi
         )}
         {i.status === "sent" && i.sentAt && <span className="rounded-full bg-ok-soft px-2 py-0.5 text-ok">Sent to the client {fmt(i.sentAt)}</span>}
         <span className="ml-auto flex gap-1">
-          <button type="button" disabled={busy} onClick={() => close(i.id, "fixed")} className="min-h-9 rounded-full px-2.5 hover:text-fg md:min-h-7">
+          <button type="button" disabled={busy} onClick={() => close(i.id, "fixed")} className="min-h-9 max-md:h-11 rounded-full px-2.5 hover:text-fg md:min-h-7">
             Fixed
           </button>
-          <button type="button" disabled={busy} onClick={() => close(i.id, "dismissed")} className="min-h-9 rounded-full px-2.5 hover:text-fg md:min-h-7">
+          <button type="button" disabled={busy} onClick={() => close(i.id, "dismissed")} className="min-h-9 max-md:h-11 rounded-full px-2.5 hover:text-fg md:min-h-7">
             Not an issue
           </button>
         </span>

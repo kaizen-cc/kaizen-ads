@@ -59,7 +59,7 @@ export function Combobox({
           setCursor(0);
           setTimeout(() => input.current?.focus(), 0);
         }}
-        className={`flex h-9 w-full items-center gap-2 rounded-full border px-3 text-sm transition-colors ${
+        className={`flex h-9 max-md:h-11 w-full items-center gap-2 rounded-full border px-3 text-sm transition-colors ${
           selected ? "border-brand-text/50 bg-brand-soft text-fg" : "border-line bg-surface text-muted hover:border-faint hover:text-fg"
         }`}
       >

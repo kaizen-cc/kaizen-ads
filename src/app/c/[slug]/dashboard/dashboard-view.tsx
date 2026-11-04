@@ -538,7 +538,7 @@ function Trend({ history, view, metric, range }: { history: DashboardHistory; vi
         </div>
         <div className="flex max-w-full gap-1 overflow-x-auto rounded-full bg-surface-2 p-1 [scrollbar-width:none]">
           {wins.map((w) => (
-            <button key={w.key} type="button" onClick={() => setWin(w.key)} className={`h-9 shrink-0 rounded-full px-3 text-[12.5px] transition-colors ${win === w.key ? "bg-fg font-medium text-bg" : "text-muted hover:text-fg"}`}>
+            <button key={w.key} type="button" onClick={() => setWin(w.key)} className={`h-9 max-md:h-11 shrink-0 rounded-full px-3 text-[12.5px] transition-colors ${win === w.key ? "bg-fg font-medium text-bg" : "text-muted hover:text-fg"}`}>
               {w.label}
             </button>
           ))}

@@ -797,11 +797,11 @@ function DeleteTicket({ ticket, onDeleted }: { ticket: Ticket; onDeleted: () => 
             onDeleted();
             router.refresh();
           }}
-          className="h-9 rounded-brand bg-bad px-4 text-sm font-medium text-white disabled:opacity-40"
+          className="h-9 max-md:h-11 rounded-brand bg-bad px-4 text-sm font-medium text-white disabled:opacity-40"
         >
           {busy ? "Deleting…" : "Delete ticket"}
         </button>
-        <button onClick={() => (setOpen(false), setReason(""))} className="h-9 rounded-brand px-3 text-sm text-muted hover:text-fg">
+        <button onClick={() => (setOpen(false), setReason(""))} className="h-9 max-md:h-11 rounded-brand px-3 text-sm text-muted hover:text-fg">
           Cancel
         </button>
       </div>

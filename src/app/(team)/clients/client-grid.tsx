@@ -195,7 +195,7 @@ function Card({ c, open, slotOptions, canEdit }: { c: ClientCard; open: boolean;
                 {x === "creative" && c.packageLabel && <span className="text-faint">· {c.packageLabel}</span>}
                 {x === "creative" && c.pkg === "sprint" && c.until && <span className="text-warn">· sprint to {untilLabel(c.until)}</span>}
                 {open && canEdit && (
-                  <button type="button" onClick={() => remove(x)} aria-label={`Take ${svc.label} off`} title={`Take ${svc.label} off`} className="-mr-1 grid h-6 w-6 place-items-center rounded-full text-faint hover:bg-bad-soft hover:text-bad md:h-4 md:w-4">
+                  <button type="button" onClick={() => remove(x)} aria-label={`Take ${svc.label} off`} title={`Take ${svc.label} off`} className="-mr-1 grid h-6 max-md:h-11 w-6 max-md:w-11 place-items-center rounded-full text-faint hover:bg-bad-soft hover:text-bad md:h-4 md:w-4">
                     ×
                   </button>
                 )}

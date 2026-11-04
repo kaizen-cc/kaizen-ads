@@ -309,7 +309,7 @@ export function HelpChat({ slug, step, initial, onCall }: { slug: string; step: 
             {files.map((f, i) => (
               <span key={`${f.name}-${i}`} className="inline-flex max-w-full items-center gap-1 rounded-full bg-bg px-3 py-1 text-[12px]">
                 <span className="truncate">📎 {f.name}</span>
-                <button type="button" onClick={() => setFiles(files.filter((_, j) => j !== i))} className="grid h-6 w-6 place-items-center text-muted hover:text-fg" aria-label={`Remove ${f.name}`}>
+                <button type="button" onClick={() => setFiles(files.filter((_, j) => j !== i))} className="grid h-6 max-md:h-11 w-6 max-md:w-11 place-items-center text-muted hover:text-fg" aria-label={`Remove ${f.name}`}>
                   ×
                 </button>
               </span>
@@ -942,7 +942,7 @@ function AssetsSheet({ slug, guide, next }: Props & { next: StepKey | null }) {
               <div key={`${f.name}-${i}`} className="flex items-center gap-3 rounded-[12px] bg-surface px-3 py-2 text-[13.5px]">
                 <span className="min-w-0 flex-1 truncate">{f.name}</span>
                 <span className="tabular shrink-0 text-[12px] text-faint">{(f.size / 1_000_000).toFixed(1)} MB</span>
-                <button type="button" onClick={() => setFiles(files.filter((_, j) => j !== i))} className="grid h-9 w-9 place-items-center rounded-full text-muted hover:text-fg" aria-label={`Remove ${f.name}`}>
+                <button type="button" onClick={() => setFiles(files.filter((_, j) => j !== i))} className="grid h-9 max-md:h-11 w-9 max-md:w-11 place-items-center rounded-full text-muted hover:text-fg" aria-label={`Remove ${f.name}`}>
                   ×
                 </button>
               </div>
@@ -1145,7 +1145,7 @@ function StyleSheet({ slug, guide, examples, looks, next }: Props & { next: Step
                   <a href={x.url} target="_blank" rel="noreferrer" className="min-w-0 flex-1 truncate hover:underline">
                     {x.name}
                   </a>
-                  <button type="button" onClick={() => setOwn(own.filter((_, j) => j !== i))} className="grid h-9 w-9 place-items-center rounded-full text-muted hover:text-fg" aria-label={`Remove ${x.name}`}>
+                  <button type="button" onClick={() => setOwn(own.filter((_, j) => j !== i))} className="grid h-9 max-md:h-11 w-9 max-md:w-11 place-items-center rounded-full text-muted hover:text-fg" aria-label={`Remove ${x.name}`}>
                     ×
                   </button>
                 </div>
@@ -1155,7 +1155,7 @@ function StyleSheet({ slug, guide, examples, looks, next }: Props & { next: Step
                   <span className="shrink-0 text-faint">{f.type.startsWith("video/") ? "▶" : "▣"}</span>
                   <span className="min-w-0 flex-1 truncate">{f.name}</span>
                   <span className="tabular shrink-0 text-[12px] text-faint">uploads when you save</span>
-                  <button type="button" onClick={() => setFiles(files.filter((_, j) => j !== i))} className="grid h-9 w-9 place-items-center rounded-full text-muted hover:text-fg" aria-label={`Remove ${f.name}`}>
+                  <button type="button" onClick={() => setFiles(files.filter((_, j) => j !== i))} className="grid h-9 max-md:h-11 w-9 max-md:w-11 place-items-center rounded-full text-muted hover:text-fg" aria-label={`Remove ${f.name}`}>
                     ×
                   </button>
                 </div>

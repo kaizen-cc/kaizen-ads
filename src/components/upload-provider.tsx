@@ -148,7 +148,7 @@ function UploadTray({ jobs, onClear }: { jobs: UploadJob[]; onClear: () => void 
   const sent = jobs.reduce((n, j) => n + j.sent, 0);
   const total = jobs.reduce((n, j) => n + j.total, 0);
   return (
-    <div className="fixed bottom-5 right-5 z-[60] w-[340px] overflow-hidden [&>button:first-child]:pr-10 rounded-[12px] border border-line bg-surface shadow-2xl animate-[step-in_.25s_ease-out]">
+    <div className="fixed inset-x-3 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-[60] sm:inset-x-auto sm:bottom-5 sm:right-5 sm:w-[340px] overflow-hidden [&>button:first-child]:pr-10 rounded-[12px] border border-line bg-surface shadow-2xl animate-[step-in_.25s_ease-out]">
       <button onClick={() => setOpen((o) => !o)} className="flex w-full items-center gap-3 px-4 py-3 text-left">
         <span className="relative grid h-8 w-8 place-items-center">
           <svg viewBox="0 0 36 36" className="absolute inset-0 -rotate-90">
@@ -167,7 +167,7 @@ function UploadTray({ jobs, onClear }: { jobs: UploadJob[]; onClear: () => void 
         <span className="text-xs text-faint">{open ? "Hide" : "Show"}</span>
       </button>
       {!active && (
-        <button onClick={onClear} aria-label="Close" className="absolute right-2 top-2 grid h-6 w-6 place-items-center rounded-full text-faint hover:bg-surface-2 hover:text-fg">
+        <button onClick={onClear} aria-label="Close" className="absolute right-2 top-2 grid h-6 max-md:h-11 w-6 max-md:w-11 place-items-center rounded-full text-faint hover:bg-surface-2 hover:text-fg">
           ×
         </button>
       )}

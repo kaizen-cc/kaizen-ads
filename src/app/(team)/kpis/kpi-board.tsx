@@ -707,8 +707,8 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-1">
-              <button type="button" onClick={() => onStep(-1)} aria-label="Previous account" className="hidden h-9 w-9 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg md:grid">‹</button>
-              <button type="button" onClick={() => onStep(1)} aria-label="Next account" className="hidden h-9 w-9 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg md:grid">›</button>
+              <button type="button" onClick={() => onStep(-1)} aria-label="Previous account" className="hidden h-9 max-md:h-11 w-9 max-md:w-11 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg md:grid">‹</button>
+              <button type="button" onClick={() => onStep(1)} aria-label="Next account" className="hidden h-9 max-md:h-11 w-9 max-md:w-11 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg md:grid">›</button>
               <button type="button" onClick={onClose} aria-label="Close" className="grid h-11 w-11 place-items-center rounded-full text-lg text-muted hover:bg-surface-2 hover:text-fg md:h-9 md:w-9">
                 ×
               </button>
@@ -1447,7 +1447,7 @@ function Card({ r, active, onOpen, onMove }: { r: KpiRow; active: boolean; onOpe
               {moves} {moves === 1 ? "move" : "moves"} to make
             </ChipTip>
           )}
-          <span className="ml-auto text-[11px] text-faint opacity-0 transition-opacity group-hover:opacity-100">Open →</span>
+          <span className="ml-auto text-[11px] text-faint opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100">Open →</span>
         </div>
       </button>
     </li>
@@ -1564,7 +1564,7 @@ function TipRow({ title, meta, ...link }: { title: string; meta?: string | null 
         <span className="text-fg/90 group-hover/row:text-fg">{title}</span>
         {meta && <span className="text-faint"> · {meta}</span>}
       </span>
-      <span aria-hidden className="mt-px shrink-0 text-faint opacity-0 transition-opacity group-hover/row:opacity-100">→</span>
+      <span aria-hidden className="mt-px shrink-0 text-faint opacity-0 transition-opacity group-hover/row:opacity-100 max-md:opacity-100">→</span>
     </>
   );
   const cls = "group/row -mx-1.5 flex gap-2 rounded-[8px] px-1.5 py-1 text-left leading-snug transition-colors hover:bg-surface-2";
@@ -1875,7 +1875,7 @@ export function KpiBoard({
                 <button
                   key={p}
                   onClick={() => setPace(pace === p ? "all" : p)}
-                  className={`inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-xs transition-colors md:h-7 ${pace === p ? "bg-fg text-bg" : m.chip}`}
+                  className={`inline-flex h-9 max-md:h-11 items-center gap-1.5 rounded-full px-3 text-xs transition-colors md:h-7 ${pace === p ? "bg-fg text-bg" : m.chip}`}
                 >
                   <span className="tabular">{n}</span> {m.label.toLowerCase()}
                 </button>

@@ -70,7 +70,7 @@ function Texts({ title, items, onChange, max, rows, keep }: { title: string; ite
           />
           <span className={`pointer-events-none absolute bottom-2 right-3 text-[10px] tabular ${t.length > max ? "text-warn" : "text-faint"}`}>{t.length}</span>
           {items.length > keep && (
-            <button type="button" onClick={() => onChange(items.filter((_, j) => j !== i))} aria-label={`Remove ${title.toLowerCase()} ${i + 1}`} className="absolute right-1 top-1 grid h-9 w-9 place-items-center rounded-full text-faint hover:text-fg">
+            <button type="button" onClick={() => onChange(items.filter((_, j) => j !== i))} aria-label={`Remove ${title.toLowerCase()} ${i + 1}`} className="absolute right-1 top-1 grid h-9 max-md:h-11 w-9 max-md:w-11 place-items-center rounded-full text-faint hover:text-fg">
               ×
             </button>
           )}

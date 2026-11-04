@@ -145,7 +145,7 @@ export function FeedPreview({ view, loading = false, autoPlay = false, compact =
               <button
                 onClick={() => setMuted((m) => !m)}
                 aria-label={muted ? "Unmute" : "Mute"}
-                className="absolute bottom-2 right-2 grid h-8 w-8 place-items-center rounded-full bg-black/60 text-white backdrop-blur"
+                className="absolute bottom-2 right-2 grid h-8 max-md:h-11 w-8 max-md:w-11 place-items-center rounded-full bg-black/60 text-white backdrop-blur"
               >
                 {muted ? (
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden>

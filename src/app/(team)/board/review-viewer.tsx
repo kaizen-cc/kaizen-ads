@@ -391,11 +391,11 @@ export function ReviewViewer({
             ) : (
               <div className="flex flex-wrap gap-1.5 max-md:flex-nowrap max-md:[&>button]:h-11 max-md:[&>button]:flex-1 max-md:[&>button]:text-[13px]">
                 {isVideo && (
-                  <button onClick={() => (videoRef.current?.pause(), begin({ x: null, y: null, tMs: nowMs }))} className="h-8 rounded-full bg-white px-3.5 text-xs font-medium text-black">
+                  <button onClick={() => (videoRef.current?.pause(), begin({ x: null, y: null, tMs: nowMs }))} className="h-8 max-md:h-11 rounded-full bg-white px-3.5 text-xs font-medium text-black">
                     Comment at {clock(nowMs)}
                   </button>
                 )}
-                <button onClick={() => begin({ x: null, y: null, tMs: null })} className="h-8 rounded-full border border-white/20 px-3.5 text-xs text-white/70 hover:bg-white/10">
+                <button onClick={() => begin({ x: null, y: null, tMs: null })} className="h-8 max-md:h-11 rounded-full border border-white/20 px-3.5 text-xs text-white/70 hover:bg-white/10">
                   Comment on the whole design
                 </button>
               </div>

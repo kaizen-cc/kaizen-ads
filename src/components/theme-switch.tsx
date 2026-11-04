@@ -49,7 +49,7 @@ export function ThemeSwitch({ saved, size = "sm" }: { saved: Theme | null; size?
           aria-checked={theme === o.key}
           title={o.label}
           onClick={() => pick(o.key)}
-          className={`flex items-center justify-center gap-1.5 rounded-full transition-colors ${size === "lg" ? "h-10 text-sm" : "h-7 text-[11px]"} ${theme === o.key ? "bg-surface-2 text-fg shadow-sm" : "text-faint hover:text-fg"}`}
+          className={`flex items-center justify-center gap-1.5 rounded-full transition-colors ${size === "lg" ? "h-10 text-sm" : "h-7 max-md:h-11 text-[11px]"} ${theme === o.key ? "bg-surface-2 text-fg shadow-sm" : "text-faint hover:text-fg"}`}
         >
           <svg width={size === "lg" ? 15 : 13} height={size === "lg" ? 15 : 13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <path d={o.icon} />

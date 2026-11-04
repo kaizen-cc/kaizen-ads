@@ -104,7 +104,7 @@ function OpenQuestion({ q, n, clientId, slug, focused }: { q: BibleQuestion; n: 
           {q.options.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {q.options.map((o) => (
-                <button key={o} type="button" onClick={() => setText((t) => (q.multi && t.trim() ? `${t.trim()}; ${o}` : o))} className="min-h-9 rounded-full border border-line px-3 text-[12.5px] text-muted hover:border-faint hover:text-fg md:min-h-7">
+                <button key={o} type="button" onClick={() => setText((t) => (q.multi && t.trim() ? `${t.trim()}; ${o}` : o))} className="min-h-9 max-md:h-11 rounded-full border border-line px-3 text-[12.5px] text-muted hover:border-faint hover:text-fg md:min-h-7">
                   {o}
                 </button>
               ))}

@@ -16,7 +16,7 @@ export function SlackConnect({ connected, next }: { connected: boolean; next?: s
     return (
       <a
         href={`/api/slack/connect?next=${encodeURIComponent(back)}`}
-        className="inline-flex h-8 items-center gap-2 rounded-full bg-fg px-3.5 text-xs font-medium text-bg hover:opacity-90"
+        className="inline-flex h-8 max-md:h-11 items-center gap-2 rounded-full bg-fg px-3.5 text-xs font-medium text-bg hover:opacity-90"
       >
         <SlackMark />
         Connect my Slack
@@ -41,7 +41,7 @@ export function SlackConnect({ connected, next }: { connected: boolean; next?: s
         type="button"
         onClick={disconnect}
         disabled={pending}
-        className="h-6 rounded-full px-2.5 text-faint hover:bg-fg/5 hover:text-fg disabled:opacity-50"
+        className="h-6 max-md:h-11 rounded-full px-2.5 text-faint hover:bg-fg/5 hover:text-fg disabled:opacity-50"
       >
         {pending ? "Disconnecting…" : failed ? "Try again" : "Disconnect"}
       </button>
