@@ -40,10 +40,17 @@ function Picture({ file, className = "" }: { file: PreviewFile; className?: stri
   );
 }
 
-/** A video: the poster frame at once, then playing muted and looping; a tap turns the sound on or off */
-function Video({ file }: { file: PreviewFile }) {
+/**
+ * A video: the poster frame at once, then playing muted and looping; a tap turns the sound on or off. With onMoment
+ * (the client's portal), a tap pauses it and comments at that moment instead, and the sound has its own button.
+ */
+function Video({ file, onMoment }: { file: PreviewFile; onMoment?: (tMs: number) => void }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [muted, setMuted] = useState(true);
+  const sound = () => {
+    setMuted(!muted);
+    void ref.current?.play().catch(() => undefined);
+  };
   return (
     <>
       <video
@@ -58,19 +65,39 @@ function Video({ file }: { file: PreviewFile }) {
         className="absolute inset-0 h-full w-full object-cover"
         onClick={(e) => {
           e.stopPropagation();
-          setMuted(!muted);
-          void ref.current?.play().catch(() => undefined);
+          const v = ref.current;
+          if (onMoment && v) {
+            v.pause();
+            onMoment(Math.round(v.currentTime * 1000));
+          } else sound();
         }}
       />
-      <span className="pointer-events-none absolute bottom-2 right-2 grid h-8 w-8 place-items-center rounded-full bg-black/60 text-[13px] text-white">{muted ? "🔇" : "🔊"}</span>
+      {onMoment ? (
+        <>
+          <span className="pointer-events-none absolute left-2 top-2 rounded-full bg-black/60 px-2.5 py-1 text-[11px] text-white">Tap to comment at this moment</span>
+          <button
+            type="button"
+            aria-label={muted ? "Sound on" : "Sound off"}
+            onClick={(e) => {
+              e.stopPropagation();
+              sound();
+            }}
+            className="absolute bottom-2 right-2 grid h-11 w-11 place-items-center rounded-full bg-black/60 text-[15px] text-white"
+          >
+            {muted ? "🔇" : "🔊"}
+          </button>
+        </>
+      ) : (
+        <span className="pointer-events-none absolute bottom-2 right-2 grid h-8 w-8 place-items-center rounded-full bg-black/60 text-[13px] text-white">{muted ? "🔇" : "🔊"}</span>
+      )}
     </>
   );
 }
 
-function Media({ file, onPick }: { file: PreviewFile; onPick?: (e: React.MouseEvent<HTMLDivElement>) => void }) {
+function Media({ file, onPick, onMoment }: { file: PreviewFile; onPick?: (e: React.MouseEvent<HTMLDivElement>) => void; onMoment?: (tMs: number) => void }) {
   return (
     <div className="absolute inset-0" onClick={onPick}>
-      {file.mime.startsWith("video/") ? <Video file={file} /> : <Picture file={file} />}
+      {file.mime.startsWith("video/") ? <Video file={file} onMoment={onMoment} /> : <Picture file={file} />}
     </div>
   );
 }
@@ -85,6 +112,7 @@ export function AdPreview({
   media,
   copyPending = false,
   onMediaClick,
+  onVideoMoment,
   overlay,
 }: {
   page: string;
@@ -98,6 +126,8 @@ export function AdPreview({
   copyPending?: boolean;
   /** A click on the creative (the portal pins a comment there): which card, and where as fractions */
   onMediaClick?: (at: { card: number; x: number; y: number }) => void;
+  /** A tap on a video (the portal comments at that moment): which card, and when, in milliseconds */
+  onVideoMoment?: (at: { card: number; tMs: number }) => void;
   /** Drawn over the creative (the portal's pins), given the card shown */
   overlay?: (card: number) => React.ReactNode;
 }) {
@@ -114,6 +144,7 @@ export function AdPreview({
     const r = e.currentTarget.getBoundingClientRect();
     onMediaClick({ card: index, x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height });
   };
+  const moment = (index: number) => (onVideoMoment ? (tMs: number) => onVideoMoment({ card: index, tMs }) : undefined);
   const go = (i: number) => {
     const el = strip.current;
     if (!el || media?.kind !== "carousel") return;
@@ -142,7 +173,7 @@ export function AdPreview({
       <div className="grid gap-2">
         <Placements value={placement} onChange={setPlacement} show={hasFeed && hasStory} />
         <div className="relative mx-auto w-full max-w-[300px] overflow-hidden rounded-[16px] bg-black" style={{ aspectRatio: "9 / 16" }}>
-          <Media file={media.story} onPick={pick(0)} />
+          <Media file={media.story} onPick={pick(0)} onMoment={moment(0)} />
           {overlay?.(0)}
           <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center gap-2 bg-gradient-to-b from-black/50 to-transparent p-3 text-white">
             <span className="grid h-7 w-7 place-items-center rounded-full bg-white/90 text-[12px] font-semibold text-black">{page.charAt(0)}</span>
@@ -175,6 +206,8 @@ export function AdPreview({
           <div className="relative pb-3">
             <div
               ref={strip}
+              // Its own swipe area: dragging here moves the cards, never the portal's swipe to approve
+              data-carousel
               onScroll={(e) => {
                 const el = e.currentTarget;
                 const w = (el.children[0] as HTMLElement | undefined)?.offsetWidth ?? 1;
@@ -185,7 +218,7 @@ export function AdPreview({
               {media.cards.map((c, i) => (
                 <div key={i} className="w-[78%] shrink-0 snap-start overflow-hidden rounded-[10px] border border-[#e4e6eb]">
                   <div className="relative w-full bg-[#e4e6eb]" style={{ aspectRatio: ratioOf(c.aspect, "1 / 1") }}>
-                    <Media file={c} onPick={pick(i)} />
+                    <Media file={c} onPick={pick(i)} onMoment={moment(i)} />
                     {overlay?.(i)}
                   </div>
                   <div className="flex items-center gap-2 bg-[#f0f2f5] px-2.5 py-2">
@@ -219,7 +252,7 @@ export function AdPreview({
             <div className="relative w-full bg-[#e4e6eb]" style={{ aspectRatio: ratioOf(media?.kind === "single" ? (media.feed ?? media.story)?.aspect ?? null : null, "4 / 5") }}>
               {media?.kind === "single" && (media.feed ?? media.story) ? (
                 <>
-                  <Media file={(media.feed ?? media.story)!} onPick={pick(0)} />
+                  <Media file={(media.feed ?? media.story)!} onPick={pick(0)} onMoment={moment(0)} />
                   {overlay?.(0)}
                 </>
               ) : (
@@ -275,7 +308,9 @@ export function previewMedia(
   const as = (f: (typeof files)[number]): PreviewFile => ({ thumb: f.thumbUrl, url: f.url, mime: f.mime, aspect: f.aspect });
   if (format === "carousel") {
     const sorted = [...files].sort((a, b) => (a.card ?? 0) - (b.card ?? 0));
-    return { kind: "carousel", cards: sorted.map((f, i) => ({ ...as(f), headline: cardCopy[i]?.headline ?? "", description: cardCopy[i]?.description ?? "" })) };
+    // Each card's own headline and description, by its card number (in order when the files aren't numbered)
+    const copyOf = (f: (typeof files)[number], i: number) => cardCopy[f.card != null && f.card > 0 ? f.card - 1 : i];
+    return { kind: "carousel", cards: sorted.map((f, i) => ({ ...as(f), headline: copyOf(f, i)?.headline ?? "", description: copyOf(f, i)?.description ?? "" })) };
   }
   const feed = files.find((f) => f.aspect === "4x5") ?? files.find((f) => f.aspect !== "9x16") ?? null;
   const story = files.find((f) => f.aspect === "9x16") ?? null;

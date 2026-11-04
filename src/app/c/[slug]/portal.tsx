@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Ad } from "@/lib/copy";
 import { AdPreview, previewMedia } from "@/components/ad-preview";
 import type { PastNote, PortalData, PortalDesign, PortalFile, PortalItem, PortalRow, RunningAd } from "@/lib/portal";
+import { gestureOf, pressStart, verdictOf, type Gesture, type PressStart } from "@/lib/swipe-gesture";
 import { submitReview, type Pin, type PieceDecision } from "./actions";
 
 // The client portal. Home: what's waiting on them, what we're changing, what's live, what's launching. Reviewing a
@@ -203,7 +204,8 @@ type Step = { kind: "intro" } | { kind: "design"; design: PortalDesign; n: numbe
 type DesignChoice = { decision: PieceDecision; note: string; pins: (Pin & { n: number })[] };
 type AdChoice = { decision: PieceDecision; note: string };
 /** Where on a design: a spot (w, h null) or a box (x, y = top-left), on one of its files. */
-type Mark = { fileIndex: number; x: number; y: number; w: number | null; h: number | null };
+/** Where a note starts: a spot or box on a picture, or a moment in a video (tMs) */
+type Mark = { fileIndex: number; x: number; y: number; w: number | null; h: number | null; tMs?: number | null };
 
 function Session({ slug, clientName, item, demo, next, onSent, onNext, onClose }: { slug: string; clientName: string; item: PortalItem; demo: boolean; next: PortalItem | null; onSent: () => void; onNext: (i: PortalItem) => void; onClose: () => void }) {
   const designs = item.designs.filter((d) => !d.context && d.clientStatus !== "approved");
@@ -537,26 +539,42 @@ function Intro({ item, designs, ads, onStart }: { item: PortalItem; designs: num
   );
 }
 
-/** Drag left or right on a piece; past the line it decides. A tap (no drag) reports where it landed. */
+/**
+ * Drag left or right on a piece; past the line it decides. Only a clearly sideways drag that started on the card
+ * moves it (swipe-gesture.ts): one inside the ad's carousel swipes its cards, one on a control is the control's, and a
+ * press that doesn't move stays a tap, so tapping the creative still pins a comment. A tap reports where it landed.
+ */
 function useSwipe(onApprove: () => void, onChanges: () => void, onTap?: (clientX: number, clientY: number) => void) {
   const [dx, setDx] = useState(0);
   const [dragging, setDragging] = useState(false);
-  const start = useRef<number | null>(null);
+  const start = useRef<{ x: number; y: number; from: PressStart; gesture: Gesture } | null>(null);
   const bind = {
     onPointerDown: (e: React.PointerEvent) => {
-      if ((e.target as HTMLElement).closest("button, video, a, textarea, input")) return;
-      start.current = e.clientX;
-      setDragging(true);
-      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      const from = pressStart(e.target as HTMLElement);
+      start.current = from === "card" ? { x: e.clientX, y: e.clientY, from, gesture: "pending" } : null;
     },
-    onPointerMove: (e: React.PointerEvent) => start.current !== null && setDx(e.clientX - start.current),
+    onPointerMove: (e: React.PointerEvent) => {
+      const s = start.current;
+      if (!s || s.gesture === "none") return;
+      if (s.gesture === "pending") {
+        s.gesture = gestureOf(s.from, e.clientX - s.x, e.clientY - s.y);
+        if (s.gesture !== "swipe") return;
+        // A swipe from here on: hold the pointer (only now, so a plain tap still clicks what's under it)
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+        setDragging(true);
+      }
+      setDx(e.clientX - s.x);
+    },
     onPointerUp: (e: React.PointerEvent) => {
-      if (start.current === null) return;
+      const s = start.current;
       start.current = null;
+      if (!s) return;
+      if (s.gesture === "swipe") {
+        const v = verdictOf(e.clientX - s.x);
+        if (v === "approve") onApprove();
+        else if (v === "changes") onChanges();
+      } else if (s.gesture === "pending") onTap?.(e.clientX, e.clientY);
       setDragging(false);
-      if (dx > 110) onApprove();
-      else if (dx < -110) onChanges();
-      else if (Math.abs(dx) < 6) onTap?.(e.clientX, e.clientY);
       setDx(0);
     },
     onPointerCancel: () => {
@@ -697,8 +715,8 @@ function DesignStep({ clientName, item, step, choice, onApprove, onChanges, onMa
             ))}
           </Media>
         ) : (
-          <div className="min-h-0 flex-1 overflow-y-auto bg-surface-2/40 px-3 py-4" onPointerDown={(e) => e.stopPropagation()}>
-            <WholeAd page={clientName} item={item} design={d} onMark={(fileIndex, x, y) => onMark({ fileIndex, x, y, w: null, h: null })} />
+          <div className="min-h-0 flex-1 overflow-y-auto bg-surface-2/40 px-3 py-4">
+            <WholeAd page={clientName} item={item} design={d} onMark={(fileIndex, x, y, tMs) => onMark({ fileIndex, x, y, w: null, h: null, tMs: tMs ?? null })} />
           </div>
         )}
         {before && d.files.length > 1 && (
@@ -724,9 +742,9 @@ function DesignStep({ clientName, item, step, choice, onApprove, onChanges, onMa
 }
 
 /** The ad as it will run, for the client: the design with the copy (or a quiet "copy coming" while it's written) */
-function WholeAd({ page, item, design, ad: chosen, onMark }: { page: string; item: PortalItem; design: PortalDesign; ad?: Ad; onMark?: (fileIndex: number, x: number, y: number) => void }) {
+function WholeAd({ page, item, design, ad: chosen, onMark }: { page: string; item: PortalItem; design: PortalDesign; ad?: Ad; onMark?: (fileIndex: number, x: number, y: number, tMs?: number) => void }) {
   const ad = chosen ?? item.ads[0]?.ad ?? null;
-  const media = previewMedia(item.format, design.files, []);
+  const media = previewMedia(item.format, design.files, item.cards?.[design.id] ?? []);
   // Which of the design's files a tap landed on: the carousel's card, or the size shown
   const fileOf = (card: number) => {
     if (item.format === "carousel") {
@@ -747,6 +765,8 @@ function WholeAd({ page, item, design, ad: chosen, onMark }: { page: string; ite
       media={media}
       copyPending={!ad}
       onMediaClick={onMark ? (at) => (design.files[fileOf(at.card)] && !isVideo(design.files[fileOf(at.card)]) ? onMark(fileOf(at.card), at.x, at.y) : undefined) : undefined}
+      // A tap on a video pauses it and comments at that moment
+      onVideoMoment={onMark ? (at) => (design.files[fileOf(at.card)] ? onMark(fileOf(at.card), 0, 0, at.tMs) : undefined) : undefined}
     />
   );
 }
@@ -801,7 +821,7 @@ function CopyStep({
           )}
           {showBefore && <p className="mb-2 inline-block rounded-full bg-surface-3 px-2.5 py-0.5 text-[11px] text-muted">Before · what you commented on</p>}
           {!showBefore && item.designs[0] && (
-            <div className="mb-4" onPointerDown={(e) => e.stopPropagation()}>
+            <div className="mb-4">
               <WholeAd page={clientName} item={item} design={item.designs.find((x) => !x.context) ?? item.designs[0]} ad={ad} />
             </div>
           )}
@@ -927,12 +947,25 @@ function Marker({ n, x, y, w, h, live = false }: { n?: number; x: number; y: num
 function MarkDesign({ item, design, start, initial, onCancel, onSave }: { item: PortalItem; design: PortalDesign; start: Mark | null; initial?: DesignChoice; onCancel: () => void; onSave: (pins: (Pin & { n: number })[], note: string) => void }) {
   const [fi, setFi] = useState(start?.fileIndex ?? 0);
   const [pins, setPins] = useState<(Pin & { n: number })[]>(initial?.decision === "changes" ? initial.pins : []);
-  const [draft, setDraft] = useState<Draft | null>(start ? { x: start.x, y: start.y, w: start.w, h: start.h, tMs: null } : null);
+  const [draft, setDraft] = useState<Draft | null>(start ? (start.tMs != null ? { x: null, y: null, w: null, h: null, tMs: start.tMs } : { x: start.x, y: start.y, w: start.w, h: start.h, tMs: null }) : null);
   const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null); // being drawn
   const [text, setText] = useState("");
   const [note, setNote] = useState(initial?.decision === "changes" ? initial.note : "");
-  const [at, setAt] = useState(0);
+  const [at, setAt] = useState(start?.tMs ?? 0);
   const video = useRef<HTMLVideoElement | null>(null);
+  // Started from a moment in the preview: the video waits on that frame
+  const startAt = start?.tMs ?? null;
+  useEffect(() => {
+    const v = video.current;
+    if (startAt == null || !v) return;
+    const seek = () => {
+      v.currentTime = startAt / 1000;
+      v.pause();
+    };
+    if (v.readyState >= 1) seek();
+    else v.addEventListener("loadedmetadata", seek, { once: true });
+    return () => v.removeEventListener("loadedmetadata", seek);
+  }, [startAt]);
   const frame = useRef<HTMLDivElement>(null);
   const file = design.files[fi] ?? design.files[0];
   const here = pins.filter((p) => p.fileId === file.id);

@@ -31,6 +31,8 @@ export type PortalItem = {
   revised: { round: number; changes: { asked: string; changed: string }[] } | null;
   landingUrl: string | null;
   summary: { why: string; audience: string; strategy: string } | null;
+  /** Each carousel's cards' own headline and description, by design id, in card order */
+  cards?: Record<string, { headline: string; description: string }[]>;
 };
 /** A ticket on the home page (in revision, launching soon), with its creative and copy for a quick look. */
 export type PortalRow = { id: string; title: string; note: string; thumbUrl: string | null; item: PortalItem };
@@ -132,11 +134,16 @@ export async function loadPortal(db: SupabaseClient, clientId: string): Promise<
   const ids = all.map((t) => t.id);
   // Tickets split off from these (the pieces the client approved): their designs show as context on copy-only reworks
   const { data: kids } = ids.length ? await db.from("requests").select("id, parent_id").in("parent_id", ids).is("deleted_at", null) : { data: [] as { id: string; parent_id: string }[] };
-  const [designs, { data: copy }, { data: rounds }] = await Promise.all([
-    designsFor(db, [...ids, ...(kids ?? []).map((k) => k.id)]),
+  const kidIds = (kids ?? []).map((k) => k.id);
+  const [designs, { data: copy }, { data: rounds }, { data: cardSets }] = await Promise.all([
+    designsFor(db, [...ids, ...kidIds]),
     ids.length ? db.from("copy_sets").select("request_id, ads, previous_ads, status, client_status").in("request_id", ids) : Promise.resolve({ data: [] as { request_id: string; ads: Ad[]; previous_ads: unknown; status: string; client_status: unknown }[] }),
     ids.length ? db.from("client_rounds").select("request_id, round, decision, targets, copy_notes, design_note, changes, sent_back_at, created_at").in("request_id", ids).order("round", { ascending: false }) : Promise.resolve({ data: [] as never[] }),
+    // Carousel card copy, including the pieces split off (approved earlier) so their cards read right too
+    ids.length ? db.from("copy_sets").select("cards").in("request_id", [...ids, ...kidIds]) : Promise.resolve({ data: [] as { cards: unknown }[] }),
   ]);
+  const cards: Record<string, { headline: string; description: string }[]> = {};
+  for (const s of cardSets ?? []) Object.assign(cards, (s.cards ?? {}) as Record<string, { headline: string; description: string }[]>);
   const copyOf = new Map((copy ?? []).map((c) => [c.request_id, c]));
   const latest = new Map<string, NonNullable<typeof rounds>[number]>();
   for (const r of rounds ?? []) if (!latest.has(r.request_id)) latest.set(r.request_id, r);
@@ -165,6 +172,7 @@ export async function loadPortal(db: SupabaseClient, clientId: string): Promise<
       revised: r?.decision === "revise" && r.sent_back_at ? { round: r.round, changes: (r.changes ?? []) as { asked: string; changed: string }[] } : null,
       landingUrl: t.landing_url ?? null,
       summary: (t.client_summary as PortalItem["summary"]) ?? null,
+      cards: Object.fromEntries([...own, ...context].filter((d) => cards[d.id]?.length).map((d) => [d.id, cards[d.id]!])),
     };
   };
 
