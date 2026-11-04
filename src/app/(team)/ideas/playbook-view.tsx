@@ -226,15 +226,22 @@ function ExampleCard({ e, named }: { e: Example; named: boolean }) {
   );
   const cls = "group grid w-[180px] shrink-0 snap-start content-start gap-2";
   const hover = {
-    onMouseEnter: () => void video.current?.play().catch(() => null),
-    onMouseLeave: () => video.current?.pause(),
+    onPointerEnter: (ev: React.PointerEvent) => void (ev.pointerType === "mouse" && video.current?.play().catch(() => null)),
+    onPointerLeave: (ev: React.PointerEvent) => void (ev.pointerType === "mouse" && video.current?.pause()),
   };
   return named && e.href ? (
     <a href={e.href} target={e.href.startsWith("http") ? "_blank" : undefined} rel="noreferrer" className={cls} {...hover}>
       {body}
     </a>
   ) : (
-    <div className={cls} {...hover}>
+    <div
+      className={cls}
+      {...hover}
+      onClick={() => {
+        const v = video.current;
+        if (v) void (v.paused ? v.play().catch(() => null) : v.pause());
+      }}
+    >
       {body}
     </div>
   );

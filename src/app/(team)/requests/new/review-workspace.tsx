@@ -329,7 +329,7 @@ export function ReviewWorkspace({
             ))}
           </ul>
           {handled.undo && (
-            <button type="button" onClick={onUndo} className="justify-self-start text-xs text-faint hover:text-fg">
+            <button type="button" onClick={onUndo} className="inline-flex min-h-11 items-center md:min-h-0 justify-self-start text-xs text-faint hover:text-fg">
               Undo the AI&apos;s last change
             </button>
           )}

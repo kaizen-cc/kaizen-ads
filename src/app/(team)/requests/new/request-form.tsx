@@ -771,7 +771,7 @@ export function RequestForm({
                         type="button"
                         onClick={draftBrief}
                         disabled={briefAi.status === "loading"}
-                        className={`inline-flex items-center gap-1.5 rounded-full border border-brand-text/30 text-xs text-fg hover:bg-brand-soft disabled:opacity-80 ${briefAi.status === "loading" ? "h-7 w-64 p-0" : "px-3 py-1"}`}
+                        className={`inline-flex items-center gap-1.5 rounded-full border border-brand-text/30 text-xs text-fg hover:bg-brand-soft disabled:opacity-80 ${briefAi.status === "loading" ? "h-9 w-64 max-w-[60vw] p-0 md:h-7" : "min-h-9 px-3 py-1 md:min-h-0"}`}
                       >
                         {briefAi.status === "loading" ? (
                           <AiProgressButton label="suggest" fallbackMs={20_000} text="Writing" />
@@ -1123,14 +1123,14 @@ function AiPanel({ aiOn, ai, clientName, onRefresh, extra }: { aiOn: boolean; ai
               </p>
               {ai.context.briefing && <p className="text-xs text-faint">Briefing updated {when(ai.context.briefing.generatedAt)}</p>}
               {!ai.context.adAccount && <p className="text-xs text-faint">No Meta ad account linked to this client yet.</p>}
-              <button type="button" onClick={onRefresh} className="justify-self-start text-xs text-muted underline-offset-4 hover:text-fg hover:underline">
+              <button type="button" onClick={onRefresh} className="inline-flex min-h-11 items-center md:min-h-0 justify-self-start text-xs text-muted underline-offset-4 hover:text-fg hover:underline">
                 Refresh with what&apos;s filled in
               </button>
             </>
           ) : ai.status === "error" ? (
             <>
               <p className="text-muted">{ai.error}</p>
-              <button type="button" onClick={onRefresh} className="justify-self-start text-xs text-muted underline-offset-4 hover:text-fg hover:underline">
+              <button type="button" onClick={onRefresh} className="inline-flex min-h-11 items-center md:min-h-0 justify-self-start text-xs text-muted underline-offset-4 hover:text-fg hover:underline">
                 Try again
               </button>
             </>
@@ -1168,7 +1168,7 @@ function AiStrip({ aiOn, ai, clientName, onRefresh }: { aiOn: boolean; ai: AiSta
               : "Kaizen AI is standing by"}
       </span>
       {ai.status !== "loading" && (
-        <button type="button" onClick={onRefresh} className="shrink-0 text-faint hover:text-fg">
+        <button type="button" onClick={onRefresh} className="-my-2 inline-flex min-h-11 shrink-0 items-center px-2 text-faint hover:text-fg md:my-0 md:min-h-0 md:px-0">
           {ai.status === "error" ? "Retry" : "Refresh"}
         </button>
       )}
@@ -1201,7 +1201,7 @@ function Done({
       </div>
       <div className="flex flex-wrap gap-2">
         {numbers.map((n, i) => (
-          <Link key={n} href={`/board?t=${n}`} className="inline-flex items-center gap-2 rounded-full border border-line bg-surface px-3 py-1.5 text-sm hover:border-faint">
+          <Link key={n} href={`/board?t=${n}`} className="inline-flex min-h-11 items-center gap-2 rounded-full border border-line bg-surface px-3.5 py-1.5 text-sm hover:border-faint md:min-h-0 md:px-3">
             {formats[i] && <FormatIcon format={formats[i]} />}
             <span className="tabular text-muted">#{n}</span>
             {formats[i] && FORMAT_LABEL[formats[i]]}
@@ -1228,7 +1228,7 @@ function MigrationPanel({ m, onChange }: { m: import("./draft").Migration; onCha
         <p className="text-sm">
           Migrating from Asana: <span className="font-medium">{m.name}</span>
         </p>
-        <a href={m.url} target="_blank" rel="noreferrer" className="text-xs text-muted hover:text-fg">
+        <a href={m.url} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center md:min-h-0 text-xs text-muted hover:text-fg">
           Open in Asana ↗
         </a>
       </div>

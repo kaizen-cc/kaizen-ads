@@ -337,7 +337,7 @@ export function ReportStudio({
               <a
                 key={p.id}
                 href={`/reports/${p.id}`}
-                className={`flex h-8 items-center gap-2 rounded-full border px-3 text-xs ${p.isMe ? "border-fg/40" : "border-line"} ${p.status === "submitted" || p.status === "posted" ? "text-ok" : "text-muted"}`}
+                className={`flex h-11 items-center gap-2 rounded-full border px-3.5 text-xs md:h-8 md:px-3 ${p.isMe ? "border-fg/40" : "border-line"} ${p.status === "submitted" || p.status === "posted" ? "text-ok" : "text-muted"}`}
               >
                 <span className={`h-1.5 w-1.5 rounded-full ${p.status === "submitted" || p.status === "posted" ? "bg-ok" : p.status === "drafting" ? "animate-pulse bg-faint" : "bg-warn"}`} />
                 {platformName(p.platform as "meta" | "google").replace(" Ads", "")} · {p.isMe ? "you" : (p.owner ?? "buyer")} · {PART_STATUS[p.status] ?? p.status}
@@ -647,7 +647,7 @@ ${t}` : t);
             )}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-faint">
               {editable && <span>This is the PDF the client gets. Click any line you wrote to change it; the pages update once it saves.</span>}
-              <a href={`/api/reports/${report.id}/pdf${joint ? "?whole=1" : ""}`} target="_blank" rel="noreferrer" className="hover:text-fg">
+              <a href={`/api/reports/${report.id}/pdf${joint ? "?whole=1" : ""}`} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center md:min-h-0 hover:text-fg">
                 {joint ? "Preview the whole report (PDF) ↗" : "Preview the PDF ↗"}
               </a>
               {!sent && (

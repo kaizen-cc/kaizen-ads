@@ -409,7 +409,7 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources, read
         {readOnly ? (
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-4 py-3 text-sm text-muted">
             <span>You&apos;re reading {readOnly}&apos;s conversation with the table. Only they can add to it.</span>
-            <Link href="/lab?tab=kaizen" className="text-xs text-faint hover:text-fg">
+            <Link href="/lab?tab=kaizen" className="inline-flex min-h-11 items-center md:min-h-0 text-xs text-faint hover:text-fg">
               ← Across Kaizen
             </Link>
           </div>
@@ -551,6 +551,19 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources, read
         )}
       </section>
 
+      {/* Phones: the shared library under the conversation (beside it on a computer) */}
+      <details className="group/mem rounded-[16px] border border-line bg-surface p-3 lg:hidden">
+        <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-1 text-sm [&::-webkit-details-marker]:hidden">
+          <span>
+            The table remembers <span className="tabular text-faint">{sources.length}</span>
+          </span>
+          <span className="text-faint transition-transform group-open/mem:rotate-90">›</span>
+        </summary>
+        <div className="pt-2">
+          <SharedMemory sources={sources} />
+        </div>
+      </details>
+
       {starting && <StartDialog t={starting} clients={clients} tests={tests} threadId={tid} onClose={() => setStarting(null)} />}
     </div>
   );
@@ -649,7 +662,7 @@ function Typing({ seat, mood }: { seat: Seat | "table"; mood: { level: "quick" |
 
 function ToolButton({ children, icon, onClick, on }: { children: React.ReactNode; icon: string; onClick: () => void; on: boolean }) {
   return (
-    <button type="button" onClick={onClick} className={`flex h-9 items-center gap-1.5 rounded-full px-2.5 text-xs md:h-7 ${on ? "bg-surface-2 text-fg" : "text-muted hover:bg-surface-2 hover:text-fg"}`}>
+    <button type="button" onClick={onClick} className={`flex h-11 items-center gap-1.5 rounded-full px-3 text-xs md:h-7 md:px-2.5 ${on ? "bg-surface-2 text-fg" : "text-muted hover:bg-surface-2 hover:text-fg"}`}>
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
         <path d={icon} />
       </svg>
@@ -682,7 +695,7 @@ function SharedChip({ kind, title, url, failed, onRemove }: { kind: string; titl
         inner
       )}
       {onRemove && (
-        <button type="button" onClick={onRemove} className="ml-1 text-faint hover:text-fg" aria-label="Remove">
+        <button type="button" onClick={onRemove} className="-my-1.5 -mr-1.5 ml-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-full text-faint hover:text-fg md:my-0 md:mr-0 md:ml-1 md:h-auto md:w-auto" aria-label="Remove">
           ×
         </button>
       )}
@@ -719,7 +732,7 @@ function SharedMemory({ sources }: { sources: LabSource[] }) {
                 await deleteSource(s.id);
                 router.refresh();
               }}
-              className="text-[10px] text-faint opacity-0 hover:text-bad group-hover:opacity-100"
+              className="-my-1.5 inline-flex min-h-11 shrink-0 items-center px-2 text-[11px] text-faint hover:text-bad md:my-0 md:min-h-0 md:px-0 md:text-[10px] md:opacity-0 md:group-hover:opacity-100 md:focus:opacity-100"
             >
               Forget
             </button>
@@ -727,7 +740,7 @@ function SharedMemory({ sources }: { sources: LabSource[] }) {
         ))}
       </div>
       {sources.length > 4 && (
-        <button onClick={() => setOpen(!open)} className="w-fit px-2 text-[11px] text-faint hover:text-fg">
+        <button onClick={() => setOpen(!open)} className="inline-flex min-h-11 w-fit items-center px-2 text-[11px] text-faint hover:text-fg md:min-h-0">
           {open ? "Show less" : `All ${sources.length}`}
         </button>
       )}
@@ -744,7 +757,7 @@ function LoomImport() {
   const [pending, start] = useTransition();
   if (!open)
     return (
-      <button type="button" onClick={() => setOpen(true)} className="w-fit px-2 text-[11px] text-brand-text hover:underline">
+      <button type="button" onClick={() => setOpen(true)} className="inline-flex min-h-11 w-fit items-center px-2 text-[11px] text-brand-text hover:underline md:min-h-0">
         + Add Loom videos
       </button>
     );
@@ -765,11 +778,11 @@ function LoomImport() {
               router.refresh();
             })
           }
-          className="h-8 rounded-full bg-brand px-3 text-[11.5px] font-medium text-white disabled:opacity-50"
+          className="h-11 rounded-full bg-brand px-4 text-[13px] font-medium text-white disabled:opacity-50 md:h-8 md:px-3 md:text-[11.5px]"
         >
           {pending ? "Adding…" : "Add"}
         </button>
-        <button type="button" onClick={() => setOpen(false)} className="text-[11px] text-faint hover:text-fg">
+        <button type="button" onClick={() => setOpen(false)} className="inline-flex min-h-11 items-center px-2 text-[11px] text-faint hover:text-fg md:min-h-0 md:px-0">
           Close
         </button>
       </div>
@@ -1065,7 +1078,7 @@ function TestCard({ t, clients, tests }: { t: LabTest; clients: LabClientRow[]; 
           )}
           {t.briefs.approved > 0 && <span>· {t.briefs.approved} approved</span>}
           {t.briefs.tickets.map((n) => (
-            <Link key={n} href={`/board?t=${n}`} className="rounded-full border border-line px-2 py-0.5 hover:border-faint">
+            <Link key={n} href={`/board?t=${n}`} className="inline-flex min-h-9 items-center rounded-full border border-line px-3 hover:border-faint md:min-h-0 md:px-2 md:py-0.5">
               #{n}
             </Link>
           ))}

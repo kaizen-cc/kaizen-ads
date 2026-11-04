@@ -202,7 +202,7 @@ function Item({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <li className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 rounded-[10px] p-1.5 transition-colors hover:bg-surface-2/60" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+    <li className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 rounded-[10px] p-1.5 transition-colors hover:bg-surface-2/60" onPointerEnter={(e) => e.pointerType === "mouse" && setOpen(true)} onPointerLeave={(e) => e.pointerType === "mouse" && setOpen(false)}>
       <button type="button" onClick={() => setOpen((o) => !o)} className="flex min-w-0 items-start gap-3 text-left">
         <span className="relative mt-0.5 h-12 w-12 shrink-0 overflow-hidden rounded-[8px] bg-surface-2">
           {thumb ? (
