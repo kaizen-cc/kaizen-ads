@@ -1,4 +1,5 @@
 import "server-only";
+import { reworkAds } from "@/lib/partial-approval";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { metaGraph, pageLeadForms } from "@/lib/context/meta";
@@ -191,11 +192,30 @@ async function loadTicket(admin: SupabaseClient, requestId: string) {
   ]);
   type F = { id: string; path: string; thumb_path: string | null; mime: string; aspect: string | null; card: number | null; original_name: string };
   type D = { id: string; position: number; name: string; is_variation: boolean; current_version: number; client_status: string | null; design_versions: { version: number; design_files: F[] }[] };
-  const list = ((designs ?? []) as unknown as D[])
-    .filter((d) => d.client_status !== "changes")
-    .map((d) => ({ id: d.id, name: d.name, position: d.position, files: d.design_versions.find((v) => v.version === d.current_version)?.design_files ?? [] }))
-    .filter((d) => d.files.length);
-  return { ticket: t as unknown as Ticket | null, cardCopy: (copy?.cards ?? {}) as Record<string, { headline: string; description: string }[]>, copy: (copy?.ads ?? []) as { kind: string; headline: string; primaryText: string; linkDescription: string; cta: string }[], designs: list, conversion: (kpi?.conversion as string | undefined) ?? null, monthlyBudget: kpi?.monthly_budget != null ? Number(kpi.monthly_budget) : null };
+  const filesOf = (rows: D[]) =>
+    rows
+      .filter((d) => d.client_status !== "changes")
+      .map((d) => ({ id: d.id, name: d.name, position: d.position, files: d.design_versions.find((v) => v.version === d.current_version)?.design_files ?? [] }))
+      .filter((d) => d.files.length);
+  let list = filesOf((designs ?? []) as unknown as D[]);
+  let ads = (copy?.ads ?? []) as { kind: string; headline: string; primaryText: string; linkDescription: string; cta: string }[];
+  let cardCopy = (copy?.cards ?? {}) as Record<string, { headline: string; description: string }[]>;
+  // A copy-only rework: every design was approved and went ahead on its own ticket (split off from this one), the
+  // client sent some copy back. The rewritten ads run on those designs; the ones the split already launched don't go twice.
+  if (!list.length && ads.length) {
+    const { data: kids } = await admin.from("requests").select("id").eq("parent_id", requestId).is("deleted_at", null);
+    const ids = (kids ?? []).map((k) => k.id as string);
+    if (ids.length) {
+      const [{ data: kidDesigns }, { data: kidCopy }] = await Promise.all([
+        admin.from("designs").select("id, position, name, is_variation, current_version, client_status, design_versions(version, design_files(id, path, thumb_path, mime, aspect, card, original_name))").in("request_id", ids).eq("client_status", "approved").order("position"),
+        admin.from("copy_sets").select("ads, cards").in("request_id", ids),
+      ]);
+      list = filesOf((kidDesigns ?? []) as unknown as D[]);
+      ads = reworkAds(ads, (kidCopy ?? []).flatMap((c) => (c.ads ?? []) as { primaryText: string; headline: string; linkDescription: string }[]));
+      cardCopy = Object.assign({}, ...(kidCopy ?? []).map((c) => (c.cards ?? {}) as Record<string, { headline: string; description: string }[]>), cardCopy);
+    }
+  }
+  return { ticket: t as unknown as Ticket | null, cardCopy, copy: ads, designs: list, conversion: (kpi?.conversion as string | undefined) ?? null, monthlyBudget: kpi?.monthly_budget != null ? Number(kpi.monthly_budget) : null };
 }
 
 /** The ad sets that can take new ads (with their recent ad names, Page and Instagram identity), the Pages and IG accounts. */

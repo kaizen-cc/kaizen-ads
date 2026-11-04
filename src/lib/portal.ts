@@ -1,4 +1,5 @@
 import "server-only";
+import { readyForClient } from "@/lib/partial-approval";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Ad } from "@/lib/copy";
 
@@ -167,9 +168,9 @@ export async function loadPortal(db: SupabaseClient, clientId: string): Promise<
     };
   };
 
-  // Only what's whole: its designs (or its split-off pieces) and its approved copy, so nothing half-moved reaches the client
+  // Only what's whole: its designs (or its split-off pieces) and its approved copy (or none of its own), so nothing half-moved reaches the client
   const items: PortalItem[] = all
-    .filter((t) => t.stage === "client_review" && (designs.get(t.id)?.length || (kids ?? []).some((k) => k.parent_id === t.id)) && copyOf.get(t.id)?.status === "approved")
+    .filter((t) => readyForClient(t.stage, Boolean(designs.get(t.id)?.length || (kids ?? []).some((k) => k.parent_id === t.id)), copyOf.get(t.id)))
     .map((t) => toItem(t));
 
   const revising: PortalRow[] = all

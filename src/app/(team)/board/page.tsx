@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { loadShadows } from "@/lib/asana";
 import { BoardClient } from "./board-client";
 import { toTicket, type BoardRow } from "./to-ticket";
+import { clientProgress } from "@/lib/partial-approval";
 import { BoardTabs, CreativeKpisView } from "./creative-kpis";
 
 // Writing a video script with the AI can take a minute
@@ -69,9 +70,24 @@ export default async function Board({ searchParams }: PageProps<"/board">) {
     return { new: mine.filter((d) => !d.is_variation).length, variations: mine.filter((d) => d.is_variation).length, cards: mine.map((d) => d.files.filter((f) => (f.card ?? 0) > 0).length).filter(Boolean) };
   };
   const cardsOf = new Map((cardRows ?? []).map((r) => [r.id as string, r.cards as number]));
+  // A partial client review: how many designs the client approved, and the ticket the approved part went ahead as
+  const reviewed = rows.filter((r) => ["client_review", "client_revision", "copy", "copy_review", "ready_for_client", "in_production", "internal_review"].includes(r.stage)).map((r) => r.id as string);
+  const [{ data: decided }, { data: splits }] = reviewed.length
+    ? await Promise.all([
+        supabase.from("designs").select("request_id, client_status").in("request_id", reviewed).not("client_status", "is", null),
+        supabase.from("requests").select("parent_id, number").in("parent_id", reviewed).is("deleted_at", null),
+      ])
+    : [{ data: [] }, { data: [] }];
+  const progressOf = (id: string) =>
+    reviewed.includes(id)
+      ? clientProgress(
+          (decided ?? []).filter((d) => d.request_id === id) as { client_status: string | null }[],
+          (splits ?? []).filter((x) => x.parent_id === id).map((x) => x.number as number),
+        )
+      : null;
   const board = (
     <BoardClient
-      tickets={(rows as BoardRow[]).map((r) => ({ ...toTicket(r), migration: migrationOf(r.id, r.stage), cards: cardsOf.get(r.id) ?? null, uploaded: uploadedOf(r.id) }))}
+      tickets={(rows as BoardRow[]).map((r) => ({ ...toTicket(r), migration: migrationOf(r.id, r.stage), cards: cardsOf.get(r.id) ?? null, uploaded: uploadedOf(r.id), clientProgress: progressOf(r.id) }))}
       clients={clients ?? []}
       people={(people ?? []).map((p) => ({ id: p.id, name: p.full_name, role: roleLabel(p.role as TeamRole) }))}
       canRequest

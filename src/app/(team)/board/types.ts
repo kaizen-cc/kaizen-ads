@@ -40,6 +40,7 @@ export type Ticket = {
   parentNumber?: number | null; // split off from this ticket (the client approved part of it)
   internalRounds?: number; // times the Head of Creative sent it back
   clientRounds?: number; // times the client asked for changes
+  clientProgress?: string | null; // a partial client review: "2 of 3 approved by the client", where the approved part went
 };
 
 export type Person = { id: string; name: string; role: string };

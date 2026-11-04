@@ -132,6 +132,7 @@ export function TicketCard({
         </p>
       )}
       {ticket.parentNumber && <p className="-mt-1 text-[11px] text-ok">Client-approved part of #{ticket.parentNumber}</p>}
+      {ticket.clientProgress && <p className="-mt-1 text-[11px] text-ok">{ticket.clientProgress}</p>}
       {ticket.migration && (
         <p className="-mt-1 rounded-[6px] bg-warn-soft px-2 py-1 text-[11px] text-warn">
           From Asana: {[ticket.migration.needsCreative && "upload the creative", ticket.migration.needsCopy && "add the copy"].filter(Boolean).join(" and ")}
