@@ -45,6 +45,9 @@ import { ScriptPanel } from "./script-panel";
 import { addTicketRef } from "../media-actions";
 import { HiggsfieldPanel } from "@/components/media/higgsfield-panel";
 import { MotionReferences } from "@/components/media/motion-references";
+import { SavedConcepts } from "@/components/saved-concepts";
+import { markSavedUsed } from "../requests/new/saved-actions";
+import { savedHref } from "@/lib/saved-references";
 import { VoiceoverPanel } from "@/components/media/voiceover-panel";
 import { ReviewPanel } from "./review-panel";
 import { AiGate } from "./ai-review";
@@ -682,6 +685,22 @@ export function TicketDrawer({
               </ul>
             )}
             {!demo && <MotionReferences clientId={ticket.clientId} name={`t${ticket.number}`} picked={ticket.refs} onPick={(r) => addTicketRef(ticket.id, r.url)} />}
+            {!demo && (
+              <SavedConcepts
+                key={ticket.id}
+                clientId={ticket.clientId}
+                only={(r) => Boolean(savedHref(r))}
+                hint="Starred for this client by the team. Add one to this ticket's references; it leaves Saved once it's used."
+                onAdd={async (r) => {
+                  const href = savedHref(r, window.location.origin);
+                  if (!href) return { ok: false, error: "That one has no link to add." };
+                  const added = await addTicketRef(ticket.id, href);
+                  if (!added.ok) return added;
+                  await markSavedUsed([r.id], ticket.id);
+                  return { ok: true };
+                }}
+              />
+            )}
           </section>
 
           {ticket.format === "video" && <ScriptPanel requestId={ticket.id} demo={demo ? null : undefined} />}

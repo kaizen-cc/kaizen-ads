@@ -25,6 +25,7 @@ export type Draft = {
   landing?: string; // where the ad sends people
   origin?: Origin | null; // what it's built on (a winner, a market ad, a promise from a call)
   migration?: Migration | null; // coming over from Asana: the stage it lands in and what that stage needs
+  savedRefIds?: string[]; // saved references it's built on: marked used (and out of Saved) once it's sent
 };
 
 /** An Asana task becoming a ticket: it lands in the stage it reached, with what that stage needs filled in. */

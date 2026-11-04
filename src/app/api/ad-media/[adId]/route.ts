@@ -15,14 +15,17 @@ function placeholder() {
   return new Response(svg, { headers: { "content-type": "image/svg+xml", "cache-control": "private, max-age=600" } });
 }
 
-export async function GET(_request: Request, ctx: RouteContext<"/api/ad-media/[adId]">) {
+export async function GET(request: Request, ctx: RouteContext<"/api/ad-media/[adId]">) {
   try {
     await requireStaff();
   } catch {
     return new Response("Not allowed", { status: 401 });
   }
   const { adId } = await ctx.params;
-  if (!/^\d{5,25}$/.test(adId) || !adminConfigured()) return placeholder();
+  // ?strict: a page that draws its own themed placeholder asks for a plain 404 instead of the card
+  const strict = new URL(request.url).searchParams.has("strict");
+  const none = () => (strict ? new Response(null, { status: 404, headers: { "cache-control": "private, max-age=600" } }) : placeholder());
+  if (!/^\d{5,25}$/.test(adId) || !adminConfigured()) return none();
   const admin = createAdminClient();
 
   const serve = async (path: string, mime: string | null) => {
@@ -38,7 +41,7 @@ export async function GET(_request: Request, ctx: RouteContext<"/api/ad-media/[a
     if (r) return r;
   }
   // Tried recently and nothing could be read: don't ask Meta again for a day
-  if (kept && !kept.path && Date.now() - Date.parse(kept.fetched_at as string) < 86_400_000) return placeholder();
+  if (kept && !kept.path && Date.now() - Date.parse(kept.fetched_at as string) < 86_400_000) return none();
 
   try {
     const { adPreviews, metaGraph } = await import("@/lib/context/meta");
@@ -101,5 +104,5 @@ export async function GET(_request: Request, ctx: RouteContext<"/api/ad-media/[a
   } catch (e) {
     console.error("[ad-media]", adId, e instanceof Error ? e.message : e);
   }
-  return placeholder();
+  return none();
 }

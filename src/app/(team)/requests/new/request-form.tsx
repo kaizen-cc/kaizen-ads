@@ -4,7 +4,7 @@ import { AiProgress, AiProgressButton } from "@/components/ai-progress";
 
 import { useRouter } from "next/navigation";
 import { PromisesStrip } from "./promises-strip";
-import { ClientPicker, StartPage, prefetchStart, rememberClient, seedStart } from "./start-flow";
+import { ClientPicker, StartPage, forgetStart, prefetchStart, rememberClient, seedStart } from "./start-flow";
 import type { StartData } from "@/lib/request-start";
 import { RequestChat } from "./request-chat";
 import { AsanaSend, BriefPdfButton } from "@/components/asana-send";
@@ -20,6 +20,8 @@ import { applyFixes, asanaPreview, createBatch, fulfilPromise, loadBriefing, rev
 import { ReviewWorkspace, startHandled, type Handled } from "./review-workspace";
 import { FORMATS, INSPIRE_KEY, MAX_VARIATIONS, SIZES, emptyDraft, selectedFormats, totalFor, type Draft, type Size } from "./draft";
 import { AllotmentMeter, AspectOption, Chip, Progress, Spark, Stepper, type ClientOption } from "./parts";
+import { SavedConcepts } from "@/components/saved-concepts";
+import { savedHref, savedLine } from "@/lib/saved-references";
 
 const STEPS = ["Client", "Start", "Formats", "Direction", "Brief", "Review"];
 // Each step in the address (?step=formats), so back returns to the step before
@@ -337,6 +339,7 @@ export function RequestForm({
       const res = await createBatch(draft, r, decisionsOf(r));
       if (res.ok) {
         writeSaved(null, saveKey);
+        if (draft.clientId && draft.savedRefIds?.length) forgetStart(draft.clientId);
         // Migrated past production: open the ticket to upload its creative
         if (draft.migration?.needsCreative && res.numbers[0]) {
           router.push(`/board?t=${res.numbers[0]}`);
@@ -853,6 +856,23 @@ export function RequestForm({
                 </Field>
 
                 <Field id="refs" label="References" hint="One link per line">
+                  {draft.clientId && !demo && (
+                    <SavedConcepts
+                      clientId={draft.clientId}
+                      added={draft.savedRefIds ?? []}
+                      hint={`Starred for ${client?.name ?? "this client"} by the team. Add one and it goes with the brief to the designer or editor.`}
+                      onAdd={async (r) => {
+                        const href = savedHref(r, window.location.origin);
+                        setDraft((d) => ({
+                          ...d,
+                          refs: href && !d.refs.includes(href) ? `${d.refs.trimEnd()}${d.refs.trim() ? "\n" : ""}${href}` : d.refs,
+                          brief: href ? d.brief : `${d.brief.trimEnd()}${d.brief.trim() ? "\n\n" : ""}${savedLine(r)}`,
+                          savedRefIds: [...new Set([...(d.savedRefIds ?? []), r.id])],
+                        }));
+                        return { ok: true };
+                      }}
+                    />
+                  )}
                   <textarea
                     id="refs"
                     rows={3}
@@ -967,6 +987,7 @@ export function RequestForm({
                     send={() => sendToAsana(draft)}
                     onSent={(tasks) => {
                       writeSaved(null, saveKey);
+                      if (draft.clientId && draft.savedRefIds?.length) forgetStart(draft.clientId);
                       setAsanaSent(tasks.map((t) => ({ name: t.name, url: t.url })));
                     }}
                   />

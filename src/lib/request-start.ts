@@ -3,12 +3,13 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { industryLabel, industryWinners, type Winner } from "@/lib/industry";
 import type { MarketAd } from "@/lib/market";
 import type { SuggestionDraft } from "@/lib/suggestions";
+import { SAVED_COLS, toSaved, type SavedRef } from "@/lib/saved-references";
 
 // Everything the "How do you want to start?" page shows for a client, in one go, from what's already stored: the briefs
 // the strategist writes every day (ads tiring, numbers off, moments, patterns), promises from calls, what's proven for
 // similar clients, and the market ads Motion keeps. No AI at all here: adapting one to the client happens when it's picked.
 
-export type StartBrief = { id: string; kind: string; signal: string; why: string; title: string; angle: string; thumb: string | null; formats: string; createdAt: string };
+export type StartBrief = { id: string; kind: string; signal: string; why: string; title: string; angle: string; thumb: string | null; adId: string | null; formats: string; createdAt: string };
 export type StartPromise = { id: string; kind: string; what: string; callTitle: string; callAt: string; internal: boolean; briefed: boolean };
 export type StartPattern = { id: string; title: string; detail: string; group: string; kind: string; clients: number; of: number; confidence: string; uses: boolean };
 export type StartData = {
@@ -18,8 +19,16 @@ export type StartData = {
   patterns: StartPattern[];
   winners: Winner[];
   winnersLabel: string | null;
+  /** How close the winners are: 1 same product, 2 same niche, 3 only the broad industry (nothing closer had one) */
+  winnersTier: 1 | 2 | 3 | null;
+  /** What the client sells, in a few words, for saying what "similar" means */
+  detail: string | null;
   market: MarketAd[];
+  /** More market ads to load past these */
+  marketMore: boolean;
   marketLabel: string | null;
+  /** References saved for this client, not used yet */
+  saved: SavedRef[];
   /** How long each read took (ms), for the dev log */
   timings?: Record<string, number>;
 };
@@ -47,9 +56,9 @@ export async function startSections(db: SupabaseClient, clientId: string): Promi
   const { data: c } = await db.from("clients").select("id, industry, industry_detail").eq("id", clientId).maybeSingle();
   timings.client = Date.now() - t0;
   const industry = c?.industry && c.industry !== "other" ? (c.industry as string) : null;
-  if (!c) return { clientId, briefs: [], promises: [], patterns: [], winners: [], winnersLabel: null, market: [], marketLabel: null, timings };
+  if (!c) return { clientId, briefs: [], promises: [], patterns: [], winners: [], winnersLabel: null, winnersTier: null, detail: null, market: [], marketMore: false, marketLabel: null, saved: [], timings };
 
-  const [briefs, promises, patterns, winners, market] = await Promise.all([
+  const [briefs, promises, patterns, winners, market, saved] = await Promise.all([
     timed(
       timings,
       "briefs",
@@ -64,8 +73,9 @@ export async function startSections(db: SupabaseClient, clientId: string): Promi
           .limit(12);
         return (data ?? []).map((r) => {
           const d = r.draft as SuggestionDraft | null;
-          const src = r.source as { thumbnail?: string | null } | null;
-          return { id: r.id as string, kind: r.kind as string, signal: r.signal as string, why: r.why as string, title: d?.title ?? "", angle: d?.angle ?? "", thumb: src?.thumbnail ?? null, formats: d ? formatsLine(d) : "", createdAt: r.created_at as string };
+          const src = r.source as { thumbnail?: string | null; adId?: string | null } | null;
+          const adId = src?.adId && /^\d{5,25}$/.test(src.adId) ? src.adId : null;
+          return { id: r.id as string, kind: r.kind as string, signal: r.signal as string, why: r.why as string, title: d?.title ?? "", angle: d?.angle ?? "", thumb: src?.thumbnail ?? null, adId, formats: d ? formatsLine(d) : "", createdAt: r.created_at as string };
         });
       },
       [] as StartBrief[],
@@ -103,22 +113,51 @@ export async function startSections(db: SupabaseClient, clientId: string): Promi
       [] as StartPattern[],
     ),
     timed(timings, "winners", async () => (industry ? industryWinners(db, industry, clientId, 6) : []), [] as Winner[]),
+    timed(timings, "market", () => marketPage(db, clientId, 0, MARKET_PAGE), { ads: [] as MarketAd[], more: false }),
     timed(
       timings,
-      "market",
+      "saved",
       async () => {
-        if (!industry) return [];
-        const { loadClientMarket } = await import("@/lib/market");
-        const all = await loadClientMarket(db, clientId, { limit: 60 });
-        // One per brand, best matches first
-        const seen = new Set<string>();
-        return all.filter((a) => (seen.has(a.brand) ? false : (seen.add(a.brand), true))).slice(0, 8);
+        const { data } = await db.from("client_saved_references").select(SAVED_COLS).eq("client_id", clientId).is("used_at", null).order("created_at", { ascending: false }).limit(40);
+        return (data ?? []).map((r) => toSaved(r as Record<string, unknown>));
       },
-      [] as MarketAd[],
+      [] as SavedRef[],
     ),
   ]);
   timings.total = Date.now() - t0;
   if (process.env.NODE_ENV !== "production") console.info("[request start]", clientId, JSON.stringify(timings));
   const label = industry ? ((c.industry_detail as string | null) ?? industryLabel(industry)) : null;
-  return { clientId, briefs, promises, patterns, winners, winnersLabel: industry ? industryLabel(industry) : null, market, marketLabel: label, timings };
+  const winnersTier = winners.length ? (Math.min(...winners.map((w) => w.match?.tier ?? 3)) as 1 | 2 | 3) : null;
+  return {
+    clientId,
+    briefs,
+    promises,
+    patterns,
+    winners,
+    winnersLabel: industry ? industryLabel(industry) : null,
+    winnersTier,
+    detail: (c.industry_detail as string | null) ?? null,
+    market: market.ads,
+    marketMore: market.more,
+    marketLabel: label,
+    saved,
+    timings,
+  };
+}
+
+/** How many market ads a page brings: two rows on a wide screen, a good swipe on a phone */
+export const MARKET_PAGE = 12;
+
+/**
+ * The client's market ads a page at a time, best matches first and brands taking turns (every brand's best ad, then
+ * every brand's second), so the first screen isn't one brand. Falls back to the industry when nothing is matched yet.
+ */
+export async function marketPage(db: SupabaseClient, clientId: string, offset: number, count: number): Promise<{ ads: MarketAd[]; more: boolean }> {
+  const { loadClientMarket } = await import("@/lib/market");
+  const all = await loadClientMarket(db, clientId, { limit: 240 });
+  const byBrand = new Map<string, MarketAd[]>();
+  for (const a of all) byBrand.set(a.brand, [...(byBrand.get(a.brand) ?? []), a]);
+  const turns: MarketAd[] = [];
+  for (let round = 0; turns.length < all.length; round++) for (const list of byBrand.values()) if (list[round]) turns.push(list[round]);
+  return { ads: turns.slice(offset, offset + count), more: turns.length > offset + count };
 }

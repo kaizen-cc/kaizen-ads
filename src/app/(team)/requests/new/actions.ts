@@ -377,6 +377,11 @@ export async function createBatch(draft: Draft, review: Review | null, decisions
         .eq("id", suggestionId)
         .eq("status", "open");
   }
+  // Built on references saved for the client: they're used now, so they leave Saved (the rows stay, with the ticket)
+  if (draft.savedRefIds?.length && rows?.length) {
+    const { markSavedUsed } = await import("./saved-actions");
+    await markSavedUsed(draft.savedRefIds, rows[0].id).catch(() => null);
+  }
   // A request that makes something promised on a call puts that promise in motion and clears its alert on Home
   if (adminConfigured() && rows?.length) {
     const clientId = draft.clientId;
@@ -465,6 +470,14 @@ export async function promiseDraft(commitmentId: string): Promise<{ ok: true; pa
   }
 }
 
+/** The next page of the client's market ads ("See more" on the start page) */
+export async function moreMarket(clientId: string, offset: number): Promise<{ ads: import("@/lib/market").MarketAd[]; more: boolean }> {
+  await requireStaff();
+  if (!/^[0-9a-f-]{36}$/i.test(clientId)) return { ads: [], more: false };
+  const { marketPage, MARKET_PAGE } = await import("@/lib/request-start");
+  return marketPage(await createClient(), clientId, Math.max(0, Math.floor(offset)), MARKET_PAGE).catch(() => ({ ads: [], more: false }));
+}
+
 /**
  * A whole request from a winning ad or a live market ad, for this client: the strategist writes it (what makes the ad
  * work, fitted to the client), and it comes back as form fields plus where it came from.
@@ -488,7 +501,8 @@ export async function ideaDraft(
     if (source.kind === "winner") {
       const w = source.winner;
       id = await suggestFromWinner(admin, clientId, { adId: w.id, client: w.client, detail: w.detail, headline: w.headline, text: w.text, thumbnail: w.thumbnail, ratio: w.ratio, result: w.result, costPerResult: w.costPerResult, usual: w.usual }, me.id, format);
-      origin = { kind: "winner", label: `${w.client}'s winning ad (${w.ratio}x their usual cost per ${w.result ?? "result"})${w.headline ? `: "${w.headline}"` : ""}`.slice(0, 200), thumb: w.thumbnail, suggestionId: id };
+      // The kept copy of its picture: Meta's own links expire within days
+      origin = { kind: "winner", label: `${w.client}'s winning ad (${w.ratio}x their usual cost per ${w.result ?? "result"})${w.headline ? `: "${w.headline}"` : ""}`.slice(0, 200), thumb: /^\d{5,25}$/.test(w.id) ? `/api/ad-media/${w.id}` : w.thumbnail, suggestionId: id };
     } else {
       const { loadMarketAd } = await import("@/lib/market");
       const a = await loadMarketAd(admin, source.adId);
@@ -639,8 +653,10 @@ export async function suggestionPatch(id: string): Promise<{ ok: true; patch: Pa
   const db = await createClient();
   const { data: r } = await db.from("creative_suggestions").select("signal, draft, source, status").eq("id", id).maybeSingle();
   if (!r || r.status !== "open") return { ok: false, error: "That brief isn't open any more." };
-  const src = r.source as { thumbnail?: string | null } | null;
-  return { ok: true, patch: { ...toPatch(r.draft as import("@/lib/suggestions").SuggestionDraft), origin: { kind: "brief", label: String(r.signal).slice(0, 200), thumb: src?.thumbnail ?? null, suggestionId: id } } };
+  const src = r.source as { thumbnail?: string | null; adId?: string | null } | null;
+  // The kept copy of the ad's picture when there's an ad behind it (Meta's own links expire)
+  const thumb = src?.adId && /^\d{5,25}$/.test(src.adId) ? `/api/ad-media/${src.adId}` : (src?.thumbnail ?? null);
+  return { ok: true, patch: { ...toPatch(r.draft as import("@/lib/suggestions").SuggestionDraft), origin: { kind: "brief", label: String(r.signal).slice(0, 200), thumb, suggestionId: id } } };
 }
 
 /** What works across businesses like this client, for the "from similar clients" cards (works only, ones it isn't using first) */
@@ -745,6 +761,10 @@ export async function sendToAsana(draft: Draft): Promise<{ ok: true; tasks: impo
     const { sendAsanaRequest } = await import("@/lib/asana-request");
     const { suggestionId, ...origin } = draft.origin ?? {};
     const r = await sendAsanaRequest(createAdminClient(), toAsana(draft), { id: me.id, email: me.email ?? null }, { suggestionId: suggestionId ?? null, origin: draft.origin ? origin : null });
+    if (draft.savedRefIds?.length) {
+      const { markSavedUsed } = await import("./saved-actions");
+      await markSavedUsed(draft.savedRefIds).catch(() => null);
+    }
     revalidatePath("/board");
     revalidatePath("/pipeline");
     return { ok: true, tasks: r.tasks };
