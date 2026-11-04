@@ -130,6 +130,8 @@ export type ClientViewProps = {
   canDeployGoogle?: boolean;
   /** Their store or CRM: connections, real customers and lead outcomes (team side) */
   business?: React.ReactNode;
+  /** After approval: their Slack messages, the final execution plan and its tasks */
+  execution?: React.ReactNode;
   today: string; // YYYY-MM-DD in New York
   packageLabel: string | null;
   team: Record<string, { current: Option | null; options: Option[] }>;
@@ -182,7 +184,7 @@ export type ClientViewProps = {
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], canDeployGoogle = false, business = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, docs = null, reports = null, playbook = null, setup = null, emails = null, businessAudit = null, patterns = null }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, docs = null, reports = null, playbook = null, setup = null, emails = null, businessAudit = null, patterns = null }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -320,6 +322,16 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                   </div>
                 ),
               },
+              ...(execution
+                ? [
+                    {
+                      id: "plan",
+                      label: "Plan & tasks",
+                      hint: "Their Slack messages, the final execution plan and its tasks: who's on what, and what's waiting on what",
+                      content: execution,
+                    },
+                  ]
+                : []),
               ...(playbook
                 ? [
                     {

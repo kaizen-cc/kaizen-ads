@@ -375,8 +375,29 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     );
   }
 
+  // The plan after approval: Slack messages, the final execution plan and its tasks (new-flow clients, or any with a plan)
+  let execution: React.ReactNode = null;
+  if (adminConfigured()) {
+    const admin = createAdminClient();
+    const [{ loadPlan, loadTasks, planGate }, { loadKickoff, loadSlackMessages, kickoffGate }, { data: seat }] = await Promise.all([
+      import("@/lib/execution-plan"),
+      import("@/lib/kickoff"),
+      supabase.from("client_assignments").select("role").eq("client_id", client.id).eq("profile_id", me.id).in("role", ["meta_buyer", "google_buyer"]).limit(1).maybeSingle(),
+    ]);
+    const [plan, tasks, kickoff, messages, gate] = await Promise.all([loadPlan(supabase, client.id), loadTasks(supabase, client.id), loadKickoff(supabase, client.id), loadSlackMessages(supabase, client.id), planGate(admin, client.id)]);
+    const { inNewFlow } = await import("@/lib/presentation-types");
+    const { data: cr } = await supabase.from("clients").select("created_at, reonboarded_at").eq("id", client.id).single();
+    if (plan || tasks.length || kickoff || messages.length || (cr && inNewFlow(cr as never))) {
+      // Before anything's drafted, say what the roadmap message waits on
+      const shownKickoff = kickoff ?? { status: "waiting" as const, missing: (await kickoffGate(admin, client.id)).missing, text: "", error: null, draftedAt: null, sentAt: null, sentBy: null, sentAs: null, forced: false };
+      const { ExecutionPanel } = await import("./execution-panel");
+      execution = <ExecutionPanel clientId={client.id} meId={me.id} plan={plan} gate={gate.missing} tasks={tasks} kickoff={shownKickoff} messages={messages} can={{ decide: Boolean(seat) || me.isExec || me.isLead, lead: me.isExec || me.isLead }} hasChannel={Boolean(client.slack_channel_id)} />;
+    }
+  }
+
   return (
     <ClientView
+      execution={execution}
       business={business}
       businessAudit={businessAudit}
       patterns={patterns}

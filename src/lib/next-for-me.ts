@@ -12,7 +12,7 @@ import { loadCallPromises, loadOnboarding, loadSuggestions, type OpenSuggestion 
 
 export type NextItem = {
   id: string;
-  kind: "ticket" | "review" | "launch" | "brief" | "promise" | "first_round" | "refresh" | "kpi" | "fatigue" | "intake" | "client" | "sprint";
+  kind: "ticket" | "review" | "launch" | "brief" | "promise" | "first_round" | "refresh" | "kpi" | "fatigue" | "intake" | "client" | "sprint" | "task";
   tone: "bad" | "warn" | "brand" | "ok";
   client: string;
   title: string;
@@ -90,6 +90,31 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
       action: ACTION[r.stage] ?? "Open",
     };
     (r.minutes_over > 0 || dueToday(r.stage_due_at) || r.stage === "client_revision" ? now : coming).push(item);
+  }
+
+  // ─── Plan tasks on me: what I'm holding up, and what I'm waiting on ───
+  const { myTasks } = await import("@/lib/execution-plan");
+  for (const t of await myTasks(db, me.id).catch(() => [])) {
+    const late = Boolean(t.dueOn && t.dueOn < new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }));
+    const due = t.dueOn ? new Date(`${t.dueOn}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" }) : null;
+    const href = `/clients/${t.clientSlug}?tab=plan`;
+    if (t.status === "blocked") {
+      watch.push({ id: `pt-${t.id}`, kind: "task", tone: "ok", client: t.client, title: t.title, why: `Waiting on: ${t.waitingOn.map((w) => `${w.title} (${w.who})`).join(", ")}`, when: due ? `Due ${due}` : null, href, action: "See the plan" });
+      continue;
+    }
+    const holding = t.holdingUp.length > 0;
+    const item: NextItem = {
+      id: `pt-${t.id}`,
+      kind: "task",
+      tone: late ? "bad" : holding ? "warn" : "brand",
+      client: t.client,
+      title: t.title,
+      why: holding ? `Holding up: ${t.holdingUp.map((h) => `${h.title} (${h.who})`).join(", ")}` : t.status === "in_progress" ? "In progress" : "Ready for you",
+      when: due ? (late ? `Was due ${due}` : `Due ${due}`) : null,
+      href,
+      action: t.status === "in_progress" ? "Finish it" : "Start it",
+    };
+    (late || holding || dueToday(t.dueOn ? `${t.dueOn}T12:00:00` : null) ? now : coming).push(item);
   }
 
   // ─── Leads: what waits on their decision ───

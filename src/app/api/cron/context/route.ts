@@ -220,7 +220,12 @@ export async function GET(request: Request) {
       const presentations = await (await import("@/lib/presentation")).keepPresentations(admin);
       const launches = await (await import("@/lib/engagement-launch")).keepLaunches(admin);
       const guides = await (await import("@/lib/onboarding-guide")).keepGuides(admin);
-      return Response.json({ presentations, launches, guides });
+      // After approval: the final execution plan and its tasks, then the client's Slack messages
+      const plans = await (await import("@/lib/execution-plan")).keepExecution(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+      const { keepKickoffs, keepMeetTeam } = await import("@/lib/kickoff");
+      const meetTeam = await keepMeetTeam(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+      const kickoffs = await keepKickoffs(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+      return Response.json({ presentations, launches, guides, plans, meetTeam, kickoffs });
     }
     if (step === "history") {
       const { googleConfigured, pullEmailHistory } = await import("@/lib/context/google");

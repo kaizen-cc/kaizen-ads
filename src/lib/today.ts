@@ -133,6 +133,29 @@ async function mine(db: SupabaseClient, me: Staff): Promise<Draft[]> {
       action: { label: "Open in Asana", href: (t.url as string) ?? "/board" },
     });
   }
+  // Plan tasks on this person: above all the ones holding someone else up
+  const { myTasks } = await import("@/lib/execution-plan");
+  const todayIso = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  for (const t of await myTasks(db, me.id).catch(() => [])) {
+    if (t.status === "blocked") continue;
+    const late = Boolean(t.dueOn && t.dueOn < todayIso);
+    const holding = t.holdingUp.length;
+    if (!holding && !late && t.dueOn !== todayIso) continue;
+    out.push({
+      key: `mine:task:${t.id}`,
+      topic: "mine",
+      score: holding ? (late ? 86 : 76) : late ? 70 : 56,
+      client: t.client,
+      clientSlug: t.clientSlug,
+      clientId: t.clientId,
+      stat: holding ? { value: String(holding), label: `${holding === 1 ? "step is" : "steps are"} waiting on you` } : late ? { value: day(`${t.dueOn}T12:00:00Z`), label: "was due" } : { value: "Today", label: "due today" },
+      title: t.title,
+      story: holding ? `You're holding up ${t.holdingUp.map((h) => `${h.title} (${h.who})`).join(", ")}. Nothing moves on those until this is done.` : "A step in their plan, on you.",
+      why: holding ? "Others are waiting on this" : late ? "Late on their plan" : "Due today",
+      evidence: [],
+      action: { label: "Open the plan", href: `/clients/${t.clientSlug}?tab=plan` },
+    });
+  }
   return out;
 }
 

@@ -29,6 +29,7 @@ const KIND: Record<NextItem["kind"], string> = {
   fatigue: "Ad wearing out",
   intake: "Onboarding",
   client: "Client",
+  task: "Plan task",
 };
 
 /** Everything on one person, in four calm sections. Briefs open right here; everything else goes where it lives. */
