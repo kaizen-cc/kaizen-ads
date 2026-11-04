@@ -92,6 +92,7 @@ function due(step: string | null) {
   if (step === "market") return hour === 8;
   if (step === "bibles") return true; // every 10 minutes (vercel.json): every client gets a Brand Bible, kept current
   if (step === "bible_write") return true; // started by a Bible build once its research is in (?client=<id>)
+  if (step === "presentation_write") return true; // started once a Bible is written (?client=<id>): its client presentation, drafted (never sent)
   if (step === "presentations") return true; // every 10 minutes (vercel.json): a new client's presentation, written and sent
   if (step === "integrations") return true; // hourly (vercel.json): stores and CRMs read, and at 9am the notes to the buyers
   if (step === "patterns") return weekday === "Mon" && hour >= 5 && hour <= 10; // Mondays early (vercel.json): patterns across clients, a group or two a run
@@ -242,6 +243,11 @@ export async function GET(request: Request) {
       const id = new URL(request.url).searchParams.get("client");
       if (!id) return Response.json({ error: "client missing" }, { status: 400 });
       return Response.json({ result: await (await import("@/lib/brand-bible")).writeBible(admin, id) });
+    }
+    if (step === "presentation_write") {
+      const id = new URL(request.url).searchParams.get("client");
+      if (!id) return Response.json({ error: "client missing" }, { status: 400 });
+      return Response.json({ result: await (await import("@/lib/presentation")).writePresentation(admin, id) });
     }
     if (step === "integrations") return Response.json(await (await import("@/lib/integrations")).keepIntegrations(admin));
     if (step === "bible_upkeep") {

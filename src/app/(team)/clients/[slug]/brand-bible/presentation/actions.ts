@@ -56,12 +56,16 @@ export async function rewritePresentation(clientId: string, change: string): Pro
   const a = await allowed(clientId);
   if ("error" in a) return { ok: false, error: a.error! };
   const { data: p } = await a.admin.from("client_presentations").select("status").eq("client_id", clientId).maybeSingle();
-  if (p && ["sent", "approved"].includes(p.status as string)) return { ok: false, error: "It's already with the client." };
-  const { data: b } = await a.admin.from("client_brand_bibles").select("markdown").eq("client_id", clientId).maybeSingle();
+  const { data: b } = await a.admin.from("client_brand_bibles").select("markdown, version").eq("client_id", clientId).maybeSingle();
   if (!b?.markdown) return { ok: false, error: "There's no Brand Bible to build it from yet." };
-  await a.admin.from("client_presentations").upsert({ client_id: clientId, status: "writing", started_at: new Date().toISOString(), error: null });
+  // Already with the client: a new version is drafted beside it (theirs stays exactly as it is)
+  const withClient = p && ["sent", "approved"].includes(p.status as string);
+  if (withClient) {
+    const { data: busy } = await a.admin.from("client_presentation_versions").select("id").eq("client_id", clientId).eq("status", "writing").gte("started_at", new Date(Date.now() - 30 * 60_000).toISOString()).limit(1);
+    if (busy?.length) return { ok: true, note: "A new version is already being written." };
+  } else await a.admin.from("client_presentations").upsert({ client_id: clientId, status: "writing", started_at: new Date().toISOString(), error: null });
   const { writePresentation } = await import("@/lib/presentation");
   after(() => writePresentation(a.admin, clientId, change.trim() || undefined).then(() => refresh(a.slug)));
   refresh(a.slug);
-  return { ok: true };
+  return { ok: true, note: withClient ? "Writing a new version: the one they have stays as it is." : undefined };
 }

@@ -48,15 +48,34 @@ Rules:
 - questions: up to five things only the client can tell us that would sharpen the work (from the Bible's open questions for the client), each with why it matters. Plain and easy to answer.`;
 
 /** Write (or rewrite) a client's presentation from their Bible. change: what the lead asked to be different. */
+/**
+ * Write the presentation from the Bible. Writing never sends it: sending stays with its own rules (a person, or the
+ * one-business-day send for new clients in the new onboarding when outreach allows). When the one on file is already
+ * with the client (sent or approved), the new one is drafted as a new version beside it and that one is left exactly
+ * as it is; a draft that's replaced is kept as history first.
+ */
 export async function writePresentation(admin: SupabaseClient, clientId: string, change?: string) {
   const [{ data: c }, { data: b }, { data: intake }, { data: prev }] = await Promise.all([
-    admin.from("clients").select("name").eq("id", clientId).single(),
-    admin.from("client_brand_bibles").select("markdown, read_this_first, overview, open_questions").eq("client_id", clientId).maybeSingle(),
+    admin.from("clients").select("name, status").eq("id", clientId).single(),
+    admin.from("client_brand_bibles").select("markdown, read_this_first, overview, open_questions, version").eq("client_id", clientId).maybeSingle(),
     admin.from("client_intakes").select("summary").eq("client_id", clientId).not("summary", "is", null).order("received_at", { ascending: false }).limit(1).maybeSingle(),
-    admin.from("client_presentations").select("deck").eq("client_id", clientId).maybeSingle(),
+    admin.from("client_presentations").select("deck, status, without_intake, drafted_at, bible_version").eq("client_id", clientId).maybeSingle(),
   ]);
   if (!c || !b?.markdown) return "missing" as const;
-  await admin.from("client_presentations").upsert({ client_id: clientId, status: "writing", error: null, started_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+  // Already with the client: a new version is drafted beside it, never over it
+  const withClient = prev && ["sent", "approved"].includes(prev.status as string);
+  let versionId: string | null = null;
+  if (withClient) {
+    const { data: v } = await admin.from("client_presentation_versions").insert({ client_id: clientId, status: "writing", bible_version: b.version ?? null }).select("id").single();
+    versionId = (v?.id as string) ?? null;
+    if (!versionId) return "failed" as const;
+  } else {
+    // A draft about to be replaced is kept, so nothing written is ever lost
+    if (prev?.deck && !change)
+      await admin.from("client_presentation_versions").insert({ client_id: clientId, status: "superseded", deck: prev.deck, without_intake: Boolean(prev.without_intake), bible_version: prev.bible_version ?? null, drafted_at: prev.drafted_at ?? null });
+    await admin.from("client_presentations").upsert({ client_id: clientId, status: "writing", error: null, started_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+  }
+  const failVersion = (error: string) => admin.from("client_presentation_versions").update({ status: "failed", error: error.slice(0, 300) }).eq("id", versionId!);
   try {
     const forClient = ((b.open_questions ?? []) as { question: string; who: string }[]).filter((q) => /client/i.test(q.who));
     const deck = await askJson<Deck>({
@@ -89,13 +108,22 @@ They haven't sent their marketing intake form yet, and we didn't want to sit and
       .map((a) => ({ brand: a.brand, detail: a.detail, thumb: a.media[0]?.thumb ?? (a.media[0]?.type === "image" ? a.media[0].url : null), url: a.motionUrl ?? a.libraryUrl ?? a.media[0]?.url ?? "", video: a.media[0]?.type === "video", days: a.daysActive, why: a.why ?? a.angle }))
       .filter((x) => x.url && x.thumb);
     const now = new Date();
+    if (versionId) {
+      await admin.from("client_presentation_versions").update({ status: "draft", deck, without_intake: !intake?.summary, error: null, drafted_at: now.toISOString() }).eq("id", versionId);
+      await tellApprovers(admin, clientId, c.name as string, "version");
+      return "draft" as const;
+    }
     await admin
       .from("client_presentations")
-      .update({ status: "draft", deck, without_intake: !intake?.summary, error: null, drafted_at: now.toISOString(), send_after: addBusinessDays(now, SEND_AFTER_DAYS).toISOString(), updated_at: now.toISOString() })
+      .update({ status: "draft", deck, without_intake: !intake?.summary, error: null, drafted_at: now.toISOString(), send_after: addBusinessDays(now, SEND_AFTER_DAYS).toISOString(), bible_version: b.version ?? null, updated_at: now.toISOString() })
       .eq("client_id", clientId);
-    if (!change) await tellApprovers(admin, clientId, c.name as string);
+    if (!change) await tellApprovers(admin, clientId, c.name as string, c.status === "onboarding" ? "auto" : "manual");
     return "draft" as const;
   } catch (e) {
+    if (versionId) {
+      await failVersion(e instanceof AiPaused ? "The AI was busy; tried again shortly." : e instanceof Error ? e.message : String(e));
+      return "failed" as const;
+    }
     if (e instanceof AiPaused) {
       await admin.from("client_presentations").update({ status: prev?.deck ? "draft" : "failed", error: "The AI was busy; tried again shortly." }).eq("client_id", clientId);
       return "failed" as const;
@@ -114,7 +142,7 @@ async function approvers(admin: SupabaseClient, clientId: string) {
   return [...new Set([...(buyers ?? []).map((b) => b.profile_id as string), ...(leads ?? []).map((l) => l.id as string)])];
 }
 
-async function tellApprovers(admin: SupabaseClient, clientId: string, name: string) {
+async function tellApprovers(admin: SupabaseClient, clientId: string, name: string, how: "auto" | "manual" | "version") {
   const { data: c } = await admin.from("clients").select("slug").eq("id", clientId).single();
   const ids = await approvers(admin, clientId);
   if (!ids.length || !c) return;
@@ -122,11 +150,16 @@ async function tellApprovers(admin: SupabaseClient, clientId: string, name: stri
     ids.map((id) => ({
       profile_id: id,
       kind: "onboarding",
-      title: `${name}'s client presentation is ready to approve`,
-      body: "The short version of their Brand Bible, for them to react to. Have a look and send it, or it goes out on its own in one business day.",
+      title: how === "version" ? `A new version of ${name}'s client presentation is drafted` : `${name}'s client presentation is ready to approve`,
+      body:
+        how === "version"
+          ? "Written from their rebuilt Brand Bible. The one they already have stays exactly as it is; the new one is on the presentation page for the team."
+          : how === "auto"
+            ? "The short version of their Brand Bible, for them to react to. Have a look and send it, or it goes out on its own in one business day."
+            : "The short version of their Brand Bible, for them to react to. Have a look and send it when it's right: it doesn't go out on its own.",
       href: `/clients/${c.slug}/brand-bible/presentation`,
       client_id: clientId,
-      key: `presentation:${clientId}:${new Date().toISOString().slice(0, 10)}`,
+      key: `presentation${how === "version" ? "-version" : ""}:${clientId}:${new Date().toISOString().slice(0, 10)}`,
       priority: "normal",
     })),
     { onConflict: "profile_id,key", ignoreDuplicates: true },
@@ -203,6 +236,10 @@ export async function keepPresentations(admin: SupabaseClient) {
       break; // one a run
     }
   }
+  if (!Object.keys(out).length) {
+    const r = await presentationForNewBible(admin);
+    if (r) out[r.name] = r.result;
+  }
   const { data: due } = await admin.from("client_presentations").select("client_id, clients!inner(name, status, created_at, reonboarded_at)").eq("status", "draft").eq("clients.status", "onboarding").or(inFlow, { referencedTable: "clients" }).lt("send_after", new Date().toISOString());
   const { autoOutreach } = await import("@/lib/client-outreach");
   for (const d of due ?? []) {
@@ -225,6 +262,54 @@ export async function keepPresentations(admin: SupabaseClient) {
     break;
   }
   return out;
+}
+
+/** Bibles built from here on get their presentation written automatically (older ones are written by hand) */
+const AUTO_FROM = "2026-11-04T00:00:00Z";
+
+/**
+ * A Bible built or rebuilt (any client, onboarding or active) whose presentation hasn't been written from it: write it.
+ * Started right after the Bible is written; this is the catch-up when that start was lost. One a run.
+ */
+async function presentationForNewBible(admin: SupabaseClient) {
+  const { data: bibles } = await admin
+    .from("client_brand_bibles")
+    .select("client_id, version, generated_at, clients!inner(name, archived_at)")
+    .neq("status", "building")
+    .not("markdown", "is", null)
+    .is("clients.archived_at", null)
+    .gte("generated_at", AUTO_FROM)
+    .order("generated_at", { ascending: false })
+    .limit(30);
+  if (!bibles?.length) return null;
+  const ids = bibles.map((b) => b.client_id as string);
+  const [{ data: decks }, { data: versions }] = await Promise.all([
+    admin.from("client_presentations").select("client_id, status, started_at, drafted_at").in("client_id", ids),
+    admin.from("client_presentation_versions").select("client_id, status, started_at").in("client_id", ids).neq("status", "superseded").order("started_at", { ascending: false }),
+  ]);
+  for (const b of bibles) {
+    const built = Date.parse(b.generated_at as string);
+    const d = (decks ?? []).find((x) => x.client_id === b.client_id);
+    const v = (versions ?? []).find((x) => x.client_id === b.client_id);
+    const last = Math.max(Date.parse((d?.started_at as string) ?? "1970-01-01"), Date.parse((v?.started_at as string) ?? "1970-01-01"));
+    if (last >= built) {
+      // Written (or being written) from this Bible: only a run that died 30 minutes ago is tried again
+      const writing = (d?.status === "writing" && Date.parse(d.started_at as string) === last) || (v?.status === "writing" && Date.parse(v.started_at as string) === last);
+      if (!writing || Date.now() - last < 30 * 60_000) continue;
+      if (v?.status === "writing") await admin.from("client_presentation_versions").update({ status: "failed", error: "The writing run stopped" }).eq("client_id", b.client_id).eq("status", "writing");
+    }
+    const name = (b.clients as unknown as { name: string } | null)?.name ?? (b.client_id as string);
+    return { name, result: `written from Bible ${b.version ?? ""}: ${await writePresentation(admin, b.client_id as string)}` };
+  }
+  return null;
+}
+
+/** Starts the presentation's writing in a run of its own once a Bible is written (the request is let go once sent) */
+export async function startPresentation(clientId: string) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return;
+  const base = (process.env.NEXT_PUBLIC_SITE_URL || "https://ads.kaizenmarketing.agency").replace(/\/$/, "");
+  await fetch(`${base}/api/cron/context?step=presentation_write&client=${clientId}`, { headers: { authorization: `Bearer ${secret}` }, signal: AbortSignal.timeout(4000), cache: "no-store" }).catch(() => {});
 }
 
 /**

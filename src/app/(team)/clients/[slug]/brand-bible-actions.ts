@@ -224,3 +224,42 @@ export async function pointOnboardingSheet(clientId: string, slug: string, url: 
   revalidatePath(`/clients/${slug}/brand-bible`);
   return r;
 }
+
+/**
+ * Collect the review bank again (the store's review app, Trustpilot, Google, comments on their Facebook and Instagram
+ * posts and ads) and rewrite only the Bible's review bank and its count. Cheap: no web research, no Bible rewrite.
+ * Runs in the background; the page shows "Collecting reviews" until it's done.
+ */
+export async function refreshReviewBankNow(clientId: string, slug: string): Promise<ActionResult> {
+  const me = await requireStaff();
+  if (!adminConfigured()) return { ok: false, error: "Server key missing." };
+  const { data: client } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
+  if (!client) return { ok: false, error: "You don't work on this client." };
+  const admin = createAdminClient();
+  if (!isExecOrLead(me)) {
+    const { data: mine } = await admin.from("client_assignments").select("profile_id").eq("client_id", clientId).eq("profile_id", me.id).limit(1).maybeSingle();
+    if (!mine) return { ok: false, error: "Only the client's team or a lead can refresh the review bank." };
+  }
+  const { data: b } = await admin.from("client_brand_bibles").select("markdown, status, review_bank").eq("client_id", clientId).maybeSingle();
+  if (!b?.markdown) return { ok: false, error: "There's no Brand Bible yet." };
+  if (b.status === "building") return { ok: false, error: "The Bible is being written: its review bank is collected as part of it." };
+  const rb = b.review_bank as { status?: string; startedAt?: string } | null;
+  // Already collecting (and not stuck): nothing to start
+  if (rb?.status === "collecting" && rb.startedAt && Date.now() - new Date(rb.startedAt).getTime() < 10 * 60_000) return { ok: true };
+  await admin
+    .from("client_brand_bibles")
+    .update({ review_bank: { ...(rb ?? {}), status: "collecting", startedAt: new Date().toISOString(), error: null } })
+    .eq("client_id", clientId);
+  const { refreshReviewBank } = await import("@/lib/review-bank");
+  after(() => refreshReviewBank(admin, clientId).then(() => revalidatePath(`/clients/${slug}/brand-bible`)));
+  revalidatePath(`/clients/${slug}/brand-bible`);
+  return { ok: true };
+}
+
+/** Write the client presentation from this Bible, in the background (the presentation page shows its progress) */
+export async function writeClientPresentation(clientId: string, slug: string): Promise<ActionResult> {
+  const { rewritePresentation } = await import("./brand-bible/presentation/actions");
+  const r = await rewritePresentation(clientId, "");
+  revalidatePath(`/clients/${slug}/brand-bible`);
+  return r.ok ? { ok: true } : r;
+}

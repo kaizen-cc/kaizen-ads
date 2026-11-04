@@ -160,6 +160,12 @@ export async function buildBible(admin: SupabaseClient, clientId: string, opts: 
     // the month doesn't pay for it again). Gathering pages runs on Sonnet with a few searches; the strategy is Opus.
     const fresh = prev?.research && prev.researched_at && Date.now() - Date.parse(prev.researched_at) < 30 * 86_400_000;
     const aim = `What Kaizen already knows about this client (don't repeat it; use it to aim the research):\n${context.slice(0, 10000)}`;
+    // The review bank, collected for real (the store's review app, Trustpilot, Google, comments on their Facebook and
+    // Instagram posts and ads) while the web research runs; a failure here never stops the build
+    const bankRun = import("@/lib/review-bank")
+      .then(({ collectReviewBank }) => collectReviewBank(admin, clientId, { reviewSources }))
+      .then((bank) => admin.from("client_brand_bibles").update({ review_bank: { ...bank, status: "ready" } }).eq("client_id", clientId))
+      .catch((e) => console.error("[bible] review bank", e instanceof Error ? e.message : e));
     const research = fresh
       ? (prev!.research as string)
       : (
@@ -211,6 +217,7 @@ ${aim}`,
           .filter(Boolean)
           .join("\n\n---\n\n");
     if (!fresh && research) await admin.from("client_brand_bibles").update({ research: research.slice(0, 100000), researched_at: new Date().toISOString() }).eq("client_id", clientId);
+    await bankRun;
     await admin.from("client_brand_bibles").update({ build_stage: "write", started_at: new Date().toISOString() }).eq("client_id", clientId);
     await startWrite(clientId);
     return "researched";
@@ -240,9 +247,11 @@ export async function writeBible(admin: SupabaseClient, clientId: string): Promi
   const [{ data: client }, ctx, { data: row }] = await Promise.all([
     admin.from("clients").select("id, name").eq("id", clientId).maybeSingle(),
     clientContext(admin, clientId),
-    admin.from("client_brand_bibles").select("markdown, version, sources_pasted, research, build_stage").eq("client_id", clientId).maybeSingle(),
+    admin.from("client_brand_bibles").select("markdown, version, sources_pasted, research, build_stage, review_bank").eq("client_id", clientId).maybeSingle(),
   ]);
   if (!client || !ctx || !row) return "missing";
+  const { renderReviewBank, placeReviewBank } = await import("@/lib/review-bank");
+  const collected = (row.review_bank as import("@/lib/review-bank").ReviewBank | null)?.picks ? (row.review_bank as import("@/lib/review-bank").ReviewBank) : null;
   if (row.build_stage !== "write") return "busy";
   // Taken: a second start (the job's pick-up) leaves it alone
   const { data: took } = await admin.from("client_brand_bibles").update({ build_stage: "writing", started_at: new Date().toISOString() }).eq("client_id", clientId).eq("build_stage", "write").select("client_id");
@@ -272,6 +281,7 @@ ${held}
 ${(row.research || "No research came back.").slice(0, 90000)}
 </web_research>
 
+${collected ? `<review_bank_collected note="read from their store's review app, Trustpilot, Google and comments on their Facebook and Instagram posts and ads: use these word for word as 4b's rows and Sources and counts; add review-site quotes the web research found; tag each with its profile">\n${renderReviewBank(collected)}\n</review_bank_collected>\n` : ""}
 <sources_pasted_by_the_team>
 ${row.sources_pasted || "None. There's no intake form or sales call yet: say so in section 1 and make the gaps tests."}
 </sources_pasted_by_the_team>
@@ -280,13 +290,22 @@ Build ${client.name}'s Brand Bible following the Brand Bible structure skill, ta
 - Rule one: if it isn't profitable, it isn't working. Nothing goes in as proven unless it was profitable and held over a real window; a few first results or a good week are not proven. With no ad data, say so and use the industry benchmarks as the expectations, labeled as benchmarks.
 - The top of the Bible (Read this first and the cover) is broad and 100% factual: mission, vision, core values, what success looks like, tone and the creative look. Its foundational rules are never one comment, one test or one conversation turned into a rule. The Do / Don't table comes from the dos-and-don'ts log: the rules in force, each with its source and date.
 - Hypotheses and test ideas ("this angle should crush") never go in the Bible: they go to the tests the creative will answer.
-- overview: the cover. statement: who they are in one or two sentences a stranger understands; mission and vision: the client's own words, quoted, or "" when they have none on record (never write one for them); goal: the business goal they gave us, in their words with the source (a revenue goal, a return, a cost per lead), or "" when none.
+- overview: the cover. statement: who they are in one or two sentences a stranger understands. mission, vision and values: the client's own words, quoted, when they have formal ones. When they don't, draft each from their own words (the site, the intake form, calls, their posts; e.g. "We hated our bedding. So we fixed it." becomes a mission), keep it short and true to how they talk, set drafted to true, and add a [business] open question asking the client to confirm or adjust them; in the markdown label them "Drafted from their words — confirm". drafted false when all three are theirs. goal: the business goal they gave us, in their words with the source (a revenue goal, a return, a cost per lead), or "" when none.
+- overview.targets: the same targets as data for the cover's tiles, "" or [] when not known, each with its source tag ("Intake form, Aug 10", "Weekly sync, Oct 28", "benchmark: WordStream 2025"): goal (the main revenue or growth goal, short: "$150k a month, profitably"), minimum (the minimum they need, e.g. "$60k a month"), returnTarget (e.g. "3x ROAS" or "under $150 blended CPA"), budget (monthly ad budget), kpis (one per platform Kaizen runs: platform "Meta" or "Google" (or "Blended"), metric ("cost per purchase", "cost per lead", "ROAS"), target ("$250"), source), milestones (the dated steps on the roadmap: period "Nov 2026", target "$100–120k", source).
 - markdown: the full Brand Bible in Markdown (headings, bullet lists and pipe tables), every fact with its source tag, and every page, profile, ad, review, file and folder you mention as a Markdown link [name](url) when you have its URL.
 - readThisFirst: the "Read this first" page on its own, plain text, under 600 words, one labeled block per line ("Label: text", or a label line ending in a colon followed by its numbered or lettered lines). The brief strategist, copywriter and reviewer read this on every request.
 - teamNotes: the "For the team" list: gaps, sensitive items left out, and today's problems in the business or on the site (sold-out notices, broken pages, prices that disagree), each starting "Current issue:". Those stay out of the Bible, which holds only what's true of the brand.
 - openQuestions: only true blockers. category: offer (offers and promotions: the client answers, then the media buyer), creative (claims, messaging, products to feature, the brand guideline: the client, then the head of creative), media (where traffic goes, KPIs, break-even: the media buyer), business (facts only the client knows). who: who answers first. options: the natural choices when there are some (the claims to approve, the products to feature), else []; multi: true when several can be picked. Keep them few and easy: this is part of the client's onboarding. In the markdown's Open questions section write each as one bullet, exactly: "- [category] Question {options: A | B | C}{multi}", leaving out {options: ...} when there are none and {multi} when only one can be picked.`,
     });
 
+    // The bank the writer was given is the floor: when its 4b came out thinner than what was collected, the collected
+    // bank goes in as it was read (word for word, every source counted)
+    let markdown = bible.markdown;
+    if (collected?.picks.length) {
+      const { splitBible, reviewBankOf, quotesOf } = await import("@/lib/bible-sections");
+      const bank = reviewBankOf(splitBible(markdown));
+      if (!bank || quotesOf(bank.body).length < Math.min(collected.picks.length, 15)) markdown = placeReviewBank(markdown, renderReviewBank(collected));
+    }
     await admin
       .from("client_brand_bibles")
       .update({
@@ -294,7 +313,7 @@ Build ${client.name}'s Brand Bible following the Brand Bible structure skill, ta
         build_stage: null,
         overview: bible.overview,
         version: row.markdown ? bumpVersion(row.version) : "v1.0",
-        markdown: bible.markdown,
+        markdown,
         read_this_first: bible.readThisFirst,
         team_notes: bible.teamNotes,
         open_questions: bible.openQuestions.map((q) => ({ ...q, options: (q.options ?? []).filter(Boolean).slice(0, 12) })),
@@ -304,6 +323,8 @@ Build ${client.name}'s Brand Bible following the Brand Bible structure skill, ta
         error: null,
       })
       .eq("client_id", clientId);
+    // Its client presentation is written right away, in a run of its own (drafted only: sending keeps its own rules)
+    await (await import("@/lib/presentation")).startPresentation(clientId);
     return "built";
   } catch (e) {
     await failed(admin, clientId, Boolean(row.markdown), e);

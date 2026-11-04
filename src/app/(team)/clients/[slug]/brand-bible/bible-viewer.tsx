@@ -4,9 +4,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { Markdown } from "@/components/markdown";
-import { audiencesOf, kindOf, quotesOf, splitBible, statsOf, type BibleSection, type Quote } from "@/lib/bible-sections";
+import { audiencesOf, kindOf, quotesOf, REVIEW_BANK, reviewBankOf, splitBible, statsOf, subsectionOf, type BibleSection, type Quote } from "@/lib/bible-sections";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
-import { clarifyBrandBible, clearBibleChat, markBrandBibleReviewed, type BibleTurn } from "../brand-bible-actions";
+import { clarifyBrandBible, clearBibleChat, markBrandBibleReviewed, refreshReviewBankNow, writeClientPresentation, type BibleTurn } from "../brand-bible-actions";
+import { JobProgress } from "@/components/job-progress";
+import type { BibleTargets } from "@/lib/ai";
 import { Layer } from "../layer";
 import type { BibleQuestion } from "@/lib/bible-questions";
 import { BibleQuestions } from "./bible-questions";
@@ -23,8 +25,17 @@ type Bible = {
   version: string;
   markdown: string;
   readThisFirst: string;
-  /** The cover: their statement, mission and vision in their words, and the goal they gave us */
-  overview: { statement: string; mission: string; vision: string; goal: string } | null;
+  /**
+   * The cover: their statement, mission, vision and values (their words, or drafted from them and marked so), the goal
+   * they gave us and its targets as data (older Bibles have only the goal's text)
+   */
+  overview: { statement: string; mission: string; vision: string; values?: string; drafted?: boolean; goal: string; targets?: BibleTargets } | null;
+  /** The review bank as collected: where it stands and what each source gave */
+  reviewBank: ReviewBankInfo | null;
+  /** The client presentation written from it, if any */
+  presentation: { status: string; startedAt: string | null; draftedAt: string | null; bibleVersion: string | null; newVersion: string | null } | null;
+  /** How long a review bank refresh and a presentation usually take */
+  expected: { reviews: number; presentation: number };
   /** The KPI target on each ad account today */
   targets: { platform: string; text: string }[];
   teamNotes: string[];
@@ -76,6 +87,15 @@ function Prose({ text }: { text: string }) {
 }
 
 // ─── Read this first ──────────────────────────────────────────────────────────
+
+export type ReviewBankInfo = {
+  status: "collecting" | "ready" | "failed" | null;
+  startedAt: string | null;
+  collectedAt: string | null;
+  error: string | null;
+  read: number;
+  sources: { source: string; found: boolean; count: number | null; rating: number | null; note: string }[];
+};
 
 type Block = { label: string; text: string; list: string[] };
 
@@ -196,21 +216,156 @@ const USE = {
   no: { label: "Not for ads", cls: "bg-bad-soft text-bad" },
 } as const;
 
-function QuoteCard({ q }: { q: Quote }) {
+function Stars({ value }: { value: string }) {
+  const n = Number.parseFloat(value);
+  if (!Number.isFinite(n) || n <= 0 || n > 5) return value ? <span className="text-[12px] text-muted">{value}</span> : null;
+  const full = Math.round(n);
   return (
-    <figure className="flex min-w-0 flex-col gap-3 rounded-[20px] border border-line bg-bg/60 p-5">
-      <span aria-hidden className="font-display text-[40px] leading-[0.6] text-brand-text">“</span>
-      <blockquote className="font-heading text-[16px] leading-relaxed">{q.quote}</blockquote>
+    <span className="inline-flex items-center gap-0.5 text-[13px] leading-none" aria-label={`${n} out of 5 stars`} title={`${n} out of 5`}>
+      {[0, 1, 2, 3, 4].map((i) => (
+        <span key={i} aria-hidden className={i < full ? "text-warn" : "text-ink/15"}>
+          ★
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function QuoteCard({ q, critic = false }: { q: Quote; critic?: boolean }) {
+  const [long, setLong] = useState(false);
+  const big = q.quote.length > 320;
+  return (
+    <figure className={`flex min-w-0 flex-col gap-3 rounded-[20px] border p-5 ${critic ? "border-bad/25 bg-bad-soft/30" : "border-line bg-bg/60"}`}>
+      <div className="flex items-center justify-between gap-3">
+        <span aria-hidden className={`font-display text-[40px] leading-[0.6] ${critic ? "text-bad" : "text-brand-text"}`}>“</span>
+        {q.stars && <Stars value={q.stars} />}
+      </div>
+      <blockquote className={`font-heading text-[16px] leading-relaxed ${big && !long ? "line-clamp-6" : ""}`}>{q.quote}</blockquote>
+      {big && (
+        <button type="button" onClick={() => setLong((v) => !v)} className="-mt-1 h-11 self-start text-[12.5px] text-muted hover:text-fg md:h-7">
+          {long ? "Show less" : "Read it all"}
+        </button>
+      )}
       <figcaption className="mt-auto grid gap-2 pt-2">
-        <span className="text-[13px] text-fg">{q.who || "Customer"}</span>
-        {q.meta && <span className="text-[12px] leading-relaxed text-faint">{q.meta.replace(/\*\*/g, "")}</span>}
-        {q.use && (
-          <span className={`w-fit rounded-full px-2.5 py-0.5 text-[11px] ${USE[q.use].cls}`} title={q.useNote}>
-            {USE[q.use].label}
+        <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[13px] text-fg">
+          {q.who || "Customer"}
+          {q.source &&
+            (q.link ? (
+              <a href={q.link} target="_blank" rel="noreferrer" className="text-[12px] text-muted underline decoration-line underline-offset-2 hover:text-fg">
+                {q.source} ↗
+              </a>
+            ) : (
+              <span className="text-[12px] text-faint">{q.source}</span>
+            ))}
+        </span>
+        {(q.profile || q.angle || q.use) && (
+          <span className="flex flex-wrap gap-1.5">
+            {q.profile && <span className="rounded-full bg-brand-soft px-2.5 py-0.5 text-[11px] text-brand-text">{q.profile}</span>}
+            {q.angle && <span className="rounded-full border border-line px-2.5 py-0.5 text-[11px] text-muted">{critic ? `Objection: ${q.angle}` : q.angle}</span>}
+            {q.use && (
+              <span className={`rounded-full px-2.5 py-0.5 text-[11px] ${USE[q.use].cls}`} title={q.useNote}>
+                {USE[q.use].label}
+              </span>
+            )}
           </span>
         )}
+        {!q.source && !q.profile && q.meta && <span className="text-[12px] leading-relaxed text-faint">{q.meta.replace(/\*\*/g, "")}</span>}
       </figcaption>
     </figure>
+  );
+}
+
+const CRITICS = /\*\*What critics say\*\*[^\n]*/i;
+
+/**
+ * The review bank: where the reviews came from (each source, what it gave or why not), the picks as cards, and what
+ * critics say as their own cards; refreshed on its own (just the bank and its count, nothing else rewritten)
+ */
+function ReviewBank({ body, info, client, canRefresh, expectedMs }: { body: string; info: ReviewBankInfo | null; client: { id: string; slug: string }; canRefresh: boolean; expectedMs: number }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [err, setErr] = useState<string | null>(null);
+  const [all, setAll] = useState(false);
+  const [main, criticPart = ""] = body.split(CRITICS);
+  const quotes = quotesOf(main);
+  const critics = quotesOf(criticPart);
+  const notes = withoutTables(main).trim();
+  const collecting = info?.status === "collecting";
+  const shown = all ? quotes : quotes.slice(0, 12);
+  useEffect(() => {
+    if (!collecting) return;
+    const t = setInterval(() => router.refresh(), 5000);
+    return () => clearInterval(t);
+  }, [collecting, router]);
+  const refresh = () =>
+    start(async () => {
+      setErr(null);
+      const r = await refreshReviewBankNow(client.id, client.slug);
+      if (!r.ok) setErr(r.error);
+      router.refresh();
+    });
+  const sources = info?.sources ?? [];
+  return (
+    <div className="grid gap-5">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <p className="text-[13px] text-muted">
+          <span className="tabular font-heading text-[20px] text-fg">{quotes.length}</span> in the bank
+          {critics.length > 0 && ` · ${critics.length} critical`}
+          {info?.collectedAt && ` · collected ${fmt(info.collectedAt)}${info.read ? ` from ${info.read} read` : ""}`}
+        </p>
+        {canRefresh && !collecting && (
+          <button type="button" disabled={pending} onClick={refresh} className="ml-auto inline-flex h-11 items-center gap-1.5 rounded-full border border-line px-4 text-[13px] text-muted hover:border-faint hover:text-fg disabled:opacity-50 md:h-9">
+            <span aria-hidden>↻</span> {pending ? "Starting…" : "Refresh the review bank"}
+          </button>
+        )}
+      </div>
+      {collecting && <JobProgress startedAt={info?.startedAt ?? null} expectedMs={expectedMs} label="Collecting reviews from their store, Google, Trustpilot and their posts" onRetry={canRefresh ? refresh : undefined} />}
+      {info?.status === "failed" && <p className="text-[13px] text-bad">The last refresh couldn&apos;t finish · {info.error ?? "try again"}</p>}
+      {err && <p className="text-[13px] text-bad">{err}</p>}
+      {sources.length > 0 ? (
+        <ul className="flex flex-wrap gap-2" aria-label="Where the reviews came from">
+          {sources.map((s) => (
+            <li key={s.source} title={s.note} className={`rounded-full border px-3 py-1.5 text-[12px] ${s.found ? "border-ok/30 bg-ok-soft/50 text-fg" : "border-dashed border-line text-faint"}`}>
+              <span className="font-medium">{s.source}</span>
+              {s.found ? (
+                <span className="text-muted">
+                  {s.count != null && ` · ${s.count}`}
+                  {s.rating != null && ` · ★ ${s.rating}`}
+                </span>
+              ) : (
+                <span> · {s.note ? s.note.replace(/\.$/, "") : "not found"}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        notes && <Prose text={notes} />
+      )}
+      {quotes.length > 0 ? (
+        <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+          {shown.map((q, i) => (
+            <QuoteCard key={i} q={q} />
+          ))}
+        </div>
+      ) : (
+        !notes && <p className="text-[13.5px] text-muted">No reviews in the bank yet.</p>
+      )}
+      {quotes.length > shown.length && (
+        <button type="button" onClick={() => setAll(true)} className="h-11 justify-self-start rounded-full border border-line px-4 text-[13px] text-muted hover:text-fg">
+          Show all {quotes.length}
+        </button>
+      )}
+      {critics.length > 0 && (
+        <div className="grid gap-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">What critics say · objections creative can answer</p>
+          <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+            {critics.map((q, i) => (
+              <QuoteCard key={i} q={q} critic />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -220,8 +375,23 @@ const withoutTables = (body: string) =>
     .filter((l) => !l.trim().startsWith("|"))
     .join("\n");
 
-function SectionBody({ sec, questions, client }: { sec: BibleSection; questions: BibleQuestion[]; client: { id: string; slug: string } }) {
+type BankProps = { info: ReviewBankInfo | null; canRefresh: boolean; expectedMs: number };
+
+function SectionBody({ sec, questions, client, bank }: { sec: BibleSection; questions: BibleQuestion[]; client: { id: string; slug: string }; bank: BankProps }) {
   const kind = kindOf(sec.title);
+  // The v3 Bible keeps its review bank under section 4 ("### 4b. Review bank"): the text around it as it is, the bank as cards
+  const sub = kind !== "reviews" ? subsectionOf(sec.body, REVIEW_BANK) : null;
+  if (sub)
+    return (
+      <div className="grid gap-6">
+        {sub.before && <Prose text={sub.before} />}
+        <div id={`${sec.id}-reviews`} className="grid scroll-mt-32 gap-4 rounded-[20px] border border-line bg-bg/40 p-4 md:p-6">
+          <h3 className="font-heading text-[18px]">{sub.heading}</h3>
+          <ReviewBank body={sub.body} info={bank.info} client={client} canRefresh={bank.canRefresh} expectedMs={bank.expectedMs} />
+        </div>
+        {sub.after && <Prose text={sub.after} />}
+      </div>
+    );
   if (kind === "audiences") {
     const { intro, list } = audiencesOf(sec.body);
     return (
@@ -237,24 +407,116 @@ function SectionBody({ sec, questions, client }: { sec: BibleSection; questions:
       </div>
     );
   }
-  if (kind === "reviews") {
-    const quotes = quotesOf(sec.body);
-    if (!quotes.length) return <Prose text={sec.body} />;
-    const notes = withoutTables(sec.body).trim();
-    return (
-      <div className="grid gap-6">
-        {notes && <Prose text={notes} />}
-        <div className="grid gap-3 md:grid-cols-2">
-          {quotes.map((q, i) => (
-            <QuoteCard key={i} q={q} />
-          ))}
-        </div>
-      </div>
-    );
-  }
+  if (kind === "reviews") return <ReviewBank body={sec.body} info={bank.info} client={client} canRefresh={bank.canRefresh} expectedMs={bank.expectedMs} />;
   // Answered in place: each question has its own conversation, label and who answers it
   if (kind === "questions") return <BibleQuestions questions={questions} clientId={client.id} slug={client.slug} />;
   return <Prose text={sec.body} />;
+}
+
+// ─── The cover ────────────────────────────────────────────────────────────────
+
+type Overview = NonNullable<Bible["overview"]>;
+
+const Source = ({ text }: { text: string }) =>
+  text ? <span className="w-fit max-w-full truncate rounded-full bg-ink/[0.06] px-2 py-0.5 text-[10.5px] text-faint" title={text}>{text}</span> : null;
+
+/** Mission, vision and values: theirs, or drafted from their words and marked so until they confirm them */
+function Principles({ overview }: { overview: Overview | null }) {
+  const items = (
+    [
+      ["Mission", overview?.mission],
+      ["Vision", overview?.vision],
+      ["Values", overview?.values],
+    ] as const
+  ).filter(([, t]) => t);
+  if (!items.length) return null;
+  return (
+    <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {items.map(([label, t]) => (
+        <div key={label} className="flex min-w-0 flex-col gap-1.5 rounded-[16px] border border-line bg-bg/40 px-4 py-3">
+          <p className="flex flex-wrap items-center gap-2 text-[10.5px] font-semibold uppercase tracking-[0.18em] text-faint">
+            {label}
+            {overview?.drafted && <span className="rounded-full bg-warn-soft px-2 py-0.5 text-[10px] normal-case tracking-normal text-warn">Drafted from their words · confirm</span>}
+          </p>
+          <p className="text-[13.5px] leading-relaxed">{t}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * What success looks like: the goal they gave us as the big tile, then the minimum, the return they're held to and the
+ * budget, a tile per platform's KPI, and the milestones on a line, each with where it came from. Older Bibles have
+ * only the goal's text, shown with the live KPI targets.
+ */
+function Success({ overview, live }: { overview: Overview | null; live: { platform: string; text: string }[] }) {
+  const t = overview?.targets;
+  const goal = t?.goal || overview?.goal || "";
+  const small = t
+    ? (
+        [
+          ["Minimum", t.minimum, t.minimumSource],
+          ["Return target", t.returnTarget, t.returnSource],
+          ["Monthly budget", t.budget, t.budgetSource],
+        ] as const
+      ).filter(([, v]) => v)
+    : [];
+  // A KPI tile per platform: the Bible's (with its source), or the live target on the account when the Bible has none
+  const kpis = t?.kpis?.length
+    ? t.kpis.map((k) => ({ platform: k.platform, metric: k.metric, target: k.target, source: k.source, live: live.find((l) => l.platform.toLowerCase() === k.platform.toLowerCase())?.text ?? "" }))
+    : live.map((l) => ({ platform: l.platform, metric: "", target: l.text, source: "Live KPI target", live: "" }));
+  const milestones = t?.milestones ?? [];
+  if (!goal && !small.length && !kpis.length && !milestones.length) return null;
+  return (
+    <div className="mt-6 grid gap-3">
+      <p className="text-[10.5px] font-semibold uppercase tracking-[0.2em] text-brand-text">What success looks like</p>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {goal && (
+          <div className="relative col-span-2 flex min-w-0 flex-col gap-2 overflow-hidden rounded-[20px] border border-brand/35 bg-brand/[0.08] px-5 py-4">
+            <span aria-hidden className="pointer-events-none absolute -right-10 -top-12 h-32 w-32 rounded-full bg-brand/25 blur-2xl" />
+            <p className="text-[11px] text-brand-text">The goal</p>
+            <p className="font-display text-[24px] leading-tight md:text-[30px]">{goal}</p>
+            <Source text={t?.goalSource ?? ""} />
+          </div>
+        )}
+        {small.map(([label, v, src]) => (
+          <div key={label} className="flex min-w-0 flex-col gap-1.5 rounded-[20px] border border-line bg-bg/40 px-4 py-4">
+            <p className="text-[11px] text-faint">{label}</p>
+            <p className="tabular font-heading text-[19px] leading-snug">{v}</p>
+            <Source text={src} />
+          </div>
+        ))}
+        {kpis.map((k, i) => (
+          <div key={`${k.platform}-${i}`} className="flex min-w-0 flex-col gap-1.5 rounded-[20px] border border-line bg-bg/40 px-4 py-4">
+            <p className="flex items-center gap-2 text-[11px] text-faint">
+              <span className={`h-2 w-2 rounded-full ${/google/i.test(k.platform) ? "bg-ok" : /meta|facebook/i.test(k.platform) ? "bg-brand" : "bg-faint"}`} />
+              {k.platform}
+              {k.metric && ` · ${k.metric}`}
+            </p>
+            <p className="tabular font-heading text-[19px] leading-snug">{k.target}</p>
+            {k.live && k.live !== k.target && <p className="text-[11.5px] text-muted">On the account now: {k.live}</p>}
+            <Source text={k.source} />
+          </div>
+        ))}
+      </div>
+      {milestones.length > 0 && (
+        <ol className="no-scrollbar -mx-1 flex snap-x gap-0 overflow-x-auto px-1 pt-1" aria-label="Milestones">
+          {milestones.map((m, i) => (
+            <li key={i} className="relative flex min-w-[150px] flex-1 snap-start flex-col gap-1 pr-4">
+              <span className="flex items-center">
+                <span className="z-10 h-3 w-3 shrink-0 rounded-full border-2 border-brand bg-deep" />
+                {i < milestones.length - 1 && <span aria-hidden className="h-px flex-1 bg-gradient-to-r from-brand/60 to-line" />}
+              </span>
+              <span className="mt-1 text-[11px] uppercase tracking-[0.14em] text-faint">{m.period}</span>
+              <span className="tabular font-heading text-[15px] leading-snug">{m.target}</span>
+              <Source text={m.source} />
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
 }
 
 // ─── The review chat ──────────────────────────────────────────────────────────
@@ -461,6 +723,21 @@ export function BibleViewer({ client, bible, canEdit }: { client: { id: string; 
   }, [bible.markdown]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const jump = (id: string) => pushParams({ s: id });
+  // The presentation: written in the background right after the Bible; it can be started from here too
+  const [presPending, startPres] = useTransition();
+  const pres = bible.presentation;
+  const presWriting = pres?.status === "writing" || pres?.newVersion === "writing";
+  useEffect(() => {
+    if (!presWriting) return;
+    const t = setInterval(() => router.refresh(), 6000);
+    return () => clearInterval(t);
+  }, [presWriting, router]);
+  const writePres = () =>
+    startPres(async () => {
+      const r = await writeClientPresentation(client.id, client.slug);
+      if (!r.ok) setError(r.error);
+      router.refresh();
+    });
   const jumpKey = (key: string) => {
     const s = sections.find((x) => keyOf(x.heading) === key || x.title.toLowerCase() === key);
     if (s) jump(s.id);
@@ -492,9 +769,13 @@ export function BibleViewer({ client, bible, canEdit }: { client: { id: string; 
     />
   );
 
+  // The review bank: its own section in older Bibles, "### 4b. Review bank" inside section 4 in the v3 ones
+  const bankIn = reviewBankOf(sections);
+  const bankAt = bankIn ? (kindOf(bankIn.section.title) === "reviews" ? bankIn.section.id : `${bankIn.section.id}-reviews`) : undefined;
+  const bank = { info: bible.reviewBank, canRefresh: canEdit, expectedMs: bible.expected.reviews };
   const tiles: [string, number, string | undefined][] = [
     ["Audiences", stats.audiences, sections.find((s) => kindOf(s.title) === "audiences")?.id],
-    ["Reviews in the bank", stats.reviews, sections.find((s) => kindOf(s.title) === "reviews")?.id],
+    ["Reviews in the bank", stats.reviews, bankAt],
     ["Competitors", stats.competitors, sections.find((s) => /competitor/i.test(s.title))?.id],
     ["Marketing moments", stats.moments, sections.find((s) => /calendar|moments/i.test(s.title))?.id],
   ];
@@ -543,46 +824,9 @@ export function BibleViewer({ client, bible, canEdit }: { client: { id: string; 
           {bible.generatedAt && ` · ${fmt(bible.generatedAt)}`}
         </p>
         <h1 className="mt-3 font-display text-[40px] leading-[1.02] tracking-tight md:text-[64px]">{client.name}</h1>
-        <div className="mt-4 grid gap-5 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
-          <div className="grid gap-4">
-            {(bible.overview?.statement || whatTheySell) && <p className="max-w-[62ch] text-[15px] leading-relaxed text-muted md:text-[17px]">{bible.overview?.statement || whatTheySell}</p>}
-            {(bible.overview?.mission || bible.overview?.vision) && (
-              <div className="grid gap-3 sm:grid-cols-2">
-                {(
-                  [
-                    ["Mission", bible.overview?.mission],
-                    ["Vision", bible.overview?.vision],
-                  ] as const
-                )
-                  .filter(([, t]) => t)
-                  .map(([label, t]) => (
-                    <div key={label} className="rounded-[16px] border border-line bg-bg/40 px-4 py-3">
-                      <p className="text-[10.5px] font-semibold uppercase tracking-[0.18em] text-faint">{label}</p>
-                      <p className="mt-1.5 text-[13.5px] leading-relaxed">{t}</p>
-                    </div>
-                  ))}
-              </div>
-            )}
-          </div>
-          {/* The ball to keep an eye on: the goal they gave us, and the target each account is held to */}
-          {(bible.overview?.goal || bible.targets.length > 0) && (
-            <div className="relative overflow-hidden rounded-[20px] border border-brand/35 bg-brand/[0.07] px-5 py-4">
-              <span aria-hidden className="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full bg-brand/25 blur-2xl" />
-              <p className="text-[10.5px] font-semibold uppercase tracking-[0.18em] text-brand-text">The goal</p>
-              {bible.overview?.goal && <p className="mt-1.5 font-heading text-[16px] leading-snug">{bible.overview.goal}</p>}
-              {bible.targets.length > 0 && (
-                <ul className={`grid gap-1.5 ${bible.overview?.goal ? "mt-3 border-t border-line pt-3" : "mt-2"}`}>
-                  {bible.targets.map((t, i) => (
-                    <li key={i} className="flex items-baseline justify-between gap-3 text-[13px]">
-                      <span className="text-faint">{t.platform} target</span>
-                      <span className="tabular text-right font-medium">{t.text}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-        </div>
+        {(bible.overview?.statement || whatTheySell) && <p className="mt-4 max-w-[68ch] text-[15px] leading-relaxed text-muted md:text-[18px]">{bible.overview?.statement || whatTheySell}</p>}
+        <Principles overview={bible.overview} />
+        <Success overview={bible.overview} live={bible.targets} />
         <dl className="mt-7 grid grid-cols-2 gap-3 md:grid-cols-5">
           {tiles.map(([label, n, id]) => (
             <button key={label} type="button" disabled={!id} onClick={() => id && jump(id)} className="grid gap-1 rounded-[18px] border border-line bg-bg/40 px-4 py-3 text-left transition-colors hover:border-faint disabled:hover:border-line">
@@ -627,6 +871,41 @@ export function BibleViewer({ client, bible, canEdit }: { client: { id: string; 
             </>
           )}
           {error && <span className="text-bad">{error}</span>}
+        </div>
+        {/* The client presentation, written from this Bible in the background */}
+        <div className="mt-5 grid gap-3 rounded-[18px] border border-line bg-bg/40 px-4 py-3 md:flex md:items-center md:gap-4">
+          <div className="min-w-0 flex-1">
+            <p className="text-[13.5px] font-medium">Client presentation</p>
+            <p className="text-[12.5px] text-muted">
+              {!pres
+                ? "Not written yet. It's written on its own once a Bible is built; it never goes to the client by itself unless they're a new client in onboarding."
+                : presWriting
+                  ? "Being written from this Bible."
+                  : pres.status === "sent" || pres.status === "approved"
+                    ? `With the client (${pres.status})${pres.newVersion === "draft" ? " · a new version is drafted beside it" : ""}.`
+                    : pres.status === "failed"
+                      ? "The last write didn't finish."
+                      : `Drafted${pres.draftedAt ? ` ${fmt(pres.draftedAt)}` : ""}${pres.bibleVersion ? ` from ${pres.bibleVersion}` : ""} · not sent.`}
+            </p>
+          </div>
+          {presWriting ? (
+            <div className="w-full md:w-72">
+              <JobProgress startedAt={pres?.startedAt ?? null} expectedMs={bible.expected.presentation} label="Writing the presentation" onRetry={canEdit ? writePres : undefined} />
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {pres && (
+                <Link href={`/clients/${client.slug}/brand-bible/presentation`} className="inline-flex h-11 items-center rounded-full border border-line px-4 text-[13px] text-muted hover:border-faint hover:text-fg md:h-9">
+                  Open it →
+                </Link>
+              )}
+              {canEdit && (!pres || pres.status === "failed" || (pres.bibleVersion !== bible.version && pres.newVersion !== "draft")) && (
+                <button type="button" disabled={presPending} onClick={writePres} className="inline-flex h-11 items-center rounded-full bg-fg px-4 text-[13px] text-bg disabled:opacity-50 md:h-9">
+                  {presPending ? "Starting…" : pres ? "Write it from this Bible" : "Write the client presentation"}
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </section>
 
@@ -692,13 +971,10 @@ export function BibleViewer({ client, bible, canEdit }: { client: { id: string; 
                 {kind === "first" ? (
                   <ReadThisFirst
                     text={bible.readThisFirst || s.body}
-                    onReviews={(() => {
-                      const r = sections.find((x) => kindOf(x.title) === "reviews");
-                      return r ? () => jump(r.id) : undefined;
-                    })()}
+                    onReviews={bankAt ? () => jump(bankAt) : undefined}
                   />
                 ) : (
-                  <SectionBody sec={s} questions={bible.questions} client={client} />
+                  <SectionBody sec={s} questions={bible.questions} client={client} bank={bank} />
                 )}
               </section>
             );

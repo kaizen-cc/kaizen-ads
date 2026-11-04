@@ -916,9 +916,26 @@ export const SCRIPT_SCHEMA = obj({
 
 // ─── Brand Bible ────────────────────────────────────────────────────────────
 
+/** The targets on the Bible's cover, as data so the cover shows them as tiles ("" when not known), each with its source */
+export type BibleTargets = {
+  goal: string;
+  goalSource: string;
+  minimum: string;
+  minimumSource: string;
+  returnTarget: string;
+  returnSource: string;
+  budget: string;
+  budgetSource: string;
+  kpis: { platform: string; metric: string; target: string; source: string }[];
+  milestones: { period: string; target: string; source: string }[];
+};
+
 export type BrandBibleOut = {
-  /** The cover: who they are in one statement, their mission and vision (their words, "" when they have none on record) and the goal they gave us */
-  overview: { statement: string; mission: string; vision: string; goal: string };
+  /**
+   * The cover: who they are in one statement, their mission, vision and core values (their words; drafted from their
+   * words and marked so when they have no formal statement) and the goal they gave us, with the targets as data
+   */
+  overview: { statement: string; mission: string; vision: string; values: string; drafted: boolean; goal: string; targets: BibleTargets };
   markdown: string;
   readThisFirst: string;
   teamNotes: string[];
@@ -927,7 +944,26 @@ export type BrandBibleOut = {
 };
 
 export const BRAND_BIBLE_SCHEMA = obj({
-  overview: obj({ statement: str, mission: str, vision: str, goal: str }),
+  overview: obj({
+    statement: str,
+    mission: str,
+    vision: str,
+    values: str,
+    drafted: { type: "boolean" },
+    goal: str,
+    targets: obj({
+      goal: str,
+      goalSource: str,
+      minimum: str,
+      minimumSource: str,
+      returnTarget: str,
+      returnSource: str,
+      budget: str,
+      budgetSource: str,
+      kpis: { type: "array", items: obj({ platform: str, metric: str, target: str, source: str }) },
+      milestones: { type: "array", items: obj({ period: str, target: str, source: str }) },
+    }),
+  }),
   markdown: str,
   readThisFirst: str,
   teamNotes: strArr,
