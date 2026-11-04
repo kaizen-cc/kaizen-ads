@@ -3,9 +3,9 @@
 import { AiProgress, AiProgressButton } from "@/components/ai-progress";
 
 import { useRouter } from "next/navigation";
-import { IdeasPanel } from "./ideas-panel";
 import { PromisesStrip } from "./promises-strip";
-import { StartPanel } from "./start-panel";
+import { ClientPicker, StartPage, prefetchStart, rememberClient, seedStart } from "./start-flow";
+import type { StartData } from "@/lib/request-start";
 import { RequestChat } from "./request-chat";
 import { AsanaSend, BriefPdfButton } from "@/components/asana-send";
 import Link from "next/link";
@@ -19,7 +19,7 @@ import { ClientTag, FormatIcon } from "@/app/(team)/board/ticket-card";
 import { applyFixes, asanaPreview, createBatch, fulfilPromise, loadBriefing, reviewRequest, sendToAsana, suggestForRequest, type ContextSummary, type RefSummary, type ReviewDecisions, type ReviewResult, type SimilarCard, type SuggestResult } from "./actions";
 import { ReviewWorkspace, startHandled, type Handled } from "./review-workspace";
 import { FORMATS, INSPIRE_KEY, MAX_VARIATIONS, SIZES, emptyDraft, selectedFormats, totalFor, type Draft, type Size } from "./draft";
-import { AllotmentMeter, AspectOption, Chip, ClientSearch, Progress, Spark, Stepper, Thinking, type ClientOption } from "./parts";
+import { AllotmentMeter, AspectOption, Chip, Progress, Spark, Stepper, type ClientOption } from "./parts";
 
 const STEPS = ["Client", "Start", "Formats", "Direction", "Brief", "Review"];
 // Each step in the address (?step=formats), so back returns to the step before
@@ -107,6 +107,7 @@ export function RequestForm({
   demo,
   initialDraft = null,
   startAtReview = false,
+  initialStart = null,
 }: {
   clients: ClientOption[];
   allotments: Record<string, Allotment>;
@@ -119,13 +120,20 @@ export function RequestForm({
   initialDraft?: Partial<Draft> | null;
   /** Open straight on the review step (the brief as it was) */
   startAtReview?: boolean;
+  /** The start page's sections, already read on the server for ?client= (no wait at all) */
+  initialStart?: StartData | null;
 }) {
+  // Seeded once, before anything asks for it
+  useState(() => {
+    if (initialStart) seedStart(initialStart);
+    return null;
+  });
   const router = useRouter();
   const [draft, setDraft] = useState<Draft>(() => ({ ...emptyDraft(initialClient), ...(initialDraft ?? {}) }));
   const askedStep = STEP_KEYS.indexOf(useParam("step") ?? "");
   // No client yet: the first step, whatever the address says
   const step = !draft.clientId ? 0 : askedStep >= 0 ? askedStep : startAtReview ? STEPS.length - 1 : initialClient ? 1 : 0;
-  const [ai, setAi] = useState<AiState>(initialClient && aiOn ? { status: "loading" } : { status: "idle" });
+  const [ai, setAi] = useState<AiState>({ status: "idle" });
   const [briefAi, setBriefAi] = useState<{ status: "idle" | "loading" } | { status: "offer"; text: string }>({ status: "idle" });
   const [review, setReview] = useState<ReviewState>({ status: "idle" });
   const [handled, setHandled] = useState<Handled | null>(null);
@@ -136,6 +144,10 @@ export function RequestForm({
   const talking = useParam("path") === "talk";
   // Phones: the winners and market ideas open as a bottom sheet instead of pushing the form down
   const ideasOpen = useParam("ideas") === "1";
+  const aiRef = useRef(ai);
+  useEffect(() => {
+    aiRef.current = ai;
+  }, [ai]);
   const [pending, start] = useTransition();
   const latest = useRef(0); // ignore suggestions that come back after the client changed
   const topRef = useRef<HTMLDivElement>(null);
@@ -180,19 +192,17 @@ export function RequestForm({
     void Promise.resolve().then(() => {
       if (saved && saved.draft.clientId && (!initialClient || saved.draft.clientId === initialClient)) {
         setDraft(saved.draft);
-        // Picked up where it was left: the same entry, on that step
-        replaceParams({ step: STEP_KEYS[saved.step] ?? null });
+        // Picked up where it was left: the client's Start page, or the step reached past it
+        replaceParams({ step: STEP_KEYS[Math.max(1, saved.step)] ?? null });
         // Anything that was mid-flight comes back settled: an unfinished AI call is simply asked again
         setAi(saved.ai.status === "loading" ? { status: "idle" } : saved.ai);
         setBriefAi(saved.briefAi.status === "loading" ? { status: "idle" } : saved.briefAi);
         setReview(saved.review.status === "running" ? { status: "idle" } : saved.review);
         setHandled(saved.handled ? { ...saved.handled, fixing: null, running: null } : null);
         setRestoredAt(saved.at);
-        if (saved.ai.status === "loading" && aiOn) suggest(saved.draft, false);
-      } else if (initialClient && aiOn) {
-        const id = ++latest.current;
-        fetchSuggestions(draft, false).then((r) => id === latest.current && setAi(r));
-      }
+        // Already in the form: the briefing fills its suggestions in the background
+        if (saved.step >= 2 && (saved.ai.status === "loading" || saved.ai.status === "idle") && aiOn) suggest(saved.draft, false);
+      } else if (initialClient && aiOn && step >= 2) suggest(draft, false);
       // Arriving from the winners library: that ad goes into the brief as a reference
       if (!demo) {
         let inspire: string | null = null;
@@ -232,12 +242,15 @@ export function RequestForm({
   };
 
   const pickClient = (c: ClientOption) => {
+    void prefetchStart(c.id).catch(() => {});
+    rememberClient(c.id);
     const next = { ...emptyDraft(c.id), formats: draft.formats, sizes: draft.sizes };
+    latest.current++;
     setDraft(next);
+    setAi({ status: "idle" });
     setBriefAi({ status: "idle" });
     setReview({ status: "idle" });
-    go(1);
-    suggest(next, false);
+    go(1, next);
   };
 
   const toggleFormat = (f: Format) => {
@@ -268,8 +281,10 @@ export function RequestForm({
     false,
   ][step];
 
-  function go(i: number) {
+  function go(i: number, d: Draft = draft) {
     setError(null);
+    // Reaching the manual form: the client's briefing pre-fills its suggestions, quietly, in the background
+    if (i >= 2 && aiOn && d.clientId && aiRef.current.status === "idle") suggest(d, false);
     // From the ideas sheet, the step takes the sheet's place: back doesn't open it again
     (ideasOpen ? replaceParams : pushParams)({ step: STEP_KEYS[i], ideas: null, path: null });
     reveal(topRef, "start");
@@ -477,8 +492,8 @@ export function RequestForm({
   ][step];
 
   return (
-    <div ref={topRef} className="grid scroll-mt-8 gap-8 xl:grid-cols-[minmax(0,1fr)_288px] xl:gap-10">
-      <div className="grid min-w-0 content-start gap-9">
+    <div ref={topRef} className="scroll-mt-8">
+      <div className={`mx-auto grid min-w-0 content-start gap-9 ${step <= 1 && !created && !asanaSent ? "max-w-6xl" : "max-w-3xl"}`}>
         <div className="grid gap-6">
           <div className="flex items-center justify-between gap-3">
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">New request</p>
@@ -487,24 +502,16 @@ export function RequestForm({
             </Link>
           </div>
           {!created && restoredAt && (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-[10px] border border-line bg-surface px-4 py-2.5 text-sm animate-[step-in_.25s_ease-out]">
-              <span className="text-muted">
-                Picked up where you left off
-                <span className="text-faint"> · saved {new Intl.DateTimeFormat("en-US", { weekday: "short", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }).format(new Date(restoredAt))}</span>
-              </span>
-              <span className="flex items-center gap-1">
-                <button type="button" onClick={() => setRestoredAt(null)} className="rounded-full px-3 py-2 text-xs text-muted hover:text-fg md:py-1">
-                  Got it
-                </button>
-                <button type="button" onClick={startOver} className="rounded-full border border-line px-3 py-2 text-xs text-muted hover:border-faint hover:text-fg md:py-1">
-                  Start over
-                </button>
-              </span>
-            </div>
+            <span className="inline-flex items-center gap-2 justify-self-start rounded-full border border-line bg-surface py-1 pl-3 pr-1 text-[12px] text-faint">
+              Resumed · saved {new Intl.DateTimeFormat("en-US", { weekday: "short", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }).format(new Date(restoredAt))}
+              <button type="button" onClick={startOver} className="min-h-8 rounded-full px-2.5 text-muted hover:bg-surface-2 hover:text-fg">
+                Start over
+              </button>
+            </span>
           )}
           {!created && draft.migration && <MigrationPanel m={draft.migration} onChange={(m) => set({ migration: m })} />}
           {!created && <Progress steps={STEPS} current={step} onJump={go} />}
-          {!created && <AiStrip aiOn={aiOn} ai={ai} clientName={client?.name ?? null} onRefresh={() => suggest(draft, true)} />}
+          {!created && step >= 2 && <AiStrip aiOn={aiOn} ai={ai} clientName={client?.name ?? null} onRefresh={() => suggest(draft, true)} />}
         </div>
 
         {asanaSent ? (
@@ -544,27 +551,29 @@ export function RequestForm({
                   </button>
                 </div>
               )}
-              <h1 className="font-heading text-[28px] leading-tight sm:text-[32px]">{heading[0]}</h1>
-              <p className="text-sm text-muted">{heading[1]}</p>
+              <h1 className={`font-heading leading-tight tracking-tight ${step <= 1 ? "text-[32px] sm:text-[44px]" : "text-[28px] sm:text-[32px]"}`}>{heading[0]}</h1>
+              <p className={step <= 1 ? "max-w-2xl text-[15px] text-muted" : "text-sm text-muted"}>{heading[1]}</p>
             </div>
 
-            {step === 0 && <ClientSearch clients={clients} allotments={allotments} onPick={pickClient} />}
+            {step === 0 && <ClientPicker clients={clients} allotments={allotments} onPick={pickClient} />}
 
             {step === 1 && draft.clientId && client && (
               talking ? (
                 <RequestChat clientId={draft.clientId} clientName={client.name} onUse={applyIdea} onBack={() => closeParams("path")} />
               ) : (
-                <StartPanel
+                <StartPage
+                  key={draft.clientId}
                   clientId={draft.clientId}
                   clientName={client.name}
                   aiOn={aiOn && !demo}
                   onBrief={applyIdea}
                   onManual={() => go(2)}
                   onTalk={() => pushParams({ path: "talk" })}
-                  promises={
+                  promises={(list) =>
                     demo ? null : (
                       <PromisesStrip
-                        clientId={draft.clientId}
+                        clientId={draft.clientId ?? ""}
+                        preloaded={list}
                         used={promise?.clientId === draft.clientId ? promise.id : null}
                         onUse={(id, patch) => {
                           set(patch);
@@ -1035,13 +1044,6 @@ export function RequestForm({
         )}
       </div>
 
-      <AiPanel
-        aiOn={aiOn}
-        ai={ai}
-        clientName={client?.name ?? null}
-        onRefresh={() => suggest(draft, true)}
-        extra={draft.clientId && !demo ? <IdeasPanel clientId={draft.clientId} formats={selectedFormats(draft)} onBrief={applyIdea} /> : null}
-      />
     </div>
   );
 }
@@ -1103,81 +1105,11 @@ function sourcesLine(c: ContextSummary) {
   return `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 }
 
-/** "today 12:02 PM", "Mon 6:01 PM" */
-function when(iso: string) {
-  const d = new Date(iso);
-  const day = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", dateStyle: "short" });
-  const time = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" }).format(d);
-  return day.format(d) === day.format(new Date()) ? `today ${time}` : `${new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short" }).format(d)} ${time}`;
-}
-
-function AiPanel({ aiOn, ai, clientName, onRefresh, extra }: { aiOn: boolean; ai: AiState; clientName: string | null; onRefresh: () => void; extra?: React.ReactNode }) {
-  return (
-    <aside className="hidden min-w-0 xl:sticky xl:top-8 xl:flex xl:max-h-[calc(100vh-4rem)] xl:flex-col xl:gap-4 xl:[&>*]:shrink-0 xl:self-start xl:overflow-y-auto xl:overflow-x-hidden xl:pb-4 [scrollbar-width:thin]">
-      <div className="relative grid gap-4 overflow-hidden rounded-[12px] border border-line bg-surface p-5">
-        <span className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-brand/20 blur-3xl" />
-        <div className="relative flex items-center gap-2.5">
-          <span className="grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-brand to-[#5a0f16] text-white shadow-[0_6px_20px_-6px_rgba(178,30,44,0.9)]">
-            <Spark size={14} className={ai.status === "loading" ? "animate-[ai-pulse_1s_ease-in-out_infinite]" : ""} />
-          </span>
-          <div>
-            <p className="text-sm font-medium">Kaizen AI</p>
-            <p className="text-[11px] text-faint">{!aiOn ? "Not connected" : ai.status === "loading" ? "Reading…" : ai.status === "ready" ? "Ready" : "Standing by"}</p>
-          </div>
-        </div>
-
-        <div className="relative grid gap-3 text-sm leading-relaxed">
-          {!aiOn ? (
-            <p className="text-muted">Suggestions and the request review switch on once the AI key is added. The form works the same without it.</p>
-          ) : !clientName ? (
-            <p className="text-muted">Pick a client and I&apos;ll read their past requests, angles and feedback, then suggest every field.</p>
-          ) : ai.status === "loading" ? (
-            <>
-              <p className="text-muted">
-                Reading <span className="text-fg">{clientName}</span>&apos;s history…
-              </p>
-              <Thinking />
-            </>
-          ) : ai.status === "ready" ? (
-            <>
-              <p className="text-muted">
-                {ai.prepared ? "Prepared" : "Suggested"} for <span className="text-fg">{clientName}</span> from {sourcesLine(ai.context)}. Look for{" "}
-                <Spark size={10} className="inline text-brand-text" /> on each field.
-              </p>
-              {ai.context.briefing && <p className="text-xs text-faint">Briefing updated {when(ai.context.briefing.generatedAt)}</p>}
-              {!ai.context.adAccount && <p className="text-xs text-faint">No Meta ad account linked to this client yet.</p>}
-              <button type="button" onClick={onRefresh} className="inline-flex min-h-11 items-center md:min-h-0 justify-self-start text-xs text-muted underline-offset-4 hover:text-fg hover:underline">
-                Refresh with what&apos;s filled in
-              </button>
-            </>
-          ) : ai.status === "error" ? (
-            <>
-              <p className="text-muted">{ai.error}</p>
-              <button type="button" onClick={onRefresh} className="inline-flex min-h-11 items-center md:min-h-0 justify-self-start text-xs text-muted underline-offset-4 hover:text-fg hover:underline">
-                Try again
-              </button>
-            </>
-          ) : (
-            <p className="text-muted">Ready when you are.</p>
-          )}
-        </div>
-
-        {aiOn && (
-          <p className="relative border-t border-line pt-3 text-[11px] leading-relaxed text-faint">
-            Before anything is created, the AI checks the request against the client&apos;s feedback and campaign direction.
-          </p>
-        )}
-      </div>
-      {extra}
-    </aside>
-  );
-}
-
-/** Narrower screens: the AI's status on one line above the form. */
+/** The AI's status on one line above the form (the steps after Start). */
 function AiStrip({ aiOn, ai, clientName, onRefresh }: { aiOn: boolean; ai: AiState; clientName: string | null; onRefresh: () => void }) {
   if (!aiOn || !clientName) return null;
   return (
-    <div className="flex items-center gap-3 rounded-[10px] border border-line bg-surface px-3.5 py-2.5 text-xs text-muted xl:hidden">
+    <div className="flex items-center gap-3 rounded-[10px] border border-line bg-surface px-3.5 py-2.5 text-xs text-muted">
       <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-gradient-to-br from-brand to-[#5a0f16] text-white">
         <Spark size={11} className={ai.status === "loading" ? "animate-[ai-pulse_1s_ease-in-out_infinite]" : ""} />
       </span>

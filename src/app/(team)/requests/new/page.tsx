@@ -6,6 +6,7 @@ import type { Draft, Size } from "./draft";
 import { createClient } from "@/lib/supabase/server";
 import { RequestForm } from "./request-form";
 import { LIVE } from "@/lib/live";
+import { startSections } from "@/lib/request-start";
 
 // The AI review can take a little while
 // The strategist writes a whole brief and then reviews it (about two minutes on a slow day)
@@ -39,9 +40,12 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
 
   // Starting again from a deleted ticket (Settings › Deleted): its brief, ready to send as is or to edit
   const restart = typeof from === "string" && isExecOrLead(me) ? await fromDeleted(from) : typeof asana === "string" ? await fromAsana(asana, me) : null;
+  const initialClient = restart?.draft.clientId ?? (typeof client === "string" ? (clients.find((c) => c.slug === client && c.creative)?.id ?? null) : null);
+  // Arriving with ?client=: its start page is read here, so it's on screen with the page (stored data only, no AI)
+  const initialStart = initialClient && !restart ? await startSections(supabase, initialClient).catch(() => null) : null;
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="mx-auto max-w-6xl">
       <RequestForm
         initialDraft={restart?.draft ?? null}
         startAtReview={Boolean(restart) && brief === "same"}
@@ -50,7 +54,8 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
         anglesByClient={anglesByClient}
         teamByClient={teamByClient}
         aiOn={aiEnabled()}
-        initialClient={restart?.draft.clientId ?? (typeof client === "string" ? (clients.find((c) => c.slug === client && c.creative)?.id ?? null) : null)}
+        initialClient={initialClient}
+        initialStart={initialStart}
       />
     </div>
   );
