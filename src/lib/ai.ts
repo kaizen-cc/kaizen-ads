@@ -115,6 +115,17 @@ ${a.role.core.trim()}
   return parts.join("\n\n");
 }
 
+/**
+ * The knowledge documents (PDFs and the like added in Settings, the Lab or a client's page) that match this task: only
+ * the few best excerpts, added after the task's own text. Nothing when nothing matches.
+ */
+async function withKnowledge(agent: AgentKey, label: string, prompt: string) {
+  if (!adminConfigured()) return prompt;
+  const { knowledgeBlock } = await import("@/lib/knowledge");
+  const block = await knowledgeBlock({ agent, label, prompt }).catch((e) => (console.error("[ai] knowledge", e instanceof Error ? e.message : e), ""));
+  return block ? `${prompt}\n\n${block}` : prompt;
+}
+
 /** Who set an AI call off: the signed-in team member, or Kaizen Ads itself (a scheduled job, no one signed in) */
 type Actor = { profile_id: string | null; actor: "person" | "auto" };
 const AUTO: Actor = { profile_id: null, actor: "auto" };
@@ -219,6 +230,7 @@ export async function askJson<T>({
   if (!aiEnabled()) throw new AiUnavailable("AI isn't connected yet.");
   const base = await getAgent(agent);
   const cfg = { ...base, model: override?.model ?? base.model, effort: override?.effort ?? base.effort };
+  if (!bare) prompt = await withKnowledge(agent, label, prompt);
   const started = Date.now();
   const request = {
     model: MODEL_IDS[cfg.model],
@@ -312,6 +324,7 @@ export async function askJsonWithTools<T>({
   if (!tools.length) return askJson<T>({ agent, label, system, prompt, schema, maxTokens });
   if (!aiEnabled()) throw new AiUnavailable("AI isn't connected yet.");
   const cfg = await getAgent(agent);
+  prompt = await withKnowledge(agent, label, prompt);
   const started = Date.now();
   const run = { agent_key: agent, label, model: cfg.model, effort: cfg.effort };
   const who = adminConfigured() ? actorNow() : Promise.resolve(AUTO);

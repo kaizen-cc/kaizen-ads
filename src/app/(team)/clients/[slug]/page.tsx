@@ -268,6 +268,8 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     .eq("client_id", client.id)
     .order("created_at", { ascending: false })
     .limit(200);
+  // Knowledge files the agents read for this client only (PDFs, brand guides, case studies)
+  const knowledge = await (await import("@/lib/knowledge")).listKnowledge(supabase, { scope: "client", clientId: client.id }).catch(() => []);
   // Every report made for them: one row per report (a joint one's parts together)
   const { data: repRows } = await supabase
     .from("reports")
@@ -407,6 +409,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       emails={emails}
       campaigns={campaigns}
       docs={docs}
+      knowledge={knowledge}
       playbook={{ items: await loadLedger(supabase, client.id), learnings: ((await supabase.from("client_brand_bibles").select("learnings").eq("client_id", client.id).maybeSingle()).data?.learnings ?? []) as { at: string; kind: string; text: string }[] }}
       reports={reportHistory}
       launchRules={launchRules}

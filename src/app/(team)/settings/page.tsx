@@ -13,6 +13,8 @@ import { Expenses, rollupFrom, type CostRow } from "./expenses";
 import { addUsage, costOf, emptyUsage, type ModelKey, type Usage } from "@/lib/ai-costs";
 import { roleLabel, type TeamRole } from "@/lib/roles";
 import { DataInspector } from "./data-inspector";
+import { KnowledgePanel } from "@/components/knowledge-panel";
+import { listKnowledge } from "@/lib/knowledge";
 import { AGENT_MOMENTS, momentOf } from "@/lib/agent-moments";
 import Team from "../team/page";
 import { ErrorButtons } from "./error-buttons";
@@ -173,14 +175,34 @@ async function Agents({ open, role: openRole, section, range, by }: { open: stri
   if (!agent && role) {
     const { data: talk } = await supabase.from("ai_role_chats").select("id, role, content, changes, created_at").eq("role_key", role.key).order("created_at").limit(200);
     const chat: RoleChatMessage[] = (talk ?? []).map((m) => ({ id: m.id, role: m.role, content: m.content, changes: (m.changes ?? []) as Change[], at: m.created_at }));
-    return <RoleDetail key={role.key} role={role} skills={list.filter((a) => a.roleKey === role.key)} items={items} chat={chat} />;
+    return (
+      <div className="grid gap-6">
+        <RoleDetail key={role.key} role={role} skills={list.filter((a) => a.roleKey === role.key)} items={items} chat={chat} />
+        <KnowledgePanel
+          target={{ scope: "agent", agentKey: `role:${role.key}` }}
+          docs={await listKnowledge(supabase, { scope: "agent", agentKey: `role:${role.key}` })}
+          canEdit
+          title={`Files for the ${role.label}`}
+          description="PDFs, decks and documents every skill of this agent can look things up in. Each call reads only the parts that match what it's doing, never the whole file."
+        />
+      </div>
+    );
   }
   if (!agent)
     return (
       <div className="grid gap-6">
         <AgentsNav section={section} />
         {section === "knowledge" ? (
-          <KnowledgeView items={items} spine={{ body: spineRow?.body ?? "", updatedAt: spineRow?.updated_at ?? null, updatedBy: (spineRow?.profiles as unknown as { full_name: string } | null)?.full_name ?? null }} />
+          <>
+            <KnowledgeView items={items} spine={{ body: spineRow?.body ?? "", updatedAt: spineRow?.updated_at ?? null, updatedBy: (spineRow?.profiles as unknown as { full_name: string } | null)?.full_name ?? null }} />
+            <KnowledgePanel
+              target={{ scope: "shared" }}
+              docs={await listKnowledge(supabase, { scope: "shared" })}
+              canEdit
+              title="Files every agent can use"
+              description="Playbooks, SOPs, research and guides as PDFs or documents. Each one is read once; a call gets only the excerpts that match its task, with the file's title, so the agents stay sharp however much is added."
+            />
+          </>
         ) : section === "expenses" ? (
           <Expenses
             rows={costRows}
@@ -197,7 +219,18 @@ async function Agents({ open, role: openRole, section, range, by }: { open: stri
     );
   const { data: chat } = await supabase.from("ai_agent_chats").select("id, role, content, changes, created_at").eq("agent_key", agent.key).order("created_at").limit(200);
   const messages: ChatMessage[] = (chat ?? []).map((m) => ({ id: m.id, role: m.role, content: m.content, changes: (m.changes ?? []) as Change[], at: m.created_at }));
-  return <AgentDetail key={agent.key} a={agent} items={items} chat={messages} />;
+  return (
+    <div className="grid gap-6">
+      <AgentDetail key={agent.key} a={agent} items={items} chat={messages} />
+      <KnowledgePanel
+        target={{ scope: "agent", agentKey: agent.key }}
+        docs={await listKnowledge(supabase, { scope: "agent", agentKey: agent.key })}
+        canEdit
+        title={`Files for ${agent.label}`}
+        description="PDFs and documents only this skill reads. Each call gets the parts that match its task, never the whole file."
+      />
+    </div>
+  );
 }
 
 async function Data({ target, from, to }: { target: string | null; from: string; to: string }) {

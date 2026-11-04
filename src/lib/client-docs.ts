@@ -21,7 +21,7 @@ const TEXTY = /^(text\/|application\/(json|xml|csv|x-yaml|yaml|javascript|rtf))/
 const OFFICE: Record<string, RegExp> = { docx: /^word\/document\.xml$/, pptx: /^ppt\/slides\/slide\d+\.xml$/, xlsx: /^xl\/sharedStrings\.xml$/ };
 
 /** The text inside an Office file (Word, PowerPoint, Excel): it's a zip of XML; read the parts with the words. */
-function officeText(buf: Buffer, ext: keyof typeof OFFICE) {
+export function officeText(buf: Buffer, ext: keyof typeof OFFICE) {
   // The zip's directory is at the end: find it, then each entry's data
   let eocd = -1;
   for (let i = buf.length - 22; i >= Math.max(0, buf.length - 66_000); i--) if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }

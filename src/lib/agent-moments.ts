@@ -23,6 +23,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Checks a strategist's brief against Kaizen's brief standard and fixes what's off", where: "Overview \u00b7 Suggested briefs (every brief the strategist writes)", trigger: "auto", when: "Right after each brief is written", labels: ["brief self-review"] },
   ],
   briefing: [
+    { title: "Reads a knowledge file (PDF, Word, slides, a scan) into its text, summary, key points and page-referenced chunks", where: "Settings · AI agents, Ads Lab, Client page · Documents", trigger: "auto", when: "When a file is added, or on Read again", labels: ["read a knowledge pdf "] },
     { title: "Writes each client's briefing from Slack, email, Drive, Meta and calls", where: "Client page · Briefing", trigger: "auto", when: "12pm and 6pm, and on Refresh now", labels: ["briefing"] },
     { title: "Reads the marketing intake form", where: "Onboarding · Client page", trigger: "auto", when: "When an intake form comes in from Zapier", labels: ["marketing intake"] },
     { title: "Reads a custom package from the enrollment or upsell form", where: "Zapier · Client package", trigger: "auto", when: "When an enrollment or upsell has a custom package", labels: ["package from a form"] },

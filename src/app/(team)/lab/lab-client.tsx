@@ -7,6 +7,7 @@ import { createPortal } from "react-dom";
 import { METRIC_LABEL, SEATS, TURNS_PER_ROUND, type Metric, type Seat } from "@/lib/lab-seats";
 import type { ClientNumbers, ProposedTest } from "@/lib/lab";
 import { pushParams, useParam } from "@/lib/url-state";
+import { KnowledgePanel } from "@/components/knowledge-panel";
 import { addLoomLinks, addTestNote, followTest, createTest, decideTest, deleteSource, deleteThread, deployLearning, draftDeploy, dropTest, iterateTest, sendToTable, startTest, tableSpeaks, type Attachment } from "./actions";
 
 export type LabClientRow = { id: string; name: string; slug: string; industry: string | null; spend30: number };
@@ -717,6 +718,8 @@ function SharedMemory({ sources }: { sources: LabSource[] }) {
   return (
     <div className="grid gap-2">
       <p className="px-1 text-[11px] uppercase tracking-[0.14em] text-faint">The table remembers</p>
+      {/* PDFs and documents: read into their text and takeaways, then listed below like everything else */}
+      <KnowledgePanel target={{ scope: "lab" }} docs={[]} canEdit compact />
       <LoomImport />
       <div className="grid gap-1">
         {shown.map((s) => (

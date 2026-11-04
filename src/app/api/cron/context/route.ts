@@ -245,7 +245,9 @@ export async function GET(request: Request) {
       const sheets = await (await import("@/lib/onboarding-sheet")).keepOnboardingSheets(admin).catch((e) => String(e));
       // Portal chat: an email for team messages left unread (off until switched on)
       const chat = await (await import("@/lib/portal-chat")).chatDigest(admin).catch((e) => String(e));
-      return Response.json({ links, issues, packages, sheets, chat });
+      // Knowledge files left half read (the server stopped mid-read): read again
+      const knowledge = await (await import("@/lib/knowledge")).keepKnowledge(admin).catch((e) => String(e));
+      return Response.json({ links, issues, packages, sheets, chat, knowledge });
     }
     if (step === "ledger") return Response.json(await (await import("@/lib/ledger")).runLedger(admin));
     if (step === "patterns") {
