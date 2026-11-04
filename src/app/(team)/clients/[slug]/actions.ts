@@ -588,3 +588,14 @@ export async function sentEmail(id: string) {
   const { data } = await (await createClient()).from("client_emails").select("subject, html, text").eq("id", id).maybeSingle();
   return data ? { ok: true as const, subject: data.subject as string, html: (data.html as string | null) ?? null, text: (data.text as string | null) ?? null } : { ok: false as const, error: "Not found." };
 }
+
+/**
+ * Execs only: live changes in this client's Meta and Google ad accounts (pauses, budgets, moves, launches) while the
+ * global switch is still off, to prove it client by client first. Who switched it and when is kept on the client.
+ */
+export async function setLiveAdWrites(clientId: string, slug: string, on: boolean): Promise<ActionResult> {
+  const me = await requireStaff();
+  if (!me.isExec) return { ok: false, error: "Only execs can switch live changes on." };
+  const { error } = await createAdminClient().from("clients").update({ live_ad_writes: on, live_ad_writes_by: me.id, live_ad_writes_at: new Date().toISOString() }).eq("id", clientId);
+  return done(slug, error);
+}

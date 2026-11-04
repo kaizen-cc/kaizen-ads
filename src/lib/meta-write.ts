@@ -22,12 +22,21 @@ export async function metaWriteSetting(admin: SupabaseClient): Promise<MetaWrite
   return { sandbox: v.sandbox !== false, sandboxAccount: bare(v.sandboxAccount ?? "795029519154776"), urlTags: v.urlTags === undefined || v.urlTags === null ? DEFAULT_URL_TAGS : v.urlTags.trim() || null };
 }
 
+/** The ad accounts of clients an exec switched live changes on for (testing client by client before the global switch) */
+export async function liveAccounts(admin: SupabaseClient, platform: "meta" | "google") {
+  const { data: on } = await admin.from("clients").select("id").eq("live_ad_writes", true).is("archived_at", null);
+  const ids = (on ?? []).map((c) => c.id as string);
+  if (!ids.length) return new Set<string>();
+  const { data: t } = await admin.from("kpi_targets").select("ad_account_id").in("client_id", ids).eq("platform", platform);
+  return new Set((t ?? []).map((x) => bare(String(x.ad_account_id ?? ""))).filter(Boolean));
+}
+
 /** Why this account can't be written to right now, or null when it can. */
 export async function writeBlocked(admin: SupabaseClient, account: string): Promise<string | null> {
   if (!metaConfigured()) return "Meta isn't connected.";
   const s = await metaWriteSetting(admin);
-  if (s.sandbox && bare(account) !== s.sandboxAccount)
-    return "Sandbox mode is on: Kaizen Ads only writes to Kaizen's own ad account until an exec switches it off in Settings → Sync health.";
+  if (s.sandbox && bare(account) !== s.sandboxAccount && !(await liveAccounts(admin, "meta")).has(bare(account)))
+    return "Live changes are off for this client: an exec switches them on in the client's Team & setup (or for everyone in Settings → Sync health).";
   return null;
 }
 

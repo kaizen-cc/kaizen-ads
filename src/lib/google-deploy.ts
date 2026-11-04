@@ -245,12 +245,12 @@ const DESC_PIN = ["", "DESCRIPTION_1", "DESCRIPTION_2"] as const;
  */
 export async function pushDeploy(admin: SupabaseClient, deployId: string, target: { campaignId: string | null; adGroupId: string | null; campaign: string | null; adGroup: string | null }) {
   const { googleWritesOn } = await import("@/lib/ad-changes");
-  if (!(await googleWritesOn(admin))) throw new Error("Changes in Google Ads are switched off. An exec turns them on in Settings → Sync health; until then, apply it by hand from the checklist.");
   const { data: d } = await admin.from("google_deploys").select("client_id, kind, plan, status").eq("id", deployId).single();
   if (!d?.plan || !["approved", "partial", "failed"].includes(d.status as string)) throw new Error("Approve it first.");
   if (d.kind === "campaign") throw new Error("A new campaign is built by hand from the checklist.");
   const account = await googleAccountOf(admin, d.client_id as string);
   if (!account) throw new Error("No Google Ads account is linked to this client on the KPI board.");
+  if (!(await googleWritesOn(admin, account))) throw new Error("Live changes are off for this client's Google Ads: an exec switches them on in the client's Team & setup; until then, apply it by hand from the checklist.");
   const plan = d.plan as DeployPlan;
   const cust = `customers/${account}`;
   const parts: { what: string; service: "adGroupAds" | "adGroupCriteria" | "campaignCriteria"; ops: unknown[] }[] = [];

@@ -46,7 +46,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
   const { data: client } = await supabase
     .from("clients")
     .select(
-      "id, name, slug, status, client_type, archived_at, archive_reason, archive_source, portal_live, portal_live_at, industry, industry_detail, industry_source, website, meta_ad_account_id, url_tags, slack_channel_id, internal_slack_channel_id, drive_folder_id, kaizen_id, auto_approve_opt_in, creative_package, creative_package_key, creative_package_until, creative_package_note, creative_db, billing_day, billing_day_source, reactivated_at, reactivated_by, services, services_extra, services_removed, creative_packages(label)",
+      "id, name, slug, status, client_type, archived_at, archive_reason, archive_source, portal_live, portal_live_at, industry, industry_detail, industry_source, website, meta_ad_account_id, url_tags, slack_channel_id, internal_slack_channel_id, drive_folder_id, kaizen_id, auto_approve_opt_in, creative_package, creative_package_key, creative_package_until, creative_package_note, creative_db, billing_day, billing_day_source, live_ad_writes, live_ad_writes_at, live_ad_writes_by, reactivated_at, reactivated_by, services, services_extra, services_removed, creative_packages(label)",
     )
     .eq("slug", slug)
     .maybeSingle();
@@ -451,6 +451,15 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       imagesUsed={usage?.images_used ?? 0}
       videosUsed={usage?.videos_used ?? 0}
       fromAsana={{ images: usage?.asana_images ?? 0, videos: usage?.asana_videos ?? 0, waitingImages: usage?.asana_waiting_images ?? 0, waitingVideos: usage?.asana_waiting_videos ?? 0 }}
+      liveWrites={await (async () => {
+        const [{ data: mw }, { data: gw }, { data: who }] = await Promise.all([
+          supabase.from("app_settings").select("value").eq("key", "meta_write").maybeSingle(),
+          supabase.from("app_settings").select("value").eq("key", "google_write").maybeSingle(),
+          client.live_ad_writes_by ? supabase.from("profiles").select("full_name").eq("id", client.live_ad_writes_by as string).maybeSingle() : Promise.resolve({ data: null }),
+        ]);
+        const globalOn = (mw?.value as { sandbox?: boolean } | null)?.sandbox === false && (gw?.value as { enabled?: boolean } | null)?.enabled === true;
+        return { on: Boolean(client.live_ad_writes), by: (who?.full_name as string | null) ?? null, at: (client.live_ad_writes_at as string | null) ?? null, globalOn };
+      })()}
       billingHistory={await (async () => {
         const { data: log } = await supabase.from("client_billing_day_log").select("at, old_day, new_day, source, note, profiles:changed_by(full_name)").eq("client_id", client.id).order("at", { ascending: false }).limit(12);
         return (log ?? []).map((h) => ({ at: h.at as string, oldDay: (h.old_day as number | null) ?? null, newDay: (h.new_day as number | null) ?? null, source: (h.source as string | null) ?? null, note: (h.note as string | null) ?? null, by: (h.profiles as unknown as { full_name: string } | null)?.full_name ?? null }));

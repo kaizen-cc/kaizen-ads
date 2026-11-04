@@ -139,8 +139,8 @@ export async function deployTargets(id: string): Promise<{ ok: true; writes: boo
     const { d } = await loadMine(id);
     const admin = createAdminClient();
     const [{ googleWritesOn }, { googleAccountOf }] = await Promise.all([import("@/lib/ad-changes"), import("@/lib/google-deploy")]);
-    const writes = await googleWritesOn(admin);
     const account = await googleAccountOf(admin, d.client_id as string);
+    const writes = await googleWritesOn(admin, account);
     if (!account) return { ok: true, writes, campaigns: [], adGroups: [] };
     const { googleAdsConfigured, googleWritableSetup } = await import("@/lib/context/google-ads");
     if (!googleAdsConfigured()) return { ok: true, writes: false, campaigns: [], adGroups: [] };

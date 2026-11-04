@@ -19,11 +19,13 @@ import { setPortalLive,
   removeContact,
   saveAllotment,
   saveBillingDay,
+  setLiveAdWrites,
   saveClientDetails,
   setAngleStatus,
   setSprintPackage,
 } from "./actions";
 import { BillingDayPanel, type BillingDayChange } from "./billing-day-panel";
+import { LiveWritesPanel } from "./live-writes-panel";
 import { PackagePanel, type Cycle, type PackageOption } from "./package-panel";
 import { ReadinessCheck } from "./readiness-check";
 import { LaunchRules, type LaunchRule } from "./launch-rules";
@@ -151,6 +153,8 @@ export type ClientViewProps = {
   cycle?: Cycle | null;
   /** Every change to the creative billing day */
   billingHistory?: BillingDayChange[];
+  /** Live changes in their ad accounts, switched on for this client (or for everyone) */
+  liveWrites?: { on: boolean; by: string | null; at: string | null; globalOn: boolean } | null;
   creativeDb?: CreativeDb | null;
   can: { admin: boolean; contacts: boolean; allot: boolean; assign: boolean };
   demo?: boolean; // design preview: the refresh only plays its animation
@@ -187,7 +191,7 @@ export type ClientViewProps = {
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, docs = null, reports = null, playbook = null, setup = null, emails = null, businessAudit = null, patterns = null }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], liveWrites = null, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, docs = null, reports = null, playbook = null, setup = null, emails = null, businessAudit = null, patterns = null }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -591,6 +595,11 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                         packages={packages}
                         canSetPackage={can.admin && !demo}
                       />
+                    </Section>
+                  )}
+                  {liveWrites && (
+                    <Section title="Live changes in their ad accounts" description="Test client by client: execs switch it on here before it's on for everyone.">
+                      <LiveWritesPanel {...liveWrites} canEdit={can.admin && !demo} toggle={setLiveAdWrites.bind(null, client.id, client.slug)} />
                     </Section>
                   )}
                   <Section title="Creative billing date" description="When their creative allotment starts again: the day the Creative Package is billed in Stripe. Execs can set it by hand; every change is kept.">
