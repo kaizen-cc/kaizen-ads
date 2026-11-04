@@ -92,6 +92,8 @@ export type Scorecard = {
   firstPass: number | null; // % that went through with no changes asked for
   revisionTurnaround: number | null; // business days to send a revision back
   sitting: { name: string; client: string | null; days: number; url: string | null }[]; // on them 2+ business days
+  onTime: number | null; // % of pieces passed on within the turnaround target
+  weekly: number[]; // pieces passed on per week across the window, oldest first (for a sparkline)
 };
 
 export type Production = {
@@ -120,24 +122,30 @@ function score(parts: { firstPass: number | null; turnaround: number | null; tar
   return Math.round(comps.reduce((n, [v, x]) => n + v * x, 0) / w);
 }
 
-/** Everything above for the last `days` days (and the scorecards for the window before, for the trend). */
-export async function loadProduction(db: SupabaseClient, days = 30): Promise<Production | null> {
-  const since = new Date(Date.now() - 2 * days * 86_400_000).toISOString();
+/**
+ * Everything above for the last `days` days (and the scorecards for the window before, for the trend). `endsDaysAgo`
+ * shifts the whole window back (the period before, to compare with).
+ */
+export async function loadProduction(db: SupabaseClient, days = 30, endsDaysAgo = 0): Promise<Production | null> {
+  const endMs = Date.now() - endsDaysAgo * 86_400_000;
+  const since = new Date(endMs - 2 * days * 86_400_000).toISOString();
   const [{ data: rows }, { data: people }] = await Promise.all([
     db
       .from("asana_tasks")
       .select("gid, name, client_id, asana_created_at, open, section, assignee_name, url, history, history_read_at, clients(name, slug)")
       .not("history_read_at", "is", null)
       .gte("asana_modified_at", since)
+      .lte("asana_created_at", new Date(endMs).toISOString())
       .limit(2000),
     db.from("profiles").select("id, full_name, role").eq("is_active", true),
   ]);
   if (!rows?.length) return null;
-  const now = new Date().toISOString();
-  const cut = new Date(Date.now() - days * 86_400_000).toISOString();
+  const now = new Date(endMs).toISOString();
+  const cut = new Date(endMs - days * 86_400_000).toISOString();
   const tasks: Task[] = rows.map((r) => {
     const c = r.clients as unknown as { name: string; slug: string } | null;
-    return { gid: r.gid, name: r.name, clientId: r.client_id, client: c?.name ?? null, slug: c?.slug ?? null, createdAt: r.asana_created_at ?? now, open: r.open, section: r.section, assignee: r.assignee_name, url: r.url, spans: spansOf(r.asana_created_at ?? now, (r.history ?? []) as HistoryEvent[], r.section, r.assignee_name) };
+    const history = ((r.history ?? []) as HistoryEvent[]).filter((e) => !endsDaysAgo || e.at <= now);
+    return { gid: r.gid, name: r.name, clientId: r.client_id, client: c?.name ?? null, slug: c?.slug ?? null, createdAt: r.asana_created_at ?? now, open: r.open, section: r.section, assignee: r.assignee_name, url: r.url, spans: spansOf(r.asana_created_at ?? now, history, r.section, r.assignee_name) };
   });
   const len = (s: Span) => bizDays(s.from, s.to ?? now);
 
@@ -201,10 +209,10 @@ export async function loadProduction(db: SupabaseClient, days = 30): Promise<Pro
     if (!kind) return null;
     const key = p!.id;
     if (!cards.has(key))
-      cards.set(key, { name: p!.full_name, profileId: p!.id, kind, score: null, level: "", previous: null, pieces: 0, turnaround: null, turnaroundTarget: TARGET[kind], firstPass: null, revisionTurnaround: null, sitting: [], _prev: { make: [], rev: [], pass: [] } });
+      cards.set(key, { name: p!.full_name, profileId: p!.id, kind, score: null, level: "", previous: null, pieces: 0, turnaround: null, turnaroundTarget: TARGET[kind], firstPass: null, revisionTurnaround: null, sitting: [], onTime: null, weekly: [], _prev: { make: [], rev: [], pass: [] } });
     return cards.get(key)!;
   };
-  const acc = new Map<string, { make: number[]; rev: number[]; pass: boolean[] }>();
+  const acc = new Map<string, { make: number[]; rev: number[]; pass: boolean[]; at?: string[] }>();
   for (const t of tasks) {
     t.spans.forEach((s, i) => {
       if (!s.holder) return;
@@ -228,6 +236,7 @@ export async function loadProduction(db: SupabaseClient, days = 30): Promise<Pro
       if (s.col === "client_revision") bucket.rev.push(len(s));
       else {
         bucket.make.push(len(s));
+        if (recent) (bucket as { at?: string[] }).at = [...((bucket as { at?: string[] }).at ?? []), s.to];
         // First pass: after they passed it on, nothing came back to them for changes
         const later = t.spans.slice(i + 1);
         const back = card.kind === "creative" ? later.some((x) => x.col === "make" || x.col === "client_revision") : later.some((x) => x.col === "copy");
@@ -236,7 +245,14 @@ export async function loadProduction(db: SupabaseClient, days = 30): Promise<Pro
     });
   }
   const team: Scorecard[] = [...cards.values()].map(({ _prev, ...c }) => {
-    const a = acc.get(c.profileId!) ?? { make: [], rev: [], pass: [] };
+    const a = acc.get(c.profileId!) ?? { make: [], rev: [], pass: [], at: [] };
+    const weeks = Math.max(1, Math.round(days / 7));
+    const weekly = Array.from({ length: weeks }, () => 0);
+    for (const at of a.at ?? []) {
+      const i = Math.min(weeks - 1, Math.floor((Date.parse(at) - Date.parse(cut)) / (7 * 86_400_000)));
+      if (i >= 0) weekly[i]++;
+    }
+    const onTime = a.make.length ? Math.round((a.make.filter((x) => x <= c.turnaroundTarget).length / a.make.length) * 100) : null;
     const firstPass = a.pass.length ? Math.round((a.pass.filter(Boolean).length / a.pass.length) * 100) : null;
     const turnaround = round1(avg(a.make));
     const revisionTurnaround = round1(avg(a.rev));
@@ -248,7 +264,7 @@ export async function loadProduction(db: SupabaseClient, days = 30): Promise<Pro
       revision: avg(_prev.rev),
       sitting: 0,
     });
-    return { ...c, pieces: a.make.length, turnaround, firstPass, revisionTurnaround, score: s, level: LEVEL(s), previous: prev, sitting: c.sitting.sort((x, y) => y.days - x.days).slice(0, 5) };
+    return { ...c, pieces: a.make.length, turnaround, firstPass, revisionTurnaround, score: s, level: LEVEL(s), previous: prev, sitting: c.sitting.sort((x, y) => y.days - x.days).slice(0, 5), onTime, weekly };
   });
   team.sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
 

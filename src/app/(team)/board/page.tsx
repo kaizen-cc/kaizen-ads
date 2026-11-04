@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { loadShadows } from "@/lib/asana";
 import { BoardClient } from "./board-client";
 import { toTicket, type BoardRow } from "./to-ticket";
+import { BoardTabs, CreativeKpisView } from "./creative-kpis";
 
 // Writing a video script with the AI can take a minute
 export const maxDuration = 800; // room for the AI creative review that starts at review, and for planning a launch (video uploads to Meta)
@@ -11,7 +12,19 @@ export const maxDuration = 800; // room for the AI creative review that starts a
 export default async function Board({ searchParams }: PageProps<"/board">) {
   const me = await requireStaff();
   const supabase = await createClient();
-  const { t } = await searchParams;
+  const { t, view, period } = await searchParams;
+  const lead = isExecOrLead(me);
+  // The creative team's KPIs: execs and leads only (anyone else asking for it gets the Board)
+  if (view === "kpis" && lead) {
+    const { loadCreativeKpis } = await import("@/lib/creative-kpis");
+    const k = await loadCreativeKpis(supabase, period === "30" || period === "90" ? period : "cycle");
+    return (
+      <div className="grid gap-5">
+        <BoardTabs active="kpis" />
+        <CreativeKpisView k={k} />
+      </div>
+    );
+  }
   const asked = typeof t === "string" && /^\d+$/.test(t) ? Number(t) : null;
 
   const [{ data: moving }, { data: one }, { data: clients }, { data: people }] = await Promise.all([
@@ -56,7 +69,7 @@ export default async function Board({ searchParams }: PageProps<"/board">) {
     return { new: mine.filter((d) => !d.is_variation).length, variations: mine.filter((d) => d.is_variation).length, cards: mine.map((d) => d.files.filter((f) => (f.card ?? 0) > 0).length).filter(Boolean) };
   };
   const cardsOf = new Map((cardRows ?? []).map((r) => [r.id as string, r.cards as number]));
-  return (
+  const board = (
     <BoardClient
       tickets={(rows as BoardRow[]).map((r) => ({ ...toTicket(r), migration: migrationOf(r.id, r.stage), cards: cardsOf.get(r.id) ?? null, uploaded: uploadedOf(r.id) }))}
       clients={clients ?? []}
@@ -66,5 +79,13 @@ export default async function Board({ searchParams }: PageProps<"/board">) {
       shadows={shadows}
       me={{ id: me.id, lead: isExecOrLead(me) }}
     />
+  );
+  return lead ? (
+    <div className="grid gap-5">
+      <BoardTabs active="board" />
+      {board}
+    </div>
+  ) : (
+    board
   );
 }
