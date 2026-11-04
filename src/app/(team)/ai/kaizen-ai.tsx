@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { captureFrames, extractAudio } from "@/lib/uploads/video-prep";
 import { pushParams, replaceParams, closeParams, useParam } from "@/lib/url-state";
@@ -30,6 +30,9 @@ const greet = () => {
   const h = new Date().getHours();
   return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
 };
+// The greeting follows the browser's clock, not the server's: the server renders "Hello" and the browser swaps in its
+// own after hydrating, so the two renders never disagree (React #418).
+const noSubscribe = () => () => {};
 const spread = <T,>(list: T[], n: number) => (list.length <= n ? list : Array.from({ length: n }, (_, i) => list[Math.round((i * (list.length - 1)) / (n - 1))]));
 
 function Icon({ d, size = 18 }: { d: string; size?: number }) {
@@ -815,6 +818,7 @@ function LiveBlock({ live, onRetry }: { live: Live; onRetry: () => void }) {
 function Empty({ first, on, groups, templates, client, homeAgent, onUse }: { first: string; on: boolean; groups: QuickAction["group"][]; templates: Template[]; client: ClientOpt | null; homeAgent: string; onUse: (p: string, id?: string) => void }) {
   const actions = groups.flatMap((g) => QUICK_ACTIONS.filter((a) => a.group === g));
   const name = (s: string) => s.replace(/\{client\}/g, client?.name ?? "a client");
+  const hello = useSyncExternalStore(noSubscribe, greet, () => "Hello");
   return (
     <div className="grid gap-8 pt-6 md:pt-16">
       <div className="grid justify-items-center gap-3 text-center">
@@ -822,7 +826,7 @@ function Empty({ first, on, groups, templates, client, homeAgent, onUse }: { fir
           <Icon d={P.spark} size={26} />
         </span>
         <h1 className="font-heading text-[30px] leading-tight tracking-tight text-fg md:text-[38px]">
-          {greet()}
+          {hello}
           {first ? `, ${first}` : ""}
         </h1>
         <p className="max-w-[520px] text-[14.5px] text-muted">
