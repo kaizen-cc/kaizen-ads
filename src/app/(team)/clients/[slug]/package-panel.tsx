@@ -170,7 +170,6 @@ export function PackagePanel({
   videosUsed,
   fromAsana,
   cycle = null,
-  saveBillingDay,
   creativeDb,
   packages,
   can,
@@ -190,7 +189,6 @@ export function PackagePanel({
   videosUsed: number;
   fromAsana?: { images: number; videos: number; waitingImages?: number; waitingVideos?: number };
   cycle?: Cycle | null;
-  saveBillingDay?: (form: FormData) => Promise<Result>;
   creativeDb?: CreativeDb | null;
   packages: PackageOption[];
   can: { exec: boolean; allot: boolean };
@@ -296,26 +294,9 @@ export function PackagePanel({
         </ActionForm>
       )}
 
-      {can.allot && !editing && saveBillingDay && (
-        <ActionForm action={saveBillingDay} submitLabel="Save billing day" autosave className="grid gap-2 border-t border-line pt-5">
-          <label className={label}>
-            Billed on
-            <select name="day" defaultValue={cycle?.billingDay ?? ""} className={field}>
-              <option value="">Not set: count by the calendar month</option>
-              {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
-                <option key={d} value={d}>
-                  The {ordinal(d)} of each month
-                </option>
-              ))}
-            </select>
-          </label>
-          <p className="text-[11px] text-faint">
-            {cycle?.billingDay
-              ? `The allotment starts again on the ${ordinal(cycle.billingDay)}${cycle.source === "stripe" ? " (their Stripe billing date)" : cycle.source === "track" ? " (from Kaizen Track)" : cycle.source === "enrolled" ? " (the day they enrolled; change it if they're billed another day)" : ""}.`
-              : "Set the day they're billed so the allotment resets with their billing, not on the 1st."}
-          </p>
-        </ActionForm>
-      )}
+      {cycle?.billingDay ? (
+        <p className="border-t border-line pt-4 text-[12px] text-faint">The allotment starts again on the {ordinal(cycle.billingDay)}{cycle.source === "stripe" ? ", from their Stripe Creative Package bill" : cycle.source === "set" ? ", set by an exec" : ""}. Execs change it in Team &amp; setup.</p>
+      ) : null}
 
       {can.exec && (
         <div className="grid gap-3 border-t border-line pt-5">

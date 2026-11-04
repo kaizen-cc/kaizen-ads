@@ -129,23 +129,42 @@ async function billingDays(admin: SupabaseClient, track: SupabaseClient) {
     if (!cur || Number(r.amount ?? 0) > cur.amount) fromStripe.set(client, { day: dayOf(r.next_at), amount: Number(r.amount ?? 0) });
   }
   // The creative allotment follows the bill the creative package is on, not the ads retainer: the latest payment or open
-  // invoice with a creative line. If that's part of a subscription, its renewal day; if it's billed on its own invoice
-  // (as many are), the day that invoice went out.
+  // invoice with a "Creative Package" line (a content package is organic social, not paid creative). If that's part of a
+  // subscription, its renewal day; if it's billed on its own invoice (as many are), the day that invoice went out.
+  // White-label: the Stripe customer is the agency, so the client is the one the memo names (Track matches it; if Track
+  // couldn't, we look for one of our clients' names in the memo), never the subscription's owner.
   const since = new Date(Date.now() - 120 * 86_400_000).toISOString();
   const [{ data: pays }, { data: open }] = await Promise.all([
-    track.from("stripe_payments").select("client_id, subscription_id, paid_at, lines, memo, refunded, ignored").gte("paid_at", since).order("paid_at", { ascending: false }),
-    track.from("stripe_open_invoices").select("client_id, subscription_id, created_at, lines, memo"),
+    track.from("stripe_payments").select("client_id, customer_id, subscription_id, paid_at, lines, memo, refunded, ignored").gte("paid_at", since).order("paid_at", { ascending: false }),
+    track.from("stripe_open_invoices").select("client_id, customer_id, subscription_id, created_at, lines, memo"),
   ]);
-  const creative = (x: { lines?: unknown; memo?: string | null }) => /creative|ugc|content package/i.test(`${typeof x.lines === "string" ? x.lines : JSON.stringify(x.lines ?? "")} ${x.memo ?? ""}`);
+  const { data: agencies } = await track.from("stripe_customers").select("id").eq("white_label", true);
+  const whiteLabel = new Set((agencies ?? []).map((a) => a.id as string));
+  const { data: everyone } = await admin.from("clients").select("id, name").is("archived_at", null);
+  const named = (everyone ?? []).map((c) => ({ id: c.id as string, key: norm(c.name as string) })).filter((c) => c.key.length >= 4).sort((a, b) => b.key.length - a.key.length);
+  /** Our client a white-label memo names ("Ads Management for 21 Property Group · …"), longest name first */
+  const fromMemo = (memo: string | null) => {
+    const m = norm((memo ?? "").split("·")[0]);
+    return m ? (named.find((c) => m.includes(c.key))?.id ?? null) : null;
+  };
+  const ourCreativeDay = new Map<string, { day: number; at: string }>();
+  const creative = (x: { lines?: unknown; memo?: string | null }) => /creative package/i.test(`${typeof x.lines === "string" ? x.lines : JSON.stringify(x.lines ?? "")} ${x.memo ?? ""}`);
   const creativeDay = new Map<string, { day: number; at: string }>();
   const bills = [
-    ...((pays ?? []) as { client_id: string | null; subscription_id: string | null; paid_at: string; lines: unknown; memo: string | null; refunded?: boolean | null; ignored?: boolean | null }[]).filter((x) => !x.refunded && !x.ignored).map((x) => ({ ...x, at: x.paid_at })),
-    ...((open ?? []) as { client_id: string | null; subscription_id: string | null; created_at: string; lines: unknown; memo: string | null }[]).map((x) => ({ ...x, at: x.created_at })),
+    ...((pays ?? []) as { client_id: string | null; customer_id: string | null; subscription_id: string | null; paid_at: string; lines: unknown; memo: string | null; refunded?: boolean | null; ignored?: boolean | null }[]).filter((x) => !x.refunded && !x.ignored).map((x) => ({ ...x, at: x.paid_at })),
+    ...((open ?? []) as { client_id: string | null; customer_id: string | null; subscription_id: string | null; created_at: string; lines: unknown; memo: string | null }[]).map((x) => ({ ...x, at: x.created_at })),
   ];
   for (const x of bills) {
     if (!creative(x)) continue;
     const sub = x.subscription_id ? subOf.get(x.subscription_id) : undefined;
-    const client = (x.subscription_id && setByHand.get(x.subscription_id)) || sub?.client || x.client_id;
+    const agency = Boolean(x.customer_id && whiteLabel.has(x.customer_id));
+    if (agency && !x.client_id) {
+      const ours = fromMemo(x.memo);
+      const cur = ours ? ourCreativeDay.get(ours) : undefined;
+      if (ours && (!cur || cur.at < x.at)) ourCreativeDay.set(ours, { day: dayOf(sub?.next_at ?? x.at), at: x.at });
+      continue;
+    }
+    const client = agency ? x.client_id : (x.subscription_id && setByHand.get(x.subscription_id)) || sub?.client || x.client_id;
     if (!client) continue;
     const cur = creativeDay.get(client);
     if (cur && cur.at >= x.at) continue;
@@ -159,11 +178,12 @@ async function billingDays(admin: SupabaseClient, track: SupabaseClient) {
     const cur = first.get(r.client_id);
     if (!cur || r.started_at < cur) first.set(r.client_id, r.started_at);
   }
-  const { data: ours } = await admin.from("clients").select("id, track_client_id, billing_day, billing_day_source").not("track_client_id", "is", null);
+  const { data: ours } = await admin.from("clients").select("id, track_client_id, billing_day, billing_day_source").is("archived_at", null);
   for (const c of ours ?? []) {
     if (c.billing_day_source === "set") continue;
-    const stripe = fromStripe.get(c.track_client_id as string);
-    const started = first.get(c.track_client_id as string);
+    const tid = c.track_client_id as string | null;
+    const stripe = ourCreativeDay.get(c.id as string) ?? (tid ? fromStripe.get(tid) : undefined);
+    const started = tid ? first.get(tid) : undefined;
     const [day, source] = stripe ? [stripe.day, "stripe"] : started ? [dayOf(started), "track"] : [0, ""];
     if (!day || (c.billing_day === day && c.billing_day_source === source)) continue;
     await admin.from("clients").update({ billing_day: day, billing_day_source: source }).eq("id", c.id);

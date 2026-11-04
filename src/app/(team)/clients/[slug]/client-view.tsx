@@ -23,6 +23,7 @@ import { setPortalLive,
   setAngleStatus,
   setSprintPackage,
 } from "./actions";
+import { BillingDayPanel, type BillingDayChange } from "./billing-day-panel";
 import { PackagePanel, type Cycle, type PackageOption } from "./package-panel";
 import { ReadinessCheck } from "./readiness-check";
 import { LaunchRules, type LaunchRule } from "./launch-rules";
@@ -148,6 +149,8 @@ export type ClientViewProps = {
   fromAsana?: { images: number; videos: number; waitingImages?: number; waitingVideos?: number };
   /** The billing cycle the allotment counts in */
   cycle?: Cycle | null;
+  /** Every change to the creative billing day */
+  billingHistory?: BillingDayChange[];
   creativeDb?: CreativeDb | null;
   can: { admin: boolean; contacts: boolean; allot: boolean; assign: boolean };
   demo?: boolean; // design preview: the refresh only plays its animation
@@ -184,7 +187,7 @@ export type ClientViewProps = {
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, docs = null, reports = null, playbook = null, setup = null, emails = null, businessAudit = null, patterns = null }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, docs = null, reports = null, playbook = null, setup = null, emails = null, businessAudit = null, patterns = null }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -590,6 +593,9 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                       />
                     </Section>
                   )}
+                  <Section title="Creative billing date" description="When their creative allotment starts again: the day the Creative Package is billed in Stripe. Execs can set it by hand; every change is kept.">
+                    <BillingDayPanel day={cycle?.billingDay ?? null} source={cycle?.source ?? null} start={cycle?.start ?? null} end={cycle?.end ?? null} history={billingHistory} canEdit={can.admin && !demo} save={saveBillingDay.bind(null, client.id, client.slug)} />
+                  </Section>
                   <Section title="Kaizen team" description="The copywriter reviews all copy and customer success handles every client.">
             <dl className="grid gap-1">
               {/* The same seats as the client cards: a video-only package needs no designer, an images-only one no editor */}
@@ -901,7 +907,6 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
             videosUsed={videosUsed}
             fromAsana={fromAsana}
             cycle={cycle}
-            saveBillingDay={saveBillingDay.bind(null, client.id, client.slug)}
             creativeDb={creativeDb}
             packages={packages}
             can={{ exec: can.admin, allot: can.allot }}

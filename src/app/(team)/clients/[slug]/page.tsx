@@ -451,6 +451,10 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       imagesUsed={usage?.images_used ?? 0}
       videosUsed={usage?.videos_used ?? 0}
       fromAsana={{ images: usage?.asana_images ?? 0, videos: usage?.asana_videos ?? 0, waitingImages: usage?.asana_waiting_images ?? 0, waitingVideos: usage?.asana_waiting_videos ?? 0 }}
+      billingHistory={await (async () => {
+        const { data: log } = await supabase.from("client_billing_day_log").select("at, old_day, new_day, source, note, profiles:changed_by(full_name)").eq("client_id", client.id).order("at", { ascending: false }).limit(12);
+        return (log ?? []).map((h) => ({ at: h.at as string, oldDay: (h.old_day as number | null) ?? null, newDay: (h.new_day as number | null) ?? null, source: (h.source as string | null) ?? null, note: (h.note as string | null) ?? null, by: (h.profiles as unknown as { full_name: string } | null)?.full_name ?? null }));
+      })()}
       cycle={{ billingDay: (client.billing_day as number | null) ?? null, source: (client.billing_day_source as string | null) ?? null, start: (usage?.period_start as string | null) ?? null, end: (usage?.period_end as string | null) ?? null, gap: client.creative_package && adminConfigured() ? ((await (await import("@/lib/package-gaps")).packageGaps(createAdminClient(), client.id).catch(() => null))?.get(client.id) ?? null) : null }}
       creativeDb={(client.creative_db as CreativeDb | null) ?? null}
       can={{ admin: me.isExec, contacts: seesAllClients(me), allot: me.isExec || me.isLead, assign: isExecOrLead(me) }}

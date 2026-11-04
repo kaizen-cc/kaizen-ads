@@ -273,13 +273,23 @@ export async function saveAllotment(clientId: string, slug: string, form: FormDa
   return done(slug, error);
 }
 
-/** Execs and leads: the day of the month the client is billed, which is when their creative allotment starts again. */
+/**
+ * Execs only: the day of the month the client's creative is billed, which is when their creative allotment starts again.
+ * "auto" hands it back to Stripe (the next hourly read sets it). Every change is kept in its history, with who and why.
+ */
 export async function saveBillingDay(clientId: string, slug: string, form: FormData): Promise<ActionResult> {
   const me = await requireStaff();
-  if (!isExecOrLead(me)) return { ok: false, error: "Only execs and leads can change the billing day." };
-  const raw = Number(form.get("day"));
-  const day = Number.isInteger(raw) && raw >= 1 && raw <= 28 ? raw : null;
-  const { error } = await createAdminClient().from("clients").update({ billing_day: day, billing_day_source: day ? "set" : null }).eq("id", clientId);
+  if (!me.isExec) return { ok: false, error: "Only execs can change the billing day." };
+  const raw = String(form.get("day") ?? "auto");
+  const note = String(form.get("note") ?? "").trim().slice(0, 300) || null;
+  const n = Number(raw);
+  const admin = createAdminClient();
+  if (raw === "auto") {
+    const { error } = await admin.from("clients").update({ billing_day_source: null, billing_day_set_by: null, billing_day_note: null }).eq("id", clientId);
+    return done(slug, error);
+  }
+  if (!Number.isInteger(n) || n < 1 || n > 28) return { ok: false, error: "Pick a day from the 1st to the 28th." };
+  const { error } = await admin.from("clients").update({ billing_day: n, billing_day_source: "set", billing_day_set_by: me.id, billing_day_note: note }).eq("id", clientId);
   return done(slug, error);
 }
 
