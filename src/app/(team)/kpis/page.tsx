@@ -35,9 +35,12 @@ type Snap = {
 
 export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
   const sp = await searchParams;
-  const me = await requireStaff();
-  const supabase = await createClient();
-  const [{ data: targets }, { data: snaps }, { data: buyers }, { data: clients }, auditBy] = await Promise.all([
+  const [me, supabase] = await Promise.all([requireStaff(), createClient()]);
+  // The Meta team sees Meta accounts and the Google team Google's; execs and everyone else see both
+  const team = teamPlatform(me.role);
+  // A buyer: only the accounts they're on (they own the KPI, or they're the client's buyer for that platform)
+  const buyer = Boolean(team) && !me.isExec && !me.isLead;
+  const [{ data: targets }, { data: snaps }, { data: buyers }, { data: clients }, auditBy, { data: activity }, { data: seats }] = await Promise.all([
     supabase
       .from("kpi_targets")
       .select("id, client_id, platform, ad_account_id, label, conversion, custom_action, campaign_match, target, monthly_budget, budget_note, source, owner_id, owner_name, extra_metrics, sheet, clients!inner(name, slug, status, kaizen_id), profiles!kpi_targets_owner_id_fkey(full_name)")
@@ -47,19 +50,17 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
     supabase.from("profiles").select("id, full_name, role").eq("is_active", true).or("role.in.(media_buyer,head_of_meta),also_buys.eq.true").order("full_name"),
     supabase.from("clients").select("id, name").neq("status", "offboarded").order("name"),
     latestAudits(supabase),
+    supabase.from("ad_account_activity").select("ad_account_id, last_change_at, last_change, checked_at, error"),
+    buyer ? supabase.from("client_assignments").select("client_id, role").eq("profile_id", me.id).in("role", ["meta_buyer", "google_buyer"]) : Promise.resolve({ data: [] as { client_id: string; role: string }[] }),
   ]);
   const snapBy = new Map((snaps ?? []).map((s) => [s.target_id as string, s as unknown as Snap]));
-  const { data: activity } = await supabase.from("ad_account_activity").select("ad_account_id, last_change_at, last_change, checked_at, error");
   const activityBy = new Map((activity ?? []).map((x) => [x.ad_account_id as string, x]));
-  const sprints = new Map((await loadSprints(supabase, { targetIds: (targets ?? []).map((t) => t.id) })).map((x) => [x.targetId, x.sprint]));
-  // Each account's last 10 changes, for its change history
-  const changes = await loadChanges(supabase, (targets ?? []).filter((t) => t.ad_account_id).map((t) => changeKey(t.platform, String(t.ad_account_id))), 10);
-
-  // The Meta team sees Meta accounts and the Google team Google's; execs and everyone else see both
-  const team = teamPlatform(me.role);
-  // A buyer: only the accounts they're on (they own the KPI, or they're the client's buyer for that platform)
-  const buyer = Boolean(team) && !me.isExec && !me.isLead;
-  const { data: seats } = buyer ? await supabase.from("client_assignments").select("client_id, role").eq("profile_id", me.id).in("role", ["meta_buyer", "google_buyer"]) : { data: [] };
+  // The sprints, and each account's last 10 changes for its change history, together
+  const [sprintList, changes] = await Promise.all([
+    loadSprints(supabase, { targetIds: (targets ?? []).map((t) => t.id) }),
+    loadChanges(supabase, (targets ?? []).filter((t) => t.ad_account_id).map((t) => changeKey(t.platform, String(t.ad_account_id))), 10),
+  ]);
+  const sprints = new Map(sprintList.map((x) => [x.targetId, x.sprint]));
   const seated = new Set((seats ?? []).map((a) => `${a.client_id}:${a.role === "google_buyer" ? "google" : "meta"}`));
   const rows: KpiRow[] = (targets ?? [])
     .filter((t) => !team || (t.platform === "google" ? "google" : "meta") === team)

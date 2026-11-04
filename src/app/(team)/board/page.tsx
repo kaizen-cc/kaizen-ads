@@ -5,15 +5,15 @@ import { loadShadows } from "@/lib/asana";
 import { BoardClient } from "./board-client";
 import { toTicket, type BoardRow } from "./to-ticket";
 import { clientProgress } from "@/lib/partial-approval";
+import { timed } from "@/lib/perf";
 import { BoardTabs, CreativeKpisView } from "./creative-kpis";
 
 // Writing a video script with the AI can take a minute
 export const maxDuration = 800; // room for the AI creative review that starts at review, and for planning a launch (video uploads to Meta)
 
 export default async function Board({ searchParams }: PageProps<"/board">) {
-  const me = await requireStaff();
-  const supabase = await createClient();
   const { t, view, period } = await searchParams;
+  const [me, supabase] = await Promise.all([requireStaff(), createClient()]);
   const lead = isExecOrLead(me);
   // The creative team's KPIs: execs and leads only (anyone else asking for it gets the Board)
   if (view === "kpis" && lead) {
@@ -33,23 +33,21 @@ export default async function Board({ searchParams }: PageProps<"/board">) {
   }
   const asked = typeof t === "string" && /^\d+$/.test(t) ? Number(t) : null;
 
-  const [{ data: moving }, { data: one }, { data: clients }, { data: people }] = await Promise.all([
+  // Two rounds, each all at once: what's on the board (and the Asana outlines), then what each ticket has made
+  const first = Promise.all([
     // Everything still moving (launched work lives on each client's page)
     supabase.from("board_requests").select("*").neq("stage", "launched").order("created_at", { ascending: false }).limit(1000),
     // A ticket opened by its number, from anywhere (a launched one from the client page too)
     asked ? supabase.from("board_requests").select("*").eq("number", asked).maybeSingle() : Promise.resolve({ data: null }),
     supabase.from("clients").select("id, name, slug").in("status", ["active", "onboarding"]).order("name"),
     supabase.from("profiles").select("id, full_name, role").eq("is_active", true).order("full_name"),
+    // Open Asana tasks not migrated yet: outline cards in their column while the team moves over
+    loadShadows(supabase).catch(() => []),
+    // Tickets migrated from Asana past production: do they have their creative and copy yet?
+    supabase.from("asana_tasks").select("request_id, url").not("request_id", "is", null),
   ]);
-
-  // Open Asana tasks not migrated yet: outline cards in their column while the team moves over
-  const shadows = await loadShadows(supabase).catch(() => []);
-  // Tickets migrated from Asana past production: do they have their creative and copy yet?
-  const { data: migrated } = await supabase.from("asana_tasks").select("request_id, url").not("request_id", "is", null);
+  const [{ data: moving }, { data: one }, { data: clients }, { data: people }, shadows, { data: migrated }] = await timed("board", "tickets", first);
   const migratedIds = (migrated ?? []).map((m) => m.request_id as string);
-  const [{ data: withDesigns }, { data: withCopy }] = migratedIds.length
-    ? await Promise.all([supabase.from("designs").select("request_id").in("request_id", migratedIds), supabase.from("copy_sets").select("request_id, status").in("request_id", migratedIds)])
-    : [{ data: [] }, { data: [] }];
   const PAST_PRODUCTION = ["internal_review", "copy", "copy_review", "ready_for_client", "client_review", "client_revision", "ready_for_launch"];
   const PAST_COPY = ["copy_review", "ready_for_client", "client_review", "ready_for_launch"];
   const migrationOf = (id: string, stage: string) => {
@@ -62,12 +60,17 @@ export default async function Board({ searchParams }: PageProps<"/board">) {
   const rows = [...(moving ?? []), ...(one && !(moving ?? []).some((r) => r.id === one.id) ? [one] : [])];
   // What each ticket in the making has uploaded, against what it asked for (and carousels' card counts)
   const making = rows.filter((r) => ["requested", "in_production", "internal_review", "client_revision"].includes(r.stage)).map((r) => r.id as string);
-  const [{ data: made }, { data: cardRows }] = making.length
-    ? await Promise.all([
-        supabase.from("designs").select("request_id, is_variation, current_version, design_versions(version, design_files(card))").in("request_id", making),
-        supabase.from("requests").select("id, cards").in("id", making).not("cards", "is", null),
-      ])
-    : [{ data: [] }, { data: [] }];
+  const reviewed = rows.filter((r) => ["client_review", "client_revision", "copy", "copy_review", "ready_for_client", "in_production", "internal_review"].includes(r.stage)).map((r) => r.id as string);
+  const second = Promise.all([
+    migratedIds.length ? supabase.from("designs").select("request_id").in("request_id", migratedIds) : Promise.resolve({ data: [] }),
+    migratedIds.length ? supabase.from("copy_sets").select("request_id, status").in("request_id", migratedIds) : Promise.resolve({ data: [] }),
+    making.length ? supabase.from("designs").select("request_id, is_variation, current_version, design_versions(version, design_files(card))").in("request_id", making) : Promise.resolve({ data: [] }),
+    making.length ? supabase.from("requests").select("id, cards").in("id", making).not("cards", "is", null) : Promise.resolve({ data: [] }),
+    // A partial client review: how many designs the client approved, and the ticket the approved part went ahead as
+    reviewed.length ? supabase.from("designs").select("request_id, client_status").in("request_id", reviewed).not("client_status", "is", null) : Promise.resolve({ data: [] }),
+    reviewed.length ? supabase.from("requests").select("parent_id, number").in("parent_id", reviewed).is("deleted_at", null) : Promise.resolve({ data: [] }),
+  ]);
+  const [{ data: withDesigns }, { data: withCopy }, { data: made }, { data: cardRows }, { data: decided }, { data: splits }] = await timed("board", "what each ticket has", second);
   type Made = { request_id: string; is_variation: boolean; current_version: number; design_versions: { version: number; design_files: { card: number | null }[] }[] };
   const uploadedOf = (id: string) => {
     if (!making.includes(id)) return null;
@@ -75,14 +78,6 @@ export default async function Board({ searchParams }: PageProps<"/board">) {
     return { new: mine.filter((d) => !d.is_variation).length, variations: mine.filter((d) => d.is_variation).length, cards: mine.map((d) => d.files.filter((f) => (f.card ?? 0) > 0).length).filter(Boolean) };
   };
   const cardsOf = new Map((cardRows ?? []).map((r) => [r.id as string, r.cards as number]));
-  // A partial client review: how many designs the client approved, and the ticket the approved part went ahead as
-  const reviewed = rows.filter((r) => ["client_review", "client_revision", "copy", "copy_review", "ready_for_client", "in_production", "internal_review"].includes(r.stage)).map((r) => r.id as string);
-  const [{ data: decided }, { data: splits }] = reviewed.length
-    ? await Promise.all([
-        supabase.from("designs").select("request_id, client_status").in("request_id", reviewed).not("client_status", "is", null),
-        supabase.from("requests").select("parent_id, number").in("parent_id", reviewed).is("deleted_at", null),
-      ])
-    : [{ data: [] }, { data: [] }];
   const progressOf = (id: string) =>
     reviewed.includes(id)
       ? clientProgress(

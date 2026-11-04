@@ -329,9 +329,10 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                 hint: "Every service side by side, what needs someone and what's in motion",
                 content: (
                   <div className="grid gap-6">
+                    {/* The full business audit leads the page: the first thing anyone opening a client sees */}
+                    {businessAudit}
                     {glance}
                     <BusinessOverview cards={cards} audits={audits ?? {}} sprints={sprints ?? {}} />
-                    {businessAudit}
                     {patterns}
                     {business}
                   </div>

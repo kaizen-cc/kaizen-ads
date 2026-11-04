@@ -92,6 +92,9 @@ export function ClientGrid({ cards, slotOptions, canEdit }: { cards: ClientCard[
 
 function Card({ c, open, slotOptions, canEdit }: { c: ClientCard; open: boolean; slotOptions: Record<SlotRole, Option[]>; canEdit: boolean }) {
   const router = useRouter();
+  // The moment someone shows intent (pointer over the card, focus, a touch), the whole client page is prefetched,
+  // so the click lands instantly; before that only its loading shell is
+  const [intent, setIntent] = useState(false);
   const [services, setServices] = useState(c.services);
   const [error, setError] = useState<string | null>(null);
   const [, start] = useTransition();
@@ -149,6 +152,9 @@ function Card({ c, open, slotOptions, canEdit }: { c: ClientCard; open: boolean;
     <li
       // Clicks from a sheet drawn elsewhere on the page (the archive confirmation on phones) aren't clicks on the card
       onClick={(e) => e.currentTarget.contains(e.target as Node) && !ownControl(e.target) && router.push(`/clients/${c.slug}`)}
+      onPointerEnter={() => setIntent(true)}
+      onFocus={() => setIntent(true)}
+      onTouchStart={() => setIntent(true)}
       className={`group relative grid cursor-pointer content-start gap-4 overflow-hidden rounded-[14px] border bg-surface p-5 transition-colors hover:border-faint/70 ${open ? "border-faint/60" : "border-line"} ${c.status === "paused" ? "opacity-60" : ""}`}
     >
       {/* A wash of the client's color along the top */}
@@ -159,7 +165,7 @@ function Card({ c, open, slotOptions, canEdit }: { c: ClientCard; open: boolean;
           {c.name.replace(/[^A-Za-z0-9]/g, "").slice(0, 1).toUpperCase()}
         </span>
         <div className="min-w-0 flex-1">
-          <Link href={`/clients/${c.slug}`} className="block truncate font-heading text-[17px] leading-snug hover:text-brand-text">
+          <Link href={`/clients/${c.slug}`} prefetch={intent ? true : null} className="block truncate font-heading text-[17px] leading-snug hover:text-brand-text">
             {c.name}
           </Link>
           <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs capitalize text-faint">

@@ -28,17 +28,16 @@ export const maxDuration = 300;
 
 // Each tier gets its own home, from the live tickets.
 export default async function Home() {
-  const me = await requireStaff();
+  const [me, db] = await Promise.all([requireStaff(), createClient()]);
   // Team members' home is Next for me; execs and leads keep the overview
   if (!me.isExec && !me.isLead) redirect("/next");
   const now = new Date();
   const base = { greeting: greetingFor(now), firstName: me.fullName.split(" ")[0], today: todayLabel(now) };
-  const db = await createClient();
   const variantNow = variantFor(me);
   // Ad accounts against target, each service line on its own: execs see Meta and Google, the Head of Meta only Meta,
   // the Head of Google only Google, the Head of Creative neither; a buyer only the accounts they own
   const lines: ("meta" | "google")[] = me.isExec ? ["meta", "google"] : me.role === "head_of_meta" ? ["meta"] : me.role === "head_of_google" ? ["google"] : [];
-  const [h, kpiLines, buyerKpis, suggestions, fatigue, onboarding, clientOptions, callPromisesAll, owedItems, said] = await Promise.all([
+  const [h, kpiLines, buyerKpis, suggestions, fatigue, onboarding, clientOptions, callPromisesAll, owedItems, said, { data: hiddenRows }, patternState, production] = await Promise.all([
     loadHome(db, me),
     Promise.all(lines.map((platform) => loadKpiPulse(db, { platform }))),
     !me.isLead && !me.isExec && variantNow === "buyer" ? loadKpiPulse(db, me.id) : Promise.resolve(null),
@@ -57,9 +56,13 @@ export default async function Home() {
     loadOwedReplies(db, me).catch(() => []),
     // And what someone said yes to in Slack or email that's past due with nothing moving
     loadSaidPromises(db, me).catch(() => []),
+    // What this person cleared off their own board (Done or Dismiss): gone for them, still there for everyone else
+    db.from("hidden_items").select("key, how, label, href, hidden_at").eq("profile_id", me.id).order("hidden_at", { ascending: false }).limit(200),
+    // What works across every client of a kind (execs and leads), and who isn't using it yet
+    import("@/lib/patterns").then(({ loadPatterns }) => loadPatterns(db)).catch(() => null),
+    // How creative production is going (speed, revisions, the team): execs and the Head of Creative
+    me.isExec || me.role === "head_of_creative" ? loadProduction(db).catch(() => null) : Promise.resolve(null),
   ]);
-  // What this person cleared off their own board (Done or Dismiss): gone for them, still there for everyone else
-  const { data: hiddenRows } = await db.from("hidden_items").select("key, how, label, href, hidden_at").eq("profile_id", me.id).order("hidden_at", { ascending: false }).limit(200);
   const hidden = new Set((hiddenRows ?? []).map((r) => r.key as string));
   h.attention = h.attention.filter((a) => !hidden.has(`alert:${a.id}`));
   const callPromises = callPromisesAll?.filter((p) => !hidden.has(`call:${p.commitmentId}`)) ?? null;
@@ -79,11 +82,7 @@ export default async function Home() {
     ]);
     onboarding.clients = onboarding.clients.filter((c) => on.has(c.clientId));
   }
-  // What works across every client of a kind (execs and leads), and who isn't using it yet
-  const patternState = await import("@/lib/patterns").then(({ loadPatterns }) => loadPatterns(db)).catch(() => null);
   const patterns = patternState ? { state: patternState, canBrief: true, canRefresh: me.isExec } : null;
-  // How creative production is going (speed, revisions, the team): execs and the Head of Creative
-  const production = me.isExec || me.role === "head_of_creative" ? await loadProduction(db).catch(() => null) : null;
 
   // The daily recap's way in, streamed in after the rest of the page, and under it what this person cleared off their
   // board (kept, so anything can be put back)
