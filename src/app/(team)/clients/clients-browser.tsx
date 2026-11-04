@@ -7,13 +7,15 @@ import type { Option } from "./assign-select";
 import { ClientGrid, type ClientCard } from "./client-grid";
 import { SERVICES, type ServiceSlug } from "@/lib/services";
 
-// The tabs: every client we're working for now, then each service line, then the paused ones (counted nowhere else)
-export type Filter = "all" | ServiceSlug | "paused";
+// The tabs: every client we're working for now, then each service line, then those missing someone, then the paused ones (counted nowhere else)
+export type Filter = "all" | ServiceSlug | "missing" | "paused";
 
 const live = (c: ClientCard) => c.status !== "paused";
 const FILTERS: { key: Filter; label: string; test: (c: ClientCard) => boolean }[] = [
   { key: "all", label: "All clients", test: live },
   ...SERVICES.map((s) => ({ key: s.slug as Filter, label: s.label, test: (c: ClientCard) => live(c) && c.services.includes(s.slug) })),
+  // Clients with a seat left empty on their team (the card's "N to fill")
+  { key: "missing", label: "Missing someone", test: (c) => live(c) && c.missing > 0 },
   { key: "paused", label: "Paused", test: (c) => !live(c) },
 ];
 
@@ -130,7 +132,7 @@ export function ClientsBrowser({
         <ClientGrid cards={shown} slotOptions={slotOptions} canEdit={canEdit} />
       ) : searching ? null : (
         <p className="rounded-[14px] border border-dashed border-line px-6 py-14 text-center text-sm text-faint">
-          {filter === "paused" ? "No paused clients." : "No clients here yet."}
+          {filter === "paused" ? "No paused clients." : filter === "missing" ? "Every client has their full team." : "No clients here yet."}
         </p>
       )}
     </>
