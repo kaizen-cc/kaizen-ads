@@ -32,6 +32,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Decides how much thought a chat message needs (quick, considered, deep)", where: "Client desk \u00b7 Agent chats", trigger: "auto", when: "With every chat message", labels: ["route a chat message"] },
   ],
   copy: [
+    { title: "Answers in Kaizen AI, the team's chat: questions, numbers, copy, briefs, reports and plans, with tools, as this agent when the message is about its work", where: "Kaizen AI", trigger: "click", when: "With every Kaizen AI message it answers", labels: ["kaizen ai "] },
     { title: "Turns a rebutted or approved-past copy flag into a conditional learning, and keeps its learnings tidy (merges, settles contradictions, retires stale ones)", where: "Settings · AI agents · What it has learned", trigger: "auto", when: "When the copywriter rebuts a flag or an exec or lead approves past it; nightly", labels: ["learning scope ", "learning consolidate "] },
     { title: "Writes Kaizen's copy set for approved creative", where: "Board · Copy studio", trigger: "auto", when: "When creative is approved", labels: ["copy "] },
     { title: "Rewrites copy in the copy studio chat", where: "Board · Copy studio", trigger: "click", when: "When someone asks it to change the copy", labels: ["copy chat"] },
@@ -42,6 +43,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Reads copy brought in from a ticket moved over from Asana", where: "Board \u00b7 Migrated tickets", trigger: "auto", when: "When a migrated ticket has copy", labels: ["copy import"] },
   ],
   scripts: [
+    { title: "Answers in Kaizen AI, the team's chat: questions, numbers, copy, briefs, reports and plans, with tools, as this agent when the message is about its work", where: "Kaizen AI", trigger: "click", when: "With every Kaizen AI message it answers", labels: ["kaizen ai "] },
     { title: "Writes the video script: three hooks, the beats and the shot list", where: "Board · Video tickets", trigger: "click", when: "When someone writes the script on a video ticket", labels: ["script"] },
     { title: "Writes the Higgsfield prompt for an AI image or video from the ticket's brief and script", where: "Board · Ticket · AI images and video", trigger: "click", when: "When someone clicks Write it from the brief", labels: ["media prompt"] },
   ],
@@ -60,11 +62,13 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
   ],
   creativecheck: [{ title: "Sorts uploaded designs into net new and variations, and checks sizes", where: "Board · Upload", trigger: "auto", when: "As a designer or editor uploads", labels: ["creative check"] }],
   creativereview: [
+    { title: "Answers in Kaizen AI, the team's chat: questions, numbers, copy, briefs, reports and plans, with tools, as this agent when the message is about its work", where: "Kaizen AI", trigger: "click", when: "With every Kaizen AI message it answers", labels: ["kaizen ai "] },
     { title: "Reviews each design against the brief, the brand and Meta policy", where: "Board · Before internal review", trigger: "click", when: "When the maker runs the AI review", labels: ["creative review"] },
     { title: "Sorts feedback on each maker's work into real errors (a typo, a missing button, the wrong size or offer) or preferences, for the Creative KPIs", where: "Board · Creative KPIs", trigger: "auto", when: "Every hour, or on Check now", labels: ["creative error check "] },
     { title: "Turns a lead disagreeing with a review note into a conditional learning, and keeps its learnings tidy (merges, settles contradictions, retires stale ones)", where: "Settings · AI agents · What it has learned", trigger: "auto", when: "When an exec or lead disagrees with a note; nightly", labels: ["learning scope ", "learning consolidate "] },
   ],
   strategist: [
+    { title: "Answers in Kaizen AI, the team's chat: questions, numbers, copy, briefs, reports and plans, with tools, as this agent when the message is about its work", where: "Kaizen AI", trigger: "click", when: "With every Kaizen AI message it answers", labels: ["kaizen ai "] },
     { title: "Talks a request through with the team: asks only what it needs, builds the full brief as they go", where: "New request · Talk it through", trigger: "click", when: "When someone talks an idea through on a new request", labels: ["request chat"] },
     { title: "Folds the team's strategy review (notes or the internal strategy call) into the final execution plan: what launches, testing, the 30/60/90 days and the tasks that wait on each other", where: "Client page · Plan & tasks", trigger: "auto", when: "Once the client approves their plan and the strategies are in, when an internal call about them comes in, or on Fold into the plan", labels: ["execution plan "] },
     { title: "Writes the go-to-market and 90-day roadmap message for the client's Slack channel, for a buyer or lead to send", where: "Client page · Plan & tasks", trigger: "auto", when: "Once the intake form is in, the plan is approved and the internal strategy meeting has happened", labels: ["kickoff message "] },
@@ -140,6 +144,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Writes each sub-vertical's Google playbook from our non-brand Google winners: the searches that convert, the copy that wins, the structures, landing pages and what fails", where: "Ideas · Google · Verticals", trigger: "auto", when: "Hourly when new Google winners come in, or Rebuild", labels: ["google playbook "] },
   ],
   auditor: [
+    { title: "Answers in Kaizen AI, the team's chat: questions, numbers, copy, briefs, reports and plans, with tools, as this agent when the message is about its work", where: "Kaizen AI", trigger: "click", when: "With every Kaizen AI message it answers", labels: ["kaizen ai "] },
     { title: "Turns a senior buyer's pushback on an audit finding into a conditional learning, and keeps its learnings tidy (merges, settles contradictions, retires stale ones)", where: "Settings · AI agents · What it has learned", trigger: "auto", when: "When someone pushes back on a finding; nightly", labels: ["learning scope ", "learning consolidate "] },
     { title: "Audits the whole business at once: Meta, Google, creative and what the client is telling us, connected, with what to do and watch", where: "Client page · Overview · Full business audit", trigger: "click", when: "When someone runs the full business audit", labels: ["business audit "] },
     { title: "Sorts a business audit's moves against a sprint already being worked: new, already on it, or pulling against a move in progress (set aside for the buyer)", where: "Client page · Full business audit · Sprints", trigger: "auto", when: "When a business audit finishes and a channel already has an open sprint", labels: ["sprint merge "] },
@@ -164,6 +169,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Spots patterns in how buyers correct its launches and proposes a rule", where: "Settings \u00b7 AI agents \u00b7 Launcher", trigger: "auto", when: "When the same correction keeps coming up", labels: ["launch rules pattern"] },
   ],
   google_auditor: [
+    { title: "Answers in Kaizen AI, the team's chat: questions, numbers, copy, briefs, reports and plans, with tools, as this agent when the message is about its work", where: "Kaizen AI", trigger: "click", when: "With every Kaizen AI message it answers", labels: ["kaizen ai "] },
     { title: "Audits a Google Ads account against its KPI target: campaigns, bidding, budgets, impression share, keywords and search terms, conversion tracking (with every campaign's scorecard)", where: "KPIs · a Google card · AI account audit", trigger: "click", when: "When someone runs an audit, or on its own when the account goes off target", labels: ["audit"] },
     { title: "Checks each Google optimization sprint: what changed in Google Ads, what was ticked, and what to tell the buyer", where: "KPIs · sprint page · Next for me", trigger: "auto", when: "Daily, or on the follow-up date it set", labels: ["sprint check"] },
     { title: "Checks every disapproved or limited Google ad, asset and keyword: the exact trigger, Google's policy article quoted, the landing page read, and the fix (a compliant rewrite or the page change), an appeal and how to request review", where: "Client page · Google Ads · Policy; KPIs · a Google card · Policy", trigger: "click", when: "When someone clicks Check everything", labels: ["google policy check "] },
@@ -176,6 +182,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Sorts Keyword Planner ideas for a client or an industry: relevant (grouped into ad-group themes), another business's name (kept apart as negatives), or off-topic", where: "Ideas · Google · In the market (keyword research)", trigger: "click", when: "When someone researches keywords for a client or seeds, and on each weekly market read", labels: ["keyword relevance "] },
   ],
   reporter: [
+    { title: "Answers in Kaizen AI, the team's chat: questions, numbers, copy, briefs, reports and plans, with tools, as this agent when the message is about its work", where: "Kaizen AI", trigger: "click", when: "With every Kaizen AI message it answers", labels: ["kaizen ai "] },
     { title: "Answers a client's questions about their numbers on their dashboard, and tells the buyer when it's a worry", where: "Client portal · Dashboard", trigger: "click", when: "When the client asks about their numbers", labels: ["client dashboard question "] },
     { title: "Writes the weekly and monthly client report for a Meta account, in the buyer's voice", where: "Reports · KPIs", trigger: "auto", when: "Mondays and the 1st, and when someone builds a report", labels: ["weekly report", "monthly report", "custom report", "built report"] },
     { title: "Rewrites a report from the buyer's note", where: "Reports · a report", trigger: "click", when: "When the buyer asks for changes", labels: ["revise report"] },
@@ -184,6 +191,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Reads the team's monthly recap template once and says where each piece of the recap goes (kept per template)", where: "Reports · a monthly recap · Fill our PowerPoint template", trigger: "click", when: "The first time a template without {{placeholders}} is filled, or on Map the template again", labels: ["recap deck map "] },
   ],
   google_reporter: [
+    { title: "Answers in Kaizen AI, the team's chat: questions, numbers, copy, briefs, reports and plans, with tools, as this agent when the message is about its work", where: "Kaizen AI", trigger: "click", when: "With every Kaizen AI message it answers", labels: ["kaizen ai "] },
     { title: "Writes the weekly and monthly client report for a Google Ads account, the same way as the Meta one", where: "Reports · KPIs", trigger: "auto", when: "Mondays and the 1st, and when someone builds a report", labels: ["weekly report", "monthly report", "custom report", "built report"] },
     { title: "Rewrites a report from the buyer's note", where: "Reports · a report", trigger: "click", when: "When the buyer asks for changes", labels: ["revise report"] },
     { title: "Brings the Slack message up to date when the buyer edited the report after it was written", where: "Reports · a report", trigger: "auto", when: "On the message step, when the report changed since", labels: ["refresh report message"] },

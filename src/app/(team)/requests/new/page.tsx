@@ -14,7 +14,7 @@ export const maxDuration = 300;
 
 export default async function NewRequest({ searchParams }: PageProps<"/requests/new">) {
   const me = await requireStaff();
-  const { client, from, brief, asana } = await searchParams;
+  const { client, from, brief, asana, ai, card } = await searchParams;
   const supabase = await createClient();
   const [{ data: rows }, { data: usage }, { data: angles }, { data: assignments }] = await Promise.all([
     supabase.from("clients").select("id, name, slug, status, creative_package").is("archived_at", null).in("status", LIVE).order("name"),
@@ -39,7 +39,14 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
   }
 
   // Starting again from a deleted ticket (Settings › Deleted): its brief, ready to send as is or to edit
-  const restart = typeof from === "string" && isExecOrLead(me) ? await fromDeleted(from) : typeof asana === "string" ? await fromAsana(asana, me) : null;
+  const restart =
+    typeof from === "string" && isExecOrLead(me)
+      ? await fromDeleted(from)
+      : typeof asana === "string"
+        ? await fromAsana(asana, me)
+        : typeof ai === "string"
+          ? await fromKaizenAi(supabase, ai, Number(card) || 0)
+          : null;
   const initialClient = restart?.draft.clientId ?? (typeof client === "string" ? (clients.find((c) => c.slug === client && c.creative)?.id ?? null) : null);
   // Arriving with ?client=: its start page is read here, so it's on screen with the page (stored data only, no AI)
   const initialStart = initialClient && !restart ? await startSections(supabase, initialClient).catch(() => null) : null;
@@ -59,6 +66,29 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
       />
     </div>
   );
+}
+
+/** A brief written in Kaizen AI (a card on one of the person's messages, read through their own session) as the draft */
+async function fromKaizenAi(db: Awaited<ReturnType<typeof createClient>>, messageId: string, index: number): Promise<{ draft: Partial<Draft> & { clientId: string } } | null> {
+  if (!/^[0-9a-f-]{36}$/.test(messageId)) return null;
+  const { data } = await db.from("ai_messages").select("cards").eq("id", messageId).maybeSingle();
+  const b = ((data?.cards ?? []) as import("@/lib/kaizen-ai/types").Card[])[index];
+  if (!b || b.type !== "brief") return null;
+  return {
+    draft: {
+      clientId: b.client.id,
+      title: b.title,
+      formats: Object.fromEntries(b.formats.map((f) => [f.format, { new: f.new, variations: f.variations }])),
+      sizes: ["4x5", "9x16"],
+      angle: b.angle,
+      audience: b.audience,
+      brief: b.brief,
+      refs: "",
+      landing: b.landing,
+      priority: "normal",
+      origin: { kind: "brief", label: `Briefed in Kaizen AI: ${b.title}`.slice(0, 200) },
+    },
+  };
 }
 
 /** A deleted ticket as a new request's draft. */

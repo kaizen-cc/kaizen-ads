@@ -1190,3 +1190,20 @@ export const CLIENT_SUMMARY_SYSTEM = `You write the short intro a client reads b
 - audience: one sentence on who they're for.
 - strategy: one or two sentences on the approach: the angle, what the creative leads with, and what we want people to do.
 Use only what's in the brief and the client context; don't invent offers, numbers or claims.`;
+
+// ─── For Kaizen AI (the team's chat), which streams and runs its own tool loop ──────────────────────────────
+
+/** The Anthropic client (shared, with the workspace header) */
+export const anthropicClient = () => anthropic();
+/** A system prompt block kept in Anthropic's prompt cache */
+export const cachedBlock = (text: string) => cached(text)[0];
+/** Tokens a response used, as ai_runs stores them */
+export const usageFor = usageOf;
+/** Only the knowledge excerpts and team learnings that match this task (without the task): "" when nothing matches */
+export async function knowledgeFor(agent: AgentKey, label: string, task: string, clientId?: string | null) {
+  const marker = "<<kaizen-ai-task-end>>";
+  const all = await withKnowledge(agent, label, `${task}${marker}`, clientId);
+  return all.slice(all.indexOf(marker) + marker.length).trim();
+}
+/** Whether an error is the AI being busy or at a usage limit (worth trying again in a moment) */
+export const aiBusy = paused;

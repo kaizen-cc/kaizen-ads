@@ -22,6 +22,7 @@ const I = {
   kpis: "M4 19h16M6 15l4-5 3 3 5-7",
   reports: "M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h4",
   ideas: "M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.6.5 1 1.2 1.1 2h5c.1-.8.5-1.5 1.1-2A6 6 0 0 0 12 3z",
+  ai: "M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z",
   lab: "M9 3h6M10 3v6L4.5 18.5A1.7 1.7 0 0 0 6 21h12a1.7 1.7 0 0 0 1.5-2.5L14 9V3M7 15h10",
 };
 
@@ -36,6 +37,7 @@ const GROUPS: { title: string; items: Item[] }[] = [
       { href: "/clients", label: "Clients", icon: I.clients },
       { href: "/kpis", label: "KPIs", icon: I.kpis },
       { href: "/reports", label: "Reports", icon: I.reports },
+      { href: "/ai", label: "Kaizen AI", icon: I.ai },
     ],
   },
   {
