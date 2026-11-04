@@ -737,7 +737,7 @@ export function WinnerCard({ w, credit, copy }: { w: Winner; credit?: WinnerAd; 
   return (
     <article className="grid content-start gap-3">
       <div className="pointer-events-none">
-        <AdPreview page={w.client} primaryText={w.text ?? ""} headline={w.headline ?? ""} description="" cta={w.cta ?? "Learn more"} media={pictureOf(w.key, w.image)} />
+        <AdPreview page={w.client} primaryText={w.text ?? ""} headline={w.headline ?? ""} description="" cta={w.cta ?? "Learn more"} media={pictureOf(w.key, w.image)} adId={/^\d{5,25}$/.test(w.key) ? w.key : null} />
       </div>
       <div className="grid gap-2 rounded-[16px] border border-line bg-surface p-3.5">
         <p className="text-[12px] text-muted">
@@ -817,7 +817,7 @@ export function TiringCard({ r, copy = false }: { r: WatchRow; /** Shown as copy
     <article className="grid content-start gap-3">
       <div className="relative">
         <div className="pointer-events-none">
-          <AdPreview page={r.client} primaryText="" headline={r.headline ?? r.adName} description="" cta="Learn more" media={pictureOf(r.adId, r.thumbnail)} />
+          <AdPreview page={r.client} primaryText="" headline={r.headline ?? r.adName} description="" cta="Learn more" media={pictureOf(r.adId, r.thumbnail)} adId={r.adId && /^\d{5,25}$/.test(r.adId) ? r.adId : null} />
         </div>
         <span className={`absolute left-3 top-3 rounded-full px-2.5 py-1 text-[11px] font-semibold shadow ${r.state === "refreshing" ? "bg-ok text-white" : tired ? "bg-bad text-white" : "bg-warn text-white"}`}>
           {r.state === "refreshing" ? "Being refreshed" : copy ? "Copy wearing out" : tired ? "Tired: replace it" : "Tiring"}

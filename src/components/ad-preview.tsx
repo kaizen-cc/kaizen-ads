@@ -94,6 +94,36 @@ function Video({ file, onMoment }: { file: PreviewFile; onMoment?: (tMs: number)
   );
 }
 
+/**
+ * A live ad's picture with a play button when the ad is a video: pressing it plays the ad's own video (asked from Meta
+ * fresh, since its file link expires), with the controls.
+ */
+function Playable({ file, adId }: { file: PreviewFile; adId: string }) {
+  const [playing, setPlaying] = useState(false);
+  if (playing)
+    return <video src={`/api/ad-media/${adId}/play`} poster={file.thumb ?? undefined} controls autoPlay playsInline className="absolute inset-0 h-full w-full bg-black object-contain" />;
+  return (
+    <>
+      <Picture file={file} />
+      <button
+        type="button"
+        aria-label="Play the video"
+        onClick={(e) => {
+          e.stopPropagation();
+          setPlaying(true);
+        }}
+        className="absolute inset-0 grid place-items-center bg-black/10 transition-colors hover:bg-black/20"
+      >
+        <span className="grid h-16 w-16 place-items-center rounded-full bg-black/60 text-white shadow-lg backdrop-blur-sm">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+            <path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5Z" />
+          </svg>
+        </span>
+      </button>
+    </>
+  );
+}
+
 function Media({ file, onPick, onMoment }: { file: PreviewFile; onPick?: (e: React.MouseEvent<HTMLDivElement>) => void; onMoment?: (tMs: number) => void }) {
   return (
     <div className="absolute inset-0" onClick={onPick}>
@@ -108,7 +138,8 @@ export function AdPreview({
   headline,
   description,
   cta,
-  landing,
+  landing: landingGiven,
+  adId = null,
   media,
   copyPending = false,
   onMediaClick,
@@ -121,6 +152,8 @@ export function AdPreview({
   description: string;
   cta: string;
   landing?: string | null;
+  /** A live Meta ad: its video plays from the preview and its link opens where the ad sends people */
+  adId?: string | null;
   media: PreviewMedia | null;
   /** The copy isn't written or approved yet: a quiet placeholder where it goes */
   copyPending?: boolean;
@@ -138,6 +171,20 @@ export function AdPreview({
   const [card, setCard] = useState(0);
   const strip = useRef<HTMLDivElement>(null);
   const cut = primaryText.length > VISIBLE && !more;
+  // A live ad: whether it's a video and where it sends people, read once from Meta (kept a week)
+  const [info, setInfo] = useState<{ video: boolean; link: string | null } | null>(null);
+  useEffect(() => {
+    if (!adId) return;
+    let live = true;
+    fetch(`/api/ad-media/${adId}/info`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => live && j && setInfo(j))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [adId]);
+  const landing = landingGiven || info?.link || null;
   const domain = landing ? landing.replace(/^https?:\/\/(www\.)?/, "").split("/")[0] : `${page.replace(/\s+/g, "").toLowerCase()}.com`;
   const pick = (index: number) => (e: React.MouseEvent<HTMLDivElement>) => {
     if (!onMediaClick) return;
@@ -252,7 +299,13 @@ export function AdPreview({
             <div className="relative w-full bg-[#e4e6eb]" style={{ aspectRatio: ratioOf(media?.kind === "single" ? (media.feed ?? media.story)?.aspect ?? null : null, "4 / 5") }}>
               {media?.kind === "single" && (media.feed ?? media.story) ? (
                 <>
-                  <Media file={(media.feed ?? media.story)!} onPick={pick(0)} onMoment={moment(0)} />
+                  {adId && info?.video && !(media.feed ?? media.story)!.mime.startsWith("video/") ? (
+                    <div className="absolute inset-0">
+                      <Playable file={(media.feed ?? media.story)!} adId={adId} />
+                    </div>
+                  ) : (
+                    <Media file={(media.feed ?? media.story)!} onPick={pick(0)} onMoment={moment(0)} />
+                  )}
                   {overlay?.(0)}
                 </>
               ) : (
