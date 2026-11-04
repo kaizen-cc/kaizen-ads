@@ -5,6 +5,9 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { addMove, answerQuestions, checkNow, closeSprint, setActionStatus, watchSprint } from "../../sprint-actions";
 import { GoogleChange } from "../../google-change";
+import { ObjectLinks } from "@/components/object-links";
+import { AuditWhy } from "@/components/audit-why";
+import type { AuditObject } from "@/lib/chat-change-core";
 
 export type SprintAction = {
   id: string;
@@ -27,6 +30,8 @@ export type SprintAction = {
   watch: string | null;
   questions: string[];
   learned: boolean;
+  /** The campaigns, ad sets or ads it names, with their real IDs */
+  objects: AuditObject[];
 };
 
 /** Questions the system still has about a move someone added, answered right on it. */
@@ -124,7 +129,7 @@ const OWNER: Record<string, string> = { media_buyer: "Media buyer", creative: "C
 const WHEN: Record<string, string> = { now: "Today", this_week: "This week", next: "Next" };
 
 /** One move on the action list: tick it, mark it doing or skipped, and leave a note the next check reads. */
-export function ActionRow({ a, readOnly, writable = null }: { a: SprintAction; readOnly: boolean; writable?: "google" | "meta" | null }) {
+export function ActionRow({ a, readOnly, writable = null, asked = 0, agent = "auditor" }: { a: SprintAction; readOnly: boolean; writable?: "google" | "meta" | null; /** "Why?" messages on it so far */ asked?: number; agent?: "auditor" | "google_auditor" }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [open, setOpen] = useState(a.status !== "done" && a.status !== "skipped");
@@ -182,14 +187,14 @@ export function ActionRow({ a, readOnly, writable = null }: { a: SprintAction; r
           </select>
         )}
       </div>
-      {a.aiNote && <p className="ml-0 md:ml-9 rounded-[10px] bg-bg/60 px-3 py-2 text-xs leading-relaxed text-muted">Last check: {a.aiNote}</p>}
+      {a.aiNote && <p className="rounded-[10px] bg-bg/60 px-3 py-2 text-xs leading-relaxed text-muted md:ml-9">Last check: {a.aiNote}</p>}
       {!readOnly && a.questions.length > 0 && a.status !== "done" && (
-        <div className="ml-0 md:ml-9">
+        <div className="md:ml-9">
           <Questions a={a} />
         </div>
       )}
       {open && (
-        <div className="ml-0 grid gap-3 md:ml-9">
+        <div className="grid min-w-0 gap-3 md:ml-9">
           {a.steps.length > 0 && (
             <ol className="grid gap-1.5 text-[13px] leading-relaxed">
               {a.steps.map((s, i) => (
@@ -203,6 +208,7 @@ export function ActionRow({ a, readOnly, writable = null }: { a: SprintAction; r
           {a.why && <p className="text-xs leading-relaxed text-muted">{a.why}</p>}
           {a.impact && <p className="text-xs text-ok">{a.impact}</p>}
           {a.watch && <p className="text-xs text-muted">How the check judges it: {a.watch}</p>}
+          <ObjectLinks objects={a.objects} />
           {writable && !readOnly && inPlatform(a, writable) && <GoogleChange platform={writable} from={{ source: "sprint", actionId: a.id }} />}
           {!readOnly && (
             <div className="flex flex-wrap items-center gap-2">
@@ -219,6 +225,9 @@ export function ActionRow({ a, readOnly, writable = null }: { a: SprintAction; r
               )}
             </div>
           )}
+          <div className="border-t border-line pt-3">
+            <AuditWhy kind="sprint" auditId={a.id} itemKey="task" count={asked} agent={agent} />
+          </div>
         </div>
       )}
     </article>

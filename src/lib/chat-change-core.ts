@@ -47,6 +47,45 @@ export function googleDeepLink(customer: string, level: "campaign" | "ad_group" 
   return `https://ads.google.com/aw/${page}?${q.toString()}`;
 }
 
+/**
+ * A campaign, ad set or ad (Google: campaign, ad group or keyword) an audit action or sprint move names, with its real
+ * ID. The audit asks the model for exact names only and finds the IDs in the account's own data, so a link never
+ * points at an ID the model made up.
+ */
+export type AuditObject = {
+  platform: "meta" | "google";
+  type: "campaign" | "adset" | "ad" | "ad_group" | "keyword";
+  id: string;
+  name: string;
+  account: string;
+  campaignId?: string | null;
+  adGroupId?: string | null;
+};
+
+/** Straight to the object in Ads Manager or Google Ads. */
+export function objectLink(o: AuditObject) {
+  if (o.platform === "meta") return metaDeepLink(o.account, o.type === "campaign" || o.type === "adset" || o.type === "ad" ? o.type : "account", o.id);
+  const level = o.type === "campaign" || o.type === "ad_group" || o.type === "keyword" ? o.type : "account";
+  return googleDeepLink(o.account, level, { campaignId: o.campaignId ?? (o.type === "campaign" ? o.id : null), adGroupId: o.adGroupId ?? (o.type === "ad_group" ? o.id : null) });
+}
+
+/** Where a planned change's object lives, so the buyer can open it and watch it change. Null when it isn't in an ad account. */
+export function opLink(op: { kind: string } & Record<string, unknown>, platform: "meta" | "google", account: string): string | null {
+  const s = (k: string) => (typeof op[k] === "string" && op[k] ? (op[k] as string) : null);
+  if (platform === "meta") {
+    const level = s("level");
+    if (op.kind === "meta_status" || op.kind === "meta_budget" || op.kind === "meta_rename") return metaDeepLink(account, (level as "campaign" | "adset" | "ad") ?? "account", s("objectId"));
+    if (op.kind === "meta_copy_ad") return metaDeepLink(account, "adset", s("targetAdsetId"));
+    if (op.kind === "meta_link") return metaDeepLink(account, "ad", s("objectId"));
+    return null;
+  }
+  if (op.kind === "ad_group_status") return googleDeepLink(account, "ad_group", { adGroupId: s("adGroupId") });
+  if (op.kind === "google_ad_status" || op.kind === "google_ad_url") return googleDeepLink(account, "ad", { adGroupId: s("adGroupId") });
+  if (op.kind === "google_keyword_status") return googleDeepLink(account, "keyword", { adGroupId: s("adGroupId") });
+  if (s("campaignId")) return googleDeepLink(account, op.kind === "negative_keywords" ? "keyword" : "campaign", { campaignId: s("campaignId") });
+  return null;
+}
+
 /** Where to look for an object once the change is made. A copied ad links to the new copy. */
 export function verifyLink(ref: ObjRef, newId?: string | null) {
   if (ref.platform === "meta") {

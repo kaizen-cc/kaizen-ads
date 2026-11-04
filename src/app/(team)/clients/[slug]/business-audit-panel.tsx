@@ -6,6 +6,8 @@ import Link from "next/link";
 import type { BusinessAuditResult } from "@/lib/business-audit";
 import type { BusinessRouting, RoutedAction } from "@/lib/business-audit-route";
 import { Rebut, type RebutNote } from "@/components/audit-rebut";
+import { AuditWhy } from "@/components/audit-why";
+import { ObjectLinks } from "@/components/object-links";
 
 // The full business audit on the client page: one button that audits every channel together (Meta, Google, creative,
 // what the client is telling us), and the latest result in the same found / do / watch shape as an account audit.
@@ -24,7 +26,7 @@ const TONE: Record<string, { label: string; chip: string; dot: string }> = {
 const WHEN: Record<string, string> = { now: "Today", this_week: "This week", next: "Next" };
 const SEV: Record<string, string> = { high: "border-l-bad", medium: "border-l-warn", low: "border-l-line" };
 
-export function BusinessAuditPanel({ clientId, slug: given = null, latest, pushback, canRebut }: { clientId: string; /** For links to the client's tasks (read from the address when not given) */ slug?: string | null; latest: BusinessAuditView | null; pushback: Record<string, RebutNote[]>; canRebut: boolean }) {
+export function BusinessAuditPanel({ clientId, slug: given = null, latest, pushback, canRebut, asked = {} }: { clientId: string; /** For links to the client's tasks (read from the address when not given) */ slug?: string | null; latest: BusinessAuditView | null; pushback: Record<string, RebutNote[]>; canRebut: boolean; /** "Why?" messages per item so far */ asked?: Record<string, number> }) {
   const router = useRouter();
   const path = usePathname();
   const slug = given ?? (path.startsWith("/clients/") ? (path.split("/")[2] ?? null) : null);
@@ -77,6 +79,14 @@ export function BusinessAuditPanel({ clientId, slug: given = null, latest, pushb
 
   const r = latest?.status === "ready" ? latest.result : null;
   const rebut = (key: string, finding: string) => (latest ? <Rebut kind="business" auditId={latest.id} itemKey={key} finding={finding} notes={pushback[key] ?? []} can={canRebut} /> : null);
+  // Under each item: ask the auditor why (team only), and push back (for those who may)
+  const talk = (key: string, finding: string) =>
+    latest ? (
+      <div className="grid gap-2 border-t border-line pt-3">
+        <AuditWhy kind="business" auditId={latest.id} itemKey={key} count={asked[`${latest.id}|${key}`] ?? 0} />
+        {rebut(key, finding)}
+      </div>
+    ) : null;
 
   return (
     <section className="grid gap-5 rounded-[22px] border border-line bg-surface p-4 md:p-6">
@@ -98,13 +108,13 @@ export function BusinessAuditPanel({ clientId, slug: given = null, latest, pushb
             <span className={`justify-self-start rounded-full px-3 py-1 text-[11.5px] font-medium ${TONE[r.verdict.status]?.chip ?? ""}`}>{TONE[r.verdict.status]?.label}</span>
             <h3 className="max-w-3xl font-heading text-[20px] leading-snug md:text-[24px]">{r.verdict.headline}</h3>
             <p className="max-w-3xl text-[14.5px] leading-relaxed text-muted">{r.verdict.summary}</p>
-            {rebut("verdict", r.verdict.headline)}
+            {talk("verdict", r.verdict.headline)}
           </div>
 
           {/* Each channel at a glance */}
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {r.channels.map((c) => (
-              <article key={c.channel} className="grid content-start gap-2 rounded-[16px] border border-line bg-bg/40 p-4">
+              <article key={c.channel} className="grid min-w-0 content-start gap-2 rounded-[16px] border border-line bg-bg/40 p-4">
                 <div className="flex items-center justify-between gap-2">
                   <span className="flex items-center gap-2 text-[13.5px] font-medium">
                     <span className={`h-2 w-2 rounded-full ${TONE[c.status]?.dot ?? "bg-faint"}`} />
@@ -118,7 +128,7 @@ export function BusinessAuditPanel({ clientId, slug: given = null, latest, pushb
                     <li key={i}>· {x}</li>
                   ))}
                 </ul>
-                {rebut(`channel:${c.channel}`, c.headline)}
+                {talk(`channel:${c.channel}`, c.headline)}
               </article>
             ))}
           </div>
@@ -138,7 +148,7 @@ export function BusinessAuditPanel({ clientId, slug: given = null, latest, pushb
             </div>
             <div className="grid gap-3 md:grid-cols-2">
               {r.causes.map((c, i) => (
-                <article key={i} className={`grid content-start gap-2 rounded-[14px] border border-l-4 border-line bg-bg/40 p-4 ${SEV[c.severity] ?? ""}`}>
+                <article key={i} className={`grid min-w-0 content-start gap-2 rounded-[16px] border border-l-4 border-line bg-bg/40 p-4 ${SEV[c.severity] ?? ""}`}>
                   <div className="flex flex-wrap gap-1.5 text-[11px]">
                     <span className="rounded-full border border-line px-2 py-0.5 text-muted">{CHANNEL[c.channel] ?? c.channel}</span>
                     <span className={c.severity === "high" ? "text-bad" : c.severity === "medium" ? "text-warn" : "text-faint"}>{c.severity} impact</span>
@@ -149,7 +159,7 @@ export function BusinessAuditPanel({ clientId, slug: given = null, latest, pushb
                       <li key={j}>· {e}</li>
                     ))}
                   </ul>
-                  {rebut(`cause:${i}`, c.title)}
+                  {talk(`cause:${i}`, c.title)}
                 </article>
               ))}
             </div>
@@ -158,7 +168,7 @@ export function BusinessAuditPanel({ clientId, slug: given = null, latest, pushb
           <Block title="What I'd do">
             <div className="grid gap-3 md:grid-cols-2">
               {r.actions.map((x, i) => (
-                <article key={i} className="grid content-start gap-2 rounded-[14px] border border-line bg-bg/40 p-4">
+                <article key={i} className="grid min-w-0 content-start gap-2 rounded-[16px] border border-line bg-bg/40 p-4">
                   <div className="flex flex-wrap gap-1.5 text-[11px]">
                     <span className="rounded-full bg-surface-2 px-2 py-0.5">{WHEN[x.when] ?? x.when}</span>
                     <span className="rounded-full border border-line px-2 py-0.5 text-muted">{CHANNEL[x.channel] ?? x.channel}</span>
@@ -175,20 +185,48 @@ export function BusinessAuditPanel({ clientId, slug: given = null, latest, pushb
                     ))}
                   </ol>
                   <p className="text-[12px] leading-relaxed text-muted">{x.why}</p>
+                  <ObjectLinks objects={x.objects} />
                   {routing?.actions[i] && <WentTo r={routing.actions[i]} slug={slug} />}
-                  {rebut(`action:${i}`, x.title)}
+                  {talk(`action:${i}`, x.title)}
                 </article>
               ))}
             </div>
           </Block>
 
+          {(r.creative ?? []).length > 0 && latest && (
+            <Block title="Creative I'd make">
+              <p className="-mt-1 text-[13px] text-muted">From what&apos;s working across the channels and the Brand Bible. Each one opens a request, already filled in.</p>
+              <div className="grid gap-3 md:grid-cols-2">
+                {(r.creative ?? []).map((c, i) => (
+                  <article key={i} className="grid min-w-0 content-start gap-2.5 rounded-[16px] border border-line bg-bg/40 p-4">
+                    <div className="flex flex-wrap gap-1.5 text-[11px]">
+                      <span className="rounded-full border border-line px-2 py-0.5 text-muted">{c.angle}</span>
+                      <span className="rounded-full border border-line px-2 py-0.5 text-muted">{c.format}</span>
+                    </div>
+                    <p className="font-heading leading-snug">{c.concept}</p>
+                    <p className="rounded-[12px] bg-surface px-3 py-2.5 font-heading text-[14.5px] leading-snug">
+                      <span className="text-brand-text">&ldquo;</span>
+                      {c.hook}
+                      <span className="text-brand-text">&rdquo;</span>
+                    </p>
+                    <p className="text-[12.5px] leading-relaxed text-muted">{c.why}</p>
+                    <Link href={`/requests/new?business=${latest.id}&idea=${i}`} className="inline-flex min-h-11 items-center justify-center justify-self-start rounded-full bg-fg px-4 text-[13px] font-medium text-bg hover:bg-fg/90 md:min-h-9">
+                      Make a request →
+                    </Link>
+                    {talk(`creative:${i}`, c.concept)}
+                  </article>
+                ))}
+              </div>
+            </Block>
+          )}
+
           <Block title="What I'd watch out for">
             <div className="grid gap-3 md:grid-cols-2">
               {r.watchouts.map((w, i) => (
-                <article key={i} className="grid content-start gap-1.5 rounded-[14px] border border-warn/30 bg-bg/40 p-4">
+                <article key={i} className="grid min-w-0 content-start gap-2 rounded-[16px] border border-warn/30 bg-bg/40 p-4">
                   <p className="font-heading leading-snug">{w.title}</p>
                   <p className="text-[12.5px] leading-relaxed text-muted">{w.why}</p>
-                  {rebut(`watchout:${i}`, w.title)}
+                  {talk(`watchout:${i}`, w.title)}
                 </article>
               ))}
             </div>
@@ -276,7 +314,7 @@ function Block({ title, children }: { title: string; children: React.ReactNode }
 
 function List({ title, items }: { title: string; items: string[] }) {
   return (
-    <div className="grid content-start gap-2 rounded-[14px] border border-line bg-bg/40 p-4">
+    <div className="grid min-w-0 content-start gap-2 rounded-[16px] border border-line bg-bg/40 p-4">
       <p className="text-[10.5px] uppercase tracking-[0.16em] text-faint">{title}</p>
       <ul className="grid gap-1.5 text-[13px] leading-relaxed text-muted">
         {items.map((x, i) => (

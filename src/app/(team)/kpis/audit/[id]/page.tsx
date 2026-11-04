@@ -5,6 +5,8 @@ import { requireStaff } from "@/lib/auth";
 import { auditRebuttals, canRebut } from "@/lib/audit-rebuttals";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { Rebut } from "@/components/audit-rebut";
+import { AuditWhy } from "@/components/audit-why";
+import { whyCounts } from "@/lib/audit-why";
 import type { AuditResult } from "@/lib/audit";
 import { conversionFor, conversionLabel } from "@/lib/kpi/conversions";
 import { kpiValue } from "@/lib/kpi/format";
@@ -54,15 +56,26 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
   // Where an action can become a change made from here: Google Ads, or Meta (behind the sandbox switch)
   const writable = t.platform === "google" ? (googleAdsConfigured() ? "google" : null) : t.platform === "meta" ? (metaConfigured() ? "meta" : null) : null;
   const admin = adminConfigured() ? createAdminClient() : null;
-  const [{ data: snap }, { data: history }, { data: sprint }, pushback, mayRebut] = await Promise.all([
+  const [{ data: snap }, { data: history }, { data: sprint }, pushback, mayRebut, asked] = await Promise.all([
     supabase.from("kpi_snapshots").select("windows, deviation").eq("target_id", a.target_id).maybeSingle(),
     supabase.from("account_audits").select("id, created_at, status, result").eq("target_id", a.target_id).order("created_at", { ascending: false }).limit(10),
     supabase.from("optimization_sprints").select("id, audit_id, sprint_actions(title, status)").eq("target_id", a.target_id).eq("status", "active").maybeSingle(),
     admin ? auditRebuttals(admin, a.id) : Promise.resolve({} as Awaited<ReturnType<typeof auditRebuttals>>),
     admin ? canRebut(admin, me.id) : Promise.resolve(false),
+    whyCounts(supabase, [a.id]).catch(() => ({}) as Record<string, number>),
   ]);
   // Disagree with a finding: kept on the audit, read by the next one and by every agent through client memory
   const rebut = (itemKey: string, finding: string) => <Rebut kind="account" auditId={a.id} itemKey={itemKey} finding={finding} notes={pushback[itemKey] ?? []} can={mayRebut} />;
+  // Ask the agent that wrote it why (team only): it answers from the numbers this audit read
+  const agent = t.platform === "google" ? "google_auditor" : "auditor";
+  const why = (itemKey: string) => <AuditWhy kind="account" auditId={a.id} itemKey={itemKey} count={asked[`${a.id}|${itemKey}`] ?? 0} agent={agent} />;
+  // Under each item: ask why, and push back (for those who may)
+  const talk = (itemKey: string, finding: string) => (
+    <div className="grid gap-2 border-t border-line pt-3">
+      {why(itemKey)}
+      {rebut(itemKey, finding)}
+    </div>
+  );
   // Which of this audit's moves are on the account's action list, and their status there
   const replaced = Boolean(sprint?.audit_id && sprint.audit_id !== a.id);
   const onList = new Map(((sprint?.sprint_actions ?? []) as { title: string; status: string }[]).map((x) => [x.title, x.status]));
@@ -149,12 +162,12 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
                 {p}
               </p>
             ))}
-          {rebut("verdict", r.verdict.headline)}
+          {talk("verdict", r.verdict.headline)}
         </div>
         <Sub title="What's behind it" sub="The root causes, most important first, with the numbers.">
           <div className="grid gap-3 md:grid-cols-2">
             {r.causes.map((c, i) => (
-              <article key={i} className={`grid content-start gap-3 rounded-[16px] border border-l-4 border-line bg-surface p-5 ${SEV[c.severity]}`}>
+              <article key={i} className={`grid min-w-0 content-start gap-3 rounded-[16px] border border-l-4 border-line bg-surface p-4 md:p-5 ${SEV[c.severity]}`}>
                 <div className="flex flex-wrap items-center gap-2 text-[11px]">
                   <span className="font-display text-sm tabular text-faint">{String(i + 1).padStart(2, "0")}</span>
                   <span className="rounded-full border border-line px-2 py-0.5 text-muted">{AREA[c.area] ?? c.area}</span>
@@ -170,7 +183,7 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
                     </li>
                   ))}
                 </ul>
-                {rebut(`cause:${i}`, c.title)}
+                {talk(`cause:${i}`, c.title)}
               </article>
             ))}
           </div>
@@ -201,7 +214,7 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
                   <p className="text-[11px] text-faint">{items.length ? hint : "Nothing here"}</p>
                 </div>
                 {items.map(({ x, i }) => (
-                  <ActionCard key={i} auditId={a.id} index={i} action={x} area={AREA[x.area] ?? x.area} done={done[String(i)] ?? null} listed={replaced ? "replaced" : (onList.get(x.title) ?? null)} writable={x.owner === "media_buyer" ? writable : null} rebut={rebut(`action:${i}`, x.title)} />
+                  <ActionCard key={i} auditId={a.id} index={i} action={x} area={AREA[x.area] ?? x.area} done={done[String(i)] ?? null} listed={replaced ? "replaced" : (onList.get(x.title) ?? null)} writable={x.owner === "media_buyer" ? writable : null} talk={talk(`action:${i}`, x.title)} />
                 ))}
               </div>
             );
@@ -211,14 +224,14 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
         <Panel title="The budget call">
           <p className="text-sm leading-relaxed">{r.budget.call}</p>
           {r.budget.moves.length > 0 && <List items={r.budget.moves} />}
-          {rebut("budget", r.budget.call)}
+          {talk("budget", r.budget.call)}
         </Panel>
 
         {r.tests.length > 0 && (
           <Sub title="Tests I'd run" sub="Each one set up to read out at this account's spend.">
             <div className="grid gap-3 md:grid-cols-2">
               {r.tests.map((x, i) => (
-                <article key={i} className="grid min-w-0 content-start gap-3 rounded-[18px] border border-line bg-surface p-5 md:p-6">
+                <article key={i} className="grid min-w-0 content-start gap-3 rounded-[16px] border border-line bg-surface p-4 md:p-5">
                   <p className="text-[10px] uppercase tracking-[0.16em] text-faint">Test {i + 1}</p>
                   <h3 className="font-heading text-lg leading-snug">{x.name}</h3>
                   <p className="text-sm leading-relaxed">
@@ -243,31 +256,7 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
                     <span className="rounded-full bg-bg px-2.5 py-1 text-muted">{x.budget}</span>
                     <span className="rounded-full bg-bg px-2.5 py-1 text-muted">{x.duration}</span>
                   </div>
-                </article>
-              ))}
-            </div>
-          </Sub>
-        )}
-
-        {r.creative.length > 0 && (
-          <Sub title="Creative I'd make" sub="From the playbook's proven angles, our Hall of Fame and the Brand Bible.">
-            <div className="grid gap-3 md:grid-cols-2">
-              {r.creative.map((c, i) => (
-                <article key={i} className="grid min-w-0 content-start gap-3 rounded-[18px] border border-line bg-surface p-5 md:p-6">
-                  <div className="flex flex-wrap gap-2 text-[11px]">
-                    <span className="rounded-full border border-line px-2 py-0.5 text-muted">{c.angle}</span>
-                    <span className="rounded-full border border-line px-2 py-0.5 text-muted">{c.format}</span>
-                  </div>
-                  <p className="font-heading text-lg leading-snug">{c.concept}</p>
-                  <p className="font-heading text-lg leading-snug">
-                    <span className="text-brand-text">&ldquo;</span>
-                    {c.hook}
-                    <span className="text-brand-text">&rdquo;</span>
-                  </p>
-                  <p className="text-sm leading-relaxed text-muted">{c.why}</p>
-                  <Link href={`/requests/new?client=${client.slug}`} className="-my-2 justify-self-start py-2 text-sm font-medium hover:underline md:my-0 md:py-0">
-                    Start a request for {client.name} →
-                  </Link>
+                  {talk(`test:${i}`, x.name)}
                 </article>
               ))}
             </div>
@@ -275,17 +264,44 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
         )}
       </Section>
 
-      <Section n="03" title="What I'd watch out for" sub="What could mislead us in these results, what the changes could break, and what to keep an eye on.">
+      {r.creative.length > 0 && (
+        <Section n="03" title="Creative I'd make" sub="From the playbook's proven angles, our Hall of Fame and the Brand Bible. Each one opens a request, already filled in.">
+          <div className="grid gap-3 md:grid-cols-2">
+            {r.creative.map((c, i) => (
+              <article key={i} className="grid min-w-0 content-start gap-3 rounded-[16px] border border-line bg-surface p-4 md:p-5">
+                <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                  <span className="font-display text-sm tabular text-faint">{String(i + 1).padStart(2, "0")}</span>
+                  <span className="rounded-full border border-line px-2 py-0.5 text-muted">{c.angle}</span>
+                  <span className="rounded-full border border-line px-2 py-0.5 text-muted">{c.format}</span>
+                </div>
+                <h3 className="font-heading text-lg leading-snug">{c.concept}</h3>
+                <p className="rounded-[12px] bg-bg px-3.5 py-3 font-heading text-[15px] leading-snug">
+                  <span className="text-brand-text">&ldquo;</span>
+                  {c.hook}
+                  <span className="text-brand-text">&rdquo;</span>
+                </p>
+                <p className="text-[13px] leading-relaxed text-muted">{c.why}</p>
+                <Link href={`/requests/new?audit=${a.id}&idea=${i}`} className="inline-flex min-h-11 items-center justify-center justify-self-start rounded-full bg-fg px-4 text-[13px] font-medium text-bg hover:bg-fg/90 md:min-h-9">
+                  Make a request →
+                </Link>
+                {talk(`creative:${i}`, c.concept)}
+              </article>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      <Section n={r.creative.length > 0 ? "04" : "03"} title="What I'd watch out for" sub="What could mislead us in these results, what the changes could break, and what to keep an eye on.">
         {(r.watchouts ?? []).length > 0 && (
           <div className="grid gap-3 md:grid-cols-2">
             {(r.watchouts ?? []).map((w, i) => (
-              <article key={i} className="grid content-start gap-2 rounded-[16px] border border-warn/30 bg-surface p-5">
+              <article key={i} className="grid min-w-0 content-start gap-2 rounded-[16px] border border-warn/30 bg-surface p-4 md:p-5">
                 <h3 className="flex gap-2 font-heading leading-snug">
                   <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-warn" />
                   {w.title}
                 </h3>
                 <p className="pl-3.5 text-[13px] leading-relaxed text-muted">{w.why}</p>
-                {rebut(`watchout:${i}`, w.title)}
+                {talk(`watchout:${i}`, w.title)}
               </article>
             ))}
           </div>

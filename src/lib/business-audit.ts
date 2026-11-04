@@ -4,6 +4,7 @@ import { askJson, clientContext, contextBlock } from "@/lib/ai";
 import { loadClientKpis } from "@/lib/kpi/client";
 import { kpiValue } from "@/lib/kpi/format";
 import type { AuditResult } from "@/lib/audit";
+import type { AuditObject } from "@/lib/chat-change-core";
 
 // The whole business at once: every channel we run or have data for (Meta, Google, creative production, and what the
 // client is telling us in Slack, email and calls), audited together on the client page. It reads the latest account
@@ -16,7 +17,9 @@ export type BusinessAuditResult = {
   diagnosis: string;
   channels: { channel: BusinessChannel; status: "off" | "at_risk" | "on_track" | "winning" | "no_data"; headline: string; notes: string[] }[];
   causes: { title: string; channel: BusinessChannel; severity: "high" | "medium" | "low"; evidence: string[] }[];
-  actions: { title: string; channel: BusinessChannel; owner: "media_buyer" | "creative" | "client" | "strategist" | "account_manager"; when: "now" | "this_week" | "next"; steps: string[]; why: string; impact: string }[];
+  actions: { title: string; channel: BusinessChannel; owner: "media_buyer" | "creative" | "client" | "strategist" | "account_manager"; when: "now" | "this_week" | "next"; steps: string[]; why: string; impact: string; /** The campaigns, ad sets or ads it names, with their real IDs */ objects?: AuditObject[] }[];
+  /** Creative worth making next, across the channels (older audits don't have it) */
+  creative?: { concept: string; angle: string; hook: string; format: string; why: string }[];
   watchouts: { title: string; why: string }[];
   watch: string[];
   questions: string[];
@@ -42,8 +45,10 @@ const SCHEMA = obj({
       steps: list(S),
       why: S,
       impact: S,
+      objects: list(obj({ type: { type: "string", enum: ["campaign", "adset", "ad", "ad_group", "keyword"] }, name: S })),
     }),
   ),
+  creative: list(obj({ concept: S, angle: S, hook: S, format: S, why: S })),
   watchouts: list(obj({ title: S, why: S })),
   watch: list(S),
   questions: list(S),
@@ -59,7 +64,8 @@ verdict: the whole business (off, at_risk, on_track, winning), a one-line headli
 diagnosis: 2 to 4 short paragraphs on why the business is where it is, across channels.
 channels: one entry per channel (meta, google, creative, communication, and business for the overall picture: budget split, offer, site, seasonality), each with its status, a one-line headline and 1 to 4 notes with real numbers.
 causes: the root causes across the business, most important first, with the channel, severity and evidence lines.
-actions: 5 to 10 concrete moves, most important first, each with its channel, owner (media_buyer, creative, client, strategist or account_manager), when (now, this_week, next), short imperative steps, why and the expected impact. Name the thing; never vague.
+actions: 5 to 10 concrete moves, most important first, each with its channel, owner (media_buyer, creative, client, strategist or account_manager), when (now, this_week, next), short imperative steps, why and the expected impact. Name the thing; never vague. objects: every Meta campaign, ad set or ad, or Google campaign or ad group, the action names, each with its type (campaign, adset, ad, ad_group or keyword) and its own name copied exactly as it appears in what you were given (not its campaign). Empty when it names none. Never make up a name.
+creative: 2 to 4 creative directions the creative team could brief tomorrow, from what's working across the channels, the Brand Bible and the latest account audits' creative ideas: concept in a line, the angle, the opening hook as it would be said or shown, the format (image, video or carousel, and the length or card count), and why with the evidence.
 watchouts: 2 to 5 things that could mislead us or break.
 watch: the 3 to 5 numbers to watch over the next two weeks, each with the line that says it's working.
 questions: what to ask the client that would change the plan.`;
@@ -115,7 +121,8 @@ Tiring ads: ${(fatigue ?? []).map((f) => `${f.ad_name} (${f.severity})`).join(";
     const pushback = await rebuttalsBlock(admin, clientId, "whole business audit across meta google creative").catch(() => "");
 
     await step("Auditing the whole business");
-    const out = await askJson<BusinessAuditResult>({
+    type Raw = Omit<BusinessAuditResult, "actions"> & { actions: (Omit<BusinessAuditResult["actions"][number], "objects"> & { objects?: { type: string; name: string }[] })[] };
+    const raw = await askJson<Raw>({
       agent: "auditor",
       label: `business audit ${client.name}`,
       clientId,
@@ -134,10 +141,14 @@ ${creative}
 ${pushback ? `\n${pushback}\n` : ""}
 Today is ${new Date().toISOString().slice(0, 10)}. Audit ${client.name}'s whole business with us.`,
     });
+    // What each move names, found in the client's ad accounts by name (never an ID the model wrote)
+    const { clientObjectIndex, resolveObjects } = await import("@/lib/audit-objects");
+    const index = raw.actions.some((a) => a.objects?.length) ? await clientObjectIndex(admin, clientId).catch(() => ({ meta: [], google: [] })) : { meta: [], google: [] };
+    const out: BusinessAuditResult = { ...raw, actions: raw.actions.map((a) => ({ ...a, objects: resolveObjects(a.channel === "google" ? index.google : a.channel === "meta" ? index.meta : [...index.meta, ...index.google], a.objects) })) };
     const clean = <T>(x: T): T => JSON.parse(JSON.stringify(x).replace(/\s*—\s*/g, ", "));
     await admin
       .from("business_audits")
-      .update({ status: "ready", step: null, result: clean(out), inputs: { kpis: kpis.length, accountAudits: latest.size, requests: reqs.length, fatigue: fatigue?.length ?? 0 }, finished_at: new Date().toISOString() })
+      .update({ status: "ready", step: null, result: clean(out), numbers: `<paid_channels>\n${paid}\n</paid_channels>\n\n${creative}`.slice(0, 200_000), inputs: { kpis: kpis.length, accountAudits: latest.size, requests: reqs.length, fatigue: fatigue?.length ?? 0 }, finished_at: new Date().toISOString() })
       .eq("id", id);
     // Its moves go to the teams: each paid channel's sprint (added to one being worked, never reset) and the rest as tasks
     const { routeBusinessAudit } = await import("@/lib/business-audit-route");

@@ -3,7 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import type { PlannedOp } from "@/lib/ad-changes";
-import { lineOf } from "@/lib/chat-change-core";
+import { lineOf, opLink } from "@/lib/chat-change-core";
+import { OpLink } from "@/components/object-links";
 import { applyPlanned, changeFor, discardPlanned, loadChange, planFrom, type ChangeView } from "./change-actions";
 
 // "Make this change in Google Ads / Meta" on an audit action or a sprint move: the buyer agent turns it into the exact
@@ -21,7 +22,7 @@ const P: Record<Platform, { name: string; full: string; head: string; border: st
   meta: { name: "Meta", full: "Meta", head: "the Head of Meta", border: "border-[#0866ff]/45 hover:bg-[#0866ff]/10", panel: "border-[#0866ff]/35 bg-[#0866ff]/[0.06]", text: "text-[#7aa7ff]", button: "bg-[#0866ff]", spin: "border-[#7aa7ff]" },
 };
 
-function Line({ op, platform }: { op: PlannedOp; platform: Platform }) {
+function Line({ op, platform, account }: { op: PlannedOp; platform: Platform; account: string }) {
   const [what, from, to] = (() => {
     switch (op.kind) {
       case "campaign_status":
@@ -64,6 +65,7 @@ function Line({ op, platform }: { op: PlannedOp; platform: Platform }) {
       {op.why && <p className="text-[11px] text-faint">{op.why}</p>}
       {op.warning && <p className="text-[11px] text-warn">{op.warning}</p>}
       {(op.result?.error || op.check?.error) && <p className="text-[11px] text-bad">{op.result?.error ?? op.check?.error}</p>}
+      {account && <OpLink href={opLink(op as PlannedOp & Record<string, unknown>, platform, account)} platform={platform} />}
     </li>
   );
 }
@@ -165,7 +167,7 @@ export function GoogleChange({ from, disabled, platform = "google" }: { from: Fr
       {c.ops.length > 0 && (
         <ul className="grid gap-2">
           {c.ops.map((op, i) => (
-            <Line key={i} op={op} platform={platform} />
+            <Line key={i} op={op} platform={platform} account={c.account} />
           ))}
         </ul>
       )}

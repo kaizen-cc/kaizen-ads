@@ -8,11 +8,12 @@ import { tickAuditAction } from "../../audit-actions";
 import { requestAudit } from "@/components/audit-watcher";
 import { addToActionList, startSprint } from "../../sprint-actions";
 import { GoogleChange } from "../../google-change";
+import { ObjectLinks } from "@/components/object-links";
 
 const OWNER: Record<string, string> = { media_buyer: "Media buyer", creative: "Creative team", client: "Client", strategist: "Strategist" };
 
 /** One action in the plan: tick it off when it's done (everyone sees who did and when). */
-export function ActionCard({ auditId, index, action, area, done, listed, writable = null, rebut = null }: { auditId: string; index: number; action: AuditResult["actions"][number]; area: string; done: { by: string; at: string } | null; listed: string | null; writable?: "google" | "meta" | null; /** Disagree with this move, for those who may */ rebut?: React.ReactNode }) {
+export function ActionCard({ auditId, index, action, area, done, listed, writable = null, talk = null }: { auditId: string; index: number; action: AuditResult["actions"][number]; area: string; done: { by: string; at: string } | null; listed: string | null; writable?: "google" | "meta" | null; /** Ask why, and disagree with this move (for those who may) */ talk?: React.ReactNode }) {
   const router = useRouter();
   const [adding, startAdd] = useTransition();
   const [, start] = useTransition();
@@ -59,11 +60,12 @@ export function ActionCard({ auditId, index, action, area, done, listed, writabl
               ))}
             </ol>
           )}
-          {open && <p className="text-[12px] leading-relaxed text-muted">{action.why}</p>}
+          {open && <p className="text-[12.5px] leading-relaxed text-muted">{action.why}</p>}
+          <ObjectLinks objects={action.objects} />
           {writable && !checked && inPlatform(action, writable) && <GoogleChange platform={writable} from={{ source: "audit", auditId, index }} />}
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <button type="button" onClick={() => setOpen(!open)} className="-my-2 py-2 pr-3 text-[11px] text-faint hover:text-fg md:my-0 md:py-0 md:pr-0">
-              {open ? "Less" : "Why"}
+            <button type="button" onClick={() => setOpen(!open)} className="-my-2 min-h-11 pr-3 text-[11.5px] text-faint hover:text-fg md:my-0 md:min-h-0 md:pr-0">
+              {open ? "Hide the reasoning" : "The reasoning"}
             </button>
             {done && checked && (
               <span className="text-[11px] text-faint">
@@ -84,13 +86,13 @@ export function ActionCard({ auditId, index, action, area, done, listed, writabl
                     router.refresh();
                   })
                 }
-                className="rounded-full border border-line px-3 py-2 text-[11px] text-muted hover:text-fg disabled:opacity-60 md:px-2.5 md:py-0.5"
+                className="min-h-11 rounded-full border border-line px-3 text-[11.5px] text-muted hover:text-fg disabled:opacity-60 md:min-h-7 md:px-2.5"
               >
                 {adding ? "Adding…" : "+ Add to my action list"}
               </button>
             )}
           </div>
-          {rebut}
+          {talk}
         </div>
       </div>
     </article>

@@ -75,13 +75,18 @@ export async function BusinessAuditStream({ clientId, meId }: { clientId: string
     import("@/lib/audit-rebuttals"),
     import("./business-audit-panel"),
   ]);
-  const [pushback, mayRebut] = await T("business audit", Promise.all([ba ? auditRebuttals(admin, ba.id as string) : Promise.resolve({} as Awaited<ReturnType<typeof auditRebuttals>>), canRebut(admin, meId)]));
+  const { whyCounts } = await import("@/lib/audit-why");
+  const [pushback, mayRebut, asked] = await T(
+    "business audit",
+    Promise.all([ba ? auditRebuttals(admin, ba.id as string) : Promise.resolve({} as Awaited<ReturnType<typeof auditRebuttals>>), canRebut(admin, meId), ba ? whyCounts(supabase, [ba.id as string]).catch(() => ({}) as Record<string, number>) : Promise.resolve({} as Record<string, number>)]),
+  );
   return (
     <BusinessAuditPanel
       clientId={clientId}
       latest={ba ? { id: ba.id as string, status: ba.status as "running" | "ready" | "failed", step: (ba.step as string | null) ?? null, error: (ba.error as string | null) ?? null, result: (ba.result as never) ?? null, at: ba.created_at as string, by: (ba.profiles as unknown as { full_name: string } | null)?.full_name ?? null } : null}
       pushback={pushback}
       canRebut={mayRebut}
+      asked={asked}
     />
   );
 }

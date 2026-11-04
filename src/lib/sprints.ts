@@ -86,7 +86,7 @@ export async function openSprint(admin: SupabaseClient, auditId: string) {
   const fresh = r.actions
     .map((x, i) => ({ x, i }))
     .filter(({ x }) => (x.when === "now" || x.when === "this_week") && !titles.has(x.title))
-    .map(({ x, i }) => ({ sprint_id: sprintId, audit_index: i, title: x.title, area: x.area, owner: x.owner, when: x.when, steps: x.steps, why: x.why, impact: x.impact, sort_order: order++ }));
+    .map(({ x, i }) => ({ sprint_id: sprintId, audit_index: i, title: x.title, area: x.area, owner: x.owner, when: x.when, steps: x.steps, why: x.why, impact: x.impact, objects: x.objects ?? [], sort_order: order++ }));
   if (fresh.length) await admin.from("sprint_actions").insert(fresh);
   await admin.from("sprint_checks").insert({
     sprint_id: sprintId,
@@ -101,7 +101,7 @@ export async function openSprint(admin: SupabaseClient, auditId: string) {
 }
 
 /** A move from a business audit, ready for a sprint's action list */
-export type BusinessMove = { index: number; title: string; area: string; owner: string; when: string; steps: string[]; why: string; impact: string };
+export type BusinessMove = { index: number; title: string; area: string; owner: string; when: string; steps: string[]; why: string; impact: string; objects?: import("@/lib/chat-change-core").AuditObject[] };
 
 /**
  * Opens a sprint on an account from a business audit (when the account has none): the buyer works it like any audit's
@@ -154,7 +154,7 @@ async function insertBusinessMoves(admin: SupabaseClient, sprintId: string, busi
   if (!moves.length) return [];
   const { data, error } = await admin
     .from("sprint_actions")
-    .insert(moves.map((m, i) => ({ sprint_id: sprintId, source: "business_audit", business_audit_id: businessAuditId, audit_index: m.index, title: m.title, area: m.area, owner: m.owner, when: m.when, steps: m.steps, why: m.why, impact: m.impact, sort_order: start + i })))
+    .insert(moves.map((m, i) => ({ sprint_id: sprintId, source: "business_audit", business_audit_id: businessAuditId, audit_index: m.index, title: m.title, area: m.area, owner: m.owner, when: m.when, steps: m.steps, why: m.why, impact: m.impact, objects: m.objects ?? [], sort_order: start + i })))
     .select("id, audit_index");
   if (error) throw new Error(error.message);
   const byIndex = new Map((data ?? []).map((r) => [r.audit_index as number, r.id as string]));
@@ -175,7 +175,7 @@ export async function addAuditAction(admin: SupabaseClient, auditId: string, ind
   }
   if (!s) throw new Error("Couldn't open the sprint");
   const { data: dup } = await admin.from("sprint_actions").select("id").eq("sprint_id", s.id).eq("title", x.title).maybeSingle();
-  if (!dup) await admin.from("sprint_actions").insert({ sprint_id: s.id, audit_index: index, title: x.title, area: x.area, owner: x.owner, when: x.when, steps: x.steps, why: x.why, impact: x.impact, sort_order: 999 });
+  if (!dup) await admin.from("sprint_actions").insert({ sprint_id: s.id, audit_index: index, title: x.title, area: x.area, owner: x.owner, when: x.when, steps: x.steps, why: x.why, impact: x.impact, objects: x.objects ?? [], sort_order: 999 });
   return s.id as string;
 }
 

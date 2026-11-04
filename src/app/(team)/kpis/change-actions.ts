@@ -22,6 +22,8 @@ export type ChangeView = {
   appliedBy: string | null;
   appliedAt: string | null;
   canApply: boolean;
+  /** The ad account (digits), for links straight to each object */
+  account: string;
 };
 
 type From = { source: "audit"; auditId: string; index: number } | { source: "sprint"; actionId: string };
@@ -44,7 +46,7 @@ async function resolve(from: From) {
 async function view(id: string): Promise<ChangeView | null> {
   const me = await requireStaff();
   const db = await createClient();
-  const { data: c } = await db.from("ad_changes").select("id, platform, status, ops, note, error, applied_at, applier:profiles!ad_changes_applied_by_fkey(full_name), kpi_targets(owner_id)").eq("id", id).maybeSingle();
+  const { data: c } = await db.from("ad_changes").select("id, platform, account, status, ops, note, error, applied_at, applier:profiles!ad_changes_applied_by_fkey(full_name), kpi_targets(owner_id)").eq("id", id).maybeSingle();
   if (!c) return null;
   return {
     id: c.id,
@@ -54,6 +56,7 @@ async function view(id: string): Promise<ChangeView | null> {
     error: c.error,
     appliedBy: (c.applier as unknown as { full_name: string } | null)?.full_name ?? null,
     appliedAt: c.applied_at,
+    account: String(c.account ?? ""),
     canApply: canApply(me, (c.kpi_targets as unknown as { owner_id: string | null } | null)?.owner_id ?? null, c.platform as string),
   };
 }

@@ -5,6 +5,8 @@ import { requireStaff } from "@/lib/auth";
 import { googleAdsConfigured } from "@/lib/context/google-ads";
 import { metaConfigured } from "@/lib/context/meta";
 import { createClient } from "@/lib/supabase/server";
+import { whyCounts } from "@/lib/audit-why";
+import type { AuditObject } from "@/lib/chat-change-core";
 import { ActionRow, AddMove, CheckNow, CloseSprint, WatchToggle, type SprintAction } from "./sprint-parts";
 
 export const metadata: Metadata = { title: "Optimization sprint" };
@@ -36,7 +38,7 @@ export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id
     .maybeSingle();
   if (!s) notFound();
   const [{ data: actions }, { data: checks }, { data: watchers }] = await Promise.all([
-    supabase.from("sprint_actions").select("id, title, area, owner, \"when\", steps, why, impact, status, note, ai_note, done_at, source, created_at, watch, questions, learned, profiles!sprint_actions_done_by_fkey(full_name), adder:profiles!sprint_actions_added_by_fkey(full_name)").eq("sprint_id", id).order("sort_order"),
+    supabase.from("sprint_actions").select("id, title, area, owner, \"when\", steps, why, impact, status, note, ai_note, done_at, source, created_at, watch, questions, learned, objects, profiles!sprint_actions_done_by_fkey(full_name), adder:profiles!sprint_actions_added_by_fkey(full_name)").eq("sprint_id", id).order("sort_order"),
     supabase.from("sprint_checks").select("id, verdict, message, changes, kpi, next_check_at, created_at").eq("sprint_id", id).order("created_at", { ascending: false }).limit(60),
     (s.watcher_ids as string[]).length ? supabase.from("profiles").select("full_name").in("id", s.watcher_ids as string[]) : Promise.resolve({ data: [] }),
   ]);
@@ -66,7 +68,11 @@ export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id
     watch: a.watch,
     questions: (a.questions ?? []) as string[],
     learned: Boolean(a.learned),
+    objects: (a.objects ?? []) as AuditObject[],
   }));
+  // How many "Why?" messages each move has
+  const asked = await whyCounts(supabase, list.map((a) => a.id)).catch(() => ({}) as Record<string, number>);
+  const agent = platform === "google" ? "google_auditor" : "auditor";
   const counted = list.filter((a) => a.status !== "skipped");
   const done = counted.filter((a) => a.status === "done").length;
   const day = dayOf(s.started_at);
@@ -141,7 +147,7 @@ export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id
             <>
               {/* Open moves first (in progress, then to do); finished ones drop to the bottom */}
               {[...list.filter((a) => a.status === "doing"), ...list.filter((a) => a.status === "todo")].map((a) => (
-                <ActionRow key={a.id} a={a} readOnly={!active} writable={writable} />
+                <ActionRow key={a.id} a={a} readOnly={!active} writable={writable} asked={asked[`${a.id}|task`] ?? 0} agent={agent} />
               ))}
               {!list.some((a) => a.status === "todo" || a.status === "doing") && <p className="rounded-[14px] border border-dashed border-line px-4 py-6 text-center text-sm text-muted">Every move is done or skipped.</p>}
               {list.some((a) => a.status === "done" || a.status === "skipped") && (
@@ -151,7 +157,7 @@ export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id
                 </p>
               )}
               {[...list.filter((a) => a.status === "done").sort((x, y) => (y.doneAt ?? "").localeCompare(x.doneAt ?? "")), ...list.filter((a) => a.status === "skipped")].map((a) => (
-                <ActionRow key={a.id} a={a} readOnly={!active} writable={writable} />
+                <ActionRow key={a.id} a={a} readOnly={!active} writable={writable} asked={asked[`${a.id}|task`] ?? 0} agent={agent} />
               ))}
             </>
           ) : (

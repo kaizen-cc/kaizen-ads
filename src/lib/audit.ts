@@ -5,9 +5,11 @@ import { askJson, clientContext, contextBlock } from "@/lib/ai";
 import { aggregate, pickType, type Day } from "@/lib/kpi/calc";
 import { conversionFor, conversionLabel, type Conversion } from "@/lib/kpi/conversions";
 import { accountSetup, metaConfigured, syncClientAds, type AccountSetup } from "@/lib/context/meta";
-import { googleAuditDetail, googleSetup, type GoogleSetup } from "@/lib/context/google-ads";
+import { googleAuditDetail, googleSetup, googleWritableSetup, type GoogleSetup } from "@/lib/context/google-ads";
 import { accountRows, type CampaignRow } from "@/lib/kpi/sync";
 import type { Benchmark } from "@/lib/verticals";
+import type { AuditObject } from "@/lib/chat-change-core";
+import { googleIndex, metaIndex, resolveObjects, type ObjectIndex, type ObjectRef } from "@/lib/audit-objects";
 
 // The account audit: one ad account (a KPI target) scrubbed the way a senior media buyer would, against its target,
 // its own last 90 days, its live setup in Meta, the client's full context (Brand Bible, strategy, memory, calls), what
@@ -25,7 +27,7 @@ export type AuditResult = {
   causes: { title: string; area: Area; severity: "high" | "medium" | "low"; confidence: "high" | "medium" | "low"; evidence: string[] }[];
   tracking: string[];
   /** What I'd do if I were you */
-  actions: { title: string; area: Area; owner: "media_buyer" | "creative" | "client" | "strategist"; when: "now" | "this_week" | "next"; steps: string[]; why: string; impact: string; effort: "low" | "medium" | "high"; inPlatform?: boolean; short?: string }[];
+  actions: { title: string; area: Area; owner: "media_buyer" | "creative" | "client" | "strategist"; when: "now" | "this_week" | "next"; steps: string[]; why: string; impact: string; effort: "low" | "medium" | "high"; inPlatform?: boolean; short?: string; /** The campaigns, ad sets or ads it names, with their real IDs (found by name in the account's data) */ objects?: AuditObject[] }[];
   tests: { name: string; hypothesis: string; setup: string; metric: string; success: string; budget: string; duration: string }[];
   creative: { concept: string; angle: string; hook: string; format: string; why: string }[];
   budget: { call: string; moves: string[] };
@@ -65,6 +67,7 @@ const PLAN_SCHEMA = obj({
       effort: { type: "string", enum: ["low", "medium", "high"] },
       inPlatform: { type: "boolean" },
       short: S,
+      objects: list(obj({ type: { type: "string", enum: ["campaign", "adset", "ad", "ad_group", "keyword"] }, name: S })),
     }),
   ),
   tests: list(obj({ name: S, hypothesis: S, setup: S, metric: S, success: S, budget: S, duration: S })),
@@ -97,9 +100,9 @@ const swapBase = (system: string) => system.replace(BASE, GOOGLE_BASE).replace(/
 const PLAN_SYSTEM = `${BASE}
 
 This pass is "Here's what I'd do if I were you" and "what I'd watch out for", built on the findings you're given.
-actions: 5 to 10 concrete moves, most important first, specific enough to do without asking: which campaign or ad set, what to change it to, what to turn off, how much budget to move. owner: media_buyer, creative (the creative team), client (only the client can fix it: offer, site, stock, tracking access) or strategist. when: now (today), this_week or next. steps as short imperative lines. why with the evidence. impact: what it should move and roughly how much. Never vague ("optimize targeting"): name the thing. inPlatform: true only when the action includes switching campaigns, ad sets or ads on or off, or changing daily budgets (on Google also target CPA / ROAS and negative keywords): changes Kaizen Ads can make in the ad account for the buyer. false for tracking, reporting, the site, the offer, creative, copy, naming, audiences or anything done outside the ad account. short: the move in 3 to 7 words, verb first, naming the thing and the number ("Raise Broad ad set to $150/day", "Pause the 3 flash-sale ad sets"), for a quick-action list.
+actions: 5 to 10 concrete moves, most important first, specific enough to do without asking: which campaign or ad set, what to change it to, what to turn off, how much budget to move. owner: media_buyer, creative (the creative team), client (only the client can fix it: offer, site, stock, tracking access) or strategist. when: now (today), this_week or next. steps as short imperative lines. why with the evidence. impact: what it should move and roughly how much. Never vague ("optimize targeting"): name the thing. inPlatform: true only when the action includes switching campaigns, ad sets or ads on or off, or changing daily budgets (on Google also target CPA / ROAS and negative keywords): changes Kaizen Ads can make in the ad account for the buyer. false for tracking, reporting, the site, the offer, creative, copy, naming, audiences or anything done outside the ad account. short: the move in 3 to 7 words, verb first, naming the thing and the number ("Raise Broad ad set to $150/day", "Pause the 3 flash-sale ad sets"), for a quick-action list. objects: every campaign, ad set or ad (on Google: campaign, ad group or keyword) the action names, each with its type (campaign, adset, ad, ad_group or keyword) and its own name copied exactly, character for character, as it appears in the numbers or the live setup (just the object's name: not its campaign, not the ID in brackets). Empty when it names none. Never make up a name.
 tests: 2 to 4 tests: hypothesis, setup in Meta, the metric, what success looks like with a number, a budget and duration that can read out at this account's spend.
-creative: 2 to 4 creative directions only if creative is part of the problem, built from the playbook's proven angles, our Hall of Fame and the Brand Bible (never copy a competitor). Empty otherwise.
+creative: 2 to 4 creative directions the creative team could brief tomorrow, built from the playbook's proven angles, our Hall of Fame and the Brand Bible (never copy a competitor): what to make to fix the creative problem when there is one, otherwise the next ads worth making to keep the account fresh. concept in a line, the angle, the opening hook as it would be said or shown, the format (image, video or carousel, and the length or card count), and why with the evidence from this account.
 budget: the call on budget and pacing (hold, cut, scale, reallocate) and the specific moves.
 watchouts: 3 to 6 things I'd watch out for in these results and in making these changes: what could mislead us (a small sample, a one-off spike, attribution lag, a promo ending), what the changes could break (resetting learning, starving a winner), and what to check before reading a result. Each with why.
 watch: the 3 to 5 numbers to watch over the next 7 days, each with the line that says it's working.
@@ -483,6 +486,7 @@ export async function runAudit(admin: SupabaseClient, id: string) {
       last14: d.last14.value,
       prev14: d.prev14.value,
       setupBlock: setupText(setup),
+      index: metaIndex(account, scoped, setup),
       inputs: { days: d.days, ads: d.ads, campaigns: setup?.campaigns.length ?? null, adsets: setup?.adsets.length ?? null, liveSetup: Boolean(setup) },
     });
   } catch (e) {
@@ -503,6 +507,8 @@ type AuditInput = {
   prev14: number | null;
   setupBlock: string;
   inputs: Record<string, unknown>;
+  /** The account's campaigns, ad sets and ads with their IDs, to find what the actions name */
+  index: ObjectIndex;
 };
 
 /** Everything after the account's own numbers and setup: the same for Meta and Google. */
@@ -662,7 +668,8 @@ Today is ${new Date().toISOString().slice(0, 10)}.`;
     // 7. What I'd do, and what to watch out for
     await m.start("plan");
     last = 0;
-    const plan = await askJson<Omit<AuditResult, "verdict" | "diagnosis" | "causes" | "tracking">>({
+    type Plan = Omit<AuditResult, "verdict" | "diagnosis" | "causes" | "tracking" | "actions"> & { actions: (Omit<AuditResult["actions"][number], "objects"> & { objects?: ObjectRef[] })[] };
+    const raw = await askJson<Plan>({
       agent: x.platform === "google" ? "google_auditor" : "auditor",
       label: `audit ${client.name} · plan`,
       clientId: a.client_id,
@@ -682,7 +689,10 @@ ${JSON.stringify(found)}
 
 Now write what you'd do if you were the buyer, and what you'd watch out for.`,
     });
-    await m.finish("plan", `${plan.actions.length} actions · ${plan.tests.length} tests · ${plan.watchouts?.length ?? 0} things to watch out for`);
+    // The names it gave, found in the account's own data (never an ID the model wrote)
+    const plan = { ...raw, actions: raw.actions.map((act) => ({ ...act, objects: resolveObjects(x.index, act.objects) })) };
+    const linked = plan.actions.reduce((t, act) => t + act.objects.length, 0);
+    await m.finish("plan", `${plan.actions.length} actions${linked ? ` (${linked} campaigns, ad sets or ads linked)` : ""} · ${plan.tests.length} tests · ${plan.watchouts?.length ?? 0} things to watch out for`);
 
     const clean = <T>(x: T): T => JSON.parse(JSON.stringify(x).replace(/\s*—\s*/g, ", "));
     await admin
@@ -692,6 +702,8 @@ Now write what you'd do if you were the buyer, and what you'd watch out for.`,
         step: null,
         progress: 100,
         result: clean({ ...found, ...plan, learnings: lessons }),
+        // What the audit read, kept for the "Why?" chat on each item: the target, the numbers, the scorecard and the setup
+        numbers: [`<target>\n${context.split("<target>")[1]?.split("</target>")[0]?.trim() ?? ""}\n</target>`, `<account_numbers platform="${x.platform}">\n${x.numbersText}\n</account_numbers>`, scorecard ? `<campaigns_scorecard>\n${scorecard}\n</campaigns_scorecard>` : "", `<live_setup>\n${x.setupBlock}\n</live_setup>`].filter(Boolean).join("\n\n").slice(0, 400_000),
         inputs: { ...x.inputs, platform: x.platform, fatigue: fatigue?.length ?? 0, hallOfFame: fame?.length ?? 0, playbook: Boolean(playbook), market: Boolean(market), benchmarks: Boolean(bm) },
         finished_at: new Date().toISOString(),
       })
@@ -725,7 +737,12 @@ async function runGoogleAudit(admin: SupabaseClient, id: string, a: { target_id:
     await m.finish("numbers", `${d.days} days · ${d.campaigns} campaigns · $${n0(rows.reduce((x, r) => x + n(r.spend), 0))} spent`);
 
     await m.start("setup");
-    const [setup, detail] = await Promise.all([googleSetup(account).catch(() => null), googleAuditDetail(account).catch(() => ({ text: "", counts: { adGroups: 0, keywords: 0, searchTerms: 0 } }))]);
+    const [setup, detail, writable] = await Promise.all([
+      googleSetup(account).catch(() => null),
+      googleAuditDetail(account).catch(() => ({ text: "", counts: { adGroups: 0, keywords: 0, searchTerms: 0 } })),
+      // Ad groups with their IDs, so actions that name one link straight to it
+      googleWritableSetup(account).catch(() => null),
+    ]);
     await m.finish("setup", setup ? `${setup.campaigns.length} campaigns · ${setup.conversions.length} conversion actions · ${detail.counts.keywords} keywords and ${detail.counts.searchTerms} search terms read` : "Couldn't read the live setup from Google Ads; working from the numbers", setup ? "done" : "skipped");
 
     await finishAudit(admin, id, a, m, {
@@ -737,6 +754,7 @@ async function runGoogleAudit(admin: SupabaseClient, id: string, a: { target_id:
       last14: d.last14.value,
       prev14: d.prev14.value,
       setupBlock: googleSetupText(setup, detail.text),
+      index: googleIndex(account, rows, setup, writable?.adGroups ?? []),
       inputs: { days: d.days, campaigns: d.campaigns, liveSetup: Boolean(setup), keywords: detail.counts.keywords, searchTerms: detail.counts.searchTerms },
     });
   } catch (e) {

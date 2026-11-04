@@ -118,7 +118,7 @@ export async function routeBusinessAudit(admin: SupabaseClient, auditId: string)
     const candidates: CandidateMove[] = moves.map(({ a, index }) => ({ index, title: a.title, why: a.why }));
     const toMove = (index: number) => {
       const a = r.actions[index];
-      return { index, title: a.title, area: platform, owner: "media_buyer", when: a.when, steps: a.steps, why: a.why, impact: a.impact };
+      return { index, title: a.title, area: platform, owner: "media_buyer", when: a.when, steps: a.steps, why: a.why, impact: a.impact, objects: a.objects ?? [] };
     };
     const headId = head(platform === "meta" ? "head_of_meta" : "head_of_google");
     const { openBusinessSprint, appendBusinessMoves } = await import("@/lib/sprints");
