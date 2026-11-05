@@ -15,6 +15,8 @@ import { makingLine, type BriefSource, type QuickBrief } from "@/lib/quick-brief
 import type { WinnerSource } from "@/lib/suggestions";
 import { saveReference, unsaveReference } from "./saved-actions";
 import { RefThumb } from "@/components/ref-thumb";
+import { useCreativeFormats } from "@/components/creative-formats-provider";
+import { fitsFormat, marketFormatOf } from "@/lib/creative-formats";
 import { Star } from "@/components/saved-concepts";
 import { metaAdId, savedHref, savedKey, SOURCE_LABEL, type SaveInput, type SavedRef, type SavedSource } from "@/lib/saved-references";
 
@@ -302,7 +304,7 @@ export function ClientPicker({ clients, allotments, onPick }: { clients: ClientO
 
 type Fmt = "image" | "video" | "carousel";
 const FMT: Record<Fmt, string> = { image: "Image", video: "Video", carousel: "Carousel" };
-const marketFormat = (a: MarketAd): Fmt => (a.format === "carousel" ? "carousel" : a.format === "video" || (!a.media.some((m) => m.type === "image") && a.media[0]?.type === "video") ? "video" : "image");
+const marketFormat = (a: MarketAd): Fmt => marketFormatOf(a);
 const marketStill = (a: MarketAd) => a.media.find((m) => m.type === "image")?.url ?? a.media.find((m) => m.thumb)?.thumb ?? null;
 const marketVideo = (a: MarketAd) => a.media.find((m) => m.type === "video")?.url ?? null;
 // A tint per kind of brief, for cards without a picture
@@ -373,7 +375,10 @@ export function StartPage({
   onTalk: () => void;
 }) {
   const { data, failed } = useStart(clientId);
-  const { saved, find, toggle, error: saveError } = useSaved(clientId, data?.saved);
+  const { saved: savedAll, find, toggle, error: saveError } = useSaved(clientId, data?.saved);
+  // Read for this person's formats on the server already; a star added here keeps to them too
+  const allowed = useCreativeFormats();
+  const saved = savedAll.filter((s) => fitsFormat(allowed, s.format));
   const star = (input: SaveInput) => ({ on: Boolean(find(input.source, input.refId)), onToggle: () => void toggle(input) });
   // A brief from a card: its quick preview first. When the card is saved, the request it becomes uses it up
   const savedId = (from: SavedRef | null) => (from && !from.id.startsWith("tmp-") ? from.id : null);
@@ -391,7 +396,7 @@ export function StartPage({
   // In the market: a page at a time, "See more" brings the next
   const [extra, setExtra] = useState<{ id: string; ads: MarketAd[]; more: boolean } | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
-  const market = [...(data?.market ?? []), ...(extra?.id === clientId ? extra.ads : [])];
+  const market = [...(data?.market ?? []), ...(extra?.id === clientId ? extra.ads : [])].filter((a) => allowed.has(marketFormat(a)));
   const marketMore = extra?.id === clientId ? extra.more : (data?.marketMore ?? false);
   const seeMore = async () => {
     setLoadingMore(true);

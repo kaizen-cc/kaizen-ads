@@ -8,6 +8,7 @@ import { readyHref, trackJob } from "@/components/brief-jobs";
 import { toast } from "@/components/toasts";
 import { startBrief } from "@/app/(team)/brief-job-actions";
 import { RefThumb } from "@/components/ref-thumb";
+import { useCreativeFormats } from "@/components/creative-formats-provider";
 import { AllotmentBars, Spark, Stepper, conceptLine } from "@/app/(team)/requests/new/parts";
 import { previewBrief, type PreviewResult } from "@/app/(team)/quick-brief-actions";
 import { quickEdited, type BriefSource, type QuickBrief, type QuickFormat } from "@/lib/quick-brief";
@@ -79,6 +80,8 @@ export function QuickBriefSheet({
   const [split, setSplit] = useState(false);
   const [active, setActive] = useState(0);
   const brief = briefs[active] ?? null;
+  // Only the formats this person can request (the preview arrives already kept to them)
+  const allowed = useCreativeFormats();
   const [writing, setWriting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -281,7 +284,7 @@ export function QuickBriefSheet({
                     </div>
                   ))}
                   <div className="flex flex-wrap gap-2">
-                    {FMTS.filter((f) => !brief.formats.some((x) => x.format === f)).map((f) => (
+                    {FMTS.filter((f) => allowed.has(f) && !brief.formats.some((x) => x.format === f)).map((f) => (
                       <button key={f} type="button" onClick={() => setFormat(f, {})} className="min-h-11 rounded-full border border-dashed border-line px-4 text-[13px] text-muted hover:border-faint hover:text-fg md:min-h-9">
                         + {FMT_LABEL[f]}
                       </button>

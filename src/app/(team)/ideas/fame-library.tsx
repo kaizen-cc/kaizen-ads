@@ -1,5 +1,7 @@
 "use client";
 
+import { fameFormatOf } from "@/lib/creative-formats";
+import { FormatScope } from "@/components/format-scope";
 import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import { FilterMenu, FilterPill } from "@/components/filters";
@@ -28,7 +30,7 @@ const toWinner = (a: FameAd): Winner => ({
   industry: null,
   detail: a.vertical,
   name: a.adName ?? "",
-  format: /carousel/i.test(a.adName ?? "") ? "carousel" : a.creative.video ? "video" : /(video|vid|ugc|reel|vsl)/i.test(a.adName ?? "") ? "video" : "image",
+  format: fameFormatOf(a),
   headline: a.creative.headline ?? null,
   text: a.creative.text ?? null,
   thumbnail: a.creative.image ?? null,
@@ -98,6 +100,7 @@ export function FameLibrary({ ads, verticals, clients, match }: { ads: FameAd[];
       <header className="grid gap-3">
         <p className="text-xs uppercase tracking-[0.18em] text-faint">Hall of Fame</p>
         <h1 className="font-display text-3xl tracking-tight md:text-4xl">Our best, by vertical</h1>
+        <FormatScope className="justify-self-start" />
         <p className="max-w-2xl text-sm text-muted">
           Ads that ran 30+ days and hit or beat their client&apos;s KPI target (or their sub-vertical&apos;s researched benchmark), with $300+ spent. Each stays six months
           after it last qualified; new winners join after every Meta sync.

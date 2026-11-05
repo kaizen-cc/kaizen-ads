@@ -8,6 +8,7 @@ import { createAdminClient, adminConfigured } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { byConcept, regenerate, runStrategist, type SuggestionDraft } from "@/lib/suggestions";
 import { conceptLine } from "@/lib/allotment";
+import { formatsFor, formatsOutside, formatsPhrase } from "@/lib/creative-formats";
 
 type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 
@@ -51,6 +52,11 @@ export async function approveSuggestion(id: string, draft: SuggestionDraft): Pro
   if ((s.draft as SuggestionDraft | null)?.summary || draft.summary) return { ok: false, error: "Only its summary is written so far. Write the full brief first." };
   if (!draft.title.trim()) return { ok: false, error: "Give it a title." };
   if (!draft.formats.some((f) => f.new + f.variations > 0)) return { ok: false, error: "Pick at least one format." };
+  {
+    // Only the formats this person requests (a designer images and carousels, a video editor video; leads everything)
+    const allowed = formatsFor(me);
+    if (formatsOutside(draft.formats.filter((f) => f.new + f.variations > 0).map((f) => f.format), allowed).length) return { ok: false, error: `Your requests are for ${formatsPhrase(allowed)}. A lead can approve the rest.` };
+  }
 
   // One concept per brief and per ticket: a suggestion is written with one concept (a new client's first round is one
   // suggestion per concept); one that still holds several becomes one ticket each, with that concept's own counts

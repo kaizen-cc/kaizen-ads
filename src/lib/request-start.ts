@@ -4,6 +4,7 @@ import { industryLabel, industryWinners, type Winner } from "@/lib/industry";
 import type { MarketAd } from "@/lib/market";
 import type { SuggestionDraft } from "@/lib/suggestions";
 import { SAVED_COLS, toSaved, type SavedRef } from "@/lib/saved-references";
+import { CREATIVE_FORMATS, fitsAnyFormat, fitsFormat, marketFormatOf, seesAllFormats, type CreativeFormat } from "@/lib/creative-formats";
 
 // Everything the "How do you want to start?" page shows for a client, in one go, from what's already stored: the briefs
 // the strategist writes every day (ads tiring, numbers off, moments, patterns), promises from calls, what's proven for
@@ -34,7 +35,7 @@ export type StartData = {
 };
 
 const FMT_WORD = { image: "image", video: "video", carousel: "carousel" } as const;
-const formatsLine = (d: SuggestionDraft) => (d.formats ?? []).map((f) => `${f.new + f.variations} ${FMT_WORD[f.format]}${f.new + f.variations === 1 ? "" : "s"}`).join(" + ");
+const formatsLine = (d: SuggestionDraft, allowed: ReadonlySet<CreativeFormat>) => (d.formats ?? []).filter((f) => allowed.has(f.format)).map((f) => `${f.new + f.variations} ${FMT_WORD[f.format]}${f.new + f.variations === 1 ? "" : "s"}`).join(" + ");
 
 /** Times a read for the dev log, never failing the page: an empty answer instead */
 async function timed<T>(timings: Record<string, number>, key: string, run: () => Promise<T>, empty: T): Promise<T> {
@@ -49,8 +50,12 @@ async function timed<T>(timings: Record<string, number>, key: string, run: () =>
   }
 }
 
-/** The start page's sections for one client, read in parallel with the person's own access (db is their client) */
-export async function startSections(db: SupabaseClient, clientId: string): Promise<StartData> {
+/**
+ * The start page's sections for one client, read in parallel with the person's own access (db is their client). Only
+ * what fits the formats the person works in (`allowed`, from their role): a designer never sees video examples.
+ */
+export async function startSections(db: SupabaseClient, clientId: string, allowed: ReadonlySet<CreativeFormat> = new Set(CREATIVE_FORMATS)): Promise<StartData> {
+  const all = seesAllFormats(allowed);
   const t0 = Date.now();
   const timings: Record<string, number> = {};
   const { data: c } = await db.from("clients").select("id, industry, industry_detail").eq("id", clientId).maybeSingle();
@@ -70,13 +75,16 @@ export async function startSections(db: SupabaseClient, clientId: string): Promi
           .eq("status", "open")
           .neq("kind", "onboarding")
           .order("created_at", { ascending: false })
-          .limit(12);
-        return (data ?? []).map((r) => {
-          const d = r.draft as SuggestionDraft | null;
-          const src = r.source as { thumbnail?: string | null; adId?: string | null } | null;
-          const adId = src?.adId && /^\d{5,25}$/.test(src.adId) ? src.adId : null;
-          return { id: r.id as string, kind: r.kind as string, signal: r.signal as string, why: r.why as string, title: d?.title ?? "", angle: d?.angle ?? "", thumb: src?.thumbnail ?? null, adId, formats: d ? formatsLine(d) : "", createdAt: r.created_at as string };
-        });
+          .limit(all ? 12 : 40);
+        return (data ?? [])
+          .filter((r) => fitsAnyFormat(allowed, ((r.draft as SuggestionDraft | null)?.formats ?? []).map((f) => f.format)))
+          .slice(0, 12)
+          .map((r) => {
+            const d = r.draft as SuggestionDraft | null;
+            const src = r.source as { thumbnail?: string | null; adId?: string | null } | null;
+            const adId = src?.adId && /^\d{5,25}$/.test(src.adId) ? src.adId : null;
+            return { id: r.id as string, kind: r.kind as string, signal: r.signal as string, why: r.why as string, title: d?.title ?? "", angle: d?.angle ?? "", thumb: src?.thumbnail ?? null, adId, formats: d ? formatsLine(d, allowed) : "", createdAt: r.created_at as string };
+          });
       },
       [] as StartBrief[],
     ),
@@ -112,14 +120,14 @@ export async function startSections(db: SupabaseClient, clientId: string): Promi
       },
       [] as StartPattern[],
     ),
-    timed(timings, "winners", async () => (industry ? industryWinners(db, industry, clientId, 6) : []), [] as Winner[]),
-    timed(timings, "market", () => marketPage(db, clientId, 0, MARKET_PAGE), { ads: [] as MarketAd[], more: false }),
+    timed(timings, "winners", async () => (industry ? (await industryWinners(db, industry, clientId, all ? 6 : 24)).filter((w) => fitsFormat(allowed, w.format)).slice(0, 6) : []), [] as Winner[]),
+    timed(timings, "market", () => marketPage(db, clientId, 0, MARKET_PAGE, allowed), { ads: [] as MarketAd[], more: false }),
     timed(
       timings,
       "saved",
       async () => {
         const { data } = await db.from("client_saved_references").select(SAVED_COLS).eq("client_id", clientId).is("used_at", null).order("created_at", { ascending: false }).limit(40);
-        return (data ?? []).map((r) => toSaved(r as Record<string, unknown>));
+        return (data ?? []).map((r) => toSaved(r as Record<string, unknown>)).filter((r) => fitsFormat(allowed, r.format));
       },
       [] as SavedRef[],
     ),
@@ -152,9 +160,10 @@ export const MARKET_PAGE = 12;
  * The client's market ads a page at a time, best matches first and brands taking turns (every brand's best ad, then
  * every brand's second), so the first screen isn't one brand. Falls back to the industry when nothing is matched yet.
  */
-export async function marketPage(db: SupabaseClient, clientId: string, offset: number, count: number): Promise<{ ads: MarketAd[]; more: boolean }> {
+export async function marketPage(db: SupabaseClient, clientId: string, offset: number, count: number, allowed: ReadonlySet<CreativeFormat> = new Set(CREATIVE_FORMATS)): Promise<{ ads: MarketAd[]; more: boolean }> {
   const { loadClientMarket } = await import("@/lib/market");
-  const all = await loadClientMarket(db, clientId, { limit: 240 });
+  // Only the formats the person works in, before paging, so a page is never short of what they can see
+  const all = (await loadClientMarket(db, clientId, { limit: 240 })).filter((a) => allowed.has(marketFormatOf(a)));
   const byBrand = new Map<string, MarketAd[]>();
   for (const a of all) byBrand.set(a.brand, [...(byBrand.get(a.brand) ?? []), a]);
   const turns: MarketAd[] = [];

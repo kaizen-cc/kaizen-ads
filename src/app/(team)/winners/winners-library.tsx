@@ -8,6 +8,7 @@ import { useMemo, useRef, useState } from "react";
 import type { Winner, WinnerScope } from "@/lib/industry";
 import { allotmentPools, POOL_TONE, type Allotment } from "@/lib/allotment";
 import { FilterMenu, FilterPill } from "@/components/filters";
+import { FormatScope } from "@/components/format-scope";
 import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
 import { QuickBriefSheet } from "@/components/quick-brief-sheet";
 import { matchPeers, winnerRelevant, type PeerInfo, type PeerMatch, type VerticalInfo } from "@/lib/peer-match";
@@ -113,6 +114,7 @@ export function WinnersLibrary({ winners, industries, clients, scope, match }: {
         <p className="text-xs uppercase tracking-[0.18em] text-faint">Winners library</p>
         <h1 className="font-display text-3xl tracking-tight md:text-4xl">What&apos;s working across our accounts</h1>
         <p className="max-w-2xl text-sm text-muted">The ads clearly beating their own account, ranked against that account so a small client&apos;s winner counts as much as a big one&apos;s.</p>
+        <FormatScope className="justify-self-start" />
         {winners.length > 0 && (
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-faint">
             <span>

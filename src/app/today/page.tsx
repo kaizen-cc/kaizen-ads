@@ -10,6 +10,8 @@ import { loadProduction } from "@/lib/production";
 import { Story } from "./story";
 import { Toaster } from "@/components/toasts";
 import { BriefJobsRoot } from "@/components/brief-jobs";
+import { CreativeFormatsProvider } from "@/components/creative-formats-provider";
+import { formatList } from "@/lib/creative-formats";
 
 export const metadata: Metadata = { title: "Today" };
 export const maxDuration = 120;
@@ -31,6 +33,8 @@ export default async function TodayPage() {
       {/* A brief started from the recap is written in the background: its notices show here too */}
       <Toaster />
       <BriefJobsRoot />
+      {/* Outside the team layout: the formats this person works in, for any quick preview opened from the recap */}
+      <CreativeFormatsProvider formats={formatList(me)}>
       <Story
       firstName={me.fullName.split(" ")[0]}
       greeting={greetingFor(new Date())}
@@ -41,6 +45,7 @@ export default async function TodayPage() {
       home={me.isExec || me.isLead ? "/pipeline" : "/next"}
       score={score}
       />
+      </CreativeFormatsProvider>
     </>
   );
 }

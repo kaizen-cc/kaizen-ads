@@ -4,6 +4,7 @@ import type { Staff } from "@/lib/auth";
 import type { AiTool } from "@/lib/ai";
 import { conversionFor } from "@/lib/kpi/conversions";
 import { extensionTools } from "./extensions";
+import { clampFormats, formatList, formatsFor, formatsRule } from "@/lib/creative-formats";
 import type { Attachment, BriefCard, Card, CopyCard, CopyField, MetricsCard, MetricsRow } from "./types";
 
 // What Kaizen AI can look up and do. Every tool runs on the server with the person's own permissions: a client is only
@@ -560,13 +561,14 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
     },
     {
       name: "create_brief",
-      description: "Turns a creative idea into a brief card. Brief it on the card opens its quick preview right where the person is; the full brief is written only if they choose it (in the background, landing in Ready to send). Nothing is sent from here. In brief, give the idea in a few short lines: the concept, the hook, what to show, the copy direction, the offer and any references. One concept per brief: several distinct ideas are one card each. Every version counts toward the allotment (net new and variations alike, a carousel once per slide; sizes are free).",
+      description: `Turns a creative idea into a brief card. Brief it on the card opens its quick preview right where the person is; the full brief is written only if they choose it (in the background, landing in Ready to send). Nothing is sent from here. In brief, give the idea in a few short lines: the concept, the hook, what to show, the copy direction, the offer and any references. One concept per brief: several distinct ideas are one card each. Every version counts toward the allotment (net new and variations alike, a carousel once per slide; sizes are free).${formatsRule(formatList(ctx.me)) ? ` ${formatsRule(formatList(ctx.me))}` : ""}`,
       input_schema: {
         type: "object",
         properties: {
           client: CLIENT,
           title: { type: "string" },
-          formats: { type: "array", items: { type: "object", properties: { format: { type: "string", enum: ["image", "video", "carousel"] }, new: { type: "integer" }, variations: { type: "integer" } }, required: ["format", "new", "variations"], additionalProperties: false } },
+          // Only the formats the person asking requests (a designer images and carousels, a video editor video)
+          formats: { type: "array", items: { type: "object", properties: { format: { type: "string", enum: formatList(ctx.me) }, new: { type: "integer" }, variations: { type: "integer" } }, required: ["format", "new", "variations"], additionalProperties: false } },
           angle: { type: "string" },
           audience: { type: "string" },
           brief: { type: "string" },
@@ -578,13 +580,16 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
       status: (input, client) => `Writing up the brief for ${nameFor(ctx, input) ?? client ?? "the client"}…`,
       run: async (input) => {
         const c = await clientOf(ctx, input);
-        const formats = ((input.formats ?? []) as BriefCard["formats"]).filter((f) => ["image", "video", "carousel"].includes(f.format)).map((f) => ({ format: f.format, new: Math.max(0, Math.min(10, Number(f.new) || 0)), variations: Math.max(0, Math.min(10, Number(f.variations) || 0)) }));
+        const formats = clampFormats(
+          ((input.formats ?? []) as BriefCard["formats"]).filter((f) => ["image", "video", "carousel"].includes(f.format)).map((f) => ({ format: f.format, new: Math.max(0, Math.min(10, Number(f.new) || 0)), variations: Math.max(0, Math.min(10, Number(f.variations) || 0)) })),
+          formatsFor(ctx.me),
+        );
         const index = ctx.cards.length;
         const b: BriefCard = {
           type: "brief",
           client: { id: c.id, name: c.name, slug: c.slug },
           title: String(input.title ?? "").slice(0, 120),
-          formats: formats.length ? formats : [{ format: "image", new: 1, variations: 0 }],
+          formats,
           angle: String(input.angle ?? "").slice(0, 200),
           audience: String(input.audience ?? "").slice(0, 500),
           brief: String(input.brief ?? "").slice(0, 8000),

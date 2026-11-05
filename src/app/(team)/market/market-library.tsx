@@ -8,6 +8,8 @@ import { ClientSearch } from "./client-search";
 import { FilterMenu as Menu, FilterPill as Pill } from "@/components/filters";
 import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
 import { QuickBriefSheet } from "@/components/quick-brief-sheet";
+import { useCreativeFormats } from "@/components/creative-formats-provider";
+import { FormatScope } from "@/components/format-scope";
 import { MarketHoverCard, MarketPreview, MarketReadPanel, useMarketRead } from "./market-preview";
 
 type View = "all" | "proven" | "early" | "fresh" | "testing";
@@ -73,7 +75,11 @@ export function MarketLibrary({
   const askedView = useParam("view");
   const view: View = VIEWS.some(([k]) => k === askedView) ? (askedView as View) : "all";
   const setView = (v: View) => pushParams({ view: v === "all" ? null : v });
-  const format = useParam("format");
+  // The format filter offers only the formats this person works in (the ads are already kept to them)
+  const allowed = useCreativeFormats();
+  const formats = FORMATS.filter((f) => allowed.has(f));
+  const askedFormat = useParam("format");
+  const format = askedFormat && formats.some((f) => f === askedFormat) ? askedFormat : null;
   const setFormat = (v: string | null) => pushParams({ format: v });
   // Typing keeps the address current without an entry per key
   const [q, setQState] = useState(useParam("q") ?? "");
@@ -133,6 +139,7 @@ export function MarketLibrary({
       <header className="grid gap-3">
         <p className="text-xs uppercase tracking-[0.18em] text-faint">Market · from Motion</p>
         <h1 className="font-display text-3xl tracking-tight md:text-4xl">What&apos;s live in the market</h1>
+        <FormatScope className="justify-self-start" />
         <p className="max-w-2xl text-sm text-muted">
           Live Meta ads from our clients&apos; competitors and the standout US advertisers in every niche we serve. No numbers for other brands&apos; ads, so time is the
           signal: still paying for it after a month usually means it works, and a new ad still running after two weeks is finding early success.
@@ -200,15 +207,17 @@ export function MarketLibrary({
                     onPick={(v) => setIndustry(v)}
                   />
                 </div>
+                {formats.length > 1 && (
                 <div className="w-full md:contents">
                   <Menu
                     label={format ? `${format[0].toUpperCase()}${format.slice(1)}s` : "Any format"}
                     on={format !== null}
-                    options={[[null, "Any format", null] as const, ...FORMATS.map((f) => [f, `${f[0].toUpperCase()}${f.slice(1)}s`, null] as const)]}
+                    options={[[null, "Any format", null] as const, ...formats.map((f) => [f, `${f[0].toUpperCase()}${f.slice(1)}s`, null] as const)]}
                     value={format}
                     onPick={(v) => setFormat(v)}
                   />
                 </div>
+                )}
               </div>
               <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-3">
                 <nav className="-mb-px flex gap-1 overflow-x-auto">

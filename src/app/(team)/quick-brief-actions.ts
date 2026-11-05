@@ -3,6 +3,7 @@
 import { AGENCY_SYSTEM, AiUnavailable, aiEnabled, askJson, clientContext, contextBlock, getAgent } from "@/lib/ai";
 import { toAllotment, type Allotment, type UsageRow } from "@/lib/allotment";
 import { requireStaff } from "@/lib/auth";
+import { CREATIVE_FORMATS, clampFormats, formatsFor, formatsRule, type CreativeFormat } from "@/lib/creative-formats";
 import { quickFromDraftAll, type BriefSource, type QuickBrief, type QuickFormat } from "@/lib/quick-brief";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -50,16 +51,17 @@ Only facts from the client context: never invent prices, offers, dates or claims
 
 const clean = (s: string, max: number) => s.replace(/\s+/g, " ").trim().slice(0, max);
 
-function cleanFormats(list: QuickFormat[], only?: QuickFormat["format"]): QuickFormat[] {
+function cleanFormats(list: QuickFormat[], only: QuickFormat["format"] | undefined, allowed: ReadonlySet<CreativeFormat>): QuickFormat[] {
   const out: QuickFormat[] = [];
   for (const f of list ?? []) {
     if (!FORMATS.includes(f.format) || out.some((x) => x.format === f.format)) continue;
     if (only && f.format !== only) continue;
+    if (!allowed.has(f.format)) continue;
     const n = Math.max(0, Math.min(10, Math.floor(Number(f.new) || 0)));
     const v = Math.max(0, Math.min(5, Math.floor(Number(f.variations) || 0)));
     if (n + v > 0) out.push({ format: f.format, new: n, variations: v });
   }
-  return out.length ? out : [{ format: only ?? "image", new: 1, variations: 0 }];
+  return out.length ? out : [{ format: only ?? CREATIVE_FORMATS.find((f) => allowed.has(f)) ?? "image", new: 1, variations: 0 }];
 }
 
 /** What the source is, in words for the strategist (read with the service role, after the person's access was checked) */
@@ -107,7 +109,10 @@ async function sourceBlock(admin: ReturnType<typeof createAdminClient>, clientId
 
 /** The quick preview of a brief, before the full one is written */
 export async function previewBrief(clientId: string, source: BriefSource, given?: QuickBrief | null): Promise<PreviewResult> {
-  await requireStaff();
+  const me = await requireStaff();
+  // Only the formats this person works in: a designer images and carousels, a video editor video (the owner's rule)
+  const allowed = formatsFor(me);
+  const fit = (b: QuickBrief): QuickBrief => ({ ...b, formats: clampFormats(b.formats ?? [], allowed) });
   if (!/^[0-9a-f-]{36}$/i.test(clientId)) return { ok: false, error: "Pick a client first." };
   const db = await createClient();
   const [{ data: client }, { data: usage }] = await Promise.all([
@@ -116,7 +121,12 @@ export async function previewBrief(clientId: string, source: BriefSource, given?
   ]);
   if (!client) return { ok: false, error: "That client isn't one you work on." };
   const allotment = usage ? toAllotment(usage as UsageRow) : null;
-  const done = (all: QuickBrief[], instant: boolean): PreviewResult => ({ ok: true, brief: all[0], others: all.slice(1, 6), allotment, client: client.name as string, instant });
+  const done = (all: QuickBrief[], instant: boolean): PreviewResult => {
+    const fitted = all.map(fit);
+    // Clamped to their formats: no longer exactly what was written, so it's written again from what they agree
+    const changed = fitted.some((b, i) => b.formats.length !== (all[i].formats ?? []).length);
+    return { ok: true, brief: fitted[0], others: fitted.slice(1, 6), allotment, client: client.name as string, instant: instant && !changed };
+  };
   // Already agreed (the next of a split): as it is
   if (given) return done([given], false);
 
@@ -150,7 +160,9 @@ export async function previewBrief(clientId: string, source: BriefSource, given?
     const [ctx, { sources }, block] = await Promise.all([clientContext(admin, clientId), getAgent("strategist"), sourceBlock(admin, clientId, source)]);
     if (!ctx) return { ok: false, error: "That client isn't there any more." };
     if (!block) return { ok: false, error: "That isn't there any more." };
-    const only = source.kind === "winner" || source.kind === "market" ? source.format : undefined;
+    const asked = source.kind === "winner" || source.kind === "market" ? source.format : undefined;
+    const only = asked && allowed.has(asked) ? asked : undefined;
+    const rule = formatsRule(allowed);
     const r = await askJson<{ briefs: Omit<QuickBrief, "note">[] }>({
       agent: "strategist",
       label: "quick brief",
@@ -162,7 +174,7 @@ export async function previewBrief(clientId: string, source: BriefSource, given?
       prompt: `${contextBlock(ctx, undefined, sources)}
 
 ${block}
-${only ? `\nThis request is for ${only === "image" ? "single images" : `${only}s`} only: formats has exactly one entry, format "${only}".` : ""}
+${only ? `\nThis request is for ${only === "image" ? "single images" : `${only}s`} only: formats has exactly one entry, format "${only}".` : ""}${rule ? `\n${rule}` : ""}
 Give the quick first look at this request for ${ctx.name}.`,
     });
     const briefs = (r.briefs ?? []).map((b) => ({
@@ -171,7 +183,7 @@ Give the quick first look at this request for ${ctx.name}.`,
       angle: clean(b.angle, 160),
       audience: clean(b.audience, 240),
       hook: clean(b.hook, 200),
-      formats: cleanFormats(b.formats, only),
+      formats: cleanFormats(b.formats, only, allowed),
       why: clean(b.why, 500),
       note: "",
     }));

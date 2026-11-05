@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { toAllotment, type UsageRow } from "@/lib/allotment";
 import { WinnersLibrary, type PickClient } from "./winners-library";
 import { LIVE } from "@/lib/live";
+import { filterByFormat, formatsFor } from "@/lib/creative-formats";
 
 export const metadata: Metadata = { title: "Winners" };
 
@@ -14,7 +15,7 @@ export const metadata: Metadata = { title: "Winners" };
 export const maxDuration = 300;
 
 export default async function Winners() {
-  await requireStaff();
+  const me = await requireStaff();
   // Every account's numbers, whoever is looking: the point is learning from clients you don't work on
   const db = adminConfigured() ? createAdminClient() : await createClient();
   const scope: WinnerScope = { accounts: 0, ads: 0, eligible: 0, withoutData: 0 };
@@ -34,7 +35,7 @@ export default async function Winners() {
     .sort((a, b) => a.name.localeCompare(b.name));
   return (
     <div className="mx-auto max-w-6xl">
-      <WinnersLibrary winners={winners} industries={INDUSTRY_OPTIONS} clients={clients} scope={scope} match={match} />
+      <WinnersLibrary winners={filterByFormat(winners, formatsFor(me), (w) => w.format)} industries={INDUSTRY_OPTIONS} clients={clients} scope={scope} match={match} />
     </div>
   );
 }

@@ -28,8 +28,11 @@ export async function marketRead(adId: string): Promise<MarketRead | null> {
 
 /** The market for one client: their matched brands' live ads (worked out now if they haven't been yet). */
 export async function clientMarket(clientId: string): Promise<import("@/lib/market").MarketAd[]> {
-  await requireStaff();
+  const me = await requireStaff();
   const { loadClientMarket } = await import("@/lib/market");
+  const { formatsFor, marketFormatOf } = await import("@/lib/creative-formats");
+  const allowed = formatsFor(me);
   const db = adminConfigured() ? createAdminClient() : await createClient();
-  return loadClientMarket(db, clientId, { limit: 400, compute: adminConfigured() && aiEnabled() ? createAdminClient() : undefined });
+  // Only the formats this person works in (a designer never sees video examples)
+  return (await loadClientMarket(db, clientId, { limit: 400, compute: adminConfigured() && aiEnabled() ? createAdminClient() : undefined })).filter((a) => allowed.has(marketFormatOf(a)));
 }

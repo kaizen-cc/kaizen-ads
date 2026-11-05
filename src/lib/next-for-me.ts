@@ -5,6 +5,7 @@ import { businessDuration, stageInfo, type Stage } from "@/lib/stages";
 import { loadHome, loadKpiPulse } from "@/lib/home";
 import { loadWatchList } from "@/lib/fatigue";
 import { loadCallPromises, loadOnboarding, loadSuggestions, type OpenSuggestion } from "@/lib/suggestions";
+import { formatsFor } from "@/lib/creative-formats";
 
 // Everything that's on one person, in one list: what to do now, what to decide, what to keep an eye on, and what's
 // coming. Pulled from the tickets, the briefs the AI wrote, the KPI tracker, the fatigue watcher and onboarding, and
@@ -65,7 +66,7 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
     buyerish && metaSide ? loadWatchList(db, { buyerId: me.id, limit: 30 }) : Promise.resolve([]),
     buyerish ? loadOnboarding(db) : Promise.resolve(null),
     buyerish ? loadCallPromises(db) : Promise.resolve([]),
-    me.isLead || me.isExec ? loadSuggestions(db) : Promise.resolve(null),
+    me.isLead || me.isExec ? loadSuggestions(db, formatsFor(me)) : Promise.resolve(null),
   ]);
 
   const now: NextItem[] = [];

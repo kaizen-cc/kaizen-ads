@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { RequestForm } from "./request-form";
 import { LIVE } from "@/lib/live";
 import { startSections } from "@/lib/request-start";
+import { formatsFor } from "@/lib/creative-formats";
 import type { PreviewItem } from "./start-flow";
 
 // The AI review can take a little while
@@ -55,7 +56,7 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
   const auditIdea = !restart && (typeof audit === "string" || typeof business === "string") ? await fromAuditIdea(supabase, typeof business === "string" ? "business" : "account", (typeof business === "string" ? business : audit) as string, Number(idea) || 0) : null;
   const initialClient = restart?.draft.clientId ?? auditIdea?.clientId ?? (typeof client === "string" ? (clients.find((c) => c.slug === client && c.creative)?.id ?? null) : null);
   // Arriving with ?client=: its start page is read here, so it's on screen with the page (stored data only, no AI)
-  const initialStart = initialClient && !restart ? await startSections(supabase, initialClient).catch(() => null) : null;
+  const initialStart = initialClient && !restart ? await startSections(supabase, initialClient, formatsFor(me)).catch(() => null) : null;
 
   return (
     <div className="mx-auto max-w-6xl">

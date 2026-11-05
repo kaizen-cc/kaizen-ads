@@ -5,6 +5,8 @@ import { AuditWatcher } from "@/components/audit-watcher";
 import { ActivityTracker } from "@/components/activity-tracker";
 import { requireStaff } from "@/lib/auth";
 import { roleLabel } from "@/lib/roles";
+import { formatList } from "@/lib/creative-formats";
+import { CreativeFormatsProvider } from "@/components/creative-formats-provider";
 import { createClient } from "@/lib/supabase/server";
 import type { Theme } from "./theme-actions";
 
@@ -14,7 +16,7 @@ export default async function TeamLayout({ children }: LayoutProps<"/">) {
   return (
     <UploadProvider>
       <TeamShell name={me.fullName} roles={roleLabel(me.role)} tier={me.isExec ? "exec" : me.isLead ? "lead" : "member"} theme={(pref?.theme as Theme | null) ?? null}>
-        {children}
+        <CreativeFormatsProvider formats={formatList(me)}>{children}</CreativeFormatsProvider>
       </TeamShell>
       <Toaster />
       <AuditWatcher />

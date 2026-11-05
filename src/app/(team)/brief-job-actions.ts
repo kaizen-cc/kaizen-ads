@@ -9,11 +9,15 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { loadSuggestion, type OpenSuggestion, type SuggestionDraft, type WinnerSource } from "@/lib/suggestions";
 import type { BriefSource, QuickBrief } from "@/lib/quick-brief";
+import { clampFormats, formatsFor } from "@/lib/creative-formats";
 
 // Briefs asked for from a card (a winner, a tiring ad): written in the background (src/lib/brief-jobs.ts). A draft
 // already written for the same ad opens at once; otherwise a job starts and the page follows its progress. From the
 // quick preview (seed: what the person agreed), a fresh one is always written, following it; part numbers the briefs of
 // a split, each its own job.
+
+/** What was agreed, kept to the formats this person requests (a designer images and carousels, a video editor video) */
+const fitSeed = (seed: QuickBrief | null, me: { role: string; isExec: boolean; isLead: boolean }): QuickBrief | null => (seed ? { ...seed, formats: clampFormats(seed.formats ?? [], formatsFor(me)) } : null);
 
 type Started = { ok: true; suggestion: OpenSuggestion } | { ok: true; job: BriefJob } | { ok: false; error: string };
 
@@ -25,9 +29,10 @@ async function started(jobId: string): Promise<Started> {
 }
 
 /** Brief more like this winning ad */
-export async function startWinnerBrief(w: WinnerSource, clientId: string, from: string | null, seed: QuickBrief | null = null, part = 0): Promise<Started> {
+export async function startWinnerBrief(w: WinnerSource, clientId: string, from: string | null, agreed: QuickBrief | null = null, part = 0): Promise<Started> {
   { const why = await notLive(await createClient(), clientId); if (why) return { ok: false, error: why }; }
   const me = await requireStaff();
+  const seed = fitSeed(agreed, me);
   if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
   const supabase = await createClient();
   const { data: existing } = seed
@@ -50,9 +55,10 @@ export async function startWinnerBrief(w: WinnerSource, clientId: string, from: 
 }
 
 /** A refresh for a tiring ad (the watch list's own rules: only clients this person works on) */
-export async function startRefreshBrief(clientId: string, adId: string, headline: string | null, from: string | null, seed: QuickBrief | null = null, part = 0): Promise<Started> {
+export async function startRefreshBrief(clientId: string, adId: string, headline: string | null, from: string | null, agreed: QuickBrief | null = null, part = 0): Promise<Started> {
   { const why = await notLive(await createClient(), clientId); if (why) return { ok: false, error: why }; }
   const me = await requireStaff();
+  const seed = fitSeed(agreed, me);
   if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
   const supabase = await createClient();
   const { data: watched } = await supabase.from("ad_fatigue").select("ad_id").eq("client_id", clientId).eq("ad_id", adId).maybeSingle();
@@ -77,8 +83,11 @@ export type BriefStarted = Started | { ok: true; ready: string };
  * from what the person agreed (seed), and lands as a draft in Ready to send. A suggested brief already written in full
  * and left as it was needs no writing: it opens there at once. part numbers the briefs of a split (each its own job).
  */
-export async function startBrief(clientId: string, source: BriefSource, seed: QuickBrief, edited: boolean, part = 0, from: string | null = null): Promise<BriefStarted> {
+export async function startBrief(clientId: string, source: BriefSource, agreed: QuickBrief, editedAsked: boolean, part = 0, from: string | null = null): Promise<BriefStarted> {
   const me = await requireStaff();
+  // Only the formats this person can request (a designer images and carousels, a video editor video)
+  const seed: QuickBrief = { ...agreed, formats: clampFormats(agreed.formats ?? [], formatsFor(me)) };
+  const edited = editedAsked || seed.formats.length !== (agreed.formats ?? []).length;
   if (!/^[0-9a-f-]{36}$/i.test(clientId)) return { ok: false, error: "Pick a client first." };
   const supabase = await createClient();
   {

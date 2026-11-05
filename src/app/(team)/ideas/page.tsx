@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/server";
 import { loadVerticals } from "@/lib/verticals";
 import { VerticalsView, type SubCard } from "./verticals-view";
 import { requireStaff } from "@/lib/auth";
+import { fameFormatOf, formatsFor } from "@/lib/creative-formats";
 import { PLAYBOOK_VERSION } from "@/lib/playbooks";
 import { FameLibrary } from "./fame-library";
 import { loadHallOfFame } from "@/lib/hall-of-fame";
@@ -227,6 +228,8 @@ async function Verticals() {
 }
 
 async function Fame() {
+  // Only the formats this person works in (a designer never sees video examples)
+  const allowed = formatsFor(await requireStaff());
   const db = adminConfigured() ? createAdminClient() : await createClient();
   const { loadPeerContext } = await import("@/lib/industry");
   const [ads, verticals, { data: usage }, { data: rows }, match] = await Promise.all([
@@ -243,5 +246,5 @@ async function Fame() {
     })
     .filter((c): c is PickClient => Boolean(c))
     .sort((a, b) => a.name.localeCompare(b.name));
-  return <FameLibrary ads={ads} verticals={verticals.flatMap((v) => v.subs.map((x) => ({ id: x.id, name: x.name, parent: v.name })))} clients={clients} match={match} />;
+  return <FameLibrary ads={ads.filter((a) => allowed.has(fameFormatOf(a)))} verticals={verticals.flatMap((v) => v.subs.map((x) => ({ id: x.id, name: x.name, parent: v.name })))} clients={clients} match={match} />;
 }

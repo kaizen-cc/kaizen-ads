@@ -10,6 +10,7 @@ import { toAllotment, type UsageRow } from "@/lib/allotment";
 import type { PickClient } from "../winners/winners-library";
 import { MarketLibrary } from "./market-library";
 import { LIVE } from "@/lib/live";
+import { formatsFor, marketFormatOf } from "@/lib/creative-formats";
 
 export const metadata: Metadata = { title: "Market" };
 
@@ -18,6 +19,8 @@ export const maxDuration = 300;
 
 export default async function Market({ searchParams }: PageProps<"/market">) {
   const me = await requireStaff();
+  // Only the formats this person works in: a designer never sees video examples (the owner's rule)
+  const allowed = formatsFor(me);
   const sp = await searchParams;
   const db = adminConfigured() ? createAdminClient() : await createClient();
   const [ads, connection, { data: usage }, { data: rows }, { count: brands }, verticals] = await Promise.all([
@@ -39,7 +42,7 @@ export default async function Market({ searchParams }: PageProps<"/market">) {
   return (
     <div className="mx-auto max-w-6xl">
       <MarketLibrary
-        ads={ads}
+        ads={ads.filter((a) => allowed.has(marketFormatOf(a)))}
         industries={INDUSTRY_OPTIONS}
         verticals={verticals.flatMap((v) => v.subs.map((s) => ({ id: s.id, name: s.name, parent: v.name })))}
         clients={clients}

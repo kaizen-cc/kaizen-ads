@@ -11,7 +11,9 @@ import type { StartData } from "@/lib/request-start";
 import { RequestChat } from "./request-chat";
 import { AsanaSend, BriefPdfButton } from "@/components/asana-send";
 import Link from "next/link";
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useCreativeFormats } from "@/components/creative-formats-provider";
+import { formatsOutside, formatsPhrase, keepFormats } from "@/lib/creative-formats";
 import { PersonAvatar } from "@/components/person-avatar";
 import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
 import type { DraftPatch, Review, ReviewIssue, Suggestions } from "@/lib/ai";
@@ -132,7 +134,20 @@ export function RequestForm({
     return null;
   });
   const router = useRouter();
-  const [draft, setDraft] = useState<Draft>(() => ({ ...emptyDraft(initialClient), ...(initialDraft ?? {}) }));
+  // Only the formats this person can request (a designer images and carousels, a video editor video): whatever fills
+  // the form (a saved copy, the AI, a brief written elsewhere) is read through this
+  const allowed = useCreativeFormats();
+  const [rawDraft, setDraft] = useState<Draft>(() => ({ ...emptyDraft(initialClient), ...(initialDraft ?? {}) }));
+  const draft = useMemo(() => {
+    const kept = keepFormats(rawDraft.formats, allowed);
+    return kept === rawDraft.formats ? rawDraft : { ...rawDraft, formats: kept };
+  }, [rawDraft, allowed]);
+  // Opened from somewhere (a deleted ticket, Asana, a brief written in Kaizen AI) in formats this person doesn't make
+  // requests for: theirs to read, not to switch to another format
+  const outside = formatsOutside(Object.keys(initialDraft?.formats ?? {}), allowed);
+  const readOnly = outside.length > 0 && Object.keys(keepFormats(initialDraft?.formats ?? {}, allowed)).length === 0;
+  // Part of what it was opened with is outside their formats: that part is left out, and the form says so
+  const leftOut = readOnly ? [] : outside;
   const askedStep = STEP_KEYS.indexOf(useParam("step") ?? "");
   // No client yet: the first step, whatever the address says
   const step = !draft.clientId ? 0 : askedStep >= 0 ? askedStep : startAtReview ? STEPS.length - 1 : initialClient ? 1 : 0;
@@ -273,7 +288,7 @@ export function RequestForm({
 
   const applyMix = (sg: Suggestions) =>
     set({
-      formats: Object.fromEntries(sg.mix.map((m) => [m.format, { new: m.new, variations: Math.min(m.variations, MAX_VARIATIONS) }])),
+      formats: Object.fromEntries(sg.mix.filter((m) => allowed.has(m.format)).map((m) => [m.format, { new: m.new, variations: Math.min(m.variations, MAX_VARIATIONS) }])),
       ...(sg.sizes.length ? { sizes: sg.sizes } : {}),
     });
 
@@ -407,7 +422,7 @@ export function RequestForm({
   const fromPatch = (base: Draft, p: DraftPatch): Draft => {
     const formats: Draft["formats"] = {};
     for (const f of p.formats ?? []) {
-      if (!FORMATS.includes(f.format) || formats[f.format]) continue;
+      if (!FORMATS.includes(f.format) || !allowed.has(f.format) || formats[f.format]) continue;
       const n = Math.max(0, Math.min(20, Math.floor(f.new || 0)));
       const v = Math.max(0, Math.min(MAX_VARIATIONS, Math.floor(f.variations || 0)));
       if (n + v > 0) formats[f.format] = { new: n, variations: v };
@@ -543,8 +558,8 @@ export function RequestForm({
             </span>
           )}
           {!created && draft.migration && <MigrationPanel m={draft.migration} onChange={(m) => set({ migration: m })} />}
-          {!created && <Progress steps={STEPS} current={step} onJump={go} />}
-          {!created && step >= 2 && <AiStrip aiOn={aiOn} ai={ai} clientName={client?.name ?? null} onRefresh={() => suggest(draft, true)} />}
+          {!created && !readOnly && <Progress steps={STEPS} current={step} onJump={go} />}
+          {!created && !readOnly && step >= 2 && <AiStrip aiOn={aiOn} ai={ai} clientName={client?.name ?? null} onRefresh={() => suggest(draft, true)} />}
         </div>
 
         {(created || asanaSent || step === STEPS.length - 1) && queue.length > 0 && <UpNext queue={queue} onOpen={openNext} onDrop={(k) => setQueue((q) => q.filter((x) => x.key !== k))} />}
@@ -567,6 +582,8 @@ export function RequestForm({
           </div>
         ) : created ? (
           <Done numbers={created} formats={formats} team={team} clientName={client?.name ?? ""} onAgain={reset} />
+        ) : readOnly ? (
+          <ReadOnlyRequest draft={rawDraft} clientName={client?.name ?? ""} outside={outside} allowedPhrase={formatsPhrase(allowed)} />
         ) : (
           <form
             key={step}
@@ -614,8 +631,9 @@ export function RequestForm({
 
             {step === 2 && (
               <div className="grid gap-8">
-                <div className="grid gap-3 sm:grid-cols-3">
-                  {FORMATS.map((f) => {
+                {leftOut.length > 0 && <LeftOutNote outside={leftOut} />}
+                <div className={`grid gap-3 ${allowed.size >= 3 ? "sm:grid-cols-3" : allowed.size === 2 ? "sm:grid-cols-2" : ""}`}>
+                  {FORMATS.filter((f) => allowed.has(f)).map((f) => {
                     const on = Boolean(draft.formats[f]);
                     const maker = team[MAKER[f].role];
                     return (
@@ -654,7 +672,7 @@ export function RequestForm({
                   })}
                 </div>
 
-                {s && s.mix.length > 0 && (
+                {s && s.mix.some((m) => allowed.has(m.format)) && (
                   <div className="grid gap-3 rounded-[10px] border border-brand-text/20 bg-brand-soft/30 p-4">
                     <div className="flex items-center justify-between gap-3">
                       <p className="flex items-center gap-1.5 text-xs text-muted">
@@ -665,7 +683,7 @@ export function RequestForm({
                       </button>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      {s.mix.map((m) => (
+                      {s.mix.filter((m) => allowed.has(m.format)).map((m) => (
                         <span key={m.format} className="inline-flex items-center gap-1.5 rounded-full bg-bg/60 px-3 py-1 text-xs">
                           <FormatIcon format={m.format} size={12} /> {FORMAT_LABEL[m.format]}
                           <span className="text-muted">· {countLabel(m.new, m.variations)}</span>
@@ -909,6 +927,7 @@ export function RequestForm({
 
             {step === 5 && (
               <div className="grid gap-6">
+                {leftOut.length > 0 && <LeftOutNote outside={leftOut} />}
                 <ReadyToSend
                   draft={draft}
                   clientName={client?.name ?? ""}
@@ -1064,6 +1083,67 @@ export function RequestForm({
         />
       )}
     </div>
+  );
+}
+
+const FORMAT_WORDS: Record<Format, string> = { image: "single images", video: "videos", carousel: "carousels" };
+const listWords = (fs: Format[]) => {
+  const w = fs.map((f) => FORMAT_WORDS[f]);
+  return w.length > 1 ? `${w.slice(0, -1).join(", ")} and ${w[w.length - 1]}` : (w[0] ?? "");
+};
+
+/** Part of what the request was opened with is in a format this person doesn't request: left out, said plainly */
+function LeftOutNote({ outside }: { outside: Format[] }) {
+  return (
+    <p className="rounded-[16px] border border-line bg-surface px-4 py-3 text-[13.5px] leading-relaxed text-muted">
+      The {listWords(outside)} in this brief {outside.length > 1 ? "aren't" : "isn't"} here: your requests are for the formats you make. A lead can send {outside.length > 1 ? "those" : "that part"}.
+    </p>
+  );
+}
+
+/** Opened in a format this person doesn't request (a designer opening a video request): theirs to read, not to switch */
+function ReadOnlyRequest({ draft, clientName, outside, allowedPhrase }: { draft: Draft; clientName: string; outside: Format[]; allowedPhrase: string }) {
+  const fs = FORMATS.filter((f) => draft.formats[f]);
+  return (
+    <article className="relative isolate grid min-w-0 gap-5 overflow-hidden rounded-[28px] border border-line bg-surface px-5 pb-6 pt-5 shadow-[0_30px_80px_-50px_rgba(0,0,0,0.55)] md:px-8 md:pt-7">
+      <div className="flex flex-wrap items-center gap-2 text-[12px]">
+        {clientName && <span className="rounded-full bg-fg px-3 py-1 font-medium text-bg">{clientName}</span>}
+        <span className="rounded-full border border-line px-3 py-1 text-faint">Read only</span>
+      </div>
+      <p className="rounded-[16px] border border-warn/40 bg-warn-soft/40 px-4 py-3 text-[14px] leading-relaxed">
+        This brief is for {listWords(outside)}. Your requests are for {allowedPhrase}, so it&apos;s here to read. A lead can send it, or change its format.
+      </p>
+      <h2 className="font-heading text-[28px] leading-[1.1] tracking-tight md:text-[34px]">{draft.title || "Untitled brief"}</h2>
+      <div className="flex flex-wrap gap-2">
+        {fs.map((f) => (
+          <span key={f} className="inline-flex items-center gap-1.5 rounded-full bg-surface-2 px-3 py-1.5 text-[12.5px]">
+            <FormatIcon format={f} size={13} /> {FORMAT_LABEL[f]} <span className="text-muted">· {countLabel(draft.formats[f]!.new, draft.formats[f]!.variations)}</span>
+          </span>
+        ))}
+      </div>
+      {(draft.angle || draft.audience) && (
+        <dl className="grid gap-3 text-[14px] sm:grid-cols-2">
+          {draft.angle && (
+            <div className="grid gap-1">
+              <dt className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">Angle</dt>
+              <dd>{draft.angle}</dd>
+            </div>
+          )}
+          {draft.audience && (
+            <div className="grid gap-1">
+              <dt className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">Audience</dt>
+              <dd>{draft.audience}</dd>
+            </div>
+          )}
+        </dl>
+      )}
+      {draft.brief.trim() && <p className="whitespace-pre-wrap text-[14.5px] leading-relaxed text-muted">{draft.brief}</p>}
+      <div>
+        <Link href="/board" className="inline-flex min-h-11 items-center rounded-full border border-line px-5 text-[14px] hover:border-faint">
+          Back to the board
+        </Link>
+      </div>
+    </article>
   );
 }
 

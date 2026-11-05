@@ -696,14 +696,20 @@ export async function loadSuggestion(db: SupabaseClient, id: string) {
   return data ? (await toOpen(db, [data]))[0] : null;
 }
 
-/** What Home shows execs and leads. Read with their own access. Drafts someone started from a winner stay theirs. */
-export async function loadSuggestions(db: SupabaseClient): Promise<SuggestionsState> {
+/**
+ * What Home shows execs and leads. Read with their own access. Drafts someone started from a winner stay theirs.
+ * allowed: the formats the viewer works in (src/lib/creative-formats.ts); a brief with none of them isn't shown.
+ */
+export async function loadSuggestions(db: SupabaseClient, allowed?: ReadonlySet<"image" | "video" | "carousel">): Promise<SuggestionsState> {
   const since30 = new Date(Date.now() - 30 * 86_400_000).toISOString();
-  const [{ data: rows }, { data: runs }, { data: decided }] = await Promise.all([
-    db.from("creative_suggestions").select(OPEN_COLS).eq("status", "open").not("kind", "in", "(winner,refresh,onboarding,call,idea)").order("created_at", { ascending: false }).limit(20),
+  const { fitsAnyFormat, seesAllFormats } = await import("@/lib/creative-formats");
+  const all = !allowed || seesAllFormats(allowed);
+  const [{ data: found }, { data: runs }, { data: decided }] = await Promise.all([
+    db.from("creative_suggestions").select(OPEN_COLS).eq("status", "open").not("kind", "in", "(winner,refresh,onboarding,call,idea)").order("created_at", { ascending: false }).limit(all ? 20 : 60),
     db.from("suggestion_runs").select("started_at, finished_at").order("started_at", { ascending: false }).limit(1),
     db.from("creative_suggestions").select("status").in("status", ["approved", "declined"]).not("kind", "in", "(winner,refresh)").gte("decided_at", since30),
   ]);
+  const rows = all ? found : (found ?? []).filter((r) => fitsAnyFormat(allowed!, ((r.draft as SuggestionDraft | null)?.formats ?? []).map((f) => f.format))).slice(0, 20);
   const run = runs?.[0];
   return {
     open: await toOpen(db, (rows ?? []).filter((r) => liveClient(r.clients))),
@@ -1362,7 +1368,9 @@ const TALK_SCHEMA = {
  * the strategist turns it into a full request (the same brief the standard checks), asking only what it truly needs,
  * one or two questions at a time. Every turn returns the brief as it stands, so it's built in front of them.
  */
-export async function talkBrief(admin: SupabaseClient, clientId: string, turns: TalkTurn[], current: SuggestionDraft | null, force = false, previewFirst = false): Promise<TalkOut & { building: boolean; conflicts: string[]; previewReady?: boolean }> {
+export async function talkBrief(admin: SupabaseClient, clientId: string, turns: TalkTurn[], current: SuggestionDraft | null, force = false, previewFirst = false, formatRule = ""): Promise<TalkOut & { building: boolean; conflicts: string[]; previewReady?: boolean }> {
+  // The formats the person in the conversation works in (src/lib/creative-formats.ts formatsRule), when not every one
+  const fr = formatRule ? `\n\n${formatRule}` : "";
   const prompt = await promptFor(admin, clientId, [{ kind: "kpi", weight: 1, line: "A team member's own creative idea", facts: [] }], undefined, true);
   if (!prompt) throw new Error("Client not found");
   const convo = `<conversation>\n${turns.map((t) => `${t.role === "user" ? "Team member" : "You"}: ${t.text}`).join("\n\n")}\n</conversation>`;
@@ -1377,7 +1385,7 @@ export async function talkBrief(admin: SupabaseClient, clientId: string, turns: 
       maxTokens: 3000,
       system: `${SYSTEM}\n\nA member of the team is telling you, in a conversation, the creative they want made for this client. Before anything is written, decide whether you can build it well right now. Look for: (1) conflicts with what the client told us or approved (offers, prices, discounts, claims, dates, rules in the Brand Bible and client memory, what's been rejected), and (2) missing details that would change the brief and that the context can't answer (which offer exactly, which product, the dates, the format or counts, the landing page). If there are any, ask about them: at most three short, plain questions, and list each conflict in one line with what the client said and when. Never ask what the context already answers, and never ask for the sake of asking. If everything needed is clear, or the team member already answered or said to go ahead with assumptions, build: true. reply: a short, warm message (what's unclear or conflicting and the questions; or that you're writing it now). questions: the questions. conflicts: the conflicts. build: true only when it's ready to write.`,
       schema: { type: "object", properties: { reply: { type: "string" }, questions: { type: "array", items: { type: "string" } }, conflicts: { type: "array", items: { type: "string" } }, build: { type: "boolean" } }, required: ["reply", "questions", "conflicts", "build"], additionalProperties: false },
-      prompt: `${prompt}\n\n${current ? `<request_so_far>\n${JSON.stringify(current, null, 1)}\n</request_so_far>\n\n` : ""}${convo}\n\nAnswer the team member's last message.`,
+      prompt: `${prompt}\n\n${current ? `<request_so_far>\n${JSON.stringify(current, null, 1)}\n</request_so_far>\n\n` : ""}${convo}${fr}\n\nAnswer the team member's last message.`,
     });
     if (!check.build) return { reply: check.reply, questions: (check.questions ?? []).slice(0, 3), conflicts: (check.conflicts ?? []).slice(0, 4), ready: false, draft: current ?? (null as unknown as SuggestionDraft), building: false };
     // Clear enough to write, and nothing written yet: the quick preview comes first (the full brief follows it)
@@ -1394,7 +1402,7 @@ export async function talkBrief(admin: SupabaseClient, clientId: string, turns: 
 
 ${current ? `<request_so_far>\n${JSON.stringify(current, null, 1)}\n</request_so_far>\n\n` : ""}<conversation>
 ${turns.map((t) => `${t.role === "user" ? "Team member" : "You"}: ${t.text}`).join("\n\n")}
-</conversation>
+</conversation>${fr}
 
 Answer the team member's last message.`,
   });

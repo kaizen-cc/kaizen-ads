@@ -13,6 +13,7 @@ import { loadOwedReplies } from "@/lib/owed-replies";
 import { HiddenLog } from "./views/hidden-log";
 import { loadSaidPromises } from "@/lib/message-promises";
 import { loadCallPromises, loadOnboarding, loadSuggestions } from "@/lib/suggestions";
+import { formatsFor } from "@/lib/creative-formats";
 import { loadWatchList } from "@/lib/fatigue";
 import { HandoffCallout } from "@/components/handoff-callout";
 import { LeaderView } from "./views/leader-view";
@@ -42,7 +43,7 @@ export default async function Home() {
     Promise.all(lines.map((platform) => loadKpiPulse(db, { platform }))),
     !me.isLead && !me.isExec && variantNow === "buyer" ? loadKpiPulse(db, me.id) : Promise.resolve(null),
     // Briefs the strategist suggests (Meta creative): execs and the leads on it decide them, not the Head of Google
-    (me.isExec || me.isLead) && me.role !== "head_of_google" ? loadSuggestions(db) : Promise.resolve(null),
+    (me.isExec || me.isLead) && me.role !== "head_of_google" ? loadSuggestions(db, formatsFor(me)) : Promise.resolve(null),
     // Ads wearing out: every client for execs and leads, a buyer's own clients for a buyer
     // (Meta ads only, so not for the Head of Google)
     me.role === "head_of_google" ? Promise.resolve(null) : me.isExec || me.isLead ? loadWatchList(db, { limit: 8 }) : variantFor(me) === "buyer" ? loadWatchList(db, { buyerId: me.id, limit: 12 }) : Promise.resolve(null),

@@ -30,6 +30,13 @@ import { readReferences, referencesBlock } from "@/lib/references";
 import { MAX_VARIATIONS, SIZES, describeDraft, refLinks, selectedFormats, type Draft } from "./draft";
 import { notLive } from "@/lib/live-guard";
 import type { QuickBrief } from "@/lib/quick-brief";
+import { clampFormats, fitsAnyFormat, fitsFormat, formatsFor, formatsOutside, formatsPhrase, formatsRule, marketFormatOf } from "@/lib/creative-formats";
+
+/** A request in formats this person doesn't make requests for (a designer and video, a video editor and images): refused */
+function outsideFormats(me: { role: string; isExec?: boolean; isLead?: boolean }, formats: string[]): string | null {
+  const allowed = formatsFor(me);
+  return formatsOutside(formats, allowed).length ? `Your requests are for ${formatsPhrase(allowed)}. A lead can send the rest.` : null;
+}
 
 type Fail = { ok: false; error: string };
 export type CreateResult = { ok: true; numbers: number[] } | Fail;
@@ -123,12 +130,16 @@ export async function loadBriefing(clientId: string): Promise<SuggestResult | nu
   const supabase = await createClient();
   const { data } = await supabase.from("client_briefings").select("suggestions").eq("client_id", clientId).maybeSingle();
   if (!data?.suggestions) return null;
-  return { ok: true, suggestions: cleanSuggestions(data.suggestions as Suggestions), context: await summarize(ctx, clientId) };
+  return { ok: true, suggestions: fitMix(cleanSuggestions(data.suggestions as Suggestions), formatsFor(await requireStaff())), context: await summarize(ctx, clientId) };
 }
+
+/** The suggested mix kept to the formats this person requests (the rest of the suggestions stand) */
+const fitMix = (s: Suggestions, allowed: ReadonlySet<import("@/lib/creative-formats").CreativeFormat>): Suggestions => ({ ...s, mix: (s.mix ?? []).filter((m) => allowed.has(m.format)) });
 
 /** Suggestions for every field, from what we know about the client and what's filled in so far. */
 export async function suggestForRequest(draft: Draft): Promise<SuggestResult> {
   const ctx = await loadContext(draft.clientId);
+  const allowed = formatsFor(await requireStaff());
   if (!ctx) return { ok: false, error: "Pick a client first." };
   try {
     const [{ sources }, refs] = await Promise.all([getAgent("suggest"), readReferences(refLinks(draft.refs))]);
@@ -146,9 +157,12 @@ ${referencesBlock(refs.reads)}
 ${describeDraft(draft, ctx.name)}
 </draft_so_far>
 
-${SUGGEST_FIELDS}`,
+${SUGGEST_FIELDS}${(() => {
+        const r = formatsRule(allowed);
+        return r ? `\n${r}` : "";
+      })()}`,
     });
-    const suggestions = cleanSuggestions(raw);
+    const suggestions = fitMix(cleanSuggestions(raw), allowed);
     return { ok: true, suggestions, context: await summarize(ctx, draft.clientId!) };
   } catch (e) {
     return { ok: false, error: e instanceof AiUnavailable ? e.message : "Couldn't get suggestions." };
@@ -285,6 +299,10 @@ export async function createBatch(draft: Draft, review: Review | null, decisions
   if (!draft.title.trim()) return { ok: false, error: "Give the request a title." };
   const formats = selectedFormats(draft);
   if (formats.length === 0) return { ok: false, error: "Pick at least one format." };
+  {
+    const why = outsideFormats(me, formats);
+    if (why) return { ok: false, error: why };
+  }
   const items = formats.map((f) => ({ format: f, new: clamp(draft.formats[f]!.new), variations: clamp(draft.formats[f]!.variations) }));
   const mig = draft.migration;
   if (mig?.needsCreative && !/^https?:\/\/\S+/i.test(mig.creativeLink.trim())) return { ok: false, error: "Add the link to the current creative: it's already past production in Asana." };
@@ -401,11 +419,11 @@ export type WinnersResult = { industry: string | null; label: string | null; det
 
 /** What's working for other clients in this client's industry (for the request form). */
 export async function industryWinnersFor(clientId: string): Promise<WinnersResult> {
-  await requireStaff();
+  const allowed = formatsFor(await requireStaff());
   const supabase = await createClient();
   const { data: c } = await supabase.from("clients").select("industry, industry_detail").eq("id", clientId).maybeSingle();
   if (!c?.industry || c.industry === "other") return { industry: null, label: null, detail: null, winners: [] };
-  return { industry: c.industry, label: industryLabel(c.industry), detail: c.industry_detail, winners: await industryWinners(supabase, c.industry, clientId, 6) };
+  return { industry: c.industry, label: industryLabel(c.industry), detail: c.industry_detail, winners: (await industryWinners(supabase, c.industry, clientId, 24)).filter((w) => fitsFormat(allowed, w.format)).slice(0, 6) };
 }
 
 export type Promise_ = {
@@ -482,10 +500,10 @@ export async function promiseDraft(commitmentId: string, seed?: QuickBrief | nul
 
 /** The next page of the client's market ads ("See more" on the start page) */
 export async function moreMarket(clientId: string, offset: number): Promise<{ ads: import("@/lib/market").MarketAd[]; more: boolean }> {
-  await requireStaff();
+  const me = await requireStaff();
   if (!/^[0-9a-f-]{36}$/i.test(clientId)) return { ads: [], more: false };
   const { marketPage, MARKET_PAGE } = await import("@/lib/request-start");
-  return marketPage(await createClient(), clientId, Math.max(0, Math.floor(offset)), MARKET_PAGE).catch(() => ({ ads: [], more: false }));
+  return marketPage(await createClient(), clientId, Math.max(0, Math.floor(offset)), MARKET_PAGE, (await import("@/lib/creative-formats")).formatsFor(me)).catch(() => ({ ads: [], more: false }));
 }
 
 /**
@@ -547,12 +565,12 @@ export async function fulfilPromise(commitmentId: string, numbers: number[]) {
 
 /** What's live in this client's market (Motion): their named competitors first, then proven and testing ads in their industry. */
 export async function marketFor(clientId: string): Promise<{ label: string | null; ads: import("@/lib/market").MarketAd[] }> {
-  await requireStaff();
+  const allowed = formatsFor(await requireStaff());
   const supabase = await createClient();
   const { data: c } = await supabase.from("clients").select("industry, industry_detail").eq("id", clientId).maybeSingle();
   if (!c?.industry || c.industry === "other") return { label: null, ads: [] };
   const { loadClientMarket } = await import("@/lib/market");
-  const all = await loadClientMarket(supabase, clientId, { limit: 200 });
+  const all = (await loadClientMarket(supabase, clientId, { limit: 200 })).filter((a) => allowed.has(marketFormatOf(a)));
   // One per brand, best matches first
   const seen = new Set<string>();
   const ads = all.filter((a) => (seen.has(a.brand) ? false : (seen.add(a.brand), true))).slice(0, 8);
@@ -585,8 +603,12 @@ const PREVIEW_SCHEMA = {
  * For the ads beside the form: one line on why each suits this client, and the gist of the brief the strategist would
  * write from it (angle, hook, the main concept, formats). One AI call for all of them, kept a day per client and ad.
  */
-export async function ideaPreviews(clientId: string, sources: IdeaSource[]): Promise<Record<string, IdeaPreview>> {
-  await requireStaff();
+export async function ideaPreviews(clientId: string, given: IdeaSource[]): Promise<Record<string, IdeaPreview>> {
+  // Only the formats this person works in: asked of the AI, and kept apart from everyone else's in the day's cache
+  const allowed = formatsFor(await requireStaff());
+  const rule = formatsRule(allowed);
+  const scope = rule ? `|${[...allowed].join(",")}` : "";
+  const sources = given.map((x) => ({ ...x, key: `${x.key}${scope}` }));
   if (!aiEnabled() || !adminConfigured() || !sources.length) return {};
   const db = await createClient();
   const { data: visible } = await db.from("clients").select("id").eq("id", clientId).maybeSingle();
@@ -618,7 +640,7 @@ For each ad, for this client (never name the other business):
 - angle: the angle this client's version would take, in a few words.
 - hook: the opening line or on-image headline it would lead with, in the client's voice.
 - concept: one sentence on what the creative would show.
-- formats: what would be made, e.g. "2 images + 1 video, 4:5 and 9:16".
+- formats: what would be made, e.g. "2 images + 1 video, 4:5 and 9:16".${rule ? `\n${rule}` : ""}
 Only facts from the context: no invented prices or offers. Return every key.`,
     });
     const fresh = r.items.filter((x) => missing.some((m) => m.key === x.key));
@@ -627,7 +649,7 @@ Only facts from the context: no invented prices or offers. Return every key.`,
   } catch (e) {
     console.error("idea previews", e instanceof Error ? e.message : e);
   }
-  return out;
+  return scope ? Object.fromEntries(Object.entries(out).map(([k, v]) => [k.slice(0, -scope.length), v])) : out;
 }
 
 // ─── The ways in: briefs ready for this client, from similar clients, and talking it through ──────────────────
@@ -641,7 +663,7 @@ const formatsLine = (d: import("@/lib/suggestions").SuggestionDraft) =>
 
 /** This client's open suggested briefs: tiring ads, performance, moments, patterns, call promises, offers (newest first) */
 export async function clientBriefs(clientId: string): Promise<BriefCard[]> {
-  await requireStaff();
+  const allowed = formatsFor(await requireStaff());
   const db = await createClient();
   const { data } = await db
     .from("creative_suggestions")
@@ -650,8 +672,9 @@ export async function clientBriefs(clientId: string): Promise<BriefCard[]> {
     .eq("status", "open")
     .neq("kind", "onboarding")
     .order("created_at", { ascending: false })
-    .limit(12);
-  return (data ?? []).map((r) => {
+    .limit(40);
+  const mine = (data ?? []).filter((r) => fitsAnyFormat(allowed, ((r.draft as import("@/lib/suggestions").SuggestionDraft | null)?.formats ?? []).map((f) => f.format))).slice(0, 12);
+  return mine.map((r) => {
     const d = r.draft as import("@/lib/suggestions").SuggestionDraft;
     const src = r.source as { thumbnail?: string | null } | null;
     return { id: r.id as string, kind: r.kind as string, signal: r.signal as string, why: r.why as string, title: d?.title ?? "", angle: d?.angle ?? "", thumb: src?.thumbnail ?? null, formats: d ? formatsLine(d) : "", createdAt: r.created_at as string };
@@ -738,7 +761,7 @@ export type TalkResult = { ok: true; reply: string; questions: string[]; conflic
 
 /** "Talk it through": the strategist's next turn, and the request as it stands */
 export async function talkRequest(clientId: string, turns: import("@/lib/suggestions").TalkTurn[], current: import("@/lib/suggestions").SuggestionDraft | null, force = false, previewFirst = false): Promise<TalkResult> {
-  await requireStaff();
+  const allowed = formatsFor(await requireStaff());
   if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
   const db = await createClient();
   const { data: mine } = await db.from("clients").select("id").eq("id", clientId).maybeSingle();
@@ -747,8 +770,10 @@ export async function talkRequest(clientId: string, turns: import("@/lib/suggest
   if (!clean.length || clean[clean.length - 1].role !== "user") return { ok: false, error: "Say what you have in mind first." };
   try {
     const { talkBrief } = await import("@/lib/suggestions");
-    const r = await talkBrief(createAdminClient(), clientId, clean, current, force, previewFirst);
-    return { ok: true, reply: r.reply, questions: r.questions, conflicts: r.conflicts, ready: r.ready, building: r.building, previewReady: Boolean(r.previewReady), draft: r.draft ?? null, patch: r.draft ? toPatch(r.draft) : null };
+    const r = await talkBrief(createAdminClient(), clientId, clean, current, force, previewFirst, formatsRule(allowed));
+    // Kept to the formats this person requests, whatever the conversation said
+    const draft = r.draft ? { ...r.draft, formats: clampFormats(r.draft.formats ?? [], allowed) } : null;
+    return { ok: true, reply: r.reply, questions: r.questions, conflicts: r.conflicts, ready: r.ready, building: r.building, previewReady: Boolean(r.previewReady), draft, patch: draft ? toPatch(draft) : null };
   } catch (e) {
     return { ok: false, error: e instanceof AiUnavailable ? e.message : "The strategist couldn't answer. Try again." };
   }
@@ -796,6 +821,10 @@ export async function sendToAsana(draft: Draft): Promise<{ ok: true; tasks: impo
   }
   if (!draft.title.trim()) return { ok: false, error: "Give the request a title." };
   if (!selectedFormats(draft).length) return { ok: false, error: "Pick at least one format." };
+  {
+    const why = outsideFormats(me, selectedFormats(draft));
+    if (why) return { ok: false, error: why };
+  }
   const { asanaConfigured } = await import("@/lib/asana");
   if (!asanaConfigured() || !adminConfigured()) return { ok: false, error: "Asana isn't connected." };
   try {

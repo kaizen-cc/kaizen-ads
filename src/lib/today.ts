@@ -169,7 +169,7 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
   const [promises, onboarding, suggestions, fatigue, home, own, owed, said] = await Promise.all([
     callPromises ? loadCallPromises(db).catch(() => []) : [],
     topics.has("onboarding") ? loadOnboarding(db).catch(() => null) : null,
-    topics.has("briefs") ? loadSuggestions(db).catch(() => null) : null,
+    topics.has("briefs") ? loadSuggestions(db, (await import("@/lib/creative-formats")).formatsFor(me)).catch(() => null) : null,
     topics.has("ads") ? loadWatchList(db, manager ? { limit: 20 } : { buyerId: me.id, limit: 20 }).catch(() => []) : [],
     topics.has("work") || topics.has("allotments") ? loadHome(db, me).catch(() => null) : null,
     mine(db, me).catch(() => []),

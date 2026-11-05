@@ -2,6 +2,7 @@ import type { CreativeDb } from "@/lib/creative-db";
 import { loadClientKpis } from "@/lib/kpi/client";
 import { loadWatchList } from "@/lib/fatigue";
 import { loadClientMarket } from "@/lib/market";
+import { formatsFor, marketFormatOf } from "@/lib/creative-formats";
 import type { IntakeRecord } from "./intake-panel";
 import type { ClientCall } from "./calls-panel";
 import { notFound } from "next/navigation";
@@ -290,8 +291,10 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
   });
 
   // In the market: the competitors this client named first, then what's proven, testing or new in their industry
+  // Only the formats this person works in: a designer never sees video examples (the owner's rule)
   const seenBrand = new Set<string>();
-  const market = marketAll.filter((a) => (seenBrand.has(a.brand) ? false : (seenBrand.add(a.brand), true))).slice(0, 8);
+  const myFormats = formatsFor(me);
+  const market = marketAll.filter((a) => myFormats.has(marketFormatOf(a))).filter((a) => (seenBrand.has(a.brand) ? false : (seenBrand.add(a.brand), true))).slice(0, 8);
   // Every call that discussed this client (client calls and internal meetings), with what was said about them
   const calls: ClientCall[] = callRows
     .map((m) => {
