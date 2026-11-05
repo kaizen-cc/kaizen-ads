@@ -159,6 +159,22 @@ export function Deliverables({ ticket, demoDesigns, onState, canDisagree = false
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticket.id, demo]);
 
+  // Copies into the client's Drive happen in the background: while any is on its way (or a round just landed and
+  // isn't lined up yet), the statuses refresh on their own
+  useEffect(() => {
+    if (demo) return;
+    const busy = (designs ?? []).some((d) => {
+      const v = d.versions[0];
+      if (!v) return false;
+      if (v.files.some((f) => f.drive?.status === "syncing")) return true;
+      return v.files.some((f) => !f.drive) && Date.now() - new Date(v.at).getTime() < 3 * 60_000;
+    });
+    if (!busy) return;
+    const t = setTimeout(() => void reload(), 8000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [designs, demo, ticket.id]);
+
   // Folder inputs need a non-standard attribute
   useEffect(() => {
     folderInput.current?.setAttribute("webkitdirectory", "");
@@ -453,6 +469,7 @@ export function Deliverables({ ticket, demoDesigns, onState, canDisagree = false
                     {of && <span className="text-brand-text">Variation of D{of.position}</span>}
                     {ticket.format === "carousel" ? <span>{plural(v?.files.length ?? 0, "card")}</span> : sizes.map((s) => <span key={s} className="tabular">{aspectLabel(s)}</span>)}
                   </div>
+                  {v && <DriveStatus files={v.files} />}
                 </div>
                 {/* A carousel's cards: replace one (the rest carry over), delete one, or fill an empty slot */}
                 {ticket.format === "carousel" && v && !d.clientApproved && (
@@ -609,6 +626,60 @@ export function Deliverables({ ticket, demoDesigns, onState, canDisagree = false
         />
       )}
     </section>
+  );
+}
+
+/**
+ * Each file's copy in the client's Drive (Ad Creative / Year / Month / Concept / Format): "In Drive ✓" with a link per
+ * size or slide, "Syncing…", or what stopped it, with where to fix it. Nothing until the file is lined up for Drive.
+ */
+function DriveStatus({ files }: { files: Design["versions"][number]["files"] }) {
+  const tracked = files.filter((f) => f.drive);
+  if (!tracked.length) return null;
+  const label = (f: (typeof files)[number]) => (f.card != null ? `Slide ${f.card}` : f.aspect ? aspectLabel(f.aspect) : f.name);
+  const failed = tracked.filter((f) => f.drive!.status === "error");
+  const syncing = tracked.filter((f) => f.drive!.status === "syncing");
+  const synced = tracked.filter((f) => f.drive!.status === "synced");
+  if (failed.length) {
+    const d = failed[0].drive!;
+    return (
+      <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] leading-snug text-bad" title={failed.map((f) => `${label(f)}: ${f.drive!.error ?? "failed"}`).join("\n")}>
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-bad" />
+        <span className="min-w-0">{d.error ?? "Couldn't copy to Drive"}</span>
+        {d.fixUrl && (
+          <a href={d.fixUrl} className="font-medium text-fg underline underline-offset-2 max-md:inline-flex max-md:min-h-10 max-md:items-center">
+            Set the folder
+          </a>
+        )}
+      </p>
+    );
+  }
+  if (syncing.length)
+    return (
+      <p className="flex items-center gap-1.5 text-[11px] text-faint" title={syncing.map((f) => `${label(f)}${f.drive!.error ? `: retrying (${f.drive!.error})` : ""}`).join("\n")}>
+        <span className="h-1.5 w-1.5 shrink-0 animate-[ai-pulse_1s_ease-in-out_infinite] rounded-full bg-brand-text" />
+        Syncing to Drive{tracked.length > 1 ? ` · ${synced.length}/${tracked.length}` : "…"}
+      </p>
+    );
+  return (
+    <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-ok">
+      {synced.length === 1 && synced[0].drive!.url ? (
+        <a href={synced[0].drive!.url} target="_blank" rel="noreferrer" className="hover:underline underline-offset-2 max-md:inline-flex max-md:min-h-10 max-md:items-center">
+          In Drive ✓
+        </a>
+      ) : (
+        <>
+          <span>In Drive ✓</span>
+          {synced.map((f) =>
+            f.drive!.url ? (
+              <a key={f.id} href={f.drive!.url} target="_blank" rel="noreferrer" className="tabular text-faint hover:text-fg hover:underline underline-offset-2 max-md:inline-flex max-md:min-h-10 max-md:items-center max-md:px-1">
+                {label(f)}
+              </a>
+            ) : null,
+          )}
+        </>
+      )}
+    </p>
   );
 }
 

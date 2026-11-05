@@ -227,6 +227,7 @@ export async function mediaToDeliverables(id: string): Promise<{ ok: true } | Fa
   if (!recorded.length) return { ok: false, error: "The files couldn't be copied. Try again." };
   const { error: recErr } = await supabase.rpc("record_design_files", { p_version: s.version_id, p_files: recorded });
   if (recErr) return { ok: false, error: recErr.message };
+  (await import("@/lib/creative-drive")).driveAfterResponse([s.design_id]);
   revalidatePath("/board");
   return { ok: true };
 }

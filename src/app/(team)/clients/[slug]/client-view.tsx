@@ -8,6 +8,7 @@ import { AssignSelect, type Option } from "../assign-select";
 import type { Freshness } from "@/lib/dates";
 import { BriefingPanel } from "./briefing-panel";
 import { ConnectionStatus } from "./connection-status";
+import { AdCreativeDrive } from "./ad-creative-drive";
 import { setPortalLive,
   syncMetaNow,
   addAngle,
@@ -820,6 +821,9 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                 ))}
               </dl>
             )}
+            <div className="mt-5 border-t border-line pt-5">
+              <AdCreativeDrive clientId={client.id} slug={client.slug} exec={can.admin} demo={demo} />
+            </div>
           </Section>
                 </div>
               </div>),

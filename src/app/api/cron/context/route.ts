@@ -91,6 +91,7 @@ function due(step: string | null) {
   if (step === "launches") return true; // every 5 minutes (vercel.json): launch what reached Ready to launch, complete what was turned on
 
   if (step === "market") return hour === 8;
+  if (step === "creative_drive") return true; // every 10 minutes (vercel.json): ticket creative copied into each client's Drive, retries
   if (step === "bibles") return true; // every 10 minutes (vercel.json): every client gets a Brand Bible, kept current
   if (step === "bible_write") return true; // started by a Bible build once its research is in (?client=<id>)
   if (step === "presentation_write") return true; // started once a Bible is written (?client=<id>): its client presentation, drafted (never sent)
@@ -254,6 +255,7 @@ export async function GET(request: Request) {
       const mediaJobs = await (await import("@/lib/ai-media-jobs")).pickUpMediaJobs(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
       return Response.json({ ...(await (await import("@/lib/launcher")).launchStep(admin)), briefJobs, mediaJobs });
     }
+    if (step === "creative_drive") return Response.json(await (await import("@/lib/creative-drive")).processDriveQueue(admin, { limit: 200, budgetMs: 600_000 }));
     if (step === "audits") return Response.json(await (await import("@/lib/auto-audits")).autoAudits(admin));
     if (step === "bibles") return Response.json(await (await import("@/lib/brand-bible")).autoBibles(admin, 3));
     if (step === "presentations") {

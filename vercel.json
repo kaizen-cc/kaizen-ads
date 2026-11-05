@@ -138,6 +138,10 @@
       "schedule": "52 * * * *"
     },
     {
+      "path": "/api/cron/context?step=creative_drive",
+      "schedule": "6-59/10 * * * *"
+    },
+    {
       "path": "/api/cron/context?step=loom",
       "schedule": "7,22,37,52 * * * *"
     }

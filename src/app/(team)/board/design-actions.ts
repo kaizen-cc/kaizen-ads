@@ -6,6 +6,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { AiUnavailable, askJson, CREATIVE_CHECK_SCHEMA, CREATIVE_CHECK_SYSTEM, type CreativeCheck } from "@/lib/ai";
 import { aspectLabel } from "@/lib/uploads/media";
+import { driveAfterResponse, driveStates, type DriveState, type DriveStateRow } from "@/lib/creative-drive";
 
 export type DesignFile = {
   id: string;
@@ -19,6 +20,8 @@ export type DesignFile = {
   card: number | null;
   url: string | null; // signed, short-lived
   thumbUrl: string | null;
+  /** A copy in the client's Drive (Ad Creative): there, on its way, or what stopped it */
+  drive?: DriveState | null;
 };
 export type BriefChange = { at: string; by: string; note: string };
 
@@ -86,6 +89,21 @@ export async function ticketDesigns(requestId: string): Promise<Design[]> {
     const { data } = await supabase.storage.from(BUCKET).createSignedUrls(paths.slice(i, i + 500), 3600);
     for (const s of data ?? []) if (s.path && s.signedUrl) signed.set(s.path, s.signedUrl);
   }
+  // Each file's copy in the client's Drive
+  const { data: driveRows } = await supabase
+    .from("creative_drive_files")
+    .select("want_file_id, synced_file_id, status, drive_url, op, attempts, error, error_kind")
+    .in(
+      "design_id",
+      designs.map((d) => d.id),
+    );
+  const drive = driveStates((driveRows ?? []) as DriveStateRow[]);
+  // No Ad Creative folder: the file says so with a link to set it on the client page
+  if ([...drive.values()].some((x) => x.kind === "no_folder")) {
+    const { data: r } = await supabase.from("requests").select("clients(slug)").eq("id", requestId).maybeSingle();
+    const slug = (r?.clients as unknown as { slug: string } | null)?.slug;
+    if (slug) for (const x of drive.values()) if (x.kind === "no_folder") x.fixUrl = `/clients/${slug}?tab=team#ad-creative-drive`;
+  }
 
   return designs.map((d) => ({
     id: d.id,
@@ -117,6 +135,7 @@ export async function ticketDesigns(requestId: string): Promise<Design[]> {
             card: f.card,
             url: signed.get(f.path) ?? null,
             thumbUrl: f.thumb_path ? (signed.get(f.thumb_path) ?? null) : null,
+            drive: drive.get(f.id) ?? null,
           })),
       })),
   }));
@@ -176,6 +195,8 @@ export async function recordFiles(versionId: string, files: UploadedFile[]): Pro
   const supabase = await createClient();
   const { error } = await supabase.rpc("record_design_files", { p_version: versionId, p_files: files });
   if (error) return { ok: false, error: error.message };
+  const { data: v } = await supabase.from("design_versions").select("design_id").eq("id", versionId).maybeSingle();
+  if (v) driveAfterResponse([v.design_id as string]);
   revalidatePath("/board");
   return { ok: true };
 }
@@ -301,6 +322,7 @@ export async function deleteDesign(designId: string): Promise<{ ok: true } | Fai
   const { error } = await c.admin.from("designs").delete().eq("id", designId);
   if (error) return { ok: false, error: error.message };
   await logDelete(c.admin, c.design.request_id, c.me.id, `Deleted ${c.design.name}`);
+  driveAfterResponse([designId]); // its Drive files move to _Replaced
   revalidatePath("/board");
   return { ok: true };
 }
@@ -322,6 +344,7 @@ export async function deleteVersion(designId: string): Promise<{ ok: true } | Fa
   const { data: prev } = await c.admin.from("design_versions").select("version").eq("design_id", designId).order("version", { ascending: false }).limit(1).maybeSingle();
   await c.admin.from("designs").update({ current_version: prev?.version ?? 1 }).eq("id", designId);
   await logDelete(c.admin, c.design.request_id, c.me.id, `Deleted v${n} of ${c.design.name}`);
+  driveAfterResponse([designId]); // the round before becomes the Drive file's newest revision again
   revalidatePath("/board");
   return { ok: true };
 }
@@ -339,6 +362,7 @@ export async function deleteFile(fileId: string): Promise<{ ok: true } | Fail> {
   if (paths.length) await c.admin.storage.from(BUCKET).remove(paths);
   await c.admin.from("design_files").delete().eq("id", fileId);
   await logDelete(c.admin, c.design.request_id, c.me.id, `Deleted ${f.card ? `card ${f.card}` : f.original_name} from ${c.design.name}`);
+  driveAfterResponse([f.design_id as string]);
   revalidatePath("/board");
   return { ok: true };
 }
