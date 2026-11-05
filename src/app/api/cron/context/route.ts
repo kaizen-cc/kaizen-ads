@@ -212,13 +212,18 @@ export async function GET(request: Request) {
       const { aiEnabled } = await import("@/lib/ai");
       if (!aiEnabled()) return Response.json({ skipped: "The AI isn't connected" });
       const loom = await import("@/lib/loom-intake");
+      const began = Date.now();
       // Shared folders not read for a day: new recordings queued
       const folders = await loom.recheckLoomFolders(admin).catch((e) => String(e));
       const queue = await loom.processLoomQueue(admin, { budgetMs: 480_000, parallel: 4 });
       // New teachings distilled since the last run: merged, contradictions flagged, the skills rewritten
       const { count } = await admin.from("media_buying_insights").select("id", { count: "exact", head: true }).is("consolidated_at", null).is("merged_into", null);
-      const insights = count ? await (await import("@/lib/buying-insights")).consolidateInsights(admin, { budgetMs: 180_000 }).catch((e) => String(e)) : { new: 0 };
-      return Response.json({ folders, queue, insights });
+      const bi = await import("@/lib/buying-insights");
+      // Points not yet attributed to an industry or sorted general vs industry-only: a slice each run until done
+      const room = 560_000 - (Date.now() - began);
+      const attribution = room > 120_000 && (await bi.attributionPending(admin)) ? await bi.attributeInsights(admin, { budgetMs: Math.min(room, 240_000) }).catch((e) => String(e)) : { pending: "later" };
+      const insights = count ? await bi.consolidateInsights(admin, { budgetMs: 180_000 }).catch((e) => String(e)) : { new: 0 };
+      return Response.json({ folders, queue, attribution, insights });
     }
     if (step === "docs") {
       const { watchDocs } = await import("@/lib/context/docs");

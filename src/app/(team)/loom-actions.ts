@@ -111,6 +111,20 @@ export async function consolidateBuyerInsights(): Promise<R<{ merged: number; co
   }
 }
 
+/** Execs: attribute every point to its platform, industry and business model, and sort general from industry-only (resumable) */
+export async function attributeBuyerInsights(): Promise<R<{ attributed: number; scoped: number; industry: number; platform: number; left: number }>> {
+  try {
+    const me = await requireStaff();
+    if (!me.isExec) return { ok: false, error: "Execs only." };
+    if (!aiEnabled()) return { ok: false, error: "The AI isn't connected." };
+    const r = await (await import("@/lib/buying-insights")).attributeInsights(createAdminClient(), { budgetMs: 420_000 });
+    revalidatePath("/settings", "layout");
+    return { ok: true, ...r };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't attribute." };
+  }
+}
+
 /** Execs: a ruling on a contradiction (keep this one, drop it, or both hold in different situations) */
 export async function ruleBuyerInsight(id: string, ruling: "keep" | "drop" | "both"): Promise<R> {
   try {

@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson, forgetAgent, type AgentKey } from "@/lib/ai";
 import { clock } from "@/lib/loom";
+import { businessModelOf, industryKey, MODEL_OF_INDUSTRY, playbookText, type BuyerPlatform, type BusinessModel, type PlaybookItem, type VerticalNode } from "@/lib/buyer-playbook";
 
 // Kaizen's senior buyer, distilled. Every Loom where he reads or buys an account is taken apart into five layers:
 // principles (what he believes and why), decision rules (if this, then that, with his thresholds), situational cases
@@ -108,7 +109,29 @@ export async function saveInsights(admin: Admin, v: { videoId: string; loomId: s
         ),
       ),
   ];
-  for (let i = 0; i < rows.length; i += 200) await admin.from("media_buying_insights").insert(rows.slice(i, i + 200));
+  // Where it came from: the video's client's sub-vertical, else the industry he named (a case's own account first),
+  // placed in our taxonomy once and remembered; the business model from what he said, else the client's industry
+  const now = new Date().toISOString();
+  const client = v.clientId ? ((await admin.from("clients").select("vertical_id, industry").eq("id", v.clientId).maybeSingle()).data ?? null) : null;
+  const named = [...new Set(rows.map((r) => (r.layer === "case" ? str((r.tags as Record<string, unknown>).industry) : "") || r.industry || "").filter(Boolean))];
+  const mapped = await mapIndustries(admin, named as string[]).catch(() => null);
+  const caseModels = d.cases.map((c) => businessModelOf(c.business_model)).filter(Boolean) as BusinessModel[];
+  const videoModel = majority(caseModels) ?? (client?.industry ? (MODEL_OF_INDUSTRY[client.industry as string] ?? null) : null) ?? businessModelOf(v.industry);
+  const attributed = rows.map((r) => {
+    const t = r.tags as Record<string, unknown>;
+    const mineToo = Boolean((r as { client_id?: string | null }).client_id);
+    const own = r.layer === "case" && !mineToo ? str(t.industry) : "";
+    const viaText = (s: string) => (s && mapped ? (mapped.get(industryKey(s)) ?? null) : null);
+    const vertical_id = (mineToo && (client?.vertical_id as string | null)) || viaText(own) || (client?.vertical_id as string | null) || viaText(r.industry ?? "") || null;
+    return { ...r, vertical_id, business_model: businessModelOf(str(t.business_model)) ?? videoModel, attributed_at: mapped ? now : null };
+  });
+  const ids: string[] = [];
+  for (let i = 0; i < attributed.length; i += 200) {
+    const { data } = await admin.from("media_buying_insights").insert(attributed.slice(i, i + 200)).select("id");
+    ids.push(...(data ?? []).map((x) => x.id as string));
+  }
+  // General or only for this kind of business (and the platform, when he didn't say); left for the backfill if the AI is busy
+  await scopeInsights(admin, ids, { until: Date.now() + 150_000, parallel: 2 }).catch(() => null);
   return rows.length;
 }
 
@@ -230,6 +253,9 @@ export async function rewriteBuyerSkills(admin: Admin) {
     .from("media_buying_insights")
     .select("layer, body, platform, confidence, quote, conflict_with, conflict_skill, ruling")
     .neq("layer", "case")
+    // Only what holds for any account: a point that only makes sense for one kind of business comes with that
+    // business's accounts (buyerPlaybookBlock), never taught to every account
+    .eq("scope", "general")
     .is("merged_into", null)
     .eq("excluded", false)
     .not("consolidated_at", "is", null)
@@ -279,6 +305,280 @@ export async function ruleInsight(admin: Admin, id: string, ruling: "keep" | "dr
   await rewriteBuyerSkills(admin);
 }
 
+// ─── Where each point came from: platform, industry, business model, scope ──
+
+const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+const majority = <T extends string>(xs: T[]): T | null => {
+  if (!xs.length) return null;
+  const n = new Map<T, number>();
+  for (const x of xs) n.set(x, (n.get(x) ?? 0) + 1);
+  return [...n].sort((a, b) => b[1] - a[1])[0][0];
+};
+
+async function taxonomy(admin: Admin) {
+  const { data } = await admin.from("verticals").select("id, name, parent_id, description").eq("active", true).order("sort_order");
+  return (data ?? []) as (VerticalNode & { description: string | null })[];
+}
+
+const MAP_SCHEMA = {
+  type: "object",
+  properties: { items: { type: "array", items: { type: "object", properties: { n: { type: "integer" }, ref: { type: "string" } }, required: ["n", "ref"], additionalProperties: false } } },
+  required: ["items"],
+  additionalProperties: false,
+};
+
+/**
+ * Free-text industries ("restaurant (pizza)", "medical (mental health practice)") placed in our verticals: the
+ * sub-vertical that fits best, else the vertical, else none. Each string is asked once (one call per batch of new
+ * ones) and remembered in media_buying_industry_map. Returns key → vertical id (null: nothing fits).
+ */
+export async function mapIndustries(admin: Admin, texts: string[]) {
+  const out = new Map<string, string | null>();
+  const keys = [...new Map(texts.filter((t) => t.trim()).map((t) => [industryKey(t), t.trim()])).entries()];
+  if (!keys.length) return out;
+  for (let i = 0; i < keys.length; i += 300) {
+    const { data } = await admin.from("media_buying_industry_map").select("key, vertical_id").in("key", keys.slice(i, i + 300).map(([k]) => k));
+    for (const r of data ?? []) out.set(r.key as string, (r.vertical_id as string | null) ?? null);
+  }
+  const fresh = keys.filter(([k]) => !out.has(k));
+  if (!fresh.length) return out;
+  const tree = await taxonomy(admin);
+  if (!tree.length) return out;
+  // Short refs (V1, S1) for the model; ids only on our side
+  const ref = new Map<string, string>();
+  const lines: string[] = [];
+  let sub = 0;
+  tree
+    .filter((v) => !v.parent_id)
+    .forEach((v, vi) => {
+      ref.set(`V${vi + 1}`, v.id);
+      lines.push(`V${vi + 1} ${v.name}${v.description ? `: ${v.description.slice(0, 140)}` : ""}`);
+      for (const s of tree.filter((x) => x.parent_id === v.id)) {
+        sub++;
+        ref.set(`S${sub}`, s.id);
+        lines.push(`  S${sub} ${s.name}${s.description ? `: ${s.description.slice(0, 140)}` : ""}`);
+      }
+    });
+  for (let i = 0; i < fresh.length; i += 80) {
+    const batch = fresh.slice(i, i + 80);
+    const res = await askJson<{ items: { n: number; ref: string }[] }>({
+      agent: "verticals",
+      label: "insight industry map",
+      bare: true,
+      override: { model: "sonnet", effort: "low" },
+      maxTokens: 4000,
+      system: "You place the kinds of business a senior media buyer mentions into an ad agency's own verticals (V) and sub-verticals (S, indented under their vertical).",
+      schema: MAP_SCHEMA,
+      prompt: `<verticals>\n${lines.join("\n")}\n</verticals>\n\n<industries>\n${batch.map(([, t], j) => `${j + 1}. ${t.slice(0, 160)}`).join("\n")}\n</industries>\n\nFor every industry by number: ref is the sub-vertical (S…) it belongs to when one clearly fits (how the business sells and to whom, not just a shared word), else its vertical (V…) when only that fits, else empty when none fits or it's too vague ("unknown", "various", "agency").`,
+    });
+    const rows = batch.map(([k, t], j) => {
+      const r = res.items.find((x) => x.n === j + 1)?.ref.trim().toUpperCase() ?? "";
+      return { key: k, label: t.slice(0, 200), vertical_id: ref.get(r) ?? null };
+    });
+    await admin.from("media_buying_industry_map").upsert(rows, { onConflict: "key" });
+    for (const r of rows) out.set(r.key, r.vertical_id);
+  }
+  return out;
+}
+
+const SCOPE_SCHEMA = {
+  type: "object",
+  properties: {
+    items: {
+      type: "array",
+      items: { type: "object", properties: { ref: { type: "string" }, scope: { type: "string", enum: ["general", "industry"] }, platform: { type: "string", enum: ["meta", "google", "both", "none"] } }, required: ["ref", "scope", "platform"], additionalProperties: false },
+    },
+  },
+  required: ["items"],
+  additionalProperties: false,
+};
+
+/**
+ * General or industry: does the point hold for any account on its platform, or only make sense for that kind of
+ * business? Asked in batches of 40 (beliefs, rules and checks; a case is always about its account, a voice note always
+ * general). Points with no platform get one when they clearly name Meta or Google things.
+ */
+export async function scopeInsights(admin: Admin, ids?: string[], { until = Date.now() + 600_000, parallel = 4 }: { until?: number; parallel?: number } = {}) {
+  const out = { scoped: 0, industry: 0, platform: 0 };
+  const now = () => new Date().toISOString();
+  // Cases and voice need no call
+  for (const [layer, scope] of [
+    ["case", "industry"],
+    ["voice", "general"],
+  ] as const) {
+    let q = admin.from("media_buying_insights").update({ scope, scoped_at: now() }).eq("layer", layer).is("scoped_at", null);
+    if (ids) q = q.in("id", ids);
+    await q;
+  }
+  const names = new Map((await taxonomy(admin)).map((v) => [v.id, v.name]));
+  for (;;) {
+    if (Date.now() > until - 45_000) break;
+    let q = admin.from("media_buying_insights").select("id, layer, body, platform, vertical_id, business_model, industry").is("scoped_at", null).is("merged_into", null).eq("excluded", false).in("layer", ["principle", "rule", "diagnostic"]).order("created_at").limit(40 * parallel);
+    if (ids) q = q.in("id", ids.slice(0, 1000));
+    const { data } = await q;
+    if (!data?.length) break;
+    const batches: (typeof data)[] = [];
+    for (let i = 0; i < data.length; i += 40) batches.push(data.slice(i, i + 40));
+    const done = await Promise.all(
+      batches.map(async (b) => {
+        try {
+          const res = await askJson<{ items: { ref: string; scope: "general" | "industry"; platform: Platform }[] }>({
+            agent: "auditor",
+            label: "insight scope",
+            bare: true,
+            override: { model: "sonnet", effort: "low" },
+            maxTokens: 5000,
+            system: "You sort the distilled teachings of Kaizen's senior buyer so each reaches the right accounts.",
+            schema: SCOPE_SCHEMA,
+            prompt: `<points>\n${b.map((x, i) => `P${i + 1} [${x.layer}; platform ${x.platform}; from ${[x.vertical_id ? names.get(x.vertical_id as string) : x.industry, x.business_model].filter(Boolean).join(", ") || "unknown business"}] ${(x.body as string).slice(0, 450)}`).join("\n")}\n</points>\n\nFor every point (ref P1, P2…):\nscope: industry when the point only makes sense for a certain kind of business (it hinges on that business's offer, customer or sales motion: reservations, ticketed events, a consult or a quote, a product category, a delivery radius, a seasonal rush specific to it); general when it holds for any account on its platform, even if he said it about one account. A buying mechanic (budgets, bidding, structure, testing, frequency, fatigue, reading the numbers) is general even when his example was one industry.\nplatform: meta when it's about Meta things (Ads Manager, ad sets, Advantage+, CBO or ABO, Reels, Stories, the pixel, lead forms, frequency), google when it's about Google Ads things (search terms, keywords, match types, Performance Max, Quality Score, impression share, responsive search ads, Shopping), both when it names both, none when it's about neither.`,
+          });
+          const at = now();
+          const byScope = new Map<string, string[]>();
+          for (let i = 0; i < b.length; i++) {
+            const r = res.items.find((x) => x.ref.trim().toUpperCase() === `P${i + 1}`);
+            const scope = r?.scope === "industry" ? "industry" : "general";
+            byScope.set(scope, [...(byScope.get(scope) ?? []), b[i].id as string]);
+            if (scope === "industry") out.industry++;
+            // Only a point with no platform gets one; a platform he said stays
+            if (b[i].platform === "none" && r && r.platform !== "none") {
+              await admin.from("media_buying_insights").update({ platform: r.platform }).eq("id", b[i].id);
+              out.platform++;
+            }
+          }
+          for (const [scope, list] of byScope) await admin.from("media_buying_insights").update({ scope, scoped_at: at }).in("id", list);
+          out.scoped += b.length;
+          return true;
+        } catch {
+          return false;
+        }
+      }),
+    );
+    if (!done.some(Boolean)) break;
+  }
+  return out;
+}
+
+type AttrRow = { id: string; layer: Layer; industry: string | null; tags: Record<string, unknown> | null; client_id: string | null; loom_video_id: string | null };
+
+/**
+ * The backfill, resumable (Settings button and the Loom cron step): every point not yet attributed gets its sub-vertical
+ * (its own client's; a case's named industry; the video's one client's; the industry it names, mapped once; or the one
+ * industry its video's cases share) and its business model (what he said, else the video's cases, else the client's
+ * industry); then each live point's scope. The generated skills are rewritten from the general ones after.
+ */
+export async function attributeInsights(admin: Admin, { budgetMs = 420_000 }: { budgetMs?: number } = {}) {
+  const until = Date.now() + budgetMs;
+  const out = { attributed: 0, mapped: 0, scoped: 0, industry: 0, platform: 0, left: 0 };
+  while (Date.now() < until - 90_000) {
+    const { data } = await admin.from("media_buying_insights").select("id, layer, industry, tags, client_id, loom_video_id").is("attributed_at", null).order("created_at").limit(1000);
+    const rows = (data ?? []) as AttrRow[];
+    if (!rows.length) break;
+    const videoIds = [...new Set(rows.map((r) => r.loom_video_id).filter(Boolean))] as string[];
+    const [{ data: videos }, { data: cases }] = await Promise.all([
+      videoIds.length ? admin.from("loom_videos").select("id, client_id, client_ids").in("id", videoIds) : Promise.resolve({ data: [] }),
+      videoIds.length ? admin.from("media_buying_insights").select("loom_video_id, industry, tags").eq("layer", "case").in("loom_video_id", videoIds) : Promise.resolve({ data: [] }),
+    ]);
+    // The video's client counts only when it's about one client
+    const videoClient = new Map<string, string | null>();
+    for (const v of videos ?? []) videoClient.set(v.id as string, v.client_id && ((v.client_ids as string[] | null) ?? []).length <= 1 ? (v.client_id as string) : null);
+    const clientIds = [...new Set([...rows.map((r) => r.client_id), ...videoClient.values()].filter(Boolean))] as string[];
+    const { data: clients } = clientIds.length ? await admin.from("clients").select("id, vertical_id, industry").in("id", clientIds) : { data: [] };
+    const client = new Map((clients ?? []).map((c) => [c.id as string, c as { id: string; vertical_id: string | null; industry: string | null }]));
+    const named = [...rows.flatMap((r) => [str(r.tags?.industry), r.industry ?? ""]), ...(cases ?? []).flatMap((c) => [str((c.tags as Record<string, unknown>)?.industry), (c.industry as string | null) ?? ""])];
+    const mapped = await mapIndustries(admin, named);
+    out.mapped = mapped.size;
+    const via = (s: string | null | undefined) => (s && s.trim() ? (mapped.get(industryKey(s)) ?? null) : null);
+    // Per video: the one industry its cases share (if they all agree), and its cases' business model
+    const videoVertical = new Map<string, string | null>();
+    const videoModel = new Map<string, BusinessModel | null>();
+    for (const vid of videoIds) {
+      const vc = (cases ?? []).filter((c) => c.loom_video_id === vid);
+      const vs = [...new Set(vc.map((c) => via(str((c.tags as Record<string, unknown>)?.industry) || (c.industry as string | null))).filter(Boolean))];
+      videoVertical.set(vid, vs.length === 1 ? (vs[0] as string) : null);
+      videoModel.set(vid, majority(vc.map((c) => businessModelOf(str((c.tags as Record<string, unknown>)?.business_model))).filter(Boolean) as BusinessModel[]));
+    }
+    const groups = new Map<string, string[]>();
+    for (const r of rows) {
+      const own = r.client_id ? client.get(r.client_id) : undefined;
+      const vClient = r.loom_video_id ? client.get(videoClient.get(r.loom_video_id) ?? "") : undefined;
+      const caseText = r.layer === "case" && !r.client_id ? str(r.tags?.industry) : "";
+      const vertical = own?.vertical_id || via(caseText) || vClient?.vertical_id || via(r.industry) || via(str(r.tags?.industry)) || (r.loom_video_id ? videoVertical.get(r.loom_video_id) : null) || null;
+      const ind = own?.industry ?? vClient?.industry ?? null;
+      const model = businessModelOf(str(r.tags?.business_model)) ?? (r.loom_video_id ? videoModel.get(r.loom_video_id) : null) ?? (ind ? (MODEL_OF_INDUSTRY[ind] ?? null) : null) ?? businessModelOf(r.industry);
+      const key = `${vertical ?? ""}|${model ?? ""}`;
+      groups.set(key, [...(groups.get(key) ?? []), r.id]);
+    }
+    const at = new Date().toISOString();
+    for (const [key, ids] of groups) {
+      const [vertical_id, business_model] = key.split("|");
+      for (let i = 0; i < ids.length; i += 200) await admin.from("media_buying_insights").update({ vertical_id: vertical_id || null, business_model: business_model || null, attributed_at: at }).in("id", ids.slice(i, i + 200));
+    }
+    out.attributed += rows.length;
+  }
+  if (Date.now() < until - 60_000) {
+    const s = await scopeInsights(admin, undefined, { until });
+    out.scoped = s.scoped;
+    out.industry = s.industry;
+    out.platform = s.platform;
+  }
+  const [{ count: a }, { count: s }] = await Promise.all([
+    admin.from("media_buying_insights").select("id", { count: "exact", head: true }).is("attributed_at", null),
+    admin.from("media_buying_insights").select("id", { count: "exact", head: true }).is("scoped_at", null).is("merged_into", null).eq("excluded", false),
+  ]);
+  out.left = (a ?? 0) + (s ?? 0);
+  if (out.scoped || out.attributed) await rewriteBuyerSkills(admin);
+  return out;
+}
+
+/** Whether the backfill still has work (the cron step runs it only then) */
+export async function attributionPending(admin: Admin) {
+  const [{ count: a }, { count: s }] = await Promise.all([
+    admin.from("media_buying_insights").select("id", { count: "exact", head: true }).is("attributed_at", null),
+    admin.from("media_buying_insights").select("id", { count: "exact", head: true }).is("scoped_at", null).is("merged_into", null).eq("excluded", false),
+  ]);
+  return (a ?? 0) + (s ?? 0);
+}
+
+// ─── The playbook for one account, at call time ─────────────────────────────
+
+const playbookCache = new Map<string, { at: number; text: string }>();
+
+/**
+ * The senior buyer's points for this client's platform and kind of business (sub-vertical, then vertical, then business
+ * model), with the closest cases, about 3.5k characters. Kept 10 minutes per client and platform. "" when none fit.
+ */
+export async function buyerPlaybookBlock(admin: Admin, clientId: string, platform: BuyerPlatform) {
+  const key = `${clientId}:${platform}`;
+  const hit = playbookCache.get(key);
+  if (hit && Date.now() - hit.at < 600_000) return hit.text;
+  const [{ data: c }, tree] = await Promise.all([admin.from("clients").select("vertical_id, industry, industry_detail").eq("id", clientId).maybeSingle(), taxonomy(admin)]);
+  let text = "";
+  const verticalId = (c?.vertical_id as string | null) ?? null;
+  const model = c?.industry ? (MODEL_OF_INDUSTRY[c.industry as string] ?? null) : null;
+  if (c && (verticalId || model)) {
+    const mine = tree.find((v) => v.id === verticalId);
+    const parentId = mine ? (mine.parent_id ?? mine.id) : null;
+    const family = parentId ? tree.filter((v) => v.id === parentId || v.parent_id === parentId).map((v) => v.id) : [];
+    const or = [family.length ? `vertical_id.in.(${family.join(",")})` : "", model ? `business_model.eq.${model}` : ""].filter(Boolean).join(",");
+    const { data } = await admin
+      .from("media_buying_insights")
+      .select("layer, body, platform, vertical_id, business_model, scope, confidence, at_seconds, tags, conflict_with, conflict_skill, ruling")
+      .in("platform", [platform, "both"])
+      .neq("layer", "voice")
+      .is("merged_into", null)
+      .eq("excluded", false)
+      .or(or)
+      .order("confidence", { ascending: false })
+      .limit(800);
+    const items = (data ?? []).filter((i) => !((i.conflict_with || i.conflict_skill) && !i.ruling)) as unknown as PlaybookItem[];
+    const parent = parentId ? tree.find((v) => v.id === parentId) : undefined;
+    const industry = [parent?.name, mine && mine.id !== parent?.id ? mine.name : null].filter(Boolean).join(" > ") || (c.industry_detail as string | null) || (c.industry as string | null) || "this business";
+    text = playbookText(items, { platform, verticalId, businessModel: model }, tree, industry);
+  }
+  playbookCache.set(key, { at: Date.now(), text });
+  return text;
+}
+
 // ─── What Settings shows ────────────────────────────────────────────────────
 
 export type InsightsStatus = {
@@ -287,6 +587,14 @@ export type InsightsStatus = {
   conflicts: { id: string; layer: Layer; body: string; quote: string | null; at: string | null; url: string | null; note: string | null; against: string | null; againstSkill: string | null }[];
   top: { layer: Layer; body: string; confidence: number }[];
   skillsAt: string | null;
+  /** Where the live points came from: general (taught to every account) or industry-only, by platform and vertical */
+  attribution: {
+    general: number;
+    industry: number;
+    unmapped: number;
+    pending: number;
+    verticals: { name: string; meta: number; google: number; both: number; none: number; total: number; industry: number }[];
+  };
 };
 
 export async function insightsStatus(admin: Admin): Promise<InsightsStatus> {
@@ -298,8 +606,31 @@ export async function insightsStatus(admin: Admin): Promise<InsightsStatus> {
   ]);
   const byLayer: Record<Layer, number> = { principle: 0, rule: 0, case: 0, diagnostic: 0, voice: 0 };
   for (const r of rows ?? []) byLayer[r.layer as Layer]++;
+  const [{ data: counts }, tree] = await Promise.all([admin.rpc("buying_insight_counts"), taxonomy(admin)]);
+  const byId = new Map(tree.map((v) => [v.id, v]));
+  const attribution: InsightsStatus["attribution"] = { general: 0, industry: 0, unmapped: 0, pending: 0, verticals: [] };
+  const per = new Map<string, InsightsStatus["attribution"]["verticals"][number]>();
+  for (const c of (counts ?? []) as { platform: Platform; vertical_id: string | null; scope: string; attributed: boolean; scoped: boolean; n: number }[]) {
+    const n = Number(c.n);
+    if (!c.attributed || !c.scoped) attribution.pending += n;
+    if (c.scope === "industry") attribution.industry += n;
+    else attribution.general += n;
+    const v = c.vertical_id ? byId.get(c.vertical_id) : undefined;
+    if (!v) {
+      if (c.attributed) attribution.unmapped += n;
+      continue;
+    }
+    const top = v.parent_id ? (byId.get(v.parent_id) ?? v) : v;
+    const row = per.get(top.id) ?? { name: top.name, meta: 0, google: 0, both: 0, none: 0, total: 0, industry: 0 };
+    row[c.platform] += n;
+    row.total += n;
+    if (c.scope === "industry") row.industry += n;
+    per.set(top.id, row);
+  }
+  attribution.verticals = [...per.values()].sort((a, b) => b.total - a.total).slice(0, 8);
   return {
     byLayer,
+    attribution,
     waiting: waiting ?? 0,
     conflicts: (conflicts ?? []).map((c) => ({
       id: c.id as string,

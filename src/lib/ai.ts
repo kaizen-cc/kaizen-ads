@@ -135,7 +135,19 @@ async function withKnowledge(agent: AgentKey, label: string, prompt: string, cli
     const { learningsBlock } = await import("@/lib/learnings");
     learned = await learningsBlock(createAdminClient(), [agent], clientId ?? null, prompt.slice(-4000)).catch(() => "");
   }
-  return [prompt, block, learned].filter(Boolean).join("\n\n");
+  // A buyer agent working on one account: the senior buyer's playbook for that platform and that kind of business
+  // (its sub-vertical, vertical, business model), which the global skills leave out on purpose
+  let playbook = "";
+  if (clientId && !prompt.includes("<senior_buyer_playbook")) {
+    const { playbookPlatforms } = await import("@/lib/buyer-playbook");
+    const platforms = playbookPlatforms(agent, label);
+    if (platforms.length) {
+      const { buyerPlaybookBlock } = await import("@/lib/buying-insights");
+      const admin = createAdminClient();
+      playbook = (await Promise.all(platforms.map((p) => buyerPlaybookBlock(admin, clientId, p).catch(() => "")))).filter(Boolean).join("\n\n");
+    }
+  }
+  return [prompt, block, learned, playbook].filter(Boolean).join("\n\n");
 }
 
 /** Who set an AI call off: the signed-in team member, or Kaizen Ads itself (a scheduled job, no one signed in) */

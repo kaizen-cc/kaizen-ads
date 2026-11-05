@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { assignLoomVideo, consolidateBuyerInsights, importLooms, keepLoomsGoing, recheckLoomFolder, retryLoomVideo, ruleBuyerInsight } from "@/app/(team)/loom-actions";
+import { assignLoomVideo, attributeBuyerInsights, consolidateBuyerInsights, importLooms, keepLoomsGoing, recheckLoomFolder, retryLoomVideo, ruleBuyerInsight } from "@/app/(team)/loom-actions";
 import type { InsightsStatus } from "@/lib/buying-insights";
 import type { LoomStatus } from "@/lib/loom-intake";
 import { loomFolders, pastedLooms } from "@/lib/loom-links";
@@ -195,6 +195,7 @@ export function BuyerInsightsPanel({ status, canRule }: { status: InsightsStatus
         {status.waiting ? `${status.waiting} new points waiting to be merged · ` : ""}Skills rewritten {when(status.skillsAt)}
       </p>
       {note && <p className="text-[12.5px] text-muted">{note}</p>}
+      <Attribution a={status.attribution} canRun={canRule} />
       {status.top.length > 0 && (
         <ul className="grid gap-1.5 text-[13px]">
           {status.top.map((t, i) => (
@@ -213,6 +214,77 @@ export function BuyerInsightsPanel({ status, canRule }: { status: InsightsStatus
         </Group>
       )}
     </section>
+  );
+}
+
+/** Where the points came from: general (every account's skills) or only for one kind of business, by vertical and platform */
+function Attribution({ a, canRun }: { a: InsightsStatus["attribution"]; canRun: boolean }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  return (
+    <div className="grid gap-3 rounded-[16px] border border-line bg-bg/40 p-3 md:p-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="grid gap-0.5">
+          <h3 className="text-[14px] font-medium">By platform and industry</h3>
+          <p className="max-w-2xl text-[12.5px] leading-relaxed text-muted">
+            General points are taught to every account&rsquo;s buyer. Industry points only come with accounts in that sub-vertical, its vertical or the same business model, on their platform.
+          </p>
+        </div>
+        {canRun && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setNote(null);
+              const r = await attributeBuyerInsights();
+              setBusy(false);
+              setNote(r.ok ? `${r.attributed} attributed, ${r.scoped} sorted (${r.industry} industry-only), ${r.platform} given a platform${r.left ? `, ${r.left} still to go` : ""}.` : r.error);
+              router.refresh();
+            }}
+            className="min-h-11 rounded-full border border-line px-4 text-[13px] text-muted hover:text-fg disabled:opacity-50 md:min-h-9"
+          >
+            {busy ? "Attributing…" : a.pending ? `Attribute ${a.pending} now` : "Attribute again"}
+          </button>
+        )}
+      </div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <Stat label="General" value={a.general} />
+        <Stat label="Industry only" value={a.industry} tone="brand" />
+        <Stat label="No industry found" value={a.unmapped} tone={a.unmapped ? "warn" : undefined} />
+        <Stat label="Still to sort" value={a.pending} tone={a.pending ? "warn" : "ok"} />
+      </div>
+      {note && <p className="text-[12.5px] text-muted">{note}</p>}
+      {a.verticals.length > 0 && (
+        <div className="-mx-1 overflow-x-auto">
+          <table className="w-full min-w-[420px] text-[12.5px]">
+            <thead className="text-left text-faint">
+              <tr>
+                <th className="px-1 py-1 font-normal">Vertical</th>
+                <th className="px-1 py-1 text-right font-normal">Meta</th>
+                <th className="px-1 py-1 text-right font-normal">Google</th>
+                <th className="px-1 py-1 text-right font-normal">Both</th>
+                <th className="px-1 py-1 text-right font-normal">None</th>
+                <th className="px-1 py-1 text-right font-normal">Industry only</th>
+              </tr>
+            </thead>
+            <tbody>
+              {a.verticals.map((v) => (
+                <tr key={v.name} className="border-t border-line">
+                  <td className="px-1 py-1.5">{v.name}</td>
+                  <td className="tabular px-1 py-1.5 text-right">{v.meta}</td>
+                  <td className="tabular px-1 py-1.5 text-right">{v.google}</td>
+                  <td className="tabular px-1 py-1.5 text-right">{v.both}</td>
+                  <td className="tabular px-1 py-1.5 text-right text-muted">{v.none}</td>
+                  <td className="tabular px-1 py-1.5 text-right text-brand-text">{v.industry}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 

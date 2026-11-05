@@ -171,6 +171,7 @@ const UTILITY: Record<string, { labels: string[]; why: string }> = {
   "src/lib/bible-links.ts": { labels: ["bible link check"], why: "compares two versions of a web page; a diff" },
   "src/lib/bible-rules.ts": { labels: ["bible rules log"], why: "extracts dos and don'ts from statements; extraction" },
   "src/lib/business-audit-route.ts": { labels: ["sprint merge"], why: "merges two action lists; a utility" },
+  "src/lib/buying-insights.ts": { labels: ["insight industry map", "insight scope"], why: "places industry names in the taxonomy and sorts the senior buyer's points in batches across videos; classification" },
   "src/lib/calls.ts": { labels: ["commitments covered", "recheck call promises"], why: "classifies promises against tickets, in batches" },
   "src/lib/chat-changes.ts": { labels: ["chat team change"], why: "maps a request to a seat and a person from a list" },
   "src/lib/client-docs.ts": { labels: ["client document"], why: "summarises one file; extraction" },
