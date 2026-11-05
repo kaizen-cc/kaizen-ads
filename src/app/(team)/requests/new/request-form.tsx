@@ -1001,7 +1001,7 @@ export function RequestForm({
                         setAsanaSent(tasks.map((t) => ({ name: t.name, url: t.url })));
                       }}
                     />
-                    <BriefPdfButton body={() => ({ ...draft, clientId: draft.clientId })} className="inline-flex h-12 items-center gap-2 rounded-full border border-line px-4 text-[14px] text-fg hover:border-faint disabled:opacity-60 md:h-11" />
+                    <BriefPdfButton body={() => ({ ...draft, clientId: draft.clientId })} onStructure={(pdfCache) => setDraft((d) => ({ ...d, pdfCache }))} className="inline-flex h-12 items-center gap-2 rounded-full border border-line px-4 text-[14px] text-fg hover:border-faint disabled:opacity-60 md:h-11" />
                   </span>
                 )}
                 {step < STEPS.length - 1 ? (

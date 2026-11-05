@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { PlannedTask, SentTask } from "@/lib/asana-request";
+import type { BriefStructure } from "@/lib/brief-pdf-model";
 
 type Res<T> = { ok: true; tasks: T[] } | { ok: false; error: string };
 
@@ -107,20 +108,32 @@ export function AsanaSend({ preview, send, onSent, className = "", label = "Send
   );
 }
 
-/** Downloads the request as a Kaizen-branded PDF */
-export function BriefPdfButton({ body, className = "" }: { body: () => Record<string, unknown>; className?: string }) {
-  const [busy, setBusy] = useState(false);
+/** Downloads the request as a Kaizen-branded PDF. The brief is restructured for it once (onStructure keeps that with the
+ *  draft, so the next export of the same brief is instant). */
+export function BriefPdfButton({ body, onStructure, className = "" }: { body: () => Record<string, unknown>; onStructure?: (cache: { key: string; structure: BriefStructure }) => void; className?: string }) {
+  const [busy, setBusy] = useState<"read" | "make" | null>(null);
   const [error, setError] = useState<string | null>(null);
   return (
     <span className="inline-flex flex-col">
       <button
         type="button"
-        disabled={busy}
+        disabled={Boolean(busy)}
         onClick={async () => {
-          setBusy(true);
+          setBusy("read");
           setError(null);
           try {
-            const res = await fetch("/api/requests/brief-pdf", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body()) });
+            const payload = body();
+            const post = (extra: Record<string, unknown>) => fetch("/api/requests/brief-pdf", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...payload, ...extra }) });
+            // The brief as a production sheet first (instant when the draft already has it for this brief)
+            const sr = await post({ mode: "structure" });
+            let cache = payload.pdfCache ?? null;
+            if (sr.ok) {
+              const kept = (await sr.json()) as { key: string; structure: BriefStructure };
+              cache = kept;
+              onStructure?.(kept);
+            }
+            setBusy("make");
+            const res = await post({ mode: "pdf", pdfCache: cache });
             if (!res.ok) throw new Error();
             const blob = await res.blob();
             const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? "Creative request.pdf";
@@ -133,11 +146,11 @@ export function BriefPdfButton({ body, className = "" }: { body: () => Record<st
           } catch {
             setError("Couldn't make the PDF.");
           }
-          setBusy(false);
+          setBusy(null);
         }}
         className={className || "inline-flex min-h-11 items-center gap-2 rounded-full border border-line px-4 text-[14px] text-fg hover:border-faint disabled:opacity-60"}
       >
-        ↓ {busy ? "Making the PDF…" : "Download PDF"}
+        ↓ {busy === "read" ? "Reading the brief…" : busy === "make" ? "Making the PDF…" : "Download PDF"}
       </button>
       {error && <span className="mt-1 text-[12px] text-bad">{error}</span>}
     </span>

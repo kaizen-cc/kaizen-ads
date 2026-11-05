@@ -1,5 +1,6 @@
 import type { Format, Priority } from "@/lib/stages";
 import type { IdeaKey } from "@/lib/saved-references";
+import type { BriefStructure } from "@/lib/brief-pdf-model";
 
 export type Size = "1x1" | "4x5" | "9x16";
 /** The sizes new work is made in: 4:5 (feed) and 9:16 (Stories, Reels). Kaizen stopped designing 1:1 on Oct 26, 2026; "1x1" stays
@@ -28,6 +29,7 @@ export type Draft = {
   migration?: Migration | null; // coming over from Asana: the stage it lands in and what that stage needs
   savedRefIds?: string[]; // saved references it's built on: marked used (and out of Saved) once it's sent
   ideaKeys?: IdeaKey[]; // the ideas it's built on (a market ad, a pattern, an audit's idea): everyone's save of them is marked used once it's sent
+  pdfCache?: { key: string; structure: BriefStructure } | null; // the brief restructured for its PDF, kept until the brief changes (by key)
 };
 
 /** An Asana task becoming a ticket: it lands in the stage it reached, with what that stage needs filled in. */
