@@ -7,6 +7,7 @@ import { aiEnabled } from "@/lib/ai";
 import { isLoomSpace, loomFolders, pastedLooms } from "@/lib/loom-links";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import type { ConflictDetail, ConflictMessage } from "@/lib/insight-conflicts";
 
 // Loom videos into the knowledge: pasted in bulk (links one per line, a CSV export, a folder page's source) or as a
 // shared folder link, in Settings (execs and leads) or on a client's Documents (anyone who can see the client). The
@@ -74,7 +75,7 @@ export async function assignLoomVideo(id: string, clientId: string | null): Prom
     const me = await requireStaff();
     if (!(await canUse(me, clientId))) return { ok: false, error: "You can't file it there." };
     if (!clientId && !isExecOrLead(me)) return { ok: false, error: "Execs and leads decide that." };
-    await (await import("@/lib/loom-intake")).assignLoom(createAdminClient(), id, clientId);
+    await (await import("@/lib/loom-intake")).assignLoom(createAdminClient(), id, clientId, me.id);
     revalidatePath("/settings", "layout");
     revalidatePath("/clients", "layout");
     return { ok: true };
@@ -125,16 +126,105 @@ export async function attributeBuyerInsights(): Promise<R<{ attributed: number; 
   }
 }
 
-/** Execs: a ruling on a contradiction (keep this one, drop it, or both hold in different situations) */
+/** The people who rule on audits: a ruling on a contradiction (keep this one, drop it, or both hold in different situations) */
 export async function ruleBuyerInsight(id: string, ruling: "keep" | "drop" | "both"): Promise<R> {
   try {
     const me = await requireStaff();
-    if (!me.isExec) return { ok: false, error: "Execs only." };
+    if (!(await ruler(me))) return { ok: false, error: "Only the people who rule on audits can decide this." };
     await (await import("@/lib/buying-insights")).ruleInsight(createAdminClient(), id, ruling, me.id);
     revalidatePath("/settings", "layout");
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Couldn't save the ruling." };
+  }
+}
+
+type Prospect = { name: string; domain: string; adAccount: string; business: string };
+
+/** Not about one of our clients: taught to the buyers as method, with the prospect it audits kept on it */
+export async function teachLoomVideo(id: string, prospect: Prospect | null): Promise<R<{ queued: boolean }>> {
+  try {
+    const me = await requireStaff();
+    if (!isExecOrLead(me)) return { ok: false, error: "Execs and leads decide that." };
+    const r = await (await import("@/lib/loom-intake")).teachFromLoom(createAdminClient(), id, prospect, me.id);
+    if (r.queued) await work();
+    revalidatePath("/settings", "layout");
+    return { ok: true, ...r };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't save it." };
+  }
+}
+
+/** The prospect on a video corrected */
+export async function saveLoomProspect(id: string, prospect: Prospect): Promise<R> {
+  try {
+    const me = await requireStaff();
+    if (!isExecOrLead(me)) return { ok: false, error: "Execs and leads decide that." };
+    await (await import("@/lib/loom-intake")).saveProspect(createAdminClient(), id, prospect, me.id);
+    revalidatePath("/settings", "layout");
+    revalidatePath("/clients", "layout");
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't save the prospect." };
+  }
+}
+
+/** "This prospect became client X": every Loom about them filed to the client as a pre-sale audit */
+export async function prospectBecameClient(id: string, clientId: string): Promise<R<{ attached: number }>> {
+  try {
+    const me = await requireStaff();
+    if (!isExecOrLead(me)) return { ok: false, error: "Execs and leads decide that." };
+    if (!(await canUse(me, clientId))) return { ok: false, error: "You can't file it there." };
+    const r = await (await import("@/lib/loom-prospects")).prospectBecameClient(createAdminClient(), id, clientId, me.id);
+    revalidatePath("/settings", "layout");
+    revalidatePath("/clients", "layout");
+    return { ok: true, ...r };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't attach them." };
+  }
+}
+
+// ─── Contradictions: the review sheet ───────────────────────────────────────
+
+async function ruler(me: Staff) {
+  return (await import("@/lib/audit-rebuttals")).canRebut(createAdminClient(), me.id);
+}
+
+/** One contradiction, both sides and the chat (anyone on the team can read; only rulers act) */
+export async function loadConflict(id: string): Promise<R<{ detail: ConflictDetail; canRule: boolean }>> {
+  try {
+    const me = await requireStaff();
+    const detail = await (await import("@/lib/insight-conflicts")).conflictDetail(createAdminClient(), id);
+    if (!detail) return { ok: false, error: "That contradiction isn't there any more." };
+    return { ok: true, detail, canRule: await ruler(me) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't open it." };
+  }
+}
+
+/** Talk it through: the person's message (empty to open the chat) and the agent's answer */
+export async function talkConflict(id: string, text: string): Promise<R<{ answer: ConflictMessage }>> {
+  try {
+    const me = await requireStaff();
+    if (!(await ruler(me))) return { ok: false, error: "Only the people who rule on audits can talk this through." };
+    if (!aiEnabled()) return { ok: false, error: "The AI isn't connected." };
+    const answer = await (await import("@/lib/insight-conflicts")).askConflict(createAdminClient(), id, text, me.id);
+    return { ok: true, answer };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't ask." };
+  }
+}
+
+/** Teach this refined rule: saved as a new ruled point that settles the contradiction, and the skills rewritten */
+export async function teachRefinedRule(messageId: string): Promise<R> {
+  try {
+    const me = await requireStaff();
+    if (!(await ruler(me))) return { ok: false, error: "Only the people who rule on audits can teach it." };
+    await (await import("@/lib/insight-conflicts")).teachRefined(createAdminClient(), messageId, me.id);
+    revalidatePath("/settings", "layout");
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't teach it." };
   }
 }
 

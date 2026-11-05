@@ -95,6 +95,8 @@ export async function POST(request: Request, ctx: RouteContext<"/api/zapier/[for
         const { data: c } = await admin.from("clients").select("status").eq("id", enrolled).single();
         if (c?.status === "onboarding") await (await import("@/lib/onboarding-guide")).welcomeClient(admin, enrolled).catch(() => null);
       });
+    // A prospect the senior buyer audited in Loom before they signed: those Looms are filed to them as pre-sale audits
+    if (enrolled && form === "enrollment") after(() => import("@/lib/loom-prospects").then(({ attachForNewClient }) => attachForNewClient(admin, enrolled)).catch(() => null));
     // Anything but a plain set package ("3 Videos per Month", "Silver + 2 extra videos") becomes Custom, with
     // exactly those deliverables as the allotment
     const recognised = (result as { creative_package?: string | null })?.creative_package ?? null;

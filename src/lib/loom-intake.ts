@@ -159,6 +159,15 @@ type Row = {
   by: string | null;
   created_at: string;
   result: Record<string, unknown> | null;
+  kind?: string | null;
+  platform?: string | null;
+  summary?: string | null;
+  agent_keys?: string[] | null;
+  doc_ids?: string[] | null;
+  forced_kind?: string | null;
+  prospect_status?: string | null;
+  prospect_name?: string | null;
+  prospect_business?: string | null;
 };
 
 type ClientRef = { id: string; name: string; former: boolean; aliases: string[]; industry: string | null };
@@ -189,10 +198,20 @@ const CLASSIFY = {
     clients: { type: "array", items: { type: "object", properties: { n: { type: "integer" }, sure: { type: "boolean" } }, required: ["n", "sure"], additionalProperties: false } },
     title: { type: "string" },
     summary: { type: "string" },
+    prospect: {
+      type: "object",
+      properties: { is_prospect: { type: "boolean" }, name: { type: "string" }, domain: { type: "string" }, ad_account: { type: "string" }, business: { type: "string" } },
+      required: ["is_prospect", "name", "domain", "ad_account", "business"],
+      additionalProperties: false,
+    },
   },
-  required: ["kind", "platform", "clients", "title", "summary"],
+  required: ["kind", "platform", "clients", "title", "summary", "prospect"],
   additionalProperties: false,
 };
+
+/** The prospect a pre-sale audit is about, as the AI read it */
+export type ProspectGuess = { is_prospect: boolean; name: string; domain: string; ad_account: string; business: string };
+const PROSPECT_RULES = `prospect: is_prospect true when the account or business it walks through isn't one of our clients: a sales prospect's account audit or pitch (an audit recorded to win the business). name: that business's name as said or shown; domain: its website if said or shown; ad_account: the ad account name or ID if shown; business: what it sells and to whom, in a few words ("dumpster rental, local service", "baby clothing store, ecommerce"). Empty strings when unknown; all empty and is_prospect false when it's about one of our clients or no business at all.`;
 
 const FILE = {
   type: "object",
@@ -206,7 +225,7 @@ const FILE = {
   additionalProperties: false,
 };
 
-type Classified = { kind: "method" | "client" | "both" | "other"; platform: "meta" | "google" | "both" | "none"; clients: { n: number; sure: boolean }[]; title: string; summary: string };
+type Classified = { kind: "method" | "client" | "both" | "other"; platform: "meta" | "google" | "both" | "none"; clients: { n: number; sure: boolean }[]; title: string; summary: string; prospect?: ProspectGuess };
 type Filed = { key_points: string[]; lessons: { rule: string; when: string }[]; situation: string; memory: { kind: "prefer" | "avoid" | "note"; text: string }[]; cases?: string };
 
 const NO_CAPTIONS =
@@ -229,16 +248,23 @@ async function fileDoc(admin: Admin, t: KnowledgeTarget, row: Row, doc: { name: 
 }
 
 /** What the video settles for one client: its situation in their knowledge, its durable decisions in memory (dated) */
-async function fileForClient(admin: Admin, row: Row, clientId: string, about: { title: string; summary: string }, filed: Filed) {
+async function fileForClient(admin: Admin, row: Row, clientId: string, about: { title: string; summary: string }, filed: Filed, opts: { presale?: boolean } = {}) {
   const date = dateOf(row.recorded_at ?? row.created_at);
-  const text = clean(`# ${about.title}\nA Loom recorded ${date}. ${about.summary}\n\n## The situation\n${filed.situation}\n\n${filed.cases ? `${filed.cases.replace(/^# .*\n/, "## How Kaizen's senior buyer read their account\n")}\n\n` : ""}${filed.key_points.length ? `## Key points\n${filed.key_points.map((k) => `- ${k}`).join("\n")}\n\n` : ""}## Transcript\n${row.transcript ?? ""}`);
-  const id = await fileDoc(admin, { scope: "client", clientId }, row, { name: `${about.title} (Loom ${date})`, text, title: about.title, summary: about.summary, keyPoints: filed.key_points });
+  const presale = Boolean(opts.presale);
+  // A pre-sale audit: recorded before they were a client, labeled so every agent reads it as the senior buyer's first read
+  const intro = presale ? `A pre-sale audit Loom recorded ${date}, before they became a client: Kaizen's senior buyer read their account as a prospect. ${about.summary}` : `A Loom recorded ${date}. ${about.summary}`;
+  const lessons = presale && filed.lessons.length ? `## What he'd do\n${filed.lessons.map((l) => `- ${l.rule}${l.when ? ` (${l.when})` : ""}`).join("\n")}\n\n` : "";
+  const text = clean(`# ${presale ? "Pre-sale audit: " : ""}${about.title}\n${intro}\n\n## The situation\n${filed.situation}\n\n${filed.cases ? `${filed.cases.replace(/^# .*\n/, "## How Kaizen's senior buyer read their account\n")}\n\n` : ""}${lessons}${filed.key_points.length ? `## Key points\n${filed.key_points.map((k) => `- ${k}`).join("\n")}\n\n` : ""}## Transcript\n${row.transcript ?? ""}`);
+  const title = presale ? `Pre-sale audit: ${about.title}` : about.title;
+  const id = await fileDoc(admin, { scope: "client", clientId }, row, { name: `${title} (Loom ${date})`, text, title, summary: about.summary, keyPoints: filed.key_points });
   const { data: known } = await admin.from("client_memory").select("body").eq("client_id", clientId).eq("source", "loom");
   const have = new Set((known ?? []).map((m) => m.body as string));
-  const notes = filed.memory
-    .map((m) => ({ client_id: clientId, kind: m.kind, source: "loom", dated: date, created_by: row.by, body: clean(`From a Loom (${date}, "${about.title.slice(0, 80)}"): ${m.text}`).slice(0, 1000) }))
+  const from = presale ? `From the pre-sale audit Loom (${date}, "${about.title.slice(0, 80)}")` : `From a Loom (${date}, "${about.title.slice(0, 80)}")`;
+  const lead = presale && about.summary ? [{ kind: "note" as const, text: `Kaizen's senior buyer audited their account before they signed. ${about.summary}` }] : [];
+  const notes = [...lead, ...filed.memory]
+    .map((m) => ({ client_id: clientId, kind: m.kind, source: "loom", dated: date, created_by: row.by, body: clean(`${from}: ${m.text}`).slice(0, 1000) }))
     .filter((m) => m.body.length > 20 && !have.has(m.body))
-    .slice(0, 6);
+    .slice(0, presale ? 7 : 6);
   if (notes.length) await admin.from("client_memory").insert(notes);
   return id;
 }
@@ -260,41 +286,59 @@ export async function processLoom(admin: Admin, row: Row) {
       if (fresh && row.attempts < 5) return update(admin, row.id, { status: "queued", title, description: loom.description, next_at: new Date(Date.now() + 30 * 60_000).toISOString(), error: "Waiting for Loom's captions" });
       return update(admin, row.id, { status: "failed", title, description: loom.description, error: NO_CAPTIONS });
     }
-    await update(admin, row.id, { title, description: loom.description ?? row.description, transcript, error: null });
+    await update(admin, row.id, { title, description: loom.description ?? row.description, transcript, error: null, ...(loom.thumbnail ? { thumbnail_url: loom.thumbnail } : {}) });
     row = { ...row, title, transcript, description: loom.description ?? row.description };
 
-    // 2. One quick classification on the start of the transcript
+    // 2. One quick classification on the start of the transcript (unless someone already decided it's method: a
+    // pre-sale audit of a prospect, taught to the buyers without being sorted again)
     const clients = await clientList(admin);
     const hint = row.hint_client_id ? clients.find((c) => c.id === row.hint_client_id) : null;
     const roster = clients.map((c, i) => `${i + 1}. ${c.name}${c.former ? " (former client)" : ""}${c.aliases.length ? ` · ${c.aliases.join(" · ")}` : ""}`).join("\n");
-    const head = `Title: ${row.title ?? "(none)"}${row.description ? `\nDescription: ${row.description.slice(0, 600)}` : ""}${row.folder ? `\nLoom folder: ${row.folder}` : ""}${hint ? `\nWhere it was shared: about ${hint.name} (posted in their channel or added on their page)` : row.hint_client ? `\nThe sender said it's about: ${row.hint_client}` : ""}`;
-    const c = await askJson<Classified>({
-      agent: "auditor",
-      label: "loom classify",
-      clientId: row.hint_client_id,
-      override: { model: "sonnet", effort: "low" },
-      maxTokens: 2500,
-      system: SYSTEM,
-      schema: CLASSIFY,
-      prompt: `${head}\n\n<transcript_start>\n${transcript.slice(0, CLASSIFY_CHARS)}\n</transcript_start>\n\nOur clients (number. name · website · ad account names):\n${roster}\n\nkind: "method" when it teaches how to read, buy or fix ad accounts in a way that applies beyond one client (an account audit walkthrough is method even when it uses one client's account, and usually "both"); "client" when it's about one client's situation (results, a decision, a problem, a plan, the relationship); "both" when it does both; "other" for anything else (internal admin, hiring, tools, personal, a demo for a prospect).\nplatform: which ad platform it's about (none when neither).\nclients: the numbers of the clients it's about, matched by name, brand, website or ad account name said or shown; sure: true only when it's clearly that client. Empty when none or you can't tell.\ntitle: a clear title in a few words (keep Loom's when it's good). summary: two or three sentences on what it covers.`,
-    });
+    const prospect = row.prospect_status === "prospect" ? { name: row.prospect_name ?? "", business: row.prospect_business ?? "" } : null;
+    const head = `Title: ${row.title ?? "(none)"}${row.description ? `\nDescription: ${row.description.slice(0, 600)}` : ""}${row.folder ? `\nLoom folder: ${row.folder}` : ""}${hint ? `\nWhere it was shared: about ${hint.name} (posted in their channel or added on their page)` : row.hint_client ? `\nThe sender said it's about: ${row.hint_client}` : ""}${prospect ? `\nA pre-sale audit of a sales prospect's account (not a client yet)${prospect.name ? `: ${prospect.name}` : ""}${prospect.business ? `, ${prospect.business}` : ""}.` : ""}`;
+    const before = (row.result ?? {}) as { classified?: Classified; title?: string };
+    const c: Classified =
+      row.forced_kind === "method"
+        ? {
+            kind: "method",
+            platform: (before.classified?.platform ?? (row.platform as Classified["platform"] | null) ?? "meta") as Classified["platform"],
+            clients: [],
+            title: before.title ?? row.title ?? "Loom video",
+            summary: row.summary ?? before.classified?.summary ?? "",
+            prospect: before.classified?.prospect,
+          }
+        : await askJson<Classified>({
+            agent: "auditor",
+            label: "loom classify",
+            clientId: row.hint_client_id,
+            override: { model: "sonnet", effort: "low" },
+            maxTokens: 2500,
+            system: SYSTEM,
+            schema: CLASSIFY,
+            prompt: `${head}\n\n<transcript_start>\n${transcript.slice(0, CLASSIFY_CHARS)}\n</transcript_start>\n\nOur clients (number. name · website · ad account names):\n${roster}\n\nkind: "method" when it teaches how to read, buy or fix ad accounts in a way that applies beyond one client (an account audit walkthrough is method even when it uses one client's account, and usually "both"; a sales prospect's account audit is "both" too); "client" when it's about one client's situation (results, a decision, a problem, a plan, the relationship); "both" when it does both; "other" for anything else (internal admin, hiring, tools, personal, a sales demo with no account read).\nplatform: which ad platform it's about (none when neither).\nclients: the numbers of the clients it's about, matched by name, brand, website or ad account name said or shown; sure: true only when it's clearly that client. Empty when none or you can't tell.\ntitle: a clear title in a few words (keep Loom's when it's good). summary: two or three sentences on what it covers.\n${PROSPECT_RULES}`,
+          });
     const sure = c.clients.filter((x) => x.sure).map((x) => clients[x.n - 1]).filter(Boolean);
     const unsure = c.clients.filter((x) => !x.sure).map((x) => clients[x.n - 1]).filter(Boolean);
     const about = { title: clean(c.title || row.title || "Loom video").slice(0, 160), summary: clean(c.summary).slice(0, 1500) };
-    const base = { kind: c.kind, platform: c.platform, summary: about.summary };
+    const suggested = c.prospect && (c.prospect.is_prospect || c.prospect.name.trim()) ? { prospect_suggested: c.prospect, prospect_suggested_at: new Date().toISOString() } : row.forced_kind ? {} : { prospect_suggested_at: new Date().toISOString() };
+    const base = { kind: c.kind, platform: c.platform, summary: about.summary, ...suggested };
 
     if (c.kind === "other") return update(admin, row.id, { ...base, status: "skipped", title: row.title ?? about.title, result: { title: about.title, classified: c } });
 
     // The client(s): where it was shared wins; the AI's sure matches join it
     const forClient = c.kind !== "method";
-    const clientIds = [...new Set([...(hint ? [hint.id] : []), ...sure.map((x) => x.id)])];
+    // (Someone decided it isn't about one of our clients: no client, whatever channel it came from)
+    const clientIds = row.forced_kind ? [] : [...new Set([...(hint ? [hint.id] : []), ...sure.map((x) => x.id)])];
     const industryOf = (ids: string[]) => (ids.length === 1 ? (clients.find((x) => x.id === ids[0])?.industry ?? null) : null);
 
     // 3. The full read, only for what gets filed. Ad-buying method is distilled (opus) into the senior buyer's
     // principles, decision rules, cases, diagnostics and voice; a client-only situation gets a lighter read.
     const what = `${head}\nWhat it is: ${c.kind === "both" ? "ad-buying method and a client situation" : c.kind === "method" ? "ad-buying method" : "a client situation"} (${c.platform === "none" ? "no ad platform" : c.platform === "both" ? "Meta and Google" : c.platform === "google" ? "Google Ads" : "Meta"})${clientIds.length ? `, about ${clientIds.map((id) => clients.find((x) => x.id === id)?.name).join(", ")}` : ""}.`;
-    const SITUATION = forClient ? "what's going on with the client, as markdown: where things stand, the problem or opportunity, what was decided or recommended and why, what's next. Specific." : "empty.";
-    const MEMORY = forClient ? "only durable facts or decisions about this client the team must keep in mind (a standing decision, a constraint, something they want or refuse), one sentence each; kind prefer (do this), avoid (don't), note (a fact). Empty when there are none. Not passing observations or this week's numbers." : "empty.";
+    // A prospect's audit keeps its situation and memory too, for the day they become a client
+    const keepSituation = forClient || Boolean(prospect);
+    const SITUATION = keepSituation ? "what's going on with the client, as markdown: where things stand, the problem or opportunity, what was decided or recommended and why, what's next. Specific." : "empty.";
+    const MEMORY = keepSituation ? "only durable facts or decisions about this client the team must keep in mind (a standing decision, a constraint, something they want or refuse), one sentence each; kind prefer (do this), avoid (don't), note (a fact). Empty when there are none. Not passing observations or this week's numbers." : "empty.";
+    const industry = industryOf(clientIds) ?? (prospect?.business || c.prospect?.business || null);
     let filed: Filed;
     let distilled: Distilled | null = null;
     if (c.kind === "client") {
@@ -318,7 +362,7 @@ export async function processLoom(admin: Admin, row: Row) {
         onText: () => {},
         system: SYSTEM,
         schema: DISTILL,
-        prompt: `${what}${industryOf(clientIds) ? `\nThe client's industry: ${industryOf(clientIds)}.` : ""}\n\n<transcript note="[m:ss] marks when each part was said">\n${transcript.slice(0, FILE_CHARS)}\n</transcript>\n\n${DISTILL_RULES}\nkey_points: 3 to 8 short lines, the specifics worth knowing.\nsituation: ${SITUATION}\nmemory: ${MEMORY}`,
+        prompt: `${what}${industry ? `\nThe ${prospect ? "prospect's business" : "client's industry"}: ${industry}.` : ""}\n\n<transcript note="[m:ss] marks when each part was said">\n${transcript.slice(0, FILE_CHARS)}\n</transcript>\n\n${DISTILL_RULES}\nkey_points: 3 to 8 short lines, the specifics worth knowing.\nsituation: ${SITUATION}\nmemory: ${MEMORY}`,
       });
       const clientCases = casesDoc(about.title, row.url, distilled, (x) => x.this_client);
       filed = {
@@ -328,7 +372,7 @@ export async function processLoom(admin: Admin, row: Row) {
         memory: distilled.memory,
         cases: clientCases ?? undefined,
       };
-      await saveInsights(admin, { videoId: row.id, loomId: row.loom_id, clientId: clientIds.length === 1 ? clientIds[0] : null, industry: industryOf(clientIds) }, distilled);
+      await saveInsights(admin, { videoId: row.id, loomId: row.loom_id, clientId: clientIds.length === 1 ? clientIds[0] : null, industry }, distilled);
     }
     const result = { title: about.title, classified: c, filed, unsure: unsure.map((x) => x.id) };
     const docIds: string[] = [];
@@ -365,6 +409,8 @@ export async function processLoom(admin: Admin, row: Row) {
       error: null,
     });
     forgetIndex();
+    // A prospect's audit: if they've already become a client, it goes to them now
+    if (prospect) await (await import("@/lib/loom-prospects")).attachProspectLooms(admin, { videoIds: [row.id] }).catch(() => null);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     // A passing problem (the AI busy, a timeout): try again later, a few times
@@ -398,19 +444,94 @@ export async function processLoomQueue(admin: Admin, { budgetMs = 480_000, paral
 }
 
 /** A video waiting for its client, assigned by hand (or marked as about no one client) */
-export async function assignLoom(admin: Admin, id: string, clientId: string | null) {
+export async function assignLoom(admin: Admin, id: string, clientId: string | null, by: string | null = null) {
   const { data } = await admin.from("loom_videos").select("*").eq("id", id).single();
   if (!data) throw new Error("Not found.");
   const row = data as unknown as Row & { doc_ids: string[]; kind: string | null; agent_keys: string[] };
   const res = (row.result ?? {}) as { title?: string; filed?: Filed };
+  const decided = { decided_by: by, decided_at: new Date().toISOString() };
   if (!clientId) {
-    await update(admin, id, { status: row.agent_keys?.length ? "filed" : "skipped" });
+    await update(admin, id, { status: row.agent_keys?.length ? "filed" : "skipped", ...decided });
     return;
   }
   const filed: Filed = res.filed ?? { key_points: [], lessons: [], situation: row.transcript?.slice(0, 4000) ?? "", memory: [] };
   const about = { title: res.title ?? row.title ?? "Loom video", summary: (data.summary as string | null) ?? "" };
   const doc = await fileForClient(admin, row, clientId, about, filed);
-  await update(admin, id, { status: "filed", client_id: clientId, client_ids: [clientId], doc_ids: [...(row.doc_ids ?? []), doc] });
+  await update(admin, id, { status: "filed", client_id: clientId, client_ids: [clientId], doc_ids: [...(row.doc_ids ?? []), doc], ...decided });
+  forgetIndex();
+}
+
+export type ProspectInput = { name: string; domain: string; adAccount: string; business: string };
+const tidy = (s: string | null | undefined, n = 200) => (s ?? "").replace(/\s+/g, " ").trim().slice(0, n) || null;
+
+/**
+ * Not about one of our clients: its strategy is taught to the buyers like any method video, and the prospect it
+ * audits (when there is one) is kept on it, so their Looms go to them the day they sign. A video already distilled is
+ * filed at once (its points get the prospect's business as their industry, so they're attributed again); one that was
+ * only read as a client situation goes back to the worker to be distilled.
+ */
+export async function teachFromLoom(admin: Admin, id: string, p: ProspectInput | null, by: string | null) {
+  const { data } = await admin.from("loom_videos").select("id, status, agent_keys, kind").eq("id", id).single();
+  if (!data) throw new Error("Not found.");
+  const name = tidy(p?.name);
+  const prospect = {
+    prospect_status: name ? "prospect" : null,
+    prospect_name: name,
+    prospect_domain: tidy(p?.domain, 160),
+    prospect_ad_account: tidy(p?.adAccount, 80),
+    prospect_business: tidy(p?.business),
+    decided_by: by,
+    decided_at: new Date().toISOString(),
+  };
+  if (((data.agent_keys as string[] | null) ?? []).length) {
+    await update(admin, id, { ...prospect, status: "filed" });
+    if (prospect.prospect_business)
+      await admin.from("media_buying_insights").update({ industry: prospect.prospect_business, attributed_at: null }).eq("loom_video_id", id).is("client_id", null).is("industry", null);
+    if (name) await (await import("@/lib/loom-prospects")).attachProspectLooms(admin, { videoIds: [id], by }).catch(() => null);
+    return { queued: false };
+  }
+  await update(admin, id, { ...prospect, forced_kind: "method", status: "queued", next_at: new Date().toISOString(), attempts: 0, error: null });
+  return { queued: true };
+}
+
+/** The prospect on a video corrected (name, website, ad account, business), without filing it again */
+export async function saveProspect(admin: Admin, id: string, p: ProspectInput, by: string | null) {
+  const name = tidy(p.name);
+  await update(admin, id, {
+    prospect_status: name ? "prospect" : null,
+    prospect_name: name,
+    prospect_domain: tidy(p.domain, 160),
+    prospect_ad_account: tidy(p.adAccount, 80),
+    prospect_business: tidy(p.business),
+    decided_by: by,
+    decided_at: new Date().toISOString(),
+  });
+  if (name) await (await import("@/lib/loom-prospects")).attachProspectLooms(admin, { videoIds: [id], by }).catch(() => null);
+}
+
+/**
+ * A prospect's Loom filed to the client they became: their knowledge (labeled as a pre-sale audit) and memory
+ * (dated, source loom), and the video marked as theirs. Once per video and client.
+ */
+export async function attachLoomToClient(admin: Admin, id: string, clientId: string, by: string | null = null) {
+  const { data } = await admin.from("loom_videos").select("*").eq("id", id).single();
+  if (!data) throw new Error("Not found.");
+  const row = data as unknown as Row & { doc_ids: string[]; client_ids: string[] };
+  const res = (row.result ?? {}) as { title?: string; filed?: Filed; classified?: Classified };
+  const filed: Filed = res.filed ?? { key_points: [], lessons: [], situation: row.transcript?.slice(0, 4000) ?? "", memory: [] };
+  const about = { title: res.title ?? row.title ?? "Loom video", summary: (data.summary as string | null) ?? "" };
+  const doc = await fileForClient(admin, row, clientId, about, filed, { presale: true });
+  const now = new Date().toISOString();
+  await update(admin, id, {
+    status: "filed",
+    prospect_status: "client",
+    prospect_client_id: clientId,
+    prospect_attached_at: now,
+    client_id: (data.client_id as string | null) ?? clientId,
+    client_ids: [...new Set([...(row.client_ids ?? []), clientId])],
+    doc_ids: [...new Set([...(row.doc_ids ?? []), doc])],
+    ...(by ? { decided_by: by, decided_at: now } : {}),
+  });
   forgetIndex();
 }
 
@@ -419,72 +540,174 @@ export async function retryLoom(admin: Admin, id: string) {
   await admin.from("loom_videos").update({ status: "queued", next_at: new Date().toISOString(), attempts: 0, error: null, updated_at: new Date().toISOString() }).eq("id", id);
 }
 
-// ─── The status block ───────────────────────────────────────────────────────
+// ─── Backfills (with the Loom queue) ────────────────────────────────────────
+
+const SUGGEST = {
+  type: "object",
+  properties: { prospect: CLASSIFY.properties.prospect },
+  required: ["prospect"],
+  additionalProperties: false,
+};
+
+/** Videos waiting for a decision that were sorted before prospects were asked about: the AI's guess, a few a run */
+export async function suggestProspects(admin: Admin, max = 12) {
+  const { data } = await admin.from("loom_videos").select("id, title, summary, transcript").eq("status", "review").is("prospect_suggested_at", null).not("transcript", "is", null).order("created_at", { ascending: false }).limit(max);
+  let done = 0;
+  for (let i = 0; i < (data ?? []).length; i += 4) {
+    await Promise.all(
+      (data ?? []).slice(i, i + 4).map(async (v) => {
+        try {
+          const r = await askJson<{ prospect: ProspectGuess }>({
+            agent: "auditor",
+            label: "loom prospect",
+            clientId: null,
+            override: { model: "sonnet", effort: "low" },
+            maxTokens: 1200,
+            system: SYSTEM,
+            schema: SUGGEST,
+            prompt: `Title: ${v.title ?? "(none)"}\nWhat it covers: ${(v.summary as string | null) ?? ""}\n\n<transcript_start>\n${String(v.transcript).slice(0, 5000)}\n</transcript_start>\n\nThis Loom wasn't matched to any of our clients.\n${PROSPECT_RULES}`,
+          });
+          await update(admin, v.id as string, { prospect_suggested: r.prospect, prospect_suggested_at: new Date().toISOString() });
+          done++;
+        } catch {}
+      }),
+    );
+  }
+  return { suggested: done };
+}
+
+/** Videos without their picture: asked of Loom once (an empty string when Loom has none, so it isn't asked again) */
+export async function fillLoomThumbnails(admin: Admin, max = 40) {
+  const { data } = await admin.from("loom_videos").select("id, url").is("thumbnail_url", null).neq("status", "queued").order("created_at", { ascending: false }).limit(max);
+  const { loomThumbnail } = await import("@/lib/loom");
+  let found = 0;
+  for (let i = 0; i < (data ?? []).length; i += 8)
+    await Promise.all(
+      (data ?? []).slice(i, i + 8).map(async (v) => {
+        const t = await loomThumbnail(v.url as string);
+        if (t) found++;
+        await admin.from("loom_videos").update({ thumbnail_url: t ?? "" }).eq("id", v.id);
+      }),
+    );
+  return { checked: data?.length ?? 0, found };
+}
+
+// ─── What the Loom panel shows ──────────────────────────────────────────────
+
+/** Where the panel sorts each video */
+export type LoomTab = "decide" | "clients" | "method" | "prospects" | "skipped" | "failed" | "queue";
+
+export type LoomVideo = {
+  id: string;
+  url: string;
+  title: string;
+  summary: string | null;
+  date: string;
+  status: string;
+  kind: string | null;
+  platform: string | null;
+  thumb: string | null;
+  clients: { id: string; name: string; slug: string }[];
+  agents: string[];
+  prospect: { status: "prospect" | "client"; name: string | null; domain: string | null; adAccount: string | null; business: string | null; client: { name: string; slug: string } | null } | null;
+  suggested: ProspectGuess | null;
+  guesses: string[];
+  error: string | null;
+  source: string;
+  tabs: LoomTab[];
+};
 
 export type LoomStatus = {
   total: number;
-  filed: number;
   queued: number;
   reading: number;
-  skipped: number;
-  failed: number;
-  review: number;
-  bySource: Record<LoomSource, number>;
-  toMediaBuyer: number;
-  toGoogle: number;
-  toClients: number;
-  waiting: { id: string; url: string; title: string; summary: string | null; source: string; guesses: string[] }[];
-  failures: { id: string; url: string; title: string; error: string; source: string }[];
+  counts: Record<LoomTab, number>;
+  videos: LoomVideo[];
   folders: { id: string; url: string; name: string | null; client: string | null; videos: number; checked: string | null; error: string | null }[];
+  /** On a client: their pre-sale audit Looms (from before they signed) */
+  presale: number;
 };
 
+/** The tabs a video belongs in (a video can teach the buyer and be filed to a client) */
+export function tabsOf(v: { status: string; client_ids: string[] | null; agent_keys: string[] | null; prospect_status: string | null }): LoomTab[] {
+  const t: LoomTab[] = [];
+  if (v.status === "queued" || v.status === "reading") t.push("queue");
+  if (v.status === "review") t.push("decide");
+  if (v.status === "failed") t.push("failed");
+  if (v.status === "skipped") t.push("skipped");
+  if (v.status === "filed" && (v.client_ids ?? []).length) t.push("clients");
+  if ((v.status === "filed" || v.status === "review") && (v.agent_keys ?? []).length) t.push("method");
+  if (v.prospect_status) t.push("prospects");
+  return t;
+}
+
 export async function loomStatus(admin: Admin, clientId?: string): Promise<LoomStatus> {
-  const empty = { slack: 0, webhook: 0, bulk: 0, client: 0, folder: 0 };
-  const mine = clientId ? `hint_client_id.eq.${clientId},client_id.eq.${clientId}` : "id.not.is.null";
+  let q = admin
+    .from("loom_videos")
+    .select("id, loom_id, url, title, summary, status, kind, platform, thumbnail_url, client_ids, agent_keys, prospect_status, prospect_name, prospect_domain, prospect_ad_account, prospect_business, prospect_client_id, prospect_suggested, recorded_at, created_at, error, source, unsure:result->unsure")
+    .order("created_at", { ascending: false })
+    .limit(3000);
+  if (clientId) q = q.or(`hint_client_id.eq.${clientId},client_id.eq.${clientId},prospect_client_id.eq.${clientId},client_ids.cs.{${clientId}}`);
   let folderQ = admin.from("loom_folders").select("id, url, name, video_count, last_checked_at, error, clients(name)").order("created_at");
   if (clientId) folderQ = folderQ.eq("client_id", clientId);
-  const [{ data: counts }, { data: waiting }, { data: failures }, { data: folders }] = await Promise.all([
-    clientId ? Promise.resolve({ data: null }) : admin.rpc("loom_counts"),
-    admin.from("loom_videos").select("id, url, title, summary, source, result").eq("status", "review").or(mine).order("created_at", { ascending: false }).limit(40),
-    admin.from("loom_videos").select("id, url, title, error, source").eq("status", "failed").or(mine).order("updated_at", { ascending: false }).limit(40),
-    folderQ,
-  ]);
-  const s: LoomStatus = { total: 0, filed: 0, queued: 0, reading: 0, skipped: 0, failed: 0, review: 0, bySource: { ...empty }, toMediaBuyer: 0, toGoogle: 0, toClients: 0, waiting: [], failures: [], folders: [] };
-  let rows = (counts ?? []) as { status: string; source: LoomSource; to_media_buyer: boolean; to_google: boolean; to_client: boolean; n: number }[];
-  if (clientId) {
-    // One client: its own videos' states
-    const { data } = await admin.from("loom_videos").select("status, source").or(`hint_client_id.eq.${clientId},client_id.eq.${clientId}`).limit(2000);
-    rows = (data ?? []).map((r) => ({ status: r.status as string, source: r.source as LoomSource, to_media_buyer: false, to_google: false, to_client: r.status === "filed", n: 1 }));
+  const [{ data: rows }, { data: folders }] = await Promise.all([q, folderQ]);
+  const list = rows ?? [];
+  const ids = [...new Set(list.flatMap((r) => [...((r.client_ids as string[] | null) ?? []), ...(((r.unsure as string[] | null) ?? []) as string[]), (r.prospect_client_id as string | null) ?? ""]).filter(Boolean))];
+  const named = new Map<string, { id: string; name: string; slug: string }>();
+  for (let i = 0; i < ids.length; i += 300) {
+    const { data } = await admin.from("clients").select("id, name, slug").in("id", ids.slice(i, i + 300));
+    for (const c of data ?? []) named.set(c.id as string, { id: c.id as string, name: c.name as string, slug: c.slug as string });
   }
-  for (const r of rows) {
-    const n = Number(r.n);
-    s.total += n;
-    if (r.status in s) (s as unknown as Record<string, number>)[r.status] += n;
-    s.bySource[r.source] = (s.bySource[r.source] ?? 0) + n;
-    if (r.to_media_buyer) s.toMediaBuyer += n;
-    if (r.to_google) s.toGoogle += n;
-    if (r.to_client) s.toClients += n;
-  }
-  const ids = [...new Set((waiting ?? []).flatMap((w) => ((w.result as { unsure?: string[] } | null)?.unsure ?? []) as string[]))];
-  const { data: names } = ids.length ? await admin.from("clients").select("id, name").in("id", ids) : { data: [] as { id: string; name: string }[] };
-  const nameOf = new Map((names ?? []).map((c) => [c.id as string, c.name as string]));
-  s.waiting = (waiting ?? []).map((w) => ({
-    id: w.id as string,
-    url: w.url as string,
-    title: (w.title as string | null) ?? "Untitled Loom",
-    summary: (w.summary as string | null) ?? null,
-    source: w.source as string,
-    guesses: (((w.result as { unsure?: string[] } | null)?.unsure ?? []) as string[]).map((id) => nameOf.get(id)).filter((x): x is string => Boolean(x)),
-  }));
-  s.failures = (failures ?? []).map((f) => ({ id: f.id as string, url: f.url as string, title: (f.title as string | null) ?? "Untitled Loom", error: (f.error as string | null) ?? "Couldn't be read", source: f.source as string }));
-  s.folders = (folders ?? []).map((f) => ({
-    id: f.id as string,
-    url: f.url as string,
-    name: (f.name as string | null) ?? null,
-    client: (f.clients as unknown as { name: string } | null)?.name ?? null,
-    videos: (f.video_count as number) ?? 0,
-    checked: (f.last_checked_at as string | null) ?? null,
-    error: (f.error as string | null) ?? null,
-  }));
-  return s;
+  const counts: Record<LoomTab, number> = { decide: 0, clients: 0, method: 0, prospects: 0, skipped: 0, failed: 0, queue: 0 };
+  const videos: LoomVideo[] = list.map((r) => {
+    const tabs = tabsOf(r as { status: string; client_ids: string[] | null; agent_keys: string[] | null; prospect_status: string | null });
+    for (const t of tabs) counts[t]++;
+    const thumb = (r.thumbnail_url as string | null) ?? null;
+    return {
+      id: r.id as string,
+      url: r.url as string,
+      title: (r.title as string | null) ?? "Untitled Loom",
+      summary: (r.summary as string | null) ?? null,
+      date: ((r.recorded_at as string | null) ?? (r.created_at as string)) as string,
+      status: r.status as string,
+      kind: (r.kind as string | null) ?? null,
+      platform: (r.platform as string | null) ?? null,
+      // Loom's own picture when it gave one; else its CDN's first frame (the panel falls back to a drawn tile)
+      thumb: thumb === "" ? null : (thumb ?? `https://cdn.loom.com/sessions/thumbnails/${r.loom_id as string}-00001.jpg`),
+      clients: ((r.client_ids as string[] | null) ?? []).map((id) => named.get(id)).filter((x): x is { id: string; name: string; slug: string } => Boolean(x)),
+      agents: (r.agent_keys as string[] | null) ?? [],
+      prospect: r.prospect_status
+        ? {
+            status: r.prospect_status as "prospect" | "client",
+            name: (r.prospect_name as string | null) ?? null,
+            domain: (r.prospect_domain as string | null) ?? null,
+            adAccount: (r.prospect_ad_account as string | null) ?? null,
+            business: (r.prospect_business as string | null) ?? null,
+            client: r.prospect_client_id ? (named.get(r.prospect_client_id as string) ?? null) : null,
+          }
+        : null,
+      suggested: (r.prospect_suggested as ProspectGuess | null) ?? null,
+      guesses: (((r.unsure as string[] | null) ?? []) as string[]).map((id) => named.get(id)?.name).filter((x): x is string => Boolean(x)),
+      error: (r.error as string | null) ?? null,
+      source: r.source as string,
+      tabs,
+    };
+  });
+  return {
+    total: list.length,
+    queued: list.filter((r) => r.status === "queued").length,
+    reading: list.filter((r) => r.status === "reading").length,
+    counts,
+    videos,
+    presale: clientId ? list.filter((r) => r.prospect_client_id === clientId).length : 0,
+    folders: (folders ?? []).map((f) => ({
+      id: f.id as string,
+      url: f.url as string,
+      name: (f.name as string | null) ?? null,
+      client: (f.clients as unknown as { name: string } | null)?.name ?? null,
+      videos: (f.video_count as number) ?? 0,
+      checked: (f.last_checked_at as string | null) ?? null,
+      error: (f.error as string | null) ?? null,
+    })),
+  };
 }

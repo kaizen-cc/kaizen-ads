@@ -223,7 +223,15 @@ export async function GET(request: Request) {
       const room = 560_000 - (Date.now() - began);
       const attribution = room > 120_000 && (await bi.attributionPending(admin)) ? await bi.attributeInsights(admin, { budgetMs: Math.min(room, 240_000) }).catch((e) => String(e)) : { pending: "later" };
       const insights = count ? await bi.consolidateInsights(admin, { budgetMs: 180_000 }).catch((e) => String(e)) : { new: 0 };
-      return Response.json({ folders, queue, attribution, insights });
+      // Prospects that became clients (by name, website or ad account): their pre-sale audit Looms filed to them
+      const prospects = await (await import("@/lib/loom-prospects")).attachProspectLooms(admin).catch((e) => String(e));
+      // Videos waiting for a decision get the AI's guess at the prospect they audit; videos get their picture
+      const left = 590_000 - (Date.now() - began);
+      const suggested = left > 60_000 ? await loom.suggestProspects(admin, 8).catch((e) => String(e)) : { later: true };
+      const thumbs = left > 30_000 ? await loom.fillLoomThumbnails(admin, 40).catch((e) => String(e)) : { later: true };
+      // Contradictions nobody was told about yet: the bell of everyone who rules on them
+      const told = await (await import("@/lib/insight-conflicts")).notifyContradictions(admin).catch((e) => String(e));
+      return Response.json({ folders, queue, attribution, insights, prospects, suggested, thumbs, told });
     }
     if (step === "docs") {
       const { watchDocs } = await import("@/lib/context/docs");

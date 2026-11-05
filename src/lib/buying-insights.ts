@@ -17,7 +17,7 @@ type Admin = SupabaseClient;
 export type Layer = "principle" | "rule" | "case" | "diagnostic" | "voice";
 type Platform = "meta" | "google" | "both" | "none";
 
-const MARK = "loom-distilled:";
+export const MARK = "loom-distilled:";
 const SKILL_LAYERS: { layer: Exclude<Layer, "case">; title: string; intro: string }[] = [
   { layer: "principle", title: "From the senior buyer's audits: principles", intro: "What Kaizen's senior buyer believes about buying ads, and why, distilled from his Loom audits. The number is how many of his videos say it: lean hardest on the most said." },
   { layer: "rule", title: "From the senior buyer's audits: decision rules", intro: "How Kaizen's senior buyer decides, with his own thresholds: if the account shows this, he does that. The number is how many of his videos say it. Apply them the way he would, and say which one you're using." },
@@ -25,8 +25,8 @@ const SKILL_LAYERS: { layer: Exclude<Layer, "case">; title: string; intro: strin
   { layer: "voice", title: "From the senior buyer's audits: voice", intro: "How Kaizen's senior buyer explains things, the phrases he uses and how he pushes back. Write audits and answers so they sound like him: direct, specific, the reason before the action. Never name him; he is Kaizen's senior buyer." },
 ];
 /** The skills each layer is written into: every Meta-side Media Buyer skill, and the Google auditor for Google */
-const META_AGENTS: AgentKey[] = ["auditor", "launcher", "fatigue"];
-const GOOGLE_AGENTS: AgentKey[] = ["google_auditor"];
+export const META_AGENTS: AgentKey[] = ["auditor", "launcher", "fatigue"];
+export const GOOGLE_AGENTS: AgentKey[] = ["google_auditor"];
 const SKILL_CHARS = 3000;
 
 // ─── Distilling one video ───────────────────────────────────────────────────
@@ -244,6 +244,8 @@ export async function consolidateInsights(admin: Admin, { budgetMs = 300_000 }: 
   const { count } = await admin.from("media_buying_insights").select("id", { count: "exact", head: true }).is("consolidated_at", null).is("merged_into", null);
   out.left = count ?? 0;
   await rewriteBuyerSkills(admin);
+  // New contradictions go to the people who rule on them (the bell)
+  if (out.conflicts) await (await import("@/lib/insight-conflicts")).notifyContradictions(admin).catch(() => null);
   return out;
 }
 
@@ -302,6 +304,7 @@ export async function ruleInsight(admin: Admin, id: string, ruling: "keep" | "dr
   const now = new Date().toISOString();
   await admin.from("media_buying_insights").update({ ruling, ruled_by: by, ruled_at: now, excluded: ruling === "drop", updated_at: now }).eq("id", id);
   if (ruling === "keep" && i.conflict_with) await admin.from("media_buying_insights").update({ excluded: true, ruling: "drop", ruled_by: by, ruled_at: now, updated_at: now }).eq("id", i.conflict_with);
+  await (await import("@/lib/insight-conflicts")).settleNotices(admin, id).catch(() => null);
   await rewriteBuyerSkills(admin);
 }
 
@@ -583,8 +586,11 @@ export async function buyerPlaybookBlock(admin: Admin, clientId: string, platfor
 
 export type InsightsStatus = {
   byLayer: Record<Layer, number>;
+  /** Live points by the platform they're about */
+  byPlatform: Record<Platform, number>;
+  total: number;
   waiting: number;
-  conflicts: { id: string; layer: Layer; body: string; quote: string | null; at: string | null; url: string | null; note: string | null; against: string | null; againstSkill: string | null }[];
+  conflicts: { id: string; layer: Layer; platform: Platform; body: string; quote: string | null; at: string | null; url: string | null; note: string | null; against: string | null; againstSkill: string | null }[];
   top: { layer: Layer; body: string; confidence: number }[];
   skillsAt: string | null;
   /** Where the live points came from: general (taught to every account) or industry-only, by platform and vertical */
@@ -599,13 +605,17 @@ export type InsightsStatus = {
 
 export async function insightsStatus(admin: Admin): Promise<InsightsStatus> {
   const [{ data: rows }, { data: conflicts }, { data: skill }, { count: waiting }] = await Promise.all([
-    admin.from("media_buying_insights").select("layer, body, confidence").is("merged_into", null).eq("excluded", false).order("confidence", { ascending: false }).limit(5000),
-    admin.from("media_buying_insights").select("id, layer, body, quote, at_seconds, loom_id, conflict_note, conflict_skill, other:conflict_with(body)").is("ruling", null).eq("excluded", false).is("merged_into", null).or("conflict_with.not.is.null,conflict_skill.not.is.null").order("created_at").limit(30),
+    admin.from("media_buying_insights").select("layer, body, confidence, platform").is("merged_into", null).eq("excluded", false).order("confidence", { ascending: false }).limit(5000),
+    admin.from("media_buying_insights").select("id, layer, body, platform, quote, at_seconds, loom_id, conflict_note, conflict_skill, other:conflict_with(body)").is("ruling", null).eq("excluded", false).is("merged_into", null).or("conflict_with.not.is.null,conflict_skill.not.is.null").order("created_at").limit(500),
     admin.from("ai_knowledge").select("updated_at").like("file_name", `${MARK}%`).order("updated_at", { ascending: false }).limit(1),
     admin.from("media_buying_insights").select("id", { count: "exact", head: true }).is("consolidated_at", null).is("merged_into", null),
   ]);
   const byLayer: Record<Layer, number> = { principle: 0, rule: 0, case: 0, diagnostic: 0, voice: 0 };
-  for (const r of rows ?? []) byLayer[r.layer as Layer]++;
+  const byPlatform: Record<Platform, number> = { meta: 0, google: 0, both: 0, none: 0 };
+  for (const r of rows ?? []) {
+    byLayer[r.layer as Layer]++;
+    byPlatform[((r.platform as Platform | null) ?? "none") as Platform]++;
+  }
   const [{ data: counts }, tree] = await Promise.all([admin.rpc("buying_insight_counts"), taxonomy(admin)]);
   const byId = new Map(tree.map((v) => [v.id, v]));
   const attribution: InsightsStatus["attribution"] = { general: 0, industry: 0, unmapped: 0, pending: 0, verticals: [] };
@@ -630,11 +640,14 @@ export async function insightsStatus(admin: Admin): Promise<InsightsStatus> {
   attribution.verticals = [...per.values()].sort((a, b) => b.total - a.total).slice(0, 8);
   return {
     byLayer,
+    byPlatform,
+    total: (rows ?? []).length,
     attribution,
     waiting: waiting ?? 0,
     conflicts: (conflicts ?? []).map((c) => ({
       id: c.id as string,
       layer: c.layer as Layer,
+      platform: c.platform as Platform,
       body: c.body as string,
       quote: (c.quote as string | null) ?? null,
       at: c.at_seconds == null ? null : clock(c.at_seconds as number),

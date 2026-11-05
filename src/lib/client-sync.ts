@@ -57,6 +57,8 @@ export async function mirrorTrack(admin: SupabaseClient) {
         if (id) {
           await admin.from("clients").update({ track_client_id: t.id }).eq("id", id).is("track_client_id", null);
           out.created.push(t.name);
+          // Their pre-sale audit Looms, if the senior buyer recorded any while they were a prospect
+          await (await import("@/lib/loom-prospects")).attachForNewClient(admin, id);
         }
         continue;
       }

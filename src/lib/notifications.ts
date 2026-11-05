@@ -46,7 +46,7 @@ export const GROUPS: { key: GroupKey; label: string; about: string; managersOnly
   { key: "leadership", label: "Across the agency", about: "New clients starting and first rounds ready for review", managersOnly: true },
   { key: "recap", label: "Daily recap reminders", about: "A nudge at 11am and 3pm if you haven't been through today's recap" },
 ];
-export const KIND_GROUP: Record<string, GroupKey> = { assigned: "on_you", handoff: "on_you", reply: "on_you", client: "on_you", ticket: "work", promise: "clients", fatigue: "clients", kpi: "clients", sprint: "clients", onboarding: "leadership", newclient: "leadership", recap: "recap" };
+export const KIND_GROUP: Record<string, GroupKey> = { assigned: "on_you", contradiction: "on_you", handoff: "on_you", reply: "on_you", client: "on_you", ticket: "work", promise: "clients", fatigue: "clients", kpi: "clients", sprint: "clients", onboarding: "leadership", newclient: "leadership", recap: "recap" };
 
 export const DEFAULT_PREFS: NoticePrefs = {
   groups: {

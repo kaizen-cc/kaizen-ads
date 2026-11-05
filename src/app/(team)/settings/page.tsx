@@ -16,7 +16,11 @@ import { addUsage, costOf, emptyUsage, type ModelKey, type Usage } from "@/lib/a
 import { roleLabel, type TeamRole } from "@/lib/roles";
 import { DataInspector } from "./data-inspector";
 import { KnowledgePanel } from "@/components/knowledge-panel";
-import { BuyerInsightsPanel, LoomPanel } from "@/components/loom-panel";
+import { LoomPanel } from "@/components/loom-panel";
+import { BuyerInsightsPanel } from "@/components/buyer-insights";
+import { KnowledgeShell, type KnowledgeHero } from "./knowledge-shell";
+import type { LoomStatus } from "@/lib/loom-intake";
+import type { InsightsStatus } from "@/lib/buying-insights";
 import { listKnowledge } from "@/lib/knowledge";
 import { AGENT_MOMENTS, momentOf } from "@/lib/agent-moments";
 import Team from "../team/page";
@@ -197,17 +201,7 @@ async function Agents({ open, role: openRole, section, range, by }: { open: stri
       <div className="grid gap-6">
         <AgentsNav section={section} />
         {section === "knowledge" ? (
-          <>
-            <KnowledgeView items={items} spine={{ body: spineRow?.body ?? "", updatedAt: spineRow?.updated_at ?? null, updatedBy: (spineRow?.profiles as unknown as { full_name: string } | null)?.full_name ?? null }} />
-            <KnowledgePanel
-              target={{ scope: "shared" }}
-              docs={await listKnowledge(supabase, { scope: "shared" })}
-              canEdit
-              title="Files every agent can use"
-              description="Playbooks, SOPs, research and guides as PDFs or documents. Each one is read once; a call gets only the excerpts that match its task, with the file's title, so the agents stay sharp however much is added."
-            />
-            <LoomBlocks />
-          </>
+          <KnowledgeBlocks items={items} spine={{ body: spineRow?.body ?? "", updatedAt: spineRow?.updated_at ?? null, updatedBy: (spineRow?.profiles as unknown as { full_name: string } | null)?.full_name ?? null }} />
         ) : section === "expenses" ? (
           <Expenses
             rows={costRows}
@@ -251,21 +245,59 @@ async function Agents({ open, role: openRole, section, range, by }: { open: stri
   );
 }
 
-/** Settings › AI agents › Knowledge: every Loom video and where it went, and what the senior buyer's Looms taught */
-async function LoomBlocks() {
-  if (!adminConfigured()) return null;
-  const admin = createAdminClient();
-  const [{ loomStatus }, { insightsStatus }, { data: clients }] = await Promise.all([
-    import("@/lib/loom-intake"),
-    import("@/lib/buying-insights"),
-    admin.from("clients").select("id, name").is("archived_at", null).order("name"),
-  ]);
-  const [loom, insights] = await Promise.all([loomStatus(admin), insightsStatus(admin)]);
+/**
+ * Settings › AI agents › Knowledge: what the agents know at a glance, then Kaizen's strategy and shared playbooks, the
+ * files, every Loom video and where it went, and what the senior buyer's Looms taught (with the contradictions to settle)
+ */
+async function KnowledgeBlocks({ items, spine }: { items: Item[]; spine: { body: string; updatedAt: string | null; updatedBy: string | null } }) {
+  const supabase = await createClient();
+  const me = await requireStaff();
+  const docs = await listKnowledge(supabase, { scope: "shared" });
+  const shared = items.filter((k) => k.agentKey === null && k.active).length;
+  let loom: LoomStatus | null = null;
+  let insights: InsightsStatus | null = null;
+  let clients: { id: string; name: string }[] = [];
+  let canRule = false;
+  if (adminConfigured()) {
+    const admin = createAdminClient();
+    const [{ loomStatus }, { insightsStatus }, { canRebut }, { data: cs }] = await Promise.all([
+      import("@/lib/loom-intake"),
+      import("@/lib/buying-insights"),
+      import("@/lib/audit-rebuttals"),
+      admin.from("clients").select("id, name").is("archived_at", null).eq("internal", false).order("name"),
+    ]);
+    [loom, insights, canRule] = await Promise.all([loomStatus(admin), insightsStatus(admin), canRebut(admin, me.id)]);
+    clients = (cs ?? []).map((c) => ({ id: c.id as string, name: c.name as string }));
+  }
+  const hero: KnowledgeHero = {
+    spineAt: spine.updatedAt,
+    shared,
+    files: docs.length,
+    looms: { read: loom ? loom.total - loom.queued - loom.reading : 0, clients: loom?.counts.clients ?? 0, method: loom?.counts.method ?? 0, queue: loom ? loom.queued + loom.reading : 0 },
+    buyer: {
+      points: insights?.total ?? 0,
+      meta: insights ? insights.byPlatform.meta + insights.byPlatform.both : 0,
+      google: insights ? insights.byPlatform.google + insights.byPlatform.both : 0,
+      skillsAt: insights?.skillsAt ?? null,
+    },
+    needs: { decide: loom?.counts.decide ?? 0, conflicts: insights?.conflicts.length ?? 0, failed: loom?.counts.failed ?? 0, firstConflict: insights?.conflicts[0]?.id ?? null },
+  };
   return (
-    <>
-      <LoomPanel status={loom} clients={(clients ?? []).map((c) => ({ id: c.id as string, name: c.name as string }))} />
-      <BuyerInsightsPanel status={insights} canRule />
-    </>
+    <KnowledgeShell
+      hero={hero}
+      strategy={<KnowledgeView items={items} spine={spine} />}
+      files={
+        <KnowledgePanel
+          target={{ scope: "shared" }}
+          docs={docs}
+          canEdit
+          title="Files every agent can use"
+          description="Playbooks, SOPs, research and guides. Each call reads only the excerpts that match its task."
+        />
+      }
+      looms={loom ? <LoomPanel status={loom} clients={clients} canDecide={isExecOrLead(me)} /> : <p className="text-[13px] text-faint">Not connected.</p>}
+      buyer={insights ? <BuyerInsightsPanel status={insights} canRule={canRule} isExec={me.isExec} /> : <p className="text-[13px] text-faint">Not connected.</p>}
+    />
   );
 }
 

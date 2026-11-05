@@ -26,21 +26,23 @@ export const clock = (s: number) => {
 };
 
 /** Title, description and the transcript text of a Loom video; transcript null when Loom won't give it */
-export async function readLoom(url: string): Promise<{ title: string | null; description: string | null; transcript: string | null; found: boolean }> {
+export async function readLoom(url: string): Promise<{ title: string | null; description: string | null; transcript: string | null; found: boolean; thumbnail: string | null }> {
   const id = loomId(url);
-  if (!id) return { title: null, description: null, transcript: null, found: false };
+  if (!id) return { title: null, description: null, transcript: null, found: false, thumbnail: null };
   const share = `https://www.loom.com/share/${id}`;
   let title: string | null = null;
   let description: string | null = null;
+  let thumbnail: string | null = null;
   // Loom's oEmbed answers only for a video anyone with the link can watch: a private one isn't found
   let found = false;
   try {
     const r = await fetch(`https://www.loom.com/v1/oembed?url=${encodeURIComponent(share)}`, { cache: "no-store", signal: AbortSignal.timeout(15_000) });
     if (r.ok) {
       found = true;
-      const j = (await r.json()) as { title?: string; description?: string };
+      const j = (await r.json()) as { title?: string; description?: string; thumbnail_url?: string };
       title = j.title ?? null;
       description = j.description ?? null;
+      thumbnail = j.thumbnail_url ?? null;
     }
   } catch {}
   let transcript: string | null = null;
@@ -68,7 +70,20 @@ export async function readLoom(url: string): Promise<{ title: string | null; des
       }
     }
   } catch {}
-  return { title, description, transcript, found };
+  return { title, description, transcript, found, thumbnail };
+}
+
+/** A video's picture from Loom's oEmbed (only for videos anyone with the link can watch); null when Loom has none */
+export async function loomThumbnail(url: string): Promise<string | null> {
+  const id = loomId(url);
+  if (!id) return null;
+  try {
+    const r = await fetch(`https://www.loom.com/v1/oembed?url=${encodeURIComponent(`https://www.loom.com/share/${id}`)}`, { cache: "no-store", signal: AbortSignal.timeout(10_000) });
+    if (!r.ok) return null;
+    return ((await r.json()) as { thumbnail_url?: string }).thumbnail_url ?? null;
+  } catch {
+    return null;
+  }
 }
 
 // ─── Shared folders ─────────────────────────────────────────────────────────
