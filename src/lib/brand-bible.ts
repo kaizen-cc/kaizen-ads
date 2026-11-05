@@ -411,7 +411,11 @@ export async function autoBibles(admin: SupabaseClient, max = 1) {
   // Off until an exec switches it on: while the Bible is being dialed in, each one is started by hand from the client
   // page and reviewed before the next
   const { data: setting } = await admin.from("app_settings").select("value").eq("key", "brand_bibles").maybeSingle();
-  if ((setting?.value as { auto?: boolean } | null)?.auto !== true) return { paused: "automatic builds are off; start each from the client page" };
+  const cfg = (setting?.value ?? null) as { auto?: boolean; dailyCap?: number | null; perRun?: number } | null;
+  if (cfg?.auto !== true) return { paused: "automatic builds are off; start each from the client page" };
+  // An exec can lift the daily ceiling (dailyCap: null) and build more per run, to rebuild every client at once
+  const cap = cfg && "dailyCap" in cfg ? cfg.dailyCap : DAILY_CAP;
+  if (cfg?.perRun) max = Math.max(1, Math.min(8, cfg.perRun));
   const [{ data: clients }, { data: bibles }, { data: intakes }] = await Promise.all([
     admin.from("clients").select("id, name, status, created_at").is("archived_at", null).in("status", ["onboarding", "active", "paused"]),
     admin.from("client_brand_bibles").select("client_id, status, markdown, generated_at, started_at"),
@@ -441,7 +445,7 @@ export async function autoBibles(admin: SupabaseClient, max = 1) {
   todo.sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name));
   // A ceiling per 24 hours, so building every client's Bible spreads over days instead of one spike
   const { count: lastDay } = await admin.from("ai_runs").select("id", { count: "exact", head: true }).eq("agent_key", "brandbible").not("label", "like", "brand bible research%").gte("created_at", new Date(Date.now() - DAY).toISOString());
-  if ((lastDay ?? 0) >= DAILY_CAP) return { waiting: todo.length, results: {}, paused: `${DAILY_CAP} built in the last 24 hours` };
+  if (cap != null && (lastDay ?? 0) >= cap) return { waiting: todo.length, results: {}, paused: `${cap} built in the last 24 hours` };
   const batch = todo.slice(0, max);
   const results = await Promise.all(batch.map(async (t) => [t.name, `${t.why}: ${await buildBible(admin, t.id, { by: null })}`] as const));
   return { waiting: todo.length - batch.length, results: Object.fromEntries(results) };
