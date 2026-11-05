@@ -264,6 +264,21 @@ export async function pullAtlassianLoomSince(date: string | null): Promise<R<Pul
   }
 }
 
+/** Execs: the Atlassian token's expiry date (YYYY-MM-DD; null goes back to ATLASSIAN_TOKEN_EXPIRES_AT) */
+export async function setAtlassianTokenExpiry(date: string | null): Promise<R> {
+  try {
+    const me = await requireStaff();
+    if (!me.isExec) return { ok: false, error: "Execs only." };
+    if (!adminConfigured()) return { ok: false, error: "Not connected." };
+    if (date && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(new Date(`${date}T00:00:00Z`).getTime()))) return { ok: false, error: "Pick a date." };
+    await (await import("@/lib/loom-atlassian")).setTokenExpiry(createAdminClient(), date || null);
+    revalidatePath("/settings", "layout");
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't save it." };
+  }
+}
+
 /** A shared folder read again now (new recordings queued) */
 export async function recheckLoomFolder(id: string): Promise<R<{ found: number; added: number; error: string | null }>> {
   try {

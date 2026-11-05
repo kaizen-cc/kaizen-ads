@@ -17,6 +17,7 @@ import {
   userLabelIn,
   type McpTool,
 } from "@/lib/atlassian-mcp";
+import { TOKEN_STEPS, TOKEN_URL, countdown, daysUntil, dueNotice, tokenExpiry } from "@/lib/atlassian-token";
 
 // Every new Loom, pulled by itself through Atlassian's official MCP server (the Loom workspace linked to an Atlassian
 // Cloud site). Each run lists the videos created since the last check (the first run looks back 30 days; an exec can
@@ -31,6 +32,7 @@ const FIRST_LOOKBACK = 30 * DAY;
 /** Overlap with the last check, so a video Loom listed late isn't missed (duplicates are skipped by the queue) */
 const OVERLAP = 2 * 3_600_000;
 const PAGE = 50;
+const nyToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 
 export type LoomConnection = {
   configured: boolean;
@@ -45,9 +47,19 @@ export type LoomConnection = {
   videoCount: number;
   since: string | null;
   walking: { from: string | null; all: boolean } | null;
+  /** The token's expiry (set on the card, or ATLASSIAN_TOKEN_EXPIRES_AT), with the days left */
+  expiry: { date: string; from: "set" | "env"; daysLeft: number } | null;
+  /** Atlassian has been refusing the token since then */
+  authFailedAt: string | null;
 };
 
 type State = {
+  token_expires_at: string | null;
+  expiry_notified: number[] | null;
+  expiry_notified_for: string | null;
+  expiry_checked_on: string | null;
+  auth_failed_at: string | null;
+  auth_notified_at: string | null;
   cursor: string | null;
   walk_from: string | null;
   walk_all: boolean;
@@ -76,7 +88,10 @@ async function save(admin: Admin, patch: Partial<State>) {
 export async function loomConnection(admin: Admin | null): Promise<LoomConnection> {
   const s = admin ? await state(admin).catch(() => null) : null;
   const walking = s && s.walk_backfill && (s.walk_from || s.walk_all) ? { from: s.walk_from, all: s.walk_all } : null;
+  const exp = tokenExpiry(s?.token_expires_at);
   return {
+    expiry: exp ? { ...exp, daysLeft: daysUntil(exp.date, nyToday()) } : null,
+    authFailedAt: s?.auth_failed_at ?? null,
     configured: atlassianConfigured(),
     mode: atlassianAuthMode(),
     missing: atlassianMissing(),
@@ -230,16 +245,80 @@ export async function syncLoomFromAtlassian(admin: Admin, opts: { from?: string 
       last_error: null,
       last_found: found,
       video_count: count ?? 0,
+      // Accepted again: the next refusal is a new one to tell the execs about
+      auth_failed_at: null,
+      auth_notified_at: null,
     });
     return { configured: true, found, added, pages, done, error: null };
   } catch (e) {
     const error = plainError(e);
+    if (e instanceof AtlassianMcpError && e.kind === "auth") await tokenRefused(admin, s).catch(() => null);
     // Keep the walk's place, so the next run continues from the last page that worked
     await save(admin, { ...keepWalk(), last_sync_at: now(), last_error: error, last_found: found, ...(session ? { account_label: session.account, cloud_id: session.cloudId } : {}) }).catch(() => null);
     return { configured: true, found, added, pages, done: false, error };
   } finally {
     await session?.mcp.close().catch(() => null);
   }
+}
+
+// ─── The token's expiry: countdown and notices to the execs ─────────────────
+
+const STEPS_TEXT = TOKEN_STEPS.map((s, i) => `${i + 1}. ${s}`).join(" ");
+
+/** A notice to every active exec (bell, and email by their settings); once per key per person */
+async function tellExecs(admin: Admin, n: { key: string; title: string; body: string }) {
+  const { data } = await admin.from("profiles").select("id").eq("is_exec", true).eq("is_active", true);
+  const ids = (data ?? []).map((p) => p.id as string);
+  if (!ids.length) return 0;
+  await admin.from("notifications").upsert(
+    ids.map((id) => ({ profile_id: id, kind: "connection", title: n.title.slice(0, 200), body: n.body.slice(0, 1000), href: TOKEN_URL, key: n.key, priority: "critical" })),
+    { onConflict: "profile_id,key", ignoreDuplicates: true },
+  );
+  return ids.length;
+}
+
+/** Atlassian started refusing the token: the execs told at once, once until it's accepted again */
+async function tokenRefused(admin: Admin, s: State | null) {
+  if (s?.auth_notified_at) return;
+  const at = new Date().toISOString();
+  await save(admin, { auth_failed_at: s?.auth_failed_at ?? at, auth_notified_at: at });
+  await tellExecs(admin, {
+    key: `connection:atlassian-auth:${at}`,
+    title: "The Atlassian token has expired or was revoked",
+    body: `New Looms stopped coming in: Atlassian refuses the token Kaizen uses for Loom. ${STEPS_TEXT} (If the token is still valid, an org admin checks that API-token sign-in is on at admin.atlassian.com › Connectors › Atlassian MCP server.)`,
+  });
+}
+
+/** Once a day: a notice to the execs when the token is 30, 14, 7 or 1 days from expiring (each threshold once per date) */
+export async function checkTokenExpiry(admin: Admin) {
+  if (!atlassianConfigured()) return { skipped: "not connected" };
+  const today = nyToday();
+  const s = await state(admin);
+  if (s?.expiry_checked_on === today) return { skipped: "checked today" };
+  const exp = tokenExpiry(s?.token_expires_at);
+  if (!exp) {
+    await save(admin, { expiry_checked_on: today });
+    return { skipped: "no expiry date" };
+  }
+  const daysLeft = daysUntil(exp.date, today);
+  const sent = s?.expiry_notified_for === exp.date ? (s?.expiry_notified ?? []) : [];
+  const due = dueNotice(daysLeft, sent);
+  let told = 0;
+  if (due) {
+    const on = new Date(`${exp.date}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+    told = await tellExecs(admin, {
+      key: `connection:atlassian-expiry:${exp.date}:${due.send}`,
+      title: `The Atlassian token for Loom ${countdown(daysLeft).toLowerCase()}`,
+      body: `It expires ${on}, and new Looms stop coming in when it does. ${STEPS_TEXT}`,
+    });
+  }
+  await save(admin, { expiry_checked_on: today, expiry_notified_for: exp.date, expiry_notified: due ? [...sent, ...due.mark] : sent });
+  return { daysLeft, notice: due?.send ?? null, told };
+}
+
+/** An exec sets the token's expiry (a new token: its notices start over); null goes back to the env default */
+export async function setTokenExpiry(admin: Admin, date: string | null) {
+  await save(admin, { token_expires_at: date, expiry_notified: [], expiry_notified_for: null, expiry_checked_on: null });
 }
 
 // ─── A transcript for a video the public page won't show ────────────────────

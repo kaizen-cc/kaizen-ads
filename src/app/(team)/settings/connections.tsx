@@ -4,7 +4,8 @@ import { higgsfieldStatus } from "@/lib/higgsfield";
 import { loomConnection } from "@/lib/loom-atlassian";
 import { motionConnected } from "@/lib/motion";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
-import { LoomAtlassianControls } from "./loom-atlassian-controls";
+import { TOKEN_URL } from "@/lib/atlassian-token";
+import { LoomAtlassianControls, TokenExpiry } from "./loom-atlassian-controls";
 
 // Settings › Connections: the media connectors (ElevenLabs, Higgsfield, Motion), whether each key is there and
 // accepted, what's left on the plan where the provider says, and what the team made with them this month. Keys are
@@ -65,8 +66,9 @@ export async function Connections({ isExec = false }: { isExec?: boolean }) {
   const elTone: Tone = !el.configured ? "off" : !el.reachable ? "bad" : el.quota && el.quota.limit && el.quota.left / el.quota.limit < 0.1 ? "warn" : "ok";
   const hfTone: Tone = !hf.configured ? "off" : !hf.reachable ? "bad" : "ok";
   const share = el.quota?.limit ? Math.min(1, el.quota.used / el.quota.limit) : 0;
-  const loomTone: Tone = !loom.configured ? "off" : loom.lastError ? "bad" : loom.lastOkAt ? "ok" : "warn";
-  const loomState = !loom.configured ? "Not connected" : loom.lastError ? "Failing" : loom.lastOkAt ? "Connected" : "Not checked yet";
+  const loomExpired = loom.expiry !== null && loom.expiry.daysLeft < 0;
+  const loomTone: Tone = !loom.configured ? "off" : loom.lastError || loom.authFailedAt || loomExpired ? "bad" : !loom.lastOkAt || (loom.expiry && loom.expiry.daysLeft <= 30) ? "warn" : "ok";
+  const loomState = !loom.configured ? "Not connected" : loom.authFailedAt || loomExpired ? "Token expired" : loom.lastError ? "Failing" : loom.lastOkAt ? (loom.expiry && loom.expiry.daysLeft <= 30 ? "Token expiring" : "Connected") : "Not checked yet";
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
@@ -157,10 +159,17 @@ export async function Connections({ isExec = false }: { isExec?: boolean }) {
             {loom.walking && <Row k="Pulling">{loom.walking.all ? "Everything, continuing every 15 minutes" : `Everything since ${new Date(loom.walking.from as string).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}, continuing every 15 minutes`}</Row>}
           </dl>
           {loom.configured ? (
-            <LoomAtlassianControls isExec={isExec} />
+            <>
+              <TokenExpiry key={loom.expiry?.date ?? "none"} expiry={loom.expiry} isExec={isExec} refused={Boolean(loom.authFailedAt)} />
+              <LoomAtlassianControls isExec={isExec} />
+            </>
           ) : (
             <p className="text-[11px] leading-relaxed text-faint">
-              Add {loom.missing.join(" and ")} in Vercel (an API token from id.atlassian.com › Security › API tokens, for an account that can see the Loom workspace), or ATLASSIAN_SERVICE_KEY for a service account, then redeploy. An org admin also turns on API-token sign-in at admin.atlassian.com › Connectors › Atlassian MCP server, and the Loom workspace has to be linked to the Atlassian site.
+              Add {loom.missing.join(" and ")} in Vercel (
+              <a href={TOKEN_URL} target="_blank" rel="noreferrer" className="text-brand-text hover:underline">
+                make a token ↗
+              </a>{" "}
+              signed in as the account whose Looms we pull), or ATLASSIAN_SERVICE_KEY for a service account, then redeploy. An org admin also turns on API-token sign-in at admin.atlassian.com › Connectors › Atlassian MCP server, and the Loom workspace has to be linked to the Atlassian site.
             </p>
           )}
         </Card>
