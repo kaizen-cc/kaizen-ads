@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Markdown } from "@/components/markdown";
 import { ChatPlan } from "@/app/(team)/clients/[slug]/chat-plan";
+import { LaunchCard } from "@/app/(team)/clients/[slug]/launch-card";
 import { BriefPreviewButton } from "@/components/quick-brief-sheet";
 import type { BriefCard, Card, CopyCard, CopyField, LinkCard, ListCard, MetricsCard, ToolRun } from "@/lib/kaizen-ai/types";
 
@@ -367,6 +368,13 @@ export function CardView({ card }: { card: Card }) {
             Planned change for {card.client}: nothing is written until it&rsquo;s confirmed below.
           </p>
           <ChatPlan id={card.id} />
+        </div>
+      );
+    case "launch":
+      return (
+        <div className="grid gap-1">
+          <p className="px-1 text-[12px] text-faint">Launch sheet for {card.client}: nothing goes to Meta until the plan is confirmed below.</p>
+          <LaunchCard id={card.id} reply />
         </div>
       );
     default:

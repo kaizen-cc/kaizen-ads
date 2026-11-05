@@ -89,7 +89,9 @@ export type BriefCard = {
 export type LinkCard = { type: "link"; title: string; detail: string; href: string; cta: string; external?: boolean };
 export type PlanCard = { type: "plan"; id: string; client: string; platform: string; instruction: string };
 export type ListCard = { type: "list"; title: string; items: { title: string; detail?: string; tone?: "ok" | "warn" | "bad" | null; href?: string | null; when?: string | null }[] };
-export type Card = MetricsCard | CopyCard | BriefCard | LinkCard | PlanCard | ListCard;
+/** A launch from a launch sheet: read, checked, asked about, planned and created on the card */
+export type LaunchCardRef = { type: "launch"; id: string; client: string };
+export type Card = MetricsCard | CopyCard | BriefCard | LinkCard | PlanCard | ListCard | LaunchCardRef;
 
 export type ChatMessage = {
   id: string;
