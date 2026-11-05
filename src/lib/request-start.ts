@@ -5,6 +5,7 @@ import type { MarketAd } from "@/lib/market";
 import type { SuggestionDraft } from "@/lib/suggestions";
 import { SAVED_COLS, toSaved, type SavedRef } from "@/lib/saved-references";
 import { CREATIVE_FORMATS, fitsAnyFormat, fitsFormat, marketFormatOf, seesAllFormats, type CreativeFormat } from "@/lib/creative-formats";
+import { promiseSince } from "@/lib/promise-window";
 
 // Everything the "How do you want to start?" page shows for a client, in one go, from what's already stored: the briefs
 // the strategist writes every day (ads tiring, numbers off, moments, patterns), promises from calls, what's proven for
@@ -94,7 +95,8 @@ export async function startSections(db: SupabaseClient, clientId: string, allowe
       async () => {
         const { data } = await db
           .from("call_commitments")
-          .select("id, kind, what, status, suggestion_id, client_calls(title, occurred_at, status)")
+          .select("id, kind, what, status, suggestion_id, client_calls!inner(title, occurred_at, status)")
+          .gte("client_calls.occurred_at", promiseSince())
           .eq("client_id", clientId)
           .in("status", ["open", "briefed"])
           .in("kind", ["creative", "copy", "offer"])

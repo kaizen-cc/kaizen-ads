@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
+import { promiseSince } from "@/lib/promise-window";
 
 // The same promise comes up in more than one place: two calls about it, both note-takers on the same call, a Slack
 // thread after. Each client's open promises (calls, Slack, email) are sorted into groups, one per piece of work, with
@@ -18,7 +19,7 @@ type Item = { ref: string; table: "call" | "msg"; id: string; group: string | nu
 
 async function openItems(admin: Admin, clientId: string): Promise<Item[]> {
   const [{ data: calls }, { data: msgs }] = await Promise.all([
-    admin.from("call_commitments").select("id, group_id, what, why, kind, due_at, status, suggestion_id, client_calls(title, occurred_at)").eq("client_id", clientId).in("status", CALL_OPEN),
+    admin.from("call_commitments").select("id, group_id, what, why, kind, due_at, status, suggestion_id, client_calls!inner(title, occurred_at)").eq("client_id", clientId).in("status", CALL_OPEN).gte("client_calls.occurred_at", promiseSince()),
     admin.from("message_promises").select("id, group_id, what, ask, asked_by, kind, said_at, due_at, status, source, channel_name").eq("client_id", clientId).in("status", MSG_OPEN),
   ]);
   return [
@@ -58,7 +59,7 @@ export async function groupPromises(admin: Admin, opts: { clientId?: string; max
   if (opts.clientId) clients = [opts.clientId];
   else {
     const [{ data: a }, { data: b }] = await Promise.all([
-      admin.from("call_commitments").select("client_id").is("group_id", null).in("status", CALL_OPEN).limit(300),
+      admin.from("call_commitments").select("client_id, client_calls!inner(occurred_at)").is("group_id", null).in("status", CALL_OPEN).gte("client_calls.occurred_at", promiseSince()).limit(300),
       admin.from("message_promises").select("client_id").is("group_id", null).in("status", MSG_OPEN).not("client_id", "is", null).limit(300),
     ]);
     clients = [...new Set([...(a ?? []), ...(b ?? [])].map((r) => r.client_id as string))].slice(0, opts.max ?? 12);

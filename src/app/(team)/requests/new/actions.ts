@@ -31,6 +31,7 @@ import { MAX_VARIATIONS, SIZES, describeDraft, refLinks, selectedFormats, type D
 import { notLive } from "@/lib/live-guard";
 import type { QuickBrief } from "@/lib/quick-brief";
 import { clampFormats, fitsAnyFormat, fitsFormat, formatsFor, formatsOutside, formatsPhrase, formatsRule, marketFormatOf } from "@/lib/creative-formats";
+import { promiseSince } from "@/lib/promise-window";
 
 /** A request in formats this person doesn't make requests for (a designer and video, a video editor and images): refused */
 function outsideFormats(me: { role: string; isExec?: boolean; isLead?: boolean }, formats: string[]): string | null {
@@ -440,7 +441,8 @@ export async function promisesFor(clientId: string): Promise<Promise_[]> {
   const supabase = await createClient();
   const { data } = await supabase
     .from("call_commitments")
-    .select("id, kind, what, status, suggestion_id, client_calls(title, occurred_at, status)")
+    .select("id, kind, what, status, suggestion_id, client_calls!inner(title, occurred_at, status)")
+    .gte("client_calls.occurred_at", promiseSince())
     .eq("client_id", clientId)
     .in("status", ["open", "briefed"])
     .in("kind", ["creative", "copy", "offer"])

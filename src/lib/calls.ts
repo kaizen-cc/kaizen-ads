@@ -5,6 +5,7 @@ import { AiPaused, askJson } from "@/lib/ai";
 import { googleConfigured, gmailMailboxes, googleDriveToken } from "@/lib/context/google";
 import { compact, getCursor, rememberLessons, saveItems, setCursor, trimBody, type Lesson } from "@/lib/context/shared";
 import { LIVE } from "@/lib/live";
+import { promiseSince } from "@/lib/promise-window";
 
 // Calls: meeting notes from Gemini (Google Meet saves "Notes by Gemini" docs in the organizer's Drive) and Fireflies
 // (its API, with FIREFLIES_API_KEY). Each call is matched to its client, read by the AI (what the client said, what
@@ -445,7 +446,8 @@ async function coverCheck(promises: { what: string }[], requests: CoverTicket[],
 export async function watchCommitments(admin: SupabaseClient, max = 12) {
   const { data: due } = await admin
     .from("call_commitments")
-    .select("id, client_id, kind, what, why, due_at, call_id, client_calls(title, occurred_at, summary), clients!inner(archived_at, status)")
+    .select("id, client_id, kind, what, why, due_at, call_id, client_calls!inner(title, occurred_at, summary), clients!inner(archived_at, status)")
+    .gte("client_calls.occurred_at", promiseSince())
     .is("clients.archived_at", null)
     .in("clients.status", LIVE)
     .eq("status", "open")
@@ -503,7 +505,8 @@ export async function watchCommitments(admin: SupabaseClient, max = 12) {
 export async function sweepCovered(admin: SupabaseClient, clientId?: string) {
   let q = admin
     .from("call_commitments")
-    .select("id, client_id, what, suggestion_id, cover_checked_at, client_calls(occurred_at), clients!inner(archived_at, status)")
+    .select("id, client_id, what, suggestion_id, cover_checked_at, client_calls!inner(occurred_at), clients!inner(archived_at, status)")
+    .gte("client_calls.occurred_at", promiseSince())
     .is("clients.archived_at", null)
     .in("clients.status", LIVE)
     .in("status", ["open", "briefed"])
@@ -623,7 +626,8 @@ const RECHECK_SCHEMA = {
 export async function recheckCommitments(admin: SupabaseClient, max = 40) {
   const { data: open } = await admin
     .from("call_commitments")
-    .select("id, what, suggestion_id, call_id, client_calls(title, host, notes)")
+    .select("id, what, suggestion_id, call_id, client_calls!inner(title, host, notes, occurred_at)")
+    .gte("client_calls.occurred_at", promiseSince())
     .in("status", ["open", "briefed"])
     .is("channel_checked_at", null)
     .limit(max);

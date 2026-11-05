@@ -14,6 +14,7 @@ import type { SuggestionKind } from "@/lib/suggestion-kinds";
 import { LIVE, isLive } from "@/lib/live";
 import { applySeed, seedBlock, type QuickBrief } from "@/lib/quick-brief";
 import { assetsBlock, loadAssets } from "@/lib/client-assets";
+import { promiseSince } from "@/lib/promise-window";
 export { KIND_LABEL, type SuggestionKind } from "@/lib/suggestion-kinds";
 
 /** format/new/variations (and a carousel's slides): what this one concept makes. One concept per brief: a request with several is split into one brief each */
@@ -1178,8 +1179,9 @@ export type CallPromise = { commitmentId: string; client: string; clientSlug: st
 export async function loadCallPromises(db: SupabaseClient): Promise<CallPromise[]> {
   const { data } = await db
     .from("call_commitments")
-    .select("id, what, due_at, suggestion_id, group_id, clients(name, slug, status, archived_at), client_calls(title, occurred_at)")
+    .select("id, what, due_at, suggestion_id, group_id, clients(name, slug, status, archived_at), client_calls!inner(title, occurred_at)")
     .eq("status", "briefed")
+    .gte("client_calls.occurred_at", promiseSince())
     .order("due_at")
     .limit(40);
   // The same promise from several calls is one card (the earliest due), with all of it
