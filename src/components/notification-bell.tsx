@@ -19,6 +19,11 @@ const ago = (iso: string) => {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 };
 const isToday = (iso: string) => new Date(iso).toDateString() === new Date().toDateString();
+/** A promise or an unanswered message: it can be closed from the notice ("It's handled", "Add context") */
+const itemOf = (key: string | null) => {
+  const m = /^(said|owed)(?:2|-lead)?:([0-9a-f-]{36})$/.exec(key ?? "");
+  return m ? { kind: m[1], id: m[2] } : null;
+};
 
 const KIND_ICON: Record<string, string> = {
   assigned: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 9a7 7 0 0 1 14 0",
@@ -237,6 +242,30 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
                             </span>
                             {!n.read && <span className={`mt-2 h-2 w-2 shrink-0 rounded-full ${n.priority === "critical" ? "bg-brand" : "bg-fg/40"} ${sheet ? "" : "group-hover:opacity-0"}`} />}
                           </button>
+                          {itemOf(n.key) && (
+                            <div className="-mt-1 flex gap-2 pb-3 pl-[60px] pr-4">
+                              {(
+                                [
+                                  ["done", "It's handled"],
+                                  ["context", "Add context"],
+                                ] as const
+                              ).map(([mode, label]) => (
+                                <button
+                                  key={mode}
+                                  type="button"
+                                  onClick={() => {
+                                    const it = itemOf(n.key)!;
+                                    setOpen(false);
+                                    if (!n.read) void markRead(n.id);
+                                    router.push(`/handled?k=${it.kind}&id=${it.id}&do=${mode}`);
+                                  }}
+                                  className={`rounded-full border px-3 text-xs transition-colors ${sheet ? "h-11" : "h-8 max-md:h-11"} ${mode === "done" ? "border-line text-fg hover:bg-surface-2" : "border-transparent text-muted hover:text-fg"}`}
+                                >
+                                  {label}
+                                </button>
+                              ))}
+                            </div>
+                          )}
                           {/* Clear: always there on phones, on hover on a computer */}
                           <button
                             type="button"

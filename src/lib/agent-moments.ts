@@ -112,6 +112,8 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Checks whether a yes in Slack or email has happened (the thread, tickets, Asana, the ad account)", where: "Overview \u00b7 Waiting on us", trigger: "auto", when: "When it comes due, and every couple of working hours after", labels: ["promise follow-through"] },
     { title: "Groups the same promise said in several places (calls, Slack, email)", where: "Overview \u00b7 Waiting on us", trigger: "auto", when: "After each read of new promises", labels: ["group promises"] },
     { title: "Picks out what the team said yes to in Slack and email", where: "Overview \u00b7 Waiting on us", trigger: "auto", when: "Every 15 minutes in working hours", labels: ["promises in messages"] },
+    { title: "Works out which client a yes in Slack or email is about when the name is misspelled or the client was added after", where: "Overview · Waiting on us", trigger: "auto", when: "With the follow-through, once per promise, and again when a client is added", labels: ["promise client match"] },
+    { title: "Reads what someone said happened to a message they were chased for: taken care of, or still owed", where: "Notifications · Email · It's handled page", trigger: "click", when: "When someone adds context to an unanswered message or replies to its email", labels: ["owed reply context"] },
   ],
   gtm: [
     { title: "Researches the client for the Meta go-to-market strategy", where: "Client page · Go-to-market", trigger: "auto", when: "At onboarding once the intake, call notes and website are in, or on Build it now", labels: ["gtm research"] },

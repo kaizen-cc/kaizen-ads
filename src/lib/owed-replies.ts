@@ -284,7 +284,7 @@ async function answeredBy(admin: Admin, open: Row[], m: Msg, profileId: string |
  * Answered (or handled another way, which the person marks themselves): off their list and their unread notices off
  * the bell. If it had gone to their lead and the execs, they hear it's been taken care of.
  */
-async function closeAnswered(admin: Admin, o: Row, now = new Date().toISOString(), how: "replied" | "handled" | "reacted" = "replied") {
+export async function closeAnswered(admin: Admin, o: Row, now = new Date().toISOString(), how: "replied" | "handled" | "reacted" = "replied") {
   await admin
     .from("owed_replies")
     .update({ status: "answered", answered_at: now, checked_at: now, ...(how === "handled" ? { dismiss_reason: "Handled another way (marked done)" } : {}) })

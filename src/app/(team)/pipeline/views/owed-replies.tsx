@@ -115,6 +115,10 @@ export function OwedReplies({ items, me }: { items: OwedReply[]; me: string }) {
                   </button>
                 </>
               )}
+              {/* What happened, in words: read at once, and it closes if that shows it's taken care of */}
+              <Link href={`/handled?k=owed&id=${o.id}&do=context`} className="inline-flex h-11 items-center justify-center rounded-brand px-3 text-sm text-faint hover:text-fg md:h-9">
+                Add context
+              </Link>
               {/* Someone else's: clear it off your board (it stays theirs) */}
               {!mine && <HideForMe hideKey={`owed:${o.id}`} label={`${o.target} → ${o.from}: ${o.gist}`} href={o.source === "slack" ? o.url : null} />}
             </div>

@@ -87,6 +87,10 @@ export function SaidPromises({ items, me }: { items: SaidPromise[]; me: string }
                   </button>
                 </>
               )}
+              {/* What's missing ("onboarding started Nov 2"), or which client it is: read at once, closes it if it's handled */}
+              <Link href={`/handled?k=said&id=${p.id}&do=context`} className="inline-flex h-11 items-center justify-center rounded-brand px-3 text-sm text-faint hover:text-fg md:h-9">
+                Add context
+              </Link>
               {!mine && <HideForMe hideKey={`said:${p.id}`} label={`${p.owner} said they'd ${p.group?.title ?? p.what}`} href={p.source === "slack" ? p.url : null} />}
             </div>
           </article>

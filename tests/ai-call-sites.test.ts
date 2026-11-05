@@ -186,7 +186,7 @@ const UTILITY: Record<string, { labels: string[]; why: string }> = {
   "src/lib/ledger.ts": { labels: ["playbook angles", "playbook learnings"], why: "labels ledger rows; extraction" },
   "src/lib/lesson-sharing.ts": { labels: ["share lesson"], why: "decides which other clients a lesson fits" },
   "src/lib/market.ts": { labels: ["brands to watch", "check market brands", "describe market brands"], why: "market brands across all clients" },
-  "src/lib/message-promises.ts": { labels: ["promises in messages", "promise follow-through"], why: "extracts and checks promises in batches" },
+  "src/lib/message-promises.ts": { labels: ["promises in messages", "promise follow-through", "promise client match"], why: "extracts and checks promises in batches, and matches them to clients across the whole client list" },
   "src/lib/owed-replies.ts": { labels: ["owed replies"], why: "classifies which messages wait on a reply, in batches" },
   "src/lib/patterns.ts": { labels: ["cross-client patterns"], why: "patterns across a business model, unnamed" },
   "src/lib/playbooks.ts": { labels: ["playbook"], why: "cross-client playbook per sub-vertical" },

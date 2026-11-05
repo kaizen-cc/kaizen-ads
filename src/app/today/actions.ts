@@ -102,9 +102,16 @@ async function closeSaid(id: string, meId: string, how: "done" | "dropped") {
   if (!adminConfigured()) return;
   const now = new Date().toISOString();
   const admin = createAdminClient();
+  // Done: closed the same way as from its notice, so anyone it went up to hears it's handled
+  if (how === "done") {
+    const { mayAct, resolveNotice } = await import("@/lib/notice-resolve");
+    if (await mayAct(admin, "said", id, meId)) await resolveNotice(admin, { kind: "said", id, profileId: meId, how: "done", via: "app" });
+    revalidatePath("/pipeline");
+    return;
+  }
   await admin
     .from("message_promises")
-    .update(how === "done" ? { status: "done", evidence: "Marked done by them", closed_at: now } : { status: "dismissed", dismissed_by: meId, dismiss_reason: "Not needed any more", closed_at: now })
+    .update({ status: "dismissed", dismissed_by: meId, dismiss_reason: "Not needed any more", closed_at: now })
     .eq("id", id)
     .eq("owner_id", meId)
     .in("status", ["open", "overdue", "escalated"]);

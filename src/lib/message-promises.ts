@@ -7,6 +7,7 @@ import { openableLink, slack } from "@/lib/context/slack";
 import { addresses, gmailToken, google, plainText, withoutQuotes, type GmailMessage } from "@/lib/context/google";
 import { LEAD_OF, notify, plain, workingHours, type Msg, type SlackWho } from "@/lib/owed-replies";
 import { loadGroups, shadowedMessages, type PromiseGroup } from "@/lib/promise-groups";
+import { matchClientName } from "@/lib/client-name-match";
 
 // What the team said yes to in Slack or email, said any way people say it: "yes", but also "love it, let's run with
 // that", "I'll get this over to design", "makes sense, will update tomorrow", or a 👍 on a clear ask. The scan hands
@@ -150,6 +151,73 @@ promise: true only when it's a real commitment by the person named as saying it.
   return { read: todo.length, promises };
 }
 
+// ─── Which client ───────────────────────────────────────────────────────────
+
+const OPEN_STATES = ["open", "overdue", "escalated"];
+const textOf = (p: Row) => `${p.what ?? ""}. ${p.ask ?? ""}. ${String(p.said ?? "").slice(0, 900)}`;
+
+/**
+ * Promises said with no client (an email from someone not yet a contact, a team channel): matched again on every pass
+ * against today's clients, including ones added after it was said (a prospect who signed that afternoon). The name as
+ * people write it first (misspelled, the brand alone, a "Brand - Location" client's location); the AI reads the ones
+ * left, once, and again only when a client has been added since.
+ */
+export async function attachClients(admin: Admin, only?: string[]) {
+  let q = admin.from("message_promises").select("id, what, ask, said, asked_by, said_at, client_matched_at").is("client_id", null).in("status", OPEN_STATES).order("said_at", { ascending: false }).limit(150);
+  if (only?.length) q = q.in("id", only);
+  const [{ data: rows }, { data: all }] = await Promise.all([q, admin.from("clients").select("id, name, website, status, created_at, internal").is("archived_at", null).limit(1000)]);
+  // Our own sandbox isn't a client anyone promises things to (and "Kaizen" is in every email's subject)
+  type C = { id: string; name: string; website: string | null; status: string; created_at: string; internal: boolean | null };
+  const clients = ((all ?? []) as C[]).filter((c) => !c.internal && !/\bkaizen\b/i.test(c.name));
+  const tally = { matched: 0, byAi: 0 };
+  if (!rows?.length || !clients?.length) return tally;
+  const now = new Date().toISOString();
+  const left: { p: Row; maybe: typeof clients }[] = [];
+  for (const p of rows) {
+    const m = matchClientName(textOf(p), clients);
+    if (m.sure) {
+      await admin.from("message_promises").update({ client_id: m.sure.id, client_match: "name", client_matched_at: now }).eq("id", p.id).is("client_id", null);
+      tally.matched++;
+    } else left.push({ p, maybe: m.maybe });
+  }
+  // The AI only for ones it hasn't read, or when a client has been added since it last did
+  const newest = clients.reduce((a, c) => (String(c.created_at) > a ? String(c.created_at) : a), "");
+  const ask = left.filter(({ p }) => !p.client_matched_at || String(p.client_matched_at) < newest).slice(0, 20);
+  if (!ask.length) return tally;
+  const list = clients.filter((c) => c.status !== "offboarded" || ask.some(({ maybe }) => maybe.some((m) => m.id === c.id)));
+  try {
+    const out = await askJson<{ items: { n: number; client: number; sure: boolean }[] }>({
+      agent: "calls",
+      label: "promise client match",
+      bare: true,
+      maxTokens: 2000,
+      system:
+        "You match things the team at Kaizen, a paid ads and creative agency, said they'd do to the client they're about. People misspell names (\"Glenlock\" for \"Gleannloch\"), shorten them to the brand (\"Crust\" for \"Crust Pizza\"), or name only the location of a client listed as \"Brand - Location\". A client may have been added after it was said (a prospect who just signed). client: the number of the client it's about, 0 when none fits or it's about the agency itself. sure: true only when the message clearly names that business or location and no other client on the list fits as well.",
+      schema: {
+        type: "object",
+        properties: { items: { type: "array", items: { type: "object", properties: { n: { type: "integer" }, client: { type: "integer" }, sure: { type: "boolean" } }, required: ["n", "client", "sure"], additionalProperties: false } } },
+        required: ["items"],
+        additionalProperties: false,
+      },
+      prompt: `Clients:\n${list.map((c, i) => `C${i + 1}. ${c.name}${c.status === "onboarding" ? " (onboarding)" : ""}, added ${nyDay(String(c.created_at))}`).join("\n")}\n\nWhat was said:\n${ask
+        .map(({ p }, i) => `${i + 1}. ${nyDay(String(p.said_at))}, asked by ${p.asked_by ?? "someone"}: ${textOf(p).replace(/\s+/g, " ").slice(0, 700)}`)
+        .join("\n\n")}`,
+    });
+    for (const v of out.items) {
+      const p = ask[v.n - 1]?.p;
+      const c = v.client > 0 ? list[v.client - 1] : null;
+      if (!p || !c || !v.sure) continue;
+      await admin.from("message_promises").update({ client_id: c.id, client_match: "ai", client_matched_at: now }).eq("id", p.id).is("client_id", null);
+      tally.byAi++;
+    }
+  } catch (e) {
+    console.error("[promises] client match failed:", e instanceof Error ? e.message : e);
+    return tally;
+  }
+  await admin.from("message_promises").update({ client_matched_at: now }).in("id", ask.map(({ p }) => p.id as string)).is("client_id", null);
+  return tally;
+}
+
 // ─── Following through ──────────────────────────────────────────────────────
 
 /** What's been said since, where it was promised. */
@@ -230,7 +298,104 @@ async function accountChangesSince(admin: Admin, clientId: string, at: string) {
   return `${changes || "none"}${names.length ? `\nCampaigns running in their ad accounts now (current names): ${names.join(" | ")}` : ""}`;
 }
 
-/** For each promise: done, moving (a ticket, a task, the thread, or the ad account shows it), or nothing yet. */
+type Data<T = Row> = { data: T[] | T | null };
+const many = (r: Data) => (Array.isArray(r.data) ? r.data : r.data ? [r.data] : []);
+
+/**
+ * What Kaizen Ads itself shows happened for the client from a little before it was said until now: the client added
+ * or enrolled, onboarding started (welcome sent, access steps, the call checked, what's blocking it), the intake sent
+ * and back, portal people invited, the kickoff message sent, the Brand Bible and go-to-market started, KPI targets and
+ * ad accounts linked, launches. Work done in Kaizen Ads isn't in a thread or a ticket, and counts all the same.
+ */
+export async function systemSince(admin: Admin, clientId: string, at: string) {
+  const from = new Date(Date.parse(at) - 6 * 3_600_000).toISOString();
+  const after = (iso: unknown) => typeof iso === "string" && iso >= from;
+  const [c, onb, intakes, forms, people, kick, bible, gtm, targets, launches, engagement, archive] = await Promise.all([
+    admin.from("clients").select("name, status, created_at, reonboarded_at, reactivated_at, portal_live_at, first_round_started_at").eq("id", clientId).maybeSingle(),
+    admin.from("client_onboarding").select("welcomed_at, call_checked_at, meta, google, assets, style, blockers").eq("client_id", clientId).maybeSingle(),
+    admin.from("client_intakes").select("received_at, status").eq("client_id", clientId).gte("received_at", from).limit(5),
+    admin.from("client_intake_forms").select("status, prepared_at, started_at, submitted_at, call_booked_at").eq("client_id", clientId).maybeSingle(),
+    admin.from("contact_clients").select("created_at, contacts(full_name, last_seen_at)").eq("client_id", clientId).gte("created_at", from).limit(10),
+    admin.from("client_kickoffs").select("status, drafted_at, sent_at").eq("client_id", clientId).maybeSingle(),
+    admin.from("client_brand_bibles").select("status, started_at, generated_at").eq("client_id", clientId).maybeSingle(),
+    admin.from("client_gtm_strategies").select("status, started_at, generated_at").eq("client_id", clientId).maybeSingle(),
+    admin.from("kpi_targets").select("platform, ad_account_id, label, created_at").eq("client_id", clientId).gte("created_at", from).limit(10),
+    admin.from("launches").select("status, created_at, launched_at, live_at, sandbox").eq("client_id", clientId).gte("created_at", from).limit(10),
+    admin.from("engagement_launches").select("status, started_at, live_at").eq("client_id", clientId).maybeSingle(),
+    admin.from("client_archive_events").select("action, from_status, at").eq("client_id", clientId).gte("at", from).limit(5),
+  ]);
+  const lines: [string, string][] = [];
+  const add = (iso: unknown, what: string) => {
+    if (after(iso)) lines.push([String(iso), what]);
+  };
+  const cl = c.data as Row | null;
+  if (cl) {
+    add(cl.created_at, `the client was added to Kaizen Ads (status now: ${cl.status})`);
+    add(cl.reonboarded_at, "the client was enrolled for onboarding again");
+    add(cl.reactivated_at, "the client was made active again");
+    add(cl.portal_live_at, "the client portal went live");
+    add(cl.first_round_started_at, "the first round of creative was started");
+  }
+  const o = onb.data as Row | null;
+  if (o) {
+    add(o.welcomed_at, "onboarding started: the welcome went to the client");
+    add(o.call_checked_at, "the onboarding call was checked off");
+    const meta = (o.meta ?? {}) as { status?: string; at?: string; checkedAt?: string };
+    if (meta.status) add(meta.at ?? meta.checkedAt, `Meta access step: ${meta.status}`);
+    const google = (o.google ?? {}) as { status?: string; at?: string; checkedAt?: string };
+    if (google.status) add(google.at ?? google.checkedAt, `Google Ads access step: ${google.status}`);
+    const assets = (o.assets ?? {}) as { files?: number; links?: number; at?: string };
+    if (assets.files || assets.links) add(assets.at, `the client shared assets (${assets.files ?? 0} files, ${assets.links ?? 0} links)`);
+    const style = (o.style ?? {}) as { at?: string };
+    add(style.at, "the client picked their creative style");
+    for (const b of ((o.blockers ?? []) as { step?: string; kind?: string; detail?: string; at?: string }[]).slice(-3)) add(b.at, `onboarding blocker logged (${b.step ?? "a step"}): ${String(b.detail ?? b.kind ?? "").slice(0, 120)}`);
+  }
+  for (const i of many(intakes)) add(i.received_at, "the client's intake form came back");
+  const f = forms.data as Row | null;
+  if (f) {
+    add(f.prepared_at, "the intake form was prepared for the client");
+    add(f.started_at, "the client started their intake form");
+    add(f.submitted_at, "the client submitted their intake form");
+    add(f.call_booked_at, "the client booked their onboarding call");
+  }
+  for (const p of many(people)) add(p.created_at, `${(p.contacts as { full_name?: string } | null)?.full_name ?? "a client contact"} was invited to the portal`);
+  const k = kick.data as Row | null;
+  if (k) {
+    add(k.drafted_at, "the kickoff message was drafted");
+    add(k.sent_at, "the kickoff message was sent to the client");
+  }
+  const bb = bible.data as Row | null;
+  if (bb) {
+    add(bb.started_at, "the Brand Bible was started");
+    add(bb.generated_at, "the Brand Bible was written");
+  }
+  const g = gtm.data as Row | null;
+  if (g) {
+    add(g.started_at, "the go-to-market strategy was started");
+    add(g.generated_at, "the go-to-market strategy was written");
+  }
+  for (const t of many(targets)) add(t.created_at, `a ${t.platform} KPI target${t.ad_account_id ? " and ad account" : ""} was linked${t.label ? ` (${t.label})` : ""}`);
+  for (const l of many(launches)) {
+    if (l.sandbox) continue;
+    add(l.created_at, `a launch was set up (${l.status})`);
+    add(l.live_at ?? l.launched_at, "ads were launched");
+  }
+  const e = engagement.data as Row | null;
+  if (e) {
+    add(e.started_at, "the engagement ads launch was started");
+    add(e.live_at, "the engagement ads went live");
+  }
+  for (const a of many(archive)) add(a.at, `the client was ${a.action}${a.from_status ? ` (from ${a.from_status})` : ""}`);
+  return lines
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([iso, what]) => `${nyDay(iso)}${iso < at ? " (just before it was said)" : ""}: ${what}`)
+    .join("\n");
+}
+
+type TeamNote = { at: string; by: string; text: string; client?: string | null };
+const notesOf = (p: Row) => ((p.team_context ?? []) as TeamNote[]).filter((n) => n?.text?.trim());
+
+/** For each promise: done, moving (a ticket, a task, the thread, the ad account or Kaizen Ads shows it), or nothing yet. */
 async function movement(admin: Admin, list: Row[], who: SlackWho | null, names: Map<string, string>) {
   const blocks: string[] = [];
   const tasksOf = new Map<string, { gid: string }[]>();
@@ -238,15 +403,19 @@ async function movement(admin: Admin, list: Row[], who: SlackWho | null, names: 
     const after = await since(p, who);
     let work = "";
     if (p.client_id) {
-      const [{ data: tickets }, tasks, changes] = await Promise.all([
+      const [{ data: tickets }, tasks, changes, system, { data: client }] = await Promise.all([
         admin.from("requests").select("number, title, brief").eq("client_id", p.client_id).gte("created_at", p.said_at).is("deleted_at", null).limit(15),
         asanaSince(admin, String(p.client_id), String(p.said_at)),
         accountChangesSince(admin, String(p.client_id), String(p.said_at)),
+        systemSince(admin, String(p.client_id), String(p.said_at)).catch(() => ""),
+        admin.from("clients").select("name, status").eq("id", p.client_id).maybeSingle(),
       ]);
       tasksOf.set(String(p.id), tasks);
-      work = `Tickets made since: ${(tickets ?? []).map((t) => `#${t.number} "${t.title}": ${String(t.brief ?? "").replace(/\s+/g, " ").slice(0, 160)}`).join(" | ") || "none"}\nAsana tasks made since: ${tasks.map((t, n) => `A${n + 1} "${t.name}"`).join(" | ") || "none"}\nChanges in their ad accounts around then and since (Meta and Google's own history): ${changes || "none"}`;
+      work = `Client: ${client?.name ?? "unknown"}${client?.status ? ` (status now: ${client.status})` : ""}\nTickets made since: ${(tickets ?? []).map((t) => `#${t.number} "${t.title}": ${String(t.brief ?? "").replace(/\s+/g, " ").slice(0, 160)}`).join(" | ") || "none"}\nAsana tasks made since: ${tasks.map((t, n) => `A${n + 1} "${t.name}"`).join(" | ") || "none"}\nChanges in their ad accounts around then and since (Meta and Google's own history): ${changes || "none"}\nWhat Kaizen Ads shows happened for this client since:\n${system || "nothing"}`;
     }
-    blocks.push(`${i + 1}. ${names.get(String(p.owner_id)) ?? "A teammate"} said on ${nyDay(String(p.said_at))} they'd: ${p.what} (asked by ${p.asked_by ?? "someone"}: ${p.ask ?? ""})\nSaid since, where it was promised:\n${after || "(nothing)"}${work ? `\n${work}` : ""}`);
+    const notes = notesOf(p);
+    const told = notes.length ? `\nWhat the team told Kaizen Ads about it:\n${notes.map((n) => `${nyDay(n.at)} ${n.by}: ${n.text.replace(/\s+/g, " ").slice(0, 500)}`).join("\n")}` : "";
+    blocks.push(`${i + 1}. ${names.get(String(p.owner_id)) ?? "A teammate"} said on ${nyDay(String(p.said_at))} they'd: ${p.what} (asked by ${p.asked_by ?? "someone"}: ${p.ask ?? ""})\nSaid since, where it was promised:\n${after || "(nothing)"}${work ? `\n${work}` : ""}${told}`);
   }
   try {
     const out = await askJson<{ items: Move[] }>({
@@ -255,7 +424,7 @@ async function movement(admin: Admin, list: Row[], who: SlackWho | null, names: 
       bare: true,
       maxTokens: 4000,
       system:
-        "You check whether something the team said they'd do has happened or is moving. done: the later messages show it delivered (sent, shared, live, launched, changed, \"here it is\"), or the ad accounts' own change history shows it done (ads or ad sets paused or their status changed for a pause, names changed for a rename, budgets changed for a budget change), or for a rename or a naming change, the current campaign names already show it, whoever's name is on it, since people use their own Meta or Google names. moving: a ticket or Asana task makes substantially the same thing, or the messages show it started or handed on (\"with design now\", \"drafting it\", a new date agreed with the person who asked). nothing: no sign of either. The person who asked dropping it (\"never mind\", \"let's hold off\") counts as done. evidence: one short line saying what showed it (or \"nothing since\"). tickets: the ticket numbers that cover it; asana: the Asana task numbers without the A.",
+        "You check whether something the team said they'd do has happened or is moving. done: the later messages show it delivered (sent, shared, live, launched, changed, \"here it is\"), or the ad accounts' own change history shows it done (ads or ad sets paused or their status changed for a pause, names changed for a rename, budgets changed for a budget change), or for a rename or a naming change, the current campaign names already show it, whoever's name is on it, since people use their own Meta or Google names. moving: a ticket or Asana task makes substantially the same thing, or the messages show it started or handed on (\"with design now\", \"drafting it\", a new date agreed with the person who asked). nothing: no sign of either. The person who asked dropping it (\"never mind\", \"let's hold off\") counts as done. Work done in Kaizen Ads counts like work anywhere else: a promise to get a client onboarded, start onboarding, kick off or set up a new client or location is moving once Kaizen Ads shows that client added or enrolled, the welcome sent or onboarding steps under way, and done once the onboarding call is checked off, the kickoff is sent or ads are launched; an intake, portal invite, Brand Bible, go-to-market, KPI target or launch shown there covers a promise to do that thing. What the team told Kaizen Ads about it is their own account: when it says it's handled, done or no longer needed, it's done; when it says it's started or with someone, it's moving; when it only explains, weigh it with the rest. evidence: one short line saying what showed it (or \"nothing since\"). tickets: the ticket numbers that cover it; asana: the Asana task numbers without the A.",
       schema: MOVE_SCHEMA,
       prompt: blocks.join("\n\n"),
     });
@@ -272,6 +441,9 @@ const whereOf = (p: Row) => (p.source === "gmail" ? "by email" : `in #${p.channe
 
 /** Due ones checked; nothing moving → the person who said it; still nothing once they've seen that → lead and execs. */
 export async function followPromises(admin: Admin, who: SlackWho | null) {
+  // Promises with no client yet: matched against today's clients first, so what Kaizen Ads shows for them counts
+  const matched = await attachClients(admin).catch(() => null);
+  if (matched && matched.matched + matched.byAi) console.log("[promises] clients matched:", matched);
   const nowIso = new Date().toISOString();
   const [{ data: open }, { data: people }] = await Promise.all([
     admin.from("message_promises").select("*").in("status", ["open", "overdue", "escalated"]).lte("due_at", nowIso).order("due_at").limit(80),
@@ -307,21 +479,7 @@ export async function followPromises(admin: Admin, who: SlackWho | null) {
     tally.checked++;
     const m = moves.get(p.id);
     if (m && m.state !== "nothing") {
-      await admin.from("message_promises").update({ status: m.state === "done" ? "done" : "in_motion", evidence: m.evidence.slice(0, 300), request_numbers: m.tickets, asana_gids: m.asanaGids, checked_at: nowIso, closed_at: nowIso }).eq("id", p.id);
-      await clearNotices(admin, `said`, p.id);
-      if (p.status === "escalated") {
-        const lead = LEAD_OF[String(byId.get(p.owner_id)?.role ?? "")];
-        const { data: leads } = lead ? await admin.from("profiles").select("id").eq("is_active", true).eq("role", lead) : { data: [] };
-        await notify(admin, [...new Set([...(leads ?? []), ...(execs ?? [])].map((x) => x.id as string))].filter((id) => id !== p.owner_id), {
-          key: `said-moving:${p.id}`,
-          kind: "promise",
-          title: `${byId.get(p.owner_id)?.full_name ?? "Someone"}'s promise is moving: ${p.what}`,
-          body: m.evidence,
-          href: p.url,
-          clientId: p.client_id,
-          priority: "normal",
-        });
-      }
+      await closeMoving(admin, p, { ...m, state: m.state }, byId.get(p.owner_id)?.full_name ?? "Someone");
       tally.moving++;
       continue;
     }
@@ -379,10 +537,70 @@ export async function followPromises(admin: Admin, who: SlackWho | null) {
   return tally;
 }
 
-/** The person's unread notices about it come off the bell once it's resolved. */
-export async function clearNotices(admin: Admin, prefix: "said" | "owed", id: string) {
+/**
+ * Moving or done: closed, its notices off everyone's bell, and whoever it went up to (the lead and execs) told. The
+ * same whether the pass found it or the person said so ("It's handled", context, a reply to the email).
+ */
+export async function closeMoving(admin: Admin, p: Row, m: { state: "done" | "moving"; evidence: string; tickets?: number[]; asanaGids?: string[] }, owner: string) {
+  const now = new Date().toISOString();
+  await admin
+    .from("message_promises")
+    .update({ status: m.state === "done" ? "done" : "in_motion", evidence: m.evidence.slice(0, 300), request_numbers: m.tickets ?? [], asana_gids: m.asanaGids ?? [], checked_at: now, closed_at: now })
+    .eq("id", p.id);
+  await clearNotices(admin, "said", String(p.id), true);
+  if (p.status !== "escalated") return;
+  const { data: told } = await admin.from("notifications").select("profile_id").eq("key", `said-lead:${p.id}`);
+  let above = (told ?? []).map((t) => t.profile_id as string);
+  if (!above.length) {
+    // Escalated before the lead notices were kept: the lead for their role and the execs
+    const { data: person } = await admin.from("profiles").select("role").eq("id", p.owner_id).maybeSingle();
+    const lead = LEAD_OF[String(person?.role ?? "")];
+    const [{ data: leads }, { data: execs }] = await Promise.all([
+      lead ? admin.from("profiles").select("id").eq("is_active", true).eq("role", lead) : Promise.resolve({ data: [] as { id: string }[] }),
+      admin.from("profiles").select("id").eq("is_active", true).eq("role", "executive"),
+    ]);
+    above = [...(leads ?? []), ...(execs ?? [])].map((x) => x.id as string);
+  }
+  await notify(admin, [...new Set(above)].filter((id) => id !== p.owner_id), {
+    key: `said-moving:${p.id}`,
+    kind: "promise",
+    title: `${owner}'s promise is ${m.state === "done" ? "handled" : "moving"}: ${p.what}`,
+    body: m.evidence,
+    href: (p.url as string | null) ?? null,
+    clientId: (p.client_id as string | null) ?? null,
+    priority: "normal",
+  });
+}
+
+/**
+ * Looked at again right now (someone added context or picked the client): closed if it shows it's handled. Slack
+ * threads aren't re-read here (that needs the workspace's people); the pass does that within a couple of hours.
+ */
+export async function recheckPromise(admin: Admin, id: string): Promise<{ state: "done" | "moving" | "nothing" | "closed" | "unknown"; evidence: string }> {
+  const { data: p } = await admin.from("message_promises").select("*").eq("id", id).maybeSingle();
+  if (!p) return { state: "unknown", evidence: "It's gone" };
+  if (!OPEN_STATES.includes(String(p.status))) return { state: "closed", evidence: String(p.evidence ?? p.dismiss_reason ?? "Already closed") };
+  if (!p.client_id) await attachClients(admin, [id]).catch(() => null);
+  const { data: fresh } = await admin.from("message_promises").select("*").eq("id", id).maybeSingle();
+  const row = (fresh ?? p) as Row;
+  const { data: owner } = await admin.from("profiles").select("full_name").eq("id", row.owner_id).maybeSingle();
+  const names = new Map([[String(row.owner_id), String(owner?.full_name ?? "").split(" ")[0] || "them"]]);
+  const m = (await movement(admin, [row], null, names)).get(id);
+  if (!m) return { state: "unknown", evidence: "Couldn't check it just now" };
+  if (m.state === "nothing") {
+    await admin.from("message_promises").update({ checked_at: new Date().toISOString() }).eq("id", id);
+    return { state: "nothing", evidence: m.evidence };
+  }
+  await closeMoving(admin, row, { ...m, state: m.state }, String(owner?.full_name ?? "Someone"));
+  return { state: m.state, evidence: m.evidence };
+}
+
+/** Its notices come off the bell once it's resolved: the unread ones, or all of them (`all`) when someone resolved it. */
+export async function clearNotices(admin: Admin, prefix: "said" | "owed", id: string, all = false) {
   const keys = prefix === "said" ? [`said:${id}`, `said2:${id}`, `said-lead:${id}`] : [`owed:${id}`, `owed2:${id}`, `owed-lead:${id}`];
-  await admin.from("notifications").update({ cleared_at: new Date().toISOString() }).in("key", keys).is("read_at", null).is("cleared_at", null);
+  let q = admin.from("notifications").update({ cleared_at: new Date().toISOString() }).in("key", keys).is("cleared_at", null);
+  if (!all) q = q.is("read_at", null);
+  await q;
 }
 
 // ─── Reading ────────────────────────────────────────────────────────────────

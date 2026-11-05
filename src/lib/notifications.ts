@@ -2,17 +2,18 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendEmail } from "@/lib/email";
 import { openableLink } from "@/lib/context/slack";
+import { noticeItem, noticeLink, replyAddress } from "@/lib/notice-links";
 
 // Notifications are made by the database where things happen (see the notifications migration). This file reads
 // them for the bell, reminds people who haven't been through their daily recap, and emails the critical ones that
 // sit unread.
 
-export type Notice = { id: string; kind: string; title: string; body: string | null; href: string | null; priority: "critical" | "normal"; createdAt: string; read: boolean; actor: string | null };
+export type Notice = { id: string; kind: string; title: string; body: string | null; href: string | null; priority: "critical" | "normal"; createdAt: string; read: boolean; actor: string | null; key: string | null };
 
 export async function loadNotifications(db: SupabaseClient, limit = 40): Promise<{ items: Notice[]; unread: number }> {
   const [{ data }, { count }] = await Promise.all([
     // Only alerts: something on this person to act on. Updates are kept but left to the daily review and the Overview
-    db.from("notifications").select("id, kind, title, body, href, priority, created_at, read_at, actor:profiles!notifications_actor_id_fkey(full_name)").eq("alert", true).is("cleared_at", null).order("created_at", { ascending: false }).limit(limit),
+    db.from("notifications").select("id, kind, title, body, href, priority, created_at, read_at, key, actor:profiles!notifications_actor_id_fkey(full_name)").eq("alert", true).is("cleared_at", null).order("created_at", { ascending: false }).limit(limit),
     db.from("notifications").select("id", { count: "exact", head: true }).eq("alert", true).is("read_at", null).is("cleared_at", null),
   ]);
   // Slack links get our workspace's address, so a click opens the message itself
@@ -29,6 +30,7 @@ export async function loadNotifications(db: SupabaseClient, limit = 40): Promise
       createdAt: n.created_at as string,
       read: Boolean(n.read_at),
       actor: (n.actor as unknown as { full_name: string } | null)?.full_name ?? null,
+      key: (n.key as string | null) ?? null,
     })),
   };
 }
@@ -107,7 +109,7 @@ export async function emailNotifications(admin: SupabaseClient) {
   const cutoff = new Date(Date.now() - 5 * 60_000).toISOString();
   const { data } = await admin
     .from("notifications")
-    .select("id, profile_id, kind, title, body, href, priority, profiles!notifications_profile_id_fkey(email, full_name)")
+    .select("id, profile_id, kind, title, body, href, priority, key, profiles!notifications_profile_id_fkey(email, full_name)")
     .is("read_at", null)
     .is("cleared_at", null)
     .is("emailed_at", null)
@@ -137,17 +139,44 @@ export async function emailNotifications(admin: SupabaseClient) {
     if (send.length && p?.email) {
       const one = send.length === 1 ? send[0] : null;
       const subject = one ? (one.title as string) : `${send.length} updates in Kaizen Ads${send.some((n) => n.priority === "critical") ? ", including something critical" : ""}`;
+      // A promise or an unanswered message: two buttons to close it from here, signed for this person and this item
+      const actions = (n: (typeof send)[number]) => {
+        const item = noticeItem(n.key as string | null);
+        if (!item) return null;
+        try {
+          return { done: noticeLink(base, { ...item, profileId: id }, "done"), context: noticeLink(base, { ...item, profileId: id }, "context") };
+        } catch {
+          return null;
+        }
+      };
       const rows = send
-        .map(
-          (n) =>
-            `<a href="${linkOf(n.href as string | null)}" style="display:block;text-decoration:none;color:#17131a;padding:14px 0;border-top:1px solid #eee"><span style="font-size:15px;font-weight:600">${n.priority === "critical" ? '<span style="color:#c8102e">● </span>' : ""}${esc(n.title as string)}</span>${n.body ? `<br><span style="font-size:13px;color:#6b6470">${esc(n.body as string)}</span>` : ""}</a>`,
-        )
+        .map((n) => {
+          const a = actions(n);
+          const buttons = a
+            ? `<div style="padding:0 0 14px"><a href="${a.done}" style="display:inline-block;margin:0 8px 0 0;padding:9px 14px;border-radius:5px;background:#17131a;color:#ffffff;font-size:13px;font-weight:600;text-decoration:none">It's handled</a><a href="${a.context}" style="display:inline-block;padding:8px 13px;border-radius:5px;border:1px solid #d9d4d6;color:#17131a;font-size:13px;text-decoration:none">Add context</a></div>`
+            : "";
+          return `<div style="border-top:1px solid #eee"><a href="${linkOf(n.href as string | null)}" style="display:block;text-decoration:none;color:#17131a;padding:14px 0 ${a ? "10px" : "14px"}"><span style="font-size:15px;font-weight:600">${n.priority === "critical" ? '<span style="color:#c8102e">● </span>' : ""}${esc(n.title as string)}</span>${n.body ? `<br><span style="font-size:13px;color:#6b6470">${esc(n.body as string)}</span>` : ""}</a>${buttons}</div>`;
+        })
         .join("");
+      // One promise or message in the email: a reply to it is read as context (when receiving is set up)
+      const item = one ? noticeItem(one.key as string | null) : null;
+      let replyTo: string | undefined;
+      try {
+        replyTo = item ? (replyAddress(item.kind, item.id) ?? undefined) : undefined;
+      } catch {
+        replyTo = undefined;
+      }
       const r = await sendEmail({
         to: p.email,
         subject,
-        text: send.map((n) => `${n.title}\n${n.body ?? ""}\n${linkOf(n.href as string | null)}`).join("\n\n"),
-        html: `<div style="font-family:system-ui,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#17131a"><p style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#c8102e;margin:0 0 14px">Kaizen Ads</p>${rows}<p style="font-size:12px;color:#8a8189;margin-top:20px">Change what you get by email in Kaizen Ads: Notifications → Settings.</p></div>`,
+        replyTo,
+        text: send
+          .map((n) => {
+            const a = actions(n);
+            return `${n.title}\n${n.body ?? ""}\n${linkOf(n.href as string | null)}${a ? `\nIt's handled: ${a.done}\nAdd context: ${a.context}` : ""}`;
+          })
+          .join("\n\n"),
+        html: `<div style="font-family:system-ui,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#17131a"><p style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#c8102e;margin:0 0 14px">Kaizen Ads</p>${rows}${replyTo ? `<p style="font-size:12px;color:#8a8189;margin-top:16px">Or reply to this email with what happened: it's read, and closes this if it's handled.</p>` : ""}<p style="font-size:12px;color:#8a8189;margin-top:20px">Change what you get by email in Kaizen Ads: Notifications → Settings.</p></div>`,
       });
       if (r.ok) sent++;
     }
