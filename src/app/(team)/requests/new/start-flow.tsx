@@ -104,7 +104,7 @@ export async function writeItem(item: PreviewItem, clientId: string, seed: Quick
         : s.kind === "pattern"
           ? await patternPatch(s.patternId, clientId, seed)
           : s.kind === "suggestion"
-            ? await suggestionPatch(s.id, edited ? seed : null)
+            ? await suggestionPatch(s.id, seed, edited)
             : s.kind === "promise"
               ? await promiseDraft(s.commitmentId, seed, edited)
               : s.kind === "idea"

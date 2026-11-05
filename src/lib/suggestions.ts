@@ -5,7 +5,8 @@ import { AGENCY_SYSTEM, askJson, clientContext, contextBlock, getAgent } from "@
 import { describeFatigue } from "@/lib/fatigue";
 import { ALLOTMENT_RULE, MAX_VARIATIONS, slidesOf, toAllotment, type Allotment, type UsageRow } from "@/lib/allotment";
 
-// The strategist: watches every account for what needs new creative and suggests a full brief, with concepts, to execs
+// The strategist: watches every account for what needs new creative and suggests a brief (only its summary until
+// someone picks it: the full brief is written then, from the same context), to execs
 // and leads on Home. A person approves it (tickets are made), edits it, declines it with a reason, or talks it through.
 // Every decision and reason goes back into the next suggestions.
 
@@ -30,6 +31,11 @@ export type SuggestionDraft = {
   landing: string;
   refs?: string[]; // links the request builds on (a Motion item, a market ad), for the creative team
   assets?: { have: string[]; need: string[] }; // what on Drive it's made from, and what to get from the client
+  /** Only the summary so far (a suggestion written on its own: the strategist's run, a moment, a promise, a tiring
+   *  ad). The full brief is written when someone picks it ("Write the full brief"), from `task` and what they agreed. */
+  summary?: boolean;
+  /** What the full brief is to be written from (the source and the instructions), kept with a summary */
+  task?: string;
 };
 
 export type Signal = { kind: SuggestionKind; weight: number; line: string; facts: string[] };
@@ -287,6 +293,84 @@ async function writeBrief(admin: SupabaseClient, clientId: string, opts: Paramet
   return out;
 }
 
+// ─── Summaries: what's suggested on its own is only sketched until someone picks it ──────────────────────────────
+
+const SUMMARY_SCHEMA = {
+  type: "object",
+  properties: {
+    suggest: { type: "boolean" },
+    skipReason: { type: "string" },
+    kind: SCHEMA.properties.kind,
+    signal: { type: "string" },
+    evidence: { type: "array", items: { type: "string" } },
+    why: { type: "string" },
+    briefs: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          concept: { type: "string" },
+          angle: { type: "string" },
+          audience: { type: "string" },
+          hook: { type: "string" },
+          format: { type: "string", enum: ["image", "video", "carousel"] },
+          new: { type: "integer" },
+          variations: { type: "integer" },
+          cards: { type: "integer" },
+        },
+        required: ["title", "concept", "angle", "audience", "hook", "format", "new", "variations", "cards"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["suggest", "skipReason", "kind", "signal", "evidence", "why", "briefs"],
+  additionalProperties: false,
+};
+
+type SummaryBrief = { title: string; concept: string; angle: string; audience: string; hook: string; format: Fmt3; new: number; variations: number; cards: number };
+type SummaryOut = Omit<Out, "draft" | "reply"> & { drafts: SuggestionDraft[] };
+
+const SUMMARY_ONLY = `SUMMARY ONLY. A person on the team looks at this first and decides whether it's worth briefing; the full brief (the designer's brief, the copy, refs, assets) is written later, only if they choose it. So don't write the full brief now, whatever the task below says. Decide (suggest, skipReason, kind, signal, evidence, why) exactly as the task asks, then give briefs: one entry per distinct concept (usually one; up to 3 only when the task allows several), each with a short specific title (under 60 characters), the concept in one or two sentences (what the creative shows and does), the angle in a few words, the audience in one line, the hook (the opening line or on-image headline, in the client's voice), and what it makes: its format, net new, variations and a carousel's slides (cards, 0 otherwise), within what's left of the allotment.`;
+
+/** A summary as a suggestion's draft: enough to show and to agree, with what the full brief is to be written from */
+function summaryDraft(b: SummaryBrief, task: string): SuggestionDraft {
+  const f = countsOf(b.format, b.new, b.variations, b.cards);
+  const formats = f.new + f.variations > 0 ? [f] : [countsOf(b.format, 1, 0, b.cards)];
+  return {
+    title: b.title.slice(0, 80),
+    angle: b.angle.slice(0, 160),
+    audience: b.audience.slice(0, 240),
+    brief: "",
+    hooks: [b.hook].filter(Boolean).slice(0, 1),
+    concepts: [{ name: b.title.slice(0, 80), hook: b.hook, visual: b.concept.slice(0, 500), copy: "", ...formats[0] }],
+    formats,
+    sizes: ["4x5", "9x16"],
+    landing: "",
+    refs: [],
+    summary: true,
+    task: task.slice(0, 12000),
+  };
+}
+
+/**
+ * The summary of a suggestion nobody asked for yet: the same decision and the same context as a full brief, but only
+ * the summary is written (fast and short). `task` is the source and the instructions, kept for the full write.
+ */
+async function writeSummary(clientId: string, opts: { prompt: string; task: string; many?: number }): Promise<SummaryOut> {
+  const out = await askJson<Omit<SummaryOut, "drafts"> & { briefs: SummaryBrief[] }>({
+    agent: "strategist",
+    label: "suggestion summary",
+    clientId,
+    system: `${SYSTEM}\n\n${SUMMARY_ONLY}`,
+    schema: SUMMARY_SCHEMA,
+    maxTokens: 3000,
+    prompt: `${opts.prompt}\n\n<task>\n${opts.task}\n</task>\n\n${SUMMARY_ONLY}`,
+  });
+  const drafts = (out.briefs ?? []).slice(0, Math.max(1, opts.many ?? 1)).map((b) => summaryDraft(b, opts.task));
+  return { suggest: out.suggest, skipReason: out.skipReason, kind: out.kind, signal: out.signal, evidence: out.evidence ?? [], why: out.why, drafts };
+}
+
 /** What the team decided about past suggestions, for the strategist to learn from. */
 async function teamDecisions(admin: SupabaseClient, clientId: string) {
   const { data } = await admin
@@ -460,19 +544,12 @@ export function byConcept(d: SuggestionDraft): SuggestionDraft[] {
 async function suggestFor(admin: SupabaseClient, clientId: string, signals: Signal[], load?: Workload) {
   const prompt = await promptFor(admin, clientId, signals, load);
   if (!prompt) return null;
-  const out = await writeBrief(admin, clientId, {
-    agent: "strategist",
-    label: "suggested brief",
-    system: SYSTEM,
-    schema: SCHEMA,
-    prompt: `${prompt}
-
-Decide whether this client needs new creative now, and if so write the request. One concept per request; if the signal truly needs more than one distinct idea, give up to 3 in concepts, each with its own format, counts and slides: each becomes its own brief. kind: the main signal it answers. signal: one line on what the data shows. evidence: 2 to 4 short facts from the signals and context. why: 2 or 3 sentences making the case to an exec. reply: "".`,
-  });
-  if (!out.suggest || !out.draft.formats.length) return null;
-  // One concept, one ticket: a request that bundles several angles is split, so each is briefed, written and made on
-  // its own (the copywriter gets one idea per ticket)
-  const drafts = byConcept(clean(out.draft, 3));
+  // Only the summary: nobody has picked it yet. The full brief is written when someone does ("Write the full brief")
+  const task = `Decide whether this client needs new creative now, and if so write the request. One concept per request: if the signal could take several ideas, the strongest one (the others can come next time). kind: the main signal it answers. signal: one line on what the data shows. evidence: 2 to 4 short facts from the signals and context. why: 2 or 3 sentences making the case to an exec.`;
+  const out = await writeSummary(clientId, { prompt, task });
+  if (!out.suggest || !out.drafts.length) return null;
+  // One open suggestion per client (creative_suggestions_one_open): one concept
+  const drafts = out.drafts.slice(0, 1);
   const { error } = await admin.from("creative_suggestions").insert(drafts.map((draft) => ({ client_id: clientId, kind: out.kind, signal: out.signal, evidence: out.evidence.slice(0, 5), why: out.why, draft, original: draft })));
   return error ? null : true;
 }
@@ -615,7 +692,7 @@ export async function loadSuggestion(db: SupabaseClient, id: string) {
 export async function loadSuggestions(db: SupabaseClient): Promise<SuggestionsState> {
   const since30 = new Date(Date.now() - 30 * 86_400_000).toISOString();
   const [{ data: rows }, { data: runs }, { data: decided }] = await Promise.all([
-    db.from("creative_suggestions").select(OPEN_COLS).eq("status", "open").not("kind", "in", "(winner,refresh,onboarding,call)").order("created_at", { ascending: false }).limit(20),
+    db.from("creative_suggestions").select(OPEN_COLS).eq("status", "open").not("kind", "in", "(winner,refresh,onboarding,call,idea)").order("created_at", { ascending: false }).limit(20),
     db.from("suggestion_runs").select("started_at, finished_at").order("started_at", { ascending: false }).limit(1),
     db.from("creative_suggestions").select("status").in("status", ["approved", "declined"]).not("kind", "in", "(winner,refresh)").gte("decided_at", since30),
   ]);
@@ -639,23 +716,18 @@ export async function suggestForMoment(admin: SupabaseClient, clientId: string, 
   const when = new Date(`${m.on_date}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" });
   const prompt = await promptFor(admin, clientId, [{ kind: "offer", weight: 1, line: `Marketing moment: ${m.name} (${when})`, facts: [m.angle ?? "", m.offer_idea ? `Promotion to ask for: ${m.offer_idea}` : "", m.why ?? ""].filter(Boolean) }]);
   if (!prompt) throw new Error("Client not found");
-  const out = await writeBrief(admin, clientId, {
-    agent: "strategist",
-    label: "marketing moment brief",
-    system: SYSTEM,
-    schema: SCHEMA,
-    prompt: `${prompt}
-
-<marketing_moment>
+  // Only the summary until someone picks it: the full brief (with the email, the ask and the landing page) is written then
+  const task = `<marketing_moment>
 ${m.name} · ${when}
 Angle: ${m.angle ?? "(work it out)"}
 Promotion to ask the client for: ${m.offer_idea ?? "(work it out)"}
 Why it fits: ${m.why ?? ""}
 </marketing_moment>
 
-Write the request for this moment, made in time for it: the brief, angle, audience, formats and counts within what's left of the allotment, sizes, its one concept and the hooks its versions test, and every asset it needs defined in draft.assets (what we have, what to ask the client to shoot). In the brief itself, after the creative, add three short plain lines: "Email:" (the email or SMS for the email team around the moment, if they do email with us), "Ask the client:" (the promotion to confirm with them, specific, by when), "Landing page:" (where it should send people, and whether a page for the moment is needed). Fit the business model and what won for similar businesses at this moment. suggest: true. kind: "offer". signal: "Marketing moment: <name>". evidence: 2 to 4 lines on why this moment fits and what won before. why: two sentences. reply: "".`,
-  });
-  const draft = clean(out.draft);
+Write the request for this moment, made in time for it: the brief, angle, audience, formats and counts within what's left of the allotment, sizes, its one concept and the hooks its versions test, and every asset it needs defined in draft.assets (what we have, what to ask the client to shoot). In the brief itself, after the creative, add three short plain lines: "Email:" (the email or SMS for the email team around the moment, if they do email with us), "Ask the client:" (the promotion to confirm with them, specific, by when), "Landing page:" (where it should send people, and whether a page for the moment is needed). Fit the business model and what won for similar businesses at this moment. suggest: true. kind: "offer". signal: "Marketing moment: <name>". evidence: 2 to 4 lines on why this moment fits and what won before. why: two sentences.`;
+  const out = await writeSummary(clientId, { prompt, task });
+  const draft = out.drafts[0];
+  if (!draft) throw new Error("Couldn't sketch the moment's brief");
   const { data, error } = await admin
     .from("creative_suggestions")
     .insert({ client_id: clientId, kind: "moment", signal: `Marketing moment: ${m.name} (${when})`, evidence: out.evidence.slice(0, 5), why: out.why, draft, original: draft, source: { momentId: m.id, headline: m.angle } })
@@ -764,24 +836,18 @@ export async function suggestForTest(
 ) {
   const prompt = await promptFor(admin, clientId, [{ kind: "lab", weight: 1, line: `Ads Lab test: ${test.title}`, facts: [test.hypothesis, `What changes: ${test.change}`, `A win: ${test.success}`] }]);
   if (!prompt) return false;
-  const out = await writeBrief(admin, clientId, {
-    agent: "strategist",
-    label: "lab test brief",
-    system: SYSTEM,
-    schema: SCHEMA,
-    prompt: `${prompt}
-
-<lab_test>
+  // Only the summary: the full brief is written when someone picks this client's test brief
+  const task = `<lab_test>
 ${test.title}
 Hypothesis: ${test.hypothesis}
 What the creative does differently: ${test.change}
 What counts as a win: ${test.success}
 </lab_test>
 
-The team chose this client for this test. Write the request that runs the test for this client: keep the test's change exactly, fit it to this client's brand, offer and audience, and keep it small and clean enough to read the result (usually 2 to 3 versions of one concept: every version counts toward the allotment). suggest: true. kind: "flop" if it replaces an angle, otherwise "kpi" (it's replaced by the lab kind). signal: "Ads Lab test: <the test's title>". evidence: what about this client makes it a fit. why: two sentences. reply: "".`,
-  });
-  const draft = clean(out.draft);
-  if (!draft.formats.length) return false;
+The team chose this client for this test. Write the request that runs the test for this client: keep the test's change exactly, fit it to this client's brand, offer and audience, and keep it small and clean enough to read the result (usually 2 to 3 versions of one concept: every version counts toward the allotment). suggest: true. kind: "flop" if it replaces an angle, otherwise "kpi" (it's replaced by the lab kind). signal: "Ads Lab test: <the test's title>". evidence: what about this client makes it a fit. why: two sentences.`;
+  const out = await writeSummary(clientId, { prompt, task });
+  const draft = out.drafts[0];
+  if (!draft?.formats.length) return false;
   const { error } = await admin.from("creative_suggestions").insert({
     client_id: clientId,
     kind: "lab",
@@ -800,7 +866,7 @@ The team chose this client for this test. Write the request that runs the test f
  * A refresh for one tiring ad: the strategist keeps what made it work (it was spending for a reason) and changes what
  * people are tired of. Drafted for whoever asked, like a brief from a winner.
  */
-export async function suggestRefresh(admin: SupabaseClient, clientId: string, adId: string, by: string | null, seed?: QuickBrief | null) {
+export async function suggestRefresh(admin: SupabaseClient, clientId: string, adId: string, by: string | null, seed?: QuickBrief | null, summary = false) {
   const { data: f } = await admin.from("ad_fatigue").select("ad_name, campaign, adset, headline, thumbnail, severity, signals").eq("client_id", clientId).eq("ad_id", adId).single();
   if (!f) throw new Error("That ad isn't on the watch list");
   const { data: snap } = await admin.from("meta_snapshots").select("ads").eq("client_id", clientId).order("fetched_at", { ascending: false }).limit(1).maybeSingle();
@@ -808,23 +874,22 @@ export async function suggestRefresh(admin: SupabaseClient, clientId: string, ad
   const watch = describeFatigue([f] as Parameters<typeof describeFatigue>[0]);
   const prompt = await promptFor(admin, clientId, [{ kind: "fatigue", weight: 1, line: `"${f.headline ?? f.ad_name}" is ${f.severity === "tired" ? "tired" : "tiring"}`, facts: [watch] }]);
   if (!prompt) throw new Error("Client not found");
-  const out = await writeBrief(admin, clientId, {
-    agent: "strategist",
-    label: "refresh a tiring ad",
-    system: SYSTEM,
-    schema: SCHEMA,
-    prompt: `${prompt}
-
-<tiring_ad>
+  const task = `<tiring_ad>
 Name: ${f.ad_name}${f.campaign ? ` · campaign: ${f.campaign}` : ""}${f.adset ? ` · ad set: ${f.adset}` : ""}
 Headline: ${ad?.headline ?? f.headline ?? "(none)"}
 Primary text: ${ad?.text ?? "(not synced)"}
 What the watcher saw: ${watch.replace(/^- /, "")}
 </tiring_ad>
 
-This ad needs a refresh. It worked before (it ran long enough to be judged against itself), so keep what made it work: the angle, the offer, the proof. Change what people have grown tired of: the visual, the hook, the first seconds of a video, the format. Usually 2 to 4 versions of one concept on the same angle (every version counts), within what's left of the allotment. Say in the brief what to keep and what to change, and why, from the numbers. For what to change, look first at the patterns across clients: a hook, format or angle proven for businesses like this one (one this client isn't using yet especially) is the strongest replacement; name it and its evidence in why. suggest: true. kind: "fatigue". signal: one line on what the watcher saw. evidence: 2 to 4 facts. why: two sentences. reply: "".${seedBlock(seed)}`,
-  });
-  const draft = applySeed(clean(out.draft), seed);
+This ad needs a refresh. It worked before (it ran long enough to be judged against itself), so keep what made it work: the angle, the offer, the proof. Change what people have grown tired of: the visual, the hook, the first seconds of a video, the format. Usually 2 to 4 versions of one concept on the same angle (every version counts), within what's left of the allotment. Say in the brief what to keep and what to change, and why, from the numbers. For what to change, look first at the patterns across clients: a hook, format or angle proven for businesses like this one (one this client isn't using yet especially) is the strongest replacement; name it and its evidence in why. suggest: true. kind: "fatigue". signal: one line on what the watcher saw. evidence: 2 to 4 facts. why: two sentences.`;
+  // Found by the watcher on its own: only the summary, until someone picks it
+  const out = summary
+    ? await writeSummary(clientId, { prompt, task }).then((o) => ({ ...o, draft: o.drafts[0] }))
+    : await writeBrief(admin, clientId, { agent: "strategist", label: "refresh a tiring ad", system: SYSTEM, schema: SCHEMA, prompt: `${prompt}
+
+${task} reply: "".${seedBlock(seed)}` }).then((o) => ({ ...o, draft: applySeed(clean(o.draft), seed) }));
+  const draft = out.draft;
+  if (!draft) throw new Error("Couldn't write the refresh");
   const { data, error } = await admin
     .from("creative_suggestions")
     .insert({
@@ -987,20 +1052,14 @@ export async function suggestFromCall(
   commitment: { id: string; what: string; why: string; kind: string },
   call: { title: string; occurred_at: string; summary: { summary?: string; clientSaid?: string[]; decisions?: string[] } | null },
   seed?: QuickBrief | null,
+  summary = false,
 ) {
   const prompt = await promptFor(admin, clientId, [
     { kind: "offer", weight: 1, line: `Promised on the call "${call.title}" (${call.occurred_at.slice(0, 10)}), not in motion yet`, facts: [commitment.what, commitment.why].filter(Boolean) },
   ]);
   if (!prompt) throw new Error("Client not found");
   const s = call.summary ?? {};
-  const out = await writeBrief(admin, clientId, {
-    agent: "strategist",
-    label: "brief from a call",
-    system: SYSTEM,
-    schema: SCHEMA,
-    prompt: `${prompt}
-
-<the_call>
+  const task = `<the_call>
 "${call.title}" on ${call.occurred_at.slice(0, 10)}
 ${s.summary ?? ""}
 ${s.clientSaid?.length ? `The client said: ${s.clientSaid.join("; ")}` : ""}
@@ -1011,11 +1070,16 @@ ${s.decisions?.length ? `Decided: ${s.decisions.join("; ")}` : ""}
 ${commitment.what}${commitment.why ? `\nContext: ${commitment.why}` : ""}
 </what_we_promised>
 
-On this call Kaizen promised the above, and two business days later nothing is in production for it. Write the request that delivers exactly what was promised: use what the client said on the call (offer, dates, details, likes and dislikes) and the rest of the client context. Keep it to what was promised; don't expand it. If the call left something to confirm (a price, a date), say so in the brief. This request is for the paid ads and creative team: if what was promised isn't ad creative or ad copy for paid ads (it's an email, SMS, flow, organic post, flyer, website or other service), or this client doesn't run paid ads with us, set suggest to false and say why in skipReason. Otherwise suggest: true. kind: "offer". signal: "Promised on the call <date>: <the promise, short>". evidence: 2 to 4 lines from the call. why: two sentences. reply: "".${seedBlock(seed)}`,
-  });
+On this call Kaizen promised the above, and two business days later nothing is in production for it. Write the request that delivers exactly what was promised: use what the client said on the call (offer, dates, details, likes and dislikes) and the rest of the client context. Keep it to what was promised; don't expand it. If the call left something to confirm (a price, a date), say so in the brief. This request is for the paid ads and creative team: if what was promised isn't ad creative or ad copy for paid ads (it's an email, SMS, flow, organic post, flyer, website or other service), or this client doesn't run paid ads with us, set suggest to false and say why in skipReason. Otherwise suggest: true. kind: "offer". signal: "Promised on the call <date>: <the promise, short>". evidence: 2 to 4 lines from the call. why: two sentences.`;
+  // Written by the watcher on its own: only the summary, until someone picks it
+  const out = summary
+    ? await writeSummary(clientId, { prompt, task }).then((o) => ({ ...o, draft: o.drafts[0] }))
+    : await writeBrief(admin, clientId, { agent: "strategist", label: "brief from a call", system: SYSTEM, schema: SCHEMA, prompt: `${prompt}
+
+${task} reply: "".${seedBlock(seed)}` }).then((o) => ({ ...o, draft: o.suggest ? applySeed(clean(o.draft), seed) : o.draft }));
   // Not work for the ads team: no brief
-  if (!out.suggest) return { skip: out.skipReason || "Not paid ads or creative work" };
-  const draft = applySeed(clean(out.draft), seed);
+  if (!out.suggest || !out.draft) return { skip: out.skipReason || "Not paid ads or creative work" };
+  const draft = out.draft;
   const { data, error } = await admin
     .from("creative_suggestions")
     .insert({
@@ -1125,11 +1189,36 @@ Someone on the team wants a request for this client built on this live ad from t
  * A brief already written (a suggested brief, a call's brief), rewritten from the quick preview the person changed:
  * the same suggestion, its draft replaced, so sending it still marks it used.
  */
-export async function rewriteWithSeed(admin: SupabaseClient, id: string, seed: QuickBrief) {
+export async function rewriteWithSeed(admin: SupabaseClient, id: string, seed: QuickBrief | null) {
   const { data: s } = await admin.from("creative_suggestions").select("id, client_id, kind, signal, evidence, why, draft, version").eq("id", id).single();
   if (!s) throw new Error("Suggestion not found");
   const prompt = await promptFor(admin, s.client_id, [{ kind: s.kind, weight: 1, line: s.signal, facts: (s.evidence ?? []) as string[] }]);
   if (!prompt) throw new Error("Client not found");
+  const was = s.draft as SuggestionDraft;
+  // Only its summary so far: the full brief is written now, from what it was to be written from and what was agreed
+  if (was.summary) {
+    const out = await writeBrief(admin, s.client_id, {
+      agent: "strategist",
+      label: "brief from a summary",
+      system: SYSTEM,
+      schema: SCHEMA,
+      prompt: `${prompt}
+
+<the_request>
+${was.task || "Write the request this suggestion answers."}
+</the_request>
+
+<its_summary>
+${JSON.stringify({ why: s.why, title: was.title, angle: was.angle, audience: was.audience, concept: was.concepts?.[0]?.visual ?? "", hook: was.hooks?.[0] ?? "", formats: was.formats }, null, 1)}
+</its_summary>
+${seedBlock(seed)}
+
+Someone on the team picked this suggestion. Write the full request now, built on the agreed direction: the brief, angle, audience, formats and counts within what's left of the allotment, sizes, exactly one concept (one concept per brief) and the hooks its versions test, the landing page, refs and every asset in draft.assets. suggest: true. Keep the same kind, signal and evidence. reply: "".`,
+    });
+    const draft = applySeed(clean(out.draft), seed);
+    await admin.from("creative_suggestions").update({ draft, why: out.why || s.why, version: (s.version as number) + 1, updated_at: new Date().toISOString() }).eq("id", id);
+    return draft;
+  }
   const out = await writeBrief(admin, s.client_id, {
     agent: "strategist",
     label: "brief rewrite from a preview",
@@ -1171,7 +1260,19 @@ ${seedBlock(seed)}
 
 Someone on the team wants a request for this client built on this idea. Write the full request: brief, angle, audience, formats and counts within what's left of the allotment, sizes, exactly one concept (one concept per brief) with its hooks, and every asset in draft.assets. suggest: true. kind: "kpi". signal: one line on the idea. evidence: 2 to 4 lines on why it fits this client. why: two sentences. reply: "".`,
   });
-  return { draft: applySeed(clean(out.draft), seed), why: out.why };
+  return { draft: applySeed(clean(out.draft), seed), why: out.why, evidence: out.evidence, signal: out.signal };
+}
+
+/** The same, written in the background and kept as its author's own draft (it opens in Ready to send) */
+export async function suggestFromIdeaSaved(admin: SupabaseClient, clientId: string, idea: { label: string; text: string }, seed: QuickBrief | null, by: string, source: Record<string, unknown> | null = null) {
+  const out = await suggestFromIdea(admin, clientId, idea, seed);
+  const { data, error } = await admin
+    .from("creative_suggestions")
+    .insert({ client_id: clientId, kind: "idea", signal: idea.label.slice(0, 300), evidence: (out.evidence ?? []).slice(0, 5), why: out.why, draft: out.draft, original: out.draft, created_by: by, source: { headline: idea.label.slice(0, 200), ...(source ?? {}) } })
+    .select("id")
+    .single();
+  if (error || !data) throw new Error(error?.message ?? "Couldn't save the brief");
+  return data.id as string;
 }
 
 export type TalkTurn = { role: "user" | "ai"; text: string };

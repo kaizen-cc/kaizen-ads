@@ -2,16 +2,17 @@
 
 import { useRouter } from "next/navigation";
 import { Suspense, useEffect, useState, useSyncExternalStore } from "react";
-import { markJobsSeen, myJobs, openBrief } from "@/app/(team)/brief-job-actions";
-import { SuggestionSheet } from "@/app/(team)/pipeline/views/suggested-briefs";
+import { markJobsSeen, myJobs } from "@/app/(team)/brief-job-actions";
 import type { BriefJob } from "@/lib/brief-jobs";
-import type { OpenSuggestion } from "@/lib/suggestions";
-import { closeThen, pushParams, useParam } from "@/lib/url-state";
+import { useParam } from "@/lib/url-state";
 import { toast } from "./toasts";
 
 // Briefs being written in the background, shared by the whole app: the card that asked shows a progress bar, a small
-// "1 brief writing" sits by the bell, and when one is ready a toast (and the bell) open it, wherever you are. The
-// list is read from the server, so a refresh or another page picks up where it was.
+// "1 brief writing" sits by the bell, and when one is ready a toast (and the bell) open it as a draft in Ready to
+// send, wherever you are. The list is read from the server, so a refresh or another page picks up where it was.
+
+/** Where a finished brief opens: the request form's Ready to send, with the brief as the team will receive it */
+export const readyHref = (suggestionId: string) => `/requests/new?draft=${suggestionId}`;
 
 let jobs: BriefJob[] = [];
 let loaded = false;
@@ -68,13 +69,13 @@ async function poll() {
       const sid = j.suggestionId;
       toast({
         tone: "ok",
-        title: `Your brief is ready${j.client ? ` — ${j.client}` : ""}`,
+        title: `Your brief is ready${j.client ? `: ${j.client}` : ""}`,
         body: j.title ?? undefined,
-        actions: [{ label: "Open", primary: true, run: () => pushParams({ ready: sid }) }],
+        actions: [{ label: "Open in Ready to send", primary: true, href: readyHref(sid) }],
         ms: 12_000,
       });
     } else if (j.status === "failed") {
-      toast({ tone: "bad", title: `The brief couldn't be written${j.client ? ` — ${j.client}` : ""}`, body: j.error ?? "Try again.", ms: 9000 });
+      toast({ tone: "bad", title: `The brief couldn't be written${j.client ? `: ${j.client}` : ""}`, body: j.error ?? "Try again.", ms: 9000 });
     }
   }
   if (done.length) void markJobsSeen(done.map((j) => j.id)).catch(() => null);
@@ -87,7 +88,6 @@ async function poll() {
 function BriefJobsHost() {
   const router = useRouter();
   const ready = useParam("ready");
-  const [sheet, setSheet] = useState<OpenSuggestion | null>(null);
 
   useEffect(() => {
     running = true;
@@ -101,27 +101,12 @@ function BriefJobsHost() {
     };
   }, []);
 
-  // ?ready=<brief>: the finished brief, open in its sheet (from the toast, the bell or a shared link)
+  // ?ready=<brief> (an older notice or a shared link): the finished brief opens in Ready to send, like the toast's
   useEffect(() => {
-    if (!ready) return;
-    let live = true;
-    void openBrief(ready).then((s) => live && setSheet(s));
-    return () => {
-      live = false;
-    };
-  }, [ready]);
+    if (ready && /^[0-9a-f-]{36}$/i.test(ready)) router.replace(readyHref(ready));
+  }, [ready, router]);
 
-  return sheet && ready === sheet.id ? (
-    <SuggestionSheet
-      s={sheet}
-      onClose={() =>
-        closeThen(() => {
-          setSheet(null);
-          router.refresh();
-        }, "ready")
-      }
-    />
-  ) : null;
+  return null;
 }
 
 /** Mount once (the team shell): keeps the list and opens finished briefs */

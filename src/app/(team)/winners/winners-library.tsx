@@ -7,13 +7,9 @@ import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import type { Winner, WinnerScope } from "@/lib/industry";
 import type { Allotment } from "@/lib/allotment";
-import type { OpenSuggestion } from "@/lib/suggestions";
-import { SuggestionSheet } from "../pipeline/views/suggested-briefs";
-import { briefFromWinner } from "./actions";
 import { FilterMenu, FilterPill } from "@/components/filters";
 import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
 import { QuickBriefSheet } from "@/components/quick-brief-sheet";
-import type { QuickBrief } from "@/lib/quick-brief";
 import { FbPreview, InsightPanel, useAd, useInsight } from "./fb-preview";
 
 export type PickClient = { id: string; name: string; industry: string | null; detail: string | null; allotment: Allotment };
@@ -295,14 +291,11 @@ function WinnerSheet({ w, industryLabel, clients, onClose }: { w: Winner; indust
   const ad = useAd(w.id); // undefined: still reading it from Meta
   const insight = useInsight(w, ad);
   const [step, setStep] = useState<"ad" | "pick" | "writing">("ad");
-  // The written brief is a place of its own (?brief=id): back returns to the ad, forward to the brief
-  const [written, setWritten] = useState<OpenSuggestion | null>(null);
-  const briefId = useParam("brief");
-  const brief = written && written.id === briefId ? written : null;
-  const [error, setError] = useState<string | null>(null);
+  const error = null;
   const synced = new Date(w.syncedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
-  // A client picked: the quick preview first (?preview=, so back closes it), then the full brief from it
+  // A client picked: the quick preview right here (?preview=, so back closes it). The full brief is written in the
+  // background only if they choose it, and opens in Ready to send
   const [previewFor, setPreviewFor] = useState<string | null>(null);
   const preview = useParam("preview");
   const previewKey = `ww-${w.id}`;
@@ -310,23 +303,6 @@ function WinnerSheet({ w, industryLabel, clients, onClose }: { w: Winner; indust
     setPreviewFor(clientId);
     pushParams({ preview: previewKey });
   };
-  const writeFull = async (clientId: string, seed: QuickBrief) => {
-    setError(null);
-    const r = await briefFromWinner(
-      { adId: w.id, client: w.client, detail: w.detail, headline: ad?.headline ?? w.headline, text: ad?.text ?? w.text, thumbnail: w.thumbnail, ratio: w.ratio, result: w.result, costPerResult: w.costPerResult, usual: w.usual },
-      clientId,
-      seed,
-    );
-    if (!r.ok) return r;
-    // The brief takes the preview's place: back from it lands on the ad again
-    setStep("pick");
-    setWritten(r.suggestion);
-    replaceParams({ preview: null, brief: r.suggestion.id });
-    return { ok: true as const };
-  };
-
-  if (brief) return <SuggestionSheet s={brief} onClose={onClose} />;
-
   return (
     <div className={SHEET_BACKDROP} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className={`${SHEET_PANEL} md:grid-cols-[minmax(0,400px)_1fr]`}>
@@ -337,7 +313,6 @@ function WinnerSheet({ w, industryLabel, clients, onClose }: { w: Winner; indust
           source={{ kind: "winner", winner: { adId: w.id, client: w.client, detail: w.detail, headline: ad?.headline ?? w.headline, text: ad?.text ?? w.text, thumbnail: w.thumbnail, ratio: w.ratio, result: w.result, costPerResult: w.costPerResult, usual: w.usual } }}
           from={{ kicker: `A winner · ${w.ratio}x its usual`, label: w.headline ?? w.name, thumb: w.thumbnail, adId: w.id }}
           progressLabel="brief from a winner+brief self-review"
-          onWrite={(seed) => writeFull(previewFor, seed)}
           onClose={() => closeParams("preview")}
         />
       )}
@@ -379,7 +354,7 @@ function WinnerSheet({ w, industryLabel, clients, onClose }: { w: Winner; indust
                 Open {w.client}
               </Link>
             </div>
-            <p className="text-[11px] text-faint">Pick a client and the strategist writes the whole request from what makes this ad work. You edit it, talk it through, and send it to production right here.</p>
+            <p className="text-[11px] text-faint">Pick a client for a quick preview of their version. Change any line; the full brief is written only if you choose it, in the background, and opens in Ready to send.</p>
           </div>
         ) : step === "pick" ? (
           <ClientPick industry={w.industry} exclude={w.clientId} clients={clients} error={error} onBack={() => setStep("ad")} onPick={write} />

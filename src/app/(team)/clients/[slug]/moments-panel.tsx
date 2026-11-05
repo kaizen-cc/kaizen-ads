@@ -1,5 +1,5 @@
-import Link from "next/link";
 import { Section } from "@/components/ui";
+import { BriefPreviewButton } from "@/components/quick-brief-sheet";
 
 // The client's marketing moments: the days in their year that can make a spike, each briefed its lead time ahead
 // (a suggested brief on Home), then judged on its campaign. Winners come back next year and for similar businesses.
@@ -10,7 +10,7 @@ const day = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US"
 const TONE: Record<string, string> = { planned: "bg-surface-2 text-muted", briefed: "bg-brand-soft text-brand-text", ran: "bg-surface-2 text-fg", won: "bg-ok-soft text-ok", lost: "bg-bad-soft text-bad", skipped: "bg-surface-2 text-faint" };
 const NAME: Record<string, string> = { planned: "Planned", briefed: "Briefed", ran: "Ran", won: "Won", lost: "Lost", skipped: "Didn't run" };
 
-export function MomentsPanel({ moments }: { moments: MomentRow[] }) {
+export function MomentsPanel({ moments, clientId = null }: { moments: MomentRow[]; clientId?: string | null }) {
   if (!moments.length) return null;
   const today = new Date().toISOString().slice(0, 10);
   const ahead = moments.filter((m) => m.on_date >= today);
@@ -28,10 +28,18 @@ export function MomentsPanel({ moments }: { moments: MomentRow[] }) {
               {m.result && (m.result.spend != null || m.result.note) && <span className="text-[11px] text-faint">{m.result.note ?? `$${m.result.spend?.toLocaleString("en-US")} across ${m.result.ads ?? 0} ads`}</span>}
               {m.status === "planned" && m.on_date >= today && <span className="text-[11px] text-faint">Briefed from {day(new Date(Date.parse(`${m.on_date}T12:00:00Z`) - m.lead_days * 86_400_000).toISOString().slice(0, 10))}</span>}
             </span>
-            {m.suggestion_id && m.status === "briefed" ? (
-              <Link href={`/pipeline?brief=${m.suggestion_id}`} className={`rounded-full px-2.5 py-1 text-[11px] ${TONE.briefed}`}>
+            {m.suggestion_id && m.status === "briefed" && clientId ? (
+              // Its quick preview right here; the full brief is written only when someone chooses it
+              <BriefPreviewButton
+                previewKey={`moment-${m.id.slice(0, 8)}`}
+                clientId={clientId}
+                source={{ kind: "suggestion", id: m.suggestion_id }}
+                from={{ kicker: "Marketing moment", label: `${m.name} · ${day(m.on_date)}` }}
+                progressLabel="brief from a summary+brief self-review"
+                className={`min-h-11 rounded-full px-3 text-[11px] md:min-h-0 md:px-2.5 md:py-1 ${TONE.briefed}`}
+              >
                 Briefed →
-              </Link>
+              </BriefPreviewButton>
             ) : (
               <span className={`rounded-full px-2.5 py-1 text-[11px] ${TONE[m.status] ?? TONE.planned}`}>{NAME[m.status] ?? m.status}</span>
             )}

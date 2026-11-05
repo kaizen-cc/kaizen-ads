@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SuggestionSheet } from "@/app/(team)/pipeline/views/suggested-briefs";
+import { BriefPreviewButton } from "@/components/quick-brief-sheet";
 import type { Resolved, Tier, TodayItem, TopicKey } from "@/lib/today";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { acknowledge, setItem } from "./actions";
@@ -604,6 +605,13 @@ function Overview({ i, status, dive, onChoose, onAct, onNext }: { i: TodayItem; 
           <button type="button" onClick={onAct} className={primary}>
             {i.action.label}
           </button>
+        ) : i.action.brief && i.clientId ? (
+          // Its quick preview right here (light, over the story); the full brief only if they choose it
+          <span className="contents [color-scheme:normal]">
+            <BriefPreviewButton previewKey={`today-${i.key}`.slice(0, 80)} clientId={i.clientId} source={i.action.brief.source} from={i.action.brief.from} className={primary}>
+              {i.action.label}
+            </BriefPreviewButton>
+          </span>
         ) : (
           <a href={i.action.href} target="_blank" rel="noreferrer" onClick={() => onChoose("done")} className={primary}>
             {i.action.label} ↗

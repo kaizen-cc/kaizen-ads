@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Section } from "@/components/ui";
+import { BriefPreviewButton } from "@/components/quick-brief-sheet";
 
 export type ClientCall = {
   id: string;
@@ -22,11 +23,11 @@ const STATUS: Record<string, { label: string; tone: string }> = {
   open: { label: "Watching", tone: "bg-surface-2 text-muted" },
   in_motion: { label: "In motion", tone: "bg-ok-soft text-ok" },
   done: { label: "Done", tone: "bg-ok-soft text-ok" },
-  briefed: { label: "Brief waiting on Home", tone: "bg-warn-soft text-warn" },
+  briefed: { label: "Summary waiting on Home", tone: "bg-warn-soft text-warn" },
   dismissed: { label: "Not needed", tone: "bg-surface-2 text-faint" },
 };
 
-export function CallsPanel({ calls }: { calls: ClientCall[] }) {
+export function CallsPanel({ calls, clientId = null }: { calls: ClientCall[]; clientId?: string | null }) {
   const [open, setOpen] = useState<string | null>(calls[0]?.id ?? null);
   return (
     <Section title="Calls" description="From Gemini and Fireflies notes. Promises made on a call are watched: if nothing's in motion two business days later, a brief from the call goes to Home.">
@@ -98,6 +99,19 @@ export function CallsPanel({ calls }: { calls: ClientCall[] }) {
                                 </a>
                               ))}
                               <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] ${st.tone}`}>{st.label}</span>
+                              {clientId && (x.status === "open" || x.status === "briefed") && ["creative", "copy", "offer"].includes(x.kind) && (
+                                // Its quick preview right here; the full brief is written only when someone chooses it
+                                <BriefPreviewButton
+                                  previewKey={`call-${x.id.slice(0, 8)}`}
+                                  clientId={clientId}
+                                  source={{ kind: "promise", commitmentId: x.id }}
+                                  from={{ kicker: "Promised on a call", label: x.what }}
+                                  progressLabel="brief from a call+brief self-review"
+                                  className="min-h-11 shrink-0 rounded-full border border-line px-3 text-[11px] hover:border-faint md:min-h-0 md:px-2 md:py-0.5"
+                                >
+                                  Brief it →
+                                </BriefPreviewButton>
+                              )}
                             </div>
                           );
                         })}

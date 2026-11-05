@@ -186,7 +186,7 @@ export async function routeBusinessAudit(admin: SupabaseClient, auditId: string)
       }
       const key = `ba:${auditId.slice(0, 8)}:${index}`;
       const owner = who[role] ?? null;
-      const brief = a.channel === "creative" && role === "head_of_creative" ? `\nBrief it: /requests/new?client=${client.slug}` : "";
+      const brief = a.channel === "creative" && role === "head_of_creative" ? `\nBrief it (its quick preview, on the business audit): /clients/${client.slug}` : "";
       rows.push({
         client_id: clientId,
         key,

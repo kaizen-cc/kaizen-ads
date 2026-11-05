@@ -8,6 +8,7 @@ import { METRIC_LABEL, SEATS, TURNS_PER_ROUND, type Metric, type Seat } from "@/
 import type { ClientNumbers, ProposedTest } from "@/lib/lab";
 import { pushParams, useParam } from "@/lib/url-state";
 import { KnowledgePanel } from "@/components/knowledge-panel";
+import { BriefPreviewButton } from "@/components/quick-brief-sheet";
 import { addLoomLinks, addTestNote, followTest, createTest, decideTest, deleteSource, deleteThread, deployLearning, draftDeploy, dropTest, iterateTest, sendToTable, startTest, tableSpeaks, type Attachment } from "./actions";
 
 export type LabClientRow = { id: string; name: string; slug: string; industry: string | null; spend30: number };
@@ -29,7 +30,7 @@ export type LabTest = {
   learning: string | null;
   createdAt: string;
   clients: { id: string; before: ClientNumbers | null; now: ClientNumbers | null; change: number | null }[];
-  briefs: { waiting: number; approved: number; tickets: number[] };
+  briefs: { waiting: number; open?: { id: string; clientId: string; client: string }[]; approved: number; tickets: number[] };
   deployed: { id: string; change: number | null }[];
   deployedAt: string | null;
   /** Who started it, and whether it's the viewer */
@@ -920,7 +921,7 @@ function StartDialog({ t, clients, tests, threadId, onClose, existing }: { t: Pr
         ))}
       </div>
       <p className="text-xs text-faint">
-        Starting takes each client&apos;s last 14 days as the baseline. The strategist writes each client&apos;s brief for the test as a suggestion on Home, so a person approves it before anything is made.
+        Starting takes each client&apos;s last 14 days as the baseline. The strategist sketches each client&apos;s brief for the test as a suggestion on Home (a quick summary); the full brief is written only when someone chooses it, and a person approves it before anything is made.
       </p>
       {error && <p className="text-sm text-bad">{error}</p>}
       <div className={SHEET_ACTIONS}>
@@ -1074,11 +1075,25 @@ function TestCard({ t, clients, tests }: { t: LabTest; clients: LabClientRow[]; 
 
       {(t.briefs.waiting > 0 || t.briefs.approved > 0) && (
         <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted">
-          {t.briefs.waiting > 0 && (
+          {t.briefs.waiting > 0 && !t.briefs.open?.length && (
             <Link href="/pipeline" className="text-brand-text hover:underline">
               {t.briefs.waiting} {t.briefs.waiting === 1 ? "brief" : "briefs"} waiting on Home
             </Link>
           )}
+          {/* Each client's brief for the test: its quick preview right here, the full brief only when someone chooses it */}
+          {(t.briefs.open ?? []).map((b) => (
+            <BriefPreviewButton
+              key={b.id}
+              previewKey={`lab-${b.id.slice(0, 8)}`}
+              clientId={b.clientId}
+              source={{ kind: "suggestion", id: b.id }}
+              from={{ kicker: "Ads Lab test", label: `${t.title} · ${b.client}` }}
+              progressLabel="brief from a summary+brief self-review"
+              className="inline-flex min-h-11 items-center rounded-full border border-brand/40 px-3 text-brand-text hover:bg-brand-soft md:min-h-0 md:px-2.5 md:py-0.5"
+            >
+              Brief for {b.client} →
+            </BriefPreviewButton>
+          ))}
           {t.briefs.approved > 0 && <span>· {t.briefs.approved} approved</span>}
           {t.briefs.tickets.map((n) => (
             <Link key={n} href={`/board?t=${n}`} className="inline-flex min-h-9 items-center rounded-full border border-line px-3 hover:border-faint md:min-h-0 md:px-2 md:py-0.5">

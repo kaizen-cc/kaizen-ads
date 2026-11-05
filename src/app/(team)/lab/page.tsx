@@ -26,7 +26,7 @@ export default async function Lab({ searchParams }: PageProps<"/lab">) {
     db.from("lab_tests").select("*, profiles!lab_tests_created_by_fkey(full_name)").neq("status", "dropped").order("created_at", { ascending: false }).limit(200),
     db.from("clients").select("id, name, slug, industry, industry_detail").neq("status", "offboarded").order("name"),
     db.from("kpi_snapshots").select("client_id, windows"),
-    db.from("creative_suggestions").select("lab_test_id, client_id, status, request_numbers").not("lab_test_id", "is", null),
+    db.from("creative_suggestions").select("id, lab_test_id, client_id, status, request_numbers").not("lab_test_id", "is", null),
     db.from("lab_test_notes").select("id, test_id, body, created_at, profiles(full_name)").order("created_at"),
   ]);
 
@@ -72,7 +72,11 @@ export default async function Lab({ searchParams }: PageProps<"/lab">) {
       learning: x.learning,
       createdAt: x.created_at,
       clients: ids.map((id) => ({ id, before: base[id] ?? null, now: live?.[id] ?? null, change: cprChange(base[id], live?.[id]) })),
-      briefs: { waiting: sugg.filter((s) => s.status === "open").length, approved: sugg.filter((s) => s.status === "approved").length, tickets: sugg.flatMap((s) => s.request_numbers as number[]) },
+      briefs: {
+        waiting: sugg.filter((s) => s.status === "open").length,
+        // Each client's brief for the test, to preview right here
+        open: sugg.filter((s) => s.status === "open").map((s) => ({ id: s.id as string, clientId: s.client_id as string, client: (clients ?? []).find((c) => c.id === s.client_id)?.name ?? "A client" })),
+        approved: sugg.filter((s) => s.status === "approved").length, tickets: sugg.flatMap((s) => s.request_numbers as number[]) },
       deployed: deployed.map((id) => ({ id, change: cprChange(deployBase[id], deployNow[id]) })),
       deployedAt: x.deployed_at,
       by: (x.profiles as unknown as { full_name: string } | null)?.full_name ?? null,

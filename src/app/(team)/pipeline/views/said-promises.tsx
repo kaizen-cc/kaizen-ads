@@ -9,6 +9,7 @@ import { PromiseSources } from "./promise-sources";
 import { HideForMe } from "./hide-for-me";
 import { SourceChip } from "@/components/source-logo";
 import { completeCard, refreshInPlace } from "@/lib/complete-card";
+import { BriefPreviewButton } from "@/components/quick-brief-sheet";
 
 // What someone said yes to in Slack or email that's past due with nothing showing it moving: theirs to do (or close),
 // and for leads and execs, the ones that went past a second notice.
@@ -66,10 +67,21 @@ export function SaidPromises({ items, me }: { items: SaidPromise[]; me: string }
             </div>
             <PromiseSources group={p.group} />
             <div className="flex flex-wrap gap-2">
-              {make && mine && (
-                <Link href={`/requests/new?client=${p.clientSlug}`} className="inline-flex h-11 w-full items-center justify-center rounded-brand bg-fg px-4 text-sm font-medium text-bg md:h-9 md:w-auto">
-                  Make the request
-                </Link>
+              {make && mine && p.clientId && (
+                // Its quick preview right here: the full brief is written only if they choose it
+                <BriefPreviewButton
+                  previewKey={`said-${p.id}`}
+                  clientId={p.clientId}
+                  source={{
+                    kind: "idea",
+                    label: `Promised in ${p.source === "gmail" ? "email" : "Slack"}: ${p.group?.title ?? p.what}`.slice(0, 200),
+                    text: [`We said we'd: ${p.group?.title ?? p.what}`, p.ask ? `They asked: ${p.ask}` : "", `What was said: "${p.said.replace(/\s+/g, " ").slice(0, 600)}"`, "Keep it to exactly what was promised."].filter(Boolean).join("\n"),
+                  }}
+                  from={{ kicker: "Promised in a message", label: p.group?.title ?? p.what }}
+                  className="inline-flex h-11 w-full items-center justify-center rounded-brand bg-fg px-4 text-sm font-medium text-bg md:h-9 md:w-auto"
+                >
+                  Brief it
+                </BriefPreviewButton>
               )}
               {/* An email opens in its owner's inbox only, so only they get the link */}
               {p.url && (p.source === "slack" || mine) && (

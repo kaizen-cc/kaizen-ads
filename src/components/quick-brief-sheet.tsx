@@ -1,8 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AiProgress } from "@/components/ai-progress";
+import { readyHref, trackJob } from "@/components/brief-jobs";
+import { toast } from "@/components/toasts";
+import { startBrief } from "@/app/(team)/brief-job-actions";
 import { RefThumb } from "@/components/ref-thumb";
 import { AllotmentBars, Spark, Stepper, conceptLine } from "@/app/(team)/requests/new/parts";
 import { previewBrief, type PreviewResult } from "@/app/(team)/quick-brief-actions";
@@ -15,6 +19,9 @@ import type { Allotment } from "@/lib/allotment";
 // with what's here so the brief follows the edits. "Not this one" closes it. The sheet lives in the address
 // (?preview=), so back closes it. One concept per brief: when what's previewed holds several distinct concepts, it
 // offers "Split into N briefs", and each is written on its own.
+// Opened anywhere but the request form (no onWrite), the full brief is written in the background (src/lib/brief-jobs.ts):
+// the sheet closes, the progress sits by the bell, and a toast and the bell open it as a draft in Ready to send.
+// "Not this one" writes nothing.
 
 type Fmt = QuickFormat["format"];
 const FMTS: Fmt[] = ["image", "video", "carousel"];
@@ -45,7 +52,7 @@ export function QuickBriefSheet({
   onWrite,
   onWriteAll,
   onClose,
-  background = false,
+  background: backgroundAsked = false,
   given = null,
 }: {
   clientId: string;
@@ -56,8 +63,8 @@ export function QuickBriefSheet({
   progressLabel: string;
   progressMs?: number;
   /** Write the full brief from the agreed preview (rest: the other briefs of a split, still to write). A promise keeps
-   *  the sheet open with the progress until it settles */
-  onWrite: (seed: QuickBrief, edited: boolean, rest: QuickBrief[]) => Promise<WriteResult> | WriteResult;
+   *  the sheet open with the progress until it settles. Left out: written in the background, opening in Ready to send */
+  onWrite?: (seed: QuickBrief, edited: boolean, rest: QuickBrief[]) => Promise<WriteResult> | WriteResult;
   /** Background surfaces: after a split, write every brief at once */
   onWriteAll?: (seeds: QuickBrief[]) => void;
   /** Already agreed (the next brief of a split): shown as it is, no AI */
@@ -76,6 +83,34 @@ export function QuickBriefSheet({
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const sourceKey = JSON.stringify(source);
+  const router = useRouter();
+  // No writer of its own: every full brief is written in the background and opens in Ready to send
+  const background = backgroundAsked || !onWrite;
+  const inBackground = async (seeds: QuickBrief[], changed: boolean) => {
+    const here = new URL(window.location.href);
+    here.searchParams.delete("preview");
+    const from = `${here.pathname}${here.search}`;
+    let started = 0;
+    for (const [i, seed] of seeds.entries()) {
+      const r = await startBrief(clientId, source, seed, changed || seeds.length > 1, i, from).catch(() => ({ ok: false as const, error: "Something went wrong. Try again." }));
+      if (!r.ok) {
+        toast({ tone: "bad", title: "The brief couldn't be started", body: r.error, ms: 8000 });
+        continue;
+      }
+      if ("ready" in r) return router.push(readyHref(r.ready));
+      if ("job" in r) {
+        trackJob(r.job);
+        started++;
+      } else router.push(readyHref(r.suggestion.id));
+    }
+    if (started)
+      toast({
+        tone: "info",
+        title: started > 1 ? `Writing ${started} briefs in the background` : "Writing the full brief in the background",
+        body: "Keep working. You'll get a notice when it's ready to open in Ready to send.",
+        ms: 6000,
+      });
+  };
   const givenKey = given ? JSON.stringify(given) : "";
 
   useEffect(() => {
@@ -119,6 +154,12 @@ export function QuickBriefSheet({
   const write = async () => {
     if (!brief || !total) return;
     setError(null);
+    if (!onWrite) {
+      // Already written and kept as it was: straight to Ready to send. Otherwise the sheet closes while it's written
+      if (!(ready?.instant && !edited)) onClose();
+      void inBackground([brief], edited);
+      return;
+    }
     const r = onWrite(brief, edited, briefs.filter((_, i) => i !== active));
     if (background || !(r instanceof Promise)) return;
     setWriting(true);
@@ -274,8 +315,16 @@ export function QuickBriefSheet({
             </div>
           )}
           {error && <p className="text-[13px] text-bad">{error}</p>}
-          {split && onWriteAll && briefs.length > 1 && (
-            <button type="button" onClick={() => onWriteAll(briefs)} disabled={writing} className="min-h-11 rounded-full border border-line px-4 text-[13.5px] text-fg hover:border-faint disabled:opacity-50">
+          {background && ready && !(ready.instant && !edited) && <p className="text-[12px] text-faint">Written in the background while you keep working. It opens in Ready to send.</p>}
+          {split && (onWriteAll || !onWrite) && briefs.length > 1 && (
+            <button
+              type="button"
+              onClick={() => {
+                if (onWriteAll) return onWriteAll(briefs);
+                onClose();
+                void inBackground(briefs, true);
+              }}
+              disabled={writing} className="min-h-11 rounded-full border border-line px-4 text-[13.5px] text-fg hover:border-faint disabled:opacity-50">
               Write all {briefs.length} in the background
             </button>
           )}
@@ -290,7 +339,7 @@ export function QuickBriefSheet({
               className="inline-flex min-h-12 items-center gap-2 rounded-full bg-brand px-6 text-[14.5px] font-medium text-white shadow-[0_10px_30px_-10px_rgba(200,16,46,0.8)] transition hover:bg-brand-hover disabled:opacity-50 disabled:shadow-none"
             >
               {!ready?.instant || edited ? <Spark size={13} /> : null}
-              {writing ? "Writing…" : background && action === "Write the full brief" ? "Write it in the background" : action}
+              {writing ? "Writing…" : action}
             </button>
           </div>
         </div>
@@ -298,6 +347,39 @@ export function QuickBriefSheet({
     </div>,
     document.body,
   );
+}
+
+type PreviewSpec = {
+  /** Unique on the page: it's what ?preview= holds, so back closes the sheet */
+  previewKey: string;
+  clientId: string;
+  source: BriefSource;
+  from: { kicker: string; label: string; thumb?: string | null; adId?: string | null; format?: Fmt | null };
+  progressLabel?: string;
+};
+
+/**
+ * A button that opens the quick preview right here (any page, even a server-rendered one): "Write the full brief"
+ * writes it in the background and it opens in Ready to send; "Not this one" writes nothing.
+ */
+export function BriefPreviewButton({ children, className, ...spec }: PreviewSpec & { children: React.ReactNode; className?: string }) {
+  const open = () => pushParams({ preview: spec.previewKey });
+  return (
+    <>
+      <button type="button" onClick={open} className={className}>
+        {children}
+      </button>
+      <Suspense fallback={null}>
+        <PreviewWhenOpen {...spec} />
+      </Suspense>
+    </>
+  );
+}
+
+/** The sheet for one preview key, while the address points at it */
+export function PreviewWhenOpen({ previewKey, clientId, source, from, progressLabel = "brief from an idea+brief self-review" }: PreviewSpec) {
+  const open = useParam("preview") === previewKey;
+  return open ? <QuickBriefSheet clientId={clientId} source={source} from={from} progressLabel={progressLabel} onClose={() => closeParams("preview")} /> : null;
 }
 
 function Block({ label, children }: { label: string; children: React.ReactNode }) {

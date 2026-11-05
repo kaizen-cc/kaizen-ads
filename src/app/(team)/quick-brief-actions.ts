@@ -121,19 +121,21 @@ export async function previewBrief(clientId: string, source: BriefSource, given?
   if (given) return done([given], false);
 
   // Already written: its summary, at once
+  // A suggestion that's only its summary so far (written on its own) shows at once too, but isn't instant: its full
+  // brief is written when the person picks it
   const fromSuggestion = async (id: string) => {
     const { data: s } = await db.from("creative_suggestions").select("draft, why, status").eq("id", id).maybeSingle();
-    return s && s.status === "open" ? quickFromDraftAll(s.draft as SuggestionDraft, (s.why as string | null) ?? "") : null;
+    return s && s.status === "open" ? { briefs: quickFromDraftAll(s.draft as SuggestionDraft, (s.why as string | null) ?? ""), full: !(s.draft as SuggestionDraft).summary } : null;
   };
   if (source.kind === "suggestion") {
     const q = await fromSuggestion(source.id);
-    return q ? done(q, true) : { ok: false, error: "That brief isn't open any more." };
+    return q ? done(q.briefs, q.full) : { ok: false, error: "That brief isn't open any more." };
   }
   if (source.kind === "promise") {
     const { data: c } = await db.from("call_commitments").select("id, suggestion_id").eq("id", source.commitmentId).maybeSingle();
     if (!c) return { ok: false, error: "That promise isn't on a client you work on." };
     const q = c.suggestion_id ? await fromSuggestion(c.suggestion_id as string) : null;
-    if (q) return done(q, true);
+    if (q) return done(q.briefs, q.full);
   }
 
   if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };

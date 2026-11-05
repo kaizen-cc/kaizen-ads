@@ -5,12 +5,8 @@ import { useMemo, useRef, useState } from "react";
 import { FilterMenu, FilterPill } from "@/components/filters";
 import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
 import { QuickBriefSheet } from "@/components/quick-brief-sheet";
-import type { QuickBrief } from "@/lib/quick-brief";
 import type { FameAd } from "@/lib/hall-of-fame";
 import type { Winner } from "@/lib/industry";
-import type { OpenSuggestion } from "@/lib/suggestions";
-import { SuggestionSheet } from "../pipeline/views/suggested-briefs";
-import { briefFromWinner } from "../winners/actions";
 import { FeedPreview, InsightPanel, useAd, useInsight } from "../winners/fb-preview";
 import { ClientPick, HoverCard, SHEET_BACKDROP, SHEET_PANEL, SheetAction, SheetBar, Writing, type PickClient } from "../winners/winners-library";
 
@@ -230,12 +226,9 @@ function FameSheet({ a, w, clients, onClose }: { a: FameAd; w: Winner; clients: 
   const ad = useAd(a.adId);
   const insight = useInsight(w, ad);
   const [step, setStep] = useState<"ad" | "pick" | "writing">("ad");
-  // The written brief is a place of its own (?brief=id): back returns to the ad, forward to the brief
-  const [written, setWritten] = useState<OpenSuggestion | null>(null);
-  const briefId = useParam("brief");
-  const brief = written && written.id === briefId ? written : null;
-  const [error, setError] = useState<string | null>(null);
-  // A client picked: the quick preview first (?preview=, so back closes it), then the full brief from it
+  const error = null;
+  // A client picked: the quick preview right here (?preview=, so back closes it). The full brief is written in the
+  // background only if they choose it, and opens in Ready to send
   const [previewFor, setPreviewFor] = useState<string | null>(null);
   const preview = useParam("preview");
   const previewKey = `wf-${a.adId}`;
@@ -243,21 +236,6 @@ function FameSheet({ a, w, clients, onClose }: { a: FameAd; w: Winner; clients: 
     setPreviewFor(clientId);
     pushParams({ preview: previewKey });
   };
-  const writeFull = async (clientId: string, seed: QuickBrief) => {
-    setError(null);
-    const r = await briefFromWinner(
-      { adId: a.adId, client: a.client, detail: a.vertical, headline: a.creative.headline ?? null, text: a.creative.text ?? null, thumbnail: a.creative.image ?? null, ratio: Math.round((1 + a.beatBy) * 10) / 10, result: a.conversion.toLowerCase(), costPerResult: a.value, usual: a.target },
-      clientId,
-      seed,
-    );
-    if (!r.ok) return r;
-    // The brief takes the preview's place: back from it lands on the ad again
-    setStep("pick");
-    setWritten(r.suggestion);
-    replaceParams({ preview: null, brief: r.suggestion.id });
-    return { ok: true as const };
-  };
-  if (brief) return <SuggestionSheet s={brief} onClose={onClose} />;
   const c = a.creative;
   return (
     <div className={SHEET_BACKDROP} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -269,7 +247,6 @@ function FameSheet({ a, w, clients, onClose }: { a: FameAd; w: Winner; clients: 
           source={{ kind: "winner", winner: { adId: a.adId, client: a.client, detail: a.vertical, headline: a.creative.headline ?? null, text: a.creative.text ?? null, thumbnail: a.creative.image ?? null, ratio: Math.round((1 + a.beatBy) * 10) / 10, result: a.conversion.toLowerCase(), costPerResult: a.value, usual: a.target } }}
           from={{ kicker: "Hall of Fame", label: a.creative.headline ?? a.client, thumb: a.creative.image ?? null, adId: a.adId }}
           progressLabel="brief from a winner+brief self-review"
-          onWrite={(seed) => writeFull(previewFor, seed)}
           onClose={() => closeParams("preview")}
         />
       )}

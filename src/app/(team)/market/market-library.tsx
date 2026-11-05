@@ -2,15 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MarketAd } from "@/lib/market";
-import type { OpenSuggestion } from "@/lib/suggestions";
-import { SuggestionSheet } from "../pipeline/views/suggested-briefs";
 import { ClientPick, SHEET_BACKDROP, SHEET_PANEL, SheetAction, SheetBar, Writing, type PickClient } from "../winners/winners-library";
-import { briefFromMarket, clientMarket } from "./actions";
+import { clientMarket } from "./actions";
 import { ClientSearch } from "./client-search";
 import { FilterMenu as Menu, FilterPill as Pill } from "@/components/filters";
 import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
 import { QuickBriefSheet } from "@/components/quick-brief-sheet";
-import type { QuickBrief } from "@/lib/quick-brief";
 import { MarketHoverCard, MarketPreview, MarketReadPanel, useMarketRead } from "./market-preview";
 
 type View = "all" | "proven" | "early" | "fresh" | "testing";
@@ -370,14 +367,11 @@ export function MarketSheet({
   const forName = clients.find((c) => c.id === forClient)?.name;
   const briefLabel = forClient ? `Brief ${forName ?? "this client"} on it` : "Brief a client on this";
   const [step, setStep] = useState<"ad" | "pick" | "writing">("ad");
-  // The written brief is a place of its own (?brief=id): back returns to the ad, forward to the brief
-  const [written, setWritten] = useState<OpenSuggestion | null>(null);
-  const briefId = useParam("brief");
-  const brief = written && written.id === briefId ? written : null;
-  const [error, setError] = useState<string | null>(null);
+  const error = null;
   const read = useMarketRead(a);
 
-  // A client picked: the quick preview first (?preview=, so back closes it), then the full brief from it
+  // A client picked: the quick preview right here (?preview=, so back closes it). The full brief is written in the
+  // background only if they choose it, and opens in Ready to send
   const [previewFor, setPreviewFor] = useState<string | null>(null);
   const preview = useParam("preview");
   const previewKey = `wm-${a.id}`;
@@ -385,19 +379,6 @@ export function MarketSheet({
     setPreviewFor(clientId);
     pushParams({ preview: previewKey });
   };
-  const writeFull = async (clientId: string, seed: QuickBrief) => {
-    setError(null);
-    const r = await briefFromMarket(a.id, clientId, seed);
-    if (!r.ok) return r;
-    // The brief takes the preview's place: back from it lands on the ad again
-    setStep(forClient ? "ad" : "pick");
-    setWritten(r.suggestion);
-    replaceParams({ preview: null, brief: r.suggestion.id });
-    return { ok: true as const };
-  };
-
-  if (brief) return <SuggestionSheet s={brief} onClose={onClose} />;
-
   return (
     <div className={SHEET_BACKDROP} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className={`${SHEET_PANEL} md:grid-cols-[minmax(0,400px)_1fr]`}>
@@ -408,7 +389,6 @@ export function MarketSheet({
           source={{ kind: "market", adId: a.id }}
           from={{ kicker: `In the market · ${a.brand}`, label: a.pageName ?? a.brand }}
           progressLabel="brief from a market ad+brief self-review"
-          onWrite={(seed) => writeFull(previewFor, seed)}
           onClose={() => closeParams("preview")}
         />
       )}
@@ -468,7 +448,7 @@ export function MarketSheet({
             </div>
             {error && <p className="text-sm text-bad">{error}</p>}
             <p className="text-[11px] text-faint">
-              The strategist writes the whole request from what makes this ad work, fitted to the client. The {a.motionUrl ? "Motion link" : a.libraryUrl ? "Ad Library link" : "ad"} goes in the request&apos;s references so the creative
+              A quick preview of the client&apos;s version first; the full brief is written only if you choose it, in the background, and opens in Ready to send. The {a.motionUrl ? "Motion link" : a.libraryUrl ? "Ad Library link" : "ad"} goes in the request&apos;s references so the creative
               team sees the idea.
             </p>
           </div>

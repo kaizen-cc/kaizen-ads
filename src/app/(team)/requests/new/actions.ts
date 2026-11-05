@@ -465,10 +465,13 @@ export async function promiseDraft(commitmentId: string, seed?: QuickBrief | nul
     const { briefPromise } = await import("@/lib/calls");
     const id = await briefPromise(admin, commitmentId, seed);
     if (!id) return { ok: false, error: "This one isn't paid ads or creative work, so it's been taken off the list." };
-    // Its brief was already written and the person changed the preview: rewritten to what they agreed
-    if (seed && edited && id === mine.suggestion_id) {
-      const { rewriteWithSeed } = await import("@/lib/suggestions");
-      await rewriteWithSeed(admin, id, seed);
+    // Its brief was already there: written in full if it was only a summary, or rewritten to what the person changed
+    if (id === mine.suggestion_id) {
+      const { data: was } = await admin.from("creative_suggestions").select("draft").eq("id", id).single();
+      if ((was?.draft as import("@/lib/suggestions").SuggestionDraft | null)?.summary || (seed && edited)) {
+        const { rewriteWithSeed } = await import("@/lib/suggestions");
+        await rewriteWithSeed(admin, id, seed ?? null);
+      }
     }
     const { data: s } = await admin.from("creative_suggestions").select("draft").eq("id", id).single();
     return { ok: true, patch: { ...toPatch(s?.draft as import("@/lib/suggestions").SuggestionDraft), origin: { kind: "promise", label: `Promised on a call: ${mine.what}`.slice(0, 200), suggestionId: id } } };
@@ -656,17 +659,20 @@ export async function clientBriefs(clientId: string): Promise<BriefCard[]> {
 }
 
 /** A suggested brief dropped into the form, with where it came from (sending it marks the brief used) */
-export async function suggestionPatch(id: string, seed?: QuickBrief | null): Promise<{ ok: true; patch: Partial<Draft> } | Fail> {
+export async function suggestionPatch(id: string, seed?: QuickBrief | null, edited = true, write = true): Promise<{ ok: true; patch: Partial<Draft> } | Fail> {
   await requireStaff();
   const db = await createClient();
   const { data: r } = await db.from("creative_suggestions").select("signal, draft, source, status").eq("id", id).maybeSingle();
   if (!r || r.status !== "open") return { ok: false, error: "That brief isn't open any more." };
-  // The person changed its quick preview: the brief is rewritten to what they agreed before it fills the request
-  if (seed) {
+  // Only its summary so far: the full brief is written only when someone picks it from its quick preview
+  const summary = Boolean((r.draft as import("@/lib/suggestions").SuggestionDraft | null)?.summary);
+  if (summary && !write) return { ok: false, error: "Only its summary is written so far. Open it and write the full brief first." };
+  // The person changed its quick preview (or it was only a summary): written to what they agreed before it fills the request
+  if ((seed && edited) || summary) {
     if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
     try {
       const { rewriteWithSeed } = await import("@/lib/suggestions");
-      r.draft = await rewriteWithSeed(createAdminClient(), id, seed);
+      r.draft = await rewriteWithSeed(createAdminClient(), id, seed ?? null);
     } catch (e) {
       return { ok: false, error: e instanceof AiUnavailable ? e.message : "The strategist couldn't rewrite it. Try again." };
     }
@@ -810,7 +816,7 @@ export async function sendToAsana(draft: Draft): Promise<{ ok: true; tasks: impo
 
 /** A suggested brief (Home, Next for me, a refresh, a pattern, a moment) as the Asana task(s) it would become */
 export async function suggestionAsanaPreview(id: string) {
-  const r = await suggestionPatch(id);
+  const r = await suggestionPatch(id, null, false, false);
   if (!r.ok) return r;
   const db = await createClient();
   const { data: s } = await db.from("creative_suggestions").select("client_id").eq("id", id).single();
@@ -819,7 +825,7 @@ export async function suggestionAsanaPreview(id: string) {
 
 /** Sends a suggested brief to the Creative board in Asana, as written */
 export async function sendSuggestionToAsana(id: string) {
-  const r = await suggestionPatch(id);
+  const r = await suggestionPatch(id, null, false, false);
   if (!r.ok) return r;
   const db = await createClient();
   const { data: s } = await db.from("creative_suggestions").select("client_id").eq("id", id).single();

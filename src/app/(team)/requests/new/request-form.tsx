@@ -106,6 +106,7 @@ export function RequestForm({
   startAtReview = false,
   initialStart = null,
   initialPreview = null,
+  initialPromise = null,
 }: {
   clients: ClientOption[];
   allotments: Record<string, Allotment>;
@@ -122,6 +123,8 @@ export function RequestForm({
   initialStart?: StartData | null;
   /** Arriving with an idea to brief (an audit's creative idea): its quick preview opens first */
   initialPreview?: PreviewItem | null;
+  /** A brief written from a call's promise: sending it puts the promise in motion */
+  initialPromise?: { id: string; clientId: string } | null;
 }) {
   // Seeded once, before anything asks for it
   useState(() => {
@@ -187,7 +190,8 @@ export function RequestForm({
   const [restoredAt, setRestoredAt] = useState<number | null>(null);
   // The design preview keeps its sample request apart from a real one
   // A migration from Asana never picks up (or overwrites) someone's own unsent request
-  const saveKey = demo ? `${SAVE_KEY}:preview` : initialDraft?.migration ? `${SAVE_KEY}:asana:${initialDraft.migration.gid}` : SAVE_KEY;
+  // A brief written in the background keeps its own saved copy, so it never overwrites another request in progress
+  const saveKey = demo ? `${SAVE_KEY}:preview` : initialDraft?.migration ? `${SAVE_KEY}:asana:${initialDraft.migration.gid}` : initialPromise || initialDraft?.origin?.suggestionId ? `${SAVE_KEY}:brief:${initialDraft?.origin?.suggestionId ?? initialPromise?.id}` : SAVE_KEY;
   const [loaded, setLoaded] = useState(false); // nothing is saved until the saved copy has been read
   useEffect(() => {
     const saved = readSaved(saveKey);
@@ -239,7 +243,7 @@ export function RequestForm({
   };
 
   // A promise from a call this request delivers (its brief was loaded); sending marks it in motion
-  const [promise, setPromise] = useState<{ id: string; clientId: string } | null>(null);
+  const [promise, setPromise] = useState<{ id: string; clientId: string } | null>(initialPromise);
 
   const set = (patch: Partial<Draft>) => {
     setDraft((d) => ({ ...d, ...patch }));

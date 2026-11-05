@@ -1,40 +1,12 @@
 "use server";
 
-import { AiUnavailable, aiEnabled } from "@/lib/ai";
+import { aiEnabled } from "@/lib/ai";
 import { requireStaff } from "@/lib/auth";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { loadSuggestion, suggestFromMarket, type OpenSuggestion } from "@/lib/suggestions";
-import { notLive } from "@/lib/live-guard";
-import type { QuickBrief } from "@/lib/quick-brief";
 
-/**
- * The strategist writes the whole request for the picked client from a live market ad, with the Motion link in its
- * references. Picking the same ad and client again opens the draft already written.
- */
-export async function briefFromMarket(adId: string, clientId: string, seed: QuickBrief | null = null): Promise<{ ok: true; suggestion: OpenSuggestion } | { ok: false; error: string }> {
-  { const why = await notLive(await createClient(), clientId); if (why) return { ok: false, error: why }; }
-  const me = await requireStaff();
-  if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
-  const supabase = await createClient();
-  // From the quick preview a fresh brief is written, following it
-  const { data: existing } = seed ? { data: null } : await supabase
-    .from("creative_suggestions")
-    .select("id")
-    .eq("kind", "market")
-    .eq("status", "open")
-    .eq("client_id", clientId)
-    .eq("created_by", me.id)
-    .eq("source->>marketAdId", adId)
-    .limit(1);
-  try {
-    const id = existing?.[0]?.id ?? (await suggestFromMarket(createAdminClient(), clientId, adId, me.id, undefined, seed));
-    const suggestion = await loadSuggestion(supabase, id);
-    return suggestion ? { ok: true, suggestion } : { ok: false, error: "Couldn't open the brief." };
-  } catch (e) {
-    return { ok: false, error: e instanceof AiUnavailable ? e.message : "The strategist couldn't write it. Try again." };
-  }
-}
+// Briefing a client on a market ad starts from its quick preview (src/components/quick-brief-sheet.tsx): the full
+// brief is written in the background only when someone chooses it (startBrief in src/app/(team)/brief-job-actions.ts).
 
 export type MarketRead = { observation: string | null; why: string | null; hook: string | null; angle: string | null; takeaways: string[] };
 

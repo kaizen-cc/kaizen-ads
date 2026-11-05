@@ -10,7 +10,7 @@ import { LIVE } from "@/lib/live";
 
 export const metadata: Metadata = { title: "Winners" };
 
-// The strategist writes a full brief from a winner while the person waits
+// A brief someone chooses from its quick preview is written right after the answer (in the background), on this route
 export const maxDuration = 300;
 
 export default async function Winners() {

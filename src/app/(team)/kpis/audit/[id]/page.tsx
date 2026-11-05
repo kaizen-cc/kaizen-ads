@@ -15,6 +15,7 @@ import { googleAdsConfigured } from "@/lib/context/google-ads";
 import { metaConfigured } from "@/lib/context/meta";
 import { VERDICT } from "../../verdict";
 import { ActionCard, RerunAudit, StartSprint } from "./audit-parts";
+import { BriefPreviewButton } from "@/components/quick-brief-sheet";
 
 export const metadata: Metadata = { title: "Account audit" };
 export const maxDuration = 800;
@@ -214,7 +215,30 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
                   <p className="text-[11px] text-faint">{items.length ? hint : "Nothing here"}</p>
                 </div>
                 {items.map(({ x, i }) => (
-                  <ActionCard key={i} auditId={a.id} index={i} action={x} area={AREA[x.area] ?? x.area} done={done[String(i)] ?? null} listed={replaced ? "replaced" : (onList.get(x.title) ?? null)} writable={x.owner === "media_buyer" ? writable : null} talk={talk(`action:${i}`, x.title)} />
+                  <ActionCard
+                    key={i}
+                    auditId={a.id}
+                    index={i}
+                    action={x}
+                    area={AREA[x.area] ?? x.area}
+                    done={done[String(i)] ?? null}
+                    listed={replaced ? "replaced" : (onList.get(x.title) ?? null)}
+                    writable={x.owner === "media_buyer" ? writable : null}
+                    talk={talk(`action:${i}`, x.title)}
+                    brief={
+                      x.owner === "creative" || x.area === "creative" ? (
+                        <BriefPreviewButton
+                          previewKey={`audit-${a.id.slice(0, 8)}-a${i}`}
+                          clientId={a.client_id as string}
+                          source={{ kind: "idea", label: `From the account audit: ${x.title}`.slice(0, 200), text: [`Move: ${x.title}`, ...x.steps.map((s) => `- ${s}`), `Why: ${x.why}`, `Impact: ${x.impact}`].join("\n") }}
+                          from={{ kicker: "Account audit move", label: x.title }}
+                          className="inline-flex min-h-11 items-center justify-center justify-self-start rounded-full border border-line px-4 text-[13px] font-medium hover:border-faint md:min-h-9"
+                        >
+                          Brief it →
+                        </BriefPreviewButton>
+                      ) : null
+                    }
+                  />
                 ))}
               </div>
             );
@@ -265,7 +289,7 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
       </Section>
 
       {r.creative.length > 0 && (
-        <Section n="03" title="Creative I'd make" sub="From the playbook's proven angles, our Hall of Fame and the Brand Bible. Each one opens a request, already filled in.">
+        <Section n="03" title="Creative I'd make" sub="From the playbook's proven angles, our Hall of Fame and the Brand Bible. Each one opens its quick preview right here; the full brief is written only when you choose it.">
           <div className="grid gap-3 md:grid-cols-2">
             {r.creative.map((c, i) => (
               <article key={i} className="grid min-w-0 content-start gap-3 rounded-[16px] border border-line bg-surface p-4 md:p-5">
@@ -281,9 +305,15 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
                   <span className="text-brand-text">&rdquo;</span>
                 </p>
                 <p className="text-[13px] leading-relaxed text-muted">{c.why}</p>
-                <Link href={`/requests/new?audit=${a.id}&idea=${i}`} className="inline-flex min-h-11 items-center justify-center justify-self-start rounded-full bg-fg px-4 text-[13px] font-medium text-bg hover:bg-fg/90 md:min-h-9">
-                  Make a request →
-                </Link>
+                <BriefPreviewButton
+                  previewKey={`audit-${a.id.slice(0, 8)}-${i}`}
+                  clientId={a.client_id as string}
+                  source={{ kind: "idea", label: `From the account audit: ${c.concept}`.slice(0, 200), text: [`Concept: ${c.concept}`, `Angle: ${c.angle}`, `Hook: "${c.hook}"`, `Format: ${c.format}`, `Why: ${c.why}`].join("\n") }}
+                  from={{ kicker: "Account audit idea", label: c.concept }}
+                  className="inline-flex min-h-11 items-center justify-center justify-self-start rounded-full bg-fg px-4 text-[13px] font-medium text-bg hover:bg-fg/90 md:min-h-9"
+                >
+                  Brief it →
+                </BriefPreviewButton>
                 {talk(`creative:${i}`, c.concept)}
               </article>
             ))}

@@ -14,7 +14,7 @@ import { closeParams, closeThen, pushParams, useParam } from "@/lib/url-state";
 import { SuggestionSheet } from "@/app/(team)/pipeline/views/suggested-briefs";
 import { startRefreshBrief, startWinnerBrief } from "@/app/(team)/brief-job-actions";
 import { BriefProgress, trackJob, useJobFor } from "@/components/brief-jobs";
-import { QuickBriefSheet } from "@/components/quick-brief-sheet";
+import { BriefPreviewButton, QuickBriefSheet } from "@/components/quick-brief-sheet";
 import type { QuickBrief } from "@/lib/quick-brief";
 import { checkErrorsNow, dismissAllotment, restoreAllotment } from "./kpi-actions";
 
@@ -801,7 +801,7 @@ export function WinnerCard({ w, credit, copy }: { w: Winner; credit?: WinnerAd; 
             {busy ? "Starting…" : copy ? "Brief new copy like this" : "Brief more like this"}
           </button>
         )}
-        <p className="text-center text-[11px] text-faint">A quick preview first, then the full brief to approve, create or send to Asana</p>
+        <p className="text-center text-[11px] text-faint">A quick preview first. The full brief only if you choose it, then it opens in Ready to send</p>
       </div>
       {previewing && (
         <QuickBriefSheet
@@ -905,9 +905,20 @@ export function TiringCard({ r, copy = false }: { r: WatchRow; /** Shown as copy
               <Link href={`/requests/new?client=${r.clientSlug}`} className="grid h-10 place-items-center rounded-full border border-line text-[12.5px] text-muted hover:text-fg">
                 Brief from a winner
               </Link>
-              <Link href={`/requests/new?client=${r.clientSlug}&path=talk`} className="grid h-10 place-items-center rounded-full border border-line text-[12.5px] text-muted hover:text-fg">
+              {/* A new concept to replace it: its quick preview right here, like the refresh */}
+              <BriefPreviewButton
+                previewKey={`kn-${r.adId}`}
+                clientId={r.clientId}
+                source={{
+                  kind: "idea",
+                  label: `New creative to replace "${r.headline ?? r.adName}"`.slice(0, 200),
+                  text: [`This ad is ${tired ? "tired" : "tiring"} after ${s.daysRunning} days (${money(s.spend7)} this week).`, ...chips.map((c) => `${c.label}: ${c.v}${c.c ? ` (${c.c})` : ""}`), "Brief a new concept to replace it: a different angle, hook or format, not a refresh of this one."].join("\n"),
+                }}
+                from={{ kicker: "New creative for a tiring ad", label: r.headline ?? r.adName, thumb: r.thumbnail, adId: r.adId && /^\d{5,25}$/.test(r.adId) ? r.adId : null }}
+                className="grid h-11 place-items-center rounded-full border border-line text-[12.5px] text-muted hover:text-fg md:h-10"
+              >
                 New creative
-              </Link>
+              </BriefPreviewButton>
             </div>
           </div>
         )}

@@ -13,6 +13,7 @@ import { SectionTitle } from "./shared";
 import { AsanaSend } from "@/components/asana-send";
 import { DEFAULT_CARDS, draws } from "@/lib/allotment";
 import { sendSuggestionToAsana, suggestionAsanaPreview } from "@/app/(team)/requests/new/actions";
+import { QuickBriefSheet } from "@/components/quick-brief-sheet";
 
 const KIND_TONE: Record<SuggestionKind, string> = {
   fatigue: "bg-warn-soft text-warn",
@@ -30,12 +31,13 @@ const KIND_TONE: Record<SuggestionKind, string> = {
   market: "bg-[#6c5ce7]/15 text-[#8b7cf6]",
   moment: "bg-brand-soft text-brand-text",
   pattern: "bg-ok-soft text-ok",
+  idea: "bg-brand-soft text-brand-text",
 };
 const FORMAT_LABEL = { image: "Images", video: "Videos", carousel: "Carousels" } as const;
 const FORMAT_ONE = { image: "image", video: "video", carousel: "carousel" } as const;
 // The order they're read in: accounts off target, then what clients asked for that nobody has started, then behind on
 // creative, then the rest, and ideas from the market last
-const RANK: Record<SuggestionKind, number> = { kpi: 0, offer: 1, call: 1, unhappy: 1, pacing: 2, fatigue: 3, refresh: 3, flop: 3, onboarding: 4, winner: 4, lab: 4, moment: 4, pattern: 4, market: 5 };
+const RANK: Record<SuggestionKind, number> = { kpi: 0, offer: 1, call: 1, unhappy: 1, pacing: 2, fatigue: 3, refresh: 3, flop: 3, onboarding: 4, winner: 4, lab: 4, moment: 4, pattern: 4, idea: 4, market: 5 };
 /** "1 new image · 5 variations" (and a carousel's slides): net new and variations, not one total that hides which is which */
 const countsOf = (formats: SuggestionDraft["formats"]) =>
   formats
@@ -120,7 +122,7 @@ export function SuggestedBriefs({ state, bare = false }: { state: SuggestionsSta
                   {countsOf(s.draft.formats)}
                   {s.draft.concepts.length > 1 ? ` · ${s.draft.concepts.length} concepts, one brief each` : ""}
                 </span>
-                <span className="text-fg transition-transform group-hover:translate-x-0.5">Review →</span>
+                <span className="text-fg transition-transform group-hover:translate-x-0.5">{s.draft.summary ? "Preview →" : "Review →"}</span>
               </span>
             </button>
           ))}
@@ -148,8 +150,27 @@ function Dots() {
   );
 }
 
-/** One suggestion, full screen: edit it, talk it through, approve it or decline it. Also opened from the winners library. */
+/**
+ * One suggestion. Only its summary so far (the strategist, a moment, a promise or a tiring ad suggested it on its own):
+ * its quick preview, where "Write the full brief" writes it in the background (it opens in Ready to send) and "Not
+ * this one" writes nothing. Written in full: the sheet to edit, talk through, approve or decline it.
+ */
 export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: () => void }) {
+  if (s.draft.summary)
+    return (
+      <QuickBriefSheet
+        clientId={s.clientId}
+        source={{ kind: "suggestion", id: s.id }}
+        from={{ kicker: KIND_LABEL[s.kind], label: s.signal || s.client, thumb: s.source?.thumbnail ?? null }}
+        progressLabel="brief from a summary+brief self-review"
+        onClose={onClose}
+      />
+    );
+  return <FullSuggestionSheet s={s} onClose={onClose} />;
+}
+
+/** One suggestion written in full, full screen: edit it, talk it through, approve it or decline it. */
+function FullSuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: () => void }) {
   const router = useRouter();
   const [draft, setDraft] = useState<SuggestionDraft>(s.draft);
   const [why, setWhy] = useState(s.why);

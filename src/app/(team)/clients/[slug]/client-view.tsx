@@ -593,7 +593,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                 )}
                 {calls && (
                   <Fold id="calls">
-                    <CallsPanel calls={calls} />
+                    <CallsPanel calls={calls} clientId={client.id} />
                   </Fold>
                 )}
               </div>),
@@ -937,7 +937,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                           <div className="grid min-w-0 gap-6">
                             {assets && !demo && client.creative_package && <ShotListPanel clientId={client.id} slug={client.slug} assets={assets} latest={shotList} live={live} />}
                             {!(assets && !demo && client.creative_package) && <p className="text-sm text-faint">Shot lists come with a creative package.</p>}
-                            <MomentsPanel moments={moments} />
+                            <MomentsPanel moments={moments} clientId={client.id} />
                           </div>
                           <div className="grid min-w-0 gap-6">
                             <PackagePanel

@@ -15,7 +15,7 @@ export const maxDuration = 300;
 
 export default async function NewRequest({ searchParams }: PageProps<"/requests/new">) {
   const me = await requireStaff();
-  const { client, from, brief, asana, ai, card, audit, business, idea } = await searchParams;
+  const { client, from, brief, asana, ai, card, audit, business, idea, draft } = await searchParams;
   const supabase = await createClient();
   const [{ data: rows }, { data: usage }, { data: angles }, { data: assignments }] = await Promise.all([
     supabase.from("clients").select("id, name, slug, status, creative_package").is("archived_at", null).in("status", LIVE).order("name"),
@@ -40,14 +40,17 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
   }
 
   // Starting again from a deleted ticket (Settings › Deleted): its brief, ready to send as is or to edit
+  // A brief written in the background (the toast or the bell: "Your brief is ready"): it opens in Ready to send
+  const written = typeof draft === "string" ? await fromWritten(supabase, draft) : null;
   const restart =
-    typeof from === "string" && isExecOrLead(me)
+    written ??
+    (typeof from === "string" && isExecOrLead(me)
       ? await fromDeleted(from)
       : typeof asana === "string"
         ? await fromAsana(asana, me)
         : typeof ai === "string"
           ? await fromKaizenAi(supabase, ai, Number(card) || 0)
-          : null;
+          : null);
   // An audit's creative idea: its quick preview opens first, over the client's start page
   const auditIdea = !restart && (typeof audit === "string" || typeof business === "string") ? await fromAuditIdea(supabase, typeof business === "string" ? "business" : "account", (typeof business === "string" ? business : audit) as string, Number(idea) || 0) : null;
   const initialClient = restart?.draft.clientId ?? auditIdea?.clientId ?? (typeof client === "string" ? (clients.find((c) => c.slug === client && c.creative)?.id ?? null) : null);
@@ -57,8 +60,10 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
   return (
     <div className="mx-auto max-w-6xl">
       <RequestForm
+        key={written ? `draft-${draft}` : "new"}
         initialDraft={restart?.draft ?? null}
-        startAtReview={Boolean(restart) && brief === "same"}
+        startAtReview={Boolean(restart) && (brief === "same" || Boolean(written))}
+        initialPromise={written?.promise ?? null}
         clients={clients}
         allotments={allotments}
         anglesByClient={anglesByClient}
@@ -70,6 +75,22 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
       />
     </div>
   );
+}
+
+/** A brief written in the background from a quick preview (read through the person's own session), as the draft */
+async function fromWritten(db: Awaited<ReturnType<typeof createClient>>, id: string): Promise<{ draft: Partial<Draft> & { clientId: string }; promise: { id: string; clientId: string } | null } | null> {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
+  const { data: s } = await db.from("creative_suggestions").select("client_id, call_commitment_id").eq("id", id).maybeSingle();
+  if (!s) return null;
+  // Only a written brief: a summary nobody has picked yet is never sent as it is
+  const { suggestionPatch } = await import("./actions");
+  const r = await suggestionPatch(id, null, false, false);
+  if (!r.ok) return null;
+  const clientId = s.client_id as string;
+  return {
+    draft: { sizes: ["4x5", "9x16"], priority: "normal", ...r.patch, clientId },
+    promise: s.call_commitment_id ? { id: s.call_commitment_id as string, clientId } : null,
+  };
 }
 
 /** A brief written in Kaizen AI (a card on one of the person's messages, read through their own session) as the draft */

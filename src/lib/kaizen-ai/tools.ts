@@ -560,7 +560,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
     },
     {
       name: "create_brief",
-      description: "Turns a creative idea into a brief card the person can open as a prefilled request (and send to the Board, or to Asana from there). Nothing is sent from here. Write a full brief: the idea, the hook, what to show, the copy direction, the offer, and the references. One concept per brief: several distinct ideas are one card each. Every version counts toward the allotment (net new and variations alike, a carousel once per slide; sizes are free).",
+      description: "Turns a creative idea into a brief card. Brief it on the card opens its quick preview right where the person is; the full brief is written only if they choose it (in the background, landing in Ready to send). Nothing is sent from here. In brief, give the idea in a few short lines: the concept, the hook, what to show, the copy direction, the offer and any references. One concept per brief: several distinct ideas are one card each. Every version counts toward the allotment (net new and variations alike, a carousel once per slide; sizes are free).",
       input_schema: {
         type: "object",
         properties: {
@@ -592,7 +592,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
           href: `/requests/new?ai=${ctx.messageId}&card=${index}`,
         };
         card(b);
-        return { shown: true, link: b.href, note: "The person opens it as a prefilled request; from there it goes to the Board or to Asana." };
+        return { shown: true, note: "The card is on screen. Brief it opens its quick preview there; the full brief is written only if they choose it, and lands in Ready to send." };
       },
     },
     {

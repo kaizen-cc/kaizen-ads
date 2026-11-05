@@ -62,7 +62,7 @@ export async function PatternsStream({ clientId }: { clientId: string }) {
   const supabase = await createClient();
   const [{ MODEL_NAMES, patternsForClient }, { ClientPatterns }] = await Promise.all([import("@/lib/patterns"), import("@/components/patterns-view")]);
   const pat = await T("patterns", patternsForClient(supabase, clientId).catch(() => null));
-  return pat?.model && pat.patterns.length ? <ClientPatterns patterns={pat.patterns} label={MODEL_NAMES[pat.model]} /> : null;
+  return pat?.model && pat.patterns.length ? <ClientPatterns patterns={pat.patterns} label={MODEL_NAMES[pat.model]} clientId={clientId} /> : null;
 }
 
 /** The full business audit: the latest one, the pushback on it, and whether this person may push back */

@@ -1,10 +1,9 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { briefPattern, refreshPatterns } from "@/app/(team)/pipeline/pattern-actions";
+import { useState } from "react";
+import { refreshPatterns } from "@/app/(team)/pipeline/pattern-actions";
 import type { Pattern, PatternsState } from "@/lib/patterns";
 import { QuickBriefSheet } from "@/components/quick-brief-sheet";
-import type { QuickBrief } from "@/lib/quick-brief";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 
 // Patterns across clients, as cards: what works (or fails) for a whole kind of business, how many clients prove it,
@@ -13,25 +12,15 @@ import { closeParams, pushParams, useParam } from "@/lib/url-state";
 const KIND: Record<Pattern["kind"], string> = { angle: "Angle", concept: "Concept", offer: "Offer", format: "Format", audience: "Audience", moment: "Moment", google: "Google" };
 const CONF: Record<Pattern["confidence"], string> = { high: "Strong", medium: "Good", low: "Early" };
 
-function Card({ p, names, canBrief, uses }: { p: Pattern; names?: Record<string, string>; canBrief?: boolean; uses?: "yes" | "no" | null }) {
+function Card({ p, names, canBrief, uses, briefFor = null }: { p: Pattern; names?: Record<string, string>; canBrief?: boolean; uses?: "yes" | "no" | null; /** The client page: brief it for this client */ briefFor?: string | null }) {
   const [open, setOpen] = useState(false);
-  const [sent, setSent] = useState<Record<string, "busy" | "done" | string>>({});
-  const [, start] = useTransition();
   const works = p.verdict === "works";
   const share = p.evidence.of ? Math.round((p.evidence.clients / p.evidence.of) * 100) : 0;
-  // A client picked: the quick preview first (?preview=, so back closes it), then the brief is written in the background
+  // A client picked: the quick preview right here (?preview=, so back closes it). The full brief is written in the
+  // background only if they choose it (its progress by the bell), and opens in Ready to send
   const [previewFor, setPreviewFor] = useState<string | null>(null);
   const previewKey = previewFor ? `pt-${p.id}-${previewFor}` : null;
   const previewing = useParam("preview") === previewKey && previewKey !== null;
-  const brief = (id: string, seeds: QuickBrief[]) => {
-    closeParams("preview");
-    setSent((x) => ({ ...x, [id]: "busy" }));
-    start(async () => {
-      const rs = await Promise.all(seeds.map((seed) => briefPattern(p.id, id, seed)));
-      const bad = rs.find((r) => !r.ok);
-      setSent((x) => ({ ...x, [id]: bad && !bad.ok ? bad.error : "done" }));
-    });
-  };
   return (
     <article className="grid gap-3 rounded-[18px] border border-line bg-surface p-4 md:p-5">
       <div className="flex flex-wrap items-center gap-2">
@@ -73,40 +62,46 @@ function Card({ p, names, canBrief, uses }: { p: Pattern; names?: Record<string,
           <div className="flex flex-wrap gap-2">
             {p.missing
               .filter((id) => names[id])
-              .map((id) => {
-                const st = sent[id];
-                return canBrief ? (
+              .map((id) =>
+                canBrief ? (
                   <button
                     key={id}
                     type="button"
-                    disabled={Boolean(st)}
                     onClick={() => {
                       setPreviewFor(id);
                       pushParams({ preview: `pt-${p.id}-${id}` });
                     }}
-                    title={st && st !== "busy" && st !== "done" ? st : undefined}
-                    className={`min-h-10 rounded-full border px-3.5 text-[12.5px] transition-colors ${st === "done" ? "border-ok/40 bg-ok-soft text-ok" : st && st !== "busy" ? "border-bad/40 text-bad" : "border-line hover:border-brand/50 hover:text-fg"} disabled:cursor-default`}
+                    className="min-h-11 rounded-full border border-line px-3.5 text-[12.5px] transition-colors hover:border-brand/50 hover:text-fg md:min-h-10"
                   >
-                    {st === "done" ? `✓ Brief coming for ${names[id]}` : st === "busy" ? `Briefing ${names[id]}…` : st ? `Couldn't: ${names[id]}` : `Brief it for ${names[id]} →`}
+                    {`Brief it for ${names[id]} →`}
                   </button>
                 ) : (
                   <span key={id} className="rounded-full border border-line px-3 py-1.5 text-[12.5px] text-muted">
                     {names[id]}
                   </span>
-                );
-              })}
+                ),
+              )}
           </div>
         </div>
+      )}
+      {briefFor && (
+        <button
+          type="button"
+          onClick={() => {
+            setPreviewFor(briefFor);
+            pushParams({ preview: `pt-${p.id}-${briefFor}` });
+          }}
+          className="min-h-11 justify-self-start rounded-full border border-line px-4 text-[13px] transition-colors hover:border-brand/50 hover:text-fg md:min-h-9"
+        >
+          Brief it for them →
+        </button>
       )}
       {previewing && previewFor && (
         <QuickBriefSheet
           clientId={previewFor}
           source={{ kind: "pattern", patternId: p.id }}
-          from={{ kicker: `Works for ${p.evidence.clients} of ${p.evidence.of}`, label: `${p.title} · ${names?.[previewFor] ?? ""}` }}
+          from={{ kicker: `Works for ${p.evidence.clients} of ${p.evidence.of}`, label: names?.[previewFor] ? `${p.title} · ${names[previewFor]}` : p.title }}
           progressLabel="brief from a pattern"
-          background
-          onWrite={(seed) => brief(previewFor, [seed])}
-          onWriteAll={(seeds) => brief(previewFor, seeds)}
           onClose={() => closeParams("preview")}
         />
       )}
@@ -166,7 +161,7 @@ export function PatternsPanel({ state, canBrief, canRefresh }: { state: Patterns
 }
 
 /** The client page: what works for businesses like this one, and whether this client uses it */
-export function ClientPatterns({ patterns, label }: { patterns: (Pattern & { uses: boolean; opportunity: boolean })[]; label: string }) {
+export function ClientPatterns({ patterns, label, clientId = null }: { patterns: (Pattern & { uses: boolean; opportunity: boolean })[]; label: string; /** Brief one they aren't using yet, right here */ clientId?: string | null }) {
   const [all, setAll] = useState(false);
   if (!patterns.length) return null;
   const shown = all ? patterns : patterns.slice(0, 4);
@@ -181,7 +176,7 @@ export function ClientPatterns({ patterns, label }: { patterns: (Pattern & { use
       </div>
       <div className="grid gap-3 lg:grid-cols-2">
         {shown.map((p) => (
-          <Card key={p.id} p={p} uses={p.verdict === "works" ? (p.uses ? "yes" : p.opportunity ? "no" : null) : null} />
+          <Card key={p.id} p={p} uses={p.verdict === "works" ? (p.uses ? "yes" : p.opportunity ? "no" : null) : null} briefFor={clientId && p.verdict === "works" && !p.uses ? clientId : null} />
         ))}
       </div>
       {patterns.length > 4 && (

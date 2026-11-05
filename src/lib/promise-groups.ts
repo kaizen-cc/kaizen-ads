@@ -161,6 +161,9 @@ async function mergeBrief(admin: Admin, clientId: string, groupId: string, membe
     clientId,
     { id: c.id as string, what: g.title as string, why: `${g.context ?? ""}\nSaid in ${members.length} places:\n${where}`.trim(), kind: MAKE.includes(String(c.kind)) ? String(c.kind) : "creative" },
     { ...call, summary: (mention?.summary as { summary?: string; clientSaid?: string[]; decisions?: string[] } | null) ?? null },
+    null,
+    // Regrouped on its own: only the summary until someone picks it
+    true,
   );
   if (typeof id !== "string") return false;
   await admin.from("call_commitments").update({ status: "briefed", suggestion_id: id }).in("id", calls.map((m) => m.id));

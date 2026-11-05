@@ -9,7 +9,8 @@ import { PromiseSources } from "./promise-sources";
 import { HideForMe } from "./hide-for-me";
 
 // What we promised clients on calls and haven't started: two business days after the call, with nothing in
-// production, the strategist writes the brief from the call. One click to review it and send it to the makers.
+// production, the strategist sketches the brief from the call (a summary). Its quick preview opens in place; the full
+// brief is written only when someone chooses it, then it's sent to the makers from Ready to send.
 
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "America/New_York" });
 
@@ -26,7 +27,7 @@ export function CallPromises({ promises, bare = false }: { promises: CallPromise
         <h2 className="font-display text-2xl tracking-tight">
           {promises.length} {promises.length === 1 ? "thing we said we'd do hasn't" : "things we said we'd do haven't"} started
         </h2>
-        <p className="text-sm text-muted">Pulled from the call notes. Each one has a brief written from the call, ready to send to production.</p>
+        <p className="text-sm text-muted">Pulled from the call notes. Each one has a quick summary from the call; the full brief is written when you choose it.</p>
       </div>
       <div className="grid gap-3 lg:grid-cols-2">
         {promises.map((p) => (
@@ -44,7 +45,7 @@ export function CallPromises({ promises, bare = false }: { promises: CallPromise
             <PromiseSources group={p.group} />
             <div className="flex flex-wrap gap-2">
               <button onClick={() => p.suggestion && pushParams({ promise: p.suggestion.id })} className="h-11 w-full rounded-brand bg-fg px-4 text-sm font-medium text-bg md:h-9 md:w-auto">
-                Review the brief
+                {p.suggestion?.draft.summary ? "Preview the brief" : "Review the brief"}
               </button>
               <HideForMe hideKey={`call:${p.commitmentId}`} label={`${p.client}: ${p.group?.title ?? p.what}`} href={`/clients/${p.clientSlug}`} />
             </div>

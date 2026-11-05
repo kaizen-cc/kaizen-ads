@@ -22,7 +22,7 @@ import { GoogleAdsMark, MetaMark } from "@/components/source-logo";
 
 export const metadata: Metadata = { title: "Ideas" };
 
-// The strategist writes a full brief from a winner or a market ad while the person waits
+// A brief someone chooses from its quick preview is written right after the answer (in the background), on this route
 export const maxDuration = 300;
 
 const GOOGLE_TABS = [

@@ -237,7 +237,8 @@ export async function prewriteRefreshes(admin: SupabaseClient, max = 6) {
   const errors: string[] = [];
   for (const w of todo.slice(0, max)) {
     try {
-      await suggestRefresh(admin, w.client_id, w.ad_id, null);
+      // Only the summary: the full refresh is written when someone picks it
+      await suggestRefresh(admin, w.client_id, w.ad_id, null, null, true);
       done++;
     } catch (e) {
       errors.push(e instanceof Error ? e.message : String(e));

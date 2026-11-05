@@ -8,6 +8,8 @@ import { TOPICS } from "@/lib/today";
 import { buildSnapshot, readSnapshot } from "@/lib/today-snapshot";
 import { loadProduction } from "@/lib/production";
 import { Story } from "./story";
+import { Toaster } from "@/components/toasts";
+import { BriefJobsRoot } from "@/components/brief-jobs";
 
 export const metadata: Metadata = { title: "Today" };
 export const maxDuration = 120;
@@ -25,7 +27,11 @@ export default async function TodayPage() {
   // Been through today's recap: no reminder this afternoon
   if (adminConfigured()) after(async () => void (await createAdminClient().from("profiles").update({ recap_seen_on: new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }) }).eq("id", me.id)));
   return (
-    <Story
+    <>
+      {/* A brief started from the recap is written in the background: its notices show here too */}
+      <Toaster />
+      <BriefJobsRoot />
+      <Story
       firstName={me.fullName.split(" ")[0]}
       greeting={greetingFor(new Date())}
       items={today.items}
@@ -34,6 +40,7 @@ export default async function TodayPage() {
       topics={TOPICS}
       home={me.isExec || me.isLead ? "/pipeline" : "/next"}
       score={score}
-    />
+      />
+    </>
   );
 }

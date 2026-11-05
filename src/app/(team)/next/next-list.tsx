@@ -9,7 +9,7 @@ import { SuggestionSheet } from "../pipeline/views/suggested-briefs";
 
 const SECTIONS: { key: keyof Omit<NextForMe, "stats">; title: string; hint: string; empty: string }[] = [
   { key: "now", title: "Now", hint: "Late, due today, or waiting on you", empty: "Nothing urgent. Nice." },
-  { key: "decide", title: "To decide", hint: "Briefs the AI wrote for your clients", empty: "No briefs waiting on you." },
+  { key: "decide", title: "To decide", hint: "Briefs the AI suggests for your clients", empty: "No briefs waiting on you." },
   { key: "watch", title: "Keep an eye on", hint: "Your accounts and clients", empty: "Your accounts look healthy." },
   { key: "coming", title: "Coming up", hint: "On you, not due yet", empty: "Nothing else lined up." },
 ];

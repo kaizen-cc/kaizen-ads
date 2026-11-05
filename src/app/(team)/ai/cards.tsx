@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
 import { Markdown } from "@/components/markdown";
 import { ChatPlan } from "@/app/(team)/clients/[slug]/chat-plan";
+import { BriefPreviewButton } from "@/components/quick-brief-sheet";
 import type { BriefCard, Card, CopyCard, CopyField, LinkCard, ListCard, MetricsCard, ToolRun } from "@/lib/kaizen-ai/types";
 
 // What Kaizen AI's tools put on screen: metrics tables, copy sets with character counts, briefs ready to send, report
@@ -264,8 +264,23 @@ function Group({ title, children }: { title: string; children: React.ReactNode }
 
 function Brief({ c }: { c: BriefCard }) {
   const [open, setOpen] = useState(false);
+  const making = c.formats.map((f) => `${f.new ? `${f.new} new` : ""}${f.new && f.variations ? " + " : ""}${f.variations ? `${f.variations} var.` : ""} ${f.format}`).join(", ");
+  // Its quick preview right here (in the address, so back closes it): the full brief is written only if they choose it
+  const q = new URLSearchParams(c.href.split("?")[1] ?? "");
+  const previewKey = `ai-${(q.get("ai") ?? c.client.id).slice(0, 8)}-${q.get("card") ?? "0"}`;
+  const action = (
+    <BriefPreviewButton
+      previewKey={previewKey}
+      clientId={c.client.id}
+      source={{ kind: "idea", label: `Briefed in Kaizen AI: ${c.title}`.slice(0, 200), text: [[`Title: ${c.title}`, c.angle && `Angle: ${c.angle}`, c.audience && `Audience: ${c.audience}`, `Making: ${making}`, c.landing && `Landing page: ${c.landing}`].filter(Boolean).join("\n"), c.brief].join("\n\n").slice(0, 4000) }}
+      from={{ kicker: "From Kaizen AI", label: c.title || c.client.name }}
+      className="inline-flex min-h-11 items-center rounded-full bg-brand px-4 text-[13px] font-medium text-white hover:bg-brand-hover md:min-h-10"
+    >
+      Brief it
+    </BriefPreviewButton>
+  );
   return (
-    <Shell title={c.title || "Creative brief"} sub={`${c.client.name} · ${c.formats.map((f) => `${f.new ? `${f.new} new` : ""}${f.new && f.variations ? " + " : ""}${f.variations ? `${f.variations} var.` : ""} ${f.format}`).join(", ")}`} action={<Link href={c.href} className="inline-flex min-h-10 items-center rounded-full bg-brand px-4 text-[13px] font-medium text-white hover:bg-brand-hover">Open as request</Link>}>
+    <Shell title={c.title || "Creative brief"} sub={`${c.client.name} · ${making}`} action={action}>
       <div className="grid gap-2 px-4 py-3 text-[13px]">
         {c.angle ? (
           <p>
@@ -287,7 +302,7 @@ function Brief({ c }: { c: BriefCard }) {
             {open ? "Show less" : "Read the whole brief"}
           </button>
           <CopyButton text={c.brief} label="Copy brief" />
-          <p className="text-[12px] text-faint">Send it to the Board, or to Asana, from the request.</p>
+          <p className="text-[12px] text-faint">Brief it for a quick preview; the full brief is written only if you choose it, and opens in Ready to send.</p>
         </div>
       </div>
     </Shell>

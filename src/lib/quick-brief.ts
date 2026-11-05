@@ -71,7 +71,8 @@ export function quickFromDraft(d: SuggestionDraft, why = ""): QuickBrief {
   const firstLine = (s: string) => s.split(/\n+/).map((x) => x.trim()).find(Boolean) ?? "";
   return {
     title: d.title ?? "",
-    concept: first ? `${first.name}: ${first.visual}`.slice(0, 400) : firstLine(d.brief ?? "").slice(0, 400),
+    // A summary's concept is already the one line; a written brief's is its name and what it shows
+    concept: first ? (d.summary ? first.visual : `${first.name}: ${first.visual}`).slice(0, 400) : firstLine(d.brief ?? "").slice(0, 400),
     angle: d.angle ?? "",
     audience: d.audience ?? "",
     hook: first?.hook ?? d.hooks?.[0] ?? "",

@@ -8,6 +8,7 @@ import type { BusinessRouting, RoutedAction } from "@/lib/business-audit-route";
 import { Rebut, type RebutNote } from "@/components/audit-rebut";
 import { AuditWhy } from "@/components/audit-why";
 import { ObjectLinks } from "@/components/object-links";
+import { BriefPreviewButton } from "@/components/quick-brief-sheet";
 
 // The full business audit on the client page: one button that audits every channel together (Meta, Google, creative,
 // what the client is telling us), and the latest result in the same found / do / watch shape as an account audit.
@@ -187,6 +188,17 @@ export function BusinessAuditPanel({ clientId, slug: given = null, latest, pushb
                   <p className="text-[12px] leading-relaxed text-muted">{x.why}</p>
                   <ObjectLinks objects={x.objects} />
                   {routing?.actions[i] && <WentTo r={routing.actions[i]} slug={slug} />}
+                  {latest && (x.owner === "creative" || x.channel === "creative") && (
+                    <BriefPreviewButton
+                      previewKey={`business-${latest.id.slice(0, 8)}-a${i}`}
+                      clientId={clientId}
+                      source={{ kind: "idea", label: `From the business audit: ${x.title}`.slice(0, 200), text: [`Move: ${x.title}`, ...x.steps.map((s) => `- ${s}`), `Why: ${x.why}`, `Impact: ${x.impact}`].join("\n") }}
+                      from={{ kicker: "Business audit move", label: x.title }}
+                      className="inline-flex min-h-11 items-center justify-center justify-self-start rounded-full border border-line px-4 text-[13px] font-medium hover:border-faint md:min-h-9"
+                    >
+                      Brief it →
+                    </BriefPreviewButton>
+                  )}
                   {talk(`action:${i}`, x.title)}
                 </article>
               ))}
@@ -195,7 +207,7 @@ export function BusinessAuditPanel({ clientId, slug: given = null, latest, pushb
 
           {(r.creative ?? []).length > 0 && latest && (
             <Block title="Creative I'd make">
-              <p className="-mt-1 text-[13px] text-muted">From what&apos;s working across the channels and the Brand Bible. Each one opens a request, already filled in.</p>
+              <p className="-mt-1 text-[13px] text-muted">From what&apos;s working across the channels and the Brand Bible. Each one opens its quick preview right here; the full brief is written only when you choose it.</p>
               <div className="grid gap-3 md:grid-cols-2">
                 {(r.creative ?? []).map((c, i) => (
                   <article key={i} className="grid min-w-0 content-start gap-2.5 rounded-[16px] border border-line bg-bg/40 p-4">
@@ -210,9 +222,15 @@ export function BusinessAuditPanel({ clientId, slug: given = null, latest, pushb
                       <span className="text-brand-text">&rdquo;</span>
                     </p>
                     <p className="text-[12.5px] leading-relaxed text-muted">{c.why}</p>
-                    <Link href={`/requests/new?business=${latest.id}&idea=${i}`} className="inline-flex min-h-11 items-center justify-center justify-self-start rounded-full bg-fg px-4 text-[13px] font-medium text-bg hover:bg-fg/90 md:min-h-9">
-                      Make a request →
-                    </Link>
+                    <BriefPreviewButton
+                      previewKey={`business-${latest.id.slice(0, 8)}-${i}`}
+                      clientId={clientId}
+                      source={{ kind: "idea", label: `From the business audit: ${c.concept}`.slice(0, 200), text: [`Concept: ${c.concept}`, `Angle: ${c.angle}`, `Hook: "${c.hook}"`, `Format: ${c.format}`, `Why: ${c.why}`].join("\n") }}
+                      from={{ kicker: "Business audit idea", label: c.concept }}
+                      className="inline-flex min-h-11 items-center justify-center justify-self-start rounded-full bg-fg px-4 text-[13px] font-medium text-bg hover:bg-fg/90 md:min-h-9"
+                    >
+                      Brief it →
+                    </BriefPreviewButton>
                     {talk(`creative:${i}`, c.concept)}
                   </article>
                 ))}

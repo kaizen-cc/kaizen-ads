@@ -484,7 +484,8 @@ export async function watchCommitments(admin: SupabaseClient, max = 12) {
         continue;
       }
       try {
-        await briefPromise(admin, c.id);
+        // On its own: only the summary, the full brief waits until someone picks it
+        await briefPromise(admin, c.id, null, true);
         briefed++;
       } catch (e) {
         console.error("[calls] couldn't brief a commitment:", e instanceof Error ? e.message : e);
@@ -565,7 +566,7 @@ export async function sweepCovered(admin: SupabaseClient, clientId?: string) {
  * Writes the brief for one promise from a call (or returns the one already written), from what was said about that
  * client on the call. Used by the watcher and by the request form.
  */
-export async function briefPromise(admin: SupabaseClient, commitmentId: string, seed?: import("@/lib/quick-brief").QuickBrief | null) {
+export async function briefPromise(admin: SupabaseClient, commitmentId: string, seed?: import("@/lib/quick-brief").QuickBrief | null, summary = false) {
   const { data: c } = await admin
     .from("call_commitments")
     .select("id, client_id, kind, what, why, suggestion_id, call_id, group_id, client_calls(title, occurred_at)")
@@ -594,7 +595,7 @@ export async function briefPromise(admin: SupabaseClient, commitmentId: string, 
   const { data: mention } = await admin.from("call_mentions").select("summary").eq("call_id", c.call_id).eq("client_id", c.client_id).maybeSingle();
   const call = c.client_calls as unknown as { title: string; occurred_at: string };
   const { suggestFromCall } = await import("@/lib/suggestions");
-  const id = await suggestFromCall(admin, c.client_id, { id: c.id, what: group?.title ?? c.what, why: [c.why, group?.context].filter(Boolean).join("\n"), kind: c.kind }, { ...call, summary: (mention?.summary as CallSummary | null) ?? null }, seed);
+  const id = await suggestFromCall(admin, c.client_id, { id: c.id, what: group?.title ?? c.what, why: [c.why, group?.context].filter(Boolean).join("\n"), kind: c.kind }, { ...call, summary: (mention?.summary as CallSummary | null) ?? null }, seed, summary);
   if (typeof id !== "string") {
     // Not work for the paid ads and creative team: off the lists, with the reason on the client page
     await admin.from("call_commitments").update({ status: "dismissed", dismiss_reason: id.skip.slice(0, 300), checked_at: new Date().toISOString() }).eq("id", c.id);

@@ -41,7 +41,8 @@ export type TodayItem = {
   story: string;
   why: string; // why it's this critical
   evidence: string[];
-  action: { label: string; href?: string; suggestion?: OpenSuggestion };
+  /** brief: a brief to start from here, its quick preview opening in place (the full brief only if they choose it) */
+  action: { label: string; href?: string; suggestion?: OpenSuggestion; brief?: { source: import("@/lib/quick-brief").BriefSource; from: { kicker: string; label: string; thumb?: string | null; adId?: string | null } } };
   /** The other place to look: the client page, or the account on the KPI board */
   alt?: { label: string; href: string };
   /** What setting it aside means here, when it's more than "not for me" */
@@ -195,7 +196,16 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
       story: `${p.askedBy ?? "Someone"} asked ${p.where} on ${day(p.saidAt)}${p.ask ? ` (${p.ask})` : ""}. ${mineToo ? "You" : p.owner.split(" ")[0]} said: "${p.said.replace(/\s+/g, " ").slice(0, 200)}${p.said.length > 200 ? "…" : ""}". Nothing since shows it's happened.`,
       why: mineToo ? (second ? "Second notice: your lead and the exec team have been told" : "You said yes, and it's past due") : "They had a notice and nothing's moved",
       evidence: p.group && p.group.sources.length > 1 ? p.group.sources.map((s) => `${s.label}, ${day(s.at)}`) : [],
-      action: make ? { label: "Make the request", href: `/requests/new?client=${p.clientSlug}` } : { label: open, href: p.url ?? p.channelUrl ?? "/today" },
+      action:
+        make && p.clientId
+          ? {
+              label: "Brief it",
+              brief: {
+                source: { kind: "idea", label: `Promised in ${p.source === "gmail" ? "email" : "Slack"}: ${p.group?.title ?? p.what}`.slice(0, 200), text: [`We said we'd: ${p.group?.title ?? p.what}`, p.ask ? `They asked: ${p.ask}` : "", `What was said: "${p.said.replace(/\s+/g, " ").slice(0, 600)}"`, "Keep it to exactly what was promised."].filter(Boolean).join("\n") },
+                from: { kicker: "Promised in a message", label: p.group?.title ?? p.what },
+              },
+            }
+          : { label: open, href: p.url ?? p.channelUrl ?? "/today" },
       ...(make && p.url ? { alt: { label: open, href: p.url } } : p.channelUrl ? { alt: { label: "Open the channel", href: p.channelUrl } } : {}),
       ...(mineToo ? { dismiss: "Done, or not needed" } : {}),
     });
@@ -410,11 +420,11 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
       clientId: r.clientId,
       stat: { value: r.severity === "tired" ? "Tired" : "Tiring", label: "against its last three weeks" },
       title: r.headline ?? r.adName,
-      story: `${r.client}'s ad is ${r.severity === "tired" ? "worn out and ready to replace" : "starting to slip"}.${r.briefId ? " A refresh brief is written and ready." : ""}`,
+      story: `${r.client}'s ad is ${r.severity === "tired" ? "worn out and ready to replace" : "starting to slip"}.${r.briefId ? " A refresh is sketched and ready to preview." : ""}`,
       why: r.severity === "tired" ? "Results slipping on a live ad" : "Early signs of wear",
       evidence: [],
-      // A new request with the client already picked; the client page is a click away
-      action: { label: "Make a request", href: `/requests/new?client=${r.clientSlug}` },
+      // A refresh, its quick preview right here (a brief already sketched shows at once); the client page is a click away
+      action: { label: r.briefId ? "Preview the refresh" : "Brief a refresh", brief: { source: r.briefId ? { kind: "suggestion", id: r.briefId } : { kind: "refresh", adId: r.adId }, from: { kicker: "Refresh a tiring ad", label: r.headline ?? r.adName, thumb: r.thumbnail, adId: r.adId } } },
       alt: { label: "Client page", href: `/clients/${r.clientSlug}` },
       image: r.thumbnail,
     });

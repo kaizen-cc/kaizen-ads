@@ -2,16 +2,27 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AiUnavailable } from "@/lib/ai";
 import { notify } from "@/lib/owed-replies";
-import { loadSuggestion, suggestFromWinner, suggestRefresh, type WinnerSource } from "@/lib/suggestions";
-import type { QuickBrief } from "@/lib/quick-brief";
+import { loadSuggestion, suggestFromWinner, suggestRefresh, type SuggestionDraft, type WinnerSource } from "@/lib/suggestions";
+import type { BriefSource, QuickBrief } from "@/lib/quick-brief";
 
 // Briefs written in the background. Asking for one queues a job; the server writes it right after answering (and a
 // cron run every five minutes picks up anything a cut-off server left behind), so a refresh or leaving the page never
 // loses it. Its progress is measured against how long that kind of brief has taken lately, and when it's ready the
-// person gets a toast and a bell notification that open it.
+// person gets a toast and a bell notification that open it as a draft in Ready to send (/requests/new?draft=).
+// Every full brief a person picks from a quick preview is written here, wherever the preview was opened.
 
-export type BriefJobKind = "winner" | "refresh";
-export type BriefJobInput = { winner?: WinnerSource; adId?: string; from?: string | null; /** The quick preview the person agreed (and maybe edited): the full brief follows it */ seed?: QuickBrief | null };
+export type BriefJobKind = "winner" | "refresh" | "market" | "pattern" | "promise" | "idea" | "talk" | "suggestion";
+export type BriefJobInput = {
+  winner?: WinnerSource;
+  adId?: string;
+  from?: string | null;
+  /** The quick preview the person agreed (and maybe edited): the full brief follows it */
+  seed?: QuickBrief | null;
+  /** What it's written from (the first two kinds also keep winner and adId, as they always have) */
+  source?: BriefSource;
+  /** The person changed the preview of a brief already written: it's rewritten to match */
+  edited?: boolean;
+};
 export type BriefJob = {
   id: string;
   kind: BriefJobKind;
@@ -26,12 +37,30 @@ export type BriefJob = {
   finishedAt: string | null;
   seen: boolean;
   from: string | null;
-  /** The ad it's written from */
+  /** The ad (or source) it's written from */
   key: string | null;
 };
 
-export const JOB_LABEL: Record<BriefJobKind, string> = { winner: "brief from a winner", refresh: "refresh a tiring ad" };
-const FALLBACK_MS: Record<BriefJobKind, number> = { winner: 45_000, refresh: 50_000 };
+export const JOB_LABEL: Record<BriefJobKind, string> = {
+  winner: "brief from a winner",
+  refresh: "refresh a tiring ad",
+  market: "brief from a market ad",
+  pattern: "brief from a pattern",
+  promise: "brief from a call",
+  idea: "brief from an idea",
+  talk: "brief from an idea",
+  suggestion: "brief from a summary",
+};
+const FALLBACK_MS: Record<BriefJobKind, number> = { winner: 45_000, refresh: 50_000, market: 60_000, pattern: 60_000, promise: 60_000, idea: 60_000, talk: 60_000, suggestion: 60_000 };
+
+/** Which job writes a brief from this source */
+export const JOB_KIND: Record<BriefSource["kind"], BriefJobKind> = { winner: "winner", refresh: "refresh", market: "market", pattern: "pattern", promise: "promise", idea: "idea", talk: "talk", suggestion: "suggestion" };
+
+/** Where a finished brief opens: as a draft in Ready to send, the request as the team will receive it */
+export const readyHref = (suggestionId: string) => `/requests/new?draft=${suggestionId}`;
+
+/** A reason the brief can't be written that the person should read as it is */
+class JobRefused extends Error {}
 
 /** How long this kind of brief usually takes: the last 20 finished jobs and AI runs for it, the typical one */
 export async function expectedMs(admin: SupabaseClient, kind: BriefJobKind) {
@@ -49,7 +78,7 @@ export async function expectedMs(admin: SupabaseClient, kind: BriefJobKind) {
   return Math.round(sorted[Math.floor(sorted.length * 0.6)] * 1.1);
 }
 
-/** Queue one; an open job for the same ad and person is reused instead of starting another */
+/** Queue one; an open job for the same source and person is reused instead of starting another */
 export async function queueBriefJob(admin: SupabaseClient, j: { kind: BriefJobKind; clientId: string; profileId: string; input: BriefJobInput; title: string | null; key: string }) {
   const { data: open } = await admin
     .from("brief_jobs")
@@ -70,13 +99,51 @@ export async function queueBriefJob(admin: SupabaseClient, j: { kind: BriefJobKi
   return data.id as string;
 }
 
-const withParam = (from: string | null | undefined, key: string, value: string) => {
-  const base = from && from.startsWith("/") ? from : "/pipeline";
-  const [path, query = ""] = base.split("?");
-  const q = new URLSearchParams(query);
-  q.set(key, value);
-  return `${path}?${q.toString()}`;
-};
+/** The full brief for one job, written through its usual writer: the suggestion it's kept as */
+async function writeJob(admin: SupabaseClient, kind: BriefJobKind, clientId: string, by: string, input: BriefJobInput): Promise<string> {
+  const seed = input.seed ?? null;
+  const src = input.source;
+  if (kind === "winner") return suggestFromWinner(admin, clientId, (input.winner ?? (src?.kind === "winner" ? src.winner : null)) as WinnerSource, by, src?.kind === "winner" ? src.format : undefined, seed);
+  if (kind === "refresh") return suggestRefresh(admin, clientId, (input.adId ?? (src?.kind === "refresh" ? src.adId : "")) as string, by, seed);
+  const s = await import("@/lib/suggestions");
+  switch (src?.kind) {
+    case "market":
+      return s.suggestFromMarket(admin, clientId, src.adId, by, src.format, seed);
+    case "pattern": {
+      const { patternById } = await import("@/lib/patterns");
+      const p = await patternById(admin, src.patternId);
+      if (!p) throw new JobRefused("That pattern isn't there any more.");
+      return s.suggestForPattern(admin, clientId, p, by, seed);
+    }
+    case "promise": {
+      const { data: before } = await admin.from("call_commitments").select("suggestion_id").eq("id", src.commitmentId).maybeSingle();
+      const { briefPromise } = await import("@/lib/calls");
+      const id = await briefPromise(admin, src.commitmentId, seed);
+      if (!id) throw new JobRefused("This promise isn't paid ads or creative work, so it's been taken off the list.");
+      // Its brief was there already: written in full now if it was only a summary, or rewritten to what was changed
+      if (id === before?.suggestion_id) {
+        const { data: was } = await admin.from("creative_suggestions").select("draft").eq("id", id).maybeSingle();
+        if ((was?.draft as SuggestionDraft | null)?.summary || input.edited) await s.rewriteWithSeed(admin, id, seed);
+      }
+      return id;
+    }
+    case "idea":
+      return s.suggestFromIdeaSaved(admin, clientId, { label: src.label.slice(0, 300), text: src.text.slice(0, 4000) }, seed, by);
+    case "talk":
+      return s.suggestFromIdeaSaved(
+        admin,
+        clientId,
+        { label: "Talked through with the strategist", text: src.turns.slice(-16).map((t) => `${t.role === "user" ? "Team member" : "Strategist"}: ${t.text.slice(0, 2000)}`).join("\n\n") },
+        seed,
+        by,
+      );
+    case "suggestion":
+      await s.rewriteWithSeed(admin, src.id, seed);
+      return src.id;
+    default:
+      throw new JobRefused("That isn't something a brief can be written from.");
+  }
+}
 
 /** Write one queued job (claimed first, so two runners never write the same brief) */
 export async function runBriefJob(admin: SupabaseClient, id: string) {
@@ -92,24 +159,21 @@ export async function runBriefJob(admin: SupabaseClient, id: string) {
   const input = (job.input ?? {}) as BriefJobInput;
   const kind = job.kind as BriefJobKind;
   try {
-    const sid =
-      kind === "winner"
-        ? await suggestFromWinner(admin, job.client_id as string, input.winner as WinnerSource, job.profile_id as string, undefined, input.seed ?? null)
-        : await suggestRefresh(admin, job.client_id as string, input.adId as string, job.profile_id as string, input.seed ?? null);
+    const sid = await writeJob(admin, kind, job.client_id as string, job.profile_id as string, input);
     const s = await loadSuggestion(admin, sid);
     await admin.from("brief_jobs").update({ status: "ready", suggestion_id: sid, finished_at: new Date().toISOString(), title: s?.draft.title ?? job.title }).eq("id", id);
     await notify(admin, [job.profile_id as string], {
       key: `brief_ready:${id}`,
       kind: "brief_ready",
-      title: `Your brief is ready${s?.client ? ` — ${s.client}` : ""}`,
-      body: s?.draft.title ?? (job.title as string | null) ?? "Open it to approve, create it or send it to Asana.",
-      href: withParam(input.from, "ready", sid),
+      title: `Your brief is ready${s?.client ? `: ${s.client}` : ""}`,
+      body: s?.draft.title ?? (job.title as string | null) ?? "Open it in Ready to send: check it, change anything, and send it.",
+      href: readyHref(sid),
       clientId: job.client_id as string | null,
       priority: "normal",
     });
     return { ran: true, ok: true };
   } catch (e) {
-    const message = e instanceof AiUnavailable ? e.message : "The strategist couldn't write it. Try again.";
+    const message = e instanceof AiUnavailable || e instanceof JobRefused ? e.message : "The strategist couldn't write it. Try again.";
     console.error("[brief-jobs]", id, e instanceof Error ? e.message : e);
     await admin.from("brief_jobs").update({ status: "failed", error: message, finished_at: new Date().toISOString() }).eq("id", id);
     return { ran: true, ok: false };
@@ -152,7 +216,7 @@ export async function myBriefJobs(db: SupabaseClient, profileId: string): Promis
       status: j.status as BriefJob["status"],
       suggestionId: (j.suggestion_id as string | null) ?? null,
       error: (j.error as string | null) ?? null,
-      expectedMs: (j.expected_ms as number | null) ?? FALLBACK_MS[j.kind as BriefJobKind],
+      expectedMs: (j.expected_ms as number | null) ?? FALLBACK_MS[j.kind as BriefJobKind] ?? 60_000,
       startedAt: (j.started_at as string | null) ?? null,
       createdAt: j.created_at as string,
       finishedAt: (j.finished_at as string | null) ?? null,
