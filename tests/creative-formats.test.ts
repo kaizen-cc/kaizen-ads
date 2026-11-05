@@ -22,6 +22,17 @@ describe("formatsFor", () => {
   });
 });
 
+describe("lead makers", () => {
+  it("keeps a lead graphic designer to single images and carousels, like a graphic designer", () => {
+    expect(formatList("lead_graphic_designer")).toEqual(["image", "carousel"]);
+    expect(formatList({ role: "lead_graphic_designer", isLead: false, isExec: false })).toEqual(["image", "carousel"]);
+  });
+  it("keeps a lead video editor to video, like a video editor", () => {
+    expect(formatList("lead_video_editor")).toEqual(["video"]);
+    expect(formatList({ role: "lead_video_editor" })).toEqual(["video"]);
+  });
+});
+
 describe("filters", () => {
   const designer = formatsFor("graphic_designer");
   const editor = formatsFor("video_editor");

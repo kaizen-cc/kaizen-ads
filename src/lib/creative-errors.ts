@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import type { HistoryEvent, TaskComment } from "@/lib/asana";
 import { spansOf, type Span } from "@/lib/production";
+import { worksAs } from "@/lib/roles";
 
 // Real errors each maker made, for the Creative KPIs: every piece of feedback on their work (comments in internal
 // review and from the client on the Board, AI review notes a person confirmed by resolving them, and comments on the
@@ -58,7 +59,7 @@ export async function collectFeedback(admin: SupabaseClient) {
     list.forEach((m, i) => {
       const { holder, round } = ownerAt(spans, m.at);
       const owner = personFor(team, holder);
-      if (!owner || !["graphic_designer", "video_editor", "copywriter"].includes(owner.role)) return;
+      if (!owner || !worksAs(owner.role, "graphic_designer", "video_editor", "copywriter")) return;
       if (m.by && personFor(team, m.by)?.id === owner.id) return; // their own update, not feedback
       rows.push({ source: "asana", source_key: `asana:${t.gid}:${m.at}:${i}`, profile_id: owner.id, client_id: t.client_id, asana_gid: t.gid, asana_url: t.url, task_title: t.name, round, author: m.by, quote: m.text.slice(0, 1500), at: m.at });
     });

@@ -34,6 +34,8 @@ export const LEAD_OF: Record<string, string | null> = {
   google_buyer: "head_of_google",
   graphic_designer: "head_of_creative",
   video_editor: "head_of_creative",
+  lead_graphic_designer: "head_of_creative",
+  lead_video_editor: "head_of_creative",
   copywriter: "head_of_creative",
   customer_success: null,
   head_of_meta: null,

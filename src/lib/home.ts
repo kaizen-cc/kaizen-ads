@@ -4,7 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { LIVE } from "@/lib/live";
 import type { Staff } from "@/lib/auth";
 import { nyToday } from "@/lib/dates";
-import { roleLabel, type TeamRole } from "@/lib/roles";
+import { baseRole, roleLabel, type TeamRole } from "@/lib/roles";
 import { businessDuration, FORMAT_LABEL, health, stageInfo, type Format, type Stage } from "@/lib/stages";
 import type { Alert, ClientPulse, Load, PhaseKey, PhaseStat, QueueItem } from "@/app/(team)/pipeline/views/shared";
 
@@ -204,7 +204,7 @@ export async function loadHome(db: SupabaseClient, me: Staff) {
   for (const r of rows) {
     if (!r.assignee_id || !r.assignee_name) continue;
     const role = roleOf.get(r.assignee_id) ?? ("graphic_designer" as TeamRole);
-    const l = loads.get(r.assignee_id) ?? { id: r.assignee_id, name: r.assignee_name, role, active: 0, overdue: 0, capacity: CAPACITY[role] ?? 12 };
+    const l = loads.get(r.assignee_id) ?? { id: r.assignee_id, name: r.assignee_name, role, active: 0, overdue: 0, capacity: CAPACITY[baseRole(role)] ?? 12 };
     l.active++;
     if (r.minutes_over > 0) l.overdue++;
     loads.set(r.assignee_id, l);
@@ -227,7 +227,7 @@ export async function loadHome(db: SupabaseClient, me: Staff) {
     clients: clients.slice(0, 10),
     monthElapsed,
     team: team.map(asLoad),
-    teamOf: (roles: TeamRole[]) => team.filter((l) => roles.includes(l.role)).map(asLoad),
+    teamOf: (roles: TeamRole[]) => team.filter((l) => roles.includes(baseRole(l.role))).map(asLoad),
     mine,
     dueToday,
     evs,

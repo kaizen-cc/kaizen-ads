@@ -3,7 +3,9 @@
 // requests single images and carousels, a video editor only video, and everyone else (heads of creative, executives,
 // media buyers, leads) both. Safe to import anywhere (server and client).
 
-export type CreativeFormat = "image" | "carousel" | "video";
+import { baseRole } from "./roles";
+
+export type CreativeFormat ="image" | "carousel" | "video";
 
 /** In the order the app shows them */
 export const CREATIVE_FORMATS: readonly CreativeFormat[] = ["image", "carousel", "video"];
@@ -16,7 +18,8 @@ const VIDEO: readonly CreativeFormat[] = ["video"];
 
 /** The formats someone works in, in display order (serializable, to hand to the browser) */
 export function formatList(who: FormatViewer): CreativeFormat[] {
-  const role = typeof who === "string" ? who : (who?.role ?? null);
+  // A lead designer or lead video editor works in the same formats as the base role
+  const role = baseRole(typeof who === "string" ? who : (who?.role ?? null));
   if (who && typeof who === "object" && (who.isExec || who.isLead)) return [...CREATIVE_FORMATS];
   if (role === "graphic_designer") return [...STILLS];
   if (role === "video_editor") return [...VIDEO];

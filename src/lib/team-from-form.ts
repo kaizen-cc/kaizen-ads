@@ -23,8 +23,8 @@ const QUESTION: [Slot, RegExp][] = [
 const ELIGIBLE: Record<Slot, string[]> = {
   meta_buyer: ["media_buyer", "head_of_meta"],
   google_buyer: ["google_buyer", "head_of_google", "media_buyer"],
-  graphic_designer: ["graphic_designer", "head_of_creative"],
-  video_editor: ["video_editor", "head_of_creative"],
+  graphic_designer: ["graphic_designer", "lead_graphic_designer", "head_of_creative"],
+  video_editor: ["video_editor", "lead_video_editor", "head_of_creative"],
   copywriter: ["copywriter"],
   coordinator: ["customer_success"],
 };

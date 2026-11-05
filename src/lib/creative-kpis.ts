@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { allotmentLine, allotmentPools, cycleElapsed, usageCounts, type PoolCounts } from "@/lib/allotment";
 import { packageGaps } from "@/lib/package-gaps";
 import { loadProduction, spansOf, type Production, type Scorecard, type Span } from "@/lib/production";
-import { roleLabel, type TeamRole } from "@/lib/roles";
+import { baseRole, roleLabel, type TeamRole } from "@/lib/roles";
 import type { HistoryEvent, TaskComment } from "@/lib/asana";
 import { loadErrors, type ErrorItem } from "@/lib/creative-errors";
 import { loadWatchList, type WatchRow } from "@/lib/fatigue";
@@ -443,7 +443,9 @@ export async function loadCreativeKpis(db: SupabaseClient, period: Period): Prom
             : s.turnaround != null && s.turnaround > s.turnaroundTarget * 1.5
               ? `Turnaround ${s.turnaround}d against a ${s.turnaroundTarget}d target`
               : null;
-    const key = roleOf.get(s.profileId ?? "") ?? (s.kind === "copy" ? "copywriter" : "graphic_designer");
+    // Grouped under the role they work as (a lead designer with the designers), labelled with their own position
+    const own = roleOf.get(s.profileId ?? "") ?? (s.kind === "copy" ? "copywriter" : "graphic_designer");
+    const key = baseRole(own);
     const b = sb.get(s.profileId ?? "") ?? { d45: { internal: 0, client: 0, pieces: 0 }, d90: { internal: 0, client: 0, pieces: 0 }, items: [] };
     const errs = errors.byPerson.get(s.profileId ?? "") ?? [];
     const plate = o.plate.sort((a, b2) => Number(b2.late) - Number(a.late) || (a.due ?? "9").localeCompare(b2.due ?? "9"));
@@ -451,7 +453,7 @@ export async function loadCreativeKpis(db: SupabaseClient, period: Period): Prom
     const doneAvg = pp?.done.length ? r1(avg(pp.done)) : null;
     return {
       ...s,
-      role: roleLabel(key as TeamRole),
+      role: roleLabel(own as TeamRole),
       roleKey: key,
       open: o.open,
       late: o.late,

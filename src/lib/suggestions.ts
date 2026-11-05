@@ -12,6 +12,7 @@ import { ALLOTMENT_RULE, allotmentLine, usageCounts, MAX_VARIATIONS, slidesOf, t
 
 import type { SuggestionKind } from "@/lib/suggestion-kinds";
 import { LIVE, isLive } from "@/lib/live";
+import { baseRole } from "@/lib/roles";
 import { applySeed, seedBlock, type QuickBrief } from "@/lib/quick-brief";
 import { assetsBlock, loadAssets } from "@/lib/client-assets";
 import { promiseSince } from "@/lib/promise-window";
@@ -417,7 +418,7 @@ export async function workload(admin: SupabaseClient): Promise<Workload> {
   const since60 = new Date(Date.now() - 60 * 86_400_000).toISOString();
   const [{ data: open }, { data: people }, { data: recent }, { data: usage }] = await Promise.all([
     admin.from("board_requests").select("client_id, number, title, format, stage, new_count").neq("stage", "launched").limit(3000),
-    admin.from("profiles").select("role").eq("is_active", true).in("role", ["graphic_designer", "video_editor"]),
+    admin.from("profiles").select("role").eq("is_active", true).in("role", ["graphic_designer", "lead_graphic_designer", "video_editor", "lead_video_editor"]),
     admin.from("requests").select("client_id, created_at").gte("created_at", since60).is("deleted_at", null).order("created_at", { ascending: false }).limit(3000),
     admin.from("client_allotment_usage").select("client_id"),
   ]);
@@ -425,7 +426,7 @@ export async function workload(admin: SupabaseClient): Promise<Workload> {
   const blank = () => ({ open: 0, making: 0, netNew: 0, lastRequest: null as string | null, tickets: [] as string[] });
   const team = { designers: { active: 0, capacity: 0 }, editors: { active: 0, capacity: 0 } };
   for (const p of people ?? []) {
-    if (p.role === "graphic_designer") team.designers.capacity += 10;
+    if (baseRole(p.role) === "graphic_designer") team.designers.capacity += 10;
     else team.editors.capacity += 6;
   }
   for (const r of open ?? []) {

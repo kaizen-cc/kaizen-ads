@@ -2,7 +2,7 @@ import "server-only";
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import type { TeamRole } from "@/lib/roles";
+import { isLeadMaker, type TeamRole } from "@/lib/roles";
 
 export type Staff = {
   kind: "staff";
@@ -105,3 +105,10 @@ export async function requireContact() {
 
 /** Execs, leads, customer success and the copywriter work across every client. */
 export const seesAllClients = (s: Staff) => s.isExec || s.isLead || s.isCoordinator || s.isCopywriter;
+
+/**
+ * Every client is an option for them (to see and request creative for): everyone above, plus a lead graphic designer or
+ * lead video editor. Only the client choice widens; it isn't the contact-managing access seesAllClients also gives.
+ * Matches private.can_see_client() in the database.
+ */
+export const hasEveryClient = (s: Staff) => seesAllClients(s) || isLeadMaker(s.role);

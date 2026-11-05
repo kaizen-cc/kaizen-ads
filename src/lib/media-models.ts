@@ -2,11 +2,13 @@
 // models with the fields each one takes, ElevenLabs' voice settings and models, and the checks that keep what's
 // sent inside what each provider accepts.
 
+import { worksAs } from "./roles";
+
 // ─── Roles ──────────────────────────────────────────────────────────────────
 
 /** Who can spend credits: the creative team (designers, editors, copywriters), leads and execs. Everyone else views. */
 export function canGenerateMedia(s: { isExec: boolean; isLead: boolean; isCreative: boolean; isCopywriter: boolean; role: string }) {
-  return s.isExec || s.isLead || s.isCreative || s.isCopywriter || ["head_of_creative", "graphic_designer", "video_editor", "copywriter"].includes(s.role);
+  return s.isExec || s.isLead || s.isCreative || s.isCopywriter || worksAs(s.role, "head_of_creative", "graphic_designer", "video_editor", "copywriter");
 }
 
 // ─── ElevenLabs ─────────────────────────────────────────────────────────────

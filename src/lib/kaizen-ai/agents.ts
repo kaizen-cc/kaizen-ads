@@ -1,4 +1,4 @@
-import type { TeamRole } from "@/lib/roles";
+import { baseRole, type TeamRole } from "@/lib/roles";
 import { AGENT_LABEL, CHAT_AGENTS, type ChatAgent } from "./types";
 
 // Which agent answers a message in Kaizen AI: what the message is about first (copy goes to the copywriter, a creative
@@ -7,7 +7,7 @@ import { AGENT_LABEL, CHAT_AGENTS, type ChatAgent } from "./types";
 
 /** The agent for someone's role, when the message doesn't say otherwise */
 export function agentForRole(role: TeamRole): ChatAgent {
-  switch (role) {
+  switch (baseRole(role)) {
     case "head_of_meta":
     case "media_buyer":
       return "auditor";
@@ -66,7 +66,7 @@ export const QUICK_ACTIONS: QuickAction[] = [
 
 /** The quick action groups each role sees first (everyone sees the rest under More) */
 export function groupsFor(role: TeamRole): QuickAction["group"][] {
-  switch (role) {
+  switch (baseRole(role)) {
     case "media_buyer":
     case "head_of_meta":
       return ["buyer", "copy", "everyone"];

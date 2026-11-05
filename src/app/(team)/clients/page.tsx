@@ -1,4 +1,4 @@
-import { isExecOrLead, requireStaff, seesAllClients } from "@/lib/auth";
+import { hasEveryClient, isExecOrLead, requireStaff } from "@/lib/auth";
 import { freshness, nyToday } from "@/lib/dates";
 import { SLOTS, canHold, seatNeeded, type SlotRole } from "@/lib/roles";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
@@ -140,7 +140,7 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
           <p className="mt-1.5 text-sm text-muted">
             {canEdit
               ? "Every client, with their creative package and team. Assign people right on the card; changes save instantly."
-              : seesAllClients(me)
+              : hasEveryClient(me)
                 ? "Every client, their creative package and who's on it."
                 : "The clients you're on."}
           </p>

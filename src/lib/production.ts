@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { baseRole } from "@/lib/roles";
 import type { HistoryEvent } from "@/lib/asana";
 
 // How creative production is going, from each Asana task's history (every column move and reassignment): how long a
@@ -205,7 +206,7 @@ export async function loadProduction(db: SupabaseClient, days = 30, endsDaysAgo 
   const KIND: Record<string, "creative" | "copy"> = { graphic_designer: "creative", video_editor: "creative", copywriter: "copy" };
   const cardFor = (holder: string) => {
     const p = personFor(holder);
-    const kind = p ? KIND[p.role as string] : undefined;
+    const kind = p ? KIND[baseRole(p.role as string)] : undefined;
     if (!kind) return null;
     const key = p!.id;
     if (!cards.has(key))
