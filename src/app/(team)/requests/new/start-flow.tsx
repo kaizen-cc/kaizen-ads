@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { KIND_LABEL, type SuggestionKind } from "@/lib/suggestion-kinds";
 import type { Winner } from "@/lib/industry";
 import type { MarketAd } from "@/lib/market";
 import type { StartData } from "@/lib/request-start";
-import { allotmentPools, type Allotment } from "@/lib/allotment";
+import { allotmentPools, cycleElapsed, type Allotment } from "@/lib/allotment";
 import { AllotmentPools } from "@/components/allotment-pools";
 import type { Draft } from "./draft";
 import type { ClientOption } from "./parts";
@@ -171,8 +171,19 @@ export function ClientPicker({ clients, allotments, onPick }: { clients: ClientO
   const term = q.trim().toLowerCase();
   const creative = useMemo(() => clients.filter((c) => c.creative), [clients]);
   const recentClients = useMemo(() => recent.map((id) => creative.find((c) => c.id === id)).filter((c): c is ClientOption => Boolean(c)).slice(0, 4), [recent, creative]);
+  // Pace through the billing cycle: the pool furthest behind (used share vs how far into the cycle we are), overages last
+  const paceOf = (c: ClientOption): { group: "behind" | "pace" | "over" | "none"; score: number } => {
+    const a = allotments[c.id];
+    const pools = allotmentPools(a);
+    if (!pools.length) return { group: "none", score: 1e9 };
+    const over = pools.filter((p) => p.over > 0);
+    if (over.length) return { group: "over", score: 1e6 + Math.max(...over.map((p) => p.over / Math.max(1, p.cap))) };
+    const elapsed = Math.max(0.05, cycleElapsed(a?.cycle));
+    const ratio = Math.min(...pools.map((p) => p.used / Math.max(1, p.cap) / elapsed));
+    return { group: ratio < 0.7 ? "behind" : "pace", score: ratio };
+  };
   const matches = useMemo(() => {
-    if (!term) return creative;
+    if (!term) return [...creative].sort((a, b) => paceOf(a).score - paceOf(b).score || a.name.localeCompare(b.name));
     return clients
       .map((c) => {
         const n = c.name.toLowerCase();
@@ -182,7 +193,8 @@ export function ClientPicker({ clients, allotments, onPick }: { clients: ClientO
       .filter((x): x is { c: ClientOption; rank: number } => x !== null)
       .sort((a, b) => Number(b.c.creative) - Number(a.c.creative) || a.rank - b.rank || a.c.name.localeCompare(b.c.name))
       .map((x) => x.c);
-  }, [clients, creative, term]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clients, creative, term, allotments]);
   const pickable = matches.filter((c) => c.creative);
 
   const pick = (c: ClientOption) => {
@@ -255,11 +267,14 @@ export function ClientPicker({ clients, allotments, onPick }: { clients: ClientO
       <section className="grid gap-3">
         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">{term ? `${pickable.length} ${pickable.length === 1 ? "match" : "matches"}` : "All clients"}</p>
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {matches.map((c) => {
+          {matches.map((c, i) => {
             const on = c.creative && pickable[active]?.id === c.id && Boolean(term);
+            const g = term ? null : paceOf(c).group;
+            const head = g && (i === 0 || paceOf(matches[i - 1]).group !== g) ? { behind: "Behind pace", pace: "On pace", over: "Over their allotment", none: "No allotment set" }[g] : null;
             return (
+              <Fragment key={c.id}>
+              {head && <p className={`col-span-full mt-2 text-[11px] font-semibold uppercase tracking-[0.16em] ${g === "over" ? "text-bad" : g === "behind" ? "text-warn" : "text-faint"}`}>{head}</p>}
               <button
-                key={c.id}
                 type="button"
                 onClick={() => pick(c)}
                 disabled={!c.creative}
@@ -273,6 +288,7 @@ export function ClientPicker({ clients, allotments, onPick }: { clients: ClientO
                   <span className="truncate text-[11.5px] text-faint">{c.creative ? (hasPools(c) ? left(c) : "On a creative package") : "No creative package"}</span>
                 </span>
               </button>
+              </Fragment>
             );
           })}
         </div>
