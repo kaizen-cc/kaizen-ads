@@ -7,7 +7,7 @@ import { askJson } from "@/lib/ai";
 
 import { INDUSTRIES, industryLabel, type Industry } from "@/lib/industries";
 import { LIVE } from "@/lib/live";
-import { matchPeers, type PeerInfo, type PeerMatch, type VerticalInfo } from "@/lib/peer-match";
+import { matchPeers, winnerRelevant, type PeerInfo, type PeerMatch, type VerticalInfo } from "@/lib/peer-match";
 export type { PeerMatch };
 export { INDUSTRIES, industryLabel, type Industry };
 
@@ -192,7 +192,7 @@ export type Winner = {
   syncedAt: string;
   /** A Hall of Fame ad: judged against its KPI target or sub-vertical benchmark over its whole run, not the account's usual */
   fame?: { basis: "kpi" | "benchmark"; roas: boolean; days: number; beatBy: number };
-  /** For one client: why this account counts as similar (same product, same niche, or only the same broad industry) */
+  /** For one client: why this account counts as similar (same product, or same niche; nothing broader ever counts) */
   match?: PeerMatch;
 };
 
@@ -265,14 +265,13 @@ async function scoreWinners(db: SupabaseClient, peers: Peer[], opts: { perClient
 }
 
 /**
- * The best ads from the accounts most like this client: ones selling the same thing first, then the same sub-vertical.
- * Only when none of those has a winner does it fall back to the broad industry, and each winner says why it matched.
+ * The best ads from the accounts most like this client: ones selling the same thing first, then the same sub-vertical,
+ * each saying why it matched. Never the broad industry (the owner's rule): when no peer has a winner, there are none,
+ * and the request page leads with what we promised and the market instead.
  */
 export async function industryWinners(db: SupabaseClient, industry: string, excludeClientId?: string, limit = 6): Promise<Winner[]> {
-  if (!excludeClientId) {
-    const { data: peers } = await db.from("clients").select("id, name, slug, industry, industry_detail").eq("industry", industry).neq("status", "offboarded");
-    return scoreWinners(db, (peers ?? []) as Peer[], { perClient: 2, limit });
-  }
+  // Without a client there's no "like this one": a whole industry's winners are the library's, not a client's
+  if (!excludeClientId) return [];
   const [{ data: me }, { data: peers }, { data: verticals }] = await Promise.all([
     db.from("clients").select("id, industry, industry_detail, vertical_id").eq("id", excludeClientId).maybeSingle(),
     db.from("clients").select("id, name, slug, industry, industry_detail, vertical_id").neq("status", "offboarded").is("archived_at", null),
@@ -281,14 +280,39 @@ export async function industryWinners(db: SupabaseClient, industry: string, excl
   const all = (peers ?? []) as Peer[];
   const self: PeerInfo = (me as PeerInfo | null) ?? { id: excludeClientId, industry, industry_detail: null, vertical_id: null };
   const matches = matchPeers({ ...self, industry: self.industry ?? industry }, all.map((p) => ({ id: p.id, industry: p.industry, industry_detail: p.industry_detail, vertical_id: p.vertical_id ?? null })), (verticals ?? []) as VerticalInfo[]);
-  const tagged = (ws: Winner[]) => ws.map((w) => ({ ...w, match: matches.get(w.clientId) }));
-  const close = all.filter((p) => (matches.get(p.id)?.tier ?? 9) < 3);
-  if (close.length) {
-    const ws = tagged(await scoreWinners(db, close, { perClient: 2, limit: limit * 3 }));
-    if (ws.length) return ws.sort((a, b) => a.match!.tier - b.match!.tier || b.ratio - a.ratio).slice(0, limit);
-  }
-  const broad = all.filter((p) => matches.get(p.id)?.tier === 3);
-  return tagged(await scoreWinners(db, broad, { perClient: 2, limit }));
+  const close = all.filter((p) => matches.has(p.id));
+  if (!close.length) return [];
+  const ws = (await scoreWinners(db, close, { perClient: 2, limit: limit * 3 })).map((w) => ({ ...w, match: matches.get(w.clientId) }));
+  return ws.sort((a, b) => a.match!.tier - b.match!.tier || b.ratio - a.ratio).slice(0, limit);
+}
+
+/** Every client's industry, product and sub-vertical, for saying which winners are relevant to whom (the library) */
+export async function loadPeerContext(db: SupabaseClient): Promise<{ peers: PeerInfo[]; verticals: VerticalInfo[] }> {
+  const [{ data: peers }, { data: verticals }] = await Promise.all([
+    db.from("clients").select("id, industry, industry_detail, vertical_id").neq("status", "offboarded"),
+    db.from("verticals").select("id, name, parent_id"),
+  ]);
+  return { peers: (peers ?? []) as PeerInfo[], verticals: (verticals ?? []) as VerticalInfo[] };
+}
+
+/**
+ * Before a brief is written for a client from a winner someone picked (the winners library, the Hall of Fame, a saved
+ * reference): the winner's business has to be the client itself or a peer (same product, or same sub-vertical). Found
+ * by the winning account's client id, or its name. Throws a plain sentence otherwise.
+ */
+export async function assertRelevantWinner(db: SupabaseClient, clientId: string, w: { client: string; clientId?: string | null }) {
+  const cols = "id, industry, industry_detail, vertical_id";
+  const [{ data: me }, { data: owners }, { data: verticals }] = await Promise.all([
+    db.from("clients").select(cols).eq("id", clientId).maybeSingle(),
+    w.clientId ? db.from("clients").select(cols).eq("id", w.clientId).limit(1) : db.from("clients").select(cols).eq("name", w.client).limit(1),
+    db.from("verticals").select("id, name, parent_id"),
+  ]);
+  if (!me) throw new Error("Client not found");
+  const owner = ((owners ?? [])[0] as PeerInfo | undefined) ?? null;
+  // A Hall of Fame ad keeps the client's name; one we can't place isn't blocked on a guess
+  if (!owner) return;
+  if (!winnerRelevant(me as PeerInfo, owner, (verticals ?? []) as VerticalInfo[]))
+    throw new Error("That winner is from a business that doesn't sell the same thing or work in the same niche, so it can't be briefed for this client. Pick a winner from a similar client, or start from what we promised or the market.");
 }
 
 /** The winners library: the best ads across every client we run. Pass scope to learn what was looked at. */
@@ -305,9 +329,9 @@ export async function allWinners(db: SupabaseClient, scope?: WinnerScope): Promi
 export function winnersBlock(industry: string | null, detail: string | null, winners: Winner[]) {
   if (!industry || !winners.length) return "";
   return `<what_works_for_similar_clients>
-Ads that are beating their own account right now, from the other Kaizen clients most like this one (same product or niche first; ${industryLabel(industry) ?? industry} otherwise)${detail ? ` (this client: ${detail})` : ""}. Learn from the angle, the hook and the structure; don't copy them word for word, and never mention another client.
+Ads that are beating their own account right now, from the other Kaizen clients most like this one: ones selling the same thing or in the same niche (${industryLabel(industry) ?? industry})${detail ? ` (this client: ${detail})` : ""}. Learn from the angle, the hook and the structure; don't copy them word for word, and never mention another client.
 ${winners
-  .map((w) => `- ${w.detail ?? "Similar business"}${w.match?.tier === 3 ? " (a different product: borrow the structure, not the product story)" : ""}: "${w.headline ?? w.name}"${w.text ? ` · copy: ${w.text.slice(0, 220)}` : ""} · ${w.ratio}x better than that account's usual cost per ${w.result ?? "result"}${w.ctr ? ` · CTR ${w.ctr}%` : ""}`)
+  .map((w) => `- ${w.detail ?? "Similar business"}${w.match ? ` (${w.match.tier === 1 ? "sells the same thing" : "same niche"})` : ""}: "${w.headline ?? w.name}"${w.text ? ` · copy: ${w.text.slice(0, 220)}` : ""} · ${w.ratio}x better than that account's usual cost per ${w.result ?? "result"}${w.ctr ? ` · CTR ${w.ctr}%` : ""}`)
   .join("\n")}
 </what_works_for_similar_clients>`;
 }

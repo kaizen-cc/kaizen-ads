@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { HideForMe } from "./hide-for-me";
+import { allotmentPools, type PoolCounts } from "@/lib/allotment";
+import { AllotmentPools } from "@/components/allotment-pools";
 
 // Building blocks shared by every role's home.
 
@@ -256,15 +258,29 @@ export type ClientPulse = {
   name: string;
   slug: string;
   tone: Tone; // overall health
-  used: number;
-  allotment: number;
+  /** The allotment per pool (images, videos): never summed into one number */
+  counts: PoolCounts;
   revisionsPerItem: number;
   waiting: number; // items with the client
   note: string;
 };
 
+/** One bar per pool (images, videos): what's used against its cap, the tick where they "should" be by today. */
+function PoolBars({ c, monthElapsed, gap = "gap-1.5" }: { c: ClientPulse; monthElapsed: number; gap?: string }) {
+  return (
+    <div className={`grid ${gap}`}>
+      {allotmentPools(c.counts).map((p) => (
+        <div key={p.key} className="relative h-1.5 rounded-full bg-surface-2" title={p.text}>
+          <div className={`h-full rounded-full ${p.over ? "bg-bad" : c.tone === "bad" ? "bg-bad" : c.tone === "warn" ? "bg-warn" : "bg-fg/70"}`} style={{ width: `${p.cap ? Math.min(100, (p.used / p.cap) * 100) : 100}%` }} />
+          <span aria-hidden className="absolute -top-1 h-3.5 w-px bg-fg/60" style={{ left: `${(c.elapsed ?? monthElapsed) * 100}%` }} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /**
- * Allotment pace: the bar is what's been used this month, the tick is where they "should" be
+ * Allotment pace, per pool: each bar is what's been used this cycle, the tick is where they "should" be
  * by today. Ahead of the tick by a lot = burning fast; well behind = we're behind on creative.
  */
 export function ClientHealth({ clients, monthElapsed }: { clients: ClientPulse[]; monthElapsed: number }) {
@@ -274,7 +290,6 @@ export function ClientHealth({ clients, monthElapsed }: { clients: ClientPulse[]
     {/* Phones: one card per client instead of the table */}
     <ul className="grid gap-2 md:hidden">
       {clients.map((c) => {
-        const pct = c.allotment ? Math.min(100, (c.used / c.allotment) * 100) : 0;
         return (
           <li key={c.slug} className="grid gap-3 rounded-brand border border-line bg-surface p-4">
             <div className="flex items-start gap-2.5">
@@ -287,14 +302,9 @@ export function ClientHealth({ clients, monthElapsed }: { clients: ClientPulse[]
               </div>
             </div>
             <div className="grid gap-1.5">
-              <div className="relative h-1.5 rounded-full bg-surface-2">
-                <div className={`h-full rounded-full ${c.tone === "bad" ? "bg-bad" : c.tone === "warn" ? "bg-warn" : "bg-fg/70"}`} style={{ width: `${pct}%` }} />
-                <span aria-hidden className="absolute -top-1 h-3.5 w-px bg-fg/60" style={{ left: `${(c.elapsed ?? monthElapsed) * 100}%` }} />
-              </div>
+              <PoolBars c={c} monthElapsed={monthElapsed} />
               <div className="tabular flex flex-wrap justify-between gap-x-3 gap-y-1 text-[11px] text-faint">
-                <span>
-                  {c.used} of {c.allotment} this cycle
-                </span>
+                <AllotmentPools allotment={c.counts} suffix="this cycle" />
                 <span>
                   <span className={c.revisionsPerItem >= 2 ? "text-bad" : c.revisionsPerItem >= 1.2 ? "text-warn" : "text-muted"}>{c.revisionsPerItem.toFixed(1)}×</span> revisions ·{" "}
                   <span className="text-muted">{c.waiting}</span> with client
@@ -317,7 +327,6 @@ export function ClientHealth({ clients, monthElapsed }: { clients: ClientPulse[]
         </thead>
         <tbody>
           {clients.map((c) => {
-            const pct = c.allotment ? Math.min(100, (c.used / c.allotment) * 100) : 0;
             return (
               <tr key={c.slug} className="border-b border-line last:border-0 hover:bg-surface-2/60">
                 <td className="px-4 py-3">
@@ -332,12 +341,9 @@ export function ClientHealth({ clients, monthElapsed }: { clients: ClientPulse[]
                   </div>
                 </td>
                 <td className="px-4 py-3">
-                  <div className="relative h-1.5 rounded-full bg-surface-2">
-                    <div className={`h-full rounded-full ${c.tone === "bad" ? "bg-bad" : c.tone === "warn" ? "bg-warn" : "bg-fg/70"}`} style={{ width: `${pct}%` }} />
-                    <span aria-hidden className="absolute -top-1 h-3.5 w-px bg-fg/60" style={{ left: `${(c.elapsed ?? monthElapsed) * 100}%` }} title="Expected by today" />
-                  </div>
-                  <p className="tabular mt-1.5 text-[11px] text-faint">
-                    {c.used} of {c.allotment}
+                  <PoolBars c={c} monthElapsed={monthElapsed} gap="gap-1" />
+                  <p className="mt-1.5 text-[11px] text-faint">
+                    <AllotmentPools allotment={c.counts} />
                   </p>
                 </td>
                 <td className={`tabular px-4 py-3 text-right ${c.revisionsPerItem >= 2 ? "text-bad" : c.revisionsPerItem >= 1.2 ? "text-warn" : "text-muted"}`}>

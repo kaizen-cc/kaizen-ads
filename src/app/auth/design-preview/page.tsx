@@ -451,12 +451,12 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
           empty
             ? []
             : [
-                { name: "Crust Pizza Co.", slug: "crust-pizza-co", tone: "bad", used: 15, allotment: 20, revisionsPerItem: 2.4, waiting: 5, note: "Unhappy with revisions" },
-                { name: "Sierra Dreams", slug: "sierra-dreams", tone: "warn", used: 48, allotment: 60, revisionsPerItem: 0.6, waiting: 4, note: "Burning fast" },
-                { name: "OceanBox", slug: "oceanbox", tone: "warn", used: 4, allotment: 13, revisionsPerItem: 0.8, waiting: 0, note: "Behind on creative" },
-                { name: "Leap Funding", slug: "leap-funding", tone: "warn", used: 5, allotment: 13, revisionsPerItem: 1.1, waiting: 3, note: "Slow to approve" },
-                { name: "Nectr", slug: "nectr", tone: "ok", used: 8, allotment: 13, revisionsPerItem: 0.4, waiting: 2, note: "On pace" },
-                { name: "Limelight Entertainment", slug: "limelight-entertainment", tone: "ok", used: 36, allotment: 60, revisionsPerItem: 0.3, waiting: 0, note: "On pace" },
+                { name: "Crust Pizza Co.", slug: "crust-pizza-co", tone: "bad", counts: { images: 15, videos: 5, imagesUsed: 12, videosUsed: 3 }, revisionsPerItem: 2.4, waiting: 5, note: "Unhappy with revisions" },
+                { name: "Sierra Dreams", slug: "sierra-dreams", tone: "warn", counts: { images: 50, videos: 10, imagesUsed: 41, videosUsed: 7 }, revisionsPerItem: 0.6, waiting: 4, note: "Burning fast" },
+                { name: "OceanBox", slug: "oceanbox", tone: "warn", counts: { images: 10, videos: 3, imagesUsed: 4, videosUsed: 0 }, revisionsPerItem: 0.8, waiting: 0, note: "Behind on creative" },
+                { name: "Leap Funding", slug: "leap-funding", tone: "warn", counts: { images: 10, videos: 3, imagesUsed: 5, videosUsed: 0 }, revisionsPerItem: 1.1, waiting: 3, note: "Slow to approve" },
+                { name: "Nectr", slug: "nectr", tone: "ok", counts: { images: 10, videos: 3, imagesUsed: 6, videosUsed: 2 }, revisionsPerItem: 0.4, waiting: 2, note: "On pace" },
+                { name: "Limelight Entertainment", slug: "limelight-entertainment", tone: "ok", counts: { images: 50, videos: 10, imagesUsed: 30, videosUsed: 6 }, revisionsPerItem: 0.3, waiting: 0, note: "On pace" },
               ]
         }
         team={empty ? [] : team}

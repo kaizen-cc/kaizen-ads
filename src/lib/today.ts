@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
+import { allotmentLine, allotmentPools } from "@/lib/allotment";
 import { loadWatchList } from "@/lib/fatigue";
 import { loadHome, recentlyWorked, workedOn } from "@/lib/home";
 import { loadOwedReplies } from "@/lib/owed-replies";
@@ -439,7 +440,10 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
   // behind). A client getting extra isn't a problem to flag.
   const elapsed = home?.monthElapsed ?? 0;
   for (const c of topics.has("allotments") ? (home?.clients ?? []) : []) {
-    if (!c.allotment) continue;
+    // Per pool, never summed: the stat is the pool furthest behind, the story every pool
+    const pools = allotmentPools(c.counts).filter((p) => p.cap > 0);
+    if (!pools.length) continue;
+    const worst = pools.reduce((a, b) => (b.used / b.cap < a.used / a.cap ? b : a));
     if (c.note === "Nothing delivered yet" || c.note === "Behind on creative")
       out.push({
         key: `allot-behind:${c.slug}`,
@@ -448,9 +452,9 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
         client: c.name,
         clientSlug: c.slug,
         clientId: null,
-        stat: { value: `${c.used}/${c.allotment}`, label: "creatives this billing cycle" },
+        stat: { value: `${worst.used}/${worst.cap}`, label: `${worst.label.toLowerCase()} this billing cycle` },
         title: c.note === "Nothing delivered yet" ? `Nothing made for ${c.name} yet this billing cycle` : `${c.name} is behind on creative`,
-        story: `${c.used} of ${c.allotment} made with ${Math.round((c.elapsed ?? elapsed) * 100)}% of their billing cycle gone. They're paying for more than they're getting.`,
+        story: `${allotmentLine(c.counts)} made with ${Math.round((c.elapsed ?? elapsed) * 100)}% of their billing cycle gone. They're paying for more than they're getting.`,
         why: "Under-delivering on what they pay for",
         evidence: [],
         action: { label: "New request", href: `/requests/new?client=${c.slug}` },

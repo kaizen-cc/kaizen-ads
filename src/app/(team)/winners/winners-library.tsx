@@ -6,13 +6,33 @@ import { AiProgress } from "@/components/ai-progress";
 import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import type { Winner, WinnerScope } from "@/lib/industry";
-import type { Allotment } from "@/lib/allotment";
+import { allotmentPools, POOL_TONE, type Allotment } from "@/lib/allotment";
 import { FilterMenu, FilterPill } from "@/components/filters";
 import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
 import { QuickBriefSheet } from "@/components/quick-brief-sheet";
+import { matchPeers, winnerRelevant, type PeerInfo, type PeerMatch, type VerticalInfo } from "@/lib/peer-match";
 import { FbPreview, InsightPanel, useAd, useInsight } from "./fb-preview";
 
 export type PickClient = { id: string; name: string; industry: string | null; detail: string | null; allotment: Allotment };
+/** Every live client's industry, what it sells and its sub-vertical, to say which winners are relevant to whom */
+export type PeerContext = { peers: PeerInfo[]; verticals: VerticalInfo[] };
+
+/**
+ * The clients a winner from `owner` may be briefed for (the owner's rule): those selling the same thing or in the same
+ * sub-vertical, closest first. Never only the same broad industry.
+ */
+export function relevantClients(owner: string, clients: PickClient[], match: PeerContext): { c: PickClient; m: PeerMatch }[] {
+  const o = match.peers.find((p) => p.id === owner);
+  if (!o) return [];
+  return clients
+    .map((c) => {
+      const me = match.peers.find((p) => p.id === c.id);
+      const m = me ? winnerRelevant(me, o, match.verticals) : null;
+      return m && m !== "own" ? { c, m } : null;
+    })
+    .filter((x): x is { c: PickClient; m: PeerMatch } => x !== null)
+    .sort((a, b) => a.m.tier - b.m.tier || a.c.name.localeCompare(b.c.name));
+}
 
 const money = (n: number) => `$${n.toLocaleString("en-US", { maximumFractionDigits: n < 100 ? 2 : 0 })}`;
 type Sort = "ratio" | "spend" | "results";
@@ -26,11 +46,19 @@ const SORTS: [Sort, string][] = [
  * The winners library: every ad across our accounts getting a clearly better cost per result than its own account's
  * usual, from the last Meta sync. Filter by industry, open one to see it as it runs, and start a request from it.
  */
-export function WinnersLibrary({ winners, industries, clients, scope }: { winners: Winner[]; industries: readonly (readonly [string, string])[]; clients: PickClient[]; scope: WinnerScope }) {
+export function WinnersLibrary({ winners, industries, clients, scope, match }: { winners: Winner[]; industries: readonly (readonly [string, string])[]; clients: PickClient[]; scope: WinnerScope; match: PeerContext }) {
   // Filters and the open ad are in the address (?industry=&live=&sort=&ad=), so back and forward step through them;
   // typing a search replaces the entry instead of adding one per key
   const industry = useParam("industry");
   const setIndustry = (v: string | null) => pushParams({ industry: v });
+  // For a client (?for=): only winners from that client and the clients selling the same thing or in the same niche
+  const forId = useParam("for");
+  const forClient = clients.find((c) => c.id === forId) ?? null;
+  const setFor = (v: string | null) => pushParams({ for: v });
+  const forPeers = useMemo(() => {
+    const me = forClient ? match.peers.find((p) => p.id === forClient.id) : null;
+    return me ? new Set([me.id, ...matchPeers(me, match.peers, match.verticals).keys()]) : null;
+  }, [forClient, match]);
   const liveOnly = useParam("live") === "1";
   const setLiveOnly = (v: boolean) => pushParams({ live: v ? "1" : null });
   const askedSort = useParam("sort");
@@ -70,10 +98,11 @@ export function WinnersLibrary({ winners, industries, clients, scope }: { winner
     const term = q.trim().toLowerCase();
     return winners
       .filter((w) => industry === null || (w.industry ?? "") === industry)
+      .filter((w) => !forClient || Boolean(forPeers?.has(w.clientId)))
       .filter((w) => !liveOnly || w.live)
       .filter((w) => !term || [w.client, w.detail, industries.find(([i]) => i === w.industry)?.[1], w.headline, w.text, w.name].some((s) => s?.toLowerCase().includes(term)))
       .sort((a, b) => (sort === "ratio" ? b.ratio - a.ratio : sort === "spend" ? b.spend - a.spend : b.results - a.results));
-  }, [winners, industries, industry, liveOnly, q, sort]);
+  }, [winners, industries, industry, liveOnly, q, sort, forClient, forPeers]);
 
   const clientCount = new Set(winners.map((w) => w.clientId)).size;
   const best = winners[0];
@@ -143,6 +172,15 @@ export function WinnersLibrary({ winners, industries, clients, scope }: { winner
                 </div>
                 <div className="w-full md:contents">
                   <FilterMenu
+                    label={forClient ? `Relevant to ${forClient.name}` : "For any client"}
+                    on={forClient !== null}
+                    options={[[null, "For any client", null] as const, ...clients.map((c) => [c.id, c.name, null] as const)]}
+                    value={forClient?.id ?? null}
+                    onPick={(v) => setFor(v)}
+                  />
+                </div>
+                <div className="w-full md:contents">
+                  <FilterMenu
                     label={SORTS.find(([k]) => k === sort)?.[1] ?? "Sort"}
                     on={false}
                     options={SORTS.map(([k, l]) => [k, l, null] as const)}
@@ -175,16 +213,17 @@ export function WinnersLibrary({ winners, industries, clients, scope }: { winner
                 </span>
               </div>
             </div>
-            {(industry !== null || liveOnly || q.trim() || sort !== "ratio") && (
+            {(industry !== null || forClient || liveOnly || q.trim() || sort !== "ratio") && (
               <div className="flex flex-wrap items-center gap-1.5">
                 {industry !== null && <FilterPill onClear={() => setIndustry(null)}>{label(industry || null)}</FilterPill>}
+                {forClient && <FilterPill onClear={() => setFor(null)}>Relevant to {forClient.name}</FilterPill>}
                 {liveOnly && <FilterPill onClear={() => setLiveOnly(false)}>Running now</FilterPill>}
                 {sort !== "ratio" && <FilterPill onClear={() => setSort("ratio")}>{SORTS.find(([k]) => k === sort)?.[1]}</FilterPill>}
                 {q.trim() && <FilterPill onClear={() => setQ("")}>&ldquo;{q.trim()}&rdquo;</FilterPill>}
                 <button
                   onClick={() => {
                     setQState("");
-                    pushParams({ industry: null, live: null, sort: null, q: null });
+                    pushParams({ industry: null, for: null, live: null, sort: null, q: null });
                   }}
                   className="ml-1 py-2 text-xs text-muted underline-offset-4 hover:text-fg hover:underline md:py-0"
                 >
@@ -195,7 +234,9 @@ export function WinnersLibrary({ winners, industries, clients, scope }: { winner
           </div>
 
           {shown.length === 0 ? (
-            <p className="py-10 text-center text-sm text-muted">Nothing matches. Try another industry or search.</p>
+            <p className="py-10 text-center text-sm text-muted">
+              {forClient ? `No winners yet from clients selling what ${forClient.name} sells or in the same niche.` : "Nothing matches. Try another industry or search."}
+            </p>
           ) : (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
               {shown.map((w) => (
@@ -253,7 +294,7 @@ export function WinnersLibrary({ winners, industries, clients, scope }: { winner
           }}
         />
       )}
-      {open && <WinnerSheet key={open.id} w={open} industryLabel={label(open.industry)} clients={clients} onClose={() => closeParams("ad", "brief")} />}
+      {open && <WinnerSheet key={open.id} w={open} industryLabel={label(open.industry)} clients={clients} match={match} onClose={() => closeParams("ad", "brief")} />}
     </div>
   );
 }
@@ -287,7 +328,7 @@ export function SheetAction({ onClick, children }: { onClick: () => void; childr
   );
 }
 
-function WinnerSheet({ w, industryLabel, clients, onClose }: { w: Winner; industryLabel: string; clients: PickClient[]; onClose: () => void }) {
+function WinnerSheet({ w, industryLabel, clients, match, onClose }: { w: Winner; industryLabel: string; clients: PickClient[]; match: PeerContext; onClose: () => void }) {
   const ad = useAd(w.id); // undefined: still reading it from Meta
   const insight = useInsight(w, ad);
   const [step, setStep] = useState<"ad" | "pick" | "writing">("ad");
@@ -357,7 +398,7 @@ function WinnerSheet({ w, industryLabel, clients, onClose }: { w: Winner; indust
             <p className="text-[11px] text-faint">Pick a client for a quick preview of their version. Change any line; the full brief is written only if you choose it, in the background, and opens in Ready to send.</p>
           </div>
         ) : step === "pick" ? (
-          <ClientPick industry={w.industry} exclude={w.clientId} clients={clients} error={error} onBack={() => setStep("ad")} onPick={write} />
+          <ClientPick match={match} exclude={w.clientId} clients={clients} error={error} onBack={() => setStep("ad")} onPick={write} />
         ) : (
           <Writing />
         )}
@@ -368,15 +409,20 @@ function WinnerSheet({ w, industryLabel, clients, onClose }: { w: Winner; indust
 }
 
 export function ClientPick({
-  industry,
+  match,
   exclude,
+  industry = null,
   clients,
   error,
   onBack,
   onPick,
 }: {
-  industry: string | null;
+  /** For a winner: only the clients like its business are listed (a market ad, without it: every client) */
+  match?: PeerContext;
+  /** The winning ad's own client: the clients listed are the ones like it */
   exclude?: string;
+  /** A market ad's industry, listed first */
+  industry?: string | null;
   clients: PickClient[];
   error: string | null;
   onBack: () => void;
@@ -384,17 +430,18 @@ export function ClientPick({
 }) {
   const [q, setQ] = useState("");
   const term = q.trim().toLowerCase();
-  // Same industry first: that's where a winner travels best
-  const list = clients
-    .filter((c) => c.id !== exclude && (!term || c.name.toLowerCase().includes(term) || c.detail?.toLowerCase().includes(term)))
-    .sort((a, b) => Number(b.industry === industry && !!industry) - Number(a.industry === industry && !!industry) || a.name.localeCompare(b.name));
-  const leftOf = (cap: number | null, used: number) => (cap === null ? null : Math.max(0, cap - used));
+  // Only clients selling the same thing or in the same niche as the ad's business (the owner's rule), closest first
+  const relevant: { c: PickClient; m: PeerMatch | null }[] =
+    match && exclude
+      ? relevantClients(exclude, clients, match)
+      : clients.map((c) => ({ c, m: null })).sort((a, b) => Number(b.c.industry === industry && !!industry) - Number(a.c.industry === industry && !!industry) || a.c.name.localeCompare(b.c.name));
+  const list = relevant.filter(({ c }) => !term || c.name.toLowerCase().includes(term) || c.detail?.toLowerCase().includes(term));
   return (
     <div className="grid min-h-0 content-start gap-3">
       <div className="flex items-center justify-between gap-2">
         <div>
           <p className="font-heading text-lg">Which client is this for?</p>
-          <p className="text-xs text-faint">Same industry first. What&apos;s left of their month shows on each.</p>
+          <p className="text-xs text-faint">{match ? "Only clients selling the same thing or in the same niche." : "Same industry first."} Their allotment shows on each.</p>
         </div>
         <button onClick={onBack} className="shrink-0 rounded-full border border-line px-3.5 py-2.5 text-xs text-muted hover:text-fg md:px-3 md:py-1">
           Back
@@ -404,39 +451,39 @@ export function ClientPick({
       {error && <p className="text-sm text-bad">{error}</p>}
       {/* Phones: the list scrolls with the sheet rather than in a box of its own */}
       <div className="flex flex-col gap-1 md:max-h-[56vh] md:overflow-y-auto md:pr-1">
-        {list.map((c) => {
+        {list.map(({ c, m }) => {
+          // The shared allotment helper: per pool, the overage in red, never clamped to 0
           const a = c.allotment;
-          const img = leftOf(a.images, a.imagesUsed);
-          const vid = leftOf(a.videos, a.videosUsed);
-          const none = (img ?? 0) === 0 && (vid ?? 0) === 0;
-          const same = industry && c.industry === industry;
           return (
             <button key={c.id} onClick={() => onPick(c.id)} className="group flex min-h-14 shrink-0 items-center gap-3 rounded-[12px] border border-line bg-surface px-3.5 py-2.5 text-left transition-colors hover:border-faint active:bg-surface-2 md:min-h-0 md:active:bg-surface">
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-2">
                   <span className="truncate text-sm font-medium">{c.name}</span>
-                  {same && <span className="shrink-0 rounded-full bg-ok-soft px-1.5 py-px text-[10px] text-ok">Same industry</span>}
+                  {m ? (
+                    <span title={m.why} className="shrink-0 rounded-full bg-ok-soft px-1.5 py-px text-[10px] text-ok">{m.tier === 1 ? "Sells the same thing" : "Same niche"}</span>
+                  ) : (
+                    industry && c.industry === industry && <span className="shrink-0 rounded-full bg-ok-soft px-1.5 py-px text-[10px] text-ok">Same industry</span>
+                  )}
                 </span>
                 <span className="block truncate text-[11px] text-faint">{c.detail ?? "Industry not set"}</span>
               </span>
-              <span className={`tabular shrink-0 text-right text-[11px] ${none ? "text-bad" : "text-muted"}`}>
-                {img !== null && (
-                  <span className="block">
-                    {img} of {a.images} images left
+              <span className="tabular grid shrink-0 text-right text-[11px] text-muted">
+                {allotmentPools(a).map((p) => (
+                  <span key={p.key} className={`block ${POOL_TONE[p.state]}`}>
+                    {p.text}
                   </span>
-                )}
-                {vid !== null && (a.videos ?? 0) > 0 && (
-                  <span className="block">
-                    {vid} of {a.videos} videos left
-                  </span>
-                )}
-                {img === null && vid === null && <span className="block text-faint">No allotment set</span>}
+                ))}
+                {!allotmentPools(a).length && <span className="block text-faint">No allotment set</span>}
               </span>
               <span className="text-faint transition-transform group-hover:translate-x-0.5">→</span>
             </button>
           );
         })}
-        {list.length === 0 && <p className="py-6 text-center text-sm text-muted">No client with a creative package matches.</p>}
+        {list.length === 0 && (
+          <p className="py-6 text-center text-sm text-muted">
+            {relevant.length ? "No client by that name." : "No client on a creative package sells the same thing or works in the same niche as this ad's business, so it isn't briefed for anyone."}
+          </p>
+        )}
       </div>
     </div>
   );

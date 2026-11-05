@@ -5,6 +5,7 @@ import { sendEmail } from "@/lib/email";
 import { STYLES, guideSteps, type Guide, type GuideHas, type GoogleStep, type MetaStep, type StyleLook } from "@/lib/onboarding-guide-types";
 import { servicesOf } from "@/lib/services";
 import { siteUrl } from "@/lib/site";
+import type { PeerInfo, VerticalInfo } from "@/lib/peer-match";
 
 // A new client's onboarding guide in their portal, sent the moment they enroll: Meta access (Kaizen's business as a
 // partner on their ad account, Page, Instagram and pixel, and our team as admin), their Google Ads account ID, their
@@ -298,12 +299,16 @@ export async function filesToDrive(
   }
 }
 
-/** Unbranded winners from other clients in their industry, to point at ("more like this") */
+/** Unbranded winners from other clients like them (same product or same sub-vertical, never only the broad industry) */
 export async function industryExamples(admin: SupabaseClient, clientId: string) {
-  const { data: c } = await admin.from("clients").select("industry, vertical_id").eq("id", clientId).single();
+  const { data: c } = await admin.from("clients").select("id, industry, industry_detail, vertical_id").eq("id", clientId).single();
   if (!c?.industry) return [];
-  const { data: peers } = await admin.from("clients").select("id").eq("industry", c.industry).neq("id", clientId).limit(200);
-  const ids = (peers ?? []).map((p) => p.id as string);
+  const [{ data: peers }, { data: verticals }, { matchPeers }] = await Promise.all([
+    admin.from("clients").select("id, industry, industry_detail, vertical_id").neq("id", clientId).is("archived_at", null).limit(500),
+    admin.from("verticals").select("id, name, parent_id"),
+    import("@/lib/peer-match"),
+  ]);
+  const ids = [...matchPeers(c as PeerInfo, (peers ?? []) as PeerInfo[], (verticals ?? []) as VerticalInfo[]).keys()];
   if (!ids.length) return [];
   const { data } = await admin.from("hall_of_fame").select("ad_id, creative, beat_by").in("client_id", ids).gt("expires_at", new Date().toISOString()).order("beat_by", { ascending: false }).limit(40);
   return (data ?? [])

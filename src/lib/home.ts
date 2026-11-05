@@ -1,5 +1,5 @@
 import "server-only";
-import { cycleElapsed } from "@/lib/allotment";
+import { allotmentLine, allotmentPools, cycleElapsed, usageCounts } from "@/lib/allotment";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { LIVE } from "@/lib/live";
 import type { Staff } from "@/lib/auth";
@@ -142,16 +142,18 @@ export async function loadHome(db: SupabaseClient, me: Staff) {
   const clients: (ClientPulse & { clientId: string })[] = (usage ?? [])
     .map((u) => {
       const list = byClient.get(u.client_id) ?? [];
-      const allotment = (u.images_per_month ?? 0) + (u.videos_per_month ?? 0);
-      const used = u.images_used + u.videos_used;
+      // Per pool (images, videos), never summed: one pool over doesn't hide the other falling behind
+      const counts = usageCounts(u)!;
+      const pools = allotmentPools(counts).filter((p) => p.cap > 0 || p.used > 0);
+      const used = pools.reduce((n, p) => n + p.used, 0);
       const waiting = list.filter((r) => r.stage === "client_review").length;
       const revisions = Math.round(((revisesBy.get(u.client_id) ?? 0) / Math.max(1, list.length || 1)) * 10) / 10;
       const cycleGone = elapsedOf.get(u.client_id) ?? monthElapsed;
-      const pace = allotment ? used / allotment - cycleGone : 0;
       // The risk is under-delivering, not giving a client more: nothing made a third of the way into the month, or far
       // behind where they should be by today. Being over the allotment is noted, not flagged.
-      const nothing = allotment > 0 && used === 0 && cycleGone >= 1 / 3;
-      const behind = allotment > 0 && pace < -0.35;
+      const capped = pools.filter((p) => p.cap > 0);
+      const nothing = capped.length > 0 && used === 0 && cycleGone >= 1 / 3;
+      const behind = capped.some((p) => p.used / p.cap - cycleGone < -0.35);
       const tone: ClientPulse["tone"] = nothing ? "bad" : behind ? "warn" : revisions >= 2 ? "warn" : "ok";
       const note = nothing
         ? "Nothing delivered yet"
@@ -159,15 +161,15 @@ export async function loadHome(db: SupabaseClient, me: Staff) {
           ? "Behind on creative"
           : revisions >= 2
             ? "Revision-heavy"
-            : used > allotment && allotment
+            : pools.some((p) => p.over > 0)
               ? "Over the allotment"
               : waiting
                 ? `${waiting} with the client`
                 : "On pace";
-      return { name: list[0]?.client_name ?? "", slug: list[0]?.client_slug ?? "", clientId: u.client_id, tone, used, allotment, revisionsPerItem: revisions, waiting, note, elapsed: cycleGone };
+      return { name: list[0]?.client_name ?? "", slug: list[0]?.client_slug ?? "", clientId: u.client_id, tone, counts, revisionsPerItem: revisions, waiting, note, elapsed: cycleGone };
     })
-    .filter((c) => c.allotment > 0 || c.waiting > 0)
-    .sort((a, b) => ({ bad: 0, warn: 1, brand: 2, ok: 3, muted: 4 })[a.tone] - ({ bad: 0, warn: 1, brand: 2, ok: 3, muted: 4 })[b.tone] || b.used - a.used);
+    .filter((c) => allotmentPools(c.counts).some((p) => p.cap > 0) || c.waiting > 0)
+    .sort((a, b) => ({ bad: 0, warn: 1, brand: 2, ok: 3, muted: 4 })[a.tone] - ({ bad: 0, warn: 1, brand: 2, ok: 3, muted: 4 })[b.tone] || b.counts.imagesUsed + b.counts.videosUsed - (a.counts.imagesUsed + a.counts.videosUsed));
   // Clients with no open ticket: fill their names in
   const missing = clients.filter((c) => !c.name).map((c) => c.clientId);
   if (missing.length) {
@@ -194,7 +196,7 @@ export async function loadHome(db: SupabaseClient, me: Staff) {
   for (const r of rows.filter((x) => x.client_rounds >= 2).slice(0, 3))
     attention.push({ id: `rev-${r.id}`, tone: "warn", kind: "Revisions", client: r.client_name, title: r.title, detail: `Client round ${r.client_rounds}${r.internal_rounds ? ` · ${r.internal_rounds} internal` : ""}`, owner: r.assignee_name ?? undefined, href: `/board?t=${r.number}` });
   for (const c of clients.filter((x) => x.note === "Nothing delivered yet" || x.note === "Behind on creative").slice(0, 6))
-    attention.push({ id: `allot-${c.clientId}`, tone: c.note === "Nothing delivered yet" ? "bad" : "warn", kind: "Allotment", client: c.name, title: c.note, detail: `${c.used} of ${c.allotment} made with ${Math.round((c.elapsed ?? monthElapsed) * 100)}% of their billing cycle gone`, href: `/clients/${c.slug}` });
+    attention.push({ id: `allot-${c.clientId}`, tone: c.note === "Nothing delivered yet" ? "bad" : "warn", kind: "Allotment", client: c.name, title: c.note, detail: `${allotmentLine(c.counts) ?? "Nothing set"} with ${Math.round((c.elapsed ?? monthElapsed) * 100)}% of their billing cycle gone`, href: `/clients/${c.slug}` });
   attention.sort((a, b) => (a.tone === b.tone ? 0 : a.tone === "bad" ? -1 : 1));
 
   // ─── Who carries what ───

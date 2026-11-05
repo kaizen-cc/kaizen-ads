@@ -16,6 +16,7 @@ import type { Production } from "@/lib/production";
 import { Topic, type TopicTile } from "./topics";
 import type { PatternsState } from "@/lib/patterns";
 import { PatternsPanel } from "@/components/patterns-view";
+import { allotmentOver, allotmentPools } from "@/lib/allotment";
 
 // The topics execs and leads share on the Overview, each with its tile (what's in it, at a glance) and its panel
 // (the detail to act on). Only topics with something in them are shown; what's all clear is said in one line.
@@ -191,11 +192,11 @@ export function accountTopics(d: SharedTopics): Built[] {
     });
   }
 
-  const clients = (d.clients ?? []).filter((c) => c.allotment > 0);
+  const clients = (d.clients ?? []).filter((c) => allotmentPools(c.counts).some((p) => p.cap > 0));
   if (clients.length) {
-    // Under-delivering is the risk; a client getting more than their allotment is only noted
+    // Under-delivering is the risk; a client getting more than their allotment is only noted (per pool, never summed)
     const behind = clients.filter((c) => c.note === "Nothing delivered yet" || c.note === "Behind on creative").length;
-    const over = clients.filter((c) => c.used > c.allotment).length;
+    const over = clients.filter((c) => allotmentOver(c.counts)).length;
     out.push({
       tile: { id: "allotments", label: "Allotments", value: behind, sub: `behind on creative${over ? ` · ${over} getting extra` : ""}`, tone: behind ? "warn" : "ok" },
       panel: (

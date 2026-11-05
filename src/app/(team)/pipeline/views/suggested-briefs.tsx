@@ -11,7 +11,7 @@ import type { OpenSuggestion, SuggestionDraft, SuggestionsState } from "@/lib/su
 import { approveSuggestion, chatSuggestion, declineSuggestion, refreshSuggestions, saveSuggestion } from "../suggestion-actions";
 import { SectionTitle } from "./shared";
 import { AsanaSend } from "@/components/asana-send";
-import { DEFAULT_CARDS, draws } from "@/lib/allotment";
+import { allotmentPool, DEFAULT_CARDS, draws } from "@/lib/allotment";
 import { sendSuggestionToAsana, suggestionAsanaPreview } from "@/app/(team)/requests/new/actions";
 import { QuickBriefSheet } from "@/components/quick-brief-sheet";
 
@@ -611,7 +611,8 @@ function AllotmentBar({ allotment: a, formats }: { allotment: OpenSuggestion["al
         <p className={`text-xs ${over ? "text-bad" : "text-muted"}`}>{over ? "This asks for more than is left. Trim the versions or slides, or upsell." : "Every version counts, a carousel once per slide. Sizes are free."}</p>
       </div>
       {pools.map((p) => {
-        const left = Math.max(0, p.cap - p.used);
+        // The shared allotment helper: an overage already this cycle shows as one, never as 0 left
+        const pool = allotmentPool(p.label === "Videos" ? "videos" : "images", p.cap, p.used);
         const pct = (n: number) => `${Math.min(100, (n / Math.max(1, p.cap)) * 100)}%`;
         const tooMany = p.used + p.take > p.cap;
         return (
@@ -619,7 +620,7 @@ function AllotmentBar({ allotment: a, formats }: { allotment: OpenSuggestion["al
             <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5 text-sm md:flex-nowrap md:gap-2">
               <span>{p.label}</span>
               <span className="tabular text-xs text-muted">
-                {p.used} used · <span className={tooMany ? "font-medium text-bad" : "text-fg"}>this takes {p.take}</span> · {left} left of {p.cap}
+                {p.used} used · <span className={tooMany ? "font-medium text-bad" : "text-fg"}>this takes {p.take}</span> · {pool.over ? <span className="text-bad">{pool.over} over {p.cap} already</span> : `${pool.left} left of ${p.cap}`}
               </span>
             </div>
             <div className="relative h-2 overflow-hidden rounded-full bg-surface-2">

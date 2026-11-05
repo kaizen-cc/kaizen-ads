@@ -1,23 +1,20 @@
 "use client";
 
 import { useId, useMemo, useState } from "react";
-import { draws, left, untilLabel, type Allotment } from "@/lib/allotment";
+import { allotmentLine, allotmentOver, draws, untilLabel, type Allotment } from "@/lib/allotment";
 import { tintFor } from "@/lib/colors";
 import type { Size } from "./draft";
 
 export type ClientOption = { id: string; name: string; slug: string; creative: boolean };
 
-/** "6 of 10 images left · 2 of 4 videos left" */
+/** "Images 86/50 · 36 over · Videos 7/10 · resets Nov 30": per pool through the shared helper, never summed */
 export function allotmentSummary(a: Allotment | undefined) {
-  if (!a || (a.images === null && a.videos === null)) return "No allotment set";
-  const part = (cap: number | null, used: number, what: string) => {
-    const l = left(cap, used);
-    return l === null ? null : l < 0 ? `${-l} ${what} over` : `${l} of ${cap} ${what} left`;
-  };
+  const pools = allotmentLine(a);
+  if (!a || !pools) return "No allotment set";
   const sprint = a.until ? `Sprint until ${untilLabel(a.until)}` : null;
-  const waiting = a.waiting && a.waiting.images + a.waiting.videos > 0 ? `${a.waiting.images + a.waiting.videos} more briefed in Asana` : null;
+  const waiting = a.waiting && a.waiting.images + a.waiting.videos > 0 ? `${a.waiting.images} images, ${a.waiting.videos} videos more briefed in Asana` : null;
   const resets = !a.until && a.cycle ? `resets ${untilLabel(a.cycle.end)}` : null;
-  return [sprint, part(a.images, a.imagesUsed, "images"), part(a.videos, a.videosUsed, "videos"), waiting, resets].filter(Boolean).join(" · ");
+  return [sprint, pools, waiting, resets].filter(Boolean).join(" · ");
 }
 
 /** The AI mark: a small four-point spark. */
@@ -175,7 +172,7 @@ export function ClientSearch({ clients, allotments, onPick }: { clients: ClientO
                   </span>
                   <span className="grid min-w-0 flex-1">
                     <span className="truncate">{name}</span>
-                    <span className="truncate text-[11px] text-faint">{allotmentSummary(allotments[c.id])}</span>
+                    <span className={`truncate text-[11px] ${allotmentOver(allotments[c.id]) ? "text-bad" : "text-faint"}`}>{allotmentSummary(allotments[c.id])}</span>
                   </span>
                   {idx === active && <kbd className="rounded border border-line px-1.5 py-0.5 text-[10px] text-faint">Enter</kbd>}
                 </button>

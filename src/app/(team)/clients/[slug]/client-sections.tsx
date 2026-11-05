@@ -13,7 +13,7 @@ export type ServiceSection = {
   label: string;
   /** How it's doing, as a dot on the switch */
   tone?: "bad" | "warn" | "ok" | null;
-  note?: string | null;
+  note?: React.ReactNode;
   tabs: ClientTab[];
 };
 

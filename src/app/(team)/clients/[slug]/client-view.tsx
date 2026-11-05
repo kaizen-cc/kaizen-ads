@@ -73,6 +73,8 @@ import { Fold } from "./knowledge-fold";
 import { GtmPanel, type GtmStrategy } from "./gtm-panel";
 import { GoogleDeploysPanel } from "./google-deploys-panel";
 import { KeywordListsPanel } from "./keyword-lists-panel";
+import { allotmentOver } from "@/lib/allotment";
+import { AllotmentPools } from "@/components/allotment-pools";
 import { PolicyPanel } from "../../kpis/policy-panel";
 import type { KeywordList } from "@/lib/keyword-research";
 import type { Deploy } from "@/lib/google-deploy";
@@ -231,7 +233,9 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
     { label: "creative in production", value: creative?.moving.length ?? 0, href: `/clients/${client.slug}?service=creative` },
     { label: "Meta ads live now", value: creative?.live.length ?? 0, href: `/clients/${client.slug}?service=creative` },
     { label: "sprint moves open", value: sprintMoves, href: "/kpis" },
-    { label: "creatives this month", value: imagesUsed + videosUsed, href: `/clients/${client.slug}?service=creative&tab=package` },
+    // Per pool, never summed into one number
+    { label: "images this cycle", value: imagesUsed, href: `/clients/${client.slug}?service=creative&tab=package` },
+    { label: "videos this cycle", value: videosUsed, href: `/clients/${client.slug}?service=creative&tab=package` },
   ].filter((m) => m.value > 0);
   const summary = digest?.summary ? digest.summary.split(/(?<=\.)\s+/).slice(0, 2).join(" ") : null;
   const glance = kpis || creative ? <Glance accounts={false} kpis={kpis ?? []} audits={audits ?? {}} sprints={sprints ?? {}} changes={changes ?? {}} alerts={alerts} inMotion={inMotion} summary={summary} today={today} /> : null;
@@ -252,15 +256,17 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
     const id = services?.chosen[slug];
     return id ? (services?.tiers.find((t) => t.id === id)?.label ?? null) : null;
   };
+  // The allotment per pool (never images and videos summed into one number, never an overage hidden)
+  const pools = { images, videos, imagesUsed, videosUsed };
   const cards: ServiceCard[] = [
     ...(has.meta ? [{ id: "meta" as const, kind: "ads" as const, label: "Meta Ads", kpis: metaKpis, summary: metaCampaigns, extra: [creative?.live.length ? `${creative.live.length} ads live` : "", tired ? `${tired} worn out, ready for a refresh` : ""].filter(Boolean) }] : []),
     ...(has.google ? [{ id: "google" as const, kind: "ads" as const, label: "Google Ads", kpis: googleKpis, summary: googleCampaigns, extra: googleLosing(googleCampaigns) }] : []),
     ...(has.creative
-      ? [{ id: "creative" as const, kind: "creative" as const, label: "Creative", package: active ? (packageLabel ?? "Creative package") : null, used: imagesUsed + videosUsed, allotted: images + videos, moving: creative?.moving.filter((r) => !["client_review", "ready_for_launch"].includes(r.stage)).length ?? 0, waiting: creative?.moving.filter((r) => r.stage === "client_review").length ?? 0, live: creative?.live.length ?? 0, asana: creative?.asana?.length ?? 0 }]
+      ? [{ id: "creative" as const, kind: "creative" as const, label: "Creative", package: active ? (packageLabel ?? "Creative package") : null, pools, moving: creative?.moving.filter((r) => !["client_review", "ready_for_launch"].includes(r.stage)).length ?? 0, waiting: creative?.moving.filter((r) => r.stage === "client_review").length ?? 0, live: creative?.live.length ?? 0, asana: creative?.asana?.length ?? 0 }]
       : []),
     ...bought.filter((b) => !["facebook-ads", "google-ads", "creative"].includes(b)).map((b) => ({ id: b, kind: "other" as const, label: SERVICES.find((x) => x.slug === b)?.label ?? b, tier: tierOf(b) })),
   ];
-  const creativeTone: "warn" | null = active && images + videos > 0 && imagesUsed + videosUsed === 0 ? "warn" : null;
+  const creativeTone: "bad" | "warn" | null = allotmentOver(pools) ? "bad" : active && images + videos > 0 && imagesUsed + videosUsed === 0 ? "warn" : null;
 
   const reportAccounts = (kpis ?? []).filter((k) => k.accountId && (!reportable || reportable.includes(k.id))).map((k) => ({ id: k.id, label: `${k.platform === "google" ? "Google" : "Meta"}${k.label ? ` · ${k.label}` : ""}` }));
 
@@ -922,7 +928,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                   id: "creative",
                   label: "Creative",
                   tone: creativeTone,
-                  note: images + videos > 0 ? `${imagesUsed + videosUsed}/${images + videos} this ${cycle?.billingDay ? "cycle" : "month"}` : packageLabel,
+                  note: <AllotmentPools allotment={pools} suffix={`this ${cycle?.billingDay ? "cycle" : "month"}`} empty={packageLabel} />,
                   tabs: [
                     { id: "production", label: "Production", hint: "Creative in motion, launched and live; what's working in the market", content: (<div className="grid gap-6">
                 {creative && <CreativePanel data={creative} />}

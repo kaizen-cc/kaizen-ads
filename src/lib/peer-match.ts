@@ -1,12 +1,14 @@
 // Which other clients count as "like this one" when we show what's working for similar clients. Closest first:
-// a business that sells the same thing (a bedding brand and a sheets brand), then the same sub-vertical, and only when
-// neither has anything, the same broad industry (labelled as such, so nobody mistakes a supplement ad for a peer).
-// Plain functions, so the request page, the AI blocks and the tests all agree.
+// a business that sells the same thing (a bedding brand and a sheets brand), then the same sub-vertical. THE OWNER'S
+// RULE (Nov 2026): that's all. Only the same broad industry ("Different product, same way of selling") never counts: a
+// bedding brand is never shown a nootropic pouch's winners. Every winner-based card, suggestion, AI context and brief
+// reads its peers from here, and when nothing matches there are no winners (lead with promises and the market instead).
+// Plain functions, so the request page, the AI blocks, the winners library and the tests all agree.
 
 export type PeerInfo = { id: string; industry: string | null; industry_detail: string | null; vertical_id: string | null };
 export type VerticalInfo = { id: string; name: string; parent_id: string | null };
-/** 1: sells the same thing, 2: same sub-vertical, 3: only the same broad industry */
-export type PeerMatch = { tier: 1 | 2 | 3; why: string };
+/** 1: sells the same thing, 2: same sub-vertical (the broad industry alone never matches) */
+export type PeerMatch = { tier: 1 | 2; why: string };
 
 // Words that say how or where something is sold, not what it is
 const STOP = new Set(
@@ -49,11 +51,10 @@ export function productWords(detail: string | null | undefined): Set<string> {
   return out;
 }
 
-/** How close each peer is to the client, or nothing when it isn't comparable at all */
+/** How close each peer is to the client (same product, or same sub-vertical), or nothing when it isn't comparable */
 export function matchPeers(me: PeerInfo, peers: PeerInfo[], verticals: VerticalInfo[]): Map<string, PeerMatch> {
   const vById = new Map(verticals.map((v) => [v.id, v]));
   const myV = me.vertical_id ? vById.get(me.vertical_id) : undefined;
-  const myParent = myV?.parent_id ? vById.get(myV.parent_id) : undefined;
   const mine = productWords(me.industry_detail);
   const out = new Map<string, PeerMatch>();
   for (const p of peers) {
@@ -64,10 +65,19 @@ export function matchPeers(me: PeerInfo, peers: PeerInfo[], verticals: VerticalI
       out.set(p.id, { tier: 1, why: `Also sells ${shared.slice(0, 2).join(", ")}${p.industry_detail ? ` (${p.industry_detail})` : ""}` });
     } else if (myV && pv && pv.id === myV.id) {
       out.set(p.id, { tier: 2, why: `Same niche: ${myV.name}${p.industry_detail ? `, though it sells ${p.industry_detail.toLowerCase()}` : ""}` });
-    } else if ((myParent && pv?.parent_id === myParent.id) || (me.industry && me.industry !== "other" && p.industry === me.industry)) {
-      out.set(p.id, { tier: 3, why: `Different product, same way of selling${myParent ? ` (${myParent.name})` : ""}${p.industry_detail ? `: ${p.industry_detail.toLowerCase()}` : ""}` });
     }
+    // Only the same broad industry (or parent vertical): not a peer, by the owner's rule
   }
   return out;
 }
+
+/** Whether a winner from `owner` may be used for `me`: its own ads, or a peer by matchPeers. Nothing else. */
+export function winnerRelevant(me: PeerInfo, owner: PeerInfo | null | undefined, verticals: VerticalInfo[]): PeerMatch | "own" | null {
+  if (!owner) return null;
+  if (owner.id === me.id) return "own";
+  return matchPeers(me, [owner], verticals).get(owner.id) ?? null;
+}
+
+/** The reason recorded on a winner suggestion dismissed because its winner came from a business that isn't a peer */
+export const UNRELATED_WINNER = "winner from an unrelated business";
 

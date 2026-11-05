@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { ActionButton, ActionForm } from "@/components/action-form";
 import { Section, field, label } from "@/components/ui";
-import { untilLabel } from "@/lib/allotment";
+import { allotmentPool, untilLabel } from "@/lib/allotment";
 import type { CreativeDb } from "@/lib/creative-db";
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -58,12 +58,15 @@ function DbCheck({ db, imagesUsed, videosUsed }: { db: CreativeDb; imagesUsed: n
 }
 
 function Meter({ name, cap, used }: { name: string; cap: number; used: number }) {
+  // The shared allotment helper: per pool, and an overage shown as one, never clamped
+  const p = allotmentPool(name === "Videos" ? "videos" : "images", cap, used);
   return (
     <div className="grid gap-2">
       <div className="flex items-baseline justify-between text-sm">
         <span className="text-muted">{name}</span>
         <span className="tabular">
           {used} <span className="text-faint">of {cap}</span>
+          {p.over > 0 && <span className="text-bad"> · {p.over} over</span>}
         </span>
       </div>
       <span className="h-1.5 overflow-hidden rounded-full bg-surface-2">

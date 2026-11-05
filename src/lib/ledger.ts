@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { conversionFor } from "@/lib/kpi/conversions";
+import type { PeerInfo, VerticalInfo } from "@/lib/peer-match";
 
 // The client playbook (a permanent activity log): every creative (ad), message angle and audience (ad set) a client has
 // run, with when it ran, its numbers against the client's KPI and a verdict. Rebuilt from the ad-level data on every
@@ -386,18 +387,29 @@ ${learnings.length ? `Learnings (dated):\n${learnings.map((l) => `- ${l.at} · $
 </client_playbook>`;
 }
 
-/** Winning angles and audiences from other clients in the same industry (anonymized): a new client's head start. */
+/**
+ * Winning angles and audiences from other clients like this one (anonymized): a new client's head start. Only clients
+ * selling the same thing or in the same sub-vertical (the owner's rule), never only the same broad industry.
+ */
 export async function peersBlock(db: SupabaseClient, clientId: string, industry: string | null, detail: string | null) {
   if (!industry || industry === "other") return "";
-  const { data: peers } = await db.from("clients").select("id, industry_detail").eq("industry", industry).neq("id", clientId).neq("status", "offboarded");
-  if (!peers?.length) return "";
-  // Same sub-category first
-  const ids = [...peers].sort((a, b) => Number(b.industry_detail === detail) - Number(a.industry_detail === detail)).map((p) => p.id as string).slice(0, 30);
+  const [{ data: me }, { data: all }, { data: verticals }, { matchPeers }] = await Promise.all([
+    db.from("clients").select("id, industry, industry_detail, vertical_id").eq("id", clientId).maybeSingle(),
+    db.from("clients").select("id, industry, industry_detail, vertical_id").neq("id", clientId).neq("status", "offboarded"),
+    db.from("verticals").select("id, name, parent_id"),
+    import("@/lib/peer-match"),
+  ]);
+  const self = (me as PeerInfo | null) ?? { id: clientId, industry, industry_detail: detail, vertical_id: null };
+  const matches = matchPeers(self, (all ?? []) as PeerInfo[], (verticals ?? []) as VerticalInfo[]);
+  const peers = ((all ?? []) as PeerInfo[]).filter((p) => matches.has(p.id));
+  if (!peers.length) return "";
+  // Same product first, then the same niche
+  const ids = peers.sort((a, b) => matches.get(a.id)!.tier - matches.get(b.id)!.tier).map((p) => p.id).slice(0, 30);
   const { data } = await db.from("client_ledger").select("client_id, kind, title, detail, verdict_reason").in("client_id", ids).eq("verdict", "winner").in("kind", ["angle", "audience"]).order("spend", { ascending: false }).limit(20);
   if (!data?.length) return "";
   const sub = new Map(peers.map((p) => [p.id as string, p.industry_detail as string | null]));
   return `<what_wins_for_similar_clients>
-Angles and audiences that won for other Kaizen clients in this industry${detail ? ` (this client: ${detail})` : ""}. Start from these rather than from scratch; adapt them, never copy, never name another client.
+Angles and audiences that won for other Kaizen clients selling the same thing or in the same niche${detail ? ` (this client: ${detail})` : ""}. Start from these rather than from scratch; adapt them, never copy, never name another client.
 ${data.map((r) => `- ${r.kind === "angle" ? "Angle" : "Audience"} "${r.title.slice(0, 90)}" for a ${sub.get(r.client_id as string) ?? "similar business"}: ${r.verdict_reason}`).join("\n")}
 </what_wins_for_similar_clients>`;
 }

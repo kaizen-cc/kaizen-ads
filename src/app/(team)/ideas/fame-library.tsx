@@ -8,7 +8,7 @@ import { QuickBriefSheet } from "@/components/quick-brief-sheet";
 import type { FameAd } from "@/lib/hall-of-fame";
 import type { Winner } from "@/lib/industry";
 import { FeedPreview, InsightPanel, useAd, useInsight } from "../winners/fb-preview";
-import { ClientPick, HoverCard, SHEET_BACKDROP, SHEET_PANEL, SheetAction, SheetBar, Writing, type PickClient } from "../winners/winners-library";
+import { ClientPick, HoverCard, SHEET_BACKDROP, SHEET_PANEL, SheetAction, SheetBar, Writing, type PeerContext, type PickClient } from "../winners/winners-library";
 
 type Sort = "beat" | "spend" | "days";
 const SORTS: [Sort, string][] = [
@@ -48,7 +48,7 @@ const toWinner = (a: FameAd): Winner => ({
  * The Hall of Fame: our ads that proved themselves (30+ days live, at or beating the client's KPI target or their
  * sub-vertical's benchmark), kept six months. By vertical and sub-vertical; open one to see it and brief a client on it.
  */
-export function FameLibrary({ ads, verticals, clients }: { ads: FameAd[]; verticals: { id: string; name: string; parent: string }[]; clients: PickClient[] }) {
+export function FameLibrary({ ads, verticals, clients, match }: { ads: FameAd[]; verticals: { id: string; name: string; parent: string }[]; clients: PickClient[]; match: PeerContext }) {
   // Filters and the open ad are in the address (?vertical=&sort=&ad=), so back and forward step through them;
   // typing a search replaces the entry instead of adding one per key
   const vertical = useParam("vertical");
@@ -217,12 +217,12 @@ export function FameLibrary({ ads, verticals, clients }: { ads: FameAd[]; vertic
           }}
         />
       )}
-      {open && <FameSheet key={open.adId} a={open} w={winners.get(open.adId)!} clients={clients} onClose={() => closeParams("ad", "brief")} />}
+      {open && <FameSheet key={open.adId} a={open} w={winners.get(open.adId)!} clients={clients} match={match} onClose={() => closeParams("ad", "brief")} />}
     </div>
   );
 }
 
-function FameSheet({ a, w, clients, onClose }: { a: FameAd; w: Winner; clients: PickClient[]; onClose: () => void }) {
+function FameSheet({ a, w, clients, match, onClose }: { a: FameAd; w: Winner; clients: PickClient[]; match: PeerContext; onClose: () => void }) {
   const ad = useAd(a.adId);
   const insight = useInsight(w, ad);
   const [step, setStep] = useState<"ad" | "pick" | "writing">("ad");
@@ -307,7 +307,7 @@ function FameSheet({ a, w, clients, onClose }: { a: FameAd; w: Winner; clients: 
             {error && <p className="text-sm text-bad">{error}</p>}
           </div>
         ) : step === "pick" ? (
-          <ClientPick industry={null} exclude={a.clientId} clients={clients} error={error} onBack={() => setStep("ad")} onPick={write} />
+          <ClientPick match={match} exclude={a.clientId} clients={clients} error={error} onBack={() => setStep("ad")} onPick={write} />
         ) : (
           <Writing />
         )}

@@ -1,6 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { cycleElapsed } from "@/lib/allotment";
+import { allotmentLine, allotmentPools, cycleElapsed, usageCounts, type PoolCounts } from "@/lib/allotment";
 import { packageGaps } from "@/lib/package-gaps";
 import { loadProduction, spansOf, type Production, type Scorecard, type Span } from "@/lib/production";
 import { roleLabel, type TeamRole } from "@/lib/roles";
@@ -55,8 +55,8 @@ export type ClientAllotment = {
   id: string;
   name: string;
   slug: string;
-  used: number;
-  cap: number | null;
+  /** The allotment per pool (images, videos): never summed into one number, an overage never hidden */
+  counts: PoolCounts;
   elapsed: number; // 0–1 through the billing cycle
   resets: string | null;
   periodStart: string | null;
@@ -502,14 +502,15 @@ export async function loadCreativeKpis(db: SupabaseClient, period: Period): Prom
     .map((u) => {
       const c = clientById.get(u.client_id);
       if (!c?.creative_package) return null;
-      const cap = u.images_per_month == null && u.videos_per_month == null ? null : (u.images_per_month ?? 0) + (u.videos_per_month ?? 0);
-      const used = (u.images_used ?? 0) + (u.videos_used ?? 0);
+      // Per pool: the pool furthest behind sets the pace (one pool over never hides the other falling behind)
+      const counts = usageCounts(u)!;
+      const capped = allotmentPools(counts).filter((p) => p.cap > 0);
       const cycle = u.period_start && u.period_end ? { start: u.period_start, end: u.period_end } : null;
       const elapsed = cycleElapsed(cycle);
       const gap = gaps.get(u.client_id);
-      const share = cap ? used / cap : null;
+      const share = capped.length ? Math.min(...capped.map((p) => p.used / p.cap)) : null;
       const status: ClientAllotment["status"] = gap?.missed ? "missed" : gap?.atRisk ? "at_risk" : share == null ? "on_track" : share >= elapsed + 0.15 ? "ahead" : share >= elapsed - 0.2 ? "on_track" : "behind";
-      return { id: u.client_id, name: c.name as string, slug: c.slug as string, used, cap, elapsed, resets: u.period_end, periodStart: u.period_start, status, dismissed: u.period_start ? (dismissedOf.get(`${u.client_id}:${u.period_start}`) ?? null) : null, bundled: bundledOf.get(u.client_id) ?? [] };
+      return { id: u.client_id, name: c.name as string, slug: c.slug as string, counts, elapsed, resets: u.period_end, periodStart: u.period_start, status, dismissed: u.period_start ? (dismissedOf.get(`${u.client_id}:${u.period_start}`) ?? null) : null, bundled: bundledOf.get(u.client_id) ?? [] };
     })
     .filter((x): x is ClientAllotment => x != null);
   const ORDER = { missed: 0, at_risk: 1, behind: 2, on_track: 3, ahead: 4 };
@@ -551,7 +552,7 @@ export async function loadCreativeKpis(db: SupabaseClient, period: Period): Prom
   const risk = counted.filter((a) => a.status === "at_risk" || a.status === "behind");
   if (missed.length) actions.push({ key: "missed", tone: "bad", title: `${missed.length} ${missed.length === 1 ? "client" : "clients"} paid for creative last cycle and got none`, detail: missed.slice(0, 3).map((a) => a.name).join(", "), href: `/clients/${missed[0].slug}` });
   if (late.length) actions.push({ key: "late", tone: late.length >= 5 ? "bad" : "warn", title: `${late.length} ${late.length === 1 ? "ticket is" : "tickets are"} late on the Board`, detail: `Oldest: #${late[0].number} ${late[0].title} (${late[0].hoursOver}h over)`, href: `/board?t=${late[0].number}` });
-  if (risk.length) actions.push({ key: "risk", tone: "warn", title: `${risk.length} ${risk.length === 1 ? "client is" : "clients are"} behind on this cycle's allotment`, detail: risk.slice(0, 3).map((a) => `${a.name} ${a.used}/${a.cap ?? "?"}`).join(" · "), href: `/board?view=kpis&allot=behind` });
+  if (risk.length) actions.push({ key: "risk", tone: "warn", title: `${risk.length} ${risk.length === 1 ? "client is" : "clients are"} behind on this cycle's allotment`, detail: risk.slice(0, 3).map((a) => `${a.name} ${allotmentLine(a.counts) ?? "no allotment set"}`).join(" · "), href: `/board?view=kpis&allot=behind` });
   const bundling = allotments.filter((a) => a.bundled.length);
   if (bundling.length) {
     const tasks = bundling.reduce((n, a) => n + a.bundled.length, 0);

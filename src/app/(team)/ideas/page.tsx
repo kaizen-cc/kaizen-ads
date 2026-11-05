@@ -228,11 +228,13 @@ async function Verticals() {
 
 async function Fame() {
   const db = adminConfigured() ? createAdminClient() : await createClient();
-  const [ads, verticals, { data: usage }, { data: rows }] = await Promise.all([
+  const { loadPeerContext } = await import("@/lib/industry");
+  const [ads, verticals, { data: usage }, { data: rows }, match] = await Promise.all([
     loadHallOfFame(db),
     loadVerticals(db),
     db.from("client_allotment_usage").select("*"),
     db.from("clients").select("id, name, industry, industry_detail").is("archived_at", null).in("status", LIVE).order("name"),
+    loadPeerContext(db),
   ]);
   const clients: PickClient[] = ((usage ?? []) as UsageRow[])
     .map((u) => {
@@ -241,5 +243,5 @@ async function Fame() {
     })
     .filter((c): c is PickClient => Boolean(c))
     .sort((a, b) => a.name.localeCompare(b.name));
-  return <FameLibrary ads={ads} verticals={verticals.flatMap((v) => v.subs.map((x) => ({ id: x.id, name: x.name, parent: v.name })))} clients={clients} />;
+  return <FameLibrary ads={ads} verticals={verticals.flatMap((v) => v.subs.map((x) => ({ id: x.id, name: x.name, parent: v.name })))} clients={clients} match={match} />;
 }

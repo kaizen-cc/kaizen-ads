@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { OnboardingSheet } from "@/lib/account-sheet";
 import { AGENCY_SYSTEM, askJson, clientContext, contextBlock, getAgent } from "@/lib/ai";
 import { describeFatigue } from "@/lib/fatigue";
-import { ALLOTMENT_RULE, MAX_VARIATIONS, slidesOf, toAllotment, type Allotment, type UsageRow } from "@/lib/allotment";
+import { ALLOTMENT_RULE, allotmentLine, usageCounts, MAX_VARIATIONS, slidesOf, toAllotment, type Allotment, type UsageRow } from "@/lib/allotment";
 
 // The strategist: watches every account for what needs new creative and suggests a brief (only its summary until
 // someone picks it: the full brief is written then, from the same context), to execs
@@ -88,8 +88,8 @@ export async function gatherSignals(admin: SupabaseClient): Promise<Map<string, 
       add(u.client_id, {
         kind: "pacing",
         weight: 2 + (elapsed - covered) * 4,
-        line: `${used} of ${allot} creatives used with ${Math.round(elapsed * 100)}% of the month gone`,
-        facts: [`Images: ${u.images_used}/${u.images_per_month ?? 0}, videos: ${u.videos_used}/${u.videos_per_month ?? 0}`, `${inWorks.get(u.client_id) ?? 0} more already in the works (every version counts, a carousel per slide)`],
+        line: `${allotmentLine(usageCounts(u)) ?? "Nothing used"} with ${Math.round(elapsed * 100)}% of the month gone`,
+        facts: [`Per pool (never summed): ${allotmentLine(usageCounts(u)) ?? "no allotment set"}`, `${inWorks.get(u.client_id) ?? 0} more already in the works (every version counts, a carousel per slide)`],
       });
   }
 
@@ -793,6 +793,8 @@ const keepFormat = (d: SuggestionDraft, format?: Fmt): SuggestionDraft => {
 };
 
 export async function suggestFromWinner(admin: SupabaseClient, clientId: string, w: WinnerSource, by: string, format?: Fmt, seed?: QuickBrief | null) {
+  // Winners only from a client selling the same thing or in the same niche (the owner's rule): throws otherwise
+  await (await import("@/lib/industry")).assertRelevantWinner(admin, clientId, w);
   const same = w.client;
   const prompt = await promptFor(admin, clientId, [
     { kind: "winner", weight: 1, line: `A winning ad from another account to build on`, facts: [`${w.ratio}x better cost per ${w.result ?? "result"} than its account's usual`] },

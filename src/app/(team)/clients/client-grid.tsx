@@ -8,7 +8,7 @@ import { setClientPaused, setClientService } from "./[slug]/actions";
 import { ArchiveControl } from "./[slug]/archive-control";
 import { tintFor } from "@/lib/colors";
 import type { Freshness } from "@/lib/dates";
-import { untilLabel } from "@/lib/allotment";
+import { allotmentPool, untilLabel } from "@/lib/allotment";
 import { SLOTS, seatNeeded, type SlotRole } from "@/lib/roles";
 import { AssignSelect, type Option } from "./assign-select";
 import { AddServices, MissingLinks, type MissingLink } from "./link-fix";
@@ -42,7 +42,9 @@ export type ClientCard = {
 const DOT = { ok: "bg-ok shadow-[0_0_0_3px_var(--ok-soft)]", warn: "bg-warn", off: "bg-faint/50" } as const;
 
 function Meter({ label, used, cap }: { label: string; used: number; cap: number }) {
-  const over = used > cap;
+  // The shared allotment helper: per pool, and an overage shown as one, never clamped
+  const p = allotmentPool(label === "Videos" ? "videos" : "images", cap, used);
+  const over = p.over > 0;
   return (
     <div className="grid gap-1.5">
       <div className="flex items-baseline justify-between text-xs">
@@ -50,6 +52,7 @@ function Meter({ label, used, cap }: { label: string; used: number; cap: number 
         <span className="tabular">
           <span className={over ? "text-bad" : "text-fg"}>{used}</span>
           <span className="text-faint"> / {cap}</span>
+          {over && <span className="text-bad"> · {p.over} over</span>}
         </span>
       </div>
       <span className="h-1 overflow-hidden rounded-full bg-surface-2">

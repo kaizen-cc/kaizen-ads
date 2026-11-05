@@ -40,6 +40,10 @@ export async function startWinnerBrief(w: WinnerSource, clientId: string, from: 
   // Nothing written without someone agreeing its quick preview first
   if (!seed) return { ok: false, error: "Open its quick preview first." };
   const admin = createAdminClient();
+  // Winners only from a client selling the same thing or in the same niche (the owner's rule)
+  const { assertRelevantWinner } = await import("@/lib/industry");
+  const unrelated = await assertRelevantWinner(admin, clientId, w).then(() => null, (e: unknown) => (e instanceof Error ? e.message : "That winner can't be briefed for this client."));
+  if (unrelated) return { ok: false, error: unrelated };
   const id = await queueBriefJob(admin, { kind: "winner", clientId, profileId: me.id, input: { winner: w, from, seed }, title: seed?.title || (w.headline ? `More like “${w.headline}”` : "More like this winner"), key: part ? `${w.adId}#${part}` : w.adId });
   after(() => runBriefJob(createAdminClient(), id));
   return started(id);

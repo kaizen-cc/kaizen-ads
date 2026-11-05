@@ -99,6 +99,60 @@ export const ALLOTMENT_RULE =
 
 export const left = (cap: number | null, used: number) => (cap === null ? null : cap - used);
 
+// THE ONE WAY TO SHOW AN ALLOTMENT (owner's rule, Nov 2026): per pool, never images and videos summed into one number,
+// and never an overage clamped to 0. Every screen that shows a client's allotment reads it through these.
+
+/** What a pool needs: its cap (null = not set) and what this cycle used. */
+export type PoolCounts = { images: number | null; videos: number | null; imagesUsed: number; videosUsed: number };
+
+export type Pool = {
+  key: "images" | "videos";
+  /** Images or Videos (images and carousels share the image pool) */
+  label: string;
+  cap: number;
+  used: number;
+  /** Left this cycle, never below 0 */
+  left: number;
+  /** Past the cap this cycle (0 when within it) */
+  over: number;
+  /** over: past the cap; full: exactly at it; ok: room left */
+  state: "over" | "full" | "ok";
+  /** The line to show, e.g. Images 86/50 · 36 over, or Videos 7/10 */
+  text: string;
+};
+
+/** A client_allotment_usage row as pool counts. */
+export const usageCounts = (r: { images_per_month: number | null; videos_per_month: number | null; images_used: number | null; videos_used: number | null } | null | undefined): PoolCounts | null =>
+  r ? { images: r.images_per_month, videos: r.videos_per_month, imagesUsed: r.images_used ?? 0, videosUsed: r.videos_used ?? 0 } : null;
+
+/** One pool's state: what's used against its cap, what's left (never below 0) and how far over (never hidden). */
+export function allotmentPool(key: Pool["key"], cap: number, usedRaw: number): Pool {
+  const used = Math.max(0, Number(usedRaw) || 0);
+  const label = key === "images" ? "Images" : "Videos";
+  const over = Math.max(0, used - cap);
+  const state = over > 0 ? "over" : used === cap ? "full" : "ok";
+  return { key, label, cap, used, left: Math.max(0, cap - used), over, state, text: `${label} ${used}/${cap}${over ? ` · ${over} over` : ""}` };
+}
+
+/** The pools to show: each with a cap set and something to say (a cap above 0, or something used against it). */
+export function allotmentPools(a: PoolCounts | null | undefined): Pool[] {
+  if (!a) return [];
+  const pool = (key: Pool["key"], cap: number | null, used: number) => (cap === null || cap === undefined || (cap <= 0 && !(Number(used) > 0)) ? null : allotmentPool(key, cap, used));
+  return [pool("images", a.images, a.imagesUsed), pool("videos", a.videos, a.videosUsed)].filter((p): p is Pool => p !== null);
+}
+
+/** Every pool on one line, e.g. Images 86/50 · 36 over · Videos 7/10; null when no pool is set. */
+export function allotmentLine(a: PoolCounts | null | undefined) {
+  const pools = allotmentPools(a);
+  return pools.length ? pools.map((p) => p.text).join(" · ") : null;
+}
+
+/** Any pool past its cap this cycle. */
+export const allotmentOver = (a: PoolCounts | null | undefined) => allotmentPools(a).some((p) => p.over > 0);
+
+/** Theme classes for a pool's state: over in red, exactly full in amber. */
+export const POOL_TONE: Record<Pool["state"], string> = { over: "text-bad", full: "text-warn", ok: "" };
+
 /** For the AI: one line per pool, with what this request would take if given. */
 export function describeAllotment(a: Allotment | null, request?: { images: number; videos: number }) {
   if (!a || (a.images === null && a.videos === null)) return "No monthly allotment is set for this client yet, so you can't check it.";

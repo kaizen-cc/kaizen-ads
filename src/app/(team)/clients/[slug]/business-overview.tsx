@@ -4,13 +4,14 @@ import { STATUS, kpiValue } from "@/lib/kpi/format";
 import type { AuditSummary } from "../../kpis/audit-panel";
 import type { SprintSummary } from "@/lib/sprints";
 import { OpenService } from "./client-sections";
+import { allotmentPools, type PoolCounts } from "@/lib/allotment";
 
 // The whole business at a glance: every service the client buys side by side (paid ads on each platform, creative,
 // and what's run outside Kaizen Ads), what all their advertising spent together, and a way into each service.
 
 export type ServiceCard =
   | { id: "meta" | "google"; kind: "ads"; label: string; kpis: ClientKpi[]; summary: PlatformSummary | null; extra: string[] }
-  | { id: "creative"; kind: "creative"; label: string; package: string | null; used: number; allotted: number; moving: number; waiting: number; live: number; asana?: number }
+  | { id: "creative"; kind: "creative"; label: string; package: string | null; pools: PoolCounts; moving: number; waiting: number; live: number; asana?: number }
   | { id: string; kind: "other"; label: string; tier: string | null };
 
 const money = (n: number) => `$${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
@@ -106,7 +107,8 @@ export function BusinessOverview({ cards, audits, sprints }: { cards: ServiceCar
             );
           }
           if (c.kind === "creative") {
-            const pct = c.allotted ? Math.min(100, Math.round((c.used / c.allotted) * 100)) : 0;
+            // Per pool, never summed: images and videos are separate allotments, and an overage shows as one
+            const pools = allotmentPools(c.pools);
             return (
               <OpenService key={c.id} id={c.id} className="group grid content-start gap-3 rounded-[18px] border border-line bg-surface p-4 text-left transition-colors hover:border-faint md:p-5">
                 <span className="flex items-center justify-between gap-2">
@@ -116,18 +118,22 @@ export function BusinessOverview({ cards, audits, sprints }: { cards: ServiceCar
                   </span>
                   {c.package && <span className="rounded-full bg-brand-soft px-2.5 py-1 text-[11px] font-medium text-brand-text">{c.package}</span>}
                 </span>
-                {c.allotted > 0 ? (
-                  <span className="grid gap-1.5">
-                    <span className="flex items-end gap-2">
-                      <span className="tabular font-display text-3xl leading-none">
-                        {c.used}
-                        <span className="text-lg text-faint">/{c.allotted}</span>
+                {pools.length ? (
+                  <span className={`grid gap-3 ${pools.length > 1 ? "grid-cols-2" : ""}`}>
+                    {pools.map((p) => (
+                      <span key={p.key} className="grid gap-1.5">
+                        <span className="flex flex-wrap items-end gap-x-2 gap-y-0.5">
+                          <span className={`tabular font-display text-3xl leading-none ${p.over ? "text-bad" : ""}`}>
+                            {p.used}
+                            <span className="text-lg text-faint">/{p.cap}</span>
+                          </span>
+                          <span className={`pb-0.5 text-xs ${p.over ? "text-bad" : "text-faint"}`}>{p.over ? `${p.label.toLowerCase()} · ${p.over} over` : p.label.toLowerCase()}</span>
+                        </span>
+                        <span className="h-1.5 overflow-hidden rounded-full bg-surface-2">
+                          <span className={`block h-full rounded-full ${p.over ? "bg-bad" : "bg-[#f2b14c]"}`} style={{ width: `${p.cap ? Math.min(100, Math.round((p.used / p.cap) * 100)) : 100}%` }} />
+                        </span>
                       </span>
-                      <span className="pb-0.5 text-xs text-faint">made this month</span>
-                    </span>
-                    <span className="h-1.5 overflow-hidden rounded-full bg-surface-2">
-                      <span className="block h-full rounded-full bg-[#f2b14c]" style={{ width: `${pct}%` }} />
-                    </span>
+                    ))}
                   </span>
                 ) : (
                   <span className="text-sm text-faint">No monthly allotment set</span>

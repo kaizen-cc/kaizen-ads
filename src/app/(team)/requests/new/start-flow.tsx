@@ -5,7 +5,8 @@ import { KIND_LABEL, type SuggestionKind } from "@/lib/suggestion-kinds";
 import type { Winner } from "@/lib/industry";
 import type { MarketAd } from "@/lib/market";
 import type { StartData } from "@/lib/request-start";
-import type { Allotment } from "@/lib/allotment";
+import { allotmentPools, type Allotment } from "@/lib/allotment";
+import { AllotmentPools } from "@/components/allotment-pools";
 import type { Draft } from "./draft";
 import type { ClientOption } from "./parts";
 import { Spark } from "./parts";
@@ -189,12 +190,9 @@ export function ClientPicker({ clients, allotments, onPick }: { clients: ClientO
     rememberClient(c.id);
     onPick(c);
   };
-  const left = (c: ClientOption) => {
-    const a = allotments[c.id];
-    if (!a) return null;
-    const total = (a.images ?? 0) + (a.videos ?? 0);
-    return total ? `${Math.max(0, total - a.imagesUsed - a.videosUsed)} of ${total} left this cycle` : null;
-  };
+  // Per pool, the overage in red (never summed, never clamped): one helper for every screen
+  const left = (c: ClientOption) => <AllotmentPools allotment={allotments[c.id]} empty={null} suffix="this cycle" />;
+  const hasPools = (c: ClientOption) => allotmentPools(allotments[c.id]).length > 0;
 
   return (
     <div className="grid gap-6">
@@ -245,7 +243,7 @@ export function ClientPicker({ clients, allotments, onPick }: { clients: ClientO
                 <span className="grid h-12 w-12 place-items-center rounded-[14px] bg-gradient-to-br from-brand to-[#7a0a1c] font-heading text-[15px] text-white">{initials(c.name)}</span>
                 <span className="grid min-w-0 gap-0.5">
                   <span className="truncate font-heading text-[17px]">{c.name}</span>
-                  <span className="text-[12px] text-faint">{left(c) ?? "On a creative package"}</span>
+                  <span className="text-[12px] text-faint">{hasPools(c) ? left(c) : "On a creative package"}</span>
                 </span>
                 <span className="absolute right-5 top-5 text-faint transition group-hover:translate-x-0.5 group-hover:text-fg">→</span>
               </button>
@@ -272,7 +270,7 @@ export function ClientPicker({ clients, allotments, onPick }: { clients: ClientO
                 <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-[11px] text-[12px] font-semibold ${c.creative ? "bg-surface-2 text-fg group-hover:bg-brand group-hover:text-white" : "bg-surface-2 text-faint"}`}>{initials(c.name)}</span>
                 <span className="grid min-w-0">
                   <span className="truncate text-[14.5px]">{c.name}</span>
-                  <span className="truncate text-[11.5px] text-faint">{c.creative ? (left(c) ?? "On a creative package") : "No creative package"}</span>
+                  <span className="truncate text-[11.5px] text-faint">{c.creative ? (hasPools(c) ? left(c) : "On a creative package") : "No creative package"}</span>
                 </span>
               </button>
             );
@@ -391,9 +389,137 @@ export function StartPage({
   const similar = (data?.patterns.length ?? 0) + (data?.winners.length ?? 0);
   const what = data?.detail ? data.detail.toLowerCase() : null;
   const similarSub =
-    data?.winnersTier === 3
-      ? `Nothing proven yet from clients selling what ${clientName} sells${what ? ` (${what})` : ""}, so these winners are from other ${data.winnersLabel ?? "similar"} accounts: borrow the structure, not the product story.`
-      : `What's proven for businesses like them and winning ads from accounts selling the same thing or in the same niche${what ? ` as ${what}` : ""}. Each card says why it matched.`;
+    (data?.winners.length ?? 1) > 0
+      ? `What's proven for businesses like them and winning ads from accounts selling the same thing or in the same niche${what ? ` as ${what}` : ""}. Each card says why it matched.`
+      : `What's proven across businesses like them. No winning ads yet from clients selling what ${clientName} sells${what ? ` (${what})` : ""} or in the same niche, so none are shown.`;
+
+  // The owner's rule: winners only from clients selling the same thing or in the same niche. When there are none, no
+  // winners section: lead with what we promised and the market instead (patterns stay, they're proven across the group)
+  const winnersHere = loading || (data?.winners.length ?? 0) > 0;
+  const num = winnersHere ? { fix: "01", similar: "02", market: "03" } : { market: "01", fix: "02", similar: "03" };
+  const fixSection = (
+        <Section n={num.fix} title="Fix what's wearing out or off" sub={`Briefs the strategist already wrote for ${clientName}: ads tiring, numbers off, moments coming up.`} loading={loading} empty="Nothing wearing out or off for them right now." count={data?.briefs.length ?? 0}>
+          {(data?.briefs ?? []).map((b) => (
+            <Card
+              key={b.id}
+              thumb={b.thumb}
+              adId={b.adId}
+              tint={KIND_TINT[b.kind]}
+              fallback={b.signal}
+              chip={KIND_LABEL[b.kind as SuggestionKind] ?? b.kind}
+              tone={["fatigue", "refresh"].includes(b.kind) ? "warn" : ["kpi", "flop", "unhappy", "pacing"].includes(b.kind) ? "bad" : "brand"}
+              title={b.title || b.signal}
+              signal={b.title ? b.signal : null}
+              why={b.why}
+              foot={b.formats}
+              busy={false}
+              disabled={false}
+              action="Brief on this"
+              onClick={() => onPreview({ key: `s-${b.id}`, source: { kind: "suggestion", id: b.id }, from: { kicker: KIND_LABEL[b.kind as SuggestionKind] ?? "Suggested brief", label: b.signal, thumb: b.thumb, adId: b.adId }, progressLabel: "brief rewrite from a preview+brief self-review", savedRefId: savedId(find("brief", b.id)) })}
+              star={star(saveBrief(b))}
+            />
+          ))}
+        </Section>
+  );
+  const promisesStrip = data && data.promises.length > 0 ? <div className={winnersHere ? "-mt-4" : ""}>{promises(data.promises)}</div> : null;
+  const similarSection = winnersHere || (data?.patterns.length ?? 0) > 0 ? (
+        <Section n={num.similar} title={winnersHere ? "Working for similar clients" : "Proven for businesses like them"} sub={similarSub} loading={loading} empty={`Nothing proven yet for businesses like ${clientName}.`} count={similar}>
+          {(data?.patterns ?? []).map((p) => (
+            <Card
+              key={`p-${p.id}`}
+              thumb={null}
+              tint="from-[#5b8def]/35"
+              fallback={p.title}
+              chip={`Works for ${p.clients} of ${p.of}`}
+              tone="ok"
+              title={p.title}
+              signal={p.group}
+              why={p.detail}
+              foot={p.uses ? "They already use it" : "Not using it yet"}
+              busy={false}
+              disabled={!aiOn}
+              action="Brief on this"
+              onClick={() => onPreview({ key: `p-${p.id}`, source: { kind: "pattern", patternId: p.id }, from: { kicker: `Works for ${p.clients} of ${p.of}`, label: p.title }, progressLabel: "brief from a pattern+brief self-review", savedRefId: savedId(find("pattern", p.id)) })}
+              star={star(savePattern(p))}
+            />
+          ))}
+          {(data?.winners ?? []).map((w: Winner) => (
+            <Card
+              key={`w-${w.id}`}
+              thumb={w.thumbnail}
+              adId={w.id}
+              ratio="4/5"
+              chip={`${w.ratio}x their usual`}
+              tone="ok"
+              format={w.format}
+              title={w.headline ?? w.name}
+              signal={w.client}
+              match={w.match ? { text: w.match.why, close: true } : null}
+              why={w.text ? w.text.slice(0, 180) : null}
+              foot={w.result ? `Beat their usual cost per ${w.result}` : ""}
+              busy={false}
+              disabled={!aiOn}
+              action="Brief on this"
+              onClick={() => onPreview({ key: `w-${w.id}`, source: { kind: "winner", winner: winnerSource(w), format: w.format }, from: { kicker: `A winner · ${w.ratio}x their usual`, label: w.headline ?? w.name, thumb: w.thumbnail, adId: w.id, format: w.format }, progressLabel: "brief from a winner+brief self-review", savedRefId: savedId(find("winner", w.id)) })}
+              star={star(saveWinner(w))}
+            />
+          ))}
+        </Section>
+  ) : null;
+  const marketSection = (
+        <section className="grid min-w-0 gap-5">
+          <SectionHead
+            n={num.market}
+            title="In the market"
+            sub={`Live ads from their competitors and brands like them${data?.marketLabel ? ` in ${data.marketLabel.toLowerCase()}` : ""}, from Motion: the longest running, and new ones live 14+ days. Star one to save it for ${clientName}.`}
+            count={loading ? undefined : market.length}
+          />
+          {loading ? (
+            <Skeleton />
+          ) : market.length ? (
+            <Carousel label="Market ads">
+              {market.map((a) => (
+                <Card
+                  key={`m-${a.id}`}
+                  fixed
+                  thumb={marketStill(a)}
+                  video={marketVideo(a)}
+                  ratio="4/5"
+                  chip={a.daysActive != null ? `Live ${a.daysActive} days` : "Live"}
+                  tone="neutral"
+                  format={marketFormat(a)}
+                  title={a.angle ?? a.headline ?? "Untitled ad"}
+                  signal={a.brand}
+                  match={a.matchWhy ? { text: a.matchWhy, close: (a.matchScore ?? 0) >= 7 } : null}
+                  why={a.why ?? null}
+                  foot=""
+                  busy={false}
+                  disabled={!aiOn}
+                  action="Brief on this"
+                  onClick={() => onPreview({ key: `m-${a.id}`, source: { kind: "market", adId: a.id, format: marketFormat(a) }, from: { kicker: `In the market · ${a.brand}`, label: a.angle ?? a.headline ?? "A live ad", thumb: marketStill(a), format: marketFormat(a) }, progressLabel: "brief from a market ad+brief self-review", savedRefId: savedId(find("market", a.id)) })}
+                  star={star(saveMarket(a))}
+                  link={a.motionUrl ?? a.libraryUrl}
+                />
+              ))}
+              {marketMore && (
+                <button
+                  type="button"
+                  onClick={() => void seeMore()}
+                  disabled={loadingMore}
+                  className="grid w-[60vw] max-w-[220px] shrink-0 snap-start place-items-center rounded-[22px] border border-dashed border-line bg-surface text-[14px] text-muted transition hover:border-faint hover:text-fg sm:w-[220px]"
+                >
+                  <span className="grid justify-items-center gap-2">
+                    <span className={`grid h-11 w-11 place-items-center rounded-full bg-surface-2 text-[18px] ${loadingMore ? "animate-pulse" : ""}`}>+</span>
+                    {loadingMore ? "Loading more…" : "See more"}
+                  </span>
+                </button>
+              )}
+            </Carousel>
+          ) : (
+            <p className="rounded-[18px] border border-dashed border-line px-4 py-8 text-center text-sm text-faint">No market ads matched to them yet.</p>
+          )}
+        </section>
+  );
 
   return (
     <div className="grid min-w-0 gap-12">
@@ -446,126 +572,21 @@ export function StartPage({
         </section>
       )}
 
-      <Section n="01" title="Fix what's wearing out or off" sub={`Briefs the strategist already wrote for ${clientName}: ads tiring, numbers off, moments coming up.`} loading={loading} empty="Nothing wearing out or off for them right now." count={data?.briefs.length ?? 0}>
-        {(data?.briefs ?? []).map((b) => (
-          <Card
-            key={b.id}
-            thumb={b.thumb}
-            adId={b.adId}
-            tint={KIND_TINT[b.kind]}
-            fallback={b.signal}
-            chip={KIND_LABEL[b.kind as SuggestionKind] ?? b.kind}
-            tone={["fatigue", "refresh"].includes(b.kind) ? "warn" : ["kpi", "flop", "unhappy", "pacing"].includes(b.kind) ? "bad" : "brand"}
-            title={b.title || b.signal}
-            signal={b.title ? b.signal : null}
-            why={b.why}
-            foot={b.formats}
-            busy={false}
-            disabled={false}
-            action="Brief on this"
-            onClick={() => onPreview({ key: `s-${b.id}`, source: { kind: "suggestion", id: b.id }, from: { kicker: KIND_LABEL[b.kind as SuggestionKind] ?? "Suggested brief", label: b.signal, thumb: b.thumb, adId: b.adId }, progressLabel: "brief rewrite from a preview+brief self-review", savedRefId: savedId(find("brief", b.id)) })}
-            star={star(saveBrief(b))}
-          />
-        ))}
-      </Section>
-
-      {data && data.promises.length > 0 && <div className="-mt-4">{promises(data.promises)}</div>}
-
-      <Section n="02" title="Working for similar clients" sub={similarSub} loading={loading} empty={`Nothing proven yet for businesses like ${clientName}.`} count={similar}>
-        {(data?.patterns ?? []).map((p) => (
-          <Card
-            key={`p-${p.id}`}
-            thumb={null}
-            tint="from-[#5b8def]/35"
-            fallback={p.title}
-            chip={`Works for ${p.clients} of ${p.of}`}
-            tone="ok"
-            title={p.title}
-            signal={p.group}
-            why={p.detail}
-            foot={p.uses ? "They already use it" : "Not using it yet"}
-            busy={false}
-            disabled={!aiOn}
-            action="Brief on this"
-            onClick={() => onPreview({ key: `p-${p.id}`, source: { kind: "pattern", patternId: p.id }, from: { kicker: `Works for ${p.clients} of ${p.of}`, label: p.title }, progressLabel: "brief from a pattern+brief self-review", savedRefId: savedId(find("pattern", p.id)) })}
-            star={star(savePattern(p))}
-          />
-        ))}
-        {(data?.winners ?? []).map((w: Winner) => (
-          <Card
-            key={`w-${w.id}`}
-            thumb={w.thumbnail}
-            adId={w.id}
-            ratio="4/5"
-            chip={`${w.ratio}x their usual`}
-            tone="ok"
-            format={w.format}
-            title={w.headline ?? w.name}
-            signal={w.client}
-            match={w.match ? { text: w.match.why, close: w.match.tier < 3 } : null}
-            why={w.text ? w.text.slice(0, 180) : null}
-            foot={w.result ? `Beat their usual cost per ${w.result}` : ""}
-            busy={false}
-            disabled={!aiOn}
-            action="Brief on this"
-            onClick={() => onPreview({ key: `w-${w.id}`, source: { kind: "winner", winner: winnerSource(w), format: w.format }, from: { kicker: `A winner · ${w.ratio}x their usual`, label: w.headline ?? w.name, thumb: w.thumbnail, adId: w.id, format: w.format }, progressLabel: "brief from a winner+brief self-review", savedRefId: savedId(find("winner", w.id)) })}
-            star={star(saveWinner(w))}
-          />
-        ))}
-      </Section>
-
-      <section className="grid min-w-0 gap-5">
-        <SectionHead
-          n="03"
-          title="In the market"
-          sub={`Live ads from their competitors and brands like them${data?.marketLabel ? ` in ${data.marketLabel.toLowerCase()}` : ""}, from Motion: the longest running, and new ones live 14+ days. Star one to save it for ${clientName}.`}
-          count={loading ? undefined : market.length}
-        />
-        {loading ? (
-          <Skeleton />
-        ) : market.length ? (
-          <Carousel label="Market ads">
-            {market.map((a) => (
-              <Card
-                key={`m-${a.id}`}
-                fixed
-                thumb={marketStill(a)}
-                video={marketVideo(a)}
-                ratio="4/5"
-                chip={a.daysActive != null ? `Live ${a.daysActive} days` : "Live"}
-                tone="neutral"
-                format={marketFormat(a)}
-                title={a.angle ?? a.headline ?? "Untitled ad"}
-                signal={a.brand}
-                match={a.matchWhy ? { text: a.matchWhy, close: (a.matchScore ?? 0) >= 7 } : null}
-                why={a.why ?? null}
-                foot=""
-                busy={false}
-                disabled={!aiOn}
-                action="Brief on this"
-                onClick={() => onPreview({ key: `m-${a.id}`, source: { kind: "market", adId: a.id, format: marketFormat(a) }, from: { kicker: `In the market · ${a.brand}`, label: a.angle ?? a.headline ?? "A live ad", thumb: marketStill(a), format: marketFormat(a) }, progressLabel: "brief from a market ad+brief self-review", savedRefId: savedId(find("market", a.id)) })}
-                star={star(saveMarket(a))}
-                link={a.motionUrl ?? a.libraryUrl}
-              />
-            ))}
-            {marketMore && (
-              <button
-                type="button"
-                onClick={() => void seeMore()}
-                disabled={loadingMore}
-                className="grid w-[60vw] max-w-[220px] shrink-0 snap-start place-items-center rounded-[22px] border border-dashed border-line bg-surface text-[14px] text-muted transition hover:border-faint hover:text-fg sm:w-[220px]"
-              >
-                <span className="grid justify-items-center gap-2">
-                  <span className={`grid h-11 w-11 place-items-center rounded-full bg-surface-2 text-[18px] ${loadingMore ? "animate-pulse" : ""}`}>+</span>
-                  {loadingMore ? "Loading more…" : "See more"}
-                </span>
-              </button>
-            )}
-          </Carousel>
-        ) : (
-          <p className="rounded-[18px] border border-dashed border-line px-4 py-8 text-center text-sm text-faint">No market ads matched to them yet.</p>
-        )}
-      </section>
+      {winnersHere ? (
+        <>
+          {fixSection}
+          {promisesStrip}
+          {similarSection}
+          {marketSection}
+        </>
+      ) : (
+        <>
+          {promisesStrip}
+          {marketSection}
+          {fixSection}
+          {similarSection}
+        </>
+      )}
 
       <section className="grid gap-5">
         <SectionHead n="04" title="Create your own" sub="Write the brief yourself, or talk the idea through with the strategist and it writes it with you." />

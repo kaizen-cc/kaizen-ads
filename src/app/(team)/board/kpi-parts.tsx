@@ -16,6 +16,8 @@ import { startRefreshBrief, startWinnerBrief } from "@/app/(team)/brief-job-acti
 import { BriefProgress, trackJob, useJobFor } from "@/components/brief-jobs";
 import { BriefPreviewButton, QuickBriefSheet } from "@/components/quick-brief-sheet";
 import type { QuickBrief } from "@/lib/quick-brief";
+import { allotmentPools } from "@/lib/allotment";
+import { AllotmentPools } from "@/components/allotment-pools";
 import { checkErrorsNow, dismissAllotment, restoreAllotment } from "./kpi-actions";
 
 // The interactive pieces of the KPI tabs: tasks you can open from anywhere (a Board ticket opens its drawer, an Asana
@@ -590,20 +592,24 @@ export function AllotmentList({ rows, canDismiss }: { rows: ClientAllotment[]; c
 
   const row = (a: ClientAllotment) => {
     const s = STATUS[a.status];
-    const share = a.cap ? Math.min(1, a.used / a.cap) : null;
+    const pools = allotmentPools(a.counts);
     return (
       <li key={a.id} className="grid gap-2 border-b border-line/70 px-4 py-3 last:border-0">
         <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)_auto] md:items-center md:gap-4">
           <Link href={`/clients/${a.slug}`} className="min-w-0 truncate text-[14px] hover:underline">
             {a.name}
           </Link>
-          <span className="relative h-2 overflow-hidden rounded-full bg-ink/[0.07]" aria-label={`${a.used} of ${a.cap ?? "?"} made, ${Math.round(a.elapsed * 100)}% through the cycle`}>
-            {share != null && <span className={`absolute inset-y-0 left-0 rounded-full ${a.dismissed ? "bg-ink/25" : BAR[s.tone]}`} style={{ width: `${Math.max(3, share * 100)}%` }} />}
-            <span className="absolute inset-y-[-2px] w-[2px] bg-fg/60" style={{ left: `${a.elapsed * 100}%` }} />
+          <span className="grid gap-1">
+            {(pools.length ? pools : [null]).map((p, i) => (
+              <span key={p?.key ?? i} className="relative h-2 overflow-hidden rounded-full bg-ink/[0.07]" aria-label={`${p ? p.text : "No allotment set"}, ${Math.round(a.elapsed * 100)}% through the cycle`}>
+                {p && p.cap > 0 && <span className={`absolute inset-y-0 left-0 rounded-full ${a.dismissed ? "bg-ink/25" : p.over ? "bg-bad" : BAR[s.tone]}`} style={{ width: `${Math.max(3, Math.min(1, p.used / p.cap) * 100)}%` }} />}
+                <span className="absolute inset-y-[-2px] w-[2px] bg-fg/60" style={{ left: `${a.elapsed * 100}%` }} />
+              </span>
+            ))}
           </span>
           <span className="flex items-center justify-between gap-2 md:justify-end">
-            <span className="tabular text-[12px] text-muted">
-              {a.used}/{a.cap ?? "?"}
+            <span className="text-[12px] text-muted">
+              <AllotmentPools allotment={a.counts} empty="No allotment set" />
               {a.resets && <span className="text-faint"> · resets {when(a.resets)}</span>}
             </span>
             {a.dismissed ? (

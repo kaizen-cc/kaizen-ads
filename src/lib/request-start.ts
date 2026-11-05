@@ -19,8 +19,8 @@ export type StartData = {
   patterns: StartPattern[];
   winners: Winner[];
   winnersLabel: string | null;
-  /** How close the winners are: 1 same product, 2 same niche, 3 only the broad industry (nothing closer had one) */
-  winnersTier: 1 | 2 | 3 | null;
+  /** How close the winners are: 1 same product, 2 same niche (never only the broad industry: then there are none) */
+  winnersTier: 1 | 2 | null;
   /** What the client sells, in a few words, for saying what "similar" means */
   detail: string | null;
   market: MarketAd[];
@@ -127,7 +127,7 @@ export async function startSections(db: SupabaseClient, clientId: string): Promi
   timings.total = Date.now() - t0;
   if (process.env.NODE_ENV !== "production") console.info("[request start]", clientId, JSON.stringify(timings));
   const label = industry ? ((c.industry_detail as string | null) ?? industryLabel(industry)) : null;
-  const winnersTier = winners.length ? (Math.min(...winners.map((w) => w.match?.tier ?? 3)) as 1 | 2 | 3) : null;
+  const winnersTier = winners.length ? (Math.min(...winners.map((w) => w.match?.tier ?? 2)) as 1 | 2) : null;
   return {
     clientId,
     briefs,

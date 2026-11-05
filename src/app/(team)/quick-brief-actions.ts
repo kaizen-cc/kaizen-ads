@@ -140,6 +140,12 @@ export async function previewBrief(clientId: string, source: BriefSource, given?
 
   if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
   const admin = createAdminClient();
+  // Winners only from a client selling the same thing or in the same niche (the owner's rule)
+  if (source.kind === "winner") {
+    const { assertRelevantWinner } = await import("@/lib/industry");
+    const unrelated = await assertRelevantWinner(admin, clientId, source.winner).then(() => null, (e: unknown) => (e instanceof Error ? e.message : "That winner can't be briefed for this client."));
+    if (unrelated) return { ok: false, error: unrelated };
+  }
   try {
     const [ctx, { sources }, block] = await Promise.all([clientContext(admin, clientId), getAgent("strategist"), sourceBlock(admin, clientId, source)]);
     if (!ctx) return { ok: false, error: "That client isn't there any more." };
