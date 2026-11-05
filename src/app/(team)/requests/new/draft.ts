@@ -30,7 +30,28 @@ export type Draft = {
   savedRefIds?: string[]; // saved references it's built on: marked used (and out of Saved) once it's sent
   ideaKeys?: IdeaKey[]; // the ideas it's built on (a market ad, a pattern, an audit's idea): everyone's save of them is marked used once it's sent
   pdfCache?: { key: string; structure: BriefStructure } | null; // the brief restructured for its PDF, kept until the brief changes (by key)
+  ai?: AiStamp | null; // written entirely by the AI: where from, and the fingerprint of what it wrote (unchanged skips the review)
 };
+
+/** Where an AI-written brief came from, so the server can read the version the AI wrote (src/lib/brief-fingerprint.ts) */
+export type AiSource =
+  | { kind: "suggestion"; id: string } // a suggested brief, a quick preview's full brief, a promise's brief (creative_suggestions)
+  | { kind: "kaizen-ai"; messageId: string; card: number } // a brief card in Kaizen AI (ai_messages)
+  | { kind: "talk"; seal: string }; // talked through with the strategist: nothing stored, so the server signed what it wrote
+/** An AI-written brief as it arrived: its source and the fingerprint of its reviewable fields */
+export type AiStamp = { source: AiSource; fingerprint: string };
+
+/** A Kaizen AI brief card as the request's fields */
+export const briefCardDraft = (b: import("@/lib/kaizen-ai/types").BriefCard): Partial<Draft> => ({
+  title: b.title,
+  formats: Object.fromEntries(b.formats.map((f) => [f.format, { new: f.new, variations: f.variations }])),
+  sizes: ["4x5", "9x16"],
+  angle: b.angle,
+  audience: b.audience,
+  brief: b.brief,
+  refs: "",
+  landing: b.landing,
+});
 
 /** An Asana task becoming a ticket: it lands in the stage it reached, with what that stage needs filled in. */
 export type Migration = { gid: string; name: string; url: string; stage: string; stageLabel: string; needsCreative: boolean; needsCopy: boolean; assigneeId: string | null; creativeLink: string; copy: string };

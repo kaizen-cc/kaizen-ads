@@ -2,7 +2,9 @@ import { aiEnabled } from "@/lib/ai";
 import { toAllotment, type Allotment, type UsageRow } from "@/lib/allotment";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
-import type { Draft, Size } from "./draft";
+import { briefCardDraft, type Draft, type Size } from "./draft";
+import { stampAi } from "@/lib/brief-fingerprint";
+import type { CreativeFormat } from "@/lib/creative-formats";
 import { createClient } from "@/lib/supabase/server";
 import { RequestForm } from "./request-form";
 import { LIVE } from "@/lib/live";
@@ -42,7 +44,8 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
 
   // Starting again from a deleted ticket (Settings › Deleted): its brief, ready to send as is or to edit
   // A brief written in the background (the toast or the bell: "Your brief is ready"): it opens in Ready to send
-  const written = typeof draft === "string" ? await fromWritten(supabase, draft) : null;
+  const allowed = formatsFor(me);
+  const written = typeof draft === "string" ? await fromWritten(supabase, draft, allowed) : null;
   const restart =
     written ??
     (typeof from === "string" && isExecOrLead(me)
@@ -50,7 +53,7 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
       : typeof asana === "string"
         ? await fromAsana(asana, me)
         : typeof ai === "string"
-          ? await fromKaizenAi(supabase, ai, Number(card) || 0)
+          ? await fromKaizenAi(supabase, ai, Number(card) || 0, allowed)
           : null);
   // An audit's creative idea: its quick preview opens first, over the client's start page
   const auditIdea = !restart && (typeof audit === "string" || typeof business === "string") ? await fromAuditIdea(supabase, typeof business === "string" ? "business" : "account", (typeof business === "string" ? business : audit) as string, Number(idea) || 0) : null;
@@ -79,7 +82,7 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
 }
 
 /** A brief written in the background from a quick preview (read through the person's own session), as the draft */
-async function fromWritten(db: Awaited<ReturnType<typeof createClient>>, id: string): Promise<{ draft: Partial<Draft> & { clientId: string }; promise: { id: string; clientId: string } | null } | null> {
+async function fromWritten(db: Awaited<ReturnType<typeof createClient>>, id: string, allowed: ReadonlySet<CreativeFormat>): Promise<{ draft: Partial<Draft> & { clientId: string }; promise: { id: string; clientId: string } | null } | null> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
   const { data: s } = await db.from("creative_suggestions").select("client_id, call_commitment_id").eq("id", id).maybeSingle();
   if (!s) return null;
@@ -88,31 +91,29 @@ async function fromWritten(db: Awaited<ReturnType<typeof createClient>>, id: str
   const r = await suggestionPatch(id, null, false, false);
   if (!r.ok) return null;
   const clientId = s.client_id as string;
+  // Written entirely by the strategist: sent unchanged, it skips the AI review (src/lib/brief-fingerprint.ts)
+  const fields: Partial<Draft> = { sizes: ["4x5", "9x16"], ...r.patch };
   return {
-    draft: { sizes: ["4x5", "9x16"], priority: "normal", ...r.patch, clientId },
+    draft: { ...fields, priority: "normal", clientId, ai: stampAi(fields, { kind: "suggestion", id }, allowed) },
     promise: s.call_commitment_id ? { id: s.call_commitment_id as string, clientId } : null,
   };
 }
 
 /** A brief written in Kaizen AI (a card on one of the person's messages, read through their own session) as the draft */
-async function fromKaizenAi(db: Awaited<ReturnType<typeof createClient>>, messageId: string, index: number): Promise<{ draft: Partial<Draft> & { clientId: string } } | null> {
+async function fromKaizenAi(db: Awaited<ReturnType<typeof createClient>>, messageId: string, index: number, allowed: ReadonlySet<CreativeFormat>): Promise<{ draft: Partial<Draft> & { clientId: string } } | null> {
   if (!/^[0-9a-f-]{36}$/.test(messageId)) return null;
   const { data } = await db.from("ai_messages").select("cards").eq("id", messageId).maybeSingle();
   const b = ((data?.cards ?? []) as import("@/lib/kaizen-ai/types").Card[])[index];
   if (!b || b.type !== "brief") return null;
+  const fields = briefCardDraft(b);
   return {
     draft: {
+      ...fields,
       clientId: b.client.id,
-      title: b.title,
-      formats: Object.fromEntries(b.formats.map((f) => [f.format, { new: f.new, variations: f.variations }])),
-      sizes: ["4x5", "9x16"],
-      angle: b.angle,
-      audience: b.audience,
-      brief: b.brief,
-      refs: "",
-      landing: b.landing,
       priority: "normal",
       origin: { kind: "brief", label: `Briefed in Kaizen AI: ${b.title}`.slice(0, 200) },
+      // Written entirely by Kaizen AI: sent unchanged, it skips the AI review
+      ai: stampAi(fields, { kind: "kaizen-ai", messageId, card: index }, allowed),
     },
   };
 }

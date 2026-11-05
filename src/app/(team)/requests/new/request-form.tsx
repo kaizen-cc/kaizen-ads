@@ -26,6 +26,7 @@ import { FORMATS, INSPIRE_KEY, MAX_VARIATIONS, SIZES, emptyDraft, selectedFormat
 import { AllotmentBars, AspectOption, Chip, Progress, Spark, Stepper, conceptLine, type ClientOption } from "./parts";
 import { SavedConcepts } from "@/components/saved-concepts";
 import { savedHref, savedLine } from "@/lib/saved-references";
+import { aiUnedited } from "@/lib/brief-fingerprint";
 
 const STEPS = ["Client", "Start", "Formats", "Direction", "Brief", "Review"];
 // Each step in the address (?step=formats), so back returns to the step before
@@ -183,6 +184,13 @@ export function RequestForm({
   const total = formats.reduce((n, f) => n + totalFor(draft.formats[f]), 0);
   const s = ai.status === "ready" ? ai.s : null;
   const allotment = draft.clientId ? allotments[draft.clientId] : undefined;
+  // Written entirely by the AI and not changed since: it goes straight through, no review (the server checks it again).
+  // Any edit to what the review reads brings the review back; edited back to how it was, it's unchanged again.
+  const [serverEdited, setServerEdited] = useState(false); // the server found it changed after all: reviewed from here on
+  const unedited = aiOn && !demo && !serverEdited && aiUnedited(draft);
+  // Where the person asked it to go once the review is through
+  const intent = useRef<"here" | "asana">("here");
+  const asanaRef = useRef<{ open: () => void } | null>(null);
 
   // Prepared suggestions come from the twice-daily briefing and load instantly. Live ones ask the AI now,
   // using what's filled in; that's also the fallback for a client with no briefing yet.
@@ -316,7 +324,8 @@ export function RequestForm({
 
   // A whole brief from a winner or a market ad: fill the form and go straight to Review
   const applyIdea = (patch: Partial<Draft>) => {
-    set(patch);
+    // Its own AI stamp (or none), never one left from an earlier brief
+    set({ ...patch, ai: patch.ai ?? null });
     go(STEPS.length - 1);
   };
 
@@ -359,7 +368,7 @@ export function RequestForm({
     };
   };
 
-  const send = (r: Review | null) =>
+  const send = (r: Review | null, reviewFailed = false) =>
     start(async () => {
       setError(null);
       if (demo) {
@@ -367,7 +376,14 @@ export function RequestForm({
         setCreated(formats.map((_, i) => 1061 + i));
         return;
       }
-      const res = await createBatch(draft, r, decisionsOf(r));
+      const res = await createBatch(draft, r, decisionsOf(r), { reviewFailed });
+      // The server didn't find it to be the AI's unchanged brief: it gets the review after all
+      if (!res.ok && res.needsReview) {
+        setServerEdited(true);
+        intent.current = "here";
+        runReview();
+        return;
+      }
       if (res.ok) {
         writeSaved(null, saveKey);
         if (draft.clientId) forgetStart(draft.clientId);
@@ -382,8 +398,9 @@ export function RequestForm({
       else setError(res.error);
     });
 
-  const runReview = () => {
-    if (!aiOn) return send(null);
+  const runReview = (to: "here" | "asana" = intent.current) => {
+    intent.current = to;
+    if (!aiOn) return to === "asana" ? asanaRef.current?.open() : send(null);
     setReview({ status: "running" });
     reveal(reviewRef, "center");
     const ask: Promise<ReviewResult> = demo
@@ -395,8 +412,11 @@ export function RequestForm({
       setHandled(h);
       setReview({ status: "done", review: res.review, similar: res.similar, refs: res.refs });
       reveal(reviewRef, "start");
-      // Nothing to look at: straight to the team
-      if (res.review.issues.length === 0 && res.similar.length === 0 && h.brief === "none") send(res.review);
+      // Nothing to look at: straight to the team (or on to Asana's preview)
+      if (res.review.issues.length === 0 && res.similar.length === 0 && h.brief === "none") {
+        if (intent.current === "asana") asanaRef.current?.open();
+        else send(res.review);
+      }
     });
   };
 
@@ -512,6 +532,7 @@ export function RequestForm({
     setBriefAi({ status: "idle" });
     setCreated(null);
     setQueue([]);
+    setServerEdited(false);
     go(0);
   };
 
@@ -523,7 +544,14 @@ export function RequestForm({
     ["What are we making?", "Pick every format you need. Each one becomes its own ticket for the right person."],
     ["What’s the direction?", "Name it and set the angle, so the team and the copy agent aim the same way."],
     ["Brief the team", "What to show, what to say, and what to stay away from."],
-    ["Ready to send", aiOn ? "This is what the team receives. Change anything right here; the AI scrubs it against the client’s history before it goes out." : "This is what the team receives. Change anything right here before it goes out."],
+    [
+      "Ready to send",
+      unedited
+        ? "This is what the team receives, as the AI wrote it. Change anything right here; a changed brief is scrubbed against the client’s history before it goes out."
+        : aiOn
+          ? "This is what the team receives. Change anything right here; the AI scrubs it against the client’s history before it goes out."
+          : "This is what the team receives. Change anything right here before it goes out.",
+    ],
   ][step];
 
   return (
@@ -942,6 +970,13 @@ export function RequestForm({
                   }}
                 />
 
+                {aiOn && !demo && draft.ai && review.status === "idle" && (
+                  <p className="flex items-center gap-2 px-1 text-[12.5px] text-faint" aria-live="polite">
+                    <span aria-hidden className={`h-1.5 w-1.5 shrink-0 rounded-full ${unedited ? "bg-ok" : "bg-warn"}`} />
+                    {unedited ? `Written by ${draft.ai.source.kind === "kaizen-ai" ? "Kaizen AI" : "the strategist"}, unchanged: goes straight through` : "Edited: the AI checks it before it goes out"}
+                  </p>
+                )}
+
                 <div ref={reviewRef} className="grid min-w-0 grid-cols-[minmax(0,1fr)] empty:hidden">
                   {review.status === "running" && <Scanning />}
                   {review.status === "done" && handled && (
@@ -991,8 +1026,20 @@ export function RequestForm({
                 {step === STEPS.length - 1 && draft.clientId && !demo && (
                   <span className="flex items-center gap-2">
                     <AsanaSend
+                      handleRef={asanaRef}
+                      // A changed or hand-written brief gets the AI review first; the AI's own unchanged brief opens straight away
+                      gate={() => {
+                        if (unedited || !aiOn || review.status === "done" || review.status === "error") return true;
+                        if (review.status !== "running") runReview("asana");
+                        return false;
+                      }}
                       preview={() => asanaPreview(draft)}
-                      send={() => sendToAsana(draft)}
+                      send={async () => {
+                        const r = await sendToAsana(draft, review.status === "done" ? review.review : null, { reviewFailed: review.status === "error" });
+                        // The server didn't find it to be the AI's unchanged brief: reviewed next time
+                        if (!r.ok && r.needsReview) setServerEdited(true);
+                        return r.ok || !r.needsReview ? r : { ok: false as const, error: "This brief was changed, so the AI checks it first. Close this and press Asana again." };
+                      }}
                       label="Asana"
                       className="inline-flex h-12 items-center gap-2 rounded-full border border-line px-4 text-[14px] text-fg hover:border-faint md:h-11"
                       onSent={(tasks) => {
@@ -1038,10 +1085,11 @@ export function RequestForm({
                   <button
                     type="button"
                     disabled={pending || review.status === "running"}
-                    onClick={() => (review.status === "error" ? send(null) : runReview())}
+                    // The AI's own unchanged brief: created at once, no review
+                    onClick={() => (unedited && review.status !== "running" ? send(null) : review.status === "error" ? send(null, true) : runReview("here"))}
                     className="inline-flex h-12 items-center md:h-11 gap-2 rounded-brand bg-brand px-6 text-sm font-medium text-white shadow-[0_8px_30px_-8px_rgba(178,30,44,0.7)] transition-colors hover:bg-brand-hover disabled:opacity-70"
                   >
-                    {aiOn && review.status !== "error" && <Spark size={12} />}
+                    {aiOn && !unedited && review.status !== "error" && <Spark size={12} />}
                     {pending
                       ? "Creating…"
                       : review.status === "running"

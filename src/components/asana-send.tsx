@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { PlannedTask, SentTask } from "@/lib/asana-request";
 import type { BriefStructure } from "@/lib/brief-pdf-model";
 
@@ -12,7 +12,25 @@ const fmtDate = (d: string | null) => (d ? new Date(`${d}T12:00:00`).toLocaleDat
  * "Send to Asana": first a preview of exactly what lands on the Creative board (one task per format, as the Google
  * Form makes them: name, column, assignee, due date, fields and the full description), then one click sends it.
  */
-export function AsanaSend({ preview, send, onSent, className = "", label = "Send to Asana" }: { preview: () => Promise<Res<PlannedTask>>; send: () => Promise<Res<SentTask>>; onSent?: (tasks: SentTask[]) => void; className?: string; label?: string }) {
+export function AsanaSend({
+  preview,
+  send,
+  onSent,
+  className = "",
+  label = "Send to Asana",
+  gate,
+  handleRef,
+}: {
+  preview: () => Promise<Res<PlannedTask>>;
+  send: () => Promise<Res<SentTask>>;
+  onSent?: (tasks: SentTask[]) => void;
+  className?: string;
+  label?: string;
+  /** Before the preview opens: false holds it (the request form runs its AI review first, then opens it through handleRef) */
+  gate?: () => boolean;
+  /** Opens the preview from outside, past the gate */
+  handleRef?: React.MutableRefObject<{ open: () => void } | null>;
+}) {
   const [open, setOpen] = useState(false);
   const [tasks, setTasks] = useState<PlannedTask[] | null>(null);
   const [sent, setSent] = useState<SentTask[] | null>(null);
@@ -39,9 +57,17 @@ export function AsanaSend({ preview, send, onSent, className = "", label = "Send
     onSent?.(r.tasks);
   };
 
+  useEffect(() => {
+    if (!handleRef) return;
+    handleRef.current = { open: () => void start() };
+    return () => {
+      handleRef.current = null;
+    };
+  });
+
   return (
     <>
-      <button type="button" onClick={start} className={className || "inline-flex min-h-11 items-center gap-2 rounded-full border border-line px-4 text-[14px] text-fg hover:border-faint"}>
+      <button type="button" onClick={() => (!gate || gate()) && void start()} className={className || "inline-flex min-h-11 items-center gap-2 rounded-full border border-line px-4 text-[14px] text-fg hover:border-faint"}>
         <AsanaMark /> {label}
       </button>
       {open && (

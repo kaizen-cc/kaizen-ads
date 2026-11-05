@@ -27,7 +27,8 @@ import { createClient } from "@/lib/supabase/server";
 import { stageInfo, type Stage } from "@/lib/stages";
 import { draws } from "@/lib/allotment";
 import { readReferences, referencesBlock } from "@/lib/references";
-import { MAX_VARIATIONS, SIZES, describeDraft, refLinks, selectedFormats, type Draft } from "./draft";
+import { MAX_VARIATIONS, SIZES, briefCardDraft, describeDraft, refLinks, selectedFormats, type Draft } from "./draft";
+import { aiFingerprint, fingerprintDraft } from "@/lib/brief-fingerprint";
 import { notLive } from "@/lib/live-guard";
 import type { QuickBrief } from "@/lib/quick-brief";
 import { clampFormats, fitsAnyFormat, fitsFormat, formatsFor, formatsOutside, formatsPhrase, formatsRule, marketFormatOf } from "@/lib/creative-formats";
@@ -39,7 +40,45 @@ function outsideFormats(me: { role: string; isExec?: boolean; isLead?: boolean }
   return formatsOutside(formats, allowed).length ? `Your requests are for ${formatsPhrase(allowed)}. A lead can send the rest.` : null;
 }
 
-type Fail = { ok: false; error: string };
+/**
+ * A brief written entirely by the AI and not changed since goes out without the review. Never taken on the form's word:
+ * the AI's version is read again here (the suggested brief's row, the Kaizen AI card) or its seal checked (talked
+ * through), and the request as sent must still have its fingerprint.
+ */
+async function uneditedAi(draft: Draft, allowed: ReadonlySet<import("@/lib/creative-formats").CreativeFormat>): Promise<boolean> {
+  const src = draft.ai?.source;
+  if (!src || !draft.clientId) return false;
+  const now = fingerprintDraft(draft);
+  if (src.kind === "talk") {
+    const { checkSeal } = await import("@/lib/brief-seal");
+    return checkSeal(draft.clientId, now, src.seal);
+  }
+  const db = await createClient();
+  if (src.kind === "suggestion") {
+    if (!/^[0-9a-f-]{36}$/i.test(src.id)) return false;
+    const { data } = await db.from("creative_suggestions").select("client_id, draft").eq("id", src.id).maybeSingle();
+    const d = data?.draft as import("@/lib/suggestions").SuggestionDraft | null;
+    if (!data || data.client_id !== draft.clientId || !d || d.summary) return false;
+    return aiFingerprint(toPatch(d), allowed) === now;
+  }
+  if (src.kind === "kaizen-ai") {
+    if (!/^[0-9a-f-]{36}$/i.test(src.messageId)) return false;
+    const { data } = await db.from("ai_messages").select("cards").eq("id", src.messageId).maybeSingle();
+    const b = ((data?.cards ?? []) as import("@/lib/kaizen-ai/types").Card[])[Math.floor(Number(src.card) || 0)];
+    if (!b || b.type !== "brief" || b.client.id !== draft.clientId) return false;
+    return aiFingerprint(briefCardDraft(b), allowed) === now;
+  }
+  return false;
+}
+
+/** Sent without the review: fine when the AI is off here, the review couldn't run, or it's the AI's own unchanged brief */
+async function reviewGate(me: Awaited<ReturnType<typeof requireStaff>>, draft: Draft, reviewed: boolean, reviewFailed: boolean): Promise<Fail | null> {
+  if (reviewed || reviewFailed || !aiEnabled()) return null;
+  if (await uneditedAi(draft, formatsFor(me))) return null;
+  return { ok: false, error: "This brief was changed, so the AI checks it before it goes out.", needsReview: true };
+}
+
+type Fail = { ok: false; error: string; /** Sent without the AI review, and it isn't the AI's own unchanged brief */ needsReview?: boolean };
 export type CreateResult = { ok: true; numbers: number[] } | Fail;
 /** What the AI read, so the form can say so. */
 export type ContextSummary = {
@@ -290,7 +329,7 @@ changed: which of title, angle, audience, brief, refs, sizes, formats you change
 }
 
 /** One ticket per selected format, routed to that format's maker. */
-export async function createBatch(draft: Draft, review: Review | null, decisions?: ReviewDecisions): Promise<CreateResult> {
+export async function createBatch(draft: Draft, review: Review | null, decisions?: ReviewDecisions, opts?: { reviewFailed?: boolean }): Promise<CreateResult> {
   const me = await requireStaff();
   if (!draft.clientId) return { ok: false, error: "Pick a client." };
   {
@@ -310,6 +349,10 @@ export async function createBatch(draft: Draft, review: Review | null, decisions
   if (mig?.needsCopy && mig.copy.trim().length < 10) return { ok: false, error: "Paste the copy as it stands: it's already past copy in Asana." };
   if (items.some((i) => i.variations > MAX_VARIATIONS)) return { ok: false, error: `Up to ${MAX_VARIATIONS} variations per format.` };
   if (items.some((i) => i.new + i.variations < 1)) return { ok: false, error: "Each format needs at least one creative." };
+  {
+    const gate = await reviewGate(me, draft, Boolean(review), Boolean(opts?.reviewFailed));
+    if (gate) return gate;
+  }
 
   const supabase = await createClient();
   const { data: batch, error } = await supabase.rpc("create_request_batch", {
@@ -773,7 +816,15 @@ export async function talkRequest(clientId: string, turns: import("@/lib/suggest
     const r = await talkBrief(createAdminClient(), clientId, clean, current, force, previewFirst, formatsRule(allowed));
     // Kept to the formats this person requests, whatever the conversation said
     const draft = r.draft ? { ...r.draft, formats: clampFormats(r.draft.formats ?? [], allowed) } : null;
-    return { ok: true, reply: r.reply, questions: r.questions, conflicts: r.conflicts, ready: r.ready, building: r.building, previewReady: Boolean(r.previewReady), draft, patch: draft ? toPatch(draft) : null };
+    // The strategist's brief, signed as written: used as it is, it goes out without the review
+    let patch: Partial<Draft> | null = draft ? toPatch(draft) : null;
+    if (patch) {
+      const { sealBrief } = await import("@/lib/brief-seal");
+      const fingerprint = aiFingerprint(patch, allowed);
+      const seal = sealBrief(clientId, fingerprint);
+      patch = { ...patch, ai: seal ? { source: { kind: "talk", seal }, fingerprint } : null };
+    }
+    return { ok: true, reply: r.reply, questions: r.questions, conflicts: r.conflicts, ready: r.ready, building: r.building, previewReady: Boolean(r.previewReady), draft, patch };
   } catch (e) {
     return { ok: false, error: e instanceof AiUnavailable ? e.message : "The strategist couldn't answer. Try again." };
   }
@@ -812,8 +863,13 @@ export async function asanaPreview(draft: Draft): Promise<{ ok: true; tasks: imp
 }
 
 /** Sends the request to the Creative board in Asana (instead of tickets here); the brief it came from is done */
-export async function sendToAsana(draft: Draft): Promise<{ ok: true; tasks: import("@/lib/asana-request").SentTask[] } | Fail> {
+export async function sendToAsana(draft: Draft, review?: Review | null, opts?: { reviewFailed?: boolean }): Promise<{ ok: true; tasks: import("@/lib/asana-request").SentTask[] } | Fail> {
   const me = await requireStaff();
+  return asanaSend(draft, me, () => reviewGate(me, draft, Boolean(review), Boolean(opts?.reviewFailed)));
+}
+
+/** Sends a request to Asana once its checks pass (the review gate; a suggested brief sent from its own row needs none) */
+async function asanaSend(draft: Draft, me: Awaited<ReturnType<typeof requireStaff>>, gate: () => Promise<Fail | null>): Promise<{ ok: true; tasks: import("@/lib/asana-request").SentTask[] } | Fail> {
   if (!draft.clientId) return { ok: false, error: "Pick a client." };
   {
     const why = await notLive(await createClient(), draft.clientId);
@@ -824,6 +880,10 @@ export async function sendToAsana(draft: Draft): Promise<{ ok: true; tasks: impo
   {
     const why = outsideFormats(me, selectedFormats(draft));
     if (why) return { ok: false, error: why };
+  }
+  {
+    const why = await gate();
+    if (why) return why;
   }
   const { asanaConfigured } = await import("@/lib/asana");
   if (!asanaConfigured() || !adminConfigured()) return { ok: false, error: "Asana isn't connected." };
@@ -851,11 +911,13 @@ export async function suggestionAsanaPreview(id: string) {
 
 /** Sends a suggested brief to the Creative board in Asana, as written */
 export async function sendSuggestionToAsana(id: string) {
+  const me = await requireStaff();
   const r = await suggestionPatch(id, null, false, false);
   if (!r.ok) return r;
   const db = await createClient();
   const { data: s } = await db.from("creative_suggestions").select("client_id").eq("id", id).single();
-  return sendToAsana({ ...emptyFor(s?.client_id as string), ...r.patch } as Draft);
+  // Built here from the brief's own row, exactly as the strategist wrote it: nothing to review
+  return asanaSend({ ...emptyFor(s?.client_id as string), ...r.patch } as Draft, me, async () => null);
 }
 
 const emptyFor = (clientId: string): Draft => ({ clientId, formats: {}, sizes: ["4x5", "9x16"], title: "", angle: "", audience: "", priority: "normal", brief: "", refs: "", landing: "" });
