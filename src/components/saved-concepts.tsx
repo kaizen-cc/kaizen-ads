@@ -5,7 +5,7 @@ import { RefThumb } from "@/components/ref-thumb";
 import { savedFor } from "@/app/(team)/requests/new/saved-actions";
 import { metaAdId, savedHref, SOURCE_LABEL, type SavedRef } from "@/lib/saved-references";
 
-// "Here are the concepts you've saved": the references starred for a client, where the creative gets made (the
+// "Here are the concepts you've saved": the ideas this person starred for a client, where the creative gets made (the
 // request form's References, a ticket's brief). One tap adds one; adding is instant and undone if it fails.
 
 export function SavedConcepts({
@@ -14,7 +14,7 @@ export function SavedConcepts({
   added = [],
   only,
   onAdd,
-  hint = "Starred in the new request flow for this client. Add one and it goes with the brief.",
+  hint = "Ideas you starred for this client anywhere in the app. Add one and it goes with the brief.",
 }: {
   clientId: string;
   /** Already read (the start page has them); otherwise they're read here */

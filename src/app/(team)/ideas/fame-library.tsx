@@ -7,6 +7,8 @@ import { useMemo, useRef, useState } from "react";
 import { FilterMenu, FilterPill } from "@/components/filters";
 import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
 import { QuickBriefSheet } from "@/components/quick-brief-sheet";
+import { SaveIdeaStar } from "@/components/save-idea-star";
+import type { SaveInput } from "@/lib/saved-references";
 import type { FameAd } from "@/lib/hall-of-fame";
 import type { Winner } from "@/lib/industry";
 import { FeedPreview, InsightPanel, useAd, useInsight } from "../winners/fb-preview";
@@ -172,8 +174,8 @@ export function FameLibrary({ ads, verticals, clients, match }: { ads: FameAd[];
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
             {shown.map((a) => (
+              <div key={a.adId} className="relative min-w-0">
               <button
-                key={a.adId}
                 onClick={() => {
                   setHover(null);
                   setOpen(a);
@@ -191,7 +193,7 @@ export function FameLibrary({ ads, verticals, clients, match }: { ads: FameAd[];
                   <span className="absolute left-2 top-2 rounded-full bg-ok px-2 py-0.5 text-[11px] font-semibold text-white shadow">
                     {a.roas ? `${a.value.toFixed(1)}x` : `${Math.round(a.beatBy * 100)}% under`}
                   </span>
-                  <span className="absolute right-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[10px] text-white backdrop-blur">{a.daysLive}d</span>
+                  <span className="absolute bottom-2 left-2 rounded-full bg-black/60 px-2 py-0.5 text-[10px] text-white backdrop-blur">{a.daysLive}d</span>
                 </span>
                 <span className="grid gap-1 px-1 pb-1">
                   <span className="line-clamp-2 text-[13px] font-medium leading-snug">{a.creative.headline ?? a.adName ?? "Untitled ad"}</span>
@@ -201,6 +203,10 @@ export function FameLibrary({ ads, verticals, clients, match }: { ads: FameAd[];
                   <span className="truncate text-[11px] text-faint">{result(a)}</span>
                 </span>
               </button>
+              <span className="absolute right-3.5 top-3.5 z-10">
+                <SaveIdeaStar idea={saveFameAd(a)} variant="overlay" size="sm" />
+              </span>
+              </div>
             ))}
           </div>
         </>
@@ -223,6 +229,12 @@ export function FameLibrary({ ads, verticals, clients, match }: { ads: FameAd[];
       {open && <FameSheet key={open.adId} a={open} w={winners.get(open.adId)!} clients={clients} match={match} onClose={() => closeParams("ad", "brief")} />}
     </div>
   );
+}
+
+/** What a star on a Hall of Fame ad saves: the winning ad and the brief it becomes for the client it's saved for */
+function saveFameAd(a: FameAd): SaveInput {
+  const winner = { adId: a.adId, client: a.client, detail: a.vertical, headline: a.creative.headline ?? null, text: a.creative.text ?? null, thumbnail: a.creative.image ?? null, ratio: Math.round((1 + a.beatBy) * 10) / 10, result: a.conversion.toLowerCase(), costPerResult: a.value, usual: a.target };
+  return { source: "winner", refId: a.adId, url: null, thumbnail: a.creative.image ?? null, title: a.creative.headline ?? a.adName ?? "A Hall of Fame ad", subtitle: `${a.client}${a.vertical ? ` · ${a.vertical}` : ""}`, format: a.creative.video ? "video" : null, data: { brief: { kind: "winner", winner } } };
 }
 
 function FameSheet({ a, w, clients, match, onClose }: { a: FameAd; w: Winner; clients: PickClient[]; match: PeerContext; onClose: () => void }) {
@@ -299,7 +311,8 @@ function FameSheet({ a, w, clients, match, onClose }: { a: FameAd; w: Winner; cl
                 </div>
               ))}
             </dl>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <SaveIdeaStar idea={saveFameAd(a)} />
               <button onClick={() => setStep("pick")} className="hidden h-10 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:brightness-110 md:block">
                 Brief a client on this
               </button>

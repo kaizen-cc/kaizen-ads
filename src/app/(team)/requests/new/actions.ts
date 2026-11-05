@@ -397,11 +397,9 @@ export async function createBatch(draft: Draft, review: Review | null, decisions
         .eq("id", suggestionId)
         .eq("status", "open");
   }
-  // Built on references saved for the client: they're used now, so they leave Saved (the rows stay, with the ticket)
-  if (draft.savedRefIds?.length && rows?.length) {
-    const { markSavedUsed } = await import("./saved-actions");
-    await markSavedUsed(draft.savedRefIds, rows[0].id).catch(() => null);
-  }
+  // Built on ideas people saved for the client: everyone's save of them is used now, so they leave each person's saved
+  // list (the rows stay, with the ticket) and the others who saved it hear it's in motion
+  if (rows?.length) await ideasUsed(draft, me, rows[0].id as string, `/board?t=${rows[0].number}`);
   // A request that makes something promised on a call puts that promise in motion and clears its alert on Home
   if (adminConfigured() && rows?.length) {
     const clientId = draft.clientId;
@@ -831,10 +829,7 @@ export async function sendToAsana(draft: Draft): Promise<{ ok: true; tasks: impo
     const { sendAsanaRequest } = await import("@/lib/asana-request");
     const { suggestionId, ...origin } = draft.origin ?? {};
     const r = await sendAsanaRequest(createAdminClient(), toAsana(draft), { id: me.id, email: me.email ?? null }, { suggestionId: suggestionId ?? null, origin: draft.origin ? origin : null });
-    if (draft.savedRefIds?.length) {
-      const { markSavedUsed } = await import("./saved-actions");
-      await markSavedUsed(draft.savedRefIds).catch(() => null);
-    }
+    await ideasUsed(draft, me, null, r.tasks.find((t) => t.url)?.url ?? null);
     revalidatePath("/board");
     revalidatePath("/pipeline");
     return { ok: true, tasks: r.tasks };
@@ -862,3 +857,15 @@ export async function sendSuggestionToAsana(id: string) {
 }
 
 const emptyFor = (clientId: string): Draft => ({ clientId, formats: {}, sizes: ["4x5", "9x16"], title: "", angle: "", audience: "", priority: "normal", brief: "", refs: "", landing: "" });
+
+/** The ideas a sent request was built on (saved rows, the suggested brief it came from, the idea itself): used, for everyone */
+async function ideasUsed(draft: Draft, me: { id: string; fullName: string }, requestId: string | null, href: string | null) {
+  if (!draft.clientId || !(draft.savedRefIds?.length || draft.ideaKeys?.length || draft.origin?.suggestionId)) return;
+  try {
+    const { markIdeasUsed } = await import("@/lib/saved-used");
+    const db = adminConfigured() ? createAdminClient() : await createClient();
+    await markIdeasUsed(db, { clientId: draft.clientId, savedIds: draft.savedRefIds, keys: draft.ideaKeys, suggestionId: draft.origin?.suggestionId ?? null, requestId, href, title: draft.title.trim() || null, by: { id: me.id, name: me.fullName } });
+  } catch (e) {
+    console.error("[saved] marking used failed:", e instanceof Error ? e.message : e);
+  }
+}

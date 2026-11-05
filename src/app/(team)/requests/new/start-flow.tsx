@@ -13,12 +13,12 @@ import { Spark } from "./parts";
 import { ideaDraft, ideaPatch, moreMarket, patternPatch, promiseDraft, suggestionPatch, talkRequest } from "./actions";
 import { makingLine, type BriefSource, type QuickBrief } from "@/lib/quick-brief";
 import type { WinnerSource } from "@/lib/suggestions";
-import { saveReference, unsaveReference } from "./saved-actions";
 import { RefThumb } from "@/components/ref-thumb";
 import { useCreativeFormats } from "@/components/creative-formats-provider";
 import { fitsFormat, marketFormatOf } from "@/lib/creative-formats";
-import { Star } from "@/components/saved-concepts";
-import { metaAdId, savedHref, savedKey, SOURCE_LABEL, type SaveInput, type SavedRef, type SavedSource } from "@/lib/saved-references";
+import { dismissSave, findSave, InMotionNote, SaveIdeaStar, seedSaves, useSaves, refreshSaves } from "@/components/save-idea-star";
+import { EmptyState } from "@/components/empty-state";
+import { ideaKeyOf, metaAdId, savedHref, SOURCE_LABEL, type SaveInput, type SavedRef, type SavedSource } from "@/lib/saved-references";
 
 // The new request's first two steps, built like the report builder: pick the client from big cards (recent first,
 // filtered as you type), then "How do you want to start?" as one full-width visual page. Everything on it is already
@@ -47,7 +47,7 @@ export function prefetchStart(clientId: string) {
 /** Read the client's start page again next time (a saved reference was just used up) */
 export function forgetStart(clientId: string) {
   cache.delete(clientId);
-  savedStore.delete(clientId);
+  refreshSaves();
 }
 
 /** Seed the cache with what the server already read (?client= in the address) */
@@ -116,7 +116,10 @@ export async function writeItem(item: PreviewItem, clientId: string, seed: Quick
                   ? await talkRequest(clientId, [...s.turns, { role: "user", text: seedText(seed) }], null, true).then((t): Patched => (!t.ok ? t : t.patch ? { ok: true, patch: { ...t.patch, origin: { kind: "brief", label: "Talked through with the strategist" } } } : { ok: false, error: "The strategist couldn't write it. Try again." }))
                   : { ok: false, error: "That can't be briefed here." };
   if (!r.ok) return r;
-  return { ok: true, patch: item.savedRefId && !item.savedRefId.startsWith("tmp-") ? { ...r.patch, savedRefIds: [item.savedRefId] } : r.patch };
+  // The idea it's built on: once sent, everyone's save of it is marked used
+  const idea = ideaKeyOf(s);
+  const patch = { ...r.patch, ...(idea ? { ideaKeys: [idea] } : {}) };
+  return { ok: true, patch: item.savedRefId && !item.savedRefId.startsWith("tmp-") ? { ...patch, savedRefIds: [item.savedRefId] } : patch };
 }
 
 /** The other briefs of a split, each to be previewed and written on its own (a brief already written becomes an idea) */
@@ -275,7 +278,7 @@ export function ClientPicker({ clients, allotments, onPick }: { clients: ClientO
             const head = g && (i === 0 || paceOf(matches[i - 1]).group !== g) ? { behind: "Behind pace", pace: "On pace", over: "Over their allotment", none: "No allotment set" }[g] : null;
             return (
               <Fragment key={c.id}>
-              {head && <p className={`col-span-full mt-2 text-[11px] font-semibold uppercase tracking-[0.16em] ${g === "over" ? "text-bad" : g === "behind" ? "text-warn" : "text-faint"}`}>{head}</p>}
+              {head && <p className={`col-span-full mt-2 text-[11px] font-semibold uppercase tracking-[0.16em] ${g === "over" ? "text-bad" : g === "behind" ? "text-warn" : g === "pace" ? "text-ok" : "text-faint"}`}>{head}</p>}
               <button
                 type="button"
                 onClick={() => pick(c)}
@@ -313,46 +316,36 @@ const KIND_TINT: Partial<Record<string, string>> = {
   moment: "from-ok/30", pattern: "from-[#5b8def]/35", call: "from-brand/35", offer: "from-brand/35",
 };
 
-// What a star saves, per kind of card
-const saveMarket = (a: MarketAd): SaveInput => ({ source: "market", refId: a.id, url: a.motionUrl ?? a.libraryUrl ?? a.landingUrl, thumbnail: marketStill(a), title: a.angle ?? a.headline ?? "Untitled ad", subtitle: a.brand, format: marketFormat(a), data: { video: marketVideo(a), days: a.daysActive } });
-const saveWinner = (w: Winner): SaveInput => ({ source: "winner", refId: w.id, url: null, thumbnail: w.thumbnail, title: w.headline ?? w.name, subtitle: `${w.client}${w.detail ? ` · ${w.detail}` : ""}`, format: w.format, data: { winner: w, why: w.match?.why ?? null } });
-const savePattern = (p: StartData["patterns"][number]): SaveInput => ({ source: "pattern", refId: p.id, url: null, thumbnail: null, title: p.title, subtitle: p.group, format: null, data: { detail: p.detail } });
-const saveBrief = (b: StartData["briefs"][number]): SaveInput => ({ source: "brief", refId: b.id, url: null, thumbnail: b.thumb, title: b.title || b.signal, subtitle: b.title ? b.signal : null, format: null, data: { adId: b.adId } });
+// What a star saves, per kind of card (each carries the brief source, so a saved one briefs the same way later)
+const saveMarket = (a: MarketAd): SaveInput => ({ source: "market", refId: a.id, url: a.motionUrl ?? a.libraryUrl ?? a.landingUrl, thumbnail: marketStill(a), title: a.angle ?? a.headline ?? "Untitled ad", subtitle: a.brand, format: marketFormat(a), data: { video: marketVideo(a), days: a.daysActive, brief: { kind: "market", adId: a.id, format: marketFormat(a) } } });
+const saveWinner = (w: Winner): SaveInput => ({ source: "winner", refId: w.id, url: null, thumbnail: w.thumbnail, title: w.headline ?? w.name, subtitle: `${w.client}${w.detail ? ` · ${w.detail}` : ""}`, format: w.format, data: { winner: w, why: w.match?.why ?? null, brief: { kind: "winner", winner: winnerSource(w), format: w.format } } });
+const savePattern = (p: StartData["patterns"][number]): SaveInput => ({ source: "pattern", refId: p.id, url: null, thumbnail: null, title: p.title, subtitle: p.group, format: null, data: { detail: p.detail, brief: { kind: "pattern", patternId: p.id } } });
+const saveBrief = (b: StartData["briefs"][number]): SaveInput => ({ source: "brief", refId: b.id, url: null, thumbnail: b.thumb, title: b.title || b.signal, subtitle: b.title ? b.signal : null, format: null, data: { adId: b.adId, brief: { kind: "suggestion", id: b.id } } });
 
-/** Saved for later, per client, kept for the visit: a star shows at once and is confirmed (or undone) after */
-const savedStore = new Map<string, SavedRef[]>();
-function useSaved(clientId: string, loaded: SavedRef[] | undefined) {
-  const [list, setList] = useState<SavedRef[] | null>(() => savedStore.get(clientId) ?? null);
-  const [error, setError] = useState<string | null>(null);
-  const current = list ?? savedStore.get(clientId) ?? loaded ?? [];
-  const put = (next: SavedRef[]) => {
-    savedStore.set(clientId, next);
-    setList(next);
-  };
-  const find = (source: SavedSource, refId: string) => current.find((s) => savedKey(s.source, s.refId) === savedKey(source, refId)) ?? null;
-  const toggle = async (input: SaveInput) => {
-    setError(null);
-    const before = current;
-    const had = find(input.source, input.refId);
-    if (had) {
-      put(before.filter((s) => s !== had));
-      const r = await unsaveReference(clientId, input.source, input.refId).catch(() => ({ ok: false as const, error: "Couldn't remove it. Try again." }));
-      if (!r.ok) {
-        put(before);
-        setError(r.error);
-      }
-      return;
-    }
-    const temp: SavedRef = { ...input, id: `tmp-${input.source}-${input.refId}`, createdAt: new Date().toISOString(), savedBy: null };
-    put([temp, ...before]);
-    const r = await saveReference(clientId, input).catch(() => ({ ok: false as const, error: "Couldn't save it. Try again." }));
-    const now = savedStore.get(clientId) ?? [];
-    if (!r.ok) {
-      put(now.filter((s) => s.id !== temp.id));
-      setError(r.error);
-    } else put(now.map((s) => (s.id === temp.id ? r.ref : s)));
-  };
-  return { saved: current, find, toggle, error };
+/** The AI label a brief from each kind of source is timed by */
+const PROGRESS: Partial<Record<BriefSource["kind"], string>> = {
+  winner: "brief from a winner+brief self-review",
+  market: "brief from a market ad+brief self-review",
+  pattern: "brief from a pattern+brief self-review",
+  suggestion: "brief rewrite from a preview+brief self-review",
+  promise: "brief from a call+brief self-review",
+  idea: "brief from an idea+brief self-review",
+};
+
+/** The brief a saved idea is briefed from here (a tiring ad's refresh becomes an idea in words: the form writes ideas) */
+function savedSource(s: SavedRef): BriefSource | null {
+  const b = s.data.brief as BriefSource | undefined;
+  if (b && typeof b === "object" && "kind" in b) {
+    if (b.kind === "refresh") return { kind: "idea", label: `A refresh for a tiring ad: ${s.title ?? "an ad"}`.slice(0, 200), text: `Refresh this tiring ad with a new hook or visual, same idea: ${s.title ?? ""}` };
+    return b.kind === "talk" ? null : b;
+  }
+  // Saved before stars carried their brief
+  if (s.source === "market") return { kind: "market", adId: s.refId, format: s.format ?? undefined };
+  if (s.source === "winner" && s.data.winner) return { kind: "winner", winner: winnerSource(s.data.winner as Winner), format: s.format ?? undefined };
+  if (s.source === "pattern") return { kind: "pattern", patternId: s.refId };
+  if (s.source === "brief") return { kind: "suggestion", id: s.refId };
+  if (s.source === "promise") return { kind: "promise", commitmentId: s.refId };
+  return null;
 }
 
 export function StartPage({
@@ -375,22 +368,30 @@ export function StartPage({
   onTalk: () => void;
 }) {
   const { data, failed } = useStart(clientId);
-  const { saved: savedAll, find, toggle, error: saveError } = useSaved(clientId, data?.saved);
+  // This person's saves (every star on the page shares them); what the server read shows until they're in
+  const everything = useSaves();
+  useEffect(() => {
+    if (data?.saved) seedSaves(clientId, data.saved);
+  }, [data, clientId]);
+  const mine = everything ?? data?.saved ?? [];
   // Read for this person's formats on the server already; a star added here keeps to them too
   const allowed = useCreativeFormats();
-  const saved = savedAll.filter((s) => fitsFormat(allowed, s.format));
-  const star = (input: SaveInput) => ({ on: Boolean(find(input.source, input.refId)), onToggle: () => void toggle(input) });
+  const saved = mine.filter((s) => s.clientId === clientId && fitsFormat(allowed, s.format));
+  const find = (source: SavedSource, refId: string) => findSave(mine, clientId, { source, refId });
+  const star = (input: SaveInput) => <SaveIdeaStar idea={input} clientId={clientId} clientName={clientName} variant="overlay" />;
   // A brief from a card: its quick preview first. When the card is saved, the request it becomes uses it up
-  const savedId = (from: SavedRef | null) => (from && !from.id.startsWith("tmp-") ? from.id : null);
+  const savedId = (from: SavedRef | null) => (from && !from.id.startsWith("tmp-") && !from.motion ? from.id : null);
 
   const briefFromSaved = (s: SavedRef) => {
-    const fmt = s.format ?? undefined;
-    const from = { kicker: SOURCE_LABEL[s.source], label: s.title ?? "Saved reference", thumb: s.thumbnail, adId: metaAdId(s), format: s.format ?? null };
-    const base = { key: `sv-${s.id}`, from, savedRefId: savedId(s) };
-    if (s.source === "market") return onPreview({ ...base, source: { kind: "market", adId: s.refId, format: fmt }, progressLabel: "brief from a market ad+brief self-review" });
-    if (s.source === "winner" && s.data.winner) return onPreview({ ...base, source: { kind: "winner", winner: winnerSource(s.data.winner as Winner), format: fmt }, progressLabel: "brief from a winner+brief self-review" });
-    if (s.source === "pattern") return onPreview({ ...base, source: { kind: "pattern", patternId: s.refId }, progressLabel: "brief from a pattern+brief self-review" });
-    if (s.source === "brief") return onPreview({ ...base, source: { kind: "suggestion", id: s.refId }, progressLabel: "brief rewrite from a preview+brief self-review" });
+    const source = savedSource(s);
+    if (!source) return;
+    onPreview({
+      key: `sv-${s.id}`,
+      source,
+      from: { kicker: SOURCE_LABEL[s.source], label: s.title ?? "Saved idea", thumb: s.thumbnail, adId: metaAdId(s), format: s.format ?? null },
+      progressLabel: PROGRESS[source.kind] ?? "brief from an idea+brief self-review",
+      savedRefId: savedId(s),
+    });
   };
 
   // In the market: a page at a time, "See more" brings the next
@@ -413,204 +414,211 @@ export function StartPage({
     (data?.winners.length ?? 1) > 0
       ? `What's proven for businesses like them and winning ads from accounts selling the same thing or in the same niche${what ? ` as ${what}` : ""}. Each card says why it matched.`
       : `What's proven across businesses like them. No winning ads yet from clients selling what ${clientName} sells${what ? ` (${what})` : ""} or in the same niche, so none are shown.`;
+  const marketHref = `/market?client=${clientId}`;
 
   // The owner's rule: winners only from clients selling the same thing or in the same niche. When there are none, no
-  // winners section: lead with what we promised and the market instead (patterns stay, they're proven across the group)
+  // winners section: lead with what we promised instead (patterns stay, they're proven across the group). Either way
+  // the critical ones come first (promises, what's wearing out), then what this person saved, then ideas to browse
   const winnersHere = loading || (data?.winners.length ?? 0) > 0;
-  const num = winnersHere ? { fix: "01", similar: "02", market: "03" } : { market: "01", fix: "02", similar: "03" };
+  const showSimilar = winnersHere || (data?.patterns.length ?? 0) > 0;
+  const order: ("fix" | "promises" | "saved" | "similar" | "market")[] = winnersHere ? ["fix", "promises", "saved", "similar", "market"] : ["promises", "fix", "saved", "market", "similar"];
+  const numbered = order.filter((k) => k !== "promises" && (k !== "similar" || showSimilar));
+  const num = (k: (typeof order)[number]) => String(numbered.indexOf(k) + 1).padStart(2, "0");
+
   const fixSection = (
-        <Section n={num.fix} title="Fix what's wearing out or off" sub={`Briefs the strategist already wrote for ${clientName}: ads tiring, numbers off, moments coming up.`} loading={loading} empty="Nothing wearing out or off for them right now." count={data?.briefs.length ?? 0}>
-          {(data?.briefs ?? []).map((b) => (
-            <Card
-              key={b.id}
-              thumb={b.thumb}
-              adId={b.adId}
-              tint={KIND_TINT[b.kind]}
-              fallback={b.signal}
-              chip={KIND_LABEL[b.kind as SuggestionKind] ?? b.kind}
-              tone={["fatigue", "refresh"].includes(b.kind) ? "warn" : ["kpi", "flop", "unhappy", "pacing"].includes(b.kind) ? "bad" : "brand"}
-              title={b.title || b.signal}
-              signal={b.title ? b.signal : null}
-              why={b.why}
-              foot={b.formats}
-              busy={false}
-              disabled={false}
-              action="Brief on this"
-              onClick={() => onPreview({ key: `s-${b.id}`, source: { kind: "suggestion", id: b.id }, from: { kicker: KIND_LABEL[b.kind as SuggestionKind] ?? "Suggested brief", label: b.signal, thumb: b.thumb, adId: b.adId }, progressLabel: "brief rewrite from a preview+brief self-review", savedRefId: savedId(find("brief", b.id)) })}
-              star={star(saveBrief(b))}
-            />
-          ))}
-        </Section>
+    <Section
+      n={num("fix")}
+      title="Fix what's wearing out or off"
+      sub={`Briefs the strategist already wrote for ${clientName}: ads tiring, numbers off, moments coming up.`}
+      loading={loading}
+      empty={<EmptyState title="All clear" line={`nothing tiring or off for ${clientName} right now`} />}
+      count={data?.briefs.length ?? 0}
+    >
+      {(data?.briefs ?? []).map((b) => (
+        <Card
+          key={b.id}
+          thumb={b.thumb}
+          adId={b.adId}
+          tint={KIND_TINT[b.kind]}
+          fallback={b.signal}
+          chip={KIND_LABEL[b.kind as SuggestionKind] ?? b.kind}
+          tone={["fatigue", "refresh"].includes(b.kind) ? "warn" : ["kpi", "flop", "unhappy", "pacing"].includes(b.kind) ? "bad" : "brand"}
+          title={b.title || b.signal}
+          signal={b.title ? b.signal : null}
+          why={b.why}
+          foot={b.formats}
+          busy={false}
+          disabled={false}
+          action="Brief on this"
+          onClick={() => onPreview({ key: `s-${b.id}`, source: { kind: "suggestion", id: b.id }, from: { kicker: KIND_LABEL[b.kind as SuggestionKind] ?? "Suggested brief", label: b.signal, thumb: b.thumb, adId: b.adId }, progressLabel: "brief rewrite from a preview+brief self-review", savedRefId: savedId(find("brief", b.id)) })}
+          star={star(saveBrief(b))}
+        />
+      ))}
+    </Section>
   );
-  const promisesStrip = data && data.promises.length > 0 ? <div className={winnersHere ? "-mt-4" : ""}>{promises(data.promises)}</div> : null;
-  const similarSection = winnersHere || (data?.patterns.length ?? 0) > 0 ? (
-        <Section n={num.similar} title={winnersHere ? "Working for similar clients" : "Proven for businesses like them"} sub={similarSub} loading={loading} empty={`Nothing proven yet for businesses like ${clientName}.`} count={similar}>
-          {(data?.patterns ?? []).map((p) => (
-            <Card
-              key={`p-${p.id}`}
-              thumb={null}
-              tint="from-[#5b8def]/35"
-              fallback={p.title}
-              chip={`Works for ${p.clients} of ${p.of}`}
-              tone="ok"
-              title={p.title}
-              signal={p.group}
-              why={p.detail}
-              foot={p.uses ? "They already use it" : "Not using it yet"}
-              busy={false}
-              disabled={!aiOn}
-              action="Brief on this"
-              onClick={() => onPreview({ key: `p-${p.id}`, source: { kind: "pattern", patternId: p.id }, from: { kicker: `Works for ${p.clients} of ${p.of}`, label: p.title }, progressLabel: "brief from a pattern+brief self-review", savedRefId: savedId(find("pattern", p.id)) })}
-              star={star(savePattern(p))}
-            />
-          ))}
-          {(data?.winners ?? []).map((w: Winner) => (
-            <Card
-              key={`w-${w.id}`}
-              thumb={w.thumbnail}
-              adId={w.id}
-              ratio="4/5"
-              chip={`${w.ratio}x their usual`}
-              tone="ok"
-              format={w.format}
-              title={w.headline ?? w.name}
-              signal={w.client}
-              match={w.match ? { text: w.match.why, close: true } : null}
-              why={w.text ? w.text.slice(0, 180) : null}
-              foot={w.result ? `Beat their usual cost per ${w.result}` : ""}
-              busy={false}
-              disabled={!aiOn}
-              action="Brief on this"
-              onClick={() => onPreview({ key: `w-${w.id}`, source: { kind: "winner", winner: winnerSource(w), format: w.format }, from: { kicker: `A winner · ${w.ratio}x their usual`, label: w.headline ?? w.name, thumb: w.thumbnail, adId: w.id, format: w.format }, progressLabel: "brief from a winner+brief self-review", savedRefId: savedId(find("winner", w.id)) })}
-              star={star(saveWinner(w))}
-            />
-          ))}
-        </Section>
+  const promisesStrip = !data ? null : (
+    <div className={order[0] === "promises" ? "" : "-mt-4"}>
+      {data.promises.length > 0 ? promises(data.promises) : <EmptyState title="Nothing promised and waiting" line={`every promise from ${clientName}'s calls is in motion`} />}
+    </div>
+  );
+  const savedSection = (
+    <section className="grid min-w-0 gap-5">
+      <SectionHead n={num("saved")} title="Things you've saved" sub={`Ideas you starred for ${clientName} anywhere in the app, not briefed yet. When someone else briefs one, it says who has it.`} count={saved.length} />
+      {saved.length ? (
+        <Carousel label="Things you've saved">
+          {saved.map((s) => {
+            const source = savedSource(s);
+            const canBrief = Boolean(source) && (aiOn || source?.kind === "suggestion");
+            return (
+              <Card
+                key={`sv-${s.id}`}
+                fixed
+                thumb={s.thumbnail}
+                adId={metaAdId(s)}
+                video={typeof s.data.video === "string" ? s.data.video : null}
+                ratio={s.thumbnail || metaAdId(s) || s.data.video ? "4/5" : "16/11"}
+                tint={s.source === "pattern" ? "from-[#5b8def]/35" : s.source === "fatigue" ? "from-warn/35" : s.source === "audit_idea" || s.source === "ai" ? "from-brand/30" : undefined}
+                fallback={s.title ?? undefined}
+                chip={SOURCE_LABEL[s.source]}
+                tone={s.motion ? "ok" : "neutral"}
+                format={s.format ?? undefined}
+                title={s.title ?? "Untitled"}
+                signal={s.subtitle}
+                why={typeof s.data.why === "string" ? s.data.why : typeof s.data.detail === "string" ? s.data.detail : null}
+                foot={s.motion ? "" : `Saved ${new Date(s.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`}
+                busy={false}
+                disabled={!canBrief || s.id.startsWith("tmp-")}
+                action="Brief on this"
+                onClick={() => briefFromSaved(s)}
+                notice={s.motion ? <InMotionNote s={s} onDismiss={() => void dismissSave(s.id)} /> : null}
+                star={s.motion ? null : star(s)}
+                link={savedHref(s)}
+              />
+            );
+          })}
+        </Carousel>
+      ) : (
+        <EmptyState tone="neutral" icon="star" title="Nothing saved yet" line={`star an idea anywhere (the market, winners, audits) and it waits here for ${clientName}`} action={{ label: "Browse in the market", href: marketHref }} />
+      )}
+    </section>
+  );
+  const similarSection = showSimilar ? (
+    <Section
+      n={num("similar")}
+      title={winnersHere ? "Working for similar clients" : "Proven for businesses like them"}
+      sub={similarSub}
+      loading={loading}
+      empty={<EmptyState tone="neutral" icon="spark" title="Nothing proven yet" line={`for businesses like ${clientName}; their market has fresh ideas meanwhile`} action={{ label: "Browse in the market", href: marketHref }} />}
+      count={similar}
+    >
+      {(data?.patterns ?? []).map((p) => (
+        <Card
+          key={`p-${p.id}`}
+          thumb={null}
+          tint="from-[#5b8def]/35"
+          fallback={p.title}
+          chip={`Works for ${p.clients} of ${p.of}`}
+          tone="ok"
+          title={p.title}
+          signal={p.group}
+          why={p.detail}
+          foot={p.uses ? "They already use it" : "Not using it yet"}
+          busy={false}
+          disabled={!aiOn}
+          action="Brief on this"
+          onClick={() => onPreview({ key: `p-${p.id}`, source: { kind: "pattern", patternId: p.id }, from: { kicker: `Works for ${p.clients} of ${p.of}`, label: p.title }, progressLabel: "brief from a pattern+brief self-review", savedRefId: savedId(find("pattern", p.id)) })}
+          star={star(savePattern(p))}
+        />
+      ))}
+      {(data?.winners ?? []).map((w: Winner) => (
+        <Card
+          key={`w-${w.id}`}
+          thumb={w.thumbnail}
+          adId={w.id}
+          ratio="4/5"
+          chip={`${w.ratio}x their usual`}
+          tone="ok"
+          format={w.format}
+          title={w.headline ?? w.name}
+          signal={w.client}
+          match={w.match ? { text: w.match.why, close: true } : null}
+          why={w.text ? w.text.slice(0, 180) : null}
+          foot={w.result ? `Beat their usual cost per ${w.result}` : ""}
+          busy={false}
+          disabled={!aiOn}
+          action="Brief on this"
+          onClick={() => onPreview({ key: `w-${w.id}`, source: { kind: "winner", winner: winnerSource(w), format: w.format }, from: { kicker: `A winner · ${w.ratio}x their usual`, label: w.headline ?? w.name, thumb: w.thumbnail, adId: w.id, format: w.format }, progressLabel: "brief from a winner+brief self-review", savedRefId: savedId(find("winner", w.id)) })}
+          star={star(saveWinner(w))}
+        />
+      ))}
+    </Section>
   ) : null;
   const marketSection = (
-        <section className="grid min-w-0 gap-5">
-          <SectionHead
-            n={num.market}
-            title="In the market"
-            sub={`Live ads from their competitors and brands like them${data?.marketLabel ? ` in ${data.marketLabel.toLowerCase()}` : ""}, from Motion: the longest running, and new ones live 14+ days. Star one to save it for ${clientName}.`}
-            count={loading ? undefined : market.length}
-          />
-          {loading ? (
-            <Skeleton />
-          ) : market.length ? (
-            <Carousel label="Market ads">
-              {market.map((a) => (
-                <Card
-                  key={`m-${a.id}`}
-                  fixed
-                  thumb={marketStill(a)}
-                  video={marketVideo(a)}
-                  ratio="4/5"
-                  chip={a.daysActive != null ? `Live ${a.daysActive} days` : "Live"}
-                  tone="neutral"
-                  format={marketFormat(a)}
-                  title={a.angle ?? a.headline ?? "Untitled ad"}
-                  signal={a.brand}
-                  match={a.matchWhy ? { text: a.matchWhy, close: (a.matchScore ?? 0) >= 7 } : null}
-                  why={a.why ?? null}
-                  foot=""
-                  busy={false}
-                  disabled={!aiOn}
-                  action="Brief on this"
-                  onClick={() => onPreview({ key: `m-${a.id}`, source: { kind: "market", adId: a.id, format: marketFormat(a) }, from: { kicker: `In the market · ${a.brand}`, label: a.angle ?? a.headline ?? "A live ad", thumb: marketStill(a), format: marketFormat(a) }, progressLabel: "brief from a market ad+brief self-review", savedRefId: savedId(find("market", a.id)) })}
-                  star={star(saveMarket(a))}
-                  link={a.motionUrl ?? a.libraryUrl}
-                />
-              ))}
-              {marketMore && (
-                <button
-                  type="button"
-                  onClick={() => void seeMore()}
-                  disabled={loadingMore}
-                  className="grid w-[60vw] max-w-[220px] shrink-0 snap-start place-items-center rounded-[22px] border border-dashed border-line bg-surface text-[14px] text-muted transition hover:border-faint hover:text-fg sm:w-[220px]"
-                >
-                  <span className="grid justify-items-center gap-2">
-                    <span className={`grid h-11 w-11 place-items-center rounded-full bg-surface-2 text-[18px] ${loadingMore ? "animate-pulse" : ""}`}>+</span>
-                    {loadingMore ? "Loading more…" : "See more"}
-                  </span>
-                </button>
-              )}
-            </Carousel>
-          ) : (
-            <p className="rounded-[18px] border border-dashed border-line px-4 py-8 text-center text-sm text-faint">No market ads matched to them yet.</p>
+    <section className="grid min-w-0 gap-5">
+      <SectionHead
+        n={num("market")}
+        title="In the market"
+        sub={`Live ads from their competitors and brands like them${data?.marketLabel ? ` in ${data.marketLabel.toLowerCase()}` : ""}, from Motion: the longest running, and new ones live 14+ days. Star one to save it for ${clientName}.`}
+        count={loading ? undefined : market.length}
+      />
+      {loading ? (
+        <Skeleton />
+      ) : market.length ? (
+        <Carousel label="Market ads">
+          {market.map((a) => (
+            <Card
+              key={`m-${a.id}`}
+              fixed
+              thumb={marketStill(a)}
+              video={marketVideo(a)}
+              ratio="4/5"
+              chip={a.daysActive != null ? `Live ${a.daysActive} days` : "Live"}
+              tone="neutral"
+              format={marketFormat(a)}
+              title={a.angle ?? a.headline ?? "Untitled ad"}
+              signal={a.brand}
+              match={a.matchWhy ? { text: a.matchWhy, close: (a.matchScore ?? 0) >= 7 } : null}
+              why={a.why ?? null}
+              foot=""
+              busy={false}
+              disabled={!aiOn}
+              action="Brief on this"
+              onClick={() => onPreview({ key: `m-${a.id}`, source: { kind: "market", adId: a.id, format: marketFormat(a) }, from: { kicker: `In the market · ${a.brand}`, label: a.angle ?? a.headline ?? "A live ad", thumb: marketStill(a), format: marketFormat(a) }, progressLabel: "brief from a market ad+brief self-review", savedRefId: savedId(find("market", a.id)) })}
+              star={star(saveMarket(a))}
+              link={a.motionUrl ?? a.libraryUrl}
+            />
+          ))}
+          {marketMore && (
+            <button
+              type="button"
+              onClick={() => void seeMore()}
+              disabled={loadingMore}
+              className="grid w-[60vw] max-w-[220px] shrink-0 snap-start place-items-center rounded-[22px] border border-line bg-surface text-[14px] text-muted transition hover:border-faint hover:text-fg sm:w-[220px]"
+            >
+              <span className="grid justify-items-center gap-2">
+                <span className={`grid h-11 w-11 place-items-center rounded-full bg-surface-2 text-[18px] ${loadingMore ? "animate-pulse" : ""}`}>+</span>
+                {loadingMore ? "Loading more…" : "See more"}
+              </span>
+            </button>
           )}
-        </section>
+        </Carousel>
+      ) : (
+        <EmptyState tone="neutral" icon="calm" title="No market ads matched yet" line="Motion is still finding brands like them" action={{ label: "Browse the whole market", href: "/market" }} />
+      )}
+    </section>
   );
+  const sections = { fix: fixSection, promises: promisesStrip, saved: savedSection, similar: similarSection, market: marketSection };
 
   return (
     <div className="grid min-w-0 gap-12">
-      {saveError && <p className="rounded-[14px] border border-bad/30 bg-bad-soft px-4 py-3 text-sm text-bad">{saveError}</p>}
       {failed && <p className="rounded-[14px] border border-line px-4 py-3 text-sm text-muted">Couldn&rsquo;t load the ready-made briefs. You can still create your own below.</p>}
 
-      {saved.length > 0 && (
-        <section className="grid min-w-0 gap-4">
-          <div className="flex items-end justify-between gap-4">
-            <div className="grid min-w-0 gap-1">
-              <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.2em] text-warn">
-                <Star on size={12} /> Saved
-              </span>
-              <h2 className="font-heading text-[22px] leading-tight tracking-tight">Saved for {clientName}</h2>
-              <p className="max-w-2xl text-[14px] text-muted">References the team starred to use. They show on {clientName}&rsquo;s tickets too, and leave this list once a brief is made from one.</p>
-            </div>
-            <span className="shrink-0 rounded-full bg-surface-2 px-3 py-1 text-[12px] tabular text-muted">{saved.length}</span>
-          </div>
-          <Carousel label="Saved references">
-            {saved.map((s) => {
-              const href = savedHref(s);
-              const canBrief = aiOn || s.source === "brief";
-              return (
-                <Card
-                  key={`sv-${s.id}`}
-                  fixed
-                  thumb={s.thumbnail}
-                  adId={metaAdId(s)}
-                  video={typeof s.data.video === "string" ? s.data.video : null}
-                  ratio={s.thumbnail || metaAdId(s) || s.data.video ? "4/5" : "16/11"}
-                  tint={s.source === "pattern" ? "from-[#5b8def]/35" : undefined}
-                  fallback={s.title ?? undefined}
-                  chip={SOURCE_LABEL[s.source]}
-                  tone="neutral"
-                  format={s.format ?? undefined}
-                  title={s.title ?? "Untitled"}
-                  signal={s.subtitle}
-                  why={typeof s.data.why === "string" ? s.data.why : typeof s.data.detail === "string" ? s.data.detail : null}
-                  foot={s.savedBy ? `Saved by ${s.savedBy.split(" ")[0]}` : ""}
-                  busy={false}
-                  disabled={!canBrief || s.id.startsWith("tmp-") || (s.source === "winner" && !s.data.winner)}
-                  action="Brief on this"
-                  onClick={() => void briefFromSaved(s)}
-                  star={{ on: true, onToggle: () => void toggle(s) }}
-                  link={href}
-                />
-              );
-            })}
-          </Carousel>
-        </section>
-      )}
-
-      {winnersHere ? (
-        <>
-          {fixSection}
-          {promisesStrip}
-          {similarSection}
-          {marketSection}
-        </>
-      ) : (
-        <>
-          {promisesStrip}
-          {marketSection}
-          {fixSection}
-          {similarSection}
-        </>
-      )}
+      {order.map((k) => (
+        <Fragment key={k}>{sections[k]}</Fragment>
+      ))}
 
       <section className="grid gap-5">
-        <SectionHead n="04" title="Create your own" sub="Write the brief yourself, or talk the idea through with the strategist and it writes it with you." />
+        <SectionHead n={String(numbered.length + 1).padStart(2, "0")} title="Create your own" sub="Write the brief yourself, or talk the idea through with the strategist and it writes it with you." />
         <div className="grid gap-4 md:grid-cols-2">
           <button type="button" onClick={onManual} className="group grid min-h-[200px] content-between gap-6 rounded-[24px] border border-line bg-surface p-6 text-left transition hover:-translate-y-0.5 hover:border-faint md:p-7">
             <span className="grid h-12 w-12 place-items-center rounded-[14px] bg-surface-2 text-[22px]">✎</span>
@@ -660,7 +668,7 @@ function Skeleton() {
   );
 }
 
-function Section({ n, title, sub, loading, empty, count, children }: { n: string; title: string; sub: string; loading: boolean; empty: string; count: number; children: React.ReactNode }) {
+function Section({ n, title, sub, loading, empty, count, children }: { n: string; title: string; sub: string; loading: boolean; empty: React.ReactNode; count: number; children: React.ReactNode }) {
   return (
     <section className="grid min-w-0 gap-5">
       <SectionHead n={n} title={title} sub={sub} count={loading ? undefined : count} />
@@ -670,7 +678,7 @@ function Section({ n, title, sub, loading, empty, count, children }: { n: string
         // Phones: one row that scrolls sideways; larger screens: a grid
         <div className="-mx-4 flex snap-x snap-mandatory gap-4 overflow-x-auto px-4 pb-2 sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 lg:grid-cols-3">{children}</div>
       ) : (
-        <p className="rounded-[18px] border border-dashed border-line px-4 py-8 text-center text-sm text-faint">{empty}</p>
+        empty
       )}
     </section>
   );
@@ -736,6 +744,7 @@ function Card({
   action,
   onClick,
   star,
+  notice,
   link,
   fixed = false,
 }: {
@@ -759,7 +768,10 @@ function Card({
   disabled: boolean;
   action: string;
   onClick: () => void;
-  star?: { on: boolean; onToggle: () => void };
+  /** Save for later (a SaveIdeaStar), top right of the picture */
+  star?: React.ReactNode;
+  /** In place of the action: "already in motion by ..." */
+  notice?: React.ReactNode;
   /** Where to see it full size (Motion, the Ad Library) */
   link?: string | null;
   /** A set width, for a sideways row */
@@ -771,18 +783,7 @@ function Card({
       <div className={`relative w-full overflow-hidden bg-gradient-to-br ${tint ?? "from-surface-2"} to-surface-2 ${media && ratio === "4/5" ? "aspect-[4/5]" : "aspect-[16/11]"}`}>
         {media ? <RefThumb src={thumb} adId={adId} video={video} format={format} /> : <span className="absolute inset-0 grid place-items-center px-7 text-center font-heading text-[19px] leading-snug text-fg/85">{fallback ?? title}</span>}
         <span className={`absolute left-3 top-3 max-w-[64%] truncate rounded-full px-2.5 py-1 text-[11px] font-semibold ${TONE[tone]}`}>{chip}</span>
-        {star && (
-          <button
-            type="button"
-            onClick={star.onToggle}
-            aria-pressed={star.on}
-            aria-label={star.on ? "Saved. Remove from saved" : "Save for later"}
-            title={star.on ? "Saved for this client" : "Save for later"}
-            className={`absolute right-2 top-2 grid h-11 w-11 place-items-center rounded-full backdrop-blur transition ${star.on ? "bg-black/70" : "bg-black/45 text-white hover:bg-black/70"}`}
-          >
-            <Star on={star.on} size={18} />
-          </button>
-        )}
+        {star && <span className="absolute right-2 top-2">{star}</span>}
         {format && <span className="absolute bottom-3 left-3 rounded-full bg-black/65 px-2.5 py-1 text-[11px] text-white backdrop-blur">{FMT[format]}</span>}
         {link && (
           <a href={link} target="_blank" rel="noreferrer" className="absolute bottom-2 right-2 grid h-11 min-w-11 place-items-center rounded-full bg-black/55 px-3 text-[12px] text-white opacity-100 backdrop-blur transition hover:bg-black/75 md:opacity-0 md:group-hover:opacity-100 md:focus:opacity-100">
@@ -802,14 +803,16 @@ function Card({
         {why && <p className="line-clamp-3 text-[13px] leading-relaxed text-muted">{why}</p>}
         <div className="mt-auto grid gap-2 pt-3">
           {foot && <p className="text-[12px] text-faint">{foot}</p>}
-          <button
-            type="button"
-            onClick={onClick}
-            disabled={disabled}
-            className={`min-h-11 rounded-full px-4 text-[14px] font-medium transition-colors ${busy ? "bg-brand-soft text-brand-text" : "bg-fg text-bg hover:opacity-90 disabled:opacity-40"}`}
-          >
-            {action}
-          </button>
+          {notice ?? (
+            <button
+              type="button"
+              onClick={onClick}
+              disabled={disabled}
+              className={`min-h-11 rounded-full px-4 text-[14px] font-medium transition-colors ${busy ? "bg-brand-soft text-brand-text" : "bg-fg text-bg hover:opacity-90 disabled:opacity-40"}`}
+            >
+              {action}
+            </button>
+          )}
         </div>
       </div>
     </article>

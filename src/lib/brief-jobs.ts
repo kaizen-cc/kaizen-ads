@@ -160,6 +160,14 @@ export async function runBriefJob(admin: SupabaseClient, id: string) {
   const kind = job.kind as BriefJobKind;
   try {
     const sid = await writeJob(admin, kind, job.client_id as string, job.profile_id as string, input);
+    // An idea with no id of its own (an audit's idea, a Kaizen AI card): kept on the brief, so sending it marks every
+    // person's save of that idea used
+    if (input.source?.kind === "idea") {
+      const { ideaKeyOf } = await import("@/lib/saved-references");
+      const k = ideaKeyOf(input.source);
+      const { data: row } = await admin.from("creative_suggestions").select("source").eq("id", sid).maybeSingle();
+      if (k && row) await admin.from("creative_suggestions").update({ source: { ...((row.source as Record<string, unknown> | null) ?? {}), savedKey: k } }).eq("id", sid);
+    }
     const s = await loadSuggestion(admin, sid);
     await admin.from("brief_jobs").update({ status: "ready", suggestion_id: sid, finished_at: new Date().toISOString(), title: s?.draft.title ?? job.title }).eq("id", id);
     await notify(admin, [job.profile_id as string], {

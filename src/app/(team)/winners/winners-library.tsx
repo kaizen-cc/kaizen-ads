@@ -11,6 +11,8 @@ import { FilterMenu, FilterPill } from "@/components/filters";
 import { FormatScope } from "@/components/format-scope";
 import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
 import { QuickBriefSheet } from "@/components/quick-brief-sheet";
+import { SaveIdeaStar } from "@/components/save-idea-star";
+import type { SaveInput } from "@/lib/saved-references";
 import { matchPeers, winnerRelevant, type PeerInfo, type PeerMatch, type VerticalInfo } from "@/lib/peer-match";
 import { FbPreview, InsightPanel, useAd, useInsight } from "./fb-preview";
 
@@ -22,6 +24,12 @@ export type PeerContext = { peers: PeerInfo[]; verticals: VerticalInfo[] };
  * The clients a winner from `owner` may be briefed for (the owner's rule): those selling the same thing or in the same
  * sub-vertical, closest first. Never only the same broad industry.
  */
+/** What a star on a winning ad saves: the ad, how it looks, and the brief it becomes for the client it's saved for */
+export function saveWinnerAd(w: Winner): SaveInput {
+  const winner = { adId: w.id, client: w.client, detail: w.detail, headline: w.headline, text: w.text, thumbnail: w.thumbnail, ratio: w.ratio, result: w.result, costPerResult: w.costPerResult, usual: w.usual };
+  return { source: "winner", refId: w.id, url: null, thumbnail: w.thumbnail, title: w.headline ?? w.name, subtitle: `${w.client}${w.detail ? ` · ${w.detail}` : ""}`, format: w.format, data: { winner: w, brief: { kind: "winner", winner, format: w.format } } };
+}
+
 export function relevantClients(owner: string, clients: PickClient[], match: PeerContext): { c: PickClient; m: PeerMatch }[] {
   const o = match.peers.find((p) => p.id === owner);
   if (!o) return [];
@@ -242,8 +250,8 @@ export function WinnersLibrary({ winners, industries, clients, scope, match }: {
           ) : (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
               {shown.map((w) => (
+                <div key={`${w.clientId}:${w.id}`} className="relative min-w-0">
                 <button
-                  key={`${w.clientId}:${w.id}`}
                   onClick={() => {
                     setHover(null);
                     setOpen(w);
@@ -260,7 +268,7 @@ export function WinnersLibrary({ winners, industries, clients, scope, match }: {
                     )}
                     <span className="absolute left-2 top-2 rounded-full bg-ok px-2 py-0.5 text-[11px] font-semibold text-white shadow">{w.ratio}x</span>
                     {w.live && (
-                      <span className="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-[10px] text-white backdrop-blur">
+                      <span className="absolute bottom-2 left-2 flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-[10px] text-white backdrop-blur">
                         <span className="h-1.5 w-1.5 rounded-full bg-ok" />
                         Live
                       </span>
@@ -276,6 +284,10 @@ export function WinnersLibrary({ winners, industries, clients, scope, match }: {
                     </span>
                   </span>
                 </button>
+                <span className="absolute right-3.5 top-3.5 z-10">
+                  <SaveIdeaStar idea={saveWinnerAd(w)} clientId={forClient?.id ?? null} clientName={forClient?.name} variant="overlay" size="sm" />
+                </span>
+                </div>
               ))}
             </div>
           )}
@@ -389,7 +401,8 @@ function WinnerSheet({ w, industryLabel, clients, match, onClose }: { w: Winner;
               {w.live === true ? "Running now" : w.live === false ? "Not delivering right now" : "Delivery status not known yet"} · Meta sync of {synced}
             </p>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <SaveIdeaStar idea={saveWinnerAd(w)} />
               <button onClick={() => setStep("pick")} className="hidden h-10 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:brightness-110 md:block">
                 Brief a client on this
               </button>

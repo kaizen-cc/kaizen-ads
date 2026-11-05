@@ -1,4 +1,5 @@
 import type { Format, Priority } from "@/lib/stages";
+import type { IdeaKey } from "@/lib/saved-references";
 
 export type Size = "1x1" | "4x5" | "9x16";
 /** The sizes new work is made in: 4:5 (feed) and 9:16 (Stories, Reels). Kaizen stopped designing 1:1 on Oct 26, 2026; "1x1" stays
@@ -26,6 +27,7 @@ export type Draft = {
   origin?: Origin | null; // what it's built on (a winner, a market ad, a promise from a call)
   migration?: Migration | null; // coming over from Asana: the stage it lands in and what that stage needs
   savedRefIds?: string[]; // saved references it's built on: marked used (and out of Saved) once it's sent
+  ideaKeys?: IdeaKey[]; // the ideas it's built on (a market ad, a pattern, an audit's idea): everyone's save of them is marked used once it's sent
 };
 
 /** An Asana task becoming a ticket: it lands in the stage it reached, with what that stage needs filled in. */

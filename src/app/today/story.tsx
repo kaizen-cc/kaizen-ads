@@ -608,7 +608,7 @@ function Overview({ i, status, dive, onChoose, onAct, onNext }: { i: TodayItem; 
         ) : i.action.brief && i.clientId ? (
           // Its quick preview right here (light, over the story); the full brief only if they choose it
           <span className="contents [color-scheme:normal]">
-            <BriefPreviewButton previewKey={`today-${i.key}`.slice(0, 80)} clientId={i.clientId} source={i.action.brief.source} from={i.action.brief.from} className={primary}>
+            <BriefPreviewButton previewKey={`today-${i.key}`.slice(0, 80)} clientId={i.clientId} source={i.action.brief.source} from={i.action.brief.from} className={primary} star="dark" wrapClassName="inline-flex items-center gap-2">
               {i.action.label}
             </BriefPreviewButton>
           </span>

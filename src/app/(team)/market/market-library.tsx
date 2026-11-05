@@ -11,6 +11,9 @@ import { QuickBriefSheet } from "@/components/quick-brief-sheet";
 import { useCreativeFormats } from "@/components/creative-formats-provider";
 import { FormatScope } from "@/components/format-scope";
 import { MarketHoverCard, MarketPreview, MarketReadPanel, useMarketRead } from "./market-preview";
+import { SaveIdeaStar } from "@/components/save-idea-star";
+import { marketFormatOf } from "@/lib/creative-formats";
+import type { SaveInput } from "@/lib/saved-references";
 
 type View = "all" | "proven" | "early" | "fresh" | "testing";
 const VIEWS: [View, string, string][] = [
@@ -22,6 +25,22 @@ const VIEWS: [View, string, string][] = [
 ];
 const FORMATS = ["image", "video", "carousel"] as const;
 const WRITING = ["Reading why this ad works", "Reading the client: brand, offer, memory, allotment", "Translating the angle and the hook", "Writing the concepts", "Fitting formats to what's left this month"];
+
+/** What a star on a market ad saves: the ad, how it looks, and the brief it becomes */
+export function saveMarketAd(a: MarketAd): SaveInput {
+  const format = marketFormatOf(a);
+  const still = a.media.find((m) => m.type === "image")?.url ?? a.media.find((m) => m.thumb)?.thumb ?? null;
+  return {
+    source: "market",
+    refId: a.id,
+    url: a.motionUrl ?? a.libraryUrl ?? a.landingUrl ?? null,
+    thumbnail: still,
+    title: a.angle ?? a.headline ?? "Untitled ad",
+    subtitle: a.brand,
+    format,
+    data: { video: a.media.find((m) => m.type === "video")?.url ?? null, days: a.daysActive, brief: { kind: "market", adId: a.id, format } },
+  };
+}
 
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : null);
 
@@ -291,6 +310,7 @@ export function MarketLibrary({
                   }}
                   onHover={(el) => hoverIn(a, el)}
                   onLeave={hoverOut}
+                  star={<SaveIdeaStar idea={saveMarketAd(a)} clientId={forId} clientName={forClient?.name} variant="overlay" size="sm" />}
                 />
               ))}
             </div>
@@ -317,10 +337,11 @@ export function MarketLibrary({
   );
 }
 
-export function AdCard({ a, sub, onOpen, onHover, onLeave }: { a: MarketAd; sub: string; onOpen: () => void; onHover?: (el: HTMLElement) => void; onLeave?: () => void }) {
+export function AdCard({ a, sub, onOpen, onHover, onLeave, star }: { a: MarketAd; sub: string; onOpen: () => void; onHover?: (el: HTMLElement) => void; onLeave?: () => void; /** Save for later, over the picture */ star?: React.ReactNode }) {
   const cover = a.media.find((m) => m.type === "image")?.url ?? a.media[0]?.thumb ?? null;
   const video = !cover && a.media.find((m) => m.type === "video");
   return (
+    <div className="relative min-w-0">
     <button onClick={onOpen} onMouseEnter={onHover ? (e) => onHover(e.currentTarget) : undefined} onMouseLeave={onLeave} className="group grid min-w-0 content-start gap-2.5 rounded-[14px] border border-line bg-surface p-2 text-left transition-all hover:border-faint active:scale-[0.98] md:active:scale-100">
       <span className="relative aspect-[4/5] overflow-hidden rounded-[10px] bg-surface-2">
         {cover ? (
@@ -353,6 +374,8 @@ export function AdCard({ a, sub, onOpen, onHover, onLeave }: { a: MarketAd; sub:
         {a.hook && <span className="line-clamp-1 text-[11px] text-faint">&ldquo;{a.hook}&rdquo;</span>}
       </span>
     </button>
+      {star && <span className="absolute right-3.5 top-3.5 z-10">{star}</span>}
+    </div>
   );
 }
 
@@ -427,7 +450,8 @@ export function MarketSheet({
 
             <MarketReadPanel a={a} read={read} />
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <SaveIdeaStar idea={saveMarketAd(a)} clientId={forClient && !guessed ? forClient : null} clientName={forName} />
               <button
                 onClick={() => (forClient ? write(forClient) : setStep("pick"))}
                 className="hidden h-10 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:brightness-110 md:block"

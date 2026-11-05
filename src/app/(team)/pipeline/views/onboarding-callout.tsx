@@ -11,6 +11,7 @@ import { approveRound } from "../suggestion-actions";
 import { conceptLine } from "@/lib/allotment";
 import { closeThen, pushParams, useParam } from "@/lib/url-state";
 import { SuggestionSheet } from "./suggested-briefs";
+import { SaveIdeaStar } from "@/components/save-idea-star";
 
 // New and returning clients, front and center for execs and leads: where each one is (intake, first round,
 // production), with the first round one click away. Deliberately louder than everything else on Home.
@@ -234,8 +235,8 @@ function ClientCard({ c, onOpen }: { c: OnboardingCard; onOpen: (s: OpenSuggesti
           {c.round.map((s, i) => {
             const f = s.draft.formats[0];
             return (
-              <li key={s.id}>
-                <button onClick={() => onOpen(s)} className="flex min-h-11 w-full items-center gap-3 rounded-[12px] border border-line bg-surface/60 px-3 py-2 text-left transition-colors hover:border-faint active:bg-surface-2 md:min-h-0">
+              <li key={s.id} className="flex items-center gap-1.5">
+                <button onClick={() => onOpen(s)} className="flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-[12px] border border-line bg-surface/60 px-3 py-2 text-left transition-colors hover:border-faint active:bg-surface-2 md:min-h-0">
                   <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-brand-soft text-[11px] font-semibold text-brand-text tabular">{i + 1}</span>
                   <span className="grid min-w-0 flex-1">
                     <span className="truncate text-sm">{s.draft.title || "Untitled concept"}</span>
@@ -243,6 +244,7 @@ function ClientCard({ c, onOpen }: { c: OnboardingCard; onOpen: (s: OpenSuggesti
                   </span>
                   <span className="text-faint">→</span>
                 </button>
+                <SaveIdeaStar source={{ kind: "suggestion", id: s.id }} from={{ kicker: "First round", label: s.draft.title || "A first round concept" }} clientId={s.clientId} clientName={s.client} size="sm" />
               </li>
             );
           })}

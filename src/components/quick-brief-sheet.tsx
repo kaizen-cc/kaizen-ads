@@ -8,6 +8,7 @@ import { readyHref, trackJob } from "@/components/brief-jobs";
 import { toast } from "@/components/toasts";
 import { startBrief } from "@/app/(team)/brief-job-actions";
 import { RefThumb } from "@/components/ref-thumb";
+import { SaveIdeaStar } from "@/components/save-idea-star";
 import { useCreativeFormats } from "@/components/creative-formats-provider";
 import { AllotmentBars, Spark, Stepper, conceptLine } from "@/app/(team)/requests/new/parts";
 import { previewBrief, type PreviewResult } from "@/app/(team)/quick-brief-actions";
@@ -200,6 +201,8 @@ export function QuickBriefSheet({
             </span>
             <span className="truncate text-[13.5px] text-muted">{from.label}</span>
           </span>
+          {/* Not now: saved for later, for this client, by this person */}
+          <SaveIdeaStar source={source} from={from} clientId={clientId} className="mt-2 md:mt-0" />
           <button type="button" onClick={() => !writing && onClose()} disabled={writing} aria-label="Close" className="mt-2 grid h-11 w-11 shrink-0 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg disabled:opacity-40 md:mt-0">
             ✕
           </button>
@@ -365,13 +368,36 @@ type PreviewSpec = {
  * A button that opens the quick preview right here (any page, even a server-rendered one): "Write the full brief"
  * writes it in the background and it opens in Ready to send; "Not this one" writes nothing.
  */
-export function BriefPreviewButton({ children, className, ...spec }: PreviewSpec & { children: React.ReactNode; className?: string }) {
+export function BriefPreviewButton({
+  children,
+  className,
+  star = "plain",
+  wrapClassName = "inline-flex max-w-full items-center gap-2 justify-self-start",
+  ...spec
+}: PreviewSpec & {
+  children: React.ReactNode;
+  className?: string;
+  /** Save for later next to it (per person, for this client); false when the card has its own star */
+  star?: "plain" | "dark" | false;
+  /** The row the button and its star sit in */
+  wrapClassName?: string;
+}) {
   const open = () => pushParams({ preview: spec.previewKey });
+  const button = (
+    <button type="button" onClick={open} className={className}>
+      {children}
+    </button>
+  );
   return (
     <>
-      <button type="button" onClick={open} className={className}>
-        {children}
-      </button>
+      {star ? (
+        <span className={wrapClassName}>
+          {button}
+          <SaveIdeaStar source={spec.source} from={spec.from} clientId={spec.clientId} variant={star} size="sm" />
+        </span>
+      ) : (
+        button
+      )}
       <Suspense fallback={null}>
         <PreviewWhenOpen {...spec} />
       </Suspense>

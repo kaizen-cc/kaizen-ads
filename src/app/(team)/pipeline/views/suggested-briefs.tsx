@@ -14,6 +14,7 @@ import { AsanaSend } from "@/components/asana-send";
 import { allotmentPool, DEFAULT_CARDS, draws } from "@/lib/allotment";
 import { sendSuggestionToAsana, suggestionAsanaPreview } from "@/app/(team)/requests/new/actions";
 import { QuickBriefSheet } from "@/components/quick-brief-sheet";
+import { SaveIdeaStar } from "@/components/save-idea-star";
 
 const KIND_TONE: Record<SuggestionKind, string> = {
   fatigue: "bg-warn-soft text-warn",
@@ -110,8 +111,9 @@ export function SuggestedBriefs({ state, bare = false }: { state: SuggestionsSta
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
           {[...state.open].sort((a, b) => RANK[a.kind] - RANK[b.kind]).map((s) => (
-            <button key={s.id} onClick={() => pushParams({ brief: s.id })} className="group grid content-start gap-2.5 rounded-[14px] border border-line bg-surface p-4 text-left transition-colors hover:border-faint">
-              <span className="flex flex-wrap items-center gap-2">
+            <div key={s.id} className="relative min-w-0">
+            <button onClick={() => pushParams({ brief: s.id })} className="group grid h-full w-full content-start gap-2.5 rounded-[14px] border border-line bg-surface p-4 text-left transition-colors hover:border-faint">
+              <span className="flex flex-wrap items-center gap-2 pr-12">
                 <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${KIND_TONE[s.kind]}`}>{KIND_LABEL[s.kind]}</span>
                 <span className="text-xs text-muted">{s.client}</span>
               </span>
@@ -125,6 +127,10 @@ export function SuggestedBriefs({ state, bare = false }: { state: SuggestionsSta
                 <span className="text-fg transition-transform group-hover:translate-x-0.5">{s.draft.summary ? "Preview →" : "Review →"}</span>
               </span>
             </button>
+            <span className="absolute right-3 top-3">
+              <SaveIdeaStar source={{ kind: "suggestion", id: s.id }} from={{ kicker: KIND_LABEL[s.kind], label: s.draft.title || s.signal, thumb: s.source?.thumbnail ?? null }} clientId={s.clientId} clientName={s.client} size="sm" />
+            </span>
+            </div>
           ))}
           {running && (
             <div className="grid place-items-center gap-2 rounded-[14px] border border-dashed border-line p-4 text-center text-xs text-faint">
@@ -258,6 +264,7 @@ function FullSuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: () =>
                 aria-label="Title"
               />
             </div>
+            <SaveIdeaStar source={{ kind: "suggestion", id: s.id }} from={{ kicker: KIND_LABEL[s.kind], label: draft.title || s.signal, thumb: s.source?.thumbnail ?? null }} clientId={s.clientId} clientName={s.client} size="sm" />
             <button onClick={onClose} className="h-11 shrink-0 rounded-full border border-line px-4 text-xs text-muted hover:text-fg md:h-auto md:px-3 md:py-1">
               Close
             </button>

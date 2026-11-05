@@ -78,7 +78,8 @@ export function SaidPromises({ items, me }: { items: SaidPromise[]; me: string }
                     text: [`We said we'd: ${p.group?.title ?? p.what}`, p.ask ? `They asked: ${p.ask}` : "", `What was said: "${p.said.replace(/\s+/g, " ").slice(0, 600)}"`, "Keep it to exactly what was promised."].filter(Boolean).join("\n"),
                   }}
                   from={{ kicker: "Promised in a message", label: p.group?.title ?? p.what }}
-                  className="inline-flex h-11 w-full items-center justify-center rounded-brand bg-fg px-4 text-sm font-medium text-bg md:h-9 md:w-auto"
+                  wrapClassName="flex w-full items-center gap-2 md:w-auto"
+                  className="inline-flex h-11 flex-1 items-center justify-center rounded-brand bg-fg px-4 text-sm font-medium text-bg md:h-9 md:flex-none"
                 >
                   Brief it
                 </BriefPreviewButton>

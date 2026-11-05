@@ -307,7 +307,7 @@ export function AllotmentMeter({ allotment, request, compact = false }: { allotm
           <div key={r.label} className="grid gap-1.5">
             <div className="flex items-baseline justify-between gap-3 text-xs">
               <span className="text-muted">{r.label}</span>
-              <span className={`tabular ${over ? "text-bad" : after === 0 ? "text-warn" : "text-muted"}`}>
+              <span className={`tabular ${over ? "text-bad" : after === 0 ? "text-ok" : "text-muted"}`}>
                 {r.used} used{r.add > 0 && <span className="text-fg"> + {r.add} here</span>} · {over ? `${-after} over` : `${after} of ${r.cap} left`}
               </span>
             </div>
@@ -378,7 +378,7 @@ export function AllotmentBars({ allotment, formats }: { allotment: Allotment | u
           <div key={r.label} className="grid gap-2">
             <div className="flex items-baseline justify-between gap-3">
               <span className="text-[13px]">{r.label}</span>
-              <span className={`tabular text-[12.5px] ${after < 0 ? "text-bad" : after === 0 ? "text-warn" : "text-muted"}`}>{after < 0 ? `${-after} over` : `${after} of ${r.cap} left after this`}</span>
+              <span className={`tabular text-[12.5px] ${after < 0 ? "text-bad" : after === 0 ? "text-ok" : "text-muted"}`}>{after < 0 ? `${-after} over` : `${after} of ${r.cap} left after this`}</span>
             </div>
             <div className="relative h-2.5 overflow-hidden rounded-full bg-surface-2">
               <span className="absolute inset-y-0 left-0 bg-fg/25" style={{ width: `${(Math.min(r.used, scale) / scale) * 100}%` }} />

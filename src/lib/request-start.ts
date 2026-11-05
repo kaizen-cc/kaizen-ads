@@ -28,7 +28,7 @@ export type StartData = {
   /** More market ads to load past these */
   marketMore: boolean;
   marketLabel: string | null;
-  /** References saved for this client, not used yet */
+  /** Ideas this person saved for this client: not used yet, or put in motion by someone else */
   saved: SavedRef[];
   /** How long each read took (ms), for the dev log */
   timings?: Record<string, number>;
@@ -54,7 +54,7 @@ async function timed<T>(timings: Record<string, number>, key: string, run: () =>
  * The start page's sections for one client, read in parallel with the person's own access (db is their client). Only
  * what fits the formats the person works in (`allowed`, from their role): a designer never sees video examples.
  */
-export async function startSections(db: SupabaseClient, clientId: string, allowed: ReadonlySet<CreativeFormat> = new Set(CREATIVE_FORMATS)): Promise<StartData> {
+export async function startSections(db: SupabaseClient, clientId: string, allowed: ReadonlySet<CreativeFormat> = new Set(CREATIVE_FORMATS), meId: string | null = null): Promise<StartData> {
   const all = seesAllFormats(allowed);
   const t0 = Date.now();
   const timings: Record<string, number> = {};
@@ -126,7 +126,17 @@ export async function startSections(db: SupabaseClient, clientId: string, allowe
       timings,
       "saved",
       async () => {
-        const { data } = await db.from("client_saved_references").select(SAVED_COLS).eq("client_id", clientId).is("used_at", null).order("created_at", { ascending: false }).limit(40);
+        // This person's own: open ones, and ones someone else put in motion (until they dismiss the notice)
+        if (!meId) return [];
+        const { data } = await db
+          .from("client_saved_references")
+          .select(SAVED_COLS)
+          .eq("client_id", clientId)
+          .eq("saved_by", meId)
+          .is("dismissed_at", null)
+          .or(`used_at.is.null,used_by.neq.${meId}`)
+          .order("created_at", { ascending: false })
+          .limit(40);
         return (data ?? []).map((r) => toSaved(r as Record<string, unknown>)).filter((r) => fitsFormat(allowed, r.format));
       },
       [] as SavedRef[],

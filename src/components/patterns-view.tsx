@@ -4,6 +4,7 @@ import { useState } from "react";
 import { refreshPatterns } from "@/app/(team)/pipeline/pattern-actions";
 import type { Pattern, PatternsState } from "@/lib/patterns";
 import { QuickBriefSheet } from "@/components/quick-brief-sheet";
+import { SaveIdeaStar } from "@/components/save-idea-star";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 
 // Patterns across clients, as cards: what works (or fails) for a whole kind of business, how many clients prove it,
@@ -84,17 +85,28 @@ function Card({ p, names, canBrief, uses, briefFor = null }: { p: Pattern; names
           </div>
         </div>
       )}
-      {briefFor && (
-        <button
-          type="button"
-          onClick={() => {
-            setPreviewFor(briefFor);
-            pushParams({ preview: `pt-${p.id}-${briefFor}` });
-          }}
-          className="min-h-11 justify-self-start rounded-full border border-line px-4 text-[13px] transition-colors hover:border-brand/50 hover:text-fg md:min-h-9"
-        >
-          Brief it for them →
-        </button>
+      {briefFor ? (
+        <span className="inline-flex items-center gap-2 justify-self-start">
+          <button
+            type="button"
+            onClick={() => {
+              setPreviewFor(briefFor);
+              pushParams({ preview: `pt-${p.id}-${briefFor}` });
+            }}
+            className="min-h-11 rounded-full border border-line px-4 text-[13px] transition-colors hover:border-brand/50 hover:text-fg md:min-h-9"
+          >
+            Brief it for them →
+          </button>
+          <SaveIdeaStar source={{ kind: "pattern", patternId: p.id }} from={{ kicker: `Works for ${p.evidence.clients} of ${p.evidence.of}`, label: p.title }} clientId={briefFor} size="sm" />
+        </span>
+      ) : (
+        works &&
+        canBrief && (
+          <span className="inline-flex items-center gap-2 justify-self-start text-[12px] text-faint">
+            <SaveIdeaStar source={{ kind: "pattern", patternId: p.id }} from={{ kicker: `Works for ${p.evidence.clients} of ${p.evidence.of}`, label: p.title }} size="sm" />
+            Save it for a client
+          </span>
+        )
       )}
       {previewing && previewFor && (
         <QuickBriefSheet

@@ -3,7 +3,8 @@
 import Link from "next/link";
 import type { MarketAd } from "@/lib/market";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
-import { AdCard, MarketSheet } from "../../market/market-library";
+import { AdCard, MarketSheet, saveMarketAd } from "../../market/market-library";
+import { SaveIdeaStar } from "@/components/save-idea-star";
 
 /**
  * What's live in this client's market right now (Motion): the competitors they named first, then what's proven or
@@ -30,7 +31,7 @@ export function MarketPanel({ clientId, industry, label, ads }: { clientId: stri
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {ads.slice(0, 8).map((a) => (
-          <AdCard key={a.id} a={a} sub={a.competitorOf.includes(clientId) ? "Competitor" : (a.matchWhy ?? a.detail ?? label)} onOpen={() => pushParams({ market: a.id })} />
+          <AdCard key={a.id} a={a} sub={a.competitorOf.includes(clientId) ? "Competitor" : (a.matchWhy ?? a.detail ?? label)} onOpen={() => pushParams({ market: a.id })} star={<SaveIdeaStar idea={saveMarketAd(a)} clientId={clientId} variant="overlay" size="sm" />} />
         ))}
       </div>
       {open && <MarketSheet key={open.id} a={open} industryLabel={label} clients={[]} forClient={clientId} onClose={() => closeParams("market", "brief")} />}

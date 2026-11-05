@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import type { WatchRow } from "@/lib/fatigue";
 import { closeParams, closeThen, pushParams, useParam } from "@/lib/url-state";
 import { QuickBriefSheet } from "@/components/quick-brief-sheet";
+import { SaveIdeaStar } from "@/components/save-idea-star";
 import type { OpenSuggestion } from "@/lib/suggestions";
 import { SuggestionSheet } from "@/app/(team)/pipeline/views/suggested-briefs";
 import { briefRefresh, dismissFatigue } from "@/app/(team)/fatigue/actions";
@@ -164,6 +165,7 @@ function WatchCard({ r, showClient, onGone }: { r: WatchRow; showClient: boolean
             {step === "writing" ? r.briefId ? "Opening…" : <Writing /> : r.briefId ? "Open the brief" : "Brief a refresh"}
           </button>
           {r.briefId && step !== "writing" && <span className="text-[11px] text-ok">Brief ready</span>}
+          <SaveIdeaStar source={{ kind: "refresh", adId: r.adId }} from={{ kicker: "Tiring ad", label: r.headline ?? r.adName, thumb: r.thumbnail, adId: r.adId }} clientId={r.clientId} size="sm" />
           <button onClick={() => setStep("dismiss")} disabled={step === "writing"} className="h-9 max-md:h-11 px-3 text-sm text-faint hover:text-fg">
             Dismiss
           </button>

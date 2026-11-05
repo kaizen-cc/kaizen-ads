@@ -150,8 +150,8 @@ export function allotmentLine(a: PoolCounts | null | undefined) {
 /** Any pool past its cap this cycle. */
 export const allotmentOver = (a: PoolCounts | null | undefined) => allotmentPools(a).some((p) => p.over > 0);
 
-/** Theme classes for a pool's state: over in red, exactly full in amber. */
-export const POOL_TONE: Record<Pool["state"], string> = { over: "text-bad", full: "text-warn", ok: "" };
+/** Theme classes for a pool's state: over in red, exactly at the cap in green (used in full, as planned). Amber is only ever "behind pace". */
+export const POOL_TONE: Record<Pool["state"], string> = { over: "text-bad", full: "text-ok", ok: "" };
 
 /** For the AI: one line per pool, with what this request would take if given. */
 export function describeAllotment(a: Allotment | null, request?: { images: number; videos: number }) {

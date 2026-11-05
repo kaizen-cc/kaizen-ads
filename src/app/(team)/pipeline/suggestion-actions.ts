@@ -110,6 +110,13 @@ export async function approveSuggestion(id: string, draft: SuggestionDraft): Pro
       await admin.from("call_commitments").update({ status: "in_motion", request_numbers: numbers }).eq("suggestion_id", id);
     if (s.kind === "refresh" && adId)
       await admin.from("ad_fatigue").update({ state: "refreshing", request_numbers: numbers, updated_at: new Date().toISOString() }).eq("client_id", s.client_id).eq("ad_id", adId);
+    // Anyone who saved this idea for the client: it's in motion now (out of their saved list, and they hear who has it)
+    try {
+      const { markIdeasUsed } = await import("@/lib/saved-used");
+      await markIdeasUsed(admin, { clientId: s.client_id as string, suggestionId: id, requestId: rows[0].id, href: `/board?t=${rows[0].number}`, title: draft.title.trim() || null, by: { id: me.id, name: me.fullName } });
+    } catch (e) {
+      console.error("[saved] marking used failed:", e instanceof Error ? e.message : e);
+    }
     // Any other brief that happens to make something promised on a call clears that promise too
     if (s.kind !== "call") {
       const clientId = s.client_id as string;

@@ -383,7 +383,7 @@ export function RequestForm({
       const res = await createBatch(draft, r, decisionsOf(r));
       if (res.ok) {
         writeSaved(null, saveKey);
-        if (draft.clientId && draft.savedRefIds?.length) forgetStart(draft.clientId);
+        if (draft.clientId) forgetStart(draft.clientId);
         // Migrated past production: open the ticket to upload its creative
         if (draft.migration?.needsCreative && res.numbers[0]) {
           router.push(`/board?t=${res.numbers[0]}`);
@@ -1008,7 +1008,7 @@ export function RequestForm({
                       className="inline-flex h-12 items-center gap-2 rounded-full border border-line px-4 text-[14px] text-fg hover:border-faint md:h-11"
                       onSent={(tasks) => {
                         writeSaved(null, saveKey);
-                        if (draft.clientId && draft.savedRefIds?.length) forgetStart(draft.clientId);
+                        if (draft.clientId) forgetStart(draft.clientId);
                         setAsanaSent(tasks.map((t) => ({ name: t.name, url: t.url })));
                       }}
                     />

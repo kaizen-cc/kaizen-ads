@@ -15,6 +15,7 @@ import { SuggestionSheet } from "@/app/(team)/pipeline/views/suggested-briefs";
 import { startRefreshBrief, startWinnerBrief } from "@/app/(team)/brief-job-actions";
 import { BriefProgress, trackJob, useJobFor } from "@/components/brief-jobs";
 import { BriefPreviewButton, QuickBriefSheet } from "@/components/quick-brief-sheet";
+import { SaveIdeaStar } from "@/components/save-idea-star";
 import type { QuickBrief } from "@/lib/quick-brief";
 import { allotmentPools } from "@/lib/allotment";
 import { AllotmentPools } from "@/components/allotment-pools";
@@ -803,9 +804,12 @@ export function WinnerCard({ w, credit, copy }: { w: Winner; credit?: WinnerAd; 
         {job ? (
           <BriefProgress job={job} />
         ) : (
-          <button type="button" onClick={() => pushParams({ preview: `kw-${w.key}` })} disabled={busy} className="h-11 rounded-full bg-fg text-[14px] font-medium text-bg disabled:opacity-60">
-            {busy ? "Starting…" : copy ? "Brief new copy like this" : "Brief more like this"}
-          </button>
+          <span className="flex items-center gap-2">
+            <button type="button" onClick={() => pushParams({ preview: `kw-${w.key}` })} disabled={busy} className="h-11 min-w-0 flex-1 rounded-full bg-fg text-[14px] font-medium text-bg disabled:opacity-60">
+              {busy ? "Starting…" : copy ? "Brief new copy like this" : "Brief more like this"}
+            </button>
+            <SaveIdeaStar source={{ kind: "winner", winner: source }} from={{ kicker: "More like a winner", label: w.headline ?? w.name, thumb: w.image, adId: /^\d{5,25}$/.test(w.key) ? w.key : null }} clientId={w.clientId} clientName={w.client} />
+          </span>
         )}
         <p className="text-center text-[11px] text-faint">A quick preview first. The full brief only if you choose it, then it opens in Ready to send</p>
       </div>
@@ -871,6 +875,11 @@ export function TiringCard({ r, copy = false }: { r: WatchRow; /** Shown as copy
         <span className={`absolute left-3 top-3 rounded-full px-2.5 py-1 text-[11px] font-semibold shadow ${r.state === "refreshing" ? "bg-ok text-white" : tired ? "bg-bad text-white" : "bg-warn text-white"}`}>
           {r.state === "refreshing" ? "Being refreshed" : copy ? "Copy wearing out" : tired ? "Tired: replace it" : "Tiring"}
         </span>
+        {r.state !== "refreshing" && (
+          <span className="absolute right-2 top-2">
+            <SaveIdeaStar source={{ kind: "refresh", adId: r.adId }} from={{ kicker: "Tiring ad", label: r.headline ?? r.adName, thumb: r.thumbnail, adId: r.adId && /^\d{5,25}$/.test(r.adId) ? r.adId : null }} clientId={r.clientId} clientName={r.client} variant="overlay" />
+          </span>
+        )}
       </div>
       <div className="grid gap-2.5 rounded-[16px] border border-line bg-surface p-3.5">
         <p className="text-[12px] text-muted">
@@ -921,7 +930,8 @@ export function TiringCard({ r, copy = false }: { r: WatchRow; /** Shown as copy
                   text: [`This ad is ${tired ? "tired" : "tiring"} after ${s.daysRunning} days (${money(s.spend7)} this week).`, ...chips.map((c) => `${c.label}: ${c.v}${c.c ? ` (${c.c})` : ""}`), "Brief a new concept to replace it: a different angle, hook or format, not a refresh of this one."].join("\n"),
                 }}
                 from={{ kicker: "New creative for a tiring ad", label: r.headline ?? r.adName, thumb: r.thumbnail, adId: r.adId && /^\d{5,25}$/.test(r.adId) ? r.adId : null }}
-                className="grid h-11 place-items-center rounded-full border border-line text-[12.5px] text-muted hover:text-fg md:h-10"
+                wrapClassName="flex min-w-0 items-center gap-1.5"
+                className="grid h-11 min-w-0 flex-1 place-items-center rounded-full border border-line text-[12.5px] text-muted hover:text-fg md:h-10"
               >
                 New creative
               </BriefPreviewButton>

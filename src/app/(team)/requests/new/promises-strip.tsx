@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { promisesFor, type Promise_ } from "./actions";
 import type { PreviewItem } from "./start-flow";
+import { SaveIdeaStar } from "@/components/save-idea-star";
 
 /**
  * What we promised this client on calls and haven't started. "Brief on this" opens its quick preview (the brief from
@@ -59,6 +60,7 @@ export function PromisesStrip({ clientId, used, onPreview, preloaded }: { client
               >
                 {on ? "Loaded into this request" : "Brief on this"}
               </button>
+              {!on && <SaveIdeaStar source={{ kind: "promise", commitmentId: p.id }} from={{ kicker: "Promised on a call", label: p.what }} clientId={clientId} size="sm" />}
             </div>
           );
         })}

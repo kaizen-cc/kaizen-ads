@@ -15,6 +15,6 @@ export async function GET(req: Request) {
   }
   const clientId = new URL(req.url).searchParams.get("client") ?? "";
   if (!/^[0-9a-f-]{36}$/i.test(clientId)) return Response.json({ error: "Which client?" }, { status: 400 });
-  const data = await startSections(await createClient(), clientId, formatsFor(me));
+  const data = await startSections(await createClient(), clientId, formatsFor(me), me.id);
   return Response.json(data, { headers: { "cache-control": "private, max-age=60" } });
 }

@@ -6,6 +6,7 @@ import { closeThen, pushParams, useParam } from "@/lib/url-state";
 import type { NextForMe, NextItem } from "@/lib/next-for-me";
 import type { OpenSuggestion } from "@/lib/suggestions";
 import { SuggestionSheet } from "../pipeline/views/suggested-briefs";
+import { SaveIdeaStar } from "@/components/save-idea-star";
 
 const SECTIONS: { key: keyof Omit<NextForMe, "stats">; title: string; hint: string; empty: string }[] = [
   { key: "now", title: "Now", hint: "Late, due today, or waiting on you", empty: "Nothing urgent. Nice." },
@@ -121,9 +122,12 @@ function Row({ it, onBrief }: { it: NextItem; onBrief: (s: OpenSuggestion) => vo
   return (
     <li>
       {it.suggestion ? (
-        <button onClick={() => onBrief(it.suggestion!)} className={cls}>
-          {body}
-        </button>
+        <span className="flex items-center pr-3">
+          <button onClick={() => onBrief(it.suggestion!)} className={`${cls} min-w-0 flex-1`}>
+            {body}
+          </button>
+          <SaveIdeaStar source={{ kind: "suggestion", id: it.suggestion.id }} from={{ kicker: KIND[it.kind], label: it.title }} clientId={it.suggestion.clientId} clientName={it.client} size="sm" />
+        </span>
       ) : (
         <Link href={it.href ?? "#"} className={cls}>
           {body}
