@@ -10,6 +10,7 @@ import { renderReportPdf } from "./pdf";
 import { periodsFor, type ReportMetrics } from "./metrics";
 import { platformName } from "./format";
 import { draftReport, type Sections } from "./write";
+import { freshen } from "./regenerate";
 
 // The reporting cadence. Mondays: a weekly report is queued for every live account that spent in the last week, and
 // drafted a few at a time. The 1st: the monthly recap, one part per buyer on the client (Meta, Google), held until
@@ -50,17 +51,34 @@ export async function queueReports(admin: SupabaseClient, kind: "weekly" | "mont
   return created;
 }
 
-/** Drafts queued reports, a few at a time (each is a writer and a QA pass), until the time runs out. */
-export async function draftQueued(admin: SupabaseClient, budgetMs = 600_000) {
+/**
+ * Drafts queued reports, a few at a time (each is a writer and a QA pass), until the time runs out. A report queued by
+ * Regenerate pulls its account's latest numbers first. `regenerated` only takes those (a batch started from the page).
+ */
+export async function draftQueued(admin: SupabaseClient, budgetMs = 600_000, opts: { regenerated?: boolean } = {}) {
   const until = Date.now() + budgetMs;
+  const recent = (at: string | null) => Boolean(at && Date.now() - Date.parse(at) < 6 * 3_600_000);
   let done = 0;
   while (Date.now() < until - 150_000) {
     // Queued ones, and any stuck mid-draft for 20 minutes (a timeout), monthly first (they're critical)
     const stuck = new Date(Date.now() - 20 * 60_000).toISOString();
-    const { data } = await admin.from("reports").select("id").or(`status.eq.queued,and(status.eq.drafting,updated_at.lt.${stuck})`).order("kind", { ascending: true }).order("created_at").limit(3);
+    let q = admin.from("reports").select("id, status, updated_at, target_id, regenerated_at").or(`status.eq.queued,and(status.eq.drafting,updated_at.lt.${stuck})`);
+    if (opts.regenerated) q = q.gte("regenerated_at", new Date(Date.now() - 6 * 3_600_000).toISOString());
+    const { data } = await q.order("kind", { ascending: true }).order("created_at").limit(opts.regenerated ? 2 : 3);
     if (!data?.length) break;
-    await Promise.all(data.map((r) => draftReport(admin, r.id)));
-    done += data.length;
+    // Each one claimed before it's written, so the schedule and a batch started from the page never write one twice
+    const claimed: typeof data = [];
+    for (const r of data) {
+      const { data: got } = await admin.from("reports").update({ status: "drafting", updated_at: new Date().toISOString() }).eq("id", r.id).eq("status", r.status).eq("updated_at", r.updated_at).select("id").maybeSingle();
+      if (got) claimed.push(r);
+    }
+    await Promise.all(
+      claimed.map(async (r) => {
+        if (recent(r.regenerated_at as string | null)) await freshen(admin, r.target_id as string);
+        await draftReport(admin, r.id);
+      }),
+    );
+    done += claimed.length;
   }
   return done;
 }

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { GoogleAdsMark, MetaMark } from "@/components/source-logo";
 import { tintFor } from "@/lib/colors";
 import type { Qa } from "@/lib/reports/write";
+import { RegenerateButton } from "./regenerate-button";
 import { RemoveGenerated } from "./remove-generated";
 
 // The Reports page's line items: one card per report (or per joint report built by hand), with the client, what kind
@@ -67,6 +68,9 @@ const STATE: Record<string, { label: string; tone: string; dot: string }> = {
 
 export type CardReport = { id: string; client: string; platform: string; status: string; qa: Qa | null; tag: Tag; owner: string | null; mine: boolean; viewedAt: string | null; postedAt: string | null };
 
+// The corner of a card: its quick actions, on hover (always there on a phone), and kept open while one is asking
+const CORNER = "absolute -right-1 -top-1 flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/card:opacity-100 has-[[role=dialog]]:opacity-100 max-md:opacity-100";
+
 /** One report: the client, the kind and dates, the buyer (and whether they've opened it), the QA, the way in. */
 export function ReportCard({ r, showOwner, removable = false }: { r: CardReport; showOwner: boolean; removable?: boolean }) {
   const s = STATE[r.status] ?? STATE.draft;
@@ -104,9 +108,10 @@ export function ReportCard({ r, showOwner, removable = false }: { r: CardReport;
           <span className="text-faint transition-transform duration-200 group-hover/card:translate-x-0.5 group-hover/card:text-fg">→</span>
         </span>
       </Link>
-      {removable && (
-        <span className="absolute -right-1 -top-1 opacity-0 transition-opacity group-hover/card:opacity-100 max-md:opacity-100">
-          <RemoveGenerated kind="report" id={r.id} sent={sent} />
+      {(removable || !["queued", "drafting"].includes(r.status)) && (
+        <span className={CORNER}>
+          {!["queued", "drafting"].includes(r.status) && <RegenerateButton kind="one" variant="icon" id={r.id} label={`${r.client} · ${r.tag.label}`} sent={sent} approved={r.status === "submitted"} />}
+          {removable && <RemoveGenerated kind="report" id={r.id} sent={sent} />}
         </span>
       )}
     </li>
@@ -123,6 +128,8 @@ export type CardBundle = {
   href: string;
   yourTurn: boolean;
   removable: boolean;
+  /** The parts this person can regenerate (their own, approved or not; any still in review for an exec or lead) */
+  regenIds: string[];
 };
 
 /** A report built by hand: one card, each service's part with its buyer and where it stands. */
@@ -152,9 +159,20 @@ export function BundleCard({ b, showOwner }: { b: CardBundle; showOwner: boolean
         </span>
         <span className={`text-xs ${state.tone}`}>{state.label} →</span>
       </Link>
-      {b.removable && (
-        <span className="absolute -right-1 -top-1 opacity-0 transition-opacity group-hover/card:opacity-100 max-md:opacity-100">
-          <RemoveGenerated kind="bundle" id={b.id} sent={sent} />
+      {(b.removable || sent || b.regenIds.length > 0) && (
+        <span className={CORNER}>
+          {(sent || b.regenIds.length > 0) && (
+            <RegenerateButton
+              kind="many"
+              variant="icon"
+              ids={b.regenIds}
+              approvedToo
+              sent={sent}
+              label={`${b.client}'s report`}
+              body={b.parts.length > 1 ? `Regenerate ${b.regenIds.length === 1 ? "this part" : "these parts"} with fresh data? Edits on ${b.regenIds.length === 1 ? "it" : "them"} will be replaced; the other parts stay as they are, approvals included.` : undefined}
+            />
+          )}
+          {b.removable && <RemoveGenerated kind="bundle" id={b.id} sent={sent} />}
         </span>
       )}
     </li>
@@ -162,14 +180,19 @@ export function BundleCard({ b, showOwner }: { b: CardBundle; showOwner: boolean
 }
 
 /** A section heading with its count and a note on the right. */
-export function Group({ title, count, note, children }: { title: string; count: number; note?: string; children: React.ReactNode }) {
+export function Group({ title, count, note, action, children }: { title: string; count: number; note?: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
     <section className="grid gap-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="flex items-baseline gap-2 font-heading text-[19px]">
           {title} <span className="tabular text-sm text-faint">{count}</span>
         </h3>
-        {note && <span className="text-xs text-faint">{note}</span>}
+        {(note || action) && (
+          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            {note && <span className="text-xs text-faint">{note}</span>}
+            {action}
+          </span>
+        )}
       </div>
       <ul className="grid gap-2.5 lg:grid-cols-2">{children}</ul>
     </section>

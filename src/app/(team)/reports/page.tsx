@@ -11,6 +11,7 @@ import { reportableTargets } from "@/lib/reports/access";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { ReportBuilder, type BuilderClient, type QuickPick } from "./report-builder";
 import { BundleCard, Empty, Group, ReportCard, type CardBundle, type CardReport, type Tag } from "./report-cards";
+import { RegenerateButton, RegenWatcher } from "./regenerate-button";
 import { GoogleAdsMark, MetaMark } from "@/components/source-logo";
 import { teamPlatform } from "@/lib/roles";
 
@@ -142,6 +143,8 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
       href: mine ? `/reports/${mine.id}` : "/reports",
       yourTurn: parts.some((p) => p.owner_id === me.id && ["draft", "drafting", "queued"].includes(p.status)),
       removable: b.created_by === me.id || me.isExec,
+      // Their own parts (approved ones too: it goes back to review); an exec or lead also the ones still in review
+      regenIds: b.status === "sent" ? [] : parts.filter((p) => (p.owner_id === me.id && ["draft", "failed", "submitted"].includes(p.status)) || (lead && ["draft", "failed"].includes(p.status))).map((p) => p.id),
     };
   };
 
@@ -170,6 +173,10 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const sentShown = sentReports.filter(fits).sort((a, b) => (b.posted_at ?? "").localeCompare(a.posted_at ?? ""));
   const sentBuiltShown = sentBuilt.filter(fitsBundle).sort((a, b) => (b.sent_at ?? b.created_at).localeCompare(a.sent_at ?? a.created_at));
   const readyCount = readyReports.length + builtRows.length;
+  // Regenerate all shown: every draft in a section, with the platform and person picked (an exec or lead: anyone's
+  // they report on; a buyer: their own). Approved, sent and still-writing ones are left as they are
+  const regenable = (x: { status: string; owner_id: string | null }) => ["draft", "failed"].includes(x.status) && (lead || x.owner_id === me.id);
+  const regenAll = (ids: string[], label: string) => (ids.length > 1 ? <RegenerateButton kind="many" variant="bulk" ids={ids} label={label} /> : undefined);
   const sentCount = sentReports.length + sentBuilt.length;
   // Land on what needs doing; with nothing waiting, on building one
   const view = asked ?? (readyCount ? "ready" : "build");
@@ -197,6 +204,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
 
   return (
     <div className="mx-auto grid max-w-5xl gap-7">
+      <RegenWatcher />
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div className="grid gap-1">
           <h1 className="font-heading text-[32px] leading-tight max-md:text-[28px]">Reports</h1>
@@ -276,21 +284,26 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
             ) : (
               <>
                 {monthlyShown.length > 0 && (
-                  <Group title={`${monthName} recap`} count={monthlyShown.length} note="The full month · goes out once every buyer on the account approves">
+                  <Group title={`${monthName} recap`} count={monthlyShown.length} note="The full month · goes out once every buyer on the account approves" action={regenAll(monthlyShown.filter(regenable).map((r) => r.id), `${monthName} recaps`)}>
                     {monthlyShown.map((r) => (
                       <ReportCard key={r.id} r={card(r)} showOwner={lead} />
                     ))}
                   </Group>
                 )}
                 {weeklyShown.length > 0 && (
-                  <Group title="Monday weekly" count={weeklyShown.length} note={`${weeklyShown.filter((r) => r.status === "draft").length} ready to review · next Monday's replace them`}>
+                  <Group title="Monday weekly" count={weeklyShown.length} note={`${weeklyShown.filter((r) => r.status === "draft").length} ready to review · next Monday's replace them`} action={regenAll(weeklyShown.filter(regenable).map((r) => r.id), "Monday weeklies")}>
                     {weeklyShown.map((r) => (
                       <ReportCard key={r.id} r={card(r)} showOwner={lead} />
                     ))}
                   </Group>
                 )}
                 {builtShown.length + customShown.length > 0 && (
-                  <Group title="Built by hand" count={builtShown.length + customShown.length} note="Here until they're sent">
+                  <Group
+                    title="Built by hand"
+                    count={builtShown.length + customShown.length}
+                    note="Here until they're sent"
+                    action={regenAll([...builtShown.flatMap((b) => b.reports.filter((p) => plat(p) === wp && (!wb || p.owner_id === wb) && regenable(p)).map((p) => p.id)), ...customShown.filter(regenable).map((r) => r.id)], "Reports built by hand")}
+                  >
                     {builtShown.map((b) => (
                       <BundleCard key={b.id} b={bundleCard(b)} showOwner={lead} />
                     ))}

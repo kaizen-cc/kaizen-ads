@@ -10,7 +10,8 @@ import { RecapDeckButton } from "./recap-deck-button";
 import { METRIC_KEYS, columnKeys, metricLabel, platformName, reportBasis, TABLE_DEFAULT, tileKeys, type MetricKey, type ReportLayout } from "@/lib/reports/format";
 import type { ReportMetrics } from "@/lib/reports/metrics";
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
-import { approveBuiltMessage, approveMyPart, builtMessage, checkAgain, loadCampaignEvents, redraft, refreshSlackMessage, reopenReport, reviseWithAi, saveLayout, saveReport, sendMyPartNow, sendReport, skipReport } from "./actions";
+import { approveBuiltMessage, approveMyPart, builtMessage, checkAgain, loadCampaignEvents, refreshSlackMessage, regenerate, reopenReport, reviseWithAi, saveLayout, saveReport, sendMyPartNow, sendReport, skipReport } from "./actions";
+import { RegenerateButton, UndoRegenerate } from "./regenerate-button";
 
 // One report, start to finish, in three steps: the report (a live preview of the document: click any line to change
 // it, or ask the AI on the side and watch it change), then the Slack message (shown as it will look in the client's
@@ -36,6 +37,8 @@ export type StudioReport = {
   chat: ChatTurn[];
   error: string | null;
   owner: string | null;
+  /** Regenerated in the last day: when and by whom, and the draft it replaced can still be brought back */
+  regen: { at: string; by: string | null } | null;
 };
 export type StudioBundle = {
   id: string;
@@ -332,23 +335,28 @@ export function ReportStudio({
             );
           })}
         </ol>
-        {bundle && bundle.parts.length > 1 && (
-          <div className="flex flex-wrap gap-1.5">
-            {bundle.parts.map((p) => (
-              <a
-                key={p.id}
-                href={`/reports/${p.id}`}
-                className={`flex h-11 items-center gap-2 rounded-full border px-3.5 text-xs md:h-8 md:px-3 ${p.isMe ? "border-fg/40" : "border-line"} ${p.status === "submitted" || p.status === "posted" ? "text-ok" : "text-muted"}`}
-              >
-                <span className={`h-1.5 w-1.5 rounded-full ${p.status === "submitted" || p.status === "posted" ? "bg-ok" : p.status === "drafting" ? "animate-pulse bg-faint" : "bg-warn"}`} />
-                {platformName(p.platform as "meta" | "google").replace(" Ads", "")} · {p.isMe ? "you" : (p.owner ?? "buyer")} · {PART_STATUS[p.status] ?? p.status}
-              </a>
-            ))}
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {bundle && bundle.parts.length > 1 && (
+            <div className="flex flex-wrap gap-1.5">
+              {bundle.parts.map((p) => (
+                <a
+                  key={p.id}
+                  href={`/reports/${p.id}`}
+                  className={`flex h-11 items-center gap-2 rounded-full border px-3.5 text-xs md:h-8 md:px-3 ${p.isMe ? "border-fg/40" : "border-line"} ${p.status === "submitted" || p.status === "posted" ? "text-ok" : "text-muted"}`}
+                >
+                  <span className={`h-1.5 w-1.5 rounded-full ${p.status === "submitted" || p.status === "posted" ? "bg-ok" : p.status === "drafting" ? "animate-pulse bg-faint" : "bg-warn"}`} />
+                  {platformName(p.platform as "meta" | "google").replace(" Ads", "")} · {p.isMe ? "you" : (p.owner ?? "buyer")} · {PART_STATUS[p.status] ?? p.status}
+                </a>
+              ))}
+            </div>
+          )}
+          {/* Regenerate: the freshest numbers and the latest report logic, from scratch (a sent one stays as it went) */}
+          {!busy && <RegenerateButton kind="one" variant="header" id={report.id} label={`${client.name}'s report`} sent={sent} approved={report.status === "submitted"} />}
+        </div>
       </div>
 
       {note && <p className={`rounded-[12px] px-4 py-3 text-sm ${note.ok ? "bg-ok-soft text-ok" : "bg-bad-soft text-bad"}`}>{note.text}</p>}
+      {report.regen && !busy && !sent && <UndoRegenerate key={report.regen.at} id={report.id} at={report.regen.at} by={report.regen.by} />}
 
       {step === "report" && (
         <div className={`grid items-start gap-5 ${minned ? "pb-20" : "lg:grid-cols-[minmax(0,1fr)_420px]"}`}>
@@ -359,8 +367,8 @@ export function ReportStudio({
                   <>
                     <p className="font-heading text-lg">The AI couldn&apos;t write it</p>
                     <p className="max-w-md text-sm text-muted">{report.error ?? "Try again."}</p>
-                    <button type="button" onClick={() => start(async () => void (await redraft(report.id), router.refresh()))} className="h-10 rounded-brand bg-fg px-4 text-sm text-bg">
-                      Write it again
+                    <button type="button" disabled={pending} onClick={() => start(async () => void (await regenerate(report.id), router.refresh()))} className="h-11 rounded-brand bg-fg px-4 text-sm text-bg disabled:opacity-60 md:h-10">
+                      {pending ? "Starting…" : "Write it again"}
                     </button>
                   </>
                 ) : (
@@ -652,11 +660,6 @@ ${t}` : t);
                 {joint ? "Preview the whole report (PDF) ↗" : "Preview the PDF ↗"}
               </a>
               {report.kind === "monthly" && <RecapDeckButton reportId={report.id} />}
-              {!sent && (
-                <button type="button" onClick={() => start(async () => void (await redraft(report.id), router.refresh()))} className="hover:text-fg">
-                  Write it again from scratch
-                </button>
-              )}
               {!sent && !built && report.kind !== "monthly" && (
                 <button type="button" onClick={() => start(async () => void (await skipReport(report.id), router.push("/reports")))} className="hover:text-fg">
                   Skip this one

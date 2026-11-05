@@ -7,7 +7,7 @@ import { revalidatePath } from "next/cache";
 import { isExecOrLead, requireStaff, type Staff } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { postWeekly, submitMonthly } from "@/lib/reports/run";
+import { draftQueued, postWeekly, submitMonthly } from "@/lib/reports/run";
 import { draftReport, qaReport, reviseReport, type ChatTurn, type Qa, type Sections } from "@/lib/reports/write";
 import { periodsFor } from "@/lib/reports/metrics";
 import { nyParts } from "@/lib/kpi/calc";
@@ -111,15 +111,77 @@ export async function checkAgain(id: string): Promise<Result<{ qa: Qa }>> {
   }
 }
 
-/** Writes it again from the latest numbers (in the background; the page follows it). */
-export async function redraft(id: string): Promise<Result> {
+/**
+ * Regenerate: written again from scratch with the account's freshest numbers (pulled from Meta or Google first) and
+ * the latest report logic, in the background; the page follows it. The draft it replaces can be undone for a day.
+ */
+export async function regenerate(id: string): Promise<Result> {
   const ok = await mine(id);
   if (!ok) return { ok: false, error: "Not found." };
+  if (ok.r.status === "posted") return { ok: false, error: "It's already gone to the client, so it can't be regenerated." };
+  if (ok.r.status === "drafting" || ok.r.status === "queued") return { ok: false, error: "It's already being written." };
   const admin = createAdminClient();
-  await admin.from("reports").update({ status: "drafting", updated_at: new Date().toISOString() }).eq("id", id);
-  after(() => draftReport(admin, id));
+  const { markForRegenerate, regenerateNow } = await import("@/lib/reports/regenerate");
+  const marked = await markForRegenerate(admin, [id], ok.me.fullName, "drafting");
+  if (!marked.length) return { ok: false, error: "It's already gone to the client, so it can't be regenerated." };
+  after(() => regenerateNow(admin, id));
   done(id);
   return { ok: true };
+}
+
+/**
+ * Regenerate every report shown (a section of the Reports page, with its platform and person filters, or a built
+ * report's parts). An exec or lead regenerates any they can report on; a buyer only their own. Approved parts are kept
+ * unless `approvedToo` (a buyer's own part of a built report). Sent ones and ones being written are skipped. Two or
+ * fewer are written now; more are queued and written a couple at a time, so nothing spikes.
+ */
+export async function regenerateMany(ids: string[], approvedToo = false): Promise<Result<{ ids: string[] }>> {
+  const me = await requireStaff();
+  const db = await createClient();
+  const { data } = await db.from("reports").select("id, status, owner_id, kpi_targets(id, client_id, platform, owner_id)").in("id", [...new Set(ids)].slice(0, 200));
+  const allowed: string[] = [];
+  for (const r of data ?? []) {
+    const t = r.kpi_targets as unknown as { id: string; client_id: string; platform: string; owner_id: string | null } | null;
+    const own = r.owner_id === me.id;
+    if (!own && !(isExecOrLead(me) && t && (await canReportOn(db, me, t)))) continue;
+    if (r.status === "draft" || r.status === "failed" || (approvedToo && own && r.status === "submitted")) allowed.push(r.id);
+  }
+  if (!allowed.length) return { ok: false, error: "Nothing here to regenerate (sent and approved reports are kept)." };
+  const admin = createAdminClient();
+  const { markForRegenerate, regenerateNow } = await import("@/lib/reports/regenerate");
+  const few = allowed.length <= 2;
+  const marked = await markForRegenerate(admin, allowed, me.fullName, few ? "drafting" : "queued");
+  if (few)
+    after(async () => {
+      for (const id of marked) await regenerateNow(admin, id);
+    });
+  // The queue: started now, picked up by the 15-minute schedule if this run ends first
+  else after(() => draftQueued(admin, 200_000, { regenerated: true }));
+  revalidatePath("/reports");
+  return { ok: true, ids: marked };
+}
+
+/** Back to the draft a regenerate replaced (within a day). */
+export async function undoRegenerate(id: string): Promise<Result> {
+  const ok = await mine(id);
+  if (!ok) return { ok: false, error: "Not found." };
+  try {
+    const { undoRegenerate: undo } = await import("@/lib/reports/regenerate");
+    await undo(createAdminClient(), id);
+    done(id);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't undo it." };
+  }
+}
+
+/** Where regenerated reports stand, for the page's progress and the toast when they're done. */
+export async function regenProgress(ids: string[]): Promise<{ id: string; status: string; client: string }[]> {
+  await requireStaff();
+  if (!ids.length) return [];
+  const db = await createClient();
+  const { data } = await db.from("reports").select("id, status, clients(name)").in("id", ids.slice(0, 200));
+  return (data ?? []).map((r) => ({ id: r.id as string, status: r.status as string, client: (r.clients as unknown as { name: string } | null)?.name ?? "" }));
 }
 
 /** Weekly: post it to the client's channel as you. Monthly: submit your part (it goes out when every part is in). */

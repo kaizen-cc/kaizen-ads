@@ -5,6 +5,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { requireStaff } from "@/lib/auth";
 import { canReportOn } from "@/lib/reports/access";
+import { canUndo, type Previous } from "@/lib/reports/regenerate";
 import { createClient } from "@/lib/supabase/server";
 import type { ReportMetrics } from "@/lib/reports/metrics";
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
@@ -26,7 +27,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
   const db = await createClient();
   const { data: r } = await db
     .from("reports")
-    .select("id, kind, platform, status, period_start, period_end, owner_id, viewed_at, bundle_id, message, message_basis, sections, metrics, extra_metrics, extras, layout, qa, chat, error, posted_at, clients(name, slug, slack_channel_id), profiles!reports_owner_id_fkey(full_name), kpi_targets(id, client_id, platform, owner_id, report_layout)")
+    .select("id, kind, platform, status, period_start, period_end, owner_id, viewed_at, bundle_id, message, message_basis, sections, metrics, extra_metrics, extras, layout, qa, chat, error, posted_at, previous, clients(name, slug, slack_channel_id), profiles!reports_owner_id_fkey(full_name), kpi_targets(id, client_id, platform, owner_id, report_layout)")
     .eq("id", id)
     .maybeSingle();
   if (!r) notFound();
@@ -79,6 +80,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           chat: (r.chat ?? []) as ChatTurn[],
           error: r.error,
           owner: name(r.profiles),
+          regen: canUndo({ status: r.status, previous: r.previous as Previous | null }) ? { at: (r.previous as Previous).at, by: (r.previous as Previous).by } : null,
         }}
         client={{ name: client.name, slug: client.slug, hasChannel: Boolean(client.slack_channel_id) }}
         bundle={

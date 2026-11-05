@@ -290,6 +290,22 @@ export async function refreshAccountKpis(admin: SupabaseClient, account: string)
   return r ?? { account, error: "No active KPI target uses this ad account" };
 }
 
+/**
+ * One KPI target's ad account now (a report regenerated with fresh data): pulled from Meta or Google and recomputed,
+ * unless it was pulled cleanly in the last `freshMs` (a batch of reports on one account pulls it once).
+ */
+export async function refreshTargetKpis(admin: SupabaseClient, targetId: string, freshMs = 20 * 60_000) {
+  const { data: t } = await admin.from("kpi_targets").select("platform, ad_account_id").eq("id", targetId).maybeSingle();
+  if (!t?.ad_account_id || !["meta", "google"].includes(t.platform as string)) return { skipped: "No ad account" };
+  const account = t.platform === "google" ? digits(t.ad_account_id as string) : String(t.ad_account_id).replace(/^act_/, "");
+  const { data: s } = await admin.from("sync_state").select("last_run_at, last_result").eq("source", `kpi:${account}`).maybeSingle();
+  if (s?.last_run_at && Date.now() - Date.parse(s.last_run_at as string) < freshMs && !(s.last_result as { error?: string | null } | null)?.error) return { skipped: "Pulled moments ago" };
+  const dashed = account.length === 10 ? `${account.slice(0, 3)}-${account.slice(3, 6)}-${account.slice(6)}` : account;
+  const { data } = await admin.from("kpi_targets").select(TARGET_FIELDS).eq("active", true).eq("platform", t.platform).in("ad_account_id", [account, `act_${account}`, dashed]);
+  const [r] = await refreshTargets(admin, (data ?? []) as Target[], true);
+  return r ?? { account, error: "No active KPI target uses this ad account" };
+}
+
 /** The scheduled step: pull every account with a target and recompute everything. */
 export async function refreshAllKpis(admin: SupabaseClient, budgetMs = 650_000) {
   const t = await tracker(admin, "kpi", "ad accounts");
