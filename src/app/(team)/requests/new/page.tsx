@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { RequestForm } from "./request-form";
 import { LIVE } from "@/lib/live";
 import { startSections } from "@/lib/request-start";
+import type { PreviewItem } from "./start-flow";
 
 // The AI review can take a little while
 // The strategist writes a whole brief and then reviews it (about two minutes on a slow day)
@@ -46,10 +47,10 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
         ? await fromAsana(asana, me)
         : typeof ai === "string"
           ? await fromKaizenAi(supabase, ai, Number(card) || 0)
-          : typeof audit === "string" || typeof business === "string"
-            ? await fromAuditIdea(supabase, typeof business === "string" ? "business" : "account", (typeof business === "string" ? business : audit) as string, Number(idea) || 0)
-            : null;
-  const initialClient = restart?.draft.clientId ?? (typeof client === "string" ? (clients.find((c) => c.slug === client && c.creative)?.id ?? null) : null);
+          : null;
+  // An audit's creative idea: its quick preview opens first, over the client's start page
+  const auditIdea = !restart && (typeof audit === "string" || typeof business === "string") ? await fromAuditIdea(supabase, typeof business === "string" ? "business" : "account", (typeof business === "string" ? business : audit) as string, Number(idea) || 0) : null;
+  const initialClient = restart?.draft.clientId ?? auditIdea?.clientId ?? (typeof client === "string" ? (clients.find((c) => c.slug === client && c.creative)?.id ?? null) : null);
   // Arriving with ?client=: its start page is read here, so it's on screen with the page (stored data only, no AI)
   const initialStart = initialClient && !restart ? await startSections(supabase, initialClient).catch(() => null) : null;
 
@@ -65,6 +66,7 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
         aiOn={aiEnabled()}
         initialClient={initialClient}
         initialStart={initialStart}
+        initialPreview={auditIdea?.item ?? null}
       />
     </div>
   );
@@ -93,26 +95,21 @@ async function fromKaizenAi(db: Awaited<ReturnType<typeof createClient>>, messag
   };
 }
 
-/** A creative idea from an account audit or a business audit (read through the person's own session) as the draft */
-async function fromAuditIdea(db: Awaited<ReturnType<typeof createClient>>, kind: "account" | "business", id: string, index: number): Promise<{ draft: Partial<Draft> & { clientId: string } } | null> {
+/** A creative idea from an account audit or a business audit (read through the person's own session), to preview */
+async function fromAuditIdea(db: Awaited<ReturnType<typeof createClient>>, kind: "account" | "business", id: string, index: number): Promise<{ clientId: string; item: PreviewItem } | null> {
   if (!/^[0-9a-f-]{36}$/.test(id)) return null;
   const { data } = await db.from(kind === "business" ? "business_audits" : "account_audits").select("client_id, result").eq("id", id).maybeSingle();
   const c = ((data?.result as { creative?: { concept: string; angle: string; hook: string; format: string; why: string }[] } | null)?.creative ?? [])[index];
   if (!data || !c) return null;
-  const format = /video|reel|ugc/i.test(c.format) ? "video" : /carousel/i.test(c.format) ? "carousel" : "image";
+  const label = `From the ${kind === "business" ? "business" : "account"} audit: ${c.concept}`.slice(0, 200);
   return {
-    draft: {
-      clientId: data.client_id as string,
-      title: c.concept.slice(0, 120),
-      formats: { [format]: { new: 1, variations: 0 } },
-      sizes: ["4x5", "9x16"],
-      angle: c.angle,
-      audience: "",
-      brief: [`Concept: ${c.concept}`, `Hook: "${c.hook}"`, `Format: ${c.format}`, `Why: ${c.why}`].join("\n\n"),
-      refs: "",
-      landing: "",
-      priority: "normal",
-      origin: { kind: "brief", label: `From the ${kind === "business" ? "business" : "account"} audit: ${c.concept}`.slice(0, 200) },
+    clientId: data.client_id as string,
+    item: {
+      key: `audit-${id.slice(0, 8)}-${index}`,
+      source: { kind: "idea", label, text: [`Concept: ${c.concept}`, `Angle: ${c.angle}`, `Hook: "${c.hook}"`, `Format: ${c.format}`, `Why: ${c.why}`].join("\n") },
+      from: { kicker: `${kind === "business" ? "Business" : "Account"} audit idea`, label: c.concept },
+      progressLabel: "brief from an idea+brief self-review",
+      origin: { kind: "brief", label },
     },
   };
 }

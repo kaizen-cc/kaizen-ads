@@ -5,6 +5,7 @@ import type { SuggestionDraft, TalkTurn } from "@/lib/suggestions";
 import type { Draft } from "./draft";
 import { talkRequest } from "./actions";
 import { Spark } from "./parts";
+import type { PreviewItem } from "./start-flow";
 
 /**
  * "Talk it through": the team member tells the strategist the idea, it asks only what it needs (one or two questions
@@ -16,7 +17,7 @@ type Saved = { turns: TalkTurn[]; draft: SuggestionDraft | null; ready: boolean;
 const key = (clientId: string) => `kz:request-chat:${clientId}`;
 const FMT = { image: "image", video: "video", carousel: "carousel" } as const;
 
-export function RequestChat({ clientId, clientName, onUse, onBack }: { clientId: string; clientName: string; onUse: (patch: Partial<Draft>) => void; onBack: () => void }) {
+export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: { clientId: string; clientName: string; onUse: (patch: Partial<Draft>) => void; /** Before the first full brief: its quick preview */ onPreview: (item: PreviewItem) => void; onBack: () => void }) {
   const [state, setState] = useState<Saved>({ turns: [], draft: null, ready: false, patch: null });
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -40,7 +41,11 @@ export function RequestChat({ clientId, clientName, onUse, onBack }: { clientId:
   }, [state, clientId]);
 
   const [phase, setPhase] = useState<"checking" | "writing" | null>(null);
+  const preview = (turns: TalkTurn[]) =>
+    onPreview({ key: `talk-${turns.length}`, source: { kind: "talk", turns }, from: { kicker: "Talked through", label: turns.filter((x) => x.role === "user")[0]?.text.slice(0, 120) ?? "Your idea" }, progressLabel: "request chat" });
   const send = async (force = false) => {
+    // Nothing written yet: "write it" opens the quick preview first, and the full brief follows what's agreed there
+    if (force && !state.draft) return preview(state.turns);
     const t = force ? "Go ahead and write it with what we have." : text.trim();
     if (!t || busy) return;
     const turns: TalkTurn[] = [...state.turns, { role: "user", text: t }];
@@ -49,7 +54,7 @@ export function RequestChat({ clientId, clientName, onUse, onBack }: { clientId:
     setBusy(true);
     setPhase(force ? "writing" : "checking");
     setError(null);
-    const r = await talkRequest(clientId, turns, state.draft, force).catch(() => ({ ok: false as const, error: "Something went wrong. Try again." }));
+    const r = await talkRequest(clientId, turns, state.draft, force, !state.draft).catch(() => ({ ok: false as const, error: "Something went wrong. Try again." }));
     setBusy(false);
     setPhase(null);
     if (!r.ok) {
@@ -61,8 +66,9 @@ export function RequestChat({ clientId, clientName, onUse, onBack }: { clientId:
       draft: r.draft ?? s.draft,
       ready: r.ready,
       patch: r.patch ?? s.patch,
-      open: r.building ? null : { questions: r.questions, conflicts: r.conflicts },
+      open: r.building || r.previewReady ? null : { questions: r.questions, conflicts: r.conflicts },
     }));
+    if (r.previewReady) preview([...turns, { role: "ai", text: r.reply }]);
   };
 
   const use = () => {
@@ -194,6 +200,13 @@ export function RequestChat({ clientId, clientName, onUse, onBack }: { clientId:
             )}
             <button type="button" disabled={busy} onClick={() => void send(true)} className="min-h-11 rounded-full border border-line px-4 text-[13.5px] text-muted hover:text-fg disabled:opacity-60">
               Write it with what we have
+            </button>
+          </div>
+        ) : state.turns.length > 1 ? (
+          <div className="grid gap-2">
+            <p className="text-[13.5px] text-muted">Everything&rsquo;s clear. See the quick preview, change anything, then the full brief is written from it.</p>
+            <button type="button" disabled={busy} onClick={() => preview(state.turns)} className="min-h-11 rounded-full bg-brand px-4 text-[14px] font-medium text-white disabled:opacity-60">
+              See the quick preview
             </button>
           </div>
         ) : (

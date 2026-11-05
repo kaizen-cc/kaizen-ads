@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { AiUnavailable } from "@/lib/ai";
 import { notify } from "@/lib/owed-replies";
 import { loadSuggestion, suggestFromWinner, suggestRefresh, type WinnerSource } from "@/lib/suggestions";
+import type { QuickBrief } from "@/lib/quick-brief";
 
 // Briefs written in the background. Asking for one queues a job; the server writes it right after answering (and a
 // cron run every five minutes picks up anything a cut-off server left behind), so a refresh or leaving the page never
@@ -10,7 +11,7 @@ import { loadSuggestion, suggestFromWinner, suggestRefresh, type WinnerSource } 
 // person gets a toast and a bell notification that open it.
 
 export type BriefJobKind = "winner" | "refresh";
-export type BriefJobInput = { winner?: WinnerSource; adId?: string; from?: string | null };
+export type BriefJobInput = { winner?: WinnerSource; adId?: string; from?: string | null; /** The quick preview the person agreed (and maybe edited): the full brief follows it */ seed?: QuickBrief | null };
 export type BriefJob = {
   id: string;
   kind: BriefJobKind;
@@ -93,8 +94,8 @@ export async function runBriefJob(admin: SupabaseClient, id: string) {
   try {
     const sid =
       kind === "winner"
-        ? await suggestFromWinner(admin, job.client_id as string, input.winner as WinnerSource, job.profile_id as string)
-        : await suggestRefresh(admin, job.client_id as string, input.adId as string, job.profile_id as string);
+        ? await suggestFromWinner(admin, job.client_id as string, input.winner as WinnerSource, job.profile_id as string, undefined, input.seed ?? null)
+        : await suggestRefresh(admin, job.client_id as string, input.adId as string, job.profile_id as string, input.seed ?? null);
     const s = await loadSuggestion(admin, sid);
     await admin.from("brief_jobs").update({ status: "ready", suggestion_id: sid, finished_at: new Date().toISOString(), title: s?.draft.title ?? job.title }).eq("id", id);
     await notify(admin, [job.profile_id as string], {

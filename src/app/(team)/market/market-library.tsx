@@ -9,6 +9,8 @@ import { briefFromMarket, clientMarket } from "./actions";
 import { ClientSearch } from "./client-search";
 import { FilterMenu as Menu, FilterPill as Pill } from "@/components/filters";
 import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
+import { QuickBriefSheet } from "@/components/quick-brief-sheet";
+import type { QuickBrief } from "@/lib/quick-brief";
 import { MarketHoverCard, MarketPreview, MarketReadPanel, useMarketRead } from "./market-preview";
 
 type View = "all" | "proven" | "early" | "fresh" | "testing";
@@ -375,18 +377,23 @@ export function MarketSheet({
   const [error, setError] = useState<string | null>(null);
   const read = useMarketRead(a);
 
-  const write = async (clientId: string) => {
+  // A client picked: the quick preview first (?preview=, so back closes it), then the full brief from it
+  const [previewFor, setPreviewFor] = useState<string | null>(null);
+  const preview = useParam("preview");
+  const previewKey = `wm-${a.id}`;
+  const write = (clientId: string) => {
+    setPreviewFor(clientId);
+    pushParams({ preview: previewKey });
+  };
+  const writeFull = async (clientId: string, seed: QuickBrief) => {
     setError(null);
-    setStep("writing");
-    const r = await briefFromMarket(a.id, clientId);
-    if (!r.ok) {
-      setError(r.error);
-      return setStep(forClient ? "ad" : "pick");
-    }
-    // Back from the brief lands on the ad again, not on the writing screen
+    const r = await briefFromMarket(a.id, clientId, seed);
+    if (!r.ok) return r;
+    // The brief takes the preview's place: back from it lands on the ad again
     setStep(forClient ? "ad" : "pick");
     setWritten(r.suggestion);
-    pushParams({ brief: r.suggestion.id });
+    replaceParams({ preview: null, brief: r.suggestion.id });
+    return { ok: true as const };
   };
 
   if (brief) return <SuggestionSheet s={brief} onClose={onClose} />;
@@ -395,6 +402,16 @@ export function MarketSheet({
     <div className={SHEET_BACKDROP} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className={`${SHEET_PANEL} md:grid-cols-[minmax(0,400px)_1fr]`}>
         <SheetBar title={a.pageName ?? a.brand} onClose={onClose} />
+      {previewFor && preview === previewKey && (
+        <QuickBriefSheet
+          clientId={previewFor}
+          source={{ kind: "market", adId: a.id }}
+          from={{ kicker: `In the market · ${a.brand}`, label: a.pageName ?? a.brand }}
+          progressLabel="brief from a market ad+brief self-review"
+          onWrite={(seed) => writeFull(previewFor, seed)}
+          onClose={() => closeParams("preview")}
+        />
+      )}
         {/* Phones: once a client is being picked, the ad steps aside so the list is right there */}
         <div className={`grid content-start gap-2 ${step === "ad" ? "" : "hidden md:grid"}`}>
           <MarketPreview a={a} />

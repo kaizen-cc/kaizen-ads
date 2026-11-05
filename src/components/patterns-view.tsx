@@ -3,6 +3,9 @@
 import { useState, useTransition } from "react";
 import { briefPattern, refreshPatterns } from "@/app/(team)/pipeline/pattern-actions";
 import type { Pattern, PatternsState } from "@/lib/patterns";
+import { QuickBriefSheet } from "@/components/quick-brief-sheet";
+import type { QuickBrief } from "@/lib/quick-brief";
+import { closeParams, pushParams, useParam } from "@/lib/url-state";
 
 // Patterns across clients, as cards: what works (or fails) for a whole kind of business, how many clients prove it,
 // and the clients not using it yet, each a click from a brief.
@@ -16,6 +19,19 @@ function Card({ p, names, canBrief, uses }: { p: Pattern; names?: Record<string,
   const [, start] = useTransition();
   const works = p.verdict === "works";
   const share = p.evidence.of ? Math.round((p.evidence.clients / p.evidence.of) * 100) : 0;
+  // A client picked: the quick preview first (?preview=, so back closes it), then the brief is written in the background
+  const [previewFor, setPreviewFor] = useState<string | null>(null);
+  const previewKey = previewFor ? `pt-${p.id}-${previewFor}` : null;
+  const previewing = useParam("preview") === previewKey && previewKey !== null;
+  const brief = (id: string, seeds: QuickBrief[]) => {
+    closeParams("preview");
+    setSent((x) => ({ ...x, [id]: "busy" }));
+    start(async () => {
+      const rs = await Promise.all(seeds.map((seed) => briefPattern(p.id, id, seed)));
+      const bad = rs.find((r) => !r.ok);
+      setSent((x) => ({ ...x, [id]: bad && !bad.ok ? bad.error : "done" }));
+    });
+  };
   return (
     <article className="grid gap-3 rounded-[18px] border border-line bg-surface p-4 md:p-5">
       <div className="flex flex-wrap items-center gap-2">
@@ -65,11 +81,8 @@ function Card({ p, names, canBrief, uses }: { p: Pattern; names?: Record<string,
                     type="button"
                     disabled={Boolean(st)}
                     onClick={() => {
-                      setSent((x) => ({ ...x, [id]: "busy" }));
-                      start(async () => {
-                        const r = await briefPattern(p.id, id);
-                        setSent((x) => ({ ...x, [id]: r.ok ? "done" : r.error }));
-                      });
+                      setPreviewFor(id);
+                      pushParams({ preview: `pt-${p.id}-${id}` });
                     }}
                     title={st && st !== "busy" && st !== "done" ? st : undefined}
                     className={`min-h-10 rounded-full border px-3.5 text-[12.5px] transition-colors ${st === "done" ? "border-ok/40 bg-ok-soft text-ok" : st && st !== "busy" ? "border-bad/40 text-bad" : "border-line hover:border-brand/50 hover:text-fg"} disabled:cursor-default`}
@@ -84,6 +97,18 @@ function Card({ p, names, canBrief, uses }: { p: Pattern; names?: Record<string,
               })}
           </div>
         </div>
+      )}
+      {previewing && previewFor && (
+        <QuickBriefSheet
+          clientId={previewFor}
+          source={{ kind: "pattern", patternId: p.id }}
+          from={{ kicker: `Works for ${p.evidence.clients} of ${p.evidence.of}`, label: `${p.title} · ${names?.[previewFor] ?? ""}` }}
+          progressLabel="brief from a pattern"
+          background
+          onWrite={(seed) => brief(previewFor, [seed])}
+          onWriteAll={(seeds) => brief(previewFor, seeds)}
+          onClose={() => closeParams("preview")}
+        />
       )}
     </article>
   );

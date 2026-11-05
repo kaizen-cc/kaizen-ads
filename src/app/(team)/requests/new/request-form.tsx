@@ -4,7 +4,9 @@ import { AiProgress, AiProgressButton } from "@/components/ai-progress";
 
 import { useRouter } from "next/navigation";
 import { PromisesStrip } from "./promises-strip";
-import { ClientPicker, StartPage, forgetStart, prefetchStart, rememberClient, seedStart } from "./start-flow";
+import { ClientPicker, StartPage, forgetStart, prefetchStart, rememberClient, seedStart, splitRest, writeItem, type PreviewItem } from "./start-flow";
+import { QuickBriefSheet, useQuickPreview } from "@/components/quick-brief-sheet";
+import { ReadyToSend, MAKER, TURNAROUND, plural, type ReadyHandle } from "./ready-to-send";
 import type { StartData } from "@/lib/request-start";
 import { RequestChat } from "./request-chat";
 import { AsanaSend, BriefPdfButton } from "@/components/asana-send";
@@ -13,26 +15,20 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { PersonAvatar } from "@/components/person-avatar";
 import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
 import type { DraftPatch, Review, ReviewIssue, Suggestions } from "@/lib/ai";
-import { draws, type Allotment } from "@/lib/allotment";
-import { FORMAT_LABEL, type Format, type Priority } from "@/lib/stages";
+import { type Allotment } from "@/lib/allotment";
+import { FORMAT_LABEL, type Format } from "@/lib/stages";
 import { ClientTag, FormatIcon } from "@/app/(team)/board/ticket-card";
 import { applyFixes, asanaPreview, createBatch, fulfilPromise, loadBriefing, reviewRequest, sendToAsana, suggestForRequest, type ContextSummary, type RefSummary, type ReviewDecisions, type ReviewResult, type SimilarCard, type SuggestResult } from "./actions";
 import { ReviewWorkspace, startHandled, type Handled } from "./review-workspace";
 import { FORMATS, INSPIRE_KEY, MAX_VARIATIONS, SIZES, emptyDraft, selectedFormats, totalFor, type Draft, type Size } from "./draft";
-import { AllotmentMeter, AspectOption, Chip, Progress, Spark, Stepper, type ClientOption } from "./parts";
+import { AllotmentBars, AspectOption, Chip, Progress, Spark, Stepper, conceptLine, type ClientOption } from "./parts";
 import { SavedConcepts } from "@/components/saved-concepts";
 import { savedHref, savedLine } from "@/lib/saved-references";
 
 const STEPS = ["Client", "Start", "Formats", "Direction", "Brief", "Review"];
 // Each step in the address (?step=formats), so back returns to the step before
 const STEP_KEYS = STEPS.map((x) => x.toLowerCase());
-const TURNAROUND: Record<Format, number> = { image: 2, video: 4, carousel: 2 };
-const MAKER: Record<Format, { role: string; label: string }> = {
-  image: { role: "graphic_designer", label: "designer" },
-  carousel: { role: "graphic_designer", label: "designer" },
-  video: { role: "video_editor", label: "video editor" },
-};
-const FIELD_STEP: Record<ReviewIssue["field"], number> = { formats: 2, sizes: 2, title: 3, angle: 3, audience: 3, brief: 4, references: 4 };
+const FIELD_ID: Record<ReviewIssue["field"], string> = { formats: "formats", sizes: "sizes", title: "title", angle: "angle", audience: "audience", brief: "brief", references: "references" };
 const input =
   "h-12 w-full rounded-[8px] border border-line bg-surface px-4 text-[15px] outline-none transition-colors placeholder:text-faint focus:border-brand-text/70";
 
@@ -45,12 +41,9 @@ type ReviewState = { status: "idle" } | { status: "running" } | { status: "done"
 
 export type RequestDemo = { suggestions: Suggestions; context: ContextSummary; review: Review; similar?: SimilarCard[] };
 
-const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+/** A key for a split's next brief (kept with the request in progress) */
+const uid = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 const countLabel = (n: number, v: number) => [n && `${n} new`, v && plural(v, "variation")].filter(Boolean).join(" + ");
-const dueLabel = (f: Format, p: Priority) => {
-  const days = p === "urgent" ? Math.floor(TURNAROUND[f] / 2) : TURNAROUND[f];
-  return days === 0 ? "due today" : `due in ${plural(days, "business day")}`;
-};
 
 function Field({ id, label, hint, children }: { id?: string; label: string; hint?: React.ReactNode; children: React.ReactNode }) {
   return (
@@ -78,6 +71,8 @@ type Saved = {
   briefAi: { status: "idle" | "loading" } | { status: "offer"; text: string };
   review: ReviewState;
   handled: Handled | null;
+  /** The other briefs of a split, still to preview and write */
+  queue?: PreviewItem[];
 };
 function readSaved(key = SAVE_KEY): Saved | null {
   try {
@@ -110,6 +105,7 @@ export function RequestForm({
   initialDraft = null,
   startAtReview = false,
   initialStart = null,
+  initialPreview = null,
 }: {
   clients: ClientOption[];
   allotments: Record<string, Allotment>;
@@ -124,6 +120,8 @@ export function RequestForm({
   startAtReview?: boolean;
   /** The start page's sections, already read on the server for ?client= (no wait at all) */
   initialStart?: StartData | null;
+  /** Arriving with an idea to brief (an audit's creative idea): its quick preview opens first */
+  initialPreview?: PreviewItem | null;
 }) {
   // Seeded once, before anything asks for it
   useState(() => {
@@ -142,6 +140,10 @@ export function RequestForm({
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<number[] | null>(null);
   const [asanaSent, setAsanaSent] = useState<{ name: string; url: string | null }[] | null>(null);
+  // The quick preview every brief starts from (in the address as ?preview=), and a split's briefs still to write
+  const preview = useQuickPreview<PreviewItem>();
+  const [queue, setQueue] = useState<PreviewItem[]>([]);
+  const readyRef = useRef<ReadyHandle | null>(null);
   // Start: talking the idea through with the strategist (in the address, so back returns to the cards)
   const talking = useParam("path") === "talk";
   // Phones: the winners and market ideas open as a bottom sheet instead of pushing the form down
@@ -163,7 +165,6 @@ export function RequestForm({
   const total = formats.reduce((n, f) => n + totalFor(draft.formats[f]), 0);
   const s = ai.status === "ready" ? ai.s : null;
   const allotment = draft.clientId ? allotments[draft.clientId] : undefined;
-  const taking = draws(draft.formats);
 
   // Prepared suggestions come from the twice-daily briefing and load instantly. Live ones ask the AI now,
   // using what's filled in; that's also the fallback for a client with no briefing yet.
@@ -201,6 +202,7 @@ export function RequestForm({
         setBriefAi(saved.briefAi.status === "loading" ? { status: "idle" } : saved.briefAi);
         setReview(saved.review.status === "running" ? { status: "idle" } : saved.review);
         setHandled(saved.handled ? { ...saved.handled, fixing: null, running: null } : null);
+        setQueue(saved.queue ?? []);
         setRestoredAt(saved.at);
         // Already in the form: the briefing fills its suggestions in the background
         if (saved.step >= 2 && (saved.ai.status === "loading" || saved.ai.status === "idle") && aiOn) suggest(saved.draft, false);
@@ -218,6 +220,7 @@ export function RequestForm({
         }
       }
       setLoaded(true);
+      if (initialPreview && initialClient) preview.open(initialPreview.key, initialPreview);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -226,8 +229,8 @@ export function RequestForm({
   useEffect(() => {
     if (!loaded || created) return;
     if (!draft.clientId) return writeSaved(null, saveKey);
-    writeSaved({ at: Date.now(), draft, step, ai, briefAi, review, handled: handled ? { ...handled, fixing: null, running: null } : null }, saveKey);
-  }, [loaded, created, draft, step, ai, briefAi, review, handled, saveKey]);
+    writeSaved({ at: Date.now(), draft, step, ai, briefAi, review, handled: handled ? { ...handled, fixing: null, running: null } : null, queue }, saveKey);
+  }, [loaded, created, draft, step, ai, briefAi, review, handled, queue, saveKey]);
 
   const startOver = () => {
     writeSaved(null, saveKey);
@@ -288,7 +291,7 @@ export function RequestForm({
     // Reaching the manual form: the client's briefing pre-fills its suggestions, quietly, in the background
     if (i >= 2 && aiOn && d.clientId && aiRef.current.status === "idle") suggest(d, false);
     // From the ideas sheet, the step takes the sheet's place: back doesn't open it again
-    (ideasOpen ? replaceParams : pushParams)({ step: STEP_KEYS[i], ideas: null, path: null });
+    (ideasOpen || preview.current ? replaceParams : pushParams)({ step: STEP_KEYS[i], ideas: null, path: null, preview: null });
     reveal(topRef, "start");
   }
 
@@ -296,6 +299,28 @@ export function RequestForm({
   const applyIdea = (patch: Partial<Draft>) => {
     set(patch);
     go(STEPS.length - 1);
+  };
+
+  // The full brief from an agreed quick preview: written through its usual pipeline, then straight to Ready to send.
+  // A split's other briefs wait in the queue, each previewed and written on its own.
+  const writePreview = async (item: PreviewItem, seed: import("@/lib/quick-brief").QuickBrief, edited: boolean, rest: import("@/lib/quick-brief").QuickBrief[]) => {
+    if (!draft.clientId) return { ok: false as const, error: "Pick a client first." };
+    const clientId = draft.clientId;
+    const r = await writeItem(item, clientId, seed, edited).catch(() => ({ ok: false as const, error: "Something went wrong. Try again." }));
+    if (!r.ok) return r;
+    // A fresh request from this brief (the last one's review and promise don't carry over)
+    setHandled(null);
+    setDraft((d) => ({ ...emptyDraft(clientId), sizes: d.sizes, ...r.patch }));
+    setReview({ status: "idle" });
+    setPromise(item.promiseId ? { id: item.promiseId, clientId } : null);
+    setQueue((q) => [...splitRest(item, rest), ...q.filter((x) => x.key !== item.key)]);
+    go(STEPS.length - 1);
+    return { ok: true as const };
+  };
+  const openNext = (item: PreviewItem) => {
+    setCreated(null);
+    setAsanaSent(null);
+    preview.open(item.key, item);
   };
 
   const draftBrief = () => {
@@ -480,6 +505,7 @@ export function RequestForm({
     setReview({ status: "idle" });
     setBriefAi({ status: "idle" });
     setCreated(null);
+    setQueue([]);
     go(0);
   };
 
@@ -491,7 +517,7 @@ export function RequestForm({
     ["What are we making?", "Pick every format you need. Each one becomes its own ticket for the right person."],
     ["What’s the direction?", "Name it and set the angle, so the team and the copy agent aim the same way."],
     ["Brief the team", "What to show, what to say, and what to stay away from."],
-    ["Ready to send", aiOn ? "Check it over. The AI scrubs it against the client’s history before it goes out." : "Check it over before it goes out."],
+    ["Ready to send", aiOn ? "This is what the team receives. Change anything right here; the AI scrubs it against the client’s history before it goes out." : "This is what the team receives. Change anything right here before it goes out."],
   ][step];
 
   return (
@@ -517,6 +543,7 @@ export function RequestForm({
           {!created && step >= 2 && <AiStrip aiOn={aiOn} ai={ai} clientName={client?.name ?? null} onRefresh={() => suggest(draft, true)} />}
         </div>
 
+        {(created || asanaSent || step === STEPS.length - 1) && queue.length > 0 && <UpNext queue={queue} onOpen={openNext} onDrop={(k) => setQueue((q) => q.filter((x) => x.key !== k))} />}
         {asanaSent ? (
           <div className="grid gap-4 rounded-[20px] border border-ok/40 bg-ok-soft/30 p-6">
             <p className="font-heading text-[24px]">Sent to Asana</p>
@@ -562,28 +589,19 @@ export function RequestForm({
 
             {step === 1 && draft.clientId && client && (
               talking ? (
-                <RequestChat clientId={draft.clientId} clientName={client.name} onUse={applyIdea} onBack={() => closeParams("path")} />
+                <RequestChat clientId={draft.clientId} clientName={client.name} onUse={applyIdea} onPreview={(item) => preview.open(item.key, item)} onBack={() => closeParams("path")} />
               ) : (
                 <StartPage
                   key={draft.clientId}
                   clientId={draft.clientId}
                   clientName={client.name}
                   aiOn={aiOn && !demo}
-                  onBrief={applyIdea}
+                  onPreview={(item) => preview.open(item.key, item)}
                   onManual={() => go(2)}
                   onTalk={() => pushParams({ path: "talk" })}
                   promises={(list) =>
                     demo ? null : (
-                      <PromisesStrip
-                        clientId={draft.clientId ?? ""}
-                        preloaded={list}
-                        used={promise?.clientId === draft.clientId ? promise.id : null}
-                        onUse={(id, patch) => {
-                          set(patch);
-                          setPromise({ id, clientId: draft.clientId ?? "" });
-                          go(STEPS.length - 1);
-                        }}
-                      />
+                      <PromisesStrip clientId={draft.clientId ?? ""} preloaded={list} used={promise?.clientId === draft.clientId ? promise.id : null} onPreview={(item) => preview.open(item.key, item)} />
                     )
                   }
                 />
@@ -655,7 +673,7 @@ export function RequestForm({
                   </div>
                 )}
 
-                <AllotmentMeter allotment={allotment} request={taking} />
+                <AllotmentBars allotment={allotment} formats={formats.map((f) => ({ format: f, ...draft.formats[f]! }))} />
 
                 {formats.length > 0 && (
                   <Field label="How many" hint={`${plural(formats.length, "ticket")} · ${plural(total, "creative")}`}>
@@ -670,7 +688,7 @@ export function RequestForm({
                             <div className="grid grid-cols-[auto_auto_minmax(40px,1fr)] items-end gap-2 md:gap-3">
                               <Stepper label="Net new" value={c.new} onChange={(n) => setCount(f, "new", n)} />
                               <Stepper label="Variations" value={c.variations} max={MAX_VARIATIONS} onChange={(n) => setCount(f, "variations", n)} />
-                              <span className="grid justify-items-end gap-1.5">
+                              <span className="grid justify-items-end gap-1.5" title={conceptLine({ format: f, ...c })}>
                                 <span className="text-[11px] text-faint">Total</span>
                                 <span className={`tabular grid h-11 place-items-center text-lg md:h-10 ${c.new + c.variations === 0 ? "text-bad" : ""}`}>{c.new + c.variations}</span>
                               </span>
@@ -689,7 +707,7 @@ export function RequestForm({
                       })}
                     </div>
                     <p className="text-xs leading-relaxed text-faint">
-                      <span className="text-muted">Net new</span> is a distinct design. A <span className="text-muted">variation</span> keeps the design and tests copy, headline or CTA. Up to {MAX_VARIATIONS} per format, and they don&apos;t count toward the allotment.
+                      One concept per brief. <span className="text-muted">Net new</span> is a distinct design of it; a <span className="text-muted">variation</span> keeps the design and tests copy, headline or CTA (up to {MAX_VARIATIONS} per format). Every version counts toward the allotment, and each carousel slide; sizes of the same version don&apos;t.
                     </p>
                   </Field>
                 )}
@@ -887,67 +905,30 @@ export function RequestForm({
 
             {step === 5 && (
               <div className="grid gap-6">
-                <div className="grid gap-px overflow-hidden rounded-[10px] border border-line bg-line">
-                  {formats.map((f) => {
-                    const c = draft.formats[f]!;
-                    const maker = team[MAKER[f].role];
-                    return (
-                      <div key={f} className="flex flex-wrap items-center gap-x-4 gap-y-2 bg-surface px-4 py-3.5">
-                        <span className="grid h-9 w-9 place-items-center rounded-[8px] bg-surface-2 text-muted">
-                          <FormatIcon format={f} size={18} />
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block text-sm font-medium">
-                            {FORMAT_LABEL[f]} <span className="font-normal text-muted">· {countLabel(c.new, c.variations)}</span>
-                          </span>
-                          <span className="block text-xs text-faint">{dueLabel(f, draft.priority)}</span>
-                        </span>
-                        <span className="flex items-center gap-2 text-sm">
-                          {maker ? (
-                            <>
-                              <PersonAvatar name={maker} size={22} /> {maker}
-                            </>
-                          ) : (
-                            <span className="text-warn">Lands unassigned</span>
-                          )}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <AllotmentMeter allotment={allotment} request={taking} compact />
-
-                <dl className="grid gap-x-6 gap-y-4 rounded-[10px] border border-line bg-surface p-5 text-sm sm:grid-cols-2">
-                  {[
-                    ["Title", draft.title, 3],
-                    ["Angle", draft.angle || "—", 3],
-                    ["Audience", draft.audience || "—", 3],
-                    ["Priority", draft.priority[0].toUpperCase() + draft.priority.slice(1), 3],
-                    ["Sizes", draft.sizes.map((z) => z.replace("x", ":")).join(", "), 2],
-                    ["Landing page", draft.landing?.trim() || "—", 4],
-                    ["References", `${draft.refs.split(/\s+/).filter((u) => /^https?:\/\//i.test(u)).length || "None"}`, 4],
-                  ].map(([k, v, to]) => (
-                    <div key={k as string} className="group min-w-0">
-                      <dt className="flex items-center gap-2 text-xs text-faint">
-                        {k}
-                        <button type="button" onClick={() => go(to as number)} className="-my-2 px-2 py-2 text-muted transition-opacity hover:text-fg md:my-0 md:px-0 md:py-0 md:text-inherit md:opacity-0 md:group-hover:opacity-100 md:focus:opacity-100">
-                          Edit
-                        </button>
-                      </dt>
-                      <dd className="mt-1 truncate">{v}</dd>
-                    </div>
-                  ))}
-                  <div className="group sm:col-span-2">
-                    <dt className="flex items-center gap-2 text-xs text-faint">
-                      Brief
-                      <button type="button" onClick={() => go(4)} className="-my-2 px-2 py-2 text-muted transition-opacity hover:text-fg md:my-0 md:px-0 md:py-0 md:text-inherit md:opacity-0 md:group-hover:opacity-100 md:focus:opacity-100">
-                        Edit
-                      </button>
-                    </dt>
-                    <dd className="mt-1 line-clamp-4 whitespace-pre-wrap leading-relaxed text-muted">{draft.brief || "No brief written."}</dd>
-                  </div>
-                </dl>
+                <ReadyToSend
+                  draft={draft}
+                  clientName={client?.name ?? ""}
+                  team={team}
+                  allotment={allotment}
+                  demo={Boolean(demo)}
+                  handleRef={readyRef}
+                  // Edits here keep a finished review on screen (its fixes and dismissals still count); before one, they're simply the request
+                  onChange={(p) => setDraft((d) => ({ ...d, ...(typeof p === "function" ? p(d) : p) }))}
+                  onSplit={(rest, keep) => {
+                    if (!draft.clientId) return;
+                    set(keep);
+                    const base: PreviewItem = { key: `split-${uid()}`, source: { kind: "idea", label: `Split from: ${draft.title}`.slice(0, 200), text: "" }, from: { kicker: "From a split", label: draft.title }, progressLabel: "brief from an idea+brief self-review", origin: draft.origin ?? null };
+                    setQueue((q) => [
+                      ...rest.map((c, i) => ({
+                        ...base,
+                        key: `${base.key}-${i}`,
+                        source: { kind: "idea" as const, label: `Split from: ${draft.title}`.slice(0, 200), text: `${c.name}\n${c.body}` },
+                        given: { title: c.name.slice(0, 80), concept: c.body.replace(/\s+/g, " ").slice(0, 400), angle: draft.angle, audience: draft.audience, hook: /Hook:\s*(.+)/.exec(c.body)?.[1] ?? "", formats: formats.slice(0, 1).map((f) => ({ format: f, new: 1, variations: 0 })), why: "", note: "" },
+                      })),
+                      ...q,
+                    ]);
+                  }}
+                />
 
                 <div ref={reviewRef} className="grid min-w-0 grid-cols-[minmax(0,1fr)] empty:hidden">
                   {review.status === "running" && <Scanning />}
@@ -959,7 +940,7 @@ export function RequestForm({
                       handled={handled}
                       brief={draft.brief}
                       onFix={fixWithAi}
-                      onEdit={(f) => go(FIELD_STEP[f])}
+                      onEdit={(f) => readyRef.current?.focus(FIELD_ID[f])}
                       onSetIssue={(i, st) => setHandled({ ...handled, issues: handled.issues.map((x, j) => (j === i ? st : x)) })}
                       onBrief={useStrongerBrief}
                       onSimilar={(n, st) => setHandled({ ...handled, similar: { ...handled.similar, [n]: st } })}
@@ -975,31 +956,16 @@ export function RequestForm({
               </div>
             )}
 
-            {step === STEPS.length - 1 && draft.clientId && !demo && (
-              <div className="grid gap-3 rounded-[18px] border border-line bg-surface p-4 md:p-5">
-                <div>
-                  <p className="text-sm font-medium">Where should it go?</p>
-                  <p className="text-[13px] text-muted">Create it here (the Board, the allotment and the AI review), send it to the Creative board in Asana exactly like a form request, or download it as a branded PDF.</p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <AsanaSend
-                    preview={() => asanaPreview(draft)}
-                    send={() => sendToAsana(draft)}
-                    onSent={(tasks) => {
-                      writeSaved(null, saveKey);
-                      if (draft.clientId && draft.savedRefIds?.length) forgetStart(draft.clientId);
-                      setAsanaSent(tasks.map((t) => ({ name: t.name, url: t.url })));
-                    }}
-                  />
-                  <BriefPdfButton body={() => ({ ...draft, clientId: draft.clientId })} />
-                </div>
-              </div>
-            )}
-
             {/* Footer */}
             {/* Phones: Back and Continue stay under the thumb, just above the tab bar */}
+            {step === STEPS.length - 1 && (
+              <div className="grid gap-1 px-1">
+                <p className="font-heading text-[18px]">Where should it go?</p>
+                <p className="text-[13px] text-muted">Create it here (the Board, the allotment and the AI review), send it to the Creative board in Asana exactly like a form request, or download it as a branded PDF.</p>
+              </div>
+            )}
             <div
-              className={`sticky bottom-[calc(59px+env(safe-area-inset-bottom))] z-20 -mx-4 flex flex-wrap items-center justify-between gap-3 border-t border-line bg-bg/95 px-4 py-3 backdrop-blur-xl md:static md:z-auto md:mx-0 md:bg-transparent md:px-0 md:pb-0 md:pt-6 md:backdrop-blur-none ${step === 0 ? "hidden" : ""}`}
+              className={`sticky z-20 -mx-4 flex flex-wrap items-center justify-between gap-3 border-t border-line bg-bg/95 px-4 py-3 backdrop-blur-xl md:mx-0 md:px-0 ${step === STEPS.length - 1 ? "bottom-[calc(59px+env(safe-area-inset-bottom))] md:bottom-0 md:rounded-[22px] md:border md:bg-surface/95 md:px-4 md:shadow-[0_20px_50px_-30px_rgba(0,0,0,0.6)]" : "bottom-[calc(59px+env(safe-area-inset-bottom))] md:static md:z-auto md:bg-transparent md:pb-0 md:pt-6 md:backdrop-blur-none"} ${step === 0 ? "hidden" : ""}`}
             >
               <div>
                 {step > 0 && (
@@ -1008,8 +974,24 @@ export function RequestForm({
                   </button>
                 )}
               </div>
-              <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-x-3 gap-y-1 md:flex-none md:gap-3">
+              <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-x-3 gap-y-2 md:flex-none md:gap-3">
                 {(error || (blocked && step > 0)) && <span className={`text-right text-xs md:text-left md:text-sm ${error ? "text-brand-text" : "text-faint"}`}>{error ?? blocked}</span>}
+                {step === STEPS.length - 1 && draft.clientId && !demo && (
+                  <span className="flex items-center gap-2">
+                    <AsanaSend
+                      preview={() => asanaPreview(draft)}
+                      send={() => sendToAsana(draft)}
+                      label="Asana"
+                      className="inline-flex h-12 items-center gap-2 rounded-full border border-line px-4 text-[14px] text-fg hover:border-faint md:h-11"
+                      onSent={(tasks) => {
+                        writeSaved(null, saveKey);
+                        if (draft.clientId && draft.savedRefIds?.length) forgetStart(draft.clientId);
+                        setAsanaSent(tasks.map((t) => ({ name: t.name, url: t.url })));
+                      }}
+                    />
+                    <BriefPdfButton body={() => ({ ...draft, clientId: draft.clientId })} className="inline-flex h-12 items-center gap-2 rounded-full border border-line px-4 text-[14px] text-fg hover:border-faint disabled:opacity-60 md:h-11" />
+                  </span>
+                )}
                 {step < STEPS.length - 1 ? (
                   step > 0 && (
                     <button disabled={Boolean(blocked)} className="h-12 rounded-brand md:h-11 bg-brand px-6 text-sm font-medium text-white shadow-[0_8px_30px_-8px_rgba(178,30,44,0.7)] transition-colors hover:bg-brand-hover disabled:bg-surface-2 disabled:text-faint disabled:shadow-none">
@@ -1055,7 +1037,7 @@ export function RequestForm({
                         : review.status === "error"
                           ? "Send without review"
                           : aiOn
-                            ? "Request creative"
+                            ? "Create here"
                             : `Create ${plural(formats.length, "ticket")}`}
                   </button>
                 )}
@@ -1065,7 +1047,46 @@ export function RequestForm({
         )}
       </div>
 
+      {preview.current && draft.clientId && (
+        <QuickBriefSheet
+          key={preview.current.key}
+          clientId={draft.clientId}
+          source={preview.current.source}
+          from={preview.current.from}
+          given={preview.current.given ?? null}
+          progressLabel={preview.current.progressLabel}
+          onWrite={(seed, edited, rest) => writePreview(preview.current!, seed, edited, rest)}
+          onClose={preview.close}
+        />
+      )}
     </div>
+  );
+}
+
+/** A split's other briefs, waiting: each opens its quick preview and is written on its own */
+function UpNext({ queue, onOpen, onDrop }: { queue: PreviewItem[]; onOpen: (item: PreviewItem) => void; onDrop: (key: string) => void }) {
+  return (
+    <section className="grid gap-3 rounded-[20px] border border-brand/30 bg-brand-soft/25 p-4">
+      <p className="flex items-center gap-2 text-[13.5px] font-medium">
+        <Spark size={12} className="text-brand-text" /> Up next from the split <span className="tabular rounded-full bg-bg/70 px-2 py-0.5 text-[11px] text-muted">{queue.length}</span>
+      </p>
+      <ul className="grid gap-2">
+        {queue.map((q) => (
+          <li key={q.key} className="flex flex-wrap items-center gap-3 rounded-[14px] border border-line bg-bg/70 px-3.5 py-2.5">
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[14px]">{q.given?.title || q.from.label}</span>
+              <span className="block truncate text-[12px] text-faint">{q.given?.concept || q.from.kicker}</span>
+            </span>
+            <button type="button" onClick={() => onDrop(q.key)} className="min-h-11 rounded-full px-3 text-[12.5px] text-faint hover:text-fg md:min-h-9">
+              Skip
+            </button>
+            <button type="button" onClick={() => onOpen(q)} className="min-h-11 rounded-full bg-fg px-4 text-[13px] font-medium text-bg hover:opacity-90 md:min-h-9">
+              Brief on this
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

@@ -7,6 +7,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { loadSuggestion, suggestFromWinner, type OpenSuggestion, type WinnerSource } from "@/lib/suggestions";
 import { notLive } from "@/lib/live-guard";
+import type { QuickBrief } from "@/lib/quick-brief";
 
 /** The ad in full from Meta: all its copy, the full image or the playable video, and Meta's own preview. */
 export async function winnerAd(adId: string): Promise<AdDetail | null> {
@@ -24,12 +25,13 @@ export async function winnerAd(adId: string): Promise<AdDetail | null> {
  * The strategist writes the whole request for the picked client from the winning ad. Picking the same ad and client
  * again opens the draft already written.
  */
-export async function briefFromWinner(w: WinnerSource, clientId: string): Promise<{ ok: true; suggestion: OpenSuggestion } | { ok: false; error: string }> {
+export async function briefFromWinner(w: WinnerSource, clientId: string, seed: QuickBrief | null = null): Promise<{ ok: true; suggestion: OpenSuggestion } | { ok: false; error: string }> {
   { const why = await notLive(await createClient(), clientId); if (why) return { ok: false, error: why }; }
   const me = await requireStaff();
   if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
   const supabase = await createClient();
-  const { data: existing } = await supabase
+  // From the quick preview a fresh brief is written, following it
+  const { data: existing } = seed ? { data: null } : await supabase
     .from("creative_suggestions")
     .select("id")
     .eq("kind", "winner")
@@ -39,7 +41,7 @@ export async function briefFromWinner(w: WinnerSource, clientId: string): Promis
     .eq("source->>adId", w.adId)
     .limit(1);
   try {
-    const id = existing?.[0]?.id ?? (await suggestFromWinner(createAdminClient(), clientId, w, me.id));
+    const id = existing?.[0]?.id ?? (await suggestFromWinner(createAdminClient(), clientId, w, me.id, undefined, seed));
     const suggestion = await loadSuggestion(supabase, id);
     return suggestion ? { ok: true, suggestion } : { ok: false, error: "Couldn't open the brief." };
   } catch (e) {

@@ -29,6 +29,7 @@ import { draws } from "@/lib/allotment";
 import { readReferences, referencesBlock } from "@/lib/references";
 import { MAX_VARIATIONS, SIZES, describeDraft, refLinks, selectedFormats, type Draft } from "./draft";
 import { notLive } from "@/lib/live-guard";
+import type { QuickBrief } from "@/lib/quick-brief";
 
 type Fail = { ok: false; error: string };
 export type CreateResult = { ok: true; numbers: number[] } | Fail;
@@ -188,7 +189,8 @@ ${
 Review this request before it goes to the creative team.
 
 issues: flag only real problems:
-- net new counts that go over what's left of the monthly allotment (block; say by how much and that it needs an upgrade or variations instead). Skip this if no allotment is set.
+- counts that go over what's left of the monthly allotment (every version counts, and each carousel slide; sizes of the same version don't) (block; say by how much and that it needs an upgrade or fewer versions). Skip this if no allotment is set.
+- more than one distinct concept in one request (warn: one concept per brief, split it)
 - on a temporary sprint package: a due date after the sprint ends (block), or more work than fits before it ends (warn). Mention the end date.
 - anything that goes against client memory, especially "avoid" items (block)
 - content that's off-topic for this client or doesn't match the campaign direction set by the title, angle and audience (block if clearly wrong, warn if unclear)
@@ -452,17 +454,22 @@ function toPatch(d: import("@/lib/suggestions").SuggestionDraft): Partial<Draft>
 }
 
 /** The brief for a promise, ready to drop into the form (written now if it wasn't already). */
-export async function promiseDraft(commitmentId: string): Promise<{ ok: true; patch: Partial<Draft> } | { ok: false; error: string }> {
+export async function promiseDraft(commitmentId: string, seed?: QuickBrief | null, edited = false): Promise<{ ok: true; patch: Partial<Draft> } | { ok: false; error: string }> {
   await requireStaff();
   const supabase = await createClient();
-  const { data: mine } = await supabase.from("call_commitments").select("id, what").eq("id", commitmentId).maybeSingle();
+  const { data: mine } = await supabase.from("call_commitments").select("id, what, suggestion_id").eq("id", commitmentId).maybeSingle();
   if (!mine) return { ok: false, error: "That promise isn't on a client you work on." };
   if (!adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
   try {
     const admin = createAdminClient();
     const { briefPromise } = await import("@/lib/calls");
-    const id = await briefPromise(admin, commitmentId);
+    const id = await briefPromise(admin, commitmentId, seed);
     if (!id) return { ok: false, error: "This one isn't paid ads or creative work, so it's been taken off the list." };
+    // Its brief was already written and the person changed the preview: rewritten to what they agreed
+    if (seed && edited && id === mine.suggestion_id) {
+      const { rewriteWithSeed } = await import("@/lib/suggestions");
+      await rewriteWithSeed(admin, id, seed);
+    }
     const { data: s } = await admin.from("creative_suggestions").select("draft").eq("id", id).single();
     return { ok: true, patch: { ...toPatch(s?.draft as import("@/lib/suggestions").SuggestionDraft), origin: { kind: "promise", label: `Promised on a call: ${mine.what}`.slice(0, 200), suggestionId: id } } };
   } catch (e) {
@@ -483,9 +490,10 @@ export async function moreMarket(clientId: string, offset: number): Promise<{ ad
  * work, fitted to the client), and it comes back as form fields plus where it came from.
  */
 export async function ideaDraft(
-  source: { kind: "winner"; winner: import("@/lib/industry").Winner } | { kind: "market"; adId: string },
+  source: { kind: "winner"; winner: Pick<import("@/lib/industry").Winner, "id" | "client" | "detail" | "headline" | "text" | "thumbnail" | "ratio" | "result" | "costPerResult" | "usual"> } | { kind: "market"; adId: string },
   clientId: string,
   format?: "image" | "video" | "carousel",
+  seed?: QuickBrief | null,
 ): Promise<{ ok: true; patch: Partial<Draft> } | { ok: false; error: string }> {
   const me = await requireStaff();
   if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
@@ -500,14 +508,14 @@ export async function ideaDraft(
     let origin: NonNullable<Draft["origin"]>;
     if (source.kind === "winner") {
       const w = source.winner;
-      id = await suggestFromWinner(admin, clientId, { adId: w.id, client: w.client, detail: w.detail, headline: w.headline, text: w.text, thumbnail: w.thumbnail, ratio: w.ratio, result: w.result, costPerResult: w.costPerResult, usual: w.usual }, me.id, format);
+      id = await suggestFromWinner(admin, clientId, { adId: w.id, client: w.client, detail: w.detail, headline: w.headline, text: w.text, thumbnail: w.thumbnail, ratio: w.ratio, result: w.result, costPerResult: w.costPerResult, usual: w.usual }, me.id, format, seed);
       // The kept copy of its picture: Meta's own links expire within days
       origin = { kind: "winner", label: `${w.client}'s winning ad (${w.ratio}x their usual cost per ${w.result ?? "result"})${w.headline ? `: "${w.headline}"` : ""}`.slice(0, 200), thumb: /^\d{5,25}$/.test(w.id) ? `/api/ad-media/${w.id}` : w.thumbnail, suggestionId: id };
     } else {
       const { loadMarketAd } = await import("@/lib/market");
       const a = await loadMarketAd(admin, source.adId);
       if (!a) return { ok: false, error: "That ad isn't in the market library any more." };
-      id = await suggestFromMarket(admin, clientId, source.adId, me.id, format);
+      id = await suggestFromMarket(admin, clientId, source.adId, me.id, format, seed);
       origin = {
         kind: "market",
         label: `${a.brand}'s live ad${a.daysActive != null ? ` (running ${a.daysActive} days)` : ""}${a.angle ? `: ${a.angle}` : ""}`.slice(0, 200),
@@ -648,11 +656,21 @@ export async function clientBriefs(clientId: string): Promise<BriefCard[]> {
 }
 
 /** A suggested brief dropped into the form, with where it came from (sending it marks the brief used) */
-export async function suggestionPatch(id: string): Promise<{ ok: true; patch: Partial<Draft> } | Fail> {
+export async function suggestionPatch(id: string, seed?: QuickBrief | null): Promise<{ ok: true; patch: Partial<Draft> } | Fail> {
   await requireStaff();
   const db = await createClient();
   const { data: r } = await db.from("creative_suggestions").select("signal, draft, source, status").eq("id", id).maybeSingle();
   if (!r || r.status !== "open") return { ok: false, error: "That brief isn't open any more." };
+  // The person changed its quick preview: the brief is rewritten to what they agreed before it fills the request
+  if (seed) {
+    if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
+    try {
+      const { rewriteWithSeed } = await import("@/lib/suggestions");
+      r.draft = await rewriteWithSeed(createAdminClient(), id, seed);
+    } catch (e) {
+      return { ok: false, error: e instanceof AiUnavailable ? e.message : "The strategist couldn't rewrite it. Try again." };
+    }
+  }
   const src = r.source as { thumbnail?: string | null; adId?: string | null } | null;
   // The kept copy of the ad's picture when there's an ad behind it (Meta's own links expire)
   const thumb = src?.adId && /^\d{5,25}$/.test(src.adId) ? `/api/ad-media/${src.adId}` : (src?.thumbnail ?? null);
@@ -672,7 +690,7 @@ export async function clientPatterns(clientId: string) {
 }
 
 /** A pattern across clients, written up as this client's brief by the strategist */
-export async function patternPatch(patternId: string, clientId: string): Promise<{ ok: true; patch: Partial<Draft> } | Fail> {
+export async function patternPatch(patternId: string, clientId: string, seed?: QuickBrief | null): Promise<{ ok: true; patch: Partial<Draft> } | Fail> {
   const me = await requireStaff();
   if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
   {
@@ -685,7 +703,7 @@ export async function patternPatch(patternId: string, clientId: string): Promise
     const p = await patternById(admin, patternId);
     if (!p) return { ok: false, error: "That pattern isn't there any more." };
     const { suggestForPattern } = await import("@/lib/suggestions");
-    const id = await suggestForPattern(admin, clientId, p, me.id);
+    const id = await suggestForPattern(admin, clientId, p, me.id, seed);
     const { data: s } = await admin.from("creative_suggestions").select("draft").eq("id", id).single();
     return { ok: true, patch: { ...toPatch(s?.draft as import("@/lib/suggestions").SuggestionDraft), origin: { kind: "brief", label: `Works for ${p.group.toLowerCase()}: ${p.title}`.slice(0, 200), suggestionId: id } } };
   } catch (e) {
@@ -693,10 +711,27 @@ export async function patternPatch(patternId: string, clientId: string): Promise
   }
 }
 
-export type TalkResult = { ok: true; reply: string; questions: string[]; conflicts: string[]; ready: boolean; building: boolean; draft: import("@/lib/suggestions").SuggestionDraft | null; patch: Partial<Draft> | null } | Fail;
+/** An idea in words (an audit's creative idea) written up as this client's full brief, from the preview the person agreed */
+export async function ideaPatch(clientId: string, idea: { label: string; text: string }, seed: QuickBrief | null, origin: Draft["origin"] | null): Promise<{ ok: true; patch: Partial<Draft> } | Fail> {
+  await requireStaff();
+  if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
+  {
+    const why = await notLive(await createClient(), clientId);
+    if (why) return { ok: false, error: why };
+  }
+  try {
+    const { suggestFromIdea } = await import("@/lib/suggestions");
+    const { draft } = await suggestFromIdea(createAdminClient(), clientId, { label: idea.label.slice(0, 300), text: idea.text.slice(0, 4000) }, seed);
+    return { ok: true, patch: { ...toPatch(draft), ...(origin ? { origin } : {}) } };
+  } catch (e) {
+    return { ok: false, error: e instanceof AiUnavailable ? e.message : "The strategist couldn't write it. Try again." };
+  }
+}
+
+export type TalkResult = { ok: true; reply: string; questions: string[]; conflicts: string[]; ready: boolean; building: boolean; previewReady: boolean; draft: import("@/lib/suggestions").SuggestionDraft | null; patch: Partial<Draft> | null } | Fail;
 
 /** "Talk it through": the strategist's next turn, and the request as it stands */
-export async function talkRequest(clientId: string, turns: import("@/lib/suggestions").TalkTurn[], current: import("@/lib/suggestions").SuggestionDraft | null, force = false): Promise<TalkResult> {
+export async function talkRequest(clientId: string, turns: import("@/lib/suggestions").TalkTurn[], current: import("@/lib/suggestions").SuggestionDraft | null, force = false, previewFirst = false): Promise<TalkResult> {
   await requireStaff();
   if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
   const db = await createClient();
@@ -706,8 +741,8 @@ export async function talkRequest(clientId: string, turns: import("@/lib/suggest
   if (!clean.length || clean[clean.length - 1].role !== "user") return { ok: false, error: "Say what you have in mind first." };
   try {
     const { talkBrief } = await import("@/lib/suggestions");
-    const r = await talkBrief(createAdminClient(), clientId, clean, current, force);
-    return { ok: true, reply: r.reply, questions: r.questions, conflicts: r.conflicts, ready: r.ready, building: r.building, draft: r.draft ?? null, patch: r.draft ? toPatch(r.draft) : null };
+    const r = await talkBrief(createAdminClient(), clientId, clean, current, force, previewFirst);
+    return { ok: true, reply: r.reply, questions: r.questions, conflicts: r.conflicts, ready: r.ready, building: r.building, previewReady: Boolean(r.previewReady), draft: r.draft ?? null, patch: r.draft ? toPatch(r.draft) : null };
   } catch (e) {
     return { ok: false, error: e instanceof AiUnavailable ? e.message : "The strategist couldn't answer. Try again." };
   }

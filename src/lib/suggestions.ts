@@ -11,6 +11,7 @@ import { ALLOTMENT_RULE, MAX_VARIATIONS, slidesOf, toAllotment, type Allotment, 
 
 import type { SuggestionKind } from "@/lib/suggestion-kinds";
 import { LIVE, isLive } from "@/lib/live";
+import { applySeed, seedBlock, type QuickBrief } from "@/lib/quick-brief";
 import { assetsBlock, loadAssets } from "@/lib/client-assets";
 export { KIND_LABEL, type SuggestionKind } from "@/lib/suggestion-kinds";
 
@@ -668,7 +669,7 @@ Write the request for this moment, made in time for it: the brief, angle, audien
  * "Brief it for …" on a pattern across clients: the strategist writes this client's version of what's proven for
  * businesses like it (never naming the others).
  */
-export async function suggestForPattern(admin: SupabaseClient, clientId: string, p: { id: string; group: string; kind: string; title: string; detail: string; evidence: { clients: number; of: number; items: string[] } }, by: string | null) {
+export async function suggestForPattern(admin: SupabaseClient, clientId: string, p: { id: string; group: string; kind: string; title: string; detail: string; evidence: { clients: number; of: number; items: string[] } }, by: string | null, seed?: QuickBrief | null) {
   const prompt = await promptFor(admin, clientId, [{ kind: "winner", weight: 1, line: `Proven across ${p.evidence.clients} of ${p.evidence.of} ${p.group.toLowerCase()}: ${p.title}`, facts: p.evidence.items.slice(0, 4) }]);
   if (!prompt) throw new Error("Client not found");
   const out = await writeBrief(admin, clientId, {
@@ -684,9 +685,9 @@ ${p.detail}
 ${p.evidence.items.map((e) => `- ${e}`).join("\n")}
 </pattern_across_clients>
 
-Write this client's version of the pattern: what's proven for businesses like it, made theirs (their offer, their voice, their customers, their Brand Bible), never a copy and never naming another client. The brief, angle, audience, formats and counts within what's left of the allotment, sizes, its one concept and the hooks its versions test, and every asset in draft.assets. suggest: true. kind: "winner". signal: "Works for ${p.group.toLowerCase()}: <the pattern>". evidence: 2 to 4 lines on how it was proven across clients (counts, no names) and why it fits this client. why: two sentences. reply: "".`,
+Write this client's version of the pattern: what's proven for businesses like it, made theirs (their offer, their voice, their customers, their Brand Bible), never a copy and never naming another client. The brief, angle, audience, formats and counts within what's left of the allotment, sizes, its one concept and the hooks its versions test, and every asset in draft.assets. suggest: true. kind: "winner". signal: "Works for ${p.group.toLowerCase()}: <the pattern>". evidence: 2 to 4 lines on how it was proven across clients (counts, no names) and why it fits this client. why: two sentences. reply: "".${seedBlock(seed)}`,
   });
-  const draft = clean(out.draft);
+  const draft = applySeed(clean(out.draft), seed);
   const { data, error } = await admin
     .from("creative_suggestions")
     .insert({ client_id: clientId, kind: "pattern", signal: `Works for ${p.group.toLowerCase()}: ${p.title}`.slice(0, 300), evidence: out.evidence.slice(0, 5), why: out.why, draft, original: draft, source: { patternId: p.id, headline: p.title }, created_by: by })
@@ -711,7 +712,7 @@ const keepFormat = (d: SuggestionDraft, format?: Fmt): SuggestionDraft => {
   return { ...d, formats: mine.length ? mine : [{ format, new: Math.max(1, d.formats.reduce((n, f) => n + f.new, 0) || 1), variations: 0 }] };
 };
 
-export async function suggestFromWinner(admin: SupabaseClient, clientId: string, w: WinnerSource, by: string, format?: Fmt) {
+export async function suggestFromWinner(admin: SupabaseClient, clientId: string, w: WinnerSource, by: string, format?: Fmt, seed?: QuickBrief | null) {
   const same = w.client;
   const prompt = await promptFor(admin, clientId, [
     { kind: "winner", weight: 1, line: `A winning ad from another account to build on`, facts: [`${w.ratio}x better cost per ${w.result ?? "result"} than its account's usual`] },
@@ -730,9 +731,9 @@ Headline: ${w.headline ?? "(none)"}
 Primary text: ${w.text ?? "(none)"}
 </winning_ad>
 
-Someone on the team wants a request for this client built on this winning ad. Work out why the ad works (the angle, the hook, the format, the structure, the proof) and translate that into a request that fits this client's brand, offer, audience and allotment. Don't copy it word for word and never name the other business. Write the full request: brief, angle, audience, formats and counts within what's left of the allotment, sizes, its one concept and the hooks its versions test. suggest: true. kind: "kpi". signal: "Built on a winning ad". evidence: 2 to 4 lines on what makes the ad work and why it fits this client. why: two or three sentences. reply: "".${onlyFormat(format)}`,
+Someone on the team wants a request for this client built on this winning ad. Work out why the ad works (the angle, the hook, the format, the structure, the proof) and translate that into a request that fits this client's brand, offer, audience and allotment. Don't copy it word for word and never name the other business. Write the full request: brief, angle, audience, formats and counts within what's left of the allotment, sizes, its one concept and the hooks its versions test. suggest: true. kind: "kpi". signal: "Built on a winning ad". evidence: 2 to 4 lines on what makes the ad work and why it fits this client. why: two or three sentences. reply: "".${seed ? "" : onlyFormat(format)}${seedBlock(seed)}`,
   });
-  const draft = keepFormat(clean(out.draft), format);
+  const draft = seed ? applySeed(clean(out.draft), seed) : keepFormat(clean(out.draft), format);
   const { data, error } = await admin
     .from("creative_suggestions")
     .insert({
@@ -799,7 +800,7 @@ The team chose this client for this test. Write the request that runs the test f
  * A refresh for one tiring ad: the strategist keeps what made it work (it was spending for a reason) and changes what
  * people are tired of. Drafted for whoever asked, like a brief from a winner.
  */
-export async function suggestRefresh(admin: SupabaseClient, clientId: string, adId: string, by: string | null) {
+export async function suggestRefresh(admin: SupabaseClient, clientId: string, adId: string, by: string | null, seed?: QuickBrief | null) {
   const { data: f } = await admin.from("ad_fatigue").select("ad_name, campaign, adset, headline, thumbnail, severity, signals").eq("client_id", clientId).eq("ad_id", adId).single();
   if (!f) throw new Error("That ad isn't on the watch list");
   const { data: snap } = await admin.from("meta_snapshots").select("ads").eq("client_id", clientId).order("fetched_at", { ascending: false }).limit(1).maybeSingle();
@@ -821,9 +822,9 @@ Primary text: ${ad?.text ?? "(not synced)"}
 What the watcher saw: ${watch.replace(/^- /, "")}
 </tiring_ad>
 
-This ad needs a refresh. It worked before (it ran long enough to be judged against itself), so keep what made it work: the angle, the offer, the proof. Change what people have grown tired of: the visual, the hook, the first seconds of a video, the format. Usually 2 to 4 versions of one concept on the same angle (every version counts), within what's left of the allotment. Say in the brief what to keep and what to change, and why, from the numbers. For what to change, look first at the patterns across clients: a hook, format or angle proven for businesses like this one (one this client isn't using yet especially) is the strongest replacement; name it and its evidence in why. suggest: true. kind: "fatigue". signal: one line on what the watcher saw. evidence: 2 to 4 facts. why: two sentences. reply: "".`,
+This ad needs a refresh. It worked before (it ran long enough to be judged against itself), so keep what made it work: the angle, the offer, the proof. Change what people have grown tired of: the visual, the hook, the first seconds of a video, the format. Usually 2 to 4 versions of one concept on the same angle (every version counts), within what's left of the allotment. Say in the brief what to keep and what to change, and why, from the numbers. For what to change, look first at the patterns across clients: a hook, format or angle proven for businesses like this one (one this client isn't using yet especially) is the strongest replacement; name it and its evidence in why. suggest: true. kind: "fatigue". signal: one line on what the watcher saw. evidence: 2 to 4 facts. why: two sentences. reply: "".${seedBlock(seed)}`,
   });
-  const draft = clean(out.draft);
+  const draft = applySeed(clean(out.draft), seed);
   const { data, error } = await admin
     .from("creative_suggestions")
     .insert({
@@ -985,6 +986,7 @@ export async function suggestFromCall(
   clientId: string,
   commitment: { id: string; what: string; why: string; kind: string },
   call: { title: string; occurred_at: string; summary: { summary?: string; clientSaid?: string[]; decisions?: string[] } | null },
+  seed?: QuickBrief | null,
 ) {
   const prompt = await promptFor(admin, clientId, [
     { kind: "offer", weight: 1, line: `Promised on the call "${call.title}" (${call.occurred_at.slice(0, 10)}), not in motion yet`, facts: [commitment.what, commitment.why].filter(Boolean) },
@@ -1009,11 +1011,11 @@ ${s.decisions?.length ? `Decided: ${s.decisions.join("; ")}` : ""}
 ${commitment.what}${commitment.why ? `\nContext: ${commitment.why}` : ""}
 </what_we_promised>
 
-On this call Kaizen promised the above, and two business days later nothing is in production for it. Write the request that delivers exactly what was promised: use what the client said on the call (offer, dates, details, likes and dislikes) and the rest of the client context. Keep it to what was promised; don't expand it. If the call left something to confirm (a price, a date), say so in the brief. This request is for the paid ads and creative team: if what was promised isn't ad creative or ad copy for paid ads (it's an email, SMS, flow, organic post, flyer, website or other service), or this client doesn't run paid ads with us, set suggest to false and say why in skipReason. Otherwise suggest: true. kind: "offer". signal: "Promised on the call <date>: <the promise, short>". evidence: 2 to 4 lines from the call. why: two sentences. reply: "".`,
+On this call Kaizen promised the above, and two business days later nothing is in production for it. Write the request that delivers exactly what was promised: use what the client said on the call (offer, dates, details, likes and dislikes) and the rest of the client context. Keep it to what was promised; don't expand it. If the call left something to confirm (a price, a date), say so in the brief. This request is for the paid ads and creative team: if what was promised isn't ad creative or ad copy for paid ads (it's an email, SMS, flow, organic post, flyer, website or other service), or this client doesn't run paid ads with us, set suggest to false and say why in skipReason. Otherwise suggest: true. kind: "offer". signal: "Promised on the call <date>: <the promise, short>". evidence: 2 to 4 lines from the call. why: two sentences. reply: "".${seedBlock(seed)}`,
   });
   // Not work for the ads team: no brief
   if (!out.suggest) return { skip: out.skipReason || "Not paid ads or creative work" };
-  const draft = clean(out.draft);
+  const draft = applySeed(clean(out.draft), seed);
   const { data, error } = await admin
     .from("creative_suggestions")
     .insert({
@@ -1074,7 +1076,7 @@ export async function loadCallPromises(db: SupabaseClient): Promise<CallPromise[
  * A request for one client built on a live ad from the market (Motion): why it works, translated to this client.
  * The Motion link (or the ad itself) rides along in the references so the creative team sees the idea.
  */
-export async function suggestFromMarket(admin: SupabaseClient, clientId: string, adId: string, by: string, format?: Fmt) {
+export async function suggestFromMarket(admin: SupabaseClient, clientId: string, adId: string, by: string, format?: Fmt, seed?: QuickBrief | null) {
   const { loadMarketAd } = await import("@/lib/market");
   const a = await loadMarketAd(admin, adId);
   if (!a) throw new Error("That ad isn't in the market library any more");
@@ -1096,9 +1098,10 @@ CTA: ${a.cta ?? "(none)"}
 Link: ${link ?? "(none)"}
 </market_ad>
 
-Someone on the team wants a request for this client built on this live ad from the market. There are no performance numbers for it: how long it has run is the signal. Work out why it works (the angle, the hook, the format, the structure, the offer mechanics) and translate that into a request that fits this client's brand, offer, audience and allotment. Never copy it, never name the other brand in the brief, and never borrow their offer or claims. Write the full request: brief, angle, audience, formats and counts within what's left of the allotment, sizes, its one concept and the hooks its versions test. draft.refs: ${link ? `"${link}" first, then any other market links you used` : "any market links you used"}. suggest: true. kind: "offer". signal: "Built on a live ad in the market". evidence: 2 to 4 lines on what makes the ad work and why it fits this client. why: two or three sentences. reply: "".${onlyFormat(format)}`,
+Someone on the team wants a request for this client built on this live ad from the market. There are no performance numbers for it: how long it has run is the signal. Work out why it works (the angle, the hook, the format, the structure, the offer mechanics) and translate that into a request that fits this client's brand, offer, audience and allotment. Never copy it, never name the other brand in the brief, and never borrow their offer or claims. Write the full request: brief, angle, audience, formats and counts within what's left of the allotment, sizes, its one concept and the hooks its versions test. draft.refs: ${link ? `"${link}" first, then any other market links you used` : "any market links you used"}. suggest: true. kind: "offer". signal: "Built on a live ad in the market". evidence: 2 to 4 lines on what makes the ad work and why it fits this client. why: two or three sentences. reply: "".${seed ? "" : onlyFormat(format)}${seedBlock(seed)}`,
   });
-  const draft = keepFormat(clean({ ...out.draft, refs: [...(link ? [link] : []), ...(out.draft.refs ?? [])] }), format);
+  const withRefs = clean({ ...out.draft, refs: [...(link ? [link] : []), ...(out.draft.refs ?? [])] });
+  const draft = seed ? applySeed(withRefs, seed) : keepFormat(withRefs, format);
   const { data, error } = await admin
     .from("creative_suggestions")
     .insert({
@@ -1116,6 +1119,59 @@ Someone on the team wants a request for this client built on this live ad from t
     .single();
   if (error || !data) throw new Error(error?.message ?? "Couldn't save the brief");
   return data.id as string;
+}
+
+/**
+ * A brief already written (a suggested brief, a call's brief), rewritten from the quick preview the person changed:
+ * the same suggestion, its draft replaced, so sending it still marks it used.
+ */
+export async function rewriteWithSeed(admin: SupabaseClient, id: string, seed: QuickBrief) {
+  const { data: s } = await admin.from("creative_suggestions").select("id, client_id, kind, signal, evidence, why, draft, version").eq("id", id).single();
+  if (!s) throw new Error("Suggestion not found");
+  const prompt = await promptFor(admin, s.client_id, [{ kind: s.kind, weight: 1, line: s.signal, facts: (s.evidence ?? []) as string[] }]);
+  if (!prompt) throw new Error("Client not found");
+  const out = await writeBrief(admin, s.client_id, {
+    agent: "strategist",
+    label: "brief rewrite from a preview",
+    system: SYSTEM,
+    schema: SCHEMA,
+    prompt: `${prompt}
+
+<your_current_brief>
+${JSON.stringify({ why: s.why, ...(s.draft as SuggestionDraft) }, null, 1)}
+</your_current_brief>
+${seedBlock(seed)}
+
+Rewrite the brief to the agreed direction: keep what in your current brief still fits it, change what the person changed. Keep suggest true, the same kind, signal and evidence. reply: "".`,
+  });
+  const draft = applySeed(clean(out.draft), seed);
+  await admin.from("creative_suggestions").update({ draft, why: out.why || s.why, version: (s.version as number) + 1, updated_at: new Date().toISOString() }).eq("id", id);
+  return draft;
+}
+
+/**
+ * A full brief from an idea in words (an audit's creative idea) and the quick preview the person agreed: returned as
+ * a draft for the request form, not saved as a suggestion (nobody else needs to approve it).
+ */
+export async function suggestFromIdea(admin: SupabaseClient, clientId: string, idea: { label: string; text: string }, seed: QuickBrief | null) {
+  const prompt = await promptFor(admin, clientId, [{ kind: "kpi", weight: 1, line: idea.label, facts: [] }]);
+  if (!prompt) throw new Error("Client not found");
+  const out = await writeBrief(admin, clientId, {
+    agent: "strategist",
+    label: "brief from an idea",
+    system: SYSTEM,
+    schema: SCHEMA,
+    prompt: `${prompt}
+
+<the_idea>
+${idea.label}
+${idea.text}
+</the_idea>
+${seedBlock(seed)}
+
+Someone on the team wants a request for this client built on this idea. Write the full request: brief, angle, audience, formats and counts within what's left of the allotment, sizes, exactly one concept (one concept per brief) with its hooks, and every asset in draft.assets. suggest: true. kind: "kpi". signal: one line on the idea. evidence: 2 to 4 lines on why it fits this client. why: two sentences. reply: "".`,
+  });
+  return { draft: applySeed(clean(out.draft), seed), why: out.why };
 }
 
 export type TalkTurn = { role: "user" | "ai"; text: string };
@@ -1138,7 +1194,7 @@ const TALK_SCHEMA = {
  * the strategist turns it into a full request (the same brief the standard checks), asking only what it truly needs,
  * one or two questions at a time. Every turn returns the brief as it stands, so it's built in front of them.
  */
-export async function talkBrief(admin: SupabaseClient, clientId: string, turns: TalkTurn[], current: SuggestionDraft | null, force = false): Promise<TalkOut & { building: boolean; conflicts: string[] }> {
+export async function talkBrief(admin: SupabaseClient, clientId: string, turns: TalkTurn[], current: SuggestionDraft | null, force = false, previewFirst = false): Promise<TalkOut & { building: boolean; conflicts: string[]; previewReady?: boolean }> {
   const prompt = await promptFor(admin, clientId, [{ kind: "kpi", weight: 1, line: "A team member's own creative idea", facts: [] }], undefined, true);
   if (!prompt) throw new Error("Client not found");
   const convo = `<conversation>\n${turns.map((t) => `${t.role === "user" ? "Team member" : "You"}: ${t.text}`).join("\n\n")}\n</conversation>`;
@@ -1156,6 +1212,8 @@ export async function talkBrief(admin: SupabaseClient, clientId: string, turns: 
       prompt: `${prompt}\n\n${current ? `<request_so_far>\n${JSON.stringify(current, null, 1)}\n</request_so_far>\n\n` : ""}${convo}\n\nAnswer the team member's last message.`,
     });
     if (!check.build) return { reply: check.reply, questions: (check.questions ?? []).slice(0, 3), conflicts: (check.conflicts ?? []).slice(0, 4), ready: false, draft: current ?? (null as unknown as SuggestionDraft), building: false };
+    // Clear enough to write, and nothing written yet: the quick preview comes first (the full brief follows it)
+    if (previewFirst && !current) return { reply: check.reply, questions: [], conflicts: [], ready: false, draft: null as unknown as SuggestionDraft, building: false, previewReady: true };
   }
   const out = await askJson<TalkOut>({
     agent: "strategist",

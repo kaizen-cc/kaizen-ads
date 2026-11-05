@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useMemo, useState } from "react";
-import { left, untilLabel, type Allotment } from "@/lib/allotment";
+import { draws, left, untilLabel, type Allotment } from "@/lib/allotment";
 import { tintFor } from "@/lib/colors";
 import type { Size } from "./draft";
 
@@ -327,9 +327,77 @@ export function AllotmentMeter({ allotment, request, compact = false }: { allotm
       })}
       {rows.some((r) => r.used + r.add > r.cap) && (
         <p className="text-xs leading-relaxed text-bad">
-          This goes over what they pay for. Swap some net new for variations, or it&apos;s an upgrade conversation.
+          This goes over what they pay for: fewer versions, or it&apos;s an upgrade conversation.
         </p>
       )}
+    </div>
+  );
+}
+
+type Counted = { format: "image" | "video" | "carousel"; new: number; variations: number; cards?: number };
+
+/** What one concept takes from the allotment, counted by draws() (every version counts; a carousel, every slide) */
+export function takes(formats: Counted[]) {
+  const map: Partial<Record<Counted["format"], { new: number; variations: number; cards?: number }>> = {};
+  for (const f of formats) map[f.format] = { new: f.new, variations: f.variations, cards: f.cards };
+  const d = draws(map);
+  return { images: d.images, videos: d.videos, total: d.images + d.videos };
+}
+
+/** "1 concept · 3 versions = 3 from the allotment" (a carousel: "4 slides = 4") */
+export function conceptLine(f: Counted) {
+  const versions = f.new + f.variations;
+  const n = takes([f]).total;
+  if (f.format === "carousel") {
+    const slides = versions * (f.cards ?? 5);
+    return `1 concept · ${versions} ${versions === 1 ? "version" : "versions"} · ${slides} slides = ${n} from the allotment`;
+  }
+  return `1 concept · ${versions} ${versions === 1 ? "version" : "versions"} = ${n} from the allotment`;
+}
+
+/**
+ * The allotment, plainly: per pool, what's already used, what this request takes, and what's left after it. Sizes of
+ * the same version (4:5, 9:16) never count.
+ */
+export function AllotmentBars({ allotment, formats }: { allotment: Allotment | undefined; formats: Counted[] }) {
+  const t = takes(formats);
+  if (!allotment || (allotment.images === null && allotment.videos === null))
+    return <p className="rounded-[14px] border border-dashed border-line px-4 py-3 text-[12.5px] text-faint">No monthly allotment set for this client yet. Execs and leads set it on the client page.</p>;
+  const rows = [
+    { label: "Images & carousels", cap: allotment.images, used: allotment.imagesUsed, add: t.images },
+    { label: "Videos", cap: allotment.videos, used: allotment.videosUsed, add: t.videos },
+  ].filter((r) => r.cap !== null && (r.add > 0 || r.cap > 0)) as { label: string; cap: number; used: number; add: number }[];
+  const over = rows.some((r) => r.used + r.add > r.cap);
+  return (
+    <div className="grid gap-3.5 rounded-[16px] border border-line bg-surface p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span className="text-[12px] font-medium text-muted">This month&apos;s allotment</span>
+        {allotment.until && <span className="rounded-full bg-warn-soft px-2 py-0.5 text-[11px] text-warn">Sprint until {untilLabel(allotment.until)}</span>}
+      </div>
+      {rows.map((r) => {
+        const after = r.cap - r.used - r.add;
+        const scale = Math.max(r.cap, r.used + r.add, 1);
+        return (
+          <div key={r.label} className="grid gap-2">
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="text-[13px]">{r.label}</span>
+              <span className={`tabular text-[12.5px] ${after < 0 ? "text-bad" : after === 0 ? "text-warn" : "text-muted"}`}>{after < 0 ? `${-after} over` : `${after} of ${r.cap} left after this`}</span>
+            </div>
+            <div className="relative h-2.5 overflow-hidden rounded-full bg-surface-2">
+              <span className="absolute inset-y-0 left-0 bg-fg/25" style={{ width: `${(Math.min(r.used, scale) / scale) * 100}%` }} />
+              <span className={`absolute inset-y-0 transition-[left,width] duration-300 ${after < 0 ? "bg-bad" : "bg-brand"}`} style={{ left: `${(Math.min(r.used, scale) / scale) * 100}%`, width: `${(Math.min(r.add, scale - Math.min(r.used, scale)) / scale) * 100}%` }} />
+              {r.used + r.add > r.cap && <span className="absolute inset-y-0 w-0.5 bg-fg" style={{ left: `${(r.cap / scale) * 100}%` }} />}
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11.5px] text-faint">
+              <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-fg/25" /> {r.used} used</span>
+              <span className="inline-flex items-center gap-1.5"><span className={`h-2 w-2 rounded-full ${after < 0 ? "bg-bad" : "bg-brand"}`} /> {r.add} this request</span>
+              <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-surface-2 ring-1 ring-line" /> {Math.max(0, after)} left</span>
+            </div>
+          </div>
+        );
+      })}
+      <p className="text-[11.5px] leading-relaxed text-faint">Every version counts, and each carousel slide. Sizes of the same version (4:5, 9:16) don&apos;t.</p>
+      {over && <p className="text-[12.5px] leading-relaxed text-bad">This goes over what they pay for: fewer versions, or it&apos;s an upgrade conversation.</p>}
     </div>
   );
 }

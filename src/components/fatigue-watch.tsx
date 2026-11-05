@@ -5,7 +5,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { WatchRow } from "@/lib/fatigue";
-import { closeThen, pushParams, useParam } from "@/lib/url-state";
+import { closeParams, closeThen, pushParams, replaceParams, useParam } from "@/lib/url-state";
+import { QuickBriefSheet } from "@/components/quick-brief-sheet";
+import type { QuickBrief } from "@/lib/quick-brief";
 import type { OpenSuggestion } from "@/lib/suggestions";
 import { SuggestionSheet } from "@/app/(team)/pipeline/views/suggested-briefs";
 import { briefRefresh, dismissFatigue } from "@/app/(team)/fatigue/actions";
@@ -57,7 +59,11 @@ function WatchCard({ r, showClient, onGone }: { r: WatchRow; showClient: boolean
   const s = r.signals;
   const tired = r.severity === "tired";
 
+  // A brief already written opens at once; otherwise its quick preview first (?preview=, so back closes it)
+  const previewKey = `fw-${r.adId}`;
+  const previewing = useParam("preview") === previewKey;
   const refresh = async () => {
+    if (!r.briefId) return pushParams({ preview: previewKey });
     setError(null);
     setStep("writing");
     const res = await briefRefresh(r.clientId, r.adId);
@@ -65,6 +71,13 @@ function WatchCard({ r, showClient, onGone }: { r: WatchRow; showClient: boolean
     if (!res.ok) return setError(res.error);
     setWritten(res.suggestion);
     pushParams({ refresh: res.suggestion.id });
+  };
+  const writeFull = async (seed: QuickBrief) => {
+    const res = await briefRefresh(r.clientId, r.adId, seed);
+    if (!res.ok) return res;
+    setWritten(res.suggestion);
+    replaceParams({ preview: null, refresh: res.suggestion.id });
+    return { ok: true as const };
   };
   const dismiss = async () => {
     const res = await dismissFatigue(r.clientId, r.adId, reason);
@@ -169,6 +182,16 @@ function WatchCard({ r, showClient, onGone }: { r: WatchRow; showClient: boolean
         <SuggestionSheet
           s={brief}
           onClose={() => closeThen(() => router.refresh(), "refresh")}
+        />
+      )}
+      {previewing && (
+        <QuickBriefSheet
+          clientId={r.clientId}
+          source={{ kind: "refresh", adId: r.adId }}
+          from={{ kicker: "Refresh a tiring ad", label: r.headline ?? r.adName, thumb: r.thumbnail, adId: r.adId }}
+          progressLabel="refresh a tiring ad+brief self-review"
+          onWrite={writeFull}
+          onClose={() => closeParams("preview")}
         />
       )}
     </article>

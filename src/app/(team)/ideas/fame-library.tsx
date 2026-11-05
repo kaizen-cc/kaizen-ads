@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import { FilterMenu, FilterPill } from "@/components/filters";
 import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
+import { QuickBriefSheet } from "@/components/quick-brief-sheet";
+import type { QuickBrief } from "@/lib/quick-brief";
 import type { FameAd } from "@/lib/hall-of-fame";
 import type { Winner } from "@/lib/industry";
 import type { OpenSuggestion } from "@/lib/suggestions";
@@ -233,21 +235,27 @@ function FameSheet({ a, w, clients, onClose }: { a: FameAd; w: Winner; clients: 
   const briefId = useParam("brief");
   const brief = written && written.id === briefId ? written : null;
   const [error, setError] = useState<string | null>(null);
-  const write = async (clientId: string) => {
+  // A client picked: the quick preview first (?preview=, so back closes it), then the full brief from it
+  const [previewFor, setPreviewFor] = useState<string | null>(null);
+  const preview = useParam("preview");
+  const previewKey = `wf-${a.adId}`;
+  const write = (clientId: string) => {
+    setPreviewFor(clientId);
+    pushParams({ preview: previewKey });
+  };
+  const writeFull = async (clientId: string, seed: QuickBrief) => {
     setError(null);
-    setStep("writing");
     const r = await briefFromWinner(
       { adId: a.adId, client: a.client, detail: a.vertical, headline: a.creative.headline ?? null, text: a.creative.text ?? null, thumbnail: a.creative.image ?? null, ratio: Math.round((1 + a.beatBy) * 10) / 10, result: a.conversion.toLowerCase(), costPerResult: a.value, usual: a.target },
       clientId,
+      seed,
     );
-    if (!r.ok) {
-      setError(r.error);
-      return setStep("pick");
-    }
-    // Back from the brief lands on the ad again, not on the writing screen
+    if (!r.ok) return r;
+    // The brief takes the preview's place: back from it lands on the ad again
     setStep("pick");
     setWritten(r.suggestion);
-    pushParams({ brief: r.suggestion.id });
+    replaceParams({ preview: null, brief: r.suggestion.id });
+    return { ok: true as const };
   };
   if (brief) return <SuggestionSheet s={brief} onClose={onClose} />;
   const c = a.creative;
@@ -255,6 +263,16 @@ function FameSheet({ a, w, clients, onClose }: { a: FameAd; w: Winner; clients: 
     <div className={SHEET_BACKDROP} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className={`${SHEET_PANEL} md:grid-cols-[minmax(0,380px)_1fr]`}>
         <SheetBar title={a.client} onClose={onClose} />
+      {previewFor && preview === previewKey && (
+        <QuickBriefSheet
+          clientId={previewFor}
+          source={{ kind: "winner", winner: { adId: a.adId, client: a.client, detail: a.vertical, headline: a.creative.headline ?? null, text: a.creative.text ?? null, thumbnail: a.creative.image ?? null, ratio: Math.round((1 + a.beatBy) * 10) / 10, result: a.conversion.toLowerCase(), costPerResult: a.value, usual: a.target } }}
+          from={{ kicker: "Hall of Fame", label: a.creative.headline ?? a.client, thumb: a.creative.image ?? null, adId: a.adId }}
+          progressLabel="brief from a winner+brief self-review"
+          onWrite={(seed) => writeFull(previewFor, seed)}
+          onClose={() => closeParams("preview")}
+        />
+      )}
         {/* Phones: once a client is being picked, the ad steps aside so the list is right there */}
         <div className={step === "ad" ? "contents" : "hidden md:contents"}>
           <FeedPreview

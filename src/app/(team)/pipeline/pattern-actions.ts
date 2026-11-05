@@ -11,6 +11,7 @@ import { createClient } from "@/lib/supabase/server";
 // that isn't using it yet (written in the background; it lands in Suggested briefs).
 
 type Result = { ok: true } | { ok: false; error: string };
+type Seed = import("@/lib/quick-brief").QuickBrief;
 
 export async function refreshPatterns(): Promise<Result> {
   const me = await requireStaff();
@@ -25,7 +26,8 @@ export async function refreshPatterns(): Promise<Result> {
   return { ok: true };
 }
 
-export async function briefPattern(patternId: string, clientId: string): Promise<Result> {
+/** seed: the quick preview the person agreed, so the brief follows it */
+export async function briefPattern(patternId: string, clientId: string, seed: Seed | null = null): Promise<Result> {
   const me = await requireStaff();
   if (!isExecOrLead(me)) return { ok: false, error: "Only execs and leads can brief a pattern." };
   if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
@@ -39,7 +41,7 @@ export async function briefPattern(patternId: string, clientId: string): Promise
   const admin = createAdminClient();
   after(async () => {
     const { suggestForPattern } = await import("@/lib/suggestions");
-    await suggestForPattern(admin, clientId, p, me.id).catch((e) => console.error("[patterns] brief", e instanceof Error ? e.message : e));
+    await suggestForPattern(admin, clientId, p, me.id, seed).catch((e) => console.error("[patterns] brief", e instanceof Error ? e.message : e));
     revalidatePath("/pipeline");
   });
   return { ok: true };

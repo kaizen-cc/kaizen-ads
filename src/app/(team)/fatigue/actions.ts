@@ -7,9 +7,10 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { loadSuggestion, suggestRefresh, type OpenSuggestion } from "@/lib/suggestions";
 import { notLive } from "@/lib/live-guard";
+import type { QuickBrief } from "@/lib/quick-brief";
 
 /** The strategist writes a refresh for one tiring ad. Asking again for the same ad opens the draft already written. */
-export async function briefRefresh(clientId: string, adId: string): Promise<{ ok: true; suggestion: OpenSuggestion } | { ok: false; error: string }> {
+export async function briefRefresh(clientId: string, adId: string, seed: QuickBrief | null = null): Promise<{ ok: true; suggestion: OpenSuggestion } | { ok: false; error: string }> {
   { const why = await notLive(await createClient(), clientId); if (why) return { ok: false, error: why }; }
   const me = await requireStaff();
   if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
@@ -17,7 +18,8 @@ export async function briefRefresh(clientId: string, adId: string): Promise<{ ok
   // Only for clients this person works on (the watch list's own rules)
   const { data: watched } = await supabase.from("ad_fatigue").select("ad_id").eq("client_id", clientId).eq("ad_id", adId).maybeSingle();
   if (!watched) return { ok: false, error: "That ad isn't on your watch list." };
-  const { data: existing } = await supabase
+  // From the quick preview a fresh brief is written, following it
+  const { data: existing } = seed ? { data: null } : await supabase
     .from("creative_suggestions")
     .select("id")
     .eq("kind", "refresh")
@@ -26,7 +28,7 @@ export async function briefRefresh(clientId: string, adId: string): Promise<{ ok
     .eq("source->>adId", adId)
     .limit(1);
   try {
-    const id = existing?.[0]?.id ?? (await suggestRefresh(createAdminClient(), clientId, adId, me.id));
+    const id = existing?.[0]?.id ?? (await suggestRefresh(createAdminClient(), clientId, adId, me.id, seed));
     const suggestion = await loadSuggestion(supabase, id);
     return suggestion ? { ok: true, suggestion } : { ok: false, error: "Couldn't open the brief." };
   } catch (e) {

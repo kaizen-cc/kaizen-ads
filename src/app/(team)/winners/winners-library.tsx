@@ -12,6 +12,8 @@ import { SuggestionSheet } from "../pipeline/views/suggested-briefs";
 import { briefFromWinner } from "./actions";
 import { FilterMenu, FilterPill } from "@/components/filters";
 import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
+import { QuickBriefSheet } from "@/components/quick-brief-sheet";
+import type { QuickBrief } from "@/lib/quick-brief";
 import { FbPreview, InsightPanel, useAd, useInsight } from "./fb-preview";
 
 export type PickClient = { id: string; name: string; industry: string | null; detail: string | null; allotment: Allotment };
@@ -300,21 +302,27 @@ function WinnerSheet({ w, industryLabel, clients, onClose }: { w: Winner; indust
   const [error, setError] = useState<string | null>(null);
   const synced = new Date(w.syncedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
-  const write = async (clientId: string) => {
+  // A client picked: the quick preview first (?preview=, so back closes it), then the full brief from it
+  const [previewFor, setPreviewFor] = useState<string | null>(null);
+  const preview = useParam("preview");
+  const previewKey = `ww-${w.id}`;
+  const write = (clientId: string) => {
+    setPreviewFor(clientId);
+    pushParams({ preview: previewKey });
+  };
+  const writeFull = async (clientId: string, seed: QuickBrief) => {
     setError(null);
-    setStep("writing");
     const r = await briefFromWinner(
       { adId: w.id, client: w.client, detail: w.detail, headline: ad?.headline ?? w.headline, text: ad?.text ?? w.text, thumbnail: w.thumbnail, ratio: w.ratio, result: w.result, costPerResult: w.costPerResult, usual: w.usual },
       clientId,
+      seed,
     );
-    if (!r.ok) {
-      setError(r.error);
-      return setStep("pick");
-    }
-    // Back from the brief lands on the ad again, not on the writing screen
+    if (!r.ok) return r;
+    // The brief takes the preview's place: back from it lands on the ad again
     setStep("pick");
     setWritten(r.suggestion);
-    pushParams({ brief: r.suggestion.id });
+    replaceParams({ preview: null, brief: r.suggestion.id });
+    return { ok: true as const };
   };
 
   if (brief) return <SuggestionSheet s={brief} onClose={onClose} />;
@@ -323,6 +331,16 @@ function WinnerSheet({ w, industryLabel, clients, onClose }: { w: Winner; indust
     <div className={SHEET_BACKDROP} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className={`${SHEET_PANEL} md:grid-cols-[minmax(0,400px)_1fr]`}>
         <SheetBar title={w.client} onClose={onClose} />
+      {previewFor && preview === previewKey && (
+        <QuickBriefSheet
+          clientId={previewFor}
+          source={{ kind: "winner", winner: { adId: w.id, client: w.client, detail: w.detail, headline: ad?.headline ?? w.headline, text: ad?.text ?? w.text, thumbnail: w.thumbnail, ratio: w.ratio, result: w.result, costPerResult: w.costPerResult, usual: w.usual } }}
+          from={{ kicker: `A winner · ${w.ratio}x its usual`, label: w.headline ?? w.name, thumb: w.thumbnail, adId: w.id }}
+          progressLabel="brief from a winner+brief self-review"
+          onWrite={(seed) => writeFull(previewFor, seed)}
+          onClose={() => closeParams("preview")}
+        />
+      )}
         {/* Phones: once a client is being picked, the ad steps aside so the list is right there */}
         <div className={`grid content-start gap-2 ${step === "ad" ? "" : "hidden md:grid"}`}>
           <FbPreview ad={ad} w={w} />

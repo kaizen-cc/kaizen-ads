@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AiProgressButton } from "@/components/ai-progress";
 import { KIND_LABEL, type SuggestionKind } from "@/lib/suggestion-kinds";
 import type { Winner } from "@/lib/industry";
 import type { MarketAd } from "@/lib/market";
@@ -10,7 +9,9 @@ import type { Allotment } from "@/lib/allotment";
 import type { Draft } from "./draft";
 import type { ClientOption } from "./parts";
 import { Spark } from "./parts";
-import { ideaDraft, moreMarket, patternPatch, suggestionPatch } from "./actions";
+import { ideaDraft, ideaPatch, moreMarket, patternPatch, promiseDraft, suggestionPatch, talkRequest } from "./actions";
+import { makingLine, type BriefSource, type QuickBrief } from "@/lib/quick-brief";
+import type { WinnerSource } from "@/lib/suggestions";
 import { saveReference, unsaveReference } from "./saved-actions";
 import { RefThumb } from "@/components/ref-thumb";
 import { Star } from "@/components/saved-concepts";
@@ -65,6 +66,69 @@ function useStart(clientId: string) {
   }, [clientId]);
   return { data: data?.id === clientId ? data.d : null, failed: failed === clientId };
 }
+
+// ─── The quick preview: every way into a brief opens it first ──────────────────────────────────────────────
+
+/** A brief about to be previewed (serializable: it's kept with the request in progress, for a split's next briefs) */
+export type PreviewItem = {
+  key: string;
+  source: BriefSource;
+  from: { kicker: string; label: string; thumb?: string | null; adId?: string | null; format?: Fmt | null };
+  /** The AI label the full write is timed by */
+  progressLabel: string;
+  /** Already agreed (the next brief of a split) */
+  given?: QuickBrief | null;
+  /** A saved reference it's built on: used up once sent */
+  savedRefId?: string | null;
+  /** A promise from a call it delivers */
+  promiseId?: string | null;
+  /** Where it came from, for ideas in words */
+  origin?: Draft["origin"];
+};
+
+type Patched = { ok: true; patch: Partial<Draft> } | { ok: false; error: string };
+
+/** "2 new images" for the strategist, from an agreed preview */
+const seedText = (b: QuickBrief) =>
+  [`Write it with this direction.`, `Title: ${b.title}`, `Concept: ${b.concept}`, `Angle: ${b.angle}`, `Audience: ${b.audience}`, `Hook: ${b.hook}`, `Making: ${makingLine(b.formats)}`, b.note.trim() ? `Note: ${b.note.trim()}` : ""].filter(Boolean).join("\n");
+
+/** The full brief from an agreed preview, through the brief pipeline its source already uses */
+export async function writeItem(item: PreviewItem, clientId: string, seed: QuickBrief, edited: boolean): Promise<Patched> {
+  const s = item.source;
+  const fmt = "format" in s ? s.format : undefined;
+  const r: Patched =
+    s.kind === "winner"
+      ? await ideaDraft({ kind: "winner", winner: { id: s.winner.adId, client: s.winner.client, detail: s.winner.detail, headline: s.winner.headline, text: s.winner.text, thumbnail: s.winner.thumbnail, ratio: s.winner.ratio, result: s.winner.result, costPerResult: s.winner.costPerResult, usual: s.winner.usual } }, clientId, fmt, seed)
+      : s.kind === "market"
+        ? await ideaDraft({ kind: "market", adId: s.adId }, clientId, fmt, seed)
+        : s.kind === "pattern"
+          ? await patternPatch(s.patternId, clientId, seed)
+          : s.kind === "suggestion"
+            ? await suggestionPatch(s.id, edited ? seed : null)
+            : s.kind === "promise"
+              ? await promiseDraft(s.commitmentId, seed, edited)
+              : s.kind === "idea"
+                ? await ideaPatch(clientId, { label: s.label, text: s.text }, seed, item.origin ?? { kind: "brief", label: s.label.slice(0, 200) })
+                : s.kind === "talk"
+                  ? await talkRequest(clientId, [...s.turns, { role: "user", text: seedText(seed) }], null, true).then((t): Patched => (!t.ok ? t : t.patch ? { ok: true, patch: { ...t.patch, origin: { kind: "brief", label: "Talked through with the strategist" } } } : { ok: false, error: "The strategist couldn't write it. Try again." }))
+                  : { ok: false, error: "That can't be briefed here." };
+  if (!r.ok) return r;
+  return { ok: true, patch: item.savedRefId && !item.savedRefId.startsWith("tmp-") ? { ...r.patch, savedRefIds: [item.savedRefId] } : r.patch };
+}
+
+/** The other briefs of a split, each to be previewed and written on its own (a brief already written becomes an idea) */
+export function splitRest(item: PreviewItem, rest: QuickBrief[]): PreviewItem[] {
+  return rest.map((b, i) => ({
+    ...item,
+    key: `${item.key}-split-${i + 1}-${Date.now().toString(36)}`,
+    source: item.source.kind === "suggestion" || item.source.kind === "promise" ? { kind: "idea", label: `Split from: ${item.from.label}`.slice(0, 200), text: `${b.title}\n${b.concept}` } : item.source,
+    given: b,
+    savedRefId: null,
+    promiseId: null,
+  }));
+}
+
+const winnerSource = (w: Winner): WinnerSource => ({ adId: w.id, client: w.client, detail: w.detail, headline: w.headline, text: w.text, thumbnail: w.thumbnail, ratio: w.ratio, result: w.result, costPerResult: w.costPerResult, usual: w.usual });
 
 // ─── Recent clients (this browser) ────────────────────────────────────────────────────────────────────────
 
@@ -280,7 +344,7 @@ export function StartPage({
   clientName,
   aiOn,
   promises,
-  onBrief,
+  onPreview,
   onManual,
   onTalk,
 }: {
@@ -289,32 +353,25 @@ export function StartPage({
   aiOn: boolean;
   /** The promises strip, given what was already read */
   promises: (list: StartData["promises"]) => React.ReactNode;
-  onBrief: (patch: Partial<Draft>) => void;
+  /** Open the quick preview for a card */
+  onPreview: (item: PreviewItem) => void;
   onManual: () => void;
   onTalk: () => void;
 }) {
   const { data, failed } = useStart(clientId);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const { saved, find, toggle, error: saveError } = useSaved(clientId, data?.saved);
-
-  // A brief from a card: when that card is saved, the request it becomes uses it up (it leaves Saved once sent)
-  const run = async (key: string, get: () => Promise<{ ok: true; patch: Partial<Draft> } | { ok: false; error: string }>, from?: SavedRef | null) => {
-    setError(null);
-    setBusy(key);
-    const r = await get().catch(() => ({ ok: false as const, error: "Something went wrong. Try again." }));
-    setBusy(null);
-    if (!r.ok) return setError(r.error);
-    onBrief(from && !from.id.startsWith("tmp-") ? { ...r.patch, savedRefIds: [from.id] } : r.patch);
-  };
   const star = (input: SaveInput) => ({ on: Boolean(find(input.source, input.refId)), onToggle: () => void toggle(input) });
+  // A brief from a card: its quick preview first. When the card is saved, the request it becomes uses it up
+  const savedId = (from: SavedRef | null) => (from && !from.id.startsWith("tmp-") ? from.id : null);
 
   const briefFromSaved = (s: SavedRef) => {
     const fmt = s.format ?? undefined;
-    if (s.source === "market") return run(`sv-${s.id}`, () => ideaDraft({ kind: "market", adId: s.refId }, clientId, fmt), s);
-    if (s.source === "winner" && s.data.winner) return run(`sv-${s.id}`, () => ideaDraft({ kind: "winner", winner: s.data.winner as Winner }, clientId, fmt), s);
-    if (s.source === "pattern") return run(`sv-${s.id}`, () => patternPatch(s.refId, clientId), s);
-    if (s.source === "brief") return run(`sv-${s.id}`, () => suggestionPatch(s.refId), s);
+    const from = { kicker: SOURCE_LABEL[s.source], label: s.title ?? "Saved reference", thumb: s.thumbnail, adId: metaAdId(s), format: s.format ?? null };
+    const base = { key: `sv-${s.id}`, from, savedRefId: savedId(s) };
+    if (s.source === "market") return onPreview({ ...base, source: { kind: "market", adId: s.refId, format: fmt }, progressLabel: "brief from a market ad+brief self-review" });
+    if (s.source === "winner" && s.data.winner) return onPreview({ ...base, source: { kind: "winner", winner: winnerSource(s.data.winner as Winner), format: fmt }, progressLabel: "brief from a winner+brief self-review" });
+    if (s.source === "pattern") return onPreview({ ...base, source: { kind: "pattern", patternId: s.refId }, progressLabel: "brief from a pattern+brief self-review" });
+    if (s.source === "brief") return onPreview({ ...base, source: { kind: "suggestion", id: s.refId }, progressLabel: "brief rewrite from a preview+brief self-review" });
   };
 
   // In the market: a page at a time, "See more" brings the next
@@ -340,7 +397,7 @@ export function StartPage({
 
   return (
     <div className="grid min-w-0 gap-12">
-      {(error || saveError) && <p className="rounded-[14px] border border-bad/30 bg-bad-soft px-4 py-3 text-sm text-bad">{error ?? saveError}</p>}
+      {saveError && <p className="rounded-[14px] border border-bad/30 bg-bad-soft px-4 py-3 text-sm text-bad">{saveError}</p>}
       {failed && <p className="rounded-[14px] border border-line px-4 py-3 text-sm text-muted">Couldn&rsquo;t load the ready-made briefs. You can still create your own below.</p>}
 
       {saved.length > 0 && (
@@ -376,10 +433,9 @@ export function StartPage({
                   signal={s.subtitle}
                   why={typeof s.data.why === "string" ? s.data.why : typeof s.data.detail === "string" ? s.data.detail : null}
                   foot={s.savedBy ? `Saved by ${s.savedBy.split(" ")[0]}` : ""}
-                  busy={busy === `sv-${s.id}`}
-                  disabled={Boolean(busy) || !canBrief || s.id.startsWith("tmp-") || (s.source === "winner" && !s.data.winner)}
-                  action="Brief from this"
-                  label={s.source === "market" ? "brief from a market ad+brief self-review" : s.source === "winner" ? "brief from a winner+brief self-review" : s.source === "pattern" ? "brief from a pattern+brief self-review" : "request from a brief"}
+                  busy={false}
+                  disabled={!canBrief || s.id.startsWith("tmp-") || (s.source === "winner" && !s.data.winner)}
+                  action="Brief on this"
                   onClick={() => void briefFromSaved(s)}
                   star={{ on: true, onToggle: () => void toggle(s) }}
                   link={href}
@@ -404,10 +460,10 @@ export function StartPage({
             signal={b.title ? b.signal : null}
             why={b.why}
             foot={b.formats}
-            busy={busy === `s-${b.id}`}
-            disabled={Boolean(busy)}
-            action="Use this brief"
-            onClick={() => run(`s-${b.id}`, () => suggestionPatch(b.id), find("brief", b.id))}
+            busy={false}
+            disabled={false}
+            action="Brief on this"
+            onClick={() => onPreview({ key: `s-${b.id}`, source: { kind: "suggestion", id: b.id }, from: { kicker: KIND_LABEL[b.kind as SuggestionKind] ?? "Suggested brief", label: b.signal, thumb: b.thumb, adId: b.adId }, progressLabel: "brief rewrite from a preview+brief self-review", savedRefId: savedId(find("brief", b.id)) })}
             star={star(saveBrief(b))}
           />
         ))}
@@ -428,11 +484,10 @@ export function StartPage({
             signal={p.group}
             why={p.detail}
             foot={p.uses ? "They already use it" : "Not using it yet"}
-            busy={busy === `p-${p.id}`}
-            disabled={Boolean(busy) || !aiOn}
-            action={`Brief it for ${clientName}`}
-            label="brief from a pattern+brief self-review"
-            onClick={() => run(`p-${p.id}`, () => patternPatch(p.id, clientId), find("pattern", p.id))}
+            busy={false}
+            disabled={!aiOn}
+            action="Brief on this"
+            onClick={() => onPreview({ key: `p-${p.id}`, source: { kind: "pattern", patternId: p.id }, from: { kicker: `Works for ${p.clients} of ${p.of}`, label: p.title }, progressLabel: "brief from a pattern+brief self-review", savedRefId: savedId(find("pattern", p.id)) })}
             star={star(savePattern(p))}
           />
         ))}
@@ -450,11 +505,10 @@ export function StartPage({
             match={w.match ? { text: w.match.why, close: w.match.tier < 3 } : null}
             why={w.text ? w.text.slice(0, 180) : null}
             foot={w.result ? `Beat their usual cost per ${w.result}` : ""}
-            busy={busy === `w-${w.id}`}
-            disabled={Boolean(busy) || !aiOn}
-            action="Brief from this"
-            label="brief from a winner+brief self-review"
-            onClick={() => run(`w-${w.id}`, () => ideaDraft({ kind: "winner", winner: w }, clientId, w.format), find("winner", w.id))}
+            busy={false}
+            disabled={!aiOn}
+            action="Brief on this"
+            onClick={() => onPreview({ key: `w-${w.id}`, source: { kind: "winner", winner: winnerSource(w), format: w.format }, from: { kicker: `A winner · ${w.ratio}x their usual`, label: w.headline ?? w.name, thumb: w.thumbnail, adId: w.id, format: w.format }, progressLabel: "brief from a winner+brief self-review", savedRefId: savedId(find("winner", w.id)) })}
             star={star(saveWinner(w))}
           />
         ))}
@@ -486,11 +540,10 @@ export function StartPage({
                 match={a.matchWhy ? { text: a.matchWhy, close: (a.matchScore ?? 0) >= 7 } : null}
                 why={a.why ?? null}
                 foot=""
-                busy={busy === `m-${a.id}`}
-                disabled={Boolean(busy) || !aiOn}
-                action="Brief from this"
-                label="brief from a market ad+brief self-review"
-                onClick={() => run(`m-${a.id}`, () => ideaDraft({ kind: "market", adId: a.id }, clientId, marketFormat(a)), find("market", a.id))}
+                busy={false}
+                disabled={!aiOn}
+                action="Brief on this"
+                onClick={() => onPreview({ key: `m-${a.id}`, source: { kind: "market", adId: a.id, format: marketFormat(a) }, from: { kicker: `In the market · ${a.brand}`, label: a.angle ?? a.headline ?? "A live ad", thumb: marketStill(a), format: marketFormat(a) }, progressLabel: "brief from a market ad+brief self-review", savedRefId: savedId(find("market", a.id)) })}
                 star={star(saveMarket(a))}
                 link={a.motionUrl ?? a.libraryUrl}
               />
@@ -639,7 +692,6 @@ function Card({
   busy,
   disabled,
   action,
-  label = "request from a brief",
   onClick,
   star,
   link,
@@ -664,7 +716,6 @@ function Card({
   busy: boolean;
   disabled: boolean;
   action: string;
-  label?: string;
   onClick: () => void;
   star?: { on: boolean; onToggle: () => void };
   /** Where to see it full size (Motion, the Ad Library) */
@@ -715,7 +766,7 @@ function Card({
             disabled={disabled}
             className={`min-h-11 rounded-full px-4 text-[14px] font-medium transition-colors ${busy ? "bg-brand-soft text-brand-text" : "bg-fg text-bg hover:opacity-90 disabled:opacity-40"}`}
           >
-            {busy ? <AiProgressButton label={label} fallbackMs={110_000} /> : action}
+            {action}
           </button>
         </div>
       </div>

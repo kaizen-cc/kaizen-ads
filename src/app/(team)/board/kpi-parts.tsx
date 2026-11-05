@@ -14,6 +14,8 @@ import { closeParams, closeThen, pushParams, useParam } from "@/lib/url-state";
 import { SuggestionSheet } from "@/app/(team)/pipeline/views/suggested-briefs";
 import { startRefreshBrief, startWinnerBrief } from "@/app/(team)/brief-job-actions";
 import { BriefProgress, trackJob, useJobFor } from "@/components/brief-jobs";
+import { QuickBriefSheet } from "@/components/quick-brief-sheet";
+import type { QuickBrief } from "@/lib/quick-brief";
 import { checkErrorsNow, dismissAllotment, restoreAllotment } from "./kpi-actions";
 
 // The interactive pieces of the KPI tabs: tasks you can open from anywhere (a Board ticket opens its drawer, an Asana
@@ -741,20 +743,20 @@ export function WinnerCard({ w, credit, copy }: { w: Winner; credit?: WinnerAd; 
   const open = useParam("brief");
   const job = useJobFor("winner", (j) => (j.status === "queued" || j.status === "writing") && jobKey(j) === w.key);
   const better = w.target && w.costPerResult ? Math.round(((w.target - w.costPerResult) / w.target) * 100) : null;
-  const go = async () => {
+  const source = { adId: w.key, client: w.client, detail: null, headline: w.headline, text: w.text, thumbnail: w.image, ratio: w.target && w.costPerResult ? Math.round((w.target / w.costPerResult) * 10) / 10 : 1, result: w.result, costPerResult: w.costPerResult ?? 0, usual: w.target ?? w.costPerResult ?? 0 };
+  // The quick preview first (in the address, so back closes it); the full brief is then written in the background
+  const previewing = useParam("preview") === `kw-${w.key}`;
+  const go = async (seed: QuickBrief, part = 0) => {
     setBusy(true);
     setError(null);
-    const r = await startWinnerBrief(
-      { adId: w.key, client: w.client, detail: null, headline: w.headline, text: w.text, thumbnail: w.image, ratio: w.target && w.costPerResult ? Math.round((w.target / w.costPerResult) * 10) / 10 : 1, result: w.result, costPerResult: w.costPerResult ?? 0, usual: w.target ?? w.costPerResult ?? 0 },
-      w.clientId,
-      `${window.location.pathname}${window.location.search}`,
-    ).catch(() => ({ ok: false as const, error: "Couldn't start the brief. Try again." }));
+    const r = await startWinnerBrief(source, w.clientId, `${window.location.pathname}${window.location.search}`, seed, part).catch(() => ({ ok: false as const, error: "Couldn't start the brief. Try again." }));
     setBusy(false);
     if (!r.ok) return setError(r.error);
     if ("job" in r) return trackJob(r.job);
     setBrief(r.suggestion);
     pushParams({ brief: r.suggestion.id });
   };
+  const closePreview = () => closeParams("preview");
   return (
     <article className="grid content-start gap-3">
       <div className="pointer-events-none">
@@ -795,12 +797,30 @@ export function WinnerCard({ w, credit, copy }: { w: Winner; credit?: WinnerAd; 
         {job ? (
           <BriefProgress job={job} />
         ) : (
-          <button type="button" onClick={go} disabled={busy} className="h-11 rounded-full bg-fg text-[14px] font-medium text-bg disabled:opacity-60">
+          <button type="button" onClick={() => pushParams({ preview: `kw-${w.key}` })} disabled={busy} className="h-11 rounded-full bg-fg text-[14px] font-medium text-bg disabled:opacity-60">
             {busy ? "Starting…" : copy ? "Brief new copy like this" : "Brief more like this"}
           </button>
         )}
-        <p className="text-center text-[11px] text-faint">Approve it, create it here, or send it to Asana</p>
+        <p className="text-center text-[11px] text-faint">A quick preview first, then the full brief to approve, create or send to Asana</p>
       </div>
+      {previewing && (
+        <QuickBriefSheet
+          clientId={w.clientId}
+          source={{ kind: "winner", winner: source }}
+          from={{ kicker: copy ? "New copy like a winner" : "More like a winner", label: w.headline ?? w.name, thumb: w.image, adId: /^\d{5,25}$/.test(w.key) ? w.key : null }}
+          progressLabel="brief from a winner"
+          background
+          onWrite={(seed) => {
+            closePreview();
+            void go(copy && !seed.note.trim() ? { ...seed, note: "A copy-led brief: new copy on the same creative." } : seed);
+          }}
+          onWriteAll={(seeds) => {
+            closePreview();
+            seeds.forEach((seed, i) => void go(seed, i));
+          }}
+          onClose={closePreview}
+        />
+      )}
       {brief && open === brief.id && <SuggestionSheet s={brief} onClose={() => closeThen(() => router.refresh(), "brief")} />}
     </article>
   );
@@ -824,10 +844,12 @@ export function TiringCard({ r, copy = false }: { r: WatchRow; /** Shown as copy
     s.freqBefore > 0 && s.freqNow / s.freqBefore >= 1.1 && { label: "Frequency", v: `${s.freqBefore.toFixed(2)} → ${s.freqNow.toFixed(2)}`, c: pctChange(s.freqNow / s.freqBefore - 1) },
     s.hookChange != null && s.hookChange <= -0.1 && { label: "Hook rate", v: `${s.hookBefore}% → ${s.hookNow}%`, c: pctChange(s.hookChange) },
   ].filter(Boolean) as { label: string; v: string; c: string | null }[];
-  const refresh = async () => {
+  const previewing = useParam("preview") === `kr-${r.adId}`;
+  const closePreview = () => closeParams("preview");
+  const refresh = async (seed: QuickBrief | null, part = 0) => {
     setBusy(true);
     setError(null);
-    const res = await startRefreshBrief(r.clientId, r.adId, r.headline ?? r.adName, `${window.location.pathname}${window.location.search}`).catch(() => ({ ok: false as const, error: "Couldn't start the brief. Try again." }));
+    const res = await startRefreshBrief(r.clientId, r.adId, r.headline ?? r.adName, `${window.location.pathname}${window.location.search}`, seed, part).catch(() => ({ ok: false as const, error: "Couldn't start the brief. Try again." }));
     setBusy(false);
     if (!res.ok) return setError(res.error);
     if ("job" in res) return trackJob(res.job);
@@ -875,7 +897,7 @@ export function TiringCard({ r, copy = false }: { r: WatchRow; /** Shown as copy
             {job ? (
               <BriefProgress job={job} />
             ) : (
-              <button type="button" onClick={refresh} disabled={busy} className="h-11 rounded-full bg-fg text-[14px] font-medium text-bg disabled:opacity-60">
+              <button type="button" onClick={() => (r.briefId ? void refresh(null) : pushParams({ preview: `kr-${r.adId}` }))} disabled={busy} className="h-11 rounded-full bg-fg text-[14px] font-medium text-bg disabled:opacity-60">
                 {busy ? "Starting…" : r.briefId ? "Open the refresh brief" : copy ? "Write new copy for this" : "Brief a refresh"}
               </button>
             )}
@@ -890,7 +912,24 @@ export function TiringCard({ r, copy = false }: { r: WatchRow; /** Shown as copy
           </div>
         )}
       </div>
-      {brief && open === brief.id && <SuggestionSheet s={brief} onClose={() => closeThen(() => router.refresh(), "refresh")} />}
+      {previewing && (
+        <QuickBriefSheet
+          clientId={r.clientId}
+          source={{ kind: "refresh", adId: r.adId }}
+          from={{ kicker: copy ? "New copy for a tiring ad" : "Refresh a tiring ad", label: r.headline ?? r.adName, thumb: r.thumbnail, adId: r.adId && /^\d{5,25}$/.test(r.adId) ? r.adId : null }}
+          progressLabel="refresh a tiring ad"
+          background
+          onWrite={(seed) => {
+            closePreview();
+            void refresh(copy && !seed.note.trim() ? { ...seed, note: "Copy is wearing out: new copy on the same creative." } : seed);
+          }}
+          onWriteAll={(seeds) => {
+            closePreview();
+            seeds.forEach((seed, i) => void refresh(seed, i));
+          }}
+          onClose={closePreview}
+        />
+      )}      {brief && open === brief.id && <SuggestionSheet s={brief} onClose={() => closeThen(() => router.refresh(), "refresh")} />}
     </article>
   );
 }
