@@ -151,7 +151,10 @@ async function upsertBrand(admin: SupabaseClient, b: Obj, meta: { source: string
   const motionId = str(pick(b, "brandId", "id"));
   const name = str(pick(b, "name", "brandName"));
   if (!motionId || !name) return null;
-  const { data: prev } = await admin.from("market_brands").select("id, sources, client_ids, industry").eq("motion_brand_id", motionId).maybeSingle();
+  const { data: prev } = await admin.from("market_brands").select("id, sources, client_ids, industry, rejected").eq("motion_brand_id", motionId).maybeSingle();
+  // A brand someone rejected (e.g. a marketing agency sitting in a Motion workspace's competitor list) stays rejected
+  // and is never attached to a client again
+  if (prev?.rejected) return undefined;
   const row = {
     motion_brand_id: motionId,
     name,
