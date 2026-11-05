@@ -228,6 +228,42 @@ export async function teachRefinedRule(messageId: string): Promise<R> {
   }
 }
 
+// ─── Loom through Atlassian ─────────────────────────────────────────────────
+
+type Pulled = { found: number; added: number; done: boolean };
+
+/** Check Atlassian for new Looms now (execs and leads); a long walk keeps going on the next cron run */
+export async function checkAtlassianLoom(): Promise<R<Pulled>> {
+  try {
+    const me = await requireStaff();
+    if (!isExecOrLead(me)) return { ok: false, error: "Execs and leads can check." };
+    if (!adminConfigured()) return { ok: false, error: "Not connected." };
+    const r = await (await import("@/lib/loom-atlassian")).syncLoomFromAtlassian(createAdminClient(), { budgetMs: 45_000, by: me.id });
+    if (r.added && aiEnabled()) await work();
+    revalidatePath("/settings", "layout");
+    return r.error ? { ok: false, error: r.error } : { ok: true, found: r.found, added: r.added, done: r.done };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't check." };
+  }
+}
+
+/** Execs: every Loom created since a date (YYYY-MM-DD), or everything (null), pulled in; continued by the cron */
+export async function pullAtlassianLoomSince(date: string | null): Promise<R<Pulled>> {
+  try {
+    const me = await requireStaff();
+    if (!me.isExec) return { ok: false, error: "Execs only." };
+    if (!adminConfigured()) return { ok: false, error: "Not connected." };
+    if (date && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(new Date(`${date}T00:00:00Z`).getTime()))) return { ok: false, error: "Pick a date." };
+    const from = date ? `${date}T00:00:00Z` : "all";
+    const r = await (await import("@/lib/loom-atlassian")).syncLoomFromAtlassian(createAdminClient(), { from, budgetMs: 45_000, by: me.id });
+    if (r.added && aiEnabled()) await work();
+    revalidatePath("/settings", "layout");
+    return r.error ? { ok: false, error: r.error } : { ok: true, found: r.found, added: r.added, done: r.done };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't pull them." };
+  }
+}
+
 /** A shared folder read again now (new recordings queued) */
 export async function recheckLoomFolder(id: string): Promise<R<{ found: number; added: number; error: string | null }>> {
   try {

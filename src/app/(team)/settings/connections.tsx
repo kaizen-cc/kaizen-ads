@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { elevenlabsStatus } from "@/lib/elevenlabs";
 import { higgsfieldStatus } from "@/lib/higgsfield";
+import { loomConnection } from "@/lib/loom-atlassian";
 import { motionConnected } from "@/lib/motion";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
+import { LoomAtlassianControls } from "./loom-atlassian-controls";
 
 // Settings › Connections: the media connectors (ElevenLabs, Higgsfield, Motion), whether each key is there and
 // accepted, what's left on the plan where the provider says, and what the team made with them this month. Keys are
@@ -41,15 +43,16 @@ function Row({ k, children }: { k: string; children: React.ReactNode }) {
   );
 }
 
-export async function Connections() {
+export async function Connections({ isExec = false }: { isExec?: boolean }) {
   const admin = adminConfigured() ? createAdminClient() : null;
   const monthStart = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
   monthStart.setDate(1);
   monthStart.setHours(0, 0, 0, 0);
-  const [el, hf, motion, usage] = await Promise.all([
+  const [el, hf, motion, loom, usage] = await Promise.all([
     elevenlabsStatus(),
     higgsfieldStatus(),
     admin ? motionConnected(admin).catch(() => null) : Promise.resolve(null),
+    loomConnection(admin),
     admin
       ? admin.from("ai_media_jobs").select("provider, kind, status, characters, credits").gte("created_at", monthStart.toISOString()).limit(5000).then((r) => r.data ?? [])
       : Promise.resolve([] as { provider: string; kind: string; status: string; characters: number | null; credits: number | null }[]),
@@ -62,6 +65,8 @@ export async function Connections() {
   const elTone: Tone = !el.configured ? "off" : !el.reachable ? "bad" : el.quota && el.quota.limit && el.quota.left / el.quota.limit < 0.1 ? "warn" : "ok";
   const hfTone: Tone = !hf.configured ? "off" : !hf.reachable ? "bad" : "ok";
   const share = el.quota?.limit ? Math.min(1, el.quota.used / el.quota.limit) : 0;
+  const loomTone: Tone = !loom.configured ? "off" : loom.lastError ? "bad" : loom.lastOkAt ? "ok" : "warn";
+  const loomState = !loom.configured ? "Not connected" : loom.lastError ? "Failing" : loom.lastOkAt ? "Connected" : "Not checked yet";
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
@@ -139,6 +144,25 @@ export async function Connections() {
           <Link href="/settings?tab=sync" className="inline-flex h-11 items-center justify-self-start rounded-full border border-line px-4 text-xs text-muted hover:text-fg md:h-9">
             {motion ? "Market sync details" : "Connect in Sync health"}
           </Link>
+        </Card>
+
+        <Card name="Loom (Atlassian)" tone={loomTone} state={loomState} about="Every new Loom pulled in by itself through Atlassian's MCP server, read and sorted into the agents' knowledge. Private and workspace-only videos too.">
+          {loom.lastError && <p className="text-xs leading-relaxed text-bad">{loom.lastError}</p>}
+          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-xs">
+            <Row k="Connected as">{loom.account ?? (loom.configured ? (loom.mode === "service" ? "A service account (shown after the first check)" : "Shown after the first check") : "Nobody yet")}</Row>
+            <Row k="Last check">{loom.lastSyncAt ? when(loom.lastSyncAt) : "Not yet"}</Row>
+            <Row k="Videos found">
+              {n(loom.videoCount)} in all{loom.lastSyncAt ? ` · ${n(loom.lastFound)} on the last check` : ""}
+            </Row>
+            {loom.walking && <Row k="Pulling">{loom.walking.all ? "Everything, continuing every 15 minutes" : `Everything since ${new Date(loom.walking.from as string).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}, continuing every 15 minutes`}</Row>}
+          </dl>
+          {loom.configured ? (
+            <LoomAtlassianControls isExec={isExec} />
+          ) : (
+            <p className="text-[11px] leading-relaxed text-faint">
+              Add {loom.missing.join(" and ")} in Vercel (an API token from id.atlassian.com › Security › API tokens, for an account that can see the Loom workspace), or ATLASSIAN_SERVICE_KEY for a service account, then redeploy. An org admin also turns on API-token sign-in at admin.atlassian.com › Connectors › Atlassian MCP server, and the Loom workspace has to be linked to the Atlassian site.
+            </p>
+          )}
         </Card>
       </div>
     </div>

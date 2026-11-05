@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { addKnowledgeText, forgetIndex, type KnowledgeTarget } from "@/lib/knowledge";
 import { casesDoc, DISTILL, DISTILL_RULES, saveInsights, type Distilled } from "@/lib/buying-insights";
+import { atlassianConfigured } from "@/lib/atlassian-mcp";
 import { listLoomFolder, readLoom } from "@/lib/loom";
 import { loomFolders, loomLinks } from "@/lib/loom-links";
 
@@ -18,7 +19,7 @@ import { loomFolders, loomLinks } from "@/lib/loom-links";
 // Client knowledge is never deleted.
 
 type Admin = SupabaseClient;
-export type LoomSource = "slack" | "webhook" | "bulk" | "client" | "folder";
+export type LoomSource = "slack" | "webhook" | "bulk" | "client" | "folder" | "atlassian";
 export type LoomIntake = {
   source: LoomSource;
   by?: string | null;
@@ -66,7 +67,7 @@ export async function matchClient(admin: Admin, text: string | null | undefined)
 }
 
 /** Videos into the queue. A video already queued or filed is skipped (one row per Loom video, ever). */
-export async function queueLooms(admin: Admin, videos: { id: string; url: string; title?: string | null; folder?: string | null }[], intake: LoomIntake) {
+export async function queueLooms(admin: Admin, videos: { id: string; url: string; title?: string | null; folder?: string | null; recordedAt?: string | null }[], intake: LoomIntake) {
   const hint = intake.clientId ?? (await matchClient(admin, intake.clientText));
   const ids: string[] = [];
   for (let i = 0; i < videos.length; i += 200) {
@@ -80,7 +81,7 @@ export async function queueLooms(admin: Admin, videos: { id: string; url: string
       hint_client: intake.clientText?.slice(0, 200) || null,
       source: intake.source,
       source_ref: intake.sourceRef ?? null,
-      recorded_at: intake.recordedAt ?? null,
+      recorded_at: v.recordedAt ?? intake.recordedAt ?? null,
       by: intake.by ?? null,
     }));
     const { data, error } = await admin.from("loom_videos").upsert(rows, { onConflict: "loom_id", ignoreDuplicates: true }).select("id");
@@ -231,7 +232,7 @@ type Filed = { key_points: string[]; lessons: { rule: string; when: string }[]; 
 const NO_CAPTIONS =
   "Loom has no transcript for this video. In Loom, open the video and turn on captions (the Transcript or Captions option on the video, or switch on auto captions in your Loom settings so every new video gets them), then click Try again.";
 const PRIVATE =
-  "Loom only shows this video to people signed in to the workspace: it's shared to a Loom Space (workspace only) or private. Either set it to anyone with the link in Loom (open the video, Share, general access: anyone with the link), then Try again; or push its transcript with the Loom browser script (docs/ZAPIER.md, Loom section), which reads it while you're signed in.";
+  "Loom only shows this video to people signed in to the workspace: it's shared to a Loom Space (workspace only) or private. Either set it to anyone with the link in Loom (open the video, Share, general access: anyone with the link), then Try again; or push its transcript with the Loom browser script (docs/ZAPIER.md, Loom section), which reads it while you're signed in. With Loom connected through Atlassian (Settings › Connections), workspace videos are read without either.";
 
 async function update(admin: Admin, id: string, patch: Record<string, unknown>) {
   await admin.from("loom_videos").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
@@ -274,6 +275,17 @@ export async function processLoom(admin: Admin, row: Row) {
   try {
     // 1. Loom: title and transcript (a brand-new recording may not have its captions yet: wait and look again)
     const loom = await readLoom(row.url);
+    // A video the public page won't give a transcript for (private, workspace only): asked of Atlassian when connected
+    if (!loom.transcript && !row.transcript) {
+      if (atlassianConfigured()) {
+        const via = await (await import("@/lib/loom-atlassian")).atlassianTranscript(admin, row.url, row.loom_id).catch(() => null);
+        if (via?.transcript) {
+          loom.transcript = via.transcript;
+          loom.found = true;
+          loom.title = loom.title ?? via.title;
+        }
+      }
+    }
     const fresh = Date.now() - new Date(row.created_at).getTime() < 0.5 * DAY;
     // (A workspace video can have no oEmbed and still a readable transcript: only both missing means Loom won't show it)
     if (!loom.found && !loom.transcript && !row.transcript) {
@@ -626,6 +638,8 @@ export type LoomStatus = {
   folders: { id: string; url: string; name: string | null; client: string | null; videos: number; checked: string | null; error: string | null }[];
   /** On a client: their pre-sale audit Looms (from before they signed) */
   presale: number;
+  /** Loom connected through Atlassian: new recordings come in by themselves */
+  auto: boolean;
 };
 
 /** The tabs a video belongs in (a video can teach the buyer and be filed to a client) */
@@ -700,6 +714,7 @@ export async function loomStatus(admin: Admin, clientId?: string): Promise<LoomS
     counts,
     videos,
     presale: clientId ? list.filter((r) => r.prospect_client_id === clientId).length : 0,
+    auto: atlassianConfigured(),
     folders: (folders ?? []).map((f) => ({
       id: f.id as string,
       url: f.url as string,

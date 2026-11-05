@@ -900,7 +900,7 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
       {tab === "team" && <Team />}
       {tab === "data" && <Data target={typeof sp.target === "string" ? sp.target : null} from={from} to={to} />}
       {tab === "sync" && <Sync motion={typeof sp.motion === "string" ? sp.motion : null} />}
-      {tab === "connections" && <Connections />}
+      {tab === "connections" && <Connections isExec={me.isExec} />}
       {tab === "errors" && <Errors all={sp.show === "all"} />}
       {tab === "deleted" && <Deleted />}
     </div>

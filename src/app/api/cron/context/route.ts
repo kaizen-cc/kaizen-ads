@@ -215,6 +215,8 @@ export async function GET(request: Request) {
       const began = Date.now();
       // Shared folders not read for a day: new recordings queued
       const folders = await loom.recheckLoomFolders(admin).catch((e) => String(e));
+      // Loom through Atlassian's MCP server (when connected): every video created since the last check queued
+      const atlassian = await (await import("@/lib/loom-atlassian")).syncLoomFromAtlassian(admin, { budgetMs: 60_000 }).catch((e) => String(e));
       const queue = await loom.processLoomQueue(admin, { budgetMs: 480_000, parallel: 4 });
       // New teachings distilled since the last run: merged, contradictions flagged, the skills rewritten
       const { count } = await admin.from("media_buying_insights").select("id", { count: "exact", head: true }).is("consolidated_at", null).is("merged_into", null);
@@ -231,7 +233,7 @@ export async function GET(request: Request) {
       const thumbs = left > 30_000 ? await loom.fillLoomThumbnails(admin, 40).catch((e) => String(e)) : { later: true };
       // Contradictions nobody was told about yet: the bell of everyone who rules on them
       const told = await (await import("@/lib/insight-conflicts")).notifyContradictions(admin).catch((e) => String(e));
-      return Response.json({ folders, queue, attribution, insights, prospects, suggested, thumbs, told });
+      return Response.json({ folders, atlassian, queue, attribution, insights, prospects, suggested, thumbs, told });
     }
     if (step === "docs") {
       const { watchDocs } = await import("@/lib/context/docs");

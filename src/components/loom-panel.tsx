@@ -25,7 +25,7 @@ const TAB_LABEL: Record<Exclude<LoomTab, "queue">, string> = {
 };
 const CLIENT_LABEL: Partial<Record<LoomTab, string>> = { clients: "Filed here", prospects: "Pre-sale audits" };
 const ORDER: Exclude<LoomTab, "queue">[] = ["decide", "method", "clients", "prospects", "skipped", "failed"];
-const SOURCE: Record<string, string> = { slack: "Slack", webhook: "Zapier", bulk: "Pasted", client: "Client page", folder: "Folder" };
+const SOURCE: Record<string, string> = { slack: "Slack", webhook: "Zapier", bulk: "Pasted", client: "Client page", folder: "Folder", atlassian: "Atlassian" };
 const PLATFORM: Record<string, string> = { meta: "Meta", google: "Google", both: "Meta + Google" };
 const AGENT: Record<string, string> = { "role:media_buyer": "Media Buyer", google_auditor: "Google Ads Buyer" };
 const PAGE = 25;
@@ -67,6 +67,21 @@ export function LoomPanel({ status, clients = [], clientId = null, canDecide = t
         <div className="grid gap-0.5">
           <h2 className="font-heading text-[20px] leading-tight">Loom videos</h2>
           <p className="text-[13px] text-muted">{clientId ? "Looms about this client, and the senior buyer's audits from before they signed." : "Every Loom from Slack, Zapier, a shared folder or pasted here, read and sorted."}</p>
+          {!clientId && (
+            <p className="flex items-center gap-1.5 text-[12px] text-faint">
+              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${status.auto ? "bg-ok" : "bg-faint"}`} aria-hidden />
+              {status.auto ? (
+                "New Looms come in automatically through Atlassian."
+              ) : (
+                <span>
+                  Connect Loom through Atlassian and new Looms come in automatically.{" "}
+                  <Link href="/settings?tab=connections" className="text-brand-text hover:underline">
+                    Connections
+                  </Link>
+                </span>
+              )}
+            </p>
+          )}
         </div>
         <button type="button" onClick={() => setAdding((a) => !a)} aria-expanded={adding} className={`min-h-11 rounded-full px-4 text-[13px] font-medium md:min-h-9 ${adding ? "bg-surface-2 text-fg" : "bg-fg text-bg"}`}>
           {adding ? "Done adding" : "Add Looms"}
