@@ -12,7 +12,7 @@ export type PeerMatch = { tier: 1 | 2; why: string };
 
 // Words that say how or where something is sold, not what it is
 const STOP = new Set(
-  "a an and the of for to in on with by at from or & brand brands online dtc d2c ecommerce e-commerce commerce shop shops store stores retailer retail company co products product goods sold seller sells selling direct consumer consumers business local premium luxury high-end affordable delivery delivered subscription service services gear equipment supply supplies women's womens men's mens kids kid's custom specialty us usa american".split(
+  "a an and the of for to in on with by at from or & brand brands online dtc d2c ecommerce e-commerce commerce shop shops store stores retailer retail company co products product goods sold seller sells selling direct consumer consumers business local premium luxury high-end affordable delivery delivered subscription service services gear equipment supply supplies women's womens men's mens kids kid's custom specialty us usa american event events party parties venue venues field fields park parks center centre club clubs studio studios school schools clinic clinics practice group firm agency entertainment experience experiences activity activities fun family families rental rentals reseller resale marketplace platform app tour tours travel location locations".split(
     " ",
   ),
 );
@@ -35,6 +35,7 @@ const GROUPS: [string, string[]][] = [
 ];
 const CANON = new Map<string, string>();
 for (const [label, words] of GROUPS) for (const w of words) CANON.set(w, label);
+const FAMILIES = new Set(GROUPS.map(([label]) => label));
 
 const singular = (w: string) => (w.length > 4 && w.endsWith("ies") ? `${w.slice(0, -3)}y` : w.length > 3 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w);
 
@@ -59,8 +60,11 @@ export function matchPeers(me: PeerInfo, peers: PeerInfo[], verticals: VerticalI
   const out = new Map<string, PeerMatch>();
   for (const p of peers) {
     if (p.id === me.id) continue;
-    const shared = [...productWords(p.industry_detail)].filter((w) => mine.has(w));
     const pv = p.vertical_id ? vById.get(p.vertical_id) : undefined;
+    // Placed in different sub-verticals: only a known product family ("bedding and sleep", "paintball") makes them the
+    // same thing, never one stray shared word
+    const apart = Boolean(myV && pv && pv.id !== myV.id);
+    const shared = [...productWords(p.industry_detail)].filter((w) => mine.has(w) && (!apart || FAMILIES.has(w)));
     if (shared.length) {
       out.set(p.id, { tier: 1, why: `Also sells ${shared.slice(0, 2).join(", ")}${p.industry_detail ? ` (${p.industry_detail})` : ""}` });
     } else if (myV && pv && pv.id === myV.id) {

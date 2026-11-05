@@ -86,3 +86,19 @@ describe("every place winners feed reads peers without a fallback", () => {
     expect(read("src/app/(team)/brief-job-actions.ts")).toMatch(/assertRelevantWinner/);
   });
 });
+
+describe("generic words never make a peer", () => {
+  it("an event ticket reseller is no peer of a paintball park that also runs events", () => {
+    const verticals = [
+      { id: "exp", name: "Experiences & Events", parent_id: null },
+      { id: "tix", name: "Ticketed Events & Social Clubs", parent_id: "exp" },
+      { id: "pb", name: "Paintball & Airsoft Parks", parent_id: "exp" },
+    ];
+    const me = { id: "bt", industry: "entertainment", industry_detail: "Event ticket reseller", vertical_id: "tix" };
+    const peers = [
+      { id: "bk", industry: "entertainment", industry_detail: "Paintball parks and events", vertical_id: "pb" },
+      { id: "ww", industry: "entertainment", industry_detail: "Paintball park and parties", vertical_id: "pb" },
+    ];
+    expect(matchPeers(me, peers, verticals).size).toBe(0);
+  });
+});
