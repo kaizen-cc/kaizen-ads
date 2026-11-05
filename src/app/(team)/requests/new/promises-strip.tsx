@@ -4,11 +4,12 @@ import { useEffect, useState } from "react";
 import { promisesFor, type Promise_ } from "./actions";
 import type { PreviewItem } from "./start-flow";
 import { SaveIdeaStar } from "@/components/save-idea-star";
+import { BriefJobSlot } from "@/components/brief-jobs";
 
 /**
  * What we promised this client on calls and haven't started. "Brief on this" opens its quick preview (the brief from
- * the call when it's written, a first look when it isn't); the full brief fills the form, and sending the request marks
- * the promise as in motion.
+ * the call when it's written, a first look when it isn't); the full brief is written in the background (its progress
+ * here), opens in Ready to send, and sending the request marks the promise as in motion.
  */
 export function PromisesStrip({ clientId, used, onPreview, preloaded }: { clientId: string; used: string | null; onPreview: (item: PreviewItem) => void; /** Already read with the rest of the start page: no fetch of its own */ preloaded?: Promise_[] }) {
   const [fetched, setList] = useState<Promise_[] | null>(null);
@@ -52,15 +53,18 @@ export function PromisesStrip({ clientId, used, onPreview, preloaded }: { client
                   {p.briefed && " · brief ready"}
                 </span>
               </span>
-              <button
-                type="button"
-                onClick={() => use(p)}
-                disabled={on}
-                className={`min-h-11 shrink-0 rounded-full text-xs font-medium md:min-h-8 ${on ? "px-3.5 text-ok" : "bg-fg px-3.5 text-bg disabled:opacity-60"}`}
-              >
-                {on ? "Loaded into this request" : "Brief on this"}
-              </button>
-              {!on && <SaveIdeaStar source={{ kind: "promise", commitmentId: p.id }} from={{ kicker: "Promised on a call", label: p.what }} clientId={clientId} size="sm" />}
+              {/* Its brief being written in the background: the progress here, then "Brief ready · Open" */}
+              <BriefJobSlot source={on ? null : { kind: "promise", commitmentId: p.id }} clientId={clientId} className="grid w-full min-w-0 sm:w-[260px] sm:shrink-0">
+                <button
+                  type="button"
+                  onClick={() => use(p)}
+                  disabled={on}
+                  className={`min-h-11 shrink-0 rounded-full text-xs font-medium md:min-h-8 ${on ? "px-3.5 text-ok" : "bg-fg px-3.5 text-bg disabled:opacity-60"}`}
+                >
+                  {on ? "Loaded into this request" : "Brief on this"}
+                </button>
+                {!on && <SaveIdeaStar source={{ kind: "promise", commitmentId: p.id }} from={{ kicker: "Promised on a call", label: p.what }} clientId={clientId} size="sm" />}
+              </BriefJobSlot>
             </div>
           );
         })}

@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import type { WatchRow } from "@/lib/fatigue";
 import { closeParams, closeThen, pushParams, useParam } from "@/lib/url-state";
 import { QuickBriefSheet } from "@/components/quick-brief-sheet";
+import { BriefJobSlot } from "@/components/brief-jobs";
 import { SaveIdeaStar } from "@/components/save-idea-star";
 import type { OpenSuggestion } from "@/lib/suggestions";
 import { SuggestionSheet } from "@/app/(team)/pipeline/views/suggested-briefs";
@@ -160,16 +161,19 @@ function WatchCard({ r, showClient, onGone }: { r: WatchRow; showClient: boolean
           <p className="text-[11px] text-faint">It comes back only if it goes from tiring to tired.</p>
         </div>
       ) : (
-        <div className="flex flex-wrap items-center gap-2">
-          <button onClick={refresh} disabled={step === "writing"} className="h-11 rounded-brand bg-fg px-4 text-sm font-medium text-bg hover:bg-fg/90 disabled:opacity-70 md:h-9">
-            {step === "writing" ? r.briefId ? "Opening…" : <Writing /> : r.briefId ? "Open the brief" : "Brief a refresh"}
-          </button>
-          {r.briefId && step !== "writing" && <span className="text-[11px] text-ok">Brief ready</span>}
-          <SaveIdeaStar source={{ kind: "refresh", adId: r.adId }} from={{ kicker: "Tiring ad", label: r.headline ?? r.adName, thumb: r.thumbnail, adId: r.adId }} clientId={r.clientId} size="sm" />
-          <button onClick={() => setStep("dismiss")} disabled={step === "writing"} className="h-9 max-md:h-11 px-3 text-sm text-faint hover:text-fg">
-            Dismiss
-          </button>
-        </div>
+        // Its brief being written in the background: the progress here, then "Brief ready · Open"
+        <BriefJobSlot source={{ kind: "refresh", adId: r.adId }} clientId={r.clientId}>
+          <div className="flex flex-wrap items-center gap-2">
+            <button onClick={refresh} disabled={step === "writing"} className="h-11 rounded-brand bg-fg px-4 text-sm font-medium text-bg hover:bg-fg/90 disabled:opacity-70 md:h-9">
+              {step === "writing" ? r.briefId ? "Opening…" : <Writing /> : r.briefId ? "Open the brief" : "Brief a refresh"}
+            </button>
+            {r.briefId && step !== "writing" && <span className="text-[11px] text-ok">Brief ready</span>}
+            <SaveIdeaStar source={{ kind: "refresh", adId: r.adId }} from={{ kicker: "Tiring ad", label: r.headline ?? r.adName, thumb: r.thumbnail, adId: r.adId }} clientId={r.clientId} size="sm" />
+            <button onClick={() => setStep("dismiss")} disabled={step === "writing"} className="h-9 max-md:h-11 px-3 text-sm text-faint hover:text-fg">
+              Dismiss
+            </button>
+          </div>
+        </BriefJobSlot>
       )}
 
       {brief && (

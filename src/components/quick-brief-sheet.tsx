@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AiProgress } from "@/components/ai-progress";
-import { readyHref, trackJob } from "@/components/brief-jobs";
+import { BriefJobSlot, BriefJobStatus, readyHref, trackJob, useBriefJobFor } from "@/components/brief-jobs";
 import { toast } from "@/components/toasts";
 import { startBrief } from "@/app/(team)/brief-job-actions";
 import { RefThumb } from "@/components/ref-thumb";
@@ -21,15 +21,14 @@ import type { Allotment } from "@/lib/allotment";
 // with what's here so the brief follows the edits. "Not this one" closes it. The sheet lives in the address
 // (?preview=), so back closes it. One concept per brief: when what's previewed holds several distinct concepts, it
 // offers "Split into N briefs", and each is written on its own.
-// Opened anywhere but the request form (no onWrite), the full brief is written in the background (src/lib/brief-jobs.ts):
-// the sheet closes, the progress sits by the bell, and a toast and the bell open it as a draft in Ready to send.
-// "Not this one" writes nothing.
+// Wherever it's opened (the request form too), the full brief is written in the background (src/lib/brief-jobs.ts):
+// the sheet closes at once and nothing waits on it. The card it was started from shows the progress and then "Brief
+// ready · Open" (BriefJobSlot), the count sits by the bell, and a toast and the bell open it as a draft in Ready to
+// send. Opened again while it's writing, the sheet shows that progress too. "Not this one" writes nothing.
 
 type Fmt = QuickFormat["format"];
 const FMTS: Fmt[] = ["image", "video", "carousel"];
 const FMT_LABEL: Record<Fmt, string> = { image: "Image", video: "Video", carousel: "Carousel" };
-
-export type WriteResult = { ok: true } | { ok: false; error: string } | void;
 
 /** What's being previewed, kept while ?preview= points at it (back and forward reopen it) */
 export function useQuickPreview<T>() {
@@ -49,31 +48,27 @@ export function QuickBriefSheet({
   clientId,
   source,
   from,
-  progressLabel,
-  progressMs = 110_000,
   onWrite,
   onWriteAll,
   onClose,
-  background: backgroundAsked = false,
+  onStarted,
   given = null,
 }: {
   clientId: string;
   source: BriefSource;
   /** Where it comes from, shown at the top: a line and a picture when there is one */
   from: { kicker: string; label: string; thumb?: string | null; adId?: string | null; format?: Fmt | null };
-  /** The AI label the full write is timed by (its recent runs) */
-  progressLabel: string;
-  progressMs?: number;
-  /** Write the full brief from the agreed preview (rest: the other briefs of a split, still to write). A promise keeps
-   *  the sheet open with the progress until it settles. Left out: written in the background, opening in Ready to send */
-  onWrite?: (seed: QuickBrief, edited: boolean, rest: QuickBrief[]) => Promise<WriteResult> | WriteResult;
-  /** Background surfaces: after a split, write every brief at once */
+  /** The AI label the brief is timed by (kept for the callers; the background job times itself) */
+  progressLabel?: string;
+  /** A card's own way to start its background brief (it closes the sheet). Left out: startBrief, opening in Ready to send */
+  onWrite?: (seed: QuickBrief, edited: boolean, rest: QuickBrief[]) => void;
+  /** With onWrite: after a split, write every brief at once */
   onWriteAll?: (seeds: QuickBrief[]) => void;
   /** Already agreed (the next brief of a split): shown as it is, no AI */
   given?: QuickBrief | null;
   onClose: () => void;
-  /** The full brief is written in the background (the sheet closes and the card shows its progress) */
-  background?: boolean;
+  /** The full brief (or a split's briefs) started in the background */
+  onStarted?: () => void;
 }) {
   const [state, setState] = useState<{ status: "loading" } | { status: "error"; error: string } | { status: "ready"; base: QuickBrief; others: QuickBrief[]; allotment: Allotment | null; client: string; instant: boolean }>({ status: "loading" });
   // Every brief on screen (one, or each concept after a split), and which one is open
@@ -83,14 +78,14 @@ export function QuickBriefSheet({
   const brief = briefs[active] ?? null;
   // Only the formats this person can request (the preview arrives already kept to them)
   const allowed = useCreativeFormats();
-  const [writing, setWriting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const sourceKey = JSON.stringify(source);
   const router = useRouter();
-  // No writer of its own: every full brief is written in the background and opens in Ready to send
-  const background = backgroundAsked || !onWrite;
+  // Already being written from here (or written): its progress, then "Brief ready", in place of a second write
+  const job = useBriefJobFor(source, clientId);
+  const writing = job?.status === "writing";
   const inBackground = async (seeds: QuickBrief[], changed: boolean) => {
+    onStarted?.();
     const here = new URL(window.location.href);
     here.searchParams.delete("preview");
     const from = `${here.pathname}${here.search}`;
@@ -135,12 +130,12 @@ export function QuickBriefSheet({
     };
   }, [clientId, sourceKey, givenKey, attempt]);
 
-  // Escape closes (not while the brief is being written in the sheet)
+  // Escape closes (always: a brief being written carries on in the background)
   useEffect(() => {
-    const key = (e: KeyboardEvent) => e.key === "Escape" && !writing && onClose();
+    const key = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [onClose, writing]);
+  }, [onClose]);
 
   const ready = state.status === "ready" && brief ? state : null;
   // A split brief is always new: each is written from its own preview
@@ -155,21 +150,13 @@ export function QuickBriefSheet({
     });
   const total = brief?.formats.reduce((n, f) => n + f.new + f.variations, 0) ?? 0;
 
-  const write = async () => {
+  const write = () => {
     if (!brief || !total) return;
-    setError(null);
-    if (!onWrite) {
-      // Already written and kept as it was: straight to Ready to send. Otherwise the sheet closes while it's written
-      if (!(ready?.instant && !edited)) onClose();
-      void inBackground([brief], edited);
-      return;
-    }
-    const r = onWrite(brief, edited, briefs.filter((_, i) => i !== active));
-    if (background || !(r instanceof Promise)) return;
-    setWriting(true);
-    const res = await r.catch(() => ({ ok: false as const, error: "Something went wrong. Try again." }));
-    setWriting(false);
-    if (res && !res.ok) setError(res.error);
+    if (onWrite) return onWrite(brief, edited, briefs.filter((_, i) => i !== active));
+    // Already written and kept as it was: straight to Ready to send. Otherwise the sheet closes at once while it's
+    // written in the background (its card shows the progress)
+    if (!(ready?.instant && !edited)) onClose();
+    void inBackground([brief], edited);
   };
 
   const action = ready?.instant && !edited ? "Use this brief" : ready?.instant && !split ? "Rewrite with my changes" : "Write the full brief";
@@ -184,7 +171,7 @@ export function QuickBriefSheet({
   if (typeof document === "undefined") return null;
   return createPortal(
     <div className="fixed inset-0 z-[60] flex items-end justify-center md:items-stretch md:justify-end" role="dialog" aria-modal="true" aria-label="Quick preview of the brief">
-      <button type="button" aria-label="Close" onClick={() => !writing && onClose()} className="absolute inset-0 bg-black/60 backdrop-blur-[2px] animate-[sheet-fade_.2s_ease-out]" />
+      <button type="button" aria-label="Close" onClick={onClose} className="absolute inset-0 bg-black/60 backdrop-blur-[2px] animate-[sheet-fade_.2s_ease-out]" />
       <div className="relative grid max-h-[94dvh] w-full grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-t-[26px] border border-line bg-bg shadow-[0_-30px_80px_-30px_rgba(0,0,0,0.6)] animate-[sheet-up_.32s_cubic-bezier(.2,.8,.2,1)] md:max-h-none md:w-[540px] md:rounded-none md:rounded-l-[26px] md:border-y-0 md:border-r-0 md:animate-[drawer-right_.32s_cubic-bezier(.2,.8,.2,1)]">
         {/* Where it comes from */}
         <div className="relative isolate flex items-center gap-3 overflow-hidden border-b border-line px-5 pb-4 pt-3 md:pt-5">
@@ -203,7 +190,7 @@ export function QuickBriefSheet({
           </span>
           {/* Not now: saved for later, for this client, by this person */}
           <SaveIdeaStar source={source} from={from} clientId={clientId} className="mt-2 md:mt-0" />
-          <button type="button" onClick={() => !writing && onClose()} disabled={writing} aria-label="Close" className="mt-2 grid h-11 w-11 shrink-0 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg disabled:opacity-40 md:mt-0">
+          <button type="button" onClick={onClose} aria-label="Close" className="mt-2 grid h-11 w-11 shrink-0 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg md:mt-0">
             ✕
           </button>
         </div>
@@ -219,7 +206,7 @@ export function QuickBriefSheet({
             </div>
           )}
           {ready && brief && (
-            <div className={`grid min-w-0 gap-6 animate-[step-in_.3s_cubic-bezier(.2,.8,.2,1)] ${writing ? "pointer-events-none opacity-60" : ""}`}>
+            <div className="grid min-w-0 gap-6 animate-[step-in_.3s_cubic-bezier(.2,.8,.2,1)]">
               {ready.others.length > 0 && !split && (
                 <div className="grid gap-2.5 rounded-[16px] border border-warn/40 bg-warn-soft/40 p-4">
                   <p className="text-[13.5px] leading-relaxed">
@@ -315,14 +302,13 @@ export function QuickBriefSheet({
         </div>
 
         <div className="grid gap-2 border-t border-line bg-bg/95 px-5 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur-xl">
-          {writing && (
-            <div className="rounded-[16px] border border-brand/25 bg-brand-soft/30 px-4 py-3">
-              <AiProgress size="sm" label={progressLabel} fallbackMs={progressMs} title={edited && ready?.instant ? "Rewriting the brief" : "Writing the brief"} note="It follows what's here. You can leave this open." />
+          {job && (
+            <div className="rounded-[16px] border border-line bg-surface px-4 py-3">
+              <BriefJobStatus source={source} clientId={clientId} compact={false} />
             </div>
           )}
-          {error && <p className="text-[13px] text-bad">{error}</p>}
-          {background && ready && !(ready.instant && !edited) && <p className="text-[12px] text-faint">Written in the background while you keep working. It opens in Ready to send.</p>}
-          {split && (onWriteAll || !onWrite) && briefs.length > 1 && (
+          {!writing && ready && !(ready.instant && !edited) && <p className="text-[12px] text-faint">Written in the background while you keep working: close this any time. It opens in Ready to send.</p>}
+          {split && (onWriteAll || !onWrite) && briefs.length > 1 && !writing && (
             <button
               type="button"
               onClick={() => {
@@ -330,22 +316,23 @@ export function QuickBriefSheet({
                 onClose();
                 void inBackground(briefs, true);
               }}
-              disabled={writing} className="min-h-11 rounded-full border border-line px-4 text-[13.5px] text-fg hover:border-faint disabled:opacity-50">
+              className="min-h-11 rounded-full border border-line px-4 text-[13.5px] text-fg hover:border-faint"
+            >
               Write all {briefs.length} in the background
             </button>
           )}
           <div className="flex items-center justify-between gap-2">
-            <button type="button" onClick={onClose} disabled={writing} className="min-h-12 rounded-full px-4 text-[14px] text-muted hover:bg-surface-2 hover:text-fg disabled:opacity-40">
-              Not this one
+            <button type="button" onClick={onClose} className="min-h-12 rounded-full px-4 text-[14px] text-muted hover:bg-surface-2 hover:text-fg">
+              {writing ? "Keep working" : "Not this one"}
             </button>
             <button
               type="button"
-              onClick={() => void write()}
+              onClick={write}
               disabled={!ready || !total || writing}
               className="inline-flex min-h-12 items-center gap-2 rounded-full bg-brand px-6 text-[14.5px] font-medium text-white shadow-[0_10px_30px_-10px_rgba(200,16,46,0.8)] transition hover:bg-brand-hover disabled:opacity-50 disabled:shadow-none"
             >
               {!ready?.instant || edited ? <Spark size={13} /> : null}
-              {writing ? "Writing…" : action}
+              {writing ? "Writing in the background" : job?.status === "ready" && !(ready?.instant && !edited) ? "Write another" : action}
             </button>
           </div>
         </div>
@@ -366,13 +353,15 @@ type PreviewSpec = {
 
 /**
  * A button that opens the quick preview right here (any page, even a server-rendered one): "Write the full brief"
- * writes it in the background and it opens in Ready to send; "Not this one" writes nothing.
+ * writes it in the background, and the button gives way to its progress and then "Brief ready · Open" (it opens in
+ * Ready to send); "Not this one" writes nothing.
  */
 export function BriefPreviewButton({
   children,
   className,
   star = "plain",
   wrapClassName = "inline-flex max-w-full items-center gap-2 justify-self-start",
+  slotClassName,
   ...spec
 }: PreviewSpec & {
   children: React.ReactNode;
@@ -381,6 +370,8 @@ export function BriefPreviewButton({
   star?: "plain" | "dark" | false;
   /** The row the button and its star sit in */
   wrapClassName?: string;
+  /** The box its progress (then "Brief ready") takes the button's place in */
+  slotClassName?: string;
 }) {
   const open = () => pushParams({ preview: spec.previewKey });
   const button = (
@@ -390,14 +381,16 @@ export function BriefPreviewButton({
   );
   return (
     <>
-      {star ? (
-        <span className={wrapClassName}>
-          {button}
-          <SaveIdeaStar source={spec.source} from={spec.from} clientId={spec.clientId} variant={star} size="sm" />
-        </span>
-      ) : (
-        button
-      )}
+      <BriefJobSlot source={spec.source} clientId={spec.clientId} className={slotClassName} tone={star === "dark" ? "dark" : "plain"}>
+        {star ? (
+          <span className={wrapClassName}>
+            {button}
+            <SaveIdeaStar source={spec.source} from={spec.from} clientId={spec.clientId} variant={star} size="sm" />
+          </span>
+        ) : (
+          button
+        )}
+      </BriefJobSlot>
       <Suspense fallback={null}>
         <PreviewWhenOpen {...spec} />
       </Suspense>

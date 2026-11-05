@@ -121,3 +121,35 @@ export function applySeed<T extends { title: string; formats: QuickFormat[] }>(d
   const formats = seed.formats.filter((f) => f.new + f.variations > 0);
   return { ...draft, title: seed.title.trim() ? seed.title.trim().slice(0, 80) : draft.title, formats: formats.length ? formats : draft.formats };
 }
+
+/** A short, stable hash of some text (for a key, not for security) */
+const shortHash = (s: string) => {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+};
+
+/**
+ * What a background brief job is keyed by for this source (src/lib/brief-jobs.ts): the server queues it under this
+ * key, and the card it was started from finds its own job (and its progress) by it. The briefs of a split add "#part".
+ */
+export function jobKeyOf(source: BriefSource): string {
+  switch (source.kind) {
+    case "winner":
+      return source.winner.adId;
+    case "refresh":
+    case "market":
+      return source.adId;
+    case "pattern":
+      return source.patternId;
+    case "promise":
+      return source.commitmentId;
+    case "suggestion":
+      return source.id;
+    case "idea":
+      return `idea:${source.label.slice(0, 120)}`;
+    case "talk":
+      // One conversation: keyed by how it started, so its card finds it while the talk goes on
+      return `talk:${shortHash(source.turns.find((t) => t.role === "user")?.text ?? "")}`;
+  }
+}

@@ -8,6 +8,7 @@ import { ClientSearch } from "./client-search";
 import { FilterMenu as Menu, FilterPill as Pill } from "@/components/filters";
 import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
 import { QuickBriefSheet } from "@/components/quick-brief-sheet";
+import { BriefJobStatus } from "@/components/brief-jobs";
 import { useCreativeFormats } from "@/components/creative-formats-provider";
 import { FormatScope } from "@/components/format-scope";
 import { MarketHoverCard, MarketPreview, MarketReadPanel, useMarketRead } from "./market-preview";
@@ -375,6 +376,8 @@ export function AdCard({ a, sub, onOpen, onHover, onLeave, star }: { a: MarketAd
       </span>
     </button>
       {star && <span className="absolute right-3.5 top-3.5 z-10">{star}</span>}
+      {/* A brief from it being written in the background: the progress under the card, then "Brief ready · Open" */}
+      <BriefJobStatus source={{ kind: "market", adId: a.id }} className="mt-1.5 grid min-w-0" />
     </div>
   );
 }
@@ -450,6 +453,8 @@ export function MarketSheet({
 
             <MarketReadPanel a={a} read={read} />
 
+            {/* A brief from it being written in the background (for any client): the progress, then "Brief ready · Open" */}
+            <BriefJobStatus source={{ kind: "market", adId: a.id }} client compact={false} />
             <div className="flex flex-wrap items-center gap-2">
               <SaveIdeaStar idea={saveMarketAd(a)} clientId={forClient && !guessed ? forClient : null} clientName={forName} />
               <button

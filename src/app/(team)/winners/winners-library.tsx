@@ -11,8 +11,10 @@ import { FilterMenu, FilterPill } from "@/components/filters";
 import { FormatScope } from "@/components/format-scope";
 import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
 import { QuickBriefSheet } from "@/components/quick-brief-sheet";
+import { BriefJobStatus } from "@/components/brief-jobs";
 import { SaveIdeaStar } from "@/components/save-idea-star";
 import type { SaveInput } from "@/lib/saved-references";
+import type { BriefSource } from "@/lib/quick-brief";
 import { matchPeers, winnerRelevant, type PeerInfo, type PeerMatch, type VerticalInfo } from "@/lib/peer-match";
 import { FbPreview, InsightPanel, useAd, useInsight } from "./fb-preview";
 
@@ -24,6 +26,9 @@ export type PeerContext = { peers: PeerInfo[]; verticals: VerticalInfo[] };
  * The clients a winner from `owner` may be briefed for (the owner's rule): those selling the same thing or in the same
  * sub-vertical, closest first. Never only the same broad industry.
  */
+/** The brief a winning ad becomes (its background job is found by it) */
+const winnerBrief = (w: Winner): BriefSource => ({ kind: "winner", winner: { adId: w.id, client: w.client, detail: w.detail, headline: w.headline, text: w.text, thumbnail: w.thumbnail, ratio: w.ratio, result: w.result, costPerResult: w.costPerResult, usual: w.usual } });
+
 /** What a star on a winning ad saves: the ad, how it looks, and the brief it becomes for the client it's saved for */
 export function saveWinnerAd(w: Winner): SaveInput {
   const winner = { adId: w.id, client: w.client, detail: w.detail, headline: w.headline, text: w.text, thumbnail: w.thumbnail, ratio: w.ratio, result: w.result, costPerResult: w.costPerResult, usual: w.usual };
@@ -287,6 +292,8 @@ export function WinnersLibrary({ winners, industries, clients, scope, match }: {
                 <span className="absolute right-3.5 top-3.5 z-10">
                   <SaveIdeaStar idea={saveWinnerAd(w)} clientId={forClient?.id ?? null} clientName={forClient?.name} variant="overlay" size="sm" />
                 </span>
+                {/* A brief from it being written in the background: the progress under the card, then "Brief ready · Open" */}
+                <BriefJobStatus source={winnerBrief(w)} className="mt-1.5 grid min-w-0" />
                 </div>
               ))}
             </div>
@@ -354,6 +361,7 @@ function WinnerSheet({ w, industryLabel, clients, match, onClose }: { w: Winner;
   const [previewFor, setPreviewFor] = useState<string | null>(null);
   const preview = useParam("preview");
   const previewKey = `ww-${w.id}`;
+  const briefSource: BriefSource = { kind: "winner", winner: { adId: w.id, client: w.client, detail: w.detail, headline: ad?.headline ?? w.headline, text: ad?.text ?? w.text, thumbnail: w.thumbnail, ratio: w.ratio, result: w.result, costPerResult: w.costPerResult, usual: w.usual } };
   const write = (clientId: string) => {
     setPreviewFor(clientId);
     pushParams({ preview: previewKey });
@@ -365,7 +373,7 @@ function WinnerSheet({ w, industryLabel, clients, match, onClose }: { w: Winner;
       {previewFor && preview === previewKey && (
         <QuickBriefSheet
           clientId={previewFor}
-          source={{ kind: "winner", winner: { adId: w.id, client: w.client, detail: w.detail, headline: ad?.headline ?? w.headline, text: ad?.text ?? w.text, thumbnail: w.thumbnail, ratio: w.ratio, result: w.result, costPerResult: w.costPerResult, usual: w.usual } }}
+          source={briefSource}
           from={{ kicker: `A winner · ${w.ratio}x its usual`, label: w.headline ?? w.name, thumb: w.thumbnail, adId: w.id }}
           progressLabel="brief from a winner+brief self-review"
           onClose={() => closeParams("preview")}
@@ -401,6 +409,8 @@ function WinnerSheet({ w, industryLabel, clients, match, onClose }: { w: Winner;
               {w.live === true ? "Running now" : w.live === false ? "Not delivering right now" : "Delivery status not known yet"} · Meta sync of {synced}
             </p>
 
+            {/* A brief from it being written in the background (for any client): the progress, then "Brief ready · Open" */}
+            <BriefJobStatus source={briefSource} client compact={false} />
             <div className="flex flex-wrap items-center gap-2">
               <SaveIdeaStar idea={saveWinnerAd(w)} />
               <button onClick={() => setStep("pick")} className="hidden h-10 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:brightness-110 md:block">

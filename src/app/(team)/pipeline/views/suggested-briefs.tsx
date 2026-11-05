@@ -14,6 +14,7 @@ import { AsanaSend } from "@/components/asana-send";
 import { allotmentPool, DEFAULT_CARDS, draws } from "@/lib/allotment";
 import { sendSuggestionToAsana, suggestionAsanaPreview } from "@/app/(team)/requests/new/actions";
 import { QuickBriefSheet } from "@/components/quick-brief-sheet";
+import { BriefJobStatus } from "@/components/brief-jobs";
 import { SaveIdeaStar } from "@/components/save-idea-star";
 
 const KIND_TONE: Record<SuggestionKind, string> = {
@@ -130,6 +131,8 @@ export function SuggestedBriefs({ state, bare = false }: { state: SuggestionsSta
             <span className="absolute right-3 top-3">
               <SaveIdeaStar source={{ kind: "suggestion", id: s.id }} from={{ kicker: KIND_LABEL[s.kind], label: s.draft.title || s.signal, thumb: s.source?.thumbnail ?? null }} clientId={s.clientId} clientName={s.client} size="sm" />
             </span>
+            {/* Its full brief being written in the background: the progress under the card, then "Brief ready · Open" */}
+            <BriefJobStatus source={{ kind: "suggestion", id: s.id }} clientId={s.clientId} className="mt-2 grid min-w-0 rounded-[14px] border border-line bg-surface px-4 py-3" />
             </div>
           ))}
           {running && (

@@ -1,15 +1,19 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Suspense, useEffect, useState, useSyncExternalStore } from "react";
 import { markJobsSeen, myJobs } from "@/app/(team)/brief-job-actions";
 import type { BriefJob } from "@/lib/brief-jobs";
+import { jobKeyOf, type BriefSource } from "@/lib/quick-brief";
 import { useParam } from "@/lib/url-state";
 import { toast } from "./toasts";
 
-// Briefs being written in the background, shared by the whole app: the card that asked shows a progress bar, a small
-// "1 brief writing" sits by the bell, and when one is ready a toast (and the bell) open it as a draft in Ready to
-// send, wherever you are. The list is read from the server, so a refresh or another page picks up where it was.
+// Briefs being written in the background, shared by the whole app. Every "Write the full brief" starts one (the quick
+// preview closes at once, nothing is lost by leaving): the card it was started from shows its progress and then
+// "Brief ready · Open" (useBriefJobFor + BriefJobSlot, the same everywhere), a small "1 brief writing" sits by the
+// bell, and when one is ready a toast (and the bell) open it as a draft in Ready to send, wherever you are. The list is
+// read from the server, so a refresh or another page picks up where it was.
 
 /** Where a finished brief opens: the request form's Ready to send, with the brief as the team will receive it */
 export const readyHref = (suggestionId: string) => `/requests/new?draft=${suggestionId}`;
@@ -35,13 +39,52 @@ export function useBriefJobs() {
   return useSyncExternalStore(subscribe, () => jobs, () => EMPTY);
 }
 
-/** The job writing a brief from this ad (the newest), if any */
-export function useJobFor(kind: BriefJob["kind"], match: (j: BriefJob) => boolean) {
-  const all = useBriefJobs();
-  return all.find((j) => j.kind === kind && match(j)) ?? null;
-}
-
 const active = (j: BriefJob) => j.status === "queued" || j.status === "writing";
+
+// "Brief ready" on a card until it's opened or put away (this browser only: a convenience, not a record)
+const HIDDEN_KEY = "kz:brief-jobs:hidden";
+let hidden: ReadonlySet<string> | null = null;
+const NONE: ReadonlySet<string> = new Set();
+const readHidden = () => {
+  if (hidden) return hidden;
+  try {
+    hidden = new Set((JSON.parse(localStorage.getItem(HIDDEN_KEY) ?? "[]") as string[]).slice(-60));
+  } catch {
+    hidden = new Set();
+  }
+  return hidden;
+};
+/** Put a finished brief's "Brief ready" away: the card offers a brief again */
+export function hideReady(...ids: string[]) {
+  const was = readHidden();
+  if (ids.every((id) => was.has(id))) return;
+  hidden = new Set([...was, ...ids]);
+  try {
+    localStorage.setItem(HIDDEN_KEY, JSON.stringify([...hidden].slice(-60)));
+  } catch {}
+  emit();
+}
+const useHidden = () => useSyncExternalStore(subscribe, readHidden, () => NONE);
+
+export type BriefJobState = { status: "writing"; job: BriefJob } | { status: "ready"; job: BriefJob & { suggestionId: string } } | null;
+
+/**
+ * The background brief this person started from this source (its own key; a split's briefs too): writing, with its
+ * progress, or ready to open. clientId null: for any client (a library card, where the client is picked after).
+ */
+export function useBriefJobFor(source: BriefSource | null | undefined, clientId: string | null = null): BriefJobState {
+  const all = useBriefJobs();
+  const gone = useHidden();
+  if (!source) return null;
+  const key = jobKeyOf(source);
+  const mine = all.filter((j) => j.kind === source.kind && (j.key === key || j.key?.startsWith(`${key}#`)) && (!clientId || !j.clientId || j.clientId === clientId));
+  const writing = mine.find(active);
+  if (writing) return { status: "writing", job: writing };
+  // The newest finished one, unless it failed (the toast said so) or was opened already
+  const last = mine.find((j) => !active(j));
+  if (last?.status === "ready" && last.suggestionId && !gone.has(last.id)) return { status: "ready", job: { ...last, suggestionId: last.suggestionId } };
+  return null;
+}
 
 // Checks the server: every 2.5s while something's writing, otherwise every minute and when the tab comes back
 let timer: ReturnType<typeof setTimeout> | null = null;
@@ -67,12 +110,14 @@ async function poll() {
     if (!loaded && j.finishedAt && Date.now() - Date.parse(j.finishedAt) > 10 * 60_000) continue;
     if (j.status === "ready" && j.suggestionId) {
       const sid = j.suggestionId;
+      // On the request form itself: offered, never opened for them (what they're doing there stays as it is)
+      const here = window.location.pathname === "/requests/new";
       toast({
         tone: "ok",
         title: `Your brief is ready${j.client ? `: ${j.client}` : ""}`,
-        body: j.title ?? undefined,
-        actions: [{ label: "Open in Ready to send", primary: true, href: readyHref(sid) }],
-        ms: 12_000,
+        body: here ? `${j.title ? `${j.title}. ` : ""}Open it in Ready to send; what you have here is kept.` : (j.title ?? undefined),
+        actions: [{ label: here ? "Open" : "Open in Ready to send", primary: true, href: readyHref(sid) }],
+        ms: here ? 20_000 : 12_000,
       });
     } else if (j.status === "failed") {
       toast({ tone: "bad", title: `The brief couldn't be written${j.client ? `: ${j.client}` : ""}`, body: j.error ?? "Try again.", ms: 9000 });
@@ -88,6 +133,8 @@ async function poll() {
 function BriefJobsHost() {
   const router = useRouter();
   const ready = useParam("ready");
+  const draft = useParam("draft");
+  const all = useBriefJobs();
 
   useEffect(() => {
     running = true;
@@ -105,6 +152,13 @@ function BriefJobsHost() {
   useEffect(() => {
     if (ready && /^[0-9a-f-]{36}$/i.test(ready)) router.replace(readyHref(ready));
   }, [ready, router]);
+
+  // Opened (from the toast, the bell or its card): its card stops saying "Brief ready"
+  useEffect(() => {
+    if (!draft) return;
+    const opened = all.filter((j) => j.suggestionId === draft).map((j) => j.id);
+    if (opened.length) hideReady(...opened);
+  }, [draft, all]);
 
   return null;
 }
@@ -143,8 +197,12 @@ const secs = (ms: number) => {
   return s >= 90 ? `about ${Math.round(s / 60)} min left` : `about ${s < 10 ? s : Math.round(s / 5) * 5}s left`;
 };
 
-/** A real progress bar for one job: against how long this kind of brief usually takes, with what's left */
-export function BriefProgress({ job }: { job: BriefJob }) {
+/**
+ * A real progress bar for one job: against how long this kind of brief usually takes, with what's left
+ * ("Writing the brief · 42% · about 1 min left"). compact: no line about leaving the page (a small card). Spans only,
+ * so it can sit anywhere a button could (a line of text too).
+ */
+export function BriefProgress({ job, compact = false, client = false, tone = "plain" }: { job: BriefJob; compact?: boolean; /** Say which client (a card any client can be briefed from) */ client?: boolean; tone?: Tone }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 500);
@@ -155,16 +213,77 @@ export function BriefProgress({ job }: { job: BriefJob }) {
   const over = spent >= job.expectedMs;
   // Eases toward 95% so it never sits at the end while the last words are written
   const share = job.status === "queued" ? 0.03 : over ? 0.95 : Math.min(0.95, 0.04 + (spent / job.expectedMs) * 0.91);
+  const pct = Math.round(share * 100);
+  const left = job.status === "queued" ? "starting" : over ? "finishing" : secs(job.expectedMs - spent);
+  const dark = tone === "dark";
   return (
-    <div className="grid gap-1.5" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(share * 100)} aria-label="Writing the brief">
-      <div className="h-1.5 overflow-hidden rounded-full bg-ink/[0.08]">
-        <div className={`h-full rounded-full bg-brand transition-[width] duration-500 ease-out ${over ? "animate-pulse" : ""}`} style={{ width: `${share * 100}%` }} />
-      </div>
-      <p className="flex items-baseline justify-between gap-2 text-[11.5px] text-muted">
-        <span>{job.status === "queued" ? "Starting…" : over ? "Finishing…" : "The strategist is writing it"}</span>
-        <span className="tabular shrink-0">{job.status === "queued" ? "" : over ? "" : secs(job.expectedMs - spent)}</span>
-      </p>
-      <p className="text-[11px] text-faint">You can leave this page: it keeps writing, and you&apos;ll be told when it&apos;s ready.</p>
-    </div>
+    <span className="grid min-w-0 gap-1.5" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label="Writing the brief">
+      <span className="flex min-w-0 items-baseline gap-1.5 text-[12.5px]">
+        <span className="relative mr-0.5 flex h-2 w-2 shrink-0 self-center" aria-hidden>
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-60" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
+        </span>
+        <span className={`truncate font-medium ${dark ? "text-white" : "text-fg"}`}>Writing the brief{client && job.client ? ` for ${job.client}` : ""}</span>
+        <span className={`tabular shrink-0 ${dark ? "text-white/60" : "text-muted"}`}>· {pct}%</span>
+        <span className={`tabular min-w-0 truncate ${dark ? "text-white/60" : "text-muted"}`}>· {left}</span>
+      </span>
+      <span className={`block h-1.5 overflow-hidden rounded-full ${dark ? "bg-white/15" : "bg-ink/[0.08]"}`}>
+        <span className={`block h-full rounded-full bg-brand transition-[width] duration-500 ease-out ${over ? "animate-pulse" : ""}`} style={{ width: `${share * 100}%` }} />
+      </span>
+      {!compact && <span className={`block text-[11px] ${dark ? "text-white/45" : "text-faint"}`}>Keep working: it&apos;s written in the background, and you&apos;ll be told when it&apos;s ready.</span>}
+    </span>
   );
+}
+
+/** A finished brief on the card it was started from: open it in Ready to send, or put the notice away */
+export function BriefReady({ job, client = false }: { job: BriefJob & { suggestionId: string }; client?: boolean }) {
+  return (
+    <span className="flex min-h-11 min-w-0 items-center gap-1.5 rounded-full border border-ok/35 bg-ok-soft py-1 pl-3.5 pr-1 animate-[step-in_.3s_cubic-bezier(.2,.8,.2,1)]" role="status">
+      <span aria-hidden className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-ok text-[11px] text-white">
+        ✓
+      </span>
+      <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ok" title={job.title ?? undefined}>
+        Brief ready{client && job.client ? ` for ${job.client}` : ""}
+      </span>
+      <Link href={readyHref(job.suggestionId)} onClick={() => hideReady(job.id)} className="grid h-10 shrink-0 place-items-center rounded-full bg-ok px-4 text-[13px] font-medium text-white transition hover:opacity-90 md:h-9">
+        Open
+      </Link>
+      <button type="button" onClick={() => hideReady(job.id)} aria-label="Put away: brief it again" title="Put away" className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-[13px] text-ok/80 hover:bg-ok/10 hover:text-ok md:h-9 md:w-9">
+        ✕
+      </button>
+    </span>
+  );
+}
+
+type Tone = "plain" | "dark";
+
+type SlotProps = {
+  source: BriefSource | null | undefined;
+  /** The client it's for; null: any (a card any client can be briefed from) */
+  clientId?: string | null;
+  /** No line about leaving the page */
+  compact?: boolean;
+  /** Say which client */
+  client?: boolean;
+  /** The box the progress or "Brief ready" sits in */
+  className?: string;
+  /** Over a dark surface whatever the theme (the daily story) */
+  tone?: Tone;
+};
+const SLOT = "grid w-full min-w-0 sm:min-w-[220px]";
+
+/** Its job's progress, then "Brief ready · Open", or nothing (beside a button that stays, a library card's) */
+export function BriefJobStatus({ source, clientId = null, compact = true, client = false, className = SLOT, tone = "plain" }: SlotProps) {
+  const state = useBriefJobFor(source, clientId);
+  if (!state) return null;
+  return <span className={className}>{state.status === "writing" ? <BriefProgress job={state.job} compact={compact} client={client} tone={tone} /> : <BriefReady job={state.job} client={client} />}</span>;
+}
+
+/**
+ * The card's "Brief on this" (children) while nothing's being written from it; in its place, the job's progress and
+ * then "Brief ready · Open". The same on every card that offers a brief.
+ */
+export function BriefJobSlot({ children, ...props }: SlotProps & { children: React.ReactNode }) {
+  const state = useBriefJobFor(props.source, props.clientId ?? null);
+  return state ? <BriefJobStatus {...props} /> : <>{children}</>;
 }

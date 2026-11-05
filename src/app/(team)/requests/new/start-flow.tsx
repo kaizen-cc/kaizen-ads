@@ -10,15 +10,16 @@ import { AllotmentPools } from "@/components/allotment-pools";
 import type { Draft } from "./draft";
 import type { ClientOption } from "./parts";
 import { Spark } from "./parts";
-import { ideaDraft, ideaPatch, moreMarket, patternPatch, promiseDraft, suggestionPatch, talkRequest } from "./actions";
-import { makingLine, type BriefSource, type QuickBrief } from "@/lib/quick-brief";
+import { moreMarket } from "./actions";
+import type { BriefSource, QuickBrief } from "@/lib/quick-brief";
+import { BriefJobSlot } from "@/components/brief-jobs";
 import type { WinnerSource } from "@/lib/suggestions";
 import { RefThumb } from "@/components/ref-thumb";
 import { useCreativeFormats } from "@/components/creative-formats-provider";
 import { fitsFormat, marketFormatOf } from "@/lib/creative-formats";
 import { dismissSave, findSave, InMotionNote, SaveIdeaStar, seedSaves, useSaves, refreshSaves } from "@/components/save-idea-star";
 import { EmptyState } from "@/components/empty-state";
-import { ideaKeyOf, metaAdId, savedHref, SOURCE_LABEL, type SaveInput, type SavedRef, type SavedSource } from "@/lib/saved-references";
+import { metaAdId, savedHref, SOURCE_LABEL, type SaveInput, type SavedRef, type SavedSource } from "@/lib/saved-references";
 
 // The new request's first two steps, built like the report builder: pick the client from big cards (recent first,
 // filtered as you type), then "How do you want to start?" as one full-width visual page. Everything on it is already
@@ -88,51 +89,6 @@ export type PreviewItem = {
   /** Where it came from, for ideas in words */
   origin?: Draft["origin"];
 };
-
-type Patched = { ok: true; patch: Partial<Draft> } | { ok: false; error: string };
-
-/** "2 new images" for the strategist, from an agreed preview */
-const seedText = (b: QuickBrief) =>
-  [`Write it with this direction.`, `Title: ${b.title}`, `Concept: ${b.concept}`, `Angle: ${b.angle}`, `Audience: ${b.audience}`, `Hook: ${b.hook}`, `Making: ${makingLine(b.formats)}`, b.note.trim() ? `Note: ${b.note.trim()}` : ""].filter(Boolean).join("\n");
-
-/** The full brief from an agreed preview, through the brief pipeline its source already uses */
-export async function writeItem(item: PreviewItem, clientId: string, seed: QuickBrief, edited: boolean): Promise<Patched> {
-  const s = item.source;
-  const fmt = "format" in s ? s.format : undefined;
-  const r: Patched =
-    s.kind === "winner"
-      ? await ideaDraft({ kind: "winner", winner: { id: s.winner.adId, client: s.winner.client, detail: s.winner.detail, headline: s.winner.headline, text: s.winner.text, thumbnail: s.winner.thumbnail, ratio: s.winner.ratio, result: s.winner.result, costPerResult: s.winner.costPerResult, usual: s.winner.usual } }, clientId, fmt, seed)
-      : s.kind === "market"
-        ? await ideaDraft({ kind: "market", adId: s.adId }, clientId, fmt, seed)
-        : s.kind === "pattern"
-          ? await patternPatch(s.patternId, clientId, seed)
-          : s.kind === "suggestion"
-            ? await suggestionPatch(s.id, seed, edited)
-            : s.kind === "promise"
-              ? await promiseDraft(s.commitmentId, seed, edited)
-              : s.kind === "idea"
-                ? await ideaPatch(clientId, { label: s.label, text: s.text }, seed, item.origin ?? { kind: "brief", label: s.label.slice(0, 200) })
-                : s.kind === "talk"
-                  ? await talkRequest(clientId, [...s.turns, { role: "user", text: seedText(seed) }], null, true).then((t): Patched => (!t.ok ? t : t.patch ? { ok: true, patch: { ...t.patch, origin: { kind: "brief", label: "Talked through with the strategist" } } } : { ok: false, error: "The strategist couldn't write it. Try again." }))
-                  : { ok: false, error: "That can't be briefed here." };
-  if (!r.ok) return r;
-  // The idea it's built on: once sent, everyone's save of it is marked used
-  const idea = ideaKeyOf(s);
-  const patch = { ...r.patch, ...(idea ? { ideaKeys: [idea] } : {}) };
-  return { ok: true, patch: item.savedRefId && !item.savedRefId.startsWith("tmp-") ? { ...patch, savedRefIds: [item.savedRefId] } : patch };
-}
-
-/** The other briefs of a split, each to be previewed and written on its own (a brief already written becomes an idea) */
-export function splitRest(item: PreviewItem, rest: QuickBrief[]): PreviewItem[] {
-  return rest.map((b, i) => ({
-    ...item,
-    key: `${item.key}-split-${i + 1}-${Date.now().toString(36)}`,
-    source: item.source.kind === "suggestion" || item.source.kind === "promise" ? { kind: "idea", label: `Split from: ${item.from.label}`.slice(0, 200), text: `${b.title}\n${b.concept}` } : item.source,
-    given: b,
-    savedRefId: null,
-    promiseId: null,
-  }));
-}
 
 const winnerSource = (w: Winner): WinnerSource => ({ adId: w.id, client: w.client, detail: w.detail, headline: w.headline, text: w.text, thumbnail: w.thumbnail, ratio: w.ratio, result: w.result, costPerResult: w.costPerResult, usual: w.usual });
 
@@ -452,6 +408,7 @@ export function StartPage({
           action="Brief on this"
           onClick={() => onPreview({ key: `s-${b.id}`, source: { kind: "suggestion", id: b.id }, from: { kicker: KIND_LABEL[b.kind as SuggestionKind] ?? "Suggested brief", label: b.signal, thumb: b.thumb, adId: b.adId }, progressLabel: "brief rewrite from a preview+brief self-review", savedRefId: savedId(find("brief", b.id)) })}
           star={star(saveBrief(b))}
+          brief={{ source: { kind: "suggestion", id: b.id }, clientId }}
         />
       ))}
     </Section>
@@ -492,6 +449,7 @@ export function StartPage({
                 onClick={() => briefFromSaved(s)}
                 notice={s.motion ? <InMotionNote s={s} onDismiss={() => void dismissSave(s.id)} /> : null}
                 star={s.motion ? null : star(s)}
+                brief={source ? { source, clientId } : null}
                 link={savedHref(s)}
               />
             );
@@ -528,6 +486,7 @@ export function StartPage({
           action="Brief on this"
           onClick={() => onPreview({ key: `p-${p.id}`, source: { kind: "pattern", patternId: p.id }, from: { kicker: `Works for ${p.clients} of ${p.of}`, label: p.title }, progressLabel: "brief from a pattern+brief self-review", savedRefId: savedId(find("pattern", p.id)) })}
           star={star(savePattern(p))}
+          brief={{ source: { kind: "pattern", patternId: p.id }, clientId }}
         />
       ))}
       {(data?.winners ?? []).map((w: Winner) => (
@@ -549,6 +508,7 @@ export function StartPage({
           action="Brief on this"
           onClick={() => onPreview({ key: `w-${w.id}`, source: { kind: "winner", winner: winnerSource(w), format: w.format }, from: { kicker: `A winner · ${w.ratio}x their usual`, label: w.headline ?? w.name, thumb: w.thumbnail, adId: w.id, format: w.format }, progressLabel: "brief from a winner+brief self-review", savedRefId: savedId(find("winner", w.id)) })}
           star={star(saveWinner(w))}
+          brief={{ source: { kind: "winner", winner: winnerSource(w), format: w.format }, clientId }}
         />
       ))}
     </Section>
@@ -585,6 +545,7 @@ export function StartPage({
               action="Brief on this"
               onClick={() => onPreview({ key: `m-${a.id}`, source: { kind: "market", adId: a.id, format: marketFormat(a) }, from: { kicker: `In the market · ${a.brand}`, label: a.angle ?? a.headline ?? "A live ad", thumb: marketStill(a), format: marketFormat(a) }, progressLabel: "brief from a market ad+brief self-review", savedRefId: savedId(find("market", a.id)) })}
               star={star(saveMarket(a))}
+              brief={{ source: { kind: "market", adId: a.id, format: marketFormat(a) }, clientId }}
               link={a.motionUrl ?? a.libraryUrl}
             />
           ))}
@@ -747,6 +708,7 @@ function Card({
   notice,
   link,
   fixed = false,
+  brief = null,
 }: {
   thumb: string | null;
   /** A Meta ad behind it: its kept picture when the link we have has expired */
@@ -776,6 +738,8 @@ function Card({
   link?: string | null;
   /** A set width, for a sideways row */
   fixed?: boolean;
+  /** What its brief is written from: its background job shows here in place of the action */
+  brief?: { source: BriefSource; clientId: string } | null;
 }) {
   const media = thumb || adId || video;
   return (
@@ -804,14 +768,17 @@ function Card({
         <div className="mt-auto grid gap-2 pt-3">
           {foot && <p className="text-[12px] text-faint">{foot}</p>}
           {notice ?? (
-            <button
-              type="button"
-              onClick={onClick}
-              disabled={disabled}
-              className={`min-h-11 rounded-full px-4 text-[14px] font-medium transition-colors ${busy ? "bg-brand-soft text-brand-text" : "bg-fg text-bg hover:opacity-90 disabled:opacity-40"}`}
-            >
-              {action}
-            </button>
+            // Its brief being written in the background: the progress here, then "Brief ready · Open"
+            <BriefJobSlot source={brief?.source} clientId={brief?.clientId ?? null}>
+              <button
+                type="button"
+                onClick={onClick}
+                disabled={disabled}
+                className={`min-h-11 rounded-full px-4 text-[14px] font-medium transition-colors ${busy ? "bg-brand-soft text-brand-text" : "bg-fg text-bg hover:opacity-90 disabled:opacity-40"}`}
+              >
+                {action}
+              </button>
+            </BriefJobSlot>
           )}
         </div>
       </div>

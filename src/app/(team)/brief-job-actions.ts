@@ -8,7 +8,7 @@ import { notLive } from "@/lib/live-guard";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { loadSuggestion, type OpenSuggestion, type SuggestionDraft, type WinnerSource } from "@/lib/suggestions";
-import type { BriefSource, QuickBrief } from "@/lib/quick-brief";
+import { jobKeyOf, type BriefSource, type QuickBrief } from "@/lib/quick-brief";
 import { clampFormats, formatsFor } from "@/lib/creative-formats";
 
 // Briefs asked for from a card (a winner, a tiring ad): written in the background (src/lib/brief-jobs.ts). A draft
@@ -97,30 +97,27 @@ export async function startBrief(clientId: string, source: BriefSource, agreed: 
   const { data: client } = await supabase.from("clients").select("id").eq("id", clientId).maybeSingle();
   if (!client) return { ok: false, error: "That client isn't one you work on." };
   if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
-  let key: string;
+  // The same key the card it was started from looks its job up by (its progress, then "Brief ready")
+  const key = jobKeyOf(source);
   let title = seed.title.trim() || null;
   switch (source.kind) {
     case "winner":
-      key = source.winner.adId;
       title ??= source.winner.headline ? `More like “${source.winner.headline}”` : "More like this winner";
       break;
     case "refresh": {
       const { data: watched } = await supabase.from("ad_fatigue").select("ad_id, headline").eq("client_id", clientId).eq("ad_id", source.adId).maybeSingle();
       if (!watched) return { ok: false, error: "That ad isn't on your watch list." };
-      key = source.adId;
       title ??= watched.headline ? `A refresh for “${watched.headline}”` : "A refresh for a tiring ad";
       break;
     }
     case "market":
-      key = source.adId;
-      break;
     case "pattern":
-      key = source.patternId;
+    case "idea":
+    case "talk":
       break;
     case "promise": {
       const { data: c } = await supabase.from("call_commitments").select("id, client_id").eq("id", source.commitmentId).maybeSingle();
       if (!c || c.client_id !== clientId) return { ok: false, error: "That promise isn't on a client you work on." };
-      key = source.commitmentId;
       break;
     }
     case "suggestion": {
@@ -128,15 +125,8 @@ export async function startBrief(clientId: string, source: BriefSource, agreed: 
       if (!s || s.status !== "open" || s.client_id !== clientId) return { ok: false, error: "That brief isn't open any more." };
       // Written in full already and left as it was: straight to Ready to send
       if (!edited && !(s.draft as SuggestionDraft | null)?.summary) return { ok: true, ready: s.id as string };
-      key = source.id;
       break;
     }
-    case "idea":
-      key = `idea:${source.label.slice(0, 120)}`;
-      break;
-    case "talk":
-      key = `talk:${Date.now()}`;
-      break;
     default:
       return { ok: false, error: "That can't be briefed." };
   }

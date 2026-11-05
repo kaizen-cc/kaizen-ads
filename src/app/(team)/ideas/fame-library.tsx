@@ -7,8 +7,10 @@ import { useMemo, useRef, useState } from "react";
 import { FilterMenu, FilterPill } from "@/components/filters";
 import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
 import { QuickBriefSheet } from "@/components/quick-brief-sheet";
+import { BriefJobStatus } from "@/components/brief-jobs";
 import { SaveIdeaStar } from "@/components/save-idea-star";
 import type { SaveInput } from "@/lib/saved-references";
+import type { BriefSource } from "@/lib/quick-brief";
 import type { FameAd } from "@/lib/hall-of-fame";
 import type { Winner } from "@/lib/industry";
 import { FeedPreview, InsightPanel, useAd, useInsight } from "../winners/fb-preview";
@@ -206,6 +208,8 @@ export function FameLibrary({ ads, verticals, clients, match }: { ads: FameAd[];
               <span className="absolute right-3.5 top-3.5 z-10">
                 <SaveIdeaStar idea={saveFameAd(a)} variant="overlay" size="sm" />
               </span>
+              {/* A brief from it being written in the background: the progress under the card, then "Brief ready · Open" */}
+              <BriefJobStatus source={fameBrief(a)} className="mt-1.5 grid min-w-0" />
               </div>
             ))}
           </div>
@@ -233,8 +237,12 @@ export function FameLibrary({ ads, verticals, clients, match }: { ads: FameAd[];
 
 /** What a star on a Hall of Fame ad saves: the winning ad and the brief it becomes for the client it's saved for */
 function saveFameAd(a: FameAd): SaveInput {
-  const winner = { adId: a.adId, client: a.client, detail: a.vertical, headline: a.creative.headline ?? null, text: a.creative.text ?? null, thumbnail: a.creative.image ?? null, ratio: Math.round((1 + a.beatBy) * 10) / 10, result: a.conversion.toLowerCase(), costPerResult: a.value, usual: a.target };
-  return { source: "winner", refId: a.adId, url: null, thumbnail: a.creative.image ?? null, title: a.creative.headline ?? a.adName ?? "A Hall of Fame ad", subtitle: `${a.client}${a.vertical ? ` · ${a.vertical}` : ""}`, format: a.creative.video ? "video" : null, data: { brief: { kind: "winner", winner } } };
+  return { source: "winner", refId: a.adId, url: null, thumbnail: a.creative.image ?? null, title: a.creative.headline ?? a.adName ?? "A Hall of Fame ad", subtitle: `${a.client}${a.vertical ? ` · ${a.vertical}` : ""}`, format: a.creative.video ? "video" : null, data: { brief: fameBrief(a) } };
+}
+
+/** The brief a Hall of Fame ad becomes (its background job is found by it) */
+function fameBrief(a: FameAd): BriefSource {
+  return { kind: "winner", winner: { adId: a.adId, client: a.client, detail: a.vertical, headline: a.creative.headline ?? null, text: a.creative.text ?? null, thumbnail: a.creative.image ?? null, ratio: Math.round((1 + a.beatBy) * 10) / 10, result: a.conversion.toLowerCase(), costPerResult: a.value, usual: a.target } };
 }
 
 function FameSheet({ a, w, clients, match, onClose }: { a: FameAd; w: Winner; clients: PickClient[]; match: PeerContext; onClose: () => void }) {
@@ -259,7 +267,7 @@ function FameSheet({ a, w, clients, match, onClose }: { a: FameAd; w: Winner; cl
       {previewFor && preview === previewKey && (
         <QuickBriefSheet
           clientId={previewFor}
-          source={{ kind: "winner", winner: { adId: a.adId, client: a.client, detail: a.vertical, headline: a.creative.headline ?? null, text: a.creative.text ?? null, thumbnail: a.creative.image ?? null, ratio: Math.round((1 + a.beatBy) * 10) / 10, result: a.conversion.toLowerCase(), costPerResult: a.value, usual: a.target } }}
+          source={fameBrief(a)}
           from={{ kicker: "Hall of Fame", label: a.creative.headline ?? a.client, thumb: a.creative.image ?? null, adId: a.adId }}
           progressLabel="brief from a winner+brief self-review"
           onClose={() => closeParams("preview")}
@@ -311,6 +319,8 @@ function FameSheet({ a, w, clients, match, onClose }: { a: FameAd; w: Winner; cl
                 </div>
               ))}
             </dl>
+            {/* A brief from it being written in the background (for any client): the progress, then "Brief ready · Open" */}
+            <BriefJobStatus source={fameBrief(a)} client compact={false} />
             <div className="flex flex-wrap items-center gap-2">
               <SaveIdeaStar idea={saveFameAd(a)} />
               <button onClick={() => setStep("pick")} className="hidden h-10 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:brightness-110 md:block">

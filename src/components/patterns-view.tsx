@@ -4,6 +4,7 @@ import { useState } from "react";
 import { refreshPatterns } from "@/app/(team)/pipeline/pattern-actions";
 import type { Pattern, PatternsState } from "@/lib/patterns";
 import { QuickBriefSheet } from "@/components/quick-brief-sheet";
+import { BriefJobSlot } from "@/components/brief-jobs";
 import { SaveIdeaStar } from "@/components/save-idea-star";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 
@@ -18,7 +19,7 @@ function Card({ p, names, canBrief, uses, briefFor = null }: { p: Pattern; names
   const works = p.verdict === "works";
   const share = p.evidence.of ? Math.round((p.evidence.clients / p.evidence.of) * 100) : 0;
   // A client picked: the quick preview right here (?preview=, so back closes it). The full brief is written in the
-  // background only if they choose it (its progress by the bell), and opens in Ready to send
+  // background only if they choose it (its progress in place of its button), and opens in Ready to send
   const [previewFor, setPreviewFor] = useState<string | null>(null);
   const previewKey = previewFor ? `pt-${p.id}-${previewFor}` : null;
   const previewing = useParam("preview") === previewKey && previewKey !== null;
@@ -65,17 +66,19 @@ function Card({ p, names, canBrief, uses, briefFor = null }: { p: Pattern; names
               .filter((id) => names[id])
               .map((id) =>
                 canBrief ? (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => {
-                      setPreviewFor(id);
-                      pushParams({ preview: `pt-${p.id}-${id}` });
-                    }}
-                    className="min-h-11 rounded-full border border-line px-3.5 text-[12.5px] transition-colors hover:border-brand/50 hover:text-fg md:min-h-10"
-                  >
-                    {`Brief it for ${names[id]} →`}
-                  </button>
+                  // Its brief being written in the background: the progress in its place, then "Brief ready · Open"
+                  <BriefJobSlot key={id} source={{ kind: "pattern", patternId: p.id }} clientId={id} client className="grid w-full min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPreviewFor(id);
+                        pushParams({ preview: `pt-${p.id}-${id}` });
+                      }}
+                      className="min-h-11 rounded-full border border-line px-3.5 text-[12.5px] transition-colors hover:border-brand/50 hover:text-fg md:min-h-10"
+                    >
+                      {`Brief it for ${names[id]} →`}
+                    </button>
+                  </BriefJobSlot>
                 ) : (
                   <span key={id} className="rounded-full border border-line px-3 py-1.5 text-[12.5px] text-muted">
                     {names[id]}
@@ -86,6 +89,7 @@ function Card({ p, names, canBrief, uses, briefFor = null }: { p: Pattern; names
         </div>
       )}
       {briefFor ? (
+        <BriefJobSlot source={{ kind: "pattern", patternId: p.id }} clientId={briefFor}>
         <span className="inline-flex items-center gap-2 justify-self-start">
           <button
             type="button"
@@ -99,6 +103,7 @@ function Card({ p, names, canBrief, uses, briefFor = null }: { p: Pattern; names
           </button>
           <SaveIdeaStar source={{ kind: "pattern", patternId: p.id }} from={{ kicker: `Works for ${p.evidence.clients} of ${p.evidence.of}`, label: p.title }} clientId={briefFor} size="sm" />
         </span>
+        </BriefJobSlot>
       ) : (
         works &&
         canBrief && (

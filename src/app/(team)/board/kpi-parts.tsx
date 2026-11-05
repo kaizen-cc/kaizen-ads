@@ -13,7 +13,7 @@ import type { OpenSuggestion } from "@/lib/suggestions";
 import { closeParams, closeThen, pushParams, useParam } from "@/lib/url-state";
 import { SuggestionSheet } from "@/app/(team)/pipeline/views/suggested-briefs";
 import { startRefreshBrief, startWinnerBrief } from "@/app/(team)/brief-job-actions";
-import { BriefProgress, trackJob, useJobFor } from "@/components/brief-jobs";
+import { BriefJobSlot, trackJob } from "@/components/brief-jobs";
 import { BriefPreviewButton, QuickBriefSheet } from "@/components/quick-brief-sheet";
 import { SaveIdeaStar } from "@/components/save-idea-star";
 import type { QuickBrief } from "@/lib/quick-brief";
@@ -736,9 +736,6 @@ export function pictureOf(adId: string | null | undefined, image: string | null)
   return url ? ({ kind: "single", feed: { thumb: url, url, mime: "image/jpeg", aspect: "4x5" }, story: null } as const) : null;
 }
 
-/** The ad a background brief is written from */
-const jobKey = (j: { key?: string | null }) => j.key ?? null;
-
 const money = (n: number | null) => (n == null ? "—" : `$${n.toLocaleString("en-US", { maximumFractionDigits: n < 100 ? 2 : 0 })}`);
 
 /** A winning ad as it runs in the feed, why it wins, and a brief for more like it */
@@ -748,7 +745,6 @@ export function WinnerCard({ w, credit, copy }: { w: Winner; credit?: WinnerAd; 
   const [error, setError] = useState<string | null>(null);
   const [brief, setBrief] = useState<OpenSuggestion | null>(null);
   const open = useParam("brief");
-  const job = useJobFor("winner", (j) => (j.status === "queued" || j.status === "writing") && jobKey(j) === w.key);
   const better = w.target && w.costPerResult ? Math.round(((w.target - w.costPerResult) / w.target) * 100) : null;
   const source = { adId: w.key, client: w.client, detail: null, headline: w.headline, text: w.text, thumbnail: w.image, ratio: w.target && w.costPerResult ? Math.round((w.target / w.costPerResult) * 10) / 10 : 1, result: w.result, costPerResult: w.costPerResult ?? 0, usual: w.target ?? w.costPerResult ?? 0 };
   // The quick preview first (in the address, so back closes it); the full brief is then written in the background
@@ -801,16 +797,15 @@ export function WinnerCard({ w, credit, copy }: { w: Winner; credit?: WinnerAd; 
           ))}
         </dl>
         {error && <p className="text-[12px] text-bad">{error}</p>}
-        {job ? (
-          <BriefProgress job={job} />
-        ) : (
+        {/* Its brief being written in the background: the progress here, then "Brief ready · Open" */}
+        <BriefJobSlot source={{ kind: "winner", winner: source }} clientId={w.clientId}>
           <span className="flex items-center gap-2">
             <button type="button" onClick={() => pushParams({ preview: `kw-${w.key}` })} disabled={busy} className="h-11 min-w-0 flex-1 rounded-full bg-fg text-[14px] font-medium text-bg disabled:opacity-60">
               {busy ? "Starting…" : copy ? "Brief new copy like this" : "Brief more like this"}
             </button>
             <SaveIdeaStar source={{ kind: "winner", winner: source }} from={{ kicker: "More like a winner", label: w.headline ?? w.name, thumb: w.image, adId: /^\d{5,25}$/.test(w.key) ? w.key : null }} clientId={w.clientId} clientName={w.client} />
           </span>
-        )}
+        </BriefJobSlot>
         <p className="text-center text-[11px] text-faint">A quick preview first. The full brief only if you choose it, then it opens in Ready to send</p>
       </div>
       {previewing && (
@@ -819,7 +814,6 @@ export function WinnerCard({ w, credit, copy }: { w: Winner; credit?: WinnerAd; 
           source={{ kind: "winner", winner: source }}
           from={{ kicker: copy ? "New copy like a winner" : "More like a winner", label: w.headline ?? w.name, thumb: w.image, adId: /^\d{5,25}$/.test(w.key) ? w.key : null }}
           progressLabel="brief from a winner"
-          background
           onWrite={(seed) => {
             closePreview();
             void go(copy && !seed.note.trim() ? { ...seed, note: "A copy-led brief: new copy on the same creative." } : seed);
@@ -845,7 +839,6 @@ export function TiringCard({ r, copy = false }: { r: WatchRow; /** Shown as copy
   const [error, setError] = useState<string | null>(null);
   const [brief, setBrief] = useState<OpenSuggestion | null>(null);
   const open = useParam("refresh");
-  const job = useJobFor("refresh", (j) => (j.status === "queued" || j.status === "writing") && jobKey(j) === r.adId);
   const s = r.signals;
   const tired = r.severity === "tired";
   const chips = [
@@ -909,13 +902,11 @@ export function TiringCard({ r, copy = false }: { r: WatchRow; /** Shown as copy
           </p>
         ) : (
           <div className="grid gap-1.5">
-            {job ? (
-              <BriefProgress job={job} />
-            ) : (
+            <BriefJobSlot source={{ kind: "refresh", adId: r.adId }} clientId={r.clientId}>
               <button type="button" onClick={() => (r.briefId ? void refresh(null) : pushParams({ preview: `kr-${r.adId}` }))} disabled={busy} className="h-11 rounded-full bg-fg text-[14px] font-medium text-bg disabled:opacity-60">
                 {busy ? "Starting…" : r.briefId ? "Open the refresh brief" : copy ? "Write new copy for this" : "Brief a refresh"}
               </button>
-            )}
+            </BriefJobSlot>
             <div className="grid grid-cols-2 gap-1.5">
               <Link href={`/requests/new?client=${r.clientSlug}`} className="grid h-10 place-items-center rounded-full border border-line text-[12.5px] text-muted hover:text-fg">
                 Brief from a winner
@@ -945,7 +936,6 @@ export function TiringCard({ r, copy = false }: { r: WatchRow; /** Shown as copy
           source={{ kind: "refresh", adId: r.adId }}
           from={{ kicker: copy ? "New copy for a tiring ad" : "Refresh a tiring ad", label: r.headline ?? r.adName, thumb: r.thumbnail, adId: r.adId && /^\d{5,25}$/.test(r.adId) ? r.adId : null }}
           progressLabel="refresh a tiring ad"
-          background
           onWrite={(seed) => {
             closePreview();
             void refresh(copy && !seed.note.trim() ? { ...seed, note: "Copy is wearing out: new copy on the same creative." } : seed);

@@ -4,7 +4,7 @@ import { AiProgress, AiProgressButton } from "@/components/ai-progress";
 
 import { useRouter } from "next/navigation";
 import { PromisesStrip } from "./promises-strip";
-import { ClientPicker, StartPage, forgetStart, prefetchStart, rememberClient, seedStart, splitRest, writeItem, type PreviewItem } from "./start-flow";
+import { ClientPicker, StartPage, forgetStart, prefetchStart, rememberClient, seedStart, type PreviewItem } from "./start-flow";
 import { QuickBriefSheet, useQuickPreview } from "@/components/quick-brief-sheet";
 import { ReadyToSend, MAKER, TURNAROUND, plural, type ReadyHandle } from "./ready-to-send";
 import type { StartData } from "@/lib/request-start";
@@ -258,7 +258,7 @@ export function RequestForm({
   };
 
   // A promise from a call this request delivers (its brief was loaded); sending marks it in motion
-  const [promise, setPromise] = useState<{ id: string; clientId: string } | null>(initialPromise);
+  const [promise] = useState<{ id: string; clientId: string } | null>(initialPromise);
 
   const set = (patch: Partial<Draft>) => {
     setDraft((d) => ({ ...d, ...patch }));
@@ -320,22 +320,9 @@ export function RequestForm({
     go(STEPS.length - 1);
   };
 
-  // The full brief from an agreed quick preview: written through its usual pipeline, then straight to Ready to send.
-  // A split's other briefs wait in the queue, each previewed and written on its own.
-  const writePreview = async (item: PreviewItem, seed: import("@/lib/quick-brief").QuickBrief, edited: boolean, rest: import("@/lib/quick-brief").QuickBrief[]) => {
-    if (!draft.clientId) return { ok: false as const, error: "Pick a client first." };
-    const clientId = draft.clientId;
-    const r = await writeItem(item, clientId, seed, edited).catch(() => ({ ok: false as const, error: "Something went wrong. Try again." }));
-    if (!r.ok) return r;
-    // A fresh request from this brief (the last one's review and promise don't carry over)
-    setHandled(null);
-    setDraft((d) => ({ ...emptyDraft(clientId), sizes: d.sizes, ...r.patch }));
-    setReview({ status: "idle" });
-    setPromise(item.promiseId ? { id: item.promiseId, clientId } : null);
-    setQueue((q) => [...splitRest(item, rest), ...q.filter((x) => x.key !== item.key)]);
-    go(STEPS.length - 1);
-    return { ok: true as const };
-  };
+  // The full brief from an agreed quick preview is written in the background, like everywhere else: the sheet closes,
+  // the card it came from shows the progress, and when it's ready a toast offers to open it in Ready to send (as its
+  // own draft, so what's here is kept). A split's other briefs from Ready to send wait in the queue, each previewed.
   const openNext = (item: PreviewItem) => {
     setCreated(null);
     setAsanaSent(null);
@@ -945,7 +932,9 @@ export function RequestForm({
                       ...rest.map((c, i) => ({
                         ...base,
                         key: `${base.key}-${i}`,
-                        source: { kind: "idea" as const, label: `Split from: ${draft.title}`.slice(0, 200), text: `${c.name}\n${c.body}` },
+                        // Each its own label (and so its own background brief), the concept first
+                        source: { kind: "idea" as const, label: `${c.name.slice(0, 90)} (split from: ${draft.title})`.slice(0, 200), text: `${c.name}\n${c.body}` },
+                        from: { kicker: "From a split", label: c.name || draft.title },
                         given: { title: c.name.slice(0, 80), concept: c.body.replace(/\s+/g, " ").slice(0, 400), angle: draft.angle, audience: draft.audience, hook: /Hook:\s*(.+)/.exec(c.body)?.[1] ?? "", formats: formats.slice(0, 1).map((f) => ({ format: f, new: 1, variations: 0 })), why: "", note: "" },
                       })),
                       ...q,
@@ -1077,8 +1066,11 @@ export function RequestForm({
           source={preview.current.source}
           from={preview.current.from}
           given={preview.current.given ?? null}
-          progressLabel={preview.current.progressLabel}
-          onWrite={(seed, edited, rest) => writePreview(preview.current!, seed, edited, rest)}
+          // A split's brief, once it's being written, leaves the queue
+          onStarted={() => {
+            const key = preview.current?.key;
+            if (key) setQueue((q) => q.filter((x) => x.key !== key));
+          }}
           onClose={preview.close}
         />
       )}

@@ -5,6 +5,7 @@ import type { SuggestionDraft, TalkTurn } from "@/lib/suggestions";
 import type { Draft } from "./draft";
 import { talkRequest } from "./actions";
 import { Spark } from "./parts";
+import { BriefJobSlot } from "@/components/brief-jobs";
 import type { PreviewItem } from "./start-flow";
 
 /**
@@ -80,6 +81,8 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
   };
 
   const d = state.draft;
+  // This conversation's brief, keyed by how it started (jobKeyOf): its background job's progress shows by its button
+  const talkSource = state.turns.length ? ({ kind: "talk", turns: state.turns } as const) : null;
   return (
     <div className="grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,360px)]">
       {/* The conversation */}
@@ -198,16 +201,21 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
                 ))}
               </ol>
             )}
-            <button type="button" disabled={busy} onClick={() => void send(true)} className="min-h-11 rounded-full border border-line px-4 text-[13.5px] text-muted hover:text-fg disabled:opacity-60">
-              Write it with what we have
-            </button>
+            <BriefJobSlot source={talkSource} clientId={clientId}>
+              <button type="button" disabled={busy} onClick={() => void send(true)} className="min-h-11 rounded-full border border-line px-4 text-[13.5px] text-muted hover:text-fg disabled:opacity-60">
+                Write it with what we have
+              </button>
+            </BriefJobSlot>
           </div>
         ) : state.turns.length > 1 ? (
           <div className="grid gap-2">
             <p className="text-[13.5px] text-muted">Everything&rsquo;s clear. See the quick preview, change anything, then the full brief is written from it.</p>
-            <button type="button" disabled={busy} onClick={() => preview(state.turns)} className="min-h-11 rounded-full bg-brand px-4 text-[14px] font-medium text-white disabled:opacity-60">
-              See the quick preview
-            </button>
+            {/* Its brief being written in the background: the progress here, then "Brief ready · Open" */}
+            <BriefJobSlot source={talkSource} clientId={clientId}>
+              <button type="button" disabled={busy} onClick={() => preview(state.turns)} className="min-h-11 rounded-full bg-brand px-4 text-[14px] font-medium text-white disabled:opacity-60">
+                See the quick preview
+              </button>
+            </BriefJobSlot>
           </div>
         ) : (
           <p className="text-[13.5px] text-muted">{phase === "writing" ? "Writing the brief…" : "It builds here once everything's clear."}</p>

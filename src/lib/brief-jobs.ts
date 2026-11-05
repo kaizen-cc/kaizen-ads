@@ -37,8 +37,9 @@ export type BriefJob = {
   finishedAt: string | null;
   seen: boolean;
   from: string | null;
-  /** The ad (or source) it's written from */
+  /** The ad (or source) it's written from (jobKeyOf in src/lib/quick-brief.ts; a split's briefs add "#part") */
   key: string | null;
+  clientId: string | null;
 };
 
 export const JOB_LABEL: Record<BriefJobKind, string> = {
@@ -204,18 +205,20 @@ export async function pickUpBriefJobs(admin: SupabaseClient) {
   return { requeued: stuck?.length ?? 0, picked: queued?.length ?? 0, written };
 }
 
-/** A person's jobs still writing, and the finished ones they haven't been shown yet */
+/**
+ * A person's jobs from the last few hours: still writing, or finished (shown or not), so the card each was started
+ * from keeps its progress and then "Brief ready" through a refresh or another page
+ */
 export async function myBriefJobs(db: SupabaseClient, profileId: string): Promise<BriefJob[]> {
   const since = new Date(Date.now() - 6 * 3600_000).toISOString();
   const { data } = await db
     .from("brief_jobs")
-    .select("id, kind, title, status, suggestion_id, error, expected_ms, started_at, created_at, finished_at, seen_at, input, clients(name)")
+    .select("id, kind, title, status, suggestion_id, error, expected_ms, started_at, created_at, finished_at, seen_at, input, client_id, clients(name)")
     .eq("profile_id", profileId)
     .gte("created_at", since)
     .order("created_at", { ascending: false })
-    .limit(12);
+    .limit(30);
   return (data ?? [])
-    .filter((j) => j.status === "queued" || j.status === "writing" || !j.seen_at)
     .map((j) => ({
       id: j.id as string,
       kind: j.kind as BriefJobKind,
@@ -231,5 +234,6 @@ export async function myBriefJobs(db: SupabaseClient, profileId: string): Promis
       seen: Boolean(j.seen_at),
       from: ((j.input as BriefJobInput | null)?.from as string | null | undefined) ?? null,
       key: ((j.input as { key?: string } | null)?.key as string | undefined) ?? null,
+      clientId: (j.client_id as string | null) ?? null,
     }));
 }
