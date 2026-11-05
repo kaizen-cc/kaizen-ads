@@ -149,7 +149,7 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
   for (const c of onboarding?.clients ?? []) {
     if (!myClients.has(c.clientId) && !me.isLead) continue;
     if (c.firstRound)
-      decide.push({ id: `o-${c.clientId}`, kind: "first_round", tone: "brand", client: c.name, title: c.firstRound.draft.title, why: "Their first round is written and waiting for you", when: `Waiting ${ago(c.firstRound.createdAt)}`, action: "Review it", suggestion: c.firstRound });
+      decide.push({ id: `o-${c.clientId}`, kind: "first_round", tone: "brand", client: c.name, title: c.firstRound.draft.title, why: c.round.length > 1 ? `Their first round is written: ${c.round.length} concepts, one ticket each` : "Their first round is written and waiting for you", when: `Waiting ${ago(c.firstRound.createdAt)}`, action: "Review it", suggestion: c.firstRound });
     else if (!c.intake && c.creative) {
       const days = Math.floor((Date.now() - Date.parse(c.since)) / 86_400_000);
       if (days >= 2) watch.push({ id: `i-${c.clientId}`, kind: "intake", tone: days > 4 ? "bad" : "warn", client: c.name, title: "Marketing intake form not in yet", why: "Their first round waits on it (or write it without)", when: `${days} days since enrolling`, href: `/clients/${c.slug}`, action: "Open client" });

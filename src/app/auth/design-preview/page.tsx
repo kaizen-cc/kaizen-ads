@@ -20,7 +20,7 @@ import { sampleTickets } from "./sample-tickets";
 import { KpiBoard } from "@/app/(team)/kpis/kpi-board";
 import { sampleKpis } from "./sample-kpis";
 import type { WatchRow } from "@/lib/fatigue";
-import type { OnboardingState } from "@/lib/suggestions";
+import type { OnboardingState, OpenSuggestion } from "@/lib/suggestions";
 import { AgentDetail, AgentsOverview, type Agent as AiAgent, type Item as AiItem } from "@/app/(team)/settings/agents";
 
 // Local-only design check with sample data (never served in production).
@@ -90,17 +90,28 @@ const sampleFatigue: WatchRow[] = [
     signals: { ctrNow: 1.41, ctrBefore: 1.62, ctrChange: -0.13, cprNow: 16.2, cprBefore: 12.8, cprChange: 0.27, accountCprChange: 0.08, freqNow: 1.6, freqBefore: 1.4, hookNow: 21.5, hookBefore: 29.8, hookChange: -0.28, spend7: 268, results7: 16, result: "purchase", daysRunning: 61 }, series: series(12.8, 0.27) },
 ];
 
+// Design preview only: a first round as it's written, one suggestion per concept, in one batch
+const sampleRoundBase: OpenSuggestion = {
+  batch: null,
+  id: "s1", clientId: "o1", client: "Bayou Smiles Dental", clientSlug: "bayou-smiles-dental", kind: "onboarding", signal: "First round: which promise moves Baton Rouge parents, price or confidence", evidence: ["Intake: Invisalign is the margin driver", "Dental winners lead with a real patient's smile in the first frame"], why: "Two dental accounts get their cheapest consults from patient-first creative. This round tests that against a price-led offer so month one tells us which to scale.", version: 1, createdAt: "2026-10-14T15:00:00Z", messages: [], source: null,
+  allotment: { images: 10, videos: 3, imagesUsed: 0, videosUsed: 0, until: null },
+  draft: { title: "First round: smiles, offers and proof", angle: "Confidence you can see", audience: "Parents 30-50 within 15 miles of Baton Rouge", brief: Array.from({ length: 14 }, (_, i) => `Line ${i + 1} of the brief: what to show, what to say, and what to avoid.`).join("\n"), hooks: ["Your smile, straightened in months", "$0 consult this month"], landing: "https://bayousmiles.com/invisalign", sizes: ["4x5", "9x16"], formats: [{ format: "image", new: 4, variations: 2 }, { format: "video", new: 1, variations: 0 }],
+    concepts: Array.from({ length: 4 }, (_, i) => ({ name: `Concept ${i + 1}`, hook: "A real patient's before and after", visual: "Close-up smile, natural light, the practice in the background.", copy: "Lead with the result, then the consult offer." })) },
+};
+const sampleRound: OpenSuggestion[] = ["Smile first", "The $0 consult", "Real patient proof"].map((title, i) => ({
+  ...sampleRoundBase,
+  id: `s${i + 1}`,
+  batch: { id: "b1", label: "First round" },
+  draft: { ...sampleRoundBase.draft, title, formats: [i === 2 ? { format: "video" as const, new: 1, variations: 0 } : { format: "image" as const, new: 1, variations: 1 }], concepts: [sampleRoundBase.draft.concepts[i]] },
+}));
+
 // Design preview only: clients being onboarded
 const sampleOnboarding: OnboardingState = {
   clients: [
-    { clientId: "o1", name: "Bayou Smiles Dental", slug: "bayou-smiles-dental", since: "2026-10-13T15:00:00Z", returning: false, creative: true, industry: "Cosmetic dentistry", intake: { status: "briefed", at: "2026-10-14T14:00:00Z", business: "Family and cosmetic dentist in Baton Rouge pushing Invisalign and whitening" }, firstRound: {
-      id: "s1", clientId: "o1", client: "Bayou Smiles Dental", clientSlug: "bayou-smiles-dental", kind: "onboarding", signal: "First round: which promise moves Baton Rouge parents, price or confidence", evidence: ["Intake: Invisalign is the margin driver", "Dental winners lead with a real patient's smile in the first frame"], why: "Two dental accounts get their cheapest consults from patient-first creative. This round tests that against a price-led offer so month one tells us which to scale.", version: 1, createdAt: "2026-10-14T15:00:00Z", messages: [], source: null,
-      allotment: { images: 10, videos: 3, imagesUsed: 0, videosUsed: 0, until: null },
-      draft: { title: "First round: smiles, offers and proof", angle: "Confidence you can see", audience: "Parents 30-50 within 15 miles of Baton Rouge", brief: Array.from({ length: 14 }, (_, i) => `Line ${i + 1} of the brief: what to show, what to say, and what to avoid.`).join("\n"), hooks: ["Your smile, straightened in months", "$0 consult this month"], landing: "https://bayousmiles.com/invisalign", sizes: ["4x5", "9x16"], formats: [{ format: "image", new: 4, variations: 2 }, { format: "video", new: 1, variations: 0 }],
-        concepts: Array.from({ length: 4 }, (_, i) => ({ name: `Concept ${i + 1}`, hook: "A real patient's before and after", visual: "Close-up smile, natural light, the practice in the background.", copy: "Lead with the result, then the consult offer." })) },
-    }, inProduction: [], writingSince: null, writeError: null, setup: { steps: { welcome: true, call: true, access: true, internal: true, intake: true, content: false, tracking: false, live: false }, progress: "5/8", notes: "Waiting on their photo library.", services: "FB Ads", onboarded: "10/13/2026", name: "Bayou Smiles Dental", syncedAt: "2026-10-19T16:02:00Z" } },
-    { clientId: "o2", name: "Gulf Coast Kayak Co.", slug: "gulf-coast-kayak", since: "2026-10-14T18:00:00Z", returning: false, creative: true, industry: "Kayak rentals", intake: null, firstRound: null, inProduction: [], writingSince: new Date(Date.now() - 35_000).toISOString(), writeError: null, setup: null },
-    { clientId: "o3", name: "Crust Pizza Co.", slug: "crust-pizza-co", since: "2026-10-10T15:00:00Z", returning: true, creative: true, industry: "Pizza restaurant", intake: { status: "briefed", at: "2026-10-11T14:00:00Z", business: "Neapolitan pizza, two locations" }, firstRound: null, inProduction: [1041, 1042], writingSince: null, writeError: null, setup: null },
+    { clientId: "o1", name: "Bayou Smiles Dental", slug: "bayou-smiles-dental", since: "2026-10-13T15:00:00Z", returning: false, creative: true, industry: "Cosmetic dentistry", intake: { status: "briefed", at: "2026-10-14T14:00:00Z", business: "Family and cosmetic dentist in Baton Rouge pushing Invisalign and whitening" }, firstRound: sampleRound[0],
+      round: sampleRound, inProduction: [], writingSince: null, writeError: null, setup: { steps: { welcome: true, call: true, access: true, internal: true, intake: true, content: false, tracking: false, live: false }, progress: "5/8", notes: "Waiting on their photo library.", services: "FB Ads", onboarded: "10/13/2026", name: "Bayou Smiles Dental", syncedAt: "2026-10-19T16:02:00Z" } },
+    { clientId: "o2", name: "Gulf Coast Kayak Co.", slug: "gulf-coast-kayak", since: "2026-10-14T18:00:00Z", returning: false, creative: true, industry: "Kayak rentals", intake: null, firstRound: null, round: [], inProduction: [], writingSince: new Date(Date.now() - 35_000).toISOString(), writeError: null, setup: null },
+    { clientId: "o3", name: "Crust Pizza Co.", slug: "crust-pizza-co", since: "2026-10-10T15:00:00Z", returning: true, creative: true, industry: "Pizza restaurant", intake: { status: "briefed", at: "2026-10-11T14:00:00Z", business: "Neapolitan pizza, two locations" }, firstRound: null, round: [], inProduction: [1041, 1042], writingSince: null, writeError: null, setup: null },
   ],
   unmatched: [{ id: "u1", name: "Lakeside Med Spa LLC", at: "2026-10-15T13:00:00Z" }],
 };

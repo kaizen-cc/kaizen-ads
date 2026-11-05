@@ -7,6 +7,8 @@ import { useEffect, useState, useSyncExternalStore, useTransition } from "react"
 import type { OnboardingCard, OnboardingState, OpenSuggestion } from "@/lib/suggestions";
 import { markOnboarded } from "../../clients/[slug]/actions";
 import { matchIntake, writeFirstRound } from "../onboarding-actions";
+import { approveRound } from "../suggestion-actions";
+import { conceptLine } from "@/lib/allotment";
 import { closeThen, pushParams, useParam } from "@/lib/url-state";
 import { SuggestionSheet } from "./suggested-briefs";
 
@@ -16,9 +18,9 @@ import { SuggestionSheet } from "./suggested-briefs";
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" });
 
 export function OnboardingCallout({ state, clients, bare = false }: { state: OnboardingState; clients: { id: string; name: string }[]; bare?: boolean }) {
-  // The first round open is in the address (?first=id), so back closes it and a link opens it
+  // The concept open is in the address (?first=id), so back closes it and a link opens it
   const openId = useParam("first");
-  const sheet = (openId && state.clients.find((c) => c.firstRound?.id === openId)?.firstRound) || null;
+  const sheet = (openId && state.clients.flatMap((c) => c.round).find((s) => s.id === openId)) || null;
   const router = useRouter();
   // Keeps itself current while an intake is being read. Otherwise it doesn't refresh the page on its own: a refresh
   // every minute redrew the whole Overview under the reader (a new intake shows on the next visit or Today check)
@@ -48,7 +50,7 @@ export function OnboardingCallout({ state, clients, bare = false }: { state: Onb
             {state.clients.length} {state.clients.length === 1 ? "client" : "clients"} getting started
           </h2>
           <p className="text-sm text-muted">
-            {ready ? `${ready} first ${ready === 1 ? "round is" : "rounds are"} written and waiting for you. ` : ""}First rounds come from their intake form and what&apos;s winning for similar clients.
+            {ready ? `${ready} first ${ready === 1 ? "round is" : "rounds are"} written and waiting for you. ` : ""}First rounds come from their intake form and what&apos;s winning for similar clients, one brief and one ticket per concept.
           </p>
         </div>
       </div>
@@ -129,6 +131,21 @@ function ClientCard({ c, onOpen }: { c: OnboardingCard; onOpen: (s: OpenSuggesti
     router.refresh();
   };
 
+  // Approve all: every concept still open in the round, each its own ticket. Asks once before making them
+  const [sure, setSure] = useState(false);
+  const [approving, approve] = useTransition();
+  const approveAll = () =>
+    approve(async () => {
+      const batch = c.firstRound?.batch?.id;
+      if (!batch) return;
+      setError(null);
+      const r = await approveRound(batch);
+      setSure(false);
+      if (!r.ok) return setError(r.error);
+      if (r.skipped.length) setError(`Not approved: ${r.skipped.join(" · ")}`);
+      refreshInPlace(router);
+    });
+
   // Times depend on the clock, so they're worked out in the browser only (the server's render shows the start)
   const inBrowser = useSyncExternalStore(
     () => () => {},
@@ -143,6 +160,7 @@ function ClientCard({ c, onOpen }: { c: OnboardingCard; onOpen: (s: OpenSuggesti
   const intakeWait = businessDaysSince(c.since, now);
   const intakeTook = intakeIn ? businessDaysSince(c.since, Date.parse(c.intake!.at)) : 0;
   const readySince = c.firstRound?.createdAt ?? null;
+  const n = c.round.length;
   const steps: { label: string; detail: string; sub?: string; state: "done" | "now" | "todo"; late?: boolean }[] = [
     { label: c.returning ? "Came back" : "Enrolled", detail: day(c.since), state: "done" },
     intakeIn
@@ -150,9 +168,9 @@ function ClientCard({ c, onOpen }: { c: OnboardingCard; onOpen: (s: OpenSuggesti
       : { label: "Intake form", detail: "Waiting on the client", sub: `${waited(intakeWait)} so far`, state: "now", late: intakeWait > 2 },
     {
       label: "First round",
-      detail: c.inProduction.length ? "Approved" : c.firstRound ? "Ready for you" : writing ? `AI is writing it · ${pct}%` : failed ? "Couldn't write it" : intakeIn ? "Ready to write" : "Not yet",
+      detail: n ? `${n} ${n === 1 ? "concept" : "concepts"} ready for you` : c.inProduction.length ? "Approved" : writing ? `AI is writing it · ${pct}%` : failed ? "Couldn't write it" : intakeIn ? "Ready to write" : "Not yet",
       sub: c.firstRound && readySince ? `Waiting on you ${waited(businessDaysSince(readySince, now))}` : undefined,
-      state: c.inProduction.length ? "done" : c.firstRound || writing || failed || intakeIn ? "now" : "todo",
+      state: n || writing || failed ? "now" : c.inProduction.length ? "done" : intakeIn ? "now" : "todo",
       late: Boolean(c.firstRound && readySince && businessDaysSince(readySince, now) > 1),
     },
     { label: "In production", detail: c.inProduction.length ? `${c.inProduction.length} ${c.inProduction.length === 1 ? "ticket" : "tickets"}` : "—", state: c.inProduction.length ? "now" : "todo" },
@@ -210,20 +228,57 @@ function ClientCard({ c, onOpen }: { c: OnboardingCard; onOpen: (s: OpenSuggesti
 
       {(error || failed) && <p className="text-xs text-bad">{error ?? `The last try didn't finish: ${c.writeError}`}</p>}
 
+      {/* The round: one brief per concept, each its own ticket once approved. Open one to edit, approve or decline it */}
+      {n > 0 && (
+        <ul className="grid gap-1.5">
+          {c.round.map((s, i) => {
+            const f = s.draft.formats[0];
+            return (
+              <li key={s.id}>
+                <button onClick={() => onOpen(s)} className="flex min-h-11 w-full items-center gap-3 rounded-[12px] border border-line bg-surface/60 px-3 py-2 text-left transition-colors hover:border-faint active:bg-surface-2 md:min-h-0">
+                  <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-brand-soft text-[11px] font-semibold text-brand-text tabular">{i + 1}</span>
+                  <span className="grid min-w-0 flex-1">
+                    <span className="truncate text-sm">{s.draft.title || "Untitled concept"}</span>
+                    {f && <span className="text-[11px] text-faint">{conceptLine(f.format, f)}</span>}
+                  </span>
+                  <span className="text-faint">→</span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
       <div className="flex flex-wrap items-center gap-2">
-        {c.firstRound ? (
-          <button onClick={() => onOpen(c.firstRound!)} className="h-11 flex-1 rounded-brand bg-brand px-4 md:h-9 md:flex-none text-sm font-medium text-white shadow-[0_8px_24px_-10px_rgba(178,30,44,0.9)] hover:brightness-110">
-            Review the first round
+        {n > 0 ? (
+          n > 1 && c.firstRound?.batch ? (
+            <button
+              onClick={() => (sure ? approveAll() : setSure(true))}
+              disabled={approving}
+              className="h-11 flex-1 rounded-brand bg-brand px-4 text-sm font-medium text-white shadow-[0_8px_24px_-10px_rgba(178,30,44,0.9)] hover:brightness-110 disabled:opacity-60 md:h-9 md:flex-none"
+            >
+              {approving ? "Approving…" : sure ? `Yes, make ${n} tickets` : `Approve all ${n}`}
+            </button>
+          ) : (
+            <button onClick={() => onOpen(c.firstRound!)} className="h-11 flex-1 rounded-brand bg-brand px-4 text-sm font-medium text-white shadow-[0_8px_24px_-10px_rgba(178,30,44,0.9)] hover:brightness-110 md:h-9 md:flex-none">
+              Review the concept
+            </button>
+          )
+        ) : null}
+        {sure && !approving && (
+          <button onClick={() => setSure(false)} className="h-11 px-2 text-xs text-faint hover:text-fg md:h-9">
+            Cancel
           </button>
-        ) : c.inProduction.length ? (
+        )}
+        {c.inProduction.length ? (
           <span className="flex flex-wrap items-center gap-1.5 text-xs text-muted">
-            {c.inProduction.map((n) => (
-              <Link key={n} href={`/board?t=${n}`} className="rounded-full border border-line px-3 py-2 hover:border-faint md:px-2 md:py-0.5">
-                #{n}
+            {c.inProduction.map((t) => (
+              <Link key={t} href={`/board?t=${t}`} className="rounded-full border border-line px-3 py-2 hover:border-faint md:px-2 md:py-0.5">
+                #{t}
               </Link>
             ))}
           </span>
-        ) : writing ? null : c.creative ? (
+        ) : writing || n ? null : c.creative ? (
           <button onClick={write} className="h-11 flex-1 rounded-brand border border-brand/50 px-4 text-sm text-fg hover:bg-brand-soft md:h-9 md:flex-none">
             {failed ? "Try again" : intakeIn ? "Write the first round" : "Write it without the intake"}
           </button>

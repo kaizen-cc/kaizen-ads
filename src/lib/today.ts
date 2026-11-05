@@ -267,10 +267,15 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
         clientId: c.clientId,
         stat: { value: String(waited), label: `${waited === 1 ? "day" : "days"} their first round has waited on you` },
         title: `${c.name}'s first round is written`,
-        story: c.firstRound.draft.title ? `"${c.firstRound.draft.title}". Approve it to put their first creative into production.` : "Approve it to put their first creative into production.",
+        story:
+          c.round.length > 1
+            ? `${c.round.length} concepts, one brief and one ticket each: ${c.round.map((r) => `"${r.draft.title}"`).join(", ")}. Approve them (all on the Overview, or one at a time) to put their first creative into production.`
+            : c.firstRound.draft.title
+              ? `"${c.firstRound.draft.title}". Approve it to put their first creative into production.`
+              : "Approve it to put their first creative into production.",
         why: "A new client's first impression",
         evidence: c.firstRound.evidence.slice(0, 3),
-        action: { label: "Review the first round", suggestion: c.firstRound },
+        action: { label: c.round.length > 1 ? `Review concept 1 of ${c.round.length}` : "Review the first round", suggestion: c.firstRound },
       });
     } else if (manager || me.isCoordinator ? !c.intake || c.intake.status === "unmatched" : false) {
       const waited = bizDays(c.since);

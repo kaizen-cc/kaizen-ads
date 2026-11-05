@@ -273,9 +273,14 @@ fixes: one short line per change you made (empty when it already met the standar
 async function writeBrief(admin: SupabaseClient, clientId: string, opts: Parameters<typeof askJson<Out>>[0]): Promise<Out> {
   const out = await askJson<Out>({ ...opts, clientId, system: `${opts.system}\n\n${BRIEF_STANDARD}` });
   if (!out.suggest || !out.draft?.brief) return out;
+  return { ...out, draft: await selfReview(admin, clientId, out.draft) };
+}
+
+/** The reviewer's pass on one written brief: corrected in place, or as it was when there's nothing to fix. */
+async function selfReview(admin: SupabaseClient, clientId: string, draft: SuggestionDraft): Promise<SuggestionDraft> {
   try {
     const ctx = await clientContext(admin, clientId);
-    if (!ctx) return out;
+    if (!ctx) return draft;
     const r = await askJson<{ fixes: string[]; draft: SuggestionDraft }>({
       agent: "review",
       label: "brief self-review",
@@ -283,14 +288,14 @@ async function writeBrief(admin: SupabaseClient, clientId: string, opts: Paramet
       system: REPAIR_SYSTEM,
       schema: REPAIR_SCHEMA,
       maxTokens: 12000,
-      prompt: `${contextBlock(ctx)}\n\n<request>\n${JSON.stringify(out.draft, null, 1)}\n</request>\n\nCheck it against the standard and the client context, and return it corrected.`,
+      prompt: `${contextBlock(ctx)}\n\n<request>\n${JSON.stringify(draft, null, 1)}\n</request>\n\nCheck it against the standard and the client context, and return it corrected.`,
     });
-    if (r.fixes.length && r.draft?.brief) return { ...out, draft: r.draft };
+    if (r.fixes.length && r.draft?.brief) return r.draft;
   } catch (e) {
     // The review is a second pass: if it can't run, the strategist's brief still goes out (the submit review catches it)
     console.error("brief self-review", clientId, e instanceof Error ? e.message : e);
   }
-  return out;
+  return draft;
 }
 
 // ─── Summaries: what's suggested on its own is only sketched until someone picks it ──────────────────────────────
@@ -498,8 +503,8 @@ const countsOf = (format: Fmt3, n: number | undefined, v: number | undefined, ca
 });
 
 /**
- * A draft as it's kept. One concept per brief: unless `many` (a strategist run, which splits them, or a new client's
- * first round, split at approval), a draft that came back with several concepts keeps the first, with its own counts.
+ * A draft as it's kept. One concept per brief: unless `many` (a draft that's split into one per concept next, by
+ * byConcept), a draft that came back with several concepts keeps the first, with its own counts.
  */
 const clean = (d: SuggestionDraft, many = 0): SuggestionDraft => {
   const concepts = d.concepts.slice(0, Math.max(1, many)).map((c) => (c.format ? { ...c, ...countsOf(c.format, c.new, c.variations, c.cards) } : c));
@@ -644,11 +649,13 @@ export type OpenSuggestion = {
   createdAt: string;
   allotment: Allotment | null;
   source: { thumbnail: string | null; headline: string | null; client: string } | null; // the winning ad, for one from a winner
+  /** The batch it was written in (a new client's first round: one suggestion per concept), reviewed together */
+  batch: { id: string; label: string | null } | null;
   messages: { role: "user" | "ai"; body: string; at: string }[];
 };
 export type SuggestionsState = { open: OpenSuggestion[]; running: boolean; lastRun: string | null; decided30: { approved: number; declined: number } };
 
-const OPEN_COLS = "id, client_id, kind, signal, evidence, why, draft, version, created_at, source, clients(name, slug, status, archived_at)";
+const OPEN_COLS = "id, client_id, kind, signal, evidence, why, draft, version, created_at, source, batch_id, batch_label, clients(name, slug, status, archived_at)";
 // Paused and archived clients are left out of what the team is asked to act on
 const liveClient = (c: unknown) => !c || isLive(c as { status?: string | null; archived_at?: string | null });
 
@@ -677,6 +684,7 @@ async function toOpen(db: SupabaseClient, rows: Record<string, unknown>[]): Prom
       createdAt: r.created_at as string,
       allotment: u ? toAllotment(u) : null,
       source: (r.source as OpenSuggestion["source"]) ?? null,
+      batch: r.batch_id ? { id: r.batch_id as string, label: (r.batch_label as string | null) ?? null } : null,
       messages: (msgs ?? []).filter((m: { suggestion_id: string }) => m.suggestion_id === r.id).map((m: { role: string; body: string; created_at: string }) => ({ role: m.role as "user" | "ai", body: m.body, at: m.created_at })),
     };
   });
@@ -938,11 +946,13 @@ export async function suggestOnboarding(admin: SupabaseClient, clientId: string)
     { kind: "onboarding", weight: 1, line: c.reonboarded_at ? "Returning client: their first round back" : "New client: their first round of creative", facts: intake ? ["The marketing intake form is in"] : ["No marketing intake form yet: work from what's known and list what to confirm"] },
   ]);
   if (!prompt) throw new Error("Client not found");
-  const out = await writeBrief(admin, clientId, {
+  const out = await askJson<RoundOut>({
     agent: "strategist",
     label: "onboarding first round",
-    system: SYSTEM,
-    schema: SCHEMA,
+    clientId,
+    system: `${SYSTEM}\n\n${BRIEF_STANDARD}`,
+    schema: ROUND_SCHEMA,
+    maxTokens: 20000,
     prompt: `${prompt}
 
 ${winners.length ? winnersBlock(c.industry, c.industry_detail, winners) : "No winning ads in this industry across our accounts yet."}
@@ -954,26 +964,74 @@ ${lookBlock}
 
 ${intake ? "" : "The marketing intake form hasn't come in yet. Build from what's known, keep claims general, and put what to confirm in the brief."}
 
-This is ${c.name}'s ${c.reonboarded_at ? "first round since they came back" : "first round with Kaizen"}: the first impression, and the first read on what works for them. Write the request:
+This is ${c.name}'s ${c.reonboarded_at ? "first round since they came back" : "first round with Kaizen"}: the first impression, and the first read on what works for them. Write the round as separate briefs, one per concept:
 - Start from the client: their offer, audience, voice and what they told us to avoid (marketing_intake and client memory are hard rules).
 - Start from the vertical playbook when there is one: its avatars and proven angles are the attack for this market.
 - Lean on what's winning for similar clients: the angles, hooks and structures that are beating their accounts, translated to this client (never copied, never naming the other business). Say in why which winners shaped it.
-- Test distinct angles so the first month teaches us something: 3 to 4 concepts in concepts, each a different angle or hook, not variations of one idea. Each concept becomes its own brief when the round is approved, so give each its own format, net new and variations counts and a carousel's slides; formats are their totals.
-- Use the month's allotment well (a new client's first month should show range); every version counts, so add variations only where a hook test makes sense.
-- In the brief, list anything the team must confirm with the client before production (from the intake's open questions).
-suggest: true. kind: "kpi". signal: one line on what this first round sets out to learn. evidence: 2 to 4 lines from the intake and the winners. why: two or three sentences. reply: "".`,
+- Test distinct angles so the first month teaches us something: 3 to 4 entries in drafts, each a different angle or hook, not variations of one idea.
+- Each entry in drafts is one complete, standalone brief for exactly one concept: concepts has exactly one entry; its own title (the concept, short), angle, audience, hooks (what each version tests), a brief that covers only this concept (a designer reading it alone has everything), its formats (one entry: this concept's format, net new, variations and a carousel's slides), sizes, landing, refs and assets. Each becomes one ticket, and every version of it counts toward the allotment. Never put two concepts in one brief.
+- Use the month's allotment well across the briefs together (a new client's first month should show range); every version counts, so add variations only where a hook test makes sense.
+- In each brief, list anything the team must confirm with the client before production for that concept (from the intake's open questions).
+suggest: true. signal: one line on what this first round sets out to learn. evidence: 2 to 4 lines from the intake and the winners. why: two or three sentences on the round as a whole.`,
   });
-  // The example ads they liked go to the creative team with the brief, as references
-  const draft = clean({ ...out.draft, refs: [...(out.draft.refs ?? []), ...liked].slice(0, 6) }, 4);
-  // One open first round per client: a newer one replaces it
+  if (!out.drafts?.length) throw new Error("The strategist didn't write any concepts");
+  // Each brief through the reviewer, side by side
+  const reviewed = await Promise.all(out.drafts.slice(0, 4).map((d) => (d?.brief ? selfReview(admin, clientId, d) : Promise.resolve(d))));
+  const batchId = crypto.randomUUID();
+  const rows = firstRoundRows(clientId, { ...out, drafts: reviewed }, { batchId, refs: liked });
+  if (!rows.length) throw new Error("The strategist didn't write any concepts");
+  // One open first round per client: a newer one replaces every concept of the older one
   await admin.from("creative_suggestions").update({ status: "expired", updated_at: new Date().toISOString() }).eq("client_id", clientId).eq("kind", "onboarding").eq("status", "open");
-  const { data, error } = await admin
-    .from("creative_suggestions")
-    .insert({ client_id: clientId, kind: "onboarding", signal: out.signal || "First round", evidence: out.evidence.slice(0, 5), why: out.why, draft, original: draft })
-    .select("id")
-    .single();
-  if (error || !data) throw new Error(error?.message ?? "Couldn't save the first round");
-  return data.id as string;
+  // A second apart, so the round reads in the strategist's order
+  const at = Date.now();
+  const { error } = await admin.from("creative_suggestions").insert(rows.map((r, i) => ({ ...r, created_at: new Date(at + i * 1000).toISOString() })));
+  if (error) throw new Error(error.message || "Couldn't save the first round");
+  return batchId;
+}
+
+const ROUND_SCHEMA = {
+  type: "object",
+  properties: {
+    signal: { type: "string" },
+    evidence: { type: "array", items: { type: "string" } },
+    why: { type: "string" },
+    drafts: { type: "array", items: (SCHEMA.properties as { draft: unknown }).draft },
+  },
+  required: ["signal", "evidence", "why", "drafts"],
+  additionalProperties: false,
+};
+type RoundOut = { signal: string; evidence: string[]; why: string; drafts: SuggestionDraft[] };
+
+export const FIRST_ROUND_LABEL = "First round";
+
+/**
+ * A first round as the suggestions it's saved as: one per concept, never several concepts in one (a brief that came
+ * back with more is split by concept), each its own complete brief with its own formats and counts, all in one batch
+ * so the team reviews them together and approves all or some. The example ads the client liked go with each as refs.
+ */
+export function firstRoundRows(clientId: string, out: RoundOut, opts: { batchId: string; refs?: string[] }) {
+  const one = out.drafts
+    .filter((d) => d && d.concepts?.length)
+    .flatMap((d) => byConcept(clean(d, Math.max(1, d.concepts.length))))
+    .slice(0, 6)
+    .map((d) => {
+      // The concept's own counts are the brief's (its allotment draw), whatever the totals said
+      const c = d.concepts[0];
+      const own = c?.format && (c.new ?? 0) + (c.variations ?? 0) > 0 ? [countsOf(c.format, c.new, c.variations, c.cards)] : d.formats;
+      return clean({ ...d, formats: own, refs: [...(d.refs ?? []), ...(opts.refs ?? [])].slice(0, 6) });
+    })
+    .filter((d) => d.formats.length);
+  return one.map((draft) => ({
+    client_id: clientId,
+    kind: "onboarding" as const,
+    signal: out.signal || FIRST_ROUND_LABEL,
+    evidence: (out.evidence ?? []).slice(0, 5),
+    why: out.why,
+    draft,
+    original: draft,
+    batch_id: opts.batchId,
+    batch_label: FIRST_ROUND_LABEL,
+  }));
 }
 
 export type OnboardingCard = {
@@ -985,8 +1043,9 @@ export type OnboardingCard = {
   creative: boolean;
   industry: string | null;
   intake: { status: string; at: string; business: string | null } | null;
-  firstRound: OpenSuggestion | null; // ready for review
-  inProduction: number[]; // tickets from an approved first round
+  firstRound: OpenSuggestion | null; // ready for review: the round's first concept
+  round: OpenSuggestion[]; // every concept of the round still open, one brief each, in the strategist's order
+  inProduction: number[]; // tickets from the round's approved concepts (one each)
   writingSince: string | null; // the strategist started writing it at
   writeError: string | null; // why the last try failed
   setup: OnboardingSheet | null; // the Account Overview sheet's onboarding checklist
@@ -1013,14 +1072,19 @@ export async function loadOnboarding(db: SupabaseClient): Promise<OnboardingStat
   const [{ data: intakes }, { data: rounds }] = ids.length
     ? await Promise.all([
         db.from("client_intakes").select("client_id, status, received_at, summary").in("client_id", ids).order("received_at", { ascending: false }),
-        db.from("creative_suggestions").select(OPEN_COLS + ", status, request_numbers").eq("kind", "onboarding").in("client_id", ids).in("status", ["open", "approved"]).order("created_at", { ascending: false }),
+        db.from("creative_suggestions").select(OPEN_COLS + ", status, request_numbers").eq("kind", "onboarding").in("client_id", ids).in("status", ["open", "approved"]).order("created_at", { ascending: true }),
       ])
     : [{ data: [] }, { data: [] }];
   const open = await toOpen(db, ((rounds ?? []) as unknown as Record<string, unknown>[]).filter((r) => r.status === "open"));
   return {
     clients: (clients ?? []).map((c) => {
       const intake = (intakes ?? []).find((i) => i.client_id === c.id);
-      const approved = ((rounds ?? []) as unknown as { client_id: string; status: string; request_numbers: number[] }[]).find((r) => r.client_id === c.id && r.status === "approved");
+      // The newest round (a batch, or one suggestion from before batches): its open concepts and its approved tickets
+      const mine = ((rounds ?? []) as unknown as { id: string; client_id: string; status: string; batch_id: string | null; request_numbers: number[] | null }[]).filter((r) => r.client_id === c.id);
+      const latest = mine.at(-1);
+      const batch = latest ? (latest.batch_id ?? latest.id) : null;
+      const inBatch = mine.filter((r) => (r.batch_id ?? r.id) === batch);
+      const round = open.filter((o) => o.clientId === c.id && (o.batch?.id ?? o.id) === batch);
       return {
         clientId: c.id,
         name: c.name,
@@ -1030,8 +1094,9 @@ export async function loadOnboarding(db: SupabaseClient): Promise<OnboardingStat
         creative: c.creative_package,
         industry: c.industry_detail,
         intake: intake ? { status: intake.status, at: intake.received_at, business: (intake.summary as { business?: string } | null)?.business ?? null } : null,
-        firstRound: open.find((o) => o.clientId === c.id) ?? null,
-        inProduction: approved?.request_numbers ?? [],
+        firstRound: round[0] ?? null,
+        round,
+        inProduction: inBatch.filter((r) => r.status === "approved").flatMap((r) => r.request_numbers ?? []),
         // The strategist writing it right now (a run older than 15 minutes didn't finish), or why it failed
         writingSince: c.first_round_started_at && Date.now() - Date.parse(c.first_round_started_at) < 15 * 60_000 ? (c.first_round_started_at as string) : null,
         writeError: (c.first_round_error as string | null) ?? null,

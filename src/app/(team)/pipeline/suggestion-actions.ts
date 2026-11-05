@@ -52,8 +52,8 @@ export async function approveSuggestion(id: string, draft: SuggestionDraft): Pro
   if (!draft.title.trim()) return { ok: false, error: "Give it a title." };
   if (!draft.formats.some((f) => f.new + f.variations > 0)) return { ok: false, error: "Pick at least one format." };
 
-  // One concept per brief: a suggestion with several concepts (a new client's first round) becomes one brief each,
-  // with that concept's own format, versions and slides
+  // One concept per brief and per ticket: a suggestion is written with one concept (a new client's first round is one
+  // suggestion per concept); one that still holds several becomes one ticket each, with that concept's own counts
   const rows: { id: string; number: number }[] = [];
   for (const part of byConcept(draft)) {
     const items = part.formats.filter((f) => f.new + f.variations > 0);
@@ -116,6 +116,27 @@ export async function approveSuggestion(id: string, draft: SuggestionDraft): Pro
   revalidatePath("/pipeline");
   revalidatePath("/board");
   return { ok: true, numbers };
+}
+
+/**
+ * Approve all: every concept of a batch still open (a new client's first round), each as it stands, each its own
+ * ticket. Concepts someone already approved or declined are left as they are.
+ */
+export async function approveRound(batchId: string): Promise<Result<{ numbers: number[]; skipped: string[] }>> {
+  await requireStaff(); // each suggestion's own rules decide, as for one
+  const supabase = await createClient();
+  const { data: open } = await supabase.from("creative_suggestions").select("id, draft").eq("batch_id", batchId).eq("status", "open").order("created_at");
+  if (!open?.length) return { ok: false, error: "Nothing left to approve in this round." };
+  const numbers: number[] = [];
+  const skipped: string[] = [];
+  for (const s of open) {
+    const draft = s.draft as SuggestionDraft;
+    const r = await approveSuggestion(s.id as string, draft);
+    if (r.ok) numbers.push(...r.numbers);
+    else skipped.push(`${draft.title || "A concept"}: ${r.error}`);
+  }
+  if (!numbers.length) return { ok: false, error: skipped.join(" · ") || "Nothing was approved." };
+  return { ok: true, numbers, skipped };
 }
 
 /** Decline, with the reason (the strategist reads it next time). Optionally remembered for the client too. */
