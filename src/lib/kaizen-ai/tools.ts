@@ -560,7 +560,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
     },
     {
       name: "create_brief",
-      description: "Turns a creative idea into a brief card the person can open as a prefilled request (and send to the Board, or to Asana from there). Nothing is sent from here. Write a full brief: the idea, the hook, what to show, the copy direction, the offer, and the references.",
+      description: "Turns a creative idea into a brief card the person can open as a prefilled request (and send to the Board, or to Asana from there). Nothing is sent from here. Write a full brief: the idea, the hook, what to show, the copy direction, the offer, and the references. One concept per brief: several distinct ideas are one card each. Every version counts toward the allotment (net new and variations alike, a carousel once per slide; sizes are free).",
       input_schema: {
         type: "object",
         properties: {

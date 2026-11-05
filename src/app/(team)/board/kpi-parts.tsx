@@ -625,6 +625,27 @@ export function AllotmentList({ rows, canDismiss }: { rows: ClientAllotment[]; c
             {a.dismissed.reason ? `“${a.dismissed.reason}”` : "Set aside"} · {a.dismissed.by ?? "an exec"}, {when(a.dismissed.at)}
           </p>
         )}
+        {/* One concept per brief: Asana tasks that bundled several, each should have been that many briefs */}
+        {a.bundled.length > 0 && (
+          <ul className="grid gap-1">
+            {a.bundled.slice(0, 3).map((t, i) => (
+              <li key={i} className="flex min-w-0 items-start gap-2 text-[12px] text-warn">
+                <span aria-hidden className="mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full bg-warn" />
+                <span className="min-w-0">
+                  {t.concepts} distinct concepts in one task: should be {t.concepts} briefs.{" "}
+                  {t.url ? (
+                    <a href={t.url} target="_blank" rel="noreferrer" className="text-muted underline-offset-2 hover:text-fg hover:underline">
+                      {t.name}
+                    </a>
+                  ) : (
+                    <span className="text-muted">{t.name}</span>
+                  )}
+                </span>
+              </li>
+            ))}
+            {a.bundled.length > 3 && <li className="pl-3.5 text-[11.5px] text-faint">and {a.bundled.length - 3} more</li>}
+          </ul>
+        )}
         {editing === a.id && (
           <div className="grid gap-2 rounded-[12px] bg-ink/[0.035] p-3">
             <label className="grid gap-1 text-[12px] text-muted">

@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { asana, asanaWrite, projectGid } from "@/lib/asana";
+import { conceptLine, unitsFor } from "@/lib/allotment";
 
 // A creative request briefed in Kaizen Ads, sent to the Creative board in Asana built exactly like the Google Form's
 // tasks, so the creative team sees nothing different while briefing moves here: one task per format, named
@@ -82,7 +83,10 @@ export async function planAsanaRequest(admin: SupabaseClient, d: AsanaDraft): Pr
     const k = d.formats[f]!;
     const count = k.new + k.variations;
     const what = f === "image" ? "image" : f;
-    const deliverables = [k.new ? `${k.new} new ${what}${k.new === 1 ? "" : "s"}` : "", k.variations ? `${k.variations} variation${k.variations === 1 ? "" : "s"}` : "", f === "carousel" && k.cards ? `${k.cards} cards each` : ""].filter(Boolean).join(", ");
+    // One concept per brief, every version counted: "1 concept, 3 versions (1 new image, 2 variations)"
+    const split = [k.new ? `${k.new} new ${what}${k.new === 1 ? "" : "s"}` : "", k.variations ? `${k.variations} variation${k.variations === 1 ? "" : "s"}` : ""].filter(Boolean).join(", ");
+    const units = unitsFor(f, k);
+    const deliverables = `${conceptLine(f, k)} (${split}); counts ${units} toward the allotment`;
     const maker = seat(MAKER[f]);
     const notes = [
       `Media Buyer Assigned to Account: ${first(buyer?.full_name)}`,
@@ -211,6 +215,10 @@ export async function sendAsanaRequest(admin: SupabaseClient, d: AsanaDraft, by:
         synced_at: now,
         from_kaizen_ads: true,
         sent_request_id: row?.id ?? null,
+        // What it takes from the allotment, counted here (the Asana counter reads the same rule from the description)
+        new_images: t.format === "video" ? 0 : unitsFor(t.format, d.formats[t.format]),
+        new_videos: t.format === "video" ? unitsFor("video", d.formats.video) : 0,
+        concepts: 1,
       };
     }),
   );

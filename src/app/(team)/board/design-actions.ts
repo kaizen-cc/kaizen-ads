@@ -377,7 +377,7 @@ export async function carryCards(versionId: string, replacing: number[]): Promis
   return { ok: true };
 }
 
-/** Correct how many net new and variations a ticket is for. Net new is what counts toward the allotment. */
+/** Correct how many net new and variations a ticket is for. Every version counts toward the allotment (a carousel once per slide). */
 export async function setTicketCounts(requestId: string, newCount: number, variations: number, reason: string): Promise<{ ok: true } | Fail> {
   await requireStaff();
   const supabase = await createClient();

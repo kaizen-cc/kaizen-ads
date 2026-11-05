@@ -154,20 +154,34 @@ function monthStart(offset = 0) {
   return first.toISOString();
 }
 
-const UNITS_SYSTEM = `You count what each Asana task from Kaizen's creative board asks the design team to make, for the client's monthly creative allotment. For each task: newImages and newVideos, the net-new paid ads creatives it asks for. A carousel counts as one image. Resizes, iterations, edits, captions or optimizations of an existing ad or video, and copy-only work, are 0 (they don't draw on the allotment). Print and in-store work (mailers, postcards, flyers, signs, menus) and organic-only posts are 0. When the task names one creative ("Video 02", "Image"), that's 1. When it asks for several ("5 statics", "both videos"), count them. A range ("3-4 statics") counts its low end. If it's unclear, count 1 of the format it names. note: a few words on why ("2 new videos", "resize of an existing ad", "print mailer").`;
+/** Bumped when the counting rule changes, so every task in the current cycles is counted again under the new rule */
+const UNITS_RULE = "v2-every-version";
+const UNITS_SYSTEM = `You count what each Asana task from Kaizen's creative board asks the design team to make, for the client's monthly creative allotment. The rule: a brief is ONE concept (one idea, one angle), and every version of that concept counts. For each task: newImages and newVideos, the paid ads creatives it takes from the allotment.
+- Each concept times its versions: "1 concept, 3 versions" is 3; "5 statics" is 5; "a new design plus 2 variations" is 3. Variations and iterations (a new hook, headline, visual or offer framing on an ad) each count as 1, the same as a net new design.
+- A carousel counts once per slide (card): a 6-slide carousel is 6 images; 2 versions of a 5-slide carousel is 10. When the slide count isn't given, count 5 per carousel.
+- Sizes are free: the same version in 4:5 and 9:16 (or any resize, or the same design adapted to another placement) is 1, never more. A task that only resizes existing ads is 0.
+- Copy-only work (captions, primary text, ad copy headlines that aren't on the creative) is 0. Print and in-store work (mailers, postcards, flyers, signs, menus) and organic-only posts are 0.
+- Images and carousels go in newImages; videos in newVideos.
+- When the task names one creative ("Video 02", "Image"), that's 1. A range ("3-4 statics") counts its low end. If it's unclear, count 1 of the format it names.
+concepts: how many distinct concepts (different ideas or angles, not versions or sizes of one idea) the task asks for: 1 for a normal task, 0 when it counts 0.
+note: a few words on why ("1 concept, 3 versions", "carousel, 6 slides", "resize of an existing ad", "print mailer"); when concepts is more than 1, start it with "N distinct concepts in one task".`;
 const UNITS_SCHEMA = {
   type: "object",
   properties: {
     tasks: {
       type: "array",
-      items: { type: "object", properties: { id: { type: "string" }, newImages: { type: "integer" }, newVideos: { type: "integer" }, note: { type: "string" } }, required: ["id", "newImages", "newVideos", "note"], additionalProperties: false },
+      items: { type: "object", properties: { id: { type: "string" }, newImages: { type: "integer" }, newVideos: { type: "integer" }, concepts: { type: "integer" }, note: { type: "string" } }, required: ["id", "newImages", "newVideos", "concepts", "note"], additionalProperties: false },
     },
   },
   required: ["tasks"],
   additionalProperties: false,
 };
 
-/** Reads how many new images and videos each of this month's tasks asks for (once, and again when it's edited). */
+/**
+ * Reads how many images and videos each of this cycle's tasks takes from the allotment (once, again when it's edited,
+ * and again when the counting rule changes), and how many distinct concepts it bundles (more than one should have been
+ * that many briefs: flagged on the creative KPIs).
+ */
 async function countUnits(admin: SupabaseClient, max = 60) {
   const { createHash } = await import("node:crypto");
   const { askJson } = await import("@/lib/ai");
@@ -178,11 +192,11 @@ async function countUnits(admin: SupabaseClient, max = 60) {
     .not("client_id", "is", null)
     .or(`counted_at.gte.${new Date(Date.now() - 35 * 86_400_000).toISOString()},and(open.eq.true,counted_month.is.null)`)
     .limit(400);
-  const keyOf = (t: { name: string; notes: string | null }) => createHash("sha1").update(`${t.name}\n${t.notes ?? ""}`).digest("hex");
+  const keyOf = (t: { name: string; notes: string | null }) => createHash("sha1").update(`${UNITS_RULE}\n${t.name}\n${t.notes ?? ""}`).digest("hex");
   const todo = (data ?? []).filter((t) => t.units_key !== keyOf(t)).slice(0, max);
   for (let i = 0; i < todo.length; i += 15) {
     const batch = todo.slice(i, i + 15);
-    const out = await askJson<{ tasks: { id: string; newImages: number; newVideos: number; note: string }[] }>({
+    const out = await askJson<{ tasks: { id: string; newImages: number; newVideos: number; concepts: number; note: string }[] }>({
       agent: "strategist",
       label: "asana allotment count",
       system: UNITS_SYSTEM,
@@ -195,7 +209,7 @@ async function countUnits(admin: SupabaseClient, max = 60) {
       if (!r) continue;
       await admin
         .from("asana_tasks")
-        .update({ new_images: Math.max(0, Math.min(50, r.newImages)), new_videos: Math.max(0, Math.min(50, r.newVideos)), units_note: r.note.slice(0, 200), units_key: keyOf(t), units_read_at: new Date().toISOString() })
+        .update({ new_images: Math.max(0, Math.min(200, r.newImages)), new_videos: Math.max(0, Math.min(50, r.newVideos)), concepts: Math.max(0, Math.min(50, r.concepts ?? 1)), units_note: r.note.slice(0, 200), units_key: keyOf(t), units_read_at: new Date().toISOString() })
         .eq("gid", t.gid);
     }
   }

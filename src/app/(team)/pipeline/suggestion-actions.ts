@@ -6,7 +6,8 @@ import { AiUnavailable, aiEnabled } from "@/lib/ai";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
 import { createAdminClient, adminConfigured } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { regenerate, runStrategist, type SuggestionDraft } from "@/lib/suggestions";
+import { byConcept, regenerate, runStrategist, type SuggestionDraft } from "@/lib/suggestions";
+import { conceptLine } from "@/lib/allotment";
 
 type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 
@@ -46,29 +47,36 @@ export async function approveSuggestion(id: string, draft: SuggestionDraft): Pro
   const supabase = await createClient();
   const { data: s } = await supabase.from("creative_suggestions").select("client_id, status, original, signal, kind, source").eq("id", id).single();
   if (!s || s.status !== "open") return { ok: false, error: "This suggestion was already decided." };
-  const items = draft.formats.filter((f) => f.new + f.variations > 0);
   if (!draft.title.trim()) return { ok: false, error: "Give it a title." };
-  if (!items.length) return { ok: false, error: "Pick at least one format." };
+  if (!draft.formats.some((f) => f.new + f.variations > 0)) return { ok: false, error: "Pick at least one format." };
 
-  const concepts = draft.concepts.length
-    ? `\n\nConcepts:\n${draft.concepts.map((c, i) => `${i + 1}. ${c.name}\n   Hook: ${c.hook}\n   Visual: ${c.visual}\n   Copy: ${c.copy}`).join("\n")}`
-    : "";
-  const hooks = draft.hooks.length ? `\n\nHooks to try:\n${draft.hooks.map((h) => `- ${h}`).join("\n")}` : "";
-  const { data: batch, error } = await supabase.rpc("create_request_batch", {
-    p_client: s.client_id,
-    p_title: draft.title.trim(),
-    p_items: items,
-    p_priority: "normal",
-    p_angle: draft.angle.trim() || null,
-    p_audience: draft.audience.trim() || null,
-    p_brief: `${draft.brief.trim()}${concepts}${hooks}\n\n(Suggested by the AI strategist: ${s.signal})`,
-    p_refs: (draft.refs ?? []).filter((u) => /^https?:\/\//i.test(u)).slice(0, 20),
-    p_sizes: draft.sizes,
-    p_ai_review: null,
-  });
-  if (error) return { ok: false, error: error.message };
-  const { data: rows } = await supabase.from("requests").select("id, number").eq("batch_id", batch).order("number");
-  const numbers = (rows ?? []).map((r) => r.number as number);
+  // One concept per brief: a suggestion with several concepts (a new client's first round) becomes one brief each,
+  // with that concept's own format, versions and slides
+  const rows: { id: string; number: number }[] = [];
+  for (const part of byConcept(draft)) {
+    const items = part.formats.filter((f) => f.new + f.variations > 0);
+    if (!items.length) continue;
+    const c = part.concepts[0];
+    const concept = c ? `\n\nConcept (${items.map((f) => conceptLine(f.format, f)).join("; ")}): ${c.name}\n   Hook: ${c.hook}\n   Visual: ${c.visual}\n   Copy: ${c.copy}` : "";
+    const hooks = part.hooks.length ? `\n\nWhat each version tests:\n${part.hooks.map((h) => `- ${h}`).join("\n")}` : "";
+    const { data: batch, error } = await supabase.rpc("create_request_batch", {
+      p_client: s.client_id,
+      p_title: part.title.trim() || draft.title.trim(),
+      p_items: items,
+      p_priority: "normal",
+      p_angle: part.angle.trim() || null,
+      p_audience: part.audience.trim() || null,
+      p_brief: `${part.brief.trim()}${concept}${hooks}\n\n(Suggested by the AI strategist: ${s.signal})`,
+      p_refs: (part.refs ?? []).filter((u) => /^https?:\/\//i.test(u)).slice(0, 20),
+      p_sizes: part.sizes,
+      p_ai_review: null,
+    });
+    if (error) return { ok: false, error: rows.length ? `${error.message} (tickets ${rows.map((r) => `#${r.number}`).join(", ")} were made)` : error.message };
+    const { data: made } = await supabase.from("requests").select("id, number").eq("batch_id", batch).order("number");
+    rows.push(...((made ?? []) as { id: string; number: number }[]));
+  }
+  if (!rows.length) return { ok: false, error: "Pick at least one format." };
+  const numbers = rows.map((r) => r.number);
   if (adminConfigured()) {
     const admin = createAdminClient();
     const landing = draft.landing?.trim();

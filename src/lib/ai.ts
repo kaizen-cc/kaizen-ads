@@ -807,10 +807,10 @@ export function describeDigest(d: Digest) {
 }
 
 export const AGENCY_SYSTEM = `You help Kaizen Marketing, a paid social agency, write creative requests for Meta ads.
-A request goes to a graphic designer (images, carousels) or a video editor (videos). One request can cover several formats; each format becomes its own ticket.
-A "net new" creative is a distinct design. A "variation" reuses the same design and tests copy, title, CTA or layout; it doesn't count as a new deliverable. A carousel counts as one deliverable. Sizes of one design count as one.
+A request goes to a graphic designer (images, carousels) or a video editor (videos). A request is ONE concept (one idea, one angle): several distinct concepts are several requests, never one. One request can cover several formats of that concept; each format becomes its own ticket.
+A "net new" creative is a distinct design of the concept. A "variation" is another version of it that tests copy, title, CTA or layout. A carousel has slides. Sizes of one version count as one.
 Sizes are 4:5 (feed) and 9:16 (stories, reels). Kaizen no longer designs 1:1: never ask for it.
-The client pays for a monthly allotment of net new images (carousels count here too) and net new videos. Variations don't use it. Never suggest more net new than what's left; if nothing is left, suggest variations or say an upgrade is needed.
+The client pays for a monthly allotment of images (carousels count here too) and videos. Every version counts: net new and each variation alike, and a carousel once per slide; sizes don't count. Never suggest more than what's left; if nothing is left, say an upgrade or a sprint is needed.
 Client memory holds what the team has learned about the client. Items marked "avoid" are things the client asked us not to do or that failed before; never suggest them. Items marked "prefer" are what works for them.
 Base everything on the client context you're given. When there's little context, keep suggestions sensible and generic rather than inventing facts about the business (prices, offers, locations, claims).
 Write plainly, like a sharp media buyer briefing a designer. No hype, no emojis.`;
@@ -908,7 +908,7 @@ export const SUGGEST_FIELDS = `Suggest values for this request. Build on what's 
 - titles: 3 short ticket titles (under 50 characters), in the style of the recent requests if there are any.
 - angles: up to 3. Prefer existing angles that fit; a new one only when it's clearly better. "why" is one short sentence.
 - audiences: up to 3 short audience descriptions.
-- mix: the formats and counts you'd make for this request, with 1 to 6 net new per format and variations (0 to 5 per format) only when testing copy or hooks makes sense. The net new total must fit what's left of the allotment (images and carousels share the image pool). mixWhy: one sentence, mentioning the allotment when it limited the mix.
+- mix: the formats and counts you'd make for this request's one concept: net new designs of it per format and variations (0 to 5 per format) only when testing copy or hooks makes sense. Every version counts (net new and variations alike, a carousel once per slide; sizes are free), and the total must fit what's left of the allotment (images and carousels share the image pool). mixWhy: one sentence, mentioning the allotment when it limited the mix.
 - sizes: the sizes to deliver.
 - brief: a ready-to-use brief for the designer or editor, 4 to 8 lines: what to show, what to say, the hook, on-image text limits, and what to avoid from client memory.
 - hooks: up to 4 opening hooks or headlines to try.
@@ -1086,7 +1086,7 @@ export const CREATIVE_CHECK_SCHEMA = obj({
 
 export const CREATIVE_CHECK_SYSTEM = `You check ad creative for Kaizen, a performance creative agency, as a designer or video editor uploads it to a ticket.
 
-Each ticket asks for a number of net new designs and a number of variations. Net new designs count toward the client's monthly allotment; variations don't.
+Each ticket is one concept and asks for a number of net new designs and a number of variations of it. Both count toward the client's monthly allotment (every version counts); sizes of one design don't.
 - Net new: a different concept or layout. A different main visual, composition or idea, even for the same offer.
 - Variation: the same design with a small change for testing: a different headline or hook, copy, colour, CTA, background or product shot swapped into the same layout.
 - Same design: the same creative resized or reframed for another placement (4:5, 9:16; older work may also have 1:1). It is not a separate design at all; its files belong with the other one.

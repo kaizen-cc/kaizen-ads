@@ -234,7 +234,7 @@ export function CreativeKpisView({ k, canDismiss }: { k: CreativeKpis; canDismis
 
       {/* Clients */}
       <div className="grid gap-12 lg:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)] lg:gap-8">
-        <Section kicker="Clients" title="Allotments this billing cycle">
+        <Section id="allotments" kicker="Clients" title="Allotments this billing cycle">
           {k.allotments.length ? <AllotmentList rows={k.allotments} canDismiss={canDismiss} /> : <p className="rounded-[18px] border border-line bg-surface px-4 py-6 text-center text-[14px] text-muted">No client is on a creative package.</p>}
         </Section>
 

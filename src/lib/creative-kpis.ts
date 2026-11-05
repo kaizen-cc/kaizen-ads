@@ -63,7 +63,10 @@ export type ClientAllotment = {
   status: "ahead" | "on_track" | "behind" | "at_risk" | "missed";
   /** An exec or lead set this cycle aside (a delay, billing dates out of step) */
   dismissed: { reason: string | null; by: string | null; at: string } | null;
+  /** Asana tasks this cycle that bundle several distinct concepts (one concept per brief: each should have been that many briefs) */
+  bundled: BundledTask[];
 };
+export type BundledTask = { name: string; url: string | null; concepts: number; note: string | null };
 export type Winner = { key: string; clientId: string; client: string; slug: string; name: string; image: string | null; text: string | null; headline: string | null; cta: string | null; result: string | null; costPerResult: number | null; target: number | null; roas: number | null; spend: number; results: number; days: number };
 export type Action = { key: string; tone: "bad" | "warn"; title: string; detail: string; href: string };
 export type CreativeKpis = {
@@ -476,6 +479,24 @@ export async function loadCreativeKpis(db: SupabaseClient, period: Period): Prom
   };
 
   // ─── Allotments, per creative-package client, this billing cycle ───
+  // One concept per brief: Asana tasks counted this cycle (or waiting) that bundle several concepts, per client
+  const oldestCycle = usageRows.map((u) => u.period_start).filter((x): x is string => Boolean(x)).sort()[0] ?? since.slice(0, 10);
+  const { data: bundledRows } = await db
+    .from("asana_tasks")
+    .select("client_id, name, url, concepts, units_note, counted_at, open")
+    .gt("concepts", 1)
+    .is("request_id", null)
+    .or(`counted_at.gte.${oldestCycle},and(open.eq.true,counted_at.is.null)`)
+    .limit(500);
+  const startOf = new Map(usageRows.map((u) => [u.client_id, u.period_start]));
+  const bundledOf = new Map<string, BundledTask[]>();
+  for (const t of bundledRows ?? []) {
+    const start = startOf.get(t.client_id as string);
+    if (t.counted_at && start && (t.counted_at as string).slice(0, 10) < start) continue;
+    const list = bundledOf.get(t.client_id as string) ?? [];
+    list.push({ name: t.name as string, url: (t.url as string | null) ?? null, concepts: t.concepts as number, note: (t.units_note as string | null) ?? null });
+    bundledOf.set(t.client_id as string, list);
+  }
   const dismissedOf = new Map((dismissals ?? []).map((d) => [`${d.client_id}:${d.period_start}`, { reason: (d.reason as string | null) ?? null, by: (d.profiles as unknown as { full_name: string } | null)?.full_name ?? null, at: d.dismissed_at as string }]));
   const allotments: ClientAllotment[] = usageRows
     .map((u) => {
@@ -488,7 +509,7 @@ export async function loadCreativeKpis(db: SupabaseClient, period: Period): Prom
       const gap = gaps.get(u.client_id);
       const share = cap ? used / cap : null;
       const status: ClientAllotment["status"] = gap?.missed ? "missed" : gap?.atRisk ? "at_risk" : share == null ? "on_track" : share >= elapsed + 0.15 ? "ahead" : share >= elapsed - 0.2 ? "on_track" : "behind";
-      return { id: u.client_id, name: c.name as string, slug: c.slug as string, used, cap, elapsed, resets: u.period_end, periodStart: u.period_start, status, dismissed: u.period_start ? (dismissedOf.get(`${u.client_id}:${u.period_start}`) ?? null) : null };
+      return { id: u.client_id, name: c.name as string, slug: c.slug as string, used, cap, elapsed, resets: u.period_end, periodStart: u.period_start, status, dismissed: u.period_start ? (dismissedOf.get(`${u.client_id}:${u.period_start}`) ?? null) : null, bundled: bundledOf.get(u.client_id) ?? [] };
     })
     .filter((x): x is ClientAllotment => x != null);
   const ORDER = { missed: 0, at_risk: 1, behind: 2, on_track: 3, ahead: 4 };
@@ -531,6 +552,17 @@ export async function loadCreativeKpis(db: SupabaseClient, period: Period): Prom
   if (missed.length) actions.push({ key: "missed", tone: "bad", title: `${missed.length} ${missed.length === 1 ? "client" : "clients"} paid for creative last cycle and got none`, detail: missed.slice(0, 3).map((a) => a.name).join(", "), href: `/clients/${missed[0].slug}` });
   if (late.length) actions.push({ key: "late", tone: late.length >= 5 ? "bad" : "warn", title: `${late.length} ${late.length === 1 ? "ticket is" : "tickets are"} late on the Board`, detail: `Oldest: #${late[0].number} ${late[0].title} (${late[0].hoursOver}h over)`, href: `/board?t=${late[0].number}` });
   if (risk.length) actions.push({ key: "risk", tone: "warn", title: `${risk.length} ${risk.length === 1 ? "client is" : "clients are"} behind on this cycle's allotment`, detail: risk.slice(0, 3).map((a) => `${a.name} ${a.used}/${a.cap ?? "?"}`).join(" · "), href: `/board?view=kpis&allot=behind` });
+  const bundling = allotments.filter((a) => a.bundled.length);
+  if (bundling.length) {
+    const tasks = bundling.reduce((n, a) => n + a.bundled.length, 0);
+    actions.push({
+      key: "bundled",
+      tone: "warn",
+      title: `${tasks} Asana ${tasks === 1 ? "task bundles" : "tasks bundle"} several concepts: one concept per brief`,
+      detail: bundling.slice(0, 3).map((a) => `${a.name}: ${a.bundled[0].concepts} distinct concepts in one task, should be ${a.bundled[0].concepts} briefs`).join(" · "),
+      href: "/board?view=kpis&allot=all#allotments",
+    });
+  }
   const overloaded = makers.filter((m) => m.act && /open pieces|waiting on them/.test(m.act));
   for (const m of overloaded.slice(0, 2)) actions.push({ key: `load-${m.profileId}`, tone: "warn", title: `${m.name}: ${m.act}`, detail: `${m.plate.length} on their plate, ${m.late} late`, href: m.profileId ? `/board?view=kpis&person=${m.profileId}` : "/board" });
   if (now?.revisionRate != null && prev?.revisionRate != null && now.revisionRate - prev.revisionRate >= 10)

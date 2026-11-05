@@ -11,6 +11,7 @@ import type { OpenSuggestion, SuggestionDraft, SuggestionsState } from "@/lib/su
 import { approveSuggestion, chatSuggestion, declineSuggestion, refreshSuggestions, saveSuggestion } from "../suggestion-actions";
 import { SectionTitle } from "./shared";
 import { AsanaSend } from "@/components/asana-send";
+import { DEFAULT_CARDS, draws } from "@/lib/allotment";
 import { sendSuggestionToAsana, suggestionAsanaPreview } from "@/app/(team)/requests/new/actions";
 
 const KIND_TONE: Record<SuggestionKind, string> = {
@@ -35,10 +36,10 @@ const FORMAT_ONE = { image: "image", video: "video", carousel: "carousel" } as c
 // The order they're read in: accounts off target, then what clients asked for that nobody has started, then behind on
 // creative, then the rest, and ideas from the market last
 const RANK: Record<SuggestionKind, number> = { kpi: 0, offer: 1, call: 1, unhappy: 1, pacing: 2, fatigue: 3, refresh: 3, flop: 3, onboarding: 4, winner: 4, lab: 4, moment: 4, pattern: 4, market: 5 };
-/** "1 new image · 5 variations": net new and variations, not one total that hides which is which */
+/** "1 new image · 5 variations" (and a carousel's slides): net new and variations, not one total that hides which is which */
 const countsOf = (formats: SuggestionDraft["formats"]) =>
   formats
-    .map((f) => [f.new ? `${f.new} new ${FORMAT_ONE[f.format]}${f.new === 1 ? "" : "s"}` : "", f.variations ? `${f.variations} variation${f.variations === 1 ? "" : "s"}${f.new ? "" : ` of ${FORMAT_ONE[f.format]}s`}` : ""].filter(Boolean).join(" · "))
+    .map((f) => [f.new ? `${f.new} new ${FORMAT_ONE[f.format]}${f.new === 1 ? "" : "s"}` : "", f.variations ? `${f.variations} variation${f.variations === 1 ? "" : "s"}${f.new ? "" : ` of ${FORMAT_ONE[f.format]}s`}` : "", f.format === "carousel" ? `${f.cards ?? DEFAULT_CARDS} slides each` : ""].filter(Boolean).join(" · "))
     .filter(Boolean)
     .join(" · ");
 // 4:5 and 9:16 only: Kaizen no longer designs 1:1
@@ -117,7 +118,7 @@ export function SuggestedBriefs({ state, bare = false }: { state: SuggestionsSta
               <span className="flex items-center justify-between gap-2 pt-1 text-xs text-faint">
                 <span>
                   {countsOf(s.draft.formats)}
-                  {s.draft.concepts.length > 1 ? ` · ${s.draft.concepts.length} concepts` : ""}
+                  {s.draft.concepts.length > 1 ? ` · ${s.draft.concepts.length} concepts, one brief each` : ""}
                 </span>
                 <span className="text-fg transition-transform group-hover:translate-x-0.5">Review →</span>
               </span>
@@ -203,11 +204,12 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
       router.refresh();
     });
 
-  const setCount = (format: SuggestionDraft["formats"][number]["format"], key: "new" | "variations", n: number) => {
+  const setCount = (format: SuggestionDraft["formats"][number]["format"], key: "new" | "variations" | "cards", n: number) => {
     const has = draft.formats.some((f) => f.format === format);
+    const clamp = (x: number) => (key === "cards" ? Math.max(2, Math.min(10, x)) : Math.max(0, Math.min(key === "new" ? 10 : 5, x)));
     const formats = has
-      ? draft.formats.map((f) => (f.format === format ? { ...f, [key]: Math.max(0, Math.min(key === "new" ? 10 : 5, n)) } : f))
-      : [...draft.formats, { format, new: key === "new" ? Math.max(0, n) : 0, variations: key === "variations" ? Math.max(0, n) : 0 }];
+      ? draft.formats.map((f) => (f.format === format ? { ...f, [key]: clamp(n) } : f))
+      : [...draft.formats, { format, new: key === "new" ? Math.max(0, n) : 0, variations: key === "variations" ? Math.max(0, n) : 0, ...(format === "carousel" ? { cards: key === "cards" ? clamp(n) : DEFAULT_CARDS } : {}) }];
     const next = { ...draft, formats };
     setDraft(next);
     save(next);
@@ -292,7 +294,7 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
 
               {draft.concepts.length > 0 && (
                 <div className="grid gap-2">
-                  <p className="text-xs text-faint">Concepts</p>
+                  <p className="text-xs text-faint">{draft.concepts.length > 1 ? `${draft.concepts.length} concepts: each becomes its own brief when approved` : "Concept"}</p>
                   <div className="grid gap-2 sm:grid-cols-2">
                     {draft.concepts.map((c, i) => (
                       <div key={i} className="grid content-start gap-1.5 rounded-[12px] border border-line bg-surface p-3">
@@ -313,12 +315,13 @@ export function SuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: ()
                 <div className="grid gap-1.5">
                   <p className="text-xs text-faint">Formats</p>
                   {(["image", "carousel", "video"] as const).map((f) => {
-                    const row = draft.formats.find((x) => x.format === f) ?? { new: 0, variations: 0 };
+                    const row = draft.formats.find((x) => x.format === f) ?? { new: 0, variations: 0, cards: undefined };
                     return (
                       <div key={f} className={`flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm md:flex-nowrap md:gap-3 ${row.new + row.variations ? "" : "opacity-50"}`}>
                         <span className="w-full md:w-20">{FORMAT_LABEL[f]}</span>
                         <Counter value={row.new} onChange={(n) => setCount(f, "new", n)} label="new" />
                         <Counter value={row.variations} onChange={(n) => setCount(f, "variations", n)} label="variations" />
+                        {f === "carousel" && <Counter value={row.cards ?? DEFAULT_CARDS} onChange={(n) => setCount(f, "cards", n)} label="slides" />}
                       </div>
                     );
                   })}
@@ -570,12 +573,9 @@ function Counter({ value, onChange, label }: { value: number; onChange: (n: numb
   );
 }
 
-/** What's left of the client's monthly creative and what this brief takes from it. Net new only; images and carousels share a pool. */
+/** What's left of the client's monthly creative and what this brief takes from it: every version, a carousel once per slide; images and carousels share a pool. */
 function AllotmentBar({ allotment: a, formats }: { allotment: OpenSuggestion["allotment"]; formats: SuggestionDraft["formats"] }) {
-  const take = {
-    images: formats.filter((f) => f.format !== "video").reduce((n, f) => n + f.new, 0),
-    videos: formats.filter((f) => f.format === "video").reduce((n, f) => n + f.new, 0),
-  };
+  const take = draws(Object.fromEntries(formats.map((f) => [f.format, f])));
   if (!a || (a.images === null && a.videos === null))
     return <p className="rounded-[12px] border border-dashed border-line px-4 py-3 text-xs text-faint">No monthly allotment set for this client, so there&apos;s nothing to check this against.</p>;
   const pools = [
@@ -587,7 +587,7 @@ function AllotmentBar({ allotment: a, formats }: { allotment: OpenSuggestion["al
     <div className={`grid gap-3 rounded-[14px] border p-4 ${over ? "border-bad/40 bg-bad-soft/40" : "border-line bg-surface"}`}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <p className="text-xs uppercase tracking-[0.14em] text-faint">This month&apos;s allotment</p>
-        <p className={`text-xs ${over ? "text-bad" : "text-muted"}`}>{over ? "This asks for more than is left. Trim it, use variations, or upsell." : "Variations don't count against it."}</p>
+        <p className={`text-xs ${over ? "text-bad" : "text-muted"}`}>{over ? "This asks for more than is left. Trim the versions or slides, or upsell." : "Every version counts, a carousel once per slide. Sizes are free."}</p>
       </div>
       {pools.map((p) => {
         const left = Math.max(0, p.cap - p.used);

@@ -55,13 +55,47 @@ export function untilLabel(day: string) {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", ...(sameYear ? {} : { year: "numeric" }) });
 }
 
-/** Only net new designs draw on the allotment. Images and carousels share the image pool. */
-export function draws(formats: Partial<Record<Format, { new: number }>>) {
+// THE ALLOTMENT RULE (owner's policy, Nov 2026). A brief is ONE concept; several distinct concepts are several briefs.
+// Every version of that concept counts (the net new design and each of its variations), a carousel once per slide.
+// Sizes of one version (4:5 and 9:16) are free, and so are copy-only edits and print or organic-only work.
+// Images and carousels share the image pool; videos have their own. The database counts the same way
+// (requests.allotment_units, read by client_allotment_usage): keep the two in step.
+
+/** A carousel's slides when nobody set them (the request form's default). */
+export const DEFAULT_CARDS = 5;
+const whole = (n: number | null | undefined) => Math.max(0, Math.floor(Number(n) || 0));
+/** A carousel's slides, as the database allows them (2 to 10). */
+export const slidesOf = (cards: number | null | undefined) => (cards == null ? DEFAULT_CARDS : Math.min(10, Math.max(2, whole(cards))));
+
+export type FormatCounts = { new: number; variations?: number; cards?: number | null };
+
+/** What one format of a request takes from the allotment: every version, a carousel once per slide. */
+export function unitsFor(format: Format, c: FormatCounts | null | undefined) {
+  if (!c) return 0;
+  const versions = whole(c.new) + whole(c.variations);
+  return format === "carousel" ? versions * slidesOf(c.cards) : versions;
+}
+
+/** What a request takes from each pool: every version counts, a carousel once per slide; sizes are free. */
+export function draws(formats: Partial<Record<Format, FormatCounts>>) {
   return {
-    images: (formats.image?.new ?? 0) + (formats.carousel?.new ?? 0),
-    videos: formats.video?.new ?? 0,
+    images: unitsFor("image", formats.image) + unitsFor("carousel", formats.carousel),
+    videos: unitsFor("video", formats.video),
   };
 }
+
+/** "1 concept, 3 versions" or "1 concept, carousel, 2 versions of 6 slides": how a brief says what it asks for. */
+export function conceptLine(format: Format, c: FormatCounts) {
+  const versions = whole(c.new) + whole(c.variations);
+  const v = `${versions} version${versions === 1 ? "" : "s"}`;
+  if (format !== "carousel") return `1 concept, ${v}`;
+  const slides = slidesOf(c.cards);
+  return versions === 1 ? `1 concept, carousel, ${slides} slides` : `1 concept, carousel, ${v} of ${slides} slides`;
+}
+
+/** The rule in one paragraph, for every AI that writes or checks a brief. */
+export const ALLOTMENT_RULE =
+  "One concept per brief: a brief is one idea (one angle, one concept); several distinct concepts are several briefs. Every version of that concept counts toward the monthly allotment (the net new design and each variation of it), and a carousel counts once per slide. Sizes (4:5 and 9:16 of the same version) don't count, and neither do copy-only edits or print and organic-only work. Images and carousels share the image allotment; videos have their own.";
 
 export const left = (cap: number | null, used: number) => (cap === null ? null : cap - used);
 
@@ -73,7 +107,7 @@ export function describeAllotment(a: Allotment | null, request?: { images: numbe
     cap === null
       ? `${label}: not set`
       : `${label}: ${cap} per month${cycle}, ${used} used, ${cap - used} left${req !== undefined ? `; this request takes ${req}, leaving ${cap - used - req}` : ""}`;
-  const lines = [line("Images and carousels", a.images, a.imagesUsed, request?.images), line("Videos", a.videos, a.videosUsed, request?.videos)];
+  const lines = [line("Images and carousels", a.images, a.imagesUsed, request?.images), line("Videos", a.videos, a.videosUsed, request?.videos), `How it counts: ${ALLOTMENT_RULE}`];
   if (a.waiting) lines.push(`Also briefed in Asana and not started yet (they'll count once production starts): ${a.waiting.images} images, ${a.waiting.videos} videos. Treat them as spoken for.`);
   return lines.join("\n");
 }

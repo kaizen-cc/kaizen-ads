@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { OnboardingSheet } from "@/lib/account-sheet";
 import { AGENCY_SYSTEM, askJson, clientContext, contextBlock, getAgent } from "@/lib/ai";
 import { describeFatigue } from "@/lib/fatigue";
-import { MAX_VARIATIONS, toAllotment, type Allotment, type UsageRow } from "@/lib/allotment";
+import { ALLOTMENT_RULE, MAX_VARIATIONS, slidesOf, toAllotment, type Allotment, type UsageRow } from "@/lib/allotment";
 
 // The strategist: watches every account for what needs new creative and suggests a full brief, with concepts, to execs
 // and leads on Home. A person approves it (tickets are made), edits it, declines it with a reason, or talks it through.
@@ -14,8 +14,8 @@ import { LIVE, isLive } from "@/lib/live";
 import { assetsBlock, loadAssets } from "@/lib/client-assets";
 export { KIND_LABEL, type SuggestionKind } from "@/lib/suggestion-kinds";
 
-/** format/new/variations: what this one concept makes, so each concept can go to production as its own ticket */
-export type Concept = { name: string; hook: string; visual: string; copy: string; format?: "image" | "video" | "carousel"; new?: number; variations?: number };
+/** format/new/variations (and a carousel's slides): what this one concept makes. One concept per brief: a request with several is split into one brief each */
+export type Concept = { name: string; hook: string; visual: string; copy: string; format?: "image" | "video" | "carousel"; new?: number; variations?: number; cards?: number };
 export type SuggestionDraft = {
   title: string;
   angle: string;
@@ -23,7 +23,8 @@ export type SuggestionDraft = {
   brief: string;
   hooks: string[];
   concepts: Concept[];
-  formats: { format: "image" | "video" | "carousel"; new: number; variations: number }[];
+  /** cards: a carousel's slides (each counts toward the allotment) */
+  formats: { format: "image" | "video" | "carousel"; new: number; variations: number; cards?: number }[];
   sizes: ("1x1" | "4x5" | "9x16")[];
   landing: string;
   refs?: string[]; // links the request builds on (a Motion item, a market ad), for the creative team
@@ -49,7 +50,7 @@ export async function gatherSignals(admin: SupabaseClient): Promise<Map<string, 
   const since30 = new Date(Date.now() - 30 * 86_400_000).toISOString();
   const [{ data: allUsage }, { data: open }, { data: kpis }, { data: snaps }, { data: items }, { data: rounds }, { data: recentReqs }, { data: watched }, { data: live }] = await Promise.all([
     admin.from("client_allotment_usage").select("client_id, images_per_month, videos_per_month, images_used, videos_used, period_start, period_end"),
-    admin.from("board_requests").select("client_id, stage, new_count").neq("stage", "launched"),
+    admin.from("requests").select("client_id, stage, allotment_units").neq("stage", "launched").is("deleted_at", null),
     admin.from("kpi_snapshots").select("client_id, status, trend, deviation, kpi_targets(label)"),
     admin.from("meta_snapshots").select("client_id, ads, weekly, fetched_at").gte("fetched_at", since7).order("fetched_at", { ascending: false }).limit(1000),
     admin.from("context_items").select("client_id, source, occurred_at, author, title, body").gte("occurred_at", since7).neq("source", "drive").order("occurred_at", { ascending: false }).limit(3000),
@@ -70,7 +71,7 @@ export async function gatherSignals(admin: SupabaseClient): Promise<Map<string, 
   const now = new Date();
   const elapsed = now.getDate() / new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const inWorks = new Map<string, number>();
-  for (const r of open ?? []) inWorks.set(r.client_id, (inWorks.get(r.client_id) ?? 0) + (r.new_count ?? 0));
+  for (const r of open ?? []) inWorks.set(r.client_id, (inWorks.get(r.client_id) ?? 0) + (r.allotment_units ?? 0));
   for (const u of usage ?? []) {
     const allot = (u.images_per_month ?? 0) + (u.videos_per_month ?? 0);
     if (!allot) continue;
@@ -81,7 +82,7 @@ export async function gatherSignals(admin: SupabaseClient): Promise<Map<string, 
         kind: "pacing",
         weight: 2 + (elapsed - covered) * 4,
         line: `${used} of ${allot} creatives used with ${Math.round(elapsed * 100)}% of the month gone`,
-        facts: [`Images: ${u.images_used}/${u.images_per_month ?? 0}, videos: ${u.videos_used}/${u.videos_per_month ?? 0}`, `${inWorks.get(u.client_id) ?? 0} net new already in the works`],
+        facts: [`Images: ${u.images_used}/${u.images_per_month ?? 0}, videos: ${u.videos_used}/${u.videos_per_month ?? 0}`, `${inWorks.get(u.client_id) ?? 0} more already in the works (every version counts, a carousel per slide)`],
       });
   }
 
@@ -182,8 +183,8 @@ const SCHEMA = {
           type: "array",
           items: {
             type: "object",
-            properties: { name: { type: "string" }, hook: { type: "string" }, visual: { type: "string" }, copy: { type: "string" }, format: { type: "string", enum: ["image", "video", "carousel"] }, new: { type: "integer" }, variations: { type: "integer" } },
-            required: ["name", "hook", "visual", "copy", "format", "new", "variations"],
+            properties: { name: { type: "string" }, hook: { type: "string" }, visual: { type: "string" }, copy: { type: "string" }, format: { type: "string", enum: ["image", "video", "carousel"] }, new: { type: "integer" }, variations: { type: "integer" }, cards: { type: "integer" } },
+            required: ["name", "hook", "visual", "copy", "format", "new", "variations", "cards"],
             additionalProperties: false,
           },
         },
@@ -191,8 +192,8 @@ const SCHEMA = {
           type: "array",
           items: {
             type: "object",
-            properties: { format: { type: "string", enum: ["image", "video", "carousel"] }, new: { type: "integer" }, variations: { type: "integer" } },
-            required: ["format", "new", "variations"],
+            properties: { format: { type: "string", enum: ["image", "video", "carousel"] }, new: { type: "integer" }, variations: { type: "integer" }, cards: { type: "integer" } },
+            required: ["format", "new", "variations", "cards"],
             additionalProperties: false,
           },
         },
@@ -214,15 +215,15 @@ type Out = { suggest: boolean; skipReason: string; kind: SuggestionKind; signal:
 
 const SYSTEM = `${AGENCY_SYSTEM}
 
-You are the agency's strategist. You watch the accounts and, when the data says a client needs new creative, you write a full creative request an exec or lead can approve in one click: the brief, the angle, the audience, the formats and counts, and 2 to 4 concrete concepts.
+You are the agency's strategist. You watch the accounts and, when the data says a client needs new creative, you write a full creative request an exec or lead can approve in one click: the brief, the angle, the audience, the formats and counts, and its one concept.
 - Start from the signal: say plainly what the data shows and why this creative answers it. Ads tiring: fresh designs on what's working, or variations of the winners. KPI off: a different angle or offer framing. Behind on creative: enough net new to catch up. A new offer: creative for that offer. Client not happy: answer what they said. Angle not landing: a new angle, and say what to stop.
 - Patterns across clients (patterns_across_clients) are your first source of ideas when an ad is tiring or performance is off: what's proven profitable for several businesses like this one. When one fits the signal, build the brief on it (especially one this client isn't using yet), name the pattern and its evidence in why ("works for 3 of 4 restaurants"), and adapt it to this client's Bible and rules. Never repeat one marked Fails unless something here is clearly different, and say what.
 - Only facts from the context. Never invent prices, offers, dates or claims. If the offer's details aren't known, say what to confirm in the brief.
-- Formats and counts: net new must fit what's left of the allotment; variations up to ${MAX_VARIATIONS} per format.
-- Concepts: name, the hook (first line or on-image headline), the visual (what's shown, in a sentence or two), the copy direction, and what that one concept makes: its format, net new count and variations count. Each concept becomes its own ticket for the designer and the copywriter, so it must stand on its own (one angle, one idea), and the concepts' counts add up to the formats.
+- Formats and counts: ${ALLOTMENT_RULE} The total must fit what's left of the allotment. Variations up to ${MAX_VARIATIONS} per format. cards: a carousel's slides (2 to 10; say what each slide shows in the brief), 0 for images and videos.
+- One concept per request: concepts has exactly one entry, unless you're told otherwise. Its name, the hook (first line or on-image headline), the visual (what's shown, in a sentence or two), the copy direction, and what it makes: its format, net new count, variations count and a carousel's slides (cards); its counts are the formats. The versions (net new designs and variations) are versions of this one idea, each testing one thing (hooks lists what each version tests). Never put several distinct ideas in one request: a different idea is a different request.
 - The brief is what the designer reads: 5 to 10 lines, specific.
 - The team's past decisions on your suggestions are the most important thing you read. Never suggest again what they declined for a reason that still holds; lean into what they approved.
-- Balance the team's time across clients (work_in_motion). If what's already in motion for this client answers the signal, don't add more: set suggest to false. A client with well above the average open work needs a strong reason for more; a client nobody has touched in weeks deserves the attention. When designers or editors are near capacity, keep it small (variations of what works, 1 to 2 net new) and say so in why.
+- Balance the team's time across clients (work_in_motion). If what's already in motion for this client answers the signal, don't add more: set suggest to false. A client with well above the average open work needs a strong reason for more; a client nobody has touched in weeks deserves the attention. When designers or editors are near capacity, keep it small (2 to 3 versions of what works) and say so in why.
 - If the signal isn't real or something is already in the works that covers it, set suggest to false and say why in skipReason (the rest can be empty).
 - Make it from what we have. Check assets_on_drive before you pick concepts: a concept that needs product photos, lifestyle shots, people or footage only works if we have them (or it's clearly stock or graphic design). assets.have: the assets on Drive each concept uses (folder or file names). assets.need: what we'd have to get from the client for it (specific shots, e.g. "15s vertical clip of the team plating a dish", "close-up product photos on white"); empty when we have everything. When a concept depends on something we don't have, either swap it for one we can make now or keep it and list the need. End the brief with one line "Assets:" saying which Drive folders to use and what's still needed.`;
 
@@ -233,7 +234,7 @@ You are the agency's strategist. You watch the accounts and, when the data says 
  * by the AI that reviews it. The same points the review checks (src/app/(team)/requests/new/actions.ts).
  */
 export const BRIEF_STANDARD = `THE BRIEF STANDARD (the request review checks every brief against this; meet it as you write):
-- Every concept is ready to design without questions: its actual on-image line (the words on the creative, not a description of them) and, when the request has variations, the specific headlines or lines each variation tests, belonging to that concept only (never reuse another concept's line).
+- One concept per brief, ready to design without questions: its actual on-image line (the words on the creative, not a description of them) and, when the request has variations, the specific headline or line each version tests. Several distinct concepts are several briefs, never one.
 - Client memory is a hard rule. Nothing goes against an "avoid" item, and no line comes close to a claim the client asked us not to make (no implying it, no comparing our way around it). When in doubt, leave the claim out.
 - Only facts from the context: no invented prices, offers, dates, numbers or claims; anything not confirmed is marked to confirm.
 - No contradictions inside the request: the brief, concepts, formats and sizes all describe the same work.
@@ -402,32 +403,56 @@ ${signals
 </signals>`;
 }
 
-const clean = (d: SuggestionDraft): SuggestionDraft => ({
-  ...d,
-  title: d.title.slice(0, 80),
-  formats: d.formats
-    .filter((f, i, all) => all.findIndex((x) => x.format === f.format) === i)
-    .map((f) => ({ ...f, new: Math.max(0, Math.min(10, f.new)), variations: Math.max(0, Math.min(MAX_VARIATIONS, f.variations)) }))
-    .filter((f) => f.new + f.variations > 0),
-  sizes: d.sizes.length ? d.sizes : ["4x5", "9x16"],
-  hooks: d.hooks.slice(0, 6),
-  concepts: d.concepts.slice(0, 4),
-  refs: [...new Set((d.refs ?? []).filter((u) => /^https?:\/\/\S+$/i.test(u)))].slice(0, 6),
-  assets: d.assets ? { have: d.assets.have.slice(0, 8), need: d.assets.need.slice(0, 8) } : undefined,
+type Fmt3 = "image" | "video" | "carousel";
+/** A format's counts held to what the Board takes: a carousel keeps its slides (2 to 10), the others have none */
+const countsOf = (format: Fmt3, n: number | undefined, v: number | undefined, cards: number | undefined) => ({
+  format,
+  new: Math.max(0, Math.min(10, Math.floor(n ?? 0))),
+  variations: Math.max(0, Math.min(MAX_VARIATIONS, Math.floor(v ?? 0))),
+  ...(format === "carousel" ? { cards: slidesOf(cards || null) } : {}),
 });
 
-/** A request with several concepts as one request per concept, each with that concept's own format and counts. */
-export function byConcept(d: SuggestionDraft): SuggestionDraft[] {
-  const own = d.concepts.filter((c) => c.format && (c.new ?? 0) + (c.variations ?? 0) > 0);
-  if (d.concepts.length < 2 || own.length !== d.concepts.length) return [d];
-  return own.map((c) => ({
+/**
+ * A draft as it's kept. One concept per brief: unless `many` (a strategist run, which splits them, or a new client's
+ * first round, split at approval), a draft that came back with several concepts keeps the first, with its own counts.
+ */
+const clean = (d: SuggestionDraft, many = 0): SuggestionDraft => {
+  const concepts = d.concepts.slice(0, Math.max(1, many)).map((c) => (c.format ? { ...c, ...countsOf(c.format, c.new, c.variations, c.cards) } : c));
+  const single = !many && d.concepts.length > 1 && concepts[0]?.format && (concepts[0].new ?? 0) + (concepts[0].variations ?? 0) > 0;
+  const formats = single ? [countsOf(concepts[0].format!, concepts[0].new, concepts[0].variations, concepts[0].cards)] : d.formats;
+  return {
     ...d,
-    title: `${c.name}`.slice(0, 80),
-    angle: c.name,
-    hooks: [c.hook, ...d.hooks.filter((h) => h !== c.hook)].slice(0, 3),
-    concepts: [c],
-    formats: [{ format: c.format!, new: Math.max(0, Math.min(10, c.new ?? 0)), variations: Math.max(0, Math.min(MAX_VARIATIONS, c.variations ?? 0)) }],
-  }));
+    title: d.title.slice(0, 80),
+    formats: formats
+      .filter((f, i, all) => all.findIndex((x) => x.format === f.format) === i)
+      .map((f) => countsOf(f.format, f.new, f.variations, f.cards))
+      .filter((f) => f.new + f.variations > 0),
+    sizes: d.sizes.length ? d.sizes : ["4x5", "9x16"],
+    hooks: d.hooks.slice(0, 6),
+    concepts,
+    refs: [...new Set((d.refs ?? []).filter((u) => /^https?:\/\/\S+$/i.test(u)))].slice(0, 6),
+    assets: d.assets ? { have: d.assets.have.slice(0, 8), need: d.assets.need.slice(0, 8) } : undefined,
+  };
+};
+
+/**
+ * One concept per brief: a request with several concepts as one request per concept, each with that concept's own
+ * format and counts (or, when a concept didn't say, one version of the request's first format).
+ */
+export function byConcept(d: SuggestionDraft): SuggestionDraft[] {
+  if (d.concepts.length < 2) return [d];
+  const fallback = d.formats[0]?.format ?? "image";
+  return d.concepts.map((c) => {
+    const own = c.format && (c.new ?? 0) + (c.variations ?? 0) > 0;
+    return {
+      ...d,
+      title: `${c.name}`.slice(0, 80),
+      angle: c.name,
+      hooks: [c.hook].filter(Boolean),
+      concepts: [c],
+      formats: [own ? countsOf(c.format!, c.new, c.variations, c.cards) : countsOf(fallback, 1, 0, d.formats[0]?.cards)],
+    };
+  });
 }
 
 /** One suggestion for one client from its signals. Returns null when the strategist decides it isn't needed. */
@@ -441,12 +466,12 @@ async function suggestFor(admin: SupabaseClient, clientId: string, signals: Sign
     schema: SCHEMA,
     prompt: `${prompt}
 
-Decide whether this client needs new creative now, and if so write the request. kind: the main signal it answers. signal: one line on what the data shows. evidence: 2 to 4 short facts from the signals and context. why: 2 or 3 sentences making the case to an exec. reply: "".`,
+Decide whether this client needs new creative now, and if so write the request. One concept per request; if the signal truly needs more than one distinct idea, give up to 3 in concepts, each with its own format, counts and slides: each becomes its own brief. kind: the main signal it answers. signal: one line on what the data shows. evidence: 2 to 4 short facts from the signals and context. why: 2 or 3 sentences making the case to an exec. reply: "".`,
   });
   if (!out.suggest || !out.draft.formats.length) return null;
   // One concept, one ticket: a request that bundles several angles is split, so each is briefed, written and made on
   // its own (the copywriter gets one idea per ticket)
-  const drafts = byConcept(clean(out.draft));
+  const drafts = byConcept(clean(out.draft, 3));
   const { error } = await admin.from("creative_suggestions").insert(drafts.map((draft) => ({ client_id: clientId, kind: out.kind, signal: out.signal, evidence: out.evidence.slice(0, 5), why: out.why, draft, original: draft })));
   return error ? null : true;
 }
@@ -627,7 +652,7 @@ Promotion to ask the client for: ${m.offer_idea ?? "(work it out)"}
 Why it fits: ${m.why ?? ""}
 </marketing_moment>
 
-Write the request for this moment, made in time for it: the brief, angle, audience, formats and counts within what's left of the allotment, sizes, 2 to 4 concepts and hooks, and every asset it needs defined in draft.assets (what we have, what to ask the client to shoot). In the brief itself, after the creative, add three short plain lines: "Email:" (the email or SMS for the email team around the moment, if they do email with us), "Ask the client:" (the promotion to confirm with them, specific, by when), "Landing page:" (where it should send people, and whether a page for the moment is needed). Fit the business model and what won for similar businesses at this moment. suggest: true. kind: "offer". signal: "Marketing moment: <name>". evidence: 2 to 4 lines on why this moment fits and what won before. why: two sentences. reply: "".`,
+Write the request for this moment, made in time for it: the brief, angle, audience, formats and counts within what's left of the allotment, sizes, its one concept and the hooks its versions test, and every asset it needs defined in draft.assets (what we have, what to ask the client to shoot). In the brief itself, after the creative, add three short plain lines: "Email:" (the email or SMS for the email team around the moment, if they do email with us), "Ask the client:" (the promotion to confirm with them, specific, by when), "Landing page:" (where it should send people, and whether a page for the moment is needed). Fit the business model and what won for similar businesses at this moment. suggest: true. kind: "offer". signal: "Marketing moment: <name>". evidence: 2 to 4 lines on why this moment fits and what won before. why: two sentences. reply: "".`,
   });
   const draft = clean(out.draft);
   const { data, error } = await admin
@@ -659,7 +684,7 @@ ${p.detail}
 ${p.evidence.items.map((e) => `- ${e}`).join("\n")}
 </pattern_across_clients>
 
-Write this client's version of the pattern: what's proven for businesses like it, made theirs (their offer, their voice, their customers, their Brand Bible), never a copy and never naming another client. The brief, angle, audience, formats and counts within what's left of the allotment, sizes, 2 to 4 concepts and hooks, and every asset in draft.assets. suggest: true. kind: "winner". signal: "Works for ${p.group.toLowerCase()}: <the pattern>". evidence: 2 to 4 lines on how it was proven across clients (counts, no names) and why it fits this client. why: two sentences. reply: "".`,
+Write this client's version of the pattern: what's proven for businesses like it, made theirs (their offer, their voice, their customers, their Brand Bible), never a copy and never naming another client. The brief, angle, audience, formats and counts within what's left of the allotment, sizes, its one concept and the hooks its versions test, and every asset in draft.assets. suggest: true. kind: "winner". signal: "Works for ${p.group.toLowerCase()}: <the pattern>". evidence: 2 to 4 lines on how it was proven across clients (counts, no names) and why it fits this client. why: two sentences. reply: "".`,
   });
   const draft = clean(out.draft);
   const { data, error } = await admin
@@ -705,7 +730,7 @@ Headline: ${w.headline ?? "(none)"}
 Primary text: ${w.text ?? "(none)"}
 </winning_ad>
 
-Someone on the team wants a request for this client built on this winning ad. Work out why the ad works (the angle, the hook, the format, the structure, the proof) and translate that into a request that fits this client's brand, offer, audience and allotment. Don't copy it word for word and never name the other business. Write the full request: brief, angle, audience, formats and counts within what's left of the allotment, sizes, 2 to 4 concepts and hooks. suggest: true. kind: "kpi". signal: "Built on a winning ad". evidence: 2 to 4 lines on what makes the ad work and why it fits this client. why: two or three sentences. reply: "".${onlyFormat(format)}`,
+Someone on the team wants a request for this client built on this winning ad. Work out why the ad works (the angle, the hook, the format, the structure, the proof) and translate that into a request that fits this client's brand, offer, audience and allotment. Don't copy it word for word and never name the other business. Write the full request: brief, angle, audience, formats and counts within what's left of the allotment, sizes, its one concept and the hooks its versions test. suggest: true. kind: "kpi". signal: "Built on a winning ad". evidence: 2 to 4 lines on what makes the ad work and why it fits this client. why: two or three sentences. reply: "".${onlyFormat(format)}`,
   });
   const draft = keepFormat(clean(out.draft), format);
   const { data, error } = await admin
@@ -752,7 +777,7 @@ What the creative does differently: ${test.change}
 What counts as a win: ${test.success}
 </lab_test>
 
-The team chose this client for this test. Write the request that runs the test for this client: keep the test's change exactly, fit it to this client's brand, offer and audience, and keep it small and clean enough to read the result (usually 2 to 3 net new, or variations of a current winner). suggest: true. kind: "flop" if it replaces an angle, otherwise "kpi" (it's replaced by the lab kind). signal: "Ads Lab test: <the test's title>". evidence: what about this client makes it a fit. why: two sentences. reply: "".`,
+The team chose this client for this test. Write the request that runs the test for this client: keep the test's change exactly, fit it to this client's brand, offer and audience, and keep it small and clean enough to read the result (usually 2 to 3 versions of one concept: every version counts toward the allotment). suggest: true. kind: "flop" if it replaces an angle, otherwise "kpi" (it's replaced by the lab kind). signal: "Ads Lab test: <the test's title>". evidence: what about this client makes it a fit. why: two sentences. reply: "".`,
   });
   const draft = clean(out.draft);
   if (!draft.formats.length) return false;
@@ -796,7 +821,7 @@ Primary text: ${ad?.text ?? "(not synced)"}
 What the watcher saw: ${watch.replace(/^- /, "")}
 </tiring_ad>
 
-This ad needs a refresh. It worked before (it ran long enough to be judged against itself), so keep what made it work: the angle, the offer, the proof. Change what people have grown tired of: the visual, the hook, the first seconds of a video, the format. Usually variations and 1 to 2 net new designs on the same angle, within what's left of the allotment. Say in the brief what to keep and what to change, and why, from the numbers. For what to change, look first at the patterns across clients: a hook, format or angle proven for businesses like this one (one this client isn't using yet especially) is the strongest replacement; name it and its evidence in why. suggest: true. kind: "fatigue". signal: one line on what the watcher saw. evidence: 2 to 4 facts. why: two sentences. reply: "".`,
+This ad needs a refresh. It worked before (it ran long enough to be judged against itself), so keep what made it work: the angle, the offer, the proof. Change what people have grown tired of: the visual, the hook, the first seconds of a video, the format. Usually 2 to 4 versions of one concept on the same angle (every version counts), within what's left of the allotment. Say in the brief what to keep and what to change, and why, from the numbers. For what to change, look first at the patterns across clients: a hook, format or angle proven for businesses like this one (one this client isn't using yet especially) is the strongest replacement; name it and its evidence in why. suggest: true. kind: "fatigue". signal: one line on what the watcher saw. evidence: 2 to 4 facts. why: two sentences. reply: "".`,
   });
   const draft = clean(out.draft);
   const { data, error } = await admin
@@ -867,13 +892,13 @@ This is ${c.name}'s ${c.reonboarded_at ? "first round since they came back" : "f
 - Start from the client: their offer, audience, voice and what they told us to avoid (marketing_intake and client memory are hard rules).
 - Start from the vertical playbook when there is one: its avatars and proven angles are the attack for this market.
 - Lean on what's winning for similar clients: the angles, hooks and structures that are beating their accounts, translated to this client (never copied, never naming the other business). Say in why which winners shaped it.
-- Test distinct angles so the first month teaches us something: 3 to 4 concepts, each a different angle or hook, not variations of one idea.
-- Use the month's allotment well (a new client's first month should show range), with variations only where a hook test makes sense.
+- Test distinct angles so the first month teaches us something: 3 to 4 concepts in concepts, each a different angle or hook, not variations of one idea. Each concept becomes its own brief when the round is approved, so give each its own format, net new and variations counts and a carousel's slides; formats are their totals.
+- Use the month's allotment well (a new client's first month should show range); every version counts, so add variations only where a hook test makes sense.
 - In the brief, list anything the team must confirm with the client before production (from the intake's open questions).
 suggest: true. kind: "kpi". signal: one line on what this first round sets out to learn. evidence: 2 to 4 lines from the intake and the winners. why: two or three sentences. reply: "".`,
   });
   // The example ads they liked go to the creative team with the brief, as references
-  const draft = clean({ ...out.draft, refs: [...(out.draft.refs ?? []), ...liked].slice(0, 6) });
+  const draft = clean({ ...out.draft, refs: [...(out.draft.refs ?? []), ...liked].slice(0, 6) }, 4);
   // One open first round per client: a newer one replaces it
   await admin.from("creative_suggestions").update({ status: "expired", updated_at: new Date().toISOString() }).eq("client_id", clientId).eq("kind", "onboarding").eq("status", "open");
   const { data, error } = await admin
@@ -1071,7 +1096,7 @@ CTA: ${a.cta ?? "(none)"}
 Link: ${link ?? "(none)"}
 </market_ad>
 
-Someone on the team wants a request for this client built on this live ad from the market. There are no performance numbers for it: how long it has run is the signal. Work out why it works (the angle, the hook, the format, the structure, the offer mechanics) and translate that into a request that fits this client's brand, offer, audience and allotment. Never copy it, never name the other brand in the brief, and never borrow their offer or claims. Write the full request: brief, angle, audience, formats and counts within what's left of the allotment, sizes, 2 to 4 concepts and hooks. draft.refs: ${link ? `"${link}" first, then any other market links you used` : "any market links you used"}. suggest: true. kind: "offer". signal: "Built on a live ad in the market". evidence: 2 to 4 lines on what makes the ad work and why it fits this client. why: two or three sentences. reply: "".${onlyFormat(format)}`,
+Someone on the team wants a request for this client built on this live ad from the market. There are no performance numbers for it: how long it has run is the signal. Work out why it works (the angle, the hook, the format, the structure, the offer mechanics) and translate that into a request that fits this client's brand, offer, audience and allotment. Never copy it, never name the other brand in the brief, and never borrow their offer or claims. Write the full request: brief, angle, audience, formats and counts within what's left of the allotment, sizes, its one concept and the hooks its versions test. draft.refs: ${link ? `"${link}" first, then any other market links you used` : "any market links you used"}. suggest: true. kind: "offer". signal: "Built on a live ad in the market". evidence: 2 to 4 lines on what makes the ad work and why it fits this client. why: two or three sentences. reply: "".${onlyFormat(format)}`,
   });
   const draft = keepFormat(clean({ ...out.draft, refs: [...(link ? [link] : []), ...(out.draft.refs ?? [])] }), format);
   const { data, error } = await admin

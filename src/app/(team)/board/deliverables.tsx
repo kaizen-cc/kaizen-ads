@@ -336,7 +336,7 @@ export function Deliverables({ ticket, demoDesigns, onState, canDisagree = false
             </span>
           )}
           {tooMany && making && (
-            <button type="button" onClick={() => void correctCounts(Math.max(net, asked.new), Math.max(vars, asked.variations))} className="rounded-full border border-line px-2.5 py-0.5 text-muted hover:text-fg max-md:min-h-10 max-md:px-3.5" title="More designs are here than the ticket asked for: make the ticket match (net new counts toward the allotment)">
+            <button type="button" onClick={() => void correctCounts(Math.max(net, asked.new), Math.max(vars, asked.variations))} className="rounded-full border border-line px-2.5 py-0.5 text-muted hover:text-fg max-md:min-h-10 max-md:px-3.5" title="More designs are here than the ticket asked for: make the ticket match (every version counts toward the allotment)">
               Make it {Math.max(net, asked.new)} new{Math.max(vars, asked.variations) ? ` + ${Math.max(vars, asked.variations)} var.` : ""}
             </button>
           )}
