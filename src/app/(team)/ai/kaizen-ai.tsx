@@ -96,6 +96,12 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, gr
   // First step before anyone's first chat: bring their Claude history over (or say they have none). Starting an import
   // opens the chat right away; it keeps importing behind.
   const [gate, setGate] = useState(mustImport);
+  // Coming back: pick up the last conversation (from the last week), or start a new one
+  const [fresh, setFresh] = useState(false);
+  const [now] = useState(() => Date.now());
+  const lastMine = threads
+    .filter((x) => x.profile_id === me.id && !x.source && now - Date.parse(x.last_message_at) < 7 * 86_400_000)
+    .sort((x, y) => Date.parse(y.last_message_at) - Date.parse(x.last_message_at))[0];
   if (gate && claude.job) setGate(false);
   const skipImport = async () => {
     const r = await skipClaudeImport();
@@ -372,6 +378,8 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, gr
           <div className="mx-auto grid w-full max-w-[820px] gap-7 px-4 pb-6 pt-6 md:px-8">
             {gate && !thread ? (
               <ImportFirst first={me.first} onImport={() => pushParams({ import: "1" })} onSkip={() => void skipImport()} />
+            ) : !thread && !messages.length && !live && lastMine && !fresh ? (
+              <PickUp title={lastMine.title} client={lastMine.clients?.name ?? null} at={lastMine.last_message_at} now={now} onPickUp={() => pushParams({ t: lastMine.id })} onFresh={() => setFresh(true)} />
             ) : !thread && !messages.length && !live ? (
               <Empty first={me.first} on={on} groups={groups} quickIds={quickIds} templates={templates} client={client} homeAgent={homeAgent.label} onUse={applyPrompt} onImport={() => pushParams({ import: "1" })} />
             ) : null}
@@ -1358,6 +1366,32 @@ function ImportFirst({ first, onImport, onSkip }: { first: string; onImport: () 
         </button>
         <button type="button" onClick={onSkip} className="min-h-11 rounded-full px-4 text-[13px] text-muted hover:text-fg">
           I don&apos;t have Claude chats to bring
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Coming back to Kaizen AI: the last conversation to pick up, or a new one */
+function PickUp({ title, client, at, now, onPickUp, onFresh }: { title: string; client: string | null; at: string; now: number; onPickUp: () => void; onFresh: () => void }) {
+  const ago = Math.round((now - Date.parse(at)) / 60000);
+  const said = ago < 2 ? "just now" : ago < 60 ? `${ago} min ago` : ago < 60 * 24 ? `${Math.round(ago / 60)} h ago` : new Date(at).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return (
+    <div className="grid justify-items-center gap-5 pt-8 text-center md:pt-16">
+      <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-faint">Welcome back</p>
+      <div className="grid w-full max-w-[520px] gap-1 rounded-[20px] border border-line bg-surface px-5 py-4 text-left">
+        <span className="text-[11.5px] text-faint">
+          Last conversation · {said}
+          {client ? ` · ${client}` : ""}
+        </span>
+        <span className="line-clamp-2 text-[15px] font-medium text-fg [overflow-wrap:anywhere]">{title || "Untitled chat"}</span>
+      </div>
+      <div className="flex w-full max-w-[520px] flex-col gap-2 md:flex-row md:justify-center">
+        <button type="button" onClick={onPickUp} className="h-12 rounded-full bg-brand px-6 text-[14px] font-semibold text-white hover:bg-brand-hover">
+          Pick up where we left off
+        </button>
+        <button type="button" onClick={onFresh} className="h-12 rounded-full border border-line px-6 text-[14px] text-fg hover:bg-ink/[0.04]">
+          Start a new conversation
         </button>
       </div>
     </div>

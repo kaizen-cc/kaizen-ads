@@ -136,6 +136,13 @@ export function ClientChat({
   const setOpen = (v: boolean) => (!floating ? setOpenHere(v) : v ? pushParams({ chat: "1" }) : closeParams("chat"));
   const [chat, setChat] = useState<ChatTurn[]>(initial ?? []);
   const [loaded, setLoaded] = useState(Boolean(initial));
+  // Coming back to a conversation: pick up where we left off, or start a new one (asked each time the chat opens)
+  const [resumed, setResumed] = useState(false);
+  const [wasOpen, setWasOpen] = useState(open);
+  if (wasOpen !== open) {
+    setWasOpen(open);
+    if (open) setResumed(false);
+  }
   useEffect(() => {
     if (!open || loaded) return;
     let live = true;
@@ -158,6 +165,7 @@ export function ClientChat({
     return () => window.removeEventListener(CHAT_EVENT, on);
   }, [clientId]);
   const [q, setQ] = useState("");
+  if (q && !resumed) setResumed(true);
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
@@ -390,7 +398,19 @@ export function ClientChat({
               ))}
             </div>
           )}
-          {chat.map((t, i) => (
+          {loaded && chat.length > 0 && !resumed && !pending && (
+            <Resume
+              last={[...chat].reverse().find((t) => t.role === "user")?.text ?? chat[chat.length - 1].text}
+              at={chat[chat.length - 1].at}
+              onPickUp={() => setResumed(true)}
+              onFresh={async () => {
+                setResumed(true);
+                await clearClientAi(clientId);
+                setChat([]);
+              }}
+            />
+          )}
+          {(resumed || pending) && chat.map((t, i) => (
             <Bubble key={i} t={t} onUndo={t.role === "assistant" ? (n) => void undo(t.at, n) : undefined} launchLatest={!t.launch || !chat.slice(i + 1).some((x) => x.launch?.id === t.launch?.id)} />
           ))}
           {pending && (
@@ -500,5 +520,31 @@ export function ClientChat({
       </aside>
       </Layer>
     </>
+  );
+}
+
+/** Coming back to a conversation that's already going: pick it up, or start fresh */
+function Resume({ last, at, onPickUp, onFresh }: { last: string; at: string | undefined; onPickUp: () => void; onFresh: () => void }) {
+  const when = at ? new Date(at) : null;
+  const [now] = useState(() => Date.now());
+  const ago = when ? Math.round((now - when.getTime()) / 60000) : null;
+  const said = ago == null ? "" : ago < 2 ? "just now" : ago < 60 ? `${ago} min ago` : ago < 60 * 24 ? `${Math.round(ago / 60)} h ago` : when!.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return (
+    <div className="grid gap-3 rounded-[16px] border border-ink/10 bg-ink/[0.03] p-4" style={{ animation: "card-in .3s cubic-bezier(.2,.8,.2,1) both" }}>
+      <div className="grid gap-1">
+        <p className="text-[13.5px] font-medium">Welcome back</p>
+        <p className="line-clamp-2 text-[12.5px] leading-snug text-ink/60 [overflow-wrap:anywhere]">
+          Last time{said ? ` (${said})` : ""}: &ldquo;{last.replace(/\s+/g, " ").slice(0, 160)}&rdquo;
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" onClick={onPickUp} className="h-11 rounded-full bg-fg px-4 text-[13px] font-medium text-bg md:h-9">
+          Pick up where we left off
+        </button>
+        <button type="button" onClick={onFresh} className="h-11 rounded-full border border-ink/15 px-4 text-[13px] text-ink/75 hover:text-fg md:h-9">
+          Start a new conversation
+        </button>
+      </div>
+    </div>
   );
 }

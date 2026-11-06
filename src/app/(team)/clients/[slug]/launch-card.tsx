@@ -414,7 +414,9 @@ export function LaunchCard({ id, compact = false, reply = false }: { id: string;
     router.refresh();
   };
 
-  if (!v) return <div className="w-full max-w-[96%] animate-pulse rounded-[14px] border border-ink/[0.08] p-3 text-[12px] text-ink/50">Opening the launch…</div>;
+  // The conversation happens in the chat: the card only comes up once there's a preview to walk through and deploy
+  // (it keeps checking quietly in the meantime, and shows the moment the plan is being laid out)
+  if (!v || ["reading", "resolving", "asking"].includes(v.status)) return null;
 
   if (compact)
     return (

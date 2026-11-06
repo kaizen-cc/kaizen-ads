@@ -354,7 +354,9 @@ export function GoogleLaunchCard({ id, compact = false }: { id: string; compact?
     router.refresh();
   };
 
-  if (!v) return <div className="w-full max-w-[96%] animate-pulse rounded-[14px] border border-ink/[0.08] p-3 text-[12px] text-ink/50">Opening the launch…</div>;
+  // The conversation happens in the chat: the card only comes up once there's a preview to walk through and deploy
+  // (it keeps checking quietly in the meantime, and shows the moment the plan is being laid out)
+  if (!v || ["reading", "resolving", "asking"].includes(v.status)) return null;
   if (compact)
     return (
       <span className="inline-flex w-fit items-center gap-2 rounded-full border border-[#1a73e8]/30 bg-[#1a73e8]/[0.06] px-3 py-1 text-[11px] text-ink/65">
