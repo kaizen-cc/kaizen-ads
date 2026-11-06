@@ -29,6 +29,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Reads a custom package from the enrollment or upsell form", where: "Zapier · Client package", trigger: "auto", when: "When an enrollment or upsell has a custom package", labels: ["package from a form"] },
     { title: "Pulls the takeaways from a shared doc, video or link", where: "Ads Lab · Round table", trigger: "auto", when: "When someone shares a source", labels: ["lab source takeaways"] },
     { title: "Reads a file or link shared about a client", where: "Client page \u00b7 Documents \u00b7 Client desk", trigger: "auto", when: "When a file or link is shared", labels: ["client document"] },
+    { title: "Summarizes the older turns of a long chat imported from Claude, once, so the person can keep going in Kaizen AI", where: "Kaizen AI · Imported from Claude", trigger: "auto", when: "The first message in an imported thread longer than the history budget", labels: ["imported thread summary"] },
     { title: "Decides how much thought a chat message needs (quick, considered, deep)", where: "Client desk \u00b7 Agent chats", trigger: "auto", when: "With every chat message", labels: ["route a chat message"] },
     { title: "Reads team feedback about the app: a title and summary, its type and area, how bad it is, and whether it repeats something already reported", where: "Feedback bubble · Feedback", trigger: "auto", when: "When someone sends feedback", labels: ["feedback triage"] },
   ],

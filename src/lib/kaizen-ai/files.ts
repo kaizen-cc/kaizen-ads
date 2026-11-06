@@ -37,7 +37,10 @@ export async function attachmentBlocks(admin: SupabaseClient, files: Attachment[
   for (const f of files) {
     const a = { ...f };
     try {
-      if (a.kind === "image") {
+      if (a.imported) {
+        // From a Claude import: the text Claude had read from the file (no file is stored), or just its name
+        blocks.push({ type: "text", text: a.text ? `<attached_file name="${a.name.replace(/"/g, "'")}" note="attached in Claude before this thread was imported">\n${full ? a.text : a.text.slice(0, 6000)}\n</attached_file>` : `(In Claude they attached ${a.name}; only its name came with the import)` });
+      } else if (a.kind === "image") {
         if (full) {
           const buf = await download(admin, a.path);
           blocks.push({ type: "text", text: `Attached picture: ${a.name}` });

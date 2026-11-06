@@ -12,24 +12,30 @@ import { createClient } from "@/lib/supabase/server";
 
 type Ok<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 
-const THREAD_COLS = "id, title, client_id, client_confirmed, agent_key, model, pinned, shared_with, last_message_at, profile_id, clients(name, slug)";
+const THREAD_COLS = "id, title, client_id, client_confirmed, agent_key, model, pinned, shared_with, last_message_at, profile_id, source, import_id, created_at, clients(name, slug)";
 
 export async function listThreads(): Promise<Thread[]> {
   await requireStaff();
   const db = await createClient();
-  const { data } = await db.from("ai_threads").select(THREAD_COLS).is("archived_at", null).order("last_message_at", { ascending: false }).limit(300);
+  const { data } = await db.from("ai_threads").select(THREAD_COLS).is("archived_at", null).eq("source_complete", true).order("last_message_at", { ascending: false }).limit(1500);
   return (data ?? []) as unknown as Thread[];
 }
 
-export async function loadThread(id: string): Promise<{ thread: Thread; messages: ChatMessage[]; owner: string | null; urls: Record<string, string> } | null> {
+/** The most messages shown when a thread opens (the newest; a long imported chat says how many came before) */
+const SHOWN_MESSAGES = 400;
+
+export async function loadThread(id: string): Promise<{ thread: Thread; messages: ChatMessage[]; owner: string | null; urls: Record<string, string>; earlier: number; notes: { name: string; chars: number }[] } | null> {
   const me = await requireStaff();
   const db = await createClient();
-  const [{ data: t }, { data: m }] = await Promise.all([
-    db.from("ai_threads").select(THREAD_COLS).eq("id", id).maybeSingle(),
-    db.from("ai_messages").select("id, role, content, attachments, tools, cards, agent_key, model, error, stopped, created_at").eq("thread_id", id).order("created_at").limit(400),
+  const [{ data: t }, { data: m }, { count }] = await Promise.all([
+    db.from("ai_threads").select(`${THREAD_COLS}, notes`).eq("id", id).maybeSingle(),
+    db.from("ai_messages").select("id, role, content, attachments, tools, cards, agent_key, model, error, stopped, created_at").eq("thread_id", id).order("created_at", { ascending: false }).limit(SHOWN_MESSAGES),
+    db.from("ai_messages").select("id", { count: "exact", head: true }).eq("thread_id", id),
   ]);
   if (!t) return null;
-  const messages = (m ?? []) as unknown as ChatMessage[];
+  const messages = ((m ?? []) as unknown as ChatMessage[]).reverse();
+  const earlier = Math.max(0, (count ?? messages.length) - messages.length);
+  const notes = (Array.isArray((t as { notes?: unknown }).notes) ? ((t as { notes: { name?: string; text?: string }[] }).notes) : []).map((n) => ({ name: String(n?.name ?? "Document"), chars: String(n?.text ?? "").length }));
   // Pictures in the thread, shown from short-lived links
   const paths = messages.flatMap((x) => (x.attachments ?? []).flatMap((a) => (a.kind === "image" ? [a.path] : a.kind === "video" && a.frames?.[0] ? [a.frames[0].path] : [])));
   const urls: Record<string, string> = {};
@@ -42,7 +48,9 @@ export async function loadThread(id: string): Promise<{ thread: Thread; messages
     const { data: p } = await createAdminClient().from("profiles").select("full_name").eq("id", (t as unknown as Thread).profile_id).maybeSingle();
     owner = (p?.full_name as string | undefined) ?? "A teammate";
   }
-  return { thread: t as unknown as Thread, messages, owner, urls };
+  const { notes: _notes, ...thread } = t as unknown as Thread & { notes?: unknown };
+  void _notes;
+  return { thread, messages, owner, urls, earlier, notes };
 }
 
 async function mine(id: string) {
@@ -78,6 +86,9 @@ export async function updateThread(id: string, patch: { title?: string; pinned?:
 export async function shareThread(id: string, profileIds: string[]): Promise<Ok> {
   const ok = await mine(id);
   if (!ok) return { ok: false, error: "Not your thread." };
+  // Chats imported from Claude stay private to the person who imported them
+  const { data: src } = await ok.db.from("ai_threads").select("source").eq("id", id).maybeSingle();
+  if (src?.source) return { ok: false, error: "Chats imported from Claude stay private to you." };
   const ids = [...new Set(profileIds.filter((p) => /^[0-9a-f-]{36}$/.test(p) && p !== ok.me.id))].slice(0, 30);
   const { error } = await ok.db.from("ai_threads").update({ shared_with: ids, updated_at: new Date().toISOString() }).eq("id", id);
   if (error) return { ok: false, error: error.message };
@@ -130,6 +141,62 @@ export async function uploadSlots(files: { name: string; mime: string; bytes: nu
     slots.push({ path: data.path, token: data.token });
   }
   return { ok: true, slots };
+}
+
+// ─── Imported from Claude ────────────────────────────────────────────────────
+
+export type ClaudeImport = { id: string; fileName: string | null; created: number; skipped: number; threads: number; status: string; createdAt: string };
+
+/** What the person already imported (Claude conversation ids, so they're skipped) and their imports */
+export async function claudeImportState(): Promise<{ imported: string[]; imports: ClaudeImport[] }> {
+  const me = await requireStaff();
+  const db = await createClient();
+  const { data: imps } = await db.from("ai_imports").select("id, file_name, created, skipped, status, created_at").eq("profile_id", me.id).order("created_at", { ascending: false }).limit(20);
+  // Page by page (a read returns at most 1,000 rows)
+  const rows: { source_id: string; import_id: string | null }[] = [];
+  for (let from = 0; from < 50_000; from += 1000) {
+    const { data } = await db.from("ai_threads").select("source_id, import_id").eq("profile_id", me.id).eq("source", "claude").eq("source_complete", true).order("id").range(from, from + 999);
+    rows.push(...((data ?? []) as typeof rows));
+    if ((data?.length ?? 0) < 1000) break;
+  }
+  const per = new Map<string, number>();
+  for (const r of rows) if (r.import_id) per.set(r.import_id as string, (per.get(r.import_id as string) ?? 0) + 1);
+  return {
+    imported: rows.map((r) => String(r.source_id)),
+    imports: (imps ?? []).map((i) => ({ id: i.id as string, fileName: (i.file_name as string | null) ?? null, created: Number(i.created) || 0, skipped: Number(i.skipped) || 0, threads: per.get(i.id as string) ?? 0, status: String(i.status), createdAt: String(i.created_at) })),
+  };
+}
+
+export async function startClaudeImport(fileName: string, conversations: number): Promise<Ok<{ id: string }>> {
+  const me = await requireStaff();
+  const db = await createClient();
+  const { data, error } = await db.from("ai_imports").insert({ profile_id: me.id, file_name: fileName.slice(0, 200), conversations: Math.max(0, Math.round(conversations) || 0) }).select("id").single();
+  return error || !data ? { ok: false, error: "Couldn't start the import." } : { ok: true, id: data.id as string };
+}
+
+export async function finishClaudeImport(id: string): Promise<Ok> {
+  const me = await requireStaff();
+  const db = await createClient();
+  const { error } = await db.from("ai_imports").update({ status: "done", finished_at: new Date().toISOString() }).eq("id", id).eq("profile_id", me.id);
+  return error ? { ok: false, error: error.message } : { ok: true };
+}
+
+/** Delete a chat imported from Claude for good (its messages go with it) */
+export async function deleteImportedThread(id: string): Promise<Ok> {
+  const me = await requireStaff();
+  const db = await createClient();
+  const { data, error } = await db.from("ai_threads").delete().eq("id", id).eq("profile_id", me.id).not("source", "is", null).select("id");
+  if (error) return { ok: false, error: error.message };
+  return data?.length ? { ok: true } : { ok: false, error: "Only chats you imported can be deleted." };
+}
+
+/** Delete a whole import: every chat it brought in */
+export async function deleteClaudeImport(id: string): Promise<Ok<{ threads: number }>> {
+  const me = await requireStaff();
+  const db = await createClient();
+  const { data: gone } = await db.from("ai_threads").delete().eq("import_id", id).eq("profile_id", me.id).select("id");
+  const { error } = await db.from("ai_imports").delete().eq("id", id).eq("profile_id", me.id);
+  return error ? { ok: false, error: error.message } : { ok: true, threads: gone?.length ?? 0 };
 }
 
 // ─── Saved prompts ───────────────────────────────────────────────────────────

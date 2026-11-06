@@ -7,7 +7,8 @@ import { pushParams, replaceParams, closeParams, useParam } from "@/lib/url-stat
 import { QUICK_ACTIONS, type QuickAction } from "@/lib/kaizen-ai/agents";
 import { AGENT_LABEL, CHAT_AGENTS, kindOf, type AiModel, type Attachment, type AttachmentKind, type Card, type ChatAgent, type ChatEvent, type ChatMessage, type Thread, type ToolRun } from "@/lib/kaizen-ai/types";
 import type { TeamRole } from "@/lib/roles";
-import { deleteTemplate, listTemplates, listThreads, loadThread, saveTemplate, shareThread, teammates, updateThread, uploadSlots, usedTemplate, type Template } from "./actions";
+import { deleteImportedThread, deleteTemplate, listTemplates, listThreads, loadThread, saveTemplate, shareThread, teammates, updateThread, uploadSlots, usedTemplate, type Template } from "./actions";
+import { ClaudeImportSheet, useClaudeImport, type ImportJob } from "./claude-import";
 import { CardView, ChatMarkdown, CopyButton, ToolChips } from "./cards";
 
 // Kaizen AI: a chat like Claude's, for the team. Threads on the left (search, pinned, grouped by client, shared with
@@ -58,11 +59,15 @@ const P = {
   spark: "M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z",
   save: "M5 3h11l3 3v15H5zM8 3v6h8V3M8 21v-7h8v7",
   chevron: "M6 9l6 6 6-6",
+  download: "M12 3v12M7 10l5 5 5-5M5 21h14",
+  trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
 };
 
 export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, groups, homeAgent }: { me: Me; on: boolean; initialThreads: Thread[]; initialTemplates: Template[]; clients: ClientOpt[]; groups: QuickAction["group"][]; homeAgent: { key: ChatAgent; label: string } }) {
   const t = useParam("t");
   const listOpen = useParam("list") === "1";
+  const importOpen = useParam("import") === "1";
+  const [extra, setExtra] = useState<{ earlier: number; notes: { name: string; chars: number }[] }>({ earlier: 0, notes: [] });
   const [threads, setThreads] = useState(initialThreads);
   const [templates, setTemplates] = useState(initialTemplates);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -87,6 +92,17 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, gr
   const client: ClientOpt | null = thread?.client_id ? (clients.find((c) => c.id === thread.client_id) ?? (thread.clients ? { id: thread.client_id, name: thread.clients.name, slug: thread.clients.slug } : null)) : draft.client;
 
   const refreshThreads = useCallback(() => void listThreads().then(setThreads), []);
+  const claude = useClaudeImport(refreshThreads);
+  const removeImported = async (id: string) => {
+    if (!window.confirm("Delete this imported chat for good?")) return;
+    setThreads((ts) => ts.filter((x) => x.id !== id));
+    if (thread?.id === id) replaceParams({ t: null });
+    const r = await deleteImportedThread(id);
+    if (!r.ok) {
+      setNotice(r.error);
+      refreshThreads();
+    }
+  };
 
   // ─── The open thread ───
   useEffect(() => {
@@ -94,6 +110,7 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, gr
       setThread(null);
       setMessages([]);
       setOwner(null);
+      setExtra({ earlier: 0, notes: [] });
       return;
     }
     if (streamingThread.current === t) return;
@@ -111,6 +128,7 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, gr
       setMessages(r.messages);
       setOwner(r.owner);
       setUrls(r.urls);
+      setExtra({ earlier: r.earlier, notes: r.notes });
       setEditing(null);
     });
     return () => {
@@ -260,6 +278,7 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, gr
         setThread(r.thread);
         setMessages(r.messages);
         setUrls(r.urls);
+        setExtra({ earlier: r.earlier, notes: r.notes });
       }
     }
     streamingThread.current = null;
@@ -318,6 +337,9 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, gr
         onPick={(id) => pushParams({ t: id, list: null })}
         onClose={() => closeParams("list")}
         onChanged={refreshThreads}
+        onImport={() => pushParams({ import: "1", list: null })}
+        onDelete={(id) => void removeImported(id)}
+        job={claude.job}
       />
 
       {/* The conversation */}
@@ -340,8 +362,9 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, gr
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto grid w-full max-w-[820px] gap-7 px-4 pb-6 pt-6 md:px-8">
             {!thread && !messages.length && !live ? (
-              <Empty first={me.first} on={on} groups={groups} templates={templates} client={client} homeAgent={homeAgent.label} onUse={applyPrompt} />
+              <Empty first={me.first} on={on} groups={groups} templates={templates} client={client} homeAgent={homeAgent.label} onUse={applyPrompt} onImport={() => pushParams({ import: "1" })} />
             ) : null}
+            {thread?.source ? <ImportedBanner thread={thread} earlier={extra.earlier} notes={extra.notes} mine={!readOnly} onDelete={() => void removeImported(thread.id)} /> : null}
             {loading && !messages.length ? <p className="py-10 text-center text-[13px] text-faint">Opening the thread…</p> : null}
             {messages.map((m) =>
               m.role === "user" ? (
@@ -391,14 +414,94 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, gr
           />
         )}
       </section>
+      {importOpen ? (
+        <ClaudeImportSheet
+          clients={clients}
+          job={claude.job}
+          onStart={(name, items, n) => void claude.start(name, items, n)}
+          onClose={() => {
+            closeParams("import");
+            claude.clear();
+          }}
+          onOpenThread={(id) => {
+            claude.clear();
+            replaceParams({ import: null, t: id });
+          }}
+          onChanged={refreshThreads}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+// ─── Imported from Claude: where it came from, earlier messages, private notes ─
+
+function ImportedBanner({ thread, earlier, notes, mine, onDelete }: { thread: Thread; earlier: number; notes: { name: string; chars: number }[]; mine: boolean; onDelete: () => void }) {
+  const started = thread.created_at ? new Date(thread.created_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }) : null;
+  return (
+    <div className="grid gap-2 rounded-[18px] border border-line bg-ink/[0.02] px-4 py-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-soft px-2.5 py-1 text-[11.5px] font-medium text-brand-text">
+          <Icon d={P.download} size={12} /> Imported from Claude
+        </span>
+        <span className="text-[12.5px] text-muted">{started ? `Started ${started}. ` : ""}Private to you. Keep chatting and Kaizen AI picks up where you left off.</span>
+        {mine ? (
+          <button type="button" onClick={onDelete} className="ml-auto inline-flex min-h-9 items-center gap-1.5 rounded-full px-3 text-[12.5px] text-faint hover:bg-bad-soft/40 hover:text-bad">
+            <Icon d={P.trash} size={13} /> Delete
+          </button>
+        ) : null}
+      </div>
+      {earlier ? <p className="text-[12.5px] text-faint">{earlier.toLocaleString()} earlier messages aren&rsquo;t shown here. Kaizen AI still reads them, the oldest as a summary.</p> : null}
+      {notes.length ? (
+        <details className="group text-[13px]">
+          <summary className="flex min-h-9 cursor-pointer list-none items-center gap-1.5 text-muted hover:text-fg">
+            <span className="transition group-open:rotate-180">
+              <Icon d={P.chevron} size={13} />
+            </span>
+            Private notes: {notes.length} {notes.length === 1 ? "doc" : "docs"} from your Claude project, read with every message
+          </summary>
+          <ul className="mt-1 grid gap-1 pl-5">
+            {notes.map((n, i) => (
+              <li key={i} className="truncate text-[12.5px] text-faint">
+                {n.name} · {Math.max(1, Math.round(n.chars / 1000))}k characters
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
     </div>
   );
 }
 
 // ─── The thread rail ────────────────────────────────────────────────────────
 
-function Rail({ open, threads, active, meId, onNew, onPick, onClose, onChanged }: { open: boolean; threads: Thread[]; active: string | null; meId: string; onNew: () => void; onPick: (id: string) => void; onClose: () => void; onChanged: () => void }) {
+function Rail({
+  open,
+  threads,
+  active,
+  meId,
+  onNew,
+  onPick,
+  onClose,
+  onChanged,
+  onImport,
+  onDelete,
+  job,
+}: {
+  open: boolean;
+  threads: Thread[];
+  active: string | null;
+  meId: string;
+  onNew: () => void;
+  onPick: (id: string) => void;
+  onClose: () => void;
+  onChanged: () => void;
+  onImport: () => void;
+  onDelete: (id: string) => void;
+  job: ImportJob | null;
+}) {
   const [q, setQ] = useState("");
+  const [menu, setMenu] = useState(false);
   const shown = useMemo(() => {
     const s = q.trim().toLowerCase();
     return s ? threads.filter((x) => x.title.toLowerCase().includes(s) || (x.clients?.name ?? "").toLowerCase().includes(s)) : threads;
@@ -421,20 +524,55 @@ function Rail({ open, threads, active, meId, onNew, onPick, onClose, onChanged }
           <Icon d={P.plus} size={16} />
           New chat
         </button>
+        <div className="relative">
+          <button type="button" onClick={() => setMenu(!menu)} className="grid h-11 w-11 place-items-center rounded-full text-muted hover:bg-ink/[0.05] hover:text-fg" aria-label="More">
+            <Icon d={P.dots} />
+          </button>
+          {menu ? (
+            <>
+              <button type="button" className="fixed inset-0 z-30 cursor-default" onClick={() => setMenu(false)} aria-label="Close" />
+              <div className="absolute right-0 top-full z-40 mt-1 grid w-56 gap-0.5 rounded-[14px] border border-line bg-surface p-1 shadow-xl">
+                <button
+                  type="button"
+                  className="flex min-h-11 items-center gap-2 rounded-[10px] px-3 text-left text-[13.5px] text-fg hover:bg-ink/[0.05]"
+                  onClick={() => {
+                    setMenu(false);
+                    onImport();
+                  }}
+                >
+                  <Icon d={P.download} size={15} /> Import from Claude
+                </button>
+              </div>
+            </>
+          ) : null}
+        </div>
         <button type="button" onClick={onClose} className="grid h-11 w-11 place-items-center rounded-full text-muted hover:bg-ink/[0.05] md:hidden" aria-label="Close">
           <Icon d={P.x} />
         </button>
       </div>
+      {job?.running ? (
+        <button type="button" onClick={onImport} className="mx-3 mb-2 grid gap-1.5 rounded-[14px] border border-line bg-ink/[0.02] px-3 py-2 text-left">
+          <span className="flex items-baseline justify-between gap-2 text-[12.5px]">
+            <span className="text-fg">Importing from Claude</span>
+            <span className="tabular-nums text-faint">
+              {job.done}/{job.total}
+            </span>
+          </span>
+          <span className="h-1 overflow-hidden rounded-full bg-ink/[0.08]">
+            <span className="block h-full rounded-full bg-brand transition-[width]" style={{ width: `${job.total ? Math.round((job.done / job.total) * 100) : 0}%` }} />
+          </span>
+        </button>
+      ) : null}
       <label className="mx-3 mb-2 flex min-h-10 items-center gap-2 rounded-full bg-ink/[0.04] px-3 text-faint focus-within:ring-2 focus-within:ring-brand/30">
         <Icon d={P.search} size={15} />
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search chats" className="w-full bg-transparent text-[13.5px] text-fg outline-none placeholder:text-faint" />
       </label>
       <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-6">
-        {pinned.length ? <RailGroup title="Pinned" items={pinned} active={active} onPick={onPick} onChanged={onChanged} mine /> : null}
+        {pinned.length ? <RailGroup title="Pinned" items={pinned} active={active} onPick={onPick} onChanged={onChanged} onDelete={onDelete} mine /> : null}
         {groups.map(([name, items]) => (
-          <RailGroup key={name || "none"} title={name || "Everything else"} items={items} active={active} onPick={onPick} onChanged={onChanged} mine />
+          <RailGroup key={name || "none"} title={name || "Everything else"} items={items} active={active} onPick={onPick} onChanged={onChanged} onDelete={onDelete} mine />
         ))}
-        {shared.length ? <RailGroup title="Shared with me" items={shared} active={active} onPick={onPick} onChanged={onChanged} mine={false} /> : null}
+        {shared.length ? <RailGroup title="Shared with me" items={shared} active={active} onPick={onPick} onChanged={onChanged} onDelete={onDelete} mine={false} /> : null}
         {!threads.length ? <p className="px-3 py-6 text-[13px] text-faint">Your chats show here.</p> : null}
       </nav>
     </div>
@@ -452,20 +590,20 @@ function Rail({ open, threads, active, meId, onNew, onPick, onClose, onChanged }
   );
 }
 
-function RailGroup({ title, items, active, onPick, onChanged, mine }: { title: string; items: Thread[]; active: string | null; onPick: (id: string) => void; onChanged: () => void; mine: boolean }) {
+function RailGroup({ title, items, active, onPick, onChanged, onDelete, mine }: { title: string; items: Thread[]; active: string | null; onPick: (id: string) => void; onChanged: () => void; onDelete: (id: string) => void; mine: boolean }) {
   return (
     <div className="mt-3">
       <p className="truncate px-3 pb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-faint">{title}</p>
       <ul className="grid gap-0.5">
         {items.map((x) => (
-          <RailItem key={x.id} x={x} active={x.id === active} onPick={onPick} onChanged={onChanged} mine={mine} />
+          <RailItem key={x.id} x={x} active={x.id === active} onPick={onPick} onChanged={onChanged} onDelete={onDelete} mine={mine} />
         ))}
       </ul>
     </div>
   );
 }
 
-function RailItem({ x, active, onPick, onChanged, mine }: { x: Thread; active: boolean; onPick: (id: string) => void; onChanged: () => void; mine: boolean }) {
+function RailItem({ x, active, onPick, onChanged, onDelete, mine }: { x: Thread; active: boolean; onPick: (id: string) => void; onChanged: () => void; onDelete: (id: string) => void; mine: boolean }) {
   const [menu, setMenu] = useState(false);
   const act = async (p: Parameters<typeof updateThread>[1]) => {
     setMenu(false);
@@ -477,6 +615,7 @@ function RailItem({ x, active, onPick, onChanged, mine }: { x: Thread; active: b
       <button type="button" onClick={() => onPick(x.id)} className={`flex min-h-10 w-full items-center gap-2 rounded-[12px] py-2 pl-3 pr-9 text-left text-[13.5px] transition ${active ? "bg-ink/[0.07] text-fg" : "text-muted hover:bg-ink/[0.04] hover:text-fg"}`}>
         {x.pinned ? <span className="text-brand-text"><Icon d={P.pin} size={13} /></span> : null}
         <span className="truncate">{x.title}</span>
+        {x.source ? <span className="ml-auto shrink-0 rounded-full bg-ink/[0.06] px-1.5 py-px text-[10px] font-medium uppercase tracking-[0.06em] text-faint" title="Imported from Claude">Claude</span> : null}
       </button>
       {mine ? (
         <button type="button" onClick={() => setMenu(!menu)} className={`absolute right-1 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-full text-faint hover:bg-ink/[0.06] hover:text-fg ${menu || active ? "opacity-100" : "opacity-0 group-hover:opacity-100 max-md:opacity-100"}`} aria-label="Thread options">
@@ -502,6 +641,18 @@ function RailItem({ x, active, onPick, onChanged, mine }: { x: Thread; active: b
           <button type="button" className="min-h-10 rounded-[10px] px-3 text-left text-[13px] text-bad hover:bg-bad-soft/40" onClick={() => void act({ archived: true })}>
             Archive
           </button>
+          {x.source ? (
+            <button
+              type="button"
+              className="min-h-10 rounded-[10px] px-3 text-left text-[13px] text-bad hover:bg-bad-soft/40"
+              onClick={() => {
+                setMenu(false);
+                onDelete(x.id);
+              }}
+            >
+              Delete for good
+            </button>
+          ) : null}
         </div>
       ) : null}
     </li>
@@ -546,7 +697,7 @@ function Header({
       </button>
       <div className="min-w-0 flex-1">
         <p className="truncate text-[15px] font-semibold text-fg">{thread?.title ?? "Kaizen AI"}</p>
-        {readOnly ? <p className="text-[12px] text-faint">Shared by {owner}</p> : null}
+        {readOnly ? <p className="text-[12px] text-faint">Shared by {owner}</p> : thread?.source ? <p className="text-[12px] text-faint">Imported from Claude · private</p> : null}
       </div>
       {detected && client && !readOnly ? (
         <div className="hidden items-center gap-1 rounded-full border border-brand/30 bg-brand-soft/30 py-1 pl-3 pr-1 text-[12.5px] sm:flex">
@@ -571,7 +722,7 @@ function Header({
           ))}
         </select>
       ) : null}
-      {thread && !readOnly ? (
+      {thread && !readOnly && !thread.source ? (
         <button type="button" onClick={() => setSharing(true)} className="grid h-11 w-11 place-items-center rounded-full text-muted hover:bg-ink/[0.05] hover:text-fg" aria-label="Share">
           <Icon d={P.share} size={17} />
         </button>
@@ -692,9 +843,31 @@ function ShareSheet({ thread, onClose }: { thread: Thread; onClose: () => void }
 
 function Attachments({ list, urls }: { list: Attachment[]; urls: Record<string, string> }) {
   if (!list?.length) return null;
+  const imported = list.filter((a) => a.imported);
+  const stored = list.filter((a) => !a.imported);
   return (
+    <div className="grid w-full justify-items-end gap-2">
+      {imported.map((a, i) =>
+        a.text ? (
+          <details key={`imp-${i}`} className="group w-full max-w-[560px] rounded-[14px] border border-line bg-surface text-[13px]">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 px-3 text-muted hover:text-fg">
+              <span className="rounded-[6px] bg-ink/[0.06] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em]">{a.name.includes(".") ? a.name.split(".").pop()?.slice(0, 5) : "file"}</span>
+              <span className="min-w-0 flex-1 truncate">Attached: {a.name}</span>
+              <span className="transition group-open:rotate-180">
+                <Icon d={P.chevron} size={14} />
+              </span>
+            </summary>
+            <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap break-words border-t border-line px-3 py-2 font-sans text-[12.5px] leading-relaxed text-fg/90">{a.text}</pre>
+          </details>
+        ) : (
+          <span key={`imp-${i}`} className="inline-flex min-h-10 max-w-[280px] items-center gap-2 rounded-[12px] border border-dashed border-line px-3 text-[12.5px] text-faint" title="Only the file's name came with the Claude export">
+            <span className="truncate">Attached in Claude: {a.name}</span>
+          </span>
+        ),
+      )}
+      {stored.length ? (
     <div className="flex flex-wrap justify-end gap-2">
-      {list.map((a) => {
+      {stored.map((a) => {
         const img = a.kind === "image" ? urls[a.path] : a.kind === "video" && a.frames?.[0] ? urls[a.frames[0].path] : null;
         return img ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -706,6 +879,8 @@ function Attachments({ list, urls }: { list: Attachment[]; urls: Record<string, 
           </span>
         );
       })}
+    </div>
+      ) : null}
     </div>
   );
 }
@@ -755,7 +930,7 @@ function AssistantBlock({ m, canRegenerate, onRegenerate }: { m: ChatMessage; ca
     <div className="group flex gap-3">
       <Avatar />
       <div className="grid min-w-0 flex-1 gap-3">
-        {m.agent_key && m.agent_key in AGENT_LABEL ? <p className="text-[12px] text-faint">{AGENT_LABEL[m.agent_key as ChatAgent]}</p> : null}
+        {m.agent_key && m.agent_key in AGENT_LABEL ? <p className="text-[12px] text-faint">{AGENT_LABEL[m.agent_key as ChatAgent]}</p> : m.model === "claude" ? <p className="text-[12px] text-faint">Claude · imported</p> : null}
         <ToolChips runs={(m.tools ?? []).filter((r) => r.ok !== null)} />
         {m.content ? <ChatMarkdown text={m.content} /> : null}
         {(m.cards ?? []).map((c, i) => (
@@ -815,7 +990,7 @@ function LiveBlock({ live, onRetry }: { live: Live; onRetry: () => void }) {
 
 // ─── The empty state: quick actions for the person's role ───────────────────
 
-function Empty({ first, on, groups, templates, client, homeAgent, onUse }: { first: string; on: boolean; groups: QuickAction["group"][]; templates: Template[]; client: ClientOpt | null; homeAgent: string; onUse: (p: string, id?: string) => void }) {
+function Empty({ first, on, groups, templates, client, homeAgent, onUse, onImport }: { first: string; on: boolean; groups: QuickAction["group"][]; templates: Template[]; client: ClientOpt | null; homeAgent: string; onUse: (p: string, id?: string) => void; onImport: () => void }) {
   const actions = groups.flatMap((g) => QUICK_ACTIONS.filter((a) => a.group === g));
   const name = (s: string) => s.replace(/\{client\}/g, client?.name ?? "a client");
   const hello = useSyncExternalStore(noSubscribe, greet, () => "Hello");
@@ -855,6 +1030,18 @@ function Empty({ first, on, groups, templates, client, homeAgent, onUse }: { fir
           </div>
         </div>
       ) : null}
+      <button type="button" onClick={onImport} className="group flex min-h-[64px] items-center gap-3 rounded-[18px] border border-dashed border-line px-4 py-3 text-left transition hover:border-brand/40 hover:bg-ink/[0.02]">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[12px] bg-brand-soft text-brand-text">
+          <Icon d={P.download} size={17} />
+        </span>
+        <span className="grid min-w-0 flex-1 gap-0.5">
+          <span className="text-[14px] font-semibold text-fg">Import your chats from Claude</span>
+          <span className="text-[12.5px] text-muted">Bring your claude.ai history over and keep any conversation going here. Private to you.</span>
+        </span>
+        <span className="-rotate-90 text-faint transition group-hover:text-fg">
+          <Icon d={P.chevron} size={16} />
+        </span>
+      </button>
     </div>
   );
 }

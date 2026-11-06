@@ -31,6 +31,8 @@ export type Attachment = {
   transcript?: string | null;
   text?: string | null;
   note?: string | null;
+  /** Came with a Claude import: no stored file (path is empty), only the text Claude read from it */
+  imported?: boolean;
 };
 
 /** What an attached file is, from its type and name */
@@ -119,6 +121,10 @@ export type Thread = {
   last_message_at: string;
   profile_id: string;
   clients?: { name: string; slug: string } | null;
+  /** "claude" when imported from Claude (with the import it came in) */
+  source?: string | null;
+  import_id?: string | null;
+  created_at?: string;
 };
 
 /** What the chat route streams back, one JSON object per line */
