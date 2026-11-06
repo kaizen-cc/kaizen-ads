@@ -20,6 +20,10 @@ const normalize = (s: string) =>
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
+/** The key one error is grouped under (error_events.fingerprint): the same for every time it happens. */
+export const errorFingerprint = (kind: string, message: string, path: string | null) =>
+  createHash("sha1").update(`${kind}|${normalize(message)}|${path ? normalize(path) : ""}`).digest("hex");
+
 const OUTAGE_PEOPLE = 5; // this many people losing connections within an hour looks like an outage
 
 const row = (label: string, value: string) =>
@@ -46,9 +50,7 @@ export async function reportError(input: {
   try {
     if (!adminConfigured()) return;
     const path = input.path?.split("?")[0] ?? null;
-    const fingerprint = createHash("sha1")
-      .update(`${input.kind}|${normalize(input.message)}|${path ? normalize(path) : ""}`)
-      .digest("hex");
+    const fingerprint = errorFingerprint(input.kind, input.message, path);
     const auto = classifyError(input.message, input.stack);
     const sample = {
       digest: input.digest ?? null,

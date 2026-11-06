@@ -30,6 +30,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Pulls the takeaways from a shared doc, video or link", where: "Ads Lab · Round table", trigger: "auto", when: "When someone shares a source", labels: ["lab source takeaways"] },
     { title: "Reads a file or link shared about a client", where: "Client page \u00b7 Documents \u00b7 Client desk", trigger: "auto", when: "When a file or link is shared", labels: ["client document"] },
     { title: "Decides how much thought a chat message needs (quick, considered, deep)", where: "Client desk \u00b7 Agent chats", trigger: "auto", when: "With every chat message", labels: ["route a chat message"] },
+    { title: "Reads team feedback about the app: a title and summary, its type and area, how bad it is, and whether it repeats something already reported", where: "Feedback bubble · Feedback", trigger: "auto", when: "When someone sends feedback", labels: ["feedback triage"] },
   ],
   copy: [
     { title: "Answers in Kaizen AI, the team's chat: questions, numbers, copy, briefs, reports and plans, with tools, as this agent when the message is about its work", where: "Kaizen AI", trigger: "click", when: "With every Kaizen AI message it answers", labels: ["kaizen ai "] },

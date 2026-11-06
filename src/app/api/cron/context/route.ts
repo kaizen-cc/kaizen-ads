@@ -84,6 +84,7 @@ function due(step: string | null) {
   if (step === "loom") return true; // every 15 minutes (vercel.json): the Loom queue, shared folders daily, the senior buyer's teachings consolidated
   if (step === "remind") return !["Sat", "Sun"].includes(weekday) && [11, 15].includes(hour);
   if (step === "notify") return true; // every 10 minutes (vercel.json): critical notifications still unread go out by email
+  if (step === "feedback") return true; // every 15 minutes (vercel.json): missed feedback read, automatic fixes followed on GitHub; Mondays at 9am the digest
   if (step === "reports") return true; // every 15 minutes (vercel.json): queues on Mondays and the 1st, drafts what's queued
   if (step === "audits") return hour >= 6 && hour <= 21;
   if (step === "ledger") return hour >= 5 && hour <= 22; // hourly (vercel.json): each client's playbook, oldest first
@@ -191,6 +192,14 @@ export async function GET(request: Request) {
     }
     if (step === "remind") return Response.json(await (await import("@/lib/notifications")).remindRecaps(admin));
     if (step === "notify") return Response.json(await (await import("@/lib/notifications")).emailNotifications(admin));
+    if (step === "feedback") {
+      const { feedbackDigest, runFeedback } = await import("@/lib/feedback");
+      const out = await runFeedback(admin);
+      // Mondays at 9am New York: what keeps coming up, to every exec (one a week: the notification key is the date)
+      const { weekday, hour } = nyNow();
+      const digest = weekday === "Mon" && hour === 9 ? await feedbackDigest(admin) : null;
+      return Response.json({ ...out, digest });
+    }
     if (step === "reports") {
       // Mondays from 5am: this week's reports, except the month's first Monday, which gets last month's full recap
       // instead (a weekly and a monthly the same Monday would say the same thing twice). Each Monday's drafts replace

@@ -42,7 +42,8 @@ jobs:
           claude_args: >-
             --allowedTools "Read,Grep,Glob,Edit,Write,Bash(npm run *),Bash(npx tsc *),Bash(npx vitest *),Bash(npx eslint *),Bash(npx next typegen*),Bash(git *),Bash(gh pr create *),Bash(gh issue comment *)"
           prompt: |
-            You are fixing a production error in Kaizen Ads (this repo). Issue #${{ github.event.issue.number }}:
+            You are fixing a production error, or a bug or planned change the team reported through the feedback
+            bubble, in Kaizen Ads (this repo). Follow any rules the issue itself sets. Issue #${{ github.event.issue.number }}:
 
             ${{ github.event.issue.title }}
 
@@ -51,7 +52,8 @@ jobs:
             1. Read AGENTS.md first (this Next.js version differs from what you know; its docs are in node_modules/next/dist/docs/).
             2. Find the root cause in the code. If the error is not caused by our code (e.g. a network blip or a browser extension),
                don't change anything: comment on the issue explaining why, and stop.
-            3. Make the smallest safe fix. Match the surrounding code style. Don't touch unrelated files.
+            3. Make the smallest safe fix. Match the surrounding code style. Don't touch unrelated files. Add or update a
+               test in tests/ where practical.
                If the database needs a change, add a new file in supabase/migrations/ and say clearly in the PR that it must be applied.
             4. Run: npm run lint && npx next typegen && npx tsc --noEmit && npx vitest run. All must pass.
             5. Create a branch claude/fix-${{ github.event.issue.number }}, commit, push, and open a PR with
@@ -73,6 +75,15 @@ jobs:
           if [ -z "$PR" ]; then echo "No fix pull request (Claude found nothing of ours to fix)"; exit 0; fi
           if gh pr diff "$PR" --name-only | grep -q '^supabase/migrations/'; then
             gh pr comment "$PR" --body "This fix changes the database, so it waits for a person to apply the migration and merge it."
+            exit 0
+          fi
+          # What an automatic fix never ships (sign-in, permissions, ad-account writes, billing, secrets, the pipeline
+          # itself), and anything bigger than a small change: a person reviews and merges those
+          FILES=$(gh pr diff "$PR" --name-only)
+          PROTECTED=$(echo "$FILES" | grep -E '^(src/lib/auth\.ts|src/proxy\.ts|src/lib/supabase/|src/lib/meta-write|src/lib/google-write|src/lib/.*(stripe|billing)|\.github/|\.env|vercel\.json|next\.config\.)' || true)
+          COUNT=$(echo "$FILES" | grep -c . || true)
+          if [ -n "$PROTECTED" ] || [ "$COUNT" -gt 5 ]; then
+            gh pr comment "$PR" --body "This fix touches files an automatic fix never ships ($COUNT files${PROTECTED:+; protected: $(echo $PROTECTED | tr '\n' ' ')}), so it waits for a person to review and merge it."
             exit 0
           fi
           git fetch origin "claude/fix-$ISSUE" && git checkout "claude/fix-$ISSUE"

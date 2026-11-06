@@ -56,6 +56,9 @@ const GROUPS: { title: string; items: Item[] }[] = [
 // Execs and leads: AI agents, the team, sync health, errors and the data under the hood
 const SETTINGS: Item = { href: "/settings", label: "Settings", icon: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z", tiers: ["exec", "lead"] };
 
+// Everyone: what they've sent from the feedback bubble; execs also see everyone's, grouped and prioritized
+const FEEDBACK: Item = { href: "/feedback", label: "Feedback", icon: "M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12zM9 11h.01M12 11h.01M15 11h.01" };
+
 function Icon({ d }: { d: string }) {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -146,8 +149,11 @@ export function TeamShell({ name, roles, tier, creative = null, theme = null, ch
             </div>
           ))}
         </nav>
-        {settings && <div className="mt-auto px-3 pb-2">{link(settings)}</div>}
-        <div className={`${settings ? "" : "mt-auto "}flex items-center gap-3 border-t border-line px-4 py-4`}>
+        <div className="mt-auto grid gap-0.5 px-3 pb-2">
+          {link(FEEDBACK)}
+          {settings && link(settings)}
+        </div>
+        <div className="flex items-center gap-3 border-t border-line px-4 py-4">
           <PersonAvatar name={name} size={34} />
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium">{name}</p>
@@ -220,6 +226,14 @@ export function TeamShell({ name, roles, tier, creative = null, theme = null, ch
                   ))}
                 </div>
               ))}
+              <Link
+                href={FEEDBACK.href}
+                onClick={() => setMenu(false)}
+                className={`flex min-h-12 items-center gap-3.5 rounded-[12px] px-3 text-[15px] ${active(FEEDBACK.href) ? "bg-surface-2 text-fg" : "text-muted active:bg-surface-2/60"}`}
+              >
+                <Icon d={FEEDBACK.icon} />
+                {FEEDBACK.label}
+              </Link>
               {settings && (
                 <Link
                   href={settings.href}

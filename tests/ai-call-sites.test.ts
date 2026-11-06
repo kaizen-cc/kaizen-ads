@@ -176,6 +176,7 @@ const UTILITY: Record<string, { labels: string[]; why: string }> = {
   "src/lib/chat-changes.ts": { labels: ["chat team change"], why: "maps a request to a seat and a person from a list" },
   "src/lib/client-docs.ts": { labels: ["client document"], why: "summarises one file; extraction" },
   "src/lib/creative-errors.ts": { labels: ["creative error check"], why: "classifies review feedback across all clients" },
+  "src/lib/feedback.ts": { labels: ["feedback triage"], why: "classifies the team's feedback about the app and matches repeats; no client is the subject" },
   "src/lib/google-playbooks.ts": { labels: ["google playbook"], why: "cross-client playbook per sub-vertical" },
   "src/lib/industry.ts": { labels: ["client industries"], why: "classifies many clients at once" },
   "src/lib/keyword-research.ts": { labels: ["keyword relevance"], why: "sorts keyword ideas into groups" },

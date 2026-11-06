@@ -3,6 +3,8 @@ import { UploadProvider } from "@/components/upload-provider";
 import { Toaster } from "@/components/toasts";
 import { AuditWatcher } from "@/components/audit-watcher";
 import { ActivityTracker } from "@/components/activity-tracker";
+import { FeedbackBubble } from "@/components/feedback-bubble";
+import { Suspense } from "react";
 import { requireStaff } from "@/lib/auth";
 import { isCreativeRole, roleLabel } from "@/lib/roles";
 import { formatList } from "@/lib/creative-formats";
@@ -21,6 +23,9 @@ export default async function TeamLayout({ children }: LayoutProps<"/">) {
       <Toaster />
       <AuditWatcher />
       <ActivityTracker />
+      <Suspense fallback={null}>
+        <FeedbackBubble />
+      </Suspense>
     </UploadProvider>
   );
 }
