@@ -547,7 +547,7 @@ ${RULES}`,
   const open = unanswered(questions);
   // Chat first: once a reply leaves nothing required open, the preview is built (they don't have to say "build it")
   const building = !open.length && (out.build || answers > 0) && (run.status === "asking" || answers > 0);
-  const answer = out.build && open.length ? `${said}\n\nBefore I can plan it I still need: ${open.map((q) => q.question).join(" ")}` : building && !out.build ? `${said}\n\nThat's everything I need: building the preview on the card now. Nothing goes live until you deploy it.` : said;
+  const answer = out.build && open.length ? `${said}\n\nBefore I can plan it I still need: ${open.map((q) => q.question).join(" ")}` : said;
   const changed = answers > 0 && ["ready", "failed"].includes(run.status);
   await patch(admin, id, { questions, turns, ...(resolution ? { resolution } : {}), ...(building ? { status: "planning", progress: "Laying out the plan" } : changed ? { status: "asking" } : {}) });
   return { answer, offTopic: false, building };
@@ -574,30 +574,57 @@ export async function setGoogleSuggestion(admin: SupabaseClient, id: string, key
 
 // ─── The plan ───────────────────────────────────────────────────────────────────────────────────────────────────
 
-const LINE = obj({ text: S, pin: I });
+// Kept flat on purpose: nested objects, enums and per-line pins make the structured-output grammar too large for the
+// API ("compiled grammar is too large"). Strings carry the detail (pins as "(pin 1)", sitelinks as "text | line 1 |
+// line 2 | url", snippets as "Header: a, b") and code turns them back into the exact plan below.
 const PLAN = obj({
   note: S,
   campaigns: arr(
-    obj({
-      key: S,
-      mode: { type: "string", enum: ["new", "existing"] },
-      existingId: S,
-      name: S,
-      type: { type: "string", enum: ["SEARCH", "PERFORMANCE_MAX"] },
-      budget: N,
-      bidding: { type: "string", enum: ["MAXIMIZE_CONVERSIONS", "MAXIMIZE_CONVERSION_VALUE", "MAXIMIZE_CLICKS", "MANUAL_CPC"] },
-      targetCpa: N,
-      targetRoas: N,
-      locations: arr(S),
-      negatives: arr(S),
-      sitelinks: arr(obj({ text: S, line1: S, line2: S, url: S })),
-      callouts: arr(S),
-      snippets: arr(obj({ header: S, values: arr(S) })),
-    }),
+    obj({ key: S, mode: S, existingId: S, name: S, type: S, budget: N, bidding: S, targetCpa: N, targetRoas: N, locations: arr(S), negatives: arr(S), sitelinks: arr(S), callouts: arr(S), snippets: arr(S) }),
   ),
-  adGroups: arr(obj({ key: S, campaignKey: S, mode: { type: "string", enum: ["new", "existing"] }, existingId: S, name: S, fromRead: I, finalUrl: S, keywords: arr(S), negatives: arr(S), rsas: arr(obj({ headlines: arr(LINE), descriptions: arr(LINE), path1: S, path2: S, finalUrl: S })) })),
+  adGroups: arr(obj({ key: S, campaignKey: S, mode: S, existingId: S, name: S, fromRead: I, finalUrl: S, keywords: arr(S), negatives: arr(S), rsas: arr(obj({ headlines: arr(S), descriptions: arr(S), path1: S, path2: S, finalUrl: S })) })),
   assetGroups: arr(obj({ key: S, campaignKey: S, existingId: S, name: S, finalUrl: S, headlines: arr(S), longHeadlines: arr(S), descriptions: arr(S), searchThemes: arr(S), byHand: arr(S) })),
 });
+type RawPlan = {
+  note: string;
+  campaigns: { key: string; mode: string; existingId: string; name: string; type: string; budget: number; bidding: string; targetCpa: number; targetRoas: number; locations: string[]; negatives: string[]; sitelinks: string[]; callouts: string[]; snippets: string[] }[];
+  adGroups: { key: string; campaignKey: string; mode: string; existingId: string; name: string; fromRead: number; finalUrl: string; keywords: string[]; negatives: string[]; rsas: { headlines: string[]; descriptions: string[]; path1: string; path2: string; finalUrl: string }[] }[];
+  assetGroups: GoogleProposal["assetGroups"];
+};
+const BIDDINGS: Bidding[] = ["MAXIMIZE_CONVERSIONS", "MAXIMIZE_CONVERSION_VALUE", "MAXIMIZE_CLICKS", "MANUAL_CPC"];
+/** The flat answer turned back into the plan's shape: modes, types and biddings checked, pins and assets parsed */
+export function proposalFrom(r: RawPlan): GoogleProposal {
+  const mode = (m: string): "new" | "existing" => (/exist/i.test(m) ? "existing" : "new");
+  const lines = (xs: string[], max: 2 | 3) =>
+    xs.map((x) => {
+      const l = parsePinned(x, max);
+      return { text: l.text, pin: l.pin };
+    });
+  return {
+    note: r.note,
+    campaigns: r.campaigns.map((c) => {
+      const b = String(c.bidding || "").toUpperCase().replace(/[\s-]+/g, "_");
+      return {
+        ...c,
+        mode: mode(c.mode),
+        type: /performance|pmax/i.test(c.type) ? "PERFORMANCE_MAX" : "SEARCH",
+        bidding: (BIDDINGS.find((x) => x === b) ?? "MAXIMIZE_CONVERSIONS") as Bidding,
+        sitelinks: c.sitelinks
+          .map((x) => x.split("|").map((y) => y.trim()))
+          .filter((p) => p[0])
+          .map((p) => ({ text: p[0], line1: p[1] ?? "", line2: p[2] ?? "", url: p.find((y) => /^https?:\/\//i.test(y)) ?? "" })) as GCampaign["sitelinks"],
+        snippets: c.snippets
+          .map((x) => {
+            const i = x.indexOf(":");
+            return i > 0 ? { header: x.slice(0, i).trim(), values: x.slice(i + 1).split(",").map((v) => v.trim()).filter(Boolean) } : null;
+          })
+          .filter((x): x is { header: string; values: string[] } => Boolean(x && x.values.length)) as GCampaign["snippets"],
+      };
+    }),
+    adGroups: r.adGroups.map((g) => ({ ...g, mode: mode(g.mode), rsas: g.rsas.map((a) => ({ ...a, headlines: lines(a.headlines, 3), descriptions: lines(a.descriptions, 2) })) })),
+    assetGroups: r.assetGroups,
+  };
+}
 type ProposalCampaign = { key: string; mode: "new" | "existing"; existingId: string; name: string; type: CampaignType; budget: number; bidding: Bidding; targetCpa: number; targetRoas: number; locations: string[]; negatives: string[]; sitelinks: GCampaign["sitelinks"]; callouts: string[]; snippets: GCampaign["snippets"] };
 type ProposalAdGroup = { key: string; campaignKey: string; mode: "new" | "existing"; existingId: string; name: string; fromRead: number; finalUrl: string; keywords: string[]; negatives: string[]; rsas: { headlines: { text: string; pin: number }[]; descriptions: { text: string; pin: number }[]; path1: string; path2: string; finalUrl: string }[] };
 export type GoogleProposal = { note: string; campaigns: ProposalCampaign[]; adGroups: ProposalAdGroup[]; assetGroups: (Omit<GooglePlan["assetGroups"][number], "mode" | "existingId"> & { existingId: string })[] };
@@ -719,11 +746,11 @@ export async function planGoogleRun(admin: SupabaseClient, id: string) {
     const choice = campaignChoice(run.questions.find((q) => q.key === "campaign")?.answer, res.campaigns);
     const urlAnswer = urlIn(run.questions.find((q) => q.key === "final_url")?.answer);
     const taken = res.suggestions.filter((s) => s.accepted === true);
-    const proposal = await step(`google run ${id.slice(0, 8)}`, "plan (agent's model)", askJson<GoogleProposal>({
+    const raw = await step(`google run ${id.slice(0, 8)}`, "plan (agent's model)", askJson<RawPlan>({
       agent: "google_launcher",
       label: "google launch plan",
       clientId: run.client_id,
-      system: `You lay out the Google launch the buyer agreed to, exactly as answered, as campaigns, ad groups and asset groups. Code copies what was read (keywords, negatives and copy of an ad group in <read>) straight from it: point at it with fromRead (its # number) and leave keywords and rsas for that ad group empty unless the buyer added more in the conversation. fromRead -1 for an ad group not in <read>.
+      system: `You lay out the Google launch the buyer agreed to, exactly as answered, as campaigns, ad groups and asset groups. Formats: mode "new" or "existing"; type "SEARCH" or "PERFORMANCE_MAX"; bidding one of MAXIMIZE_CONVERSIONS, MAXIMIZE_CONVERSION_VALUE, MAXIMIZE_CLICKS, MANUAL_CPC; each headline or description is a plain string, with " (pin 1)" at the end only when pinned; a sitelink is "link text | line 1 | line 2 | https://url"; a structured snippet is "Header: value, value, value". Code copies what was read (keywords, negatives and copy of an ad group in <read>) straight from it: point at it with fromRead (its # number) and leave keywords and rsas for that ad group empty unless the buyer added more in the conversation. fromRead -1 for an ad group not in <read>.
 - campaigns: key ("c1"…). mode "existing" with existingId (an id from <account>) when the buyer chose a live campaign; else "new" with existingId "", a name in the account's naming pattern, type SEARCH unless they chose Performance Max, budget (daily dollars, as agreed), bidding (MAXIMIZE_CONVERSIONS unless agreed otherwise; MAXIMIZE_CONVERSION_VALUE for a ROAS goal), targetCpa / targetRoas only when agreed (else 0), locations as place names Google knows ("Houston, Texas"). For an existing campaign budget 0 and locations []. negatives: campaign negatives with notation ("free", [diy]). sitelinks, callouts, snippets: only when the buyer asked for them or took a suggestion that adds them, and only where <live_setup> shows they're missing.
 - adGroups: key ("g1"…), campaignKey, mode "existing" with existingId (an ad group id from <account>) only when the buyer chose to add into it, else "new" with a name in the account's pattern. finalUrl: the landing page for its ads. keywords and negatives with notation ([exact], "phrase", broad plain) when they come from the conversation or a suggestion taken. rsas: only ads the buyer wrote in the conversation, or that they asked you to write (then up to 15 headlines of at most 30 characters and 4 descriptions of at most 90, built on the client's winning lines and away from the tired ones, pin 0 unless asked; pin 1 to 3 for headlines, 1 to 2 for descriptions).
 - assetGroups: only for Performance Max: an existing asset group (existingId from <account>) gets the text agreed (headlines 30, long headlines 90, descriptions 90); searchThemes and byHand (images, videos, audience signals the buyer described) are listed for doing by hand.
@@ -737,6 +764,7 @@ ${RULES}`,
         .join("\n")}\n</conversation>\n\n<account id="${run.account}">\n${accountText(res, { groups: 80, waste: 10 })}\n</account>\n\n<live_setup>\n${res.setup.slice(0, 3500)}\n</live_setup>${choice?.mode === "existing" ? `\n\nThe buyer chose the live campaign ${choice.id}.` : choice?.mode === "new" ? `\n\nThe buyer chose a new ${choice.type === "PERFORMANCE_MAX" ? "Performance Max" : "Search"} campaign.` : ""}`,
     }));
     // Google's own places for the new campaigns' locations
+    const proposal = proposalFrom(raw);
     const names = [...new Set(proposal.campaigns.filter((c) => c.mode === "new").flatMap((c) => c.locations))];
     const geos = names.length ? await suggestGeo(names).catch(() => [] as { geo: string; name: string }[]) : [];
     const locations = new Map<string, { geo: string; name: string }>();

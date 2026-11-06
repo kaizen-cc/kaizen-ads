@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { LogoLoader } from "@/components/logo-loader";
 import { useEffect, useRef, useState } from "react";
 import { WriteOff } from "@/components/write-gate";
 import { chars, G, kwText, type AdLine, type GAdGroup, type GCampaign, type GooglePlan, type Match, type PlanEdit, type Rsa } from "@/lib/google-launch/core";
@@ -356,7 +357,7 @@ export function GoogleLaunchCard({ id, compact = false }: { id: string; compact?
 
   // The conversation happens in the chat: the card only comes up once there's a preview to walk through and deploy
   // (it keeps checking quietly in the meantime, and shows the moment the plan is being laid out)
-  if (!v || ["reading", "resolving", "asking"].includes(v.status)) return null;
+  if (!v || (["reading", "resolving", "asking"].includes(v.status) && !v.error)) return null;
   if (compact)
     return (
       <span className="inline-flex w-fit items-center gap-2 rounded-full border border-[#1a73e8]/30 bg-[#1a73e8]/[0.06] px-3 py-1 text-[11px] text-ink/65">
@@ -368,7 +369,18 @@ export function GoogleLaunchCard({ id, compact = false }: { id: string; compact?
   const plan = v.plan;
   const open = v.questions.filter((q) => !q.answer);
   const requiredOpen = open.filter((q) => q.required);
-  const links = new Map((v.qa?.lines ?? []).map((l) => [l.key, l.link]));
+  // Where each object lives in Google Ads: after deploy from the read-back, and before it for what's already there
+  const acct = String(v.account ?? "").replace(/\D/g, "");
+  const here = new Map<string, string>();
+  if (plan && acct) {
+    const camp = new Map(plan.campaigns.map((c) => [c.key, c]));
+    for (const c of plan.campaigns) if (c.mode === "existing" && c.existingId) here.set(`campaign:${c.key}`, `https://ads.google.com/aw/adgroups?campaignId=${c.existingId}&__e=${acct}`);
+    for (const g of plan.adGroups) {
+      const c = camp.get(g.campaignKey);
+      if (g.mode === "existing" && g.existingId && c?.existingId) here.set(`adgroup:${g.key}`, `https://ads.google.com/aw/keywords?campaignId=${c.existingId}&adGroupId=${g.existingId}&__e=${acct}`);
+    }
+  }
+  const links = new Map<string, string | null>([...here, ...(v.qa?.lines ?? []).filter((l) => l.link).map((l) => [l.key, l.link] as [string, string])]);
   const toMake = v.items.filter((i) => i.status !== "existing").length;
   const invalid = v.items.filter((i) => i.status === "invalid").length;
   const created = v.items.filter((i) => i.status === "created").length;
@@ -407,6 +419,11 @@ export function GoogleLaunchCard({ id, compact = false }: { id: string; compact?
         </p>
       )}
       {v.error && <p className="rounded-[10px] border border-bad/25 bg-bad-soft/20 px-3 py-2 text-[12px] text-ink/85">{v.error}</p>}
+      {["planning", "checking", "applying"].includes(v.status) && (
+        <div className="grid place-items-center py-3">
+          <LogoLoader size="sm" scene="laptop" label={v.progress ?? (v.status === "applying" ? "Creating it in the account" : "Building the plan")} />
+        </div>
+      )}
 
       {v.summary && (
         <div className="grid gap-1.5 text-[12.5px] leading-relaxed text-ink/85">

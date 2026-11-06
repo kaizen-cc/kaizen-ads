@@ -215,9 +215,8 @@ async function continueLaunch(admin: SupabaseClient, clientId: string, profileId
   }
   const chat = await loadClientChat(admin, clientId, profileId);
   const now = new Date().toISOString();
-  const text = r.building ? `${r.answer}
-
-Laying out the plan now and checking every line with ${google ? "Google" : "Meta"}: it's on the launch card.` : r.answer;
+  // Everything's answered: one line, then the card takes over (the plan builds with the loader on it)
+  const text = r.building ? "That's everything. I'm building the plan now: it shows here for you to check before anything goes live." : r.answer;
   const next: ChatTurn[] = [...chat, { role: "user" as const, text: q, at: now }, { role: "assistant" as const, text, at: now, launch: { id: open.id, platform: google ? ("google" as const) : ("meta" as const) } }].slice(-60);
   await admin.from("client_chats").upsert({ client_id: clientId, profile_id: profileId, turns: next, updated_at: now });
   return next;

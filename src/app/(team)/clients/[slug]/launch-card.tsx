@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { LogoLoader } from "@/components/logo-loader";
 import { useEffect, useRef, useState } from "react";
 import { WriteOff } from "@/components/write-gate";
 import type { BudgetSpec, CheckItem, LaunchItem, LaunchPlan, LaunchQuestion, PlanAd, PlanAdset, PlanCampaign } from "@/lib/launch-sheet/types";
@@ -427,7 +428,7 @@ export function LaunchCard({ id, compact = false, reply = false }: { id: string;
 
   // The conversation happens in the chat: the card only comes up once there's a preview to walk through and deploy
   // (it keeps checking quietly in the meantime, and shows the moment the plan is being laid out)
-  if (!v || ["reading", "resolving", "asking"].includes(v.status)) return null;
+  if (!v || (["reading", "resolving", "asking"].includes(v.status) && !v.error)) return null;
 
   if (compact)
     return (
@@ -480,6 +481,11 @@ export function LaunchCard({ id, compact = false, reply = false }: { id: string;
         </p>
       )}
       {v.error && <p className="rounded-[10px] border border-bad/25 bg-bad-soft/20 px-3 py-2 text-[12px] text-ink/85">{v.error}</p>}
+      {["planning", "checking", "applying"].includes(v.status) && (
+        <div className="grid place-items-center py-3">
+          <LogoLoader size="sm" scene="laptop" label={v.progress ?? (v.status === "applying" ? "Creating it in the account" : "Building the plan")} />
+        </div>
+      )}
 
       {v.summary && (
         <div className="grid gap-1.5">
