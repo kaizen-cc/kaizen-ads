@@ -225,9 +225,9 @@ export function FeedbackBubble() {
           onPointerUp={onPointerUp}
           onPointerCancel={() => (drag.current = null)}
           style={{ transform: `translateY(${-lift}px)`, touchAction: "none" }}
-          className="group fixed bottom-[calc(74px+env(safe-area-inset-bottom))] right-0 z-40 grid h-11 w-9 cursor-grab select-none place-items-center rounded-l-full border border-r-0 border-line bg-surface/90 text-muted shadow-[0_8px_24px_-12px_rgba(0,0,0,0.55)] backdrop-blur-md transition-[color,opacity,width] active:cursor-grabbing md:bottom-6 md:right-6 md:h-11 md:w-11 md:rounded-full md:border-r md:opacity-70 md:hover:text-fg md:hover:opacity-100"
+          className="group fixed bottom-[calc(74px+env(safe-area-inset-bottom))] right-0 z-40 grid h-12 w-11 cursor-grab select-none place-items-center rounded-l-full bg-brand text-white shadow-[0_10px_28px_-10px_rgba(178,30,44,0.85)] transition-[background-color,transform] hover:bg-brand-hover active:cursor-grabbing md:bottom-6 md:right-6 md:h-14 md:w-14 md:rounded-full md:hover:scale-105"
         >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" />
             <path d="M9 11h.01M12 11h.01M15 11h.01" strokeWidth="2.4" />
           </svg>
@@ -245,7 +245,7 @@ export function FeedbackBubble() {
                 void addFile(file);
               }
             }}
-            className="pb-safe absolute inset-x-0 bottom-0 grid max-h-[92dvh] gap-4 overflow-y-auto rounded-t-[22px] border border-line bg-surface p-5 shadow-2xl animate-[sheet-up_.28s_cubic-bezier(.2,.8,.2,1)] md:pointer-events-auto md:inset-x-auto md:bottom-6 md:right-6 md:w-[392px] md:rounded-[18px] md:pb-5"
+            className="pb-safe absolute inset-x-0 bottom-0 flex max-h-[92dvh] flex-col gap-5 overflow-y-auto rounded-t-[22px] border border-line bg-surface px-5 pt-5 shadow-2xl animate-[sheet-up_.28s_cubic-bezier(.2,.8,.2,1)] md:pointer-events-auto md:inset-x-auto md:bottom-6 md:right-6 md:max-h-[calc(100dvh-48px)] md:w-[420px] md:rounded-[20px] md:px-6 md:pt-6"
           >
             {thanks ? (
               <div className="grid justify-items-center gap-2 py-8 text-center">
@@ -313,6 +313,7 @@ export function FeedbackBubble() {
                     </button>
                   </div>
                 ) : (
+                  <div className="grid gap-2">
                   <div className="flex flex-wrap items-center gap-2">
                     {canCapture() && (
                       <button type="button" onClick={capture} className="inline-flex min-h-11 items-center gap-2 rounded-full border border-line px-3.5 text-[13px] text-muted hover:border-faint/60 hover:text-fg md:min-h-9">
@@ -330,7 +331,8 @@ export function FeedbackBubble() {
                       Add an image
                       <input type="file" accept="image/*" className="sr-only" onChange={(e) => void addFile(e.target.files?.[0])} />
                     </label>
-                    <span className="hidden text-[12px] text-faint md:inline">or paste one</span>
+                  </div>
+                  <p className="hidden text-[12px] text-faint md:block">Or paste a screenshot straight into this box.</p>
                   </div>
                 )}
 
@@ -356,7 +358,7 @@ export function FeedbackBubble() {
                   )}
                 </div>
 
-                <div className="flex items-center justify-between gap-3">
+                <div className="sticky bottom-0 -mx-5 mt-auto flex items-center justify-between gap-3 border-t border-line bg-surface px-5 py-4 md:-mx-6 md:px-6">
                   <Link href="/feedback?tab=mine" className="inline-flex min-h-11 items-center text-[13px] text-muted hover:text-fg">
                     My feedback
                   </Link>
