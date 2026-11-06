@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Stage } from "@/lib/stages";
+import { cleanTitle, normalizePriority, type PriorityLevel } from "@/lib/task-title";
 
 // Asana's Creative board, mirrored while the team moves over to Kaizen Ads. Every few minutes the open tasks are read
 // (column, assignee, due date, Client ID, priority, description) and kept as "shadow" tickets in the matching stage.
@@ -317,7 +318,9 @@ export async function syncAsana(admin: SupabaseClient) {
         client_ref: idField ? String(idField) : null,
         platform,
         format: task.name.match(FORMAT)?.[1]?.toLowerCase().replace("static", "image").replace("reel", "video") ?? null,
-        priority: Object.entries(fields).find(([k]) => /priority/i.test(k))?.[1] ?? (/urgent/i.test(task.name) ? "urgent" : null),
+        // One set (normal, high, urgent) from the Priority field ("Hi", "HIGH", "URGENT") and the title's "URGENT:" tags;
+        // the field's own words stay in fields
+        priority: ((p) => (p === "normal" ? null : p))(normalizePriority(Object.entries(fields).find(([k]) => /priority/i.test(k))?.[1], task.name)),
         assignee_name: task.assignee?.name ?? null,
         assignee_email: email,
         profile_id: profile?.id ?? null,
@@ -354,7 +357,10 @@ export async function syncAsana(admin: SupabaseClient) {
 
 export type ShadowTicket = {
   gid: string;
+  /** The task's name as Asana has it */
   name: string;
+  /** The name without its "URGENT:" / "[URGENT]" tags (the priority badge says it once) */
+  title: string;
   stage: Stage;
   section: string | null;
   clientId: string | null;
@@ -363,7 +369,7 @@ export type ShadowTicket = {
   clientRef: string | null;
   platform: string | null;
   format: string | null;
-  priority: string | null;
+  priority: PriorityLevel;
   assignee: string | null;
   profileId: string | null;
   dueOn: string | null;
@@ -389,6 +395,7 @@ export async function loadShadows(db: SupabaseClient): Promise<ShadowTicket[]> {
     return {
       gid: r.gid,
       name: r.name,
+      title: cleanTitle(r.name).title,
       stage: r.stage as Stage,
       section: r.section,
       clientId: r.client_id,
@@ -397,7 +404,8 @@ export async function loadShadows(db: SupabaseClient): Promise<ShadowTicket[]> {
       clientRef: r.client_ref,
       platform: r.platform,
       format: r.format,
-      priority: r.priority,
+      // Rows mirrored before the priority was normalized carry Asana's own words: read them the same way
+      priority: normalizePriority(r.priority, r.name),
       assignee: r.assignee_name,
       profileId: r.profile_id,
       dueOn: r.due_on,

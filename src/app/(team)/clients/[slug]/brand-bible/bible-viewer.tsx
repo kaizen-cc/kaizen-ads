@@ -12,6 +12,8 @@ import type { BibleTargets } from "@/lib/ai";
 import { Layer } from "../layer";
 import type { BibleQuestion } from "@/lib/bible-questions";
 import { BibleQuestions } from "./bible-questions";
+import { AvatarFooter, AvatarGovernanceBar, ChangesPanel, ProposeAvatarSheet, type Governance } from "./bible-avatars";
+import { avatarsOf, BIBLE_EDITORS } from "@/lib/bible-avatars";
 import type { WebsiteIssue } from "@/lib/website-issues";
 import { ExportButton, IssuesPanel, LinksPanel, SheetPanel, type BibleLink, type OnboardingSheetInfo } from "./bible-upkeep";
 
@@ -70,6 +72,7 @@ const TIER: Record<string, string> = {
   proven: "bg-ok-soft text-ok",
   likely: "border border-line bg-surface-2 text-fg",
   hypothesis: "bg-warn-soft text-warn",
+  retired: "border border-line text-faint",
 };
 
 function Tier({ tier }: { tier: string | null }) {
@@ -189,11 +192,11 @@ function ReadThisFirst({ text, onReviews }: { text: string; onReviews?: () => vo
 
 // ─── Sections ─────────────────────────────────────────────────────────────────
 
-function AudienceCard({ title, tier, body }: { title: string; tier: string | null; body: string }) {
+function AudienceCard({ title, tier, body, retired = null, footer }: { title: string; tier: string | null; body: string; retired?: string | null; footer?: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const m = title.match(/^([A-Z])\s*[·.:-]\s*(.*)$/);
   return (
-    <article className="relative flex min-w-0 flex-col gap-3 overflow-hidden rounded-[20px] border border-line bg-bg/60 p-5">
+    <article className={`relative flex min-w-0 flex-col gap-3 overflow-hidden rounded-[20px] border border-line p-5 ${retired ? "bg-transparent opacity-70" : "bg-bg/60"}`}>
       <header className="flex items-start gap-3">
         <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] bg-brand-soft font-display text-[18px] text-brand-text">{m?.[1] ?? "•"}</span>
         <h3 className="min-w-0 flex-1 pt-1 font-heading text-[17px] leading-snug">{m?.[2] ?? title}</h3>
@@ -206,6 +209,7 @@ function AudienceCard({ title, tier, body }: { title: string; tier: string | nul
       <button type="button" onClick={() => setOpen((o) => !o)} className="h-11 self-start rounded-full px-1 text-[13px] text-muted hover:text-fg md:h-8">
         {open ? "Show less" : "Read the full profile →"}
       </button>
+      {footer && <div className="border-t border-line pt-3">{footer}</div>}
     </article>
   );
 }
@@ -377,7 +381,7 @@ const withoutTables = (body: string) =>
 
 type BankProps = { info: ReviewBankInfo | null; canRefresh: boolean; expectedMs: number };
 
-function SectionBody({ sec, questions, client, bank }: { sec: BibleSection; questions: BibleQuestion[]; client: { id: string; slug: string }; bank: BankProps }) {
+function SectionBody({ sec, questions, client, bank, gov, canEdit }: { sec: BibleSection; questions: BibleQuestion[]; client: { id: string; slug: string }; bank: BankProps; gov: Governance; canEdit: boolean }) {
   const kind = kindOf(sec.title);
   // The v3 Bible keeps its review bank under section 4 ("### 4b. Review bank"): the text around it as it is, the bank as cards
   const sub = kind !== "reviews" ? subsectionOf(sec.body, REVIEW_BANK) : null;
@@ -394,22 +398,31 @@ function SectionBody({ sec, questions, client, bank }: { sec: BibleSection; ques
     );
   if (kind === "audiences") {
     const { intro, list } = audiencesOf(sec.body);
+    const nameOf = (title: string) => title.match(/^[A-Z]\s*[·.:-]\s*(.*)$/)?.[1]?.trim() ?? title;
+    const current = list.filter((a) => !a.retired);
+    const retired = list.filter((a) => a.retired);
+    const card = (a: (typeof list)[number]) => <AudienceCard key={a.title + (a.retired ?? "")} {...a} footer={<AvatarFooter name={nameOf(a.title)} retired={a.retired ?? null} results={gov.results[nameOf(a.title)] ?? null} />} />;
     return (
       <div className="grid gap-6">
         {intro && <Prose text={intro} />}
-        {list.length > 0 && (
-          <div className="grid gap-3 lg:grid-cols-2">
-            {list.map((a) => (
-              <AudienceCard key={a.title} {...a} />
-            ))}
-          </div>
+        <AvatarGovernanceBar canEdit={canEdit} />
+        {current.length > 0 && <div className="grid gap-3 lg:grid-cols-2">{current.map(card)}</div>}
+        {retired.length > 0 && (
+          <details className="group rounded-[18px] border border-line bg-bg/40 px-4 py-3">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 text-[13px] text-muted">
+              Retired avatars <span className="tabular rounded-full bg-surface-2 px-2 py-0.5 text-[11px]">{retired.length}</span>
+              <span className="ml-auto text-[12px] text-faint group-open:hidden">Show</span>
+            </summary>
+            <div className="grid gap-3 pt-3 lg:grid-cols-2">{retired.map(card)}</div>
+          </details>
         )}
       </div>
     );
   }
   if (kind === "reviews") return <ReviewBank body={sec.body} info={bank.info} client={client} canRefresh={bank.canRefresh} expectedMs={bank.expectedMs} />;
-  // Answered in place: each question has its own conversation, label and who answers it
-  if (kind === "questions") return <BibleQuestions questions={questions} clientId={client.id} slug={client.slug} />;
+  // Answered in place: each question has its own conversation, label, who answers it and who approves the change
+  if (kind === "questions")
+    return <BibleQuestions questions={questions} clientId={client.id} slug={client.slug} canEdit={canEdit} pending={gov.changes.filter((c) => c.kind === "question_answer" && c.status === "pending").map((c) => c.questionId ?? "")} />;
   return <Prose text={sec.body} />;
 }
 
@@ -674,7 +687,7 @@ function BibleChat({
           </div>
         </div>
       ) : (
-        <p className="border-t border-line px-5 py-4 text-[12.5px] text-faint">Execs and leads answer the Bible&apos;s questions here.</p>
+        <p className="border-t border-line px-5 py-4 text-[12.5px] text-faint">{BIBLE_EDITORS} edit the Bible here. You can answer each open question in the Bible (your answer goes to the approvers) or propose an avatar change.</p>
       )}
     </div>
   );
@@ -691,7 +704,7 @@ const onWide = (cb: () => void) => {
 };
 const useWide = () => useSyncExternalStore(onWide, () => window.matchMedia(WIDE).matches, () => true);
 
-export function BibleViewer({ client, bible, canEdit }: { client: { id: string; name: string; slug: string }; bible: Bible; canEdit: boolean }) {
+export function BibleViewer({ client, bible, canEdit, governance }: { client: { id: string; name: string; slug: string }; bible: Bible; canEdit: boolean; governance: Governance }) {
   const router = useRouter();
   const sections = splitBible(bible.markdown);
   const stats = statsOf(sections);
@@ -940,6 +953,8 @@ export function BibleViewer({ client, bible, canEdit }: { client: { id: string; 
         </nav>
 
         <main className="grid min-w-0 gap-5">
+          {/* What's waiting on the approvers (avatars, answers from people who don't edit the Bible), and what was decided */}
+          <ChangesPanel gov={governance} client={client} />
           {sections.map((s) => {
             const kind = kindOf(s.title);
             if (kind === "reference")
@@ -974,7 +989,7 @@ export function BibleViewer({ client, bible, canEdit }: { client: { id: string; 
                     onReviews={bankAt ? () => jump(bankAt) : undefined}
                   />
                 ) : (
-                  <SectionBody sec={s} questions={bible.questions} client={client} bank={bank} />
+                  <SectionBody sec={s} questions={bible.questions} client={client} bank={bank} gov={governance} canEdit={canEdit} />
                 )}
               </section>
             );
@@ -1045,6 +1060,7 @@ export function BibleViewer({ client, bible, canEdit }: { client: { id: string; 
         {asking && wide && <aside className="sticky top-20 h-[calc(100dvh-6rem)] overflow-hidden rounded-[24px] border border-line bg-surface">{chat}</aside>}
       </div>
       {asking && !wide && <SmallChat>{chat}</SmallChat>}
+      <ProposeAvatarSheet client={client} avatars={avatarsOf(bible.markdown).filter((a) => !a.retired)} results={governance.results} />
     </div>
   );
 }

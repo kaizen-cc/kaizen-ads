@@ -8,8 +8,13 @@ import { isExecOrLead, requireStaff } from "@/lib/auth";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { notLive } from "@/lib/live-guard";
+import { canEditBible, decide, propose, type Proposal } from "@/lib/bible-governance";
+import { BIBLE_APPROVERS, BIBLE_EDITORS } from "@/lib/bible-avatars";
+import type { QTurn } from "@/lib/bible-questions";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
+
+const NOT_EDITOR = `${BIBLE_EDITORS} edit the Brand Bible. Propose the change instead: it goes to the approvers.`;
 
 /**
  * Execs and leads: research the client on the web, then build (or update) their Brand Bible from that research,
@@ -19,8 +24,8 @@ export type ActionResult = { ok: true } | { ok: false; error: string };
 export async function buildBrandBible(clientId: string, slug: string, pasted: string): Promise<ActionResult> {
   { const why = await notLive(await createClient(), clientId); if (why) return { ok: false, error: why }; }
   const me = await requireStaff();
-  if (!isExecOrLead(me)) return { ok: false, error: "Only execs and leads can build a Brand Bible." };
   if (!adminConfigured()) return { ok: false, error: "Server key missing." };
+  if (!(await canEditBible(createAdminClient(), me, clientId))) return { ok: false, error: NOT_EDITOR };
   const supabase = await createClient();
   const [{ data: client }, ctx] = await Promise.all([supabase.from("clients").select("id").eq("id", clientId).maybeSingle(), clientContext(supabase, clientId)]);
   if (!client || !ctx) return { ok: false, error: "You don't work on this client." };
@@ -76,8 +81,8 @@ const CLARIFY_RULES = `You are reviewing this client's Brand Bible with someone 
 /** The review chat: the team answers open questions and corrects the Bible; the strategist's answers edit it in place. */
 export async function clarifyBrandBible(clientId: string, slug: string, message: string): Promise<{ ok: true; chat: BibleTurn[] } | { ok: false; error: string }> {
   const me = await requireStaff();
-  if (!isExecOrLead(me)) return { ok: false, error: "Only execs and leads can change the Brand Bible." };
   if (!adminConfigured()) return { ok: false, error: "Server key missing." };
+  if (!(await canEditBible(createAdminClient(), me, clientId))) return { ok: false, error: NOT_EDITOR };
   const text = message.trim().slice(0, 8000);
   if (!text) return { ok: false, error: "Write something first." };
   const supabase = await createClient();
@@ -132,7 +137,7 @@ export async function clarifyBrandBible(clientId: string, slug: string, message:
 /** Starts the review chat over (the Bible keeps every change it made) */
 export async function clearBibleChat(clientId: string, slug: string): Promise<ActionResult> {
   const me = await requireStaff();
-  if (!isExecOrLead(me) || !adminConfigured()) return { ok: false, error: "Not allowed." };
+  if (!adminConfigured() || !(await canEditBible(createAdminClient(), me, clientId))) return { ok: false, error: NOT_EDITOR };
   await createAdminClient().from("client_brand_bibles").update({ review_chat: [] }).eq("client_id", clientId);
   revalidatePath(`/clients/${slug}/brand-bible`);
   return { ok: true };
@@ -144,8 +149,22 @@ export async function discussBibleQuestion(clientId: string, slug: string, id: s
   if (!adminConfigured()) return { ok: false as const, error: "Server key missing." };
   const { data: client } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
   if (!client) return { ok: false as const, error: "You don't work on this client." };
+  const admin = createAdminClient();
+  // Someone who can't edit the Bible proposes the answer: it goes to the approvers, and waits in the question
+  if (!(await canEditBible(admin, me, clientId))) {
+    const p = await propose(admin, me, clientId, { kind: "question_answer", questionId: id, answer: text });
+    if (!p.ok) return p;
+    const { data: q } = await admin.from("bible_questions").select("thread").eq("id", id).single();
+    const now = new Date().toISOString();
+    const mine: QTurn = { role: "team", text: text.trim().slice(0, 6000), at: now, by: me.fullName ?? "Team" };
+    const note: QTurn = { role: "ai", text: `Proposed answer. It goes into the Bible once one of the approvers (${BIBLE_APPROVERS.toLowerCase()}) approves it.`, at: now };
+    const thread: QTurn[] = [...((q?.thread ?? []) as QTurn[]), mine, note].slice(-40);
+    await admin.from("bible_questions").update({ thread, updated_at: now }).eq("id", id);
+    revalidatePath(`/clients/${slug}/brand-bible`);
+    return { ok: true as const, answered: false, proposed: true, thread };
+  }
   const { discussQuestion } = await import("@/lib/bible-questions");
-  const r = await discussQuestion(createAdminClient(), clientId, id, { text, by: me.fullName ?? "Team", via: "team" });
+  const r = await discussQuestion(admin, clientId, id, { text, by: me.fullName ?? "Team", via: "team" });
   if (r.ok && r.answered) {
     revalidatePath(`/clients/${slug}`);
     revalidatePath(`/clients/${slug}/brand-bible`);
@@ -264,4 +283,27 @@ export async function writeClientPresentation(clientId: string, slug: string): P
   const r = await rewritePresentation(clientId, "");
   revalidatePath(`/clients/${slug}/brand-bible`);
   return r.ok ? { ok: true } : r;
+}
+
+/** Anyone on the client: propose adding, changing or retiring an avatar, with why and the evidence. Goes to the approvers. */
+export async function proposeBibleChange(clientId: string, slug: string, p: Exclude<Proposal, { kind: "question_answer" }>): Promise<ActionResult> {
+  const me = await requireStaff();
+  if (!adminConfigured()) return { ok: false, error: "Server key missing." };
+  const { data: client } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
+  if (!client) return { ok: false, error: "You don't work on this client." };
+  const r = await propose(createAdminClient(), me, clientId, p);
+  revalidatePath(`/clients/${slug}/brand-bible`);
+  return r.ok ? { ok: true } : r;
+}
+
+/** Execs, the Head of Creative or the account manager: approve (applied to the Bible) or reject (kept, with why) */
+export async function decideBibleChange(clientId: string, slug: string, id: string, approve: boolean, note: string): Promise<{ ok: true; applied: boolean } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  if (!adminConfigured()) return { ok: false, error: "Server key missing." };
+  const { data: client } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
+  if (!client) return { ok: false, error: "You don't work on this client." };
+  const r = await decide(createAdminClient(), me, clientId, id, approve, note);
+  revalidatePath(`/clients/${slug}`);
+  revalidatePath(`/clients/${slug}/brand-bible`);
+  return r;
 }

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { PersonAvatar } from "@/components/person-avatar";
+import { PriorityBadge } from "@/components/priority-badge";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { FORMAT_LABEL, PHASE_LABEL, businessDuration, health, stageInfo, type Phase, type Priority, type Stage } from "@/lib/stages";
 import { MoveDialog } from "./move-dialog";
@@ -381,11 +382,7 @@ export function TicketDrawer({
             <div className="flex min-w-0 items-center gap-2.5">
               <ClientTag name={ticket.clientName} />
               <span className="tabular text-xs text-faint">#{ticket.number}</span>
-              {ticket.priority !== "normal" && (
-                <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${ticket.priority === "urgent" ? "bg-bad-soft text-bad" : "bg-warn-soft text-warn"}`}>
-                  {ticket.priority === "urgent" ? "Urgent" : "High"}
-                </span>
-              )}
+              <PriorityBadge priority={ticket.priority} size="md" />
             </div>
             <button onClick={onClose} className="-mr-2 grid h-8 w-8 shrink-0 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg max-md:h-11 max-md:w-11 max-md:bg-surface max-md:text-base" aria-label="Close ticket">
               ✕

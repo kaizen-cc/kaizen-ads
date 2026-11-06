@@ -2,7 +2,7 @@
 // review chat's edits. Plain functions, no server or browser APIs, so all three share them.
 
 export type BibleSection = { id: string; num: string; title: string; heading: string; body: string };
-export type Audience = { title: string; tier: string | null; body: string };
+export type Audience = { title: string; tier: string | null; body: string; /** When it was retired ("Nov 6, 2026, replaced"), else null */ retired?: string | null };
 export type Quote = {
   quote: string;
   who: string;
@@ -69,8 +69,15 @@ export function audiencesOf(body: string): { intro: string; list: Audience[] } {
     .map((p) => {
       const [head, ...rest] = p.split("\n");
       const title = head.replace(/^###\s+/, "").trim();
-      const tier = title.match(/\((Proven|Likely|Hypothesis)\)/i)?.[1] ?? null;
-      return { title: title.replace(/\s*\((Proven|Likely|Hypothesis)\)\s*/i, ""), tier, body: rest.join("\n").trim() };
+      // A retired avatar stays in the Bible, labeled with the day it was retired: "### B · Bargain Hunter (Retired Nov 6, 2026)"
+      const retired = title.match(/\(Retired\b([^)]*)\)/i);
+      const tier = retired ? "Retired" : (title.match(/\((Proven|Likely|Hypothesis)\)/i)?.[1] ?? null);
+      return {
+        title: title.replace(/\s*\((Proven|Likely|Hypothesis)\)\s*/i, " ").replace(/\s*\(Retired\b[^)]*\)\s*/i, " ").trim(),
+        tier,
+        body: rest.join("\n").trim(),
+        retired: retired ? retired[1].replace(/^[\s:,-]+/, "").trim() || "retired" : null,
+      };
     });
   return { intro, list };
 }
@@ -191,7 +198,7 @@ export function statsOf(sections: BibleSection[]) {
   const aud = by("audiences");
   const bank = reviewBankOf(sections);
   return {
-    audiences: aud ? audiencesOf(aud.body).list.length : 0,
+    audiences: aud ? audiencesOf(aud.body).list.filter((a) => !a.retired).length : 0,
     // The v3 bank sits under section 4 as "### 4b. Review bank"; older Bibles gave it its own section
     reviews: bank ? quotesOf(bank.body).length || tablesOf(bank.body).reduce((n, t) => n + t.rows.length, 0) : 0,
     competitors: rows(titled(/competitor/i)),

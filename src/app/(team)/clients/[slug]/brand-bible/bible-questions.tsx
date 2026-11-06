@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import type { BibleQuestion, QCategory, QStage, QTurn } from "@/lib/bible-questions";
 import { useParam } from "@/lib/url-state";
+import { BIBLE_APPROVERS, BIBLE_EDITORS } from "@/lib/bible-avatars";
 import { discussBibleQuestion, passBibleQuestion } from "../brand-bible-actions";
 
 // The Bible's open questions, each with its label, who answers it (the client first where it's theirs), and a
@@ -37,7 +38,7 @@ function Thread({ turns }: { turns: QTurn[] }) {
   );
 }
 
-function OpenQuestion({ q, n, clientId, slug, focused }: { q: BibleQuestion; n: number; clientId: string; slug: string; focused: boolean }) {
+function OpenQuestion({ q, n, clientId, slug, focused, canEdit, waiting }: { q: BibleQuestion; n: number; clientId: string; slug: string; focused: boolean; canEdit: boolean; waiting: boolean }) {
   const router = useRouter();
   const [turns, setTurns] = useState(q.thread);
   const [text, setText] = useState("");
@@ -67,7 +68,7 @@ function OpenQuestion({ q, n, clientId, slug, focused }: { q: BibleQuestion; n: 
         return;
       }
       setTurns(r.thread);
-      if (r.answered) router.refresh();
+      if (r.answered || ("proposed" in r && r.proposed)) router.refresh();
     });
   };
   const pass = (toExecs: boolean) =>
@@ -112,6 +113,7 @@ function OpenQuestion({ q, n, clientId, slug, focused }: { q: BibleQuestion; n: 
             </div>
           )}
           {q.stage === "client" && <p className="text-[12px] text-faint">Waiting on the client in their portal. You can answer for them if you already know.</p>}
+          {waiting && <p className="w-fit rounded-full bg-warn-soft px-2.5 py-0.5 text-[11.5px] text-warn">An answer is waiting on approval</p>}
         </div>
         {!open && (
           <button type="button" onClick={() => setOpen(true)} className="h-11 w-full shrink-0 rounded-full border border-line px-4 text-[13px] text-muted hover:border-faint hover:text-fg md:h-9 md:w-auto">
@@ -141,7 +143,7 @@ function OpenQuestion({ q, n, clientId, slug, focused }: { q: BibleQuestion; n: 
                 }
               }}
               rows={1}
-              placeholder="Answer it here. It goes straight into the Bible."
+              placeholder={canEdit ? "Answer it here. It goes straight into the Bible." : "Answer it here. It goes to the approvers first."}
               className="min-h-11 flex-1 resize-none bg-transparent py-2 text-[16px] leading-relaxed outline-none placeholder:text-faint md:text-[13.5px]"
             />
             <button type="button" disabled={busy || !text.trim()} onClick={send} className="h-11 shrink-0 rounded-full bg-brand px-4 text-[13px] font-medium text-white disabled:opacity-40 md:h-9">
@@ -166,16 +168,29 @@ function OpenQuestion({ q, n, clientId, slug, focused }: { q: BibleQuestion; n: 
   );
 }
 
-export function BibleQuestions({ questions, clientId, slug }: { questions: BibleQuestion[]; clientId: string; slug: string }) {
+export function BibleQuestions({ questions, clientId, slug, canEdit = true, pending = [] }: { questions: BibleQuestion[]; clientId: string; slug: string; canEdit?: boolean; pending?: string[] }) {
   const focus = useParam("q");
   const open = questions.filter((q) => q.stage !== "answered");
   const done = questions.filter((q) => q.stage === "answered" && q.answer).reverse();
   return (
     <div className="grid gap-4">
+      {/* Who answers and who approves, said once */}
+      <dl className="grid gap-2 rounded-[18px] border border-line bg-bg/40 px-4 py-3 text-[12.5px] md:grid-cols-2 md:gap-6">
+        <div className="grid gap-0.5">
+          <dt className="text-faint">Who answers</dt>
+          <dd className="leading-relaxed text-muted">Each question is routed by what it&apos;s about: the client first where it&apos;s theirs, then the media buyer (offers, media), the Head of Creative (creative) or the execs (the business).</dd>
+        </div>
+        <div className="grid gap-0.5">
+          <dt className="text-faint">Who approves the change</dt>
+          <dd className="leading-relaxed text-muted">
+            {BIBLE_EDITORS} write answers straight into the Bible. Anyone else&apos;s answer waits for {BIBLE_APPROVERS.toLowerCase()} to approve it.
+          </dd>
+        </div>
+      </dl>
       {open.length ? (
         <ol className="grid gap-3">
           {open.map((q, i) => (
-            <OpenQuestion key={q.id} q={q} n={i + 1} clientId={clientId} slug={slug} focused={focus === q.id} />
+            <OpenQuestion key={q.id} q={q} n={i + 1} clientId={clientId} slug={slug} focused={focus === q.id} canEdit={canEdit} waiting={pending.includes(q.id)} />
           ))}
         </ol>
       ) : (

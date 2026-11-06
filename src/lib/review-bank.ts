@@ -410,7 +410,7 @@ export async function refreshReviewBank(admin: SupabaseClient, clientId: string)
   try {
     const { splitBible, audiencesOf, kindOf } = await import("@/lib/bible-sections");
     const aud = splitBible(b.markdown as string).find((s) => kindOf(s.title) === "audiences");
-    const profiles = aud ? audiencesOf(aud.body).list.map((a) => a.title) : [];
+    const profiles = aud ? audiencesOf(aud.body).list.filter((a) => !a.retired).map((a) => a.title) : [];
     const { businessModelOf, MODEL_GUIDE } = await import("@/lib/business-model");
     const model = await businessModelOf(admin, clientId).catch(() => null);
     const bank = await collectReviewBank(admin, clientId, { profiles, web: (b.research as string | null) ?? undefined, reviewSources: model ? MODEL_GUIDE[model.model].reviews : undefined });

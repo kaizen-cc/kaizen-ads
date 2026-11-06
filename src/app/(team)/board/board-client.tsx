@@ -115,6 +115,8 @@ export function BoardClient({
   const person = params.get("person");
   const format = (params.get("format") as Format | null) ?? null;
   const only = (params.get("only") as Health | null) ?? null;
+  // High or Urgent only (Kaizen tickets and the Asana outlines, both read as one set)
+  const priority = ((p) => (p === "high" || p === "urgent" ? p : null))(params.get("priority"));
   const openNumber = params.get("t");
   // A ticket dropped on another column waits in the move dialog (?move=number&to=stage) until it's confirmed
   const moveNumber = params.get("move");
@@ -131,9 +133,17 @@ export function BoardClient({
         (!person || x.assigneeId === person) &&
         (!format || x.format === format) &&
         (!only || health(x.minutesOver, x.stage) === only) &&
+        (!priority || x.priority === priority) &&
         (!t || x.title.toLowerCase().includes(t) || x.clientName.toLowerCase().includes(t) || String(x.number).startsWith(t)),
     );
-  }, [tickets, q, client, person, format, only]);
+  }, [tickets, q, client, person, format, only, priority]);
+  // How many of each on the board (for the picked client), Asana outlines included
+  const priorityCounts = useMemo(() => {
+    const c = { high: 0, urgent: 0 };
+    for (const x of tickets) if (x.stage !== "launched" && (!client || x.clientSlug === client) && x.priority !== "normal") c[x.priority]++;
+    for (const x of shadows) if ((!client || x.clientSlug === client) && x.priority !== "normal") c[x.priority]++;
+    return c;
+  }, [tickets, shadows, client]);
 
   const counts = useMemo(() => {
     const c = { ok: 0, warn: 0, bad: 0 };
@@ -163,11 +173,12 @@ export function BoardClient({
       if (person && x.profileId !== person) continue;
       if (format && x.format !== format) continue;
       if (only) continue; // turnaround health is ours; Asana tasks don't have it
-      if (t && !x.name.toLowerCase().includes(t) && !(x.clientName ?? "").toLowerCase().includes(t)) continue;
+      if (priority && x.priority !== priority) continue;
+      if (t && !x.title.toLowerCase().includes(t) && !(x.clientName ?? "").toLowerCase().includes(t)) continue;
       m.set(x.stage, [...(m.get(x.stage) ?? []), x]);
     }
     return m;
-  }, [shadows, q, client, person, format, only]);
+  }, [shadows, q, client, person, format, only, priority]);
   const selectedClient = clients.find((c) => c.slug === client) ?? null;
 
   // Getting around a board wider than the screen: a visible scrollbar, the phase labels and arrows jump along it, and
@@ -223,7 +234,7 @@ export function BoardClient({
   const optimisticMove = (id: string, stage: Stage) =>
     setTickets((all) => all.map((x) => (x.id === id ? { ...x, stage, minutesInStage: 0, minutesOver: 0 } : x)));
 
-  const filtersOn = Boolean(q || client || person || format || only);
+  const filtersOn = Boolean(q || client || person || format || only || priority);
 
   return (
     <div className="grid gap-6">
@@ -298,8 +309,30 @@ export function BoardClient({
             </button>
           ))}
         </div>
+        <div role="radiogroup" aria-label="Priority" className="flex w-full rounded-full border border-line bg-surface p-0.5 text-sm md:w-auto">
+          {(
+            [
+              [null, "Any priority", null],
+              ["high", "High", "bg-warn"],
+              ["urgent", "Urgent", "bg-bad"],
+            ] as const
+          ).map(([p, label, dot]) => (
+            <button
+              key={p ?? "any"}
+              type="button"
+              role="radio"
+              aria-checked={priority === p}
+              onClick={() => pushParams({ priority: p })}
+              className={`flex h-10 flex-1 items-center justify-center gap-1.5 rounded-full px-3 md:h-auto md:flex-initial md:py-1 ${priority === p ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}
+            >
+              {dot && <span aria-hidden className={`h-1.5 w-1.5 rounded-full ${dot}`} />}
+              {label}
+              {p && priorityCounts[p] > 0 && <span className="tabular text-[11px] opacity-70">{priorityCounts[p]}</span>}
+            </button>
+          ))}
+        </div>
         {filtersOn && (
-          <button onClick={() => pushParams({ q: null, client: null, person: null, format: null, only: null })} className="h-11 px-3 text-xs text-muted hover:text-fg md:h-auto md:px-2">
+          <button onClick={() => pushParams({ q: null, client: null, person: null, format: null, only: null, priority: null })} className="h-11 px-3 text-xs text-muted hover:text-fg md:h-auto md:px-2">
             Clear
           </button>
         )}

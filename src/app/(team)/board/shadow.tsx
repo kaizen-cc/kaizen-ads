@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect } from "react";
 import type { ShadowTicket } from "@/lib/asana";
+import { PriorityBadge } from "@/components/priority-badge";
 import { stageInfo } from "@/lib/stages";
 
 const day = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -20,9 +21,9 @@ export function ShadowCard({ s, onOpen }: { s: ShadowTicket; onOpen: () => void 
           <span className="h-1.5 w-1.5 rounded-full bg-[#f06a6a]" />
           In Asana
         </span>
-        {s.priority && /high|urgent/i.test(s.priority) && <span className="rounded-full bg-bad-soft px-1.5 py-0.5 text-[11px] text-bad md:text-[10px]">{s.priority}</span>}
+        <PriorityBadge priority={s.priority} />
       </span>
-      <span className="line-clamp-3 text-[13px] leading-snug text-muted">{s.name}</span>
+      <span className="line-clamp-3 text-[13px] leading-snug text-muted">{s.title}</span>
       {s.section && s.section.trim().toLowerCase() !== stageInfo(s.stage).label.toLowerCase() && <span className="text-[11px] text-faint md:text-[10px]">Asana: {s.section}</span>}
       <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-faint">
         <span className="truncate">{s.clientName ?? (s.clientRef ? `Client ${s.clientRef}` : "Client not matched")}</span>
@@ -53,7 +54,13 @@ export function ShadowSheet({ s, canMigrate, onClose }: { s: ShadowTicket; canMi
               <span className="h-1.5 w-1.5 rounded-full bg-[#f06a6a]" />
               Mirrored from Asana · not a Kaizen Ads ticket yet
             </span>
-            <h2 className="font-heading text-xl leading-snug">{s.name}</h2>
+            <h2 className="font-heading text-xl leading-snug">{s.title}</h2>
+            {s.priority !== "normal" && (
+              <span className="flex items-center gap-2 text-[12px] text-faint">
+                <PriorityBadge priority={s.priority} size="md" />
+                {s.fields.Priority && s.fields.Priority.trim().toLowerCase() !== s.priority && <span>Asana: {s.fields.Priority}</span>}
+              </span>
+            )}
           </div>
           <button type="button" onClick={onClose} className="rounded-full px-2 text-lg text-faint hover:text-fg max-md:-mr-2 max-md:grid max-md:h-11 max-md:w-11 max-md:shrink-0 max-md:place-items-center max-md:px-0 max-md:text-2xl" aria-label="Close">
             ×

@@ -55,13 +55,27 @@ export default async function BrandBiblePage({ params }: { params: Promise<{ slu
     usualMs("brand bible reviews %", 30_000, 90_000),
     usualMs("client presentation %", 15_000, 60_000),
   ]);
+  // Who edits (execs, leads, the account manager), who approves proposals, the proposals themselves, and how the ads
+  // made for each avatar are doing
+  const gov = await import("@/lib/bible-governance");
+  const { avatarsOf } = await import("@/lib/bible-avatars");
+  const admin = adminConfigured() ? createAdminClient() : null;
+  const [canEdit, canApprove, changes, results] = admin
+    ? await Promise.all([
+        gov.canEditBible(admin, me, client.id),
+        gov.canApproveBible(admin, me, client.id),
+        gov.loadChanges(admin, client.id).catch(() => []),
+        gov.avatarResults(admin, client.id, avatarsOf(b.markdown as string).map((a) => a.name)).catch(() => ({})),
+      ])
+    : [isExecOrLead(me), me.isExec, [], {}];
   const rb = (b.review_bank ?? null) as (Partial<ReviewBankInfo> & { status?: ReviewBankInfo["status"] }) | null;
   // A new version written beside the one already with the client
   const beside = pres && ["sent", "approved"].includes(pres.status as string) && newest && (!pres.sent_at || Date.parse(newest.started_at as string) > Date.parse(pres.sent_at as string)) ? newest : null;
   return (
     <BibleViewer
       client={{ id: client.id, name: client.name, slug: client.slug }}
-      canEdit={isExecOrLead(me)}
+      canEdit={canEdit}
+      governance={{ canApprove, changes, results }}
       bible={{
         status: b.status,
         version: b.version,

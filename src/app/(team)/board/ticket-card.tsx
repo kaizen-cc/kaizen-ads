@@ -1,6 +1,7 @@
 "use client";
 
 import { PersonAvatar } from "@/components/person-avatar";
+import { PriorityBadge } from "@/components/priority-badge";
 import { tintFor } from "@/lib/colors";
 import { businessDuration, FORMAT_LABEL, health, type Health } from "@/lib/stages";
 import type { Ticket } from "./types";
@@ -109,11 +110,7 @@ export function TicketCard({
       <div className="flex items-center justify-between gap-2">
         <ClientTag name={ticket.clientName} small />
         <span className="flex shrink-0 items-center gap-1.5 text-faint">
-          {ticket.priority !== "normal" && (
-            <span className={`rounded-full px-1.5 py-px text-[11px] font-semibold uppercase md:text-[10px] tracking-wide ${ticket.priority === "urgent" ? "bg-bad-soft text-bad" : "bg-warn-soft text-warn"}`}>
-              {ticket.priority}
-            </span>
-          )}
+          <PriorityBadge priority={ticket.priority} />
           <FormatBadge format={ticket.format} />
         </span>
       </div>

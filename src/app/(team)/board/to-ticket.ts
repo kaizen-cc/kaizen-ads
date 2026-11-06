@@ -1,4 +1,5 @@
 import type { Format, Priority, Stage } from "@/lib/stages";
+import { cleanTitle } from "@/lib/task-title";
 import type { Ticket } from "./types";
 
 /** A row from the `board_requests` view. */
@@ -44,10 +45,12 @@ export const toTicket = (r: BoardRow): Ticket => ({
   clientId: r.client_id,
   clientName: r.client_name,
   clientSlug: r.client_slug,
-  title: r.title,
+  // A ticket migrated from Asana can still carry "URGENT: URGENT:" in its title: shown once, as the badge
+  title: cleanTitle(r.title).title,
   format: r.format,
   kind: r.kind,
-  priority: r.priority,
+  // The ticket's own priority (set from Asana's at migration, then changed only in the ticket)
+  priority: r.priority ?? "normal",
   stage: r.stage,
   assigneeId: r.assignee_id,
   assigneeName: r.assignee_name,
