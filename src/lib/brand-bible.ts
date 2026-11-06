@@ -381,10 +381,29 @@ export async function autoBibles(admin: SupabaseClient, max = 1) {
     .in("build_stage", ["write", "writing"])
     .lt("started_at", new Date(Date.now() - 5 * 60_000).toISOString())
     .limit(2);
-  const picked = (stuck ?? []).filter((b) => b.build_stage === "write" || Date.now() - Date.parse(b.started_at as string) > 20 * 60_000).slice(0, 1);
-  for (const b of picked) {
-    await admin.from("client_brand_bibles").update({ build_stage: "write" }).eq("client_id", b.client_id);
-    return { written: await writeBible(admin, b.client_id as string) };
+  // A build cut off during research (the run hit its time limit): writing starts if the research was saved, otherwise
+  // the build starts again; nothing stays "building" forever
+  const { data: cut } = await admin
+    .from("client_brand_bibles")
+    .select("client_id, research, researched_at")
+    .eq("status", "building")
+    .eq("build_stage", "research")
+    .lt("started_at", new Date(Date.now() - 20 * 60_000).toISOString())
+    .limit(10);
+  for (const r of cut ?? []) {
+    const saved = r.research && r.researched_at && Date.now() - Date.parse(r.researched_at as string) < 30 * 86_400_000;
+    if (saved) await admin.from("client_brand_bibles").update({ build_stage: "write", started_at: new Date(Date.now() - 6 * 60_000).toISOString() }).eq("client_id", r.client_id);
+    else await admin.from("client_brand_bibles").update({ status: "failed", build_stage: null, error: "The research didn't finish. Trying again.", started_at: new Date(Date.now() - 23 * 3_600_000).toISOString() }).eq("client_id", r.client_id);
+  }
+  const picked = (stuck ?? []).filter((b) => b.build_stage === "write" || Date.now() - Date.parse(b.started_at as string) > 20 * 60_000).slice(0, 2);
+  if (picked.length) {
+    const written = await Promise.all(
+      picked.map(async (b) => {
+        await admin.from("client_brand_bibles").update({ build_stage: "write" }).eq("client_id", b.client_id);
+        return writeBible(admin, b.client_id as string);
+      }),
+    );
+    return { written };
   }
   // A new client's Bible starts once their intake form is read and their email history (sales emails included) is in,
   // automatic builds on or not: it's the next step of onboarding. If the intake still isn't in 4 business days after
