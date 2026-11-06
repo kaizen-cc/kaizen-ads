@@ -1,31 +1,39 @@
 import Link from "next/link";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
-import { TOPICS, type TodayItem, type TopicKey } from "@/lib/today";
-import { buildSnapshot, readSnapshot } from "@/lib/today-snapshot";
+import { TOPICS, type TodayItem } from "@/lib/today";
+import { rowStat, TIER_ORDER, topicGroups, type Bucket } from "@/lib/today-counts";
+import { todaySnapshot } from "@/lib/today-snapshot";
 import { TodayLive } from "./today-live";
 import { TodayLoading } from "./today-loading";
 import { HoverCard } from "@/components/hover-card";
 
 // The way into the daily recap, at the top of the Overview: today in three numbers, a start button, a jump into any
 // topic, and the person's list (what they saved for later). Built once a day (with its loading moment), then shown
-// from the saved version at once and kept current in the background (src/lib/today-snapshot.ts).
+// from the saved version at once and kept current in the background (src/lib/today-snapshot.ts). Every number here is
+// counted the way the recap counts (src/lib/today-counts.ts): everything about one client in a topic is one look.
 
 const TIER_DOT: Record<string, string> = { critical: "bg-[#ff4d5e]", high: "bg-[#f2b14c]", normal: "bg-[#9aa8ff]" };
+const TIER_COLOR = { critical: "#ff4d5e", high: "#f2b14c", normal: "#9aa8ff" } as const;
 
 /** Where an item goes when it's clicked: its own place (the KPI card, the ticket, the client), else the recap at its topic. */
 const hrefOf = (i: TodayItem) => i.action.href ?? (i.clientSlug ? `/clients/${i.clientSlug}` : `/today?topic=${i.topic}`);
 
-/** One item in a hover summary: the client and what's up, its number, and a link straight to it. */
-function Line({ i }: { i: TodayItem }) {
+/** One client in a hover summary: what's most urgent for them (and how many more), its number, and a link straight to it. */
+function Line({ b }: { b: Bucket }) {
+  const i = b.items[0];
   return (
     <Link href={hrefOf(i)} className="grid grid-cols-[8px_minmax(0,1fr)_auto] items-start gap-2 rounded-[10px] px-2 py-1.5 hover:bg-ink/[0.06]">
-      <span className={`mt-1.5 h-1.5 w-1.5 rounded-full ${TIER_DOT[i.tier]}`} />
+      <span className={`mt-1.5 h-1.5 w-1.5 rounded-full ${TIER_DOT[b.tier]}`} />
       <span className="grid min-w-0">
         <span className="truncate text-[12.5px] text-ink/90">{i.title}</span>
-        <span className="truncate text-[11px] text-ink/45">{i.client}</span>
+        <span className="truncate text-[11px] text-ink/45">
+          {b.client}
+          {b.items.length > 1 ? ` · ${b.items.length} open` : ""}
+        </span>
       </span>
-      <span className="tabular pt-0.5 text-[11px] text-ink/60">{i.stat.value}</span>
+      {/* Several open: the number is how many (the recap's row shows the same); one: the item's own number */}
+      <span className="tabular pt-0.5 text-[11px] text-ink/60">{rowStat(b.items, i).value}</span>
     </Link>
   );
 }
@@ -60,14 +68,14 @@ function Summary({ i }: { i: TodayItem }) {
   );
 }
 
-/** A few items under a heading, each a link, with the way into the rest. */
-function List({ title, items, more }: { title: string; items: TodayItem[]; more: { label: string; href: string } }) {
+/** A few clients under a heading, each a link, with the way into the rest. */
+function List({ title, buckets, more }: { title: string; buckets: (Bucket & { topic: string })[]; more: { label: string; href: string } }) {
   return (
     <>
       <p className="px-2 text-[10px] uppercase tracking-[0.16em] text-ink/45">{title}</p>
       <div className="grid">
-        {items.slice(0, 5).map((i) => (
-          <Line key={i.key} i={i} />
+        {buckets.slice(0, 5).map((b) => (
+          <Line key={`${b.topic}:${b.key}`} b={b} />
         ))}
       </div>
       <Link href={more.href} className="px-2 text-[11.5px] text-ink/60 hover:text-fg">
@@ -78,16 +86,19 @@ function List({ title, items, more }: { title: string; items: TodayItem[]; more:
 }
 
 export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
-  const snap = (await readSnapshot(db, me)) ?? (await buildSnapshot(db, me, null));
+  const snap = await todaySnapshot(db, me);
   const t = snap.today;
+  const looks = t.looks;
   const delta = snap.delta;
   const saved = t.items.filter((i) => i.state === "saved");
-  const topics = [...new Set(t.items.map((i) => i.topic))] as TopicKey[];
-  const criticalBy = (k: TopicKey) => t.items.filter((i) => i.topic === k && i.tier === "critical").length;
-  const top = t.items[0];
+  // The recap's topics in its order (most critical first), each client one row: the same rows its screens show
+  const groups = topicGroups(t.items);
+  const rows = groups.flatMap((g) => g.buckets.map((b) => ({ ...b, topic: g.topic })));
+  const first = rows.reduce<(typeof rows)[number] | null>((a, b) => (!a || b.items[0].score > a.items[0].score ? b : a), null);
+  const top = first?.items[0];
   return (
     <section className="relative grid gap-5 overflow-hidden rounded-[24px] border border-line bg-deep p-5 md:p-7">
-      <div aria-hidden className="pointer-events-none absolute -left-24 -top-32 h-[340px] w-[340px] rounded-full blur-[110px]" style={{ background: t.counts.critical ? "rgba(200,16,46,0.45)" : "rgba(90,110,255,0.3)" }} />
+      <div aria-hidden className="pointer-events-none absolute -left-24 -top-32 h-[340px] w-[340px] rounded-full blur-[110px]" style={{ background: looks.byTier.critical ? "rgba(200,16,46,0.45)" : "rgba(90,110,255,0.3)" }} />
       <div aria-hidden className="pointer-events-none absolute -bottom-40 right-0 h-[300px] w-[300px] rounded-full bg-[rgba(224,150,40,0.18)] blur-[120px]" />
       <div className="relative flex flex-wrap items-end justify-between gap-5">
         <div className="grid min-w-0 gap-2">
@@ -103,11 +114,12 @@ export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
             <TodayLive shown={snap.computedAt} />
           </p>
           <p className="font-display text-3xl leading-tight tracking-tight text-fg md:text-4xl">
-            {t.items.length ? (
+            {looks.total ? (
               <>
-                {t.items.length} things{t.counts.critical ? (
+                {looks.total} {looks.total === 1 ? "thing" : "things"}
+                {looks.byTier.critical ? (
                   <>
-                    , <span className="text-[#ff4d5e]">{t.counts.critical} critical</span>
+                    , <span className="text-[#ff4d5e]">{looks.byTier.critical} critical</span>
                   </>
                 ) : null}
               </>
@@ -115,10 +127,11 @@ export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
               "All clear today"
             )}
           </p>
-          {top && (
+          {top && first && (
             <HoverCard content={<Summary i={top} />} className="max-w-xl">
               <Link href={hrefOf(top)} className="text-sm text-ink/60 hover:text-fg">
-                First up: <span className="text-ink/85 underline decoration-ink/20 underline-offset-4">{top.title}</span> · {top.client}
+                First up: <span className="text-ink/85 underline decoration-ink/20 underline-offset-4">{top.title}</span> · {first.client}
+                {first.items.length > 1 ? ` and ${first.items.length - 1} more for them` : ""}
               </Link>
             </HoverCard>
           )}
@@ -149,25 +162,20 @@ export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
         </div>
         <div className="flex w-full items-center gap-3 md:w-auto">
           <div className="hidden gap-4 text-right sm:flex">
-            {(
-              [
-                ["critical", "#ff4d5e"],
-                ["high", "#f2b14c"],
-                ["normal", "#9aa8ff"],
-              ] as const
-            ).map(([k, c]) => {
-              const these = t.items.filter((i) => i.tier === k);
+            {TIER_ORDER.map((k) => {
+              const c = TIER_COLOR[k];
+              const these = rows.filter((b) => b.tier === k);
               const name = k === "high" ? "important" : k === "normal" ? "worth a look" : k;
               const body = (
                 <Link href={these[0] ? `/today?topic=${these[0].topic}` : "/today"} className="grid rounded-[10px] px-1 hover:bg-ink/[0.05]">
                   <span className="font-display text-2xl tabular" style={{ color: c }}>
-                    {t.counts[k]}
+                    {looks.byTier[k]}
                   </span>
                   <span className="text-[10px] uppercase tracking-[0.14em] text-ink/40">{name}</span>
                 </Link>
               );
               return these.length ? (
-                <HoverCard key={k} content={<List title={`${these.length} ${name}`} items={these} more={{ label: `All ${these.length} in your recap`, href: `/today?topic=${these[0].topic}` }} />}>
+                <HoverCard key={k} content={<List title={`${these.length} ${name}`} buckets={these} more={{ label: `All ${these.length} in your recap`, href: `/today?topic=${these[0].topic}` }} />}>
                   {body}
                 </HoverCard>
               ) : (
@@ -176,22 +184,23 @@ export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
             })}
           </div>
           <Link href="/today" className="inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-full bg-fg px-6 md:flex-none md:justify-start text-[15px] font-semibold text-bg shadow-[0_10px_40px_-10px_rgba(255,255,255,0.4)] hover:bg-ink/90">
-            {t.items.length || t.resolved.length ? "Start your day" : "Open"} <span aria-hidden>→</span>
+            {looks.total || t.resolved.length ? "Start your day" : "Open"} <span aria-hidden>→</span>
           </Link>
         </div>
       </div>
 
-      {topics.length > 0 && (
+      {groups.length > 0 && (
         <div className="relative flex flex-wrap gap-2">
           <span className="w-full pr-1 text-[11px] uppercase tracking-[0.16em] text-ink/40 md:w-auto md:self-center">Jump to</span>
-          {topics.map((k) => {
-            const these = t.items.filter((i) => i.topic === k);
+          {groups.map(({ topic: k }) => {
+            const these = rows.filter((b) => b.topic === k);
+            const n = looks.byTopic[k];
             return (
-              <HoverCard key={k} content={<List title={`${TOPICS[k].label} · ${TOPICS[k].blurb}`} items={these} more={{ label: `Go through all ${these.length}`, href: `/today?topic=${k}` }} />}>
+              <HoverCard key={k} content={<List title={`${TOPICS[k].label} · ${TOPICS[k].blurb}`} buckets={these} more={{ label: `Go through all ${n.n}`, href: `/today?topic=${k}` }} />}>
                 <Link href={`/today?topic=${k}`} className="flex min-h-11 items-center gap-1.5 rounded-full border border-ink/15 bg-ink/[0.04] px-4 py-1.5 text-sm md:min-h-0 md:px-3 md:text-xs text-ink/80 hover:border-ink/40 hover:text-fg">
-                  {criticalBy(k) > 0 && <span className="h-1.5 w-1.5 rounded-full bg-[#ff4d5e]" />}
+                  {n.critical > 0 && <span className="h-1.5 w-1.5 rounded-full bg-[#ff4d5e]" />}
                   {TOPICS[k].label}
-                  <span className="tabular text-ink/45">{these.length}</span>
+                  <span className="tabular text-ink/45">{n.n}</span>
                 </Link>
               </HoverCard>
             );

@@ -21,6 +21,8 @@ import { PageHeader } from "./views/shared";
 import { NextSection } from "./views/next-section";
 import { loadNextForMe } from "@/lib/next-for-me";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { topicsFor } from "@/lib/today";
+import { todaySnapshot } from "@/lib/today-snapshot";
 
 const department = (me: Staff) => (me.role === "head_of_creative" ? "Creative" : me.role === "head_of_google" ? "Google" : "Meta");
 
@@ -82,7 +84,7 @@ export default async function Home() {
   // Ad accounts against target, each service line on its own: execs see Meta and Google, the Head of Meta only Meta,
   // the Head of Google only Google, the Head of Creative neither
   const lines: ("meta" | "google")[] = me.isExec ? ["meta", "google"] : me.role === "head_of_meta" ? ["meta"] : me.role === "head_of_google" ? ["google"] : [];
-  const [h, kpiLines, suggestions, fatigue, onboarding, clientOptions, callPromisesAll, owedItems, said, { data: hiddenRows }, patternState, production, next, { data: assigned }] = await Promise.all([
+  const [h, kpiLines, suggestions, fatigue, onboarding, clientOptions, callPromisesAll, owedItems, said, { data: hiddenRows }, patternState, production, next, { data: assigned }, snap] = await Promise.all([
     loadHome(db, me),
     Promise.all(lines.map((platform) => loadKpiPulse(db, { platform }))),
     // Briefs the strategist suggests (Meta creative): execs and the leads on it decide them, not the Head of Google
@@ -107,7 +109,11 @@ export default async function Home() {
     // Next for me: everything on this person, under the themes
     loadNextForMe(db, me),
     assignedQuery(),
+    // Today's recap, the same one the "Your day" card reads (built once per request): the themes count as it does
+    todaySnapshot(db, me).catch(() => null),
   ]);
+  // The recap's counts (clients, per topic) and which topics it covers for this person, for the theme cards
+  const looks = snap ? { byTopic: snap.today.looks.byTopic, covered: [...topicsFor(me)] } : null;
   const hidden = new Set((hiddenRows ?? []).map((r) => r.key as string));
   h.attention = h.attention.filter((a) => !hidden.has(`alert:${a.id}`));
   // The Head of Creative: only the call promises with a brief to make; the rest are the buyers' and account managers'
@@ -121,6 +127,12 @@ export default async function Home() {
     onboarding.creativeView = true;
   }
   const owed = { items: owedItems.filter((o) => o.targetId === me.id || !hidden.has(`owed:${o.id}`)), said: said.filter((p) => p.ownerId === me.id || !hidden.has(`said:${p.id}`)), me: me.id };
+  // What they marked done or "not for me" in their recap leaves these lists for them too (a brief idea, an ad wearing
+  // out): the item is still open for everyone else, so it's their mark, read the same way here (src/lib/item-state.ts)
+  const { data: closedRows } = await db.from("daily_items").select("key").eq("profile_id", me.id).in("status", ["done", "dismissed"]);
+  const closed = new Set((closedRows ?? []).map((r) => r.key as string));
+  const suggestionsShown = suggestions ? { ...suggestions, open: suggestions.open.filter((sg) => !closed.has(`brief:${sg.id}`)) } : suggestions;
+  const fatigueShown = fatigue ? fatigue.filter((r) => !closed.has(`fatigue:${r.clientId}:${r.adId}`)) : fatigue;
 
   const kpis = kpiLines.filter((k): k is KpiPulse => Boolean(k));
   // The heads of Meta and Google see the clients on their line being onboarded, not every new client
@@ -144,7 +156,7 @@ export default async function Home() {
   const nextSection = <NextSection data={next} me={me.id} deploys={deploys} />;
 
   if (me.isExec) {
-    return <PulseView {...base} vitals={h.vitals} attention={h.attention} phases={h.phases} clients={h.clients} team={h.team} monthElapsed={h.monthElapsed} kpis={kpis} production={production} suggestions={suggestions} fatigue={fatigue} onboarding={onboarding} clientOptions={clientOptions} callPromises={callPromises} owed={owed} patterns={patterns} handoffs={<HandoffCallout db={db} me={me.id} />} recap={recap} next={nextSection} />;
+    return <PulseView {...base} vitals={h.vitals} attention={h.attention} phases={h.phases} clients={h.clients} team={h.team} monthElapsed={h.monthElapsed} kpis={kpis} production={production} suggestions={suggestionsShown} fatigue={fatigueShown} onboarding={onboarding} clientOptions={clientOptions} callPromises={callPromises} owed={owed} patterns={patterns} looks={looks} handoffs={<HandoffCallout db={db} me={me.id} />} recap={recap} next={nextSection} />;
   }
 
   // Leaders (Head of Creative / Meta / Google)
@@ -173,13 +185,14 @@ export default async function Home() {
       canRequest
       kpis={kpis}
       production={production}
-      suggestions={suggestions}
-      fatigue={fatigue}
+      suggestions={suggestionsShown}
+      fatigue={fatigueShown}
       onboarding={onboarding}
       clientOptions={clientOptions}
       callPromises={callPromises}
       owed={owed}
       patterns={patterns}
+      looks={looks}
       handoffs={<HandoffCallout db={db} me={me.id} />}
       recap={recap}
       next={nextSection}

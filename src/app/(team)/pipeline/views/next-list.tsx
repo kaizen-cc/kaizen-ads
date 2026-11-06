@@ -10,6 +10,7 @@ import type { NextForMe, NextItem } from "@/lib/next-for-me";
 import type { OpenSuggestion } from "@/lib/suggestions";
 import { SuggestionSheet } from "./suggested-briefs";
 import { SaveIdeaStar } from "@/components/save-idea-star";
+import { bucketKey } from "@/lib/today-counts";
 
 // Next for me, drawn to sit under the recap hero: a lit header with today's numbers in one strip, then each group as
 // its own card with a colored accent, and rows that lead with the client. The accents are the hero's colors, set as
@@ -293,10 +294,11 @@ function ClientChip({ name, size = 40 }: { name: string; size?: number }) {
 }
 
 /** Items in order, gathered by client where a client has several (first appearance keeps the urgency order). */
-function byClient(items: NextItem[]) {
+/** Gathered by client the way the daily recap gathers them (src/lib/today-counts.ts), so a client is one row here too. */
+function byClient(items: NextItem[]): [string, NextItem[]][] {
   const m = new Map<string, NextItem[]>();
-  for (const it of items) m.set(it.client, [...(m.get(it.client) ?? []), it]);
-  return [...m.entries()];
+  for (const it of items) m.set(bucketKey(it), [...(m.get(bucketKey(it)) ?? []), it]);
+  return [...m.values()].map((its) => [its[0].client, its]);
 }
 
 type Handlers = { onBrief: (s: OpenSuggestion) => void; onReviewed: (it: NextItem) => void };

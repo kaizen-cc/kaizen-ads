@@ -5,6 +5,7 @@ import { requireStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { loadSuggestion, type OpenSuggestion } from "@/lib/suggestions";
 import { notLive } from "@/lib/live-guard";
+import { markItem, reviewsChanged } from "@/lib/item-state";
 
 /**
  * The refresh already there for one tiring ad (the watcher sketches one on its own), to open. Nothing is written here:
@@ -34,6 +35,9 @@ export async function dismissFatigue(clientId: string, adId: string, reason: str
   if (error) return { ok: false, error: error.message };
   // Its refresh brief written ahead isn't needed
   await supabase.from("creative_suggestions").update({ status: "expired" }).eq("kind", "refresh").eq("status", "open").eq("client_id", clientId).eq("source->>adId", adId);
+  // Set aside for everyone: out of this person's recap at once, and everyone's review re-checked
+  await markItem(supabase, me.id, `fatigue:${clientId}:${adId}`, "dismissed", { topic: "ads", clientId });
+  await reviewsChanged();
   revalidatePath("/pipeline");
   return { ok: true };
 }

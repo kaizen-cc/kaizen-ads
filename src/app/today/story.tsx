@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { SuggestionSheet } from "@/app/(team)/pipeline/views/suggested-briefs";
 import { BriefPreviewButton } from "@/components/quick-brief-sheet";
 import type { Resolved, Tier, TodayItem, TopicKey } from "@/lib/today";
+import { bucketsOf, countLooks, isOpenMark, lookHeadline, openOf, rowStat, topicGroups, TIER_ORDER, type Bucket } from "@/lib/today-counts";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { acknowledge, setItem } from "./actions";
 import { DoneBurst } from "@/components/done-burst";
@@ -26,35 +27,11 @@ const TIER: Record<Tier, { label: string; glow: string; accent: string; chip: st
   normal: { label: "Worth a look", glow: "rgba(90,110,255,0.35)", accent: "#9aa8ff", chip: "bg-white/15 text-white" },
 };
 
-/** What a topic's screen says, in one line. */
-function headline(topic: TopicKey, n: number) {
-  const s = (one: string, many: string) => (n === 1 ? one : many);
-  switch (topic) {
-    case "mine":
-      return `${n} ${s("thing is", "things are")} on you today`;
-    case "promises":
-      return `${n} ${s("thing is", "things are")} waiting on us: promised, said yes to, or not answered`;
-    case "onboarding":
-      return `${n} new ${s("client needs", "clients need")} you`;
-    case "accounts":
-      return `${n} ${s("account is", "accounts are")} having issues`;
-    case "work":
-      return `${n} ${s("piece of work is", "pieces of work are")} running late`;
-    case "briefs":
-      return `${n} brief ${s("idea", "ideas")} for clients, when you have a moment`;
-    case "ads":
-      return `${n} ${s("ad is", "ads are")} ready for a refresh`;
-    case "allotments":
-      return `${n} ${s("client is", "clients are")} behind on creative`;
-  }
-}
-
 export function Story({
   firstName,
   greeting,
   items: itemsAtStart,
   resolved: resolvedAtStart,
-  counts,
   topics,
   home = "/pipeline",
   demo = false,
@@ -66,7 +43,6 @@ export function Story({
   greeting: string;
   items: TodayItem[];
   resolved: Resolved[];
-  counts: Record<Tier, number>;
   topics: Record<TopicKey, { label: string; blurb: string }>;
   /** Where Close and the end card go: the person's home */
   home?: string;
@@ -80,11 +56,10 @@ export function Story({
   const [items] = useState(itemsAtStart);
   const [resolved] = useState(resolvedAtStart);
   // Topics, most critical first (the most urgent item in each decides), each with its items most urgent first
-  const groups = useMemo(() => {
-    const m = new Map<TopicKey, TodayItem[]>();
-    for (const i of items) m.set(i.topic, [...(m.get(i.topic) ?? []), i]);
-    return [...m.entries()].map(([topic, list]) => ({ topic, items: list.sort((a, b) => b.score - a.score) })).sort((a, b) => b.items[0].score - a.items[0].score);
-  }, [items]);
+  const groups = useMemo(() => topicGroups(items).map(({ topic, items }) => ({ topic, items })), [items]);
+  // Counted by client (src/lib/today-counts.ts): everything about one client in a topic is one look, the same numbers
+  // the Overview shows
+  const looks = useMemo(() => countLooks(items), [items]);
   // Every screen is a place in the address (?topic= to play first, ?card= for the screen, ?item= for a brief open), so
   // the browser's back and forward move through the story like its own arrows
   const askedTopic = useParam("topic");
@@ -152,9 +127,7 @@ export function Story({
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  // Counted by client: everything about one client in a topic is one look
-  const byTopic = groups.map((g) => { const bs = bucketsOf(g.items); return [g.topic, { n: bs.length, critical: bs.filter((b) => b.tier === "critical").length }] as [TopicKey, { n: number; critical: number }]; });
-  const looks = byTopic.reduce((n, [, c]) => n + c.n, 0);
+  const byTopic = groups.map((g) => [g.topic, looks.byTopic[g.topic]] as [TopicKey, { n: number; critical: number }]);
   const saved = items.filter((i) => mine[i.key] === "saved");
   const acted = items.filter((i) => mine[i.key] === "done").length;
   const tone = card.kind === "topic" ? TIER[card.items[0].tier] : card.kind === "resolved" ? { glow: "rgba(40,180,120,0.35)", accent: "#5be3a5" } : { glow: "rgba(200,16,46,0.35)", accent: "#ff4d5e" };
@@ -222,15 +195,15 @@ export function Story({
                   {greeting}, {firstName}.
                 </h1>
                 <p className="max-w-xl text-[17px] leading-relaxed text-white/70 md:text-lg md:leading-normal">
-                  {items.length ? `${looks} ${looks === 1 ? "thing" : "things"} to look at today (everything about a client gathered into one), in ${groups.length} ${groups.length === 1 ? "topic" : "topics"}${counts.critical ? `. ${counts.critical} critical` : ""}. Most critical first.` : "Nothing needs you today. Every client is in good hands."}
+                  {items.length ? `${looks.total} ${looks.total === 1 ? "thing" : "things"} to look at today (everything about a client gathered into one), in ${groups.length} ${groups.length === 1 ? "topic" : "topics"}${looks.byTier.critical ? `. ${looks.byTier.critical} critical` : ""}. Most critical first.` : "Nothing needs you today. Every client is in good hands."}
                   {resolved.length ? ` And ${resolved.length} ${resolved.length === 1 ? "thing a teammate took" : "things teammates took"} care of since you last looked.` : ""}
                 </p>
               </div>
               <div className="grid grid-cols-3 gap-3 md:max-w-2xl">
-                {(["critical", "high", "normal"] as const).map((t) => (
+                {TIER_ORDER.map((t) => (
                   <div key={t} className="grid min-w-0 gap-1 rounded-[18px] border border-white/10 bg-white/[0.04] p-3.5 md:p-4">
                     <span className="font-display text-4xl tabular md:text-5xl" style={{ color: TIER[t].accent }}>
-                      {counts[t]}
+                      {looks.byTier[t]}
                     </span>
                     <span className="text-[10.5px] uppercase leading-tight tracking-[0.12em] text-white/60 md:text-xs md:leading-normal md:tracking-[0.14em]">{TIER[t].label}</span>
                   </div>
@@ -390,19 +363,6 @@ export function Story({
   );
 }
 
-/** Everything in a topic about one client, gathered: one row to review, counted once. Team items gather as "Team". */
-type Bucket = { key: string; client: string; items: TodayItem[]; tier: Tier };
-function bucketsOf(list: TodayItem[]): Bucket[] {
-  // The list comes most urgent first, so each client lands where its most urgent item is, and leads with it
-  const m = new Map<string, TodayItem[]>();
-  for (const i of list) {
-    // By name: some items (promises from calls, replies) carry no client id, and the same client must still be one row
-    const k = i.client.trim().toLowerCase().replace(/\s+/g, " ");
-    m.set(k, [...(m.get(k) ?? []), i]);
-  }
-  return [...m.entries()].map(([key, items]) => ({ key, client: items[0].client, items, tier: items[0].tier }));
-}
-
 /**
  * One topic on one screen: the headline, every client in it (all their items gathered under one row) with the number
  * that matters, and the selected client's overview beside the list. Deep dive steps through the clients one at a time.
@@ -426,7 +386,7 @@ function TopicScreen({
   onSaveAll: () => void;
   onNext: () => void;
 }) {
-  const open = (i: TodayItem) => mine[i.key] !== "dismissed" && mine[i.key] !== "done";
+  const open = (i: TodayItem) => isOpenMark(mine[i.key]);
   const live = list.filter(open);
   const buckets = useMemo(() => bucketsOf(list), [list]);
   const liveBuckets = buckets.filter((b) => b.items.some(open));
@@ -488,7 +448,7 @@ function TopicScreen({
             {critical ? <span style={{ color: TIER.critical.accent }}> · {critical} critical</span> : null}
           </p>
           <h2 className="font-display text-4xl leading-[1.05] tracking-tight md:text-6xl">
-            <span style={{ color: t.accent }}>{buckets.length}</span> {headline(topic, buckets.length).replace(/^\d+\s/, "")}
+            <span style={{ color: t.accent }}>{buckets.length}</span> {lookHeadline(topic, buckets.length).replace(/^\d+\s/, "")}
           </h2>
           {live.length > buckets.length && <p className="text-sm text-white/50">{live.length} items in all, gathered by client so each one is a single look.</p>}
         </div>
@@ -496,10 +456,12 @@ function TopicScreen({
           {buckets
             .filter((b) => !left.has(b.key))
             .map((b, n) => {
-              const rest = b.items.filter(open);
+              // One count for the row: its open items (the same the overview lists as open), and its big number says it
+              const rest = openOf(b.items, mine);
               const gone = rest.length === 0;
               const handled = b.items.some((i) => mine[i.key] === "done");
               const lead = rest[0] ?? b.items[0];
+              const stat = rowStat(rest, lead);
               const on = current?.key === b.key;
               const savedAll = rest.length > 0 && rest.every((i) => mine[i.key] === "saved");
               return (
@@ -521,7 +483,6 @@ function TopicScreen({
                     <span className="grid min-w-0 gap-0.5">
                       <span className="flex items-center gap-2">
                         <span className="truncate text-[15px] font-medium">{b.client}</span>
-                        {rest.length > 1 && <span className="tabular shrink-0 rounded-full bg-white/12 px-1.5 py-px text-[10px] text-white/80">{rest.length} things</span>}
                         {savedAll && <span className="shrink-0 rounded-full bg-white/15 px-1.5 py-px text-[10px]">Saved</span>}
                         {gone && handled && <span className="shrink-0 rounded-full bg-[#5be3a5]/20 px-1.5 py-px text-[10px] text-[#5be3a5]">Handled</span>}
                         {b.items.some((i) => i.carried) && <span className="shrink-0 text-[10px] text-white/45">from before</span>}
@@ -533,9 +494,9 @@ function TopicScreen({
                     </span>
                     <span className="text-right">
                       <span className="tabular block font-display text-xl leading-none" style={{ color: TIER[b.tier].accent }}>
-                        {lead.stat.value}
+                        {stat.value}
                       </span>
-                      <span className="block max-w-[110px] truncate text-[10.5px] text-white/45 md:max-w-[150px]">{lead.stat.label}</span>
+                      <span title={stat.label} className="block max-w-[110px] truncate text-[10.5px] text-white/45 md:max-w-[150px]">{stat.label}</span>
                     </span>
                   </button>
                 </li>
@@ -622,7 +583,8 @@ function TopicScreen({
  */
 function Overview({ b, mine, dive, onChoose, onAct, onNext }: { b: Bucket; mine: Record<string, Mark>; dive: { at: number; of: number } | null; onChoose: (i: TodayItem, s: "saved" | "done" | "dismissed") => void; onAct: (i: TodayItem) => void; onNext: (() => void) | null }) {
   const t = TIER[b.tier];
-  const openItems = b.items.filter((i) => mine[i.key] !== "dismissed" && mine[i.key] !== "done");
+  // The same open count as the client's row (src/lib/today-counts.ts); handled or set-aside items show greyed, uncounted
+  const openItems = openOf(b.items, mine);
   const [expanded, setExpanded] = useState<string | null>(openItems[0]?.key ?? null);
   const single = b.items.length === 1;
   const unsaved = openItems.filter((i) => mine[i.key] !== "saved");

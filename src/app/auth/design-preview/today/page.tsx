@@ -35,7 +35,6 @@ export default function TodayPreview() {
       greeting="Good morning"
       items={ITEMS}
       resolved={[{ key: "r1", topic: "promises", client: "Goodmellow", title: "Evergreen local retail ads: store-entry time-lapse video", by: "Priscila", what: "put it in motion as #812" }]}
-      counts={{ critical: 3, high: 2, normal: 1 }}
       topics={TOPICS}
       demo
     />

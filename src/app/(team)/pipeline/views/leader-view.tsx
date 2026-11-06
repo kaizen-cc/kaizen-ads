@@ -26,6 +26,7 @@ export type LeaderData = {
   clientOptions?: { id: string; name: string }[];
   suggestions?: SuggestionsState | null;
   patterns?: import("./overview-topics").SharedTopics["patterns"];
+  looks?: import("./overview-topics").SharedTopics["looks"];
 };
 
 /**

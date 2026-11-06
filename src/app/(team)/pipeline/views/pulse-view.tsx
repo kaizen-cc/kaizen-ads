@@ -31,6 +31,7 @@ export type PulseData = {
   clientOptions?: { id: string; name: string }[];
   suggestions?: SuggestionsState | null;
   patterns?: import("./overview-topics").SharedTopics["patterns"];
+  looks?: import("./overview-topics").SharedTopics["looks"];
   handoffs?: React.ReactNode;
   recap?: React.ReactNode;
   /** Next for me: everything on the exec themselves, under the themes */

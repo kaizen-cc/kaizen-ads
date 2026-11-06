@@ -7,10 +7,10 @@ import { loadHome, recentlyWorked, workedOn } from "@/lib/home";
 import { loadOwedReplies } from "@/lib/owed-replies";
 import { loadSaidPromises } from "@/lib/message-promises";
 import { loadCallPromises, loadOnboarding, loadSuggestions, type OpenSuggestion } from "@/lib/suggestions";
-import { assetsStale } from "@/lib/client-assets";
 import { LIVE } from "@/lib/live";
 import { isCreativeRole } from "@/lib/roles";
 import { INTAKE_WAIT_DAYS, addBusinessDays as addBizDays } from "@/lib/brand-bible";
+import { countLooks, hideKeyOf, type Looks } from "@/lib/today-counts";
 
 // The daily recap: everything that needs an exec or lead today, one item at a time, most critical first. Critical
 // means it can cost us the client: a promise we made and haven't kept, a new client waiting on us, an important
@@ -57,7 +57,8 @@ export type TodayItem = {
   image?: string | null;
 };
 export type Resolved = { key: string; topic: TopicKey; client: string; title: string; by: string | null; what: string };
-export type Today = { items: TodayItem[]; resolved: Resolved[]; counts: Record<Tier, number> };
+/** counts: items by tier (kept for older readers); looks: what every screen shows, counted by client (src/lib/today-counts.ts) */
+export type Today = { items: TodayItem[]; resolved: Resolved[]; counts: Record<Tier, number>; looks: Looks };
 
 const tierOf = (score: number): Tier => (score >= 80 ? "critical" : score >= 60 ? "high" : "normal");
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" });
@@ -464,36 +465,8 @@ async function gatherAll(db: SupabaseClient, me: Staff): Promise<Draft[]> {
     });
   }
 
-  // Clients with nothing new on Drive in 45 days and no shot list sent lately: ask them for fresh footage
-  if (topics.has("briefs")) {
-    const [{ data: pkg }, { data: media }, { data: sent }] = await Promise.all([
-      db.from("clients").select("id, name, slug").eq("creative_package", true).is("archived_at", null).in("status", [...LIVE]),
-      db.from("client_assets").select("client_id, created_at").in("kind", ["image", "video"]).order("created_at", { ascending: false }).limit(5000),
-      db.from("shot_lists").select("client_id, created_at").gte("created_at", new Date(Date.now() - 30 * 86_400_000).toISOString()),
-    ]);
-    const newest = new Map<string, string>();
-    for (const m of media ?? []) if (!newest.has(m.client_id)) newest.set(m.client_id, m.created_at);
-    const asked = new Set((sent ?? []).map((s) => s.client_id));
-    for (const c of pkg ?? []) {
-      const last = newest.get(c.id) ?? null;
-      if (asked.has(c.id) || !assetsStale(last)) continue;
-      const days = last ? Math.round((Date.now() - Date.parse(last)) / 86_400_000) : null;
-      out.push({
-        key: `assets:${c.id}:${new Date().toISOString().slice(0, 7)}`,
-        topic: "briefs",
-        score: 50,
-        client: c.name,
-        clientSlug: c.slug,
-        clientId: c.id,
-        stat: { value: days == null ? "None" : `${days}d`, label: days == null ? "photos or video on Drive" : "since new footage landed on Drive" },
-        title: `Ask ${c.name} for fresh footage`,
-        story: `${days == null ? "There's nothing on their Drive to make creative from." : `Nothing new has landed on their Drive in ${days} days.`} A shot list for next month tells them exactly what to film, from what's planned and what's winning.`,
-        why: "Fresh creative needs fresh footage",
-        evidence: [],
-        action: { label: "Write the shot list", href: `/clients/${c.slug}#shot-list` },
-      });
-    }
-  }
+  // (Clients with nothing new on Drive aren't a to-do here: that list would be every client. The client page's shot
+  // list panel still says when it's time to ask for fresh footage.)
 
   // Ads wearing out
   for (const r of fatigue.filter((x) => x.state === "open")) {
@@ -595,9 +568,8 @@ export async function loadToday(db: SupabaseClient, me: Staff): Promise<Today> {
   // What they cleared off their Overview (Done or Dismiss there) leaves their day too, so the counts match
   const hidden = new Set((hiddenRows ?? []).map((h) => h.key as string));
   const asHidden = (key: string) => {
-    const [kind, id] = key.split(":");
-    const as = kind.startsWith("owed") ? "owed" : kind.startsWith("said") ? "said" : kind === "promise" ? "call" : kind === "attention" ? "alert" : null;
-    return Boolean(as && hidden.has(`${as}:${id}`));
+    const as = hideKeyOf(key);
+    return Boolean(as && hidden.has(as));
   };
   const drafts = all.filter((d) => !asHidden(d.key));
   const state = new Map((mine ?? []).map((m) => [m.key as string, m]));
@@ -619,5 +591,5 @@ export async function loadToday(db: SupabaseClient, me: Staff): Promise<Today> {
   const resolved = await whatHappened(db, gone.map((g) => ({ key: g.key as string, snapshot: g.snapshot as { client?: string; title?: string; topic?: TopicKey } })));
   const counts = { critical: 0, high: 0, normal: 0 };
   for (const i of items) counts[i.tier]++;
-  return { items, resolved, counts };
+  return { items, resolved, counts, looks: countLooks(items) };
 }

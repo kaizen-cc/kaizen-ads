@@ -8,6 +8,7 @@ import { createAdminClient, adminConfigured } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { byConcept, regenerate, runStrategist, type SuggestionDraft } from "@/lib/suggestions";
 import { conceptLine } from "@/lib/allotment";
+import { markItem, reviewsChanged } from "@/lib/item-state";
 import { formatsFor, formatsOutside, formatsPhrase } from "@/lib/creative-formats";
 
 type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
@@ -126,6 +127,9 @@ export async function approveSuggestion(id: string, draft: SuggestionDraft): Pro
       });
     }
   }
+  // Decided for everyone: done in this person's recap at once, and everyone's review re-checked
+  await markItem(supabase, me.id, `brief:${id}`, "done", { topic: "briefs", clientId: s.client_id as string });
+  await reviewsChanged();
   revalidatePath("/pipeline");
   revalidatePath("/board");
   return { ok: true, numbers };
@@ -170,6 +174,8 @@ export async function declineSuggestion(id: string, reason: string, remember: bo
     await createAdminClient().from("call_commitments").update({ status: "dismissed", dismissed_by: me.id, dismiss_reason: why.slice(0, 300) }).eq("suggestion_id", id).eq("status", "briefed");
   if (remember)
     await supabase.from("client_memory").insert({ client_id: s.client_id, kind: "note", body: `Strategy: "${(s.draft as SuggestionDraft).title}" was declined: ${why}`.slice(0, 1000), source: "team", created_by: me.id });
+  await markItem(supabase, me.id, `brief:${id}`, "dismissed", { topic: "briefs", clientId: s.client_id as string });
+  await reviewsChanged();
   revalidatePath("/pipeline");
   return { ok: true };
 }

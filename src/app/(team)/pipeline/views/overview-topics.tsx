@@ -17,6 +17,8 @@ import { Topic, type TopicTile } from "./topics";
 import type { PatternsState } from "@/lib/patterns";
 import { PatternsPanel } from "@/components/patterns-view";
 import { allotmentOver, allotmentPools } from "@/lib/allotment";
+import { lookChip, type Looks } from "@/lib/today-counts";
+import type { TopicKey } from "@/lib/today";
 
 // The topics execs and leads share on the Overview, each with its tile (what's in it, at a glance) and its panel
 // (the detail to act on). Only topics with something in them are shown; what's all clear is said in one line.
@@ -35,6 +37,11 @@ export type SharedTopics = {
   clientOptions?: { id: string; name: string }[];
   /** What works (or fails) across every client of a kind, and who isn't using it yet */
   patterns?: { state: PatternsState; canBrief: boolean; canRefresh: boolean } | null;
+  /**
+   * The daily recap's counts for this person (src/lib/today-counts.ts) and the topics their recap covers. Where a theme
+   * shows a topic the recap has, its number and chip are the recap's (clients, per topic), so the page agrees with itself.
+   */
+  looks?: (Pick<Looks, "byTopic"> & { covered: TopicKey[] }) | null;
 };
 
 type Built = { tile: TopicTile | null; panel: React.ReactNode; clear?: string };
@@ -172,7 +179,8 @@ export function accountTopics(d: SharedTopics): Built[] {
   if (pat && pat.state.groups.length) {
     const all = pat.state.groups.flatMap((g) => g.patterns);
     const works = all.filter((p) => p.verdict === "works");
-    const open = works.reduce((n, p) => n + p.missing.filter((id) => pat.state.clients[id]).length, 0);
+    // Clients, each once (a client missing two proven ideas is one client), the unit every theme counts in
+    const open = new Set(works.flatMap((p) => p.missing.filter((id) => pat.state.clients[id]))).size;
     out.push({
       tile: { id: "patterns", label: "Patterns", value: open, sub: `${s(works.length, "pattern")} proven across clients`, tone: "quiet" },
       panel: (
@@ -236,14 +244,48 @@ export function buildThemes(d: SharedTopics, extra: { first?: Theme | null; deli
   // A topic with nothing counted yet (patterns before their first read) still shows in its theme
   const quiet = topics.filter((b) => !b.tile && b.panel);
   const by = (...ids: string[]) => built.filter((b) => ids.includes(b.tile!.id));
-  const sum = (bs: Built[]) => bs.reduce((n, b) => n + (Number(b.tile!.value) || 0), 0);
   const SAY: Record<string, string> = { promises: "waiting on us", attention: "stuck, late or behind", "kpis-meta": "Meta accounts off target", "kpis-google": "Google accounts off target", "kpis-all": "accounts off target", briefs: "brief ideas", fatigue: "ads due a refresh", allotments: "behind on creative", patterns: "clients missing a proven idea" };
-  const points = (bs: Built[]) => bs.filter((b) => Number(b.tile!.value)).map((b) => `${b.tile!.value} ${SAY[b.tile!.id] ?? b.tile!.label.toLowerCase()}`);
+  // Each theme's number is the sum of its parts, and each part is a chip. A topic the person's recap covers is counted
+  // as the recap counts it (clients, per topic, from the same snapshot), whatever the panels below hold; only what the
+  // recap doesn't have (patterns, production, the team) is counted here, in clients where it's about clients.
+  const RECAP: Record<string, TopicKey> = { promises: "promises", attention: "work", "kpis-meta": "accounts", "kpis-google": "accounts", "kpis-all": "accounts", briefs: "briefs", fatigue: "ads", allotments: "allotments", onboarding: "onboarding" };
+  const recapN = (k: TopicKey) => (d.looks && d.looks.covered.includes(k) ? (d.looks.byTopic[k]?.n ?? 0) : null);
+  type Part = { n: number; say: string; topic?: TopicKey };
+  const parts = (bs: Built[], keys: TopicKey[]): Part[] => [
+    ...keys.flatMap((k) => {
+      const n = recapN(k);
+      return n == null ? [] : [{ n, say: lookChip(k, n), topic: k }];
+    }),
+    ...bs.filter((b) => !(RECAP[b.tile!.id] && recapN(RECAP[b.tile!.id]) != null)).map((b) => ({ n: Number(b.tile!.value) || 0, say: `${b.tile!.value} ${SAY[b.tile!.id] ?? b.tile!.label.toLowerCase()}` })),
+  ];
+  const sum = (ps: Part[]) => ps.reduce((n, x) => n + x.n, 0);
+  const points = (ps: Part[]) => ps.filter((x) => x.n).map((x) => x.say);
+  // The recap's topics in a theme, each a way into the recap at that topic (some, like a footage ask, have no panel here)
+  const inRecap = (ps: Part[]) => {
+    const these = ps.filter((x) => x.topic && x.n);
+    return these.length ? (
+      <nav key="in-recap" aria-label="In your recap" className="flex flex-wrap items-center gap-2 px-1">
+        <span className="w-full text-[11px] uppercase tracking-[0.16em] text-faint md:w-auto">In your recap</span>
+        {these.map((x) => (
+          <Link key={x.topic} href={`/today?topic=${x.topic}`} className="flex min-h-11 items-center rounded-full border border-ink/12 px-4 py-1.5 text-sm text-ink/75 hover:border-ink/30 hover:text-fg md:min-h-0 md:px-3 md:text-xs">
+            {x.say} →
+          </Link>
+        ))}
+      </nav>
+    ) : null;
+  };
 
-  const risk = by("promises", "attention", "kpis-meta", "kpis-google", "kpis-all");
-  const growth = by("briefs", "fatigue", "patterns");
-  const fresh = by("onboarding");
-  const allot = by("allotments");
+  const riskBuilt = by("promises", "attention", "kpis-meta", "kpis-google", "kpis-all");
+  const growthBuilt = by("briefs", "fatigue", "patterns");
+  const freshBuilt = by("onboarding");
+  const allotBuilt = by("allotments");
+  const risk = parts(riskBuilt, ["promises", "work", "accounts"]);
+  const growth = parts(growthBuilt, ["briefs", "ads"]);
+  const fresh = parts(freshBuilt, ["onboarding"]);
+  const allot = parts(allotBuilt, ["allotments"]);
+  // New clients: how many need you is the recap's; how many are getting started at all is context, in clients too
+  const starting = d.onboarding?.clients.length ?? 0;
+  const freshPoints = recapN("onboarding") == null ? freshBuilt.map((b) => b.tile!.sub) : [...points(fresh), starting ? `${s(starting, "client")} getting started` : ""].filter(Boolean);
   // Creative production (execs and the Head of Creative): clients whose pieces take longest are what needs a look
   const p = extra.production;
   const deliveryCount = sum(allot) + (extra.delivery?.count ?? 0) + (p?.slow.length ?? 0);
@@ -263,7 +305,7 @@ export function buildThemes(d: SharedTopics, extra: { first?: Theme | null; deli
     count: sum(risk),
     headline: sum(risk) ? (extra.calm ? "Messages and promises waiting on us, and work that's stuck" : "Off-target accounts, promises and messages waiting on us, work that's stuck") : extra.calm ? "Every promise and message is in hand" : "Every account, promise and message is in hand",
     points: points(risk),
-    content: risk.map((b) => b.panel),
+    content: [inRecap(risk), ...riskBuilt.map((b) => b.panel)],
   });
   // Suggestions, not alarms: a calm colour and plain wording
   themes.push({
@@ -273,16 +315,16 @@ export function buildThemes(d: SharedTopics, extra: { first?: Theme | null; deli
     count: sum(growth),
     headline: sum(growth) ? "Briefs the strategist suggests, ads ready for a refresh and what works across clients, when you have a moment" : "No new ideas waiting",
     points: points(growth),
-    content: [...growth.map((b) => b.panel), ...quiet.map((b) => b.panel)],
+    content: [inRecap(growth), ...growthBuilt.map((b) => b.panel), ...quiet.map((b) => b.panel)],
   });
   themes.push({
     id: "new",
     title: "New clients",
     tone: sum(fresh) ? "warn" : "ok",
     count: sum(fresh),
-    headline: sum(fresh) ? (extra.calm ? "First rounds for clients getting started" : "Setup, intake and first rounds for clients getting started") : "No one onboarding right now",
-    points: fresh.map((b) => b.tile!.sub),
-    content: fresh.map((b) => b.panel),
+    headline: sum(fresh) ? (extra.calm ? "First rounds for clients getting started" : "Setup, intake and first rounds for clients getting started") : starting ? "Nobody new needs you right now" : "No one onboarding right now",
+    points: freshPoints,
+    content: [inRecap(fresh), ...freshBuilt.map((b) => b.panel)],
   });
   themes.push({
     id: "delivery",
@@ -290,11 +332,12 @@ export function buildThemes(d: SharedTopics, extra: { first?: Theme | null; deli
     tone: deliveryCount ? "quiet" : "ok",
     count: deliveryCount,
     headline: p ? "How fast creative gets made, revisions, and allotments" : deliveryCount ? "Creative allotments this month, and how the work is moving" : "Allotments on pace",
-    points: [...prodPoints, ...points(allot), ...(extra.delivery?.points ?? [])],
+    points: [...points(allot), ...prodPoints, ...(extra.delivery?.points ?? [])],
     content: (
       <>
+        {inRecap(allot)}
         {prodPanel}
-        {allot.map((b) => b.panel)}
+        {allotBuilt.map((b) => b.panel)}
         {extra.delivery?.content}
       </>
     ),
