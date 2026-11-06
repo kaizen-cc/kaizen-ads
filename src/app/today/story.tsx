@@ -423,16 +423,35 @@ function TopicScreen({
     }, s === "done" ? 1700 : 350);
   };
   // The client open (?pick=key) and the deep dive (?dive=n) are places too: back returns to the list
-  const selected = useParam("pick");
-  const setSelected = (key: string) => pushParams({ pick: key, dive: null });
-  const askedDive = useParam("dive");
+  // The address catches up as a low-priority transition, so the click shows the overview at once from local state and
+  // the address (back, forward, a pasted link) takes over again whenever it changes
+  const urlPick = useParam("pick");
+  const urlDive = useParam("dive");
+  const [here, setHere] = useState({ pick: urlPick, dive: urlDive });
+  const [seen, setSeen] = useState({ pick: urlPick, dive: urlDive });
+  if (seen.pick !== urlPick || seen.dive !== urlDive) {
+    setSeen({ pick: urlPick, dive: urlDive });
+    setHere({ pick: urlPick, dive: urlDive });
+  }
+  const selected = here.pick;
+  const setSelected = (key: string) => {
+    setHere({ pick: key, dive: null });
+    pushParams({ pick: key, dive: null });
+  };
+  const askedDive = here.dive;
   const dive = askedDive && live.length ? Number(askedDive) || 0 : null;
-  const setDive = (n: number | null) => pushParams({ dive: n == null ? null : String(n), pick: null });
+  const setDive = (n: number | null) => {
+    setHere({ pick: null, dive: n == null ? null : String(n) });
+    pushParams({ dive: n == null ? null : String(n), pick: null });
+  };
   const current = dive != null ? live[Math.min(dive, live.length - 1)] : (live.find((i) => i.key === selected) ?? null);
   const critical = list.filter((i) => i.tier === "critical").length;
   const t = TIER[list[0].tier];
   const allSaved = live.length > 0 && live.every((i) => mine[i.key] === "saved");
-  const closeOverview = () => closeParams(dive != null ? "dive" : "pick", "pick", "dive");
+  const closeOverview = () => {
+    setHere({ pick: null, dive: null });
+    closeParams(dive != null ? "dive" : "pick", "pick", "dive");
+  };
   const nextInDive = () => {
     if (dive == null) return;
     // The last one: on to the next screen (which leaves the dive behind)
@@ -527,7 +546,7 @@ function TopicScreen({
             </div>
           </div>
         ) : current ? (
-          <div className="max-h-[92dvh] overflow-y-auto overscroll-contain rounded-t-[28px] bg-[#0d0c11] pb-[env(safe-area-inset-bottom)] md:max-h-none md:overflow-visible md:rounded-none md:bg-transparent md:pb-0 max-md:animate-[card-in_.3s_cubic-bezier(.2,.8,.2,1)_both]">
+          <div className="max-h-[92dvh] overflow-y-auto overscroll-contain rounded-t-[28px] bg-[#0d0c11] pb-[env(safe-area-inset-bottom)] md:max-h-none md:overflow-visible lg:max-h-[calc(100dvh-150px)] lg:overflow-y-auto lg:rounded-[28px] md:rounded-none md:bg-transparent md:pb-0 max-md:animate-[card-in_.3s_cubic-bezier(.2,.8,.2,1)_both]">
             <div className="sticky top-0 z-10 flex justify-end bg-[#0d0c11]/90 px-2 pt-2 backdrop-blur md:hidden">
               <button type="button" onClick={closeOverview} aria-label="Back to the list" className="grid h-11 w-11 place-items-center rounded-full text-white/60 active:bg-white/10">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
