@@ -13,6 +13,7 @@ import type { AuditObject } from "@/lib/chat-change-core";
 import { googleIndex, metaIndex, resolveObjects, type ObjectIndex, type ObjectRef } from "@/lib/audit-objects";
 import { inScope, scopeRows, scopeText, type KpiScope } from "@/lib/kpi/scope";
 import { CREATIVE_READ_RULES, CREATIVE_READ_SCHEMA, creativeAnalysisText, type CreativeAnalysis } from "@/lib/creative-analysis-core";
+import { SETUP_RULE, checkAgainstSetup, type SetupFacts } from "@/lib/setup-check";
 
 // The account audit: one ad account (a KPI target) scrubbed the way a senior media buyer would, against its target,
 // its own last 90 days, its live setup in Meta, the client's full context (Brand Bible, strategy, memory, calls), what
@@ -489,6 +490,8 @@ export async function runAudit(admin: SupabaseClient, id: string) {
     const kept = (c: { id: string; name: string }) => inScope(t as KpiScope, { id: c.id, name: c.name });
     const setup = fullSetup ? { ...fullSetup, campaigns: fullSetup.campaigns.filter(kept), adsets: fullSetup.adsets.filter((x) => fullSetup.campaigns.some((c) => c.id === x.campaignId && kept(c))) } : null;
     const leftOut = [...new Set(rows.filter((r) => !inScope(t as KpiScope, { id: r.campaign_id, name: r.campaign_name })).map((r) => r.campaign_name ?? r.campaign_id ?? ""))].filter(Boolean);
+    // What's already in place (audiences by kind, exclusions, placements, dataset events), so the plan never asks for it again
+    const snap = await import("@/lib/setup-snapshot").then((s) => s.setupSnapshot("meta", account, fullSetup));
     if (setup) {
       const learning = setup.adsets.filter((x) => x.learning && x.learning !== "SUCCESS").length;
       await m.finish("setup", `${setup.campaigns.length} campaigns and ${setup.adsets.length} ad sets live or paused${learning ? ` · ${learning} still learning` : ""} · placements, age, gender and country splits`);
@@ -502,7 +505,8 @@ export async function runAudit(admin: SupabaseClient, id: string) {
       numbersText: d.text,
       last14: d.last14.value,
       prev14: d.prev14.value,
-      setupBlock: setupText(setup),
+      setupBlock: [setupText(setup), snap?.text].filter(Boolean).join("\n\n"),
+      facts: snap?.facts,
       index: metaIndex(account, scoped, setup),
       inputs: { days: d.days, ads: d.ads, campaigns: setup?.campaigns.length ?? null, adsets: setup?.adsets.length ?? null, liveSetup: Boolean(setup) },
       scopeNote: scopeText(t as KpiScope, leftOut),
@@ -534,6 +538,8 @@ type AuditInput = {
   creative?: { rows: Row[]; today: string };
   /** Google: the copy analysis, already worked out from the account's assets */
   googleCreative?: GoogleCreativeAnalysis | null;
+  /** What's already in place, as facts the plan is checked against (src/lib/setup-check.ts) */
+  facts?: SetupFacts;
 };
 
 /** Everything after the account's own numbers and setup: the same for Meta and Google. */
@@ -676,7 +682,11 @@ Today is ${new Date().toISOString().slice(0, 10)}.`;
       agent: x.platform === "google" ? "google_auditor" : "auditor",
       label: `audit ${client.name} · findings`,
       clientId: a.client_id,
-      system: x.platform === "google" ? `${swapBase(FOUND_SYSTEM)}${x.googleCreative ? `\n${GOOGLE_CREATIVE_READ_RULES}` : ""}` : `${FOUND_SYSTEM}\n${CREATIVE_READ_RULES}`,
+      system: x.platform === "google" ? `${swapBase(FOUND_SYSTEM)}${x.googleCreative ? `\n${GOOGLE_CREATIVE_READ_RULES}` : ""}
+
+${SETUP_RULE}` : `${FOUND_SYSTEM}\n${CREATIVE_READ_RULES}
+
+${SETUP_RULE}`,
       schema: x.platform === "google" && !x.googleCreative ? FOUND_SCHEMA : FOUND_SCHEMA_META,
       maxTokens: 32000,
       onText: (so) => {
@@ -716,7 +726,9 @@ Today is ${new Date().toISOString().slice(0, 10)}.`;
       agent: x.platform === "google" ? "google_auditor" : "auditor",
       label: `audit ${client.name} · plan`,
       clientId: a.client_id,
-      system: x.platform === "google" ? `${swapBase(PLAN_SYSTEM)}\nOn Google the creative is the copy: each creative item is new copy to write next, from the creative analysis (more of what the top headlines say, a replacement for what Google rates Low, a converting search theme no headline answers yet) and what's proven on Meta for this client. concept: the message; angle; hook: the lead headline as written (30 characters or less); format: RSA headlines and descriptions, a Performance Max asset group, or sitelinks and callouts; why with the evidence.` : PLAN_SYSTEM,
+      system: `${x.platform === "google" ? `${swapBase(PLAN_SYSTEM)}\nOn Google the creative is the copy: each creative item is new copy to write next, from the creative analysis (more of what the top headlines say, a replacement for what Google rates Low, a converting search theme no headline answers yet) and what's proven on Meta for this client. concept: the message; angle; hook: the lead headline as written (30 characters or less); format: RSA headlines and descriptions, a Performance Max asset group, or sitelinks and callouts; why with the evidence.` : PLAN_SYSTEM}
+
+${SETUP_RULE}`,
       schema: PLAN_SCHEMA,
       maxTokens: 32000,
       onText: (so) => {
@@ -732,8 +744,12 @@ ${JSON.stringify(found)}
 
 Now write what you'd do if you were the buyer, and what you'd watch out for.`,
     });
+    // Never what's already in place: an action adding something that's there everywhere it would go is dropped (and logged)
+    const checked = checkAgainstSetup(raw.actions, x.facts);
+    x.inputs.setupCheck = checked.log;
+    if (checked.log.dropped.length) console.info(`[audit] ${id}: dropped ${checked.log.dropped.length} actions already in place:`, JSON.stringify(checked.log.dropped));
     // The names it gave, found in the account's own data (never an ID the model wrote)
-    const plan = { ...raw, actions: raw.actions.map((act) => ({ ...act, objects: resolveObjects(x.index, act.objects) })) };
+    const plan = { ...raw, actions: checked.actions.map((act) => ({ ...act, objects: resolveObjects(x.index, act.objects) })) };
     const linked = plan.actions.reduce((t, act) => t + act.objects.length, 0);
     await m.finish("plan", `${plan.actions.length} actions${linked ? ` (${linked} campaigns, ad sets or ads linked)` : ""} · ${plan.tests.length} tests · ${plan.watchouts?.length ?? 0} things to watch out for`);
 
@@ -784,8 +800,10 @@ async function runGoogleAudit(admin: SupabaseClient, id: string, a: { target_id:
     await m.finish("numbers", `${d.days} days · ${d.campaigns} campaigns · $${n0(rows.reduce((x, r) => x + n(r.spend), 0))} spent`);
 
     await m.start("setup");
-    const [fullSetup, detail, writable, copy, terms] = await Promise.all([
+    const [fullSetup, snap, detail, writable, copy, terms] = await Promise.all([
       googleSetup(account).catch(() => null),
+      // What's already in place (audiences, lists, assets, negatives, conversion settings), so the plan never asks for it again
+      import("@/lib/setup-snapshot").then((s) => s.setupSnapshot("google", account)),
       googleAuditDetail(account).catch(() => ({ text: "", counts: { adGroups: 0, keywords: 0, searchTerms: 0 } })),
       // Ad groups with their IDs, so actions that name one link straight to it
       googleWritableSetup(account).catch(() => null),
@@ -806,7 +824,8 @@ async function runGoogleAudit(admin: SupabaseClient, id: string, a: { target_id:
       numbersText: `${d.text}\n\n${health}`,
       last14: d.last14.value,
       prev14: d.prev14.value,
-      setupBlock: googleSetupText(setup, detail.text),
+      setupBlock: [googleSetupText(setup, detail.text), snap?.text].filter(Boolean).join("\n\n"),
+      facts: snap?.facts,
       index: googleIndex(account, rows, setup, (writable?.adGroups ?? []).filter((g) => !setup || setup.campaigns.some((c) => c.id === g.campaignId))),
       scopeNote: scopeText(t as KpiScope, leftOut) + (leftOut.length ? " The keywords and search terms in the live setup may include those campaigns: leave them out." : ""),
       googleCreative,

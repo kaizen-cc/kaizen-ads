@@ -131,7 +131,8 @@ export function wellFormed(s: string) {
  */
 const LEARNS_ALSO: Partial<Record<AgentKey, AgentKey[]>> = { google_launcher: ["google_auditor"], google_reporter: ["google_auditor"] };
 
-async function withKnowledge(agent: AgentKey, label: string, prompt: string, clientId?: string | null) {
+/** Exported for tests/rebuttal-loop.test.ts: what a call about a client reads beyond its own prompt */
+export async function withKnowledge(agent: AgentKey, label: string, prompt: string, clientId?: string | null) {
   if (!adminConfigured()) return prompt;
   const { knowledgeBlock } = await import("@/lib/knowledge");
   const block = await knowledgeBlock({ agent, label, prompt }).catch((e) => (console.error("[ai] knowledge", e instanceof Error ? e.message : e), ""));

@@ -771,8 +771,11 @@ export async function accountSetup(adAccountId: string) {
   const audience = (t: Record<string, unknown> | undefined) => {
     if (!t) return null;
     const geo = t.geo_locations as { countries?: string[]; regions?: { name: string }[]; cities?: { name: string; radius?: number }[]; custom_locations?: unknown[] } | undefined;
-    const ca = (t.custom_audiences as { name: string }[] | undefined)?.map((a) => a.name) ?? [];
-    const ex = (t.excluded_custom_audiences as { name: string }[] | undefined)?.map((a) => a.name) ?? [];
+    const ca = (t.custom_audiences as { id?: string; name: string }[] | undefined)?.map((a) => a.name) ?? [];
+    const ex = (t.excluded_custom_audiences as { id?: string; name: string }[] | undefined)?.map((a) => a.name) ?? [];
+    // The audiences by ID (for the setup snapshot to tell a customer list from a lookalike) and the placements by position
+    const ids = (v: unknown) => ((v as { id?: string }[] | undefined) ?? []).map((a) => String(a.id ?? "")).filter(Boolean);
+    const positions = ["facebook_positions", "instagram_positions", "messenger_positions", "audience_network_positions", "threads_positions"].flatMap((p) => ((t[p] as string[] | undefined) ?? []).map((x) => `${p.split("_")[0]} ${x}`));
     const interests = ((t.flexible_spec as { interests?: { name: string }[] }[] | undefined) ?? []).flatMap((f) => f.interests?.map((i) => i.name) ?? []);
     const adv = (t.targeting_automation as { advantage_audience?: number } | undefined)?.advantage_audience;
     return {
@@ -786,6 +789,9 @@ export async function accountSetup(adAccountId: string) {
       interests: interests.slice(0, 12),
       advantage: adv === 1,
       placements: t.publisher_platforms ? (t.publisher_platforms as string[]).join(",") : "automatic",
+      customIds: ids(t.custom_audiences),
+      excludedIds: ids(t.excluded_custom_audiences),
+      positions,
     };
   };
   return {

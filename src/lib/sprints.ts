@@ -216,6 +216,9 @@ async function googleHistory(account: string, since: string) {
   return events.filter((e) => e.at > since).slice(0, 25).map((e) => `${e.what}${e.object ? ` on ${e.objectType ?? ""} "${e.object}"` : ""} (${e.at.slice(0, 10)})`);
 }
 
+/** An ad set's audience as compared between reads: the fields read since (audience IDs, positions) left out, so an older saved read doesn't look changed */
+const audienceKey = (a: AccountSetup["adsets"][number]["audience"]) => JSON.stringify(a ? { ...a, customIds: undefined, excludedIds: undefined, positions: undefined } : a);
+
 function setupChanges(before: AccountSetup | null, now: AccountSetup | null) {
   if (!before?.adsets || !now?.adsets) return [];
   const out: string[] = [];
@@ -243,7 +246,7 @@ function setupChanges(before: AccountSetup | null, now: AccountSetup | null) {
     if (b.dailyBudget !== x.dailyBudget) out.push(`Ad set "${x.name}" daily budget ${money(b.dailyBudget)} → ${money(x.dailyBudget)}`);
     if (b.optimization !== x.optimization || b.event !== x.event) out.push(`Ad set "${x.name}" now optimizes for ${x.optimization}${x.event ? ` (${x.event})` : ""}`);
     if (b.bidStrategy !== x.bidStrategy || b.bidAmount !== x.bidAmount) out.push(`Ad set "${x.name}" bidding changed to ${x.bidStrategy ?? "none"}${x.bidAmount ? ` $${x.bidAmount}` : ""}`);
-    if (JSON.stringify(b.audience) !== JSON.stringify(x.audience)) out.push(`Ad set "${x.name}" audience changed (now ${x.audience?.ages} ${x.audience?.genders}, ${x.audience?.geo}${x.audience?.advantage ? ", Advantage+" : ""})`);
+    if (audienceKey(b.audience) !== audienceKey(x.audience)) out.push(`Ad set "${x.name}" audience changed (now ${x.audience?.ages} ${x.audience?.genders}, ${x.audience?.geo}${x.audience?.advantage ? ", Advantage+" : ""})`);
   }
   return out;
 }
@@ -332,6 +335,8 @@ export async function checkSprint(admin: SupabaseClient, sprintId: string) {
   const changes = google
     ? [...googleSetupChanges(s.setup as GoogleSetup | null, setupNow as GoogleSetup | null), ...(account && googleAdsConfigured() ? await googleHistory(account, since) : [])]
     : [...setupChanges(s.setup as AccountSetup | null, setupNow as AccountSetup | null), ...(account ? await adChanges(admin, s.client_id, account, since) : [])];
+  // What's in place now (audiences, lists, assets, negatives, conversion settings): a setup move already in place is done
+  const snapshot = await import("@/lib/setup-snapshot").then((m) => m.setupSnapshot(kt?.platform, account, google ? null : (setupNow as AccountSetup | null)));
   const ticked = (actions ?? []).filter((x) => x.done_at && x.done_at > since);
   const base = s.baseline as Kpi;
   const r = audit?.result as AuditResult | null;
@@ -370,7 +375,11 @@ ${changes.length ? changes.map((c) => `- ${c}`).join("\n") : setupNow ? (google 
 
 <ticked_since_last_check>
 ${ticked.map((x) => `- ${x.title}`).join("\n") || "(nothing)"}
-</ticked_since_last_check>`,
+</ticked_since_last_check>${snapshot ? `
+
+<setup_now note="what's in place in the account right now: a setup move (an audience or list attached, assets, negative lists, a conversion setting) that's in place here is looks_done even if it was set up before the sprint; one that's in place only in some places is partly">
+${snapshot.text}
+</setup_now>` : ""}`,
   });
 
   const next = checkAt(Math.max(1, Math.min(7, out.next_check_days || 1)));
