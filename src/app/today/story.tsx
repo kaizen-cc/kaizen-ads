@@ -152,7 +152,9 @@ export function Story({
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const byTopic = groups.map((g) => [g.topic, { n: g.items.length, critical: g.items.filter((i) => i.tier === "critical").length }] as [TopicKey, { n: number; critical: number }]);
+  // Counted by client: everything about one client in a topic is one look
+  const byTopic = groups.map((g) => { const bs = bucketsOf(g.items); return [g.topic, { n: bs.length, critical: bs.filter((b) => b.tier === "critical").length }] as [TopicKey, { n: number; critical: number }]; });
+  const looks = byTopic.reduce((n, [, c]) => n + c.n, 0);
   const saved = items.filter((i) => mine[i.key] === "saved");
   const acted = items.filter((i) => mine[i.key] === "done").length;
   const tone = card.kind === "topic" ? TIER[card.items[0].tier] : card.kind === "resolved" ? { glow: "rgba(40,180,120,0.35)", accent: "#5be3a5" } : { glow: "rgba(200,16,46,0.35)", accent: "#ff4d5e" };
@@ -220,7 +222,7 @@ export function Story({
                   {greeting}, {firstName}.
                 </h1>
                 <p className="max-w-xl text-[17px] leading-relaxed text-white/70 md:text-lg md:leading-normal">
-                  {items.length ? `${items.length} things across your clients today, in ${groups.length} ${groups.length === 1 ? "topic" : "topics"}${counts.critical ? `. ${counts.critical} critical` : ""}. Most critical first.` : "Nothing needs you today. Every client is in good hands."}
+                  {items.length ? `${looks} ${looks === 1 ? "thing" : "things"} to look at today (everything about a client gathered into one), in ${groups.length} ${groups.length === 1 ? "topic" : "topics"}${counts.critical ? `. ${counts.critical} critical` : ""}. Most critical first.` : "Nothing needs you today. Every client is in good hands."}
                   {resolved.length ? ` And ${resolved.length} ${resolved.length === 1 ? "thing a teammate took" : "things teammates took"} care of since you last looked.` : ""}
                 </p>
               </div>
@@ -388,9 +390,21 @@ export function Story({
   );
 }
 
+/** Everything in a topic about one client, gathered: one row to review, counted once. Team items gather as "Team". */
+type Bucket = { key: string; client: string; items: TodayItem[]; tier: Tier };
+function bucketsOf(list: TodayItem[]): Bucket[] {
+  // The list comes most urgent first, so each client lands where its most urgent item is, and leads with it
+  const m = new Map<string, TodayItem[]>();
+  for (const i of list) {
+    const k = i.clientId ? `c:${i.clientId}` : `n:${i.client.trim().toLowerCase()}`;
+    m.set(k, [...(m.get(k) ?? []), i]);
+  }
+  return [...m.entries()].map(([key, items]) => ({ key, client: items[0].client, items, tier: items[0].tier }));
+}
+
 /**
- * One topic on one screen: the headline, every client in it with the number that matters, and the selected client's
- * overview beside the list. Deep dive steps through them one at a time on the same screen.
+ * One topic on one screen: the headline, every client in it (all their items gathered under one row) with the number
+ * that matters, and the selected client's overview beside the list. Deep dive steps through the clients one at a time.
  */
 function TopicScreen({
   topic,
@@ -411,18 +425,21 @@ function TopicScreen({
   onSaveAll: () => void;
   onNext: () => void;
 }) {
-  const live = list.filter((i) => mine[i.key] !== "dismissed" && mine[i.key] !== "done");
-  // Something just marked done: a check plays where it was, then it leaves the list (dismissed ones simply go)
-  const [cheer, setCheer] = useState<TodayItem | null>(null);
+  const open = (i: TodayItem) => mine[i.key] !== "dismissed" && mine[i.key] !== "done";
+  const live = list.filter(open);
+  const buckets = useMemo(() => bucketsOf(list), [list]);
+  const liveBuckets = buckets.filter((b) => b.items.some(open));
+  // A client whose last open item was just marked done: a check plays where it was, then it leaves the list
+  const [cheer, setCheer] = useState<{ key: string; client: string; title: string } | null>(null);
   const [left, setLeft] = useState<Set<string>>(new Set());
-  const finish = (i: TodayItem, s: "done" | "dismissed") => {
-    if (s === "done") setCheer(i);
+  const finish = (b: Bucket, i: TodayItem, s: "done" | "dismissed") => {
+    if (s === "done") setCheer({ key: b.key, client: b.client, title: b.items.length > 1 ? `All ${b.items.length} handled` : i.title });
     setTimeout(() => {
-      setLeft((l) => new Set(l).add(i.key));
-      setCheer((c) => (c?.key === i.key ? null : c));
+      setLeft((l) => new Set(l).add(b.key));
+      setCheer((c) => (c?.key === b.key ? null : c));
     }, s === "done" ? 1700 : 350);
   };
-  // The client open (?pick=key) and the deep dive (?dive=n) are places too: back returns to the list
+  // The client open (?pick=key) and the deep dive (?dive=n) are places too: back returns to the list.
   // The address catches up as a low-priority transition, so the click shows the overview at once from local state and
   // the address (back, forward, a pasted link) takes over again whenever it changes
   const urlPick = useParam("pick");
@@ -439,13 +456,14 @@ function TopicScreen({
     pushParams({ pick: key, dive: null });
   };
   const askedDive = here.dive;
-  const dive = askedDive && live.length ? Number(askedDive) || 0 : null;
+  const dive = askedDive && liveBuckets.length ? Number(askedDive) || 0 : null;
   const setDive = (n: number | null) => {
     setHere({ pick: null, dive: n == null ? null : String(n) });
     pushParams({ dive: n == null ? null : String(n), pick: null });
   };
-  const current = dive != null ? live[Math.min(dive, live.length - 1)] : (live.find((i) => i.key === selected) ?? null);
-  const critical = list.filter((i) => i.tier === "critical").length;
+  // An old link may name an item rather than its client: open the client it belongs to
+  const current = dive != null ? liveBuckets[Math.min(dive, liveBuckets.length - 1)] : (liveBuckets.find((b) => b.key === selected || b.items.some((i) => i.key === selected)) ?? null);
+  const critical = buckets.filter((b) => b.tier === "critical").length;
   const t = TIER[list[0].tier];
   const allSaved = live.length > 0 && live.every((i) => mine[i.key] === "saved");
   const closeOverview = () => {
@@ -455,13 +473,13 @@ function TopicScreen({
   const nextInDive = () => {
     if (dive == null) return;
     // The last one: on to the next screen (which leaves the dive behind)
-    if (dive + 1 >= live.length) onNext();
+    if (dive + 1 >= liveBuckets.length) onNext();
     else setDive(dive + 1);
   };
 
   return (
     <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:items-start">
-      {/* The topic, and everyone in it */}
+      {/* The topic, and every client in it */}
       <div className="grid gap-6">
         <div className="grid gap-3">
           <p className="text-sm uppercase tracking-[0.24em] text-white/50">
@@ -469,59 +487,69 @@ function TopicScreen({
             {critical ? <span style={{ color: TIER.critical.accent }}> · {critical} critical</span> : null}
           </p>
           <h2 className="font-display text-4xl leading-[1.05] tracking-tight md:text-6xl">
-            <span style={{ color: t.accent }}>{list.length}</span> {headline(topic, list.length).replace(/^\d+\s/, "")}
+            <span style={{ color: t.accent }}>{buckets.length}</span> {headline(topic, buckets.length).replace(/^\d+\s/, "")}
           </h2>
+          {live.length > buckets.length && <p className="text-sm text-white/50">{live.length} items in all, gathered by client so each one is a single look.</p>}
         </div>
         <ul className="grid gap-1.5" data-own-keys>
-          {list.filter((i) => !left.has(i.key)).map((i, n) => {
-            const m = mine[i.key];
-            const gone = m === "dismissed" || m === "done";
-            const on = current?.key === i.key;
-            return (
-              <li key={i.key} className={gone ? "pointer-events-none" : ""} style={gone ? { animation: "card-out .35s ease 1.35s both" } : undefined}>
-                <button
-                  type="button"
-                  disabled={gone}
-                  onClick={() => (on ? closeOverview() : setSelected(i.key))}
-                  className={`group grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-[16px] border px-4 py-3.5 text-left transition-colors md:py-3 ${m === "done" ? "border-[#5be3a5]/50 bg-[#5be3a5]/[0.08]" : on ? "border-white/40 bg-white/[0.1]" : "border-white/10 bg-white/[0.035] hover:border-white/25 hover:bg-white/[0.07]"} ${m === "dismissed" ? "opacity-40" : ""}`}
-                  style={{ animation: `card-in .4s ${0.04 * n}s cubic-bezier(.2,.8,.2,1) both` }}
-                >
-                  {m === "done" ? (
-                    <span className="grid h-5 w-5 place-items-center rounded-full bg-[#5be3a5] text-[11px] font-bold text-black" style={{ animation: "card-in .35s cubic-bezier(.2,.8,.2,1.4) both" }}>
-                      ✓
+          {buckets
+            .filter((b) => !left.has(b.key))
+            .map((b, n) => {
+              const rest = b.items.filter(open);
+              const gone = rest.length === 0;
+              const handled = b.items.some((i) => mine[i.key] === "done");
+              const lead = rest[0] ?? b.items[0];
+              const on = current?.key === b.key;
+              const savedAll = rest.length > 0 && rest.every((i) => mine[i.key] === "saved");
+              return (
+                <li key={b.key} className={gone ? "pointer-events-none" : ""} style={gone ? { animation: "card-out .35s ease 1.35s both" } : undefined}>
+                  <button
+                    type="button"
+                    disabled={gone}
+                    onClick={() => (on ? closeOverview() : setSelected(b.key))}
+                    className={`group grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-[16px] border px-4 py-3.5 text-left transition-colors md:py-3 ${gone && handled ? "border-[#5be3a5]/50 bg-[#5be3a5]/[0.08]" : on ? "border-white/40 bg-white/[0.1]" : "border-white/10 bg-white/[0.035] hover:border-white/25 hover:bg-white/[0.07]"} ${gone && !handled ? "opacity-40" : ""}`}
+                    style={{ animation: `card-in .4s ${0.04 * n}s cubic-bezier(.2,.8,.2,1) both` }}
+                  >
+                    {gone && handled ? (
+                      <span className="grid h-5 w-5 place-items-center rounded-full bg-[#5be3a5] text-[11px] font-bold text-black" style={{ animation: "card-in .35s cubic-bezier(.2,.8,.2,1.4) both" }}>
+                        ✓
+                      </span>
+                    ) : (
+                      <span className="h-2.5 w-2.5 rounded-full" style={{ background: TIER[b.tier].accent, boxShadow: `0 0 12px ${TIER[b.tier].accent}` }} />
+                    )}
+                    <span className="grid min-w-0 gap-0.5">
+                      <span className="flex items-center gap-2">
+                        <span className="truncate text-[15px] font-medium">{b.client}</span>
+                        {rest.length > 1 && <span className="tabular shrink-0 rounded-full bg-white/12 px-1.5 py-px text-[10px] text-white/80">{rest.length} things</span>}
+                        {savedAll && <span className="shrink-0 rounded-full bg-white/15 px-1.5 py-px text-[10px]">Saved</span>}
+                        {gone && handled && <span className="shrink-0 rounded-full bg-[#5be3a5]/20 px-1.5 py-px text-[10px] text-[#5be3a5]">Handled</span>}
+                        {b.items.some((i) => i.carried) && <span className="shrink-0 text-[10px] text-white/45">from before</span>}
+                      </span>
+                      <span className="truncate text-xs text-white/55">
+                        {lead.title}
+                        {rest.length > 1 ? <span className="text-white/40"> · +{rest.length - 1} more</span> : null}
+                      </span>
                     </span>
-                  ) : (
-                    <span className="h-2.5 w-2.5 rounded-full" style={{ background: TIER[i.tier].accent, boxShadow: `0 0 12px ${TIER[i.tier].accent}` }} />
-                  )}
-                  <span className="grid min-w-0 gap-0.5">
-                    <span className="flex items-center gap-2">
-                      <span className="truncate text-[15px] font-medium">{i.client}</span>
-                      {m === "saved" && <span className="shrink-0 rounded-full bg-white/15 px-1.5 py-px text-[10px]">Saved</span>}
-                      {m === "done" && <span className="shrink-0 rounded-full bg-[#5be3a5]/20 px-1.5 py-px text-[10px] text-[#5be3a5]">Handled</span>}
-                      {i.carried && <span className="shrink-0 text-[10px] text-white/45">from before</span>}
+                    <span className="text-right">
+                      <span className="tabular block font-display text-xl leading-none" style={{ color: TIER[b.tier].accent }}>
+                        {lead.stat.value}
+                      </span>
+                      <span className="block max-w-[110px] truncate text-[10.5px] text-white/45 md:max-w-[150px]">{lead.stat.label}</span>
                     </span>
-                    <span className="truncate text-xs text-white/55">{i.title}</span>
-                  </span>
-                  <span className="text-right">
-                    <span className="tabular block font-display text-xl leading-none" style={{ color: TIER[i.tier].accent }}>
-                      {i.stat.value}
-                    </span>
-                    <span className="block max-w-[110px] truncate text-[10.5px] text-white/45 md:max-w-[150px]">{i.stat.label}</span>
-                  </span>
-                </button>
-              </li>
-            );
-          })}
+                  </button>
+                </li>
+              );
+            })}
         </ul>
         <div className="flex flex-wrap items-center gap-2.5">
-          {live.length > 0 && (
+          {liveBuckets.length > 0 && (
             <button type="button" onClick={() => setDive(0)} className="inline-flex h-12 w-full items-center justify-center rounded-full bg-white px-6 text-[15px] font-semibold text-black hover:bg-white/90 md:w-auto md:justify-start">
               Deep dive, one by one
             </button>
           )}
           {live.length > 0 && (
             <button type="button" onClick={onSaveAll} disabled={allSaved} className={`h-12 flex-1 rounded-full border px-5 text-sm md:flex-none ${allSaved ? "border-white bg-white/15" : "border-white/25 text-white/85 hover:bg-white/10"}`}>
-              {allSaved ? "All saved ✓" : `Save ${live.length === 1 ? "it" : `all ${live.length}`} for later`}
+              {allSaved ? "All saved ✓" : `Save ${liveBuckets.length === 1 ? "it" : `all ${liveBuckets.length}`} for later`}
             </button>
           )}
           <button type="button" onClick={onNext} className="h-12 rounded-full px-4 text-sm text-white/60 hover:text-white">
@@ -554,27 +582,31 @@ function TopicScreen({
                 </svg>
               </button>
             </div>
-          <Overview
-            key={current.key}
-            i={current}
-            status={mine[current.key]}
-            dive={dive != null ? { at: Math.min(dive, live.length - 1) + 1, of: live.length } : null}
-            onChoose={(s) => {
-              onChoose(current, s);
-              if (s !== "saved") finish(current, s);
-              if (dive != null && s !== "saved") nextInDive();
-            }}
-            onAct={() => (current.action.suggestion ? onAct(current) : undefined)}
-            onNext={dive != null ? nextInDive : null}
-          />
+            <Overview
+              key={current.key}
+              b={current}
+              mine={mine}
+              dive={dive != null ? { at: Math.min(dive, liveBuckets.length - 1) + 1, of: liveBuckets.length } : null}
+              onChoose={(i, s) => {
+                onChoose(i, s);
+                if (s === "saved") return;
+                // The client's last open item: it leaves the list (and the deep dive moves on)
+                if (!current.items.some((x) => x.key !== i.key && open(x))) {
+                  finish(current, i, s);
+                  if (dive != null) nextInDive();
+                }
+              }}
+              onAct={(i) => (i.action.suggestion ? onAct(i) : undefined)}
+              onNext={dive != null ? nextInDive : null}
+            />
           </div>
         ) : (
           <div className="hidden min-h-[360px] place-items-center rounded-[28px] border border-dashed border-white/12 p-10 text-center lg:grid">
             <div className="grid gap-2">
               <span className="font-display text-[120px] leading-none tracking-tight opacity-90" style={{ color: t.accent }}>
-                {list.length}
+                {buckets.length}
               </span>
-              <p className="text-sm text-white/55">Pick a client to see what&apos;s going on and act on it, or deep dive through them one by one.</p>
+              <p className="text-sm text-white/55">Pick a client to see everything that&apos;s waiting for them and act on it, or deep dive through them one by one.</p>
             </div>
           </div>
         )}
@@ -583,26 +615,113 @@ function TopicScreen({
   );
 }
 
-/** One client's overview inside its topic: the number, the story, the evidence, and what to do. */
-function Overview({ i, status, dive, onChoose, onAct, onNext }: { i: TodayItem; status?: Mark; dive: { at: number; of: number } | null; onChoose: (s: "saved" | "done" | "dismissed") => void; onAct: () => void; onNext: (() => void) | null }) {
-  const t = TIER[i.tier];
-  const primary = "inline-flex h-12 w-full items-center justify-center rounded-full bg-white px-5 text-[15px] font-semibold text-black hover:bg-white/90 md:h-11 md:w-auto md:justify-start md:text-sm";
+/**
+ * One client's overview inside its topic. One item: the number, the story, the evidence, and what to do. Several:
+ * the client once on top, then each item as its own fold (the most urgent open), each with its own actions.
+ */
+function Overview({ b, mine, dive, onChoose, onAct, onNext }: { b: Bucket; mine: Record<string, Mark>; dive: { at: number; of: number } | null; onChoose: (i: TodayItem, s: "saved" | "done" | "dismissed") => void; onAct: (i: TodayItem) => void; onNext: (() => void) | null }) {
+  const t = TIER[b.tier];
+  const openItems = b.items.filter((i) => mine[i.key] !== "dismissed" && mine[i.key] !== "done");
+  const [expanded, setExpanded] = useState<string | null>(openItems[0]?.key ?? null);
+  const single = b.items.length === 1;
+  const unsaved = openItems.filter((i) => mine[i.key] !== "saved");
   return (
     <div className="relative grid gap-5 overflow-hidden rounded-[28px] border border-white/12 bg-black/40 p-5 pt-3 backdrop-blur-xl md:p-8" style={{ animation: "card-in .35s cubic-bezier(.2,.8,.2,1) both" }}>
       <span aria-hidden className="pointer-events-none absolute -right-20 -top-24 h-[240px] w-[240px] rounded-full blur-[80px]" style={{ background: t.glow }} />
       <div className="relative flex flex-wrap items-center gap-2">
         <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${t.chip}`}>{t.label}</span>
-        <span className="text-xs uppercase tracking-[0.16em] text-white/55">{i.client}</span>
+        <span className="text-xs uppercase tracking-[0.16em] text-white/55">{b.client}</span>
         {dive && <span className="ml-auto text-xs text-white/45">{dive.at} of {dive.of}</span>}
       </div>
-      <div className="relative flex flex-wrap items-end gap-x-3 gap-y-1">
-        <span className="font-display text-6xl leading-none tracking-tight tabular md:text-7xl" style={{ color: t.accent }}>
-          {i.stat.value}
-        </span>
-        <span className="pb-1.5 text-sm text-white/60">{i.stat.label}</span>
-      </div>
-      <h3 className="relative font-heading text-2xl leading-snug">{i.title}</h3>
-      <p className="relative text-[15px] leading-relaxed text-white/75">{i.story}</p>
+      {single ? (
+        <ItemBody i={b.items[0]} status={mine[b.items[0].key]} big onChoose={(s) => onChoose(b.items[0], s)} onAct={() => onAct(b.items[0])} onNext={onNext} />
+      ) : (
+        <>
+          <div className="relative flex flex-wrap items-end gap-x-3 gap-y-1">
+            <span className="font-display text-6xl leading-none tracking-tight tabular md:text-7xl" style={{ color: t.accent }}>
+              {openItems.length || b.items.length}
+            </span>
+            <span className="pb-1.5 text-sm text-white/60">{openItems.length ? `open for ${b.client}` : `handled for ${b.client}`}</span>
+          </div>
+          <ul className="relative grid gap-2">
+            {b.items.map((i) => {
+              const m = mine[i.key];
+              const closed = m === "done" || m === "dismissed";
+              const isOpen = expanded === i.key && !closed;
+              const it = TIER[i.tier];
+              return (
+                <li key={i.key} className={`overflow-hidden rounded-[18px] border transition-colors ${isOpen ? "border-white/25 bg-white/[0.05]" : "border-white/10 bg-white/[0.025]"} ${closed ? "opacity-50" : ""}`}>
+                  <button type="button" disabled={closed} onClick={() => setExpanded(isOpen ? null : i.key)} aria-expanded={isOpen} className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 text-left">
+                    {m === "done" ? (
+                      <span className="grid h-5 w-5 place-items-center rounded-full bg-[#5be3a5] text-[11px] font-bold text-black">✓</span>
+                    ) : (
+                      <span className="h-2 w-2 rounded-full" style={{ background: it.accent }} />
+                    )}
+                    <span className="grid min-w-0 gap-0.5">
+                      <span className={`text-[14.5px] leading-snug ${isOpen ? "" : "truncate"}`}>{i.title}</span>
+                      <span className="truncate text-[11px] text-white/45">
+                        {m === "done" ? "Handled" : m === "dismissed" ? "Set aside" : m === "saved" ? "Saved for later" : i.stat.label}
+                      </span>
+                    </span>
+                    <span className="tabular font-display text-xl leading-none" style={{ color: it.accent }}>
+                      {i.stat.value}
+                    </span>
+                  </button>
+                  {isOpen && (
+                    <div className="grid gap-4 border-t border-white/10 px-4 pb-4 pt-4" style={{ animation: "card-in .25s cubic-bezier(.2,.8,.2,1) both" }}>
+                      <ItemBody
+                        i={i}
+                        status={m}
+                        onChoose={(s) => {
+                          onChoose(i, s);
+                          // On to the next open one for this client
+                          if (s !== "saved") setExpanded(openItems.find((x) => x.key !== i.key)?.key ?? null);
+                        }}
+                        onAct={() => onAct(i)}
+                        onNext={null}
+                      />
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+          <div className="relative flex flex-wrap items-center gap-2">
+            {unsaved.length > 1 && (
+              <button type="button" onClick={() => unsaved.forEach((i) => onChoose(i, "saved"))} className="h-11 rounded-full border border-white/25 px-4 text-sm text-white/85 hover:bg-white/10">
+                Save all {unsaved.length} for later
+              </button>
+            )}
+            {onNext && (
+              <button type="button" onClick={onNext} className="ml-auto h-11 rounded-full px-3 text-sm text-white/70 hover:text-white">
+                Next client →
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** One item: the story, the evidence, a drafted reply, why it's here, and what to do. */
+function ItemBody({ i, status, big = false, onChoose, onAct, onNext }: { i: TodayItem; status?: Mark; big?: boolean; onChoose: (s: "saved" | "done" | "dismissed") => void; onAct: () => void; onNext: (() => void) | null }) {
+  const t = TIER[i.tier];
+  const primary = "inline-flex h-12 w-full items-center justify-center rounded-full bg-white px-5 text-[15px] font-semibold text-black hover:bg-white/90 md:h-11 md:w-auto md:justify-start md:text-sm";
+  return (
+    <>
+      {big && (
+        <>
+          <div className="relative flex flex-wrap items-end gap-x-3 gap-y-1">
+            <span className="font-display text-6xl leading-none tracking-tight tabular md:text-7xl" style={{ color: t.accent }}>
+              {i.stat.value}
+            </span>
+            <span className="pb-1.5 text-sm text-white/60">{i.stat.label}</span>
+          </div>
+          <h3 className="relative font-heading text-2xl leading-snug">{i.title}</h3>
+        </>
+      )}
+      <p className={`relative leading-relaxed text-white/75 ${big ? "text-[15px]" : "text-sm"}`}>{i.story}</p>
       {i.evidence.length > 0 && (
         <ul className="relative grid gap-1.5">
           {i.evidence.map((e, n) => (
@@ -656,7 +775,7 @@ function Overview({ i, status, dive, onChoose, onAct, onNext }: { i: TodayItem; 
           </button>
         )}
       </div>
-    </div>
+    </>
   );
 }
 

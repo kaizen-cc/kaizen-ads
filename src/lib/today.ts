@@ -10,6 +10,7 @@ import { loadCallPromises, loadOnboarding, loadSuggestions, type OpenSuggestion 
 import { assetsStale } from "@/lib/client-assets";
 import { LIVE } from "@/lib/live";
 import { isCreativeRole } from "@/lib/roles";
+import { INTAKE_WAIT_DAYS, addBusinessDays as addBizDays } from "@/lib/brand-bible";
 
 // The daily recap: everything that needs an exec or lead today, one item at a time, most critical first. Critical
 // means it can cost us the client: a promise we made and haven't kept, a new client waiting on us, an important
@@ -277,6 +278,18 @@ async function gatherAll(db: SupabaseClient, me: Staff): Promise<Draft[]> {
     });
   }
 
+  // New clients without their intake form: where their Brand Bible and presentation stand, so the item says what
+  // happens next (a countdown to the Bible being built without it, then to the presentation going out for approval)
+  const noIntake = (onboarding?.clients ?? []).filter((c) => !c.intake || c.intake.status === "unmatched").map((c) => c.clientId);
+  const [{ data: bibleRows }, { data: deckRows }] = noIntake.length
+    ? await Promise.all([
+        db.from("client_brand_bibles").select("client_id, status, generated_at").in("client_id", noIntake),
+        db.from("client_presentations").select("client_id, status, send_after, sent_at, approved_at").in("client_id", noIntake),
+      ])
+    : [{ data: [] }, { data: [] }];
+  const bibleOf = new Map((bibleRows ?? []).map((r) => [r.client_id as string, r]));
+  const deckOf = new Map((deckRows ?? []).map((r) => [r.client_id as string, r]));
+
   // New clients: a first round waiting on us is their first impression
   for (const c of onboarding?.clients ?? []) {
     if (c.firstRound && manager) {
@@ -301,22 +314,66 @@ async function gatherAll(db: SupabaseClient, me: Staff): Promise<Draft[]> {
         action: { label: c.round.length > 1 ? `Review concept 1 of ${c.round.length}` : "Review the first round", suggestion: c.firstRound },
       });
     } else if ((manager && !creative) || me.isCoordinator ? !c.intake || c.intake.status === "unmatched" : false) {
-      // Chasing an intake form is the account manager's (and the buyers' and execs'), never the creative team's
+      // Chasing an intake form is the account manager's (and the buyers' and execs'), never the creative team's. It
+      // reads as what comes next, not just a problem: the Bible is built without it after INTAKE_WAIT_DAYS business
+      // days, and its presentation goes to the client for approval a business day after that
       const waited = bizDays(c.since);
-      if (waited >= 3)
+      const bible = bibleOf.get(c.clientId);
+      const deck = deckOf.get(c.clientId);
+      const built = Boolean(bible?.generated_at);
+      const nudge = "Their intake form still makes everything sharper (the Bible is rebuilt the moment it arrives), so a nudge from their account manager is worth it.";
+      const next: Pick<TodayItem, "stat" | "title" | "story"> | null =
+        deck?.status === "approved"
+          ? null
+          : deck?.status === "sent"
+            ? {
+                stat: { value: String(bizDays(deck.sent_at as string)), label: "business days their Brand Bible has waited on their approval" },
+                title: `${c.name}'s Brand Bible is with them for approval`,
+                story: `Built without their intake form and sent ${deck.sent_at ? day(deck.sent_at as string) : "already"}; it's waiting on their approval in the portal. ${nudge}`,
+              }
+            : deck?.status === "held"
+              ? {
+                  stat: { value: "Held", label: "their Brand Bible presentation is on hold" },
+                  title: `${c.name}'s Brand Bible is ready, and held`,
+                  story: `Built without their intake form. Its presentation is held, so it won't go to them for approval until someone sends it from the presentation page. ${nudge}`,
+                }
+              : built && deck?.send_after
+                ? (() => {
+                    const left = Math.max(0, Math.ceil((Date.parse(deck.send_after as string) - Date.now()) / 86_400_000));
+                    return {
+                      stat: { value: left ? String(left) : "Today", label: left ? `${left === 1 ? "day" : "days"} until their Brand Bible goes for their approval` : "their Brand Bible goes for their approval" },
+                      title: `${c.name}'s Brand Bible goes to them for approval ${left ? day(deck.send_after as string) : "today"}`,
+                      story: `Built without their intake form. Its presentation goes out on its own ${day(deck.send_after as string)} for their approval, unless someone holds it. Check it before then on the presentation page. ${nudge}`,
+                    };
+                  })()
+                : waited < INTAKE_WAIT_DAYS
+                  ? (() => {
+                      const left = INTAKE_WAIT_DAYS - waited;
+                      return {
+                        stat: { value: String(left), label: `business ${left === 1 ? "day" : "days"} until we build their Brand Bible without it` },
+                        title: `${c.name}'s intake form isn't in yet`,
+                        story: `If it isn't in by ${day(addBizDays(c.since, INTAKE_WAIT_DAYS).toISOString())}, their Brand Bible is built anyway from their calls, emails, website and our research, and its presentation goes to them for approval a business day later. ${nudge}`,
+                      };
+                    })()
+                  : {
+                      stat: { value: "Now", label: "their Brand Bible is being built without it" },
+                      title: `${c.name}'s Brand Bible is being built without their intake form`,
+                      story: `${INTAKE_WAIT_DAYS} business days passed without it, so it's built from their calls, emails, website and our research. Its presentation then goes to them for approval a business day later. ${nudge}`,
+                    };
+      if (next && waited >= 1)
         out.push({
           key: `intake:${c.clientId}`,
           topic: "onboarding",
-          score: 58 + Math.min(10, waited),
+          score: 52 + Math.min(14, waited * 2),
           client: c.name,
           clientSlug: c.slug,
           clientId: c.clientId,
-          stat: { value: String(waited), label: "days waiting on their intake form" },
-          title: `${c.name} hasn't sent their intake form`,
-          story: c.setup?.notes ? `From the onboarding checklist: ${c.setup.notes.slice(0, 220)}` : "Their first round can't be written well without it. A nudge from their account manager usually does it.",
-          why: "Onboarding stalls without it",
+          ...next,
+          ...(c.setup?.notes ? { story: `${next.story} From the onboarding checklist: ${c.setup.notes.slice(0, 220)}` } : {}),
+          why: "Onboarding: what happens next without their intake form",
           evidence: [],
-          action: { label: "Open the client", href: `/clients/${c.slug}` },
+          action: built ? { label: "See their Brand Bible", href: `/clients/${c.slug}/brand-bible${deck && deck.status !== "sent" ? "/presentation" : ""}` } : { label: "Open the client", href: `/clients/${c.slug}` },
+          ...(built ? { alt: { label: "Open the client", href: `/clients/${c.slug}` } } : {}),
         });
     }
   }
