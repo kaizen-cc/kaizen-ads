@@ -3,16 +3,36 @@
 import { revalidatePath } from "next/cache";
 import { AGENT_MOMENTS } from "@/lib/agent-moments";
 import { AiUnavailable, askJson, forgetAgent, type AgentKey } from "@/lib/ai";
-import { requireExec } from "@/lib/auth";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { requireExec, requireStaff, type Staff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readShared, SHARED_RULES, type AgentFile, type Attachment } from "@/lib/agent-docs";
 import { changeTarget } from "@/lib/agent-change";
+import { canTrainAgent } from "@/lib/agent-access";
+import { logTraining, revertChange, snapshot } from "@/lib/agent-training";
 
-/** Kept in the agent's history: who changed what and when, with the test it had just before (if any) */
-async function logChange(c: { agentKey?: string | null; roleKey?: string | null; target: string; by: string }) {
-  const { recordChange } = await import("@/lib/agent-evals");
-  await recordChange(createAdminClient(), c);
+// Who may change an agent: executives every one, each service line's head their own line's agent and skills (see
+// canTrainAgent). The check is made here, so the writes go through the admin connection (the tables' own policies
+// stay executives only). Models and effort (cost), shared items, deleting and Kaizen's strategy stay with the execs.
+
+/** The signed-in person when they can train this agent (a role key or skill key), or null */
+async function trainer(target: string | null | undefined): Promise<Staff | null> {
+  const me = await requireStaff();
+  return canTrainAgent(me, target) ? me : null;
+}
+const NOT_YOURS = { ok: false as const, error: "Only an executive or the head of this agent's line can change it." };
+const EXEC_ONLY_BRAIN = "Only an executive changes the model or effort.";
+
+/** Which skill an item belongs to (null = shared), or undefined when it isn't there */
+async function itemOwner(db: SupabaseClient, id: string): Promise<string | null | undefined> {
+  const { data } = await db.from("ai_knowledge").select("agent_key").eq("id", id).maybeSingle();
+  return data ? ((data.agent_key as string | null) ?? null) : undefined;
+}
+
+/** Kept in the agent's history: who changed what and when, before and after, with the test it had just before (if any) */
+async function logChange(me: Staff, c: { agentKey?: string | null; roleKey?: string | null; target: string; record: string }, before: Awaited<ReturnType<typeof snapshot>>) {
+  await logTraining(createAdminClient(), { me, ...c, before });
 }
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -30,62 +50,83 @@ function done(error?: { message: string } | null): ActionResult {
 
 /** Model, effort and instructions. The next call of this agent uses them (within a minute on every server). */
 export async function saveAgentSetup(key: AgentKey, v: { model: string; effort: string; instructions: string }): Promise<ActionResult> {
-  const me = await requireExec();
+  const me = await trainer(key);
+  if (!me) return NOT_YOURS;
   if (!MODELS.includes(v.model)) return { ok: false, error: "Pick a model." };
   if (!EFFORTS.includes(v.effort)) return { ok: false, error: "Pick an effort." };
-  const supabase = await createClient();
+  const supabase = createAdminClient();
+  const before = await snapshot(supabase, `agent:${key}`);
+  if (!before) return { ok: false, error: "Unknown agent." };
+  if (!me.isExec && (before.model !== v.model || before.effort !== v.effort)) return { ok: false, error: EXEC_ONLY_BRAIN };
   const { error } = await supabase
     .from("ai_agents")
     .update({ model: v.model, effort: v.effort, instructions: v.instructions.trim().slice(0, 20000), updated_by: me.id, updated_at: new Date().toISOString() })
     .eq("key", key);
-  if (!error) await logChange({ agentKey: key, target: "setup", by: me.id });
+  if (!error) await logChange(me, { agentKey: key, target: "setup", record: `agent:${key}` }, before);
   return done(error);
 }
 
 /** agentKey null = shared: every agent reads it. */
 export async function addItem(v: { agentKey: string | null; kind: Kind; title: string; body: string; fileName?: string | null }): Promise<ActionResult> {
-  const me = await requireExec();
+  // Shared items (read by every agent) are executives only
+  const me = await trainer(v.agentKey);
+  if (!me) return NOT_YOURS;
   if (!v.title.trim() || !v.body.trim()) return { ok: false, error: "Give it a title and some content." };
-  const supabase = await createClient();
-  const { error } = await supabase.from("ai_knowledge").insert({
+  const supabase = createAdminClient();
+  const { data: added, error } = await supabase.from("ai_knowledge").insert({
     agent_key: v.agentKey,
     kind: KINDS.includes(v.kind) ? v.kind : "knowledge",
     title: v.title.trim().slice(0, 200),
     body: v.body.trim().slice(0, 60000),
     file_name: v.fileName ?? null,
     created_by: me.id,
-  });
-  if (!error) await logChange({ agentKey: v.agentKey, target: "item:new", by: me.id });
+  }).select("id").single();
+  if (!error) await logChange(me, { agentKey: v.agentKey, target: "item:new", record: `item:${added.id}` }, null);
   return done(error);
 }
 
 export async function updateItem(id: string, v: { kind: Kind; title: string; body: string }): Promise<ActionResult> {
-  const me = await requireExec();
+  const supabase = createAdminClient();
+  const owner = await itemOwner(supabase, id);
+  if (owner === undefined) return { ok: false, error: "That item isn't there any more." };
+  const me = await trainer(owner);
+  if (!me) return NOT_YOURS;
   if (!v.title.trim() || !v.body.trim()) return { ok: false, error: "Give it a title and some content." };
-  const supabase = await createClient();
+  const before = await snapshot(supabase, `item:${id}`);
   const { error } = await supabase
     .from("ai_knowledge")
     .update({ kind: KINDS.includes(v.kind) ? v.kind : "knowledge", title: v.title.trim().slice(0, 200), body: v.body.trim().slice(0, 60000), updated_at: new Date().toISOString() })
     .eq("id", id);
-  if (!error) {
-    const { data: it } = await supabase.from("ai_knowledge").select("agent_key").eq("id", id).maybeSingle();
-    await logChange({ agentKey: (it?.agent_key as string | null) ?? null, target: `item:${id}`, by: me.id });
-  }
+  if (!error) await logChange(me, { agentKey: owner, target: `item:${id}`, record: `item:${id}` }, before);
   return done(error);
 }
 
 export async function setItemActive(id: string, active: boolean): Promise<ActionResult> {
-  await requireExec();
-  const supabase = await createClient();
+  const supabase = createAdminClient();
+  const owner = await itemOwner(supabase, id);
+  if (owner === undefined) return { ok: false, error: "That item isn't there any more." };
+  const me = await trainer(owner);
+  if (!me) return NOT_YOURS;
+  const before = await snapshot(supabase, `item:${id}`);
   const { error } = await supabase.from("ai_knowledge").update({ active, updated_at: new Date().toISOString() }).eq("id", id);
+  if (!error) await logChange(me, { agentKey: owner, target: `item:${id}`, record: `item:${id}` }, before);
   return done(error);
 }
 
+/** Deleting is executives only (a head turns an item off instead, which can be put back) */
 export async function deleteItem(id: string): Promise<ActionResult> {
   await requireExec();
-  const supabase = await createClient();
+  const supabase = createAdminClient();
   const { error } = await supabase.from("ai_knowledge").delete().eq("id", id);
   return done(error);
+}
+
+/** Put a change back as it was (executives): from the heads' Changes list the digest points to */
+export async function revertAgentChange(id: string): Promise<ActionResult> {
+  const me = await requireExec();
+  const r = await revertChange(createAdminClient(), me, id);
+  if (!r.ok) return r;
+  return done();
 }
 
 // ─── Coach: chat with an agent's playbook ──────────────────────────────────
@@ -161,10 +202,11 @@ How to propose changes:
 reply: 1 to 3 sentences, plain and direct, saying what you'd change (the exec applies each change with a click).`;
 
 export async function chatWithCoach(key: AgentKey, message: string, files: AgentFile[] = []): Promise<{ ok: true; messages: ChatMessage[] } | { ok: false; error: string }> {
-  const me = await requireExec();
+  const me = await trainer(key);
+  if (!me) return NOT_YOURS;
   const text = message.trim();
   if (!text && !files.length) return { ok: false, error: "Write something first." };
-  const supabase = await createClient();
+  const supabase = createAdminClient();
   const [{ data: agent }, { data: items }, { data: history }] = await Promise.all([
     supabase.from("ai_agents").select("key, label, description, model, effort, instructions, live, ai_roles(label, core)").eq("key", key).maybeSingle(),
     supabase.from("ai_knowledge").select("id, agent_key, kind, title, body, active").or(`agent_key.eq.${key},agent_key.is.null`).order("created_at"),
@@ -211,6 +253,8 @@ ${role.core}
     const known = new Set((items ?? []).map((k) => k.id));
     const changes = out.changes
       .filter((c) => (c.op === "update_item" || c.op === "turn_off_item" ? known.has(c.item_id) : true))
+      // A head's coach proposes no model or effort changes and nothing to the shared items
+      .filter((c) => me.isExec || (c.op !== "set_model" && !(c.op === "add_item" && c.scope === "shared") && !((c.op === "update_item" || c.op === "turn_off_item") && !(items ?? []).find((k) => k.id === c.item_id)?.agent_key)))
       .map((c) => ({ ...c, applied: false }));
     await supabase.from("ai_agent_chats").insert([
       { agent_key: key, role: "user", content: text.slice(0, 8000), attachments: shared.attachments, changes: [], created_by: me.id },
@@ -223,16 +267,42 @@ ${role.core}
 }
 
 export async function loadChat(key: AgentKey): Promise<ChatMessage[]> {
-  await requireExec();
-  const supabase = await createClient();
+  if (!(await trainer(key))) return [];
+  const supabase = createAdminClient();
   const { data } = await supabase.from("ai_agent_chats").select("id, role, content, changes, attachments, created_at").eq("agent_key", key).order("created_at").limit(200);
   return (data ?? []).map((m) => ({ id: m.id, role: m.role as "user" | "coach", content: m.content, changes: (m.changes ?? []) as Change[], at: m.created_at, attachments: (m.attachments ?? []) as Attachment[] }));
 }
 
-type Db = Awaited<ReturnType<typeof createClient>>;
+/**
+ * Write one proposed edit to a skill's playbook, kept in its history with the before and after. set_core edits the
+ * agent's core (only the agent chat proposes it). A head can't change the model or effort, nor shared items.
+ */
+async function writeChange(supabase: SupabaseClient, me: Staff, key: string, c: Change, roleKey?: string): Promise<{ message: string } | null> {
+  if (!me.isExec && c.op === "set_model") return { message: EXEC_ONLY_BRAIN };
+  let owner: string | null | undefined = key;
+  if (c.op === "update_item" || c.op === "turn_off_item") {
+    owner = await itemOwner(supabase, c.item_id);
+    if (owner === undefined) return { message: "That item isn't there any more." };
+    if (!canTrainAgent(me, owner)) return { message: NOT_YOURS.error };
+  }
+  const shared = c.op === "add_item" && c.scope === "shared" && !roleKey;
+  if (shared && !me.isExec) return { message: "Only an executive adds to what every agent reads." };
+  const record = c.op === "set_core" ? `role:${roleKey ?? ""}` : c.op === "update_item" || c.op === "turn_off_item" ? `item:${c.item_id}` : c.op === "add_item" ? "" : `agent:${key}`;
+  const before = record ? await snapshot(supabase, record) : null;
+  const error = await writeRaw(supabase, me, key, c, roleKey);
+  if (error) return error;
+  if (c.op === "add_item") {
+    // The item just added: the newest by this person on this skill (or shared)
+    let q = supabase.from("ai_knowledge").select("id").eq("created_by", me.id).order("created_at", { ascending: false }).limit(1);
+    q = shared ? q.is("agent_key", null) : q.eq("agent_key", key);
+    const { data: added } = await q.maybeSingle();
+    if (added) await logChange(me, { agentKey: shared ? null : key, target: "item:new", record: `item:${added.id}` }, null);
+  } else if (c.op === "set_core") await logChange(me, { roleKey, target: "core", record }, before);
+  else await logChange(me, { agentKey: owner, target: changeTarget(c.op, c.item_id), record }, before);
+  return null;
+}
 
-/** Write one proposed edit to a skill's playbook. set_core edits the agent's core (only the agent chat proposes it). */
-async function writeChange(supabase: Db, me: { id: string }, key: string, c: Change, roleKey?: string): Promise<{ message: string } | null> {
+async function writeRaw(supabase: SupabaseClient, me: { id: string }, key: string, c: Change, roleKey?: string): Promise<{ message: string } | null> {
   const now = new Date().toISOString();
   if (c.op === "set_core") {
     if (!roleKey) return { message: "Change the core from the agent's page." };
@@ -269,8 +339,9 @@ async function writeChange(supabase: Db, me: { id: string }, key: string, c: Cha
 
 /** Apply one of the coach's proposed edits. */
 export async function applyChange(key: AgentKey, chatId: number, index: number): Promise<ActionResult> {
-  const me = await requireExec();
-  const supabase = await createClient();
+  const me = await trainer(key);
+  if (!me) return NOT_YOURS;
+  const supabase = createAdminClient();
   const { data: msg } = await supabase.from("ai_agent_chats").select("changes").eq("id", chatId).eq("agent_key", key).maybeSingle();
   const changes = (msg?.changes ?? []) as Change[];
   const c = changes[index];
@@ -280,13 +351,12 @@ export async function applyChange(key: AgentKey, chatId: number, index: number):
   if (error) return { ok: false, error: error.message };
   changes[index] = { ...c, applied: true };
   await supabase.from("ai_agent_chats").update({ changes }).eq("id", chatId);
-  await logChange({ agentKey: key, target: changeTarget(c.op, c.item_id), by: me.id });
   return done();
 }
 
 export async function clearChat(key: AgentKey): Promise<ActionResult> {
-  await requireExec();
-  const supabase = await createClient();
+  if (!(await trainer(key))) return NOT_YOURS;
+  const supabase = createAdminClient();
   const { error } = await supabase.from("ai_agent_chats").delete().eq("agent_key", key);
   return done(error);
 }
@@ -352,10 +422,11 @@ const ITEM_CAP = 6000;
 const PLAYBOOK_CAP = 90000;
 
 export async function chatWithAgent(roleKey: string, message: string, files: AgentFile[] = []): Promise<{ ok: true; messages: RoleChatMessage[] } | { ok: false; error: string }> {
-  const me = await requireExec();
+  const me = await trainer(roleKey);
+  if (!me) return NOT_YOURS;
   const text = message.trim();
   if (!text && !files.length) return { ok: false, error: "Write something first." };
-  const supabase = await createClient();
+  const supabase = createAdminClient();
   const [{ data: role }, { data: skills }, { data: spine }, { data: history }] = await Promise.all([
     supabase.from("ai_roles").select("key, label, description, core").eq("key", roleKey).maybeSingle(),
     supabase.from("ai_agents").select("key, label, description, model, effort, instructions, live").eq("role_key", roleKey).order("sort_order"),
@@ -424,6 +495,7 @@ export async function chatWithAgent(roleKey: string, message: string, files: Age
           if (!k || (c.op === "update_item" && truncated.has(c.item_id))) return null;
           return { ...c, skill: k };
         }
+        if (c.op === "set_model" && !me.isExec) return null;
         return keys.includes(c.skill ?? "") ? c : null;
       })
       .filter((c): c is Change => Boolean(c))
@@ -443,16 +515,17 @@ export async function chatWithAgent(roleKey: string, message: string, files: Age
 }
 
 export async function loadRoleChat(roleKey: string): Promise<RoleChatMessage[]> {
-  await requireExec();
-  const supabase = await createClient();
+  if (!(await trainer(roleKey))) return [];
+  const supabase = createAdminClient();
   const { data } = await supabase.from("ai_role_chats").select("id, role, content, changes, attachments, created_at").eq("role_key", roleKey).order("created_at").limit(200);
   return (data ?? []).map((m) => ({ id: m.id, role: m.role as "user" | "agent", content: m.content, changes: (m.changes ?? []) as Change[], at: m.created_at, attachments: (m.attachments ?? []) as Attachment[] }));
 }
 
 /** Apply one edit the agent proposed, checking it still lands on this agent's own core, skills or items. */
 export async function applyRoleChange(roleKey: string, chatId: number, index: number): Promise<ActionResult> {
-  const me = await requireExec();
-  const supabase = await createClient();
+  const me = await trainer(roleKey);
+  if (!me) return NOT_YOURS;
+  const supabase = createAdminClient();
   const { data: msg } = await supabase.from("ai_role_chats").select("changes").eq("id", chatId).eq("role_key", roleKey).maybeSingle();
   const changes = (msg?.changes ?? []) as Change[];
   const c = changes[index];
@@ -473,23 +546,24 @@ export async function applyRoleChange(roleKey: string, chatId: number, index: nu
   if (error) return { ok: false, error: error.message };
   changes[index] = { ...c, applied: true };
   await supabase.from("ai_role_chats").update({ changes }).eq("id", chatId);
-  await logChange(c.op === "set_core" ? { roleKey, target: "core", by: me.id } : { agentKey: key, target: changeTarget(c.op, c.item_id), by: me.id });
   return done();
 }
 
 export async function clearRoleChat(roleKey: string): Promise<ActionResult> {
-  await requireExec();
-  const supabase = await createClient();
+  if (!(await trainer(roleKey))) return NOT_YOURS;
+  const supabase = createAdminClient();
   const { error } = await supabase.from("ai_role_chats").delete().eq("role_key", roleKey);
   return done(error);
 }
 
 /** An agent's core: what every one of its skills reads before its own playbook. */
 export async function saveRoleCore(key: string, core: string): Promise<ActionResult> {
-  const me = await requireExec();
-  const supabase = await createClient();
+  const me = await trainer(key);
+  if (!me) return NOT_YOURS;
+  const supabase = createAdminClient();
+  const before = await snapshot(supabase, `role:${key}`);
   const { error } = await supabase.from("ai_roles").update({ core: core.trim().slice(0, 20000), updated_by: me.id, updated_at: new Date().toISOString() }).eq("key", key);
-  if (!error) await logChange({ roleKey: key, target: "core", by: me.id });
+  if (!error) await logChange(me, { roleKey: key, target: "core", record: `role:${key}` }, before);
   return done(error);
 }
 

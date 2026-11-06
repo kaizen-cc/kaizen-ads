@@ -166,16 +166,22 @@ ${cut(spineText, 4000)}
  * A change was saved: kept in the agent's history with who and when, and the test it had just before (by the same
  * person, of the same thing, in the last three hours), if any.
  */
-export async function recordChange(admin: SupabaseClient, c: { agentKey?: string | null; roleKey?: string | null; target: string; by: string }) {
+export async function recordChange(admin: SupabaseClient, c: { agentKey?: string | null; roleKey?: string | null; target: string; by: string; extra?: Record<string, unknown> }): Promise<string | null> {
   try {
     const since = new Date(Date.now() - 3 * 3_600_000).toISOString();
     let q = admin.from("agent_evals").select("id, summary").eq("target", c.target).eq("kind", "change").eq("created_by", c.by).is("applied_at", null).gte("created_at", since).order("created_at", { ascending: false }).limit(1);
     q = c.agentKey ? q.eq("agent_key", c.agentKey) : q.eq("role_key", c.roleKey ?? "");
     const { data: ev } = await q.maybeSingle();
     if (ev) await admin.from("agent_evals").update({ applied_at: new Date().toISOString() }).eq("id", ev.id);
-    await admin.from("agent_changes").insert({ agent_key: c.agentKey ?? null, role_key: c.roleKey ?? null, target: c.target, eval_id: ev?.id ?? null, eval_summary: (ev?.summary as string | null) ?? null, changed_by: c.by });
+    const { data: row } = await admin
+      .from("agent_changes")
+      .insert({ agent_key: c.agentKey ?? null, role_key: c.roleKey ?? null, target: c.target, eval_id: ev?.id ?? null, eval_summary: (ev?.summary as string | null) ?? null, changed_by: c.by, ...(c.extra ?? {}) })
+      .select("id")
+      .maybeSingle();
+    return (row?.id as string | undefined) ?? null;
   } catch (e) {
     console.error("[agent evals] record change", e instanceof Error ? e.message : e);
+    return null;
   }
 }
 

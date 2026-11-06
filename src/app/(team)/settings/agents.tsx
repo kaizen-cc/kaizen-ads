@@ -118,6 +118,13 @@ function AgentIcon({ icon, size = 44 }: { icon: string; size?: number }) {
 // ─── Unsaved changes ─────────────────────────────────────────────────────────
 // Every editor that has changes registers itself; the banner at the bottom saves or discards them all.
 
+/**
+ * Whether the viewer is an executive. The head of a service line trains their own line's agent here too, but the model
+ * and effort (cost), deleting items and the shared items stay with the executives (see canTrainAgent).
+ */
+const ExecCtx = createContext(true);
+const useIsExec = () => useContext(ExecCtx);
+
 type Pending = { label: string; save: () => Promise<Result>; discard: () => void };
 const DirtyCtx = createContext<{ set: (id: string, p: Pending | null) => void } | null>(null);
 
@@ -306,6 +313,8 @@ function ItemCard({ item, readOnly = false }: { item: Item; readOnly?: boolean }
   const [busy, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+  // Deleting is for executives; a head turns an item off instead, which can be put back
+  const canDelete = useIsExec();
   const dirty = editing && (kind !== item.kind || title !== item.title || body !== item.body);
   const discard = () => {
     setKind(item.kind);
@@ -354,7 +363,7 @@ function ItemCard({ item, readOnly = false }: { item: Item; readOnly?: boolean }
             Cancel
           </button>
           <span className="tabular ml-auto text-[11px] text-faint">~{tokensOf(body).toLocaleString()} tokens</span>
-          <button
+          {canDelete && <button
             onClick={() => {
               if (!confirm(`Delete "${item.title}"? This can't be undone.`)) return;
               start(async () => {
@@ -366,7 +375,7 @@ function ItemCard({ item, readOnly = false }: { item: Item; readOnly?: boolean }
             className="h-11 rounded-full px-3 text-sm md:h-9 text-faint hover:text-bad"
           >
             Delete
-          </button>
+          </button>}
         </div>
         {error && <p className="text-xs text-bad">{error}</p>}
       </li>
@@ -570,6 +579,8 @@ function Setup({ a }: { a: Agent }) {
   const [model, setModel] = useState(a.model);
   const [effort, setEffort] = useState(a.effort);
   const [instructions, setInstructions] = useState(a.instructions);
+  // The model and effort are what it costs: executives set them, a head sees them
+  const brain = useIsExec();
   const dirty = model !== a.model || effort !== a.effort || instructions !== a.instructions;
   useDirty(`setup:${a.key}`, dirty, {
     label: "Model and instructions",
@@ -583,15 +594,19 @@ function Setup({ a }: { a: Agent }) {
   return (
     <div className="grid gap-8">
       <div className="grid gap-4">
-        <p className="text-sm font-medium">Brain</p>
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <p className="text-sm font-medium">Brain</p>
+          {!brain && <p className="text-xs text-faint">Set by an executive (it decides the cost)</p>}
+        </div>
         <div className="grid gap-3 md:grid-cols-3">
           {MODELS.map((m) => {
             const on = model === m.key;
             return (
               <button
                 key={m.key}
+                disabled={!brain}
                 onClick={() => setModel(m.key)}
-                className={`grid gap-2 rounded-[14px] border p-4 text-left transition-all ${on ? "border-fg/60 bg-surface-2 shadow-[0_0_0_4px_rgba(255,255,255,0.04)]" : "border-line bg-bg hover:border-faint/60"}`}
+                className={`grid gap-2 rounded-[14px] border p-4 text-left transition-all disabled:cursor-default ${on ? "border-fg/60 bg-surface-2 shadow-[0_0_0_4px_rgba(255,255,255,0.04)]" : `border-line bg-bg ${brain ? "hover:border-faint/60" : "opacity-50"}`}`}
               >
                 <span className="flex items-center justify-between">
                   <span className="font-heading text-[17px]">{m.name}</span>
@@ -605,7 +620,7 @@ function Setup({ a }: { a: Agent }) {
         <div className="grid gap-2">
           <div className="grid grid-cols-3 gap-1 rounded-[12px] border border-line bg-bg p-1">
             {EFFORTS.map((e) => (
-              <button key={e.key} onClick={() => setEffort(e.key)} className={`min-h-11 rounded-[9px] px-2 py-2 text-sm transition-colors md:min-h-0 md:px-3 ${effort === e.key ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
+              <button key={e.key} disabled={!brain} onClick={() => setEffort(e.key)} className={`min-h-11 rounded-[9px] px-2 py-2 text-sm transition-colors disabled:cursor-default md:min-h-0 md:px-3 ${effort === e.key ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
                 {e.name}
                 <span className="hidden sm:inline"> effort</span>
               </button>
@@ -628,7 +643,7 @@ function Setup({ a }: { a: Agent }) {
           className={`${field} h-auto py-4 text-[13.5px] font-normal leading-relaxed`}
         />
       </div>
-      {dirty && <TestChange agentKey={a.key} target="setup" proposal={{ instructions, model, effort }} />}
+      {dirty && <TestChange agentKey={a.key} target="setup" proposal={brain ? { instructions, model, effort } : { instructions }} />}
     </div>
   );
 }
@@ -645,6 +660,7 @@ const CHANGE_LABEL: Record<Change["op"], string> = {
 function ChangeCard({ c, onApply, items, skill = null, test = null }: { c: Change; onApply: () => Promise<void>; items: Item[]; skill?: string | null; /** Who to test this edit on: the skill, or the agent (a core edit) */ test?: { agentKey?: string | null; roleKey?: string | null } | null }) {
   const [open, setOpen] = useState(false);
   const [busy, start] = useTransition();
+  const isExec = useIsExec();
   const target = items.find((i) => i.id === c.item_id);
   const title =
     c.op === "set_model"
@@ -671,6 +687,8 @@ function ChangeCard({ c, onApply, items, skill = null, test = null }: { c: Chang
         </div>
         {c.applied ? (
           <span className="shrink-0 text-xs text-ok">✓ Applied</span>
+        ) : !isExec && (c.op === "set_model" || c.scope === "shared") ? (
+          <span className="shrink-0 text-xs text-faint">For an executive</span>
         ) : (
           <button disabled={busy} onClick={() => start(onApply)} className="h-11 shrink-0 rounded-full bg-fg px-4 text-xs font-medium text-bg disabled:opacity-50 md:h-8 md:px-3.5">
             {busy ? "Applying…" : "Apply"}
@@ -1092,7 +1110,16 @@ const TABS = [
   ["learned", "What it has learned"],
 ] as const;
 
-export function AgentDetail({ a, items, chat, learned = null }: { a: Agent; items: Item[]; chat: ChatMessage[]; /** Its learnings from the team, and its changes and their tests */ learned?: { learnings: LearningView[]; changes: ChangeRow[]; evals: EvalRow[] } | null }) {
+export function AgentDetail(props: { a: Agent; items: Item[]; chat: ChatMessage[]; /** Its learnings from the team, and its changes and their tests */ learned?: { learnings: LearningView[]; changes: ChangeRow[]; evals: EvalRow[] } | null; isExec?: boolean }) {
+  return (
+    <ExecCtx.Provider value={props.isExec ?? true}>
+      <AgentDetailBody {...props} />
+    </ExecCtx.Provider>
+  );
+}
+
+function AgentDetailBody({ a, items, chat, learned = null }: { a: Agent; items: Item[]; chat: ChatMessage[]; learned?: { learnings: LearningView[]; changes: ChangeRow[]; evals: EvalRow[] } | null }) {
+  const isExec = useIsExec();
   // The skill's tab is in the address (?view=), so back returns to the tab read before
   const asked = useParam("view");
   const tab = TABS.find(([k]) => k === asked)?.[0] ?? "use";
@@ -1185,11 +1212,19 @@ export function AgentDetail({ a, items, chat, learned = null }: { a: Agent; item
           {shared.length > 0 && (
             <div className="grid gap-3 border-t border-line pt-5">
               <p className="text-xs text-faint">
-                Also reads {shared.length} shared {shared.length === 1 ? "item" : "items"} every agent uses (edit them under{" "}
-                <Link href="/settings?tab=agents" className="text-muted underline-offset-4 hover:text-fg hover:underline">
-                  Shared knowledge
-                </Link>
-                ):
+                Also reads {shared.length} shared {shared.length === 1 ? "item" : "items"} every agent uses
+                {isExec ? (
+                  <>
+                    {" "}
+                    (edit them under{" "}
+                    <Link href="/settings?tab=agents&section=knowledge" className="text-muted underline-offset-4 hover:text-fg hover:underline">
+                      Shared knowledge
+                    </Link>
+                    ):
+                  </>
+                ) : (
+                  " (executives edit these):"
+                )}
               </p>
               <div className="flex flex-wrap gap-1.5">
                 {shared.map((k) => (
@@ -1407,12 +1442,14 @@ const roleStats = (role: Role, skills: Agent[]) => ({
 });
 
 /** The AI agents section: the agents, the knowledge every one of them reads, and what they cost */
-export function AgentsNav({ section }: { section: string }) {
+export function AgentsNav({ section, isExec = true }: { section: string; /** A head trains their own line's agent only: no strategy, shared knowledge, changes or expenses */ isExec?: boolean }) {
   const tabs = [
     ["agents", "Agents"],
     ["knowledge", "Knowledge"],
+    ["changes", "Changes"],
     ["expenses", "Expenses"],
   ] as const;
+  if (!isExec) return null;
   const on = tabs.some(([k]) => k === section) ? section : "agents";
   return (
     <nav className="flex w-full gap-1 justify-self-start rounded-full border border-line bg-surface p-1 md:w-fit" aria-label="AI agents">
@@ -1421,7 +1458,7 @@ export function AgentsNav({ section }: { section: string }) {
           key={k}
           href={k === "agents" ? "/settings?tab=agents" : `/settings?tab=agents&section=${k}`}
           aria-current={on === k ? "page" : undefined}
-          className={`inline-flex h-10 flex-1 items-center justify-center rounded-full px-5 text-sm transition-colors md:h-9 md:flex-none ${on === k ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}
+          className={`inline-flex h-11 flex-1 items-center justify-center whitespace-nowrap rounded-full px-2.5 text-[13px] transition-colors md:h-9 md:flex-none md:px-5 md:text-sm ${on === k ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}
         >
           {l}
         </Link>
@@ -1452,7 +1489,7 @@ export function KnowledgeView({ items, spine }: { items: Item[]; spine: { body: 
   );
 }
 
-export function RolesOverview({ roles, agents, items }: { roles: Role[]; agents: Agent[]; items: Item[] }) {
+export function RolesOverview({ roles, agents, items, isExec = true }: { roles: Role[]; agents: Agent[]; items: Item[]; /** A head sees only their own line's agent */ isExec?: boolean }) {
   const week = agents.reduce((t, a) => t + a.cost7, 0);
   const runs = agents.reduce((t, a) => t + a.stats.runs, 0);
   const live = agents.filter((a) => a.live).length;
@@ -1467,7 +1504,10 @@ export function RolesOverview({ roles, agents, items }: { roles: Role[]; agents:
           <div className="flex flex-wrap items-end justify-between gap-6">
             <div className="grid gap-2">
               <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-faint">Kaizen&apos;s AI team</p>
-              <h2 className="font-heading text-[28px] leading-tight md:text-[34px]">Six agents, {agents.length} skills</h2>
+              <h2 className="font-heading text-[28px] leading-tight md:text-[34px]">
+                {isExec ? "Six agents" : roles.length === 1 ? `The ${roles[0].label}` : `Your ${roles.length} agents`}, {agents.length} skills
+              </h2>
+              {!isExec && <p className="max-w-md text-[13px] text-muted">Your line&apos;s agent: talk to it, tune its skills and review what it learns. Executives see every change and set the model and effort.</p>}
               <div className="flex -space-x-2">
                 {roles.map((r) => (
                   <span key={r.key} className="rounded-[16px] ring-4 ring-deep">
@@ -1632,9 +1672,10 @@ function TalkToAgent({ role, skills, items, chat }: { role: Role; skills: Agent[
   );
 }
 
-export function RoleDetail({ role, skills, items, chat }: { role: Role; skills: Agent[]; items: Item[]; chat: RoleChatMessage[] }) {
+export function RoleDetail({ role, skills, items, chat, isExec = true }: { role: Role; skills: Agent[]; items: Item[]; chat: RoleChatMessage[]; isExec?: boolean }) {
   const st = roleStats(role, skills);
   return (
+    <ExecCtx.Provider value={isExec}>
     <DirtyProvider>
       <div className="grid gap-6 pb-24">
         <Link href="/settings?tab=agents" className="inline-flex min-h-11 items-center text-xs text-muted hover:text-fg md:min-h-0">
@@ -1723,5 +1764,6 @@ export function RoleDetail({ role, skills, items, chat }: { role: Role; skills: 
         </section>
       </div>
     </DirtyProvider>
+    </ExecCtx.Provider>
   );
 }

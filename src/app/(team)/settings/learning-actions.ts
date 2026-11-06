@@ -2,19 +2,39 @@
 
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
-import { requireExec } from "@/lib/auth";
+import { requireStaff, type Staff } from "@/lib/auth";
+import { canTrainAgent } from "@/lib/agent-access";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { EvalRow, Proposal } from "@/lib/agent-evals";
 import type { LearningScope } from "@/lib/learning-rank";
 
-// Settings › AI agents: testing a change before it's saved, and an exec's hand on what each agent has learned.
+// Settings › AI agents: testing a change before it's saved, and an exec's (or the line head's) hand on what each
+// agent has learned.
 
 type Result = { ok: true } | { ok: false; error: string };
 
+// Executives, and each service line's head for their own line's agent and skills (canTrainAgent)
+const NOT_YOURS = { ok: false as const, error: "Only an executive or the head of this agent's line can change it." };
+
+/** The signed-in person when they can train this agent (a role or skill key), or null */
+async function trainer(target: string | null | undefined): Promise<Staff | null> {
+  const me = await requireStaff();
+  return canTrainAgent(me, target) ? me : null;
+}
+
+/** The same, for one learning (by its skill) */
+async function learningTrainer(id: string): Promise<Staff | null> {
+  const { data } = await createAdminClient().from("agent_learnings").select("agent_key").eq("id", id).maybeSingle();
+  return data ? trainer(data.agent_key as string) : null;
+}
+
 /** Replay up to 8 recent real calls with the proposed change next to what the agent does now (in the background) */
 export async function testAgentChange(v: { agentKey?: string | null; roleKey?: string | null; target: string; proposal: Proposal }): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
-  const me = await requireExec();
   if (!v.agentKey && !v.roleKey) return { ok: false, error: "Nothing to test." };
+  const me = await trainer(v.agentKey ?? v.roleKey);
+  if (!me) return NOT_YOURS;
+  // A head tests their own instructions, items and core, not a model or effort change
+  if (!me.isExec && (v.proposal.model || v.proposal.effort)) return { ok: false, error: "Only an executive changes the model or effort." };
   const admin = createAdminClient();
   const { startEval, runEval } = await import("@/lib/agent-evals");
   const id = await startEval(admin, { agentKey: v.agentKey ?? null, roleKey: v.roleKey ?? null, target: v.target, proposal: v.proposal, by: me.id });
@@ -24,16 +44,15 @@ export async function testAgentChange(v: { agentKey?: string | null; roleKey?: s
 
 /** One test, for the page to poll */
 export async function agentTest(id: string): Promise<EvalRow | null> {
-  await requireExec();
   const { data } = await createAdminClient().from("agent_evals").select("*, profiles:created_by(full_name)").eq("id", id).maybeSingle();
-  if (!data) return null;
+  if (!data || !(await trainer((data.agent_key as string | null) ?? (data.role_key as string | null)))) return null;
   const { toEval } = await import("@/lib/agent-evals");
   return toEval(data as Record<string, unknown>);
 }
 
 /** Tidy one agent's learnings now instead of waiting for the night */
 export async function consolidateNow(agentKey: string): Promise<Result> {
-  await requireExec();
+  if (!(await trainer(agentKey))) return NOT_YOURS;
   const admin = createAdminClient();
   after(async () => {
     const { consolidateLearnings } = await import("@/lib/learnings");
@@ -47,7 +66,8 @@ const touch = (me: { id: string }) => ({ updated_at: new Date().toISOString(), u
 
 /** Reword a learning or its condition */
 export async function editLearning(id: string, v: { lesson: string; condition: string }): Promise<Result> {
-  const me = await requireExec();
+  const me = await learningTrainer(id);
+  if (!me) return NOT_YOURS;
   if (v.lesson.trim().length < 6) return { ok: false, error: "Say what it should learn." };
   const { error } = await createAdminClient().from("agent_learnings").update({ lesson: v.lesson.trim().slice(0, 600), condition: v.condition.trim().slice(0, 300) || null, ...touch(me) }).eq("id", id);
   revalidatePath("/settings");
@@ -56,15 +76,17 @@ export async function editLearning(id: string, v: { lesson: string; condition: s
 
 /** Retire one (it stops being read; kept for the record) */
 export async function retireLearning(id: string): Promise<Result> {
-  const me = await requireExec();
-  const { error } = await createAdminClient().from("agent_learnings").update({ status: "retired", note: "Retired by an exec", ...touch(me) }).eq("id", id);
+  const me = await learningTrainer(id);
+  if (!me) return NOT_YOURS;
+  const { error } = await createAdminClient().from("agent_learnings").update({ status: "retired", note: me.isExec ? "Retired by an exec" : "Retired by the head of its line", ...touch(me) }).eq("id", id);
   revalidatePath("/settings");
   return error ? { ok: false, error: error.message } : { ok: true };
 }
 
 /** Bring a retired one back */
 export async function restoreLearning(id: string): Promise<Result> {
-  const me = await requireExec();
+  const me = await learningTrainer(id);
+  if (!me) return NOT_YOURS;
   const { error } = await createAdminClient().from("agent_learnings").update({ status: "active", note: null, last_seen: new Date().toISOString(), ...touch(me) }).eq("id", id);
   revalidatePath("/settings");
   return error ? { ok: false, error: error.message } : { ok: true };
@@ -75,7 +97,8 @@ export async function restoreLearning(id: string): Promise<Result> {
  * every client. An exec can promote past the three-clients rule; a one-off exception stays with its client.
  */
 export async function setLearningScope(id: string, scope: LearningScope): Promise<Result> {
-  const me = await requireExec();
+  const me = await learningTrainer(id);
+  if (!me) return NOT_YOURS;
   const admin = createAdminClient();
   const { data: l } = await admin.from("agent_learnings").select("kind, client_id, evidence_clients").eq("id", id).maybeSingle();
   if (!l) return { ok: false, error: "That learning isn't there any more." };
@@ -104,11 +127,12 @@ export async function setLearningScope(id: string, scope: LearningScope): Promis
 
 /** Two contradict and nobody won: keep this one, retire the other */
 export async function keepLearning(id: string): Promise<Result> {
-  const me = await requireExec();
+  const me = await learningTrainer(id);
+  if (!me) return NOT_YOURS;
   const admin = createAdminClient();
   const { data: l } = await admin.from("agent_learnings").select("conflict_with").eq("id", id).maybeSingle();
-  await admin.from("agent_learnings").update({ status: "active", conflict_with: null, note: "Kept by an exec over a contradicting lesson", ...touch(me) }).eq("id", id);
-  if (l?.conflict_with) await admin.from("agent_learnings").update({ status: "retired", note: "An exec kept the contradicting lesson instead", ...touch(me) }).eq("id", l.conflict_with);
+  await admin.from("agent_learnings").update({ status: "active", conflict_with: null, note: me.isExec ? "Kept by an exec over a contradicting lesson" : "Kept by the head of its line over a contradicting lesson", ...touch(me) }).eq("id", id);
+  if (l?.conflict_with) await admin.from("agent_learnings").update({ status: "retired", note: me.isExec ? "An exec kept the contradicting lesson instead" : "The head of its line kept the contradicting lesson instead", ...touch(me) }).eq("id", l.conflict_with);
   revalidatePath("/settings");
   return { ok: true };
 }

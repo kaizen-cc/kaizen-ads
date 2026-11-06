@@ -4,6 +4,7 @@ import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { isExecOrLead, requireStaff, type Staff } from "@/lib/auth";
 import { aiEnabled } from "@/lib/ai";
+import { canTrainAgent } from "@/lib/agent-access";
 import { addKnowledge, forgetIndex, knowledgeSlots, readKnowledge, type KnowledgeTarget } from "@/lib/knowledge";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -15,7 +16,9 @@ type R<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 
 /** Who may add to or change knowledge in this place */
 async function allowed(me: Staff, t: KnowledgeTarget) {
-  if (t.scope === "agent" || t.scope === "shared") return me.isExec;
+  // An agent's own files: executives, or the head of that agent's line; every agent's (shared): executives
+  if (t.scope === "agent") return canTrainAgent(me, t.agentKey);
+  if (t.scope === "shared") return me.isExec;
   if (t.scope === "lab") return isExecOrLead(me);
   // A client: the team member's own access rules decide
   const { data } = await (await createClient()).from("clients").select("id").eq("id", t.clientId).maybeSingle();

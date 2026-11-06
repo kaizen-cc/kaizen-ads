@@ -4,7 +4,10 @@ import { Connections } from "./connections";
 import { DEFAULT_URL_TAGS, metaWriteSetting } from "@/lib/meta-write";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { isExecOrLead, requireStaff } from "@/lib/auth";
+import { isExecOrLead, requireStaff, type Staff } from "@/lib/auth";
+import { canTrainAgent, trainableRoles } from "@/lib/agent-access";
+import { HeadChanges } from "./head-changes";
+import { loadHeadChanges } from "@/lib/agent-training";
 import { daysAgoIso, freshness } from "@/lib/dates";
 import { nyParts } from "@/lib/kpi/calc";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
@@ -43,8 +46,10 @@ const TABS = [
   ["errors", "Errors"],
   ["deleted", "Deleted"],
 ] as const;
-// Leads see the team and the deleted log; execs see everything
+// Leads see the team and the deleted log; execs see everything. The heads of Meta, Google and Creative also see
+// AI agents, with only their own line's agent in it (canTrainAgent)
 const LEAD_TABS = ["team", "connections", "deleted"];
+const HEAD_TABS = ["agents"];
 
 const day = (offset: number) => {
   const d = new Date(`${nyParts(new Date()).date}T12:00:00Z`);
@@ -56,8 +61,14 @@ const day = (offset: number) => {
 const tomorrowIso = () => new Date(Date.now() + 86_400_000).toISOString();
 const sixDaysAgo = () => new Date(Date.now() - 6 * 86_400_000);
 
-async function Agents({ open, role: openRole, section, range, by }: { open: string | null; role: string | null; section: string; range: string; by: string }) {
+async function Agents({ me, open: askedAgent, role: askedRole, section: askedSection, range, by }: { me: Staff; open: string | null; role: string | null; section: string; range: string; by: string }) {
   const supabase = await createClient();
+  // A head sees only their line's agent and its skills, and none of the exec-only sections (strategy, shared
+  // knowledge, the heads' changes, expenses)
+  const open = askedAgent && canTrainAgent(me, askedAgent) ? askedAgent : null;
+  const openRole = askedRole && canTrainAgent(me, askedRole) ? askedRole : null;
+  const section = me.isExec ? askedSection : "agents";
+  const mineOnly = <T,>(rows: T[], roleOf: (r: T) => string | null) => (me.isExec ? rows : rows.filter((r) => canTrainAgent(me, roleOf(r))));
   const since = daysAgoIso(7);
   // What every AI call cost, rolled up by day, skill, model, kind and person, back to the earliest period the
   // Expenses page offers; the agent cards and the model picker read the last 7 days and this month from it
@@ -82,14 +93,16 @@ async function Agents({ open, role: openRole, section, range, by }: { open: stri
       mtdByModel.set(k, by);
     }
   }
+  // The chats are read by their trainers: a head reads their line's through the server (the tables are execs' only)
+  const chatDb = me.isExec ? supabase : createAdminClient();
   const [{ data: agents }, { data: knowledge }, { data: month }, { data: roleRows }, { data: spineRow }, { data: chats }, { data: roleChats }] = await Promise.all([
     supabase.from("ai_agents").select("*, profiles(full_name)").order("sort_order"),
     supabase.from("ai_knowledge").select("*").order("created_at"),
     supabase.from("ai_runs").select("agent_key, label, model, ms, input_tokens, output_tokens, ok, error, created_at").gte("created_at", daysAgoIso(30)).order("created_at", { ascending: false }).limit(5000),
     supabase.from("ai_roles").select("*, profiles(full_name)").order("sort_order"),
     supabase.from("ai_spine").select("body, updated_at, profiles(full_name)").eq("id", 1).maybeSingle(),
-    supabase.from("ai_agent_chats").select("agent_key, changes").eq("role", "coach").gte("created_at", daysAgoIso(90)),
-    supabase.from("ai_role_chats").select("role_key, changes").eq("role", "agent").gte("created_at", daysAgoIso(90)),
+    chatDb.from("ai_agent_chats").select("agent_key, changes").eq("role", "coach").gte("created_at", daysAgoIso(90)),
+    chatDb.from("ai_role_chats").select("role_key, changes").eq("role", "agent").gte("created_at", daysAgoIso(90)),
   ]);
   // Edits an agent proposed in its own chat that nobody has applied yet
   const roleProposals = new Map<string, number>();
@@ -97,7 +110,7 @@ async function Agents({ open, role: openRole, section, range, by }: { open: stri
     const open = ((c.changes ?? []) as { applied?: boolean }[]).filter((x) => !x.applied).length;
     if (open) roleProposals.set(c.role_key, (roleProposals.get(c.role_key) ?? 0) + open);
   }
-  const roles: Role[] = (roleRows ?? []).map((r) => ({
+  const roles: Role[] = mineOnly(roleRows ?? [], (r) => r.key as string).map((r) => ({
     key: r.key,
     label: r.label,
     description: r.description,
@@ -124,7 +137,7 @@ async function Agents({ open, role: openRole, section, range, by }: { open: stri
       if (data) lastEver.set(k, data.created_at);
     }),
   );
-  const list: Agent[] = (agents ?? []).map((a) => {
+  const list: Agent[] = mineOnly(agents ?? [], (a) => (a.role_key as string | null) ?? null).map((a) => {
     const mine = runs.filter((r) => r.agent_key === a.key);
     const mineMonth = (month ?? []).filter((r) => r.agent_key === a.key);
     const timed = mine.filter((r) => r.ms != null && r.ok);
@@ -169,7 +182,8 @@ async function Agents({ open, role: openRole, section, range, by }: { open: stri
       })),
     };
   });
-  const items: Item[] = (knowledge ?? []).map((k) => ({
+  // A head's view: their skills' items, and the shared ones they read (read-only)
+  const items: Item[] = (knowledge ?? []).filter((k) => me.isExec || !k.agent_key || canTrainAgent(me, k.agent_key as string)).map((k) => ({
     id: k.id,
     agentKey: k.agent_key,
     kind: k.kind,
@@ -182,11 +196,11 @@ async function Agents({ open, role: openRole, section, range, by }: { open: stri
   const agent = list.find((a) => a.key === open);
   const role = roles.find((r) => r.key === openRole);
   if (!agent && role) {
-    const { data: talk } = await supabase.from("ai_role_chats").select("id, role, content, changes, created_at").eq("role_key", role.key).order("created_at").limit(200);
+    const { data: talk } = await chatDb.from("ai_role_chats").select("id, role, content, changes, created_at").eq("role_key", role.key).order("created_at").limit(200);
     const chat: RoleChatMessage[] = (talk ?? []).map((m) => ({ id: m.id, role: m.role, content: m.content, changes: (m.changes ?? []) as Change[], at: m.created_at }));
     return (
       <div className="grid gap-6">
-        <RoleDetail key={role.key} role={role} skills={list.filter((a) => a.roleKey === role.key)} items={items} chat={chat} />
+        <RoleDetail key={role.key} role={role} skills={list.filter((a) => a.roleKey === role.key)} items={items} chat={chat} isExec={me.isExec} />
         <KnowledgePanel
           target={{ scope: "agent", agentKey: `role:${role.key}` }}
           docs={await listKnowledge(supabase, { scope: "agent", agentKey: `role:${role.key}` })}
@@ -200,8 +214,10 @@ async function Agents({ open, role: openRole, section, range, by }: { open: stri
   if (!agent)
     return (
       <div className="grid gap-6">
-        <AgentsNav section={section} />
-        {section === "knowledge" ? (
+        <AgentsNav section={section} isExec={me.isExec} />
+        {section === "changes" ? (
+          <HeadChanges changes={await loadHeadChanges(createAdminClient())} />
+        ) : section === "knowledge" ? (
           <KnowledgeBlocks items={items} spine={{ body: spineRow?.body ?? "", updatedAt: spineRow?.updated_at ?? null, updatedBy: (spineRow?.profiles as unknown as { full_name: string } | null)?.full_name ?? null }} />
         ) : section === "expenses" ? (
           <Expenses
@@ -213,11 +229,11 @@ async function Agents({ open, role: openRole, section, range, by }: { open: stri
             by={by}
           />
         ) : (
-          <RolesOverview roles={roles} agents={list.filter((a) => a.roleKey)} items={items} />
+          <RolesOverview roles={roles} agents={list.filter((a) => a.roleKey)} items={items} isExec={me.isExec} />
         )}
       </div>
     );
-  const { data: chat } = await supabase.from("ai_agent_chats").select("id, role, content, changes, created_at").eq("agent_key", agent.key).order("created_at").limit(200);
+  const { data: chat } = await chatDb.from("ai_agent_chats").select("id, role, content, changes, created_at").eq("agent_key", agent.key).order("created_at").limit(200);
   const messages: ChatMessage[] = (chat ?? []).map((m) => ({ id: m.id, role: m.role, content: m.content, changes: (m.changes ?? []) as Change[], at: m.created_at }));
   // What it has learned from the team, and its changes and their tests (its own and its agent's core)
   const admin = createAdminClient();
@@ -234,7 +250,7 @@ async function Agents({ open, role: openRole, section, range, by }: { open: stri
   };
   return (
     <div className="grid gap-6">
-      <AgentDetail key={agent.key} a={agent} items={items} chat={messages} learned={learned} />
+      <AgentDetail key={agent.key} a={agent} items={items} chat={messages} learned={learned} isExec={me.isExec} />
       <KnowledgePanel
         target={{ scope: "agent", agentKey: agent.key }}
         docs={await listKnowledge(supabase, { scope: "agent", agentKey: agent.key })}
@@ -838,11 +854,12 @@ async function Deleted() {
   );
 }
 
-/** Execs: the AI agents and the data under the hood. Leads: the deleted log. */
+/** Execs: the AI agents and the data under the hood. Leads: the deleted log. Heads: their line's AI agent too. */
 export default async function Settings({ searchParams }: PageProps<"/settings">) {
   const me = await requireStaff();
-  if (!isExecOrLead(me)) redirect("/pipeline");
-  const tabs = me.isExec ? TABS : TABS.filter(([k]) => LEAD_TABS.includes(k));
+  const trains = trainableRoles(me).length > 0;
+  if (!isExecOrLead(me) && !trains) redirect("/pipeline");
+  const tabs = me.isExec ? TABS : TABS.filter(([k]) => (isExecOrLead(me) && LEAD_TABS.includes(k)) || (trains && HEAD_TABS.includes(k)));
   const sp = await searchParams;
   const tab = tabs.some(([k]) => k === sp.tab) ? (sp.tab as (typeof TABS)[number][0]) : tabs[0][0];
   const valid = (d: unknown) => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d);
@@ -870,6 +887,7 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
       </nav>
       {tab === "agents" && (
         <Agents
+          me={me}
           open={typeof sp.agent === "string" ? sp.agent : null}
           role={typeof sp.role === "string" ? sp.role : null}
           section={typeof sp.section === "string" ? sp.section : "agents"}
