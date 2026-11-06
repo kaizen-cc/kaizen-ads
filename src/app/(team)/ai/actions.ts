@@ -163,8 +163,27 @@ export async function claudeImportState(): Promise<{ imported: string[]; imports
   for (const r of rows) if (r.import_id) per.set(r.import_id as string, (per.get(r.import_id as string) ?? 0) + 1);
   return {
     imported: rows.map((r) => String(r.source_id)),
-    imports: (imps ?? []).map((i) => ({ id: i.id as string, fileName: (i.file_name as string | null) ?? null, created: Number(i.created) || 0, skipped: Number(i.skipped) || 0, threads: per.get(i.id as string) ?? 0, status: String(i.status), createdAt: String(i.created_at) })),
+    imports: (imps ?? []).filter((i) => i.file_name !== NO_IMPORT).map((i) => ({ id: i.id as string, fileName: (i.file_name as string | null) ?? null, created: Number(i.created) || 0, skipped: Number(i.skipped) || 0, threads: per.get(i.id as string) ?? 0, status: String(i.status), createdAt: String(i.created_at) })),
   };
+}
+
+/** The marker an "I don't have Claude chats" leaves (an empty, finished import), so Kaizen AI stops asking */
+const NO_IMPORT = "__no_claude_chats__";
+
+/** Whether the person still has to bring their Claude chats over (or say they have none) before their first chat */
+export async function needsClaudeImport(): Promise<boolean> {
+  const me = await requireStaff();
+  const db = await createClient();
+  const { count } = await db.from("ai_imports").select("id", { count: "exact", head: true }).eq("profile_id", me.id);
+  return !count;
+}
+
+/** "I don't have Claude chats to bring": recorded once, so the import step doesn't come back */
+export async function skipClaudeImport(): Promise<Ok> {
+  const me = await requireStaff();
+  const db = await createClient();
+  const { error } = await db.from("ai_imports").insert({ profile_id: me.id, file_name: NO_IMPORT, conversations: 0, status: "done", finished_at: new Date().toISOString() });
+  return error ? { ok: false, error: "Couldn't save that. Try again." } : { ok: true };
 }
 
 export async function startClaudeImport(fileName: string, conversations: number): Promise<Ok<{ id: string }>> {

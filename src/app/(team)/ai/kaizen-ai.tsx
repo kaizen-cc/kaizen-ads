@@ -7,7 +7,7 @@ import { pushParams, replaceParams, closeParams, useParam } from "@/lib/url-stat
 import { QUICK_ACTIONS, type QuickAction } from "@/lib/kaizen-ai/agents";
 import { AGENT_LABEL, CHAT_AGENTS, kindOf, type AiModel, type Attachment, type AttachmentKind, type Card, type ChatAgent, type ChatEvent, type ChatMessage, type Thread, type ToolRun } from "@/lib/kaizen-ai/types";
 import type { TeamRole } from "@/lib/roles";
-import { deleteImportedThread, deleteTemplate, listTemplates, listThreads, loadThread, saveTemplate, shareThread, teammates, updateThread, uploadSlots, usedTemplate, type Template } from "./actions";
+import { deleteImportedThread, deleteTemplate, listTemplates, listThreads, loadThread, saveTemplate, shareThread, teammates, updateThread, uploadSlots, usedTemplate, type Template, skipClaudeImport } from "./actions";
 import { ClaudeImportSheet, useClaudeImport, type ImportJob } from "./claude-import";
 import { CardView, ChatMarkdown, CopyButton, ToolChips } from "./cards";
 
@@ -63,7 +63,7 @@ const P = {
   trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
 };
 
-export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, groups, homeAgent }: { me: Me; on: boolean; initialThreads: Thread[]; initialTemplates: Template[]; clients: ClientOpt[]; groups: QuickAction["group"][]; homeAgent: { key: ChatAgent; label: string } }) {
+export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, groups, homeAgent, mustImport = false }: { me: Me; on: boolean; initialThreads: Thread[]; initialTemplates: Template[]; clients: ClientOpt[]; groups: QuickAction["group"][]; homeAgent: { key: ChatAgent; label: string }; mustImport?: boolean }) {
   const t = useParam("t");
   const listOpen = useParam("list") === "1";
   const importOpen = useParam("import") === "1";
@@ -93,6 +93,15 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, gr
 
   const refreshThreads = useCallback(() => void listThreads().then(setThreads), []);
   const claude = useClaudeImport(refreshThreads);
+  // First step before anyone's first chat: bring their Claude history over (or say they have none). Starting an import
+  // opens the chat right away; it keeps importing behind.
+  const [gate, setGate] = useState(mustImport);
+  if (gate && claude.job) setGate(false);
+  const skipImport = async () => {
+    const r = await skipClaudeImport();
+    if (r.ok) setGate(false);
+    else setNotice(r.error);
+  };
   const removeImported = async (id: string) => {
     if (!window.confirm("Delete this imported chat for good?")) return;
     setThreads((ts) => ts.filter((x) => x.id !== id));
@@ -361,7 +370,9 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, gr
 
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto grid w-full max-w-[820px] gap-7 px-4 pb-6 pt-6 md:px-8">
-            {!thread && !messages.length && !live ? (
+            {gate && !thread ? (
+              <ImportFirst first={me.first} onImport={() => pushParams({ import: "1" })} onSkip={() => void skipImport()} />
+            ) : !thread && !messages.length && !live ? (
               <Empty first={me.first} on={on} groups={groups} templates={templates} client={client} homeAgent={homeAgent.label} onUse={applyPrompt} onImport={() => pushParams({ import: "1" })} />
             ) : null}
             {thread?.source ? <ImportedBanner thread={thread} earlier={extra.earlier} notes={extra.notes} mine={!readOnly} onDelete={() => void removeImported(thread.id)} /> : null}
@@ -387,7 +398,7 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, gr
           </div>
         </div>
 
-        {readOnly ? (
+        {gate && !thread ? null : readOnly ? (
           <p className="border-t border-line px-4 py-4 text-center text-[13px] text-muted">Shared with you by {owner ?? "a teammate"} · read only</p>
         ) : (
           <Composer
@@ -1304,6 +1315,45 @@ function SaveTemplate({ prompt, onClose }: { prompt: string; onClose: (saved: bo
             Save
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** Before the first chat: the one thing to do first, bring their Claude chats over, with a way out if they have none */
+function ImportFirst({ first, onImport, onSkip }: { first: string; onImport: () => void; onSkip: () => void }) {
+  const steps = [
+    ["Export from Claude", "claude.ai, Settings, Privacy, Export data. Claude emails you a ZIP in a few minutes."],
+    ["Drop the ZIP here", "Pick which chats come over and which client each one is about. Nothing leaves your account."],
+    ["Keep going here", "Every chat becomes your own private thread, so you can pick any conversation up where you left it."],
+  ];
+  return (
+    <div className="grid gap-7 pt-4 md:pt-10">
+      <div className="grid justify-items-center gap-3 text-center">
+        <span className="grid h-14 w-14 place-items-center rounded-[18px] bg-brand-soft text-brand-text">
+          <Icon d={P.download} size={24} />
+        </span>
+        <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-brand-text">Step one</p>
+        <h2 className="font-heading text-3xl leading-tight text-fg md:text-4xl">{first ? `${first}, bring your Claude chats over` : "Bring your Claude chats over"}</h2>
+        <p className="max-w-[520px] text-[15px] leading-relaxed text-muted">Before your first chat here, import your history from Claude. Everything you&apos;ve already worked through comes with you, so Kaizen AI picks up where you are instead of starting cold.</p>
+      </div>
+      <ol className="grid gap-2.5 md:grid-cols-3">
+        {steps.map(([t, d], n) => (
+          <li key={t} className="grid content-start gap-1.5 rounded-[18px] border border-line bg-surface p-4">
+            <span className="tabular grid h-7 w-7 place-items-center rounded-full bg-ink/[0.06] text-[13px] font-semibold text-fg">{n + 1}</span>
+            <span className="text-[14px] font-semibold text-fg">{t}</span>
+            <span className="text-[13px] leading-relaxed text-muted">{d}</span>
+          </li>
+        ))}
+      </ol>
+      <div className="grid justify-items-center gap-3">
+        <button type="button" onClick={onImport} className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-brand px-7 text-[15px] font-semibold text-white hover:bg-brand-hover md:w-auto">
+          <Icon d={P.download} size={17} />
+          Import from Claude
+        </button>
+        <button type="button" onClick={onSkip} className="min-h-11 rounded-full px-4 text-[13px] text-muted hover:text-fg">
+          I don&apos;t have Claude chats to bring
+        </button>
       </div>
     </div>
   );
