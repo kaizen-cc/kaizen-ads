@@ -1,7 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import type { Staff } from "@/lib/auth";
-import { canApply, googleWritesOn } from "@/lib/ad-changes";
+import { googleWritesOn } from "@/lib/ad-changes";
+import { can } from "@/lib/chat-permissions";
+import { seatsOn } from "@/lib/chat-permissions-server";
 import { googleMutate, googleQuery } from "@/lib/context/google-ads";
 import { isPublicHost, pageText } from "@/lib/references";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -547,7 +549,10 @@ export async function applyPolicyFix(admin: SupabaseClient, me: Staff, checkId: 
   if (!issue?.ai) return { ok: false, error: "That item hasn't been reviewed yet." };
   const steps = fixChecklist(issue);
   const acc = await googleAccountOf(admin, row.client_id as string);
-  if (!canApply(me, acc?.ownerId ?? null, "google")) return { ok: true, mode: "checklist", note: "Only an exec, the Head of Google or the account's buyer can change the account; here's the fix to make by hand.", steps };
+  // The role first (only Google's side changes a Google account), then the client's Google switch
+  const seats = [...(await seatsOn(admin, me.id, row.client_id as string)), ...(acc?.ownerId === me.id ? (["google"] as const) : [])];
+  const allowed = can(me, "ads.change", { platform: "google", seats });
+  if (!allowed.ok) return { ok: true, mode: "checklist", note: `${allowed.reason} Here's the fix to make by hand.`, steps };
   if (!(await googleWritesOn(admin, row.account as string))) return { ok: true, mode: "checklist", note: "Live Google changes are off for this client, so here's the fix to make by hand.", steps };
   const f = issue.ai.fix;
   let service: "adGroupAds" | "adGroupCriteria" | null = null;

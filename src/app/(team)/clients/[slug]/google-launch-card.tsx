@@ -367,7 +367,9 @@ export function GoogleLaunchCard({ id, compact = false }: { id: string; compact?
   const toMake = v.items.filter((i) => i.status !== "existing").length;
   const invalid = v.items.filter((i) => i.status === "invalid").length;
   const created = v.items.filter((i) => i.status === "created").length;
-  const editing = ["ready", "failed"].includes(v.status) && !busy;
+  // Only someone who may launch in this client's Google Ads works the card (src/lib/chat-permissions.ts)
+  const mine = v.canConfirm;
+  const editing = mine && ["ready", "failed"].includes(v.status) && !busy;
   const edit = (e: PlanEdit) => void act(`edit:${"key" in e ? e.key : e.type}`, () => editGoogleLaunch(v.id, e));
   const kws = plan?.adGroups.reduce((s, g) => s + g.keywords.length, 0) ?? 0;
   const ads = plan?.adGroups.reduce((s, g) => s + g.rsas.length, 0) ?? 0;
@@ -421,12 +423,12 @@ export function GoogleLaunchCard({ id, compact = false }: { id: string; compact?
           <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-ink/45">Only you can decide{requiredOpen.length ? ` · ${requiredOpen.length} to go` : ""}</p>
           <ul className="grid gap-2">
             {v.questions.map((q) => (
-              <Question key={q.key} q={q} busy={Boolean(busy) || v.status !== "asking"} onUse={(answer) => void act(`use:${q.key}`, () => (answer ? takeGoogleProposals(v.id, [q.key], { [q.key]: answer }) : takeGoogleProposals(v.id, [q.key])))} />
+              <Question key={q.key} q={q} busy={Boolean(busy) || v.status !== "asking" || !mine} onUse={(answer) => void act(`use:${q.key}`, () => (answer ? takeGoogleProposals(v.id, [q.key], { [q.key]: answer }) : takeGoogleProposals(v.id, [q.key])))} />
             ))}
           </ul>
         </div>
       )}
-      {["asking", "ready"].includes(v.status) && (
+      {mine && ["asking", "ready"].includes(v.status) && (
         <div className="flex flex-wrap items-center gap-2">
           {v.status === "asking" && open.length > 1 && (
             <button type="button" disabled={Boolean(busy)} onClick={() => void act("all", () => takeGoogleProposals(v.id, open.map((q) => q.key)))} className="h-11 rounded-full border border-ink/15 px-4 text-[12.5px] text-ink/75 hover:text-fg disabled:opacity-40 md:h-9">
@@ -471,11 +473,12 @@ export function GoogleLaunchCard({ id, compact = false }: { id: string; compact?
         </p>
       )}
 
-      {/* Once it's deployed and read back: suggest more for the rest of the account (sprint or the buyer's tasks) */}
-      {v.status === "applied" && v.qa && <LaunchMore runId={v.id} />}
+      {/* Once it's deployed and read back: suggest more for the rest of the account (sprint or the buyer's tasks), only
+          for someone who may work this platform's account on this client */}
+      {v.status === "applied" && v.qa && mine && <LaunchMore runId={v.id} />}
 
-      {v.status === "ready" && !v.write.live && <WriteOff status={v.write} canSwitch={v.canSwitch} account={v.account} compact onLive={() => void loadGoogleLaunch(v.id).then((next) => next && setV(next))} />}
-      {v.status === "ready" && v.write.live && !v.canConfirm && <p className="text-[11.5px] text-ink/50">The client&apos;s Google buyer, the head of Google, a lead or an exec deploys a launch.</p>}
+      {mine && v.status === "ready" && !v.write.live && <WriteOff status={v.write} canSwitch={v.canSwitch} account={v.account} compact onLive={() => void loadGoogleLaunch(v.id).then((next) => next && setV(next))} />}
+      {!mine && ["asking", "ready", "failed"].includes(v.status) && <p className="text-[11.5px] text-ink/50">{v.confirmWhy ?? "The client's Google buyer, the head of Google or an exec works a Google launch."}</p>}
       {error && <p className="text-[12px] text-bad">{error}</p>}
 
       <div className="flex flex-wrap gap-2">
@@ -484,17 +487,17 @@ export function GoogleLaunchCard({ id, compact = false }: { id: string; compact?
             {busy === "deploy" ? "Starting…" : `Deploy ${toMake} line${toMake === 1 ? "" : "s"}, paused`}
           </button>
         )}
-        {["ready", "failed"].includes(v.status) && invalid > 0 && (
+        {mine && ["ready", "failed"].includes(v.status) && invalid > 0 && (
           <button type="button" disabled={Boolean(busy)} onClick={() => void act("fix", () => fixGoogleLaunch(v.id))} className="h-11 rounded-full border border-ink/15 px-4 text-[12.5px] text-ink/80 hover:text-fg disabled:opacity-40 md:h-9">
             {busy === "fix" ? "Fixing…" : "Fix what I can"}
           </button>
         )}
-        {v.status === "failed" && plan && (
+        {mine && v.status === "failed" && plan && (
           <button type="button" disabled={Boolean(busy)} onClick={() => void act("recheck", () => recheckGoogleLaunch(v.id))} className="h-11 rounded-full border border-ink/15 px-4 text-[12.5px] text-ink/80 hover:text-fg disabled:opacity-40 md:h-9">
             Check again
           </button>
         )}
-        {["asking", "ready", "failed"].includes(v.status) && (
+        {mine && ["asking", "ready", "failed"].includes(v.status) && (
           <button type="button" disabled={Boolean(busy)} onClick={() => void act("aside", () => setAsideGoogleLaunch(v.id))} className="h-11 rounded-full border border-ink/10 px-4 text-[12.5px] text-ink/60 hover:text-fg md:h-9">
             Set aside
           </button>

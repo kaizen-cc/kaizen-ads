@@ -7,6 +7,8 @@ import { metaGraph } from "@/lib/context/meta";
 import { diagnoseAccess, metaWritableSetup, metaWrite, writeBlocked, type MetaSetup } from "@/lib/meta-write";
 import { replaceLinks, type ObjRef } from "@/lib/chat-change-core";
 import { adStats, statsText, targetOf, windowLabel, type AdStats } from "@/lib/ad-stats";
+import { can, canChangeBuyer } from "@/lib/chat-permissions";
+import { canOn } from "@/lib/chat-permissions-server";
 
 // Changes made to an ad account from Kaizen Ads. An audit action or a sprint move is turned into specific changes by
 // the buyer agent (from the account's live setup), each one checked with the platform without being applied (Google's
@@ -49,9 +51,13 @@ export type PlannedOp = ChangeOp & {
   selected?: boolean;
 };
 
-/** Who can apply a change: execs, the head of the account's platform, and the account's own buyer. */
+/**
+ * Who can apply a change, by role (src/lib/chat-permissions.ts): execs, the head of the account's platform, and that
+ * platform's buyer when the account is theirs (its KPI owner). canOn also reads the client's buyer seats.
+ */
 export function canApply(me: Staff, ownerId: string | null, platform: string = "google") {
-  return me.isExec || me.role === (platform === "meta" ? "head_of_meta" : "head_of_google") || (ownerId != null && ownerId === me.id);
+  const p = platform === "meta" ? "meta" : "google";
+  return can(me, "ads.change", { platform: p, seats: ownerId != null && ownerId === me.id ? [p] : [] }).ok;
 }
 
 // ─── Meta ───────────────────────────────────────────────────────────────────
@@ -486,6 +492,9 @@ export async function googleWritesOn(admin: SupabaseClient, account?: string | n
 export async function applyChange(admin: SupabaseClient, changeId: string, me: Staff, pick?: number[]) {
   const { data: ch } = await admin.from("ad_changes").select("account, platform, client_id, ops, sprint_action_id, status").eq("id", changeId).single();
   if (!ch || !["ready", "partial", "failed"].includes(ch.status)) throw new Error("Nothing to apply.");
+  // The person's role first (a Google buyer never applies in Meta, the creative team never in either), then the switch
+  const allowed = ch.platform === "team" ? canChangeBuyer(me) : await canOn(admin, me, "ads.change", { platform: ch.platform === "meta" ? "meta" : "google", clientId: ch.client_id as string });
+  if (!allowed.ok) throw new Error(allowed.reason);
   if (ch.platform === "google" && !(await googleWritesOn(admin, ch.account as string))) throw new Error("Live changes in Google Ads are off for this client: an exec switches them on in the client's Team & setup. Google's check above already ran; until then, do it by hand from the checklist.");
   await admin.from("ad_changes").update({ status: "applying", updated_at: new Date().toISOString() }).eq("id", changeId);
   const ops = (ch.ops ?? []) as PlannedOp[];

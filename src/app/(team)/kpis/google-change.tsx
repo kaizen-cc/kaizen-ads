@@ -80,7 +80,7 @@ export function GoogleChange({ from, disabled, platform = "google" }: { from: Fr
   const [c, setC] = useState<ChangeView | null>(null);
   const [open, setOpen] = useState(false);
   // Can it write to the account at all: read before anything is pressed
-  const [gate, setGate] = useState<{ write: WriteStatus; canSwitch: boolean } | null>(null);
+  const [gate, setGate] = useState<{ write: WriteStatus; canSwitch: boolean; why: string | null } | null>(null);
   // The last change planned from this action, if there is one (one under way opens)
   const key = from.source === "audit" ? `${from.auditId}:${from.index}` : from.actionId;
   useEffect(() => {
@@ -151,6 +151,8 @@ export function GoogleChange({ from, disabled, platform = "google" }: { from: Fr
       setOpen(false);
     });
 
+  // Not this person's account to change (a Google buyer on a Meta action, the creative team): who can, in one line
+  if (gate?.why && !c) return <p className="text-[11px] text-faint">{gate.why}</p>;
   if (!open || !c)
     return (
       <div className="grid min-w-0 gap-2">
@@ -234,7 +236,7 @@ export function GoogleChange({ from, disabled, platform = "google" }: { from: Fr
                 Apply {ready.length} {ready.length === 1 ? "change" : "changes"}
               </button>
             ) : (
-              <span className="text-xs text-faint">The account&apos;s buyer, {p.head} or an exec can apply these.</span>
+              <span className="text-xs text-faint">{c.applyWhy ?? `The account's buyer, ${p.head} or an exec can apply these.`}</span>
             ))}
           {c.status === "applying" && (
             <span className="flex items-center gap-2 text-sm text-muted">
@@ -242,7 +244,7 @@ export function GoogleChange({ from, disabled, platform = "google" }: { from: Fr
               Applying…
             </span>
           )}
-          {!busy && (
+          {!busy && c.canApply && (
             <button type="button" onClick={plan} disabled={pending || disabled} className="h-11 rounded-full border border-line px-4 text-sm text-muted hover:text-fg disabled:opacity-60 md:h-9">
               Plan it again
             </button>

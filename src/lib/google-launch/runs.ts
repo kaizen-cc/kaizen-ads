@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { googleDeepLink } from "@/lib/chat-change-core";
 import { cachedRead, forgetCached, step } from "@/lib/launch-cache";
+import { canIdOn } from "@/lib/chat-permissions-server";
 import { googleAdsConfigured, googleBulkMutate, googleQuery, googleWritableSetup, suggestGeo } from "@/lib/context/google-ads";
 import { applyAnswers, mergeQuestions } from "@/lib/launch-sheet/questions";
 import { unanswered } from "@/lib/launch-sheet/plan";
@@ -121,6 +122,9 @@ async function accountFor(admin: SupabaseClient, clientId: string, targetId: str
 
 /** A new Google launch from the chat (the buyer's words, and a sheet when one was shared); read in the background */
 export async function startGoogleRun(admin: SupabaseClient, clientId: string, profileId: string, o: { request: string; source?: SheetSource | null; targetId?: string | null; scopeType?: CampaignType | null }): Promise<{ id: string } | { error: string }> {
+  // Only someone who may launch in this client's Google Ads account starts one (every surface comes here)
+  const allowed = await canIdOn(admin, profileId, "ads.launch", { platform: "google", clientId });
+  if (!allowed.ok) return { error: allowed.reason };
   const account = await accountFor(admin, clientId, o.targetId ?? null);
   if (!account) return { error: "There's no Google Ads account linked to this client on the KPI board, so I can't launch into it yet." };
   const source = o.source ?? { kind: "words", text: o.request.slice(0, 3000) };
@@ -814,6 +818,13 @@ async function lock(admin: SupabaseClient, id: string) {
  * everything PAUSED, then reads it back and logs it in the client's change history. Refused with the switch off.
  */
 export async function applyGoogleRun(admin: SupabaseClient, id: string, by: string) {
+  // The person deploying must be allowed to launch in this client's Google Ads account (then the switch, below)
+  const { data: owner } = await admin.from("launch_runs").select("client_id").eq("id", id).maybeSingle();
+  const allowed = await canIdOn(admin, by, "ads.launch", { platform: "google", clientId: (owner?.client_id as string | undefined) ?? null });
+  if (!allowed.ok) {
+    await admin.from("launch_runs").update({ status: "ready", progress: null, error: allowed.reason, updated_at: now() }).eq("id", id).eq("status", "applying");
+    return { blocked: allowed.reason };
+  }
   if (!(await lock(admin, id))) return { busy: true };
   try {
     const run = await load(admin, id);

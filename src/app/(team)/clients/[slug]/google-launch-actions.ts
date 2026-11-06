@@ -6,6 +6,7 @@ import { requireStaff, type Staff } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { WriteStatus } from "@/lib/write-status-core";
+import { canOn } from "@/lib/chat-permissions-server";
 import { deployBlocked, type GooglePlan, type PlanEdit } from "@/lib/google-launch/core";
 import type { Suggestion } from "@/lib/google-launch/runs";
 import { unanswered } from "@/lib/launch-sheet/plan";
@@ -35,17 +36,25 @@ export type GoogleLaunchView = {
   write: WriteStatus;
   canSwitch: boolean;
   canConfirm: boolean;
+  /** Who can, when this person can't (one calm line in place of the buttons) */
+  confirmWhy: string | null;
   /** Why Deploy isn't offered right now (null: it is) */
   blocked: string | null;
 };
 
 const STALE_MS = 8 * 60_000;
 
-/** Who deploys a Google launch: execs, leads, the head of Google, or the client's own Google buyer */
+/** Who works and deploys a Google launch: execs, the head of Google, or the client's own Google buyer */
 async function mayConfirm(me: Staff, clientId: string) {
-  if (me.isExec || me.isLead || me.role === "head_of_google") return true;
-  const { data } = await createAdminClient().from("client_assignments").select("profile_id").eq("client_id", clientId).eq("role", "google_buyer").eq("profile_id", me.id).maybeSingle();
-  return Boolean(data);
+  return canOn(createAdminClient(), me, "ads.launch", { platform: "google", clientId });
+}
+
+/** The launch, when this person may work it; otherwise why not */
+async function workable(id: string): Promise<{ v: GoogleLaunchView } | { error: string; v: GoogleLaunchView | null }> {
+  const v = await view(id);
+  if (!v) return { error: "Not found.", v: null };
+  if (!v.canConfirm) return { error: v.confirmWhy ?? "This launch isn't yours to work.", v };
+  return { v };
 }
 
 async function view(id: string): Promise<GoogleLaunchView | null> {
@@ -66,7 +75,8 @@ async function view(id: string): Promise<GoogleLaunchView | null> {
   const items: LaunchItem[] = (rows ?? []).map((x) => ({ key: x.key, kind: x.kind, position: x.position, parentKey: x.parent_key, label: x.label, status: x.status, metaId: x.meta_id, error: x.error, help: x.help, checked: x.checked_at }));
   const { writeStatus } = await import("@/lib/write-status");
   const write = await writeStatus(createAdminClient(), { clientId: r.client_id as string, account: (r.account as string | null) || null }, "google");
-  const canConfirm = await mayConfirm(me, r.client_id as string);
+  const confirm = await mayConfirm(me, r.client_id as string);
+  const canConfirm = confirm.ok;
   const res = (r.resolution ?? {}) as { checks?: CheckItem[]; suggestions?: Suggestion[] };
   const src = r.source as { kind?: string; name?: string; url?: string; text?: string };
   const plan = (r.plan as GooglePlan | null) ?? null;
@@ -89,7 +99,9 @@ async function view(id: string): Promise<GoogleLaunchView | null> {
     write,
     canSwitch: me.isExec,
     canConfirm,
-    blocked: deployBlocked({ live: write.live, liveReason: write.reason, canConfirm, status, items, errors: 0 }),
+    confirmWhy: confirm.reason,
+    // The role first (deployBlocked reads canConfirm before the switch), then the client's Google switch
+    blocked: canConfirm ? deployBlocked({ live: write.live, liveReason: write.reason, canConfirm, status, items, errors: 0 }) : confirm.reason,
   };
 }
 
@@ -102,8 +114,8 @@ type Result = { ok: true; view: GoogleLaunchView } | { ok: false; error: string 
 /** Takes the proposal (or the option the buyer clicked) as the answer to these questions */
 export async function takeGoogleProposals(id: string, keys: string[], chosen: Record<string, string> = {}): Promise<GoogleLaunchView | null> {
   await requireStaff();
-  const v = await view(id);
-  if (!v || v.status !== "asking") return v;
+  const { v } = await workable(id);
+  if (!v || !v.canConfirm || v.status !== "asking") return v;
   const { acceptGoogleProposals } = await import("@/lib/google-launch/runs");
   await acceptGoogleProposals(createAdminClient(), id, keys, chosen);
   return view(id);
@@ -112,8 +124,8 @@ export async function takeGoogleProposals(id: string, keys: string[], chosen: Re
 /** A suggestion from the account taken, skipped, or back to open */
 export async function setGoogleLaunchSuggestion(id: string, key: string, accepted: boolean | null): Promise<GoogleLaunchView | null> {
   await requireStaff();
-  const v = await view(id);
-  if (!v || !["asking", "ready"].includes(v.status)) return v;
+  const { v } = await workable(id);
+  if (!v || !v.canConfirm || !["asking", "ready"].includes(v.status)) return v;
   const { setGoogleSuggestion } = await import("@/lib/google-launch/runs");
   await setGoogleSuggestion(createAdminClient(), id, key, accepted);
   return view(id);
@@ -122,8 +134,9 @@ export async function setGoogleLaunchSuggestion(id: string, key: string, accepte
 /** Lays out the plan from the answers and the suggestions taken (refused while a required question is open) */
 export async function buildGoogleLaunchPlan(id: string): Promise<Result> {
   await requireStaff();
-  const v = await view(id);
-  if (!v) return { ok: false, error: "Not found." };
+  const w = await workable(id);
+  if ("error" in w) return { ok: false, error: w.error };
+  const v = w.v;
   if (!["asking", "ready"].includes(v.status)) return { ok: false, error: "It can't be planned right now." };
   const open = unanswered(v.questions);
   if (open.length) return { ok: false, error: `Answer these first: ${open.map((q) => q.question).join(" ")}` };
@@ -137,8 +150,10 @@ export async function buildGoogleLaunchPlan(id: string): Promise<Result> {
 /** One edit on the card (remove a line, fix a headline or description, a keyword, a budget, a name), checked again */
 export async function editGoogleLaunch(id: string, edit: PlanEdit): Promise<Result> {
   await requireStaff();
-  const v = await view(id);
-  if (!v?.plan) return { ok: false, error: "There's no plan to edit." };
+  const w = await workable(id);
+  if ("error" in w) return { ok: false, error: w.error };
+  const v = w.v;
+  if (!v.plan) return { ok: false, error: "There's no plan to edit." };
   if (!["ready", "failed"].includes(v.status)) return { ok: false, error: "It can't be edited right now." };
   const { editGoogleRun } = await import("@/lib/google-launch/runs");
   await editGoogleRun(createAdminClient(), id, edit);
@@ -148,8 +163,10 @@ export async function editGoogleLaunch(id: string, edit: PlanEdit): Promise<Resu
 /** Checks the plan with Google again (after it refused a deploy, or once something changed in the account) */
 export async function recheckGoogleLaunch(id: string): Promise<Result> {
   await requireStaff();
-  const v = await view(id);
-  if (!v?.plan || !["ready", "failed"].includes(v.status)) return { ok: false, error: "There's no plan to check." };
+  const w = await workable(id);
+  if ("error" in w) return { ok: false, error: w.error };
+  const v = w.v;
+  if (!v.plan || !["ready", "failed"].includes(v.status)) return { ok: false, error: "There's no plan to check." };
   const { checkGoogleRun } = await import("@/lib/google-launch/runs");
   await checkGoogleRun(createAdminClient(), id);
   return { ok: true, view: (await view(id))! };
@@ -158,8 +175,10 @@ export async function recheckGoogleLaunch(id: string): Promise<Result> {
 /** Fixes what's over Google's limits or would be refused (punctuation, duplicates, long lines shortened) */
 export async function fixGoogleLaunch(id: string): Promise<Result> {
   await requireStaff();
-  const v = await view(id);
-  if (!v?.plan || !["ready", "failed"].includes(v.status)) return { ok: false, error: "There's no plan to fix." };
+  const w = await workable(id);
+  if ("error" in w) return { ok: false, error: w.error };
+  const v = w.v;
+  if (!v.plan || !["ready", "failed"].includes(v.status)) return { ok: false, error: "There's no plan to fix." };
   const admin = createAdminClient();
   await admin.from("launch_runs").update({ status: "checking", progress: "Fixing the lines and checking them with Google", updated_at: new Date().toISOString() }).eq("id", id);
   const { fixGoogleRun } = await import("@/lib/google-launch/runs");
@@ -172,6 +191,7 @@ export async function deployGoogleLaunch(id: string): Promise<Result> {
   const me = await requireStaff();
   const v = await view(id);
   if (!v) return { ok: false, error: "Not found." };
+  if (!v.canConfirm) return { ok: false, error: v.confirmWhy ?? "This launch isn't yours to deploy." };
   // The same gate the card shows (the client's Google switch, who's asking, a checked plan); googleBulkMutate checks
   // the switch again before anything reaches Google
   if (v.blocked) return { ok: false, error: v.blocked };
@@ -186,8 +206,8 @@ export async function deployGoogleLaunch(id: string): Promise<Result> {
 /** Parks the launch (nothing is created); the chat answers normally again */
 export async function setAsideGoogleLaunch(id: string): Promise<GoogleLaunchView | null> {
   await requireStaff();
-  const v = await view(id);
-  if (!v || !["asking", "ready", "failed"].includes(v.status)) return v;
+  const { v } = await workable(id);
+  if (!v || !v.canConfirm || !["asking", "ready", "failed"].includes(v.status)) return v;
   await createAdminClient().from("launch_runs").update({ status: v.items.some((i) => i.status === "created") ? "partial" : "set_aside", updated_at: new Date().toISOString() }).eq("id", id);
   return view(id);
 }

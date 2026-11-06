@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
+import { can } from "@/lib/chat-permissions";
 import { stageInfo } from "@/lib/stages";
 import { draftCopy } from "@/lib/copy-draft";
 import { AiUnavailable, type CreativeNotes } from "@/lib/ai";
@@ -305,6 +306,9 @@ export async function startAiReview(requestId: string, opts: { auto?: boolean } 
   const supabase = await createClient();
   const { data: r } = await supabase.from("requests").select("stage, format, sizes, new_count, variation_count, cards").eq("id", requestId).maybeSingle();
   if (!r) return { ok: false, error: "Ticket not found." };
+  // A creative review in this ticket's format: the creative team (their own formats), the buyers and the executives
+  const reviewing = can(me, "creative.review", { format: r.format as string | null });
+  if (!reviewing.ok) return { ok: false, error: reviewing.reason };
   if (!adminConfigured()) return { ok: false, error: "Server key missing." };
   const admin = createAdminClient();
   if (opts.auto) {

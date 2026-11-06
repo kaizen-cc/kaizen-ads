@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import type { ChatTurn } from "@/lib/handoff";
 import { cachedRead, step } from "@/lib/launch-cache";
+import { canIdOn } from "@/lib/chat-permissions-server";
 import { SETUP_RULE, checkAgainstSetup, type SetupFacts } from "@/lib/setup-check";
 
 // "Want me to suggest some more changes while you have me here?": offered on a launch card once the launch the buyer
@@ -121,6 +122,10 @@ export async function suggestMore(admin: SupabaseClient, runId: string, by: stri
   const run = await loadRun(admin, runId);
   if (!run || !run.account) throw new Error("That launch isn't there anymore.");
   if (run.status !== "applied") throw new Error("Suggestions come once the launch is deployed.");
+  // Sprint actions and tasks for changes in this platform's account: only for someone who may change it on this client
+  // (src/lib/chat-permissions.ts). Nothing is saved for anyone else.
+  const allowed = await canIdOn(admin, by, "ads.change", { platform: run.platform === "google" ? "google" : "meta", clientId: run.client_id });
+  if (!allowed.ok) return { more: { status: "failed", where: null, href: null, items: [], skipped: 0, error: allowed.reason, at: now() }, line: allowed.reason };
   const was = moreOf(run.resolution);
   if (was && (was.status === "done" || was.status === "writing")) return { more: was, line: lineFor(was) };
   const scope = `${run.platform} run ${runId.slice(0, 8)}`;

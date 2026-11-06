@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { industryLabel, industryWinners, type Winner } from "@/lib/industry";
 import { requireStaff } from "@/lib/auth";
+import { can } from "@/lib/chat-permissions";
 import {
   aiEnabled,
   AGENCY_SYSTEM,
@@ -79,6 +80,15 @@ async function reviewGate(me: Awaited<ReturnType<typeof requireStaff>>, draft: D
 }
 
 type Fail = { ok: false; error: string; /** Sent without the AI review, and it isn't the AI's own unchanged brief */ needsReview?: boolean };
+
+/**
+ * Only people who write briefs draft or send one (src/lib/chat-permissions.ts): never the copywriter or customer
+ * success; a designer only images and carousels, a video editor only video (formats: the request's, when known).
+ */
+async function briefer(formats?: readonly string[] | null): Promise<Fail | null> {
+  const v = can(await requireStaff(), "brief", { formats });
+  return v.ok ? null : { ok: false, error: v.reason };
+}
 export type CreateResult = { ok: true; numbers: number[] } | Fail;
 /** What the AI read, so the form can say so. */
 export type ContextSummary = {
@@ -165,6 +175,7 @@ async function summarize(ctx: ClientContext, clientId: string): Promise<ContextS
 
 /** Suggestions made by the twice-daily briefing, so the form fills in instantly. Null when there are none yet. */
 export async function loadBriefing(clientId: string): Promise<SuggestResult | null> {
+  if (await briefer()) return null;
   const ctx = await loadContext(clientId);
   if (!ctx) return null;
   const supabase = await createClient();
@@ -178,6 +189,8 @@ const fitMix = (s: Suggestions, allowed: ReadonlySet<import("@/lib/creative-form
 
 /** Suggestions for every field, from what we know about the client and what's filled in so far. */
 export async function suggestForRequest(draft: Draft): Promise<SuggestResult> {
+  const no = await briefer();
+  if (no) return no;
   const ctx = await loadContext(draft.clientId);
   const allowed = formatsFor(await requireStaff());
   if (!ctx) return { ok: false, error: "Pick a client first." };
@@ -214,6 +227,8 @@ ${SUGGEST_FIELDS}${(() => {
  * everything known about the client, and catch tickets that already ask for the same thing.
  */
 export async function reviewRequest(draft: Draft): Promise<ReviewResult> {
+  const no = await briefer(selectedFormats(draft));
+  if (no) return no;
   const ctx = await loadContext(draft.clientId);
   if (!ctx) return { ok: false, error: "Pick a client first." };
   try {
@@ -292,6 +307,8 @@ verdict "clear" only when there are no issues and no similar tickets. summary: o
 
 /** "Make this change": the AI applies one or more review fixes to the request's text fields. */
 export async function applyFixes(draft: Draft, issues: { field: string; issue: string; fix: string }[]): Promise<{ ok: true; patch: DraftPatch } | Fail> {
+  const no = await briefer();
+  if (no) return no;
   const ctx = await loadContext(draft.clientId);
   if (!ctx) return { ok: false, error: "Pick a client first." };
   try {
@@ -331,6 +348,8 @@ changed: which of title, angle, audience, brief, refs, sizes, formats you change
 /** One ticket per selected format, routed to that format's maker. */
 export async function createBatch(draft: Draft, review: Review | null, decisions?: ReviewDecisions, opts?: { reviewFailed?: boolean }): Promise<CreateResult> {
   const me = await requireStaff();
+  const no = await briefer(selectedFormats(draft));
+  if (no) return no;
   if (!draft.clientId) return { ok: false, error: "Pick a client." };
   {
     const why = await notLive(await createClient(), draft.clientId);
@@ -522,7 +541,8 @@ function toPatch(d: import("@/lib/suggestions").SuggestionDraft): Partial<Draft>
 
 /** The brief for a promise, ready to drop into the form (written now if it wasn't already). */
 export async function promiseDraft(commitmentId: string, seed?: QuickBrief | null, edited = false): Promise<{ ok: true; patch: Partial<Draft> } | { ok: false; error: string }> {
-  await requireStaff();
+  const no = await briefer();
+  if (no) return no;
   const supabase = await createClient();
   const { data: mine } = await supabase.from("call_commitments").select("id, what, suggestion_id").eq("id", commitmentId).maybeSingle();
   if (!mine) return { ok: false, error: "That promise isn't on a client you work on." };
@@ -566,6 +586,8 @@ export async function ideaDraft(
   seed?: QuickBrief | null,
 ): Promise<{ ok: true; patch: Partial<Draft> } | { ok: false; error: string }> {
   const me = await requireStaff();
+  const no = await briefer(format ? [format] : null);
+  if (no) return no;
   if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
   {
     const why = await notLive(await createClient(), clientId);
@@ -653,6 +675,7 @@ const PREVIEW_SCHEMA = {
  * write from it (angle, hook, the main concept, formats). One AI call for all of them, kept a day per client and ad.
  */
 export async function ideaPreviews(clientId: string, given: IdeaSource[]): Promise<Record<string, IdeaPreview>> {
+  if (await briefer()) return {};
   // Only the formats this person works in: asked of the AI, and kept apart from everyone else's in the day's cache
   const allowed = formatsFor(await requireStaff());
   const rule = formatsRule(allowed);
@@ -732,7 +755,8 @@ export async function clientBriefs(clientId: string): Promise<BriefCard[]> {
 
 /** A suggested brief dropped into the form, with where it came from (sending it marks the brief used) */
 export async function suggestionPatch(id: string, seed?: QuickBrief | null, edited = true, write = true): Promise<{ ok: true; patch: Partial<Draft> } | Fail> {
-  await requireStaff();
+  const no = await briefer();
+  if (no) return no;
   const db = await createClient();
   const { data: r } = await db.from("creative_suggestions").select("signal, draft, source, status").eq("id", id).maybeSingle();
   if (!r || r.status !== "open") return { ok: false, error: "That brief isn't open any more." };
@@ -770,6 +794,8 @@ export async function clientPatterns(clientId: string) {
 /** A pattern across clients, written up as this client's brief by the strategist */
 export async function patternPatch(patternId: string, clientId: string, seed?: QuickBrief | null): Promise<{ ok: true; patch: Partial<Draft> } | Fail> {
   const me = await requireStaff();
+  const no = await briefer();
+  if (no) return no;
   if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
   {
     const why = await notLive(await createClient(), clientId);
@@ -791,7 +817,8 @@ export async function patternPatch(patternId: string, clientId: string, seed?: Q
 
 /** An idea in words (an audit's creative idea) written up as this client's full brief, from the preview the person agreed */
 export async function ideaPatch(clientId: string, idea: { label: string; text: string }, seed: QuickBrief | null, origin: Draft["origin"] | null): Promise<{ ok: true; patch: Partial<Draft> } | Fail> {
-  await requireStaff();
+  const no = await briefer();
+  if (no) return no;
   if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
   {
     const why = await notLive(await createClient(), clientId);
@@ -810,6 +837,8 @@ export type TalkResult = { ok: true; reply: string; questions: string[]; conflic
 
 /** "Talk it through": the strategist's next turn, and the request as it stands */
 export async function talkRequest(clientId: string, turns: import("@/lib/suggestions").TalkTurn[], current: import("@/lib/suggestions").SuggestionDraft | null, force = false, previewFirst = false): Promise<TalkResult> {
+  const no = await briefer();
+  if (no) return no;
   const allowed = formatsFor(await requireStaff());
   if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
   const db = await createClient();
@@ -873,6 +902,8 @@ export async function asanaPreview(draft: Draft): Promise<{ ok: true; tasks: imp
 /** Sends the request to the Creative board in Asana (instead of tickets here); the brief it came from is done */
 export async function sendToAsana(draft: Draft, review?: Review | null, opts?: { reviewFailed?: boolean }): Promise<{ ok: true; tasks: import("@/lib/asana-request").SentTask[] } | Fail> {
   const me = await requireStaff();
+  const no = await briefer(selectedFormats(draft));
+  if (no) return no;
   return asanaSend(draft, me, () => reviewGate(me, draft, Boolean(review), Boolean(opts?.reviewFailed)));
 }
 

@@ -6,6 +6,8 @@ import { marketBlock } from "@/lib/market";
 import type { AuditResult } from "@/lib/audit";
 import { accountBrief, type ChatTurn, type DeskAction } from "@/lib/handoff";
 import { addDocs, finishDoc, readDoc, type DocRead } from "@/lib/client-docs";
+import { clientPerms, permsPrompt } from "@/lib/chat-permissions";
+import { permsOn, personById } from "@/lib/chat-permissions-server";
 
 // The client desk: the AI on each client page, like a receptionist for everything about the client. Anyone who can
 // see the client asks it about the account, strategizes with it, shares files and links (filed in the client's
@@ -33,11 +35,11 @@ Leave fields you don't need as "" (or false, 0).
 Keep it short: 1 to 8 sentences or a short list, longer only for a summary they asked for. Plain text, no markdown (no asterisks or headings); start list lines with "- ". No emojis.
 If they ask you to run an audit, say they can start one with the "Run an audit" button above the chat (it's the same audit as on the KPI board and shows in both places).
 
-Changes in the ad account: when the teammate asks you to change something in the client's Meta or Google Ads account (pause or turn on campaigns, ad sets, ads or keywords, change budgets or targets, rename, swap links, final URLs or UTMs, copy or move an ad to another campaign or ad set, add negative keywords) or to change the client's media buyer, set change: wanted true, platform "meta", "google" or "team" (the buyer), and instruction: their full request in one or two sentences with every name, number and condition they gave (resolve "it" and "that one" from the conversation). Never say it's done or that you can't: say you're pulling the exact campaigns and ads from the live account so they can check them and confirm before anything changes. Only when they clearly ask for a change; a question about the account is not a change. Otherwise change is wanted false with "" fields. One change request per message; for both platforms, do the one they named first and say you'll do the other next.
+Changes in the ad account (only on a platform this person may change, below; otherwise change is wanted false and you say who can): when the teammate asks you to change something in the client's Meta or Google Ads account (pause or turn on campaigns, ad sets, ads or keywords, change budgets or targets, rename, swap links, final URLs or UTMs, copy or move an ad to another campaign or ad set, add negative keywords) or to change the client's media buyer, set change: wanted true, platform "meta", "google" or "team" (the buyer), and instruction: their full request in one or two sentences with every name, number and condition they gave (resolve "it" and "that one" from the conversation). Never say it's done or that you can't (unless it isn't theirs to do: see what this person may do, below): say you're pulling the exact campaigns and ads from the live account so they can check them and confirm before anything changes. Only when they clearly ask for a change; a question about the account is not a change. Otherwise change is wanted false with "" fields. One change request per message; for both platforms, do the one they named first and say you'll do the other next.
 
 Launch sheets: when they share a launch sheet (a plan of ads to launch: rows of dates, Pages, creative and copy) to launch or set up, summarize it in a sentence or two; the launch card under your answer takes it from there (the media buyer checks it against the account and asks what only they can decide). Don't plan the launch yourself and don't use change for it.
 
-Launching new ads: when they ask you to launch or build something new in an ad account (a campaign, an ad group, keywords, responsive search ads, Performance Max assets, new ads) or share a sheet of keywords and ad copy to launch, set launch: wanted true, platform "google" for Google Ads (keywords, ad groups, RSAs, Search, Performance Max) or "meta" for Meta, and request: their full ask in one or two sentences with every name, number, link, keyword and line of copy they gave. Say in a sentence what you understood; the launch card under your answer takes it from there (it reads the live account, asks only what's missing in the format the platform needs and shows every object it will create, paused, before anything is deployed; once it's deployed it offers to suggest more for the rest of the account). Don't plan it yourself and don't use change for it. A Meta launch is read from a launch sheet (or approved ads launch from the board): when they want one without sharing a sheet, ask them to share it here. Otherwise launch is wanted false with "" fields.`;
+Launching new ads (only on a platform this person may launch on, below): when they ask you to launch or build something new in an ad account (a campaign, an ad group, keywords, responsive search ads, Performance Max assets, new ads) or share a sheet of keywords and ad copy to launch, set launch: wanted true, platform "google" for Google Ads (keywords, ad groups, RSAs, Search, Performance Max) or "meta" for Meta, and request: their full ask in one or two sentences with every name, number, link, keyword and line of copy they gave. Say in a sentence what you understood; the launch card under your answer takes it from there (it reads the live account, asks only what's missing in the format the platform needs and shows every object it will create, paused, before anything is deployed; once it's deployed it offers to suggest more for the rest of the account). Don't plan it yourself and don't use change for it. A Meta launch is read from a launch sheet (or approved ads launch from the board): when they want one without sharing a sheet, ask them to share it here. Otherwise launch is wanted false with "" fields.`;
 
 const SCHEMA = {
   type: "object",
@@ -193,6 +195,11 @@ async function answerOffer(admin: SupabaseClient, clientId: string, profileId: s
   return m.appendChat(admin, clientId, profileId, [asked, m.moreTurn(offer.id, offer.platform, more)]);
 }
 
+/** The answer, with who can do what was asked (once: the AI may already have said it) */
+function withWho(answer: string, who: string) {
+  return answer.includes(who) ? answer : `${answer}\n\n${who}`;
+}
+
 /** The person's message, answered in the launch conversation they have open with this client (null: not about it) */
 async function continueLaunch(admin: SupabaseClient, clientId: string, profileId: string, q: string): Promise<ChatTurn[] | null> {
   const { openRunFor, launchReply, planRun } = await import("@/lib/launch-sheet/runs");
@@ -238,9 +245,13 @@ export async function askAboutClient(
     const handled = (await answerOffer(admin, clientId, profileId, q)) ?? (await continueLaunch(admin, clientId, profileId, q));
     if (handled) return handled;
   }
+  // What this person may do here (src/lib/chat-permissions.ts): the AI only offers and starts what's theirs to do
+  const person = await personById(admin, profileId);
+  const perms = person ? await permsOn(admin, person, clientId) : clientPerms({ role: null });
   // Sounds like a new Google launch: the account read starts now, alongside the answer below, so the launch card has
-  // it the moment the launch is set up (kept ten minutes; the launch's own read shares it). Never waits on it.
-  if (q && /\b(launch|set up|build|new (ad ?group|campaign|ads?|keywords?)|add (keywords?|an? ad ?group|rsas?))\b/i.test(q) && (scope?.platform === "google" || /\b(google|keywords?|rsas?|responsive search|search (ads?|campaign)|ad ?groups?|pmax|performance max)\b/i.test(q))) {
+  // it the moment the launch is set up (kept ten minutes; the launch's own read shares it). Never waits on it. Only for
+  // someone who may launch in Google Ads on this client (no read is warmed for a launch that won't start).
+  if (perms.launch.google && q && /\b(launch|set up|build|new (ad ?group|campaign|ads?|keywords?)|add (keywords?|an? ad ?group|rsas?))\b/i.test(q) && (scope?.platform === "google" || /\b(google|keywords?|rsas?|responsive search|search (ads?|campaign)|ad ?groups?|pmax|performance max)\b/i.test(q))) {
     const warm = import("@/lib/google-launch/runs").then((m) => m.warmGoogleLaunch(admin, clientId, scope?.platform === "google" ? (scope.targetId ?? null) : null)).catch(() => undefined);
     const { after } = await import("next/server");
     after(() => warm);
@@ -294,7 +305,7 @@ export async function askAboutClient(
     agent: "strategist",
     label: `client desk (${level}${docs.length ? `, ${docs.length} shared` : ""})`,
     clientId,
-    system: SYSTEM + (scope ? `\nThis chat was opened from the client's ${scope.platform === "google" ? "Google Ads" : "Meta"} KPI card: a launch or change they don't name a platform for is on ${scope.platform === "google" ? "Google Ads" : "Meta"}.` : "") + (level === "deep" ? "\nThis is a big question: think it through, use the market and research you're given (say where a point comes from), and give a clear recommendation with the reasoning; up to 12 sentences or a short structured list." : level === "quick" ? "\nThis is a quick question: answer it directly in 1 to 3 sentences." : ""),
+    system: SYSTEM + `\n\n${permsPrompt(perms)}` + (scope ? `\nThis chat was opened from the client's ${scope.platform === "google" ? "Google Ads" : "Meta"} KPI card: a launch or change they don't name a platform for is on ${scope.platform === "google" ? "Google Ads" : "Meta"}.` : "") + (level === "deep" ? "\nThis is a big question: think it through, use the market and research you're given (say where a point comes from), and give a clear recommendation with the reasoning; up to 12 sentences or a short structured list." : level === "quick" ? "\nThis is a quick question: answer it directly in 1 to 3 sentences." : ""),
     schema: SCHEMA,
     maxTokens: level === "deep" || docs.length ? 16000 : 8000,
     override: { model, effort: route.effort },
@@ -320,7 +331,10 @@ export async function askAboutClient(
   const L = out.launch;
   const launchWanted = Boolean(L?.wanted);
   // A launch is never also a change (the launch card plans it)
-  if (!launchWanted && c?.wanted && ["meta", "google", "team"].includes(c.platform) && c.instruction.trim()) {
+  // Not this person's to change (a Google buyer asking for Meta, the creative team for either): say who can instead
+  const changeRefused = c?.wanted ? (c.platform === "team" ? (perms.buyer ? null : "Changing a client's media buyer is for the executives and the heads of Meta and Google.") : c.platform === "meta" || c.platform === "google" ? perms.changeWhy[c.platform] : null) : null;
+  if (!launchWanted && c?.wanted && changeRefused) answer = withWho(answer, changeRefused);
+  else if (!launchWanted && c?.wanted && ["meta", "google", "team"].includes(c.platform) && c.instruction.trim()) {
     const { startChatChange, planChatChange } = await import("@/lib/chat-changes");
     const r = await startChatChange(admin, clientId, profileId, c.platform as "meta" | "google" | "team", c.instruction.trim());
     if ("id" in r) {
@@ -337,7 +351,12 @@ export async function askAboutClient(
   const googleAsked = launchWanted && (L?.platform === "google" || (!L?.platform && scope?.platform === "google"));
   const sheetDoc = await launchSheetIn(admin, docs as SharedDoc[], q, googleAsked || (!launchWanted && scope?.platform === "google"), launchWanted);
   const { after } = await import("next/server");
-  if (sheetDoc?.platform === "google" || (googleAsked && !sheetDoc)) {
+  // A launch on a platform that isn't this person's: no launch card, just who can do it
+  const launchPlatform: "meta" | "google" | null = sheetDoc ? sheetDoc.platform : googleAsked ? "google" : launchWanted && L?.platform === "meta" ? "meta" : null;
+  const launchRefused = launchPlatform ? perms.launchWhy[launchPlatform] : null;
+  if (launchRefused) {
+    if (launchWanted) answer = withWho(answer, launchRefused);
+  } else if (sheetDoc?.platform === "google" || (googleAsked && !sheetDoc)) {
     const { startGoogleRun, prepareGoogleRun } = await import("@/lib/google-launch/runs");
     const r = await startGoogleRun(admin, clientId, profileId, { request: (L?.request || q).trim(), source: sheetDoc?.src ?? null, targetId: scope?.platform === "google" ? (scope.targetId ?? null) : null });
     if ("id" in r) {

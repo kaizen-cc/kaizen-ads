@@ -3,6 +3,7 @@
 import { after } from "next/server";
 import { aiEnabled } from "@/lib/ai";
 import { requireStaff } from "@/lib/auth";
+import { can } from "@/lib/chat-permissions";
 import { JOB_KIND, myBriefJobs, queueBriefJob, runBriefJob, type BriefJob } from "@/lib/brief-jobs";
 import { notLive } from "@/lib/live-guard";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
@@ -21,6 +22,12 @@ const fitSeed = (seed: QuickBrief | null, me: { role: string; isExec: boolean; i
 
 type Started = { ok: true; suggestion: OpenSuggestion } | { ok: true; job: BriefJob } | { ok: false; error: string };
 
+/** Briefs are for the creative team, the media buyers and the executives (src/lib/chat-permissions.ts) */
+function refused(me: { role: string; isExec: boolean }, seed?: QuickBrief | null): { ok: false; error: string } | null {
+  const v = can(me, "brief", { formats: (seed?.formats ?? []).map((f) => f.format) });
+  return v.ok ? null : { ok: false, error: v.reason };
+}
+
 async function started(jobId: string): Promise<Started> {
   const me = await requireStaff();
   const jobs = await myBriefJobs(createAdminClient(), me.id);
@@ -33,6 +40,8 @@ export async function startWinnerBrief(w: WinnerSource, clientId: string, from: 
   { const why = await notLive(await createClient(), clientId); if (why) return { ok: false, error: why }; }
   const me = await requireStaff();
   const seed = fitSeed(agreed, me);
+  const no = refused(me, seed);
+  if (no) return no;
   if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
   const supabase = await createClient();
   const { data: existing } = seed
@@ -59,6 +68,8 @@ export async function startRefreshBrief(clientId: string, adId: string, headline
   { const why = await notLive(await createClient(), clientId); if (why) return { ok: false, error: why }; }
   const me = await requireStaff();
   const seed = fitSeed(agreed, me);
+  const no = refused(me, seed);
+  if (no) return no;
   if (!aiEnabled() || !adminConfigured()) return { ok: false, error: "The AI isn't connected here." };
   const supabase = await createClient();
   const { data: watched } = await supabase.from("ad_fatigue").select("ad_id").eq("client_id", clientId).eq("ad_id", adId).maybeSingle();
@@ -87,6 +98,8 @@ export async function startBrief(clientId: string, source: BriefSource, agreed: 
   const me = await requireStaff();
   // Only the formats this person can request (a designer images and carousels, a video editor video)
   const seed: QuickBrief = { ...agreed, formats: clampFormats(agreed.formats ?? [], formatsFor(me)) };
+  const no = refused(me, seed);
+  if (no) return no;
   const edited = editedAsked || seed.formats.length !== (agreed.formats ?? []).length;
   if (!/^[0-9a-f-]{36}$/i.test(clientId)) return { ok: false, error: "Pick a client first." };
   const supabase = await createClient();
@@ -167,6 +180,8 @@ export async function myJobs(): Promise<BriefJob[]> {
 /** A brief that couldn't be written, asked for again from what was agreed (the same source, seed and key) */
 export async function retryBriefJob(jobId: string): Promise<Started> {
   const me = await requireStaff();
+  const no = refused(me);
+  if (no) return no;
   if (!/^[0-9a-f-]{36}$/i.test(jobId) || !adminConfigured()) return { ok: false, error: "That brief isn't there." };
   const admin = createAdminClient();
   const { data: j } = await admin.from("brief_jobs").select("id, kind, client_id, profile_id, input, title, status").eq("id", jobId).maybeSingle();

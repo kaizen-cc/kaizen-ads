@@ -6,6 +6,7 @@ import { requireStaff, type Staff } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { WriteStatus } from "@/lib/write-status-core";
+import { canOn } from "@/lib/chat-permissions-server";
 import { runnable, unanswered } from "@/lib/launch-sheet/plan";
 import type { CheckItem, LaunchItem, LaunchPlan, LaunchQuestion, LaunchSheet, Resolution, RunStatus } from "@/lib/launch-sheet/types";
 
@@ -35,17 +36,25 @@ export type LaunchView = {
   write: WriteStatus;
   canSwitch: boolean;
   canConfirm: boolean;
+  /** Who can, when this person can't (one calm line in place of the buttons) */
+  confirmWhy: string | null;
   resumable: boolean;
   confirmedBy: string | null;
 };
 
 const STALE_MS = 8 * 60_000;
 
-/** Who confirms a launch: execs, leads, the head of Meta, or the client's own Meta buyer */
+/** Who works a Meta launch (answers, plans, confirms): execs, the head of Meta, or the client's own Meta buyer */
 async function mayConfirm(me: Staff, clientId: string) {
-  if (me.isExec || me.isLead || me.role === "head_of_meta") return true;
-  const { data } = await createAdminClient().from("client_assignments").select("profile_id").eq("client_id", clientId).eq("role", "meta_buyer").eq("profile_id", me.id).maybeSingle();
-  return Boolean(data);
+  return canOn(createAdminClient(), me, "ads.launch", { platform: "meta", clientId });
+}
+
+/** The launch, when this person may work it; otherwise why not */
+async function workable(id: string): Promise<{ v: LaunchView } | { error: string; v: LaunchView | null }> {
+  const v = await view(id);
+  if (!v) return { error: "Not found.", v: null };
+  if (!v.canConfirm) return { error: v.confirmWhy ?? "This launch isn't yours to work.", v };
+  return { v };
 }
 
 async function view(id: string): Promise<LaunchView | null> {
@@ -78,6 +87,7 @@ async function view(id: string): Promise<LaunchView | null> {
   const liveNote = r.account ? write.reason : null;
   const lockedRecently = r.locked_at && Date.now() - Date.parse(r.locked_at as string) < 10 * 60_000;
   const src = r.source as { name?: string; url?: string };
+  const confirm = await mayConfirm(me, r.client_id as string);
   return {
     id: r.id as string,
     clientId: r.client_id as string,
@@ -98,7 +108,8 @@ async function view(id: string): Promise<LaunchView | null> {
     liveNote,
     write,
     canSwitch: me.isExec,
-    canConfirm: await mayConfirm(me, r.client_id as string),
+    canConfirm: confirm.ok,
+    confirmWhy: confirm.reason,
     resumable: status === "applying" && !lockedRecently && Boolean(plan && runnable(items, plan).length),
     confirmedBy: (r.confirmer as unknown as { full_name: string } | null)?.full_name ?? null,
   };
@@ -111,8 +122,8 @@ export async function loadLaunch(id: string) {
 /** Takes the Media Buyer's proposal (or the option the buyer clicked) as the answer to these questions */
 export async function takeLaunchProposals(id: string, keys: string[], chosen: Record<string, string> = {}): Promise<LaunchView | null> {
   await requireStaff();
-  const v = await view(id);
-  if (!v || v.status !== "asking") return v;
+  const { v } = await workable(id);
+  if (!v || !v.canConfirm || v.status !== "asking") return v;
   const { acceptProposals } = await import("@/lib/launch-sheet/runs");
   await acceptProposals(createAdminClient(), id, keys, chosen);
   return view(id);
@@ -121,8 +132,9 @@ export async function takeLaunchProposals(id: string, keys: string[], chosen: Re
 /** Lays out the plan from the answers (refused while a required question is open) */
 export async function buildLaunchPlan(id: string): Promise<{ ok: true; view: LaunchView } | { ok: false; error: string }> {
   await requireStaff();
-  const v = await view(id);
-  if (!v) return { ok: false, error: "Not found." };
+  const w = await workable(id);
+  if ("error" in w) return { ok: false, error: w.error };
+  const v = w.v;
   if (!["asking", "ready"].includes(v.status)) return { ok: false, error: "It can't be planned right now." };
   const open = unanswered(v.questions);
   if (open.length) return { ok: false, error: `Answer these first: ${open.map((q) => q.question).join(" ")}` };
@@ -138,36 +150,37 @@ export async function confirmLaunch(id: string): Promise<{ ok: true; view: Launc
   const me = await requireStaff();
   const v = await view(id);
   if (!v) return { ok: false, error: "Not found." };
-  if (!v.canConfirm) return { ok: false, error: "Only the client's Meta buyer, the head of Meta, a lead or an exec can confirm a launch." };
+  // The role first, then the client's Meta switch
+  if (!v.canConfirm) return { ok: false, error: v.confirmWhy ?? "This launch isn't yours to confirm." };
   if (v.status !== "ready") return { ok: false, error: "There's no checked plan to confirm." };
   if (!v.live) return { ok: false, error: v.liveNote ?? "Live changes are off for this client." };
   const admin = createAdminClient();
   await admin.from("launch_runs").update({ status: "applying", progress: "Starting", confirmed_by: me.id, confirmed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", id);
   const { applyRun } = await import("@/lib/launch-sheet/runs");
-  after(() => applyRun(admin, id));
+  after(() => applyRun(admin, id, { by: me.id }));
   revalidatePath("/clients", "layout");
   return { ok: true, view: (await view(id))! };
 }
 
 /** Picks a stopped launch up where it left off (only lines not created yet); retry: the failed lines too */
 export async function continueLaunch(id: string, retry = false): Promise<{ ok: true; view: LaunchView } | { ok: false; error: string }> {
-  await requireStaff();
+  const me = await requireStaff();
   const v = await view(id);
   if (!v) return { ok: false, error: "Not found." };
-  if (!v.canConfirm) return { ok: false, error: "Only the client's Meta buyer, the head of Meta, a lead or an exec can do this." };
+  if (!v.canConfirm) return { ok: false, error: v.confirmWhy ?? "This launch isn't yours to continue." };
   if (!(retry ? ["partial", "failed", "applying"].includes(v.status) : v.resumable)) return { ok: false, error: "There's nothing to continue." };
   if (!v.plan) return { ok: false, error: "There's no plan." };
   const admin = createAdminClient();
   const { applyRun } = await import("@/lib/launch-sheet/runs");
-  after(() => applyRun(admin, id, { retry }));
+  after(() => applyRun(admin, id, { retry, by: me.id }));
   return { ok: true, view: (await view(id))! };
 }
 
 /** Parks the launch (nothing created stays as it is); the chat answers normally again */
 export async function setAsideLaunch(id: string): Promise<LaunchView | null> {
   await requireStaff();
-  const v = await view(id);
-  if (!v || !["asking", "ready", "failed"].includes(v.status)) return v;
+  const { v } = await workable(id);
+  if (!v || !v.canConfirm || !["asking", "ready", "failed"].includes(v.status)) return v;
   await createAdminClient().from("launch_runs").update({ status: v.items.some((i) => i.status === "created") ? "partial" : "set_aside", updated_at: new Date().toISOString() }).eq("id", id);
   return view(id);
 }
@@ -175,8 +188,10 @@ export async function setAsideLaunch(id: string): Promise<LaunchView | null> {
 /** A reply about the launch from a surface without the client chat's box (Kaizen AI's card) */
 export async function replyToLaunch(id: string, text: string): Promise<{ ok: true; answer: string; view: LaunchView } | { ok: false; error: string }> {
   await requireStaff();
-  const v = await view(id);
-  if (!v || !["asking", "ready", "failed"].includes(v.status)) return { ok: false, error: "This launch isn't waiting on you." };
+  const w = await workable(id);
+  if ("error" in w) return { ok: false, error: w.error };
+  const v = w.v;
+  if (!["asking", "ready", "failed"].includes(v.status)) return { ok: false, error: "This launch isn't waiting on you." };
   const admin = createAdminClient();
   const { launchReply, planRun } = await import("@/lib/launch-sheet/runs");
   const r = await launchReply(admin, id, text.trim().slice(0, 3000));

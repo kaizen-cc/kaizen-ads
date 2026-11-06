@@ -2,6 +2,7 @@ import type { KpiRow } from "@/app/(team)/kpis/kpi-board";
 import { computeSnapshot, type Day } from "@/lib/kpi/calc";
 import { conversionFor, conversionLabel } from "@/lib/kpi/conversions";
 import { successOf } from "@/lib/kpi/success";
+import { ALL_PERMS } from "@/lib/chat-permissions";
 
 // Design preview only: realistic rows built by running the real KPI math over made-up daily numbers.
 
@@ -36,6 +37,7 @@ const make = (
   return {
     id,
     clientId: id,
+    perms: ALL_PERMS,
     client,
     kaizenId: null,
     slug: client.toLowerCase().replace(/\W+/g, "-"),

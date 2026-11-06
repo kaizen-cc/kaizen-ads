@@ -10,6 +10,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { DeployKind, DeployPlan, DeployTarget } from "@/lib/google-deploy";
 import type { WriteStatus } from "@/lib/write-status-core";
 import type { KeywordList, ListKeyword, Research } from "@/lib/keyword-research";
+import { canOn } from "@/lib/chat-permissions-server";
 
 /** The AI's read of one Google winner (written the first time someone points at it, then kept a week). */
 export async function googleIdeaInsight(id: string): Promise<GoogleInsight | null> {
@@ -28,6 +29,14 @@ export async function googleIdeaInsight(id: string): Promise<GoogleInsight | nul
 /** Google buyers, the Head of Google and execs take Google ideas to clients (Meta roles keep the brief flow). */
 const canDeploy = (me: Staff) => me.isExec || me.role === "google_buyer" || me.role === "head_of_google";
 
+/**
+ * Taking something into a client's Google Ads account (src/lib/chat-permissions.ts): execs, the Head of Google, and
+ * a Google buyer only on the clients they're the Google buyer for.
+ */
+async function mayWriteGoogle(me: Staff, clientId: string) {
+  return canOn(createAdminClient(), me, "ads.change", { platform: "google", clientId });
+}
+
 /** Only clients the person can see, through their own access rules. */
 async function visible(clientId: string) {
   const { data } = await (await createClient()).from("clients").select("id, slug").eq("id", clientId).maybeSingle();
@@ -41,6 +50,8 @@ export async function deployIdea(ideaId: string, clientId: string, kind: DeployK
   if (!adminConfigured() || !aiEnabled()) return { ok: false, error: "The AI isn't set up here." };
   const c = await visible(clientId);
   if (!c) return { ok: false, error: "Not found." };
+  const allowed = await mayWriteGoogle(me, clientId);
+  if (!allowed.ok) return { ok: false, error: allowed.reason };
   const admin = createAdminClient();
   try {
     const { createDeploy, draftDeploy } = await import("@/lib/google-deploy");
@@ -66,7 +77,9 @@ async function loadMine(id: string) {
   const me = await requireStaff();
   const { data } = await (await createClient()).from("google_deploys").select("id, client_id, status, plan, clients(slug)").eq("id", id).maybeSingle();
   if (!data) throw new Error("Not found.");
-  if (!canDeploy(me) && !me.isLead) throw new Error("Only the Google team and execs act on these.");
+  // The Google side only (the Head of Meta or Creative no longer acts on a Google deploy), on this client
+  const allowed = await mayWriteGoogle(me, data.client_id as string);
+  if (!allowed.ok) throw new Error(allowed.reason);
   return { me, d: data, slug: (data.clients as unknown as { slug: string } | null)?.slug ?? "" };
 }
 
@@ -260,9 +273,11 @@ export async function keywordTargets(clientId: string): Promise<{ ok: true; writ
  */
 export async function addKeywordsToClient(input: { clientId: string; keywords: ListKeyword[]; finalUrl: string; target: DeployTarget; push: boolean; listName?: string | null; seeds: string[] }): Promise<{ ok: true; id: string; slug: string; status: string; results: { what: string; ok: boolean; error: string | null }[]; error: string | null } | { ok: false; error: string }> {
   const me = await requireStaff();
-  if (!canAddKeywords(me)) return { ok: false, error: "The Google team, execs and leads add keywords to clients." };
   const c = await visible(input.clientId);
   if (!c || !adminConfigured()) return { ok: false, error: "Not found." };
+  // Keywords go into the client's Google Ads account: the Google side only, on this client (then the switch)
+  const allowed = await mayWriteGoogle(me, input.clientId);
+  if (!allowed.ok) return { ok: false, error: allowed.reason };
   const target: DeployTarget = {
     campaignId: input.target.campaignId || null,
     adGroupId: input.target.adGroupId || null,

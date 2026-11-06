@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { LogoLoader } from "@/components/logo-loader";
+import { useRoleCan } from "@/components/creative-formats-provider";
 import { makeCopyVariations, starCopyLine } from "@/app/(team)/copy-library-actions";
 import { BADGE_LABEL, filterCopy, KIND_LABEL, limitOf, PLATFORM_LABEL, type CopyBadge, type CopyKind, type CopyPlatform } from "@/lib/copy-library-core";
 import type { CopyLibrary as Library, LibraryLine } from "@/lib/copy-library";
@@ -44,6 +45,7 @@ function useCopied() {
 
 export function CopyLibrary({ clientId, slug, title = "Copy library" }: { clientId?: string; slug?: string; title?: string }) {
   const [lib, setLib] = useState<Library | null>(null);
+  const roleCan = useRoleCan();
   const [failed, setFailed] = useState(false);
   const [stars, setStars] = useState<Record<string, boolean>>({});
   const platform = useParam("cl_plat") as CopyPlatform | null;
@@ -104,8 +106,9 @@ export function CopyLibrary({ clientId, slug, title = "Copy library" }: { client
           )}
         </div>
         <p className="max-w-2xl text-[13.5px] text-muted">
-          Every primary text, headline and description that ran in Meta, and every Google headline, description, sitelink and callout{clientId ? "" : ", across our clients"}, added up across the ads that used it and judged on the KPI. Reuse what&apos;s proven, or have the Copywriter write variations of it.
+          Every primary text, headline and description that ran in Meta, and every Google headline, description, sitelink and callout{clientId ? "" : ", across our clients"}, added up across the ads that used it and judged on the KPI. Reuse what&apos;s proven{roleCan.copyWhy ? "." : ", or have the Copywriter write variations of it."}
         </p>
+        {(roleCan.copyWhy || roleCan.briefWhy) && <p className="text-[12px] text-faint">{[roleCan.copyWhy, roleCan.briefWhy].filter(Boolean).join(". ")}.</p>}
       </header>
 
       {/* Search and filters: one row that scrolls sideways on phones */}
@@ -246,6 +249,8 @@ export function CopyLibrary({ clientId, slug, title = "Copy library" }: { client
 
 function CopyCard({ l, cross, slug, starred, onStar, open, onOpen }: { l: LibraryLine; cross: boolean; slug: string; starred: boolean; onStar: (on: boolean) => void; open: boolean; onOpen: (open: boolean) => void }) {
   const { copied, copy } = useCopied();
+  // Make variations is copy writing, Use in a request is a brief: only for those whose role does them
+  const can = useRoleCan();
   const [full, setFull] = useState(false);
   const long = l.text.length > 220 || l.text.split("\n").length > 4;
   const kpi = l.roasKpi ? (l.roas != null ? `${l.roas}x ROAS` : "No revenue") : l.cpa != null ? `$${l.cpa} per result` : "No results";
@@ -320,16 +325,18 @@ function CopyCard({ l, cross, slug, starred, onStar, open, onOpen }: { l: Librar
           <span aria-hidden>{starred ? "★" : "☆"}</span>
           {starred ? "Saved" : "Save"}
         </button>
-        <button type="button" onClick={() => onOpen(!open)} aria-expanded={open} className={`inline-flex min-h-11 items-center rounded-full px-4 text-[13px] font-medium md:min-h-9 ${open ? "bg-surface-2" : "bg-fg text-bg hover:bg-fg/90"}`}>
-          {open ? "Close variations" : "Make variations"}
-        </button>
-        {l.platform === "meta" && (
+        {!can.copyWhy && (
+          <button type="button" onClick={() => onOpen(!open)} aria-expanded={open} className={`inline-flex min-h-11 items-center rounded-full px-4 text-[13px] font-medium md:min-h-9 ${open ? "bg-surface-2" : "bg-fg text-bg hover:bg-fg/90"}`}>
+            {open ? "Close variations" : "Make variations"}
+          </button>
+        )}
+        {l.platform === "meta" && !can.briefWhy && (
           <Link href={`/requests/new?client=${encodeURIComponent(slug)}&copyline=${encodeURIComponent(`${l.clientId}.${l.key}`)}`} className="inline-flex min-h-11 items-center rounded-full border border-line px-4 text-[13px] font-medium hover:border-faint md:min-h-9">
             Use in a request →
           </Link>
         )}
       </div>
-      {open && <Variations l={l} />}
+      {open && !can.copyWhy && <Variations l={l} />}
     </li>
   );
 }

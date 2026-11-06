@@ -9,6 +9,8 @@ import { metaGraph } from "@/lib/context/meta";
 import { conversionFor } from "@/lib/kpi/conversions";
 import { metaWritableSetup, type MetaSetup } from "@/lib/meta-write";
 import { SLOTS, canHold } from "@/lib/roles";
+import { canChangeBuyer } from "@/lib/chat-permissions";
+import { canOn, personById } from "@/lib/chat-permissions-server";
 
 // Changes asked for in the client desk chat (on the client page and on the KPI board): "pause every ad under 0.5% CTR
 // in the prospecting campaign", "move the winner from engagement to conversions", "swap the link on the BFCM ads",
@@ -21,6 +23,11 @@ export type ChatPlatform = "meta" | "google" | "team";
 
 /** A new change from the chat: the row the plan card follows, planned in the background. Null when there's nothing to change. */
 export async function startChatChange(admin: SupabaseClient, clientId: string, profileId: string, platform: ChatPlatform, instruction: string, targetId?: string | null): Promise<{ id: string } | { error: string }> {
+  // Only someone who may change this account (or the client's buyer) starts a plan for it: every surface comes here
+  const person = await personById(admin, profileId);
+  if (!person) return { error: "Only active team members can plan changes." };
+  const allowed = platform === "team" ? canChangeBuyer(person) : await canOn(admin, person, "ads.change", { platform, clientId });
+  if (!allowed.ok) return { error: allowed.reason };
   let target: { id: string; ad_account_id: string | null } | null = null;
   if (platform !== "team") {
     const { data: ts } = await admin.from("kpi_targets").select("id, ad_account_id").eq("client_id", clientId).eq("platform", platform).eq("active", true).not("ad_account_id", "is", null).order("created_at");

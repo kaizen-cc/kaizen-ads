@@ -4,6 +4,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
 import { MODEL_IDS, aiBusy, askJson, aiEnabled, anthropicClient, cachedBlock, getAgent, knowledgeFor, usageFor, withAgent } from "@/lib/ai";
 import { roleLabel } from "@/lib/roles";
+import { buyingPlatform, permsPrompt, roleWidePerms } from "@/lib/chat-permissions";
+import { permsOn } from "@/lib/chat-permissions-server";
 import { agentLabel, isChatAgent, pickAgent } from "./agents";
 import { attachmentBlocks } from "./files";
 import { chatTools, clientBrief } from "./tools";
@@ -316,7 +318,10 @@ export async function runTurn(input: TurnInput): Promise<void> {
   if (imported.length) system.push(cachedBlock(imported.join("\n\n")));
   // Copy asked for with no client: ask which one first (copy without the client's voice, rules and proven lines isn't ours)
   const noClientCopy = copyAsked && !client && wantsCopy(userText) ? "This message asks for ad copy but no client is set on the thread. Before writing any copy, ask which client it's for (they can pick it in the header), unless they've said it's generic." : "";
-  system.push({ type: "text", text: [`Today is ${today} (New York). You're talking with the team's ${roleLabel(me.role)}${me.isExec ? " (an executive)" : me.isLead ? " (a lead)" : ""}.`, knowledge, noClientCopy].filter(Boolean).join("\n\n") });
+  // What this person may do (src/lib/chat-permissions.ts): on the pinned client, or by role (a buyer: on their own clients)
+  const perms = client ? await permsOn(admin, me, client.id) : roleWidePerms(me);
+  const allowedLine = `${permsPrompt(perms)}${!client && buyingPlatform(me) && !me.isExec && !me.role.startsWith("head_of") ? ` A buyer's changes and launches are only on clients where they're the client's ${buyingPlatform(me) === "meta" ? "Meta" : "Google"} buyer.` : ""}`;
+  system.push({ type: "text", text: [`Today is ${today} (New York). You're talking with the team's ${roleLabel(me.role)}${me.isExec ? " (an executive)" : me.isLead ? " (a lead)" : ""}.`, allowedLine, knowledge, noClientCopy].filter(Boolean).join("\n\n") });
 
   // ─── The answer, with tools on the way ───
   const { data: placeholder } = await admin.from("ai_messages").insert({ thread_id: thread.id, role: "assistant", content: "", agent_key: agent, model }).select("id").single();

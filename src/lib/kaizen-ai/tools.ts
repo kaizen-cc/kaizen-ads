@@ -5,6 +5,7 @@ import type { AiTool } from "@/lib/ai";
 import { conversionFor } from "@/lib/kpi/conversions";
 import { extensionTools } from "./extensions";
 import { clampFormats, formatList, formatsFor, formatsRule } from "@/lib/creative-formats";
+import { can, roleWidePerms, type Who } from "@/lib/chat-permissions";
 import type { Attachment, BriefCard, Card, CopyCard, CopyField, MetricsCard, MetricsRow } from "./types";
 
 // What Kaizen AI can look up and do. Every tool runs on the server with the person's own permissions: a client is only
@@ -597,6 +598,9 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
         if (input.ticket) {
           const { data: r } = await ctx.db.from("requests").select("id, number, title, client_id").eq("number", Number(input.ticket)).is("deleted_at", null).maybeSingle();
           if (!r) throw new Error(`No ticket #${input.ticket} that you can see.`);
+          // Starting a review is the creative team's, the buyers' and the executives' (reading the standards is anyone's)
+          const allowed = can(ctx.me, "creative.review");
+          if (!allowed.ok) throw new Error(allowed.reason);
           const { startRun, runCreativeReview } = await import("@/lib/creative-review");
           const id = await startRun(ctx.admin, r.id as string, ctx.me.id);
           const { after } = await import("next/server");
@@ -764,5 +768,30 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
 
   // The connectors in src/lib/ai-tools (Google policy checker, monthly recap deck, ElevenLabs, Higgsfield, Motion)
   for (const t of await extensionTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
-  return tools;
+  return toolsFor(ctx.me, tools);
+}
+
+/**
+ * Only the tools this person may use (src/lib/chat-permissions.ts), so the AI never offers what isn't theirs: no ad
+ * account changes for the creative team, a Meta launch only for the Meta side, briefs only for those who brief (in
+ * their formats), copy only for those who write it. Every tool that's kept checks the client again on the server.
+ */
+export function toolsFor<T extends { name: string; input_schema?: unknown }>(me: Who, tools: T[]): T[] {
+  const p = roleWidePerms(me);
+  const changeOn = (["meta", "google"] as const).filter((x) => p.change[x]);
+  const drop = new Set<string>();
+  if (!changeOn.length && !p.buyer) drop.add("plan_ad_changes");
+  if (!p.launch.meta) for (const n of ["launch_sheet", "launch_reply"]) drop.add(n);
+  if (!p.copy) drop.add("write_ad_copy");
+  if (!p.briefFormats.length) drop.add("create_brief");
+  if (!p.change.google) drop.add("google_policy_apply_fix");
+  return tools
+    .filter((t) => !drop.has(t.name))
+    .map((t) => {
+      if (t.name !== "plan_ad_changes") return t;
+      // The platforms they may change (and the buyer, for those who may change it)
+      const s = t.input_schema as { properties: Record<string, unknown> };
+      const platforms = [...changeOn, ...(p.buyer ? ["team"] : [])];
+      return { ...t, input_schema: { ...s, properties: { ...s.properties, platform: { type: "string", enum: platforms } } } };
+    });
 }

@@ -1,5 +1,6 @@
 import { googleAdsConfigured } from "@/lib/context/google-ads";
 import { teamPlatform } from "@/lib/roles";
+import { clientPerms } from "@/lib/chat-permissions";
 import { requireStaff } from "@/lib/auth";
 import type { Agg, Pacing, Status, Trend } from "@/lib/kpi/calc";
 import { conversionFor, conversionLabel } from "@/lib/kpi/conversions";
@@ -62,6 +63,10 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
   ]);
   const sprints = new Map(sprintList.map((x) => [x.targetId, x.sprint]));
   const seated = new Set((seats ?? []).map((a) => `${a.client_id}:${a.role === "google_buyer" ? "google" : "meta"}`));
+  // What this person may do from each card's chat (src/lib/chat-permissions.ts): a buyer's seats on that client, or
+  // the card being theirs
+  const ownedBy = new Set((targets ?? []).filter((t) => t.owner_id === me.id).map((t) => `${t.client_id}:${t.platform === "google" ? "google" : "meta"}`));
+  const seatsOf = (clientId: string) => (buyer ? (["meta", "google"] as const).filter((p) => seated.has(`${clientId}:${p}`) || ownedBy.has(`${clientId}:${p}`)) : []);
   const rows: KpiRow[] = (targets ?? [])
     .filter((t) => !team || (t.platform === "google" ? "google" : "meta") === team)
     .filter((t) => !buyer || t.owner_id === me.id || seated.has(`${t.client_id}:${t.platform === "google" ? "google" : "meta"}`))
@@ -75,6 +80,7 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
       return {
         id: t.id,
         clientId: t.client_id,
+        perms: clientPerms(me, seatsOf(t.client_id as string)),
         client: c?.name ?? "Unknown",
         kaizenId: c?.kaizen_id ?? null,
         slug: c?.slug ?? "",

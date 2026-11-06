@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { AiUnavailable, askJson, clientContext, contextBlock, COPY_CHAT_SCHEMA, COPY_CHAT_SYSTEM, type CopyLesson, type CopyViolation } from "@/lib/ai";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
+import { can } from "@/lib/chat-permissions";
 import { adsHash, blockers, isDismissed, type Ad, type Dismissed } from "@/lib/copy";
 import { draftCopy, learnFromCopy, storeCopyCheck } from "@/lib/copy-draft";
 import { onReachedClient } from "@/lib/client-revision";
@@ -86,6 +87,9 @@ export async function ticketCopy(requestId: string): Promise<CopyState> {
 /** Write (or rewrite with a note from copy review) the copy set. It runs in the background; ticketCopy shows its progress. */
 export async function redraftCopy(requestId: string, note?: string): Promise<{ ok: true; state: CopyState } | { ok: false; error: string }> {
   const me = await requireStaff();
+  // Writing copy: the copywriter, the heads, the buyers and the executives (src/lib/chat-permissions.ts)
+  const writes = can(me, "copy");
+  if (!writes.ok) return { ok: false, error: writes.reason };
   const supabase = await createClient();
   const { data: visible } = await supabase.from("requests").select("id, client_id, angle_id").eq("id", requestId).maybeSingle();
   if (!visible) return { ok: false, error: "Ticket not found." };

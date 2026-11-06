@@ -4,6 +4,7 @@ import { AGENCY_SYSTEM, AiUnavailable, aiEnabled, askJson, clientContext, contex
 import { AVATAR_RULE } from "@/lib/suggestions";
 import { toAllotment, type Allotment, type UsageRow } from "@/lib/allotment";
 import { requireStaff } from "@/lib/auth";
+import { can } from "@/lib/chat-permissions";
 import { CREATIVE_FORMATS, clampFormats, formatsFor, formatsRule, type CreativeFormat } from "@/lib/creative-formats";
 import { quickFromDraftAll, type BriefSource, type QuickBrief, type QuickFormat } from "@/lib/quick-brief";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
@@ -145,6 +146,10 @@ export async function bibleAvatars(clientId: string): Promise<BibleAvatar[]> {
 /** The quick preview of a brief, before the full one is written */
 export async function previewBrief(clientId: string, source: BriefSource, given?: QuickBrief | null): Promise<PreviewResult> {
   const me = await requireStaff();
+  // Briefs (even the quick preview) are for the creative team, the media buyers and the executives: never the
+  // copywriter or customer success (src/lib/chat-permissions.ts)
+  const briefing = can(me, "brief");
+  if (!briefing.ok) return { ok: false, error: briefing.reason };
   // Only the formats this person works in: a designer images and carousels, a video editor video (the owner's rule)
   const allowed = formatsFor(me);
   const fit = (b: QuickBrief): QuickBrief => ({ ...b, formats: clampFormats(b.formats ?? [], allowed) });

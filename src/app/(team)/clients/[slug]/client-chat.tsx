@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { requestAudit } from "@/components/audit-watcher";
 import { useFabClear } from "@/components/fab-clear";
 import type { ChatTurn } from "@/lib/handoff";
+import { ALL_PERMS, type ClientPerms } from "@/lib/chat-permissions";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { askClientAi, clearClientAi, loadClientAi, openClientDoc, undoClientDesk } from "./actions";
 import { createClient } from "@/lib/supabase/client";
@@ -25,13 +26,8 @@ export type AuditTarget = { id: string; label: string; status: "none" | "queued"
 /** The KPI card a chat was opened from: launches and changes that don't name a platform go to its account */
 export type ChatScope = { platform: "meta" | "google"; targetId?: string | null };
 
-const STARTERS = [
-  "Summarize where this account stands",
-  "What should we test next, and why?",
-  "What has the client told us lately?",
-  "Pause the ads that spent with no results this week",
-  "Launch a new ad group in Google Ads",
-];
+const CHANGE_STARTER = "Pause the ads that spent with no results this week";
+const STARTERS = ["Summarize where this account stands", "What should we test next, and why?", "What has the client told us lately?", CHANGE_STARTER, "Launch a new ad group in Google Ads"];
 const LAUNCH_STARTERS = { google: "Launch a new ad group in Google Ads", meta: "Launch ads on Meta from a launch sheet" } as const;
 const LAUNCH_DRAFT = { google: "Launch in Google Ads: ", meta: "Launch on Meta (I'm sharing the launch sheet): " } as const;
 const MAX_FILE = 50 * 1024 * 1024;
@@ -101,8 +97,34 @@ function Bubble({ t, onUndo, launchLatest = true }: { t: ChatTurn; onUndo?: (i: 
  * (a KPI card), which loads the thread when opened. Either way it's the same thread, so a conversation started on the
  * KPI board is there on the client page and the other way round.
  */
-export function ClientChat({ clientId, client, initial, targets, live, variant = "floating", scope = null }: { clientId: string; client: string; initial?: ChatTurn[]; targets: AuditTarget[]; live: boolean; variant?: "floating" | "inline"; scope?: ChatScope | null }) {
+export function ClientChat({
+  clientId,
+  client,
+  initial,
+  targets,
+  live,
+  variant = "floating",
+  scope = null,
+  perms = ALL_PERMS,
+}: {
+  clientId: string;
+  client: string;
+  initial?: ChatTurn[];
+  targets: AuditTarget[];
+  live: boolean;
+  variant?: "floating" | "inline";
+  scope?: ChatScope | null;
+  /** What this person may do on this client (src/lib/chat-permissions.ts): the chat only offers what's theirs */
+  perms?: ClientPerms;
+}) {
   const router = useRouter();
+  // Starters: only the ones this person may act on (a change, a launch on their own platform)
+  const mayChange = perms.change.meta || perms.change.google;
+  const starters = (scope && perms.launch[scope.platform] ? [LAUNCH_STARTERS[scope.platform], ...STARTERS.filter((x) => x !== LAUNCH_STARTERS.google)] : STARTERS).filter(
+    (s) => (s !== CHANGE_STARTER || mayChange) && (s !== LAUNCH_STARTERS.google || perms.launch.google) && (s !== LAUNCH_STARTERS.meta || perms.launch.meta),
+  );
+  const canLaunchHere = Boolean(scope && perms.launch[scope.platform]);
+  const mayLaunch = perms.launch.meta || perms.launch.google;
   // On the client page the open chat is in the address (?chat=1), so back closes it and a link opens it. The inline
   // button sits on cards that can share a page, so it keeps its own.
   const floating = variant === "floating";
@@ -246,7 +268,7 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
           Ask about {client}
         </button>
       ) : null}
-      {variant === "inline" && scope && (
+      {variant === "inline" && scope && canLaunchHere && (
         <button
           type="button"
           onClick={() => {
@@ -290,7 +312,13 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
           <div className="grid min-w-0 gap-1">
             <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-ink/50">Client desk</p>
             <h2 className="font-display text-2xl leading-tight tracking-tight [overflow-wrap:anywhere]">{client}</h2>
-            <p className="text-xs text-ink/50">Ask anything, share files and links (they&apos;re filed in the client&apos;s documents), tell it what to remember, ask for a change in the ad account, or launch something new: tell it what to launch in Google Ads, or drop a launch sheet or keyword sheet (it shows exactly what it will create or touch for you to confirm).</p>
+            <p className="text-xs text-ink/50">
+              Ask anything, share files and links (they&apos;re filed in the client&apos;s documents), tell it what to remember
+              {mayChange ? `, ask for a change in the ${perms.change.meta && perms.change.google ? "ad account" : perms.change.meta ? "Meta account" : "Google Ads account"}` : ""}
+              {mayLaunch
+                ? `, or launch something new: ${perms.launch.google ? "tell it what to launch in Google Ads, or drop " : "drop "}${perms.launch.meta && perms.launch.google ? "a launch sheet or keyword sheet" : perms.launch.meta ? "a launch sheet" : "a keyword sheet"} (it shows exactly what it will create or touch for you to confirm).`
+                : "."}
+            </p>
           </div>
           <span className="flex shrink-0 gap-1.5">
             {chat.length > 0 && (
@@ -348,7 +376,7 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
           {!loaded && <p className="animate-pulse text-xs text-ink/50">Loading your conversation about {client}…</p>}
           {loaded && !chat.length && !pending && (
             <div className="grid gap-2">
-              {(scope ? [LAUNCH_STARTERS[scope.platform], ...STARTERS.filter((x) => x !== LAUNCH_STARTERS.google)] : STARTERS).map((s) => (
+              {starters.map((s) => (
                 <button key={s} type="button" onClick={() => ask(s)} className="min-h-11 rounded-[12px] border border-ink/[0.08] px-3.5 py-2.5 text-left text-[13px] md:min-h-0 text-ink/70 transition-colors hover:border-brand/50 hover:text-fg">
                   {s}
                 </button>

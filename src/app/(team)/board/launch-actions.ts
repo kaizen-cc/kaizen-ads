@@ -9,6 +9,7 @@ import { delivery, editLaunch, setDelivery, type AdEdit, type Delivery } from "@
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { writeStatus, type WriteStatus } from "@/lib/write-status";
+import { canOn } from "@/lib/chat-permissions-server";
 
 // The Launch panel on a ticket in Ready to launch: plan (the Media Buyer proposes, Kaizen's checks and Meta's dry run),
 // adjust, then create the ads paused. See src/lib/launcher.ts.
@@ -46,11 +47,9 @@ function withLink(result: LaunchView["result"], plan: LaunchPlan | null): Launch
   return { ...result, link: adsManagerLink(plan.account, ids, result.adsetId, campaign) };
 }
 
-/** Who can launch: the client's Meta buyer, the Head of Meta and execs. */
+/** Who can launch (src/lib/chat-permissions.ts): the client's Meta buyer, the Head of Meta and execs. */
 async function canLaunch(me: Staff, clientId: string) {
-  if (me.isExec || me.role === "head_of_meta") return true;
-  const { data } = await (await createClient()).from("client_assignments").select("profile_id").eq("client_id", clientId).eq("role", "meta_buyer").eq("profile_id", me.id).maybeSingle();
-  return Boolean(data);
+  return (await canOn(createAdminClient(), me, "ads.launch", { platform: "meta", clientId })).ok;
 }
 
 async function view(id: string): Promise<LaunchView | null> {

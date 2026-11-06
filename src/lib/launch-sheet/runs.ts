@@ -4,6 +4,7 @@ import { metaGraph } from "@/lib/context/meta";
 import { metaWrite, metaWritableSetup, metaWriteSetting, writeBlocked } from "@/lib/meta-write";
 import { metaDeepLink } from "@/lib/chat-change-core";
 import { step } from "@/lib/launch-cache";
+import { canIdOn } from "@/lib/chat-permissions-server";
 import { openSource, type SheetSource } from "./intake";
 import { gridToSheet } from "./sheet";
 import { resolveSheet } from "./resolve";
@@ -53,6 +54,9 @@ const patch = (admin: SupabaseClient, id: string, p: Record<string, unknown>) =>
 
 /** A new launch from a shared sheet; read and checked in the background (prepareRun) */
 export async function startRun(admin: SupabaseClient, clientId: string, profileId: string, source: SheetSource, surface: "client_chat" | "kaizen_ai"): Promise<{ id: string } | { error: string }> {
+  // Only someone who may launch in this client's Meta account starts one (every surface comes here)
+  const allowed = await canIdOn(admin, profileId, "ads.launch", { platform: "meta", clientId });
+  if (!allowed.ok) return { error: allowed.reason };
   const { data, error } = await admin.from("launch_runs").insert({ client_id: clientId, created_by: profileId, source, surface, status: "reading", progress: "Reading the sheet" }).select("id").single();
   if (error || !data) return { error: error?.message ?? "Couldn't start it." };
   return { id: data.id as string };
@@ -421,9 +425,16 @@ async function upload(admin: SupabaseClient, runId: string, account: string, fil
  * Creates the plan in Meta, line by line, in order. retry: failed lines are tried again (only them). Stops before
  * budgetMs runs out and leaves the run to be continued (the card continues it), so a long launch never half-creates.
  */
-export async function applyRun(admin: SupabaseClient, id: string, opts: { retry?: boolean; budgetMs?: number } = {}) {
+export async function applyRun(admin: SupabaseClient, id: string, opts: { retry?: boolean; budgetMs?: number; by: string }) {
   const started = Date.now();
   const budget = opts.budgetMs ?? 240_000;
+  // The person creating it must be allowed to launch in this client's Meta account (then the switch, below)
+  const { data: owner } = await admin.from("launch_runs").select("client_id").eq("id", id).maybeSingle();
+  const allowed = await canIdOn(admin, opts.by, "ads.launch", { platform: "meta", clientId: (owner?.client_id as string | undefined) ?? null });
+  if (!allowed.ok) {
+    await admin.from("launch_runs").update({ status: "ready", progress: null, error: allowed.reason, updated_at: now() }).eq("id", id).eq("status", "applying");
+    return { blocked: allowed.reason };
+  }
   if (!(await lock(admin, id))) return { busy: true };
   try {
     const run = await load(admin, id);

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { AiUnavailable, aiEnabled } from "@/lib/ai";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
+import { can } from "@/lib/chat-permissions";
 import { createAdminClient, adminConfigured } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { byConcept, regenerate, runStrategist, type SuggestionDraft } from "@/lib/suggestions";
@@ -12,6 +13,13 @@ import { markItem, reviewsChanged } from "@/lib/item-state";
 import { formatsFor, formatsOutside, formatsPhrase } from "@/lib/creative-formats";
 
 type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
+
+/** Briefs are for the creative team, the media buyers and the executives (src/lib/chat-permissions.ts) */
+async function briefer(formats?: readonly string[]): Promise<{ me: Awaited<ReturnType<typeof requireStaff>> } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  const v = can(me, "brief", { formats });
+  return v.ok ? { me } : { ok: false, error: v.reason };
+}
 
 async function lead() {
   const me = await requireStaff();
@@ -37,7 +45,9 @@ export async function refreshSuggestions(): Promise<Result> {
 
 /** Edits are kept as they're made. */
 export async function saveSuggestion(id: string, draft: SuggestionDraft): Promise<Result> {
-  await requireStaff(); // the suggestion's own rules decide: execs, leads, or whoever started it from a winner
+  // The suggestion's own rules decide: execs, leads, or whoever started it from a winner; and only someone who briefs
+  const b = await briefer();
+  if ("error" in b) return b;
   const supabase = await createClient();
   const { error } = await supabase.from("creative_suggestions").update({ draft, edited: true, updated_at: new Date().toISOString() }).eq("id", id).eq("status", "open");
   return error ? { ok: false, error: error.message } : { ok: true };
@@ -45,7 +55,11 @@ export async function saveSuggestion(id: string, draft: SuggestionDraft): Promis
 
 /** Approve: the tickets are made from the suggestion as it stands, and go straight to the makers. */
 export async function approveSuggestion(id: string, draft: SuggestionDraft): Promise<Result<{ numbers: number[] }>> {
-  const me = await requireStaff(); // the suggestion's own rules decide: execs, leads, or whoever started it from a winner
+  // The suggestion's own rules decide: execs, leads, or whoever started it from a winner; and only someone who briefs
+  // these formats (src/lib/chat-permissions.ts)
+  const b = await briefer(draft.formats.filter((f) => f.new + f.variations > 0).map((f) => f.format));
+  if ("error" in b) return b;
+  const me = b.me;
   const supabase = await createClient();
   const { data: s } = await supabase.from("creative_suggestions").select("client_id, status, original, signal, kind, source, draft").eq("id", id).single();
   if (!s || s.status !== "open") return { ok: false, error: "This suggestion was already decided." };
@@ -182,7 +196,10 @@ export async function declineSuggestion(id: string, reason: string, remember: bo
 
 /** A message to the strategist about one suggestion; it answers and rewrites the suggestion if asked. */
 export async function chatSuggestion(id: string, text: string): Promise<Result<{ draft: SuggestionDraft; why: string; reply: string }>> {
-  const me = await requireStaff(); // the suggestion's own rules decide: execs, leads, or whoever started it from a winner
+  // The suggestion's own rules decide: execs, leads, or whoever started it from a winner; rewriting a brief is a brief
+  const b = await briefer();
+  if ("error" in b) return b;
+  const me = b.me;
   const body = text.trim();
   if (!body) return { ok: false, error: "Write something first." };
   if (!adminConfigured()) return { ok: false, error: "The AI isn't connected here." };

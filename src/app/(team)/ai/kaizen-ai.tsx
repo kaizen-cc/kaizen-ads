@@ -63,7 +63,7 @@ const P = {
   trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
 };
 
-export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, groups, homeAgent, mustImport = false }: { me: Me; on: boolean; initialThreads: Thread[]; initialTemplates: Template[]; clients: ClientOpt[]; groups: QuickAction["group"][]; homeAgent: { key: ChatAgent; label: string }; mustImport?: boolean }) {
+export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, groups, quickIds, homeAgent, mustImport = false }: { me: Me; on: boolean; initialThreads: Thread[]; initialTemplates: Template[]; clients: ClientOpt[]; groups: QuickAction["group"][]; /** The quick actions this person may use (by role) */ quickIds: string[]; homeAgent: { key: ChatAgent; label: string }; mustImport?: boolean }) {
   const t = useParam("t");
   const listOpen = useParam("list") === "1";
   const importOpen = useParam("import") === "1";
@@ -373,7 +373,7 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, gr
             {gate && !thread ? (
               <ImportFirst first={me.first} onImport={() => pushParams({ import: "1" })} onSkip={() => void skipImport()} />
             ) : !thread && !messages.length && !live ? (
-              <Empty first={me.first} on={on} groups={groups} templates={templates} client={client} homeAgent={homeAgent.label} onUse={applyPrompt} onImport={() => pushParams({ import: "1" })} />
+              <Empty first={me.first} on={on} groups={groups} quickIds={quickIds} templates={templates} client={client} homeAgent={homeAgent.label} onUse={applyPrompt} onImport={() => pushParams({ import: "1" })} />
             ) : null}
             {thread?.source ? <ImportedBanner thread={thread} earlier={extra.earlier} notes={extra.notes} mine={!readOnly} onDelete={() => void removeImported(thread.id)} /> : null}
             {loading && !messages.length ? <p className="py-10 text-center text-[13px] text-faint">Opening the thread…</p> : null}
@@ -422,6 +422,7 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, gr
             onUse={applyPrompt}
             onTemplatesChanged={() => void listTemplates().then(setTemplates)}
             groups={groups}
+            quickIds={quickIds}
           />
         )}
       </section>
@@ -1001,8 +1002,9 @@ function LiveBlock({ live, onRetry }: { live: Live; onRetry: () => void }) {
 
 // ─── The empty state: quick actions for the person's role ───────────────────
 
-function Empty({ first, on, groups, templates, client, homeAgent, onUse, onImport }: { first: string; on: boolean; groups: QuickAction["group"][]; templates: Template[]; client: ClientOpt | null; homeAgent: string; onUse: (p: string, id?: string) => void; onImport: () => void }) {
-  const actions = groups.flatMap((g) => QUICK_ACTIONS.filter((a) => a.group === g));
+function Empty({ first, on, groups, quickIds, templates, client, homeAgent, onUse, onImport }: { first: string; on: boolean; groups: QuickAction["group"][]; quickIds: string[]; templates: Template[]; client: ClientOpt | null; homeAgent: string; onUse: (p: string, id?: string) => void; onImport: () => void }) {
+  // Only what this person may do (a Google change, copy, a review): the rest isn't offered
+  const actions = groups.flatMap((g) => QUICK_ACTIONS.filter((a) => a.group === g && quickIds.includes(a.id)));
   const name = (s: string) => s.replace(/\{client\}/g, client?.name ?? "a client");
   const hello = useSyncExternalStore(noSubscribe, greet, () => "Hello");
   return (
@@ -1080,6 +1082,7 @@ function Composer({
   onUse,
   onTemplatesChanged,
   groups,
+  quickIds,
 }: {
   input: React.RefObject<HTMLTextAreaElement | null>;
   text: string;
@@ -1101,6 +1104,7 @@ function Composer({
   onUse: (p: string, id?: string) => void;
   onTemplatesChanged: () => void;
   groups: QuickAction["group"][];
+  quickIds: string[];
 }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [agentMenu, setAgentMenu] = useState(false);
@@ -1108,7 +1112,8 @@ function Composer({
   const [drag, setDrag] = useState(false);
   // "/" opens the quick actions and saved prompts, filtered by what follows it
   const slash = /^\/[^\s]*$/.test(text) ? text.slice(1).toLowerCase() : null;
-  const ordered = [...groups.flatMap((g) => QUICK_ACTIONS.filter((a) => a.group === g)), ...QUICK_ACTIONS.filter((a) => !groups.includes(a.group))];
+  const mine = QUICK_ACTIONS.filter((a) => quickIds.includes(a.id));
+  const ordered = [...groups.flatMap((g) => mine.filter((a) => a.group === g)), ...mine.filter((a) => !groups.includes(a.group))];
   const options =
     slash === null
       ? []

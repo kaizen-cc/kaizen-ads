@@ -3,7 +3,9 @@
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { requireStaff } from "@/lib/auth";
-import { applyChange, canApply, planChange, type PlannedOp } from "@/lib/ad-changes";
+import { applyChange, planChange, type PlannedOp } from "@/lib/ad-changes";
+import { can } from "@/lib/chat-permissions";
+import { canOn, seatsOn } from "@/lib/chat-permissions-server";
 import { googleAdsConfigured } from "@/lib/context/google-ads";
 import { metaConfigured } from "@/lib/context/meta";
 import type { AuditResult } from "@/lib/audit";
@@ -23,6 +25,8 @@ export type ChangeView = {
   appliedBy: string | null;
   appliedAt: string | null;
   canApply: boolean;
+  /** Why not (who can), when canApply is false */
+  applyWhy: string | null;
   /** The ad account (digits), for links straight to each object */
   account: string;
   /** Whether applying would actually write to the account (live changes on for the client), read before pressing */
@@ -53,7 +57,13 @@ async function view(id: string): Promise<ChangeView | null> {
   const db = await createClient();
   const { data: c } = await db.from("ad_changes").select("id, client_id, platform, account, status, ops, note, error, applied_at, applier:profiles!ad_changes_applied_by_fkey(full_name), kpi_targets(owner_id)").eq("id", id).maybeSingle();
   if (!c) return null;
-  const write = await writeStatus(createAdminClient(), { clientId: c.client_id as string | null, account: String(c.account ?? "") }, c.platform === "meta" ? "meta" : "google");
+  const admin = createAdminClient();
+  const platform = c.platform === "meta" ? "meta" : "google";
+  const write = await writeStatus(admin, { clientId: c.client_id as string | null, account: String(c.account ?? "") }, platform);
+  // The client's buyer seats, or the KPI card being theirs, make a buyer the account's own
+  const owner = (c.kpi_targets as unknown as { owner_id: string | null } | null)?.owner_id ?? null;
+  const seats = [...(await seatsOn(admin, me.id, c.client_id as string | null)), ...(owner === me.id ? [platform as "meta" | "google"] : [])];
+  const allowed = can(me, "ads.change", { platform, seats });
   return {
     id: c.id,
     status: c.status as ChangeView["status"],
@@ -63,7 +73,8 @@ async function view(id: string): Promise<ChangeView | null> {
     appliedBy: (c.applier as unknown as { full_name: string } | null)?.full_name ?? null,
     appliedAt: c.applied_at,
     account: String(c.account ?? ""),
-    canApply: canApply(me, (c.kpi_targets as unknown as { owner_id: string | null } | null)?.owner_id ?? null, c.platform as string),
+    canApply: allowed.ok,
+    applyWhy: allowed.reason,
     write,
     canSwitch: me.isExec,
   };
@@ -73,7 +84,7 @@ async function view(id: string): Promise<ChangeView | null> {
  * Whether a change planned from this action could be written to its account right now, for the button before it's
  * pressed (canSwitch: execs can switch live changes on right there).
  */
-export async function writeFor(from: From): Promise<{ write: WriteStatus; canSwitch: boolean } | null> {
+export async function writeFor(from: From): Promise<{ write: WriteStatus; canSwitch: boolean; why: string | null } | null> {
   const me = await requireStaff();
   if (!adminConfigured()) return null;
   const r = await resolve(from);
@@ -81,17 +92,21 @@ export async function writeFor(from: From): Promise<{ write: WriteStatus; canSwi
   const admin = createAdminClient();
   const { data: t } = await admin.from("kpi_targets").select("client_id, platform, ad_account_id").eq("id", r.targetId).maybeSingle();
   if (!t || !["google", "meta"].includes(t.platform as string)) return null;
-  return { write: await writeStatus(admin, { clientId: t.client_id as string, account: (t.ad_account_id as string | null) ?? null }, t.platform as "meta" | "google"), canSwitch: me.isExec };
+  // why: who can, when this person can't change this account (the button becomes one calm line)
+  const allowed = await canOn(admin, me, "ads.change", { platform: t.platform as "meta" | "google", clientId: t.client_id as string });
+  return { write: await writeStatus(admin, { clientId: t.client_id as string, account: (t.ad_account_id as string | null) ?? null }, t.platform as "meta" | "google"), canSwitch: me.isExec, why: allowed.reason };
 }
 
 /** The same read for a KPI's own account (its #1 problem's plan, the next step written on the board). */
-export async function writeForTarget(targetId: string): Promise<{ write: WriteStatus; canSwitch: boolean } | null> {
+export async function writeForTarget(targetId: string): Promise<{ write: WriteStatus; canSwitch: boolean; why: string | null } | null> {
   const me = await requireStaff();
   if (!adminConfigured()) return null;
   // Read with the viewer's own access first: only someone who can see the KPI learns about its account
   const { data: t } = await (await createClient()).from("kpi_targets").select("client_id, platform, ad_account_id").eq("id", targetId).maybeSingle();
   if (!t || !["google", "meta"].includes(t.platform as string)) return null;
-  return { write: await writeStatus(createAdminClient(), { clientId: t.client_id as string, account: (t.ad_account_id as string | null) ?? null }, t.platform as "meta" | "google"), canSwitch: me.isExec };
+  const admin = createAdminClient();
+  const allowed = await canOn(admin, me, "ads.change", { platform: t.platform as "meta" | "google", clientId: t.client_id as string });
+  return { write: await writeStatus(admin, { clientId: t.client_id as string, account: (t.ad_account_id as string | null) ?? null }, t.platform as "meta" | "google"), canSwitch: me.isExec, why: allowed.reason };
 }
 
 /**
@@ -107,6 +122,8 @@ export async function planTargetStep(targetId: string, step: string): Promise<{ 
   const text = step.replace(/\s+/g, " ").trim().slice(0, 1500);
   if (text.length < 4) return { ok: false, error: "That step is empty." };
   const admin = createAdminClient();
+  const allowed = await canOn(admin, me, "ads.change", { platform: t.platform as "meta" | "google", clientId: t.client_id as string });
+  if (!allowed.ok) return { ok: false, error: allowed.reason };
   const { startChatChange, planChatChange } = await import("@/lib/chat-changes");
   const r = await startChatChange(admin, t.client_id as string, me.id, t.platform as "meta" | "google", `A next step from the KPI board: ${text}`, t.id as string);
   if ("error" in r) return { ok: false, error: r.error };
@@ -137,6 +154,9 @@ export async function planFrom(from: From): Promise<{ ok: true; id: string } | {
   const admin = createAdminClient();
   const { data: t } = await admin.from("kpi_targets").select("id, client_id, platform, ad_account_id").eq("id", r.targetId).single();
   if (!t || !t.ad_account_id || !["google", "meta"].includes(t.platform)) return { ok: false, error: "This account has no ad account to change." };
+  // Planning is a step toward a change: only someone who may change this account starts one
+  const allowed = await canOn(admin, me, "ads.change", { platform: t.platform as "meta" | "google", clientId: t.client_id as string });
+  if (!allowed.ok) return { ok: false, error: allowed.reason };
   if (t.platform === "google" && !googleAdsConfigured()) return { ok: false, error: "Google Ads isn't connected." };
   if (t.platform === "meta" && !metaConfigured()) return { ok: false, error: "Meta isn't connected." };
   const { data: row, error } = await admin
@@ -165,7 +185,7 @@ export async function applyPlanned(id: string, pick?: number[]): Promise<{ ok: t
   const me = await requireStaff();
   const c = await view(id);
   if (!c) return { ok: false, error: "Not found." };
-  if (!c.canApply) return { ok: false, error: "Only the account's buyer, the head of its platform or an exec can apply changes." };
+  if (!c.canApply) return { ok: false, error: c.applyWhy ?? "Only the account's buyer, the head of its platform or an exec can apply changes." };
   if (!c.write.live) return { ok: false, error: c.write.reason ?? "Live changes are off for this client." };
   try {
     const status = await applyChange(createAdminClient(), id, me, pick);

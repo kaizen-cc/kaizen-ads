@@ -1,6 +1,7 @@
 "use server";
 
 import { requireStaff } from "@/lib/auth";
+import { can } from "@/lib/chat-permissions";
 import { findCopyLine } from "@/lib/copy-library";
 import type { CopyKind } from "@/lib/copy-library-core";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -22,6 +23,9 @@ export async function starCopyLine(clientId: string, key: string, kind: CopyKind
 
 export async function makeCopyVariations(clientId: string, key: string, n: number, note: string | null) {
   const me = await requireStaff();
+  // Writing copy is the copywriter's, the heads', the buyers' and the executives' (src/lib/chat-permissions.ts)
+  const allowed = can(me, "copy");
+  if (!allowed.ok) return { error: allowed.reason } as const;
   if (!ID.test(clientId)) return { error: "That client can't be found." } as const;
   // The line as the person can see it (their own session decides whether they can see the client)
   const line = await findCopyLine(await createClient(), clientId, key);

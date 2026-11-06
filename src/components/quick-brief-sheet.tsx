@@ -9,7 +9,7 @@ import { toast } from "@/components/toasts";
 import { startBrief } from "@/app/(team)/brief-job-actions";
 import { RefThumb } from "@/components/ref-thumb";
 import { SaveIdeaStar } from "@/components/save-idea-star";
-import { useCreativeFormats } from "@/components/creative-formats-provider";
+import { useCreativeFormats, useRoleCan } from "@/components/creative-formats-provider";
 import { AllotmentBars, Spark, Stepper, conceptLine } from "@/app/(team)/requests/new/parts";
 import { previewBrief, type PreviewResult } from "@/app/(team)/quick-brief-actions";
 import { quickEdited, type BriefSource, type QuickBrief, type QuickFormat } from "@/lib/quick-brief";
@@ -425,6 +425,9 @@ export function BriefPreviewButton({
   slotClassName?: string;
 }) {
   const open = () => pushParams({ preview: spec.previewKey });
+  // Not someone who writes briefs (the copywriter, customer success): a calm line, not a button that would refuse
+  const { briefWhy } = useRoleCan();
+  if (briefWhy) return <span className="text-[11.5px] text-faint">{briefWhy}</span>;
   const button = (
     <button type="button" onClick={open} className={className}>
       {children}

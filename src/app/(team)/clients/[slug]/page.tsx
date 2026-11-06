@@ -22,6 +22,8 @@ import { assetsStale } from "@/lib/client-assets";
 import { loadSprints } from "@/lib/sprints";
 import { reportableTargets } from "@/lib/reports/access";
 import { loadClientChat } from "@/lib/client-chat";
+import { clientPerms } from "@/lib/chat-permissions";
+import { permsOn } from "@/lib/chat-permissions-server";
 import type { AuditTarget } from "./client-chat";
 import { clientReadiness } from "@/lib/readiness";
 import { loadCampaigns } from "@/lib/client-campaigns";
@@ -342,6 +344,8 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
   const assetGlance = { images: imageCount ?? 0, videos: videoCount ?? 0, designs: designs ?? 0, newest, stale: assetsStale(newest) };
   const shotList = shot ? { id: shot.id, list: shot.list as ShotList, createdAt: shot.created_at, sentAt: shot.sent_at } : null;
   const changes = Object.fromEntries(kpis.filter((k) => k.accountId).map((k) => [k.id, changeBy.get(changeKey(k.platform, k.accountId!)) ?? []]));
+  // What this person may do on this client (src/lib/chat-permissions.ts): the chat and its cards offer only that
+  const perms = admin ? await permsOn(admin, me, client.id) : clientPerms(me);
   const targets: AuditTarget[] = kpis
     .filter((k) => k.accountId)
     .map((k) => {
@@ -462,7 +466,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       assets={assetGlance}
       shotList={shotList}
       moments={(momentRows ?? []) as MomentRow[]}
-      chat={{ initial: chatTurns, targets }}
+      chat={{ initial: chatTurns, targets, perms }}
       fatigue={fatigue}
       market={market}
       intake={intake}
@@ -475,7 +479,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       googleGtm={googleGtm}
       googleDeploys={googleDeploys}
       keywordLists={keywordLists}
-      canDeployGoogle={me.isExec || me.isLead || me.role === "google_buyer" || me.role === "head_of_google"}
+      canDeployGoogle={perms.change.google}
       today={nyToday()}
       team={Object.fromEntries(SLOTS.map((slot) => [slot.value, { current: currentIn(slot.value), options: optionsFor(slot) }]))}
       contacts={contacts}

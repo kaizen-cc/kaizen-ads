@@ -1,8 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { isExecOrLead, requireStaff, type Staff } from "@/lib/auth";
+import { requireStaff, type Staff } from "@/lib/auth";
 import { applyChange, checkOps, type PlannedOp } from "@/lib/ad-changes";
+import { can, canChangeBuyer, type Verdict } from "@/lib/chat-permissions";
+import { seatsOn } from "@/lib/chat-permissions-server";
 import { writeStatus, type WriteStatus } from "@/lib/write-status";
 import { editOp, edited, type OpEdit } from "@/lib/chat-change-core";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
@@ -28,6 +30,8 @@ export type ChatChangeView = {
   /** Execs can switch live changes on right from the card */
   canSwitch: boolean;
   canConfirm: boolean;
+  /** Who can confirm, when this person can't (one calm line in place of the buttons) */
+  confirmWhy: string | null;
   savedAt: string | null;
   appliedBy: string | null;
   appliedAt: string | null;
@@ -35,17 +39,20 @@ export type ChatChangeView = {
 
 const STALE_MS = 6 * 60_000;
 
-/** Who can confirm: execs, leads, the head of the platform, the client's own buyer on it (or the account's KPI owner). A buyer change: execs and leads. */
-async function mayConfirm(me: Staff, row: { platform: string; client_id: string; target_id: string | null }) {
-  if (row.platform === "team") return isExecOrLead(me);
-  if (me.isExec || me.isLead) return true;
-  if (me.role === (row.platform === "meta" ? "head_of_meta" : "head_of_google")) return true;
+/**
+ * Who can confirm (src/lib/chat-permissions.ts): execs, the head of the platform, the client's own buyer on it (or the
+ * account's KPI owner, on that platform). A buyer change: execs and the heads of Meta and Google.
+ */
+async function mayConfirm(me: Staff, row: { platform: string; client_id: string; target_id: string | null }): Promise<Verdict> {
+  if (row.platform === "team") return canChangeBuyer(me);
+  const platform = row.platform === "meta" ? "meta" : "google";
   const admin = createAdminClient();
-  const [{ data: seat }, { data: t }] = await Promise.all([
-    admin.from("client_assignments").select("profile_id").eq("client_id", row.client_id).eq("role", row.platform === "meta" ? "meta_buyer" : "google_buyer").eq("profile_id", me.id).maybeSingle(),
+  const [seats, { data: t }] = await Promise.all([
+    seatsOn(admin, me.id, row.client_id),
     row.target_id ? admin.from("kpi_targets").select("owner_id").eq("id", row.target_id).maybeSingle() : Promise.resolve({ data: null }),
   ]);
-  return Boolean(seat) || (t as { owner_id?: string | null } | null)?.owner_id === me.id;
+  const owns = (t as { owner_id?: string | null } | null)?.owner_id === me.id;
+  return can(me, "ads.change", { platform, seats: owns ? [...seats, platform] : seats });
 }
 
 /** Whether confirming would write to the account: the same read as every apply button (src/lib/write-status.ts) */
@@ -68,7 +75,7 @@ async function view(id: string): Promise<ChatChangeView | null> {
     error = "The plan took too long and stopped. Ask again in the chat.";
     await createAdminClient().from("ad_changes").update({ status, error, updated_at: new Date().toISOString() }).eq("id", id).eq("status", "planning");
   }
-  const [{ live, note: liveNote, write }, canConfirm] = await Promise.all([liveFor(c.platform as string, c.account as string, c.client_id as string), mayConfirm(me, { platform: c.platform as string, client_id: c.client_id as string, target_id: c.target_id as string | null })]);
+  const [{ live, note: liveNote, write }, confirm] = await Promise.all([liveFor(c.platform as string, c.account as string, c.client_id as string), mayConfirm(me, { platform: c.platform as string, client_id: c.client_id as string, target_id: c.target_id as string | null })]);
   return {
     id: c.id as string,
     platform: c.platform as ChatChangeView["platform"],
@@ -82,7 +89,8 @@ async function view(id: string): Promise<ChatChangeView | null> {
     liveNote,
     write,
     canSwitch: me.isExec,
-    canConfirm,
+    canConfirm: confirm.ok,
+    confirmWhy: confirm.reason,
     savedAt: (c.saved_at as string | null) ?? null,
     appliedBy: (c.applier as unknown as { full_name: string } | null)?.full_name ?? null,
     appliedAt: (c.applied_at as string | null) ?? null,
@@ -101,7 +109,7 @@ export async function confirmChatChange(id: string, picks: number[], edits: Reco
   const me = await requireStaff();
   const v = await view(id);
   if (!v) return { ok: false, error: "Not found." };
-  if (!v.canConfirm) return { ok: false, error: v.platform === "team" ? "Only execs and leads can change a client's buyer." : "Only the client's buyer, the head of the platform, a lead or an exec can confirm changes." };
+  if (!v.canConfirm) return { ok: false, error: v.confirmWhy ?? "This change isn't yours to confirm." };
   if (!["ready", "partial", "failed"].includes(v.status)) return { ok: false, error: "There's nothing to confirm." };
   if (!v.live) return { ok: false, error: v.liveNote ?? "Live changes are off for this client." };
   if (!picks.length) return { ok: false, error: "Tick at least one change." };

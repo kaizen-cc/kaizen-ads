@@ -1,6 +1,7 @@
 import { aiEnabled } from "@/lib/ai";
 import { toAllotment, type Allotment, type UsageRow } from "@/lib/allotment";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
+import { can } from "@/lib/chat-permissions";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { briefCardDraft, type Draft, type Size } from "./draft";
 import { stampAi } from "@/lib/brief-fingerprint";
@@ -18,6 +19,15 @@ export const maxDuration = 300;
 
 export default async function NewRequest({ searchParams }: PageProps<"/requests/new">) {
   const me = await requireStaff();
+  // Briefs are for the creative team, the media buyers and the executives: anyone else gets a calm line, not a form
+  const briefing = can(me, "brief");
+  if (!briefing.ok)
+    return (
+      <div className="mx-auto max-w-xl px-4 py-16 text-center">
+        <h1 className="text-[20px] font-semibold text-fg">New creative request</h1>
+        <p className="mt-3 text-[14px] leading-relaxed text-fg/60">{briefing.reason}</p>
+      </div>
+    );
   const { client, from, brief, asana, ai, card, audit, business, idea, draft, copyline } = await searchParams;
   const supabase = await createClient();
   const [{ data: rows }, { data: usage }, { data: angles }, { data: assignments }] = await Promise.all([

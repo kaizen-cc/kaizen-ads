@@ -2,7 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
-import { isExecOrLead, requireStaff } from "@/lib/auth";
+import { requireStaff } from "@/lib/auth";
+import { canOn } from "@/lib/chat-permissions-server";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -17,10 +18,9 @@ async function allowed(clientId: string) {
   const { data: mine } = await (await createClient()).from("clients").select("id, slug").eq("id", clientId).maybeSingle();
   if (!mine) return { error: "You don't work on this client." } as const;
   const admin = createAdminClient();
-  if (!isExecOrLead(me)) {
-    const { data: buyer } = await admin.from("client_assignments").select("profile_id").eq("client_id", clientId).eq("role", "meta_buyer").eq("profile_id", me.id).maybeSingle();
-    if (!buyer) return { error: "Only the client's media buyer or a lead can do this." } as const;
-  }
+  // A Meta launch: the client's Meta buyer, the Head of Meta and the executives (src/lib/chat-permissions.ts)
+  const ok = await canOn(admin, me, "ads.launch", { platform: "meta", clientId });
+  if (!ok.ok) return { error: ok.reason } as const;
   return { me, admin, slug: mine.slug as string } as const;
 }
 const refresh = (slug: string) => {

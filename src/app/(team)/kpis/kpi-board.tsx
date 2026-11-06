@@ -11,6 +11,7 @@ import { STATUS, deviationTone, kpiValue, money } from "@/lib/kpi/format";
 import { freshness } from "@/lib/dates";
 import { addKpiTarget, archiveKpiTarget, exploreKpi, linkAdAccount, pullClientKpis, saveAccountNotes, saveKpiTarget, setExtraMetrics, type NoteKey } from "./actions";
 import { ClientChat } from "../clients/[slug]/client-chat";
+import type { ClientPerms } from "@/lib/chat-permissions";
 import type { Explore } from "@/lib/kpi/explore";
 import { HealthChart, PaceBar, TargetGauge, healthHex, healthOf, paceMeta } from "./kpi-charts";
 import { AuditPanel, agoText, type AuditSummary, type QuickAction } from "./audit-panel";
@@ -35,6 +36,8 @@ import { kpiCampaigns, setCampaignCounted, setCampaignResult, setCardMetric, typ
 export type KpiRow = {
   id: string;
   clientId: string;
+  /** What this person may do on this client from the card's chat (src/lib/chat-permissions.ts) */
+  perms: ClientPerms;
   client: string;
   /** The Client ID we assign at enrollment */
   kaizenId: number | null;
@@ -752,6 +755,7 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
                 clientId={r.clientId}
                 client={r.client}
                 live
+                perms={r.perms}
                 scope={r.accountId ? { platform: r.platform === "google" ? "google" : "meta", targetId: r.id } : null}
                 targets={r.accountId ? [{ id: r.id, label: `${r.platform === "google" ? "Google" : "Meta"}${r.label ? ` · ${r.label}` : ""}`, status: r.audit?.status ?? "none", auditId: r.audit?.id ?? null }] : []}
               />

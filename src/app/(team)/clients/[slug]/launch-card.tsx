@@ -406,10 +406,10 @@ export function LaunchCard({ id, compact = false, reply = false }: { id: string;
           <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-ink/45">Only you can decide{requiredOpen.length ? ` · ${requiredOpen.length} to go` : ""}</p>
           <ul className="grid gap-2">
             {v.questions.map((q) => (
-              <Question key={q.key} q={q} busy={Boolean(busy) || v.status !== "asking"} onUse={(answer) => void act(`use:${q.key}`, () => (answer ? takeLaunchProposals(v.id, [q.key], { [q.key]: answer }) : takeLaunchProposals(v.id, [q.key])))} />
+              <Question key={q.key} q={q} busy={Boolean(busy) || v.status !== "asking" || !v.canConfirm} onUse={(answer) => void act(`use:${q.key}`, () => (answer ? takeLaunchProposals(v.id, [q.key], { [q.key]: answer }) : takeLaunchProposals(v.id, [q.key])))} />
             ))}
           </ul>
-          {v.status === "asking" && (
+          {v.status === "asking" && v.canConfirm && (
             <div className="flex flex-wrap items-center gap-2">
               {open.length > 1 && (
                 <button type="button" disabled={Boolean(busy)} onClick={() => void act("all", () => takeLaunchProposals(v.id, open.map((q) => q.key)))} className="h-11 rounded-full border border-ink/15 px-4 text-[12.5px] text-ink/75 hover:text-fg disabled:opacity-40 md:h-9">
@@ -461,15 +461,16 @@ export function LaunchCard({ id, compact = false, reply = false }: { id: string;
         </p>
       )}
 
-      {/* Once it's created and read back: suggest more for the rest of the account (sprint or the buyer's tasks) */}
-      {v.status === "applied" && v.qa && <LaunchMore runId={v.id} />}
+      {/* Once it's created and read back: suggest more for the rest of the account (sprint or the buyer's tasks), only
+          for someone who may work this platform's account on this client */}
+      {v.status === "applied" && v.qa && v.canConfirm && <LaunchMore runId={v.id} />}
 
-      {v.status === "ready" && !v.live && (v.write && !v.write.live ? (
+      {v.status === "ready" && v.canConfirm && !v.live && (v.write && !v.write.live ? (
         <WriteOff status={v.write} canSwitch={v.canSwitch} account={v.plan?.account ?? null} compact onLive={() => void loadLaunch(v.id).then((next) => next && setV(next))} />
       ) : (
         <p className="rounded-[10px] border border-warn/30 bg-warn-soft/30 px-3 py-2 text-[12px] text-ink/80">{v.liveNote ?? "Live changes are off for this client."} The plan stays here to create once they&apos;re on.</p>
       ))}
-      {v.status === "ready" && v.live && !v.canConfirm && <p className="text-[11.5px] text-ink/50">The client&apos;s Meta buyer, the head of Meta, a lead or an exec confirms a launch.</p>}
+      {["asking", "ready", "partial", "failed"].includes(v.status) && !v.canConfirm && <p className="text-[11.5px] text-ink/50">{v.confirmWhy ?? "The client's Meta buyer, the head of Meta or an exec works a Meta launch."}</p>}
       {error && <p className="text-[12px] text-bad">{error}</p>}
 
       <div className="flex flex-wrap gap-2">
@@ -484,14 +485,14 @@ export function LaunchCard({ id, compact = false, reply = false }: { id: string;
             {busy === "retry" ? "Retrying…" : `Retry ${failed} line${failed === 1 ? "" : "s"}`}
           </button>
         )}
-        {["asking", "ready"].includes(v.status) && (
+        {["asking", "ready"].includes(v.status) && v.canConfirm && (
           <button type="button" disabled={Boolean(busy)} onClick={() => void act("aside", () => setAsideLaunch(v.id))} className="h-11 rounded-full border border-ink/10 px-4 text-[12.5px] text-ink/60 hover:text-fg md:h-9">
             Set aside
           </button>
         )}
       </div>
 
-      {reply && ["asking", "ready"].includes(v.status) && (
+      {reply && v.canConfirm && ["asking", "ready"].includes(v.status) && (
         <form
           onSubmit={(e) => {
             e.preventDefault();

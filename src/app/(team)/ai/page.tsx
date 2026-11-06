@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { aiEnabled } from "@/lib/ai";
 import { requireStaff } from "@/lib/auth";
-import { agentForRole, groupsFor } from "@/lib/kaizen-ai/agents";
+import { agentForRole, groupsFor, quickActionIds } from "@/lib/kaizen-ai/agents";
 import { AGENT_LABEL } from "@/lib/kaizen-ai/types";
 import { listTemplates, listThreads, needsClaudeImport, pickableClients } from "./actions";
 import { KaizenAi } from "./kaizen-ai";
@@ -22,6 +22,7 @@ export default async function KaizenAiPage() {
         initialTemplates={templates}
         clients={clients}
         groups={groupsFor(me.role)}
+        quickIds={quickActionIds(me)}
         homeAgent={{ key: home, label: AGENT_LABEL[home] }}
         mustImport={mustImport}
       />

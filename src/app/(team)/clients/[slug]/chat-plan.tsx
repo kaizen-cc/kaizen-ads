@@ -325,12 +325,12 @@ export function ChatPlan({ id }: { id: string }) {
         </ul>
       )}
 
-      {open && !v.live && v.platform !== "team" && (v.write ? (
+      {open && v.canConfirm && !v.live && v.platform !== "team" && (v.write ? (
         <WriteOff status={v.write} canSwitch={v.canSwitch} account={v.account} compact onLive={() => void loadChatChange(v.id).then((next) => next && setV(next))} />
       ) : (
         <p className="rounded-[10px] border border-warn/30 bg-warn-soft/30 px-3 py-2 text-[12px] text-ink/80">{v.liveNote ?? "Live changes are off for this client."} Save it as a checklist to apply by hand, or confirm it here once they&apos;re on.</p>
       ))}
-      {open && !v.canConfirm && <p className="text-[11.5px] text-ink/50">{v.platform === "team" ? "An exec or a lead confirms a buyer change." : `The client's buyer, the head of ${p.name}, a lead or an exec confirms this.`}</p>}
+      {open && !v.canConfirm && <p className="text-[11.5px] text-ink/50">{v.confirmWhy ?? (v.platform === "team" ? "An exec or the head of Meta or Google confirms a buyer change." : `The client's ${p.name} buyer, the head of ${p.name} or an exec confirms this.`)}</p>}
       {error && <p className="text-[12px] text-bad">{error}</p>}
 
       {open && v.canConfirm && (

@@ -2,6 +2,7 @@
 
 import { after } from "next/server";
 import { requireStaff } from "@/lib/auth";
+import { canOn } from "@/lib/chat-permissions-server";
 import type { ChatTurn } from "@/lib/handoff";
 import type { MoreState } from "@/lib/launch-more";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -37,6 +38,11 @@ export async function answerLaunchMore(runId: string, yes: boolean): Promise<Ans
   if (!r) return { ok: false, error: "Not found." };
   if (r.status !== "applied") return { ok: false, error: "Suggestions come once the launch is deployed." };
   const admin = createAdminClient();
+  // Suggestions become sprint actions or tasks for this platform's account: only for someone who may change it
+  if (yes) {
+    const allowed = await canOn(admin, me, "ads.change", { platform: r.platform, clientId: r.client_id });
+    if (!allowed.ok) return { ok: false, error: allowed.reason };
+  }
   const m = await import("@/lib/launch-more");
   const asked: ChatTurn = { role: "user", text: yes ? "Yes, suggest more changes" : "No thanks", at: new Date().toISOString() };
   if (!yes) {
@@ -59,6 +65,9 @@ export async function startLaunchMoreItem(runId: string, index: number): Promise
   const r = await visible(runId);
   if (!r) return { ok: false, error: "Not found." };
   const admin = createAdminClient();
+  // startChatChange checks this too; said here first so nothing is marked started for someone who can't
+  const allowed = await canOn(admin, me, "ads.change", { platform: r.platform, clientId: r.client_id });
+  if (!allowed.ok) return { ok: false, error: allowed.reason };
   const m = await import("@/lib/launch-more");
   const b = await m.runBasics(admin, runId);
   const item = b?.more?.items[index];
@@ -79,10 +88,12 @@ export async function startLaunchMoreItem(runId: string, index: number): Promise
 
 /** "Launch with the chat" opened on a Google KPI card: start reading the account now, so the launch card is quick */
 export async function warmLaunchRead(clientId: string, targetId: string | null): Promise<void> {
-  await requireStaff();
+  const me = await requireStaff();
   const { data: c } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
   if (!c) return;
   const admin = createAdminClient();
+  // Only warmed for someone who may launch in this client's Google Ads (no read for a launch that won't start)
+  if (!(await canOn(admin, me, "ads.launch", { platform: "google", clientId })).ok) return;
   after(async () => {
     const { warmGoogleLaunch } = await import("@/lib/google-launch/runs");
     await warmGoogleLaunch(admin, clientId, typeof targetId === "string" ? targetId : null);

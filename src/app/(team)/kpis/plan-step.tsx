@@ -11,7 +11,7 @@ import { planTargetStep, writeForTarget } from "./change-actions";
 // run, confirm). Whether it can be written shows first: live changes off, it plans a checklist to do by hand.
 
 export function PlanStep({ targetId, step, platform }: { targetId: string; step: string; platform: "meta" | "google" }) {
-  const [gate, setGate] = useState<{ write: WriteStatus; canSwitch: boolean } | null>(null);
+  const [gate, setGate] = useState<{ write: WriteStatus; canSwitch: boolean; why: string | null } | null>(null);
   const [id, setId] = useState<string | "pending" | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -40,6 +40,8 @@ export function PlanStep({ targetId, step, platform }: { targetId: string; step:
   };
 
   if (id && id !== "pending") return <ChatPlan id={id} />;
+  // Not this person's account to change: who can, in one calm line instead of the button
+  if (gate?.why) return <p className="text-[12px] text-faint">{gate.why}</p>;
   return (
     <div className="grid min-w-0 gap-2">
       {off && <WriteOff status={off} canSwitch={gate?.canSwitch ?? false} compact onLive={() => setGate(gate && { ...gate, write: { ...gate.write, live: true, off: null, reason: null } })} />}

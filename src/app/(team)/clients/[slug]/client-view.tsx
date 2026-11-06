@@ -36,6 +36,7 @@ import { CreativePanel } from "./creative-panel";
 import { CopyLibrary } from "@/components/copy-library";
 import { KpiPanel } from "./kpi-panel";
 import { ClientChat, type AuditTarget } from "./client-chat";
+import type { ClientPerms } from "@/lib/chat-permissions";
 import type { AuditSummary } from "../../kpis/audit-panel";
 import type { ChatTurn } from "@/lib/handoff";
 import type { AccountChange } from "@/lib/account-changes";
@@ -182,7 +183,7 @@ export type ClientViewProps = {
   assets?: AssetGlance | null; // what's on their Drive
   shotList?: SavedShotList | null; // next month's shot list
   moments?: MomentRow[]; // their marketing moments, ahead and past
-  chat?: { initial: ChatTurn[]; targets: AuditTarget[] } | null; // my thread with the AI about this client
+  chat?: { initial: ChatTurn[]; targets: AuditTarget[]; perms?: ClientPerms } | null; // my thread with the AI about this client (and what I may do from it)
   fatigue?: WatchRow[] | null; // ads wearing out
   market?: MarketAd[]; // live in this client's market (Motion)
   intake?: IntakeRecord | null; // the marketing intake form; undefined in the design preview
@@ -275,7 +276,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
 
   return (
     <div className="mx-auto grid max-w-6xl gap-8">
-      {chat && !demo && <ClientChat clientId={client.id} client={client.name} initial={chat.initial} targets={chat.targets} live={live} />}
+      {chat && !demo && <ClientChat clientId={client.id} client={client.name} initial={chat.initial} targets={chat.targets} live={live} perms={chat.perms} />}
       {/* Header */}
       <header className="grid gap-3">
         <Link href="/clients" className="inline-flex min-h-11 w-fit items-center text-xs text-muted hover:text-fg md:min-h-0">
