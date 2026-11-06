@@ -20,6 +20,7 @@ import {
   G,
   googleItems,
   googleOperations,
+  followCampaign,
   googleQuestions,
   kwKey,
   kwText,
@@ -364,7 +365,7 @@ export async function prepareGoogleRun(admin: SupabaseClient, id: string) {
     const live = res.campaigns.filter((c) => c.status === "ENABLED").length;
     const facts = `${count(res.campaigns.length)} campaigns (${count(live)} live), ${count(res.adGroups.length)} ad groups, ${count(res.inAccount.length)} keywords read${cached ? " (read in the last few minutes)" : ""}.`;
     const summary = [read ? `${read}.` : "", facts, ...draft.notes.map((x) => `Note: ${x}`)].filter(Boolean).join("\n\n");
-    await patch(admin, id, { sheet: draft, resolution: res, summary, questions: must, status: "asking", progress: "Tailoring the questions to the account", error: null });
+    await patch(admin, id, { sheet: draft, resolution: res, summary, questions: followCampaign(must, res.campaigns, res.adGroups), status: "asking", progress: "Tailoring the questions to the account", error: null });
     console.log(`[launch] ${scope} · questions on the card ${Date.now() - t0}ms`);
   } catch (e) {
     await patch(admin, id, { status: "failed", progress: null, error: msg(e).slice(0, 500) });
@@ -420,7 +421,7 @@ ${RULES}`,
       latest.questions,
     );
     const checks = intakeChecks(draft, res);
-    await patch(admin, id, { sheet: draft, resolution: { ...(latest.resolution ?? res), checks }, summary, questions, progress: null });
+    await patch(admin, id, { sheet: draft, resolution: { ...(latest.resolution ?? res), checks }, summary, questions: followCampaign(questions, res.campaigns, res.adGroups), progress: null });
     console.log(`[launch] ${scope} · questions tailored ${Date.now() - t0}ms`);
   } catch (e) {
     // The questions from code are already on the card and answerable: only the tailoring is lost
@@ -488,6 +489,7 @@ ${RULES}`,
   if (out.offTopic) return { answer: "", offTopic: true, building: false };
   let questions = applyAnswers(run.questions, out.answers);
   if (out.newQuestions.length) questions = mergeQuestions(out.newQuestions.map((q) => ({ ...q, answer: null })), [], questions);
+  questions = followCampaign(questions, run.resolution.campaigns, run.resolution.adGroups);
   const turns = [...run.turns, { role: "user" as const, text: message.slice(0, 3000), at: now() }, { role: "assistant" as const, text: out.answer, at: now() }].slice(-40);
   if (out.setAside) {
     await patch(admin, id, { questions, turns, status: "set_aside" });
@@ -509,7 +511,7 @@ export async function acceptGoogleProposals(admin: SupabaseClient, id: string, k
     run.questions,
     run.questions.filter((q) => keys.includes(q.key) && !q.answer).map((q) => ({ key: q.key, answer: chosen[q.key] && q.options.includes(chosen[q.key]) ? chosen[q.key] : q.proposal })),
   );
-  await patch(admin, id, { questions });
+  await patch(admin, id, { questions: run.resolution ? followCampaign(questions, run.resolution.campaigns, run.resolution.adGroups) : questions });
 }
 
 /** A suggestion taken or skipped on the card */

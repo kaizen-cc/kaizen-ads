@@ -121,3 +121,26 @@ export function applyAnswers(qs: LaunchQuestion[], answers: { key: string; answe
   }
   return next;
 }
+
+/**
+ * Where the ads land must be one place: an answer to "structure" that names more than one live campaign or ad set
+ * ("if brand, X; if not, Y") is cleared and asked again, and its proposal is always one of the options offered.
+ */
+export function followStructure(questions: LaunchQuestion[], existing: { name: string }[]): LaunchQuestion[] {
+  return questions.map((x) => {
+    if (x.key !== "structure") return x;
+    const proposal = x.options.length && !x.options.includes(x.proposal) ? x.options[0] : x.proposal;
+    const a = String(x.answer ?? "").toLowerCase();
+    let rest = a;
+    let named = 0;
+    for (const e of [...existing].sort((p, q) => q.name.length - p.name.length)) {
+      const n = e.name.toLowerCase();
+      if (n && rest.includes(n)) {
+        named++;
+        rest = rest.split(n).join(" ");
+      }
+    }
+    // "A new ad set copied from X" names one place; naming two different ones is the ambiguous case
+    return named > 1 && !/copied from/i.test(a) ? { ...x, proposal, answer: null, why: "Pick one place: that answer named more than one campaign or ad set." } : { ...x, proposal };
+  });
+}

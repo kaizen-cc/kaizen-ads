@@ -425,6 +425,57 @@ export function campaignChoice(answer: string | null | undefined, campaigns: Acc
   return null;
 }
 
+/** Every live campaign an answer names (an answer naming two, "if brand, X; if non-brand, Y", picks neither) */
+export function campaignsNamed(answer: string | null | undefined, campaigns: AccountCampaign[]) {
+  const a = String(answer ?? "").toLowerCase();
+  if (!a) return [];
+  // Longest names first, each match taken out so a name inside a longer one isn't counted twice
+  let rest = a;
+  const out: AccountCampaign[] = [];
+  for (const c of [...campaigns].sort((x, y) => y.name.length - x.name.length)) {
+    const n = c.name.toLowerCase();
+    if (n && rest.includes(n)) {
+      out.push(c);
+      rest = rest.split(n).join(" ");
+    }
+  }
+  return out;
+}
+
+export const NEW_AD_GROUP = "A new ad group named for the theme";
+
+/**
+ * The ad group question follows the campaign answer: only the ad groups inside the chosen campaign (never ones from
+ * other campaigns), only a new one for a new campaign, and nothing to pick until one campaign is chosen. A campaign
+ * answer that names more than one campaign is cleared and asked again; proposals are always one of the options.
+ */
+export function followCampaign(questions: LaunchQuestion[], campaigns: AccountCampaign[], adGroups: AccountAdGroup[]): LaunchQuestion[] {
+  const camp = questions.find((x) => x.key === "campaign");
+  let out = questions.map((x) => ({ ...x }));
+  if (camp) {
+    const named = campaignsNamed(camp.answer, campaigns);
+    out = out.map((x) => {
+      if (x.key !== "campaign") return x;
+      const proposal = x.options.length && !x.options.includes(x.proposal) ? x.options[0] : x.proposal;
+      return named.length > 1 ? { ...x, proposal, answer: null, why: `Pick one campaign: that answer named ${named.length} (${named.map((c) => c.name).join(", ")}).` } : { ...x, proposal };
+    });
+  }
+  const answer = out.find((x) => x.key === "campaign")?.answer ?? null;
+  const choice = camp ? campaignChoice(answer, campaigns) : null;
+  return out.map((x) => {
+    if (x.key !== "ad_group") return x;
+    if (!camp) return x;
+    if (!choice) return { ...x, options: [], proposal: "Pick the campaign first", answer: null, why: "The ad groups to choose from depend on the campaign." };
+    if (choice.mode === "new") return { ...x, options: [NEW_AD_GROUP], proposal: NEW_AD_GROUP, answer: x.answer && !/new/i.test(x.answer) ? null : x.answer };
+    const inside = adGroups.filter((g) => g.campaignId === choice.id && g.status !== "REMOVED");
+    const options = [...inside.slice(0, 8).map((g) => `${g.name}${g.status === "PAUSED" ? " (paused)" : ""}${g.rsas ? `, ${g.rsas} ad${g.rsas === 1 ? "" : "s"}` : ""}`), NEW_AD_GROUP];
+    // An answer naming an ad group from another campaign no longer stands
+    const ans = x.answer;
+    const stands = !ans || /new/i.test(ans) || inside.some((g) => ans.toLowerCase().includes(g.name.toLowerCase()));
+    return { ...x, options, proposal: options.includes(x.proposal) ? x.proposal : NEW_AD_GROUP, answer: stands ? ans : null };
+  });
+}
+
 // ─── Edits on the card ────────────────────────────────────────────────────────────────────────────────────────────
 
 export type PlanEdit =

@@ -9,7 +9,7 @@ import { openSource, type SheetSource } from "./intake";
 import { gridToSheet } from "./sheet";
 import { resolveSheet } from "./resolve";
 import { askQuestions, proposeStructure, readWithModel, replyToBuyer } from "./converse";
-import { applyAnswers, mergeQuestions, requiredQuestions } from "./questions";
+import { applyAnswers, followStructure, mergeQuestions, requiredQuestions } from "./questions";
 import { buildPlan, planItems, runOutcome, runnable, unanswered } from "./plan";
 import { adParams, adsetParams, campaignParams, creativeSpec, ENHANCEMENTS_OFF, formFields, scheduleParams, type Uploaded } from "./payloads";
 import { explainMetaError } from "./errors";
@@ -179,7 +179,7 @@ export async function prepareRun(admin: SupabaseClient, id: string) {
       return;
     }
     const questions = mergeQuestions(asked.questions.map((q) => ({ ...q, answer: null })), must, latest.questions);
-    await patch(admin, id, { summary, questions, progress: null });
+    await patch(admin, id, { summary, questions: followStructure(questions, latest.resolution?.existing ?? []), progress: null });
     console.log(`[launch] ${scope} · questions tailored ${Date.now() - t0}ms`);
   } catch (e) {
     console.error(`[launch] ${scope} · tailoring failed:`, msg(e));
@@ -201,6 +201,7 @@ export async function launchReply(admin: SupabaseClient, id: string, message: st
   if (out.offTopic) return { answer: "", offTopic: true, building: false };
   let questions = applyAnswers(run.questions, out.answers);
   if (out.newQuestions.length) questions = mergeQuestions(out.newQuestions.map((q) => ({ ...q, answer: null })), [], questions);
+  questions = followStructure(questions, run.resolution.existing);
   const turns = [...run.turns, { role: "user" as const, text: message.slice(0, 3000), at: now() }, { role: "assistant" as const, text: out.answer, at: now() }].slice(-40);
   if (out.setAside) {
     await patch(admin, id, { questions, turns, status: "set_aside" });
@@ -228,7 +229,7 @@ export async function acceptProposals(admin: SupabaseClient, id: string, keys: s
       .filter((q) => keys.includes(q.key) && !q.answer)
       .map((q) => ({ key: q.key, answer: chosen[q.key] && q.options.includes(chosen[q.key]) ? chosen[q.key] : q.proposal })),
   );
-  await patch(admin, id, { questions });
+  await patch(admin, id, { questions: followStructure(questions, run.resolution?.existing ?? []) });
 }
 
 // ─── The plan ───────────────────────────────────────────────────────────────────────────────────────────────────
