@@ -33,7 +33,9 @@ Leave fields you don't need as "" (or false, 0).
 Keep it short: 1 to 8 sentences or a short list, longer only for a summary they asked for. Plain text, no markdown (no asterisks or headings); start list lines with "- ". No emojis.
 If they ask you to run an audit, say they can start one with the "Run an audit" button above the chat (it's the same audit as on the KPI board and shows in both places).
 
-Changes in the ad account: when the teammate asks you to change something in the client's Meta or Google Ads account (pause or turn on campaigns, ad sets, ads or keywords, change budgets or targets, rename, swap links, final URLs or UTMs, copy or move an ad to another campaign or ad set, add negative keywords) or to change the client's media buyer, set change: wanted true, platform "meta", "google" or "team" (the buyer), and instruction: their full request in one or two sentences with every name, number and condition they gave (resolve "it" and "that one" from the conversation). Never say it's done or that you can't: say you're pulling the exact campaigns and ads from the live account so they can check them and confirm before anything changes. Only when they clearly ask for a change; a question about the account is not a change. Otherwise change is wanted false with "" fields. One change request per message; for both platforms, do the one they named first and say you'll do the other next.`;
+Changes in the ad account: when the teammate asks you to change something in the client's Meta or Google Ads account (pause or turn on campaigns, ad sets, ads or keywords, change budgets or targets, rename, swap links, final URLs or UTMs, copy or move an ad to another campaign or ad set, add negative keywords) or to change the client's media buyer, set change: wanted true, platform "meta", "google" or "team" (the buyer), and instruction: their full request in one or two sentences with every name, number and condition they gave (resolve "it" and "that one" from the conversation). Never say it's done or that you can't: say you're pulling the exact campaigns and ads from the live account so they can check them and confirm before anything changes. Only when they clearly ask for a change; a question about the account is not a change. Otherwise change is wanted false with "" fields. One change request per message; for both platforms, do the one they named first and say you'll do the other next.
+
+Launch sheets: when they share a launch sheet (a plan of ads to launch: rows of dates, Pages, creative and copy) to launch or set up, summarize it in a sentence or two; the launch card under your answer takes it from there (the media buyer checks it against the account and asks what only they can decide). Don't plan the launch yourself and don't use change for it.`;
 
 const SCHEMA = {
   type: "object",
@@ -134,6 +136,48 @@ async function act(admin: SupabaseClient, clientId: string, profileId: string, a
   return done;
 }
 
+type SharedDoc = { id: string; kind: string; name: string; path: string | null; url: string | null; mime: string | null };
+
+/** The first shared file or link that is a launch sheet (a table of ads), or that was shared with "launch this" */
+async function launchSheetIn(admin: SupabaseClient, docs: SharedDoc[], q: string) {
+  const { isLaunchSheet, isSheetLink } = await import("@/lib/launch-sheet/intake");
+  const asked = /(launch|set (it|this|them) up|push (it|this|them)|go live|build (it|this|the campaign))/i.test(q);
+  for (const d of docs) {
+    const src =
+      d.kind === "file" && d.path
+        ? { kind: "file" as const, bucket: "client-docs", path: d.path, name: d.name, mime: d.mime ?? "", docId: d.id }
+        : d.kind === "link" && d.url && isSheetLink(d.url)
+          ? { kind: "link" as const, url: d.url, name: d.name, docId: d.id }
+          : null;
+    if (!src) continue;
+    const sheetLike = src.kind === "link" || /pdf|sheet|excel|csv/.test(src.mime) || /\.(pdf|xlsx|xlsm|csv|tsv)$/i.test(src.name);
+    if (!sheetLike) continue;
+    if (asked || (await isLaunchSheet(admin, src))) return src;
+  }
+  return null;
+}
+
+/** The person's message, answered in the launch conversation they have open with this client (null: not about it) */
+async function continueLaunch(admin: SupabaseClient, clientId: string, profileId: string, q: string): Promise<ChatTurn[] | null> {
+  const { openRunFor, launchReply, planRun } = await import("@/lib/launch-sheet/runs");
+  const open = await openRunFor(admin, clientId, profileId);
+  if (!open || !["asking", "ready"].includes(open.status)) return null;
+  const r = await launchReply(admin, open.id, q);
+  if (r.offTopic) return null;
+  if (r.building) {
+    const { after } = await import("next/server");
+    after(() => planRun(admin, open.id));
+  }
+  const chat = await loadClientChat(admin, clientId, profileId);
+  const now = new Date().toISOString();
+  const text = r.building ? `${r.answer}
+
+Laying out the plan now and checking every line with Meta: it's on the launch card.` : r.answer;
+  const next: ChatTurn[] = [...chat, { role: "user" as const, text: q, at: now }, { role: "assistant" as const, text, at: now, launch: { id: open.id } }].slice(-60);
+  await admin.from("client_chats").upsert({ client_id: clientId, profile_id: profileId, turns: next, updated_at: now });
+  return next;
+}
+
 /**
  * One message in the person's thread about this client, with any files (already uploaded to the client's folder)
  * and links; the answer is saved with it. Sorted first: a quick question gets a fast answer, a big one the full
@@ -149,6 +193,12 @@ export async function askAboutClient(
 ) {
   const q = question.trim().slice(0, 3000);
   const links = [...new Set(q.match(URL_RE) ?? [])].slice(0, 4);
+  // A launch from a sheet waiting on this person: their message goes to the Media Buyer in that conversation (unless
+  // it's about something else, or they're sharing something new)
+  if (q && !files.length && !links.length) {
+    const handled = await continueLaunch(admin, clientId, profileId, q);
+    if (handled) return handled;
+  }
   const ceiling = await getAgent("strategist");
   // The shared files and links go into the client's document history first, then they're read
   const docs = await addDocs(admin, clientId, profileId, "chat", files, links);
@@ -231,12 +281,31 @@ export async function askAboutClient(
     } else answer = `${answer}\n\n${r.error}`;
   }
 
+  // A launch sheet shared (a table of ads to launch, or a sheet shared with "launch this"): the Media Buyer reads it,
+  // checks it against the account and asks what only the buyer can answer, on the launch card under the answer
+  let launch: { id: string } | undefined;
+  const sheetDoc = await launchSheetIn(admin, docs as SharedDoc[], q);
+  if (sheetDoc) {
+    const { startRun, prepareRun } = await import("@/lib/launch-sheet/runs");
+    const r = await startRun(admin, clientId, profileId, sheetDoc, "client_chat");
+    if ("id" in r) {
+      launch = { id: r.id };
+      const { after } = await import("next/server");
+      after(() => prepareRun(admin, r.id));
+      answer = `${answer}
+
+This is a launch sheet, so I'm reading it as one: checking every Page, file, size, post, the pixel and what's already in the account, then I'll ask what only you can decide. It's all on the card below; nothing goes to Meta until you confirm the plan.`;
+    } else answer = `${answer}
+
+I couldn't start the launch from it: ${r.error}`;
+  }
+
   const now = new Date().toISOString();
   const attachments = docs.map((d) => ({ id: d.id as string, name: d.kind === "link" ? (out.docs.find((x) => x.n === docs.indexOf(d) + 1)?.title ?? (d.name as string)) : (d.name as string), kind: d.kind as "file" | "link" }));
   const next: ChatTurn[] = [
     ...chat,
     { role: "user" as const, text: q, at: now, ...(attachments.length ? { attachments } : {}) },
-    { role: "assistant" as const, text: answer, at: now, level, researched: Boolean(extra.includes("<web_research>")), ...(done.length ? { done } : {}), ...(plan ? { plan } : {}) },
+    { role: "assistant" as const, text: answer, at: now, level, researched: Boolean(extra.includes("<web_research>")), ...(done.length ? { done } : {}), ...(plan ? { plan } : {}), ...(launch ? { launch } : {}) },
   ].slice(-60);
   await admin.from("client_chats").upsert({ client_id: clientId, profile_id: profileId, turns: next, updated_at: now });
   return next;

@@ -646,6 +646,50 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
     },
   ];
 
+  // A launch sheet shared here (attached, or a Google Sheets / Drive link): the same launch as in the client's chat
+  tools.push({
+    name: "launch_sheet",
+    description:
+      "Starts a launch from a launch sheet (a PDF, Excel or CSV attached to this message, or a Google Sheets or Drive link): the Media Buyer reads it, checks it against the client's ad account and Drive, and asks the buyer what only they can decide, on a launch card. The plan is laid out and created only after the buyer answers and confirms on the card. Use it when they share a launch sheet to launch or set up. Afterwards, pass the buyer's answers about that launch with launch_reply.",
+    input_schema: { type: "object", properties: { client: CLIENT, file: { type: "string", description: "The attached file's name (leave out for a link)" }, url: { type: "string", description: "A Google Sheets or Drive link (leave out for an attached file)" } }, additionalProperties: false },
+    status: (input, client) => `Reading the launch sheet for ${nameFor(ctx, input) ?? client ?? "the client"}…`,
+    run: async (input) => {
+      const c = await clientOf(ctx, input);
+      const { AI_BUCKET } = await import("./files");
+      const want = String(input.file ?? "").trim().toLowerCase();
+      const url = String(input.url ?? "").trim();
+      const f = ctx.files.find((x) => (want ? x.name.toLowerCase() === want : ["pdf", "doc", "text"].includes(x.kind))) ?? null;
+      const source = url ? { kind: "link" as const, url, name: url } : f ? { kind: "file" as const, bucket: AI_BUCKET, path: f.path, name: f.name, mime: f.mime } : null;
+      if (!source) throw new Error("Attach the launch sheet (PDF, Excel or CSV) or paste its Google Sheets link.");
+      const { startRun, prepareRun } = await import("@/lib/launch-sheet/runs");
+      const r = await startRun(ctx.admin, c.id, ctx.me.id, source, "kaizen_ai");
+      if ("error" in r) throw new Error(r.error);
+      const { after } = await import("next/server");
+      after(() => prepareRun(ctx.admin, r.id));
+      card({ type: "launch", id: r.id, client: c.name });
+      return { started: true, launchId: r.id, note: "The launch card is reading and checking the sheet now; the summary, the checklist and the questions appear on it. Say so in a sentence; don't list the questions yourself. Nothing goes to Meta until the buyer confirms the plan on the card." };
+    },
+  });
+  tools.push({
+    name: "launch_reply",
+    description: "Passes the buyer's message about a launch started with launch_sheet (answers to its questions, changes to its plan, 'build the plan') to the Media Buyer running it, and returns its reply. Use the launchId launch_sheet returned. Never confirm a launch here: that's on the card.",
+    input_schema: { type: "object", properties: { launchId: { type: "string" }, message: { type: "string" } }, required: ["launchId", "message"], additionalProperties: false },
+    status: () => "Passing it to the Media Buyer…",
+    run: async (input) => {
+      const id = String(input.launchId ?? "");
+      const { data: run } = await ctx.db.from("launch_runs").select("id, client_id, status").eq("id", id).maybeSingle();
+      if (!run) throw new Error("That launch isn't one you can see.");
+      if (!["asking", "ready", "failed"].includes(run.status as string)) return { status: run.status, note: "This launch isn't waiting on the buyer right now; the card shows where it is." };
+      const { launchReply, planRun } = await import("@/lib/launch-sheet/runs");
+      const r = await launchReply(ctx.admin, id, String(input.message ?? "").slice(0, 3000));
+      if (r.building) {
+        const { after } = await import("next/server");
+        after(() => planRun(ctx.admin, id));
+      }
+      return r.offTopic ? { note: "The Media Buyer says this isn't about the launch." } : { reply: r.answer, planning: r.building };
+    },
+  });
+
   // Search everything on file, recorded calls: the report chat's own lookups, reused for the pinned client
   if (ctx.clientId) {
     const { reportTools } = await import("@/lib/reports/tools");

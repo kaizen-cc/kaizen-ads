@@ -10,6 +10,7 @@ import { askClientAi, clearClientAi, loadClientAi, openClientDoc, undoClientDesk
 import { createClient } from "@/lib/supabase/client";
 import { Layer } from "./layer";
 import { ChatPlan } from "./chat-plan";
+import { LaunchCard } from "./launch-card";
 
 // The client desk: a button in the corner that opens a drawer, so the page itself doesn't get longer. Ask a question,
 // strategize, get a summary, share files and links (filed in the client's documents and read), tell it what to
@@ -34,7 +35,7 @@ async function openDoc(id: string) {
 
 const LEVEL = { quick: { label: "Quick answer", dot: "bg-ink/40" }, standard: { label: "Considered", dot: "bg-[#9aa8ff]" }, deep: { label: "Thought it through", dot: "bg-brand" } } as const;
 
-function Bubble({ t, onUndo }: { t: ChatTurn; onUndo?: (i: number) => void }) {
+function Bubble({ t, onUndo, launchLatest = true }: { t: ChatTurn; onUndo?: (i: number) => void; launchLatest?: boolean }) {
   const me = t.role === "user";
   return (
     <div className={`grid gap-1 ${me ? "justify-items-end" : ""}`}>
@@ -67,6 +68,8 @@ function Bubble({ t, onUndo }: { t: ChatTurn; onUndo?: (i: number) => void }) {
       )}
       {/* A change in the ad account (or the buyer) it planned: check the exact objects, then confirm */}
       {!me && t.plan && <ChatPlan id={t.plan.id} />}
+      {/* A launch from a shared launch sheet: the full card on its latest turn, a pointer to it on earlier ones */}
+      {!me && t.launch && <LaunchCard id={t.launch.id} compact={!launchLatest} />}
       {!me && t.level && (
         <span className="flex items-center gap-1.5 px-1 text-[10px] text-ink/40">
           <span className={`h-1.5 w-1.5 rounded-full ${LEVEL[t.level].dot}`} />
@@ -244,7 +247,7 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
           <div className="grid min-w-0 gap-1">
             <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-ink/50">Client desk</p>
             <h2 className="font-display text-2xl leading-tight tracking-tight [overflow-wrap:anywhere]">{client}</h2>
-            <p className="text-xs text-ink/50">Ask anything, share files and links (they&apos;re filed in the client&apos;s documents), tell it what to remember, or ask for a change in the ad account (it shows exactly what it will touch for you to confirm).</p>
+            <p className="text-xs text-ink/50">Ask anything, share files and links (they&apos;re filed in the client&apos;s documents), tell it what to remember, ask for a change in the ad account, or drop a launch sheet to launch it (it shows exactly what it will create or touch for you to confirm).</p>
           </div>
           <span className="flex shrink-0 gap-1.5">
             {chat.length > 0 && (
@@ -310,7 +313,7 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
             </div>
           )}
           {chat.map((t, i) => (
-            <Bubble key={i} t={t} onUndo={t.role === "assistant" ? (n) => void undo(t.at, n) : undefined} />
+            <Bubble key={i} t={t} onUndo={t.role === "assistant" ? (n) => void undo(t.at, n) : undefined} launchLatest={!t.launch || !chat.slice(i + 1).some((x) => x.launch?.id === t.launch?.id)} />
           ))}
           {pending && (
             <>

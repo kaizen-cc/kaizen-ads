@@ -56,6 +56,8 @@ export type ChatTurn = {
   done?: DeskAction[];
   /** A change in the ad account (or the buyer) it planned: the plan card follows it there, to confirm */
   plan?: { id: string };
+  /** A launch from a shared launch sheet: the launch card follows it there (questions, plan, confirm) */
+  launch?: { id: string };
 };
 
 const S = { type: "string" };
