@@ -226,12 +226,13 @@ export function FeedbackBubble() {
           onPointerCancel={() => (drag.current = null)}
           // Above a page's own corner button (--fab-clear, set by useFabClear), plus wherever it was dragged
           style={{ transform: `translateY(calc(${-lift}px - var(--fab-clear, 0px)))`, touchAction: "none" }}
-          className="group fixed bottom-[calc(74px+env(safe-area-inset-bottom))] right-0 z-40 grid h-12 w-11 cursor-grab select-none place-items-center rounded-l-full bg-brand text-white shadow-[0_10px_28px_-10px_rgba(178,30,44,0.85)] transition-[background-color,transform] hover:bg-brand-hover active:cursor-grabbing md:bottom-6 md:right-6 md:h-14 md:w-14 md:rounded-full md:hover:scale-105"
+          className="group fixed bottom-[calc(74px+env(safe-area-inset-bottom))] right-0 z-40 flex h-12 w-11 cursor-grab select-none items-center justify-center gap-2 rounded-l-full border border-r-0 border-brand/40 bg-surface/95 text-brand-text shadow-[0_10px_28px_-12px_rgba(0,0,0,0.6)] backdrop-blur transition-[border-color,transform] hover:border-brand active:cursor-grabbing md:bottom-6 md:right-6 md:h-11 md:w-auto md:rounded-full md:border-r md:px-4 md:hover:-translate-y-0.5"
         >
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-            <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" />
-            <path d="M9 11h.01M12 11h.01M15 11h.01" strokeWidth="2.4" />
+          {/* A flag, not a chat bubble, and its own words, so it never reads as the AI chat */}
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="shrink-0">
+            <path d="M4 22V4a1 1 0 0 1 .4-.8C5.5 2.4 7 2 8.5 2c3 0 4 2 7 2 1.4 0 2.6-.3 3.6-.8a.6.6 0 0 1 .9.5v9.6a1 1 0 0 1-.4.8c-1.1.8-2.6 1.1-4.1 1.1-3 0-4-2-7-2-1.5 0-3 .4-4.5 1.2" />
           </svg>
+          <span className="hidden whitespace-nowrap text-[13px] font-medium text-fg md:inline">Run into an issue?</span>
         </button>
       )}
 
