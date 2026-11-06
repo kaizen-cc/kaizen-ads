@@ -13,6 +13,8 @@ import { Layer } from "./layer";
 import { ChatPlan } from "./chat-plan";
 import { LaunchCard } from "./launch-card";
 import { GoogleLaunchCard } from "./google-launch-card";
+import { CHAT_EVENT } from "./launch-more";
+import { warmLaunchRead } from "./launch-more-actions";
 
 // The client desk: a button in the corner that opens a drawer, so the page itself doesn't get longer. Ask a question,
 // strategize, get a summary, share files and links (filed in the client's documents and read), tell it what to
@@ -45,7 +47,7 @@ const LEVEL = { quick: { label: "Quick answer", dot: "bg-ink/40" }, standard: { 
 function Bubble({ t, onUndo, launchLatest = true }: { t: ChatTurn; onUndo?: (i: number) => void; launchLatest?: boolean }) {
   const me = t.role === "user";
   return (
-    <div className={`grid gap-1 ${me ? "justify-items-end" : ""}`}>
+    <div className={`grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1 ${me ? "justify-items-end" : ""}`}>
       {t.attachments && t.attachments.length > 0 && (
         <span className={`flex max-w-[92%] flex-wrap gap-1.5 ${me ? "justify-end" : ""}`}>
           {t.attachments.map((a) => (
@@ -56,7 +58,7 @@ function Bubble({ t, onUndo, launchLatest = true }: { t: ChatTurn; onUndo?: (i: 
           ))}
         </span>
       )}
-      {t.text && <p className={`max-w-[92%] whitespace-pre-wrap rounded-[14px] px-3.5 py-2.5 text-[13.5px] leading-relaxed ${me ? "bg-fg text-bg" : "border border-ink/[0.06] bg-ink/[0.04] text-fg"}`}>{t.text}</p>}
+      {t.text && <p className={`max-w-[92%] whitespace-pre-wrap rounded-[14px] [overflow-wrap:anywhere] px-3.5 py-2.5 text-[13.5px] leading-relaxed ${me ? "bg-fg text-bg" : "border border-ink/[0.06] bg-ink/[0.04] text-fg"}`}>{t.text}</p>}
       {/* What it changed in the knowledge base, each with an undo */}
       {!me && t.done && t.done.length > 0 && (
         <ul className="grid w-full max-w-[92%] gap-1">
@@ -72,6 +74,12 @@ function Bubble({ t, onUndo, launchLatest = true }: { t: ChatTurn; onUndo?: (i: 
             </li>
           ))}
         </ul>
+      )}
+      {/* Where the answer points (the sprint the suggestions went on, the buyer's tasks) */}
+      {!me && t.link && (
+        <Link href={t.link.href} className="inline-flex min-h-9 w-fit items-center rounded-full border border-ink/10 px-3 text-[12px] text-brand-text hover:border-brand/40 max-md:min-h-11">
+          {t.link.label} →
+        </Link>
       )}
       {/* A change in the ad account (or the buyer) it planned: check the exact objects, then confirm */}
       {!me && t.plan && <ChatPlan id={t.plan.id} />}
@@ -118,6 +126,15 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
       live = false;
     };
   }, [open, loaded, clientId]);
+  // Turns added from a launch card (suggest more, do it now) show in the thread at once
+  useEffect(() => {
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<{ clientId: string; chat: ChatTurn[] }>).detail;
+      if (d?.clientId === clientId && Array.isArray(d.chat)) setChat(d.chat);
+    };
+    window.addEventListener(CHAT_EVENT, on);
+    return () => window.removeEventListener(CHAT_EVENT, on);
+  }, [clientId]);
   const [q, setQ] = useState("");
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -235,6 +252,8 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
           onClick={() => {
             setOpen(true);
             setQ((cur) => cur || LAUNCH_DRAFT[scope.platform]);
+            // The account read starts now, while they type what to launch (Google: Meta's launch is read from its sheet)
+            if (scope.platform === "google") void warmLaunchRead(clientId, scope.targetId ?? null).catch(() => undefined);
           }}
           title={`Tell the chat what to launch in ${scope.platform === "google" ? "Google Ads" : "Meta"}, or share the sheet: it asks what it needs, shows every object it will create and deploys it paused when you say so`}
           className="inline-flex h-9 max-md:h-11 shrink-0 items-center gap-2 rounded-full border border-line px-4 text-sm text-muted transition-colors hover:border-brand/50 hover:text-fg"
@@ -325,7 +344,7 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
           )}
         </div>
 
-        <div className="relative grid content-start gap-3 overflow-y-auto overscroll-contain px-4 py-2 md:px-5">
+        <div className="relative grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-3 overflow-y-auto overflow-x-hidden overscroll-contain px-4 py-2 md:px-5">
           {!loaded && <p className="animate-pulse text-xs text-ink/50">Loading your conversation about {client}…</p>}
           {loaded && !chat.length && !pending && (
             <div className="grid gap-2">

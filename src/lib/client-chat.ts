@@ -37,7 +37,7 @@ Changes in the ad account: when the teammate asks you to change something in the
 
 Launch sheets: when they share a launch sheet (a plan of ads to launch: rows of dates, Pages, creative and copy) to launch or set up, summarize it in a sentence or two; the launch card under your answer takes it from there (the media buyer checks it against the account and asks what only they can decide). Don't plan the launch yourself and don't use change for it.
 
-Launching new ads: when they ask you to launch or build something new in an ad account (a campaign, an ad group, keywords, responsive search ads, Performance Max assets, new ads) or share a sheet of keywords and ad copy to launch, set launch: wanted true, platform "google" for Google Ads (keywords, ad groups, RSAs, Search, Performance Max) or "meta" for Meta, and request: their full ask in one or two sentences with every name, number, link, keyword and line of copy they gave. Say in a sentence what you understood; the launch card under your answer takes it from there (it reads the live account, asks only what's missing in the format the platform needs, suggests from the account and shows every object it will create, paused, before anything is deployed). Don't plan it yourself and don't use change for it. A Meta launch is read from a launch sheet (or approved ads launch from the board): when they want one without sharing a sheet, ask them to share it here. Otherwise launch is wanted false with "" fields.`;
+Launching new ads: when they ask you to launch or build something new in an ad account (a campaign, an ad group, keywords, responsive search ads, Performance Max assets, new ads) or share a sheet of keywords and ad copy to launch, set launch: wanted true, platform "google" for Google Ads (keywords, ad groups, RSAs, Search, Performance Max) or "meta" for Meta, and request: their full ask in one or two sentences with every name, number, link, keyword and line of copy they gave. Say in a sentence what you understood; the launch card under your answer takes it from there (it reads the live account, asks only what's missing in the format the platform needs and shows every object it will create, paused, before anything is deployed; once it's deployed it offers to suggest more for the rest of the account). Don't plan it yourself and don't use change for it. A Meta launch is read from a launch sheet (or approved ads launch from the board): when they want one without sharing a sheet, ask them to share it here. Otherwise launch is wanted false with "" fields.`;
 
 const SCHEMA = {
   type: "object",
@@ -170,6 +170,29 @@ async function launchSheetIn(admin: SupabaseClient, docs: SharedDoc[], q: string
   return null;
 }
 
+const YES = /^\s*(yes|yeah|yep|yup|sure|ok(ay)?|please( do)?|go ahead|do it|sounds good|suggest( (more|some|them))?)\b[\s\S]{0,40}$/i;
+const NO = /^\s*(no|nope|nah|not now|skip( it)?|no thanks?)\b[\s\S]{0,30}$/i;
+
+/**
+ * A "yes" (or "no thanks") to "Want me to suggest some more changes while you have me here?" on a launch this person
+ * just deployed: the suggestions are written and added to the sprint or saved as their tasks (src/lib/launch-more.ts).
+ * Null: no offer is waiting, or the message isn't an answer to it.
+ */
+async function answerOffer(admin: SupabaseClient, clientId: string, profileId: string, q: string): Promise<ChatTurn[] | null> {
+  const yes = YES.test(q);
+  if (!yes && !NO.test(q)) return null;
+  const m = await import("@/lib/launch-more");
+  const offer = await m.pendingOffer(admin, clientId, profileId);
+  if (!offer) return null;
+  const asked: ChatTurn = { role: "user", text: q, at: new Date().toISOString() };
+  if (!yes) {
+    await m.declineMore(admin, offer.id);
+    return m.appendChat(admin, clientId, profileId, [asked, { role: "assistant", text: "No problem. The launch is done.", at: new Date().toISOString() }]);
+  }
+  const { more } = await m.suggestMore(admin, offer.id, profileId);
+  return m.appendChat(admin, clientId, profileId, [asked, m.moreTurn(offer.id, offer.platform, more)]);
+}
+
 /** The person's message, answered in the launch conversation they have open with this client (null: not about it) */
 async function continueLaunch(admin: SupabaseClient, clientId: string, profileId: string, q: string): Promise<ChatTurn[] | null> {
   const { openRunFor, launchReply, planRun } = await import("@/lib/launch-sheet/runs");
@@ -212,8 +235,15 @@ export async function askAboutClient(
   // A launch from a sheet waiting on this person: their message goes to the Media Buyer in that conversation (unless
   // it's about something else, or they're sharing something new)
   if (q && !files.length && !links.length) {
-    const handled = await continueLaunch(admin, clientId, profileId, q);
+    const handled = (await answerOffer(admin, clientId, profileId, q)) ?? (await continueLaunch(admin, clientId, profileId, q));
     if (handled) return handled;
+  }
+  // Sounds like a new Google launch: the account read starts now, alongside the answer below, so the launch card has
+  // it the moment the launch is set up (kept ten minutes; the launch's own read shares it). Never waits on it.
+  if (q && /\b(launch|set up|build|new (ad ?group|campaign|ads?|keywords?)|add (keywords?|an? ad ?group|rsas?))\b/i.test(q) && (scope?.platform === "google" || /\b(google|keywords?|rsas?|responsive search|search (ads?|campaign)|ad ?groups?|pmax|performance max)\b/i.test(q))) {
+    const warm = import("@/lib/google-launch/runs").then((m) => m.warmGoogleLaunch(admin, clientId, scope?.platform === "google" ? (scope.targetId ?? null) : null)).catch(() => undefined);
+    const { after } = await import("next/server");
+    after(() => warm);
   }
   const ceiling = await getAgent("strategist");
   // The shared files and links go into the client's document history first, then they're read
@@ -315,7 +345,7 @@ export async function askAboutClient(
       after(() => prepareGoogleRun(admin, r.id));
       answer = `${answer}
 
-${sheetDoc ? "I'm reading the sheet as a Google launch: every ad group, keyword and match type, and each ad's headlines and descriptions," : "I'm setting this up as a Google launch, reading the account:"} checked against the live campaigns, then I'll ask only what's missing and suggest what the account shows. It's all on the card below; nothing goes to Google Ads until you deploy it, and then everything is created paused.`;
+${sheetDoc ? "I'm reading the sheet as a Google launch: every ad group, keyword and match type, and each ad's headlines and descriptions," : "I'm setting this up as a Google launch, reading the account:"} checked against the live campaigns, then I'll ask only what's missing for it. It's all on the card below; nothing goes to Google Ads until you deploy it, and then everything is created paused.`;
     } else answer = `${answer}
 
 I couldn't start the launch: ${r.error}`;

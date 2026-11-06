@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { WriteOff } from "@/components/write-gate";
 import type { BudgetSpec, CheckItem, LaunchItem, LaunchPlan, LaunchQuestion, PlanAd, PlanAdset, PlanCampaign } from "@/lib/launch-sheet/types";
+import { Clamp, LaunchMore } from "./launch-more";
 import { buildLaunchPlan, confirmLaunch, continueLaunch, loadLaunch, replyToLaunch, setAsideLaunch, takeLaunchProposals, type LaunchView } from "./launch-sheet-actions";
 
 // The launch card under a chat answer: a launch sheet as the Media Buyer reads it, checks it and asks about it, then
@@ -66,8 +67,8 @@ export function Checklist({ checks }: { checks: CheckItem[] }) {
             <button type="button" onClick={() => setOpen(open === c.key ? null : c.key)} className="flex min-h-9 items-start gap-2 text-left max-md:min-h-11">
               <Mark level={c.level} />
               <span className="grid min-w-0 gap-0.5">
-                <span className="text-[12.5px] font-medium">{c.label}</span>
-                <span className={`text-[11.5px] leading-snug text-ink/60 ${open === c.key ? "" : "line-clamp-2"}`}>{c.detail}</span>
+                <span className="text-[12.5px] font-medium [overflow-wrap:anywhere]">{c.label}</span>
+                <span className={`text-[11.5px] leading-snug text-ink/60 [overflow-wrap:anywhere] ${open === c.key ? "" : "line-clamp-2"}`}>{c.detail}</span>
               </span>
             </button>
             {open === c.key && c.fix && <p className="ml-7 rounded-[8px] border border-ink/[0.08] bg-ink/[0.03] px-2.5 py-1.5 text-[11.5px] leading-snug text-ink/75 [overflow-wrap:anywhere]">How to fix: {c.fix}</p>}
@@ -84,7 +85,11 @@ export function Question({ q, busy, onUse }: { q: LaunchQuestion; busy: boolean;
         {q.question}
         {q.required && !q.answer && <span className="ml-1 text-brand-text">*</span>}
       </p>
-      {q.why && <p className="text-[11px] leading-snug text-ink/50">{q.why}</p>}
+      {q.why && (
+        <p className="line-clamp-2 text-[11px] leading-snug text-ink/50" title={q.why}>
+          {q.why}
+        </p>
+      )}
       {q.answer ? (
         <p className="flex items-start gap-1.5 text-[12px] text-ink/85">
           <span className="text-ok">✓</span>
@@ -92,7 +97,7 @@ export function Question({ q, busy, onUse }: { q: LaunchQuestion; busy: boolean;
         </p>
       ) : (
         <>
-          <p className="text-[12px] leading-snug text-ink/75">
+          <p className="text-[12px] leading-snug text-ink/75 [overflow-wrap:anywhere]">
             <span className="text-ink/45">Proposal: </span>
             {q.proposal}
           </p>
@@ -104,7 +109,7 @@ export function Question({ q, busy, onUse }: { q: LaunchQuestion; busy: boolean;
               .filter((o) => o.trim() && o.trim() !== q.proposal.trim())
               .slice(0, 4)
               .map((o) => (
-                <button key={o} type="button" disabled={busy} onClick={() => onUse(o)} className="h-10 max-w-full truncate rounded-full border border-ink/10 px-3.5 text-[12px] text-ink/70 hover:text-fg disabled:opacity-40 md:h-8">
+                <button key={o} type="button" title={o} disabled={busy} onClick={() => onUse(o)} className="h-10 max-w-full truncate rounded-full border border-ink/10 px-3.5 text-[12px] text-ink/70 hover:text-fg disabled:opacity-40 md:h-8">
                   {o}
                 </button>
               ))}
@@ -283,8 +288,10 @@ export function LaunchCard({ id, compact = false, reply = false }: { id: string;
   const [said, setSaid] = useState<string | null>(null);
   // How many lines were created when the launch was last continued from here (so each stop is continued once)
   const continued = useRef(-1);
+  // Polls while the questions are being tailored (status asking with progress), at most about two minutes
+  const tailoring = useRef(0);
 
-  // Follow the launch while it's being read, planned or created
+  // Follow the launch while it's being read, planned or created, and while the questions are being tailored
   useEffect(() => {
     let live = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -292,7 +299,8 @@ export function LaunchCard({ id, compact = false, reply = false }: { id: string;
       const next = await loadLaunch(id).catch(() => null);
       if (!live) return;
       setV(next);
-      if (next && (WORKING.has(next.status) || next.resumable)) timer = setTimeout(tick, 2500);
+      const refining = next?.status === "asking" && Boolean(next.progress) && tailoring.current++ < 50;
+      if (next && (WORKING.has(next.status) || next.resumable || refining || (next.status === "applied" && !next.qa))) timer = setTimeout(tick, 2500);
     };
     void tick();
     return () => {
@@ -344,15 +352,16 @@ export function LaunchCard({ id, compact = false, reply = false }: { id: string;
   const qaBad = (v.qa?.lines ?? []).filter((l) => !l.ok);
 
   return (
-    <section className="grid w-full max-w-[96%] gap-3 rounded-[16px] border border-[#0866ff]/30 bg-[#0866ff]/[0.04] p-3 md:p-3.5">
+    // Never wider than the chat panel: every descendant may shrink (min-w-0) and long tokens (names, links) wrap anywhere
+    <section className="grid w-full min-w-0 max-w-[96%] grid-cols-[minmax(0,1fr)] gap-3 rounded-[16px] border border-[#0866ff]/30 bg-[#0866ff]/[0.04] p-3 [overflow-wrap:anywhere] md:p-3.5 [&_*]:min-w-0">
       <header className="flex items-center justify-between gap-2">
-        <span className="flex items-center gap-2 text-[10.5px] font-medium uppercase tracking-[0.16em] text-ink/60">
-          <span className="h-2 w-2 rounded-full bg-[#0866ff]" />
+        <span className="flex shrink-0 items-center gap-2 text-[10.5px] font-medium uppercase tracking-[0.16em] text-ink/60">
+          <span className="h-2 w-2 shrink-0 rounded-full bg-[#0866ff]" />
           Launch · Meta
         </span>
-        <span className="flex items-center gap-1.5 text-[10.5px] text-ink/50">
-          {WORKING.has(v.status) && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" />}
-          {STATUS[v.status] ?? v.status}
+        <span className="flex items-center gap-1.5 truncate text-[10.5px] text-ink/50" title={STATUS[v.status] ?? v.status}>
+          {(WORKING.has(v.status) || (v.status === "asking" && v.progress)) && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-brand" />}
+          <span className="truncate">{STATUS[v.status] ?? v.status}</span>
         </span>
       </header>
 
@@ -365,17 +374,21 @@ export function LaunchCard({ id, compact = false, reply = false }: { id: string;
         </p>
       </div>
 
-      {v.progress && WORKING.has(v.status) && <p className="text-[12px] text-ink/65">{v.progress}</p>}
+      {v.progress && (WORKING.has(v.status) || v.status === "asking") && (
+        <p className="flex items-center gap-2 text-[12px] text-ink/65">
+          {v.status === "asking" && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-brand" />}
+          {v.progress}
+          {v.status === "asking" ? "… you can answer already" : ""}
+        </p>
+      )}
       {v.error && <p className="rounded-[10px] border border-bad/25 bg-bad-soft/20 px-3 py-2 text-[12px] text-ink/85">{v.error}</p>}
 
       {v.summary && (
         <div className="grid gap-1.5">
           <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-ink/45">What I read</p>
-          <div className="grid gap-2 text-[12.5px] leading-relaxed text-ink/85">
+          <div className="grid gap-1.5 text-[12.5px] leading-relaxed text-ink/85">
             {v.summary.split(/\n{2,}/).map((p, i) => (
-              <p key={i} className={p.startsWith("Note:") ? "text-[11.5px] text-ink/60" : ""}>
-                {p}
-              </p>
+              <Clamp key={i} text={p} className={p.startsWith("Note:") ? "text-[11.5px] text-ink/60" : ""} />
             ))}
           </div>
         </div>
@@ -418,7 +431,7 @@ export function LaunchCard({ id, compact = false, reply = false }: { id: string;
             <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-ink/45">The plan · {plan.goLive === "scheduled" ? "scheduled start" : "created paused"}</p>
             {toMake > 0 && <span className="text-[10.5px] text-ink/45">{created ? `${created} of ${toMake} created` : `${toMake} lines`}</span>}
           </div>
-          {plan.note && <p className="text-[12px] leading-relaxed text-ink/75">{plan.note}</p>}
+          {plan.note && <Clamp text={plan.note} className="text-[12px] leading-relaxed text-ink/75" />}
           {v.warnings.length > 0 && (
             <ul className="grid gap-1 rounded-[10px] border border-warn/25 bg-warn-soft/20 px-3 py-2">
               {v.warnings.slice(0, 8).map((w) => (
@@ -447,6 +460,9 @@ export function LaunchCard({ id, compact = false, reply = false }: { id: string;
           {qaBad.length ? `Read back from Meta: ${qaBad.length} line${qaBad.length === 1 ? "" : "s"} differ from the plan. ${qaBad.slice(0, 3).map((l) => `${l.key.split(":")[0]} ${l.diffs.join(", ")}`).join("; ")}` : `Read back from Meta: all ${v.qa.lines.length} created lines match the plan.`}
         </p>
       )}
+
+      {/* Once it's created and read back: suggest more for the rest of the account (sprint or the buyer's tasks) */}
+      {v.status === "applied" && v.qa && <LaunchMore runId={v.id} />}
 
       {v.status === "ready" && !v.live && (v.write && !v.write.live ? (
         <WriteOff status={v.write} canSwitch={v.canSwitch} account={v.plan?.account ?? null} compact onLive={() => void loadLaunch(v.id).then((next) => next && setV(next))} />

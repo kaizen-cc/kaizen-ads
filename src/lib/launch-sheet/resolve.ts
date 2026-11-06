@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { metaConfigured, metaGraph } from "@/lib/context/meta";
 import { assignUrl, metaWritableSetup, tokenScopes, writeBlocked } from "@/lib/meta-write";
+import { cachedRead } from "@/lib/launch-cache";
 import { copyWarnings } from "./payloads";
 import { copyOf } from "./plan";
 import { budgetSanity } from "./budget";
@@ -168,12 +169,17 @@ export async function resolveSheet(admin: SupabaseClient, clientId: string, shee
     add({ key: "account", label: "Meta connection", level: "fail", detail: "Meta isn't connected to Kaizen Ads.", fix: "Set META_SYSTEM_USER_TOKEN." });
     return res;
   }
-  const [blocked, scopes] = await Promise.all([writeBlocked(admin, account), tokenScopes().catch(() => ({ granted: [] as string[], missing: [] as string[] }))]);
+  // Every part below is read at once (they don't depend on each other, except posts on the Pages); each keeps its own
+  // checks, added in the usual order at the end. The account's Pages are kept ten minutes (src/lib/launch-cache.ts).
+  const [blocked, scopes, { pages, igs }] = await Promise.all([
+    writeBlocked(admin, account),
+    tokenScopes().catch(() => ({ granted: [] as string[], missing: [] as string[] })),
+    cachedRead(admin, `meta-pages:${account}`, () => usablePages(account), { clientId }).then((r) => r.value),
+  ]);
   add(blocked ? { key: "live", label: "Live changes", level: "warn", detail: blocked, fix: "An exec switches live changes on for this client in Team & setup. Until then the plan can be checked and saved, not created." } : { key: "live", label: "Live changes", level: "ok", detail: "Kaizen can create in this ad account once you confirm." });
   if (scopes.missing.length) add({ key: "scopes", label: "Token permissions", level: "fail", detail: `The system user's token is missing ${scopes.missing.join(", ")}.`, fix: "Business settings → Users → System users → Generate new token with those permissions, then replace META_SYSTEM_USER_TOKEN." });
 
   // ─── Pages ──────────────────────────────────────────────────────────────────────────────────────────────
-  const { pages, igs } = await usablePages(account);
   const names = [...new Set(sheet.rows.map((r) => r.page.trim()).filter(Boolean))];
   for (const name of names) {
     const rows = sheet.rows.filter((r) => r.page.trim() === name).map((r) => r.index);
@@ -201,202 +207,234 @@ export async function resolveSheet(admin: SupabaseClient, clientId: string, shee
       });
   }
 
-  // ─── Creative files in Drive ───────────────────────────────────────────────────────────────────────────
-  let token: string | null = null;
-  try {
-    const { driveToken } = await import("@/lib/context/google");
-    token = await driveToken();
-  } catch {
-    token = null;
-  }
-  const byLink = new Map<string, Promise<ResolvedFile[]>>();
-  for (const r of sheet.rows) {
-    if (r.existingPost) continue;
-    const links = r.creative.links.filter((u) => /drive\.google\.com|docs\.google\.com/.test(u));
-    if (!links.length) {
-      res.creatives.push({ row: r.index, name: r.creative.name, files: [], picked: { feed: null, vertical: null }, missing: ["4x5", "9x16"], error: r.creative.name ? "No link to the files" : "No creative" });
-      continue;
-    }
-    if (!token) {
-      res.creatives.push({ row: r.index, name: r.creative.name, files: [], picked: { feed: null, vertical: null }, missing: ["4x5", "9x16"], error: "Google Drive isn't connected" });
-      continue;
-    }
+  // ─── Creative files in Drive (every row at once; a link shared by rows is opened once) ─────────────────
+  const creativesP = (async () => {
+    const cs: CheckItem[] = [];
+    let token: string | null = null;
     try {
-      const files = (
-        await Promise.all(
-          links.map((u) => {
-            if (!byLink.has(u)) byLink.set(u, driveFiles(token!, u));
-            return byLink.get(u)!;
-          }),
-        )
-      ).flat();
-      res.creatives.push({ row: r.index, name: r.creative.name, files, ...pickSizes(files), error: files.length ? null : "No images or videos in it" });
-    } catch (e) {
-      res.creatives.push({ row: r.index, name: r.creative.name, files: [], picked: { feed: null, vertical: null }, missing: ["4x5", "9x16"], error: e instanceof Error ? e.message : String(e) });
+      const { driveToken } = await import("@/lib/context/google");
+      token = await driveToken();
+    } catch {
+      token = null;
     }
-  }
-  const unread = res.creatives.filter((c) => c.error);
-  const missingSize = res.creatives.filter((c) => !c.error && c.missing.length);
-  const onlySquare = res.creatives.filter((c) => c.files.some((f) => f.aspect === "1x1") && c.missing.includes("4x5"));
-  add({
-    key: "files",
-    label: "Creative files",
-    level: unread.length ? "fail" : missingSize.length ? "warn" : "ok",
-    detail: unread.length
-      ? `${unread.length} creative${unread.length === 1 ? "" : "s"} couldn't be read: ${unread.slice(0, 4).map((c) => `"${c.name}" (${c.error})`).join("; ")}.`
-      : `${res.creatives.length} creative${res.creatives.length === 1 ? "" : "s"} opened in Drive.`,
-    fix: unread.length ? "Share the Drive folders with the agency's Google Workspace (or anyone with the link), then check again." : null,
-    rows: unread.map((c) => c.row),
-  });
-  if (missingSize.length)
-    add({
-      key: "sizes",
-      label: "Sizes (4:5 and 9:16)",
-      level: "warn",
-      detail: `${missingSize.length} creative${missingSize.length === 1 ? " is" : "s are"} missing a size: ${missingSize.slice(0, 5).map((c) => `"${c.name}" (no ${c.missing.join(" or ").replace(/x/g, ":")})`).join("; ")}.${onlySquare.length ? " Older 1:1 files are read but Kaizen launches 4:5 and 9:16." : ""}`,
-      fix: "Ask the designer for the missing size, or run those with the one size they have.",
-      rows: missingSize.map((c) => c.row),
+    const byLink = new Map<string, Promise<ResolvedFile[]>>();
+    const made = await Promise.all(
+      sheet.rows
+        .filter((r) => !r.existingPost)
+        .map(async (r): Promise<ResolvedCreative> => {
+          const links = r.creative.links.filter((u) => /drive\.google\.com|docs\.google\.com/.test(u));
+          if (!links.length) return { row: r.index, name: r.creative.name, files: [], picked: { feed: null, vertical: null }, missing: ["4x5", "9x16"], error: r.creative.name ? "No link to the files" : "No creative" };
+          if (!token) return { row: r.index, name: r.creative.name, files: [], picked: { feed: null, vertical: null }, missing: ["4x5", "9x16"], error: "Google Drive isn't connected" };
+          try {
+            const files = (
+              await Promise.all(
+                links.map((u) => {
+                  if (!byLink.has(u)) byLink.set(u, driveFiles(token!, u));
+                  return byLink.get(u)!;
+                }),
+              )
+            ).flat();
+            return { row: r.index, name: r.creative.name, files, ...pickSizes(files), error: files.length ? null : "No images or videos in it" };
+          } catch (e) {
+            return { row: r.index, name: r.creative.name, files: [], picked: { feed: null, vertical: null }, missing: ["4x5", "9x16"], error: e instanceof Error ? e.message : String(e) };
+          }
+        }),
+    );
+    res.creatives.push(...made);
+    const unread = res.creatives.filter((c) => c.error);
+    const missingSize = res.creatives.filter((c) => !c.error && c.missing.length);
+    const onlySquare = res.creatives.filter((c) => c.files.some((f) => f.aspect === "1x1") && c.missing.includes("4x5"));
+    cs.push({
+      key: "files",
+      label: "Creative files",
+      level: unread.length ? "fail" : missingSize.length ? "warn" : "ok",
+      detail: unread.length
+        ? `${unread.length} creative${unread.length === 1 ? "" : "s"} couldn't be read: ${unread.slice(0, 4).map((c) => `"${c.name}" (${c.error})`).join("; ")}.`
+        : `${res.creatives.length} creative${res.creatives.length === 1 ? "" : "s"} opened in Drive.`,
+      fix: unread.length ? "Share the Drive folders with the agency's Google Workspace (or anyone with the link), then check again." : null,
+      rows: unread.map((c) => c.row),
     });
-  else if (res.creatives.length && !unread.length) add({ key: "sizes", label: "Sizes (4:5 and 9:16)", level: "ok", detail: "Every creative has a 4:5 and a 9:16." });
+    if (missingSize.length)
+      cs.push({
+        key: "sizes",
+        label: "Sizes (4:5 and 9:16)",
+        level: "warn",
+        detail: `${missingSize.length} creative${missingSize.length === 1 ? " is" : "s are"} missing a size: ${missingSize.slice(0, 5).map((c) => `"${c.name}" (no ${c.missing.join(" or ").replace(/x/g, ":")})`).join("; ")}.${onlySquare.length ? " Older 1:1 files are read but Kaizen launches 4:5 and 9:16." : ""}`,
+        fix: "Ask the designer for the missing size, or run those with the one size they have.",
+        rows: missingSize.map((c) => c.row),
+      });
+    else if (res.creatives.length && !unread.length) cs.push({ key: "sizes", label: "Sizes (4:5 and 9:16)", level: "ok", detail: "Every creative has a 4:5 and a 9:16." });
+    return cs;
+  })();
 
   // ─── Existing posts ────────────────────────────────────────────────────────────────────────────────────
-  for (const r of sheet.rows.filter((x) => x.existingPost)) {
-    const url = r.existingPost!;
-    const post: ResolvedPost = { row: r.index, url, platform: /instagram/i.test(url) ? "instagram" : "facebook", shortcode: shortcodeOf(url), mediaId: null, igId: null, pageId: null, storyId: null, error: null };
-    try {
-      if (post.platform === "instagram") {
-        const user = igUserOf(url)?.toLowerCase();
-        const page = res.pages.find((p) => p.igName?.toLowerCase() === user) ?? res.pages.find((p) => p.name === r.page.trim());
-        const ig = page?.igId ?? igs.find((i) => i.username?.toLowerCase() === user)?.id ?? null;
-        post.igId = ig;
-        post.pageId = page?.pageId ?? null;
-        if (!ig || !post.shortcode) post.error = `The Instagram account${user ? ` @${user}` : ""} isn't one the ad account can use.`;
-        else {
-          post.mediaId = await igMedia(ig, post.shortcode);
-          if (!post.mediaId) post.error = "Not found among the account's posts (deleted, a collab owned by another account, or older than the last 500).";
-        }
-      } else post.error = "Facebook post links are checked when the plan is built (the Page's post id).";
-    } catch (e) {
-      post.error = e instanceof Error ? e.message : String(e);
+  const postsP = (async () => {
+    const cs: CheckItem[] = [];
+    const found = await Promise.all(
+      sheet.rows
+        .filter((x) => x.existingPost)
+        .map(async (r) => {
+          const url = r.existingPost!;
+          const post: ResolvedPost = { row: r.index, url, platform: /instagram/i.test(url) ? "instagram" : "facebook", shortcode: shortcodeOf(url), mediaId: null, igId: null, pageId: null, storyId: null, error: null };
+          try {
+            if (post.platform === "instagram") {
+              const user = igUserOf(url)?.toLowerCase();
+              const page = res.pages.find((p) => p.igName?.toLowerCase() === user) ?? res.pages.find((p) => p.name === r.page.trim());
+              const ig = page?.igId ?? igs.find((i) => i.username?.toLowerCase() === user)?.id ?? null;
+              post.igId = ig;
+              post.pageId = page?.pageId ?? null;
+              if (!ig || !post.shortcode) post.error = `The Instagram account${user ? ` @${user}` : ""} isn't one the ad account can use.`;
+              else {
+                post.mediaId = await igMedia(ig, post.shortcode);
+                if (!post.mediaId) post.error = "Not found among the account's posts (deleted, a collab owned by another account, or older than the last 500).";
+              }
+            } else post.error = "Facebook post links are checked when the plan is built (the Page's post id).";
+          } catch (e) {
+            post.error = e instanceof Error ? e.message : String(e);
+          }
+          return post;
+        }),
+    );
+    res.posts.push(...found);
+    if (res.posts.length) {
+      const bad = res.posts.filter((p) => p.error);
+      cs.push({ key: "posts", label: "Existing posts", level: bad.length ? "fail" : "ok", detail: bad.length ? bad.map((p) => `${p.url}: ${p.error}`).join(" ") : `${res.posts.length} post${res.posts.length === 1 ? "" : "s"} found, ready to run as they are.`, fix: bad.length ? "Make sure the post is live on an Instagram account connected to the ad account; a shared or collab post may need its owner to allow ads (Partnership ad code)." : null, rows: bad.map((p) => p.row) });
     }
-    res.posts.push(post);
-  }
-  if (res.posts.length) {
-    const bad = res.posts.filter((p) => p.error);
-    add({ key: "posts", label: "Existing posts", level: bad.length ? "fail" : "ok", detail: bad.length ? bad.map((p) => `${p.url}: ${p.error}`).join(" ") : `${res.posts.length} post${res.posts.length === 1 ? "" : "s"} found, ready to run as they are.`, fix: bad.length ? "Make sure the post is live on an Instagram account connected to the ad account; a shared or collab post may need its owner to allow ads (Partnership ad code)." : null, rows: bad.map((p) => p.row) });
-  }
+    return cs;
+  })();
 
-  // ─── Places as Meta locations ──────────────────────────────────────────────────────────────────────────
-  const places = new Map<string, number[]>();
-  for (const r of sheet.rows) if (r.geo.trim()) places.set(r.geo.trim(), [...(places.get(r.geo.trim()) ?? []), r.index]);
-  if (!places.size && sheet.event.location) places.set(sheet.event.location, []);
-  for (const [text, rows] of places) {
-    const g: ResolvedGeo = { text, key: null, name: null, type: null, region: null, country: null, rows };
-    try {
-      const r = await metaGraph<{ data: { key: string; name: string; type: string; region?: string; country_code?: string }[] }>("search", { type: "adgeolocation", q: text, location_types: JSON.stringify(["city", "region", "neighborhood", "zip", "country"]), limit: "5" });
-      const hit = r.data.find((x) => x.type === "city" && x.country_code === "US") ?? r.data.find((x) => x.type === "city") ?? r.data[0];
-      if (hit) Object.assign(g, { key: hit.key, name: hit.name, type: hit.type, region: hit.region ?? null, country: hit.country_code ?? null });
-    } catch {
-      // Left without a key: the plan says so
-    }
-    res.geos.push(g);
-  }
-  const noGeo = res.geos.filter((g) => !g.key || g.type === "neighborhood");
-  if (res.geos.length)
-    add({
-      key: "geo",
-      label: "Places",
-      level: noGeo.length ? "warn" : "ok",
-      detail: res.geos.map((g) => (g.key ? `"${g.text}" → ${g.name}${g.region ? `, ${g.region}` : ""} (${g.type})` : `"${g.text}" not found`)).join("; "),
-      fix: noGeo.length ? "Say the city (and radius) to target for these." : null,
-    });
+  // ─── Places as Meta locations (every place at once) ────────────────────────────────────────────────────
+  const geosP = (async () => {
+    const cs: CheckItem[] = [];
+    const places = new Map<string, number[]>();
+    for (const r of sheet.rows) if (r.geo.trim()) places.set(r.geo.trim(), [...(places.get(r.geo.trim()) ?? []), r.index]);
+    if (!places.size && sheet.event.location) places.set(sheet.event.location, []);
+    const geos = await Promise.all(
+      [...places].map(async ([text, rows]) => {
+        const g: ResolvedGeo = { text, key: null, name: null, type: null, region: null, country: null, rows };
+        try {
+          const r = await metaGraph<{ data: { key: string; name: string; type: string; region?: string; country_code?: string }[] }>("search", { type: "adgeolocation", q: text, location_types: JSON.stringify(["city", "region", "neighborhood", "zip", "country"]), limit: "5" });
+          const hit = r.data.find((x) => x.type === "city" && x.country_code === "US") ?? r.data.find((x) => x.type === "city") ?? r.data[0];
+          if (hit) Object.assign(g, { key: hit.key, name: hit.name, type: hit.type, region: hit.region ?? null, country: hit.country_code ?? null });
+        } catch {
+          // Left without a key: the plan says so
+        }
+        return g;
+      }),
+    );
+    res.geos.push(...geos);
+    const noGeo = res.geos.filter((g) => !g.key || g.type === "neighborhood");
+    if (res.geos.length)
+      cs.push({
+        key: "geo",
+        label: "Places",
+        level: noGeo.length ? "warn" : "ok",
+        detail: res.geos.map((g) => (g.key ? `"${g.text}" → ${g.name}${g.region ? `, ${g.region}` : ""} (${g.type})` : `"${g.text}" not found`)).join("; "),
+        fix: noGeo.length ? "Say the city (and radius) to target for these." : null,
+      });
+    return cs;
+  })();
 
   // ─── Pixel and Purchase ────────────────────────────────────────────────────────────────────────────────
-  try {
-    const px = await metaGraph<{ data: { id: string; name: string; last_fired_time?: string; is_unavailable?: boolean }[] }>(`act_${account}/adspixels`, { fields: "name,last_fired_time,is_unavailable", limit: "50" });
-    const live = px.data.filter((p) => !p.is_unavailable).sort((a, b) => (b.last_fired_time ?? "").localeCompare(a.last_fired_time ?? ""));
-    const p = live[0];
-    if (!p) add({ key: "pixel", label: "Pixel", level: "fail", detail: "The ad account has no pixel (dataset).", fix: "Events Manager → connect a dataset to the website and share it with the ad account." });
-    else {
-      const since = String(Math.floor(Date.now() / 1000) - 7 * 86400);
-      const [events, hosts] = await Promise.all([
-        metaGraph<{ data: { data?: { value: string; count: number }[] }[] }>(`${p.id}/stats`, { aggregation: "event", start_time: since }).catch(() => null),
-        metaGraph<{ data: { data?: { value: string; count: number }[] }[] }>(`${p.id}/stats`, { aggregation: "host", start_time: since }).catch(() => null),
-      ]);
-      const ev = events?.data.flatMap((d) => d.data ?? []) ?? [];
-      const purchase = events ? ev.some((e) => /^purchase$/i.test(e.value) && e.count > 0) : null;
-      const host = sheet.event.link ? new URL(sheet.event.link).hostname.replace(/^www\./, "") : null;
-      const hs = hosts?.data.flatMap((d) => d.data ?? []).map((h) => h.value.replace(/^www\./, "")) ?? [];
-      const domainSeen = hosts && host ? hs.some((h) => h === host || h.endsWith(`.${host}`) || host.endsWith(`.${h}`)) : null;
-      res.pixel = { id: p.id, name: p.name, lastFired: p.last_fired_time ?? null, purchaseRecent: purchase, domainSeen };
-      const ok = purchase !== false && domainSeen !== false;
-      add({
-        key: "pixel",
-        label: "Pixel and Purchase",
-        level: ok ? (purchase == null ? "warn" : "ok") : "fail",
-        detail: `${p.name} (${p.id}), last fired ${p.last_fired_time ? p.last_fired_time.slice(0, 10) : "never"}. ${purchase == null ? "Couldn't read its events." : purchase ? "Purchase fired in the last 7 days." : "No Purchase in the last 7 days."}${host ? ` ${domainSeen == null ? "" : domainSeen ? `Seen on ${host}.` : `Not seen on ${host} lately.`}` : ""}`,
-        fix: ok ? null : "Check the ticket checkout fires Purchase to this dataset (Events Manager → Test events) before optimizing for purchases.",
-      });
+  const pixelP = (async () => {
+    const cs: CheckItem[] = [];
+    try {
+      const px = await metaGraph<{ data: { id: string; name: string; last_fired_time?: string; is_unavailable?: boolean }[] }>(`act_${account}/adspixels`, { fields: "name,last_fired_time,is_unavailable", limit: "50" });
+      const live = px.data.filter((p) => !p.is_unavailable).sort((a, b) => (b.last_fired_time ?? "").localeCompare(a.last_fired_time ?? ""));
+      const p = live[0];
+      if (!p) cs.push({ key: "pixel", label: "Pixel", level: "fail", detail: "The ad account has no pixel (dataset).", fix: "Events Manager → connect a dataset to the website and share it with the ad account." });
+      else {
+        const since = String(Math.floor(Date.now() / 1000) - 7 * 86400);
+        const [events, hosts] = await Promise.all([
+          metaGraph<{ data: { data?: { value: string; count: number }[] }[] }>(`${p.id}/stats`, { aggregation: "event", start_time: since }).catch(() => null),
+          metaGraph<{ data: { data?: { value: string; count: number }[] }[] }>(`${p.id}/stats`, { aggregation: "host", start_time: since }).catch(() => null),
+        ]);
+        const ev = events?.data.flatMap((d) => d.data ?? []) ?? [];
+        const purchase = events ? ev.some((e) => /^purchase$/i.test(e.value) && e.count > 0) : null;
+        const host = sheet.event.link ? new URL(sheet.event.link).hostname.replace(/^www\./, "") : null;
+        const hs = hosts?.data.flatMap((d) => d.data ?? []).map((h) => h.value.replace(/^www\./, "")) ?? [];
+        const domainSeen = hosts && host ? hs.some((h) => h === host || h.endsWith(`.${host}`) || host.endsWith(`.${h}`)) : null;
+        res.pixel = { id: p.id, name: p.name, lastFired: p.last_fired_time ?? null, purchaseRecent: purchase, domainSeen };
+        const ok = purchase !== false && domainSeen !== false;
+        cs.push({
+          key: "pixel",
+          label: "Pixel and Purchase",
+          level: ok ? (purchase == null ? "warn" : "ok") : "fail",
+          detail: `${p.name} (${p.id}), last fired ${p.last_fired_time ? p.last_fired_time.slice(0, 10) : "never"}. ${purchase == null ? "Couldn't read its events." : purchase ? "Purchase fired in the last 7 days." : "No Purchase in the last 7 days."}${host ? ` ${domainSeen == null ? "" : domainSeen ? `Seen on ${host}.` : `Not seen on ${host} lately.`}` : ""}`,
+          fix: ok ? null : "Check the ticket checkout fires Purchase to this dataset (Events Manager → Test events) before optimizing for purchases.",
+        });
+      }
+    } catch (e) {
+      cs.push({ key: "pixel", label: "Pixel", level: "warn", detail: `Couldn't read the pixels: ${e instanceof Error ? e.message : String(e)}` });
     }
-  } catch (e) {
-    add({ key: "pixel", label: "Pixel", level: "warn", detail: `Couldn't read the pixels: ${e instanceof Error ? e.message : String(e)}` });
-  }
+    return cs;
+  })();
 
   // ─── What's already in the account, and its spend ──────────────────────────────────────────────────────
-  try {
-    const setup = await metaWritableSetup(admin, account);
-    const words = norm(`${sheet.event.name} ${sheet.event.location}`)
-      .split(" ")
-      .filter((w) => w.length > 3 && !["fest", "the", "with", "event"].includes(w));
-    const hit = (name: string) => {
-      const n = norm(name);
-      return words.length > 0 && words.filter((w) => n.includes(w)).length >= Math.min(2, words.length);
-    };
-    const matches: ExistingMatch[] = [
-      ...setup.campaigns.filter((c) => hit(c.name)).map((c) => ({ level: "campaign" as const, id: c.id, name: c.name, status: c.effective, dailyBudget: c.dailyBudget, lifetimeBudget: c.lifetimeBudget, spend: null })),
-      ...setup.adsets.filter((s) => hit(s.name) || hit(s.campaign)).map((s) => ({ level: "adset" as const, id: s.id, name: s.name, status: s.effective, campaignId: s.campaignId, dailyBudget: s.dailyBudget, lifetimeBudget: s.lifetimeBudget, spend: null })),
-    ].slice(0, 20);
-    let spent = 0;
-    for (const m of matches.filter((x) => x.level === "campaign")) {
-      const r = await metaGraph<{ data: { spend?: string }[] }>(`${m.id}/insights`, { fields: "spend", date_preset: "maximum" }).catch(() => ({ data: [] }));
-      m.spend = Math.round(Number(r.data[0]?.spend ?? 0) * 100) / 100;
-      spent += m.spend;
-    }
-    // Nothing named like the event: the live campaigns and ad sets spending most are still offered, to add to or copy
-    const spend14 = new Map<string, number>();
-    for (const a of setup.ads) spend14.set(a.adsetId, (spend14.get(a.adsetId) ?? 0) + a.spend14);
-    const related: ExistingMatch[] = matches.length
-      ? []
-      : setup.adsets
-          .filter((s) => s.effective === "ACTIVE")
-          .sort((a, b) => (spend14.get(b.id) ?? 0) - (spend14.get(a.id) ?? 0))
-          .slice(0, 3)
-          .flatMap((s) => {
-            const c = setup.campaigns.find((x) => x.id === s.campaignId);
-            return [
-              ...(c ? [{ level: "campaign" as const, id: c.id, name: c.name, status: c.effective, dailyBudget: c.dailyBudget, lifetimeBudget: c.lifetimeBudget, spend: null, related: true }] : []),
-              { level: "adset" as const, id: s.id, name: s.name, status: s.effective, campaignId: s.campaignId, dailyBudget: s.dailyBudget, lifetimeBudget: s.lifetimeBudget, spend: Math.round((spend14.get(s.id) ?? 0) * 100) / 100, related: true },
-            ];
-          })
-          .filter((m, i, all) => all.findIndex((x) => x.id === m.id) === i);
-    res.existing = [...matches, ...related];
-    res.spend.matched = matches.some((m) => m.level === "campaign") ? Math.round(spent * 100) / 100 : null;
-    add({
-      key: "existing",
-      label: "Already in the account",
-      level: matches.length ? "warn" : "ok",
-      detail: matches.length ? `${matches.filter((m) => m.level === "campaign").length} campaign(s) and ${matches.filter((m) => m.level === "adset").length} ad set(s) look like this event: ${matches.slice(0, 4).map((m) => `"${m.name}" (${m.status.toLowerCase().replace(/_/g, " ")})`).join(", ")}. New ads can go into them instead of duplicating.` : "Nothing in the account looks like this event: it would be new.",
-    });
-    if (res.spend.matched != null)
-      add({
-        key: "spend",
-        label: "Spend to date",
-        level: sheet.spentToDate != null && Math.abs(res.spend.matched - sheet.spentToDate) > Math.max(50, sheet.spentToDate * 0.1) ? "warn" : "info",
-        detail: `Those campaigns have spent $${res.spend.matched.toFixed(2)} in total${sheet.spentToDate != null ? `; the sheet says $${sheet.spentToDate.toFixed(2)}${sheet.spentThrough ? ` through ${sheet.spentThrough}` : ""}` : ""}${sheet.totalBudget != null ? ` of a $${sheet.totalBudget.toFixed(2)} total` : ""}.`,
+  const existingP = (async () => {
+    const cs: CheckItem[] = [];
+    try {
+      const setup = await metaWritableSetup(admin, account);
+      const words = norm(`${sheet.event.name} ${sheet.event.location}`)
+        .split(" ")
+        .filter((w) => w.length > 3 && !["fest", "the", "with", "event"].includes(w));
+      const hit = (name: string) => {
+        const n = norm(name);
+        return words.length > 0 && words.filter((w) => n.includes(w)).length >= Math.min(2, words.length);
+      };
+      const matches: ExistingMatch[] = [
+        ...setup.campaigns.filter((c) => hit(c.name)).map((c) => ({ level: "campaign" as const, id: c.id, name: c.name, status: c.effective, dailyBudget: c.dailyBudget, lifetimeBudget: c.lifetimeBudget, spend: null })),
+        ...setup.adsets.filter((s) => hit(s.name) || hit(s.campaign)).map((s) => ({ level: "adset" as const, id: s.id, name: s.name, status: s.effective, campaignId: s.campaignId, dailyBudget: s.dailyBudget, lifetimeBudget: s.lifetimeBudget, spend: null })),
+      ].slice(0, 20);
+      // Each matching campaign's lifetime spend, all at once
+      await Promise.all(
+        matches
+          .filter((x) => x.level === "campaign")
+          .map(async (m) => {
+            const r = await metaGraph<{ data: { spend?: string }[] }>(`${m.id}/insights`, { fields: "spend", date_preset: "maximum" }).catch(() => ({ data: [] }));
+            m.spend = Math.round(Number(r.data[0]?.spend ?? 0) * 100) / 100;
+          }),
+      );
+      const spent = matches.filter((x) => x.level === "campaign").reduce((s, m) => s + (m.spend ?? 0), 0);
+      // Nothing named like the event: the live campaigns and ad sets spending most are still offered, to add to or copy
+      const spend14 = new Map<string, number>();
+      for (const a of setup.ads) spend14.set(a.adsetId, (spend14.get(a.adsetId) ?? 0) + a.spend14);
+      const related: ExistingMatch[] = matches.length
+        ? []
+        : setup.adsets
+            .filter((s) => s.effective === "ACTIVE")
+            .sort((a, b) => (spend14.get(b.id) ?? 0) - (spend14.get(a.id) ?? 0))
+            .slice(0, 3)
+            .flatMap((s) => {
+              const c = setup.campaigns.find((x) => x.id === s.campaignId);
+              return [
+                ...(c ? [{ level: "campaign" as const, id: c.id, name: c.name, status: c.effective, dailyBudget: c.dailyBudget, lifetimeBudget: c.lifetimeBudget, spend: null, related: true }] : []),
+                { level: "adset" as const, id: s.id, name: s.name, status: s.effective, campaignId: s.campaignId, dailyBudget: s.dailyBudget, lifetimeBudget: s.lifetimeBudget, spend: Math.round((spend14.get(s.id) ?? 0) * 100) / 100, related: true },
+              ];
+            })
+            .filter((m, i, all) => all.findIndex((x) => x.id === m.id) === i);
+      res.existing = [...matches, ...related];
+      res.spend.matched = matches.some((m) => m.level === "campaign") ? Math.round(spent * 100) / 100 : null;
+      cs.push({
+        key: "existing",
+        label: "Already in the account",
+        level: matches.length ? "warn" : "ok",
+        detail: matches.length ? `${matches.filter((m) => m.level === "campaign").length} campaign(s) and ${matches.filter((m) => m.level === "adset").length} ad set(s) look like this event: ${matches.slice(0, 4).map((m) => `"${m.name}" (${m.status.toLowerCase().replace(/_/g, " ")})`).join(", ")}. New ads can go into them instead of duplicating.` : "Nothing in the account looks like this event: it would be new.",
       });
-  } catch (e) {
-    add({ key: "existing", label: "Already in the account", level: "warn", detail: `Couldn't read the account: ${e instanceof Error ? e.message : String(e)}` });
-  }
+      if (res.spend.matched != null)
+        cs.push({
+          key: "spend",
+          label: "Spend to date",
+          level: sheet.spentToDate != null && Math.abs(res.spend.matched - sheet.spentToDate) > Math.max(50, sheet.spentToDate * 0.1) ? "warn" : "info",
+          detail: `Those campaigns have spent $${res.spend.matched.toFixed(2)} in total${sheet.spentToDate != null ? `; the sheet says $${sheet.spentToDate.toFixed(2)}${sheet.spentThrough ? ` through ${sheet.spentThrough}` : ""}` : ""}${sheet.totalBudget != null ? ` of a $${sheet.totalBudget.toFixed(2)} total` : ""}.`,
+        });
+    } catch (e) {
+      cs.push({ key: "existing", label: "Already in the account", level: "warn", detail: `Couldn't read the account: ${e instanceof Error ? e.message : String(e)}` });
+    }
+    return cs;
+  })();
+
+  for (const part of await Promise.all([creativesP, postsP, geosP, pixelP, existingP])) for (const c of part) add(c);
 
   // ─── Dates, budget math, policy, copy ──────────────────────────────────────────────────────────────────
   const past = sheet.rows.filter((r) => r.date && r.date < today);

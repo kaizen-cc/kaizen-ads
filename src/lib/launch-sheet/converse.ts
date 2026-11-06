@@ -14,6 +14,15 @@ const N = { type: "number" };
 const obj = (properties: Record<string, unknown>) => ({ type: "object", properties, required: Object.keys(properties), additionalProperties: false });
 const arr = (items: unknown) => ({ type: "array", items });
 
+/**
+ * The fast tier for the steps someone is waiting on (reading a table the code already found, the questions, each chat
+ * turn); the plan keeps the agent's own model
+ */
+const FAST = { model: "sonnet", effort: "low" } as const;
+
+/** Short, plain lines for a narrow chat panel */
+const SHORT = `Write for a narrow chat panel: short sentences, numbers first, no em dashes.`;
+
 const RULES = `Kaizen's launch rules: everything is created PAUSED unless the buyer explicitly chooses a scheduled start in this conversation. Each ad stacks its text options (every primary text and headline as Meta's text options) with Advantage+ creative enhancements off; 4:5 runs in feeds and 9:16 in Stories and Reels (older 1:1 files are read but not launched). Kaizen's UTM template is added to every link. Budgets in a sheet are usually TOTALS per period, never daily budgets: never copy a period total in as a daily budget. Refer to people by role (the buyer, the client, the designer), never by name. Plain text, no markdown, no emojis.`;
 
 /** A compact view of the sheet for the model (row numbers are the sheet's row indexes) */
@@ -81,10 +90,13 @@ export async function readWithModel(clientId: string, sheet: LaunchSheet, grid: 
     agent: "launcher",
     label: "launch sheet read",
     clientId,
+    // Rows already found by the code: only a summary and notes are written, so the fast tier is enough
+    ...(needRows ? {} : { override: FAST }),
     system: `You read a launch sheet a buyer shared in a client's chat: the plan of ads to launch (often an event, with dates, the Page each ad runs on, the place, the creative and its copy options). You get the sheet as read from the file (its table, links and cell colors), and the file itself when it's a PDF (look at the pages: colors, layout, footnotes).
-summary: 2 to 4 plain sentences on what the sheet asks for (the event or offer, how many ads and posts, which Pages, the places, the dates and the budget as the sheet gives it). Don't decide anything.
+summary: 2 short sentences (at most 40 words) on what the sheet asks for (the event or offer, how many ads and posts, which Pages, the places, the dates and the budget as the sheet gives it). Don't decide anything.
 colorGuesses: for each row color, what it most likely means in the client's tracking (a guess the buyer will confirm, e.g. "launched", "not launched yet", "error"). Empty when rows have no colors.
-notes: anything odd a buyer should know (a row with no creative, the same creative twice on one Page, copy that doesn't match its row, dates after the event, a footnote that changes how to read the budget). At most 6, one sentence each.
+notes: anything odd a buyer should know (a row with no creative, the same creative twice on one Page, copy that doesn't match its row, dates after the event, a footnote that changes how to read the budget). At most 4, one short sentence each.
+${SHORT}
 ${needRows ? "rows: the structure wasn't found from the file, so read every row of the table yourself: its date as written, the Page, the place, the creative's name, the numbers of its links from <links> (never write a URL), and its copy options. Leave out header and note lines." : "rows: [] (the rows were read already)."}
 eventName and goal: as the sheet writes them ("" when absent).
 ${RULES}`,
@@ -107,14 +119,16 @@ export async function askQuestions(clientId: string, client: string, brief: stri
     agent: "launcher",
     label: "launch sheet questions",
     clientId,
+    override: FAST,
     system: `You're the media buyer about to launch a client's launch sheet into Meta. Everything was read and checked against the live account (below). Before anything is planned, you ask the buyer only what the buyer must decide, each with your proposal from your skills, the client's context and the checks, and why.
-summary: 2 to 4 sentences: what you read and what the checks found that matters (what's ready, what blocks).
-questions: start from the required questions given (keep each key; rewrite the question and proposal for this client and sheet, keep it short; give options when there are clear choices). Add a question only when the sheet or the checks leave something open the buyer must decide (e.g. a different landing link per place, which creative of a folder with several, a footnote that changes the budget, rows marked as errors). Never ask what the checks already settled. At most 9 questions.
+summary: 1 or 2 sentences (at most 35 words): what the checks found that matters for this launch (what's ready, what blocks).
+questions: start from the required questions given (keep each key; rewrite the question and proposal for this client and sheet, keep it short; give options when there are clear choices; question at most 15 words, why one sentence of at most 15 words, proposal at most 12 words). Stay on this sheet: nothing account-wide. Add a question only when the sheet or the checks leave something open the buyer must decide (e.g. a different landing link per place, which creative of a folder with several, a footnote that changes the budget, rows marked as errors). Never ask what the checks already settled. At most 7 questions.
+${SHORT}
 Proposals follow the client's goal as the sheet states it (e.g. volume of purchases over ROAS), Kaizen's buying principles in your skills, and the account as it is (add to a matching campaign rather than duplicate it when that fits).
 ${RULES}`,
     schema: ASK_SCHEMA,
-    maxTokens: 8000,
-    prompt: `<client>${client}</client>\n\n<client_context>\n${brief.slice(0, 14_000)}\n</client_context>\n\n<sheet>\n${sheetBrief(sheet)}\n</sheet>\n\n<checks>\n${resolutionBrief(res)}\n</checks>\n\n${budget ? `<budget_options note="exact numbers worked out from the sheet's periods from today (${today}); periods already over are left out">\n${budget.options.map((o) => `${o.mode}: ${o.map.lines.map((l) => `${l.label} ${l.start}..${l.end} $${l.amount} ($${l.daily}/day)`).join("; ")} · total $${o.map.total}${o.spec ? ` · as Meta takes it: ${o.spec.type} $${o.spec.amount}${o.spec.schedules?.length ? ` + ${o.spec.schedules.length} budget schedule(s)` : ""}` : ""}${o.map.notes.length ? ` · ${o.map.notes.join(" ")}` : ""}`).join("\n")}\n</budget_options>\n\n` : ""}<required_questions>\n${questionsText(must)}\n</required_questions>`,
+    maxTokens: 4000,
+    prompt: `<client>${client}</client>\n\n<client_context>\n${brief.slice(0, 3000)}\n</client_context>\n\n<sheet>\n${sheetBrief(sheet)}\n</sheet>\n\n<checks>\n${resolutionBrief(res)}\n</checks>\n\n${budget ? `<budget_options note="exact numbers worked out from the sheet's periods from today (${today}); periods already over are left out">\n${budget.options.map((o) => `${o.mode}: ${o.map.lines.map((l) => `${l.label} ${l.start}..${l.end} $${l.amount} ($${l.daily}/day)`).join("; ")} · total $${o.map.total}${o.spec ? ` · as Meta takes it: ${o.spec.type} $${o.spec.amount}${o.spec.schedules?.length ? ` + ${o.spec.schedules.length} budget schedule(s)` : ""}` : ""}${o.map.notes.length ? ` · ${o.map.notes.join(" ")}` : ""}`).join("\n")}\n</budget_options>\n\n` : ""}<required_questions>\n${questionsText(must)}\n</required_questions>`,
   });
 }
 
@@ -128,16 +142,18 @@ export async function replyToBuyer(clientId: string, sheet: LaunchSheet, res: Re
     agent: "launcher",
     label: "launch sheet chat",
     clientId,
+    override: FAST,
     system: `You're the media buyer in a conversation with the buyer about launching a launch sheet into Meta. The sheet, the checks against the live account, your questions (with what's answered) and the conversation are below. Stage: ${stage}.
 answers: the questions the buyer's message answers, by key, in their words made exact (e.g. "rows": "only the green rows dated from Oct 1"). When the buyer accepts your proposal ("yes", "go with that", "your defaults"), the answer is your proposal written out. Only what the buyer actually said or accepted; never answer for them.
 newQuestions: a new question only when their answer opens one the plan needs.
 build: true when the buyer asks to build, see or redo the plan, or says go ahead. The plan is only built once every required question is answered; if some aren't, say which in answer.
-answer: your reply in 1 to 6 sentences: confirm what you took from them, push back with the reason when something works against the client's goal or Kaizen's rules, and ask what's still open. When the stage is "ready" or later and they ask for a change to the plan, take it as an answer (usually "structure", "budget", "targeting" or "rows") and set build true so the plan is rebuilt and checked again. When the stage is "ready" and they say go ahead or confirm, tell them to press Create on the launch card (it checks who may confirm and creates everything paused, or scheduled as agreed); build stays false.
+answer: your reply in 1 to 4 short sentences: confirm what you took from them, push back with the reason when something works against the client's goal or Kaizen's rules, and ask what's still open. When the stage is "ready" or later and they ask for a change to the plan, take it as an answer (usually "structure", "budget", "targeting" or "rows") and set build true so the plan is rebuilt and checked again. When the stage is "ready" and they say go ahead or confirm, tell them to press Create on the launch card (it checks who may confirm and creates everything paused, or scheduled as agreed); build stays false.
 offTopic: true when the message isn't about this launch at all (then answer "").
 setAside: true when they say to stop, drop or park this launch.
+${SHORT}
 ${RULES}`,
     schema: REPLY_SCHEMA,
-    maxTokens: 6000,
+    maxTokens: 3000,
     prompt: `<sheet>\n${sheetBrief(sheet, 60)}\n</sheet>\n\n<checks>\n${resolutionBrief(res)}\n</checks>\n\n<questions>\n${questionsText(qs)}\n</questions>\n\n<conversation>\n${turns
       .slice(-16)
       .map((t) => `${t.role === "user" ? "Buyer" : "You"}: ${t.text}`)

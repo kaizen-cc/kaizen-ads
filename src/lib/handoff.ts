@@ -58,6 +58,8 @@ export type ChatTurn = {
   plan?: { id: string };
   /** A launch (a Meta launch sheet, or new Google Ads from words or a sheet): the launch card follows it there (questions, plan, confirm) */
   launch?: { id: string; platform?: "meta" | "google" };
+  /** A place in the app the answer points to (the sprint the suggestions went on, the buyer's tasks) */
+  link?: { href: string; label: string };
 };
 
 const S = { type: "string" };

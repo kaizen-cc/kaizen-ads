@@ -1,11 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { WriteOff } from "@/components/write-gate";
 import { chars, G, kwText, type AdLine, type GAdGroup, type GCampaign, type GooglePlan, type Match, type PlanEdit, type Rsa } from "@/lib/google-launch/core";
 import type { LaunchItem } from "@/lib/launch-sheet/types";
 import { Checklist, Mark, Question } from "./launch-card";
+import { Clamp, LaunchMore } from "./launch-more";
 import {
   buildGoogleLaunchPlan,
   deployGoogleLaunch,
@@ -14,15 +15,14 @@ import {
   loadGoogleLaunch,
   recheckGoogleLaunch,
   setAsideGoogleLaunch,
-  setGoogleLaunchSuggestion,
   takeGoogleProposals,
   type GoogleLaunchView,
 } from "./google-launch-actions";
 
 // The Google launch card under a chat answer: what was read (the buyer's words or their sheet), the questions only
-// they can answer, what the Google Ads Buyer suggests from the account, then the plan as every object it creates
+// they can answer (only about this launch), then the plan as every object it creates
 // (campaign, ad groups, keywords by match type, negatives, each RSA headline and description with its character count,
-// assets, budget), each with Google's dry run. Lines are edited or removed right here; Deploy creates it all paused.
+// assets, budget), each with Google's dry run. Lines are edited or removed right here; Deploy creates it all paused; once it's read back, the card offers to suggest more for the rest of the account.
 
 const WORKING = new Set(["reading", "resolving", "planning", "checking", "applying"]);
 const STATUS: Record<string, string> = {
@@ -318,8 +318,10 @@ export function GoogleLaunchCard({ id, compact = false }: { id: string; compact?
   const [v, setV] = useState<GoogleLaunchView | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Polls while the questions are being tailored (status asking with progress), at most about two minutes
+  const tailoring = useRef(0);
 
-  // Follow it while it's being read, planned, checked or created
+  // Follow it while it's being read, planned, checked or created, and while the questions are being tailored
   useEffect(() => {
     let live = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -327,7 +329,8 @@ export function GoogleLaunchCard({ id, compact = false }: { id: string; compact?
       const next = await loadGoogleLaunch(id).catch(() => null);
       if (!live) return;
       setV(next);
-      if (next && WORKING.has(next.status)) timer = setTimeout(tick, 2500);
+      const refining = next?.status === "asking" && Boolean(next.progress) && tailoring.current++ < 50;
+      if (next && (WORKING.has(next.status) || refining || (next.status === "applied" && !next.qa))) timer = setTimeout(tick, 2500);
     };
     void tick();
     return () => {
@@ -371,31 +374,37 @@ export function GoogleLaunchCard({ id, compact = false }: { id: string; compact?
   const qaBad = (v.qa?.lines ?? []).filter((l) => !l.ok);
 
   return (
-    <section className="grid w-full max-w-[96%] gap-3 rounded-[16px] border border-[#1a73e8]/30 bg-[#1a73e8]/[0.04] p-3 md:p-3.5">
+    // Never wider than the chat panel: every descendant may shrink (min-w-0) and long tokens (campaign names with pipes,
+    // URLs, keyword lists) wrap anywhere
+    <section className="grid w-full min-w-0 max-w-[96%] grid-cols-[minmax(0,1fr)] gap-3 rounded-[16px] border border-[#1a73e8]/30 bg-[#1a73e8]/[0.04] p-3 [overflow-wrap:anywhere] md:p-3.5 [&_*]:min-w-0">
       <header className="flex items-center justify-between gap-2">
-        <span className="flex items-center gap-2 text-[10.5px] font-medium uppercase tracking-[0.16em] text-ink/60">
-          <span className="h-2 w-2 rounded-full bg-[#1a73e8]" />
+        <span className="flex shrink-0 items-center gap-2 text-[10.5px] font-medium uppercase tracking-[0.16em] text-ink/60">
+          <span className="h-2 w-2 shrink-0 rounded-full bg-[#1a73e8]" />
           Launch · Google Ads
         </span>
-        <span className="flex items-center gap-1.5 text-[10.5px] text-ink/50">
-          {WORKING.has(v.status) && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" />}
-          {STATUS[v.status] ?? v.status}
+        <span className="flex items-center gap-1.5 truncate text-[10.5px] text-ink/50" title={STATUS[v.status] ?? v.status}>
+          {(WORKING.has(v.status) || (v.status === "asking" && v.progress)) && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-brand" />}
+          <span className="truncate">{STATUS[v.status] ?? v.status}</span>
         </span>
       </header>
-      <p className="text-[11.5px] text-ink/55">
+      <p className="truncate text-[11.5px] text-ink/55" title={`${v.source}${v.account ? ` · account ${v.account}` : ""}`}>
         {v.source}
         {v.account ? ` · account ${v.account.replace(/^(\d{3})(\d{3})(\d{4})$/, "$1-$2-$3")}` : ""}
       </p>
 
-      {v.progress && WORKING.has(v.status) && <p className="text-[12px] text-ink/65">{v.progress}</p>}
+      {v.progress && (WORKING.has(v.status) || v.status === "asking") && (
+        <p className="flex items-center gap-2 text-[12px] text-ink/65">
+          {v.status === "asking" && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-brand" />}
+          {v.progress}
+          {v.status === "asking" ? "… you can answer already" : ""}
+        </p>
+      )}
       {v.error && <p className="rounded-[10px] border border-bad/25 bg-bad-soft/20 px-3 py-2 text-[12px] text-ink/85">{v.error}</p>}
 
       {v.summary && (
-        <div className="grid gap-2 text-[12.5px] leading-relaxed text-ink/85">
+        <div className="grid gap-1.5 text-[12.5px] leading-relaxed text-ink/85">
           {v.summary.split(/\n{2,}/).map((p, i) => (
-            <p key={i} className={p.startsWith("Note:") ? "text-[11.5px] text-ink/60" : i === 0 && p.startsWith("I read") ? "font-medium" : ""}>
-              {p}
-            </p>
+            <Clamp key={i} text={p} className={p.startsWith("Note:") ? "text-[11.5px] text-ink/60" : ""} />
           ))}
         </div>
       )}
@@ -404,31 +413,6 @@ export function GoogleLaunchCard({ id, compact = false }: { id: string; compact?
         <div className="grid gap-1">
           <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-ink/45">What I checked</p>
           <Checklist checks={v.checks} />
-        </div>
-      )}
-
-      {v.suggestions.length > 0 && ["asking", "ready"].includes(v.status) && (
-        <div className="grid gap-2">
-          <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-ink/45">What I&apos;d add, from the account today</p>
-          <ul className="grid gap-1.5">
-            {v.suggestions.map((s) => (
-              <li key={s.key} className={`grid gap-1.5 rounded-[12px] border px-3 py-2.5 ${s.accepted ? "border-ok/30 bg-ok-soft/10" : s.accepted === false ? "border-ink/[0.05] opacity-60" : "border-ink/[0.08] bg-ink/[0.02]"}`}>
-                <p className="text-[12.5px] font-medium leading-snug">{s.title}</p>
-                <p className="text-[11.5px] leading-snug text-ink/60">{s.why}</p>
-                <span className="flex flex-wrap gap-1.5">
-                  <button type="button" disabled={Boolean(busy)} onClick={() => void act(`s:${s.key}`, () => setGoogleLaunchSuggestion(v.id, s.key, s.accepted === true ? null : true))} className={`h-10 rounded-full px-3.5 text-[12px] disabled:opacity-40 md:h-8 ${s.accepted ? "bg-ok/20 text-ok" : "bg-fg text-bg"}`}>
-                    {s.accepted ? "✓ In the plan" : "Use it"}
-                  </button>
-                  {s.accepted !== false && (
-                    <button type="button" disabled={Boolean(busy)} onClick={() => void act(`s:${s.key}`, () => setGoogleLaunchSuggestion(v.id, s.key, false))} className="h-10 rounded-full border border-ink/10 px-3.5 text-[12px] text-ink/65 hover:text-fg disabled:opacity-40 md:h-8">
-                      Skip
-                    </button>
-                  )}
-                </span>
-              </li>
-            ))}
-          </ul>
-          {v.status === "ready" && v.suggestions.some((s) => s.accepted) && <p className="text-[11px] text-ink/45">Suggestions taken after the plan was built go in when you rebuild it.</p>}
         </div>
       )}
 
@@ -462,7 +446,7 @@ export function GoogleLaunchCard({ id, compact = false }: { id: string; compact?
             <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-ink/45">The plan · everything created paused</p>
             <span className="text-[10.5px] text-ink/45">{created ? `${created} of ${toMake} created` : `${toMake} lines · ${kws} keywords · ${ads} ads`}</span>
           </div>
-          {plan.note && <p className="text-[12px] leading-relaxed text-ink/75">{plan.note}</p>}
+          {plan.note && <Clamp text={plan.note} className="text-[12px] leading-relaxed text-ink/75" />}
           {v.warnings.length > 0 && (
             <ul className="grid gap-1 rounded-[10px] border border-warn/25 bg-warn-soft/20 px-3 py-2">
               {v.warnings.slice(0, 8).map((w) => (
@@ -486,6 +470,9 @@ export function GoogleLaunchCard({ id, compact = false }: { id: string; compact?
           {qaBad.length ? `Read back from Google: ${qaBad.length} line${qaBad.length === 1 ? "" : "s"} differ from the plan. ${qaBad.slice(0, 3).map((l) => `${l.key.split(":")[0]} ${l.diffs.join(", ")}`).join("; ")}` : `Read back from Google: all ${v.qa.lines.length} created lines are there, paused. Turn them on in Google Ads when you're ready.`}
         </p>
       )}
+
+      {/* Once it's deployed and read back: suggest more for the rest of the account (sprint or the buyer's tasks) */}
+      {v.status === "applied" && v.qa && <LaunchMore runId={v.id} />}
 
       {v.status === "ready" && !v.write.live && <WriteOff status={v.write} canSwitch={v.canSwitch} account={v.account} compact onLive={() => void loadGoogleLaunch(v.id).then((next) => next && setV(next))} />}
       {v.status === "ready" && v.write.live && !v.canConfirm && <p className="text-[11.5px] text-ink/50">The client&apos;s Google buyer, the head of Google, a lead or an exec deploys a launch.</p>}

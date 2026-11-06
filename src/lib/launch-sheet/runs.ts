@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { metaGraph } from "@/lib/context/meta";
 import { metaWrite, metaWritableSetup, metaWriteSetting, writeBlocked } from "@/lib/meta-write";
 import { metaDeepLink } from "@/lib/chat-change-core";
+import { step } from "@/lib/launch-cache";
 import { openSource, type SheetSource } from "./intake";
 import { gridToSheet } from "./sheet";
 import { resolveSheet } from "./resolve";
@@ -33,6 +34,7 @@ type Run = {
   client_id: string;
   account: string | null;
   status: RunStatus;
+  progress: string | null;
   source: SheetSource;
   sheet: LaunchSheet | null;
   summary: string | null;
@@ -44,7 +46,7 @@ type Run = {
 };
 
 async function load(admin: SupabaseClient, id: string): Promise<Run | null> {
-  const { data } = await admin.from("launch_runs").select("id, client_id, account, status, source, sheet, summary, resolution, questions, turns, plan, created_by").eq("id", id).maybeSingle();
+  const { data } = await admin.from("launch_runs").select("id, client_id, account, status, progress, source, sheet, summary, resolution, questions, turns, plan, created_by").eq("id", id).maybeSingle();
   return (data as Run | null) ?? null;
 }
 const patch = (admin: SupabaseClient, id: string, p: Record<string, unknown>) => admin.from("launch_runs").update({ ...p, updated_at: now() }).eq("id", id);
@@ -74,65 +76,110 @@ export async function openRunFor(admin: SupabaseClient, clientId: string, profil
 
 // ─── Read, check, ask ───────────────────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Reads the sheet, checks it against the account and Drive, then asks. The required questions are worked out by code,
+ * so they're on the card (and answerable) as soon as the checks are done; the Media Buyer then tailors them on the
+ * fast tier and they're merged in, keeping any answer already given. When the code found the table, the Media Buyer's
+ * read (a summary and notes) runs alongside the checks instead of before them.
+ */
 export async function prepareRun(admin: SupabaseClient, id: string) {
+  const t0 = Date.now();
+  const scope = `meta run ${id.slice(0, 8)}`;
   const run = await load(admin, id);
   if (!run) return;
+  let sheet!: LaunchSheet;
+  let res!: Resolution;
+  let read!: Awaited<ReturnType<typeof readWithModel>>;
+  const day = today();
+  // The client's name and context for the tailoring step, read alongside everything else
+  const ctxP = Promise.all([
+    admin.from("clients").select("name").eq("id", run.client_id).single(),
+    step(scope, "client context", import("@/lib/handoff").then((m) => m.accountBrief(admin, run.client_id, null)).then((b) => b.text)).catch(() => ""),
+  ]);
   try {
-    const opened = await openSource(admin, run.source);
+    const opened = await step(scope, "open the sheet", openSource(admin, run.source));
     if (!opened.grid) throw new Error(opened.note ?? "The sheet couldn't be read.");
-    const day = today();
-    const sheet = gridToSheet(opened.grid, day);
-    const read = await readWithModel(run.client_id, sheet, opened.grid, opened.pdf, opened.name);
-    // The model's rows only when the file's structure didn't give any; its links point into the file's own links
-    if (!sheet.rows.length && read.rows.length) {
-      const links = [...new Set(opened.grid.rows.flatMap((r) => r.flatMap((c) => c.links)))];
-      sheet.via = "model";
-      sheet.rows = read.rows.map((r, index) => {
-        const ls = r.links.map((n) => links[n]).filter((u): u is string => Boolean(u));
-        const post = ls.find(isPostUrl) ?? null;
-        return {
-          index,
-          dateText: r.dateText,
-          date: null,
-          endDate: null,
-          page: r.page,
-          access: "",
-          geo: r.geo,
-          creative: { name: r.creative, links: ls },
-          existingPost: post,
-          copy: Array.from({ length: Math.max(r.headlines.length, r.primaries.length, r.descriptions.length) }, (_, i) => ({ headline: r.headlines[i] ?? "", primary: r.primaries[i] ?? "", description: r.descriptions[i] ?? "" })),
-          link: null,
-          cta: "",
-          audience: "",
-          color: r.color || null,
-          colorHex: null,
-          notes: [],
-          extra: {},
-        };
-      });
-      const { parseDate } = await import("./sheet");
-      for (const r of sheet.rows) r.date = parseDate(r.dateText, Number(day.slice(0, 4)));
+    const grid = opened.grid;
+    sheet = gridToSheet(grid, day);
+    const found = sheet.rows.length > 0;
+    // The table wasn't found from the file's structure: the Media Buyer reads the rows first (the checks need them)
+    const readP = step(scope, found ? "read summary (fast tier)" : "read rows (agent's model)", readWithModel(run.client_id, sheet, grid, opened.pdf, opened.name));
+    readP.catch(() => undefined);
+    if (!found) {
+      const r = await readP;
+      if (r.rows.length) {
+        // The model's links point into the file's own links
+        const links = [...new Set(grid.rows.flatMap((x) => x.flatMap((c) => c.links)))];
+        sheet.via = "model";
+        sheet.rows = r.rows.map((x, index) => {
+          const ls = x.links.map((n) => links[n]).filter((u): u is string => Boolean(u));
+          const post = ls.find(isPostUrl) ?? null;
+          return {
+            index,
+            dateText: x.dateText,
+            date: null,
+            endDate: null,
+            page: x.page,
+            access: "",
+            geo: x.geo,
+            creative: { name: x.creative, links: ls },
+            existingPost: post,
+            copy: Array.from({ length: Math.max(x.headlines.length, x.primaries.length, x.descriptions.length) }, (_, i) => ({ headline: x.headlines[i] ?? "", primary: x.primaries[i] ?? "", description: x.descriptions[i] ?? "" })),
+            link: null,
+            cta: "",
+            audience: "",
+            color: x.color || null,
+            colorHex: null,
+            notes: [],
+            extra: {},
+          };
+        });
+        const { parseDate } = await import("./sheet");
+        for (const x of sheet.rows) x.date = parseDate(x.dateText, Number(day.slice(0, 4)));
+      }
     }
+    if (!sheet.rows.length) throw new Error("No ads were found in the sheet (a table with rows of creative and copy).");
+    // The checks match the account's campaigns by the event's name: when the code didn't find it, the read names it first
+    if (!sheet.event.name) {
+      const r = await readP;
+      if (r.eventName) sheet.event.name = r.eventName;
+    }
+    await patch(admin, id, { sheet, status: "resolving", progress: `${sheet.rows.length} row${sheet.rows.length === 1 ? "" : "s"} read. Checking Pages, Drive files, places, the pixel and the account` });
+    const checked = sheet;
+    const [r1, r2] = await Promise.all([step(scope, "checks against the account and Drive", resolveSheet(admin, run.client_id, checked, day)), readP]);
+    res = r1;
+    read = r2;
     if (!sheet.event.name && read.eventName) sheet.event.name = read.eventName;
     if (!sheet.goal && read.goal) sheet.goal = read.goal;
-    if (!sheet.rows.length) throw new Error("No ads were found in the sheet (a table with rows of creative and copy).");
-    const colors = read.colorGuesses.filter((c) => c.color && c.guess);
-    await patch(admin, id, { sheet, status: "resolving", progress: "Checking it against the ad account and Drive" });
-
-    const res = await resolveSheet(admin, run.client_id, sheet, day);
-    await patch(admin, id, { resolution: res, account: res.account, progress: "Writing the questions" });
-
-    const [{ data: c }, brief] = await Promise.all([
-      admin.from("clients").select("name").eq("id", run.client_id).single(),
-      import("@/lib/handoff").then((m) => m.accountBrief(admin, run.client_id, null)).then((b) => b.text).catch(() => ""),
-    ]);
     const must = requiredQuestions(sheet, res, day);
-    const asked = await askQuestions(run.client_id, (c?.name as string) ?? "the client", brief, sheet, res, must, day);
-    const questions = mergeQuestions(asked.questions.map((q) => ({ ...q, answer: null })), must);
-    const summary = [read.summary, asked.summary, colors.length ? `Row colors (to confirm): ${colors.map((x) => `${x.color} probably means ${x.guess}`).join("; ")}.` : "", ...read.notes.map((n) => `Note: ${n}`)].filter(Boolean).join("\n\n");
-    await patch(admin, id, { summary, questions, status: "asking", progress: null, error: null });
+    const colors = read.colorGuesses.filter((c) => c.color && c.guess);
+    const summary = [read.summary, colors.length ? `Row colors (to confirm): ${colors.map((x) => `${x.color} probably means ${x.guess}`).join("; ")}.` : "", ...read.notes.map((n) => `Note: ${n}`)].filter(Boolean).join("\n\n");
+    await patch(admin, id, { sheet, resolution: res, account: res.account, summary, questions: must, status: "asking", progress: "Tailoring the questions to the account", error: null });
+    console.log(`[launch] ${scope} · questions on the card ${Date.now() - t0}ms`);
   } catch (e) {
     await patch(admin, id, { status: "failed", progress: null, error: msg(e).slice(0, 500) });
+    return;
+  }
+
+  // ─── The Media Buyer tailors the questions (fast tier), merged in without touching answers ───
+  try {
+    const [{ data: c }, brief] = await ctxP;
+    const must = requiredQuestions(sheet, res, day);
+    const asked = await step(scope, "tailor questions (fast tier)", askQuestions(run.client_id, (c?.name as string) ?? "the client", brief, sheet, res, must, day));
+    const latest = await load(admin, id);
+    if (!latest) return;
+    const colors = read.colorGuesses.filter((x) => x.color && x.guess);
+    const summary = [read.summary, asked.summary, colors.length ? `Row colors (to confirm): ${colors.map((x) => `${x.color} probably means ${x.guess}`).join("; ")}.` : "", ...read.notes.map((n) => `Note: ${n}`)].filter(Boolean).join("\n\n");
+    if (latest.status !== "asking") {
+      await patch(admin, id, { summary, progress: latest.progress === "Tailoring the questions to the account" ? null : latest.progress });
+      return;
+    }
+    const questions = mergeQuestions(asked.questions.map((q) => ({ ...q, answer: null })), must, latest.questions);
+    await patch(admin, id, { summary, questions, progress: null });
+    console.log(`[launch] ${scope} · questions tailored ${Date.now() - t0}ms`);
+  } catch (e) {
+    console.error(`[launch] ${scope} · tailoring failed:`, msg(e));
+    await patch(admin, id, { progress: null });
   }
 }
 

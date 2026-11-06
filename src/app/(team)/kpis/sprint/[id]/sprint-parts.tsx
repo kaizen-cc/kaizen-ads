@@ -23,7 +23,7 @@ export type SprintAction = {
   aiNote: string | null;
   doneAt: string | null;
   doneBy: string | null;
-  source: "audit" | "buyer" | "business_audit";
+  source: "audit" | "buyer" | "business_audit" | "launch";
   /** When a business audit added it to a sprint already being worked */
   addedOn?: string | null;
   addedBy: string | null;
@@ -167,6 +167,7 @@ export function ActionRow({ a, readOnly, writable = null, asked = 0, agent = "au
             {a.status === "doing" && <span className="rounded-full bg-warn-soft px-2 py-0.5 text-warn">In progress</span>}
             {a.status === "skipped" && <span className="rounded-full border border-line px-2 py-0.5 text-faint">Skipped</span>}
             {a.source === "buyer" && <span className="rounded-full bg-bg px-2 py-0.5 text-muted">Added{a.addedBy ? ` by ${a.addedBy}` : ""}</span>}
+            {a.source === "launch" && <span className="rounded-full bg-bg px-2 py-0.5 text-muted">From the launch chat{a.addedBy ? ` · ${a.addedBy}` : ""}{a.addedOn ? ` · ${new Date(a.addedOn).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}</span>}
             {a.source === "business_audit" && <span className="rounded-full bg-brand/10 px-2 py-0.5 text-brand-text">Added from business audit{a.addedOn ? ` ${new Date(a.addedOn).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}</span>}
             {a.questions.length > 0 && <span className="rounded-full bg-brand-soft px-2 py-0.5 text-brand-text">{a.questions.length} question{a.questions.length === 1 ? "" : "s"}</span>}
             {a.learned && <span className="rounded-full bg-ok-soft px-2 py-0.5 text-ok">Lesson saved to the client page</span>}

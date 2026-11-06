@@ -273,8 +273,8 @@ export async function signOffPlan(admin: SupabaseClient, clientId: string, by: s
   );
   // Steps a rebuilt plan dropped are set aside, never deleted
   const keys = new Set(tasks.map((t) => t.key));
-  // (a business audit's tasks, ba:…, aren't part of the plan: they stay)
-  const dropped = (existing ?? []).filter((t) => !keys.has(t.key as string) && !String(t.key).startsWith("ba:") && !["done", "skipped"].includes(t.status as string)).map((t) => t.key as string);
+  // (a business audit's tasks, ba:…, and actions saved from a launch chat, lc:…, aren't part of the plan: they stay)
+  const dropped = (existing ?? []).filter((t) => !keys.has(t.key as string) && !/^(ba|lc):/.test(String(t.key)) &&!["done", "skipped"].includes(t.status as string)).map((t) => t.key as string);
   if (dropped.length) await admin.from("client_tasks").update({ status: "skipped", updated_at: now.toISOString() }).eq("client_id", clientId).in("key", dropped);
   await refreshTasks(admin, clientId);
   return { ok: true as const };

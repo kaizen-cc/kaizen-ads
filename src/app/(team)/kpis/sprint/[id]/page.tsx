@@ -63,7 +63,7 @@ export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id
     doneAt: a.done_at,
     doneBy: (a.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
     source: (a.source ?? "audit") as SprintAction["source"],
-    addedOn: a.source === "business_audit" ? ((a.created_at as string | null) ?? null) : null,
+    addedOn: a.source === "business_audit" || a.source === "launch" ?((a.created_at as string | null) ?? null) : null,
     addedBy: (a.adder as unknown as { full_name: string } | null)?.full_name ?? null,
     watch: a.watch,
     questions: (a.questions ?? []) as string[],

@@ -2,13 +2,14 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { googleDeepLink } from "@/lib/chat-change-core";
+import { cachedRead, forgetCached, step } from "@/lib/launch-cache";
 import { googleAdsConfigured, googleBulkMutate, googleQuery, googleWritableSetup, suggestGeo } from "@/lib/context/google-ads";
 import { applyAnswers, mergeQuestions } from "@/lib/launch-sheet/questions";
 import { unanswered } from "@/lib/launch-sheet/plan";
 import { gridText } from "@/lib/launch-sheet/grid";
 import type { SheetSource } from "@/lib/launch-sheet/intake";
 import type { CheckItem, ItemStatus, LaunchItem, LaunchQuestion, RunStatus } from "@/lib/launch-sheet/types";
-import { SETUP_RULE, checkAgainstSetup, type SetupFacts } from "@/lib/setup-check";
+import type { SetupFacts } from "@/lib/setup-check";
 import {
   campaignChoice,
   checkGooglePlan,
@@ -90,6 +91,7 @@ type Run = {
   client_id: string;
   account: string | null;
   status: RunStatus;
+  progress: string | null;
   source: SheetSource | { kind: "words"; text: string };
   sheet: GoogleDraft | null;
   summary: string | null;
@@ -101,7 +103,7 @@ type Run = {
 };
 
 async function load(admin: SupabaseClient, id: string): Promise<Run | null> {
-  const { data } = await admin.from("launch_runs").select("id, client_id, account, status, source, sheet, summary, resolution, questions, turns, plan, created_by").eq("id", id).eq("platform", "google").maybeSingle();
+  const { data } = await admin.from("launch_runs").select("id, client_id, account, status, progress, source, sheet, summary, resolution, questions, turns, plan, created_by").eq("id", id).eq("platform", "google").maybeSingle();
   return (data as Run | null) ?? null;
 }
 const patch = (admin: SupabaseClient, id: string, p: Record<string, unknown>) => admin.from("launch_runs").update({ ...p, updated_at: now() }).eq("id", id);
@@ -150,15 +152,17 @@ const n = (v: unknown) => Number(v) || 0;
 async function readAccount(admin: SupabaseClient, clientId: string, account: string) {
   const since = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
   const safe = <T,>(p: Promise<T>, fallback: T) => p.catch(() => fallback);
+  // Every part timed, so the slow one shows in the logs ("[launch] google 123 · setup snapshot 4100ms")
+  const t = <T,>(label: string, p: Promise<T>) => step(`google ${account}`, label, p);
   const [setup, { data: days }, ads, groups, kws, snapshot, converting, lines] = await Promise.all([
-    googleWritableSetup(account),
+    t("campaigns, ad groups, wasted searches", googleWritableSetup(account)),
     admin.from("google_campaign_daily").select("campaign_id, spend, actions").eq("ad_account_id", account).gte("date", since),
-    safe(googleQuery(account, "SELECT ad_group.id, ad_group_ad.ad_strength FROM ad_group_ad WHERE ad_group_ad.ad.type = 'RESPONSIVE_SEARCH_AD' AND ad_group_ad.status != 'REMOVED' AND campaign.status != 'REMOVED'") as Promise<Row[]>, [] as Row[]),
-    safe(googleQuery(account, "SELECT asset_group.id, asset_group.name, asset_group.ad_strength, campaign.id, campaign.name FROM asset_group WHERE asset_group.status != 'REMOVED' AND campaign.status != 'REMOVED'") as Promise<Row[]>, [] as Row[]),
-    safe(googleQuery(account, "SELECT ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type FROM ad_group_criterion WHERE ad_group_criterion.type = 'KEYWORD' AND ad_group_criterion.status != 'REMOVED' AND ad_group_criterion.negative = FALSE AND campaign.status != 'REMOVED'") as Promise<Row[]>, [] as Row[]),
-    safe(import("@/lib/google-setup").then((m) => m.googleSetupSnapshot(account)), null),
-    safe(import("@/lib/context/google-ads").then((m) => m.googleConvertingTerms(account, 90)), [] as { term: string; campaignName: string; conversions: number; spend: number }[]),
-    safe(import("@/lib/copy-library").then((m) => m.clientCopyLines(admin, clientId)), []),
+    safe(t("ad strength", googleQuery(account, "SELECT ad_group.id, ad_group_ad.ad_strength FROM ad_group_ad WHERE ad_group_ad.ad.type = 'RESPONSIVE_SEARCH_AD' AND ad_group_ad.status != 'REMOVED' AND campaign.status != 'REMOVED'") as Promise<Row[]>), [] as Row[]),
+    safe(t("asset groups", googleQuery(account, "SELECT asset_group.id, asset_group.name, asset_group.ad_strength, campaign.id, campaign.name FROM asset_group WHERE asset_group.status != 'REMOVED' AND campaign.status != 'REMOVED'") as Promise<Row[]>), [] as Row[]),
+    safe(t("keywords", googleQuery(account, "SELECT ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type FROM ad_group_criterion WHERE ad_group_criterion.type = 'KEYWORD' AND ad_group_criterion.status != 'REMOVED' AND ad_group_criterion.negative = FALSE AND campaign.status != 'REMOVED'") as Promise<Row[]>), [] as Row[]),
+    safe(t("setup snapshot", import("@/lib/google-setup").then((m) => m.googleSetupSnapshot(account))), null),
+    safe(t("converting searches", import("@/lib/context/google-ads").then((m) => m.googleConvertingTerms(account, 90))), [] as { term: string; campaignName: string; conversions: number; spend: number }[]),
+    safe(t("copy library", import("@/lib/copy-library").then((m) => m.clientCopyLines(admin, clientId))), []),
   ]);
   const spend = new Map<string, { spend: number; conv: number }>();
   for (const d of days ?? []) {
@@ -195,23 +199,46 @@ async function readAccount(admin: SupabaseClient, clientId: string, account: str
   };
 }
 
-/** The account in a compact form for the Google Ads Buyer */
-function accountText(r: GoogleResolution) {
+type AccountRead = Awaited<ReturnType<typeof readAccount>>;
+
+/**
+ * The live account for a launch, kept ten minutes (src/lib/launch-cache.ts): the warm-up started while the chat is
+ * still answering, a second launch, a retry and the suggestions after a deploy read it instantly.
+ */
+export async function readGoogleAccount(admin: SupabaseClient, clientId: string, account: string, fresh = false) {
+  return cachedRead<AccountRead>(admin, `google:${clientId}:${account}`, () => readAccount(admin, clientId, account), { clientId, fresh });
+}
+
+/** Starts reading the account a Google launch will need, before the launch itself is set up (never throws) */
+export async function warmGoogleLaunch(admin: SupabaseClient, clientId: string, targetId: string | null) {
+  if (!googleAdsConfigured()) return;
+  const account = await accountFor(admin, clientId, targetId).catch(() => null);
+  if (!account) return;
+  await step(`google ${account}`, "warm-up read", readGoogleAccount(admin, clientId, account)).catch(() => undefined);
+}
+
+/** The account in a compact form for the Google Ads Buyer (a step that needs less gets less: lean for the questions) */
+function accountText(r: GoogleResolution, o: { groups?: number; terms?: number; waste?: number; copy?: boolean } = {}) {
   const money = (x: number | null) => (x == null ? "?" : `$${Math.round(x)}`);
+  const { groups = 120, terms = 25, waste = 15, copy = true } = o;
   return [
     "CAMPAIGNS (id, type, status, bidding, daily budget, last 30 days)",
     ...r.campaigns.map((c) => `- ${c.id} "${c.name}" ${c.type} ${c.status} ${c.bidding.toLowerCase()} ${money(c.budget)}/day · ${money(c.spend30)} spent, ${c.conversions30} conv${c.conversions30 ? ` ($${Math.round(c.spend30 / c.conversions30)}/conv)` : ""}`),
     "AD GROUPS (id, campaign, ads and their best ad strength)",
-    ...r.adGroups.slice(0, 120).map((g) => `- ${g.id} "${g.name}" in "${g.campaign}" ${g.status}${g.rsas ? `, ${g.rsas} RSA${g.rsas === 1 ? "" : "s"}${g.strength ? ` (${g.strength.toLowerCase()})` : ""}` : ", no RSA"}`),
-    ...(r.assetGroups.length ? ["PERFORMANCE MAX ASSET GROUPS", ...r.assetGroups.map((a) => `- ${a.id} "${a.name}" in "${a.campaign}"${a.strength ? ` (${a.strength.toLowerCase()})` : ""}`)] : []),
-    "SEARCHES THAT CONVERTED (90 days)",
-    ...r.converting.slice(0, 25).map((t) => `- "${t.term}" (${t.campaign}): ${t.conversions} conv, $${t.spend}`),
-    "SEARCHES SPENDING WITH NO CONVERSIONS (30 days)",
-    ...r.waste.slice(0, 15).map((t) => `- "${t.term}" (${t.campaign}): $${t.spend}, ${t.clicks} clicks`),
-    "COPY LIBRARY (this client's Google lines)",
-    ...r.winners.map((l) => `- winner ${l}`),
-    ...r.tired.map((l) => `- tired ${l}`),
+    ...r.adGroups.slice(0, groups).map((g) => `- ${g.id} "${g.name}" in "${g.campaign}" ${g.status}${g.rsas ? `, ${g.rsas} RSA${g.rsas === 1 ? "" : "s"}${g.strength ? ` (${g.strength.toLowerCase()})` : ""}` : ", no RSA"}`),
+    ...(r.adGroups.length > groups ? [`(${r.adGroups.length - groups} more ad groups)`] : []),
+    ...(r.assetGroups.length ? ["PERFORMANCE MAX ASSET GROUPS", ...r.assetGroups.slice(0, groups).map((a) => `- ${a.id} "${a.name}" in "${a.campaign}"${a.strength ? ` (${a.strength.toLowerCase()})` : ""}`)] : []),
+    ...(terms ? ["SEARCHES THAT CONVERTED (90 days)", ...r.converting.slice(0, terms).map((t) => `- "${t.term}" (${t.campaign}): ${t.conversions} conv, $${t.spend}`)] : []),
+    ...(waste ? ["SEARCHES SPENDING WITH NO CONVERSIONS (30 days)", ...r.waste.slice(0, waste).map((t) => `- "${t.term}" (${t.campaign}): $${t.spend}, ${t.clicks} clicks`)] : []),
+    ...(copy ? ["COPY LIBRARY (this client's Google lines)", ...r.winners.map((l) => `- winner ${l}`), ...r.tired.map((l) => `- tired ${l}`)] : []),
   ].join("\n");
+}
+
+/** The account as the "suggest more" step after a deploy reads it: the full picture and what's already in place */
+export async function googleAccountForSuggestions(admin: SupabaseClient, clientId: string, account: string) {
+  const { value } = await readGoogleAccount(admin, clientId, account);
+  const res = { account, request: "", scopeType: null, ...value, suggestions: [], checks: [], at: now() } as GoogleResolution;
+  return { text: accountText(res, { groups: 60, terms: 20, waste: 20 }), setup: value.setup.slice(0, 5000), facts: value.facts };
 }
 
 /** What was read, compact, for the model (ad groups by number, so the plan can point at one without retyping it) */
@@ -264,6 +291,8 @@ async function readSheetWithModel(clientId: string, name: string, text: string) 
     agent: "google_launcher",
     label: "google launch sheet read",
     clientId,
+    // Copying text out of a table: the fast tier does it as well, in a fraction of the time
+    override: { model: "sonnet", effort: "low" },
     system: `You read a Google Ads launch sheet a buyer shared: the keywords and ad copy to launch, in whatever layout they use. Read every ad group with its campaign (as the sheet names it, "" when it doesn't), its keywords and negatives exactly as written (keep [brackets] and "quotes": they're the match type; never add notation that isn't there), its RSA headlines and descriptions word for word (keep any pin written next to one, like "(pin 1)"), display paths and the final URL. Copy text exactly, even when it's over Google's limits: the checks flag it. campaignNegatives: negatives for the whole campaign. notes: anything ambiguous (copy you couldn't place, two ad groups with the same name, a column you couldn't read), one sentence each, at most 6.
 ${RULES}`,
     schema: obj({ adGroups: arr(DRAFT_GROUP), campaignNegatives: arr(S), notes: arr(S) }),
@@ -274,50 +303,93 @@ ${RULES}`,
   return { ...d, notes: out.notes.slice(0, 6) };
 }
 
-const INTAKE = obj({ summary: S, wordsDraft: arr(DRAFT_GROUP), questions: arr(obj({ key: S, question: S, why: S, proposal: S, options: arr(S), required: B })), suggestions: arr(obj({ key: S, title: S, why: S })) });
+const INTAKE = obj({ summary: S, wordsDraft: arr(DRAFT_GROUP), questions: arr(obj({ key: S, question: S, why: S, proposal: S, options: arr(S), required: B })) });
 
-/** Reads what was shared and the account, then asks only what's missing and suggests from the account. Background. */
+/** The fast tier for the steps someone is waiting on (the questions, each chat turn); the plan keeps the agent's own model */
+const FAST = { model: "sonnet", effort: "low" } as const;
+
+/** Short, plain lines for the card: what each piece of text the model writes must look like */
+const SHORT = `Write for a narrow chat panel: short sentences, numbers first, no em dashes, no lists inside a sentence.`;
+
+const count = (x: number) => x.toLocaleString("en-US");
+
+/**
+ * Reads what was shared and the account, then asks only what's missing. Background. The questions the launch needs
+ * are worked out by code, so they're on the card (and answerable) as soon as the account is read; the Google Ads
+ * Buyer then tailors them to the request and the account on the fast tier and they're merged in, keeping any answer
+ * already given. Nothing account-wide is suggested here: that's offered after the launch is deployed (launch-more.ts).
+ */
 export async function prepareGoogleRun(admin: SupabaseClient, id: string) {
+  const t0 = Date.now();
+  const scope = `google run ${id.slice(0, 8)}`;
   const run = await load(admin, id);
   if (!run || !run.account) return;
+  const account = run.account;
   const base = run.resolution as Partial<GoogleResolution> | null;
   const request = base?.request ?? "";
+  let draft: GoogleDraft = { adGroups: [], campaignNegatives: [], notes: [] };
+  let read = "";
+  let res!: GoogleResolution;
+  // The client's context for the tailoring step, read alongside everything else
+  const briefP = step(scope, "client context", import("@/lib/handoff").then((m) => m.accountBrief(admin, run.client_id, null)).then((b) => b.text)).catch(() => "");
   try {
     if (!googleAdsConfigured()) throw new Error("Google Ads isn't connected yet (Settings, Sync health).");
-    let draft: GoogleDraft = { adGroups: [], campaignNegatives: [], notes: [] };
-    let read = "";
+    // The account read starts at once, alongside the sheet (and it's usually warm: the chat started it)
+    const acctP = step(scope, "account read", readGoogleAccount(admin, run.client_id, account));
+    acctP.catch(() => undefined);
     if (run.source.kind !== "words") {
-      const { openTabs } = await import("@/lib/launch-sheet/intake");
-      const t = await openTabs(admin, run.source);
-      if (!t.tabs.length) throw new Error(t.note ?? "The sheet couldn't be read.");
-      const parsed = tabsToDraft(t.tabs);
-      if (parsed.recognized && parsed.draft.adGroups.length) draft = parsed.draft;
-      else draft = await readSheetWithModel(run.client_id, t.name, t.tabs.map((x) => `[tab "${x.title}"]\n${gridText(x.grid, 40_000)}`).join("\n\n").slice(0, 120_000));
+      const source = run.source;
+      await step(scope, "sheet read", async () => {
+        const { openTabs } = await import("@/lib/launch-sheet/intake");
+        const t = await openTabs(admin, source);
+        if (!t.tabs.length) throw new Error(t.note ?? "The sheet couldn't be read.");
+        const parsed = tabsToDraft(t.tabs);
+        if (parsed.recognized && parsed.draft.adGroups.length) draft = parsed.draft;
+        else {
+          await patch(admin, id, { progress: "Reading the sheet's layout with the Google Ads Buyer" });
+          draft = await readSheetWithModel(run.client_id, t.name, t.tabs.map((x) => `[tab "${x.title}"]\n${gridText(x.grid, 40_000)}`).join("\n\n").slice(0, 120_000));
+        }
+      });
       read = draftSummary(draft);
-      await patch(admin, id, { sheet: draft, progress: "Checking it against the account" });
+      await patch(admin, id, { sheet: draft, progress: `${read}. Reading the account` });
     }
-    const acct = await readAccount(admin, run.client_id, run.account);
-    const res: GoogleResolution = { account: run.account, request, scopeType: base?.scopeType ?? null, ...acct, suggestions: [], checks: [], at: now() };
-    await patch(admin, id, { progress: "Writing the questions and suggestions" });
-    const [brief, copy] = await Promise.all([
-      import("@/lib/handoff").then((m) => m.accountBrief(admin, run.client_id, null)).then((b) => b.text).catch(() => ""),
-      import("@/lib/copy-library").then((m) => m.copyContext(admin, run.client_id, 6000, "google")).catch(() => ""),
-    ]);
+    const { value: acct, cached } = await acctP;
+    res = { account, request, scopeType: base?.scopeType ?? null, ...acct, suggestions: [], checks: [], at: now() };
     const must = googleQuestions(draft, res.campaigns, res.adGroups, `${request} ${run.source.kind !== "words" ? run.source.name : ""}`, res.scopeType);
-    const out = await askJson<{ summary: string; wordsDraft: DraftOut[]; questions: Omit<LaunchQuestion, "answer">[]; suggestions: { key: string; title: string; why: string }[] }>({
-      agent: "google_launcher",
-      label: "google launch intake",
-      clientId: run.client_id,
-      system: `You're the Google Ads buyer about to launch new ads into a client's live Google Ads account, from a buyer's request in chat${run.source.kind !== "words" ? " and the sheet they shared (already read: below)" : ""}. Nothing is planned or written yet.
-summary: 2 to 4 sentences: what they want launched, what you read${read ? ` (say it as read: "${read}")` : ""}, and what in the account matters for it.
+    res.checks = intakeChecks(draft, res);
+    const live = res.campaigns.filter((c) => c.status === "ENABLED").length;
+    const facts = `${count(res.campaigns.length)} campaigns (${count(live)} live), ${count(res.adGroups.length)} ad groups, ${count(res.inAccount.length)} keywords read${cached ? " (read in the last few minutes)" : ""}.`;
+    const summary = [read ? `${read}.` : "", facts, ...draft.notes.map((x) => `Note: ${x}`)].filter(Boolean).join("\n\n");
+    await patch(admin, id, { sheet: draft, resolution: res, summary, questions: must, status: "asking", progress: "Tailoring the questions to the account", error: null });
+    console.log(`[launch] ${scope} · questions on the card ${Date.now() - t0}ms`);
+  } catch (e) {
+    await patch(admin, id, { status: "failed", progress: null, error: msg(e).slice(0, 500) });
+    return;
+  }
+
+  // ─── The Google Ads Buyer tailors the questions (fast tier, lean prompt), merged in without touching answers ───
+  try {
+    const must = googleQuestions(draft, res.campaigns, res.adGroups, `${request} ${run.source.kind !== "words" ? run.source.name : ""}`, res.scopeType);
+    const brief = await briefP;
+    const out = await step(
+      scope,
+      "tailor questions (fast tier)",
+      askJson<{ summary: string; wordsDraft: DraftOut[]; questions: Omit<LaunchQuestion, "answer">[] }>({
+        agent: "google_launcher",
+        label: "google launch intake",
+        clientId: run.client_id,
+        override: FAST,
+        system: `You're the Google Ads buyer about to launch new ads into a client's live Google Ads account, from a buyer's request in chat${run.source.kind !== "words" ? " and the sheet they shared (already read: below)" : ""}. Nothing is planned or written yet. Stay on what they asked to launch: never bring up other campaigns' problems, tracking, conversion actions, sign-offs, Merchant Center or anything account-wide.
+summary: 1 or 2 sentences, at most 35 words: what they want launched and the one fact in the account that matters most for it.
 wordsDraft: ${run.source.kind !== "words" ? "[] (the sheet was read)." : "what the buyer wrote in their message, as ad groups: keywords exactly as written (keep [ ] and quotes, never add notation), headlines and descriptions word for word, final URL. [] when they only described what they want."}
-questions: start from the required questions given (keep each key; rewrite the question, why and proposal for this client and request, short; keep the options, and make the campaign options the live campaigns that fit best by name, type, status, spend and theme). Add a question only when something the plan needs is still open and only the buyer can decide it (a new campaign's daily budget and bidding, Search or Performance Max, the places to show, which ad groups the copy is for, pins). Never ask what the request, the sheet or the account already answers. At most 8.
-suggestions: up to 6 improvements grounded in the account today and your skills: negatives from searches that waste spend, keywords from searches that convert and aren't covered, copy built on the winners and away from the tired lines, missing assets (sitelinks, callouts, snippets) only where the setup snapshot shows they're missing, ad strength, match type mix, landing page fit. Each with a key, a short title (what you'd add or change) and why, with the numbers. ${SETUP_RULE}
+questions: start from the required questions given (keep each key and its options; make the campaign options the live campaigns that fit best by name, type, status, spend and theme). Rewrite each for this client and request: question at most 15 words, why one sentence of at most 15 words, proposal at most 12 words. Add a question only when something this launch needs is still open and only the buyer can decide it (a new campaign's daily budget and bidding, Search or Performance Max, the places to show, which ad groups the copy is for, pins). Never ask what the request, the sheet or the account already answers. At most 6.
+${SHORT}
 ${RULES}`,
-      schema: INTAKE,
-      maxTokens: 12000,
-      prompt: `<request>${request || "(shared a sheet to launch)"}</request>\n\n${draft.adGroups.length ? `<read>\n${draftText(draft)}\n</read>\n\n` : ""}<account id="${run.account}">\n${accountText(res)}\n</account>\n\n<live_setup>\n${res.setup.slice(0, 9000) || "(couldn't be read)"}\n</live_setup>\n\n<client_context>\n${brief.slice(0, 9000)}\n</client_context>\n\n${copy ? `<copy_context>\n${copy}\n</copy_context>\n\n` : ""}<required_questions>\n${must.map((q) => `- ${q.key}: ${q.question} Proposal: ${q.proposal}. Options: ${q.options.join(" | ")}`).join("\n")}\n</required_questions>`,
-    });
+        schema: INTAKE,
+        maxTokens: 4000,
+        prompt: `<request>${request || "(shared a sheet to launch)"}</request>\n\n${draft.adGroups.length ? `<read>\n${draftText(draft, 25)}\n</read>\n\n` : ""}<account id="${account}">\n${accountText(res, { groups: 60, terms: 12, waste: 0, copy: false })}\n</account>\n\n<client_context>\n${brief.slice(0, 2500)}\n</client_context>\n\n<required_questions>\n${must.map((q) => `- ${q.key}: ${q.question} Proposal: ${q.proposal}. Options: ${q.options.join(" | ")}`).join("\n")}\n</required_questions>`,
+      }),
+    );
     if (run.source.kind === "words" && out.wordsDraft.length) {
       draft = draftFrom(out.wordsDraft);
       read = draft.adGroups.length ? draftSummary(draft) : "";
@@ -325,7 +397,15 @@ ${RULES}`,
     // The questions again from what's now read (the words may have answered some), the model's version of each kept
     const required = googleQuestions(draft, res.campaigns, res.adGroups, request, res.scopeType);
     const keys = new Set(required.map((q) => q.key));
-    const fromModel = out.questions.filter((q) => keys.has(q.key) || !["campaign", "ad_group", "final_url", "keywords", "match_types", "ads", "go_live"].includes(q.key));
+    const fromModel = out.questions.filter((q) => keys.has(q.key) || !["campaign", "ad_group", "final_url", "keywords", "match_types", "ads", "go_live"].includes(q.key)).slice(0, 6);
+    const latest = await load(admin, id);
+    if (!latest) return;
+    const summary = [read ? `${read}.` : "", out.summary, ...draft.notes.map((x) => `Note: ${x}`)].filter(Boolean).join("\n\n");
+    // The buyer moved on (built the plan, set it aside) while this was writing: only the summary is updated
+    if (latest.status !== "asking") {
+      await patch(admin, id, { summary, progress: latest.progress === "Tailoring the questions to the account" ? null : latest.progress });
+      return;
+    }
     const questions = mergeQuestions(
       fromModel.map((q) => {
         const must1 = required.find((m) => m.key === q.key);
@@ -333,79 +413,87 @@ ${RULES}`,
         return { ...q, options: must1 ? [...new Set([...q.options, ...must1.options])].slice(0, 7) : q.options, answer: null };
       }),
       required,
+      latest.questions,
     );
-    // Suggestions that add what's already in place are dropped (the setup check)
-    const checked = checkAgainstSetup(
-      out.suggestions.map((s) => ({ ...s, why: s.why })),
-      res.facts,
-    ).actions;
-    res.suggestions = checked.slice(0, 6).map((s, i) => ({ key: s.key || `s${i + 1}`, title: s.title, why: s.why, accepted: null }));
-    res.checks = intakeChecks(draft, res);
-    const summary = [read ? `${read}.` : "", out.summary, ...draft.notes.map((x) => `Note: ${x}`)].filter(Boolean).join("\n\n");
-    await patch(admin, id, { sheet: draft, resolution: res, summary, questions, status: "asking", progress: null, error: null });
+    const checks = intakeChecks(draft, res);
+    await patch(admin, id, { sheet: draft, resolution: { ...(latest.resolution ?? res), checks }, summary, questions, progress: null });
+    console.log(`[launch] ${scope} · questions tailored ${Date.now() - t0}ms`);
   } catch (e) {
-    await patch(admin, id, { status: "failed", progress: null, error: msg(e).slice(0, 500) });
+    // The questions from code are already on the card and answerable: only the tailoring is lost
+    console.error(`[launch] ${scope} · tailoring failed:`, msg(e));
+    await patch(admin, id, { progress: null });
   }
 }
 
-/** What the read already shows: the account, the copy against Google's limits, duplicates */
+/**
+ * What the read already shows about this launch, and only this launch (numbers first, one short line each): the
+ * account in counts, copy against Google's limits, keywords that already run, ads short of lines, a missing landing
+ * page, match types that weren't written.
+ */
 function intakeChecks(d: GoogleDraft, r: GoogleResolution): CheckItem[] {
   const out: CheckItem[] = [];
-  out.push({ key: "account", label: "The account", level: "ok", detail: `${r.campaigns.filter((c) => c.status === "ENABLED").length} live campaigns, ${r.adGroups.length} ad groups${r.assetGroups.length ? `, ${r.assetGroups.length} asset groups` : ""}.` });
+  out.push({ key: "account", label: "The account", level: "ok", detail: `${r.campaigns.filter((c) => c.status === "ENABLED").length} live campaigns · ${r.adGroups.length} ad groups${r.assetGroups.length ? ` · ${r.assetGroups.length} asset groups` : ""}` });
   if (!d.adGroups.length) return out;
   const rsas = d.adGroups.flatMap((g) => g.rsas);
-  const long = rsas.flatMap((x) => [...x.headlines.filter((h) => [...h.text].length > G.headline).map((h) => `"${h.text}" (${[...h.text].length}/30)`), ...x.descriptions.filter((h) => [...h.text].length > G.description).map((h) => `a ${[...h.text].length}-character description`)]);
-  out.push(long.length ? { key: "limits", label: "Copy limits", level: "warn", detail: `${long.length} line${long.length === 1 ? " is" : "s are"} over Google's limits: ${long.slice(0, 4).join(", ")}${long.length > 4 ? "…" : ""}.`, fix: "Fix them on the plan card (Fix what I can), or send shorter ones." } : { key: "limits", label: "Copy limits", level: "ok", detail: "Every headline and description fits Google's limits." });
+  const long = rsas.flatMap((x) => [...x.headlines.filter((h) => [...h.text].length > G.headline).map((h) => `"${h.text}" (${[...h.text].length}/30)`), ...x.descriptions.filter((h) => [...h.text].length > G.description).map((h) => `a ${[...h.text].length}/90 description`)]);
+  out.push(long.length ? { key: "limits", label: `${long.length} over Google's limits`, level: "warn", detail: `${long.slice(0, 3).join(", ")}${long.length > 3 ? "…" : ""}`, fix: "Fix them on the plan card (Fix what I can), or send shorter ones." } : { key: "limits", label: "Copy limits", level: "ok", detail: "Every headline and description fits." });
   const inAcc = new Set(r.inAccount);
   const dup = d.adGroups.flatMap((g) => g.keywords).filter((k) => inAcc.has(kwKey(k)));
-  if (dup.length) out.push({ key: "dupes", label: "Already in the account", level: "warn", detail: `${dup.length} keyword${dup.length === 1 ? " already runs" : "s already run"}: ${dup.slice(0, 5).map(kwText).join(", ")}${dup.length > 5 ? "…" : ""}.`, fix: "Leave them out, or keep them only if this ad group should take those searches over." });
+  if (dup.length) out.push({ key: "dupes", label: `${dup.length} keyword${dup.length === 1 ? " already runs" : "s already run"}`, level: "warn", detail: `${dup.slice(0, 4).map(kwText).join(", ")}${dup.length > 4 ? "…" : ""}`, fix: "Leave them out, or keep them only if this ad group should take those searches over." });
   const few = rsas.filter((x) => x.headlines.length < G.headlinesMin || x.descriptions.length < G.descriptionsMin).length;
-  if (few) out.push({ key: "rsa_counts", label: "Ads", level: "warn", detail: `${few} RSA${few === 1 ? " has" : "s have"} fewer than 3 headlines or 2 descriptions.` });
+  if (few) out.push({ key: "rsa_counts", label: `${few} ad${few === 1 ? "" : "s"} short of lines`, level: "warn", detail: "Google needs at least 3 headlines and 2 descriptions." });
+  const noUrl = d.adGroups.filter((g) => !g.finalUrl && !g.rsas.some((x) => x.finalUrl)).length;
+  if (noUrl) out.push({ key: "final_url", label: `${noUrl} ad group${noUrl === 1 ? "" : "s"} without a landing page`, level: "warn", detail: "I'll ask for the final URL." });
+  const guessed = d.adGroups.flatMap((g) => g.keywords).filter((k) => k.from === "default").length;
+  if (guessed) out.push({ key: "match", label: `${guessed} keyword${guessed === 1 ? "" : "s"} without a match type`, level: "info", detail: "Written without [ ] or quotes: I'll ask which match type." });
   return out;
 }
 
 // ─── The conversation ───────────────────────────────────────────────────────────────────────────────────────────
 
-const REPLY = obj({ answer: S, answers: arr(obj({ key: S, answer: S })), newQuestions: arr(obj({ key: S, question: S, why: S, proposal: S, options: arr(S), required: B })), accept: arr(S), skip: arr(S), build: B, offTopic: B, setAside: B });
+const REPLY = obj({ answer: S, answers: arr(obj({ key: S, answer: S })), newQuestions: arr(obj({ key: S, question: S, why: S, proposal: S, options: arr(S), required: B })), build: B, offTopic: B, setAside: B });
 
-/** The buyer's message about the launch: answers taken in, suggestions taken or skipped, the plan built when asked */
+/** The buyer's message about the launch: answers taken in, the plan built when asked. Fast tier: someone is waiting. */
 export async function googleLaunchReply(admin: SupabaseClient, id: string, message: string): Promise<{ answer: string; offTopic: boolean; building: boolean }> {
   const run = await load(admin, id);
   if (!run?.resolution) return { answer: "", offTopic: true, building: false };
-  const res = run.resolution;
-  const out = await askJson<{ answer: string; answers: { key: string; answer: string }[]; newQuestions: Omit<LaunchQuestion, "answer">[]; accept: string[]; skip: string[]; build: boolean; offTopic: boolean; setAside: boolean }>({
-    agent: "google_launcher",
-    label: "google launch chat",
-    clientId: run.client_id,
-    system: `You're the Google Ads buyer in a conversation with the buyer about launching new ads into the client's Google Ads account. What was read, your questions (with what's answered), your suggestions and the conversation are below. Stage: ${run.status}.
+  const out = await step(
+    `google run ${id.slice(0, 8)}`,
+    "chat turn (fast tier)",
+    askJson<{ answer: string; answers: { key: string; answer: string }[]; newQuestions: Omit<LaunchQuestion, "answer">[]; build: boolean; offTopic: boolean; setAside: boolean }>({
+      agent: "google_launcher",
+      label: "google launch chat",
+      clientId: run.client_id,
+      override: FAST,
+      system: `You're the Google Ads buyer in a conversation with the buyer about launching new ads into the client's Google Ads account. What was read, your questions (with what's answered) and the conversation are below. Stage: ${run.status}. Stay on this launch: nothing account-wide (that's offered after it's deployed).
 answers: the questions the buyer's message answers, by key, in their words made exact and in the format Google needs (keywords with their notation, a daily budget in dollars, the full final URL). When they accept your proposal ("yes", "go with that"), the answer is your proposal written out. When they give keywords or copy, the answer holds them word for word. Only what they actually said or accepted.
-newQuestions: only when their answer opens something the plan needs.
-accept / skip: keys of your suggestions they took or turned down.
+newQuestions: only when their answer opens something the plan needs (question at most 15 words, why one short sentence).
 build: true when they ask to build, see or redo the plan, or say go ahead, or (stage ready) ask for a change to the plan. The plan is only built once every required question is answered; if some aren't, say which.
-answer: 1 to 6 sentences: confirm what you took, push back with the reason when something works against the client's results or Google's rules (over a limit, a duplicate, a keyword already running), and ask what's still open. When the stage is "ready" and they say go ahead, tell them to press Deploy on the launch card (it checks the client's Google switch and who may deploy, and creates everything paused); build stays false.
+answer: 1 to 4 short sentences: confirm what you took, push back with the reason when something works against the client's results or Google's rules (over a limit, a duplicate, a keyword already running), and ask what's still open. When the stage is "ready" and they say go ahead, tell them to press Deploy on the launch card (it checks the client's Google switch and who may deploy, and creates everything paused); build stays false.
 offTopic: true when the message isn't about this launch (answer ""). setAside: true when they say to stop or park it.
+${SHORT}
 ${RULES}`,
-    schema: REPLY,
-    maxTokens: 6000,
-    prompt: `<read>\n${run.sheet ? draftText(run.sheet, 25) : "(nothing yet)"}\n</read>\n\n<questions>\n${run.questions.map((q) => `- ${q.key}${q.required ? " (required)" : ""}: ${q.question} Proposal: ${q.proposal}. ${q.answer ? `ANSWERED: ${q.answer}` : "Not answered yet."}`).join("\n")}\n</questions>\n\n<suggestions>\n${res.suggestions.map((s) => `- ${s.key}: ${s.title}. ${s.accepted === true ? "TAKEN" : s.accepted === false ? "SKIPPED" : "open"}`).join("\n") || "(none)"}\n</suggestions>\n\n${run.plan ? `<plan>\n${planText(run.plan)}\n</plan>\n\n` : ""}<conversation>\n${run.turns
-      .slice(-16)
-      .map((t) => `${t.role === "user" ? "Buyer" : "You"}: ${t.text}`)
-      .join("\n")}\n</conversation>\n\nThe buyer says: ${message.slice(0, 3000)}`,
-  });
+      schema: REPLY,
+      maxTokens: 3000,
+      prompt: `<read>\n${run.sheet ? draftText(run.sheet, 25) : "(nothing yet)"}\n</read>\n\n<questions>\n${run.questions.map((q) => `- ${q.key}${q.required ? " (required)" : ""}: ${q.question} Proposal: ${q.proposal}. ${q.answer ? `ANSWERED: ${q.answer}` : "Not answered yet."}`).join("\n")}\n</questions>\n\n${run.plan ? `<plan>\n${planText(run.plan)}\n</plan>\n\n` : ""}<conversation>\n${run.turns
+        .slice(-12)
+        .map((t) => `${t.role === "user" ? "Buyer" : "You"}: ${t.text}`)
+        .join("\n")}\n</conversation>\n\nThe buyer says: ${message.slice(0, 3000)}`,
+    }),
+  );
   if (out.offTopic) return { answer: "", offTopic: true, building: false };
   let questions = applyAnswers(run.questions, out.answers);
   if (out.newQuestions.length) questions = mergeQuestions(out.newQuestions.map((q) => ({ ...q, answer: null })), [], questions);
-  const suggestions = res.suggestions.map((s) => (out.accept.includes(s.key) ? { ...s, accepted: true } : out.skip.includes(s.key) ? { ...s, accepted: false } : s));
   const turns = [...run.turns, { role: "user" as const, text: message.slice(0, 3000), at: now() }, { role: "assistant" as const, text: out.answer, at: now() }].slice(-40);
   if (out.setAside) {
-    await patch(admin, id, { questions, turns, status: "set_aside", resolution: { ...res, suggestions } });
+    await patch(admin, id, { questions, turns, status: "set_aside" });
     return { answer: out.answer || "Set aside. Nothing was created.", offTopic: false, building: false };
   }
   const open = unanswered(questions);
-  const building = out.build && !open.length && (run.status === "asking" || out.answers.length > 0 || out.accept.length > 0);
+  const building = out.build && !open.length && (run.status === "asking" || out.answers.length > 0);
   const answer = out.build && open.length ? `${out.answer}\n\nBefore I can plan it I still need: ${open.map((q) => q.question).join(" ")}` : out.answer;
-  const changed = (out.answers.length > 0 || out.accept.length > 0) && ["ready", "failed"].includes(run.status);
-  await patch(admin, id, { questions, turns, resolution: { ...res, suggestions }, ...(building ? { status: "planning", progress: "Laying out the plan" } : changed ? { status: "asking" } : {}) });
+  const changed = out.answers.length > 0 && ["ready", "failed"].includes(run.status);
+  await patch(admin, id, { questions, turns, ...(building ? { status: "planning", progress: "Laying out the plan" } : changed ? { status: "asking" } : {}) });
   return { answer, offTopic: false, building };
 }
 
@@ -574,7 +662,7 @@ export async function planGoogleRun(admin: SupabaseClient, id: string) {
     const choice = campaignChoice(run.questions.find((q) => q.key === "campaign")?.answer, res.campaigns);
     const urlAnswer = run.questions.find((q) => q.key === "final_url")?.answer?.match(/https?:\/\/\S+/)?.[0]?.replace(/[).,]+$/, "") ?? null;
     const taken = res.suggestions.filter((s) => s.accepted === true);
-    const proposal = await askJson<GoogleProposal>({
+    const proposal = await step(`google run ${id.slice(0, 8)}`, "plan (agent's model)", askJson<GoogleProposal>({
       agent: "google_launcher",
       label: "google launch plan",
       clientId: run.client_id,
@@ -589,8 +677,8 @@ ${RULES}`,
       prompt: `<request>${res.request}</request>\n\n<read>\n${draft.adGroups.length || draft.campaignNegatives.length ? draftText(draft, 200) : "(nothing read: the plan comes from the answers and the conversation)"}\n</read>\n\n<answers>\n${run.questions.map((q) => `- ${q.key}: ${q.answer ?? "(not answered)"}`).join("\n")}\n</answers>\n\n<suggestions_taken>\n${taken.map((s) => `- ${s.title}: ${s.why}`).join("\n") || "(none)"}\n</suggestions_taken>\n\n<conversation>\n${run.turns
         .slice(-20)
         .map((t) => `${t.role === "user" ? "Buyer" : "You"}: ${t.text}`)
-        .join("\n")}\n</conversation>\n\n<account id="${run.account}">\n${accountText(res)}\n</account>\n\n<live_setup>\n${res.setup.slice(0, 6000)}\n</live_setup>${choice?.mode === "existing" ? `\n\nThe buyer chose the live campaign ${choice.id}.` : choice?.mode === "new" ? `\n\nThe buyer chose a new ${choice.type === "PERFORMANCE_MAX" ? "Performance Max" : "Search"} campaign.` : ""}`,
-    });
+        .join("\n")}\n</conversation>\n\n<account id="${run.account}">\n${accountText(res, { groups: 80, waste: 10 })}\n</account>\n\n<live_setup>\n${res.setup.slice(0, 3500)}\n</live_setup>${choice?.mode === "existing" ? `\n\nThe buyer chose the live campaign ${choice.id}.` : choice?.mode === "new" ? `\n\nThe buyer chose a new ${choice.type === "PERFORMANCE_MAX" ? "Performance Max" : "Search"} campaign.` : ""}`,
+    }));
     // Google's own places for the new campaigns' locations
     const names = [...new Set(proposal.campaigns.filter((c) => c.mode === "new").flatMap((c) => c.locations))];
     const geos = names.length ? await suggestGeo(names).catch(() => [] as { geo: string; name: string }[]) : [];
@@ -764,6 +852,8 @@ export async function applyGoogleRun(admin: SupabaseClient, id: string, by: stri
       if (loose.length && !by.size) Object.assign(items.find((i) => i.status !== "existing") ?? {}, { status: "failed", error: plainGoogleError(loose[0]).plain });
     }
     await writeItems(admin, id, items);
+    // The account changed: what was kept of it goes (the read after the read-back below keeps the new one)
+    if (r.ok) await forgetCached(admin, `google:${run.client_id}:${plan.account}`);
     const created = items.filter((i) => i.status === "created").length;
     const status: RunStatus = r.ok ? (byHand.length ? "partial" : "applied") : "failed";
     await patch(admin, id, {
@@ -800,7 +890,11 @@ export async function applyGoogleRun(admin: SupabaseClient, id: string, by: stri
         () => null,
         () => null,
       );
-    if (r.ok) await qaGoogleRun(admin, id).catch(() => undefined);
+    if (r.ok) {
+      await qaGoogleRun(admin, id).catch(() => undefined);
+      // Read again now, so "suggest more" on the card (and the next launch) starts from the account as it is
+      await readGoogleAccount(admin, run.client_id, plan.account, true).catch(() => undefined);
+    }
     return { status };
   } catch (e) {
     await patch(admin, id, { status: "failed", progress: null, error: msg(e).slice(0, 500) });
