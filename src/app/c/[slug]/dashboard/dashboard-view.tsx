@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { LogoLoader } from "@/components/logo-loader";
 import type { DashboardHistory, DashboardPart } from "@/lib/client-dashboard";
 import { askAboutNumbers, dashboardFor, dashboardHistoryFor } from "./actions";
 
@@ -294,14 +295,8 @@ export function DashboardView({ slug, brand, asked: initial, demo, business = nu
 
 function Skeleton() {
   return (
-    <div className="grid gap-4">
-      <div className="h-28 animate-pulse rounded-[22px] bg-surface" />
-      <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
-        {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
-          <div key={i} className="h-28 animate-pulse rounded-[18px] bg-surface" />
-        ))}
-      </div>
-      <div className="h-80 animate-pulse rounded-[22px] bg-surface" />
+    <div className="grid min-h-[55vh] place-items-center" aria-busy="true">
+      <LogoLoader size="lg" />
     </div>
   );
 }

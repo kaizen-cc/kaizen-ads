@@ -16,6 +16,7 @@ import { HealthChart, PaceBar, TargetGauge, healthHex, healthOf, paceMeta } from
 import { AuditPanel, agoText, type AuditSummary, type QuickAction } from "./audit-panel";
 import { PolicyPanel } from "./policy-panel";
 import { ChangeLog } from "@/components/change-log";
+import { LogoLoader } from "@/components/logo-loader";
 import type { AccountChange } from "@/lib/account-changes";
 import type { SprintSummary } from "@/lib/sprints";
 import type { LedgerItem } from "@/lib/ledger";
@@ -1333,10 +1334,8 @@ function CreativeTab({ r }: { r: KpiRow }) {
   }, [r.clientId, r.id]);
   if (!d)
     return (
-      <div className="grid gap-3">
-        {[0, 1, 2].map((i) => (
-          <div key={i} className="h-28 animate-pulse rounded-[20px] bg-surface" />
-        ))}
+      <div className="grid min-h-[360px] place-items-center" aria-busy="true">
+        <LogoLoader size="md" />
       </div>
     );
   return (

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { LogoLoader } from "@/components/logo-loader";
 
 // The first look at the day: while the daily review is built (once a day, the first visit), it says what it's doing
 // instead of sitting blank. Fades in only if the wait is real, so a saved review never flashes it.
@@ -36,8 +37,8 @@ export function TodayLoading() {
           </p>
           <p className="text-sm text-ink/55">The first look of the day takes a moment. After this it opens instantly and keeps itself current.</p>
         </div>
-        <span className="relative grid h-14 w-14 place-items-center">
-          <span className="absolute inset-0 animate-spin rounded-full border-2 border-ink/10 border-t-[#ff4d5e] [animation-duration:1.4s]" />
+        <span className="grid justify-items-center gap-1">
+          <LogoLoader size="sm" hideCaption className="!gap-0" />
           <span className="tabular text-xs text-ink/60">
             {step + 1}/{STEPS.length}
           </span>

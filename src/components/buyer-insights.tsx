@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { LogoLoader } from "@/components/logo-loader";
 import { attributeBuyerInsights, consolidateBuyerInsights, loadConflict, ruleBuyerInsight, talkConflict, teachRefinedRule } from "@/app/(team)/loom-actions";
 import type { InsightsStatus } from "@/lib/buying-insights";
 import type { ConflictDetail, ConflictMessage, ConflictPoint, ConflictSkill } from "@/lib/insight-conflicts";
@@ -346,7 +347,11 @@ function ConflictBody({ id }: { id: string }) {
 
         <div className="grid content-start gap-4 overflow-y-auto overscroll-contain px-5 py-5">
           {error && <p className="rounded-[12px] bg-bad-soft px-3 py-2 text-[12.5px] text-bad">{error}</p>}
-          {!ready && !error && <div className="h-40 animate-pulse rounded-[18px] bg-surface" />}
+          {!ready && !error && (
+            <div className="grid h-40 place-items-center rounded-[18px] bg-surface" aria-busy="true">
+              <LogoLoader size="sm" />
+            </div>
+          )}
           {ready && (
             <>
               <div className="grid gap-3 md:grid-cols-2">

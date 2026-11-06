@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState, useTransition } from "react";
+import { LogoLoader } from "@/components/logo-loader";
 import { makeCopyVariations, starCopyLine } from "@/app/(team)/copy-library-actions";
 import { BADGE_LABEL, filterCopy, KIND_LABEL, limitOf, PLATFORM_LABEL, type CopyBadge, type CopyKind, type CopyPlatform } from "@/lib/copy-library-core";
 import type { CopyLibrary as Library, LibraryLine } from "@/lib/copy-library";
@@ -210,10 +211,8 @@ export function CopyLibrary({ clientId, slug, title = "Copy library" }: { client
       </div>
 
       {!lib ? (
-        <div className="grid gap-3" aria-busy>
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="h-36 animate-pulse rounded-[18px] border border-line bg-surface" />
-          ))}
+        <div className="grid min-h-[320px] place-items-center" aria-busy>
+          <LogoLoader size="md" />
         </div>
       ) : lines.length === 0 ? (
         <div className="grid place-items-center gap-2 rounded-[20px] border border-dashed border-line px-6 py-14 text-center">

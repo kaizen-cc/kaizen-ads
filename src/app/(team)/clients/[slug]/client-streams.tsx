@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { LogoLoader } from "@/components/logo-loader";
 import type { Staff } from "@/lib/auth";
 import { timed } from "@/lib/perf";
 import { servicesOf } from "@/lib/services";
@@ -11,9 +12,13 @@ import { createClient } from "@/lib/supabase/server";
 type Base = { id: string; slug: string; name: string };
 const T = <V,>(label: string, work: Promise<V>) => timed("client page", label, work);
 
-/** A skeleton the size of a panel, while it streams in */
+/** A panel-sized space with the little Kaizen character keeping busy, while the panel streams in */
 export function PanelSkeleton({ h = "h-40" }: { h?: string }) {
-  return <div className={`${h} animate-pulse rounded-[18px] border border-line bg-surface`} aria-busy="true" aria-label="Loading" />;
+  return (
+    <div className={`${h} grid place-items-center overflow-hidden rounded-[18px] border border-line bg-surface`} aria-busy="true">
+      <LogoLoader size="sm" />
+    </div>
+  );
 }
 
 export function Streamed({ children, h }: { children: React.ReactNode; h?: string }) {
