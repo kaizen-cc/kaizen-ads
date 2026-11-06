@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore, useTransition } from "react";
+import { markBibleReviewed } from "./actions";
 import { closeThen, pushParams, useParam } from "@/lib/url-state";
 import type { NextForMe, NextItem } from "@/lib/next-for-me";
 import type { OpenSuggestion } from "@/lib/suggestions";
@@ -12,10 +13,12 @@ import { SaveIdeaStar } from "@/components/save-idea-star";
 const SECTIONS: { key: keyof Omit<NextForMe, "stats">; title: string; hint: string; empty: string }[] = [
   { key: "now", title: "Now", hint: "Late, due today, or waiting on you", empty: "Nothing urgent. Nice." },
   { key: "decide", title: "To decide", hint: "Briefs the AI suggests for your clients", empty: "No briefs waiting on you." },
+  { key: "bibles", title: "Brand Bibles to review", hint: "Read each one, then mark it reviewed", empty: "" },
   { key: "watch", title: "Keep an eye on", hint: "Your accounts and clients", empty: "Your accounts look healthy." },
-  { key: "waiting", title: "Waiting on the client", hint: "For your information: nothing to chase", empty: "" },
   { key: "coming", title: "Coming up", hint: "On you, not due yet", empty: "Nothing else lined up." },
 ];
+// Sections that only show when they have something in them
+const OPTIONAL = new Set<string>(["bibles", "coming"]);
 
 const DOT: Record<NextItem["tone"], string> = { bad: "bg-bad", warn: "bg-warn", brand: "bg-brand", ok: "bg-ok" };
 
@@ -61,6 +64,7 @@ const KIND: Record<NextItem["kind"], string> = {
   intake: "Onboarding",
   client: "Client",
   task: "Plan task",
+  bible: "Brand Bible",
 };
 
 /** Everything on one person, in four calm sections, each folding away. Briefs open right here; everything else goes where it lives. */
@@ -71,7 +75,21 @@ export function NextList({ data, me }: { data: NextForMe; me: string }) {
   // The brief open is in the address (?brief=id), so back closes it and a link opens it
   const openId = useParam("brief");
   const sheet = (openId && SECTIONS.flatMap((x) => data[x.key]).find((it) => it.suggestion?.id === openId)?.suggestion) || null;
-  const total = data.now.length + data.decide.length + data.watch.length;
+  // Bibles marked reviewed leave the list at once; the page catches up behind it
+  const [reviewed, setReviewed] = useState<string[]>([]);
+  const [, startReview] = useTransition();
+  const review = (it: NextItem) => {
+    if (!it.bible) return;
+    const b = it.bible;
+    setReviewed((r) => [...r, it.id]);
+    startReview(async () => {
+      const r = await markBibleReviewed(b.clientId, b.version);
+      if (!r.ok) setReviewed((x) => x.filter((id) => id !== it.id));
+      else router.refresh();
+    });
+  };
+  const bibles = data.bibles.filter((it) => !reviewed.includes(it.id));
+  const total = data.now.length + data.decide.length + data.watch.length + bibles.length;
   return (
     <div className="grid gap-8">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -90,15 +108,15 @@ export function NextList({ data, me }: { data: NextForMe; me: string }) {
         ))}
       </div>
 
-      {total === 0 && data.coming.length === 0 && data.waiting.length === 0 ? (
+      {total === 0 && data.coming.length === 0 ? (
         <div className="grid place-items-center gap-2 rounded-[16px] border border-dashed border-line px-6 py-16 text-center">
           <p className="font-medium">You&apos;re all caught up</p>
           <p className="max-w-sm text-sm text-muted">New work, briefs to decide and anything off on your accounts land here as they come in.</p>
         </div>
       ) : (
         SECTIONS.map((s) => {
-          const items = data[s.key];
-          if (!items.length && (s.key === "coming" || s.key === "waiting")) return null;
+          const items = s.key === "bibles" ? bibles : data[s.key];
+          if (!items.length && OPTIONAL.has(s.key)) return null;
           const open = !closed.includes(s.key);
           const urgent = items.filter((it) => it.tone === "bad").length;
           return (
@@ -129,7 +147,7 @@ export function NextList({ data, me }: { data: NextForMe; me: string }) {
               ) : (
                 <ul id={`next-${s.key}`} className="grid divide-y divide-line overflow-hidden rounded-[14px] border border-line bg-surface">
                   {items.map((it) => (
-                    <Row key={it.id} it={it} onBrief={(b) => pushParams({ brief: b.id })} />
+                    <Row key={it.id} it={it} onBrief={(b) => pushParams({ brief: b.id })} onReviewed={it.bible ? () => review(it) : undefined} />
                   ))}
                 </ul>
               )}
@@ -148,13 +166,14 @@ export function NextList({ data, me }: { data: NextForMe; me: string }) {
   );
 }
 
-function Row({ it, onBrief }: { it: NextItem; onBrief: (s: OpenSuggestion) => void }) {
+function Row({ it, onBrief, onReviewed }: { it: NextItem; onBrief: (s: OpenSuggestion) => void; onReviewed?: () => void }) {
   const body = (
     <>
       <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${DOT[it.tone]}`} />
       <span className="grid min-w-0 flex-1 gap-0.5">
-        <span className="flex min-w-0 items-baseline gap-2">
+        <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
           <span className="truncate text-sm font-medium">{it.title}</span>
+          {it.chip && <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10.5px] ${it.chip.tone === "ok" ? "bg-ok-soft text-ok" : "bg-surface-2 text-muted"}`}>{it.chip.label}</span>}
         </span>
         <span className="truncate text-xs text-muted">
           <span className="text-faint">{KIND[it.kind]} · </span>
@@ -176,6 +195,18 @@ function Row({ it, onBrief }: { it: NextItem; onBrief: (s: OpenSuggestion) => vo
             {body}
           </button>
           <SaveIdeaStar source={{ kind: "suggestion", id: it.suggestion.id }} from={{ kicker: KIND[it.kind], label: it.title }} clientId={it.suggestion.clientId} clientName={it.client} size="sm" />
+        </span>
+      ) : onReviewed ? (
+        // A Brand Bible: open it to read, or mark it reviewed right here (phones: the button sits under the row)
+        <span className="flex flex-col sm:flex-row sm:items-center sm:pr-3">
+          <Link href={it.href ?? "#"} className={`${cls} min-w-0 flex-1`}>
+            {body}
+          </Link>
+          <span className="flex justify-end px-4 pb-3 sm:p-0">
+            <button type="button" onClick={onReviewed} className="min-h-11 rounded-full px-3 text-xs text-faint transition-colors hover:bg-surface-2 hover:text-fg sm:min-h-9">
+              Mark reviewed
+            </button>
+          </span>
         </span>
       ) : (
         <Link href={it.href ?? "#"} className={cls}>

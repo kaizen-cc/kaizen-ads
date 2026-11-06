@@ -1072,7 +1072,12 @@ export type OnboardingCard = {
   writeError: string | null; // why the last try failed
   setup: OnboardingSheet | null; // the Account Overview sheet's onboarding checklist
 };
-export type OnboardingState = { clients: OnboardingCard[]; unmatched: { id: string; name: string | null; at: string }[] };
+export type OnboardingState = {
+  clients: OnboardingCard[];
+  unmatched: { id: string; name: string | null; at: string }[];
+  /** The Head of Creative's view: first rounds and production only, never the intake form or the account setup (the account manager's) */
+  creativeView?: boolean;
+};
 
 /** Clients being onboarded, with where each one is: intake, first round, production. For execs and leads. */
 export async function loadOnboarding(db: SupabaseClient): Promise<OnboardingState> {

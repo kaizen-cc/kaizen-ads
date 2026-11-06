@@ -132,7 +132,7 @@ async function bibleSources(admin: SupabaseClient, clientId: string) {
  * written in its own run (writeBible, started right after; the 10-minute Bible job picks it up if that start is lost),
  * because research and writing together take longer than one server run allows. Returns how the first half ended.
  */
-export async function buildBible(admin: SupabaseClient, clientId: string, opts: { pasted?: string; by?: string | null } = {}): Promise<"researched" | "failed" | "missing"> {
+export async function buildBible(admin: SupabaseClient, clientId: string, opts: { pasted?: string; by?: string | null; reason?: import("@/lib/bible-review").BuildReason } = {}): Promise<"researched" | "failed" | "missing"> {
   const [{ data: client }, ctx, { data: prev }] = await Promise.all([
     admin.from("clients").select("id, name, website").eq("id", clientId).maybeSingle(),
     clientContext(admin, clientId),
@@ -147,6 +147,8 @@ export async function buildBible(admin: SupabaseClient, clientId: string, opts: 
     error: null,
     build_stage: "research",
     started_at: new Date().toISOString(),
+    // Why it's being built: the write that finishes it decides from this whether the creative team is told
+    build_reason: opts.reason ?? (prev?.markdown ? "manual" : "new"),
     ...(opts.by !== undefined ? { generated_by: opts.by } : {}),
   });
 
@@ -245,9 +247,9 @@ async function startWrite(clientId: string) {
 /** The second half: the Bible written from the research, what Kaizen holds and the current Bible (an update keeps what holds). */
 export async function writeBible(admin: SupabaseClient, clientId: string): Promise<"built" | "failed" | "missing" | "busy"> {
   const [{ data: client }, ctx, { data: row }] = await Promise.all([
-    admin.from("clients").select("id, name").eq("id", clientId).maybeSingle(),
+    admin.from("clients").select("id, name, slug").eq("id", clientId).maybeSingle(),
     clientContext(admin, clientId),
-    admin.from("client_brand_bibles").select("markdown, version, sources_pasted, research, build_stage, review_bank").eq("client_id", clientId).maybeSingle(),
+    admin.from("client_brand_bibles").select("markdown, version, sources_pasted, research, build_stage, review_bank, status, reviewed_at, reviewed_by, build_reason, content_hash").eq("client_id", clientId).maybeSingle(),
   ]);
   if (!client || !ctx || !row) return "missing";
   const { renderReviewBank, placeReviewBank } = await import("@/lib/review-bank");
@@ -307,23 +309,44 @@ Build ${client.name}'s Brand Bible following the Brand Bible structure skill, ta
       const bank = reviewBankOf(splitBible(markdown));
       if (!bank || quotesOf(bank.body).length < Math.min(collected.picks.length, 15)) markdown = placeReviewBank(markdown, renderReviewBank(collected));
     }
+    // Whether the creative team is told it's ready for their review: a new Bible, or one that materially changed (a
+    // monthly refresh that leaves what the team reads as it was tells no one, and keeps its review)
+    const review = await import("@/lib/bible-review");
+    const openQuestions = bible.openQuestions.map((q) => ({ ...q, options: (q.options ?? []).filter(Boolean).slice(0, 12) }));
+    const hash = review.materialHash({ readThisFirst: bible.readThisFirst, overview: bible.overview, openQuestions });
+    const prevHash = (row.content_hash as string | null) ?? null;
+    const announce = review.shouldAnnounce({ isNew: !row.markdown, reason: (row.build_reason as string | null) ?? null, prevHash, hash });
+    const keepReview = Boolean(row.markdown && prevHash === hash && row.status === "reviewed");
+    const version = row.markdown ? bumpVersion(row.version) : "v1.0";
+    const { count: intakes } = await admin.from("client_intakes").select("id", { count: "exact", head: true }).eq("client_id", clientId);
+    const fromIntake = (intakes ?? 0) > 0;
     await admin
       .from("client_brand_bibles")
       .update({
-        status: "draft",
+        status: keepReview ? "reviewed" : "draft",
         build_stage: null,
         overview: bible.overview,
-        version: row.markdown ? bumpVersion(row.version) : "v1.0",
+        version,
         markdown,
         read_this_first: bible.readThisFirst,
         team_notes: bible.teamNotes,
-        open_questions: bible.openQuestions.map((q) => ({ ...q, options: (q.options ?? []).filter(Boolean).slice(0, 12) })),
+        open_questions: openQuestions,
         generated_at: new Date().toISOString(),
-        reviewed_at: null,
-        reviewed_by: null,
+        reviewed_at: keepReview ? row.reviewed_at : null,
+        reviewed_by: keepReview ? row.reviewed_by : null,
         error: null,
+        content_hash: hash,
+        built_from_intake: fromIntake,
+        ...(announce ? { ready_for_review_at: new Date().toISOString() } : {}),
       })
       .eq("client_id", clientId);
+    if (announce) {
+      await review.announceBible(admin, { clientId, client: client.name as string, slug: client.slug as string, version, fromIntake }).catch((e) => console.error("[bible] review notice", e instanceof Error ? e.message : e));
+    } else if (row.markdown) {
+      // Not announced: whoever reviewed the last version has this one reviewed too, so it doesn't come back on their list
+      const { data: had } = await admin.from("brand_bible_reviews").select("profile_id, reviewed_at").eq("client_id", clientId).eq("version", row.version);
+      if (had?.length) await admin.from("brand_bible_reviews").upsert(had.map((h) => ({ client_id: clientId, version, profile_id: h.profile_id, reviewed_at: h.reviewed_at })), { onConflict: "client_id,version,profile_id", ignoreDuplicates: true });
+    }
     // Its client presentation is written right away, in a run of its own (drafted only: sending keeps its own rules)
     await (await import("@/lib/presentation")).startPresentation(clientId);
     return "built";
@@ -424,7 +447,7 @@ export async function autoBibles(admin: SupabaseClient, max = 1) {
       if (b?.status === "building" || (b?.status === "failed" && Date.now() - Date.parse(b.started_at as string) < DAY)) continue;
       if (intake && b?.generated_at && Date.parse(b.generated_at as string) > Date.parse(intake)) continue;
       if (await emailHistoryPending(admin, c.id as string)) continue;
-      return { onboarding: { [c.name as string]: await buildBible(admin, c.id as string, { by: null }) } };
+      return { onboarding: { [c.name as string]: await buildBible(admin, c.id as string, { by: null, reason: intake && b?.generated_at ? "intake" : "new" }) } };
     }
   }
   // Off until an exec switches it on: while the Bible is being dialed in, each one is started by hand from the client
@@ -447,6 +470,7 @@ export async function autoBibles(admin: SupabaseClient, max = 1) {
   const ago = (iso: string | null | undefined) => (iso ? now - Date.parse(iso) : Infinity);
 
   type Todo = { id: string; name: string; rank: number; why: string };
+  const reasonOf = (why: string) => (why === "monthly update" ? "monthly" : why === "new intake" ? "intake" : "new");
   const todo: Todo[] = [];
   for (const c of clients ?? []) {
     const b = bible.get(c.id);
@@ -466,6 +490,6 @@ export async function autoBibles(admin: SupabaseClient, max = 1) {
   const { count: lastDay } = await admin.from("ai_runs").select("id", { count: "exact", head: true }).eq("agent_key", "brandbible").not("label", "like", "brand bible research%").gte("created_at", new Date(Date.now() - DAY).toISOString());
   if (cap != null && (lastDay ?? 0) >= cap) return { waiting: todo.length, results: {}, paused: `${cap} built in the last 24 hours` };
   const batch = todo.slice(0, max);
-  const results = await Promise.all(batch.map(async (t) => [t.name, `${t.why}: ${await buildBible(admin, t.id, { by: null })}`] as const));
+  const results = await Promise.all(batch.map(async (t) => [t.name, `${t.why}: ${await buildBible(admin, t.id, { by: null, reason: reasonOf(t.why) })}`] as const));
   return { waiting: todo.length - batch.length, results: Object.fromEntries(results) };
 }

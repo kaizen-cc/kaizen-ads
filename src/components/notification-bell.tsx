@@ -38,6 +38,7 @@ const KIND_ICON: Record<string, string> = {
   sprint: "M13 2 3 14h9l-1 8 10-12h-9l1-8z",
   reply: "M9 14 4 9l5-5M4 9h10a6 6 0 0 1 6 6v5",
   contradiction: "M8 3 4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4",
+  bible: "M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5v14zM6.5 17A2.5 2.5 0 0 0 4 19.5 2.5 2.5 0 0 0 6.5 22H20v-5",
   brief_ready: "M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M9 14l2 2 4-4",
 };
 

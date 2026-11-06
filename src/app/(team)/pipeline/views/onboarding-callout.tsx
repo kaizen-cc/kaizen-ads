@@ -51,7 +51,8 @@ export function OnboardingCallout({ state, clients, bare = false }: { state: Onb
             {state.clients.length} {state.clients.length === 1 ? "client" : "clients"} getting started
           </h2>
           <p className="text-sm text-muted">
-            {ready ? `${ready} first ${ready === 1 ? "round is" : "rounds are"} written and waiting for you. ` : ""}First rounds come from their intake form and what&apos;s winning for similar clients, one brief and one ticket per concept.
+            {ready ? `${ready} first ${ready === 1 ? "round is" : "rounds are"} written and waiting for you. ` : ""}
+            {state.creativeView ? "First rounds come from their Brand Bible and what's winning for similar clients, one brief and one ticket per concept." : <>First rounds come from their intake form and what&apos;s winning for similar clients, one brief and one ticket per concept.</>}
           </p>
         </div>
       </div>
@@ -60,7 +61,7 @@ export function OnboardingCallout({ state, clients, bare = false }: { state: Onb
           make), then the rest, whose card is their account setup */}
       <div className="grid gap-3 lg:grid-cols-2">
         {[...creative, ...other].map((c) => (
-          <ClientCard key={c.clientId} c={c} onOpen={(f) => pushParams({ first: f.id })} />
+          <ClientCard key={c.clientId} c={c} creativeView={Boolean(state.creativeView)} onOpen={(f) => pushParams({ first: f.id })} />
         ))}
       </div>
 
@@ -100,7 +101,7 @@ function businessDaysSince(iso: string, now: number) {
 }
 const waited = (days: number) => (days === 0 ? "today" : days === 1 ? "1 day" : `${days} days`);
 
-function ClientCard({ c, onOpen }: { c: OnboardingCard; onOpen: (s: OpenSuggestion) => void }) {
+function ClientCard({ c, creativeView, onOpen }: { c: OnboardingCard; creativeView: boolean; onOpen: (s: OpenSuggestion) => void }) {
   const router = useRouter();
   const [started, setStarted] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -162,20 +163,26 @@ function ClientCard({ c, onOpen }: { c: OnboardingCard; onOpen: (s: OpenSuggesti
   const intakeTook = intakeIn ? businessDaysSince(c.since, Date.parse(c.intake!.at)) : 0;
   const readySince = c.firstRound?.createdAt ?? null;
   const n = c.round.length;
-  const steps: { label: string; detail: string; sub?: string; state: "done" | "now" | "todo"; late?: boolean }[] = [
+  // The creative team never sees the intake form (the account manager chases it): the first round is simply ready to write
+  const writable = intakeIn || creativeView;
+  const all: ({ label: string; detail: string; sub?: string; state: "done" | "now" | "todo"; late?: boolean } | null)[] = [
     { label: c.returning ? "Came back" : "Enrolled", detail: day(c.since), state: "done" },
-    intakeIn
-      ? { label: "Intake form", detail: `In ${day(c.intake!.at)}`, sub: Date.parse(c.intake!.at) < Date.parse(c.since) ? "Before enrolling" : `Took ${waited(intakeTook)}`, state: "done" }
-      : { label: "Intake form", detail: "Waiting on the client", sub: `${waited(intakeWait)} so far`, state: "now", late: intakeWait > 2 },
+    creativeView
+      ? null
+      : intakeIn
+        ? { label: "Intake form", detail: `In ${day(c.intake!.at)}`, sub: Date.parse(c.intake!.at) < Date.parse(c.since) ? "Before enrolling" : `Took ${waited(intakeTook)}`, state: "done" }
+        : { label: "Intake form", detail: "Waiting on the client", sub: `${waited(intakeWait)} so far`, state: "now", late: intakeWait > 2 },
     {
       label: "First round",
-      detail: n ? `${n} ${n === 1 ? "concept" : "concepts"} ready for you` : c.inProduction.length ? "Approved" : writing ? `AI is writing it · ${pct}%` : failed ? "Couldn't write it" : intakeIn ? "Ready to write" : "Not yet",
+      detail: n ? `${n} ${n === 1 ? "concept" : "concepts"} ready for you` : c.inProduction.length ? "Approved" : writing ? `AI is writing it · ${pct}%` : failed ? "Couldn't write it" : writable ? "Ready to write" : "Not yet",
       sub: c.firstRound && readySince ? `Waiting on you ${waited(businessDaysSince(readySince, now))}` : undefined,
-      state: n || writing || failed ? "now" : c.inProduction.length ? "done" : intakeIn ? "now" : "todo",
+      state: n || writing || failed ? "now" : c.inProduction.length ? "done" : writable ? "now" : "todo",
       late: Boolean(c.firstRound && readySince && businessDaysSince(readySince, now) > 1),
     },
     { label: "In production", detail: c.inProduction.length ? `${c.inProduction.length} ${c.inProduction.length === 1 ? "ticket" : "tickets"}` : "—", state: c.inProduction.length ? "now" : "todo" },
   ];
+  const steps = all.filter((s) => s !== null);
+  const roundAt = steps.findIndex((s) => s.label === "First round");
 
   return (
     <article className="grid content-start gap-4 rounded-[16px] border border-line bg-bg/70 p-4 backdrop-blur">
@@ -192,24 +199,24 @@ function ClientCard({ c, onOpen }: { c: OnboardingCard; onOpen: (s: OpenSuggesti
         </div>
       </div>
 
-      <ol className="grid grid-cols-2 gap-x-3 gap-y-3 md:grid-cols-4 md:gap-1.5">
+      <ol className={`grid gap-x-3 gap-y-3 md:gap-1.5 ${steps.length === 3 ? "grid-cols-3" : "grid-cols-2 md:grid-cols-4"}`}>
         {steps.map((s, i) => (
           <li key={s.label} className="grid content-start gap-1.5">
             <span className="relative h-1 overflow-hidden rounded-full bg-surface-2">
-              {i === 2 && writing ? (
+              {i === roundAt && writing ? (
                 <span className="absolute inset-y-0 left-0 rounded-full bg-brand transition-[width] duration-1000 ease-linear" style={{ width: `${pct}%` }} />
               ) : (
-                <span className={`absolute inset-0 rounded-full ${s.state === "done" ? "bg-ok" : s.state === "now" ? (s.late || (i === 2 && failed) ? "bg-bad" : "bg-brand") : ""}`} />
+                <span className={`absolute inset-0 rounded-full ${s.state === "done" ? "bg-ok" : s.state === "now" ? (s.late || (i === roundAt && failed) ? "bg-bad" : "bg-brand") : ""}`} />
               )}
             </span>
             <span className={`text-[11px] font-medium ${s.state === "todo" ? "text-faint" : "text-fg"}`}>{s.label}</span>
-            <span className={`text-[10.5px] leading-snug ${s.state === "now" ? (s.late || (i === 2 && failed) ? "text-bad" : "text-brand-text") : "text-faint"}`}>{s.detail}</span>
+            <span className={`text-[10.5px] leading-snug ${s.state === "now" ? (s.late || (i === roundAt && failed) ? "text-bad" : "text-brand-text") : "text-faint"}`}>{s.detail}</span>
             {s.sub && <span className={`text-[10px] leading-snug ${s.late ? "text-bad" : "text-faint"}`}>{s.sub}</span>}
           </li>
         ))}
       </ol>
 
-      {c.setup && <Setup s={c.setup} />}
+      {c.setup && !creativeView && <Setup s={c.setup} />}
 
       {writing && (
         <div className="grid gap-1.5 rounded-[12px] border border-brand/25 bg-brand-soft/30 px-3 py-2.5">
@@ -282,7 +289,7 @@ function ClientCard({ c, onOpen }: { c: OnboardingCard; onOpen: (s: OpenSuggesti
           </span>
         ) : writing || n ? null : c.creative ? (
           <button onClick={write} className="h-11 flex-1 rounded-brand border border-brand/50 px-4 text-sm text-fg hover:bg-brand-soft md:h-9 md:flex-none">
-            {failed ? "Try again" : intakeIn ? "Write the first round" : "Write it without the intake"}
+            {failed ? "Try again" : writable ? "Write the first round" : "Write it without the intake"}
           </button>
         ) : null}
         <button

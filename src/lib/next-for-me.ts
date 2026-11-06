@@ -7,6 +7,7 @@ import { loadWatchList } from "@/lib/fatigue";
 import { loadCallPromises, loadOnboarding, loadSuggestions, type OpenSuggestion } from "@/lib/suggestions";
 import { formatsFor } from "@/lib/creative-formats";
 import { isCreativeRole } from "@/lib/roles";
+import { loadBiblesToReview } from "@/lib/bible-review";
 
 // Everything that's on one person, in one list: what to do now, what to decide, what to keep an eye on, and what's
 // coming. Pulled from the tickets, the briefs the AI wrote, the KPI tracker, the fatigue watcher and onboarding, and
@@ -14,7 +15,7 @@ import { isCreativeRole } from "@/lib/roles";
 
 export type NextItem = {
   id: string;
-  kind: "ticket" | "review" | "launch" | "brief" | "promise" | "first_round" | "refresh" | "kpi" | "fatigue" | "intake" | "client" | "sprint" | "task";
+  kind: "ticket" | "review" | "launch" | "brief" | "promise" | "first_round" | "refresh" | "kpi" | "fatigue" | "intake" | "client" | "sprint" | "task" | "bible";
   tone: "bad" | "warn" | "brand" | "ok";
   client: string;
   title: string;
@@ -23,14 +24,18 @@ export type NextItem = {
   href?: string;
   action: string; // the button
   suggestion?: OpenSuggestion; // briefs open right here
+  /** A short tag beside the title (a Brand Bible: whether it was built from the intake form) */
+  chip?: { label: string; tone: "ok" | "quiet" };
+  /** A Brand Bible version this person can mark reviewed from the list */
+  bible?: { clientId: string; version: string };
 };
 
 export type NextForMe = {
   now: NextItem[];
   decide: NextItem[];
   watch: NextItem[];
-  /** What the client still owes us, as information (the creative team: an intake form not in yet, so they can go ahead with what we have) */
-  waiting: NextItem[];
+  /** The creative team: Brand Bibles ready for their review, each tagged with whether it was built from the intake form */
+  bibles: NextItem[];
   coming: NextItem[];
   stats: { onMe: number; late: number; dueToday: number; toDecide: number };
 };
@@ -78,7 +83,7 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
   ]);
   const myClients = new Set([...(assigned ?? []), ...(owned ?? [])].map((r) => r.client_id as string));
 
-  const [h, kpis, fatigue, onboarding, promises, suggestions] = await Promise.all([
+  const [h, kpis, fatigue, onboarding, promises, suggestions, bibleList] = await Promise.all([
     loadHome(db, me),
     buyerish ? loadKpiPulse(db, me.id) : Promise.resolve(null),
     // Ads wearing out: a buyer's own; the creative team's, on the clients they make for (the Head of Creative every client)
@@ -87,17 +92,33 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
       : creative
         ? loadWatchList(db, { limit: 30 }).then((ws) => (me.isLead ? ws : ws.filter((w) => myClients.has(w.clientId))))
         : Promise.resolve([]),
-    // New clients: first rounds for the buyers and the Head of Creative, intake chasing for account managers
-    buyerish || me.isCoordinator || creative ? loadOnboarding(db) : Promise.resolve(null),
+    // New clients: first rounds for the buyers and the Head of Creative, intake chasing for account managers (the
+    // creative team never sees the intake form itself: they hear when the client's Brand Bible is ready instead)
+    buyerish || me.isCoordinator || me.role === "head_of_creative" ? loadOnboarding(db) : Promise.resolve(null),
     buyerish || me.role === "head_of_creative" ? loadCallPromises(db) : Promise.resolve([]),
     me.isLead || me.isExec ? loadSuggestions(db, formatsFor(me)) : Promise.resolve(null),
+    creative ? loadBiblesToReview(db, me).catch(() => []) : Promise.resolve([]),
   ]);
 
   const now: NextItem[] = [];
   const decide: NextItem[] = [];
   const watch: NextItem[] = [];
-  const waiting: NextItem[] = [];
   const coming: NextItem[] = [];
+
+  // ─── Brand Bibles ready for my review (the creative team) ───
+  const bibles: NextItem[] = bibleList.map((b) => ({
+    id: `bb-${b.clientId}-${b.version}`,
+    kind: "bible",
+    tone: "brand",
+    client: b.client,
+    title: `Brand Bible ready for your review · v${b.version.replace(/^v/i, "")}`,
+    why: b.fromIntake ? "Built from the intake form" : "Built without the intake form: from calls, emails and research",
+    when: ago(b.readyAt) === "today" ? "Ready today" : `Ready ${ago(b.readyAt)} ago`,
+    href: `/clients/${b.slug}/brand-bible`,
+    action: "Read it",
+    chip: b.fromIntake ? { label: "From the intake form", tone: "ok" } : { label: "Without the intake form", tone: "quiet" },
+    bible: { clientId: b.clientId, version: b.version },
+  }));
   const today = new Date().toLocaleDateString("en-US", { timeZone: "America/New_York" });
   const dueToday = (iso: string | null) => Boolean(iso && new Date(iso).toLocaleDateString("en-US", { timeZone: "America/New_York" }) === today);
 
@@ -181,12 +202,8 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
       // A first round is a creative decision: the client's buyer, and the leads (not the account manager)
       if ((!myClients.has(c.clientId) && !me.isLead) || !(buyerish || me.role === "head_of_creative")) continue;
       decide.push({ id: `o-${c.clientId}`, kind: "first_round", tone: "brand", client: c.name, title: c.firstRound.draft.title, why: c.round.length > 1 ? `Their first round is written: ${c.round.length} concepts, one ticket each` : "Their first round is written and waiting for you", when: `Waiting ${ago(c.firstRound.createdAt)}`, action: "Review it", suggestion: c.firstRound });
-    } else if (!c.intake && c.creative && creative && (me.isLead || myClients.has(c.clientId))) {
-      // The creative team: a status, not a chase (the account manager chases it). Clients are slow with these, so the
-      // usual call is to go ahead with what we have; this says how long it's been so they can decide
-      const days = Math.floor((Date.now() - Date.parse(c.since)) / 86_400_000);
-      waiting.push({ id: `iw-${c.clientId}`, kind: "intake", tone: "ok", client: c.name, title: "Intake not in yet · proceed with what we have", why: "Their account manager is following up", when: days <= 0 ? "Enrolled today" : `Waiting ${days} ${days === 1 ? "day" : "days"}`, href: `/clients/${c.slug}`, action: "Open client" });
     } else if (!c.intake && c.creative && chasesIntake(me, seatsOf(c.clientId))) {
+      // The account manager's to chase. Never the creative team's: they're told when the Brand Bible is ready instead
       const days = Math.floor((Date.now() - Date.parse(c.since)) / 86_400_000);
       if (days >= 2) watch.push({ id: `i-${c.clientId}`, kind: "intake", tone: days > 4 ? "bad" : "warn", client: c.name, title: "Marketing intake form not in yet", why: "Their first round waits on it (or write it without)", when: `${days} days since enrolling`, href: `/clients/${c.slug}`, action: "Open client" });
     }
@@ -247,7 +264,7 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
     now: sort(now),
     decide: sort(decide),
     watch: sort(watch),
-    waiting,
+    bibles,
     coming,
     stats: { onMe: h.mine.length, late: h.mine.filter((r) => r.minutes_over > 0).length, dueToday: h.dueToday, toDecide: decide.length },
   };

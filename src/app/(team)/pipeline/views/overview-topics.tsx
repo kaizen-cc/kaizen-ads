@@ -102,12 +102,12 @@ export function actTopics(d: SharedTopics): Built[] {
   const starting = onboarding?.clients ?? [];
   if (onboarding && (starting.length || onboarding.unmatched.length)) {
     const ready = starting.filter((c) => c.firstRound).length;
-    const notSetUp = starting.filter((c) => c.setup && Object.values(c.setup.steps).some((v) => !v)).length;
+    const notSetUp = onboarding.creativeView ? 0 : starting.filter((c) => c.setup && Object.values(c.setup.steps).some((v) => !v)).length;
     const bits = [ready ? `${s(ready, "first round")} ready for you` : null, notSetUp ? `${notSetUp} still being set up` : null, onboarding.unmatched.length ? `${s(onboarding.unmatched.length, "intake form")} to match` : null].filter(Boolean);
     out.push({
       tile: { id: "onboarding", label: "Onboarding", value: starting.length, sub: ready ? `${ready} first round${ready === 1 ? "" : "s"} ready` : "clients getting started", tone: ready ? "brand" : "quiet" },
       panel: (
-        <Topic key="onboarding" id="onboarding" title="Clients getting started" summary={bits.join(" · ") || "Where each new client is: setup, intake, first round, production"} count={starting.length} tone={ready ? "brand" : "quiet"}>
+        <Topic key="onboarding" id="onboarding" title="Clients getting started" summary={bits.join(" · ") || (onboarding.creativeView ? "Where each new client is: first round, production" : "Where each new client is: setup, intake, first round, production")} count={starting.length} tone={ready ? "brand" : "quiet"}>
           <OnboardingCallout state={onboarding} clients={d.clientOptions ?? []} bare />
         </Topic>
       ),
@@ -280,7 +280,7 @@ export function buildThemes(d: SharedTopics, extra: { first?: Theme | null; deli
     title: "New clients",
     tone: sum(fresh) ? "warn" : "ok",
     count: sum(fresh),
-    headline: sum(fresh) ? "Setup, intake and first rounds for clients getting started" : "No one onboarding right now",
+    headline: sum(fresh) ? (extra.calm ? "First rounds for clients getting started" : "Setup, intake and first rounds for clients getting started") : "No one onboarding right now",
     points: fresh.map((b) => b.tile!.sub),
     content: fresh.map((b) => b.panel),
   });

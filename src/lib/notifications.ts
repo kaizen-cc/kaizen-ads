@@ -57,11 +57,11 @@ export type NoticePrefs = { groups: Record<GroupKey, { app: boolean; email: Emai
 export const GROUPS: { key: GroupKey; label: string; about: string; managersOnly?: boolean }[] = [
   { key: "on_you", label: "Assigned to you", about: "Tickets and Asana tasks put on you, clients you're added to, handoffs, messages you haven't replied to" },
   { key: "work", label: "Your work", about: "Tickets you're on moving, comments, reviews, new copy and uploads, client changes" },
-  { key: "clients", label: "Your clients", about: "Promises made on calls, ads worn out, accounts going off target, sprint check-ins" },
+  { key: "clients", label: "Your clients", about: "Promises made on calls, ads worn out, Brand Bibles ready for your review, accounts going off target, sprint check-ins" },
   { key: "leadership", label: "Across the agency", about: "New clients starting, first rounds ready for review, and connections about to stop working", managersOnly: true },
   { key: "recap", label: "Daily recap reminders", about: "A nudge at 11am and 3pm if you haven't been through today's recap" },
 ];
-export const KIND_GROUP: Record<string, GroupKey> = { assigned: "on_you", contradiction: "on_you", handoff: "on_you", reply: "on_you", client: "on_you", ticket: "work", promise: "clients", fatigue: "clients", kpi: "clients", sprint: "clients", onboarding: "leadership", newclient: "leadership", connection: "leadership", recap: "recap" };
+export const KIND_GROUP: Record<string, GroupKey> = { assigned: "on_you", contradiction: "on_you", handoff: "on_you", reply: "on_you", client: "on_you", ticket: "work", promise: "clients", fatigue: "clients", bible: "clients", kpi: "clients", sprint: "clients", onboarding: "leadership", newclient: "leadership", connection: "leadership", recap: "recap" };
 
 export const DEFAULT_PREFS: NoticePrefs = {
   groups: {

@@ -73,6 +73,8 @@ export default async function Home() {
   if (onboarding && creativeLead) {
     onboarding.clients = onboarding.clients.filter((c) => c.creative || c.firstRound);
     onboarding.unmatched = [];
+    // The intake form is the account manager's: the creative team hears when the Brand Bible is ready instead
+    onboarding.creativeView = true;
   }
   const owed = { items: owedItems.filter((o) => o.targetId === me.id || !hidden.has(`owed:${o.id}`)), said: said.filter((p) => p.ownerId === me.id || !hidden.has(`said:${p.id}`)), me: me.id };
 
