@@ -43,6 +43,7 @@ import {
   type Rsa,
 } from "./core";
 import { applyMatchAnswer, tabsToDraft } from "./sheet";
+import { ASKS_FOR_LINK, followLanding, landingRule, pagesText, urlIn, type LandingSet } from "@/lib/landing-pages-core";
 
 // A Google launch from the client chat (the client page, or a Google card on the KPI board), start to finish:
 //   read     the buyer's words, or the sheet they shared (any layout: see sheet.ts), and the live account (campaigns
@@ -85,6 +86,8 @@ export type GoogleResolution = {
   suggestions: Suggestion[];
   checks: CheckItem[];
   at: string;
+  /** The client's pages the ads can land on (src/lib/landing-pages.ts) */
+  landing?: LandingSet | null;
 };
 
 export type Turn = { role: "user" | "assistant"; text: string; at: string };
@@ -219,7 +222,26 @@ export async function warmGoogleLaunch(admin: SupabaseClient, clientId: string, 
   if (!googleAdsConfigured()) return;
   const account = await accountFor(admin, clientId, targetId).catch(() => null);
   if (!account) return;
-  await step(`google ${account}`, "warm-up read", readGoogleAccount(admin, clientId, account)).catch(() => undefined);
+  await Promise.all([
+    step(`google ${account}`, "warm-up read", readGoogleAccount(admin, clientId, account)).catch(() => undefined),
+    step(`google ${account}`, "warm-up landing pages", import("@/lib/landing-pages").then((m) => m.findLandingPages(admin, clientId, { google: account }))).catch(() => undefined),
+  ]);
+}
+
+/** What the launch is about, for ranking the landing pages: the request, the ad groups and keywords, the answers so far */
+export function googleTheme(request: string, draft: GoogleDraft | null, questions: LaunchQuestion[]) {
+  const d = draft ?? { adGroups: [], campaignNegatives: [], notes: [] };
+  const answered = questions.filter((q) => ["ad_group", "keywords", "campaign"].includes(q.key) && q.answer).map((q) => q.answer);
+  return [request, ...d.adGroups.flatMap((g) => [g.name, g.campaign, ...g.keywords.slice(0, 30).map((k) => k.text)]), ...answered].join(" ").slice(0, 4000);
+}
+
+/** The client's landing pages for a Google launch (kept a day), or null when they can't be read */
+async function landingFor(admin: SupabaseClient, clientId: string, account: string): Promise<LandingSet | null> {
+  const m = await import("@/lib/landing-pages");
+  return m
+    .findLandingPages(admin, clientId, { google: account })
+    .then((s) => m.keepOnRun(s))
+    .catch(() => null);
 }
 
 /** The account in a compact form for the Google Ads Buyer (a step that needs less gets less: lean for the questions) */
@@ -337,6 +359,8 @@ export async function prepareGoogleRun(admin: SupabaseClient, id: string) {
   let res!: GoogleResolution;
   // The client's context for the tailoring step, read alongside everything else
   const briefP = step(scope, "client context", import("@/lib/handoff").then((m) => m.accountBrief(admin, run.client_id, null)).then((b) => b.text)).catch(() => "");
+  // The client's pages, for the landing-page question (usually warm: the chat started it with the account read)
+  const pagesP = step(scope, "landing pages", landingFor(admin, run.client_id, account));
   try {
     if (!googleAdsConfigured()) throw new Error("Google Ads isn't connected yet (Settings, Sync health).");
     // The account read starts at once, alongside the sheet (and it's usually warm: the chat started it)
@@ -359,13 +383,15 @@ export async function prepareGoogleRun(admin: SupabaseClient, id: string) {
       await patch(admin, id, { sheet: draft, progress: `${read}. Reading the account` });
     }
     const { value: acct, cached } = await acctP;
-    res = { account, request, scopeType: base?.scopeType ?? null, ...acct, suggestions: [], checks: [], at: now() };
+    // The pages if they're already found; otherwise they join the questions once tailored, below
+    const landing = await Promise.race([pagesP, new Promise<null>((r) => setTimeout(() => r(null), 1500))]);
+    res = { account, request, scopeType: base?.scopeType ?? null, ...acct, suggestions: [], checks: [], at: now(), landing };
     const must = googleQuestions(draft, res.campaigns, res.adGroups, `${request} ${run.source.kind !== "words" ? run.source.name : ""}`, res.scopeType);
     res.checks = intakeChecks(draft, res);
     const live = res.campaigns.filter((c) => c.status === "ENABLED").length;
     const facts = `${count(res.campaigns.length)} campaigns (${count(live)} live), ${count(res.adGroups.length)} ad groups, ${count(res.inAccount.length)} keywords read${cached ? " (read in the last few minutes)" : ""}.`;
     const summary = [read ? `${read}.` : "", facts, ...draft.notes.map((x) => `Note: ${x}`)].filter(Boolean).join("\n\n");
-    await patch(admin, id, { sheet: draft, resolution: res, summary, questions: followCampaign(must, res.campaigns, res.adGroups), status: "asking", progress: "Tailoring the questions to the account", error: null });
+    await patch(admin, id, { sheet: draft, resolution: res, summary, questions: followLanding(followCampaign(must, res.campaigns, res.adGroups), "final_url", landing, googleTheme(request, draft, must)), status: "asking", progress: "Tailoring the questions to the account", error: null });
     console.log(`[launch] ${scope} · questions on the card ${Date.now() - t0}ms`);
   } catch (e) {
     await patch(admin, id, { status: "failed", progress: null, error: msg(e).slice(0, 500) });
@@ -421,12 +447,22 @@ ${RULES}`,
       latest.questions,
     );
     const checks = intakeChecks(draft, res);
-    await patch(admin, id, { sheet: draft, resolution: { ...(latest.resolution ?? res), checks }, summary, questions: followCampaign(questions, res.campaigns, res.adGroups), progress: null });
+    const landing = (await pagesP) ?? latest.resolution?.landing ?? null;
+    await patch(admin, id, {
+      sheet: draft,
+      resolution: { ...(latest.resolution ?? res), checks, landing },
+      summary,
+      questions: followLanding(followCampaign(questions, res.campaigns, res.adGroups), "final_url", landing, googleTheme(request, draft, questions)),
+      progress: null,
+    });
     console.log(`[launch] ${scope} · questions tailored ${Date.now() - t0}ms`);
   } catch (e) {
-    // The questions from code are already on the card and answerable: only the tailoring is lost
+    // The questions from code are already on the card and answerable: only the tailoring is lost (the pages still join)
     console.error(`[launch] ${scope} · tailoring failed:`, msg(e));
-    await patch(admin, id, { progress: null });
+    const landing = await pagesP;
+    const latest = landing ? await load(admin, id) : null;
+    if (latest?.resolution && latest.status === "asking") await patch(admin, id, { progress: null, resolution: { ...latest.resolution, landing }, questions: followLanding(latest.questions, "final_url", landing, googleTheme(request, draft, latest.questions)) });
+    else await patch(admin, id, { progress: null });
   }
 }
 
@@ -462,6 +498,11 @@ const REPLY = obj({ answer: S, answers: arr(obj({ key: S, answer: S })), newQues
 export async function googleLaunchReply(admin: SupabaseClient, id: string, message: string): Promise<{ answer: string; offTopic: boolean; building: boolean }> {
   const run = await load(admin, id);
   if (!run?.resolution) return { answer: "", offTopic: true, building: false };
+  // The client's pages, so a page named in words ("the homepage") is answered with its link (a run from before they
+  // were found reads them now: kept a day, so usually at once)
+  const landing = run.resolution.landing ?? (run.account ? await landingFor(admin, run.client_id, run.account) : null);
+  const theme = googleTheme(run.resolution.request, run.sheet, run.questions);
+  const asksUrl = run.questions.some((q) => q.key === "final_url");
   const out = await step(
     `google run ${id.slice(0, 8)}`,
     "chat turn (fast tier)",
@@ -476,11 +517,11 @@ newQuestions: only when their answer opens something the plan needs (question at
 build: true when they ask to build, see or redo the plan, or say go ahead, or (stage ready) ask for a change to the plan. The plan is only built once every required question is answered; if some aren't, say which.
 answer: 1 or 2 short sentences. Talk like a senior media buyer a colleague just walked up to: natural and brief, one breath at a time, under 45 words. Confirm what you took in a few words, then ask ONE thing, the next open decision, with your pick in a few words. No lists or bullets, no reasoning, rules or caveats unless they ask why or something would break; the rest comes in the next turns. Push back in a sentence when something works against the client's results or the platform's rules. (Google's rules: over a limit, a duplicate, a keyword already running.) When the stage is "ready" and they say go ahead, tell them to press Deploy on the launch card (it checks the client's Google switch and who may deploy, and creates everything paused); build stays false.
 offTopic: true when the message isn't about this launch (answer ""). setAside: true when they say to stop or park it.
-${SHORT}
+${asksUrl ? `${landingRule("final_url")}\n` : ""}${SHORT}
 ${RULES}`,
       schema: REPLY,
       maxTokens: 3000,
-      prompt: `<read>\n${run.sheet ? draftText(run.sheet, 25) : "(nothing yet)"}\n</read>\n\n<questions>\n${run.questions.map((q) => `- ${q.key}${q.required ? " (required)" : ""}: ${q.question} Proposal: ${q.proposal}. ${q.answer ? `ANSWERED: ${q.answer}` : "Not answered yet."}`).join("\n")}\n</questions>\n\n${run.plan ? `<plan>\n${planText(run.plan)}\n</plan>\n\n` : ""}<conversation>\n${run.turns
+      prompt: `<read>\n${run.sheet ? draftText(run.sheet, 25) : "(nothing yet)"}\n</read>\n\n${asksUrl ? `<landing_pages site="${landing?.site ?? ""}">\n${pagesText(landing, theme)}\n</landing_pages>\n\n` : ""}<questions>\n${run.questions.map((q) => `- ${q.key}${q.required ? " (required)" : ""}: ${q.question} Proposal: ${q.proposal}. ${q.answer ? `ANSWERED: ${q.answer}` : "Not answered yet."}`).join("\n")}\n</questions>\n\n${run.plan ? `<plan>\n${planText(run.plan)}\n</plan>\n\n` : ""}<conversation>\n${run.turns
         .slice(-12)
         .map((t) => `${t.role === "user" ? "Buyer" : "You"}: ${t.text}`)
         .join("\n")}\n</conversation>\n\nThe buyer says: ${message.slice(0, 3000)}`,
@@ -490,17 +531,25 @@ ${RULES}`,
   let questions = applyAnswers(run.questions, out.answers);
   if (out.newQuestions.length) questions = mergeQuestions(out.newQuestions.map((q) => ({ ...q, answer: null })), [], questions);
   questions = followCampaign(questions, run.resolution.campaigns, run.resolution.adGroups);
-  const turns = [...run.turns, { role: "user" as const, text: message.slice(0, 3000), at: now() }, { role: "assistant" as const, text: out.answer, at: now() }].slice(-40);
+  // The landing page as a real link: a page named in words taken from the list, a typed link checked
+  const { settleLanding } = await import("@/lib/landing-pages");
+  const settled = await settleLanding(questions, "final_url", landing, message, out.answers.some((a) => a.key === "final_url"));
+  questions = followLanding(settled.questions, "final_url", landing, googleTheme(run.resolution.request, run.sheet, settled.questions));
+  // Code took the page the chat asked a link for: its words would contradict the card, so the note replaces them
+  const said = settled.took && ASKS_FOR_LINK.test(out.answer) ? (settled.note ?? "") : [out.answer, settled.note].filter(Boolean).join(" ");
+  const answers = out.answers.length + (settled.took ? 1 : 0);
+  const turns = [...run.turns, { role: "user" as const, text: message.slice(0, 3000), at: now() }, { role: "assistant" as const, text: said, at: now() }].slice(-40);
+  const resolution = landing && !run.resolution.landing ? { ...run.resolution, landing } : null;
   if (out.setAside) {
     await patch(admin, id, { questions, turns, status: "set_aside" });
     return { answer: out.answer || "Set aside. Nothing was created.", offTopic: false, building: false };
   }
   const open = unanswered(questions);
   // Chat first: once a reply leaves nothing required open, the preview is built (they don't have to say "build it")
-  const building = !open.length && (out.build || out.answers.length > 0) && (run.status === "asking" || out.answers.length > 0);
-  const answer = out.build && open.length ? `${out.answer}\n\nBefore I can plan it I still need: ${open.map((q) => q.question).join(" ")}` : building && !out.build ? `${out.answer}\n\nThat's everything I need: building the preview on the card now. Nothing goes live until you deploy it.` : out.answer;
-  const changed = out.answers.length > 0 && ["ready", "failed"].includes(run.status);
-  await patch(admin, id, { questions, turns, ...(building ? { status: "planning", progress: "Laying out the plan" } : changed ? { status: "asking" } : {}) });
+  const building = !open.length && (out.build || answers > 0) && (run.status === "asking" || answers > 0);
+  const answer = out.build && open.length ? `${said}\n\nBefore I can plan it I still need: ${open.map((q) => q.question).join(" ")}` : building && !out.build ? `${said}\n\nThat's everything I need: building the preview on the card now. Nothing goes live until you deploy it.` : said;
+  const changed = answers > 0 && ["ready", "failed"].includes(run.status);
+  await patch(admin, id, { questions, turns, ...(resolution ? { resolution } : {}), ...(building ? { status: "planning", progress: "Laying out the plan" } : changed ? { status: "asking" } : {}) });
   return { answer, offTopic: false, building };
 }
 
@@ -512,7 +561,8 @@ export async function acceptGoogleProposals(admin: SupabaseClient, id: string, k
     run.questions,
     run.questions.filter((q) => keys.includes(q.key) && !q.answer).map((q) => ({ key: q.key, answer: chosen[q.key] && q.options.includes(chosen[q.key]) ? chosen[q.key] : q.proposal })),
   );
-  await patch(admin, id, { questions: run.resolution ? followCampaign(questions, run.resolution.campaigns, run.resolution.adGroups) : questions });
+  // The landing pages offered follow the ad group and keywords just chosen
+  await patch(admin, id, { questions: run.resolution ? followLanding(followCampaign(questions, run.resolution.campaigns, run.resolution.adGroups), "final_url", run.resolution.landing, googleTheme(run.resolution.request, run.sheet, questions)) : questions });
 }
 
 /** A suggestion taken or skipped on the card */
@@ -667,7 +717,7 @@ export async function planGoogleRun(admin: SupabaseClient, id: string) {
     const matchAnswer = run.questions.find((q) => q.key === "match_types")?.answer;
     if (matchAnswer) draft = applyMatchAnswer(draft, matchAnswer);
     const choice = campaignChoice(run.questions.find((q) => q.key === "campaign")?.answer, res.campaigns);
-    const urlAnswer = run.questions.find((q) => q.key === "final_url")?.answer?.match(/https?:\/\/\S+/)?.[0]?.replace(/[).,]+$/, "") ?? null;
+    const urlAnswer = urlIn(run.questions.find((q) => q.key === "final_url")?.answer);
     const taken = res.suggestions.filter((s) => s.accepted === true);
     const proposal = await step(`google run ${id.slice(0, 8)}`, "plan (agent's model)", askJson<GoogleProposal>({
       agent: "google_launcher",

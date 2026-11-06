@@ -1,6 +1,7 @@
 import "server-only";
 import { askJson } from "@/lib/ai";
 import { gridText } from "./grid";
+import { landingRule, pagesText, type LandingSet } from "@/lib/landing-pages-core";
 import { budgetOptions, type Proposal } from "./plan";
 import type { Grid, LaunchQuestion, LaunchSheet, Resolution } from "./types";
 
@@ -137,7 +138,8 @@ ${RULES}`,
 const REPLY_SCHEMA = obj({ answer: S, answers: arr(obj({ key: S, answer: S })), newQuestions: arr(Q), build: B, offTopic: B, setAside: B });
 export type ReplyOut = { answer: string; answers: { key: string; answer: string }[]; newQuestions: Omit<LaunchQuestion, "answer">[]; build: boolean; offTopic: boolean; setAside: boolean };
 
-export async function replyToBuyer(clientId: string, sheet: LaunchSheet, res: Resolution, qs: LaunchQuestion[], turns: { role: "user" | "assistant"; text: string }[], message: string, stage: string) {
+export async function replyToBuyer(clientId: string, sheet: LaunchSheet, res: Resolution, qs: LaunchQuestion[], turns: { role: "user" | "assistant"; text: string }[], message: string, stage: string, landing: { set: LandingSet | null; theme: string } | null = null) {
+  const asksLink = Boolean(landing) && qs.some((q) => q.key === "link");
   return askJson<ReplyOut>({
     agent: "launcher",
     label: "launch sheet chat",
@@ -150,11 +152,11 @@ build: true when the buyer asks to build, see or redo the plan, or says go ahead
 answer: your reply in 1 or 2 short sentences. Talk like a senior media buyer a colleague just walked up to: natural and brief, one breath at a time, under 45 words. Confirm what you took in a few words, then ask ONE thing, the next open decision, with your pick in a few words. No lists or bullets, no reasoning, rules or caveats unless they ask why or something would break; the rest comes in the next turns. Push back in a sentence when something works against the client's results or the platform's rules. Never propose or plan launching into a paused campaign, ad group or ad set: nothing added there runs. Only live ones, or a new one. If the buyer names a paused one, say plainly it's paused and offer the live ones or a new one. When the stage is "ready" or later and they ask for a change to the plan, take it as an answer (usually "structure", "budget", "targeting" or "rows") and set build true so the plan is rebuilt and checked again. When the stage is "ready" and they say go ahead or confirm, tell them to press Create on the launch card (it checks who may confirm and creates everything paused, or scheduled as agreed); build stays false.
 offTopic: true when the message isn't about this launch at all (then answer "").
 setAside: true when they say to stop, drop or park this launch.
-${SHORT}
+${asksLink ? `${landingRule("link")}\n` : ""}${SHORT}
 ${RULES}`,
     schema: REPLY_SCHEMA,
     maxTokens: 3000,
-    prompt: `<sheet>\n${sheetBrief(sheet, 60)}\n</sheet>\n\n<checks>\n${resolutionBrief(res)}\n</checks>\n\n<questions>\n${questionsText(qs)}\n</questions>\n\n<conversation>\n${turns
+    prompt: `<sheet>\n${sheetBrief(sheet, 60)}\n</sheet>\n\n<checks>\n${resolutionBrief(res)}\n</checks>\n\n${asksLink ? `<landing_pages site="${landing?.set?.site ?? ""}">\n${pagesText(landing?.set, landing?.theme ?? "")}\n</landing_pages>\n\n` : ""}<questions>\n${questionsText(qs)}\n</questions>\n\n<conversation>\n${turns
       .slice(-16)
       .map((t) => `${t.role === "user" ? "Buyer" : "You"}: ${t.text}`)
       .join("\n")}\n</conversation>\n\nThe buyer says: ${message.slice(0, 3000)}`,

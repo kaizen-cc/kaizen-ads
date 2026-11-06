@@ -1,3 +1,4 @@
+import { kindOf, normalizeUrl, shortUrl } from "@/lib/landing-pages-core";
 import type { LaunchQuestion, LaunchSheet, Resolution } from "./types";
 
 // The questions only the buyer can answer, before anything is planned. The Media Buyer writes them with its proposal
@@ -75,6 +76,14 @@ export function requiredQuestions(sheet: LaunchSheet, res: Resolution, today: st
       `${[...new Set(sheet.rows.map((r) => r.geo).filter(Boolean))].join(", ") || sheet.event.location || "The event's city"} at a 15 mile radius, ages ${res.checks.some((c) => c.key === "policy_alcohol") ? "21" : "18"}–65, Advantage+ audience off`,
     ),
   );
+  // Where the ads send people: asked when the sheet gives no link, or only the bare homepage (a page that matches
+  // usually converts better: offered, not required). Its options are the client's pages (landing-pages-core.ts)
+  const rowLinks = sheet.rows.some((r) => r.link && !r.existingPost);
+  if (!rowLinks && sheet.rows.some((r) => !r.existingPost)) {
+    const event = normalizeUrl(sheet.event.link);
+    if (!event) out.push(q("link", "Where should the ads send people?", "The sheet has no landing link for the ads.", "The client's page that matches the event best"));
+    else if (kindOf(event) === "home") out.push(q("link", `The sheet only links the homepage (${shortUrl(event)}). Send people there, or to a page that matches?`, "A page that matches the ad usually converts better than the homepage.", event, [event], false));
+  }
   const missing = res.pages.filter((p) => !p.canAdvertise);
   if (missing.length)
     out.push(
@@ -104,7 +113,8 @@ export function mergeQuestions(model: LaunchQuestion[], must: LaunchQuestion[], 
   const byKey = new Map<string, LaunchQuestion>();
   for (const m of must) byKey.set(m.key, m);
   // The model's version of a required question wins (its proposal comes from the client's context), still required
-  for (const m of model) byKey.set(m.key, { ...m, required: byKey.has(m.key) ? true : m.required, answer: null });
+  // (a code question that's only offered, like the landing page over a homepage link, stays optional)
+  for (const m of model) byKey.set(m.key, { ...m, required: byKey.has(m.key) ? byKey.get(m.key)!.required : m.required, answer: null });
   for (const p of previous) {
     const cur = byKey.get(p.key);
     if (cur && p.answer) cur.answer = p.answer;

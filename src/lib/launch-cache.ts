@@ -10,8 +10,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 const TTL = 10 * 60_000;
 const inFlight = new Map<string, Promise<unknown>>();
 
-export async function cachedRead<T>(admin: SupabaseClient, key: string, read: () => Promise<T>, o: { clientId?: string | null; ttl?: number; fresh?: boolean } = {}): Promise<{ value: T; cached: boolean; at: string }> {
-  const k = `launch:${key}`;
+export async function cachedRead<T>(admin: SupabaseClient, key: string, read: () => Promise<T>, o: { clientId?: string | null; ttl?: number; fresh?: boolean; prefix?: string } = {}): Promise<{ value: T; cached: boolean; at: string }> {
+  const k = `${o.prefix ?? "launch:"}${key}`;
   if (!o.fresh) {
     const { data } = await admin
       .from("keyword_research_cache")

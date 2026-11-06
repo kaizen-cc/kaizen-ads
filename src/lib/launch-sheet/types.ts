@@ -2,6 +2,8 @@
 // file looked like, so the Media Buyer can check it against the ad account, ask what only the buyer can answer, and
 // push what's agreed. Shared by the server and the chat card (no server code here).
 
+import type { LandingSet } from "@/lib/landing-pages-core";
+
 /** One cell of a sheet, from any source: its text, the links inside it, its background color (null: none/white) */
 export type Cell = { text: string; links: string[]; color: string | null };
 /** A sheet as rows of cells (PDF pages one after another; an XLSX's first sheet with rows; a CSV) */
@@ -108,12 +110,24 @@ export type Resolution = {
   spend: { matched: number | null; sheet: number | null };
   checks: CheckItem[];
   at: string;
+  /** The client's pages the ads can send people to (src/lib/landing-pages.ts) */
+  landing?: LandingSet | null;
 };
 
 // ─── The conversation ────────────────────────────────────────────────────────────────────────────────────────────
 
 /** A question only the buyer can answer, with the Media Buyer's proposed default and why */
-export type LaunchQuestion = { key: string; question: string; why: string; proposal: string; options: string[]; required: boolean; answer: string | null };
+export type LaunchQuestion = {
+  key: string;
+  question: string;
+  why: string;
+  proposal: string;
+  options: string[];
+  required: boolean;
+  answer: string | null;
+  /** A short name to show for an option whose value is long (a landing page's full link → "Seafood box") */
+  labels?: Record<string, string>;
+};
 
 // ─── The plan (line items) ───────────────────────────────────────────────────────────────────────────────────────
 

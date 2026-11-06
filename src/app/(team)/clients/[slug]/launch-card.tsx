@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { WriteOff } from "@/components/write-gate";
 import type { BudgetSpec, CheckItem, LaunchItem, LaunchPlan, LaunchQuestion, PlanAd, PlanAdset, PlanCampaign } from "@/lib/launch-sheet/types";
+import { shortUrl } from "@/lib/landing-pages-core";
 import { Clamp, LaunchMore } from "./launch-more";
 import { buildLaunchPlan, confirmLaunch, continueLaunch, loadLaunch, replyToLaunch, setAsideLaunch, takeLaunchProposals, type LaunchView } from "./launch-sheet-actions";
 
@@ -131,6 +132,9 @@ export function Question({ q, busy, onUse, onWrite }: { q: LaunchQuestion; busy:
     setWriting(false);
   };
   const waitsOnCampaign = q.options.length === 0 && /first$/i.test(q.proposal);
+  // A long value (a landing page's full link) shows by its short name; the link itself is what's taken
+  const isLink = (v: string) => /^https?:\/\/\S+$/.test(v.trim());
+  const nameOf = (v: string) => q.labels?.[v] ?? (isLink(v) ? shortUrl(v) : v);
   return (
     <li className={`grid min-w-0 gap-1.5 rounded-[12px] border px-3 py-2.5 ${q.answer ? "border-ok/25 bg-ok-soft/10" : "border-ink/[0.08] bg-ink/[0.02]"}`}>
       <p className="text-[12.5px] font-medium leading-snug">
@@ -157,7 +161,14 @@ export function Question({ q, busy, onUse, onWrite }: { q: LaunchQuestion; busy:
           {q.proposal && (
             <p className="text-[12px] leading-snug text-ink/75 [overflow-wrap:anywhere]">
               <span className="text-ink/45">{waitsOnCampaign ? "" : "Proposal: "}</span>
-              {q.proposal}
+              {isLink(q.proposal) ? (
+                <>
+                  {nameOf(q.proposal)}
+                  {q.labels?.[q.proposal] && <span className="text-ink/45"> · {shortUrl(q.proposal)}</span>}
+                </>
+              ) : (
+                q.proposal
+              )}
             </p>
           )}
           <div className="flex flex-wrap gap-1.5">
@@ -171,7 +182,7 @@ export function Question({ q, busy, onUse, onWrite }: { q: LaunchQuestion; busy:
               .slice(0, 8)
               .map((o) => (
                 <button key={o} type="button" title={o} disabled={busy} onClick={() => onUse(o)} className="h-10 max-w-full truncate rounded-full border border-ink/10 px-3.5 text-[12px] text-ink/70 hover:text-fg disabled:opacity-40 md:h-8">
-                  {o}
+                  {nameOf(o)}
                 </button>
               ))}
           </div>

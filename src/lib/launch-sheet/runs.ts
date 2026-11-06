@@ -15,6 +15,8 @@ import { adParams, adsetParams, campaignParams, creativeSpec, ENHANCEMENTS_OFF, 
 import { explainMetaError } from "./errors";
 import { isPostUrl } from "./sheet";
 import type { ItemStatus, LaunchItem, LaunchPlan, LaunchQuestion, LaunchSheet, Resolution, RunStatus } from "./types";
+import { ASKS_FOR_LINK, followLanding, urlIn, type LandingSet } from "@/lib/landing-pages-core";
+import { settleLanding } from "@/lib/landing-pages";
 
 // A launch from a sheet, start to finish, for any client and any chat surface:
 //   read     the file (structure, links, colors) and the Media Buyer's read of it
@@ -80,6 +82,20 @@ export async function openRunFor(admin: SupabaseClient, clientId: string, profil
 
 // ─── Read, check, ask ───────────────────────────────────────────────────────────────────────────────────────────
 
+/** What the sheet is about, for ranking the client's pages: the event, the goal, the creatives and headlines */
+export function metaTheme(sheet: LaunchSheet) {
+  return [sheet.event.name, sheet.goal, ...sheet.rows.slice(0, 40).flatMap((r) => [r.creative.name, ...r.copy.slice(0, 2).map((c) => c.headline)])].join(" ").slice(0, 4000);
+}
+
+/** The client's landing pages for a Meta launch (kept a day), or null when they can't be read */
+async function landingFor(admin: SupabaseClient, clientId: string, account: string | null): Promise<LandingSet | null> {
+  const m = await import("@/lib/landing-pages");
+  return m
+    .findLandingPages(admin, clientId, { meta: account })
+    .then((s) => m.keepOnRun(s))
+    .catch(() => null);
+}
+
 /**
  * Reads the sheet, checks it against the account and Drive, then asks. The required questions are worked out by code,
  * so they're on the card (and answerable) as soon as the checks are done; the Media Buyer then tailors them on the
@@ -94,6 +110,7 @@ export async function prepareRun(admin: SupabaseClient, id: string) {
   let sheet!: LaunchSheet;
   let res!: Resolution;
   let read!: Awaited<ReturnType<typeof readWithModel>>;
+  let pagesP: Promise<LandingSet | null> = Promise.resolve(null);
   const day = today();
   // The client's name and context for the tailoring step, read alongside everything else
   const ctxP = Promise.all([
@@ -155,7 +172,10 @@ export async function prepareRun(admin: SupabaseClient, id: string) {
     read = r2;
     if (!sheet.event.name && read.eventName) sheet.event.name = read.eventName;
     if (!sheet.goal && read.goal) sheet.goal = read.goal;
-    const must = requiredQuestions(sheet, res, day);
+    // The client's pages for the landing link (found alongside the tailoring; on the card now if already kept)
+    pagesP = step(scope, "landing pages", landingFor(admin, run.client_id, res.account));
+    res.landing = await Promise.race([pagesP, new Promise<null>((r) => setTimeout(() => r(null), 1500))]);
+    const must = followLanding(requiredQuestions(sheet, res, day), "link", res.landing, metaTheme(sheet));
     const colors = read.colorGuesses.filter((c) => c.color && c.guess);
     const summary = [read.summary, colors.length ? `Row colors (to confirm): ${colors.map((x) => `${x.color} probably means ${x.guess}`).join("; ")}.` : "", ...read.notes.map((n) => `Note: ${n}`)].filter(Boolean).join("\n\n");
     await patch(admin, id, { sheet, resolution: res, account: res.account, summary, questions: must, status: "asking", progress: "Tailoring the questions to the account", error: null });
@@ -178,12 +198,17 @@ export async function prepareRun(admin: SupabaseClient, id: string) {
       await patch(admin, id, { summary, progress: latest.progress === "Tailoring the questions to the account" ? null : latest.progress });
       return;
     }
-    const questions = mergeQuestions(asked.questions.map((q) => ({ ...q, answer: null })), must, latest.questions);
-    await patch(admin, id, { summary, questions: followStructure(questions, latest.resolution?.existing ?? []), progress: null });
+    const landing = (await pagesP) ?? latest.resolution?.landing ?? null;
+    const questions = followLanding(mergeQuestions(asked.questions.map((q) => ({ ...q, answer: null })), must, latest.questions), "link", landing, metaTheme(sheet));
+    await patch(admin, id, { summary, questions: followStructure(questions, latest.resolution?.existing ?? []), ...(latest.resolution ? { resolution: { ...latest.resolution, landing } } : {}), progress: null });
     console.log(`[launch] ${scope} · questions tailored ${Date.now() - t0}ms`);
   } catch (e) {
     console.error(`[launch] ${scope} · tailoring failed:`, msg(e));
-    await patch(admin, id, { progress: null });
+    // The questions from code stay; the pages still join them
+    const landing = await pagesP;
+    const latest = landing ? await load(admin, id) : null;
+    if (latest?.resolution && latest.status === "asking") await patch(admin, id, { progress: null, resolution: { ...latest.resolution, landing }, questions: followLanding(latest.questions, "link", landing, metaTheme(sheet)) });
+    else await patch(admin, id, { progress: null });
   }
 }
 
@@ -197,11 +222,22 @@ export async function prepareRun(admin: SupabaseClient, id: string) {
 export async function launchReply(admin: SupabaseClient, id: string, message: string): Promise<{ answer: string; offTopic: boolean; building: boolean }> {
   const run = await load(admin, id);
   if (!run?.sheet || !run.resolution) return { answer: "", offTopic: true, building: false };
-  const out = await replyToBuyer(run.client_id, run.sheet, run.resolution, run.questions, run.turns, message, run.status);
+  // The client's pages, so a page named in words ("the homepage") is answered with its link
+  const asksLink = run.questions.some((q) => q.key === "link");
+  const landing = run.resolution.landing ?? (asksLink ? await landingFor(admin, run.client_id, run.resolution.account) : null);
+  const theme = metaTheme(run.sheet);
+  const out = await replyToBuyer(run.client_id, run.sheet, run.resolution, run.questions, run.turns, message, run.status, { set: landing, theme });
   if (out.offTopic) return { answer: "", offTopic: true, building: false };
   let questions = applyAnswers(run.questions, out.answers);
   if (out.newQuestions.length) questions = mergeQuestions(out.newQuestions.map((q) => ({ ...q, answer: null })), [], questions);
   questions = followStructure(questions, run.resolution.existing);
+  // The landing link as a real link: a page named in words taken from the list, a typed link checked
+  const settled = asksLink ? await settleLanding(questions, "link", landing, message, out.answers.some((a) => a.key === "link")) : { questions, note: null, took: false };
+  questions = followLanding(settled.questions, "link", landing, theme);
+  const said = settled.took && ASKS_FOR_LINK.test(out.answer) ? (settled.note ?? "") : [out.answer, settled.note].filter(Boolean).join(" ");
+  if (settled.took) out.answers.push({ key: "link", answer: questions.find((q) => q.key === "link")?.answer ?? "" });
+  out.answer = said;
+  if (landing && !run.resolution.landing) await patch(admin, id, { resolution: { ...run.resolution, landing } });
   const turns = [...run.turns, { role: "user" as const, text: message.slice(0, 3000), at: now() }, { role: "assistant" as const, text: out.answer, at: now() }].slice(-40);
   if (out.setAside) {
     await patch(admin, id, { questions, turns, status: "set_aside" });
@@ -260,9 +296,12 @@ export async function planRun(admin: SupabaseClient, id: string) {
       admin.from("clients").select("url_tags").eq("id", run.client_id).single(),
     ]);
     const names = [...(setup?.campaigns ?? []).map((c) => `campaign: ${c.name}`), ...(setup?.adsets ?? []).slice(0, 20).map((s) => `ad set: ${s.name}`)];
-    const proposal = await proposeStructure(run.client_id, run.sheet, run.resolution, run.questions, run.turns, day, names, tzName);
+    // The landing page the buyer chose is the sheet's link (rows with their own link keep it)
+    const chosen = urlIn(run.questions.find((q) => q.key === "link")?.answer);
+    const sheet: LaunchSheet = chosen ? { ...run.sheet, event: { ...run.sheet.event, link: chosen } } : run.sheet;
+    const proposal = await proposeStructure(run.client_id, sheet, run.resolution, run.questions, run.turns, day, names, tzName);
     const urlTags = ((client?.url_tags as string | null) ?? "").trim() || (settings.urlTags ?? null);
-    const { plan, warnings } = buildPlan(proposal, { sheet: run.sheet, resolution: run.resolution, account, urlTags, today: day, specialAdCategories: [] });
+    const { plan, warnings } = buildPlan(proposal, { sheet, resolution: run.resolution, account, urlTags, today: day, specialAdCategories: [] });
     // A new ad set copied from an existing one: its targeting, pixel, event and optimization, read as they are now
     for (const s of plan.adsets.filter((x) => x.cloneFrom)) {
       const src = await metaGraph<{ name?: string; targeting?: Record<string, unknown>; promoted_object?: Record<string, unknown>; optimization_goal?: string; billing_event?: string }>(s.cloneFrom!, { fields: "name,targeting,promoted_object,optimization_goal,billing_event" }).catch(() => null);
