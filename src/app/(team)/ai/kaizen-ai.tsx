@@ -441,12 +441,12 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, gr
           job={claude.job}
           onStart={(name, items, n, account) => void claude.start(name, items, n, account)}
           onClose={() => {
-            closeParams("import");
+            closeParams("import", "importstep");
             claude.clear();
           }}
           onOpenThread={(id) => {
             claude.clear();
-            replaceParams({ import: null, t: id });
+            replaceParams({ import: null, importstep: null, t: id });
           }}
           onChanged={refreshThreads}
         />

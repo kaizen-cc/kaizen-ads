@@ -324,7 +324,7 @@ export function ownChats(files: { conversations: unknown; projects: unknown; use
     return {
       ok: false,
       reason: "unknown-owners",
-      message: `This export has chats from ${accounts.size} different Claude accounts and no users.json saying whose is whose, so none of it can be imported. Drop the whole ZIP from Claude's export email (not conversations.json on its own), or export just your own data from Claude's settings › Privacy › Export data.`,
+      message: `This export has chats from ${accounts.size} different Claude accounts and no list saying whose is whose (users.json, in the light_metadata part of a newer export), so none of it can be imported. Add the light_metadata ZIP (or the whole ZIP from an older export, not conversations.json on its own), or export just your own data from Claude's settings › Privacy › Export data.`,
       emails: [],
     };
   }

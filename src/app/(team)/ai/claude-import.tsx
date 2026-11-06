@@ -2,10 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { batches, notImported, ownChats, parseConversations, parseProjects, partsOf, suggestClient, type ImportedConversation, type ImportedProject, type ImportItem } from "@/lib/kaizen-ai/claude-import";
-import { readClaudeExport } from "@/lib/kaizen-ai/claude-import-file";
+import { linksExpired, missingFiles, sameFile, wantedFiles, type Manifest, type ManifestFile } from "@/lib/kaizen-ai/claude-export-manifest";
+import { readClaudeExportFiles, readManifest } from "@/lib/kaizen-ai/claude-import-file";
+import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
 import { claudeImportState, deleteClaudeImport, finishClaudeImport, startClaudeImport, type ClaudeImport } from "./actions";
 
-// Import from Claude: the person exports their data from claude.ai, drops the ZIP here, picks the chats (each with the
+// Import from Claude: the person exports their data from claude.ai, drops the file from Claude's email here (the manifest's download links are shown, then the parts they downloaded are read), picks the chats (each with the
 // client it's about, suggested from its title and opening), and they come in as their own private threads, in
 // batches, while they keep using Kaizen AI. Their file is read in the browser; only what they pick is sent.
 
@@ -86,6 +88,9 @@ type Step = { at: "drop" } | { at: "reading"; pct: number } | { at: "preview"; f
 type Problem = { text: string; emails?: string[] };
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+const listOf = (names: string[]) => (names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`);
+const when = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+const linkClass = "font-medium text-brand-text underline decoration-brand/30 underline-offset-2 hover:decoration-brand";
 
 export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpenThread, onChanged }: { clients: ClientOpt[]; /** Their Kaizen email: an organization's export is narrowed to the member with this email */ email: string; job: ImportJob | null; onStart: (fileName: string, items: ImportItem[], conversations: number, sourceAccount: string | null) => void; onClose: () => void; onOpenThread: (id: string) => void; onChanged: () => void }) {
   const [step, setStep] = useState<Step>({ at: "drop" });
@@ -94,11 +99,20 @@ export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpe
   const [state, setState] = useState<{ imported: string[]; imports: ClaudeImport[] } | null>(null);
   const [drag, setDrag] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  // Claude's export manifest: its links live only here, in memory on this device (never in the address or sent anywhere)
+  const [manifest, setManifest] = useState<Manifest | null>(null);
+  const stepParam = useParam("importstep");
+  const downloading = stepParam === "download" && manifest !== null;
 
   const refresh = useCallback(() => void claudeImportState().then(setState), []);
   useEffect(() => {
     refresh();
   }, [refresh, job?.running]);
+
+  // The download step from a refresh or a pasted link: its links are gone with the page, so back to the start
+  useEffect(() => {
+    if (stepParam === "download" && !manifest) replaceParams({ importstep: null });
+  }, [stepParam, manifest]);
 
   // Escape closes
   useEffect(() => {
@@ -107,12 +121,25 @@ export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpe
     return () => window.removeEventListener("keydown", k);
   }, [onClose]);
 
-  const read = async (file: File) => {
+  const openManifest = (m: Manifest) => {
     setError(null);
-    if (!/\.(zip|json)$/i.test(file.name)) return setError("Drop the ZIP from Claude's export email, or conversations.json from inside it.");
+    setManifest(m);
+    if (stepParam !== "download") pushParams({ importstep: "download" });
+  };
+
+  const read = async (files: File[]) => {
+    setError(null);
     setStep({ at: "reading", pct: 0 });
     try {
-      const raw = await readClaudeExport(file, (d, t) => setStep({ at: "reading", pct: Math.round((d / t) * 100) }));
+      const raw = await readClaudeExportFiles(files, (d, t) => setStep({ at: "reading", pct: Math.round((d / t) * 100) }));
+      const names = raw.files.map((f) => f.name);
+      if (!raw.conversations.length) {
+        throw new Error(
+          names.length
+            ? `No chats found in ${listOf(names)}. Your chats are in the conversations ZIP${names.length > 1 ? "s" : ""} (conversations-000.zip and so on), or conversations.json in an older export.`
+            : "Those files don't have any chats in them.",
+        );
+      }
       // Only their own: an organization's export is narrowed to their chats here, before anything is shown or sent
       const own = ownChats(raw, email);
       if (!own.ok) {
@@ -121,7 +148,7 @@ export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpe
         return;
       }
       const all = parseConversations(own.conversations);
-      if (!all.length) throw new Error(own.kind === "org" ? "You don't have any chats in this export." : "No conversations found in that file.");
+      if (!all.length) throw new Error(own.kind === "org" ? "You don't have any chats in this export." : `No chats with messages in ${listOf(names)}.`);
       const known = state?.imported ?? (await claudeImportState()).imported;
       const convs = notImported(all, known);
       const projects = notImported(
@@ -132,14 +159,32 @@ export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpe
         own.kind === "org"
           ? `This is your organization's export: only your own ${plural(all.length, "chat is", "chats are")} shown; the other ${plural(own.otherPeople, "person's", "people's")} chats are skipped and never leave your browser.`
           : null;
-      setStep({ at: "preview", fileName: file.name, convs, projects, already: all.length - convs.length, account: own.account, notice });
+      const fileName = names.length > 1 ? `${names[0]} + ${names.length - 1} more` : (names[0] ?? "Claude export");
+      setStep({ at: "preview", fileName, convs, projects, already: all.length - convs.length, account: own.account, notice });
     } catch (e) {
       setStep({ at: "drop" });
-      setError(e instanceof Error ? e.message : "Couldn't read that file.");
+      setError(e instanceof Error ? e.message : "Couldn't read those files.");
     }
   };
 
+  /** Files dropped or picked on the first step: the manifest from Claude's email goes to the download step */
+  const take = async (list: File[]) => {
+    setError(null);
+    const files = list.filter((f) => /\.(zip|json|jsonl)$/i.test(f.name));
+    if (!files.length) return setError("Drop the file from Claude's export email (a .json or a ZIP), or conversations.json from inside the ZIP.");
+    const manifests: Manifest[] = [];
+    const data: File[] = [];
+    for (const f of files) {
+      const m = await readManifest(f);
+      if (m) manifests.push(m);
+      else data.push(f);
+    }
+    if (!data.length && manifests.length) return openManifest(manifests[0]);
+    void read(data);
+  };
+
   const running = Boolean(job?.running);
+  const busy = step.at === "reading" || running;
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-end md:place-items-center" role="dialog" aria-modal aria-label="Import from Claude">
@@ -152,7 +197,7 @@ export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpe
             </svg>
           </span>
           <div className="min-w-0 flex-1">
-            <p className="font-heading text-[20px] leading-tight text-fg">Import from Claude</p>
+            <p className="font-heading text-[20px] leading-tight text-fg">{downloading && step.at !== "preview" ? "Download your files" : "Import from Claude"}</p>
             <p className="mt-0.5 text-[13px] text-muted">Bring your Claude chats here and keep going where you left off. They stay private to you.</p>
           </div>
           <button type="button" onClick={onClose} className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-muted hover:bg-ink/[0.05] hover:text-fg" aria-label="Close">
@@ -173,7 +218,29 @@ export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpe
               onStart={(items, n) => {
                 onStart(step.fileName, items, n, step.account);
                 setStep({ at: "drop" });
+                setManifest(null);
+                if (stepParam) replaceParams({ importstep: null });
               }}
+            />
+          ) : downloading ? (
+            <DownloadStep
+              key={`${manifest.createdAt ?? ""} ${manifest.files.map((f) => f.filename).join(" ")}`}
+              manifest={manifest}
+              reading={step.at === "reading" ? step.pct : null}
+              disabled={busy}
+              error={error}
+              onFiles={async (files) => {
+                // Another manifest dropped here: its links take over
+                const data: File[] = [];
+                for (const f of files) {
+                  const m = await readManifest(f);
+                  if (m) setManifest(m);
+                  else data.push(f);
+                }
+                return data;
+              }}
+              onRead={(files) => void read(files)}
+              onBack={() => closeParams("importstep")}
             />
           ) : (
             <div className="grid gap-5 px-5 py-5">
@@ -181,20 +248,20 @@ export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpe
                 {[
                   <>
                     Open{" "}
-                    <a href={CLAUDE_EXPORT_URL} target="_blank" rel="noreferrer" className="font-medium text-brand-text underline decoration-brand/30 underline-offset-2 hover:decoration-brand">
+                    <a href={CLAUDE_EXPORT_URL} target="_blank" rel="noreferrer" className={linkClass}>
                       Claude&rsquo;s settings
                     </a>{" "}
                     › <span className="font-medium text-fg">Privacy</span> › <span className="font-medium text-fg">Export data</span>.
                     <span className="mt-1 block text-[13px] text-muted">
                       Don&rsquo;t see it? You&rsquo;re probably the org&rsquo;s owner: export from{" "}
-                      <a href={CLAUDE_ORG_EXPORT_URL} target="_blank" rel="noreferrer" className="font-medium text-brand-text underline decoration-brand/30 underline-offset-2 hover:decoration-brand">
+                      <a href={CLAUDE_ORG_EXPORT_URL} target="_blank" rel="noreferrer" className={linkClass}>
                         Admin settings › Data and privacy
                       </a>{" "}
                       instead; Kaizen AI keeps only your own chats.
                     </span>
                   </>,
-                  <>Claude emails you a download link (it can take a few minutes). Download the ZIP.</>,
-                  <>Drop the ZIP below. It&rsquo;s read on your device; only the chats you pick are saved.</>,
+                  <>Claude emails you when it&rsquo;s ready (it can take a few minutes). Download the file it gives you: a small .json listing your download links, or a ZIP.</>,
+                  <>Drop it below. We&rsquo;ll show you which files to download next, if any. Everything is read on your device; only the chats you pick are saved.</>,
                 ].map((s, i) => (
                   <li key={i} className="flex gap-3 text-[14px] leading-relaxed text-fg/90">
                     <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-brand-soft text-[13px] font-semibold text-brand-text">{i + 1}</span>
@@ -205,7 +272,7 @@ export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpe
 
               <button
                 type="button"
-                disabled={step.at === "reading" || running}
+                disabled={busy}
                 onClick={() => fileInput.current?.click()}
                 onDragOver={(e) => {
                   e.preventDefault();
@@ -215,24 +282,19 @@ export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpe
                 onDrop={(e) => {
                   e.preventDefault();
                   setDrag(false);
-                  const f = e.dataTransfer.files[0];
-                  if (f && step.at !== "reading" && !running) void read(f);
+                  const files = [...e.dataTransfer.files];
+                  if (files.length && !busy) void take(files);
                 }}
                 className={`grid min-h-[150px] place-items-center rounded-[20px] border-2 border-dashed px-4 py-6 text-center transition disabled:cursor-default ${drag ? "border-brand bg-brand-soft/40" : "border-line hover:border-brand/40 hover:bg-ink/[0.02]"}`}
               >
                 {step.at === "reading" ? (
-                  <span className="grid w-full max-w-[320px] gap-2">
-                    <span className="text-[14px] font-medium text-fg">Reading your export…</span>
-                    <span className="h-1.5 overflow-hidden rounded-full bg-ink/[0.08]">
-                      <span className="block h-full rounded-full bg-brand transition-[width]" style={{ width: `${step.pct}%` }} />
-                    </span>
-                  </span>
+                  <Reading pct={step.pct} />
                 ) : running ? (
                   <span className="text-[13.5px] text-muted">One import at a time. This one keeps going while Kaizen AI is open.</span>
                 ) : (
                   <span className="grid gap-1">
-                    <span className="text-[15px] font-medium text-fg">Drop the ZIP here, or tap to choose it</span>
-                    <span className="text-[12.5px] text-faint">The export ZIP (up to 1.5 GB), or conversations.json from inside it</span>
+                    <span className="text-[15px] font-medium text-fg">Drop the file from Claude&rsquo;s email here, or tap to choose it</span>
+                    <span className="text-[12.5px] text-faint">The .json from the email, the export ZIPs (up to 1.5 GB each, several at once is fine), or conversations.json</span>
                   </span>
                 )}
               </button>
@@ -240,44 +302,271 @@ export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpe
                 ref={fileInput}
                 type="file"
                 hidden
-                accept=".zip,.json,application/zip,application/json"
+                multiple
+                accept=".zip,.json,.jsonl,application/zip,application/json"
                 onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) void read(f);
+                  const files = [...(e.target.files ?? [])];
+                  if (files.length) void take(files);
                   e.target.value = "";
                 }}
               />
-              {error ? (
-                <div className="grid gap-1.5 rounded-[12px] bg-bad-soft/50 px-3 py-2 text-[13px] text-bad">
-                  <p>{error.text}</p>
-                  {error.emails?.length ? (
-                    <div className="grid gap-0.5">
-                      <p className="text-[12px] text-muted">The accounts in this export:</p>
-                      <ul className="max-h-[140px] overflow-y-auto text-fg/80">
-                        {error.emails.map((e) => (
-                          <li key={e} className="truncate text-[12.5px]">
-                            {e}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : null}
-                </div>
+              {manifest && !busy ? (
+                <button type="button" onClick={() => pushParams({ importstep: "download" })} className="min-h-11 justify-self-start rounded-full border border-line px-4 text-[13.5px] text-fg hover:bg-ink/[0.04]">
+                  Back to your download links
+                </button>
               ) : null}
+              {error ? <ErrorNote error={error} /> : null}
 
               <p className="text-[12.5px] leading-relaxed text-faint">
                 What comes over: each chat&rsquo;s messages with their dates, and the text Claude read from files you attached. Claude Projects&rsquo; knowledge files aren&rsquo;t in the export, except the docs listed in its projects.json, which you can bring as private notes. Imported chats are never shared or used to teach Kaizen&rsquo;s agents.
               </p>
 
-              {state?.imports.length ? <PastImports imports={state.imports} onChanged={() => {
+              {state?.imports.length ? (
+                <PastImports
+                  imports={state.imports}
+                  onChanged={() => {
                     refresh();
                     onChanged();
                   }}
-                /> : null}
+                />
+              ) : null}
             </div>
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function Reading({ pct }: { pct: number }) {
+  return (
+    <span className="grid w-full max-w-[320px] gap-2">
+      <span className="text-[14px] font-medium text-fg">Reading your export…</span>
+      <span className="h-1.5 overflow-hidden rounded-full bg-ink/[0.08]">
+        <span className="block h-full rounded-full bg-brand transition-[width]" style={{ width: `${pct}%` }} />
+      </span>
+    </span>
+  );
+}
+
+function ErrorNote({ error }: { error: Problem }) {
+  return (
+    <div className="grid gap-1.5 rounded-[12px] bg-bad-soft/50 px-3 py-2 text-[13px] text-bad">
+      <p>{error.text}</p>
+      {error.emails?.length ? (
+        <div className="grid gap-0.5">
+          <p className="text-[12px] text-muted">The accounts in this export:</p>
+          <ul className="max-h-[140px] overflow-y-auto text-fg/80">
+            {error.emails.map((e) => (
+              <li key={e} className="truncate text-[12.5px]">
+                {e}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const Check = ({ className = "" }: { className?: string }) => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+    <path d="M5 12.5l4.5 4.5L19 7.5" />
+  </svg>
+);
+
+/**
+ * The manifest's parts the import needs, each with its link (opened by the person: the download needs their Claude
+ * login), then the files they downloaded, checked against the list before they're read.
+ */
+function DownloadStep({ manifest, reading, disabled, error, onFiles, onRead, onBack }: { manifest: Manifest; reading: number | null; disabled: boolean; error: Problem | null; onFiles: (files: File[]) => Promise<File[]>; onRead: (files: File[]) => void; onBack: () => void }) {
+  const [opened, setOpened] = useState<Set<string>>(() => new Set());
+  const [picked, setPicked] = useState<File[]>([]);
+  const [missing, setMissing] = useState<ManifestFile[]>([]);
+  const [blocked, setBlocked] = useState(false);
+  const [drag, setDrag] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+  const wanted = wantedFiles(manifest);
+  const others = manifest.files.filter((f) => f.role === "other");
+  const expired = linksExpired(manifest);
+  const has = (f: ManifestFile) => picked.some((p) => sameFile(p.name, f.filename));
+  const mark = (name: string) => setOpened((s) => new Set(s).add(name));
+
+  const downloadAll = () => {
+    setBlocked(false);
+    const todo = wanted.filter((f) => !opened.has(f.filename) && !has(f));
+    let i = 0;
+    const next = () => {
+      const f = todo[i++];
+      if (!f) return;
+      const w = window.open(f.url, "_blank");
+      if (!w) {
+        // The browser held back the rest: the buttons below open them one at a time
+        setBlocked(true);
+        return;
+      }
+      w.opener = null;
+      mark(f.filename);
+      if (i < todo.length) setTimeout(next, 1500);
+    };
+    next();
+  };
+
+  const add = async (list: File[]) => {
+    const data = (await onFiles(list.filter((f) => /\.(zip|json|jsonl)$/i.test(f.name)))) ?? [];
+    if (!data.length) return;
+    const all = [...picked.filter((p) => !data.some((d) => sameFile(d.name, p.name))), ...data];
+    setPicked(all);
+    const gap = missingFiles(manifest, all.map((f) => f.name));
+    setMissing(gap);
+    if (!gap.length) onRead(all);
+  };
+
+  const left = wanted.filter((f) => !opened.has(f.filename) && !has(f)).length;
+
+  return (
+    <div
+      className={`grid gap-4 px-5 py-5 transition ${drag ? "bg-brand-soft/20" : ""}`}
+      onDragOver={(e) => {
+        e.preventDefault();
+        if (!disabled) setDrag(true);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDrag(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDrag(false);
+        if (!disabled) void add([...e.dataTransfer.files]);
+      }}
+    >
+      {expired ? (
+        <div className="grid gap-1 rounded-[14px] bg-bad-soft/50 px-3 py-2.5 text-[13px] text-bad">
+          <p className="font-medium">These links expired{manifest.expiresAt ? ` on ${when(manifest.expiresAt)}` : ""}.</p>
+          <p className="text-fg/80">
+            Request a new export from{" "}
+            <a href={CLAUDE_ORG_EXPORT_URL} target="_blank" rel="noreferrer" className={linkClass}>
+              Admin settings › Data and privacy
+            </a>{" "}
+            (or{" "}
+            <a href={CLAUDE_EXPORT_URL} target="_blank" rel="noreferrer" className={linkClass}>
+              Settings › Privacy
+            </a>
+            ) and drop the new file from the email. Files you already downloaded can still be uploaded below.
+          </p>
+        </div>
+      ) : (
+        <p className="rounded-[14px] bg-warn-soft/50 px-3 py-2.5 text-[13px] leading-relaxed text-fg">
+          {manifest.expiresAt ? <>Links expire {when(manifest.expiresAt)}, and each</> : <>Each link</>} may work only once, so download each file one time and keep it. If a download fails, request a new export from Claude.
+        </p>
+      )}
+
+      <div className="grid gap-2">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-faint">{plural(wanted.length, "file", "files")} to download</p>
+          {!expired && left > 1 ? (
+            <button type="button" onClick={downloadAll} disabled={disabled} className="min-h-11 rounded-full px-3 text-[13px] font-medium text-brand-text hover:bg-brand-soft/40 disabled:opacity-50">
+              Download all {left}
+            </button>
+          ) : null}
+        </div>
+        {blocked ? <p className="rounded-[12px] bg-warn-soft/50 px-3 py-2 text-[12.5px] text-fg">Your browser opened one and held back the rest. Tap Download on each file below.</p> : null}
+        <ul className="grid gap-2">
+          {wanted.map((f) => {
+            const added = has(f);
+            const clicked = opened.has(f.filename);
+            const short = missing.some((m) => m.filename === f.filename);
+            return (
+              <li key={f.filename} className={`flex min-h-16 items-center gap-3 rounded-[16px] border px-3 py-2 ${short ? "border-bad/40" : "border-line"}`}>
+                <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-full ${added ? "bg-brand text-white" : clicked ? "bg-brand-soft text-brand-text" : "bg-ink/[0.05] text-faint"}`}>
+                  {added || clicked ? <Check /> : <span className="h-1.5 w-1.5 rounded-full bg-current" />}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[14px] leading-snug text-fg">{f.label}</p>
+                  <p className="truncate text-[12px] text-faint">
+                    {f.filename}
+                    {added ? " · added" : clicked ? " · download started" : ""}
+                  </p>
+                </div>
+                {expired ? null : (
+                  <a
+                    href={f.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={() => mark(f.filename)}
+                    className={`grid min-h-11 shrink-0 place-items-center rounded-full px-4 text-[13px] font-medium transition ${clicked || added ? "text-muted hover:bg-ink/[0.05] hover:text-fg" : "bg-brand-soft text-brand-text hover:bg-brand-soft/70"}`}
+                  >
+                    {clicked || added ? "Again" : "Download"}
+                  </a>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+        {others.length ? (
+          <details className="group rounded-[14px] px-1">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 px-2 text-[12.5px] text-muted hover:text-fg">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="transition group-open:rotate-180" aria-hidden>
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+              Not needed for Kaizen AI ({others.length})
+            </summary>
+            <ul className="grid gap-0.5 px-2 pb-2 text-[12.5px] text-faint">
+              {others.map((f) => (
+                <li key={f.filename} className="truncate">
+                  {f.label} · {f.filename}
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
+      </div>
+
+      {reading !== null ? (
+        <div className="grid min-h-[96px] place-items-center rounded-[20px] border border-line px-4 py-4">
+          <Reading pct={reading} />
+        </div>
+      ) : (
+        <div className="grid gap-2">
+          <button type="button" disabled={disabled} onClick={() => input.current?.click()} className="min-h-12 rounded-full bg-brand px-5 text-[14.5px] font-medium text-white shadow-sm transition hover:bg-brand-hover disabled:opacity-40">
+            I&rsquo;ve downloaded them: upload the files
+          </button>
+          <p className="text-center text-[12.5px] text-faint">Pick them all at once (they&rsquo;re in your Downloads), or drop them anywhere here.</p>
+        </div>
+      )}
+      <input
+        ref={input}
+        type="file"
+        hidden
+        multiple
+        accept=".zip,.json,.jsonl,application/zip,application/json"
+        onChange={(e) => {
+          const files = [...(e.target.files ?? [])];
+          if (files.length) void add(files);
+          e.target.value = "";
+        }}
+      />
+
+      {missing.length && reading === null ? (
+        <div className="grid gap-2 rounded-[14px] bg-warn-soft/50 px-3 py-2.5 text-[13px] text-fg">
+          <p>
+            Still missing {listOf(missing.map((m) => m.filename))}. {plural(picked.length, "file", "files")} added so far.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" disabled={disabled} onClick={() => input.current?.click()} className="min-h-11 rounded-full bg-surface px-4 text-[13px] font-medium text-fg shadow-sm hover:bg-ink/[0.04]">
+              Add {missing.length === 1 ? "it" : "them"}
+            </button>
+            <button type="button" disabled={disabled} onClick={() => onRead(picked)} className="min-h-11 rounded-full px-4 text-[13px] text-muted hover:bg-ink/[0.05] hover:text-fg">
+              Read what I have
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {error ? <ErrorNote error={error} /> : null}
+
+      <button type="button" onClick={onBack} className="min-h-11 justify-self-start rounded-full px-3 text-[13.5px] text-muted hover:text-fg">
+        Back
+      </button>
     </div>
   );
 }
