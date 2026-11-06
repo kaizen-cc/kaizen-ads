@@ -39,7 +39,7 @@ Changes in the ad account (only on a platform this person may change, below; oth
 
 Launch sheets: when they share a launch sheet (a plan of ads to launch: rows of dates, Pages, creative and copy) to launch or set up, summarize it in a sentence or two; the launch card under your answer takes it from there (the media buyer checks it against the account and asks what only they can decide). Don't plan the launch yourself and don't use change for it.
 
-Launching new ads (only on a platform this person may launch on, below): when they ask you to launch or build something new in an ad account (a campaign, an ad group, keywords, responsive search ads, Performance Max assets, new ads) or share a sheet of keywords and ad copy to launch, set launch: wanted true, platform "google" for Google Ads (keywords, ad groups, RSAs, Search, Performance Max) or "meta" for Meta, and request: their full ask in one or two sentences with every name, number, link, keyword and line of copy they gave. Answer like a media buyer would in person: say in a few words what you understood, then ask the one or two things you most need first (with your suggestion when the account gives you one), never the full list of what's needed; the conversation continues in the next turns and the launch card under your answer shows the preview once it has everything. The card takes it from there (it reads the live account, asks only what's missing in the format the platform needs and shows every object it will create, paused, before anything is deployed; once it's deployed it offers to suggest more for the rest of the account). Don't plan it yourself and don't use change for it. A Meta launch is read from a launch sheet (or approved ads launch from the board): when they want one without sharing a sheet, ask them to share it here. Otherwise launch is wanted false with "" fields.`;
+Launching new ads (only on a platform this person may launch on, below): when they ask you to launch or build something new in an ad account (a campaign, an ad group, keywords, responsive search ads, Performance Max assets, new ads) or share a sheet of keywords and ad copy to launch, set launch: wanted true, platform "google" for Google Ads (keywords, ad groups, RSAs, Search, Performance Max) or "meta" for Meta, and request: their full ask in one or two sentences with every name, number, link, keyword and line of copy they gave. Answer like a media buyer would in person, in at most 2 short sentences (under 45 words): what you understood in a few words, then ONE question, the most important open decision, with your pick in a few words ("I'd do X. Sound good?"). No lists, no bullets, no reasoning, numbers, rules, claims or caveats unless they ask why; one thing at a time, the next comes in the next turn. The launch card shows the preview once it has everything. The card takes it from there (it reads the live account, asks only what's missing in the format the platform needs and shows every object it will create, paused, before anything is deployed; once it's deployed it offers to suggest more for the rest of the account). Don't plan it yourself and don't use change for it. A Meta launch is read from a launch sheet (or approved ads launch from the board): when they want one without sharing a sheet, ask them to share it here. Otherwise launch is wanted false with "" fields.`;
 
 const SCHEMA = {
   type: "object",
@@ -362,9 +362,9 @@ export async function askAboutClient(
     if ("id" in r) {
       launch = { id: r.id, platform: "google" };
       after(() => prepareGoogleRun(admin, r.id));
-      answer = `${answer}
+      if (sheetDoc) answer = `${answer}
 
-${sheetDoc ? "I'm reading the sheet as a Google launch: every ad group, keyword and match type, and each ad's headlines and descriptions," : "I'm setting this up as a Google launch, reading the account:"} checked against the live campaigns, then I'll ask only what's missing for it. It's all on the card below; nothing goes to Google Ads until you deploy it, and then everything is created paused.`;
+Reading your sheet now.`;
     } else answer = `${answer}
 
 I couldn't start the launch: ${r.error}`;
@@ -376,7 +376,7 @@ I couldn't start the launch: ${r.error}`;
       after(() => prepareRun(admin, r.id));
       answer = `${answer}
 
-This is a launch sheet, so I'm reading it as one: checking every Page, file, size, post, the pixel and what's already in the account, then I'll ask what only you can decide, including whether to add to a campaign or ad set that's running or copy one. It's all on the card below; nothing goes to Meta until you confirm the plan.`;
+Reading your sheet now.`;
     } else answer = `${answer}
 
 I couldn't start the launch from it: ${r.error}`;
