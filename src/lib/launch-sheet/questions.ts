@@ -41,12 +41,27 @@ export function requiredQuestions(sheet: LaunchSheet, res: Resolution, today: st
       ),
     );
   else out.push(q("budget", "What budget should this launch run on?", "The sheet doesn't give one Meta can take.", "Ask the client's monthly budget on the KPI board", []));
+  // Where the ads land: an existing campaign or ad set (as it is, or a new ad set copied from one), else a new campaign
+  const matched = res.existing.filter((e) => !e.related);
+  const camps = res.existing.filter((e) => e.level === "campaign").slice(0, 2);
+  const sets = res.existing.filter((e) => e.level === "adset").slice(0, 2);
+  const options = [
+    ...camps.map((c) => `Add to the campaign "${c.name}", a new ad set per Page`),
+    ...sets.slice(0, 1).map((s) => `Into the ad set "${s.name}" as it is`),
+    ...sets.slice(0, 1).map((s) => `A new ad set copied from "${s.name}" (same targeting, pixel and optimization)`),
+    "A new campaign, one ad set per Page",
+  ];
   out.push(
     q(
       "structure",
-      "How should it be structured: one campaign with an ad set per Page, place or phase, or adding to campaigns that are already running?",
-      res.existing.length ? `The account already has ${res.existing.length} campaign${res.existing.length === 1 ? "" : "s"} or ad set${res.existing.length === 1 ? "" : "s"} that look like this event.` : "Nothing in the account looks like this event yet.",
-      res.existing.length ? "Add to the matching campaign, a new ad set per Page" : "A new sales campaign optimizing for purchases, one ad set per Page",
+      "Where should these ads go: into a campaign or ad set that's running (as it is, or a new ad set copied from one), or a new campaign?",
+      matched.length
+        ? `The account already has ${matched.length} campaign${matched.length === 1 ? "" : "s"} or ad set${matched.length === 1 ? "" : "s"} that look like this event.`
+        : res.existing.length
+          ? "Nothing is named like this event, but these are live and spending in the account."
+          : "Nothing in the account looks like this event yet.",
+      matched.length ? options[0] : sets.length ? `A new ad set copied from "${sets[0].name}" (same targeting, pixel and optimization)` : "A new sales campaign optimizing for purchases, one ad set per Page",
+      res.existing.length ? options : [],
     ),
   );
   out.push(

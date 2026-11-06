@@ -94,7 +94,8 @@ export type ResolvedFile = { id: string; name: string; mime: string; aspect: "4x
 export type ResolvedCreative = { row: number; name: string; files: ResolvedFile[]; picked: { feed: string | null; vertical: string | null }; missing: ("4x5" | "9x16")[]; error: string | null };
 export type ResolvedPost = { row: number; url: string; platform: "instagram" | "facebook"; shortcode: string | null; mediaId: string | null; igId: string | null; pageId: string | null; storyId: string | null; error: string | null };
 export type ResolvedGeo = { text: string; key: string | null; name: string | null; type: string | null; region: string | null; country: string | null; rows: number[] };
-export type ExistingMatch = { level: "campaign" | "adset"; id: string; name: string; status: string; campaignId?: string | null; dailyBudget: number | null; lifetimeBudget: number | null; spend: number | null };
+/** related: not named like the sheet's event, but live in the account (offered as a place to add to, or an ad set to copy) */
+export type ExistingMatch = { level: "campaign" | "adset"; id: string; name: string; status: string; campaignId?: string | null; dailyBudget: number | null; lifetimeBudget: number | null; spend: number | null; related?: boolean };
 
 export type Resolution = {
   account: string | null;
@@ -154,6 +155,10 @@ export type PlanAdset = {
   end: string | null;
   targeting: Targeting;
   placements: "advantage" | "feeds_stories_reels";
+  /** A new ad set copied from this existing one (Kaizen's launcher rule): its targeting, pixel, event and optimization */
+  cloneFrom?: string | null;
+  /** What was read from it when the plan was laid out (used instead of `targeting` and the pixel) */
+  cloned?: { targeting: Record<string, unknown>; promotedObject: Record<string, unknown> | null; optimizationGoal: string; billingEvent: string; name: string } | null;
 };
 
 export type PlanMedia = { fileId: string; name: string; aspect: string; kind: "image" | "video"; thumb: string | null };
@@ -181,7 +186,8 @@ export type LaunchPlan = {
   note: string;
 };
 
-export type ItemKind = "campaign" | "adset" | "media" | "creative" | "ad";
+/** Meta: campaign, adset, media, creative, ad. Google (src/lib/google-launch/core.ts): budget, campaign, targeting, negative, extension, ad_group, keyword, rsa, pmax_asset */
+export type ItemKind = "campaign" | "adset" | "media" | "creative" | "ad" | "budget" | "targeting" | "negative" | "extension" | "ad_group" | "keyword" | "rsa" | "pmax_asset";
 export type ItemStatus = "planned" | "valid" | "invalid" | "unchecked" | "creating" | "created" | "failed" | "skipped" | "existing";
 
 /** One line of the plan as it's checked and created (a launch_items row) */

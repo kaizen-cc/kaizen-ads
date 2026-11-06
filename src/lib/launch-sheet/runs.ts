@@ -60,7 +60,7 @@ export async function startRun(admin: SupabaseClient, clientId: string, profileI
 export async function openRunFor(admin: SupabaseClient, clientId: string, profileId: string) {
   const { data } = await admin
     .from("launch_runs")
-    .select("id, status, updated_at")
+    .select("id, status, platform, updated_at")
     .eq("client_id", clientId)
     .eq("created_by", profileId)
     .in("status", ["asking", "ready", "planning", "checking"])
@@ -69,7 +69,7 @@ export async function openRunFor(admin: SupabaseClient, clientId: string, profil
     .maybeSingle();
   // An open run older than two weeks isn't what they're talking about now
   if (!data || Date.now() - Date.parse(data.updated_at as string) > 14 * 86_400_000) return null;
-  return data as { id: string; status: RunStatus };
+  return data as { id: string; status: RunStatus; platform: "meta" | "google" };
 }
 
 // ─── Read, check, ask ───────────────────────────────────────────────────────────────────────────────────────────
@@ -210,6 +210,18 @@ export async function planRun(admin: SupabaseClient, id: string) {
     const proposal = await proposeStructure(run.client_id, run.sheet, run.resolution, run.questions, run.turns, day, names, tzName);
     const urlTags = ((client?.url_tags as string | null) ?? "").trim() || (settings.urlTags ?? null);
     const { plan, warnings } = buildPlan(proposal, { sheet: run.sheet, resolution: run.resolution, account, urlTags, today: day, specialAdCategories: [] });
+    // A new ad set copied from an existing one: its targeting, pixel, event and optimization, read as they are now
+    for (const s of plan.adsets.filter((x) => x.cloneFrom)) {
+      const src = await metaGraph<{ name?: string; targeting?: Record<string, unknown>; promoted_object?: Record<string, unknown>; optimization_goal?: string; billing_event?: string }>(s.cloneFrom!, { fields: "name,targeting,promoted_object,optimization_goal,billing_event" }).catch(() => null);
+      if (!src?.targeting) {
+        warnings.push(`Ad set "${s.name}": couldn't read the ad set it copies, so it uses the targeting in the plan.`);
+        s.cloneFrom = null;
+        continue;
+      }
+      s.cloned = { targeting: src.targeting, promotedObject: src.promoted_object ?? null, optimizationGoal: src.optimization_goal ?? s.optimizationGoal, billingEvent: src.billing_event ?? "IMPRESSIONS", name: src.name ?? "" };
+      s.pixelId = (src.promoted_object?.pixel_id as string | undefined) ?? s.pixelId;
+      s.event = (src.promoted_object?.custom_event_type as string | undefined) ?? s.event;
+    }
     // The lines, replacing those of an earlier plan that weren't created (created ones are kept, never made twice)
     const { data: old } = await admin.from("launch_items").select("key, status").eq("run_id", id);
     const made = new Set((old ?? []).filter((o) => o.status === "created").map((o) => o.key as string));
@@ -504,7 +516,7 @@ export async function qaRun(admin: SupabaseClient, id: string) {
         if (m.name !== s.name.slice(0, 400)) diffs.push(`name is "${m.name}"`);
         if (s.pixelId && m.promoted_object?.pixel_id !== s.pixelId) diffs.push("optimizes for a different pixel");
         if (s.event && m.promoted_object?.custom_event_type && m.promoted_object.custom_event_type !== s.event) diffs.push(`optimizes for ${m.promoted_object.custom_event_type}`);
-        if (m.targeting?.age_min != null && m.targeting.age_min !== s.targeting.ageMin) diffs.push(`minimum age is ${m.targeting.age_min}`);
+        if (!s.cloned && m.targeting?.age_min != null && m.targeting.age_min !== s.targeting.ageMin) diffs.push(`minimum age is ${m.targeting.age_min}`);
         if (s.budget && !plan.campaigns.find((c) => c.key === s.campaignKey)?.budget && Number(m[s.budget.type === "daily" ? "daily_budget" : "lifetime_budget"] ?? 0) !== minor(s.budget.amount)) diffs.push("budget differs");
         if (plan.goLive === "paused" && m.status !== "PAUSED") diffs.push(`status is ${m.status}`);
         link = metaDeepLink(plan.account, "adset", r.meta_id);

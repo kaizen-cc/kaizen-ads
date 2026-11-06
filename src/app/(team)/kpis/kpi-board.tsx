@@ -752,6 +752,7 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
                 clientId={r.clientId}
                 client={r.client}
                 live
+                scope={r.accountId ? { platform: r.platform === "google" ? "google" : "meta", targetId: r.id } : null}
                 targets={r.accountId ? [{ id: r.id, label: `${r.platform === "google" ? "Google" : "Meta"}${r.label ? ` · ${r.label}` : ""}`, status: r.audit?.status ?? "none", auditId: r.audit?.id ?? null }] : []}
               />
               <Link href={`/clients/${r.slug}?service=${r.platform}`} className="inline-flex h-11 items-center rounded-full border border-line px-4 text-sm text-muted hover:text-fg md:h-9">

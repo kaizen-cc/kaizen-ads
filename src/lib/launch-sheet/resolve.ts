@@ -362,7 +362,24 @@ export async function resolveSheet(admin: SupabaseClient, clientId: string, shee
       m.spend = Math.round(Number(r.data[0]?.spend ?? 0) * 100) / 100;
       spent += m.spend;
     }
-    res.existing = matches;
+    // Nothing named like the event: the live campaigns and ad sets spending most are still offered, to add to or copy
+    const spend14 = new Map<string, number>();
+    for (const a of setup.ads) spend14.set(a.adsetId, (spend14.get(a.adsetId) ?? 0) + a.spend14);
+    const related: ExistingMatch[] = matches.length
+      ? []
+      : setup.adsets
+          .filter((s) => s.effective === "ACTIVE")
+          .sort((a, b) => (spend14.get(b.id) ?? 0) - (spend14.get(a.id) ?? 0))
+          .slice(0, 3)
+          .flatMap((s) => {
+            const c = setup.campaigns.find((x) => x.id === s.campaignId);
+            return [
+              ...(c ? [{ level: "campaign" as const, id: c.id, name: c.name, status: c.effective, dailyBudget: c.dailyBudget, lifetimeBudget: c.lifetimeBudget, spend: null, related: true }] : []),
+              { level: "adset" as const, id: s.id, name: s.name, status: s.effective, campaignId: s.campaignId, dailyBudget: s.dailyBudget, lifetimeBudget: s.lifetimeBudget, spend: Math.round((spend14.get(s.id) ?? 0) * 100) / 100, related: true },
+            ];
+          })
+          .filter((m, i, all) => all.findIndex((x) => x.id === m.id) === i);
+    res.existing = [...matches, ...related];
     res.spend.matched = matches.some((m) => m.level === "campaign") ? Math.round(spent * 100) / 100 : null;
     add({
       key: "existing",

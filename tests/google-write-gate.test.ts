@@ -69,4 +69,11 @@ describe("googleMutate", () => {
     await expect(googleMutate("111-111-1111", "campaigns", [{ update: {} }], false)).rejects.toThrow(/Live changes in Google Ads are off/);
     expect(fetch).not.toHaveBeenCalled();
   });
+  it("refuses a launch's deploy batch the same way (a chat launch never writes with the switch off)", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const { googleBulkMutate } = await import("@/lib/context/google-ads");
+    await expect(googleBulkMutate("111-111-1111", [{ campaignBudgetOperation: { create: {} } }], false)).rejects.toThrow(/Live changes in Google Ads are off/);
+    expect(fetch).not.toHaveBeenCalled();
+  });
 });

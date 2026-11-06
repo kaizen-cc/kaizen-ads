@@ -34,7 +34,7 @@ function budgetText(b: BudgetSpec | null) {
 }
 const dates = (s: string | null, e: string | null) => (s || e ? `${s ?? "on turn-on"} → ${e ?? "no end"}` : "Starts when turned on");
 
-function Mark({ level }: { level: CheckItem["level"] | "valid" | "invalid" | "unchecked" | "created" | "failed" | "planned" | "creating" | "skipped" | "existing" }) {
+export function Mark({ level }: { level: CheckItem["level"] | "valid" | "invalid" | "unchecked" | "created" | "failed" | "planned" | "creating" | "skipped" | "existing" }) {
   const m: Record<string, [string, string]> = {
     ok: ["✓", "text-ok"],
     valid: ["✓", "text-ok"],
@@ -54,7 +54,7 @@ function Mark({ level }: { level: CheckItem["level"] | "valid" | "invalid" | "un
   return <span aria-hidden className={`mt-px grid h-5 w-5 shrink-0 place-items-center rounded-full bg-ink/[0.06] text-[11px] font-semibold ${cls}`}>{ch}</span>;
 }
 
-function Checklist({ checks }: { checks: CheckItem[] }) {
+export function Checklist({ checks }: { checks: CheckItem[] }) {
   const [open, setOpen] = useState<string | null>(null);
   const order = { fail: 0, warn: 1, info: 2, ok: 3 } as const;
   return (
@@ -77,7 +77,7 @@ function Checklist({ checks }: { checks: CheckItem[] }) {
   );
 }
 
-function Question({ q, busy, onUse }: { q: LaunchQuestion; busy: boolean; onUse: (answer: string | null) => void }) {
+export function Question({ q, busy, onUse }: { q: LaunchQuestion; busy: boolean; onUse: (answer: string | null) => void }) {
   return (
     <li className={`grid gap-1.5 rounded-[12px] border px-3 py-2.5 ${q.answer ? "border-ok/25 bg-ok-soft/10" : "border-ink/[0.08] bg-ink/[0.02]"}`}>
       <p className="text-[12.5px] font-medium leading-snug">
@@ -230,7 +230,7 @@ function AdsetLine({ s, plan, items, qa, cbo }: { s: PlanAdset; plan: LaunchPlan
           <span className="text-[10px] uppercase tracking-[0.14em] text-ink/45">Ad set{s.mode === "existing" ? " · existing" : ""}</span>
           <span className="text-[12.5px] font-medium leading-snug [overflow-wrap:anywhere]">{s.name}</span>
           <span className="text-[11px] leading-snug text-ink/55">
-            {dates(s.start, s.end)} · {cbo ? "campaign budget" : (budgetText(s.budget) ?? "no budget")} · {where} · ages {t.ageMin}–{t.ageMax === 65 ? "65+" : t.ageMax} · {s.event?.toLowerCase() ?? "purchase"}
+            {dates(s.start, s.end)} · {cbo ? "campaign budget" : (budgetText(s.budget) ?? "no budget")} · {s.cloned ? `targeting, pixel and optimization copied from "${s.cloned.name || "the ad set"}"` : `${where} · ages ${t.ageMin}–${t.ageMax === 65 ? "65+" : t.ageMax}`} · {s.event?.toLowerCase() ?? "purchase"}
           </span>
           <LineState item={item} link={qa.get(`adset:${s.key}`)} />
         </div>

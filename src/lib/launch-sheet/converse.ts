@@ -51,7 +51,7 @@ export function resolutionBrief(res: Resolution) {
     ...res.posts.map((p) => `- row #${p.row} ${p.url}: ${p.mediaId ? `found (media ${p.mediaId})` : p.error}`),
     `Pixel: ${res.pixel ? `${res.pixel.name} (${res.pixel.id}), last fired ${res.pixel.lastFired ?? "never"}, Purchase in 7 days: ${res.pixel.purchaseRecent ?? "unknown"}` : "none"}`,
     "Already in the account:",
-    ...res.existing.map((e) => `- ${e.level} "${e.name}" (${e.id}) ${e.status}${e.dailyBudget != null ? ` daily $${e.dailyBudget}` : ""}${e.lifetimeBudget != null ? ` lifetime $${e.lifetimeBudget}` : ""}${e.spend != null ? ` spent $${e.spend}` : ""}`),
+    ...res.existing.map((e) => `- ${e.level} "${e.name}" (${e.id}) ${e.status}${e.dailyBudget != null ? ` daily $${e.dailyBudget}` : ""}${e.lifetimeBudget != null ? ` lifetime $${e.lifetimeBudget}` : ""}${e.spend != null ? ` spent $${e.spend}` : ""}${e.related ? " (live in the account, not named like this event)" : ""}`),
   ].join("\n");
 }
 
@@ -169,6 +169,7 @@ const PLAN_SCHEMA = obj({
       ageMax: { type: "integer" },
       advantageAudience: B,
       event: S,
+      cloneFrom: S,
     }),
   ),
   ads: arr(obj({ key: S, adsetKey: S, rows: arr({ type: "integer" }), name: S, identity: { type: "string", enum: ["page", "partnership"] }, page: S, partner: S, cta: S, link: S })),
@@ -183,7 +184,7 @@ export async function proposeStructure(clientId: string, sheet: LaunchSheet, res
     clientId,
     system: `You lay out the launch the buyer agreed to, as campaigns, ad sets and ads, exactly as answered in the questions and the conversation. Code fills in the copy (straight from the sheet's rows), the files, the posts, the pixel and the UTMs: you choose the structure.
 - campaigns: key ("c1"…), mode "existing" with existingId only when the buyer agreed to add to that campaign (an id from the checks), else "new" with existingId "". name follows the account's naming pattern (examples given). objective "OUTCOME_SALES" for purchases unless agreed otherwise. budget: the campaign's when the budget lives on the campaign (type "daily" with schedules for later periods, or "lifetime"), else type "none" with amount 0. start/end YYYY-MM-DD or "".
-- adsets: key ("s1"…), campaignKey, mode/existingId as for campaigns. name in the account's pattern. budget when the ad set holds it (else type "none"). start/end: from today (${today}) on, never in the past. geos: the places by their text exactly as in the checks' Places list, with a radius in miles (10 to 50). countries ["US"] only when targeting a whole country. ageMin 21 when the ads promote alcohol or bars in the US. advantageAudience false unless agreed. event "PURCHASE" unless agreed.
+- adsets: key ("s1"…), campaignKey, mode/existingId as for campaigns. name in the account's pattern. budget when the ad set holds it (else type "none"). start/end: from today (${today}) on, never in the past. geos: the places by their text exactly as in the checks' Places list, with a radius in miles (10 to 50). countries ["US"] only when targeting a whole country. ageMin 21 when the ads promote alcohol or bars in the US. advantageAudience false unless agreed. event "PURCHASE" unless agreed. cloneFrom: when the buyer chose a new ad set copied from an existing one, that ad set's id (from the checks' "Already in the account"): it keeps that ad set's targeting, pixel, event and optimization, so geos may be []; else "". Kaizen's launcher puts ads into an existing ad set or a copy of one inside an existing campaign; a new campaign only when the buyer asked for one.
 - ads: key ("a1"…), adsetKey, rows: the sheet row numbers (#) this ad runs (one row per ad, unless rows repeat the same creative and copy on the same Page), name in the account's pattern, identity "page" (the Page by its name as in the sheet) or "partnership" (page = the brand's Page, partner = the partner Page's name), cta as a Meta CTA type (BUY_TICKETS, SHOP_NOW, LEARN_MORE…), link "" to use the sheet's link.
 Use the budget numbers worked out below exactly for the mapping the buyer chose (never a period total as a daily budget). Leave out rows the buyer said not to launch. goLive "scheduled" only when the buyer chose a scheduled start, else "paused".
 note: 1 to 3 sentences on how the plan follows what was agreed.

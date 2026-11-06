@@ -48,6 +48,13 @@ const toHex = (c?: { red?: number; green?: number; blue?: number }) => {
 
 /** A Google Sheet with its links and colors (the tab named in the link's gid, else the one that reads like a launch table) */
 async function openGoogleSheet(id: string, gid: string | null): Promise<Opened> {
+  const { title, grids } = await googleSheetGrids(id);
+  const pick = grids.find((g) => gid != null && String(g.sheet.properties.sheetId) === gid) ?? grids.find((g) => looksLikeLaunchSheet(g.grid)) ?? grids[0];
+  return { grid: pick?.grid ?? null, pdf: null, name: `${title}${pick ? ` · ${pick.sheet.properties.title}` : ""}`, note: null };
+}
+
+/** Every tab of a Google Sheet as a grid (values, links and colors) */
+async function googleSheetGrids(id: string) {
   const { driveToken } = await import("@/lib/context/google");
   const token = await driveToken();
   const fields = "properties.title,sheets(properties(title,sheetId),data(rowData(values(formattedValue,hyperlink,effectiveFormat.backgroundColor,textFormatRuns.format.link.uri))))";
@@ -64,8 +71,49 @@ async function openGoogleSheet(id: string, gid: string | null): Promise<Opened> 
     );
     return { sheet: s, grid: { rows: rows.filter((r) => r.some((c) => c.text || c.links.length)), source: "gsheet" as const } };
   });
-  const pick = grids.find((g) => gid != null && String(g.sheet.properties.sheetId) === gid) ?? grids.find((g) => looksLikeLaunchSheet(g.grid)) ?? grids[0];
-  return { grid: pick?.grid ?? null, pdf: null, name: `${body.properties?.title ?? "Google Sheet"}${pick ? ` · ${pick.sheet.properties.title}` : ""}`, note: null };
+  return { title: body.properties?.title ?? "Google Sheet", grids };
+}
+
+export type Tabs = { name: string; tabs: { title: string; grid: Grid }[]; pdf: string | null; note: string | null };
+
+/**
+ * Every tab of a shared sheet, for a Google buyer's file (one tab per ad group, a negatives tab): a Google Sheets link
+ * or a Drive file (all its tabs), an Excel file (all its sheets), a CSV or PDF (one).
+ */
+export async function openTabs(admin: SupabaseClient, src: SheetSource): Promise<Tabs> {
+  const fromBytes = async (buf: Buffer, name: string, mime: string): Promise<Tabs> => {
+    const ext = extOf(name);
+    if (ext === "xlsx" || ext === "xlsm" || /spreadsheetml/.test(mime)) {
+      const { xlsxTabs } = await import("./xlsx");
+      return { name, tabs: xlsxTabs(buf), pdf: null, note: null };
+    }
+    const o = await openBytes(buf, name, mime);
+    return { name, tabs: o.grid ? [{ title: name, grid: o.grid }] : [], pdf: o.pdf, note: o.note };
+  };
+  const sheetTabs = async (id: string): Promise<Tabs> => {
+    const { title, grids } = await googleSheetGrids(id);
+    return { name: title, tabs: grids.filter((g) => g.grid.rows.length).map((g) => ({ title: g.sheet.properties.title, grid: g.grid })), pdf: null, note: null };
+  };
+  if (src.kind === "file") {
+    const { data, error } = await admin.storage.from(src.bucket).download(src.path);
+    if (error || !data) throw new Error("The file isn't there any more.");
+    return fromBytes(Buffer.from(await data.arrayBuffer()), src.name, src.mime);
+  }
+  const sheet = src.url.match(SHEET_URL);
+  if (sheet) return sheetTabs(sheet[1]);
+  const file = src.url.match(DRIVE_FILE);
+  if (file) {
+    const { driveToken } = await import("@/lib/context/google");
+    const token = await driveToken();
+    const meta = await fetch(`https://www.googleapis.com/drive/v3/files/${file[1]}?fields=name,mimeType&supportsAllDrives=true`, { headers: { authorization: `Bearer ${token}` }, cache: "no-store" });
+    if (!meta.ok) throw new Error("Kaizen's Google account can't open this file: share it with the agency's Google Workspace (or anyone with the link).");
+    const f = (await meta.json()) as { name: string; mimeType: string };
+    if (f.mimeType === "application/vnd.google-apps.spreadsheet") return sheetTabs(file[1]);
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${file[1]}?alt=media&supportsAllDrives=true`, { headers: { authorization: `Bearer ${token}` }, cache: "no-store" });
+    if (!res.ok) throw new Error(`Drive: ${res.status}`);
+    return fromBytes(Buffer.from(await res.arrayBuffer()), f.name, f.mimeType);
+  }
+  throw new Error("That link isn't a Google Sheet or a Drive file.");
 }
 
 /** A Drive file by id (PDF, Excel or CSV, or a Google Sheet) */

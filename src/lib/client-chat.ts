@@ -35,7 +35,9 @@ If they ask you to run an audit, say they can start one with the "Run an audit" 
 
 Changes in the ad account: when the teammate asks you to change something in the client's Meta or Google Ads account (pause or turn on campaigns, ad sets, ads or keywords, change budgets or targets, rename, swap links, final URLs or UTMs, copy or move an ad to another campaign or ad set, add negative keywords) or to change the client's media buyer, set change: wanted true, platform "meta", "google" or "team" (the buyer), and instruction: their full request in one or two sentences with every name, number and condition they gave (resolve "it" and "that one" from the conversation). Never say it's done or that you can't: say you're pulling the exact campaigns and ads from the live account so they can check them and confirm before anything changes. Only when they clearly ask for a change; a question about the account is not a change. Otherwise change is wanted false with "" fields. One change request per message; for both platforms, do the one they named first and say you'll do the other next.
 
-Launch sheets: when they share a launch sheet (a plan of ads to launch: rows of dates, Pages, creative and copy) to launch or set up, summarize it in a sentence or two; the launch card under your answer takes it from there (the media buyer checks it against the account and asks what only they can decide). Don't plan the launch yourself and don't use change for it.`;
+Launch sheets: when they share a launch sheet (a plan of ads to launch: rows of dates, Pages, creative and copy) to launch or set up, summarize it in a sentence or two; the launch card under your answer takes it from there (the media buyer checks it against the account and asks what only they can decide). Don't plan the launch yourself and don't use change for it.
+
+Launching new ads: when they ask you to launch or build something new in an ad account (a campaign, an ad group, keywords, responsive search ads, Performance Max assets, new ads) or share a sheet of keywords and ad copy to launch, set launch: wanted true, platform "google" for Google Ads (keywords, ad groups, RSAs, Search, Performance Max) or "meta" for Meta, and request: their full ask in one or two sentences with every name, number, link, keyword and line of copy they gave. Say in a sentence what you understood; the launch card under your answer takes it from there (it reads the live account, asks only what's missing in the format the platform needs, suggests from the account and shows every object it will create, paused, before anything is deployed). Don't plan it yourself and don't use change for it. A Meta launch is read from a launch sheet (or approved ads launch from the board): when they want one without sharing a sheet, ask them to share it here. Otherwise launch is wanted false with "" fields.`;
 
 const SCHEMA = {
   type: "object",
@@ -52,8 +54,9 @@ const SCHEMA = {
       },
     },
     change: { type: "object", properties: { wanted: { type: "boolean" }, platform: { type: "string", enum: ["meta", "google", "team", ""] }, instruction: S }, required: ["wanted", "platform", "instruction"], additionalProperties: false },
+    launch: { type: "object", properties: { wanted: { type: "boolean" }, platform: { type: "string", enum: ["meta", "google", ""] }, request: S }, required: ["wanted", "platform", "request"], additionalProperties: false },
   },
-  required: ["answer", "docs", "actions", "change"],
+  required: ["answer", "docs", "actions", "change", "launch"],
   additionalProperties: false,
 };
 
@@ -138,10 +141,15 @@ async function act(admin: SupabaseClient, clientId: string, profileId: string, a
 
 type SharedDoc = { id: string; kind: string; name: string; path: string | null; url: string | null; mime: string | null };
 
-/** The first shared file or link that is a launch sheet (a table of ads), or that was shared with "launch this" */
-async function launchSheetIn(admin: SupabaseClient, docs: SharedDoc[], q: string) {
-  const { isLaunchSheet, isSheetLink } = await import("@/lib/launch-sheet/intake");
-  const asked = /(launch|set (it|this|them) up|push (it|this|them)|go live|build (it|this|the campaign))/i.test(q);
+/**
+ * The first shared file or link that is a launch: a Google buyer's sheet (keywords, match types, RSA copy), a Meta
+ * launch sheet (a table of ads), or a sheet shared with "launch this" (Google when the chat is about Google: a Google
+ * launch asked for, or the chat opened from a Google KPI card).
+ */
+async function launchSheetIn(admin: SupabaseClient, docs: SharedDoc[], q: string, google: boolean, wanted: boolean) {
+  const { isSheetLink, openTabs } = await import("@/lib/launch-sheet/intake");
+  const [{ looksLikeLaunchSheet }, { looksLikeGoogleSheet }] = await Promise.all([import("@/lib/launch-sheet/sheet"), import("@/lib/google-launch/sheet")]);
+  const asked = /(launch|set (it|this|them) up|push (it|this|them)|go live|build (it|this|the campaign))/i.test(q);
   for (const d of docs) {
     const src =
       d.kind === "file" && d.path
@@ -152,7 +160,12 @@ async function launchSheetIn(admin: SupabaseClient, docs: SharedDoc[], q: string
     if (!src) continue;
     const sheetLike = src.kind === "link" || /pdf|sheet|excel|csv/.test(src.mime) || /\.(pdf|xlsx|xlsm|csv|tsv)$/i.test(src.name);
     if (!sheetLike) continue;
-    if (asked || (await isLaunchSheet(admin, src))) return src;
+    const tabs = await openTabs(admin, src).catch(() => null);
+    const grids = tabs?.tabs.map((t) => t.grid) ?? [];
+    if (grids.some((g) => looksLikeGoogleSheet(g))) return { src, platform: "google" as const };
+    // A Meta launch sheet stays Meta unless a Google launch was asked for in so many words
+    if (grids.some((g) => looksLikeLaunchSheet(g))) return { src, platform: google && wanted ? ("google" as const) : ("meta" as const) };
+    if (asked || wanted) return { src, platform: google ? ("google" as const) : ("meta" as const) };
   }
   return null;
 }
@@ -162,18 +175,20 @@ async function continueLaunch(admin: SupabaseClient, clientId: string, profileId
   const { openRunFor, launchReply, planRun } = await import("@/lib/launch-sheet/runs");
   const open = await openRunFor(admin, clientId, profileId);
   if (!open || !["asking", "ready"].includes(open.status)) return null;
-  const r = await launchReply(admin, open.id, q);
+  const google = open.platform === "google";
+  const g = google ? await import("@/lib/google-launch/runs") : null;
+  const r = g ? await g.googleLaunchReply(admin, open.id, q) : await launchReply(admin, open.id, q);
   if (r.offTopic) return null;
   if (r.building) {
     const { after } = await import("next/server");
-    after(() => planRun(admin, open.id));
+    after(() => (g ? g.planGoogleRun(admin, open.id) : planRun(admin, open.id)));
   }
   const chat = await loadClientChat(admin, clientId, profileId);
   const now = new Date().toISOString();
   const text = r.building ? `${r.answer}
 
-Laying out the plan now and checking every line with Meta: it's on the launch card.` : r.answer;
-  const next: ChatTurn[] = [...chat, { role: "user" as const, text: q, at: now }, { role: "assistant" as const, text, at: now, launch: { id: open.id } }].slice(-60);
+Laying out the plan now and checking every line with ${google ? "Google" : "Meta"}: it's on the launch card.` : r.answer;
+  const next: ChatTurn[] = [...chat, { role: "user" as const, text: q, at: now }, { role: "assistant" as const, text, at: now, launch: { id: open.id, platform: google ? ("google" as const) : ("meta" as const) } }].slice(-60);
   await admin.from("client_chats").upsert({ client_id: clientId, profile_id: profileId, turns: next, updated_at: now });
   return next;
 }
@@ -190,6 +205,7 @@ export async function askAboutClient(
   question: string,
   goDeep = false,
   files: { path: string; name: string; mime: string; bytes: number }[] = [],
+  scope: { platform: "meta" | "google"; targetId?: string | null } | null = null,
 ) {
   const q = question.trim().slice(0, 3000);
   const links = [...new Set(q.match(URL_RE) ?? [])].slice(0, 4);
@@ -244,11 +260,11 @@ export async function askAboutClient(
         .join("\n\n")}\n</shared>`
     : "";
 
-  const out = await askJson<{ answer: string; docs: { n: number; title: string; summary: string }[]; actions: Action[]; change?: { wanted: boolean; platform: string; instruction: string } }>({
+  const out = await askJson<{ answer: string; docs: { n: number; title: string; summary: string }[]; actions: Action[]; change?: { wanted: boolean; platform: string; instruction: string }; launch?: { wanted: boolean; platform: string; request: string } }>({
     agent: "strategist",
     label: `client desk (${level}${docs.length ? `, ${docs.length} shared` : ""})`,
     clientId,
-    system: SYSTEM + (level === "deep" ? "\nThis is a big question: think it through, use the market and research you're given (say where a point comes from), and give a clear recommendation with the reasoning; up to 12 sentences or a short structured list." : level === "quick" ? "\nThis is a quick question: answer it directly in 1 to 3 sentences." : ""),
+    system: SYSTEM + (scope ? `\nThis chat was opened from the client's ${scope.platform === "google" ? "Google Ads" : "Meta"} KPI card: a launch or change they don't name a platform for is on ${scope.platform === "google" ? "Google Ads" : "Meta"}.` : "") + (level === "deep" ? "\nThis is a big question: think it through, use the market and research you're given (say where a point comes from), and give a clear recommendation with the reasoning; up to 12 sentences or a short structured list." : level === "quick" ? "\nThis is a quick question: answer it directly in 1 to 3 sentences." : ""),
     schema: SCHEMA,
     maxTokens: level === "deep" || docs.length ? 16000 : 8000,
     override: { model, effort: route.effort },
@@ -271,7 +287,10 @@ export async function askAboutClient(
   let plan: { id: string } | undefined;
   let answer = out.answer;
   const c = out.change;
-  if (c?.wanted && ["meta", "google", "team"].includes(c.platform) && c.instruction.trim()) {
+  const L = out.launch;
+  const launchWanted = Boolean(L?.wanted);
+  // A launch is never also a change (the launch card plans it)
+  if (!launchWanted && c?.wanted && ["meta", "google", "team"].includes(c.platform) && c.instruction.trim()) {
     const { startChatChange, planChatChange } = await import("@/lib/chat-changes");
     const r = await startChatChange(admin, clientId, profileId, c.platform as "meta" | "google" | "team", c.instruction.trim());
     if ("id" in r) {
@@ -281,20 +300,34 @@ export async function askAboutClient(
     } else answer = `${answer}\n\n${r.error}`;
   }
 
-  // A launch sheet shared (a table of ads to launch, or a sheet shared with "launch this"): the Media Buyer reads it,
-  // checks it against the account and asks what only the buyer can answer, on the launch card under the answer
-  let launch: { id: string } | undefined;
-  const sheetDoc = await launchSheetIn(admin, docs as SharedDoc[], q);
-  if (sheetDoc) {
-    const { startRun, prepareRun } = await import("@/lib/launch-sheet/runs");
-    const r = await startRun(admin, clientId, profileId, sheetDoc, "client_chat");
+  // A launch: new Google Ads asked for in words or a Google buyer's sheet (the Google Ads Buyer reads the account, asks
+  // what's missing, suggests and lays out every object to deploy, paused), or a Meta launch sheet (the Media Buyer reads
+  // it, checks it against the account and asks what only the buyer can answer). Both on the launch card under the answer.
+  let launch: { id: string; platform: "meta" | "google" } | undefined;
+  const googleAsked = launchWanted && (L?.platform === "google" || (!L?.platform && scope?.platform === "google"));
+  const sheetDoc = await launchSheetIn(admin, docs as SharedDoc[], q, googleAsked || (!launchWanted && scope?.platform === "google"), launchWanted);
+  const { after } = await import("next/server");
+  if (sheetDoc?.platform === "google" || (googleAsked && !sheetDoc)) {
+    const { startGoogleRun, prepareGoogleRun } = await import("@/lib/google-launch/runs");
+    const r = await startGoogleRun(admin, clientId, profileId, { request: (L?.request || q).trim(), source: sheetDoc?.src ?? null, targetId: scope?.platform === "google" ? (scope.targetId ?? null) : null });
     if ("id" in r) {
-      launch = { id: r.id };
-      const { after } = await import("next/server");
+      launch = { id: r.id, platform: "google" };
+      after(() => prepareGoogleRun(admin, r.id));
+      answer = `${answer}
+
+${sheetDoc ? "I'm reading the sheet as a Google launch: every ad group, keyword and match type, and each ad's headlines and descriptions," : "I'm setting this up as a Google launch, reading the account:"} checked against the live campaigns, then I'll ask only what's missing and suggest what the account shows. It's all on the card below; nothing goes to Google Ads until you deploy it, and then everything is created paused.`;
+    } else answer = `${answer}
+
+I couldn't start the launch: ${r.error}`;
+  } else if (sheetDoc) {
+    const { startRun, prepareRun } = await import("@/lib/launch-sheet/runs");
+    const r = await startRun(admin, clientId, profileId, sheetDoc.src, "client_chat");
+    if ("id" in r) {
+      launch = { id: r.id, platform: "meta" };
       after(() => prepareRun(admin, r.id));
       answer = `${answer}
 
-This is a launch sheet, so I'm reading it as one: checking every Page, file, size, post, the pixel and what's already in the account, then I'll ask what only you can decide. It's all on the card below; nothing goes to Meta until you confirm the plan.`;
+This is a launch sheet, so I'm reading it as one: checking every Page, file, size, post, the pixel and what's already in the account, then I'll ask what only you can decide, including whether to add to a campaign or ad set that's running or copy one. It's all on the card below; nothing goes to Meta until you confirm the plan.`;
     } else answer = `${answer}
 
 I couldn't start the launch from it: ${r.error}`;

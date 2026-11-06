@@ -241,6 +241,33 @@ describe("questions before any plan", () => {
     expect(unanswered(answered)).toHaveLength(0);
     expect(applyAnswers(merged, [{ key: "nope", answer: "x" }, { key: "go_live", answer: "  " }]).find((q) => q.key === "go_live")!.answer).toBeNull();
   });
+
+  it("asks whether to add to a campaign or ad set that's running, or copy one, naming the relevant ones", () => {
+    const res = resolution(sheet);
+    res.existing = [
+      { level: "campaign", id: "c9", name: "Evergreen | Sales", status: "ACTIVE", dailyBudget: 80, lifetimeBudget: null, spend: null, related: true },
+      { level: "adset", id: "s9", name: "Evergreen | San Diego 21+", status: "ACTIVE", campaignId: "c9", dailyBudget: null, lifetimeBudget: null, spend: 410, related: true },
+    ];
+    const q = requiredQuestions(sheet, res, "2026-09-01").find((x) => x.key === "structure")!;
+    expect(q.options).toEqual(['Add to the campaign "Evergreen | Sales", a new ad set per Page', 'Into the ad set "Evergreen | San Diego 21+" as it is', 'A new ad set copied from "Evergreen | San Diego 21+" (same targeting, pixel and optimization)', "A new campaign, one ad set per Page"]);
+    expect(q.proposal).toMatch(/copied from "Evergreen/);
+    expect(q.why).toMatch(/live and spending/);
+  });
+});
+
+describe("a new ad set copied from an existing one", () => {
+  it("keeps the source's targeting, pixel and optimization", () => {
+    const p = proposal(sheet);
+    p.adsets[0] = { ...p.adsets[0], geos: [], cloneFrom: "s9" };
+    const { plan, warnings } = buildPlan(p, ctx(sheet));
+    expect(plan.adsets[0].cloneFrom).toBe("s9");
+    expect(warnings.some((w) => /no location/.test(w))).toBe(false);
+    const s = { ...plan.adsets[0], cloned: { targeting: { geo_locations: { countries: ["US"] }, age_min: 25 }, promotedObject: { pixel_id: "px9", custom_event_type: "LEAD" }, optimizationGoal: "OFFSITE_CONVERSIONS", billingEvent: "IMPRESSIONS", name: "Evergreen" } };
+    const params = adsetParams(s, "c9", true, "paused", -5);
+    expect(JSON.parse(params.targeting)).toEqual({ geo_locations: { countries: ["US"] }, age_min: 25 });
+    expect(JSON.parse(params.promoted_object)).toEqual({ pixel_id: "px9", custom_event_type: "LEAD" });
+    expect(params.status).toBe("PAUSED");
+  });
 });
 
 describe("resolution helpers", () => {

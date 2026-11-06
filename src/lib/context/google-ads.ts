@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { JWT } from "google-auth-library";
+import { parseGoogleErrors, type GoogleError } from "@/lib/google-launch/core";
 
 // Google Ads: campaign numbers per day for every client account with a Google KPI target, read through Kaizen's
 // manager (MCC) account. The same shape as Meta's daily rows, so the KPI board, audits, the daily recap and
@@ -62,6 +63,16 @@ async function accessToken(): Promise<string> {
 
 type Row = Record<string, Record<string, unknown>>;
 
+/** Google refused a call: the plain sentence, and Google's own answer (each error with the operation it's about) */
+export class GoogleAdsError extends Error {
+  constructor(
+    message: string,
+    readonly raw: string,
+  ) {
+    super(message);
+  }
+}
+
 /** One call to a customer's endpoint, through our manager account, or directly when it isn't linked under it. */
 async function post(customer: string, path: string, body: unknown): Promise<string> {
   const token = await accessToken();
@@ -87,9 +98,9 @@ async function post(customer: string, path: string, body: unknown): Promise<stri
     const first = { text, status: res.status };
     res = await call(digits(customer));
     text = await res.text();
-    if (!res.ok) throw new Error(`${explain(first.text, first.status)}${/USER_PERMISSION_DENIED/.test(text) ? "" : ` (directly: ${explain(text, res.status)})`}`);
+    if (!res.ok) throw new GoogleAdsError(`${explain(first.text, first.status)}${/USER_PERMISSION_DENIED/.test(text) ? "" : ` (directly: ${explain(text, res.status)})`}`, /USER_PERMISSION_DENIED/.test(text) ? first.text : text);
   }
-  if (!res.ok) throw new Error(explain(text, res.status));
+  if (!res.ok) throw new GoogleAdsError(explain(text, res.status), text);
   return text;
 }
 
@@ -115,6 +126,31 @@ export async function googleMutate(customer: string, service: "campaigns" | "cam
     return JSON.parse(text) as { results?: { resourceName?: string }[] };
   } catch {
     return {};
+  }
+}
+
+/**
+ * Many changes in one call (GoogleAdsService.Mutate), all or nothing, in order, with temporary resource names (negative
+ * ids) so a new campaign, its budget, ad groups, keywords and ads are made together. validateOnly: Google checks every
+ * operation and says which would fail, creating nothing (allowed with the switch off). A real call is gated here the
+ * same way googleMutate is. Google's refusal comes back as one error per problem, each with its operation's index.
+ */
+export async function googleBulkMutate(customer: string, operations: Record<string, unknown>[], validateOnly: boolean): Promise<{ ok: true; results: (string | null)[] } | { ok: false; errors: GoogleError[]; message: string }> {
+  if (!validateOnly) {
+    const [{ createAdminClient }, { googleWritesOn, GOOGLE_OFF }] = await Promise.all([import("@/lib/supabase/admin"), import("@/lib/meta-write")]);
+    if (!(await googleWritesOn(createAdminClient(), customer))) throw new Error(GOOGLE_OFF);
+  }
+  if (!operations.length) return { ok: true, results: [] };
+  try {
+    const text = await post(customer, "googleAds:mutate", { mutateOperations: operations, validateOnly, partialFailure: false });
+    const j = (text ? JSON.parse(text) : {}) as { mutateOperationResponses?: Record<string, { resourceName?: string }>[] };
+    return { ok: true, results: (j.mutateOperationResponses ?? []).map((r) => Object.values(r)[0]?.resourceName ?? null) };
+  } catch (e) {
+    if (e instanceof GoogleAdsError) {
+      const errors = parseGoogleErrors(e.raw);
+      return { ok: false, errors: errors.length ? errors : [{ index: null, code: "", message: e.message, trigger: null, policy: [] }], message: e.message };
+    }
+    throw e;
   }
 }
 

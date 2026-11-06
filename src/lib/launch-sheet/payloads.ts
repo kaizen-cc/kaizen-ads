@@ -89,18 +89,20 @@ export function targetingSpec(t: Targeting, placements: PlanAdset["placements"])
 /** POST act_<id>/adsets. cbo: the campaign holds the budget (the ad set has none of its own) */
 export function adsetParams(s: PlanAdset, campaignId: string, cbo: boolean, goLive: "paused" | "scheduled", tz: number): Record<string, string> {
   const lifetime = (cbo ? null : s.budget)?.type === "lifetime";
+  // A copy of an existing ad set keeps its targeting, pixel, event and optimization as they are
+  const c = s.cloned ?? null;
   return {
     name: s.name.slice(0, 400),
     campaign_id: campaignId,
     status: status(goLive),
-    billing_event: "IMPRESSIONS",
-    optimization_goal: s.optimizationGoal,
+    billing_event: c?.billingEvent || "IMPRESSIONS",
+    optimization_goal: c?.optimizationGoal || s.optimizationGoal,
     destination_type: "WEBSITE",
-    ...(s.pixelId ? { promoted_object: json({ pixel_id: s.pixelId, ...(s.event ? { custom_event_type: s.event } : {}) }) } : {}),
+    ...(c?.promotedObject ? { promoted_object: json(c.promotedObject) } : s.pixelId ? { promoted_object: json({ pixel_id: s.pixelId, ...(s.event ? { custom_event_type: s.event } : {}) }) } : {}),
     ...(cbo ? {} : { ...budgetFields(s.budget), bid_strategy: "LOWEST_COST_WITHOUT_CAP" }),
     ...(s.start ? { start_time: metaTime(s.start, tz) } : {}),
     ...(s.end || lifetime ? { end_time: metaTime(s.end ?? s.start ?? "", tz, true) } : {}),
-    targeting: json(targetingSpec(s.targeting, s.placements)),
+    targeting: json(c?.targeting ?? targetingSpec(s.targeting, s.placements)),
     attribution_spec: json(ATTRIBUTION_SPEC),
   };
 }

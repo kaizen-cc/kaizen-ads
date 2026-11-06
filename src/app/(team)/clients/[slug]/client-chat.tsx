@@ -12,6 +12,7 @@ import { createClient } from "@/lib/supabase/client";
 import { Layer } from "./layer";
 import { ChatPlan } from "./chat-plan";
 import { LaunchCard } from "./launch-card";
+import { GoogleLaunchCard } from "./google-launch-card";
 
 // The client desk: a button in the corner that opens a drawer, so the page itself doesn't get longer. Ask a question,
 // strategize, get a summary, share files and links (filed in the client's documents and read), tell it what to
@@ -19,13 +20,18 @@ import { LaunchCard } from "./launch-card";
 // audit (the same audit as on the KPI board). Each person has their own thread per client, kept between visits.
 
 export type AuditTarget = { id: string; label: string; status: "none" | "queued" | "running" | "ready" | "failed"; auditId: string | null };
+/** The KPI card a chat was opened from: launches and changes that don't name a platform go to its account */
+export type ChatScope = { platform: "meta" | "google"; targetId?: string | null };
 
 const STARTERS = [
   "Summarize where this account stands",
   "What should we test next, and why?",
   "What has the client told us lately?",
   "Pause the ads that spent with no results this week",
+  "Launch a new ad group in Google Ads",
 ];
+const LAUNCH_STARTERS = { google: "Launch a new ad group in Google Ads", meta: "Launch ads on Meta from a launch sheet" } as const;
+const LAUNCH_DRAFT = { google: "Launch in Google Ads: ", meta: "Launch on Meta (I'm sharing the launch sheet): " } as const;
 const MAX_FILE = 50 * 1024 * 1024;
 const safe = (n: string) => n.normalize("NFKD").replace(/[^\w.\-]+/g, "-").replace(/-+/g, "-").slice(-120);
 
@@ -70,7 +76,7 @@ function Bubble({ t, onUndo, launchLatest = true }: { t: ChatTurn; onUndo?: (i: 
       {/* A change in the ad account (or the buyer) it planned: check the exact objects, then confirm */}
       {!me && t.plan && <ChatPlan id={t.plan.id} />}
       {/* A launch from a shared launch sheet: the full card on its latest turn, a pointer to it on earlier ones */}
-      {!me && t.launch && <LaunchCard id={t.launch.id} compact={!launchLatest} />}
+      {!me && t.launch && (t.launch.platform === "google" ? <GoogleLaunchCard id={t.launch.id} compact={!launchLatest} /> : <LaunchCard id={t.launch.id} compact={!launchLatest} />)}
       {!me && t.level && (
         <span className="flex items-center gap-1.5 px-1 text-[10px] text-ink/40">
           <span className={`h-1.5 w-1.5 rounded-full ${LEVEL[t.level].dot}`} />
@@ -87,7 +93,7 @@ function Bubble({ t, onUndo, launchLatest = true }: { t: ChatTurn; onUndo?: (i: 
  * (a KPI card), which loads the thread when opened. Either way it's the same thread, so a conversation started on the
  * KPI board is there on the client page and the other way round.
  */
-export function ClientChat({ clientId, client, initial, targets, live, variant = "floating" }: { clientId: string; client: string; initial?: ChatTurn[]; targets: AuditTarget[]; live: boolean; variant?: "floating" | "inline" }) {
+export function ClientChat({ clientId, client, initial, targets, live, variant = "floating", scope = null }: { clientId: string; client: string; initial?: ChatTurn[]; targets: AuditTarget[]; live: boolean; variant?: "floating" | "inline"; scope?: ChatScope | null }) {
   const router = useRouter();
   // On the client page the open chat is in the address (?chat=1), so back closes it and a link opens it. The inline
   // button sits on cards that can share a page, so it keeps its own.
@@ -186,7 +192,7 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
       const { error: e } = await supabase.storage.from("client-docs").upload(path, f, { contentType: f.type || "application/octet-stream" });
       if (!e) uploaded.push({ path, name: f.name, mime: f.type, bytes: f.size });
     }
-    const r = await askClientAi(clientId, text, deep, uploaded);
+    const r = await askClientAi(clientId, text, deep, uploaded, scope);
     clearTimeout(t);
     setSlow(false);
     setPending(null);
@@ -222,7 +228,22 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
           </svg>
           Ask about {client}
         </button>
-      ) : (
+      ) : null}
+      {variant === "inline" && scope && (
+        <button
+          type="button"
+          onClick={() => {
+            setOpen(true);
+            setQ((cur) => cur || LAUNCH_DRAFT[scope.platform]);
+          }}
+          title={`Tell the chat what to launch in ${scope.platform === "google" ? "Google Ads" : "Meta"}, or share the sheet: it asks what it needs, shows every object it will create and deploys it paused when you say so`}
+          className="inline-flex h-9 max-md:h-11 shrink-0 items-center gap-2 rounded-full border border-line px-4 text-sm text-muted transition-colors hover:border-brand/50 hover:text-fg"
+        >
+          <span aria-hidden>↗</span>
+          Launch with the chat
+        </button>
+      )}
+      {variant === "inline" ? null : (
       <button
         type="button"
         onClick={() => setOpen(true)}
@@ -250,7 +271,7 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
           <div className="grid min-w-0 gap-1">
             <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-ink/50">Client desk</p>
             <h2 className="font-display text-2xl leading-tight tracking-tight [overflow-wrap:anywhere]">{client}</h2>
-            <p className="text-xs text-ink/50">Ask anything, share files and links (they&apos;re filed in the client&apos;s documents), tell it what to remember, ask for a change in the ad account, or drop a launch sheet to launch it (it shows exactly what it will create or touch for you to confirm).</p>
+            <p className="text-xs text-ink/50">Ask anything, share files and links (they&apos;re filed in the client&apos;s documents), tell it what to remember, ask for a change in the ad account, or launch something new: tell it what to launch in Google Ads, or drop a launch sheet or keyword sheet (it shows exactly what it will create or touch for you to confirm).</p>
           </div>
           <span className="flex shrink-0 gap-1.5">
             {chat.length > 0 && (
@@ -308,7 +329,7 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
           {!loaded && <p className="animate-pulse text-xs text-ink/50">Loading your conversation about {client}…</p>}
           {loaded && !chat.length && !pending && (
             <div className="grid gap-2">
-              {STARTERS.map((s) => (
+              {(scope ? [LAUNCH_STARTERS[scope.platform], ...STARTERS.filter((x) => x !== LAUNCH_STARTERS.google)] : STARTERS).map((s) => (
                 <button key={s} type="button" onClick={() => ask(s)} className="min-h-11 rounded-[12px] border border-ink/[0.08] px-3.5 py-2.5 text-left text-[13px] md:min-h-0 text-ink/70 transition-colors hover:border-brand/50 hover:text-fg">
                   {s}
                 </button>

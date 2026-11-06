@@ -29,6 +29,8 @@ export type Proposal = {
     ageMax: number;
     advantageAudience: boolean;
     event: string;
+    /** The existing ad set a new one is copied from ("" when it isn't a copy) */
+    cloneFrom?: string;
   }[];
   ads: { key: string; adsetKey: string; rows: number[]; name: string; identity: "page" | "partnership"; page: string; partner: string; cta: string; link: string }[];
 };
@@ -84,8 +86,12 @@ export function buildPlan(p: Proposal, ctx: PlanContext): { plan: LaunchPlan; wa
       else if (r.type === "region") regions.push({ key: r.key, name: r.name ?? g.text });
       else if (r.type === "country" && r.country) countries.push(r.country);
     }
-    if (g0(cities, regions, countries, s.zips)) warnings.push(`Ad set "${s.name}" has no location.`);
+    // A copy of an existing ad set keeps that ad set's places (read when the plan is laid out)
+    const cloneFrom = s.mode !== "existing" && s.cloneFrom?.trim() ? s.cloneFrom.trim() : null;
+    if (!cloneFrom && g0(cities, regions, countries, s.zips)) warnings.push(`Ad set "${s.name}" has no location.`);
     return {
+      cloneFrom,
+      cloned: null,
       key: s.key,
       campaignKey: s.campaignKey,
       mode: s.mode === "existing" && s.existingId ? "existing" : "new",

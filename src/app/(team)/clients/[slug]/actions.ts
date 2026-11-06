@@ -455,13 +455,21 @@ export async function markOnboarded(clientId: string, slug: string): Promise<Act
 }
 
 /** The AI chat on the client page: one message in your own thread about this client. RLS decides who sees the client. */
-export async function askClientAi(clientId: string, question: string, goDeep = false, files: { path: string; name: string; mime: string; bytes: number }[] = []): Promise<{ ok: true; chat: ChatTurn[] } | { ok: false; error: string }> {
+export async function askClientAi(
+  clientId: string,
+  question: string,
+  goDeep = false,
+  files: { path: string; name: string; mime: string; bytes: number }[] = [],
+  /** Opened from a KPI card: that card's platform and account, for launches and changes that don't name one */
+  scope: { platform: "meta" | "google"; targetId?: string | null } | null = null,
+): Promise<{ ok: true; chat: ChatTurn[] } | { ok: false; error: string }> {
   const me = await requireStaff();
   if (!question.trim() && !files.length) return { ok: false, error: "Ask something first." };
   const { data: c } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
   if (!c) return { ok: false, error: "Client not found." };
   try {
-    const chat = await askAboutClient(createAdminClient(), clientId, me.id, question, goDeep, files);
+    const safeScope = scope && (scope.platform === "google" || scope.platform === "meta") ? { platform: scope.platform, targetId: typeof scope.targetId === "string" ? scope.targetId : null } : null;
+    const chat = await askAboutClient(createAdminClient(), clientId, me.id, question, goDeep, files, safeScope);
     revalidatePath("/clients/[slug]", "page");
     return { ok: true, chat };
   } catch (e) {

@@ -119,6 +119,27 @@ export function xlsxToGrid(buf: Buffer, sheetName?: string): Grid | null {
   return best;
 }
 
+/** Every sheet of an XLSX that holds something, with its tab name (a Google buyer's file is often one tab per ad group) */
+export function xlsxTabs(buf: Buffer): { title: string; grid: Grid }[] {
+  const parts = unzip(buf, (n) => /^xl\/(workbook\.xml|_rels\/workbook\.xml\.rels|sharedStrings\.xml|styles\.xml|worksheets\/(_rels\/)?sheet\d+\.xml(\.rels)?)$/.test(n));
+  const wb = parts.get("xl/workbook.xml")?.toString("utf8");
+  if (!wb) return [];
+  const rels = parts.get("xl/_rels/workbook.xml.rels")?.toString("utf8") ?? "";
+  const shared = [...(parts.get("xl/sharedStrings.xml")?.toString("utf8") ?? "").matchAll(/<si>([\s\S]*?)<\/si>/g)].map((m) => texts(m[1]));
+  const fillOf = styleFills(parts.get("xl/styles.xml")?.toString("utf8"));
+  const out: { title: string; grid: Grid }[] = [];
+  for (const m of wb.matchAll(/<sheet\b[^>]*>/g)) {
+    const rid = attr(m[0], "r:id");
+    const target = rels.match(new RegExp(`<Relationship[^>]*Id="${rid}"[^>]*Target="([^"]+)"`))?.[1] ?? rels.match(new RegExp(`<Relationship[^>]*Target="([^"]+)"[^>]*Id="${rid}"`))?.[1];
+    const path = target ? `xl/${target.replace(/^\/?xl\//, "")}` : null;
+    const xml = path ? parts.get(path)?.toString("utf8") : null;
+    if (!path || !xml) continue;
+    const grid = sheetGrid(xml, shared, fillOf, parts.get(path.replace(/worksheets\//, "worksheets/_rels/") + ".rels")?.toString("utf8") ?? "");
+    if (grid.rows.length) out.push({ title: unescape(attr(m[0], "name") ?? ""), grid });
+  }
+  return out;
+}
+
 function sheetGrid(xml: string, shared: string[], fillOf: (string | null)[], rels: string): Grid {
   const cells = new Map<string, Cell>();
   let maxR = -1;
