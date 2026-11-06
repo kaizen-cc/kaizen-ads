@@ -42,7 +42,7 @@ export default async function TodayPage() {
       resolved={today.resolved}
       counts={today.counts}
       topics={TOPICS}
-      home={me.isExec || me.isLead ? "/pipeline" : "/next"}
+      home="/pipeline"
       score={score}
       />
       </CreativeFormatsProvider>

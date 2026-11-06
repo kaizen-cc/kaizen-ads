@@ -8,7 +8,7 @@ import type { ClientCall } from "./calls-panel";
 import { notFound } from "next/navigation";
 import type { Digest } from "@/lib/ai";
 import { isExecOrLead, requireStaff, seesAllClients } from "@/lib/auth";
-import { SLOTS, canHold, isCreativeRole } from "@/lib/roles";
+import { SLOTS, canHold, canSeeReports, isCreativeRole } from "@/lib/roles";
 import { freshness, nyToday } from "@/lib/dates";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -420,8 +420,8 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       knowledge={knowledge}
       loom={loom}
       playbook={{ items: ledger, learnings: brandBible?.learnings ?? [] }}
-      // Client reports are the buyers' and account managers', not the creative team's
-      reports={isCreativeRole(me.role) ? null : reportHistory}
+      // Client reports are the executives' and media buyers' only
+      reports={canSeeReports(me) ? reportHistory : null}
       launchRules={launchRules}
       readiness={readiness}
       services={{

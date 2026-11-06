@@ -1,4 +1,3 @@
-import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { TodayHero, TodayHeroSkeleton } from "./views/today-hero";
 import { requireStaff, type Staff } from "@/lib/auth";
@@ -7,7 +6,7 @@ import { loadHome, loadKpiPulse, type KpiPulse } from "@/lib/home";
 import { loadProduction } from "@/lib/production";
 import { roleLabel } from "@/lib/roles";
 import { servicesOf } from "@/lib/services";
-import { businessDuration, health, stageInfo, type Stage } from "@/lib/stages";
+import { type Stage } from "@/lib/stages";
 import { createClient } from "@/lib/supabase/server";
 import { loadOwedReplies } from "@/lib/owed-replies";
 import { HiddenLog } from "./views/hidden-log";
@@ -18,51 +17,96 @@ import { loadWatchList } from "@/lib/fatigue";
 import { HandoffCallout } from "@/components/handoff-callout";
 import { LeaderView } from "./views/leader-view";
 import { PulseView } from "./views/pulse-view";
-import type { Tone } from "./views/shared";
-import { WorkView, type WorkVariant } from "./views/work-view";
+import { PageHeader } from "./views/shared";
+import { NextSection } from "./views/next-section";
+import { loadNextForMe } from "@/lib/next-for-me";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
-const variantFor = (me: Staff): WorkVariant => (me.isCreative ? "creative" : me.isCopywriter ? "copy" : me.isCoordinator ? "cs" : "buyer");
 const department = (me: Staff) => (me.role === "head_of_creative" ? "Creative" : me.role === "head_of_google" ? "Google" : "Meta");
 
-// The strategist runs in the background after "Look again", within this page's time
+// The strategist runs in the background after "Look again" (and a brief from Next for me is written), within this
+// page's time
 export const maxDuration = 300;
 
-// Each tier gets its own home, from the live tickets.
+type HiddenRow = { key: string; how: string; label: string | null; href: string | null; hidden_at: string };
+
+/** The daily recap's way in, streamed in after the rest of the page, and under it what this person cleared off their board (kept, so anything can be put back) */
+function Recap({ db, me, hidden }: { db: SupabaseClient; me: Staff; hidden: HiddenRow[] }) {
+  return (
+    <>
+      <Suspense fallback={<TodayHeroSkeleton />}>
+        <TodayHero db={db} me={me} />
+      </Suspense>
+      <HiddenLog items={hidden.map((r) => ({ key: r.key, how: r.how as "done" | "dismissed", label: r.label, href: r.href, at: r.hidden_at }))} />
+    </>
+  );
+}
+
+/** The Google team: ideas taken to their clients from Ideas › Google, waiting on a decision or to be applied */
+async function googleDeploys(db: SupabaseClient, me: Staff, clientIds: string[]) {
+  if (!(me.role === "google_buyer" || me.role === "head_of_google") || !clientIds.length) return [];
+  const { loadDeploys } = await import("@/lib/google-deploy");
+  return (await loadDeploys(db, clientIds, { open: true }).catch(() => [])).filter((d) => d.status === "open" || d.status === "approved");
+}
+
+/**
+ * Everyone's home: the daily recap first, then (execs and leads) the few themes of the agency, and under it all Next
+ * for me, everything on the person signed in. Team members get their recap and their Next for me.
+ */
 export default async function Home() {
   const [me, db] = await Promise.all([requireStaff(), createClient()]);
-  // Team members' home is Next for me; execs and leads keep the overview
-  if (!me.isExec && !me.isLead) redirect("/next");
   const now = new Date();
   const base = { greeting: greetingFor(now), firstName: me.fullName.split(" ")[0], today: todayLabel(now) };
-  const variantNow = variantFor(me);
+  const hiddenQuery = () => db.from("hidden_items").select("key, how, label, href, hidden_at").eq("profile_id", me.id).order("hidden_at", { ascending: false }).limit(200);
+  const assignedQuery = () => db.from("client_assignments").select("client_id").eq("profile_id", me.id);
+
+  // Team members (designers, editors, buyers, the copywriter, customer success): their recap and their Next for me.
+  // What the themes hold for execs and leads (promises, messages, ads wearing out, new clients) reaches them in the
+  // recap and in Next for me already, so there's nothing else to tab through.
+  if (!me.isExec && !me.isLead) {
+    const [next, { data: mine }, { data: hiddenRows }] = await Promise.all([loadNextForMe(db, me), assignedQuery(), hiddenQuery()]);
+    const ids = [...new Set((mine ?? []).map((m) => m.client_id as string))];
+    // What works across businesses like the ones they work on: the same patterns the audits and refresh briefs build on
+    const [patterns, deploys] = await Promise.all([ids.length ? import("@/lib/patterns").then(({ loadPatterns }) => loadPatterns(db, ids)).catch(() => null) : Promise.resolve(null), googleDeploys(db, me, ids)]);
+    const n = next.now.length + next.decide.length;
+    return (
+      <div className="mx-auto grid max-w-6xl gap-8">
+        <PageHeader today={base.today} title={`${base.greeting}, ${base.firstName}`} subtitle={`${roleLabel(me.role)} · ${n ? `${n} ${n === 1 ? "thing needs" : "things need"} you` : "nothing needs you right now"}`} />
+        <Recap db={db} me={me} hidden={(hiddenRows ?? []) as HiddenRow[]} />
+        <HandoffCallout db={db} me={me.id} />
+        <NextSection data={next} me={me.id} deploys={deploys} patterns={patterns} />
+      </div>
+    );
+  }
+
   // Ad accounts against target, each service line on its own: execs see Meta and Google, the Head of Meta only Meta,
-  // the Head of Google only Google, the Head of Creative neither; a buyer only the accounts they own
+  // the Head of Google only Google, the Head of Creative neither
   const lines: ("meta" | "google")[] = me.isExec ? ["meta", "google"] : me.role === "head_of_meta" ? ["meta"] : me.role === "head_of_google" ? ["google"] : [];
-  const [h, kpiLines, buyerKpis, suggestions, fatigue, onboarding, clientOptions, callPromisesAll, owedItems, said, { data: hiddenRows }, patternState, production] = await Promise.all([
+  const [h, kpiLines, suggestions, fatigue, onboarding, clientOptions, callPromisesAll, owedItems, said, { data: hiddenRows }, patternState, production, next, { data: assigned }] = await Promise.all([
     loadHome(db, me),
     Promise.all(lines.map((platform) => loadKpiPulse(db, { platform }))),
-    !me.isLead && !me.isExec && variantNow === "buyer" ? loadKpiPulse(db, me.id) : Promise.resolve(null),
     // Briefs the strategist suggests (Meta creative): execs and the leads on it decide them, not the Head of Google
-    (me.isExec || me.isLead) && me.role !== "head_of_google" ? loadSuggestions(db, formatsFor(me)) : Promise.resolve(null),
-    // Ads wearing out: every client for execs and leads, a buyer's own clients for a buyer
-    // (Meta ads only, so not for the Head of Google)
-    me.role === "head_of_google" ? Promise.resolve(null) : me.isExec || me.isLead ? loadWatchList(db, { limit: 8 }) : variantFor(me) === "buyer" ? loadWatchList(db, { buyerId: me.id, limit: 12 }) : Promise.resolve(null),
-    // New and returning clients, first thing on the page for execs and leads
-    // Execs and leads: every client. A buyer: their own clients (the access rules narrow it)
-    me.isExec || me.isLead || variantFor(me) === "buyer" ? loadOnboarding(db) : Promise.resolve(null),
-    me.isExec || me.isLead ? db.from("clients").select("id, name").is("archived_at", null).order("name").then(({ data }) => data ?? []) : Promise.resolve([]),
-    // What we promised on calls and haven't started: everyone's for execs and leads, a buyer's own clients for a buyer
-    me.isExec || me.isLead || variantFor(me) === "buyer" ? loadCallPromises(db) : Promise.resolve(null),
+    me.role !== "head_of_google" ? loadSuggestions(db, formatsFor(me)) : Promise.resolve(null),
+    // Ads wearing out: every client (Meta ads only, so not for the Head of Google)
+    me.role === "head_of_google" ? Promise.resolve(null) : loadWatchList(db, { limit: 8 }),
+    // New and returning clients: every client
+    loadOnboarding(db),
+    db.from("clients").select("id, name").is("archived_at", null).order("name").then(({ data }) => data ?? []),
+    // What we promised on calls and haven't started: everyone's
+    loadCallPromises(db),
     // Messages nobody answered: their own, and the ones escalated past a second notice on the people they lead
     loadOwedReplies(db, me).catch(() => []),
     // And what someone said yes to in Slack or email that's past due with nothing moving
     loadSaidPromises(db, me).catch(() => []),
     // What this person cleared off their own board (Done or Dismiss): gone for them, still there for everyone else
-    db.from("hidden_items").select("key, how, label, href, hidden_at").eq("profile_id", me.id).order("hidden_at", { ascending: false }).limit(200),
+    hiddenQuery(),
     // What works across every client of a kind (execs and leads), and who isn't using it yet
     import("@/lib/patterns").then(({ loadPatterns }) => loadPatterns(db)).catch(() => null),
     // How creative production is going (speed, revisions, the team): execs and the Head of Creative
     me.isExec || me.role === "head_of_creative" ? loadProduction(db).catch(() => null) : Promise.resolve(null),
+    // Next for me: everything on this person, under the themes
+    loadNextForMe(db, me),
+    assignedQuery(),
   ]);
   const hidden = new Set((hiddenRows ?? []).map((r) => r.key as string));
   h.attention = h.attention.filter((a) => !hidden.has(`alert:${a.id}`));
@@ -94,120 +138,51 @@ export default async function Home() {
   }
   const patterns = patternState ? { state: patternState, canBrief: true, canRefresh: me.isExec } : null;
 
-  // The daily recap's way in, streamed in after the rest of the page, and under it what this person cleared off their
-  // board (kept, so anything can be put back)
-  const recap = (
-    <>
-      <Suspense fallback={<TodayHeroSkeleton />}>
-        <TodayHero db={db} me={me} />
-      </Suspense>
-      <HiddenLog items={(hiddenRows ?? []).map((r) => ({ key: r.key as string, how: r.how as "done" | "dismissed", label: r.label as string | null, href: r.href as string | null, at: r.hidden_at as string }))} />
-    </>
-  );
+  const recap = <Recap db={db} me={me} hidden={(hiddenRows ?? []) as HiddenRow[]} />;
+  // Next for me, under the themes. The patterns for their clients are already in the themes (every client's)
+  const deploys = await googleDeploys(db, me, [...new Set((assigned ?? []).map((m) => m.client_id as string))]);
+  const nextSection = <NextSection data={next} me={me.id} deploys={deploys} />;
 
   if (me.isExec) {
-    return <PulseView {...base} vitals={h.vitals} attention={h.attention} phases={h.phases} clients={h.clients} team={h.team} monthElapsed={h.monthElapsed} kpis={kpis} production={production} suggestions={suggestions} fatigue={fatigue} onboarding={onboarding} clientOptions={clientOptions} callPromises={callPromises} owed={owed} patterns={patterns} handoffs={<HandoffCallout db={db} me={me.id} />} recap={recap} />;
+    return <PulseView {...base} vitals={h.vitals} attention={h.attention} phases={h.phases} clients={h.clients} team={h.team} monthElapsed={h.monthElapsed} kpis={kpis} production={production} suggestions={suggestions} fatigue={fatigue} onboarding={onboarding} clientOptions={clientOptions} callPromises={callPromises} owed={owed} patterns={patterns} handoffs={<HandoffCallout db={db} me={me.id} />} recap={recap} next={nextSection} />;
   }
 
-  if (me.isLead) {
-    const dept = department(me);
-    const creative = dept === "Creative";
-    // The Head of Creative decides creative review; the heads of Meta and Google, launches
-    const google = dept === "Google";
-    // Ads launched from here are Meta ads: the Head of Google has none waiting on them
-    const waiting = google ? [] : h.rows.filter((r) => (creative ? r.stage === "internal_review" : r.stage === "ready_for_launch")).sort((a, b) => b.minutes_over - a.minutes_over);
-    const mine = new Set<Stage>(creative ? ["requested", "in_production", "client_revision", "internal_review"] : ["client_review", "ready_for_launch"]);
-    const team = h.teamOf(creative ? ["graphic_designer", "video_editor"] : google ? ["google_buyer"] : ["media_buyer"]);
-    return (
-      <LeaderView
-        {...base}
-        department={dept}
-        reviewLabel={creative ? "Waiting for your review" : "Ready to launch"}
-        stats={{
-          waitingOnYou: waiting.length,
-          teamActive: team.reduce((n, l) => n + l.active, 0),
-          teamOverdue: team.reduce((n, l) => n + l.overdue, 0),
-          onTimeRate: h.vitals.onTimeRate,
-        }}
-        review={waiting.map((r) => h.toQueue(r))}
-        attention={h.attention.filter((a) => a.kind === "Allotment" || h.rows.some((r) => a.href === `/board?t=${r.number}` && mine.has(r.stage)))}
-        team={team}
-        phases={h.phases}
-        canRequest
-        kpis={kpis}
-        production={production}
-        suggestions={suggestions}
-        fatigue={fatigue}
-        onboarding={onboarding}
-        clientOptions={clientOptions}
-        callPromises={callPromises}
-        owed={owed}
-        patterns={patterns}
-        handoffs={<HandoffCallout db={db} me={me.id} />}
-        recap={recap}
-      />
-    );
-  }
-
-  const variant = variantFor(me);
-  const sideRow = (r: (typeof h.rows)[number]) => ({
-    label: `${r.client_name} · ${r.title}`,
-    detail: stageInfo(r.stage)?.label ?? r.stage,
-    value: businessDuration(r.minutes_in_stage),
-    tone: health(r.minutes_over, r.stage) as Tone,
-  });
-  const titleOf = (id: string) => h.rows.find((r) => r.id === id);
-
-  const fourth =
-    variant === "buyer"
-      ? h.rows.filter((r) => r.stage === "ready_for_launch" && r.buyer_id === me.id).length
-      : variant === "creative"
-        ? h.mine.filter((r) => r.stage === "client_revision" || (r.stage === "in_production" && r.internal_rounds > 0)).length
-        : variant === "copy"
-          ? h.copyDone.filter((c) => c.approved_by === me.id).length
-          : h.rows.filter((r) => r.stage === "client_review").length;
-
-  const side =
-    variant === "buyer"
-      ? { title: "Waiting on your clients", items: h.rows.filter((r) => r.stage === "client_review" && r.buyer_id === me.id).map(sideRow), empty: "Approvals your clients owe show here." }
-      : variant === "creative"
-        ? { title: "Coming up", items: h.rows.filter((r) => r.stage === "requested" && r.creative_id === me.id).map(sideRow), empty: "Briefs assigned to you appear here before they're due." }
-        : variant === "copy"
-          ? {
-              title: "Recently passed on",
-              items: h.copyDone
-                .filter((c) => c.approved_by === me.id)
-                .map((c) => {
-                  const r = titleOf(c.request_id);
-                  return { label: r ? `${r.client_name} · ${r.title}` : "A ticket", detail: r ? (stageInfo(r.stage)?.label ?? r.stage) : "Approved", value: new Date(c.approved_at).toLocaleDateString("en-US", { weekday: "short", timeZone: "America/New_York" }), tone: "ok" as Tone };
-                }),
-              empty: "Copy you've approved this week.",
-            }
-          : { title: "Waiting on clients", items: h.rows.filter((r) => r.stage === "client_review").sort((a, b) => b.minutes_in_stage - a.minutes_in_stage).map(sideRow), empty: "Approvals in progress, with their business-hours clock." };
-
-  // For designers and editors: what they sent to review this week, and how much passed first time
-  let delivered: { week: number; firstPass: number | null } | undefined;
-  if (variant === "creative") {
-    const week = h.evs.filter((e) => e.actor_id === me.id && e.to_stage === "internal_review" && e.created_at >= h.since7).length;
-    const myTickets = new Set(h.rows.filter((r) => r.creative_id === me.id).map((r) => r.id));
-    const decisions = h.evs.filter((e) => e.kind === "review" && myTickets.has(e.request_id) && (e.data?.decision === "approve" || e.data?.decision === "changes"));
-    delivered = { week, firstPass: decisions.length ? Math.round((decisions.filter((e) => e.data?.decision === "approve").length / decisions.length) * 100) : null };
-  }
-
+  // Leaders (Head of Creative / Meta / Google)
+  const dept = department(me);
+  const creative = dept === "Creative";
+  // The Head of Creative decides creative review; the heads of Meta and Google, launches
+  const google = dept === "Google";
+  // Ads launched from here are Meta ads: the Head of Google has none waiting on them
+  const waiting = google ? [] : h.rows.filter((r) => (creative ? r.stage === "internal_review" : r.stage === "ready_for_launch")).sort((a, b) => b.minutes_over - a.minutes_over);
+  const mine = new Set<Stage>(creative ? ["requested", "in_production", "client_revision", "internal_review"] : ["client_review", "ready_for_launch"]);
+  const team = h.teamOf(creative ? ["graphic_designer", "video_editor"] : google ? ["google_buyer"] : ["media_buyer"]);
   return (
-    <WorkView
+    <LeaderView
       {...base}
-      variant={variant}
-      role={roleLabel(me.role)}
-      stats={{ mine: h.mine.length, dueToday: h.dueToday, overdue: h.mine.filter((r) => r.minutes_over > 0).length, fourth }}
-      queue={h.mine.map((r) => h.toQueue(r))}
-      side={side}
-      delivered={delivered}
-      canAct={variant === "buyer"}
-      kpis={buyerKpis}
+      department={dept}
+      reviewLabel={creative ? "Waiting for your review" : "Ready to launch"}
+      stats={{
+        waitingOnYou: waiting.length,
+        teamActive: team.reduce((n, l) => n + l.active, 0),
+        teamOverdue: team.reduce((n, l) => n + l.overdue, 0),
+        onTimeRate: h.vitals.onTimeRate,
+      }}
+      attention={h.attention.filter((a) => a.kind === "Allotment" || h.rows.some((r) => a.href === `/board?t=${r.number}` && mine.has(r.stage)))}
+      team={team}
+      phases={h.phases}
+      canRequest
+      kpis={kpis}
+      production={production}
+      suggestions={suggestions}
       fatigue={fatigue}
       onboarding={onboarding}
+      clientOptions={clientOptions}
       callPromises={callPromises}
+      owed={owed}
+      patterns={patterns}
+      handoffs={<HandoffCallout db={db} me={me.id} />}
+      recap={recap}
+      next={nextSection}
     />
   );
 }

@@ -3,11 +3,11 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useSyncExternalStore, useTransition } from "react";
-import { markBibleReviewed } from "./actions";
+import { markBibleReviewed } from "../next-actions";
 import { closeThen, pushParams, useParam } from "@/lib/url-state";
 import type { NextForMe, NextItem } from "@/lib/next-for-me";
 import type { OpenSuggestion } from "@/lib/suggestions";
-import { SuggestionSheet } from "../pipeline/views/suggested-briefs";
+import { SuggestionSheet } from "./suggested-briefs";
 import { SaveIdeaStar } from "@/components/save-idea-star";
 
 const SECTIONS: { key: keyof Omit<NextForMe, "stats">; title: string; hint: string; empty: string }[] = [
@@ -72,8 +72,9 @@ export function NextList({ data, me }: { data: NextForMe; me: string }) {
   const router = useRouter();
   const closed = useClosed(me);
   const toggle = (key: string) => writeClosed(me, closed.includes(key) ? closed.filter((k) => k !== key) : [...closed, key]);
-  // The brief open is in the address (?brief=id), so back closes it and a link opens it
-  const openId = useParam("brief");
+  // The brief open is in the address (?todo=id), so back closes it and a link opens it. Its own param, not ?brief:
+  // the suggested briefs in the Overview's themes above use that one, and the same brief can be in both
+  const openId = useParam("todo");
   const sheet = (openId && SECTIONS.flatMap((x) => data[x.key]).find((it) => it.suggestion?.id === openId)?.suggestion) || null;
   // Bibles marked reviewed leave the list at once; the page catches up behind it
   const [reviewed, setReviewed] = useState<string[]>([]);
@@ -147,7 +148,7 @@ export function NextList({ data, me }: { data: NextForMe; me: string }) {
               ) : (
                 <ul id={`next-${s.key}`} className="grid divide-y divide-line overflow-hidden rounded-[14px] border border-line bg-surface">
                   {items.map((it) => (
-                    <Row key={it.id} it={it} onBrief={(b) => pushParams({ brief: b.id })} onReviewed={it.bible ? () => review(it) : undefined} />
+                    <Row key={it.id} it={it} onBrief={(b) => pushParams({ todo: b.id })} onReviewed={it.bible ? () => review(it) : undefined} />
                   ))}
                 </ul>
               )}
@@ -159,7 +160,7 @@ export function NextList({ data, me }: { data: NextForMe; me: string }) {
       {sheet && (
         <SuggestionSheet
           s={sheet}
-          onClose={() => closeThen(() => router.refresh(), "brief")}
+          onClose={() => closeThen(() => router.refresh(), "todo")}
         />
       )}
     </div>

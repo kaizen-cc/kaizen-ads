@@ -4,7 +4,7 @@ import { askJson } from "@/lib/ai";
 import { isExecOrLead, type Staff } from "@/lib/auth";
 import { nyParts } from "@/lib/kpi/calc";
 import { postAsApp, postAsUser } from "@/lib/slack-user";
-import { canReportOn } from "./access";
+import { canReportOn, reportListeners } from "./access";
 import { renderReportPdf, type ReportPart, type ReportPdfInput } from "./pdf";
 import type { ReportMetrics } from "./metrics";
 import type { ReportLayout } from "./format";
@@ -95,9 +95,10 @@ export async function buildReport(admin: SupabaseClient, db: SupabaseClient, me:
       .single();
     if (r) parts.push({ id: r.id as string, owner, platform: t.platform });
   }
-  // Another buyer's part: they're asked for it
+  // Another buyer's part: they're asked for it (only executives and media buyers hear about reports)
   const { data: client } = await admin.from("clients").select("name").eq("id", clientId).single();
-  for (const p of parts.filter((x) => x.owner !== me.id))
+  const askable = await reportListeners(admin, parts.map((x) => x.owner));
+  for (const p of parts.filter((x) => x.owner !== me.id && askable.has(x.owner)))
     await admin.from("notifications").upsert(
       {
         profile_id: p.owner,
@@ -158,7 +159,7 @@ export async function approvePart(admin: SupabaseClient, reportId: string, by: S
   const { b, parts } = await loadParts(admin, r.bundle_id);
   const waiting = parts.filter((p) => p.status !== "submitted" && p.status !== "posted");
   // The builder hears that a part is in
-  if (b.created_by && b.created_by !== by.id)
+  if (b.created_by && b.created_by !== by.id && (await reportListeners(admin, [b.created_by])).has(b.created_by))
     await admin.from("notifications").upsert(
       {
         profile_id: b.created_by,
@@ -231,11 +232,13 @@ export async function deliverBuilt(admin: SupabaseClient, bundleId: string, by: 
     const now = new Date().toISOString();
     await admin.from("report_bundles").update({ status: "sent", sent_at: now, delivered: { slack: { channel: client.slack_channel_id, ts: out.ts, as: joint ? "app" : "buyer" } } }).eq("id", bundleId);
     await admin.from("reports").update({ status: "posted", posted_at: now, posted_by: by }).eq("bundle_id", bundleId).eq("status", "submitted");
-    const owners = [...new Set([b.created_by, ...parts.map((p) => p.owner_id)].filter((x): x is string => Boolean(x)))];
-    await admin.from("notifications").upsert(
-      owners.map((id) => ({ profile_id: id, kind: "report", title: `${client.name} report sent`, body: `${label}${joint ? ", one message and one PDF for every service, from the Kaizen app" : ""}.`, href: `/reports/${parts.find((p) => p.owner_id === id)?.id ?? parts[0].id}`, client_id: b.client_id, key: `report-sent:${bundleId}`, priority: "normal" })),
-      { onConflict: "profile_id,key", ignoreDuplicates: true },
-    );
+    const told = await reportListeners(admin, [b.created_by, ...parts.map((p) => p.owner_id)]);
+    const owners = [...told];
+    if (owners.length)
+      await admin.from("notifications").upsert(
+        owners.map((id) => ({ profile_id: id, kind: "report", title: `${client.name} report sent`, body: `${label}${joint ? ", one message and one PDF for every service, from the Kaizen app" : ""}.`, href: `/reports/${parts.find((p) => p.owner_id === id)?.id ?? parts[0].id}`, client_id: b.client_id, key: `report-sent:${bundleId}`, priority: "normal" })),
+        { onConflict: "profile_id,key", ignoreDuplicates: true },
+      );
   } catch (e) {
     await admin.from("report_bundles").update({ status: "failed", error: (e instanceof Error ? e.message : String(e)).slice(0, 400) }).eq("id", bundleId);
     throw e;

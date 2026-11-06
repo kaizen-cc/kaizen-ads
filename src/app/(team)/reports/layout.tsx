@@ -1,7 +1,7 @@
-import { keepCreativeOut } from "@/lib/auth";
+import { requireReports } from "@/lib/auth";
 
-// Client reports are the buyers' and account managers': the creative team goes home instead
+// Client reports are the executives' and media buyers': everyone else goes home instead
 export default async function ReportsLayout({ children }: LayoutProps<"/reports">) {
-  await keepCreativeOut("reports");
+  await requireReports();
   return children;
 }

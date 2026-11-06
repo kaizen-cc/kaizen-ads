@@ -33,11 +33,13 @@ export type PulseData = {
   patterns?: import("./overview-topics").SharedTopics["patterns"];
   handoffs?: React.ReactNode;
   recap?: React.ReactNode;
+  /** Next for me: everything on the exec themselves, under the themes */
+  next?: React.ReactNode;
 };
 
 /**
  * Executives: today's recap up top, then four themes (clients at risk, creative and growth, new clients, delivery),
- * each one number and a line. Opening a theme shows only its detail, so the page stays short.
+ * each one number and a line. Opening a theme shows only its detail, so the page stays short. Next for me under it all.
  */
 export function PulseView(d: PulseData) {
   const v = d.vitals;
@@ -81,6 +83,7 @@ export function PulseView(d: PulseData) {
       {d.recap}
       {d.handoffs}
       <Themes themes={themes} />
+      {d.next}
     </div>
   );
 }

@@ -67,6 +67,15 @@ export const worksAs = (role: string | null | undefined, ...as: TeamRole[]) => a
  */
 export const isCreativeRole = (role: string | null | undefined) => worksAs(role, "head_of_creative", "graphic_designer", "video_editor");
 
+/** Who works with client reports: executives and the media buyers (the heads of Meta and Google, Meta and Google buyers) */
+export const REPORT_ROLES: readonly TeamRole[] = ["executive", "head_of_meta", "head_of_google", "media_buyer", "google_buyer"];
+
+/**
+ * Whether someone sees client reports at all (the Reports page, a client's Reports tab, report links and notices):
+ * executives and media buyers only. The creative team, the copywriter and customer success never do.
+ */
+export const canSeeReports = (p: { role: string | null | undefined; isExec?: boolean | null }) => Boolean(p.isExec) || REPORT_ROLES.includes(p.role as TeamRole);
+
 /** Per-client slots and who can fill them. */
 export const SLOTS = [
   { value: "meta_buyer", label: "Meta buyer", eligible: ["media_buyer", "head_of_meta"] as TeamRole[] },

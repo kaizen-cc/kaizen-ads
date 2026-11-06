@@ -2,7 +2,7 @@ import type { WatchRow } from "@/lib/fatigue";
 import type { Production } from "@/lib/production";
 import type { CallPromise, OnboardingState, SuggestionsState } from "@/lib/suggestions";
 import { buildThemes } from "./overview-topics";
-import { FlowStrip, PageHeader, PrimaryAction, Queue, Stats, TeamLoad, type Alert, type KpiPulseData, type Load, type PhaseKey, type PhaseStat, type QueueItem } from "./shared";
+import { FlowStrip, PageHeader, PrimaryAction, Stats, TeamLoad, type Alert, type KpiPulseData, type Load, type PhaseKey, type PhaseStat } from "./shared";
 import { Themes } from "./themes";
 import { Topic } from "./topics";
 
@@ -13,7 +13,6 @@ export type LeaderData = {
   department: string; // "Creative", "Meta", "Google"
   reviewLabel: string; // "Waiting for your review" / "Ready for launch"
   stats: { waitingOnYou: number; teamActive: number; teamOverdue: number; onTimeRate: number | null };
-  review: QueueItem[];
   attention: Alert[];
   team: Load[];
   phases: Record<PhaseKey, PhaseStat>;
@@ -29,26 +28,16 @@ export type LeaderData = {
   patterns?: import("./overview-topics").SharedTopics["patterns"];
 };
 
-/** Leaders (Head of Creative / Meta / Google): their queue first, then the same themes as execs, their team in Delivery. */
-export function LeaderView(d: LeaderData & { handoffs?: React.ReactNode; recap?: React.ReactNode }) {
+/**
+ * Leaders (Head of Creative / Meta / Google): the recap, the same themes as execs (their team in Delivery), then Next
+ * for me. What waits on their review or launch is in Next for me's "Now" (it used to be a "Your queue" theme too).
+ */
+export function LeaderView(d: LeaderData & { handoffs?: React.ReactNode; recap?: React.ReactNode; next?: React.ReactNode }) {
   const working = d.stats.teamActive > 0;
   const themes = buildThemes(d, {
     production: d.production,
     // The Head of Creative: no ad accounts here, so nothing reads as a client at risk
     calm: d.department === "Creative",
-    first: {
-      id: "queue",
-      title: "Your queue",
-      tone: d.review.length ? "brand" : "ok",
-      count: d.review.length,
-      headline: d.review.length ? d.reviewLabel : "Nothing waiting on you",
-      points: d.review.length ? [`oldest first`] : [],
-      content: (
-        <Topic id="review" title={d.reviewLabel} summary={`${d.review.length} waiting, oldest first`} count={d.review.length} tone="brand" defaultOpen>
-          <Queue items={d.review} empty={{ title: "All reviewed", body: "New work for your review shows up here the moment it's uploaded." }} />
-        </Topic>
-      ),
-    },
     delivery: {
       count: d.stats.teamOverdue,
       points: working ? [`${d.stats.teamActive} active on your team`, d.stats.teamOverdue ? `${d.stats.teamOverdue} overdue` : ""].filter(Boolean) : [],
@@ -78,12 +67,24 @@ export function LeaderView(d: LeaderData & { handoffs?: React.ReactNode; recap?:
       <PageHeader
         today={d.today}
         title={`${d.greeting}, ${d.firstName}`}
-        subtitle={`Head of ${d.department} · ${d.stats.waitingOnYou ? `${d.stats.waitingOnYou} waiting on you` : "nothing waiting on you"}`}
+        subtitle={
+          <>
+            Head of {d.department} ·{" "}
+            {d.stats.waitingOnYou ? (
+              <a href="#next" className="underline-offset-4 hover:text-fg hover:underline">
+                {d.stats.waitingOnYou} waiting on you
+              </a>
+            ) : (
+              "nothing waiting on you"
+            )}
+          </>
+        }
         action={<PrimaryAction label="New request" disabled={!d.canRequest} href="/requests/new" />}
       />
       {d.recap}
       {d.handoffs}
       <Themes themes={themes} />
+      {d.next}
     </div>
   );
 }

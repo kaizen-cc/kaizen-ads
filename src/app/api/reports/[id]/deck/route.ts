@@ -1,4 +1,5 @@
 import { requireStaff } from "@/lib/auth";
+import { canSeeReports } from "@/lib/roles";
 import { canReportOn } from "@/lib/reports/access";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -10,6 +11,8 @@ export const maxDuration = 60;
 // export of the Google Slides copy). The same rule as the report itself: its buyer, the leads of its line, execs.
 export async function GET(_request: Request, ctx: RouteContext<"/api/reports/[id]/deck">) {
   const me = await requireStaff();
+  // Reports are only for executives and media buyers
+  if (!canSeeReports(me)) return new Response("Not found", { status: 404 });
   const { id } = await ctx.params;
   if (!adminConfigured() || !/^[0-9a-f-]{36}$/i.test(id)) return new Response("Not found", { status: 404 });
   const db = await createClient();

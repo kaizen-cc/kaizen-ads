@@ -2,7 +2,7 @@ import "server-only";
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { isCreativeRole, isLeadMaker, type TeamRole } from "@/lib/roles";
+import { canSeeReports, isCreativeRole, isLeadMaker, type TeamRole } from "@/lib/roles";
 
 export type Staff = {
   kind: "staff";
@@ -98,15 +98,25 @@ export async function requireExec() {
 }
 
 /**
- * The media-buying pages (the KPI board with its audits and sprints, reports, the Ads Lab) aren't the creative team's.
+ * The media-buying pages (the KPI board with its audits and sprints, the Ads Lab) aren't the creative team's.
  * Someone on it who lands on one (an old link, a bookmark) goes to their own place instead of a dead end: the
  * creative team's KPIs for the KPI board (the Head of Creative; designers and editors the Board), home otherwise.
  */
-export async function keepCreativeOut(page: "kpis" | "reports" | "lab") {
+export async function keepCreativeOut(page: "kpis" | "lab") {
   const staff = await requireStaff();
   if (!isCreativeRole(staff.role)) return staff;
   const lead = staff.role === "head_of_creative";
-  redirect(page === "kpis" ? (lead ? "/board?view=kpis" : "/board") : lead ? "/pipeline" : "/next");
+  redirect(page === "kpis" ? (lead ? "/board?view=kpis" : "/board") : "/pipeline");
+}
+
+/**
+ * Client reports are only for executives and media buyers (canSeeReports). Anyone else who lands on one (an old link,
+ * a bookmark) goes home instead of a dead end.
+ */
+export async function requireReports() {
+  const staff = await requireStaff();
+  if (!canSeeReports(staff)) redirect("/pipeline");
+  return staff;
 }
 
 export async function requireContact() {

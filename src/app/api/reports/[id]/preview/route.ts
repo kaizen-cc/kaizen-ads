@@ -1,4 +1,5 @@
 import { requireStaff } from "@/lib/auth";
+import { canSeeReports } from "@/lib/roles";
 import { canReportOn } from "@/lib/reports/access";
 import { reportImages } from "@/lib/reports/pdf";
 import { loadReport } from "@/lib/reports/share";
@@ -12,6 +13,8 @@ export const maxDuration = 60;
 // with the click targets, and the top ads' pictures), read once; every edit after that is drawn there, at once.
 export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const me = await requireStaff();
+  // Reports are only for executives and media buyers
+  if (!canSeeReports(me)) return new Response("Not found", { status: 404 });
   const { id } = await ctx.params;
   if (!adminConfigured() || !/^[0-9a-f-]{36}$/i.test(id)) return new Response("Not found", { status: 404 });
   const db = await createClient();

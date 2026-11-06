@@ -11,6 +11,7 @@ import { periodsFor, type ReportMetrics } from "./metrics";
 import { platformName } from "./format";
 import { draftReport, type Sections } from "./write";
 import { freshen } from "./regenerate";
+import { reportListeners } from "./access";
 
 // The reporting cadence. Mondays: a weekly report is queued for every live account that spent in the last week, and
 // drafted a few at a time. The 1st: the monthly recap, one part per buyer on the client (Meta, Google), held until
@@ -187,10 +188,12 @@ export async function sendPartNow(admin: SupabaseClient, id: string, by: { id: s
   const { data: waiting } = await admin.from("reports").select("id, platform, owner_id").eq("bundle_id", r.bundle_id).not("status", "in", "(submitted,posted,skipped)");
   await deliverBundle(admin, r.bundle_id, by);
   const name = (p: string) => (p === "google" ? "Google" : "Meta");
-  if (waiting?.length)
+  // Only executives and media buyers hear about reports
+  const told = await reportListeners(admin, (waiting ?? []).map((w) => w.owner_id as string | null));
+  if (waiting?.some((w) => told.has(w.owner_id as string)))
     await admin.from("notifications").upsert(
       waiting
-        .filter((w) => w.owner_id)
+        .filter((w) => told.has(w.owner_id as string))
         .map((w) => ({
           profile_id: w.owner_id,
           kind: "report",
@@ -298,8 +301,10 @@ export async function remindReports(admin: SupabaseClient, today = nyParts(new D
   const { data } = await admin.from("reports").select("id, kind, owner_id, client_id, period_start, status, clients(name)").in("status", ["draft", "failed"]).gte("period_start", new Date(Date.now() - 40 * 86_400_000).toISOString().slice(0, 10));
   const day = Number(today.slice(8, 10));
   let n = 0;
+  // Only executives and media buyers hear about reports
+  const told = await reportListeners(admin, (data ?? []).map((r) => r.owner_id as string | null));
   for (const r of data ?? []) {
-    if (!r.owner_id) continue;
+    if (!r.owner_id || !told.has(r.owner_id as string)) continue;
     const name = (r.clients as unknown as { name: string }).name;
     const monthly = r.kind === "monthly";
     if (monthly && day > 5) continue;

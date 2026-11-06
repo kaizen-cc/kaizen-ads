@@ -52,10 +52,10 @@ export async function markBrandBibleReviewed(clientId: string, slug: string): Pr
   if (!isExecOrLead(me)) return { ok: false, error: "Only the head of creative or an exec can mark it reviewed." };
   const supabase = await createClient();
   const { data, error } = await supabase.from("client_brand_bibles").update({ status: "reviewed", reviewed_at: new Date().toISOString(), reviewed_by: me.id }).eq("client_id", clientId).select("version").maybeSingle();
-  // Theirs is reviewed too: it leaves their "Brand Bibles to review" in Next for me
+  // Theirs is reviewed too: it leaves their "Brand Bibles to review" in Next for me (on the Overview)
   if (data?.version) await supabase.from("brand_bible_reviews").upsert({ client_id: clientId, version: data.version, profile_id: me.id }, { onConflict: "client_id,version,profile_id", ignoreDuplicates: true });
   revalidatePath(`/clients/${slug}`);
-  revalidatePath("/next");
+  revalidatePath("/pipeline");
   return error ? { ok: false, error: error.message } : { ok: true };
 }
 

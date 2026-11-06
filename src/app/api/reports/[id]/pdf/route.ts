@@ -1,4 +1,5 @@
 import { requireStaff } from "@/lib/auth";
+import { canSeeReports } from "@/lib/roles";
 import { pdfDisposition } from "@/lib/reports/format";
 import { renderReportPdf } from "@/lib/reports/pdf";
 import { loadReport } from "@/lib/reports/share";
@@ -12,6 +13,8 @@ export const maxDuration = 60;
 // GET /api/reports/<id>/pdf: one report as a PDF, for the team (the buyer checking it, or sending it by hand).
 export async function GET(request: Request, ctx: RouteContext<"/api/reports/[id]/pdf">) {
   const me = await requireStaff();
+  // Reports are only for executives and media buyers
+  if (!canSeeReports(me)) return new Response("Not found", { status: 404 });
   const { id } = await ctx.params;
   if (!adminConfigured() || !/^[0-9a-f-]{36}$/i.test(id)) return new Response("Not found", { status: 404 });
   // The same rule as the report itself: its account's buyer, the leads of its line, execs

@@ -375,11 +375,6 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
         department="Creative"
         reviewLabel="Waiting for your review"
         stats={{ waitingOnYou: 6, teamActive: 41, teamOverdue: 3, onTimeRate: 84 }}
-        review={[
-          { id: "r1", client: "Fast Conversational Spanish", title: "$7 trial · teachers image", format: "Image", stage: "Uploaded by Nelson · 5h ago", due: "Due today", tone: "warn", priority: "Urgent" },
-          { id: "r2", client: "Union Hill Day School", title: "October stacked", format: "Carousel", stage: "Uploaded by Hillary · 2h ago", due: "Tomorrow", tone: "ok" },
-          { id: "r3", client: "Nectr", title: "Performance claim statics · v2", format: "Image", stage: "Revision from Nelson", due: "Tomorrow", tone: "ok" },
-        ]}
         attention={[
           { id: "a1", tone: "bad", kind: "Stuck", client: "Tejas Brewery", title: "Seasonal tap list", detail: "In production 6 business days (turnaround 4)", owner: "Daniel" },
           { id: "a2", tone: "warn", kind: "Revisions", client: "Crust Pizza Co.", title: "Donation Program", detail: "3rd revision round · client asked for larger logos twice", owner: "Victor" },
@@ -466,7 +461,7 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
   }
 
   return (
-    <TeamShell name={who.name} roles={who.role} tier={who.role === "Executive" ? "exec" : who.role.startsWith("Head") ? "lead" : "member"}>
+    <TeamShell name={who.name} roles={who.role} tier={who.role === "Executive" ? "exec" : who.role.startsWith("Head") ? "lead" : "member"} reports={["Executive", "Head of Meta", "Head of Google", "Media buyer", "Google buyer"].includes(who.role)}>
       {body}
     </TeamShell>
   );

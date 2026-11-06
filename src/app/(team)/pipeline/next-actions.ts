@@ -17,6 +17,6 @@ export async function markBibleReviewed(clientId: string, version: string): Prom
     await db.from("client_brand_bibles").update({ status: "reviewed", reviewed_at: new Date().toISOString(), reviewed_by: me.id }).eq("client_id", clientId).eq("version", version).neq("status", "building");
   // Its notice is done with too
   await db.from("notifications").update({ read_at: new Date().toISOString() }).eq("profile_id", me.id).eq("key", `bible-review:${clientId}:${version}`).is("read_at", null);
-  revalidatePath("/next");
+  revalidatePath("/pipeline");
   return { ok: true };
 }

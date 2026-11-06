@@ -1,4 +1,5 @@
 import { requireStaff } from "@/lib/auth";
+import { canSeeReports } from "@/lib/roles";
 import { adImageResponse, topAdOf } from "@/lib/reports/ad-image";
 import { canReportOn } from "@/lib/reports/access";
 import type { ReportMetrics } from "@/lib/reports/metrics";
@@ -12,6 +13,8 @@ export const maxDuration = 30;
 // report itself: its account's buyer, the leads of its line, execs.
 export async function GET(_request: Request, ctx: RouteContext<"/api/reports/[id]/ad/[adId]">) {
   const me = await requireStaff();
+  // Reports are only for executives and media buyers
+  if (!canSeeReports(me)) return new Response("Not found", { status: 404 });
   const { id, adId } = await ctx.params;
   if (!adminConfigured() || !/^[0-9a-f-]{36}$/i.test(id) || !/^\d{6,25}$/.test(adId)) return new Response("Not found", { status: 404 });
   const db = await createClient();
