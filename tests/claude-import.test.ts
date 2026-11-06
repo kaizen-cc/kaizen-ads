@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { batches, notImported, parseConversation, parseConversations, parseProjects, partsOf, suggestClient } from "@/lib/kaizen-ai/claude-import";
+import { batches, foreignItems, notImported, ownChats, parseConversation, parseConversations, parseProjects, partsOf, suggestClient } from "@/lib/kaizen-ai/claude-import";
 
 // Reading Claude's data export into Kaizen AI threads: both the older shape (text per message) and the newer one
 // (content blocks with tool calls and thinking, branches from edits), skipping what's already imported, and the
@@ -95,7 +95,7 @@ describe("reading a Claude export", () => {
       { uuid: "p1", name: "Agency work", prompt_template: "Be concise", docs: [{ filename: "voice.md", content: "Our voice" }, { filename: "empty.md", content: "" }] },
       { uuid: "p2", name: "No docs", docs: [] },
     ]);
-    expect(projects).toEqual([{ uuid: "p1", name: "Agency work", docs: [{ name: "Project instructions", text: "Be concise" }, { name: "voice.md", text: "Our voice" }] }]);
+    expect(projects).toEqual([{ uuid: "p1", name: "Agency work", docs: [{ name: "Project instructions", text: "Be concise" }, { name: "voice.md", text: "Our voice" }], creator: null }]);
   });
 });
 
@@ -137,5 +137,84 @@ describe("the client a chat is about", () => {
   it("suggests nothing when no client is named", () => {
     expect(suggestClient({ title: "Weekend plans", messages: [{ role: "user", text: "What should I cook?", at: "", files: [] }] }, clients)).toBeNull();
     expect(suggestClient({ title: "Crust Pizza", messages: [] }, [])).toBeNull();
+  });
+});
+
+describe("only the importer's own chats", () => {
+  const chat = (uuid: string, account: string | null) => ({
+    uuid,
+    name: `Chat ${uuid}`,
+    created_at: "2026-10-01T10:00:00Z",
+    updated_at: "2026-10-01T10:05:00Z",
+    ...(account ? { account: { uuid: account } } : {}),
+    chat_messages: [{ uuid: `${uuid}-m`, sender: "human", text: "hello", created_at: "2026-10-01T10:00:00Z" }],
+  });
+  const project = (uuid: string, creator: string | null) => ({
+    uuid,
+    name: `Project ${uuid}`,
+    ...(creator ? { creator: { uuid: creator, full_name: "Someone" } } : {}),
+    docs: [{ filename: "notes.md", content: "Some notes" }],
+  });
+  const users = [
+    { uuid: "acc-owner", full_name: "Owner", email_address: "Owner@KaizenMarketing.agency" },
+    { uuid: "acc-buyer", full_name: "Buyer", email_address: "buyer@kaizenmarketing.agency" },
+    { uuid: "acc-designer", full_name: "Designer", email_address: "designer@kaizenmarketing.agency" },
+  ];
+  const orgConvs = [chat("o1", "acc-owner"), chat("b1", "acc-buyer"), chat("o2", "acc-owner"), chat("d1", "acc-designer"), chat("x1", null)];
+
+  it("keeps only my chats from an organization's export with three accounts (email matched in any case)", () => {
+    const r = ownChats({ conversations: orgConvs, projects: [], users }, "owner@kaizenmarketing.agency");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.kind).toBe("org");
+    expect(r.account).toBe("acc-owner");
+    expect(parseConversations(r.conversations).map((c) => c.uuid).sort()).toEqual(["o1", "o2"]);
+    expect(r.otherPeople).toBe(2);
+    expect(r.skippedChats).toBe(3);
+    expect(parseConversations(r.conversations).every((c) => c.account === "acc-owner")).toBe(true);
+  });
+
+  it("brings only the projects I made from an organization's export", () => {
+    const r = ownChats({ conversations: orgConvs, projects: [project("p-mine", "acc-owner"), project("p-buyer", "acc-buyer"), project("p-unknown", null)], users }, "owner@kaizenmarketing.agency");
+    expect(r.ok && parseProjects(r.projects).map((p) => [p.uuid, p.creator])).toEqual([["p-mine", "acc-owner"]]);
+    expect(r.ok && r.skippedProjects).toBe(2);
+  });
+
+  it("refuses chats from several accounts with no users.json to say whose is whose", () => {
+    const r = ownChats({ conversations: orgConvs, projects: null, users: null }, "owner@kaizenmarketing.agency");
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.reason).toBe("unknown-owners");
+  });
+
+  it("refuses when my email isn't in the export, listing the accounts that are and none of the chats", () => {
+    const r = ownChats({ conversations: orgConvs, projects: [], users }, "someone@kaizenmarketing.agency");
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reason).toBe("not-in-export");
+    expect(r.message).toContain("someone@kaizenmarketing.agency");
+    expect(r.emails).toEqual(["buyer@kaizenmarketing.agency", "designer@kaizenmarketing.agency", "owner@kaizenmarketing.agency"]);
+    expect(ownChats({ conversations: [chat("o1", "acc-owner")], projects: [], users }, "").ok).toBe(false);
+  });
+
+  it("treats several members in users.json as an organization's export even when only one of them has chats", () => {
+    const r = ownChats({ conversations: [chat("b1", "acc-buyer")], projects: [], users }, "owner@kaizenmarketing.agency");
+    expect(r.ok && r.conversations).toEqual([]);
+  });
+
+  it("keeps a personal export whole, whatever the Claude account's email", () => {
+    const mine = [chat("a", "acc-me"), chat("b", "acc-me"), chat("c", null)];
+    const r = ownChats({ conversations: mine, projects: [project("p1", "acc-me"), project("p2", null)], users: [{ uuid: "acc-me", full_name: "Me", email_address: "me@gmail.com" }] }, "me@kaizenmarketing.agency");
+    expect(r.ok && r.kind).toBe("personal");
+    expect(r.ok && r.account).toBe("acc-me");
+    expect(r.ok && r.conversations.length).toBe(3);
+    expect(r.ok && r.projects.length).toBe(2);
+    // conversations.json on its own, older shape with no account at all
+    const bare = ownChats({ conversations: older, projects: null, users: null }, "me@kaizenmarketing.agency");
+    expect(bare.ok && bare.kind === "personal" && bare.account === null && bare.conversations.length === older.length).toBe(true);
+  });
+
+  it("flags items from another account than the one declared", () => {
+    expect(foreignItems([{ account: "acc-owner" }, { account: null }, {}], "acc-owner")).toBe(0);
+    expect(foreignItems([{ account: "acc-owner" }, { account: "acc-buyer" }], "acc-owner")).toBe(1);
   });
 });

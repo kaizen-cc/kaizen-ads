@@ -1,15 +1,17 @@
 import { Unzip, UnzipInflate } from "fflate";
 
-// The person's Claude export, read in their browser: the ZIP streamed through (only conversations.json and
-// projects.json are kept; everything else in it is skipped as it passes), or conversations.json on its own. Nothing
-// is uploaded until they pick what to import.
+// The person's Claude export, read in their browser: the ZIP streamed through (only conversations.json, projects.json
+// and users.json are kept; everything else in it is skipped as it passes), or conversations.json on its own. Nothing
+// is uploaded until they pick what to import, and from an organization's export only their own chats ever are.
 
 /** The biggest export file we read (the ZIP, or the JSON on its own) */
 export const MAX_FILE_BYTES = 1_500_000_000;
 /** The biggest conversations.json a browser can turn into text (V8's string limit is about 512 MB) */
 export const MAX_JSON_BYTES = 480_000_000;
 
-export type ExportFiles = { conversations: unknown; projects: unknown | null };
+export type ExportFiles = { conversations: unknown; projects: unknown | null; users: unknown | null };
+
+const KEPT = ["conversations.json", "projects.json", "users.json"];
 
 const base = (name: string) => name.split("/").pop()?.toLowerCase() ?? "";
 
@@ -39,14 +41,14 @@ export async function readClaudeExport(file: File, onProgress?: (done: number, t
   if (lower.endsWith(".json")) {
     if (file.size > MAX_JSON_BYTES) throw new Error("conversations.json is too big to read in the browser (over 480 MB).");
     const raw = parse(await file.text(), file.name);
-    return { conversations: raw, projects: null };
+    return { conversations: raw, projects: null, users: null };
   }
   const wanted: Record<string, Uint8Array[]> = {};
   const done = new Set<string>();
   let failed: Error | null = null;
   const uz = new Unzip((entry) => {
     const name = base(entry.name);
-    if (name !== "conversations.json" && name !== "projects.json") return;
+    if (!KEPT.includes(name)) return;
     if (wanted[name]) return;
     const chunks: Uint8Array[] = [];
     wanted[name] = chunks;
@@ -80,14 +82,14 @@ export async function readClaudeExport(file: File, onProgress?: (done: number, t
     uz.push(value);
     if (failed) throw failed;
     onProgress?.(read, file.size);
-    // Both found and whole: the rest of the ZIP isn't needed
-    if (done.has("conversations.json") && done.has("projects.json")) {
+    // All found and whole: the rest of the ZIP isn't needed
+    if (KEPT.every((k) => done.has(k))) {
       void reader.cancel();
       break;
     }
   }
   if (failed) throw failed;
-  if (!wanted["conversations.json"]) throw new Error("There's no conversations.json in that ZIP. Is it the export from Claude (Settings, Privacy, Export data)?");
+  if (!wanted["conversations.json"]) throw new Error("There's no conversations.json in that ZIP. Is it the export from Claude (Settings › Privacy › Export data, or an owner's Admin settings › Data and privacy)?");
   const conversations = parse(join(wanted["conversations.json"]), "conversations.json");
   let projects: unknown = null;
   if (wanted["projects.json"]) {
@@ -97,5 +99,7 @@ export async function readClaudeExport(file: File, onProgress?: (done: number, t
       projects = null;
     }
   }
-  return { conversations, projects };
+  // Who's who in an organization's export: without it, chats from several accounts can't be told apart (and are refused)
+  const users = wanted["users.json"] ? parse(join(wanted["users.json"]), "users.json") : null;
+  return { conversations, projects, users };
 }

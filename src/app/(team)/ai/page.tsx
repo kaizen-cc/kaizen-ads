@@ -16,7 +16,7 @@ export default async function KaizenAiPage() {
   return (
     <Suspense>
       <KaizenAi
-        me={{ id: me.id, first: me.fullName.split(" ")[0] ?? "", role: me.role }}
+        me={{ id: me.id, first: me.fullName.split(" ")[0] ?? "", role: me.role, email: me.email }}
         on={aiEnabled()}
         initialThreads={threads}
         initialTemplates={templates}

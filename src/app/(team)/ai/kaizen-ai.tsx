@@ -17,7 +17,7 @@ import { CardView, ChatMarkdown, CopyButton, ToolChips } from "./cards";
 // address (?t=, ?list=), so back and forward work like everywhere else.
 
 type ClientOpt = { id: string; name: string; slug: string };
-type Me = { id: string; first: string; role: TeamRole };
+type Me = { id: string; first: string; role: TeamRole; /** Their Kaizen email (an org's Claude export is narrowed to this member) */ email: string };
 type Pending = { key: string; name: string; kind: AttachmentKind; status: "uploading" | "ready" | "failed"; note?: string; preview?: string; att?: Attachment };
 type Live = { thread: string | null; text: string; tools: ToolRun[]; cards: Card[]; agent: { label: string; why: string } | null; error: string | null; busy: boolean };
 
@@ -437,8 +437,9 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, gr
       {importOpen ? (
         <ClaudeImportSheet
           clients={clients}
+          email={me.email}
           job={claude.job}
-          onStart={(name, items, n) => void claude.start(name, items, n)}
+          onStart={(name, items, n, account) => void claude.start(name, items, n, account)}
           onClose={() => {
             closeParams("import");
             claude.clear();
@@ -1335,8 +1336,22 @@ function SaveTemplate({ prompt, onClose }: { prompt: string; onClose: (saved: bo
 
 /** Before the first chat: the one thing to do first, bring their Claude chats over, with a way out if they have none */
 function ImportFirst({ first, onImport, onSkip }: { first: string; onImport: () => void; onSkip: () => void }) {
-  const steps = [
-    ["Export from Claude", "claude.ai, Settings, Privacy, Export data. Claude emails you a ZIP in a few minutes."],
+  const link = "font-medium text-brand-text underline decoration-brand/30 underline-offset-2 hover:decoration-brand";
+  const steps: [string, React.ReactNode][] = [
+    [
+      "Export from Claude",
+      <>
+        Open{" "}
+        <a href="https://claude.ai/settings/data-privacy-controls" target="_blank" rel="noreferrer" className={link}>
+          Claude&apos;s settings
+        </a>{" "}
+        › Privacy › Export data. Don&apos;t see it? You&apos;re probably the org&apos;s owner: export from{" "}
+        <a href="https://claude.ai/admin-settings/data-privacy-controls" target="_blank" rel="noreferrer" className={link}>
+          Admin settings › Data and privacy
+        </a>{" "}
+        instead; Kaizen AI keeps only your own chats. Claude emails you a ZIP.
+      </>,
+    ],
     ["Drop the ZIP here", "Pick which chats come over and which client each one is about. Nothing leaves your account."],
     ["Keep going here", "Every chat becomes your own private thread, so you can pick any conversation up where you left it."],
   ];

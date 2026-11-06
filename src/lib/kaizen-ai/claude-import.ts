@@ -1,6 +1,7 @@
 import { matchClientName, type NamedClient } from "@/lib/client-name-match";
 
-// Reading a Claude data export (claude.ai: Settings, Privacy, Export data) into conversations Kaizen AI can import:
+// Reading a Claude data export (claude.ai: Settings, Privacy, Export data; or an owner's organization export, filtered
+// to the importer's own chats by ownChats below) into conversations Kaizen AI can import:
 // conversations.json (older exports: each message's text; newer ones: content blocks, tool calls and thinking too,
 // and a parent link per message when a message was edited into branches), and projects.json (the project's docs).
 // Pure, so it runs in the browser on the person's own file and is tested with fixtures.
@@ -23,10 +24,12 @@ export type ImportedConversation = {
   messages: ImportedMessage[];
   /** The Claude project it was in, when the export says */
   projectUuid: string | null;
+  /** The Claude account it belongs to, when the export says */
+  account: string | null;
   /** Characters in it (for batching and the preview) */
   chars: number;
 };
-export type ImportedProject = { uuid: string; name: string; docs: { name: string; text: string }[] };
+export type ImportedProject = { uuid: string; name: string; docs: { name: string; text: string }[]; creator: string | null };
 
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Obj) : null);
@@ -134,6 +137,7 @@ export function parseConversation(raw: unknown, now = new Date().toISOString()):
     updatedAt,
     messages,
     projectUuid: str(c.project_uuid) || str(project?.uuid) || null,
+    account: accountOf(c),
     chars: messages.reduce((n, m) => n + m.text.length + m.files.reduce((k, f) => k + (f.text?.length ?? 0) + f.name.length, 0), 0),
   };
 }
@@ -169,7 +173,7 @@ export function parseProjects(raw: unknown): ImportedProject[] {
     });
     const prompt = str(p.prompt_template).trim();
     if (prompt && room > 0) docs.unshift({ name: "Project instructions", text: cut(prompt, Math.min(room, 20_000)) });
-    return docs.length ? [{ uuid: uuid.slice(0, 100), name: str(p.name).trim().slice(0, 100) || "Claude project", docs }] : [];
+    return docs.length ? [{ uuid: uuid.slice(0, 100), name: str(p.name).trim().slice(0, 100) || "Claude project", docs, creator: creatorOf(p) }] : [];
   });
 }
 
@@ -205,6 +209,8 @@ export type ImportItem = {
   /** Long conversations go in parts: the first creates the thread, the last marks it complete */
   part: number;
   last: boolean;
+  /** The Claude account it came from (conversation's account, project's creator), when the export says */
+  account?: string | null;
 };
 
 const sizeOf = (m: ImportedMessage) => m.text.length + m.files.reduce((n, f) => n + (f.text?.length ?? 0) + f.name.length + 40, 0) + 120;
@@ -243,4 +249,112 @@ export function batches(items: ImportItem[], max = MAX_BATCH_CHARS, maxItems = 4
   }
   if (cur.length) out.push(cur);
   return out;
+}
+
+// Whose chats these are. A member's own export (claude.ai Settings, Privacy, Export data) holds one account's chats.
+// An organization's export (Admin settings, Data and privacy: what an owner gets) holds every member's, with
+// users.json listing the members (uuid, full_name, email_address), each conversation naming its account
+// (account.uuid) and each project its creator (creator.uuid). Kaizen AI only ever keeps the importer's own: the rest
+// is dropped here, in their browser, before anything is shown or sent.
+
+export type ExportAccount = { uuid: string; name: string; email: string };
+
+const rawList = (raw: unknown, key: string): unknown[] => (Array.isArray(raw) ? raw : Array.isArray(obj(raw)?.[key]) ? (obj(raw)![key] as unknown[]) : []);
+
+/** The members listed in users.json */
+export function parseUsers(raw: unknown): ExportAccount[] {
+  return rawList(raw, "users").flatMap((x) => {
+    const u = obj(x);
+    const uuid = u ? str(u.uuid) || str(u.id) : "";
+    if (!u || !uuid) return [];
+    return [{ uuid, name: str(u.full_name) || str(u.name), email: (str(u.email_address) || str(u.email)).trim().toLowerCase() }];
+  });
+}
+
+/** The account a conversation belongs to (account.uuid; account_uuid in some shapes), when the export says */
+export function accountOf(raw: unknown): string | null {
+  const c = obj(raw);
+  if (!c) return null;
+  return str(obj(c.account)?.uuid) || str(c.account_uuid) || null;
+}
+
+/** Who made a project (creator.uuid; creator_uuid or account.uuid in some shapes), when the export says */
+export function creatorOf(raw: unknown): string | null {
+  const p = obj(raw);
+  if (!p) return null;
+  return str(obj(p.creator)?.uuid) || str(p.creator_uuid) || str(obj(p.account)?.uuid) || null;
+}
+
+export type Ownership =
+  | {
+      ok: true;
+      /** "org" when the export holds more than one person's data */
+      kind: "personal" | "org";
+      /** The account the kept chats belong to (null when the export doesn't say) */
+      account: string | null;
+      conversations: unknown[];
+      projects: unknown[];
+      /** Other people in the export, and how many of their chats and projects were left out */
+      otherPeople: number;
+      skippedChats: number;
+      skippedProjects: number;
+    }
+  | { ok: false; reason: "unknown-owners" | "not-in-export"; message: string; emails: string[] };
+
+/**
+ * Only the importer's own chats and projects. A personal export (one account) comes through whole. An org export
+ * (several accounts in conversations.json, or several members in users.json) keeps only what belongs to the member
+ * whose email_address is the person's Kaizen email (exact, any case); with no users.json to tell who is who it's
+ * refused, and so is one that doesn't list their email.
+ */
+export function ownChats(files: { conversations: unknown; projects: unknown; users: unknown }, email: string): Ownership {
+  const convs = rawList(files.conversations, "conversations");
+  const projects = rawList(files.projects, "projects");
+  const users = files.users == null ? null : parseUsers(files.users);
+  const accounts = new Set(convs.map(accountOf).filter((a): a is string => Boolean(a)));
+  const org = accounts.size > 1 || (users?.length ?? 0) > 1;
+
+  if (!org) {
+    const account = [...accounts][0] ?? (users?.length === 1 ? users[0].uuid : null);
+    // A project someone else made (shared with them) isn't theirs to bring over
+    const own = projects.filter((p) => !account || !creatorOf(p) || creatorOf(p) === account);
+    return { ok: true, kind: "personal", account, conversations: convs, projects: own, otherPeople: 0, skippedChats: 0, skippedProjects: projects.length - own.length };
+  }
+  if (!users?.length) {
+    return {
+      ok: false,
+      reason: "unknown-owners",
+      message: `This export has chats from ${accounts.size} different Claude accounts and no users.json saying whose is whose, so none of it can be imported. Drop the whole ZIP from Claude's export email (not conversations.json on its own), or export just your own data from Claude's settings › Privacy › Export data.`,
+      emails: [],
+    };
+  }
+  const mine = email.trim().toLowerCase();
+  const me = mine ? users.find((u) => u.email === mine) : undefined;
+  if (!me) {
+    return {
+      ok: false,
+      reason: "not-in-export",
+      message: `None of these chats are yours (your Kaizen email ${email.trim() || "(none)"} isn't in this export).`,
+      emails: [...new Set(users.map((u) => u.email).filter(Boolean))].sort(),
+    };
+  }
+  const kept = convs.filter((c) => accountOf(c) === me.uuid);
+  const keptProjects = projects.filter((p) => creatorOf(p) === me.uuid);
+  const others = new Set([...accounts].filter((a) => a !== me.uuid));
+  for (const u of users) if (u.uuid !== me.uuid) others.add(u.uuid);
+  return {
+    ok: true,
+    kind: "org",
+    account: me.uuid,
+    conversations: kept,
+    projects: keptProjects,
+    otherPeople: others.size,
+    skippedChats: convs.length - kept.length,
+    skippedProjects: projects.length - keptProjects.length,
+  };
+}
+
+/** How many items name an account other than the declared one (the import route turns such a request away) */
+export function foreignItems(items: { account?: unknown }[], sourceAccount: string): number {
+  return items.filter((i) => typeof i?.account === "string" && i.account !== sourceAccount).length;
 }

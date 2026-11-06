@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { batches, notImported, parseConversations, parseProjects, partsOf, suggestClient, type ImportedConversation, type ImportedProject, type ImportItem } from "@/lib/kaizen-ai/claude-import";
+import { batches, notImported, ownChats, parseConversations, parseProjects, partsOf, suggestClient, type ImportedConversation, type ImportedProject, type ImportItem } from "@/lib/kaizen-ai/claude-import";
 import { readClaudeExport } from "@/lib/kaizen-ai/claude-import-file";
 import { claudeImportState, deleteClaudeImport, finishClaudeImport, startClaudeImport, type ClaudeImport } from "./actions";
 
@@ -13,6 +13,8 @@ type ClientOpt = { id: string; name: string; slug: string };
 export type ImportJob = { importId: string; total: number; done: number; created: number; skipped: number; failed: number; running: boolean; error: string | null; firstThread: string | null };
 
 const CLAUDE_EXPORT_URL = "https://claude.ai/settings/data-privacy-controls";
+/** Where an org's owner exports (owners don't get the personal Export data button) */
+const CLAUDE_ORG_EXPORT_URL = "https://claude.ai/admin-settings/data-privacy-controls";
 const SHOW = 150;
 
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -22,7 +24,7 @@ export function useClaudeImport(onProgress: () => void) {
   const [job, setJob] = useState<ImportJob | null>(null);
   const running = useRef(false);
   const start = useCallback(
-    async (fileName: string, items: ImportItem[], conversations: number) => {
+    async (fileName: string, items: ImportItem[], conversations: number, sourceAccount: string | null = null) => {
       if (running.current) return;
       const s = await startClaudeImport(fileName, conversations);
       if (!s.ok) {
@@ -38,7 +40,7 @@ export function useClaudeImport(onProgress: () => void) {
         let res: { results: { uuid: string; status: string; threadId?: string }[] } | null = null;
         for (let attempt = 0; attempt < 3 && !res; attempt++) {
           try {
-            const r = await fetch("/api/ai/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ importId: s.id, items: batch }) });
+            const r = await fetch("/api/ai/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ importId: s.id, items: batch, ...(sourceAccount ? { sourceAccount } : {}) }) });
             if (r.ok) res = await r.json();
             else if (r.status < 500) break;
           } catch {
@@ -80,11 +82,15 @@ export function useClaudeImport(onProgress: () => void) {
   return { job, start, clear: () => setJob((j) => (j?.running ? j : null)) };
 }
 
-type Step = { at: "drop" } | { at: "reading"; pct: number } | { at: "preview"; fileName: string; convs: ImportedConversation[]; projects: ImportedProject[]; already: number };
+type Step = { at: "drop" } | { at: "reading"; pct: number } | { at: "preview"; fileName: string; convs: ImportedConversation[]; projects: ImportedProject[]; already: number; account: string | null; notice: string | null };
+type Problem = { text: string; emails?: string[] };
 
-export function ClaudeImportSheet({ clients, job, onStart, onClose, onOpenThread, onChanged }: { clients: ClientOpt[]; job: ImportJob | null; onStart: (fileName: string, items: ImportItem[], conversations: number) => void; onClose: () => void; onOpenThread: (id: string) => void; onChanged: () => void }) {
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpenThread, onChanged }: { clients: ClientOpt[]; /** Their Kaizen email: an organization's export is narrowed to the member with this email */ email: string; job: ImportJob | null; onStart: (fileName: string, items: ImportItem[], conversations: number, sourceAccount: string | null) => void; onClose: () => void; onOpenThread: (id: string) => void; onChanged: () => void }) {
   const [step, setStep] = useState<Step>({ at: "drop" });
-  const [error, setError] = useState<string | null>(null);
+  const [error, setProblem] = useState<Problem | null>(null);
+  const setError = (e: string | Problem | null) => setProblem(typeof e === "string" ? { text: e } : e);
   const [state, setState] = useState<{ imported: string[]; imports: ClaudeImport[] } | null>(null);
   const [drag, setDrag] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -107,15 +113,26 @@ export function ClaudeImportSheet({ clients, job, onStart, onClose, onOpenThread
     setStep({ at: "reading", pct: 0 });
     try {
       const raw = await readClaudeExport(file, (d, t) => setStep({ at: "reading", pct: Math.round((d / t) * 100) }));
-      const all = parseConversations(raw.conversations);
-      if (!all.length) throw new Error("No conversations found in that file.");
+      // Only their own: an organization's export is narrowed to their chats here, before anything is shown or sent
+      const own = ownChats(raw, email);
+      if (!own.ok) {
+        setStep({ at: "drop" });
+        setError({ text: own.message, emails: own.emails });
+        return;
+      }
+      const all = parseConversations(own.conversations);
+      if (!all.length) throw new Error(own.kind === "org" ? "You don't have any chats in this export." : "No conversations found in that file.");
       const known = state?.imported ?? (await claudeImportState()).imported;
       const convs = notImported(all, known);
       const projects = notImported(
-        parseProjects(raw.projects).map((p) => ({ ...p, uuid: `project:${p.uuid}` })),
+        parseProjects(own.projects).map((p) => ({ ...p, uuid: `project:${p.uuid}` })),
         known,
       ).map((p) => ({ ...p, uuid: p.uuid.slice("project:".length) }));
-      setStep({ at: "preview", fileName: file.name, convs, projects, already: all.length - convs.length });
+      const notice =
+        own.kind === "org"
+          ? `This is your organization's export: only your own ${plural(all.length, "chat is", "chats are")} shown; the other ${plural(own.otherPeople, "person's", "people's")} chats are skipped and never leave your browser.`
+          : null;
+      setStep({ at: "preview", fileName: file.name, convs, projects, already: all.length - convs.length, account: own.account, notice });
     } catch (e) {
       setStep({ at: "drop" });
       setError(e instanceof Error ? e.message : "Couldn't read that file.");
@@ -154,7 +171,7 @@ export function ClaudeImportSheet({ clients, job, onStart, onClose, onOpenThread
               clients={clients}
               onBack={() => setStep({ at: "drop" })}
               onStart={(items, n) => {
-                onStart(step.fileName, items, n);
+                onStart(step.fileName, items, n, step.account);
                 setStep({ at: "drop" });
               }}
             />
@@ -166,8 +183,15 @@ export function ClaudeImportSheet({ clients, job, onStart, onClose, onOpenThread
                     Open{" "}
                     <a href={CLAUDE_EXPORT_URL} target="_blank" rel="noreferrer" className="font-medium text-brand-text underline decoration-brand/30 underline-offset-2 hover:decoration-brand">
                       Claude&rsquo;s settings
-                    </a>
-                    , go to <span className="font-medium text-fg">Privacy</span> and click <span className="font-medium text-fg">Export data</span>.
+                    </a>{" "}
+                    › <span className="font-medium text-fg">Privacy</span> › <span className="font-medium text-fg">Export data</span>.
+                    <span className="mt-1 block text-[13px] text-muted">
+                      Don&rsquo;t see it? You&rsquo;re probably the org&rsquo;s owner: export from{" "}
+                      <a href={CLAUDE_ORG_EXPORT_URL} target="_blank" rel="noreferrer" className="font-medium text-brand-text underline decoration-brand/30 underline-offset-2 hover:decoration-brand">
+                        Admin settings › Data and privacy
+                      </a>{" "}
+                      instead; Kaizen AI keeps only your own chats.
+                    </span>
                   </>,
                   <>Claude emails you a download link (it can take a few minutes). Download the ZIP.</>,
                   <>Drop the ZIP below. It&rsquo;s read on your device; only the chats you pick are saved.</>,
@@ -223,7 +247,23 @@ export function ClaudeImportSheet({ clients, job, onStart, onClose, onOpenThread
                   e.target.value = "";
                 }}
               />
-              {error ? <p className="rounded-[12px] bg-bad-soft/50 px-3 py-2 text-[13px] text-bad">{error}</p> : null}
+              {error ? (
+                <div className="grid gap-1.5 rounded-[12px] bg-bad-soft/50 px-3 py-2 text-[13px] text-bad">
+                  <p>{error.text}</p>
+                  {error.emails?.length ? (
+                    <div className="grid gap-0.5">
+                      <p className="text-[12px] text-muted">The accounts in this export:</p>
+                      <ul className="max-h-[140px] overflow-y-auto text-fg/80">
+                        {error.emails.map((e) => (
+                          <li key={e} className="truncate text-[12.5px]">
+                            {e}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
 
               <p className="text-[12.5px] leading-relaxed text-faint">
                 What comes over: each chat&rsquo;s messages with their dates, and the text Claude read from files you attached. Claude Projects&rsquo; knowledge files aren&rsquo;t in the export, except the docs listed in its projects.json, which you can bring as private notes. Imported chats are never shared or used to teach Kaizen&rsquo;s agents.
@@ -316,7 +356,7 @@ function PastImports({ imports, onChanged }: { imports: ClaudeImport[]; onChange
 }
 
 function Preview({ step, clients, onBack, onStart }: { step: Extract<Step, { at: "preview" }>; clients: ClientOpt[]; onBack: () => void; onStart: (items: ImportItem[], conversations: number) => void }) {
-  const { convs, projects, already } = step;
+  const { convs, projects, already, notice } = step;
   // Suggested clients, worked out once
   const suggested = useMemo(() => new Map(convs.map((c) => [c.uuid, suggestClient(c, clients)?.id ?? null])), [convs, clients]);
   const [picked, setPicked] = useState<Set<string>>(() => new Set([...convs.map((c) => c.uuid), ...projects.map((p) => `project:${p.uuid}`)]));
@@ -345,10 +385,10 @@ function Preview({ step, clients, onBack, onStart }: { step: Extract<Step, { at:
     const items: ImportItem[] = [
       ...convs
         .filter((c) => picked.has(c.uuid))
-        .flatMap((c) => partsOf({ uuid: c.uuid, kind: "chat", title: c.title, createdAt: c.createdAt, updatedAt: c.updatedAt, clientId: clientOf(c.uuid), notes: (c.projectUuid && docsOf.get(c.projectUuid)) || [] }, c.messages)),
+        .flatMap((c) => partsOf({ uuid: c.uuid, kind: "chat", title: c.title, createdAt: c.createdAt, updatedAt: c.updatedAt, clientId: clientOf(c.uuid), notes: (c.projectUuid && docsOf.get(c.projectUuid)) || [], account: c.account }, c.messages)),
       ...projects
         .filter((p) => picked.has(`project:${p.uuid}`))
-        .flatMap((p) => partsOf({ uuid: `project:${p.uuid}`, kind: "project", title: `${p.name} · project docs`, createdAt: now, updatedAt: now, clientId: suggestClient({ title: p.name, messages: [] }, clients)?.id ?? null, notes: p.docs }, [])),
+        .flatMap((p) => partsOf({ uuid: `project:${p.uuid}`, kind: "project", title: `${p.name} · project docs`, createdAt: now, updatedAt: now, clientId: suggestClient({ title: p.name, messages: [] }, clients)?.id ?? null, notes: p.docs, account: p.creator }, [])),
     ];
     if (items.length) onStart(items, n + np);
   };
@@ -363,6 +403,7 @@ function Preview({ step, clients, onBack, onStart }: { step: Extract<Step, { at:
           {already ? <span>· {already} already imported, skipped</span> : null}
           {matched ? <span>· {matched} matched to a client</span> : null}
         </div>
+        {notice ? <p className="rounded-[12px] bg-brand-soft/40 px-3 py-2 text-[12.5px] leading-relaxed text-fg/90">{notice}</p> : null}
         <div className="flex items-center gap-2">
           <label className="flex min-h-11 flex-1 items-center gap-2 rounded-full bg-ink/[0.04] px-3 text-faint focus-within:ring-2 focus-within:ring-brand/30">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden>

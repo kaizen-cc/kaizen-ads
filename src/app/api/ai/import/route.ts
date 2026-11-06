@@ -1,5 +1,5 @@
 import { requireStaff } from "@/lib/auth";
-import { IMPORT_SOURCE, MAX_FILE_CHARS, MAX_MESSAGE_CHARS, MAX_NOTES_CHARS, type ImportItem } from "@/lib/kaizen-ai/claude-import";
+import { foreignItems, IMPORT_SOURCE, MAX_FILE_CHARS, MAX_MESSAGE_CHARS, MAX_NOTES_CHARS, type ImportItem } from "@/lib/kaizen-ai/claude-import";
 import type { Attachment } from "@/lib/kaizen-ai/types";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -19,8 +19,14 @@ const isoOr = (s: unknown, fallback: string) => (typeof s === "string" && Number
 export async function POST(request: Request) {
   const me = await requireStaff();
   if (!adminConfigured()) return Response.json({ error: "Not set up" }, { status: 503 });
-  const body = (await request.json().catch(() => null)) as { importId?: string; items?: ImportItem[] } | null;
+  const body = (await request.json().catch(() => null)) as { importId?: string; items?: ImportItem[]; sourceAccount?: unknown } | null;
   if (!body || typeof body.importId !== "string" || !UUID.test(body.importId) || !Array.isArray(body.items)) return Response.json({ error: "Nothing to import." }, { status: 400 });
+  // The Claude account these are from: when declared, every item that names its account must be that one (the browser
+  // only sends the person's own chats from an organization's export; this turns away anything else)
+  if (body.sourceAccount != null) {
+    if (typeof body.sourceAccount !== "string" || !body.sourceAccount.trim()) return Response.json({ error: "Nothing to import." }, { status: 400 });
+    if (foreignItems(body.items, body.sourceAccount)) return Response.json({ error: "Some of these chats are from someone else's Claude account. Only your own can be imported." }, { status: 400 });
+  }
   const db = await createClient();
   const admin = createAdminClient();
   // The import is theirs
