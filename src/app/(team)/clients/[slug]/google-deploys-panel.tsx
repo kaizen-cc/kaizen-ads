@@ -437,7 +437,7 @@ function Push({ d, pending, onPush, onCancel }: { d: Deploy; pending: boolean; o
         {t.write && !t.write.live ? (
           <WriteOff status={t.write} canSwitch={t.canSwitch} onLive={() => void deployTargets(d.id).then(setT)} />
         ) : (
-          <p>Live changes are off for this client (an exec switches them on in their Team &amp; setup). Until then, apply it by hand from the checklist above and mark it applied.</p>
+          <p>Live changes in Google Ads are off for this client (an exec switches them on in their Team &amp; setup). Until then, apply it by hand from the checklist above and mark it applied.</p>
         )}
         <button type="button" onClick={onCancel} className="min-h-11 justify-self-start rounded-full px-4 text-sm text-muted hover:text-fg">
           Back

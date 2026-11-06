@@ -8,7 +8,7 @@ import { pushParams, useParam } from "@/lib/url-state";
 // address, so back returns to the section you were on). Meta access is checked once for the hero and its section.
 
 export type SyncView = "syncs" | "meta" | "google" | "writes";
-export type SyncHero = { healthy: number; behind: number; failing: number; total: number; latest: string | null; metaSandbox: boolean; googleOn: boolean };
+export type SyncHero = { healthy: number; behind: number; failing: number; total: number; latest: string | null; metaSandbox: boolean; /** Clients with live changes in Google Ads switched on (there's no switch for everyone) */ googleLive: number };
 
 const VIEWS: { key: SyncView; label: string }[] = [
   { key: "syncs", label: "Syncs" },
@@ -72,8 +72,8 @@ function Shell({ hero, syncs, meta, google, writes }: { hero: SyncHero; syncs: R
     {
       key: "google",
       label: "Google writes",
-      value: hero.googleOn ? "On" : "Off",
-      sub: hero.googleOn ? "confirmed changes go in" : "planned and checked only",
+      value: hero.googleLive ? `${hero.googleLive} live` : "Off",
+      sub: hero.googleLive ? `${hero.googleLive === 1 ? "client" : "clients"} switched on in Team & setup` : "planned and checked only",
       tone: "muted",
     },
     {

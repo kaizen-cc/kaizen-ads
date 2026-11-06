@@ -101,9 +101,14 @@ async function search(customer: string, query: string): Promise<Row[]> {
 
 /**
  * A change to the account (campaigns, campaignBudgets, adGroups, campaignCriteria). validateOnly: Google checks it
- * fully and says whether it would go through, without changing anything.
+ * fully and says whether it would go through, without changing anything. Every real change (not a dry run) is gated
+ * here, whatever asked for it: refused unless an exec switched live changes in Google Ads on for the account's client.
  */
 export async function googleMutate(customer: string, service: "campaigns" | "campaignBudgets" | "adGroups" | "campaignCriteria" | "adGroupCriteria" | "adGroupAds" | "ads", operations: unknown[], validateOnly: boolean) {
+  if (!validateOnly) {
+    const [{ createAdminClient }, { googleWritesOn, GOOGLE_OFF }] = await Promise.all([import("@/lib/supabase/admin"), import("@/lib/meta-write")]);
+    if (!(await googleWritesOn(createAdminClient(), customer))) throw new Error(GOOGLE_OFF);
+  }
   const text = await post(customer, `${service}:mutate`, { operations, validateOnly, partialFailure: false });
   // What was created (resource names), e.g. a new ad group the keywords then go into
   try {
@@ -364,6 +369,34 @@ export async function managedAccounts() {
   return rows
     .filter((r) => !r.customerClient?.manager)
     .map((r) => ({ id: String(r.customerClient?.id), name: String(r.customerClient?.descriptiveName ?? ""), status: String(r.customerClient?.status ?? "") }));
+}
+
+export type GoogleAccess = { account: string; name: string | null; status: string | null; linked: boolean; read: boolean; write: boolean | null; error: string | null };
+
+/**
+ * Can Kaizen Ads change this Google Ads account? Three cheap looks: is it under our manager account, can we read it
+ * (its name and status), and a dry run of creating a shared budget there (validate only: Google checks our access to
+ * make changes and creates nothing). The dry run skips the live-changes gate because nothing is written.
+ */
+export async function googleAccess(customer: string, managed?: { id: string }[]): Promise<GoogleAccess> {
+  const id = digits(customer);
+  const under = managed ?? (await managedAccounts().catch(() => [] as { id: string }[]));
+  const linked = under.some((a) => digits(a.id) === id);
+  const base: GoogleAccess = { account: id, name: null, status: null, linked, read: false, write: null, error: null };
+  try {
+    const rows = await search(id, "SELECT customer.id, customer.descriptive_name, customer.status, customer.manager FROM customer LIMIT 1");
+    const c = rows[0]?.customer as { descriptiveName?: string; status?: string; manager?: boolean } | undefined;
+    Object.assign(base, { read: true, name: c?.descriptiveName ?? null, status: c?.status ?? null });
+    if (c?.manager) return { ...base, write: false, error: "This is a manager account, not an ad account: link the client's own account on the KPI board." };
+  } catch (e) {
+    return { ...base, error: e instanceof Error ? e.message : String(e) };
+  }
+  try {
+    await googleMutate(id, "campaignBudgets", [{ create: { name: `Kaizen Ads access check ${Date.now()}`, amountMicros: "1000000", deliveryMethod: "STANDARD", explicitlyShared: true } }], true);
+    return { ...base, write: true };
+  } catch (e) {
+    return { ...base, write: false, error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 /** Our manager account's ID, as Google shows it (123-456-7890) */

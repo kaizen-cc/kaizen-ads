@@ -160,7 +160,7 @@ export async function deployTargets(id: string): Promise<{ ok: true; writes: boo
   }
 }
 
-/** Pushes it to Google Ads, paused (only with Google writes switched on). */
+/** Pushes it to Google Ads, paused (only with live changes in Google Ads switched on for the client). */
 export async function pushDeployAction(id: string, target: DeployTarget) {
   try {
     const { me, d, slug } = await loadMine(id);

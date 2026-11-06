@@ -655,7 +655,7 @@ function AddSheet({ clientId, clientName, keywords, canEnable, listName, seeds, 
               </>
             ) : (
               <>
-                {mode !== "later" && <p className="text-[12.5px] text-muted">Live changes are off for {clientName}: it&apos;s saved with a checklist, to push once an exec switches them on in their Team &amp; setup.</p>}
+                {mode !== "later" && <p className="text-[12.5px] text-muted">Live changes in Google Ads are off for {clientName}: it&apos;s saved with a checklist, to push once an exec switches them on in their Team &amp; setup.</p>}
                 <button type="button" disabled={busy || !ready} onClick={() => void submit(false)} className="h-12 rounded-full bg-brand text-[15px] font-medium text-white hover:bg-brand-hover disabled:opacity-60">
                   {busy ? "Saving…" : "Save to their Ideas to use"}
                 </button>

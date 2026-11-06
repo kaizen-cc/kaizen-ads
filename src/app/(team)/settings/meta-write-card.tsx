@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
-import { checkMetaWrite, setGoogleWrites, setMetaSandbox, setUrlTags } from "./meta-write-actions";
+import { checkMetaWrite, setMetaSandbox, setUrlTags } from "./meta-write-actions";
 
 // Meta's auto-fill tags: each ad's own values, filled in by Meta when someone clicks
 const TAGS: [string, string][] = [
@@ -159,59 +160,38 @@ export function MetaWriteCard({ sandbox, sandboxAccount, canEdit, updated, urlTa
   );
 }
 
-/** Writing to Google Ads: off until an exec switches it on. Google's own check of each change runs either way. */
-export function GoogleWriteCard({ enabled, canEdit, updated }: { enabled: boolean; canEdit: boolean; updated: string | null }) {
-  const [on, setOn] = useState(enabled);
-  const [confirm, setConfirm] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, start] = useTransition();
-  const flip = (next: boolean) =>
-    start(async () => {
-      setError(null);
-      const r = await setGoogleWrites(next);
-      if (!r.ok) return setError(r.error);
-      setOn(next);
-      setConfirm(false);
-    });
+export type GoogleLiveClient = { name: string; slug: string; by: string | null; at: string | null };
+
+/**
+ * Writing to Google Ads: there's no switch for everyone. Nothing is written to a client's Google Ads account until an
+ * exec switches live changes in Google Ads on for that client in its Team & setup; this lists which clients are on.
+ */
+export function GoogleWriteCard({ clients }: { clients: GoogleLiveClient[] }) {
+  const on = clients.length > 0;
   return (
     <section className={`grid min-w-0 gap-3 rounded-[18px] border p-4 md:p-5 ${on ? "border-warn/40 bg-warn-soft/30" : "border-ok/30 bg-ok/[0.04]"}`}>
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="grid max-w-[60ch] gap-1">
-          <p className="flex items-center gap-2 font-heading text-lg">
-            <span className={`h-2 w-2 rounded-full ${on ? "bg-warn" : "bg-ok"}`} />
-            Writing to Google Ads · {on ? "on" : "off"}
-          </p>
-          <p className="text-sm text-muted">
-            {on
-              ? "Confirmed changes from audits and sprints (pausing, budgets, target CPA and ROAS, negative keywords) go into client Google Ads accounts. Google checks each one first, and a person confirms it."
-              : "Kaizen Ads plans changes from audits and sprints and Google checks each one, but nothing is applied in a Google Ads account until this is switched on."}
-          </p>
-          {updated && <p className="text-[11px] text-faint">Last changed {updated}</p>}
-        </div>
-        {canEdit &&
-          (on ? (
-            <button type="button" disabled={pending} onClick={() => flip(false)} className="h-11 w-full rounded-full bg-fg px-4 text-sm font-medium text-bg disabled:opacity-60 md:h-9 md:w-auto">
-              Switch off
-            </button>
-          ) : confirm ? (
-            <span className="grid w-full gap-2 rounded-[12px] border border-warn/40 bg-surface p-3 text-xs md:w-auto md:max-w-xs">
-              <span>Switch on? Confirmed changes will reach client Google Ads accounts.</span>
-              <span className="flex gap-2">
-                <button type="button" disabled={pending} onClick={() => flip(true)} className="h-11 flex-1 rounded-full bg-warn px-3 font-medium text-bg disabled:opacity-60 md:h-8 md:flex-none">
-                  Yes, switch on
-                </button>
-                <button type="button" onClick={() => setConfirm(false)} className="h-11 px-3 text-muted hover:text-fg md:h-8 md:px-2">
-                  Not yet
-                </button>
-              </span>
-            </span>
-          ) : (
-            <button type="button" onClick={() => setConfirm(true)} className="h-11 w-full rounded-full border border-line bg-surface px-4 text-sm text-muted hover:text-fg md:h-9 md:w-auto">
-              Switch on…
-            </button>
-          ))}
+      <div className="grid max-w-[60ch] gap-1">
+        <p className="flex items-center gap-2 font-heading text-lg">
+          <span className={`h-2 w-2 rounded-full ${on ? "bg-warn" : "bg-ok"}`} />
+          Writing to Google Ads · {on ? `live for ${clients.length} ${clients.length === 1 ? "client" : "clients"}` : "off for every client"}
+        </p>
+        <p className="text-sm text-muted">
+          Kaizen Ads plans changes from audits, sprints and chat, and Google checks each one, but nothing is applied in a client&apos;s Google Ads account until an exec switches live changes in Google Ads on
+          for that client in its Team &amp; setup. There&apos;s no switch for everyone.
+        </p>
       </div>
-      {error && <p className="text-sm text-bad">{error}</p>}
+      {on && (
+        <ul className="grid divide-y divide-line overflow-hidden rounded-[14px] border border-line bg-surface">
+          {clients.map((c) => (
+            <li key={c.slug}>
+              <Link href={`/clients/${c.slug}?tab=team`} className="flex min-h-11 flex-wrap items-center justify-between gap-x-3 gap-y-0.5 px-4 py-2.5 text-sm hover:bg-surface-2">
+                <span className="font-medium">{c.name}</span>
+                {c.by && c.at && <span className="text-[12px] text-faint">Switched on by {c.by} · {c.at}</span>}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }

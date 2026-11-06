@@ -31,13 +31,24 @@ export async function setUrlTags(tags: string): Promise<{ ok: true; tags: string
   return error ? { ok: false, error: error.message } : { ok: true, tags: clean || DEFAULT_URL_TAGS };
 }
 
-/** Execs: let confirmed changes go into Google Ads (off: Google still checks them, nothing is applied). */
-export async function setGoogleWrites(on: boolean): Promise<{ ok: true } | { ok: false; error: string }> {
-  const me = await requireExec();
-  if (!adminConfigured()) return { ok: false, error: "Can't save here." };
-  const { error } = await createAdminClient().from("app_settings").upsert({ key: "google_write", value: { enabled: on }, updated_by: me.id, updated_at: new Date().toISOString() });
-  revalidatePath("/settings");
-  return error ? { ok: false, error: error.message } : { ok: true };
+export type GoogleAccessResult = { ok: true; rows: (import("@/lib/context/google-ads").GoogleAccess & { label: string | null })[]; checkedAt: string } | { ok: false; error: string };
+
+/**
+ * Google Ads access for changes on one client's Google Ads accounts (the ones its live switch opens, read the way the
+ * gate reads them): under our manager account, readable, and a dry run of a change. Nothing is created.
+ */
+export async function checkGoogleAccess(clientId: string): Promise<GoogleAccessResult> {
+  const { requireStaff } = await import("@/lib/auth");
+  await requireStaff();
+  if (!adminConfigured()) return { ok: false, error: "Can't check here." };
+  const { googleAdsConfigured, googleAccess, managedAccounts } = await import("@/lib/context/google-ads");
+  if (!googleAdsConfigured()) return { ok: false, error: "Google Ads isn't connected." };
+  const { clientWriteAccounts } = await import("@/lib/meta-write");
+  const accounts = await clientWriteAccounts(createAdminClient(), clientId, "google");
+  if (!accounts.length) return { ok: true, rows: [], checkedAt: new Date().toISOString() };
+  const managed = await managedAccounts().catch(() => []);
+  const rows = await Promise.all(accounts.map(async (a) => ({ ...(await googleAccess(a.account, managed)), label: a.label })));
+  return { ok: true, rows, checkedAt: new Date().toISOString() };
 }
 
 /** Execs: can Kaizen Ads write to this ad account? A dry run with Meta; nothing is created. */

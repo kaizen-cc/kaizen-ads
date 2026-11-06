@@ -22,21 +22,58 @@ export async function metaWriteSetting(admin: SupabaseClient): Promise<MetaWrite
   return { sandbox: v.sandbox !== false, sandboxAccount: bare(v.sandboxAccount ?? "795029519154776"), urlTags: v.urlTags === undefined || v.urlTags === null ? DEFAULT_URL_TAGS : v.urlTags.trim() || null };
 }
 
-/** The ad accounts of clients an exec switched live changes on for (testing client by client before the global switch) */
+/** Each platform's own per-client switch (Team & setup): live_ad_writes is Meta, live_google_writes is Google Ads */
+export const LIVE_COLUMN = { meta: "live_ad_writes", google: "live_google_writes" } as const;
+
+/**
+ * The ad accounts of clients an exec switched live changes on for, on this platform. Meta and Google Ads are switched
+ * separately: a client live in Meta isn't live in Google Ads.
+ */
 export async function liveAccounts(admin: SupabaseClient, platform: "meta" | "google") {
-  const { data: on } = await admin.from("clients").select("id").eq("live_ad_writes", true).is("archived_at", null);
+  const { data: on } = await admin.from("clients").select("id").eq(LIVE_COLUMN[platform], true).is("archived_at", null);
   const ids = (on ?? []).map((c) => c.id as string);
   if (!ids.length) return new Set<string>();
   const { data: t } = await admin.from("kpi_targets").select("ad_account_id").in("client_id", ids).eq("platform", platform);
   return new Set((t ?? []).map((x) => bare(String(x.ad_account_id ?? ""))).filter(Boolean));
 }
 
+export type WriteAccount = { account: string; label: string | null; targetId: string; active: boolean };
+
+/**
+ * The ad accounts on this platform that a client's live switch opens: read exactly as liveAccounts reads them (the
+ * client's KPI targets on the platform, any with an account), so what Team & setup shows is where writes can go.
+ */
+export async function clientWriteAccounts(admin: SupabaseClient, clientId: string, platform: "meta" | "google"): Promise<WriteAccount[]> {
+  const { data: t } = await admin.from("kpi_targets").select("id, ad_account_id, label, active").eq("client_id", clientId).eq("platform", platform);
+  const out = new Map<string, WriteAccount>();
+  for (const x of t ?? []) {
+    const account = bare(String(x.ad_account_id ?? ""));
+    if (!account) continue;
+    const prev = out.get(account);
+    // One line per account: the active target's label wins
+    if (!prev || (!prev.active && x.active)) out.set(account, { account, label: (x.label as string | null) || prev?.label || null, targetId: x.id as string, active: x.active !== false || Boolean(prev?.active) });
+  }
+  return [...out.values()];
+}
+
+/**
+ * Whether changes may be written to this Google Ads account: only when an exec switched live changes in Google Ads on
+ * for the client that owns it. There's no switch for everyone: each client is switched on by hand.
+ */
+export async function googleWritesOn(admin: SupabaseClient, account?: string | null) {
+  const id = String(account ?? "").replace(/\D/g, "");
+  if (!id) return false;
+  return (await liveAccounts(admin, "google")).has(id);
+}
+
+export const GOOGLE_OFF = "Live changes in Google Ads are off for this client: an exec switches them on in the client's Team & setup. Until then, do it by hand from the checklist.";
+
 /** Why this account can't be written to right now, or null when it can. */
 export async function writeBlocked(admin: SupabaseClient, account: string): Promise<string | null> {
   if (!metaConfigured()) return "Meta isn't connected.";
   const s = await metaWriteSetting(admin);
   if (s.sandbox && bare(account) !== s.sandboxAccount && !(await liveAccounts(admin, "meta")).has(bare(account)))
-    return "Live changes are off for this client: an exec switches them on in the client's Team & setup (or for everyone in Settings → Sync health).";
+    return "Live changes in Meta are off for this client: an exec switches them on in the client's Team & setup (or for everyone in Settings → Sync health).";
   return null;
 }
 

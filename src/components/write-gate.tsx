@@ -38,7 +38,7 @@ export function WriteOff({ status, canSwitch = false, account, onLive, compact =
     start(async () => {
       if (!status.client) return;
       setError(null);
-      const r = await setLiveAdWrites(status.client.id, status.client.slug, true);
+      const r = await setLiveAdWrites(status.client.id, status.client.slug, status.platform, true);
       if (!r.ok) return setError(r.error);
       setAsking(false);
       onLive?.();
@@ -77,7 +77,7 @@ export function WriteOff({ status, canSwitch = false, account, onLive, compact =
             </>
           ) : (
             <button type="button" onClick={() => setAsking(true)} className="min-h-11 rounded-full border border-warn/40 px-4 text-[12.5px] font-medium text-fg hover:bg-warn/10 md:min-h-8">
-              Switch on live changes
+              Switch on live changes in {status.platform === "google" ? "Google Ads" : "Meta"}
             </button>
           ))}
         {status.client && status.off === "client" && (
@@ -91,7 +91,7 @@ export function WriteOff({ status, canSwitch = false, account, onLive, compact =
           </a>
         )}
       </div>
-      {asking && <p className="text-[11.5px] text-faint">Approved changes for this client will then be made in Meta and Google Ads, each checked by the platform first.</p>}
+      {asking && <p className="text-[11.5px] text-faint">Approved changes for this client will then be made in {status.platform === "google" ? "Google Ads" : "Meta"}, each checked by the platform first. The other platform keeps its own switch.</p>}
       {error && <p className="text-[12px] text-bad">{error}</p>}
     </div>
   );

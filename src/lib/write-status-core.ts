@@ -1,5 +1,5 @@
 // Whether a change can actually be written to an ad account right now, decided the same way the gates decide it
-// (src/lib/meta-write.ts writeBlocked for Meta, googleWritesOn in src/lib/ad-changes.ts for Google). Pure, so the
+// (src/lib/meta-write.ts: writeBlocked for Meta, googleWritesOn for Google). Pure, so the
 // buttons can show it before anyone presses them and the tests can pin it down. The server side is write-status.ts.
 
 export type WritePlatform = "meta" | "google";
@@ -28,9 +28,10 @@ export type WriteInputs = {
   sandbox?: boolean;
   /** Meta: Kaizen's own account, always writable */
   sandboxAccount?: string | null;
-  /** Google: live changes for every client (Settings → Sync health) */
-  googleGlobal?: boolean;
-  /** An exec switched live changes on for the client that owns this account */
+  /**
+   * An exec switched live changes on, on this platform, for the client that owns this account (Meta: live_ad_writes,
+   * Google Ads: live_google_writes). For Google it's the only way in: there's no switch for everyone.
+   */
   clientLive: boolean;
 };
 
@@ -45,9 +46,9 @@ export function decideWrite(i: WriteInputs): WriteStatus {
   const live =
     i.platform === "meta"
       ? i.sandbox === false || (Boolean(i.sandboxAccount) && bareAccount(i.account) === bareAccount(i.sandboxAccount)) || i.clientLive
-      : i.googleGlobal === true || i.clientLive;
+      : i.clientLive;
   if (live) return { ...base, live: true, off: null, reason: null };
-  return { ...base, live: false, off: "client", reason: `Live changes are off for ${i.client?.name ?? "this client"}${i.platform === "google" ? "'s Google Ads" : ""}.` };
+  return { ...base, live: false, off: "client", reason: `Live changes in ${NAME[i.platform]} are off for ${i.client?.name ?? "this client"}.` };
 }
 
 /** Where an exec switches it on: the client's Team & setup tab */

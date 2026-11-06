@@ -608,8 +608,10 @@ async function Sync({ motion }: { motion: string | null }) {
   const me = await requireStaff();
   const { data: mw } = await admin.from("app_settings").select("updated_at, profiles(full_name)").eq("key", "meta_write").maybeSingle();
   const write = await metaWriteSetting(admin);
-  const { data: gw } = await admin.from("app_settings").select("value, updated_at, profiles(full_name)").eq("key", "google_write").maybeSingle();
-  const gwBy = (gw?.profiles as unknown as { full_name: string } | null)?.full_name;
+  // Google Ads has no switch for everyone: which clients an exec switched live changes in Google Ads on for
+  const { data: googleLiveRows } = await admin.from("clients").select("name, slug, live_google_writes_at, live_google_writes_by").eq("live_google_writes", true).is("archived_at", null).order("name");
+  const googleBys = [...new Set((googleLiveRows ?? []).map((c) => c.live_google_writes_by as string | null).filter(Boolean) as string[])];
+  const { data: googleByRows } = googleBys.length ? await admin.from("profiles").select("id, full_name").in("id", googleBys) : { data: [] as { id: string; full_name: string }[] };
   const mwBy = (mw?.profiles as unknown as { full_name: string } | null)?.full_name;
   const [{ data }, { data: accounts }] = await Promise.all([
     admin.from("sync_state").select("source, last_run_at, last_result").order("source"),
@@ -707,8 +709,13 @@ async function Sync({ motion }: { motion: string | null }) {
     </details>
   );
 
-  const googleOn = (gw?.value as { enabled?: boolean } | null)?.enabled === true;
   const changedAt = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" });
+  const googleLive = (googleLiveRows ?? []).map((c) => ({
+    name: c.name as string,
+    slug: c.slug as string,
+    by: (googleByRows ?? []).find((p) => p.id === c.live_google_writes_by)?.full_name ?? null,
+    at: c.live_google_writes_at ? changedAt(c.live_google_writes_at as string) : null,
+  }));
 
   const syncsPanel = (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-8 md:gap-10">
@@ -772,10 +779,10 @@ async function Sync({ motion }: { motion: string | null }) {
 
   return (
     <SyncShell
-      hero={{ healthy, behind: behindN, failing: failingN, total: syncs.length, latest: latest ? freshness(latest).label.toLowerCase() : null, metaSandbox: write.sandbox, googleOn }}
+      hero={{ healthy, behind: behindN, failing: failingN, total: syncs.length, latest: latest ? freshness(latest).label.toLowerCase() : null, metaSandbox: write.sandbox, googleLive: googleLive.length }}
       syncs={syncsPanel}
       meta={<AudienceTermsCheck />}
-      google={<GoogleWriteCard enabled={googleOn} canEdit={me.isExec} updated={gw?.updated_at ? `${changedAt(gw.updated_at)}${gwBy ? ` by ${gwBy}` : ""}` : null} />}
+      google={<GoogleWriteCard clients={googleLive} />}
       writes={
         <MetaWriteCard
           sandbox={write.sandbox}

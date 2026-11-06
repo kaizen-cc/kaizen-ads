@@ -57,7 +57,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       supabase
         .from("clients")
         .select(
-          "id, name, slug, status, client_type, archived_at, archive_reason, archive_source, portal_live, portal_live_at, industry, industry_detail, industry_source, website, meta_ad_account_id, url_tags, slack_channel_id, internal_slack_channel_id, drive_folder_id, kaizen_id, auto_approve_opt_in, creative_package, creative_package_key, creative_package_until, creative_package_note, creative_db, billing_day, billing_day_source, live_ad_writes, live_ad_writes_at, live_ad_writes_by, reactivated_at, reactivated_by, created_at, reonboarded_at, services, services_extra, services_removed, creative_packages(label)",
+          "id, name, slug, status, client_type, archived_at, archive_reason, archive_source, portal_live, portal_live_at, industry, industry_detail, industry_source, website, meta_ad_account_id, url_tags, slack_channel_id, internal_slack_channel_id, drive_folder_id, kaizen_id, auto_approve_opt_in, creative_package, creative_package_key, creative_package_until, creative_package_note, creative_db, billing_day, billing_day_source, live_ad_writes, live_ad_writes_at, live_ad_writes_by, live_google_writes, live_google_writes_at, live_google_writes_by, reactivated_at, reactivated_by, created_at, reonboarded_at, services, services_extra, services_removed, creative_packages(label)",
         )
         .eq("slug", slug)
         .maybeSingle(),
@@ -124,15 +124,36 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     const { data: asanaLinks } = gids.length ? await supabase.from("asana_tasks").select("gid, url").in("gid", gids) : { data: [] };
     return { callRows: callRows ?? [], promised: promised ?? [], asanaLinks: asanaLinks ?? [] };
   };
-  // Live changes in their ad accounts: on for this client, or for everyone
+  // Live changes in their ad accounts, Meta and Google Ads switched separately, with the accounts each switch opens
+  // (read the way the write gates read them, so what's shown is where changes go)
   const liveWritesChain = async () => {
-    const [{ data: mw }, { data: gw }, { data: who }] = await Promise.all([
-      supabase.from("app_settings").select("value").eq("key", "meta_write").maybeSingle(),
-      supabase.from("app_settings").select("value").eq("key", "google_write").maybeSingle(),
-      client.live_ad_writes_by ? supabase.from("profiles").select("full_name").eq("id", client.live_ad_writes_by as string).maybeSingle() : Promise.resolve({ data: null }),
+    const { clientWriteAccounts, metaWriteSetting } = await import("@/lib/meta-write");
+    const db = admin ?? supabase;
+    const name = (id: unknown) => (id ? supabase.from("profiles").select("full_name").eq("id", id as string).maybeSingle() : Promise.resolve({ data: null }));
+    const [setting, { data: metaBy }, { data: googleBy }, metaAccounts, googleAccounts] = await Promise.all([
+      metaWriteSetting(db),
+      name(client.live_ad_writes_by),
+      name(client.live_google_writes_by),
+      clientWriteAccounts(db, client.id, "meta"),
+      clientWriteAccounts(db, client.id, "google"),
     ]);
-    const globalOn = (mw?.value as { sandbox?: boolean } | null)?.sandbox === false && (gw?.value as { enabled?: boolean } | null)?.enabled === true;
-    return { on: Boolean(client.live_ad_writes), by: (who?.full_name as string | null) ?? null, at: (client.live_ad_writes_at as string | null) ?? null, globalOn };
+    return {
+      meta: {
+        on: Boolean(client.live_ad_writes),
+        by: (metaBy?.full_name as string | null) ?? null,
+        at: (client.live_ad_writes_at as string | null) ?? null,
+        globalOn: !setting.sandbox,
+        accounts: metaAccounts,
+        field: String(client.meta_ad_account_id ?? "").replace(/^act_/, "").replace(/\D/g, "") || null,
+        sandboxAccount: setting.sandboxAccount,
+      },
+      google: {
+        on: Boolean(client.live_google_writes),
+        by: (googleBy?.full_name as string | null) ?? null,
+        at: (client.live_google_writes_at as string | null) ?? null,
+        accounts: googleAccounts,
+      },
+    };
   };
 
   // Everything the page needs, all at once

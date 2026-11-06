@@ -10,7 +10,7 @@ import { askJson, clientContext, contextBlock } from "@/lib/ai";
 // - keywords: keywords to add, with the negatives that keep them clean.
 // Written from the client's Brand Bible, Google go-to-market strategy, business model, the sub-vertical's Google
 // playbook and the patterns across clients. The Google buyer approves, edits or declines it like a suggested brief.
-// Approved, it's a checklist to apply by hand, or (when Google writes are switched on in Settings) pushed to Google
+// Approved, it's a checklist to apply by hand, or (when an exec switched live changes in Google Ads on for the client) pushed to Google
 // Ads paused: keywords and the ad into an ad group the buyer picks, negatives onto a campaign. A whole new campaign is
 // always built by hand from the checklist.
 
@@ -252,16 +252,16 @@ const DESC_PIN = ["", "DESCRIPTION_1", "DESCRIPTION_2"] as const;
 /**
  * Pushes an approved deploy to Google Ads, paused: the ad and keywords into the ad group picked (or a new ad group made
  * in the campaign picked), negatives onto the campaign picked. Each part is checked by Google first (validate only),
- * then sent on its own so one refusal doesn't stop the rest. Only with live changes on for the client (or everyone).
+ * then sent on its own so one refusal doesn't stop the rest. Only with live changes in Google Ads on for the client.
  */
 export async function pushDeploy(admin: SupabaseClient, deployId: string, target: DeployTarget) {
-  const { googleWritesOn } = await import("@/lib/ad-changes");
+  const { googleWritesOn, GOOGLE_OFF } = await import("@/lib/meta-write");
   const { data: d } = await admin.from("google_deploys").select("client_id, kind, plan, status").eq("id", deployId).single();
   if (!d?.plan || !["approved", "partial", "failed"].includes(d.status as string)) throw new Error("Approve it first.");
   if (d.kind === "campaign") throw new Error("A new campaign is built by hand from the checklist.");
   const account = await googleAccountOf(admin, d.client_id as string);
   if (!account) throw new Error("No Google Ads account is linked to this client on the KPI board.");
-  if (!(await googleWritesOn(admin, account))) throw new Error("Live changes are off for this client's Google Ads: an exec switches them on in the client's Team & setup; until then, apply it by hand from the checklist.");
+  if (!(await googleWritesOn(admin, account))) throw new Error(GOOGLE_OFF);
   const plan = d.plan as DeployPlan;
   const cust = `customers/${account}`;
   const state = target.status === "ENABLED" ? "ENABLED" : "PAUSED";

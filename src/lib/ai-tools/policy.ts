@@ -536,8 +536,8 @@ export type ApplyResult = { ok: true; mode: "applied"; note: string; resource: s
 
 /**
  * Apply the fix: a PAUSED replacement next to the item (a new responsive search ad with the compliant text, or the
- * compliant keyword), checked by Google first, then made. Only where live Google changes are on (for everyone, or for this
- * client) and the person may change the account; otherwise, and for page fixes and assets, the checklist.
+ * compliant keyword), checked by Google first, then made. Only where live changes in Google Ads are on for this client
+ * and the person may change the account; otherwise, and for page fixes and assets, the checklist.
  */
 export async function applyPolicyFix(admin: SupabaseClient, me: Staff, checkId: string, key: string): Promise<ApplyResult> {
   const { data: row } = await admin.from("policy_checks").select("client_id, account, issues").eq("id", checkId).single();

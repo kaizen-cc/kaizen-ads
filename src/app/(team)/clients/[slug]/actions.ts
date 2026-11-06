@@ -590,12 +590,15 @@ export async function sentEmail(id: string) {
 }
 
 /**
- * Execs only: live changes in this client's Meta and Google ad accounts (pauses, budgets, moves, launches) while the
- * global switch is still off, to prove it client by client first. Who switched it and when is kept on the client.
+ * Execs only: live changes in this client's Meta ad accounts (pauses, budgets, moves, launches) or, switched on its
+ * own, its Google Ads account. Nothing is written to Google Ads for a client until this is on for it; Meta's global
+ * sandbox (Settings) can also open Meta for everyone. Who switched each one and when is kept on the client.
  */
-export async function setLiveAdWrites(clientId: string, slug: string, on: boolean): Promise<ActionResult> {
+export async function setLiveAdWrites(clientId: string, slug: string, platform: "meta" | "google", on: boolean): Promise<ActionResult> {
   const me = await requireStaff();
   if (!me.isExec) return { ok: false, error: "Only execs can switch live changes on." };
-  const { error } = await createAdminClient().from("clients").update({ live_ad_writes: on, live_ad_writes_by: me.id, live_ad_writes_at: new Date().toISOString() }).eq("id", clientId);
+  const now = new Date().toISOString();
+  const patch = platform === "google" ? { live_google_writes: on, live_google_writes_by: me.id, live_google_writes_at: now } : { live_ad_writes: on, live_ad_writes_by: me.id, live_ad_writes_at: now };
+  const { error } = await createAdminClient().from("clients").update(patch).eq("id", clientId);
   return done(slug, error);
 }

@@ -26,7 +26,7 @@ import { setPortalLive,
   setSprintPackage,
 } from "./actions";
 import { BillingDayPanel, type BillingDayChange } from "./billing-day-panel";
-import { LiveWritesPanel } from "./live-writes-panel";
+import { GoogleConnection, LiveWritesPanel, type LiveWritesData } from "./live-writes-panel";
 import { PackagePanel, type Cycle, type PackageOption } from "./package-panel";
 import { ReadinessCheck } from "./readiness-check";
 import { LaunchRules, type LaunchRule } from "./launch-rules";
@@ -166,8 +166,8 @@ export type ClientViewProps = {
   cycle?: Cycle | null;
   /** Every change to the creative billing day */
   billingHistory?: BillingDayChange[];
-  /** Live changes in their ad accounts, switched on for this client (or for everyone) */
-  liveWrites?: { on: boolean; by: string | null; at: string | null; globalOn: boolean } | null;
+  /** Live changes in their ad accounts, Meta and Google Ads switched separately, with the accounts each one opens */
+  liveWrites?: LiveWritesData | null;
   creativeDb?: CreativeDb | null;
   /** buyerTools: the media-buying tabs (Google policy and ideas to apply); the creative team doesn't get them */
   can: { admin: boolean; contacts: boolean; allot: boolean; assign: boolean; buyerTools?: boolean };
@@ -633,8 +633,8 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                     </Section>
                   )}
                   {liveWrites && (
-                    <Section title="Live changes in their ad accounts" description="Test client by client: execs switch it on here before it's on for everyone.">
-                      <LiveWritesPanel {...liveWrites} clientId={client.id} canEdit={can.admin && !demo} toggle={setLiveAdWrites.bind(null, client.id, client.slug)} />
+                    <Section title="Live changes in their ad accounts" description="Meta and Google Ads are switched on separately, client by client, by an exec. Off, every change stays a plan to do by hand.">
+                      <LiveWritesPanel data={liveWrites} clientId={client.id} canEdit={can.admin && !demo} toggle={setLiveAdWrites.bind(null, client.id, client.slug)} />
                     </Section>
                   )}
                   <Section title="Creative billing date" description="When their creative allotment starts again: the day the Creative Package is billed in Stripe. Execs can set it by hand; every change is kept.">
@@ -765,6 +765,14 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                     </span>
                     <ConnectionStatus status={connections.meta} sync={live ? syncMetaNow.bind(null, client.id, client.slug) : undefined} demo={demo} />
                   </label>
+                  {liveWrites && (
+                    <div className={label}>
+                      <span>
+                        Google Ads account ID <span className="font-normal text-faint">(set on the KPI board)</span>
+                      </span>
+                      <GoogleConnection accounts={liveWrites.google.accounts} />
+                    </div>
+                  )}
                   <label className={label}>
                     <span>
                       UTM parameters <span className="font-normal text-faint">(only if this client uses their own)</span>
@@ -808,6 +816,14 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                   <dt className="text-muted">Status</dt>
                   <dd className="capitalize">{client.status}</dd>
                 </div>
+                {liveWrites && (
+                  <div className="grid gap-1">
+                    <dt className="text-muted">Google Ads account ID</dt>
+                    <dd>
+                      <GoogleConnection accounts={liveWrites.google.accounts} />
+                    </dd>
+                  </div>
+                )}
                 {(
                   [
                     ["Meta ad account", connections.meta, true],
