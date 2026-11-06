@@ -151,13 +151,36 @@ export async function startBrief(clientId: string, source: BriefSource, agreed: 
   return started(id);
 }
 
-/** The briefs this person has writing, and the finished ones not yet shown. Quiet when signed out. */
+/**
+ * The briefs this person has writing, and the finished ones not yet shown. Quiet when signed out. Read by their
+ * profile id: profiles.id isn't the auth uid, and reading by the uid found nothing, so the card's progress went
+ * away on the first check and no toast ever came (the bell's notice still did).
+ */
 export async function myJobs(): Promise<BriefJob[]> {
   const db = await createClient();
   const { data: claims } = await db.auth.getClaims();
-  const id = claims?.claims?.sub as string | undefined;
-  if (!id) return [];
-  return myBriefJobs(db, id).catch(() => []);
+  if (!claims?.claims?.sub) return [];
+  const me = await requireStaff();
+  return myBriefJobs(adminConfigured() ? createAdminClient() : db, me.id).catch(() => []);
+}
+
+/** A brief that couldn't be written, asked for again from what was agreed (the same source, seed and key) */
+export async function retryBriefJob(jobId: string): Promise<Started> {
+  const me = await requireStaff();
+  if (!/^[0-9a-f-]{36}$/i.test(jobId) || !adminConfigured()) return { ok: false, error: "That brief isn't there." };
+  const admin = createAdminClient();
+  const { data: j } = await admin.from("brief_jobs").select("id, kind, client_id, profile_id, input, title, status").eq("id", jobId).maybeSingle();
+  if (!j || j.profile_id !== me.id) return { ok: false, error: "That brief isn't yours." };
+  if (j.status !== "failed") return started(j.id as string);
+  {
+    const why = await notLive(await createClient(), j.client_id as string);
+    if (why) return { ok: false, error: why };
+  }
+  if (!aiEnabled()) return { ok: false, error: "The AI isn't connected here." };
+  const input = (j.input ?? {}) as import("@/lib/brief-jobs").BriefJobInput & { key?: string };
+  const id = await queueBriefJob(admin, { kind: j.kind as import("@/lib/brief-jobs").BriefJobKind, clientId: j.client_id as string, profileId: me.id, input, title: (j.title as string | null) ?? null, key: input.key ?? jobId });
+  after(() => runBriefJob(createAdminClient(), id));
+  return started(id);
 }
 
 /** Shown (the toast went up, or it was opened): it stops coming back */

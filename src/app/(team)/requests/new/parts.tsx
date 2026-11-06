@@ -1,20 +1,22 @@
 "use client";
 
 import { useId, useMemo, useState } from "react";
-import { allotmentLine, allotmentOver, draws, untilLabel, type Allotment } from "@/lib/allotment";
+import { allotmentOver, allotmentWithProgress, draws, inProgress, untilLabel, type Allotment } from "@/lib/allotment";
 import { tintFor } from "@/lib/colors";
 import type { Size } from "./draft";
 
 export type ClientOption = { id: string; name: string; slug: string; creative: boolean };
 
-/** "Images 86/50 · 36 over · Videos 7/10 · resets Nov 30": per pool through the shared helper, never summed */
+/**
+ * "Images 0/25 used · 14 in progress · Videos 7/10 used · resets Nov 30": per pool through the shared helper, never
+ * summed, with what's on the board or in Asana and not delivered yet beside what's used (so nobody overproduces)
+ */
 export function allotmentSummary(a: Allotment | undefined) {
-  const pools = allotmentLine(a);
+  const pools = allotmentWithProgress(a);
   if (!a || !pools) return "No allotment set";
   const sprint = a.until ? `Sprint until ${untilLabel(a.until)}` : null;
-  const waiting = a.waiting && a.waiting.images + a.waiting.videos > 0 ? `${a.waiting.images} images, ${a.waiting.videos} videos more briefed in Asana` : null;
   const resets = !a.until && a.cycle ? `resets ${untilLabel(a.cycle.end)}` : null;
-  return [sprint, pools, waiting, resets].filter(Boolean).join(" · ");
+  return [sprint, pools, resets].filter(Boolean).join(" · ");
 }
 
 /** The AI mark: a small four-point spark. */
@@ -361,9 +363,9 @@ export function AllotmentBars({ allotment, formats }: { allotment: Allotment | u
   if (!allotment || (allotment.images === null && allotment.videos === null))
     return <p className="rounded-[14px] border border-dashed border-line px-4 py-3 text-[12.5px] text-faint">No monthly allotment set for this client yet. Execs and leads set it on the client page.</p>;
   const rows = [
-    { label: "Images & carousels", cap: allotment.images, used: allotment.imagesUsed, add: t.images },
-    { label: "Videos", cap: allotment.videos, used: allotment.videosUsed, add: t.videos },
-  ].filter((r) => r.cap !== null && (r.add > 0 || r.cap > 0)) as { label: string; cap: number; used: number; add: number }[];
+    { label: "Images & carousels", cap: allotment.images, used: allotment.imagesUsed, add: t.images, progress: inProgress(allotment, "images") },
+    { label: "Videos", cap: allotment.videos, used: allotment.videosUsed, add: t.videos, progress: inProgress(allotment, "videos") },
+  ].filter((r) => r.cap !== null && (r.add > 0 || r.cap > 0)) as { label: string; cap: number; used: number; add: number; progress: number }[];
   const over = rows.some((r) => r.used + r.add > r.cap);
   return (
     <div className="grid gap-3.5 rounded-[16px] border border-line bg-surface p-4">
@@ -389,6 +391,11 @@ export function AllotmentBars({ allotment, formats }: { allotment: Allotment | u
               <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-fg/25" /> {r.used} used</span>
               <span className="inline-flex items-center gap-1.5"><span className={`h-2 w-2 rounded-full ${after < 0 ? "bg-bad" : "bg-brand"}`} /> {r.add} this request</span>
               <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-surface-2 ring-1 ring-line" /> {Math.max(0, after)} left</span>
+              {r.progress > 0 && (
+                <span className="inline-flex items-center gap-1.5 text-warn" title="On the board or in Asana and not delivered yet: requested, in production, in review, with the client">
+                  <span className="h-2 w-2 rounded-full border border-warn" /> {r.progress} in progress, not delivered yet
+                </span>
+              )}
             </div>
           </div>
         );

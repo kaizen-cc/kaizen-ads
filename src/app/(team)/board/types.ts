@@ -18,6 +18,9 @@ export type Ticket = {
   creativeName: string | null;
   buyerName: string | null;
   angleName: string | null;
+  /** Who it's for: a Brand Bible avatar by name, or a new one under test */
+  avatar?: string | null;
+  avatarTest?: boolean;
   audience: string | null;
   brief: string | null;
   refs: string[];

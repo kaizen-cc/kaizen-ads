@@ -17,6 +17,9 @@ export type AsanaDraft = {
   formats: Partial<Record<AsanaFormat, { new: number; variations: number; cards?: number }>>;
   sizes: string[];
   angle: string;
+  /** A Brand Bible avatar by name, or a new one under test */
+  avatar?: string;
+  avatarTest?: boolean;
   audience: string;
   brief: string;
   refs: string;
@@ -94,7 +97,9 @@ export async function planAsanaRequest(admin: SupabaseClient, d: AsanaDraft): Pr
       `Type of Creative: ${FORMAT_TYPE[f]}`,
       `Deliverables: ${deliverables}${sizes ? ` (${sizes})` : ""}`,
       `Intended Audience: ${d.audience.trim()}`,
+      ...(d.avatar?.trim() ? [`Avatar: ${d.avatar.trim()}${d.avatarTest ? " (avatar test: not in the Brand Bible yet)" : ""}`] : []),
       `Creative Angle: ${d.angle.trim()}`,
+      ...(d.avatar?.trim() || d.angle.trim() ? [`Name files and folders by: ${[d.avatar?.trim(), d.angle.trim()].filter(Boolean).join(" - ")}`] : []),
       `Anything Specific to focus on: ${d.brief.trim()}`,
       "",
       ...(refs.length ? ["References:", ...refs, ""] : []),

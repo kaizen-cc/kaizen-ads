@@ -15,6 +15,10 @@ import { previewBrief, type PreviewResult } from "@/app/(team)/quick-brief-actio
 import { quickEdited, type BriefSource, type QuickBrief, type QuickFormat } from "@/lib/quick-brief";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import type { Allotment } from "@/lib/allotment";
+import type { BibleAvatar } from "@/lib/bible-sections";
+import { motionLine, type MotionItem } from "@/lib/in-motion";
+import { AvatarField } from "@/components/avatar-field";
+import { LinkCards, LinkInput } from "@/components/link-refs";
 
 // The quick preview every brief starts from. Picking a card ("Brief on this") opens this sheet: a short summary in a
 // few seconds that can be changed line by line, then "Write the full brief" starts the usual (longer) write, seeded
@@ -25,6 +29,10 @@ import type { Allotment } from "@/lib/allotment";
 // the sheet closes at once and nothing waits on it. The card it was started from shows the progress and then "Brief
 // ready · Open" (BriefJobSlot), the count sits by the bell, and a toast and the bell open it as a draft in Ready to
 // send. Opened again while it's writing, the sheet shows that progress too. "Not this one" writes nothing.
+// "Write the full brief" keeps the sheet open on its progress ("You'll get a notice when it's ready (about 2 min) · Keep
+// working"), so the next step is never a guess; if the write fails, it says why, with Retry. Above the lines: what's
+// already in motion for the client that touches this brief (board and Asana), the avatar from the Brand Bible, and any
+// link pasted as a reference.
 
 type Fmt = QuickFormat["format"];
 const FMTS: Fmt[] = ["image", "video", "carousel"];
@@ -52,6 +60,7 @@ export function QuickBriefSheet({
   onWriteAll,
   onClose,
   onStarted,
+  onBriefChange,
   given = null,
 }: {
   clientId: string;
@@ -69,8 +78,14 @@ export function QuickBriefSheet({
   onClose: () => void;
   /** The full brief (or a split's briefs) started in the background */
   onStarted?: () => void;
+  /** The preview as it stands, on arrival and after every change (talk it through keeps it, and refines it next turn) */
+  onBriefChange?: (brief: QuickBrief) => void;
 }) {
-  const [state, setState] = useState<{ status: "loading" } | { status: "error"; error: string } | { status: "ready"; base: QuickBrief; others: QuickBrief[]; allotment: Allotment | null; client: string; instant: boolean }>({ status: "loading" });
+  const [state, setState] = useState<
+    | { status: "loading" }
+    | { status: "error"; error: string }
+    | { status: "ready"; base: QuickBrief; others: QuickBrief[]; allotment: Allotment | null; client: string; instant: boolean; avatars: BibleAvatar[]; motion: MotionItem[] }
+  >({ status: "loading" });
   // Every brief on screen (one, or each concept after a split), and which one is open
   const [briefs, setBriefs] = useState<QuickBrief[]>([]);
   const [split, setSplit] = useState(false);
@@ -120,7 +135,7 @@ export function QuickBriefSheet({
       .then((r) => {
         if (!live) return;
         if (!r.ok) return setState({ status: "error", error: r.error });
-        setState({ status: "ready", base: r.brief, others: r.others, allotment: r.allotment, client: r.client, instant: r.instant });
+        setState({ status: "ready", base: r.brief, others: r.others, allotment: r.allotment, client: r.client, instant: r.instant, avatars: r.avatars, motion: r.motion });
         setBriefs([r.brief]);
         setSplit(false);
         setActive(0);
@@ -138,6 +153,14 @@ export function QuickBriefSheet({
   }, [onClose]);
 
   const ready = state.status === "ready" && brief ? state : null;
+  // Handed back as it changes (talk it through keeps the preview and refines that same one next)
+  const changeRef = useRef(onBriefChange);
+  useEffect(() => {
+    changeRef.current = onBriefChange;
+  }, [onBriefChange]);
+  useEffect(() => {
+    if (brief && !split) changeRef.current?.(brief);
+  }, [brief, split]);
   // A split brief is always new: each is written from its own preview
   const edited = ready && brief ? split || quickEdited(ready.base, brief) : false;
   const setBrief = (fn: (b: QuickBrief) => QuickBrief) => setBriefs((all) => all.map((b, i) => (i === active ? fn(b) : b)));
@@ -153,9 +176,8 @@ export function QuickBriefSheet({
   const write = () => {
     if (!brief || !total) return;
     if (onWrite) return onWrite(brief, edited, briefs.filter((_, i) => i !== active));
-    // Already written and kept as it was: straight to Ready to send. Otherwise the sheet closes at once while it's
-    // written in the background (its card shows the progress)
-    if (!(ready?.instant && !edited)) onClose();
+    // Written in the background: the sheet stays on its progress (with "Keep working" to close it), so what happens
+    // next is plain; its card shows the same progress, and a toast and the bell bring it when it's ready
     void inBackground([brief], edited);
   };
 
@@ -234,6 +256,25 @@ export function QuickBriefSheet({
                   ))}
                 </div>
               )}
+              {ready.motion.length > 0 && (
+                <div className="grid gap-2 rounded-[16px] border border-warn/40 bg-warn-soft/40 p-4" role="note">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-warn">Already in motion for {ready.client}</p>
+                  <ul className="grid gap-1.5">
+                    {ready.motion.map((m) => (
+                      <li key={m.key} className="min-w-0 text-[13.5px] leading-snug">
+                        {m.href ? (
+                          <a href={m.href} target={m.source === "asana" ? "_blank" : undefined} rel="noreferrer" className="underline decoration-warn/40 underline-offset-2 hover:decoration-warn">
+                            {motionLine(m)}
+                          </a>
+                        ) : (
+                          motionLine(m)
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-[12px] text-muted">Check it isn&apos;t the same work before writing this one. Briefs count only what they add.</p>
+                </div>
+              )}
               <div className="grid gap-1">
                 <p className="text-[12px] text-faint">{split ? "Its own brief, written on its own. Change any line first." : ready.instant ? `Already written for ${ready.client}. Change any line and it's rewritten to match.` : `A first look for ${ready.client}. Change any line before the full brief is written.`}</p>
                 <Line value={brief.title} onChange={(v) => set({ title: v })} label="Title" className="font-heading text-[24px] leading-tight tracking-tight" placeholder="Name it" />
@@ -250,13 +291,16 @@ export function QuickBriefSheet({
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
-                <Block label="Angle">
-                  <Line value={brief.angle} onChange={(v) => set({ angle: v })} label="Angle" className="text-[14.5px]" placeholder="The angle" />
+                <Block label="Avatar">
+                  <AvatarField clientId={clientId} avatars={ready.avatars} value={{ avatar: brief.avatar ?? "", avatarTest: Boolean(brief.avatarTest) }} onChange={(v) => set(v)} compact />
                 </Block>
-                <Block label="Audience">
-                  <Line value={brief.audience} onChange={(v) => set({ audience: v })} label="Audience" className="text-[14.5px]" placeholder="Who it's for" />
+                <Block label="Angle">
+                  <Line value={brief.angle} onChange={(v) => set({ angle: v })} label="Angle" className="text-[14.5px]" placeholder="The message aimed at that avatar" />
                 </Block>
               </div>
+              <Block label="Audience">
+                <Line value={brief.audience} onChange={(v) => set({ audience: v })} label="Audience" className="text-[14.5px]" placeholder="Who it's for, in targeting terms" />
+              </Block>
 
               <Block label="What gets made">
                 <div className="grid gap-2">
@@ -288,6 +332,13 @@ export function QuickBriefSheet({
                 <Line value={brief.why} onChange={(v) => set({ why: v })} label="Why it fits" className="text-[14px] leading-relaxed text-muted" placeholder="Why it fits them now" />
               </Block>
 
+              <Block label="References">
+                <div className="grid gap-2.5">
+                  {(brief.refs ?? []).length > 0 && <LinkCards urls={brief.refs ?? []} clientId={clientId} clientName={ready.client} size="sm" onRemove={(u) => set({ refs: (brief.refs ?? []).filter((x) => x !== u) })} />}
+                  <LinkInput onAdd={(urls) => setBrief((b) => ({ ...b, refs: [...new Set([...(b.refs ?? []), ...urls])].slice(0, 10) }))} />
+                </div>
+              </Block>
+
               <Block label="Add a note">
                 <textarea
                   value={brief.note}
@@ -307,7 +358,7 @@ export function QuickBriefSheet({
               <BriefJobStatus source={source} clientId={clientId} compact={false} />
             </div>
           )}
-          {!writing && ready && !(ready.instant && !edited) && <p className="text-[12px] text-faint">Written in the background while you keep working: close this any time. It opens in Ready to send.</p>}
+          {!job && ready && !(ready.instant && !edited) && <p className="text-[12px] text-faint">Written in the background (about a minute or two). This shows its progress; you&apos;ll get a notice when it&apos;s ready to open in Ready to send.</p>}
           {split && (onWriteAll || !onWrite) && briefs.length > 1 && !writing && (
             <button
               type="button"

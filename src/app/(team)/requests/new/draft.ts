@@ -20,6 +20,9 @@ export type Draft = {
   sizes: Size[];
   title: string;
   angle: string;
+  /** Who it's for: one of the Brand Bible's avatars by name, or a new one under test (avatarTest) */
+  avatar?: string;
+  avatarTest?: boolean;
   audience: string;
   priority: Priority;
   brief: string;
@@ -92,7 +95,8 @@ export function describeDraft(d: Draft, clientName: string) {
     `Formats: ${fmts || "none picked yet"}`,
     `Sizes: ${d.sizes.map((s) => s.replace("x", ":")).join(", ") || "none"}`,
     `Title: ${d.title || "(empty)"}`,
-    `Angle or avatar: ${d.angle || "(empty)"}`,
+    `Avatar: ${d.avatar?.trim() ? `${d.avatar.trim()}${d.avatarTest ? " (a new avatar under test, not in the Brand Bible)" : ""}` : "(none picked)"}`,
+    `Angle: ${d.angle || "(empty)"}`,
     `Audience: ${d.audience || "(empty)"}`,
     `Priority: ${d.priority}`,
     `Brief:\n${d.brief || "(empty)"}`,

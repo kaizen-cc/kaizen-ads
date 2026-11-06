@@ -2,6 +2,7 @@ import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { MAX_VARIATIONS, describeAllotment, toAllotment, type Allotment, type UsageRow } from "@/lib/allotment";
+import { motionBlock } from "@/lib/in-motion";
 import { describeMeta } from "@/lib/context/meta";
 import { describeKpis, loadClientKpis } from "@/lib/kpi/client";
 import { describeFatigue } from "@/lib/fatigue";
@@ -544,6 +545,8 @@ export type ClientContext = {
   googleGtm?: string | null; // the Google Ads go-to-market strategy, the same way
   business?: string; // real revenue, customers and lead outcomes from their store or CRM (Shopify, WooCommerce, GoHighLevel…)
   activity?: string; // what's happening in the app now: tickets, review comments, approvals, overrides, plan, owed replies, promises
+  /** Open tickets and Asana-mirrored tasks not delivered yet (src/lib/in-motion.ts): every writer reads them */
+  motion?: import("@/lib/in-motion").MotionItem[];
   sinceBriefing: { source: string; at: string; author: string | null; title: string | null; body: string | null }[]; // newer than the briefing
   angles: { name: string; kind: string; description: string | null }[];
   memory: { kind: "avoid" | "prefer" | "note"; body: string; source: string; dated?: string | null }[]; // dated: true as of that day (background, not a standing rule)
@@ -588,7 +591,7 @@ export async function clientContext(supabase: SupabaseClient, clientId: string, 
   if (!c) return null;
   // The Bible's living learnings: what their ads proved since it was written, newest first
   const learned = ((bible?.learnings ?? []) as { at: string; kind: string; text: string }[]).slice(-30).reverse();
-  const [newer, siteIssues, gtm, googleGtm, business, documents, playbook, peers, patterns, reports, winners, kpis, intake, tiring, activity] = await Promise.all([
+  const [newer, siteIssues, gtm, googleGtm, business, documents, playbook, peers, patterns, reports, winners, kpis, intake, tiring, activity, motion] = await Promise.all([
     // Slack and email that came in after the briefing was written, so suggestions and the review are current
     supabase
       .from("context_items")
@@ -656,6 +659,8 @@ export async function clientContext(supabase: SupabaseClient, clientId: string, 
       .then(({ data }) => describeFatigue((data ?? []) as Parameters<typeof describeFatigue>[0])),
     // What's happening with them in the app right now: tickets, comments, approvals, overrides, plan, promises
     import("@/lib/client-activity").then(({ activityBlock }) => activityBlock(supabase, clientId)).catch(() => ""),
+    // Already in motion: the board's open tickets and Asana's open tasks, so no writer claims nothing exists
+    import("@/lib/in-motion").then(({ loadInMotion }) => loadInMotion(supabase, clientId)).catch(() => []),
   ]);
   return {
     brandBible:
@@ -685,6 +690,7 @@ export async function clientContext(supabase: SupabaseClient, clientId: string, 
     intake,
     tiring,
     activity,
+    motion,
     angles: angles ?? [],
     memory: (memory ?? []) as ClientContext["memory"],
     recent: (recent ?? []).map((r) => ({
@@ -759,6 +765,8 @@ export function contextBlock(ctx: ClientContext, request?: { images: number; vid
       "</newer_than_the_briefing>",
     );
   if (on("allotment")) lines.push("<allotment_this_month>", describeAllotment(ctx.allotment, request), "</allotment_this_month>");
+  // Always read: what's on the board and in Asana for them right now
+  if (ctx.motion) lines.push(motionBlock(ctx.motion));
   // Standing rules and lessons; then what was true as of a date (a month's results, an event, a promotion), kept as
   // background so nothing the client told us is lost, but never read as a rule for today
   const standing = ctx.memory.filter((m) => !m.dated);

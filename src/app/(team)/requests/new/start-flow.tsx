@@ -164,7 +164,8 @@ export function ClientPicker({ clients, allotments, onPick }: { clients: ClientO
     onPick(c);
   };
   // Per pool, the overage in red (never summed, never clamped): one helper for every screen
-  const left = (c: ClientOption) => <AllotmentPools allotment={allotments[c.id]} empty={null} suffix="this cycle" />;
+  // With what's in progress for them (board and Asana, not delivered yet), so "0 of 25 used" never reads as room for 25
+  const left = (c: ClientOption) => <AllotmentPools allotment={allotments[c.id]} empty={null} progress />;
   const hasPools = (c: ClientOption) => allotmentPools(allotments[c.id]).length > 0;
 
   return (
@@ -301,6 +302,9 @@ function savedSource(s: SavedRef): BriefSource | null {
   if (s.source === "pattern") return { kind: "pattern", patternId: s.refId };
   if (s.source === "brief") return { kind: "suggestion", id: s.refId };
   if (s.source === "promise") return { kind: "promise", commitmentId: s.refId };
+  // A link saved for later (Motion, Pinterest, Instagram, TikTok, the Ads Library, YouTube, any page): an idea built on it
+  if (s.source === "link" && s.url)
+    return { kind: "idea", label: `A saved reference: ${s.title ?? s.url}`.slice(0, 200), text: `Build this client's version of what this reference does well (keep the link in the brief's references and say what to take from it): ${s.url}${s.subtitle ? ` (${s.subtitle})` : ""}` };
   return null;
 }
 

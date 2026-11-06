@@ -4,7 +4,7 @@ import { requireStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { LIVE } from "@/lib/live";
-import { SAVED_COLS, saveState, toSaved, type SaveInput, type SavedRef, type SavedSource } from "@/lib/saved-references";
+import { SAVED_COLS, saveState, toSaved, type LinkPreview, type SaveInput, type SavedRef, type SavedSource } from "@/lib/saved-references";
 
 // Ideas saved for later (client_saved_references), per person per client, read and written with the person's own
 // access. Starring is instant on screen; these only confirm it.
@@ -45,6 +45,16 @@ export async function saveReference(clientId: string, input: SaveInput): Promise
     .single();
   if (error || !data) return { ok: false, error: "Couldn't save it. Try again." };
   return { ok: true, ref: toSaved(data as Record<string, unknown>) };
+}
+
+/** Preview cards for pasted reference links (title and picture, read on the server); a link that can't be read still shows */
+export async function linkPreviews(urls: string[]): Promise<LinkPreview[]> {
+  await requireStaff();
+  const list = [...new Set(urls.map((u) => u.trim()).filter((u) => /^https?:\/\/\S+$/i.test(u)))].slice(0, 10);
+  if (!list.length) return [];
+  const { previewLink } = await import("@/lib/link-preview");
+  const admin = adminConfigured() ? createAdminClient() : null;
+  return Promise.all(list.map((u) => previewLink(u, admin)));
 }
 
 /** Unstar: gone from this person's saved list (one already used stays on record) */

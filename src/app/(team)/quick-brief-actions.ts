@@ -1,6 +1,7 @@
 "use server";
 
 import { AGENCY_SYSTEM, AiUnavailable, aiEnabled, askJson, clientContext, contextBlock, getAgent } from "@/lib/ai";
+import { AVATAR_RULE } from "@/lib/suggestions";
 import { toAllotment, type Allotment, type UsageRow } from "@/lib/allotment";
 import { requireStaff } from "@/lib/auth";
 import { CREATIVE_FORMATS, clampFormats, formatsFor, formatsRule, type CreativeFormat } from "@/lib/creative-formats";
@@ -8,12 +9,28 @@ import { quickFromDraftAll, type BriefSource, type QuickBrief, type QuickFormat 
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { SuggestionDraft } from "@/lib/suggestions";
+import { avatarsOf, matchAvatar, type BibleAvatar } from "@/lib/bible-sections";
+import { loadInMotion, motionMatches, type MotionItem } from "@/lib/in-motion";
 
 // The quick preview every brief starts from (src/lib/quick-brief.ts): a short summary in a few seconds, from a fast
 // model at low effort, or at once when the brief is already written. The full brief is written after, from what the
 // person agreed.
 
-export type PreviewResult = { ok: true; brief: QuickBrief; /** Other distinct concepts in it: one concept per brief, so these can be split off */ others: QuickBrief[]; allotment: Allotment | null; client: string; instant: boolean } | { ok: false; error: string };
+export type PreviewResult =
+  | {
+      ok: true;
+      brief: QuickBrief;
+      /** Other distinct concepts in it: one concept per brief, so these can be split off */
+      others: QuickBrief[];
+      allotment: Allotment | null;
+      client: string;
+      instant: boolean;
+      /** The Brand Bible's avatars, for the avatar dropdown */
+      avatars: BibleAvatar[];
+      /** Open tickets and Asana tasks that touch this brief: "Already in motion: #123 Holiday promo (in production)" */
+      motion: MotionItem[];
+    }
+  | { ok: false; error: string };
 
 const FORMATS = ["image", "video", "carousel"] as const;
 
@@ -30,11 +47,12 @@ const ONE = {
       items: { type: "object", properties: { format: { type: "string", enum: [...FORMATS] }, new: { type: "integer" }, variations: { type: "integer" } }, required: ["format", "new", "variations"], additionalProperties: false },
     },
     why: { type: "string" },
+    avatar: { type: "string" },
   },
-  required: ["title", "concept", "angle", "audience", "hook", "formats", "why"],
+  required: ["title", "concept", "angle", "audience", "hook", "formats", "why", "avatar"],
   additionalProperties: false,
 };
-const SCHEMA = { type: "object", properties: { briefs: { type: "array", items: ONE } }, required: ["briefs"], additionalProperties: false };
+const SCHEMA = { type: "object", properties: { briefs: { type: "array", items: ONE }, inMotion: { type: "array", items: { type: "string" } } }, required: ["briefs", "inMotion"], additionalProperties: false };
 
 const SYSTEM = `${AGENCY_SYSTEM}
 
@@ -47,6 +65,8 @@ One concept per brief. briefs: one entry per distinct concept (one idea, one ang
 - hook: the opening line or on-image headline it leads with, in the client's voice.
 - formats: what gets made for this one concept, each format with net new and variations (0 to 5). Every version counts toward the allotment (net new and variations alike, and each carousel slide; sizes of the same version don't), so the total must fit what's left (images and carousels share the image pool).
 - why: one or two sentences on why it fits this client now (their offer, audience, goal, what's working for them, and the allotment if it limited the counts).
+- ${AVATAR_RULE}
+inMotion: the keys (R123, A456...) of items in already_in_motion that cover or overlap this request (the same offer, product, promo, moment or idea); [] when none. If one already covers it, say so in why ("Already in motion: #123 Holiday promo (in production)") and keep this one to what it adds. Never say nothing exists for something listed there.
 Only facts from the client context: never invent prices, offers, dates or claims. Never name another business or client.`;
 
 const clean = (s: string, max: number) => s.replace(/\s+/g, " ").trim().slice(0, max);
@@ -97,14 +117,29 @@ async function sourceBlock(admin: ReturnType<typeof createAdminClient>, clientId
     }
     case "idea":
       return `<the_idea>\n${source.label}\n${source.text.slice(0, 3000)}\n</the_idea>`;
-    case "talk":
-      return `<conversation>\n${source.turns
+    case "talk": {
+      const convo = `<conversation>\n${source.turns
         .slice(-16)
         .map((t) => `${t.role === "user" ? "Team member" : "Strategist"}: ${t.text.slice(0, 2000)}`)
-        .join("\n\n")}\n</conversation>\nSummarize the request the team member wants: their idea, their format and counts.`;
+        .join("\n\n")}\n</conversation>`;
+      const refs = source.refs?.length ? `\n<references_added>\n${source.refs.slice(0, 10).join("\n")}\n</references_added>\nThese links are references for this same brief, not new requests.` : "";
+      // The preview as it stands: refined by what was said since, never rewritten from scratch
+      if (source.current)
+        return `${convo}${refs}\n<current_preview>\n${JSON.stringify({ title: source.current.title, concept: source.current.concept, avatar: source.current.avatar ?? "", angle: source.current.angle, audience: source.current.audience, hook: source.current.hook, formats: source.current.formats, why: source.current.why }, null, 1)}\n</current_preview>\nThis is the SAME request, already previewed (the team member may have edited it). Return it refined by what the team member said since: keep its title, concept, avatar, angle, hook and counts exactly unless they asked to change them, and change only what they asked about. Exactly one entry in briefs. If they asked to go back to the brief, return it unchanged.`;
+      return `${convo}${refs}\nSummarize the request the team member wants: their idea, their format and counts.`;
+    }
     default:
       return null;
   }
+}
+
+/** The client's Brand Bible avatars (its audience profiles), for the avatar dropdown on every brief form */
+export async function bibleAvatars(clientId: string): Promise<BibleAvatar[]> {
+  await requireStaff();
+  if (!/^[0-9a-f-]{36}$/i.test(clientId)) return [];
+  const db = await createClient();
+  const { data } = await db.from("client_brand_bibles").select("markdown").eq("client_id", clientId).maybeSingle();
+  return avatarsOf(data?.markdown as string | null);
 }
 
 /** The quick preview of a brief, before the full one is written */
@@ -115,20 +150,40 @@ export async function previewBrief(clientId: string, source: BriefSource, given?
   const fit = (b: QuickBrief): QuickBrief => ({ ...b, formats: clampFormats(b.formats ?? [], allowed) });
   if (!/^[0-9a-f-]{36}$/i.test(clientId)) return { ok: false, error: "Pick a client first." };
   const db = await createClient();
-  const [{ data: client }, { data: usage }] = await Promise.all([
+  const [{ data: client }, { data: usage }, { data: bible }] = await Promise.all([
     db.from("clients").select("id, name").eq("id", clientId).maybeSingle(),
     db.from("client_allotment_usage").select("*").eq("client_id", clientId).maybeSingle(),
+    db.from("client_brand_bibles").select("markdown").eq("client_id", clientId).maybeSingle(),
   ]);
   if (!client) return { ok: false, error: "That client isn't one you work on." };
   const allotment = usage ? toAllotment(usage as UsageRow) : null;
-  const done = (all: QuickBrief[], instant: boolean): PreviewResult => {
-    const fitted = all.map(fit);
+  const avatars = avatarsOf(bible?.markdown as string | null);
+  // What's on the board and in Asana for them (read with the service role after the access check above)
+  const reader = adminConfigured() ? createAdminClient() : db;
+  const motionAll = await loadInMotion(reader, clientId).catch(() => [] as MotionItem[]);
+  // The Bible's own spelling of the avatar; a name it doesn't have stays, marked as a test only when it was asked as one
+  const avatarOf = (b: QuickBrief): QuickBrief => {
+    if (!b.avatar?.trim()) return b;
+    const hit = matchAvatar(avatars, b.avatar);
+    return hit ? { ...b, avatar: hit.name, avatarTest: false } : avatars.length && !b.avatarTest ? { ...b, avatar: "" } : b;
+  };
+  const done = (all: QuickBrief[], instant: boolean, picked: string[] = []): PreviewResult => {
+    const fitted = all.map(fit).map(avatarOf);
     // Clamped to their formats: no longer exactly what was written, so it's written again from what they agree
     const changed = fitted.some((b, i) => b.formats.length !== (all[i].formats ?? []).length);
-    return { ok: true, brief: fitted[0], others: fitted.slice(1, 6), allotment, client: client.name as string, instant: instant && !changed };
+    // The ones the AI named, and any whose title reads like this brief
+    const first = fitted[0];
+    const byKey = new Map(motionAll.map((m) => [m.key, m]));
+    const named = picked.map((k) => byKey.get(k.trim())).filter((m): m is MotionItem => Boolean(m));
+    const near = motionMatches(motionAll, `${first.title} ${first.concept} ${first.hook}`);
+    const motion = [...named, ...near].filter((m, i, a) => a.findIndex((x) => x.key === m.key) === i).slice(0, 4);
+    return { ok: true, brief: first, others: fitted.slice(1, 6), allotment, client: client.name as string, instant: instant && !changed, avatars, motion };
   };
   // Already agreed (the next of a split): as it is
   if (given) return done([given], false);
+  // Talked through and already previewed, with nothing said since: the same preview, as it was (no AI)
+  if (source.kind === "talk" && source.current && !source.refine)
+    return done([{ ...source.current, refs: [...new Set([...(source.current.refs ?? []), ...(source.refs ?? [])])] }], false);
 
   // Already written: its summary, at once
   // A suggestion that's only its summary so far (written on its own) shows at once too, but isn't instant: its full
@@ -163,7 +218,7 @@ export async function previewBrief(clientId: string, source: BriefSource, given?
     const asked = source.kind === "winner" || source.kind === "market" ? source.format : undefined;
     const only = asked && allowed.has(asked) ? asked : undefined;
     const rule = formatsRule(allowed);
-    const r = await askJson<{ briefs: Omit<QuickBrief, "note">[] }>({
+    const r = await askJson<{ briefs: Omit<QuickBrief, "note">[]; inMotion: string[] }>({
       agent: "strategist",
       label: "quick brief",
       clientId,
@@ -185,10 +240,14 @@ Give the quick first look at this request for ${ctx.name}.`,
       hook: clean(b.hook, 200),
       formats: cleanFormats(b.formats, only, allowed),
       why: clean(b.why, 500),
-      note: "",
+      // Kept from the conversation: the person's note, a new avatar under test, the references they added
+      note: source.kind === "talk" ? (source.current?.note ?? "") : "",
+      avatar: clean(b.avatar ?? "", 80),
+      avatarTest: source.kind === "talk" && source.current?.avatarTest && clean(b.avatar ?? "", 80) === source.current.avatar ? true : false,
+      refs: source.kind === "talk" ? [...new Set([...(source.current?.refs ?? []), ...(source.refs ?? [])])].slice(0, 10) : [],
     }));
     if (!briefs.length) return { ok: false, error: "Couldn't sketch it. Try again." };
-    return done(briefs, false);
+    return done(source.kind === "talk" && source.current ? briefs.slice(0, 1) : briefs, false, r.inMotion ?? []);
   } catch (e) {
     return { ok: false, error: e instanceof AiUnavailable ? e.message : "Couldn't sketch it. Try again." };
   }

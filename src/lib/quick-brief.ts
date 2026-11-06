@@ -17,6 +17,12 @@ export type QuickBrief = {
   why: string;
   /** Anything the person adds for the strategist */
   note: string;
+  /** Who it's for: one of the Brand Bible's avatars by name (src/lib/bible-sections.ts avatarsOf), or a new one under test */
+  avatar?: string;
+  /** The avatar isn't in the Bible yet: this brief tests it */
+  avatarTest?: boolean;
+  /** Links the person added as references (any page: Motion, Pinterest, Instagram, TikTok, the Ads Library, YouTube) */
+  refs?: string[];
 };
 
 /** What a brief can be started from. Serializable, so it can travel to the server and into a background job. */
@@ -30,8 +36,8 @@ export type BriefSource =
   | { kind: "promise"; commitmentId: string }
   /** An idea in words (an audit's creative idea, a note): label says where it came from */
   | { kind: "idea"; label: string; text: string }
-  /** "Talk it through": the conversation so far */
-  | { kind: "talk"; turns: TalkTurn[] };
+  /** "Talk it through": the conversation so far, and the preview as it stands (refined, never rewritten from scratch) */
+  | { kind: "talk"; turns: TalkTurn[]; current?: QuickBrief | null; refs?: string[]; /** Refine current by what was said since (otherwise it's shown as it is) */ refine?: boolean };
 
 export const FORMAT_WORD: Record<QuickFormat["format"], [string, string]> = { image: ["image", "images"], video: ["video", "videos"], carousel: ["carousel", "carousels"] };
 
@@ -62,6 +68,9 @@ export function quickFromDraftAll(d: SuggestionDraft, why = ""): QuickBrief[] {
     formats: own.length === d.concepts.length ? [{ format: c.format!, new: c.new ?? 0, variations: c.variations ?? 0 }] : (d.formats ?? []).slice(0, 1).map((f) => ({ format: f.format, new: 1, variations: 0 })),
     why: why.slice(0, 400),
     note: "",
+    avatar: d.avatar ?? "",
+    avatarTest: Boolean(d.avatarTest),
+    refs: d.refs ?? [],
   }));
 }
 
@@ -79,6 +88,9 @@ export function quickFromDraft(d: SuggestionDraft, why = ""): QuickBrief {
     formats: (d.formats ?? []).map((f) => ({ format: f.format, new: f.new, variations: f.variations })),
     why: why.slice(0, 400),
     note: "",
+    avatar: d.avatar ?? "",
+    avatarTest: Boolean(d.avatarTest),
+    refs: d.refs ?? [],
   };
 }
 
@@ -89,6 +101,8 @@ export function quickEdited(was: QuickBrief, now: QuickBrief) {
   if (norm(now.note)) return true;
   const keys = ["title", "concept", "angle", "audience", "hook", "why"] as const;
   if (keys.some((k) => norm(was[k]) !== norm(now[k]))) return true;
+  if (norm(was.avatar ?? "") !== norm(now.avatar ?? "") || Boolean(was.avatarTest) !== Boolean(now.avatarTest)) return true;
+  if ((was.refs ?? []).join(" ") !== (now.refs ?? []).join(" ")) return true;
   const fmt = (x: QuickFormat[]) =>
     x
       .filter((f) => f.new + f.variations > 0)
@@ -107,19 +121,27 @@ export function seedBlock(seed: QuickBrief | null | undefined) {
 A person on the team previewed a short summary of this brief and agreed this direction (they may have edited any line). Build the full brief on it: keep its concept, angle, audience, hook and exactly these formats and counts, and follow their note. One concept per brief (this overrides any instruction above to write several): draft.concepts has exactly one entry, this concept, and its versions are the counts below. Only change something when it would break a hard rule (client memory, an "avoid" item, the allotment, what Meta rejects), and then say so in the brief.
 Title: ${seed.title || "(yours to write)"}
 Concept: ${seed.concept || "(yours to write)"}
+Avatar: ${seed.avatar?.trim() ? `${seed.avatar.trim()}${seed.avatarTest ? " (a NEW avatar under test, not in the Brand Bible yet: write for it, and say in the brief that it's an avatar test)" : " (from the Brand Bible: keep it exactly, as draft.avatar)"}` : "(pick one from the Brand Bible's audience profiles, by name)"}
 Angle: ${seed.angle || "(yours to write)"}
 Audience: ${seed.audience || "(yours to write)"}
 Hook: ${seed.hook || "(yours to write)"}
 Making: ${makingLine(seed.formats)}
-Why it fits: ${seed.why || "(yours to write)"}${norm(seed.note) ? `\nTheir note: ${seed.note.trim()}` : ""}
+Why it fits: ${seed.why || "(yours to write)"}${norm(seed.note) ? `\nTheir note: ${seed.note.trim()}` : ""}${seed.refs?.length ? `\nReferences they added (keep every one in draft.refs and say what to take from each): ${seed.refs.join(" ")}` : ""}
 </agreed_direction>`;
 }
 
-/** The full brief held to what was agreed: the formats and counts the person set, and their title */
-export function applySeed<T extends { title: string; formats: QuickFormat[] }>(draft: T, seed: QuickBrief | null | undefined): T {
+/** The full brief held to what was agreed: the formats and counts the person set, their title, avatar and references */
+export function applySeed<T extends { title: string; formats: QuickFormat[]; refs?: string[]; avatar?: string; avatarTest?: boolean }>(draft: T, seed: QuickBrief | null | undefined): T {
   if (!seed) return draft;
   const formats = seed.formats.filter((f) => f.new + f.variations > 0);
-  return { ...draft, title: seed.title.trim() ? seed.title.trim().slice(0, 80) : draft.title, formats: formats.length ? formats : draft.formats };
+  const refs = [...new Set([...(seed.refs ?? []), ...(draft.refs ?? [])].filter((u) => /^https?:\/\/\S+$/i.test(u)))].slice(0, 10);
+  return {
+    ...draft,
+    title: seed.title.trim() ? seed.title.trim().slice(0, 80) : draft.title,
+    formats: formats.length ? formats : draft.formats,
+    ...(refs.length ? { refs } : {}),
+    ...(seed.avatar?.trim() ? { avatar: seed.avatar.trim().slice(0, 80), avatarTest: Boolean(seed.avatarTest) } : {}),
+  };
 }
 
 /** A short, stable hash of some text (for a key, not for security) */

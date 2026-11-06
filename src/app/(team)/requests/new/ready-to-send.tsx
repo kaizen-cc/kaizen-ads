@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { PersonAvatar } from "@/components/person-avatar";
 import { RefThumb } from "@/components/ref-thumb";
 import { SavedConcepts } from "@/components/saved-concepts";
+import { AvatarField } from "@/components/avatar-field";
+import { LinkCards, LinkInput } from "@/components/link-refs";
 import { Line } from "@/components/quick-brief-sheet";
 import type { Allotment } from "@/lib/allotment";
 import { savedHref, savedLine } from "@/lib/saved-references";
@@ -129,10 +131,12 @@ export function ReadyToSend({
   handleRef?: React.MutableRefObject<ReadyHandle | null>;
 }) {
   const [editBrief, setEditBrief] = useState(!draft.brief.trim());
-  const [link, setLink] = useState("");
   const briefRef = useRef<HTMLTextAreaElement>(null);
   const formats = selectedFormats(draft);
   const links = refLinks(draft.refs);
+  // The app's own pictures (a kept Meta ad, a direct image) show as they are; any other link gets a preview card
+  const own = links.filter((u) => !/^https?:/i.test(u) || refPicture(u).adId || refPicture(u).src);
+  const pasted = links.filter((u) => !own.includes(u));
   const { base, concepts } = briefConcepts(draft.brief);
 
   useEffect(() => {
@@ -159,12 +163,12 @@ export function ReadyToSend({
   const setCount = (f: Format, key: "new" | "variations" | "cards", n: number) => onChange({ formats: { ...draft.formats, [f]: { ...draft.formats[f]!, [key]: n } } });
   const toggleSize = (z: Size) => onChange({ sizes: draft.sizes.includes(z) ? draft.sizes.filter((x) => x !== z) : SIZES.filter((x) => x === z || draft.sizes.includes(x)) });
   const removeLink = (u: string) => onChange({ refs: draft.refs.split("\n").filter((l) => l.trim() !== u).join("\n") });
-  const addLink = () => {
-    const u = link.trim();
-    if (!/^https?:\/\/\S+$/i.test(u)) return;
-    if (!links.includes(u)) onChange({ refs: `${draft.refs.trimEnd()}${draft.refs.trim() ? "\n" : ""}${u}` });
-    setLink("");
-  };
+  const addLinks = (urls: string[]) =>
+    onChange((d) => {
+      const have = refLinks(d.refs);
+      const fresh = urls.filter((u) => !have.includes(u));
+      return fresh.length ? { refs: `${d.refs.trimEnd()}${d.refs.trim() ? "\n" : ""}${fresh.join("\n")}` } : {};
+    });
   const split = () => {
     const [first, ...rest] = concepts;
     onSplit(rest, { title: first.name.slice(0, 120), brief: `${base}\n\nConcept:\n${first.name}\n${first.body}`.trim() });
@@ -259,13 +263,16 @@ export function ReadyToSend({
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Angle" id="rts-angle">
-              <Line value={draft.angle} onChange={(v) => onChange({ angle: v })} label="Angle" placeholder="The angle or avatar" className="text-[15px]" />
+            <Field label="Avatar" id="rts-avatar">
+              <AvatarField clientId={draft.clientId} value={{ avatar: draft.avatar ?? "", avatarTest: Boolean(draft.avatarTest) }} onChange={(v) => onChange(v)} compact />
             </Field>
-            <Field label="Audience" id="rts-audience">
-              <Line value={draft.audience} onChange={(v) => onChange({ audience: v })} label="Audience" placeholder="Who it's for" className="text-[15px]" />
+            <Field label="Angle" id="rts-angle">
+              <Line value={draft.angle} onChange={(v) => onChange({ angle: v })} label="Angle" placeholder="The message aimed at that avatar" className="text-[15px]" />
             </Field>
           </div>
+          <Field label="Audience" id="rts-audience">
+            <Line value={draft.audience} onChange={(v) => onChange({ audience: v })} label="Audience" placeholder="Who it's for, in targeting terms" className="text-[15px]" />
+          </Field>
 
           <Field label="Landing page" id="rts-landing">
             <input
@@ -311,7 +318,7 @@ export function ReadyToSend({
         {/* References */}
         <div id="rts-references" tabIndex={-1} className="grid gap-3 border-t border-line px-5 py-6 outline-none md:px-8">
           <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">References</span>
-          {(links.length > 0 || draft.origin?.thumb) && (
+          {(own.length > 0 || draft.origin?.thumb) && (
             <ul className="-mx-5 flex snap-x gap-3 overflow-x-auto px-5 pb-1 [scrollbar-width:thin] md:mx-0 md:px-0">
               {draft.origin?.thumb && (
                 <li className="grid w-[150px] shrink-0 snap-start content-start overflow-hidden rounded-[14px] border border-line bg-bg">
@@ -322,7 +329,7 @@ export function ReadyToSend({
                   <span className="line-clamp-2 p-2 text-[12px] leading-snug text-muted">{draft.origin.label}</span>
                 </li>
               )}
-              {links.map((u) => {
+              {own.map((u) => {
                 const pic = refPicture(u);
                 const h = host(u);
                 return (
@@ -348,24 +355,8 @@ export function ReadyToSend({
               })}
             </ul>
           )}
-          <div className="flex gap-2">
-            <input
-              value={link}
-              onChange={(e) => setLink(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  addLink();
-                }
-              }}
-              placeholder="Paste a link: a Motion snapshot, the ad to iterate, an example"
-              aria-label="Add a reference link"
-              className="h-11 min-w-0 flex-1 rounded-[12px] border border-line bg-bg/60 px-3.5 text-[16px] outline-none placeholder:text-faint focus:border-brand/60 md:text-[14px]"
-            />
-            <button type="button" onClick={addLink} disabled={!/^https?:\/\/\S+$/i.test(link.trim())} className="min-h-11 shrink-0 rounded-full bg-fg px-4 text-[13.5px] text-bg disabled:opacity-40">
-              Add
-            </button>
-          </div>
+          {pasted.length > 0 && <LinkCards urls={pasted} clientId={demo ? null : draft.clientId} clientName={clientName} onRemove={removeLink} />}
+          <LinkInput onAdd={addLinks} />
           {draft.clientId && !demo && (
             <SavedConcepts
               clientId={draft.clientId}

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Suspense, useEffect, useState, useSyncExternalStore } from "react";
-import { markJobsSeen, myJobs } from "@/app/(team)/brief-job-actions";
+import { markJobsSeen, myJobs, retryBriefJob } from "@/app/(team)/brief-job-actions";
 import type { BriefJob } from "@/lib/brief-jobs";
 import { jobKeyOf, type BriefSource } from "@/lib/quick-brief";
 import { useParam } from "@/lib/url-state";
@@ -66,7 +66,7 @@ export function hideReady(...ids: string[]) {
 }
 const useHidden = () => useSyncExternalStore(subscribe, readHidden, () => NONE);
 
-export type BriefJobState = { status: "writing"; job: BriefJob } | { status: "ready"; job: BriefJob & { suggestionId: string } } | null;
+export type BriefJobState = { status: "writing"; job: BriefJob } | { status: "ready"; job: BriefJob & { suggestionId: string } } | { status: "failed"; job: BriefJob } | null;
 
 /**
  * The background brief this person started from this source (its own key; a split's briefs too): writing, with its
@@ -83,6 +83,9 @@ export function useBriefJobFor(source: BriefSource | null | undefined, clientId:
   // The newest finished one, unless it failed (the toast said so) or was opened already
   const last = mine.find((j) => !active(j));
   if (last?.status === "ready" && last.suggestionId && !gone.has(last.id)) return { status: "ready", job: { ...last, suggestionId: last.suggestionId } };
+  // Couldn't be written (in the last half hour): said where it was asked for, with Retry, until it's put away
+  // (older failures are left out of the list when it's read: see poll)
+  if (last?.status === "failed" && !gone.has(last.id)) return { status: "failed", job: last };
   return null;
 }
 
@@ -125,9 +128,11 @@ async function poll() {
   }
   if (done.length) void markJobsSeen(done.map((j) => j.id)).catch(() => null);
   loaded = true;
-  jobs = next;
+  // A failure is offered again (Retry) for half an hour where it was asked for; after that it's left out
+  const now = Date.now();
+  jobs = next.filter((j) => j.status !== "failed" || now - Date.parse(j.finishedAt ?? j.createdAt) < 30 * 60_000);
   emit();
-  schedule(next.some(active) ? 2500 : 60_000);
+  schedule(jobs.some(active) ? 2500 : 60_000);
 }
 
 function BriefJobsHost() {
@@ -192,6 +197,12 @@ export function BriefJobsIndicator({ compact = false }: { compact?: boolean }) {
   );
 }
 
+/** "about 2 min" for how long a brief usually takes */
+export const aboutLabel = (ms: number) => {
+  const s = Math.max(1, Math.round(ms / 1000));
+  return s < 90 ? `about ${Math.max(10, Math.round(s / 10) * 10)}s` : `about ${Math.round(s / 60)} min`;
+};
+
 const secs = (ms: number) => {
   const s = Math.max(1, Math.round(ms / 1000));
   return s >= 90 ? `about ${Math.round(s / 60)} min left` : `about ${s < 10 ? s : Math.round(s / 5) * 5}s left`;
@@ -230,7 +241,11 @@ export function BriefProgress({ job, compact = false, client = false, tone = "pl
       <span className={`block h-1.5 overflow-hidden rounded-full ${dark ? "bg-white/15" : "bg-ink/[0.08]"}`}>
         <span className={`block h-full rounded-full bg-brand transition-[width] duration-500 ease-out ${over ? "animate-pulse" : ""}`} style={{ width: `${share * 100}%` }} />
       </span>
-      {!compact && <span className={`block text-[11px] ${dark ? "text-white/45" : "text-faint"}`}>Keep working: it&apos;s written in the background, and you&apos;ll be told when it&apos;s ready.</span>}
+      {!compact && (
+        <span className={`block text-[11.5px] ${dark ? "text-white/55" : "text-muted"}`}>
+          You&apos;ll get a notice when it&apos;s ready ({aboutLabel(job.expectedMs)}) · Keep working
+        </span>
+      )}
     </span>
   );
 }
@@ -272,11 +287,46 @@ type SlotProps = {
 };
 const SLOT = "grid w-full min-w-0 sm:min-w-[220px]";
 
-/** Its job's progress, then "Brief ready · Open", or nothing (beside a button that stays, a library card's) */
+/** A brief that couldn't be written, where it was asked for: why, and Retry (the same brief, from what was agreed) */
+export function BriefFailed({ job, client = false }: { job: BriefJob; client?: boolean }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const retry = async () => {
+    setBusy(true);
+    setError(null);
+    const r = await retryBriefJob(job.id).catch(() => ({ ok: false as const, error: "Something went wrong. Try again." }));
+    setBusy(false);
+    if (!r.ok) return setError(r.error);
+    if ("job" in r) {
+      hideReady(job.id);
+      trackJob(r.job);
+    }
+  };
+  return (
+    <span className="grid min-w-0 gap-1.5 rounded-[16px] border border-bad/35 bg-bad-soft px-3.5 py-2.5 animate-[step-in_.3s_cubic-bezier(.2,.8,.2,1)]" role="alert">
+      <span className="text-[13px] font-medium text-bad">The brief couldn&apos;t be written{client && job.client ? ` for ${job.client}` : ""}</span>
+      <span className="text-[12.5px] leading-relaxed text-bad/90">{error ?? job.error ?? "Try again."}</span>
+      <span className="flex flex-wrap items-center gap-2 pt-0.5">
+        <button type="button" disabled={busy} onClick={() => void retry()} className="min-h-11 rounded-full bg-bad px-4 text-[13px] font-medium text-white transition hover:opacity-90 disabled:opacity-60 md:min-h-9">
+          {busy ? "Starting…" : "Retry"}
+        </button>
+        <button type="button" onClick={() => hideReady(job.id)} className="min-h-11 rounded-full px-3 text-[13px] text-bad/80 hover:bg-bad/10 md:min-h-9">
+          Put away
+        </button>
+      </span>
+    </span>
+  );
+}
+
+/** Its job's progress, then "Brief ready · Open" (or why it couldn't be written, with Retry), or nothing */
 export function BriefJobStatus({ source, clientId = null, compact = true, client = false, className = SLOT, tone = "plain" }: SlotProps) {
   const state = useBriefJobFor(source, clientId);
   if (!state) return null;
-  return <span className={className}>{state.status === "writing" ? <BriefProgress job={state.job} compact={compact} client={client} tone={tone} /> : <BriefReady job={state.job} client={client} />}</span>;
+  return (
+    <span className={className}>
+      {state.status === "writing" ? <BriefProgress job={state.job} compact={compact} client={client} tone={tone} /> : state.status === "failed" ? <BriefFailed job={state.job} client={client} /> : <BriefReady job={state.job} client={client} />}
+    </span>
+  );
 }
 
 /**

@@ -82,6 +82,47 @@ export function audiencesOf(body: string): { intro: string; list: Audience[] } {
   return { intro, list };
 }
 
+/** One avatar (buyer persona) from the Bible's audience profiles: its name, confidence and who it is in a line */
+export type BibleAvatar = { name: string; tier: string | null; who: string };
+
+/**
+ * The avatars a brief can be for: the ### profiles in the Bible's audience section ("### A · Liquidating Seller
+ * (Likely)" is "Liquidating Seller"). Matrices and notes in that section ("Pain to angle matrix", "How they sell") aren't
+ * avatars and are left out.
+ */
+export function avatarsOf(markdown: string | null | undefined): BibleAvatar[] {
+  if (!markdown) return [];
+  const section = splitBible(markdown).find((s) => kindOf(s.title) === "audiences");
+  if (!section) return [];
+  const list = audiencesOf(section.body).list;
+  const lettered = list.filter((a) => /^[A-Z0-9]{1,2}\s*[·.:)-]\s+/.test(a.title));
+  const picked = (lettered.length ? lettered : list).filter((a) => !/matrix|how they|summary|overview|notes?$|^\d+[a-z]\.\s/i.test(a.title));
+  const seen = new Set<string>();
+  const out: BibleAvatar[] = [];
+  for (const a of picked) {
+    const name = a.title.replace(/^[A-Z0-9]{1,2}\s*[·.:)-]\s+/, "").replace(/\*\*/g, "").trim().slice(0, 80);
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    const who = a.body
+      .split("\n")
+      .map((l) => l.replace(/^[-*>\s]+/, "").replace(/\*\*/g, "").trim())
+      .find((l) => l && !l.startsWith("|") && !/^#+/.test(l)) ?? "";
+    out.push({ name, tier: a.tier, who: who.slice(0, 200) });
+  }
+  return out.slice(0, 12);
+}
+
+/** The Bible avatar a name means (case and a leading "A · " aside), or null */
+export function matchAvatar(avatars: BibleAvatar[], name: string | null | undefined): BibleAvatar | null {
+  const key = (s: string) => s.replace(/^[A-Z0-9]{1,2}\s*[·.:)-]\s+/, "").replace(/\s*\((Proven|Likely|Hypothesis)\)\s*/i, "").trim().toLowerCase();
+  const n = key(name ?? "");
+  if (!n) return null;
+  return avatars.find((a) => key(a.name) === n) ?? avatars.find((a) => n.includes(key(a.name)) || key(a.name).includes(n)) ?? null;
+}
+
+/** "Avatar: Liquidating Seller" or "Avatar test: Weekend Warrior Dad", for a ticket, a card or an Asana task */
+export const avatarLabel = (avatar: string | null | undefined, test?: boolean | null) => (avatar?.trim() ? `${test ? "Avatar test" : "Avatar"}: ${avatar.trim()}` : null);
+
 const cells = (row: string) =>
   row
     .trim()

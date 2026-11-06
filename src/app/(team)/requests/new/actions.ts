@@ -403,6 +403,11 @@ export async function createBatch(draft: Draft, review: Review | null, decisions
     await admin.from("asana_tasks").update({ request_id: ids[0], migrated_at: now, migrated_by: me.id }).eq("gid", mig.gid);
   }
 
+  // Who it's for (a Brand Bible avatar, or a new one under test): on every ticket, so files and folders can be named by it
+  const avatar = draft.avatar?.trim();
+  if (avatar && rows?.length && adminConfigured())
+    await createAdminClient().from("requests").update({ avatar: avatar.slice(0, 80), avatar_test: Boolean(draft.avatarTest) }).in("id", rows.map((r) => r.id));
+
   // Where the ads send people: on every ticket of the batch (copy and the client's preview use it)
   const landing = draft.landing?.trim();
   if (landing && /^https?:\/\/\S+\.\S+/i.test(landing) && rows?.length && adminConfigured())
@@ -505,6 +510,7 @@ function toPatch(d: import("@/lib/suggestions").SuggestionDraft): Partial<Draft>
   return {
     title: d.title,
     angle: d.angle,
+    ...(d.avatar?.trim() ? { avatar: d.avatar.trim(), avatarTest: Boolean(d.avatarTest) } : {}),
     audience: d.audience,
     brief: `${d.brief}${concepts}${hooks}`,
     formats: Object.fromEntries(d.formats.map((f) => [f.format, { new: f.new, variations: f.variations }])),
@@ -838,6 +844,8 @@ const toAsana = (d: Draft): import("@/lib/asana-request").AsanaDraft => ({
   formats: d.formats,
   sizes: d.sizes,
   angle: d.angle,
+  avatar: d.avatar,
+  avatarTest: d.avatarTest,
   audience: d.audience,
   brief: d.brief,
   refs: d.refs,

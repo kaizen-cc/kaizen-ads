@@ -7,7 +7,44 @@
 
 import type { BriefSource } from "@/lib/quick-brief";
 
-export type SavedSource = "market" | "winner" | "pattern" | "brief" | "fatigue" | "promise" | "audit_idea" | "ai" | "idea";
+export type SavedSource = "market" | "winner" | "pattern" | "brief" | "fatigue" | "promise" | "audit_idea" | "ai" | "idea" | "link";
+
+/** What kind of page a pasted reference link is */
+export type LinkKind = "motion" | "pinterest" | "instagram" | "tiktok" | "meta_ad_library" | "youtube" | "link";
+
+/** A pasted link as a card: what it is, its title and picture (read on the server, src/lib/link-preview.ts) */
+export type LinkPreview = { url: string; kind: LinkKind; title: string | null; subtitle: string | null; thumbnail: string | null; site: string; adId: string | null };
+
+export const LINK_LABEL: Record<LinkKind, string> = { motion: "Motion", pinterest: "Pinterest", instagram: "Instagram", tiktok: "TikTok", meta_ad_library: "Ad Library", youtube: "YouTube", link: "Link" };
+
+/** The kind of a link, from its address alone */
+export function linkKind(url: string): LinkKind {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return "link";
+  }
+  const h = u.hostname.toLowerCase().replace(/^www\./, "");
+  if (h.endsWith("motionapp.com")) return "motion";
+  if (h === "pin.it" || /(^|\.)pinterest\.[a-z.]+$/.test(h)) return "pinterest";
+  if (h === "instagram.com" || h.endsWith(".instagram.com") || h === "instagr.am") return "instagram";
+  if (h === "tiktok.com" || h.endsWith(".tiktok.com")) return "tiktok";
+  if ((h === "facebook.com" || h.endsWith(".facebook.com")) && u.pathname.startsWith("/ads/library")) return "meta_ad_library";
+  if (h === "youtu.be" || h === "youtube.com" || h.endsWith(".youtube.com")) return "youtube";
+  return "link";
+}
+
+/** Every http(s) link in a piece of text (a chat message, a pasted list), cleaned of trailing punctuation */
+export function linksIn(text: string): string[] {
+  const found = text.match(/https?:\/\/[^\s<>"']+/gi) ?? [];
+  return [...new Set(found.map((u) => u.replace(/[),.;:!?\]]+$/, "")))].slice(0, 10);
+}
+
+/** A pasted link, saved for later for a client: keyed by its address */
+export function linkSaveInput(p: LinkPreview): SaveInput {
+  return { source: "link", refId: ideaHash(p.url.toLowerCase()), url: p.url, thumbnail: p.thumbnail, title: p.title ?? p.site, subtitle: `${LINK_LABEL[p.kind]}${p.kind === "link" ? ` · ${p.site}` : ""}`, format: null, data: { kind: p.kind, adId: p.adId, site: p.site } };
+}
 export type SavedFormat = "image" | "video" | "carousel";
 
 /** Someone else briefed an idea this person saved */
@@ -165,6 +202,7 @@ export const SOURCE_LABEL: Record<SavedSource, string> = {
   audit_idea: "Audit idea",
   ai: "Kaizen AI",
   idea: "Idea",
+  link: "Link",
 };
 
 /** A Meta ad id, whose picture the app keeps (/api/ad-media/<id>) because Meta's own links expire */

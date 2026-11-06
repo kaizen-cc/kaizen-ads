@@ -38,6 +38,10 @@ export type SuggestionDraft = {
   summary?: boolean;
   /** What the full brief is to be written from (the source and the instructions), kept with a summary */
   task?: string;
+  /** Who it's for: one of the Brand Bible's avatars, by name ("" when the Bible has none) */
+  avatar?: string;
+  /** A new avatar under test (not in the Bible): only when someone on the team asked to test one */
+  avatarTest?: boolean;
 };
 
 export type Signal = { kind: SuggestionKind; weight: number; line: string; facts: string[] };
@@ -210,8 +214,9 @@ const SCHEMA = {
         landing: { type: "string" },
         refs: { type: "array", items: { type: "string" } },
         assets: { type: "object", properties: { have: { type: "array", items: { type: "string" } }, need: { type: "array", items: { type: "string" } } }, required: ["have", "need"], additionalProperties: false },
+        avatar: { type: "string" },
       },
-      required: ["title", "angle", "audience", "brief", "hooks", "concepts", "formats", "sizes", "landing", "refs", "assets"],
+      required: ["title", "angle", "audience", "brief", "hooks", "concepts", "formats", "sizes", "landing", "refs", "assets", "avatar"],
       additionalProperties: false,
     },
     reply: { type: "string" },
@@ -222,6 +227,10 @@ const SCHEMA = {
 
 type Out = { suggest: boolean; skipReason: string; kind: SuggestionKind; signal: string; evidence: string[]; why: string; draft: SuggestionDraft; reply: string };
 
+/** Avatar and angle are two different things, for every writer: the avatar is WHO (from the Bible), the angle is HOW */
+export const AVATAR_RULE =
+  'avatar: who this is for, as one avatar from the Brand Bible\'s audience profiles (the "### A · Name" profiles in its audience section), its name exactly as written there without the letter (e.g. "Liquidating Seller"). Pick the one the idea speaks to. Never invent an avatar: when the Bible has no audience profiles, avatar is "". Only when someone on the team explicitly asks to test a new avatar, write that new avatar\'s short name and say in the brief that it\'s an avatar test. The avatar is not the angle: angle is the message (the reason to act, the hook\'s idea) aimed at that avatar, in a few words. The creative team names files and folders by avatar and angle, so keep both short and clean.';
+
 const SYSTEM = `${AGENCY_SYSTEM}
 
 You are the agency's strategist. You watch the accounts and, when the data says a client needs new creative, you write a full creative request an exec or lead can approve in one click: the brief, the angle, the audience, the formats and counts, and its one concept.
@@ -231,6 +240,7 @@ You are the agency's strategist. You watch the accounts and, when the data says 
 - Formats and counts: ${ALLOTMENT_RULE} The total must fit what's left of the allotment. Variations up to ${MAX_VARIATIONS} per format. cards: a carousel's slides (2 to 10; say what each slide shows in the brief), 0 for images and videos.
 - One concept per request: concepts has exactly one entry, unless you're told otherwise. Its name, the hook (first line or on-image headline), the visual (what's shown, in a sentence or two), the copy direction, and what it makes: its format, net new count, variations count and a carousel's slides (cards); its counts are the formats. The versions (net new designs and variations) are versions of this one idea, each testing one thing (hooks lists what each version tests). Never put several distinct ideas in one request: a different idea is a different request.
 - The brief is what the designer reads: 5 to 10 lines, specific.
+- ${AVATAR_RULE}
 - The team's past decisions on your suggestions are the most important thing you read. Never suggest again what they declined for a reason that still holds; lean into what they approved.
 - Balance the team's time across clients (work_in_motion). If what's already in motion for this client answers the signal, don't add more: set suggest to false. A client with well above the average open work needs a strong reason for more; a client nobody has touched in weeks deserves the attention. When designers or editors are near capacity, keep it small (2 to 3 versions of what works) and say so in why.
 - If the signal isn't real or something is already in the works that covers it, set suggest to false and say why in skipReason (the rest can be empty).
@@ -325,8 +335,9 @@ const SUMMARY_SCHEMA = {
           new: { type: "integer" },
           variations: { type: "integer" },
           cards: { type: "integer" },
+          avatar: { type: "string" },
         },
-        required: ["title", "concept", "angle", "audience", "hook", "format", "new", "variations", "cards"],
+        required: ["title", "concept", "angle", "audience", "hook", "format", "new", "variations", "cards", "avatar"],
         additionalProperties: false,
       },
     },
@@ -335,10 +346,10 @@ const SUMMARY_SCHEMA = {
   additionalProperties: false,
 };
 
-type SummaryBrief = { title: string; concept: string; angle: string; audience: string; hook: string; format: Fmt3; new: number; variations: number; cards: number };
+type SummaryBrief = { title: string; concept: string; angle: string; audience: string; hook: string; format: Fmt3; new: number; variations: number; cards: number; avatar?: string };
 type SummaryOut = Omit<Out, "draft" | "reply"> & { drafts: SuggestionDraft[] };
 
-const SUMMARY_ONLY = `SUMMARY ONLY. A person on the team looks at this first and decides whether it's worth briefing; the full brief (the designer's brief, the copy, refs, assets) is written later, only if they choose it. So don't write the full brief now, whatever the task below says. Decide (suggest, skipReason, kind, signal, evidence, why) exactly as the task asks, then give briefs: one entry per distinct concept (usually one; up to 3 only when the task allows several), each with a short specific title (under 60 characters), the concept in one or two sentences (what the creative shows and does), the angle in a few words, the audience in one line, the hook (the opening line or on-image headline, in the client's voice), and what it makes: its format, net new, variations and a carousel's slides (cards, 0 otherwise), within what's left of the allotment.`;
+const SUMMARY_ONLY = `SUMMARY ONLY. A person on the team looks at this first and decides whether it's worth briefing; the full brief (the designer's brief, the copy, refs, assets) is written later, only if they choose it. So don't write the full brief now, whatever the task below says. Decide (suggest, skipReason, kind, signal, evidence, why) exactly as the task asks, then give briefs: one entry per distinct concept (usually one; up to 3 only when the task allows several), each with a short specific title (under 60 characters), the concept in one or two sentences (what the creative shows and does), the angle in a few words, the audience in one line, the hook (the opening line or on-image headline, in the client's voice), the avatar (one of the Brand Bible's avatars by name, never invented), and what it makes: its format, net new, variations and a carousel's slides (cards, 0 otherwise), within what's left of the allotment.`;
 
 /** A summary as a suggestion's draft: enough to show and to agree, with what the full brief is to be written from */
 function summaryDraft(b: SummaryBrief, task: string): SuggestionDraft {
@@ -357,6 +368,7 @@ function summaryDraft(b: SummaryBrief, task: string): SuggestionDraft {
     refs: [],
     summary: true,
     task: task.slice(0, 12000),
+    avatar: (b.avatar ?? "").slice(0, 80),
   };
 }
 
@@ -1352,6 +1364,12 @@ export async function suggestFromIdeaSaved(admin: SupabaseClient, clientId: stri
 }
 
 export type TalkTurn = { role: "user" | "ai"; text: string };
+
+/**
+ * The talk's stability rules: one brief, refined turn by turn. A follow-up changes only what it asks about, a pasted
+ * link is a reference for the same brief (never a new topic), and "go back" means the brief as it stood.
+ */
+export const TALK_KEEP = `ONE BRIEF, REFINED. When there's a request (or preview) so far, every message refines that SAME brief: keep its title, concept, avatar, angle, hook and counts exactly unless the team member asks to change them, and change only what they asked about. Never start over or write a different idea because of a follow-up. A link they paste (Motion, Pinterest, Instagram, TikTok, the Ads Library, YouTube, any page) is a reference for this same brief: add it to draft.refs, say in one line what to take from it, and keep everything else. Never drop the brief or treat the link as a new request. If they say "go back to the brief" (or similar), return the request so far unchanged.`;
 export type TalkOut = { reply: string; questions: string[]; ready: boolean; draft: SuggestionDraft };
 
 const TALK_SCHEMA = {
@@ -1388,7 +1406,7 @@ export async function talkBrief(admin: SupabaseClient, clientId: string, turns: 
       maxTokens: 3000,
       system: `${SYSTEM}\n\nA member of the team is telling you, in a conversation, the creative they want made for this client. Before anything is written, decide whether you can build it well right now. Look for: (1) conflicts with what the client told us or approved (offers, prices, discounts, claims, dates, rules in the Brand Bible and client memory, what's been rejected), and (2) missing details that would change the brief and that the context can't answer (which offer exactly, which product, the dates, the format or counts, the landing page). If there are any, ask about them: at most three short, plain questions, and list each conflict in one line with what the client said and when. Never ask what the context already answers, and never ask for the sake of asking. If everything needed is clear, or the team member already answered or said to go ahead with assumptions, build: true. reply: a short, warm message (what's unclear or conflicting and the questions; or that you're writing it now). questions: the questions. conflicts: the conflicts. build: true only when it's ready to write.`,
       schema: { type: "object", properties: { reply: { type: "string" }, questions: { type: "array", items: { type: "string" } }, conflicts: { type: "array", items: { type: "string" } }, build: { type: "boolean" } }, required: ["reply", "questions", "conflicts", "build"], additionalProperties: false },
-      prompt: `${prompt}\n\n${current ? `<request_so_far>\n${JSON.stringify(current, null, 1)}\n</request_so_far>\n\n` : ""}${convo}${fr}\n\nAnswer the team member's last message.`,
+      prompt: `${prompt}\n\n${current ? `<request_so_far>\n${JSON.stringify(current, null, 1)}\n</request_so_far>\n\n` : ""}${convo}${fr}\n\n${TALK_KEEP}\n\nAnswer the team member's last message.`,
     });
     if (!check.build) return { reply: check.reply, questions: (check.questions ?? []).slice(0, 3), conflicts: (check.conflicts ?? []).slice(0, 4), ready: false, draft: current ?? (null as unknown as SuggestionDraft), building: false };
     // Clear enough to write, and nothing written yet: the quick preview comes first (the full brief follows it)
@@ -1398,7 +1416,7 @@ export async function talkBrief(admin: SupabaseClient, clientId: string, turns: 
     agent: "strategist",
     label: "request chat",
     clientId,
-    system: `${SYSTEM}\n\n${BRIEF_STANDARD}\n\nThis time you're not watching the accounts: a member of the team is telling you, in a conversation, the creative idea they want made for this client. Build their idea, not yours: keep what they asked for (the idea, the format, the counts they named), and make it complete and strong with the client's context (Brand Bible, KPIs, what's working, the patterns across clients, assets on Drive, the allotment). Ask a question only when the answer would change the request and the context can't answer it (which offer, which product, how many); at most two at a time, short and plain, never one the context already answers. Otherwise fill the gaps yourself and say what you assumed. reply: a short, warm message to them (what you built or changed, any assumption, then your questions if any). questions: the questions you asked, if any. ready: true when the request is complete enough to send. draft: the full request as it stands now, always complete (title, angle, audience, brief, hooks, concepts, formats within what's left of the allotment, sizes, landing, refs, assets).`,
+    system: `${SYSTEM}\n\n${BRIEF_STANDARD}\n\n${TALK_KEEP}\n\nThis time you're not watching the accounts: a member of the team is telling you, in a conversation, the creative idea they want made for this client. Build their idea, not yours: keep what they asked for (the idea, the format, the counts they named), and make it complete and strong with the client's context (Brand Bible, KPIs, what's working, the patterns across clients, assets on Drive, the allotment). Ask a question only when the answer would change the request and the context can't answer it (which offer, which product, how many); at most two at a time, short and plain, never one the context already answers. Otherwise fill the gaps yourself and say what you assumed. reply: a short, warm message to them (what you built or changed, any assumption, then your questions if any). questions: the questions you asked, if any. ready: true when the request is complete enough to send. draft: the full request as it stands now, always complete (title, angle, audience, brief, hooks, concepts, formats within what's left of the allotment, sizes, landing, refs, assets).`,
     schema: TALK_SCHEMA,
     maxTokens: 12000,
     prompt: `${prompt}

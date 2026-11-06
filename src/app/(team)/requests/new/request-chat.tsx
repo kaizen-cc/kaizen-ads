@@ -2,21 +2,51 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { SuggestionDraft, TalkTurn } from "@/lib/suggestions";
+import type { QuickBrief } from "@/lib/quick-brief";
+import { linksIn } from "@/lib/saved-references";
 import type { Draft } from "./draft";
 import { talkRequest } from "./actions";
 import { Spark } from "./parts";
 import { BriefJobSlot } from "@/components/brief-jobs";
+import { LinkCards } from "@/components/link-refs";
 import type { PreviewItem } from "./start-flow";
 
 /**
  * "Talk it through": the team member tells the strategist the idea, it asks only what it needs (one or two questions
  * at a time) and the brief builds beside the conversation. "Use this brief" fills the request and opens it at Review,
  * where every field can still be changed. Kept in this browser per client, so a refresh doesn't lose the conversation.
+ *
+ * One brief, refined: the quick preview (and the full brief) persist across turns, and every follow-up refines that
+ * same one (same title and concept unless asked). Each version is kept, with "Previous version" to step back, and
+ * "go back to the brief" brings the brief back as it stood. A pasted link is a reference for this brief, never a new
+ * topic: it's attached (with a preview card) and the brief stays.
  */
 
-type Saved = { turns: TalkTurn[]; draft: SuggestionDraft | null; ready: boolean; patch: Partial<Draft> | null; open?: { questions: string[]; conflicts: string[] } | null };
+type Saved = {
+  turns: TalkTurn[];
+  draft: SuggestionDraft | null;
+  ready: boolean;
+  patch: Partial<Draft> | null;
+  open?: { questions: string[]; conflicts: string[] } | null;
+  /** Every version of the quick preview, oldest first, and the one shown */
+  previews?: QuickBrief[];
+  at?: number;
+  /** Earlier full drafts, oldest first (the current one is draft) */
+  drafts?: { draft: SuggestionDraft; patch: Partial<Draft> | null }[];
+  /** Links pasted as references for this brief */
+  refs?: string[];
+};
 const key = (clientId: string) => `kz:request-chat:${clientId}`;
 const FMT = { image: "image", video: "video", carousel: "carousel" } as const;
+const EVENT = "kz:talk-preview";
+
+/** The quick preview of a talk, as it arrives and as it's edited: kept by the conversation (src/components/quick-brief-sheet.tsx onBriefChange) */
+export function recordTalkPreview(clientId: string, brief: QuickBrief) {
+  window.dispatchEvent(new CustomEvent(EVENT, { detail: { clientId, brief } }));
+}
+
+const GO_BACK = /^\s*(please\s+)?(go|take (me|us)|bring (it|me))\s+back(\s+to\s+(the|my|our|that|this)\s+(brief|preview|version|idea))?\s*[.!]*\s*$|^\s*(restore|undo)\b|\bgo back to the (brief|preview)\b/i;
+const sameBrief = (a: QuickBrief | undefined, b: QuickBrief) => Boolean(a) && JSON.stringify(a) === JSON.stringify(b);
 
 export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: { clientId: string; clientName: string; onUse: (patch: Partial<Draft>) => void; /** Before the first full brief: its quick preview */ onPreview: (item: PreviewItem) => void; onBack: () => void }) {
   const [state, setState] = useState<Saved>({ turns: [], draft: null, ready: false, patch: null });
@@ -24,6 +54,8 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  // The next preview that arrives is a new version (something was said since); edits after it change that version
+  const nextIsNew = useRef(false);
 
   useEffect(() => {
     try {
@@ -38,23 +70,90 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
     try {
       sessionStorage.setItem(key(clientId), JSON.stringify(state));
     } catch {}
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [state, clientId]);
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [state.turns.length, busy]);
+
+  // The preview sheet hands back the preview as it stands: a new version when it was refined, otherwise the edit
+  useEffect(() => {
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<{ clientId: string; brief: QuickBrief }>).detail;
+      if (!d || d.clientId !== clientId) return;
+      setState((s) => {
+        const list = s.previews ?? [];
+        const at = s.at ?? list.length - 1;
+        if (sameBrief(list[at], d.brief)) return s;
+        if (nextIsNew.current || !list.length) {
+          nextIsNew.current = false;
+          const next = [...list, d.brief].slice(-12);
+          return { ...s, previews: next, at: next.length - 1 };
+        }
+        return { ...s, previews: list.map((b, i) => (i === at ? d.brief : b)) };
+      });
+    };
+    window.addEventListener(EVENT, on);
+    return () => window.removeEventListener(EVENT, on);
+  }, [clientId]);
+
+  const previews = state.previews ?? [];
+  const at = Math.min(state.at ?? previews.length - 1, previews.length - 1);
+  const current = at >= 0 ? previews[at] : null;
+  const refs = state.refs ?? [];
 
   const [phase, setPhase] = useState<"checking" | "writing" | null>(null);
-  const preview = (turns: TalkTurn[]) =>
-    onPreview({ key: `talk-${turns.length}`, source: { kind: "talk", turns }, from: { kicker: "Talked through", label: turns.filter((x) => x.role === "user")[0]?.text.slice(0, 120) ?? "Your idea" }, progressLabel: "request chat" });
+  /** fresh: something was said since the version shown, so it comes back refined as the next version of the same brief */
+  const preview = (turns: TalkTurn[], fresh: boolean) => {
+    if (current && fresh) nextIsNew.current = true;
+    onPreview({
+      key: `talk-${turns.length}-${at}${fresh ? "-r" : ""}`,
+      source: { kind: "talk", turns, current: current ? { ...current, refs: [...new Set([...(current.refs ?? []), ...refs])] } : null, refs, refine: fresh },
+      from: { kicker: "Talked through", label: turns.filter((x) => x.role === "user")[0]?.text.slice(0, 120) ?? "Your idea" },
+      progressLabel: "request chat",
+    });
+  };
+
+  const say = (turns: TalkTurn[], reply: string) => setState((s) => ({ ...s, turns: [...turns, { role: "ai", text: reply }] }));
+
   const send = async (force = false) => {
     // Nothing written yet: "write it" opens the quick preview first, and the full brief follows what's agreed there
-    if (force && !state.draft) return preview(state.turns);
+    if (force && !state.draft) return preview(state.turns, false);
     const t = force ? "Go ahead and write it with what we have." : text.trim();
     if (!t || busy) return;
     const turns: TalkTurn[] = [...state.turns, { role: "user", text: t }];
-    setState((s) => ({ ...s, turns }));
     if (!force) setText("");
+    setError(null);
+
+    // "Go back to the brief": the brief as it stood, no AI (nothing is rewritten)
+    if (!force && GO_BACK.test(t) && (current || state.draft)) {
+      say(turns, current ? "Here's the brief as it stood. Change anything in the preview, or tell me what to adjust." : "Here's the brief as it stood.");
+      if (current) preview([...turns, { role: "ai", text: "Here's the brief as it stood." }], false);
+      return;
+    }
+
+    // A pasted link is a reference for this brief: attached, and the brief stays as it is
+    const urls = force ? [] : linksIn(t);
+    if (urls.length) {
+      const nextRefs = [...new Set([...refs, ...urls])].slice(0, 10);
+      const rest = urls.reduce((s, u) => s.replace(u, " "), t).replace(/\s+/g, " ").trim();
+      setState((s) => ({
+        ...s,
+        refs: nextRefs,
+        // The preview shown keeps them too
+        previews: (s.previews ?? []).map((b, i) => (i === at ? { ...b, refs: [...new Set([...(b.refs ?? []), ...urls])].slice(0, 10) } : b)),
+        draft: s.draft ? { ...s.draft, refs: [...new Set([...(s.draft.refs ?? []), ...urls])].slice(0, 10) } : s.draft,
+        patch: s.patch ? { ...s.patch, refs: [...new Set([...(s.patch.refs ?? "").split(/\s+/).filter(Boolean), ...urls])].join("\n") } : s.patch,
+      }));
+      // Only a link (or "use this as a reference"): nothing for the strategist to rewrite
+      if (!rest || /^(use (this|these|it|them)|for reference|as (a )?reference|ref(erence)?|like this|see|check (this|these)( out)?)[.!:]*$/i.test(rest)) {
+        say(turns, `Added ${urls.length === 1 ? "it" : "them"} as ${urls.length === 1 ? "a reference" : "references"} to this brief. Everything else stays as it is.`);
+        return;
+      }
+    }
+
+    setState((s) => ({ ...s, turns }));
     setBusy(true);
     setPhase(force ? "writing" : "checking");
-    setError(null);
     const r = await talkRequest(clientId, turns, state.draft, force, !state.draft).catch(() => ({ ok: false as const, error: "Something went wrong. Try again." }));
     setBusy(false);
     setPhase(null);
@@ -62,14 +161,22 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
       setError(r.error);
       return;
     }
-    setState((s) => ({
-      turns: [...turns, { role: "ai", text: r.reply }],
-      draft: r.draft ?? s.draft,
-      ready: r.ready,
-      patch: r.patch ?? s.patch,
-      open: r.building || r.previewReady ? null : { questions: r.questions, conflicts: r.conflicts },
-    }));
-    if (r.previewReady) preview([...turns, { role: "ai", text: r.reply }]);
+    setState((s) => {
+      // A new full draft: the one before it is kept, so it can be brought back
+      const drafts = r.draft && s.draft ? [...(s.drafts ?? []), { draft: s.draft, patch: s.patch }].slice(-8) : (s.drafts ?? []);
+      const keepRefs = (d: SuggestionDraft | null) => (d && (s.refs ?? []).length ? { ...d, refs: [...new Set([...(d.refs ?? []), ...(s.refs ?? [])])].slice(0, 10) } : d);
+      const patch = r.patch && (s.refs ?? []).length ? { ...r.patch, refs: [...new Set([...(r.patch.refs ?? "").split(/\s+/).filter(Boolean), ...(s.refs ?? [])])].join("\n") } : r.patch;
+      return {
+        ...s,
+        turns: [...turns, { role: "ai", text: r.reply }],
+        draft: keepRefs(r.draft) ?? s.draft,
+        drafts,
+        ready: r.ready,
+        patch: patch ?? s.patch,
+        open: r.building || r.previewReady ? null : { questions: r.questions, conflicts: r.conflicts },
+      };
+    });
+    if (r.previewReady) preview([...turns, { role: "ai", text: r.reply }], true);
   };
 
   const use = () => {
@@ -80,9 +187,51 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
     onUse({ ...state.patch, origin: { kind: "brief", label: "Talked through with the strategist" } });
   };
 
+  const stepBack = () => setState((s) => ({ ...s, at: Math.max(0, (s.at ?? (s.previews ?? []).length - 1) - 1) }));
+  const stepForward = () => setState((s) => ({ ...s, at: Math.min((s.previews ?? []).length - 1, (s.at ?? 0) + 1) }));
+  const draftBack = () =>
+    setState((s) => {
+      const list = s.drafts ?? [];
+      const prev = list[list.length - 1];
+      if (!prev || !s.draft) return s;
+      // The two swap: the one shown goes to the history, so it can be brought back the same way
+      return { ...s, draft: prev.draft, patch: prev.patch, drafts: [...list.slice(0, -1), { draft: s.draft, patch: s.patch }] };
+    });
+  const removeRef = (u: string) =>
+    setState((s) => ({
+      ...s,
+      refs: (s.refs ?? []).filter((x) => x !== u),
+      previews: (s.previews ?? []).map((b) => ({ ...b, refs: (b.refs ?? []).filter((x) => x !== u) })),
+      draft: s.draft ? { ...s.draft, refs: (s.draft.refs ?? []).filter((x) => x !== u) } : s.draft,
+      patch: s.patch ? { ...s.patch, refs: (s.patch.refs ?? "").split(/\s+/).filter((x) => x && x !== u).join("\n") } : s.patch,
+    }));
+
   const d = state.draft;
   // This conversation's brief, keyed by how it started (jobKeyOf): its background job's progress shows by its button
   const talkSource = state.turns.length ? ({ kind: "talk", turns: state.turns } as const) : null;
+  const versions = previews.length > 1 && (
+    <div className="flex items-center justify-between gap-2 text-[12px] text-faint">
+      <span className="tabular">
+        Version {at + 1} of {previews.length}
+      </span>
+      <span className="flex gap-1">
+        <button type="button" onClick={stepBack} disabled={at <= 0} className="min-h-11 rounded-full px-3 text-muted hover:bg-surface-2 hover:text-fg disabled:opacity-40 md:min-h-8">
+          ← Previous version
+        </button>
+        {at < previews.length - 1 && (
+          <button type="button" onClick={stepForward} className="min-h-11 rounded-full px-3 text-muted hover:bg-surface-2 hover:text-fg md:min-h-8">
+            Newer →
+          </button>
+        )}
+      </span>
+    </div>
+  );
+  const refCards = refs.length > 0 && (
+    <div className="grid gap-1.5">
+      <p className="text-[11px] uppercase tracking-[0.1em] text-faint">References</p>
+      <LinkCards urls={refs} clientId={clientId} clientName={clientName} size="sm" onRemove={removeRef} />
+    </div>
+  );
   return (
     <div className="grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,360px)]">
       {/* The conversation */}
@@ -102,7 +251,7 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
           {state.turns.length === 0 && (
             <div className="grid gap-2 rounded-[14px] bg-surface-2/60 p-4 text-[14px] leading-relaxed text-muted">
               <p className="font-medium text-fg">What do you want to make for {clientName}?</p>
-              <p>Say it the way you&rsquo;d say it to the team: the idea, the format, how many, anything it has to include. I&rsquo;ll ask only what I need and build the brief from their Bible, numbers and assets as we go.</p>
+              <p>Say it the way you&rsquo;d say it to the team: the idea, the format, how many, anything it has to include. Paste any link as a reference (Motion, Pinterest, Instagram, TikTok, the Ad Library, YouTube). I&rsquo;ll ask only what I need and build the brief from their Bible, numbers and assets as we go.</p>
               <div className="flex flex-wrap gap-2 pt-1">
                 {["A UGC video answering the price objection", "3 statics for the new offer", "A carousel showing how it works, step by step"].map((x) => (
                   <button key={x} type="button" onClick={() => setText(x)} className="min-h-10 rounded-full border border-line px-3 text-[12.5px] text-muted hover:text-fg md:min-h-8">
@@ -113,7 +262,7 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
             </div>
           )}
           {state.turns.map((t, i) => (
-            <div key={i} className={`max-w-[88%] whitespace-pre-wrap rounded-[16px] px-4 py-2.5 text-[14px] leading-relaxed ${t.role === "user" ? "justify-self-end bg-fg text-bg" : "justify-self-start bg-surface-2 text-fg"}`}>
+            <div key={i} className={`max-w-[88%] whitespace-pre-wrap break-words rounded-[16px] px-4 py-2.5 text-[14px] leading-relaxed ${t.role === "user" ? "justify-self-end bg-fg text-bg" : "justify-self-start bg-surface-2 text-fg"}`}>
               {t.text}
             </div>
           ))}
@@ -133,7 +282,7 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
               }
             }}
             rows={1}
-            placeholder={state.turns.length ? "Answer, or add anything…" : "Describe the creative you want…"}
+            placeholder={state.turns.length ? "Answer, refine, or paste a reference link…" : "Describe the creative you want…"}
             className="min-h-11 flex-1 resize-none rounded-[14px] border border-line bg-bg px-4 py-2.5 text-[16px] outline-none placeholder:text-faint focus:border-brand-text/60 md:text-[14.5px]"
           />
           <button type="button" onClick={() => void send()} disabled={!text.trim() || busy} className="h-11 shrink-0 rounded-full bg-brand px-5 text-[14px] font-medium text-white disabled:opacity-50">
@@ -153,6 +302,12 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
                 <dt className="text-[11px] uppercase tracking-[0.1em] text-faint">Making</dt>
                 <dd>{d.formats.map((f) => `${f.new} new${f.variations ? ` + ${f.variations} var.` : ""} ${FMT[f.format]}${f.new + f.variations === 1 ? "" : "s"}`).join(" · ") || "–"}</dd>
               </div>
+              {d.avatar && (
+                <div>
+                  <dt className="text-[11px] uppercase tracking-[0.1em] text-faint">{d.avatarTest ? "Avatar test" : "Avatar"}</dt>
+                  <dd>{d.avatar}</dd>
+                </div>
+              )}
               <div>
                 <dt className="text-[11px] uppercase tracking-[0.1em] text-faint">Angle</dt>
                 <dd>{d.angle || "–"}</dd>
@@ -179,11 +334,62 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
                 <dd className="line-clamp-6 whitespace-pre-wrap text-muted">{d.brief}</dd>
               </div>
             </dl>
+            {refCards}
+            {(state.drafts ?? []).length > 0 && (
+              <button type="button" onClick={draftBack} className="min-h-11 justify-self-start rounded-full px-3 text-[12.5px] text-muted hover:bg-surface-2 hover:text-fg md:min-h-8">
+                ← Previous version
+              </button>
+            )}
             <button type="button" onClick={use} className={`min-h-11 rounded-full px-4 text-[14px] font-medium ${state.ready ? "bg-brand text-white" : "border border-line text-fg hover:border-faint"}`}>
               {state.ready ? "Use this brief →" : "Use it as it is →"}
             </button>
             <p className="text-[12px] text-faint">Every field can still be changed before it goes out.</p>
           </>
+        ) : current ? (
+          <div className="grid gap-3">
+            {versions}
+            <p className="font-heading text-[18px] leading-snug">{current.title || "Untitled"}</p>
+            <p className="text-[13.5px] leading-relaxed text-muted">{current.concept}</p>
+            <dl className="grid gap-2 text-[13px]">
+              {current.avatar && (
+                <div>
+                  <dt className="text-[11px] uppercase tracking-[0.1em] text-faint">{current.avatarTest ? "Avatar test" : "Avatar"}</dt>
+                  <dd>{current.avatar}</dd>
+                </div>
+              )}
+              {current.angle && (
+                <div>
+                  <dt className="text-[11px] uppercase tracking-[0.1em] text-faint">Angle</dt>
+                  <dd>{current.angle}</dd>
+                </div>
+              )}
+              {current.hook && (
+                <div>
+                  <dt className="text-[11px] uppercase tracking-[0.1em] text-faint">Hook</dt>
+                  <dd>&ldquo;{current.hook}&rdquo;</dd>
+                </div>
+              )}
+              <div>
+                <dt className="text-[11px] uppercase tracking-[0.1em] text-faint">Making</dt>
+                <dd>{current.formats.map((f) => `${f.new} new${f.variations ? ` + ${f.variations} var.` : ""} ${FMT[f.format]}${f.new + f.variations === 1 ? "" : "s"}`).join(" · ") || "–"}</dd>
+              </div>
+            </dl>
+            {refCards}
+            {state.open && (state.open.questions.length > 0 || state.open.conflicts.length > 0) && (
+              <ol className="grid list-decimal gap-1.5 rounded-[12px] border border-warn/30 bg-warn-soft/30 py-2 pl-8 pr-3 text-[13px] text-muted">
+                {[...state.open.conflicts, ...state.open.questions].map((q, i) => (
+                  <li key={i}>{q}</li>
+                ))}
+              </ol>
+            )}
+            {/* Its brief being written in the background: the progress here, then "Brief ready · Open" (or Retry) */}
+            <BriefJobSlot source={talkSource} clientId={clientId} compact={false}>
+              <button type="button" disabled={busy} onClick={() => preview(state.turns, false)} className="min-h-11 rounded-full bg-brand px-4 text-[14px] font-medium text-white disabled:opacity-60">
+                Open the preview
+              </button>
+            </BriefJobSlot>
+            <p className="text-[12px] text-faint">Keep talking to refine this same brief. Say &ldquo;go back to the brief&rdquo; any time to see it as it stood.</p>
+          </div>
         ) : state.open && (state.open.questions.length > 0 || state.open.conflicts.length > 0) ? (
           <div className="grid gap-3">
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-warn">To settle before it&rsquo;s written</p>
@@ -201,7 +407,8 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
                 ))}
               </ol>
             )}
-            <BriefJobSlot source={talkSource} clientId={clientId}>
+            {refCards}
+            <BriefJobSlot source={talkSource} clientId={clientId} compact={false}>
               <button type="button" disabled={busy} onClick={() => void send(true)} className="min-h-11 rounded-full border border-line px-4 text-[13.5px] text-muted hover:text-fg disabled:opacity-60">
                 Write it with what we have
               </button>
@@ -210,15 +417,19 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
         ) : state.turns.length > 1 ? (
           <div className="grid gap-2">
             <p className="text-[13.5px] text-muted">Everything&rsquo;s clear. See the quick preview, change anything, then the full brief is written from it.</p>
-            {/* Its brief being written in the background: the progress here, then "Brief ready · Open" */}
-            <BriefJobSlot source={talkSource} clientId={clientId}>
-              <button type="button" disabled={busy} onClick={() => preview(state.turns)} className="min-h-11 rounded-full bg-brand px-4 text-[14px] font-medium text-white disabled:opacity-60">
+            {refCards}
+            {/* Its brief being written in the background: the progress here, then "Brief ready · Open" (or Retry) */}
+            <BriefJobSlot source={talkSource} clientId={clientId} compact={false}>
+              <button type="button" disabled={busy} onClick={() => preview(state.turns, false)} className="min-h-11 rounded-full bg-brand px-4 text-[14px] font-medium text-white disabled:opacity-60">
                 See the quick preview
               </button>
             </BriefJobSlot>
           </div>
         ) : (
-          <p className="text-[13.5px] text-muted">{phase === "writing" ? "Writing the brief…" : "It builds here once everything's clear."}</p>
+          <>
+            <p className="text-[13.5px] text-muted">{phase === "writing" ? "Writing the brief…" : "It builds here once everything's clear."}</p>
+            {refCards}
+          </>
         )}
       </aside>
     </div>

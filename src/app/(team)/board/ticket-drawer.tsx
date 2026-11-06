@@ -424,10 +424,16 @@ export function TicketDrawer({
                   </span>
                 </>
               )}
+              {ticket.avatar && (
+                <>
+                  <span className="text-faint">·</span>
+                  <span className={ticket.avatarTest ? "text-warn" : ""}>{ticket.avatarTest ? "Avatar test" : "Avatar"}: {ticket.avatar}</span>
+                </>
+              )}
               {ticket.angleName && (
                 <>
                   <span className="text-faint">·</span>
-                  <span>{ticket.angleName}</span>
+                  <span>Angle: {ticket.angleName}</span>
                 </>
               )}
             </p>

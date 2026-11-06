@@ -19,6 +19,8 @@ export type BoardRow = {
   creative_name: string | null;
   buyer_name: string | null;
   angle_name: string | null;
+  avatar?: string | null;
+  avatar_test?: boolean | null;
   audience: string | null;
   brief: string | null;
   refs: string[] | null;
@@ -57,6 +59,8 @@ export const toTicket = (r: BoardRow): Ticket => ({
   creativeName: r.creative_name,
   buyerName: r.buyer_name,
   angleName: r.angle_name,
+  avatar: r.avatar ?? null,
+  avatarTest: Boolean(r.avatar_test),
   audience: r.audience,
   brief: r.brief,
   refs: r.refs ?? [],

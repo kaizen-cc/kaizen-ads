@@ -8,7 +8,8 @@ import { ClientPicker, StartPage, forgetStart, prefetchStart, rememberClient, se
 import { QuickBriefSheet, useQuickPreview } from "@/components/quick-brief-sheet";
 import { ReadyToSend, MAKER, TURNAROUND, plural, type ReadyHandle } from "./ready-to-send";
 import type { StartData } from "@/lib/request-start";
-import { RequestChat } from "./request-chat";
+import { RequestChat, recordTalkPreview } from "./request-chat";
+import { AvatarField } from "@/components/avatar-field";
 import { AsanaSend, BriefPdfButton } from "@/components/asana-send";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
@@ -772,7 +773,11 @@ export function RequestForm({
                   </Suggest>
                 </Field>
 
-                <Field id="angle" label="Angle or avatar" hint="Copy is written once per angle">
+                <Field id="avatar" label="Avatar" hint="Who it's for, from the Brand Bible">
+                  <AvatarField id="avatar-select" clientId={draft.clientId} value={{ avatar: draft.avatar ?? "", avatarTest: Boolean(draft.avatarTest) }} onChange={(v) => set(v)} />
+                </Field>
+
+                <Field id="angle" label="Angle" hint="The message aimed at that avatar. Copy is written once per angle">
                   <input id="angle" value={draft.angle} onChange={(e) => set({ angle: e.target.value })} placeholder="Fresh, never frozen" className={input} />
                   <Suggest loading={ai.status === "loading"}>
                     {s?.angles.map((a) => (
@@ -1114,6 +1119,8 @@ export function RequestForm({
           source={preview.current.source}
           from={preview.current.from}
           given={preview.current.given ?? null}
+          // Talked through: the preview as it stands (and every edit) goes back to the conversation, which refines it
+          onBriefChange={preview.current.source.kind === "talk" && draft.clientId ? (b) => recordTalkPreview(draft.clientId!, b) : undefined}
           // A split's brief, once it's being written, leaves the queue
           onStarted={() => {
             const key = preview.current?.key;
@@ -1161,8 +1168,14 @@ function ReadOnlyRequest({ draft, clientName, outside, allowedPhrase }: { draft:
           </span>
         ))}
       </div>
-      {(draft.angle || draft.audience) && (
+      {(draft.angle || draft.audience || draft.avatar) && (
         <dl className="grid gap-3 text-[14px] sm:grid-cols-2">
+          {draft.avatar && (
+            <div className="grid gap-1">
+              <dt className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">{draft.avatarTest ? "Avatar test" : "Avatar"}</dt>
+              <dd>{draft.avatar}</dd>
+            </div>
+          )}
           {draft.angle && (
             <div className="grid gap-1">
               <dt className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">Angle</dt>

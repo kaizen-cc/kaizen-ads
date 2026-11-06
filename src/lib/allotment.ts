@@ -14,6 +14,9 @@ export type Allotment = {
   waiting?: { images: number; videos: number };
   /** The billing cycle being counted (YYYY-MM-DD; the end is the day it resets) */
   cycle?: { start: string; end: string } | null;
+  /** On the board or in Asana and not delivered yet (requested, in production, in review, with the client), per pool,
+   *  whatever cycle it was asked in: what's already coming, so nobody overproduces against what's left */
+  progress?: { images: number; videos: number };
 };
 
 /** until: a sprint package's last day (YYYY-MM-DD); null = ongoing. */
@@ -28,6 +31,8 @@ export type UsageRow = {
   asana_waiting_videos?: number;
   period_start?: string | null;
   period_end?: string | null;
+  progress_images?: number;
+  progress_videos?: number;
 };
 
 export const toAllotment = (r: UsageRow): Allotment => ({
@@ -38,7 +43,23 @@ export const toAllotment = (r: UsageRow): Allotment => ({
   until: r.package_until ?? null,
   waiting: r.asana_waiting_images || r.asana_waiting_videos ? { images: r.asana_waiting_images ?? 0, videos: r.asana_waiting_videos ?? 0 } : undefined,
   cycle: r.period_start && r.period_end ? { start: r.period_start, end: r.period_end } : null,
+  progress: { images: r.progress_images ?? 0, videos: r.progress_videos ?? 0 },
 });
+
+/** What's in progress for one pool (0 when nothing, or not known) */
+export const inProgress = (a: Pick<Allotment, "progress"> | null | undefined, key: "images" | "videos") => Math.max(0, Number(a?.progress?.[key]) || 0);
+
+/** "Images 0/25 used · 14 in progress · Videos 2/5 used": every pool, with what's on its way next to what's used */
+export function allotmentWithProgress(a: (PoolCounts & Pick<Allotment, "progress">) | null | undefined) {
+  const pools = allotmentPools(a);
+  if (!pools.length) return null;
+  return pools
+    .map((p) => {
+      const n = inProgress(a, p.key);
+      return `${p.label} ${p.used}/${p.cap} used${p.over ? ` · ${p.over} over` : ""}${n ? ` · ${n} in progress` : ""}`;
+    })
+    .join(" · ");
+}
 
 /** How far through its billing cycle a client is (0 to 1); the calendar month when no cycle is known. */
 export function cycleElapsed(cycle: { start: string; end: string } | null | undefined, now = new Date()) {
@@ -163,5 +184,11 @@ export function describeAllotment(a: Allotment | null, request?: { images: numbe
       : `${label}: ${cap} per month${cycle}, ${used} used, ${cap - used} left${req !== undefined ? `; this request takes ${req}, leaving ${cap - used - req}` : ""}`;
   const lines = [line("Images and carousels", a.images, a.imagesUsed, request?.images), line("Videos", a.videos, a.videosUsed, request?.videos), `How it counts: ${ALLOTMENT_RULE}`];
   if (a.waiting) lines.push(`Also briefed in Asana and not started yet (they'll count once production starts): ${a.waiting.images} images, ${a.waiting.videos} videos. Treat them as spoken for.`);
+  const pi = inProgress(a, "images");
+  const pv = inProgress(a, "videos");
+  if (pi || pv)
+    lines.push(
+      `In progress right now (on the board or in Asana, not delivered yet: requested, in production, in review, with the client): ${pi} images and carousel slides, ${pv} videos. Some may already count in "used" above (asked this cycle); the rest are still coming. Before suggesting more, weigh what's already coming: don't overproduce. A request that adds to a pool with a lot in progress needs a reason, and say in why what's in progress.`,
+    );
   return lines.join("\n");
 }

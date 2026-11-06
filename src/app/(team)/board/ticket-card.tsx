@@ -115,6 +115,12 @@ export function TicketCard({
         </span>
       </div>
       <p className="line-clamp-2 text-sm font-medium leading-snug">{ticket.title}</p>
+      {(ticket.avatar || ticket.angleName) && (
+        <p className="-mt-1 flex min-w-0 flex-wrap gap-1 text-[11px] md:text-[10.5px]" title="Avatar and angle: name files and folders by them">
+          {ticket.avatar && <span className={`max-w-full truncate rounded-full px-1.5 py-px ${ticket.avatarTest ? "bg-warn-soft text-warn" : "bg-surface-2 text-muted"}`}>{ticket.avatarTest ? "Test: " : ""}{ticket.avatar}</span>}
+          {ticket.angleName && <span className="max-w-full truncate rounded-full border border-line px-1.5 py-px text-faint">{ticket.angleName}</span>}
+        </p>
+      )}
       {ticket.uploaded && (
         <p className="-mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-faint">
           <span className={ticket.uploaded.new >= ticket.newCount ? "text-ok" : ""}>
