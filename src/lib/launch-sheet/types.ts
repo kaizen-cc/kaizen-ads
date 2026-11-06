@@ -3,6 +3,7 @@
 // push what's agreed. Shared by the server and the chat card (no server code here).
 
 import type { LandingSet } from "@/lib/landing-pages-core";
+import type { Comeback, LaunchContext } from "@/lib/kaizen-scope";
 
 /** One cell of a sheet, from any source: its text, the links inside it, its background color (null: none/white) */
 export type Cell = { text: string; links: string[]; color: string | null };
@@ -96,8 +97,11 @@ export type ResolvedFile = { id: string; name: string; mime: string; aspect: "4x
 export type ResolvedCreative = { row: number; name: string; files: ResolvedFile[]; picked: { feed: string | null; vertical: string | null }; missing: ("4x5" | "9x16")[]; error: string | null };
 export type ResolvedPost = { row: number; url: string; platform: "instagram" | "facebook"; shortcode: string | null; mediaId: string | null; igId: string | null; pageId: string | null; storyId: string | null; error: string | null };
 export type ResolvedGeo = { text: string; key: string | null; name: string | null; type: string | null; region: string | null; country: string | null; rows: number[] };
-/** related: not named like the sheet's event, but live in the account (offered as a place to add to, or an ad set to copy) */
-export type ExistingMatch = { level: "campaign" | "adset"; id: string; name: string; status: string; campaignId?: string | null; dailyBudget: number | null; lifetimeBudget: number | null; spend: number | null; related?: boolean };
+/**
+ * related: not named like the sheet's event, but live in the account (offered as a place to add to, or an ad set to
+ * copy). Only Kaizen's own (a Kaizen-named campaign, or an ad set Kaizen named or that sits in one) are ever listed.
+ */
+export type ExistingMatch = { level: "campaign" | "adset"; id: string; name: string; status: string; campaignId?: string | null; campaignName?: string | null; dailyBudget: number | null; lifetimeBudget: number | null; spend: number | null; related?: boolean };
 
 export type Resolution = {
   account: string | null;
@@ -112,6 +116,14 @@ export type Resolution = {
   at: string;
   /** The client's pages the ads can send people to (src/lib/landing-pages.ts) */
   landing?: LandingSet | null;
+  /** Every campaign in the account as read (id, name, effective status), for the history and the Kaizen checks */
+  campaigns?: { id: string; name: string; status: string }[];
+  /** Names in the account Kaizen didn't set up (never written to: a buyer naming one is told so) */
+  outside?: string[];
+  /** What a master buyer knows walking in (client, account history, related accounts), built once (launch-context.ts) */
+  context?: LaunchContext | null;
+  /** The paused Kaizen campaign worth bringing back, when no live Kaizen campaign fits */
+  comeback?: Comeback | null;
 };
 
 // ─── The conversation ────────────────────────────────────────────────────────────────────────────────────────────
@@ -153,6 +165,8 @@ export type PlanCampaign = {
   budget: BudgetSpec | null;
   start: string | null;
   end: string | null;
+  /** A paused Kaizen campaign the buyer agreed to bring back: turned on last, when the launch is created */
+  revive?: boolean;
 };
 
 export type PlanAdset = {

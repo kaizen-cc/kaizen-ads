@@ -134,7 +134,7 @@ const camp = (over: Partial<GooglePlan["campaigns"][number]> = {}): GooglePlan["
   key: "c1",
   mode: "new",
   existingId: null,
-  name: "Search | Plumbing",
+  name: "Search | Plumbing | Kaizen",
   type: "SEARCH",
   budget: 50,
   bidding: "MAXIMIZE_CONVERSIONS",
@@ -298,22 +298,22 @@ describe("the plan's lines and edits on the card", () => {
 
 describe("what the buyer is asked", () => {
   const campaigns: AccountCampaign[] = [
-    { id: "1", name: "Search | Plumbing | Houston", status: "ENABLED", type: "SEARCH", bidding: "MAXIMIZE_CONVERSIONS", budget: 80, spend30: 2100, conversions30: 40 },
+    { id: "1", name: "Search | Plumbing | Houston | Kaizen", status: "ENABLED", type: "SEARCH", bidding: "MAXIMIZE_CONVERSIONS", budget: 80, spend30: 2100, conversions30: 40 },
     { id: "2", name: "PMax | All", status: "ENABLED", type: "PERFORMANCE_MAX", bidding: "MAXIMIZE_CONVERSION_VALUE", budget: 60, spend30: 1500, conversions30: 20 },
     { id: "3", name: "Brand", status: "PAUSED", type: "SEARCH", bidding: "MANUAL_CPC", budget: 10, spend30: 0, conversions30: 0 },
   ];
   it("asks only what's missing, with the live campaigns that fit first", () => {
     const qs = googleQuestions({ adGroups: [], campaignNegatives: [], notes: [] }, campaigns, [], "new ad group for water heater plumbing");
-    expect(qs.map((x) => x.key)).toEqual(["campaign", "ad_group", "final_url", "keywords", "ads", "go_live"]);
-    expect(qs[0].options[0]).toBe("Search | Plumbing | Houston (Search, on, $2100 in 30 days)");
+    expect(qs.map((x) => x.key)).toEqual(["campaign", "ad_group", "final_url", "keywords", "ads"]);
+    expect(qs[0].options[0]).toBe("Search | Plumbing | Houston | Kaizen (Search, on, $2100 in 30 days)");
     expect(qs[0].options).toContain("A new Search campaign");
   });
-  it("doesn't ask what the sheet answered, and asks about unwritten match types", () => {
+  it("doesn't ask what the sheet answered, never a match type or paused creation, and a non-Kaizen campaign is asked again", () => {
     const { draft } = tabsToDraft([{ title: "x", grid: grid([["Campaign", "Ad group", "Keyword", "Headline 1", "Headline 2", "Headline 3", "Description 1", "Description 2", "Final URL"], ["Brand", "Brand", "acme", "a", "b", "c", "d", "e", "https://acme.com"]]) }]);
-    expect(googleQuestions(draft, campaigns, [], "").map((x) => x.key)).toEqual(["match_types", "go_live"]);
+    expect(googleQuestions(draft, campaigns, [], "").map((x) => x.key)).toEqual(["campaign"]);
   });
   it("reads the buyer's campaign pick", () => {
-    expect(campaignChoice("Add to Search | Plumbing | Houston (Search, on, $2100 in 30 days)", campaigns)).toEqual({ mode: "existing", id: "1" });
+    expect(campaignChoice("Add to Search | Plumbing | Houston | Kaizen (Search, on, $2100 in 30 days)", campaigns)).toEqual({ mode: "existing", id: "1", revive: false });
     expect(campaignChoice("A new Performance Max campaign", campaigns)).toEqual({ mode: "new", type: "PERFORMANCE_MAX" });
     expect(campaignChoice("a new one please", campaigns)).toEqual({ mode: "new", type: "SEARCH" });
   });

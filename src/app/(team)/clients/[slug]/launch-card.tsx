@@ -81,7 +81,7 @@ export function Checklist({ checks }: { checks: CheckItem[] }) {
 }
 
 /** What a question is about, in two or three words, for the "still needed" line */
-const NEED: Record<string, string> = { campaign: "Campaign", ad_group: "Ad group", final_url: "Landing page", keywords: "Keywords and match types", match_types: "Match types", ads: "Ad copy", go_live: "OK to create paused", structure: "Where it goes", budget: "Budget", targeting: "Targeting", schedule: "Schedule", copy: "Copy", creative: "Creative" };
+const NEED: Record<string, string> = { campaign: "Campaign", ad_group: "Ad group", final_url: "Landing page", keywords: "Keywords and match types", match_types: "Match types", ads: "Ad copy", structure: "Where it goes", budget: "Budget", targeting: "Targeting", schedule: "Schedule", copy: "Copy", creative: "Creative" };
 export const needOf = (q: LaunchQuestion) => NEED[q.key] ?? (q.question.length > 40 ? `${q.question.slice(0, 38)}…` : q.question);
 
 /**
@@ -353,7 +353,7 @@ function CampaignLine({ c, plan, items, qa }: { c: PlanCampaign; plan: LaunchPla
       <div className="flex items-start gap-2">
         <Mark level={levelOf(item)} />
         <div className="grid min-w-0 gap-0.5">
-          <span className="text-[10px] uppercase tracking-[0.14em] text-ink/45">Campaign · {c.mode === "existing" ? "existing" : "new"}</span>
+          <span className="text-[10px] uppercase tracking-[0.14em] text-ink/45">Campaign · {c.mode === "existing" ? (c.revive ? "existing, brought back" : "existing") : "new"}</span>
           <span className="text-[13px] font-medium leading-snug [overflow-wrap:anywhere]">{c.name}</span>
           <span className="text-[11px] text-ink/55">
             {c.objective.replace("OUTCOME_", "").toLowerCase()}
@@ -361,6 +361,12 @@ function CampaignLine({ c, plan, items, qa }: { c: PlanCampaign; plan: LaunchPla
           </span>
           {c.budget?.schedules?.length ? <span className="text-[10.5px] text-ink/45">{c.budget.schedules.map((x) => `+${money(x.amount)}/day ${x.start}→${x.end}`).join(" · ")}</span> : null}
           <LineState item={item} link={qa.get(`campaign:${c.key}`)} />
+          {c.revive && (
+            <>
+              <span className="text-[11.5px] leading-snug text-ink/75">Paused now: turned back on last, when you create the launch. Everything new in it is created paused for you to switch on.</span>
+              <LineState item={itemOf(items, `revive:${c.key}`)} link={qa.get(`revive:${c.key}`)} />
+            </>
+          )}
         </div>
       </div>
       <ul className="grid gap-2 md:pl-4">

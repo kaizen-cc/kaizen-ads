@@ -10,13 +10,15 @@ import { gridToSheet } from "./sheet";
 import { resolveSheet } from "./resolve";
 import { askQuestions, proposeStructure, readWithModel, replyToBuyer } from "./converse";
 import { applyAnswers, followStructure, mergeQuestions, requiredQuestions } from "./questions";
-import { buildPlan, planItems, runOutcome, runnable, unanswered } from "./plan";
+import { buildPlan, metaScopeIssues, planItems, runOutcome, runnable, unanswered } from "./plan";
 import { adParams, adsetParams, campaignParams, creativeSpec, ENHANCEMENTS_OFF, formFields, scheduleParams, type Uploaded } from "./payloads";
 import { explainMetaError } from "./errors";
 import { isPostUrl } from "./sheet";
 import type { ItemStatus, LaunchItem, LaunchPlan, LaunchQuestion, LaunchSheet, Resolution, RunStatus } from "./types";
 import { ASKS_FOR_LINK, followLanding, urlIn, type LandingSet } from "@/lib/landing-pages-core";
 import { settleLanding } from "@/lib/landing-pages";
+import { askedKey, BRING_BACK, isKaizenAdset, isKaizenName, NOT_ASKED, scrubPaused, yesOnlyAnswersAsked, type LaunchContext } from "@/lib/kaizen-scope";
+import { contextText } from "@/lib/launch-context";
 
 // A launch from a sheet, start to finish, for any client and any chat surface:
 //   read     the file (structure, links, colors) and the Media Buyer's read of it
@@ -31,7 +33,8 @@ export const today = () => new Date().toLocaleDateString("en-CA", { timeZone: "A
 const now = () => new Date().toISOString();
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-export type Turn = { role: "user" | "assistant"; text: string; at: string };
+/** asks: the question an assistant turn asked (its key), so a short "yes" answers only that one */
+export type Turn = { role: "user" | "assistant"; text: string; at: string; asks?: string | null };
 type Run = {
   id: string;
   client_id: string;
@@ -82,6 +85,28 @@ export async function openRunFor(admin: SupabaseClient, clientId: string, profil
 
 // ─── Read, check, ask ───────────────────────────────────────────────────────────────────────────────────────────
 
+/** The launch's context (client, account history, related accounts), built once; null when it can't be (8s at most) */
+async function metaContext(admin: SupabaseClient, clientId: string, account: string, res: Resolution, theme: string): Promise<LaunchContext | null> {
+  const { buildLaunchContext } = await import("@/lib/launch-context");
+  const built = step(`meta ${account}`, "launch context", buildLaunchContext(admin, clientId, "meta", account, { live: res.campaigns ?? [], theme, pausedStatuses: ["PAUSED"] })).catch((e) => {
+    console.error("[launch] meta context:", msg(e));
+    return null;
+  });
+  return Promise.race([built, new Promise<null>((r) => setTimeout(() => r(null), 8000))]);
+}
+
+/** The run's context, built now (and kept) for a run from before it was kept */
+async function ensureContext(admin: SupabaseClient, run: Run): Promise<LaunchContext | null> {
+  if (!run.resolution?.account || !run.sheet) return null;
+  if (run.resolution.context) return run.resolution.context;
+  const ctx = await metaContext(admin, run.client_id, run.resolution.account, run.resolution, metaTheme(run.sheet));
+  if (ctx) {
+    run.resolution = { ...run.resolution, context: ctx, comeback: run.resolution.comeback ?? ctx.comeback };
+    await patch(admin, run.id, { resolution: run.resolution });
+  }
+  return ctx;
+}
+
 /** What the sheet is about, for ranking the client's pages: the event, the goal, the creatives and headlines */
 export function metaTheme(sheet: LaunchSheet) {
   return [sheet.event.name, sheet.goal, ...sheet.rows.slice(0, 40).flatMap((r) => [r.creative.name, ...r.copy.slice(0, 2).map((c) => c.headline)])].join(" ").slice(0, 4000);
@@ -112,11 +137,8 @@ export async function prepareRun(admin: SupabaseClient, id: string) {
   let read!: Awaited<ReturnType<typeof readWithModel>>;
   let pagesP: Promise<LandingSet | null> = Promise.resolve(null);
   const day = today();
-  // The client's name and context for the tailoring step, read alongside everything else
-  const ctxP = Promise.all([
-    admin.from("clients").select("name").eq("id", run.client_id).single(),
-    step(scope, "client context", import("@/lib/handoff").then((m) => m.accountBrief(admin, run.client_id, null)).then((b) => b.text)).catch(() => ""),
-  ]);
+  // The client's name for the tailoring step, read alongside everything else
+  const ctxP = admin.from("clients").select("name").eq("id", run.client_id).single();
   try {
     const opened = await step(scope, "open the sheet", openSource(admin, run.source));
     if (!opened.grid) throw new Error(opened.note ?? "The sheet couldn't be read.");
@@ -175,6 +197,10 @@ export async function prepareRun(admin: SupabaseClient, id: string) {
     // The client's pages for the landing link (found alongside the tailoring; on the card now if already kept)
     pagesP = step(scope, "landing pages", landingFor(admin, run.client_id, res.account));
     res.landing = await Promise.race([pagesP, new Promise<null>((r) => setTimeout(() => r(null), 1500))]);
+    // What a master buyer knows walking in, built once and kept on the run: its comeback decides "where it goes" when
+    // no live Kaizen campaign fits
+    res.context = res.account ? await metaContext(admin, run.client_id, res.account, res, metaTheme(sheet)) : null;
+    res.comeback = res.context?.comeback ?? null;
     const must = followLanding(requiredQuestions(sheet, res, day), "link", res.landing, metaTheme(sheet));
     const colors = read.colorGuesses.filter((c) => c.color && c.guess);
     const summary = [read.summary, colors.length ? `Row colors (to confirm): ${colors.map((x) => `${x.color} probably means ${x.guess}`).join("; ")}.` : "", ...read.notes.map((n) => `Note: ${n}`)].filter(Boolean).join("\n\n");
@@ -187,9 +213,11 @@ export async function prepareRun(admin: SupabaseClient, id: string) {
 
   // ─── The Media Buyer tailors the questions (fast tier), merged in without touching answers ───
   try {
-    const [{ data: c }, brief] = await ctxP;
+    const { data: c } = await ctxP;
     const must = requiredQuestions(sheet, res, day);
-    const asked = await step(scope, "tailor questions (fast tier)", askQuestions(run.client_id, (c?.name as string) ?? "the client", brief, sheet, res, must, day));
+    const asked = await step(scope, "tailor questions (fast tier)", askQuestions(run.client_id, (c?.name as string) ?? "the client", contextText(res.context), sheet, res, must, day));
+    // Never a question about paused creation (Kaizen's rule), whatever the model wrote
+    asked.questions = asked.questions.filter((q) => !NOT_ASKED.test(`${q.key} ${q.question}`));
     const latest = await load(admin, id);
     if (!latest) return;
     const colors = read.colorGuesses.filter((x) => x.color && x.guess);
@@ -200,7 +228,7 @@ export async function prepareRun(admin: SupabaseClient, id: string) {
     }
     const landing = (await pagesP) ?? latest.resolution?.landing ?? null;
     const questions = followLanding(mergeQuestions(asked.questions.map((q) => ({ ...q, answer: null })), must, latest.questions), "link", landing, metaTheme(sheet));
-    await patch(admin, id, { summary, questions: followStructure(questions, latest.resolution?.existing ?? []), ...(latest.resolution ? { resolution: { ...latest.resolution, landing } } : {}), progress: null });
+    await patch(admin, id, { summary, questions: followStructure(questions, latest.resolution?.existing ?? [], latest.resolution?.outside ?? []), ...(latest.resolution ? { resolution: { ...latest.resolution, landing } } : {}), progress: null });
     console.log(`[launch] ${scope} · questions tailored ${Date.now() - t0}ms`);
   } catch (e) {
     console.error(`[launch] ${scope} · tailoring failed:`, msg(e));
@@ -226,11 +254,22 @@ export async function launchReply(admin: SupabaseClient, id: string, message: st
   const asksLink = run.questions.some((q) => q.key === "link");
   const landing = run.resolution.landing ?? (asksLink ? await landingFor(admin, run.client_id, run.resolution.account) : null);
   const theme = metaTheme(run.sheet);
-  const out = await replyToBuyer(run.client_id, run.sheet, run.resolution, run.questions, run.turns, message, run.status, { set: landing, theme });
+  const context = await ensureContext(admin, run);
+  const lastSaid = [...run.turns].reverse().find((t) => t.role === "assistant") ?? null;
+  const out = await replyToBuyer(run.client_id, run.sheet, run.resolution, run.questions, run.turns, message, run.status, { set: landing, theme }, contextText(context));
   if (out.offTopic) return { answer: "", offTopic: true, building: false };
+  // A short "yes" answers only the question just asked
+  out.answers = yesOnlyAnswersAsked(message, out.answers, run.questions, lastSaid);
   let questions = applyAnswers(run.questions, out.answers);
-  if (out.newQuestions.length) questions = mergeQuestions(out.newQuestions.map((q) => ({ ...q, answer: null })), [], questions);
-  questions = followStructure(questions, run.resolution.existing);
+  if (out.newQuestions.length) questions = mergeQuestions(out.newQuestions.filter((q) => !NOT_ASKED.test(`${q.key} ${q.question}`)).map((q) => ({ ...q, answer: null })), [], questions);
+  questions = followStructure(questions, run.resolution.existing, run.resolution.outside ?? []);
+  // A "where it goes" answer that wasn't taken (Kaizen didn't set it up, two places): that's what's said
+  const given = out.answers.find((a) => a.key === "structure")?.answer ?? null;
+  const refused = given && !questions.find((q) => q.key === "structure")?.answer ? (questions.find((q) => q.key === "structure")?.why ?? null) : null;
+  if (refused) {
+    out.answer = refused;
+    out.answers = out.answers.filter((a) => a.key !== "structure");
+  } else out.answer = scrubPaused(out.answer);
   // The landing link as a real link: a page named in words taken from the list, a typed link checked
   const settled = asksLink ? await settleLanding(questions, "link", landing, message, out.answers.some((a) => a.key === "link")) : { questions, note: null, took: false };
   questions = followLanding(settled.questions, "link", landing, theme);
@@ -238,7 +277,8 @@ export async function launchReply(admin: SupabaseClient, id: string, message: st
   if (settled.took) out.answers.push({ key: "link", answer: questions.find((q) => q.key === "link")?.answer ?? "" });
   out.answer = said;
   if (landing && !run.resolution.landing) await patch(admin, id, { resolution: { ...run.resolution, landing } });
-  const turns = [...run.turns, { role: "user" as const, text: message.slice(0, 3000), at: now() }, { role: "assistant" as const, text: out.answer, at: now() }].slice(-40);
+  const asks = refused ? "structure" : out.asks && questions.some((q) => q.key === out.asks && !q.answer) ? out.asks : askedKey(questions, { text: out.answer });
+  const turns = [...run.turns, { role: "user" as const, text: message.slice(0, 3000), at: now() }, { role: "assistant" as const, text: out.answer, at: now(), asks }].slice(-40);
   if (out.setAside) {
     await patch(admin, id, { questions, turns, status: "set_aside" });
     return { answer: out.answer || "Set aside. Nothing was created.", offTopic: false, building: false };
@@ -266,7 +306,7 @@ export async function acceptProposals(admin: SupabaseClient, id: string, keys: s
       .filter((q) => keys.includes(q.key) && !q.answer)
       .map((q) => ({ key: q.key, answer: chosen[q.key] && q.options.includes(chosen[q.key]) ? chosen[q.key] : q.proposal })),
   );
-  await patch(admin, id, { questions: followStructure(questions, run.resolution?.existing ?? []) });
+  await patch(admin, id, { questions: followStructure(questions, run.resolution?.existing ?? [], run.resolution?.outside ?? []) });
 }
 
 // ─── The plan ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -295,13 +335,21 @@ export async function planRun(admin: SupabaseClient, id: string) {
       metaWriteSetting(admin),
       admin.from("clients").select("url_tags").eq("id", run.client_id).single(),
     ]);
-    const names = [...(setup?.campaigns ?? []).map((c) => `campaign: ${c.name}`), ...(setup?.adsets ?? []).slice(0, 20).map((s) => `ad set: ${s.name}`)];
+    if (!setup) throw new Error("Couldn't read the ad account to check which campaigns Kaizen set up. Try again in a minute.");
+    // The naming examples: Kaizen's own campaigns and ad sets (the pattern new names follow), then the rest
+    const kaizenFirst = <T extends { name: string }>(xs: T[], mine: (x: T) => boolean) => [...xs].sort((a, b) => Number(mine(b)) - Number(mine(a)));
+    const names = [...kaizenFirst(setup?.campaigns ?? [], (c) => isKaizenName(c.name)).map((c) => `campaign: ${c.name}`), ...kaizenFirst(setup?.adsets ?? [], (s) => isKaizenAdset(s)).slice(0, 20).map((s) => `ad set: ${s.name}`)];
     // The landing page the buyer chose is the sheet's link (rows with their own link keep it)
     const chosen = urlIn(run.questions.find((q) => q.key === "link")?.answer);
     const sheet: LaunchSheet = chosen ? { ...run.sheet, event: { ...run.sheet.event, link: chosen } } : run.sheet;
-    const proposal = await proposeStructure(run.client_id, sheet, run.resolution, run.questions, run.turns, day, names, tzName);
+    const context = await ensureContext(admin, run);
+    const proposal = await proposeStructure(run.client_id, sheet, run.resolution, run.questions, run.turns, day, names, tzName, [contextText(context), run.resolution.comeback ? `<comeback id="${run.resolution.comeback.id}">${run.resolution.comeback.why}</comeback>` : ""].filter(Boolean).join("\n\n"));
     const urlTags = ((client?.url_tags as string | null) ?? "").trim() || (settings.urlTags ?? null);
-    const { plan, warnings } = buildPlan(proposal, { sheet, resolution: run.resolution, account, urlTags, today: day, specialAdCategories: [] });
+    // The paused Kaizen campaign comes back only when the buyer took it ("Bring back the campaign …")
+    const where = run.questions.find((q) => q.key === "structure")?.answer ?? "";
+    const cb = run.resolution.comeback;
+    const revive = cb && where.toLowerCase().includes(cb.name.toLowerCase()) && BRING_BACK.test(where) ? cb.id : null;
+    const { plan, warnings } = buildPlan(proposal, { sheet, resolution: run.resolution, account, urlTags, today: day, specialAdCategories: [], scope: setup ? { campaigns: setup.campaigns, adsets: setup.adsets } : null, revive });
     // A new ad set copied from an existing one: its targeting, pixel, event and optimization, read as they are now
     for (const s of plan.adsets.filter((x) => x.cloneFrom)) {
       const src = await metaGraph<{ name?: string; targeting?: Record<string, unknown>; promoted_object?: Record<string, unknown>; optimization_goal?: string; billing_event?: string }>(s.cloneFrom!, { fields: "name,targeting,promoted_object,optimization_goal,billing_event" }).catch(() => null);
@@ -385,6 +433,10 @@ export async function validateRun(admin: SupabaseClient, id: string) {
     };
     if (blocked && r.kind !== "media") {
       await skip(`Not checked with Meta: ${blocked}`);
+      continue;
+    }
+    if (r.key.startsWith("revive:")) {
+      await skip("Turned on last, when you create the launch (after everything new in it is made, paused).");
       continue;
     }
     if (r.kind === "campaign") {
@@ -494,6 +546,13 @@ export async function applyRun(admin: SupabaseClient, id: string, opts: { retry?
     const { tz } = await accountInfo(account);
     const day = today();
     const setup = await metaWritableSetup(admin, account).catch(() => null);
+    // Kaizen only writes into what it set up: checked against the account as it is now, whatever the card sent
+    const scope = setup ? metaScopeIssues(plan, setup) : ["Couldn't read the ad account to check which campaigns Kaizen set up."];
+    if (scope.length) {
+      const why = `Not created: ${scope[0]}${scope.length > 1 ? ` (and ${scope.length - 1} more)` : ""}`.slice(0, 500);
+      await patch(admin, id, { status: "ready", progress: null, error: why });
+      return { blocked: why };
+    }
     let rows = await items(admin, id);
     const total = rows.filter((r) => r.status !== "existing").length;
     for (;;) {
@@ -511,7 +570,13 @@ export async function applyRun(admin: SupabaseClient, id: string, opts: { retry?
         let metaId: string | null = null;
         let detail: Record<string, unknown> = r.detail ?? {};
         let help: string | null = null;
-        if (r.kind === "campaign") {
+        if (r.key.startsWith("revive:")) {
+          // The paused Kaizen campaign the buyer agreed to bring back (its new ad sets and ads stay paused)
+          const c = plan.campaigns.find((x) => `revive:${x.key}` === r.key);
+          if (!c?.existingId || !c.revive || !isKaizenName(setup?.campaigns.find((x) => x.id === c.existingId)?.name)) throw new Error("Only a paused Kaizen campaign the buyer agreed to bring back is turned on.");
+          await metaWrite(admin, account, c.existingId, { status: "ACTIVE" }, false);
+          metaId = c.existingId;
+        } else if (r.kind === "campaign") {
           const c = plan.campaigns.find((x) => `campaign:${x.key}` === r.key)!;
           metaId = (await metaWrite<{ id: string }>(admin, account, `act_${account}/campaigns`, campaignParams(c, plan.goLive, tz), false)).id;
           const notes: string[] = [];
@@ -601,7 +666,11 @@ export async function qaRun(admin: SupabaseClient, id: string) {
     const diffs: string[] = [];
     let link: string | null = null;
     try {
-      if (r.kind === "campaign") {
+      if (r.key.startsWith("revive:")) {
+        const m = await metaGraph<{ status: string; effective_status?: string }>(r.meta_id!, { fields: "status,effective_status" });
+        if (m.status !== "ACTIVE") diffs.push(`status is ${m.status}`);
+        link = metaDeepLink(plan.account, "campaign", r.meta_id);
+      } else if (r.kind === "campaign") {
         const c = plan.campaigns.find((x) => `campaign:${x.key}` === r.key)!;
         const m = await metaGraph<{ name: string; status: string; objective: string; daily_budget?: string; lifetime_budget?: string }>(r.meta_id!, { fields: "name,status,objective,daily_budget,lifetime_budget" });
         if (m.name !== c.name.slice(0, 400)) diffs.push(`name is "${m.name}"`);

@@ -251,7 +251,7 @@ function CampaignLine({ c, plan, items, edit, busy, links }: { c: GCampaign; pla
         <Mark level={levelOf(budget?.status === "invalid" ? budget : item)} />
         <div className="grid min-w-0 flex-1 gap-0.5">
           <span className="text-[10px] uppercase tracking-[0.14em] text-ink/45">
-            {c.type === "PERFORMANCE_MAX" ? "Performance Max" : "Search"} campaign · {c.mode === "existing" ? "existing" : "new, paused"}
+            {c.type === "PERFORMANCE_MAX" ? "Performance Max" : "Search"} campaign · {c.mode === "existing" ? (c.revive ? "existing, brought back" : "existing") : "new, paused"}
           </span>
           {c.mode === "new" ? <Editable value={c.name} disabled={busy} onSave={(text) => edit({ type: "name", key: `campaign:${c.key}`, text })} /> : <span className="text-[13px] font-medium leading-snug">{c.name}</span>}
           {c.mode === "new" && c.type === "SEARCH" && (
@@ -265,6 +265,12 @@ function CampaignLine({ c, plan, items, edit, busy, links }: { c: GCampaign; pla
             </span>
           )}
           <LineNote item={budget?.status === "invalid" ? budget : item} link={links.get(`campaign:${c.key}`)} />
+          {c.revive && (
+            <>
+              <span className="text-[11.5px] leading-snug text-ink/75">Paused now: turned back on when you deploy. Everything new in it is created paused for you to switch on.</span>
+              <LineNote item={items.find((i) => i.key === `revive:${c.key}`)} link={links.get(`revive:${c.key}`)} />
+            </>
+          )}
         </div>
         {c.mode === "new" && <Remove label={c.name} disabled={busy} onClick={() => edit({ type: "remove", key: `campaign:${c.key}` })} />}
       </div>

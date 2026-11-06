@@ -1,5 +1,6 @@
 import { budgetSpec, daysBetween, mapBudget, specSpend, type BudgetMode } from "./budget";
 import { copyWarnings, ctaType } from "./payloads";
+import { childrenNamedKaizen, isKaizenAdset, isKaizenName, withKaizen } from "@/lib/kaizen-scope";
 import type { BudgetSpec, LaunchItem, LaunchPlan, LaunchQuestion, LaunchSheet, PlanAd, PlanAdset, PlanCampaign, PlanMedia, Resolution, Targeting } from "./types";
 
 // The launch plan: the Media Buyer proposes the STRUCTURE from the conversation (which campaigns and ad sets, which
@@ -35,7 +36,37 @@ export type Proposal = {
   ads: { key: string; adsetKey: string; rows: number[]; name: string; identity: "page" | "partnership"; page: string; partner: string; cta: string; link: string }[];
 };
 
-export type PlanContext = { sheet: LaunchSheet; resolution: Resolution; account: string; urlTags: string | null; today: string; specialAdCategories: string[] };
+/** The account's campaigns and ad sets as read (for Kaizen's scope and naming), and the paused Kaizen campaign to bring back */
+export type MetaScope = { campaigns: { id: string; name: string; effective?: string }[]; adsets: { id: string; name: string; campaignId: string; campaign: string }[] };
+export type PlanContext = { sheet: LaunchSheet; resolution: Resolution; account: string; urlTags: string | null; today: string; specialAdCategories: string[]; scope?: MetaScope | null; revive?: string | null };
+
+/**
+ * What in a plan Kaizen didn't set up (each a sentence): an existing campaign without Kaizen in its name, an existing ad
+ * set (or one copied from) that isn't Kaizen's, an existing ad set under a non-Kaizen campaign, a new campaign without
+ * Kaizen in its name. The deploy refuses a plan with any of them, whatever the card sent.
+ */
+export function metaScopeIssues(plan: Pick<LaunchPlan, "campaigns" | "adsets">, scope: MetaScope): string[] {
+  const out: string[] = [];
+  const camp = new Map(scope.campaigns.map((c) => [c.id, c]));
+  const set = new Map(scope.adsets.map((s) => [s.id, s]));
+  for (const c of plan.campaigns) {
+    if (c.mode === "new" && !isKaizenName(c.name)) out.push(`The new campaign "${c.name}" needs Kaizen in its name.`);
+    if (c.mode === "existing" && c.existingId) {
+      const live = camp.get(c.existingId);
+      if (!live) out.push(`Campaign ${c.existingId} isn't in the account.`);
+      else if (!isKaizenName(live.name)) out.push(`"${live.name}" wasn't set up by Kaizen, so nothing is added to it.`);
+    }
+  }
+  for (const s of plan.adsets) {
+    for (const [id, what] of [[s.mode === "existing" ? s.existingId : null, "added to"], [s.cloneFrom ?? null, "copied"]] as const) {
+      if (!id) continue;
+      const live = set.get(id);
+      if (!live) out.push(`Ad set ${id} isn't in the account.`);
+      else if (!isKaizenAdset(live)) out.push(`The ad set "${live.name}" wasn't set up by Kaizen, so it isn't ${what}.`);
+    }
+  }
+  return out;
+}
 
 const budgetOf = (b: ProposalBudget | undefined): BudgetSpec | null =>
   !b || b.type === "none" || !(b.amount > 0) ? null : { type: b.type, amount: Math.round(b.amount * 100) / 100, ...(b.schedules?.length ? { schedules: b.schedules.filter((s) => s.amount > 0 && s.start && s.end) } : {}) };
@@ -60,17 +91,36 @@ export function buildPlan(p: Proposal, ctx: PlanContext): { plan: LaunchPlan; wa
     const n = name.trim().toLowerCase();
     return res.pages.find((x) => x.name.toLowerCase() === n || (x.pageName ?? "").toLowerCase() === n) ?? null;
   };
-  const campaigns: PlanCampaign[] = p.campaigns.map((c) => ({
-    key: c.key,
-    mode: c.mode === "existing" && c.existingId ? "existing" : "new",
-    existingId: c.mode === "existing" && c.existingId ? c.existingId : null,
-    name: c.name.trim(),
-    objective: c.objective || "OUTCOME_SALES",
-    specialAdCategories: ctx.specialAdCategories,
-    budget: budgetOf(c.budget),
-    start: day(c.start),
-    end: day(c.end),
-  }));
+  // Kaizen only writes into what it set up; new names carry Kaizen the way the account's Kaizen names do
+  const scope = ctx.scope ?? null;
+  const campaignById = new Map((scope?.campaigns ?? []).map((c) => [c.id, c]));
+  const adsetById = new Map((scope?.adsets ?? []).map((s) => [s.id, s]));
+  const examples = (scope?.campaigns ?? []).filter((c) => isKaizenName(c.name)).map((c) => c.name);
+  const kaizenSetNames = (scope?.adsets ?? []).filter((s) => isKaizenName(s.campaign)).map((s) => s.name);
+  const setsKaizen = childrenNamedKaizen(kaizenSetNames);
+  const campaigns: PlanCampaign[] = p.campaigns.map((c) => {
+    let existing = c.mode === "existing" && c.existingId ? c.existingId : null;
+    const live = existing && scope ? campaignById.get(existing) : null;
+    if (existing && scope && (!live || !isKaizenName(live.name))) {
+      warnings.push(live ? `"${live.name}" wasn't set up by Kaizen, so it isn't touched: planned as a new Kaizen campaign instead.` : `Campaign ${existing} isn't in the account, so it's planned as a new one.`);
+      existing = null;
+    }
+    const revive = Boolean(existing && live && live.effective && live.effective !== "ACTIVE" && ctx.revive === existing);
+    if (existing && live?.effective && live.effective !== "ACTIVE" && !revive) warnings.push(`"${live.name}" is paused: nothing added there runs until it's turned on.`);
+    if (revive) warnings.push(`"${live!.name}" is turned back on when the launch is created, so its own ad sets run again. Everything new in it is created paused for you to switch on.`);
+    return {
+      key: c.key,
+      mode: existing ? "existing" : "new",
+      existingId: existing,
+      ...(revive ? { revive: true } : {}),
+      name: existing ? (live?.name ?? c.name.trim()) : withKaizen(c.name.trim() || "Sales", examples),
+      objective: c.objective || "OUTCOME_SALES",
+      specialAdCategories: ctx.specialAdCategories,
+      budget: budgetOf(c.budget),
+      start: day(c.start),
+      end: day(c.end),
+    };
+  });
   const geoKey = (text: string) => res.geos.find((g) => g.text.toLowerCase() === text.trim().toLowerCase()) ?? null;
   const adsets: PlanAdset[] = p.adsets.map((s) => {
     const cities: Targeting["cities"] = [];
@@ -86,17 +136,30 @@ export function buildPlan(p: Proposal, ctx: PlanContext): { plan: LaunchPlan; wa
       else if (r.type === "region") regions.push({ key: r.key, name: r.name ?? g.text });
       else if (r.type === "country" && r.country) countries.push(r.country);
     }
-    // A copy of an existing ad set keeps that ad set's places (read when the plan is laid out)
-    const cloneFrom = s.mode !== "existing" && s.cloneFrom?.trim() ? s.cloneFrom.trim() : null;
-    if (!cloneFrom && g0(cities, regions, countries, s.zips)) warnings.push(`Ad set "${s.name}" has no location.`);
+    // A copy of an existing ad set keeps that ad set's places (read when the plan is laid out); only Kaizen's are copied
+    let cloneFrom = s.mode !== "existing" && s.cloneFrom?.trim() ? s.cloneFrom.trim() : null;
+    if (cloneFrom && scope && !(adsetById.get(cloneFrom) && isKaizenAdset(adsetById.get(cloneFrom)!))) {
+      warnings.push(`Ad set "${s.name}": the ad set it copies wasn't set up by Kaizen, so it isn't copied (it uses the targeting in the plan).`);
+      cloneFrom = null;
+    }
+    // Ads go into an existing ad set only when it's Kaizen's and its campaign is in the plan as Kaizen's
+    let existing = s.mode === "existing" && s.existingId ? s.existingId : null;
+    const liveSet = existing && scope ? adsetById.get(existing) : null;
+    const parent = campaigns.find((c) => c.key === s.campaignKey);
+    if (existing && scope && (!liveSet || !isKaizenAdset(liveSet) || parent?.mode !== "existing" || parent.existingId !== liveSet.campaignId)) {
+      warnings.push(liveSet ? `The ad set "${liveSet.name}" ${isKaizenAdset(liveSet) ? "isn't in the campaign planned" : "wasn't set up by Kaizen"}, so a new ad set is planned instead.` : `Ad set ${existing} isn't in the account, so a new one is planned.`);
+      existing = null;
+    }
+    if (!cloneFrom && !existing && g0(cities, regions, countries, s.zips)) warnings.push(`Ad set "${s.name}" has no location.`);
+    const newName = s.name.trim() || "New ad set";
     return {
       cloneFrom,
       cloned: null,
       key: s.key,
       campaignKey: s.campaignKey,
-      mode: s.mode === "existing" && s.existingId ? "existing" : "new",
-      existingId: s.mode === "existing" && s.existingId ? s.existingId : null,
-      name: s.name.trim(),
+      mode: existing ? "existing" : "new",
+      existingId: existing,
+      name: existing ? (liveSet?.name ?? s.name.trim()) : setsKaizen ? withKaizen(newName, kaizenSetNames) : newName,
       optimizationGoal: "OFFSITE_CONVERSIONS",
       pixelId: res.pixel?.id ?? null,
       event: s.event || "PURCHASE",
@@ -236,8 +299,10 @@ export function planItems(plan: LaunchPlan): LaunchItem[] {
     items.push({ ...base, key: `creative:${a.key}`, kind: "creative", position: 0, parentKey: `adset:${a.adsetKey}`, label: a.name, status: "planned" });
     items.push({ ...base, key: `ad:${a.key}`, kind: "ad", position: 0, parentKey: `creative:${a.key}`, label: a.name, status: "planned" });
   }
-  const order: Record<string, number> = { campaign: 0, adset: 1, media: 2, creative: 3, ad: 4 };
-  return items.sort((a, b) => order[a.kind] - order[b.kind]).map((x, i) => ({ ...x, position: i }));
+  // A paused Kaizen campaign brought back: turned on last, once everything new in it is in place (and paused)
+  for (const c of plan.campaigns) if (c.revive && c.mode === "existing") items.push({ ...base, key: `revive:${c.key}`, kind: "campaign", position: 0, parentKey: `campaign:${c.key}`, label: `Turn "${c.name}" back on`, status: "planned", metaId: null });
+  const order = (x: LaunchItem) => (x.key.startsWith("revive:") ? 5 : ({ campaign: 0, adset: 1, media: 2, creative: 3, ad: 4 } as Record<string, number>)[x.kind]);
+  return items.sort((a, b) => order(a) - order(b)).map((x, i) => ({ ...x, position: i }));
 }
 
 /** The media a creative needs (its keys) */
@@ -259,6 +324,8 @@ export function runnable(items: LaunchItem[], plan: LaunchPlan, retry = false): 
   return items
     .filter((i) => !DONE.has(i.status) && i.status !== "skipped" && (retry || i.status !== "failed"))
     .filter((i) => done(i.parentKey) && (i.kind !== "creative" || mediaKeys(plan, i.key.slice("creative:".length)).every(done)))
+    // Turning a campaign back on waits for every other line, and never runs after one failed
+    .filter((i) => !i.key.startsWith("revive:") || items.every((x) => x.key.startsWith("revive:") || DONE.has(x.status) || x.status === "skipped"))
     .sort((a, b) => a.position - b.position);
 }
 

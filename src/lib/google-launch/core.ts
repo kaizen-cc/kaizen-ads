@@ -2,9 +2,12 @@
 // type, negatives, responsive search ads, extensions, Performance Max text), checked here against Google's limits
 // before Google is asked, turned into one GoogleAdsService.Mutate batch with temporary resource names (so a new
 // campaign, its budget, its ad groups, keywords and ads go in one call, all or nothing), and read back. Pure: shared by
-// the server, the launch card and the tests (tests/google-launch.test.ts). Everything launched is created PAUSED.
+// the server, the launch card and the tests (tests/google-launch.test.ts). Everything launched is created PAUSED, and only
+// into what Kaizen set up: a campaign with Kaizen in its name, a paused Kaizen campaign turned back on (the one line
+// that turns something on, run only on Deploy), or a new campaign named with Kaizen (src/lib/kaizen-scope.ts).
 
 import type { LaunchItem, LaunchQuestion } from "@/lib/launch-sheet/types";
+import { BRING_BACK, comebackOption, isKaizenName, notKaizenLine, withKaizen, type Comeback } from "@/lib/kaizen-scope";
 
 export type Match = "EXACT" | "PHRASE" | "BROAD";
 /** A keyword as Google takes it. from: how its match type was known (written as [kw] / "kw", a match type column, or nothing given) */
@@ -34,6 +37,8 @@ export type GCampaign = {
   sitelinks: Sitelink[];
   callouts: string[];
   snippets: Snippet[];
+  /** A paused Kaizen campaign the buyer agreed to bring back: turned on when the launch is deployed */
+  revive?: boolean;
 };
 
 export type GAdGroup = { key: string; campaignKey: string; mode: "new" | "existing"; existingId: string | null; name: string; keywords: Kw[]; negatives: Kw[]; rsas: Rsa[] };
@@ -304,6 +309,33 @@ export function checkGooglePlan(plan: GooglePlan, inAccount: Set<string> = new S
     if (a.headlines.length > G.pmaxHeadlinesMax || a.longHeadlines.length > G.pmaxLongMax || a.descriptions.length > G.pmaxDescriptionsMax) out.push({ key, level: "error", message: `"${a.name}" has more text than an asset group takes (15 headlines, 5 long headlines, 5 descriptions).` });
     if (a.searchThemes.length > G.searchThemesMax) out.push({ key, level: "error", message: `"${a.name}" has more than ${G.searchThemesMax} search themes.` });
   }
+  return [...out, ...kaizenScopeIssues(plan)];
+}
+
+/** The campaign (its key in the plan) a line of the plan belongs to */
+export function campaignKeyOf(plan: GooglePlan, itemKey: string): string | null {
+  const [kind, a] = itemKey.split(":");
+  if (["budget", "campaign", "targeting", "cneg", "sitelink", "callout", "snippet", "revive"].includes(kind)) return a ?? null;
+  if (["adgroup", "kw", "aneg", "rsa"].includes(kind)) return plan.adGroups.find((g) => g.key === a)?.campaignKey ?? null;
+  if (kind === "assetgroup") return plan.assetGroups.find((x) => x.key === a)?.campaignKey ?? null;
+  return null;
+}
+
+/**
+ * Kaizen only writes into what it set up: every line hanging off an existing campaign without Kaizen in its name is
+ * refused (the plan builder already moves those to a new Kaizen campaign: this is the backstop the deploy also
+ * checks), and a new campaign must have Kaizen in its name.
+ */
+export function kaizenScopeIssues(plan: GooglePlan): Issue[] {
+  const out: Issue[] = [];
+  const outside = new Set(plan.campaigns.filter((c) => c.mode === "existing" && !isKaizenName(c.name)).map((c) => c.key));
+  for (const c of plan.campaigns) if (c.mode === "new" && !isKaizenName(c.name)) out.push({ key: `campaign:${c.key}`, level: "error", message: `A new campaign's name must have Kaizen in it ("${c.name}").`, fix: "Rename it with Kaizen, the way the account names its Kaizen campaigns." });
+  if (!outside.size) return out;
+  for (const i of googleItems(plan)) {
+    if (i.status === "existing") continue;
+    const ck = campaignKeyOf(plan, i.key);
+    if (ck && outside.has(ck)) out.push({ key: i.key, level: "error", message: `"${plan.campaigns.find((c) => c.key === ck)?.name}" wasn't set up by Kaizen, so nothing is added to it.`, fix: "Put it in a Kaizen campaign or a new one." });
+  }
   return out;
 }
 
@@ -321,7 +353,10 @@ export function googleItems(plan: GooglePlan): LaunchItem[] {
       if (c.type === "SEARCH") add(`budget:${c.key}`, "budget", `$${c.budget ?? 0}/day budget`, null);
       add(`campaign:${c.key}`, "campaign", c.name, c.type === "SEARCH" ? `budget:${c.key}` : null);
       if (c.type === "SEARCH") add(`targeting:${c.key}`, "targeting", `${c.locations.map((l) => l.name).join(", ") || "Everywhere"} · English`, `campaign:${c.key}`);
-    } else add(`campaign:${c.key}`, "campaign", c.name, null, true, c.existingId);
+    } else {
+      add(`campaign:${c.key}`, "campaign", c.name, null, true, c.existingId);
+      if (c.revive) add(`revive:${c.key}`, "campaign", `Turn "${c.name}" back on (when you deploy)`, `campaign:${c.key}`);
+    }
     c.negatives.forEach((k, i) => add(`cneg:${c.key}:${i}`, "negative", kwText(k), `campaign:${c.key}`));
     c.sitelinks.forEach((s, i) => add(`sitelink:${c.key}:${i}`, "extension", `Sitelink: ${s.text}`, `campaign:${c.key}`));
     c.callouts.forEach((t, i) => add(`callout:${c.key}:${i}`, "extension", `Callout: ${t}`, `campaign:${c.key}`));
@@ -369,13 +404,24 @@ export type AccountAdGroup = { id: string; name: string; status: string; campaig
 const q = (key: string, question: string, why: string, proposal: string, options: string[] = [], required = true): LaunchQuestion => ({ key, question, why, proposal, options, required, answer: null });
 const words = (s: string) => s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2);
 
-/** The live campaigns most likely to fit what's being launched: same words in the name, then Search and spend */
+/** A brand campaign (its name says brand, not non-brand or generic): no place for a non-brand keyword */
+export const isBrandCampaign = (name: string) => /\bbrand\b/i.test(name) && !/non[\s_-]?brand|generic/i.test(name);
+const aboutBrand = (about: string) => /\bbrand(ed)?\b/i.test(about) && !/non[\s_-]?brand/i.test(about);
+
+/**
+ * The live Kaizen campaigns most likely to fit what's being launched: same words in the name, then Search and spend.
+ * Only campaigns with Kaizen in their name (Kaizen never touches what it didn't set up), and only live ones (nothing
+ * added to a paused one runs). A brand campaign ranks last unless the launch is about the brand.
+ */
 export function relevantCampaigns(campaigns: AccountCampaign[], about: string, type: CampaignType | null = null, n = 4) {
   const want = new Set(words(about));
-  const score = (c: AccountCampaign) => words(c.name).filter((w) => want.has(w)).length * 100 + (c.status === "ENABLED" ? 1000 : 0) + (type && c.type === type ? 30 : 0) + Math.min(40, c.spend30 / 50);
-  // Only live campaigns: nothing added to a paused one runs
-  return [...campaigns].filter((c) => c.status === "ENABLED" && ["SEARCH", "PERFORMANCE_MAX"].includes(c.type)).sort((a, b) => score(b) - score(a)).slice(0, n);
+  const brandy = aboutBrand(about);
+  const score = (c: AccountCampaign) => words(c.name).filter((w) => want.has(w)).length * 100 + (c.status === "ENABLED" ? 1000 : 0) + (type && c.type === type ? 30 : 0) + Math.min(40, c.spend30 / 50) - (isBrandCampaign(c.name) && !brandy ? 500 : 0);
+  return [...campaigns].filter((c) => c.status === "ENABLED" && isKaizenName(c.name) && ["SEARCH", "PERFORMANCE_MAX"].includes(c.type)).sort((a, b) => score(b) - score(a)).slice(0, n);
 }
+
+/** The live Kaizen campaigns that really fit: a brand campaign doesn't take a non-brand launch */
+export const goodFits = (fits: AccountCampaign[], about: string) => fits.filter((c) => !isBrandCampaign(c.name) || aboutBrand(about));
 
 export const campaignOption = (c: AccountCampaign) => `${c.name} (${c.type === "PERFORMANCE_MAX" ? "PMax" : "Search"}, ${c.status === "ENABLED" ? "on" : "paused"}, $${Math.round(c.spend30)} in 30 days)`;
 
@@ -384,19 +430,29 @@ export const campaignOption = (c: AccountCampaign) => `${c.name} (${c.type === "
  * one, with its type, budget, bidding and places), which ad group, the landing page, keywords and their match types,
  * the ads. Only what's missing is asked; the model rewrites them for the client but can never drop one.
  */
-export function googleQuestions(d: GoogleDraft, campaigns: AccountCampaign[], adGroups: AccountAdGroup[], about: string, scopeType: CampaignType | null = null): LaunchQuestion[] {
+export function googleQuestions(d: GoogleDraft, campaigns: AccountCampaign[], adGroups: AccountAdGroup[], about: string, scopeType: CampaignType | null = null, comeback: Pick<Comeback, "id" | "name" | "why"> | null = null): LaunchQuestion[] {
   const out: LaunchQuestion[] = [];
   const named = [...new Set(d.adGroups.map((g) => g.campaign.trim()).filter(Boolean))];
-  const known = (n: string) => campaigns.find((c) => c.name.toLowerCase() === n.toLowerCase());
-  const fits = relevantCampaigns(campaigns, `${about} ${named.join(" ")} ${d.adGroups.map((g) => g.name).join(" ")}`, scopeType);
+  // Only a live Kaizen campaign named in the sheet is taken as it is
+  const known = (n: string) => campaigns.find((c) => c.name.toLowerCase() === n.toLowerCase() && isKaizenName(c.name) && c.status === "ENABLED");
+  const theme = `${about} ${named.join(" ")} ${d.adGroups.map((g) => g.name).join(" ")}`;
+  const fits = relevantCampaigns(campaigns, theme, scopeType);
+  const good = goodFits(fits, theme);
+  // No live Kaizen campaign fits: a paused Kaizen one with a good record is offered back
+  const back = !good.length && comeback ? comebackOption(comeback) : null;
   if (!named.length || named.some((n) => !known(n))) {
-    const opts = [...fits.map(campaignOption), "A new Search campaign", "A new Performance Max campaign"];
+    const opts = [...good.map(campaignOption), ...(back ? [back] : []), ...fits.filter((c) => !good.includes(c)).map(campaignOption), "A new Search campaign", "A new Performance Max campaign"];
+    const outside = named.filter((n) => campaigns.some((c) => c.name.toLowerCase() === n.toLowerCase() && !isKaizenName(c.name)));
     out.push(
       q(
         "campaign",
-        named.length ? `The sheet names ${named.map((n) => `"${n}"`).join(", ")}, which ${named.length === 1 ? "isn't a campaign" : "aren't campaigns"} in the account. Add to one that's running, or build it new?` : "Which campaign should this go into?",
-        fits.length ? "These are the live campaigns that fit best, by name, type and spend." : "Nothing in the account fits yet.",
-        fits[0] ? `Add to ${campaignOption(fits[0])}` : "A new Search campaign",
+        outside.length
+          ? `The sheet names ${outside.map((n) => `"${n}"`).join(", ")}, which Kaizen didn't set up. Which Kaizen campaign, or a new one?`
+          : named.length
+            ? `The sheet names ${named.map((n) => `"${n}"`).join(", ")}, which ${named.length === 1 ? "isn't a live Kaizen campaign" : "aren't live Kaizen campaigns"}. Which one, or a new one?`
+            : "Which campaign should this go into?",
+        good.length ? "These are the live Kaizen campaigns that fit best, by name, type and spend." : back && comeback ? comeback.why : "No live Kaizen campaign fits, so a new one named with Kaizen.",
+        good[0] ? `Add to ${campaignOption(good[0])}` : (back ?? "A new Search campaign"),
         opts,
       ),
     );
@@ -408,19 +464,22 @@ export function googleQuestions(d: GoogleDraft, campaigns: AccountCampaign[], ad
   }
   if (!d.adGroups.some((g) => g.finalUrl || g.rsas.some((r) => r.finalUrl))) out.push(q("final_url", "Which page should the ads send people to?", "Every ad needs a landing page; the one that matches the keywords converts best.", "The page that matches the theme best on the client's site"));
   if (!d.adGroups.some((g) => g.keywords.length)) out.push(q("keywords", "Which keywords, and in what match type? Write [exact] and \"phrase\" as you'd write them in Google Ads.", "Search ads only show for the keywords given.", "I'll propose them from the searches that already convert in the account, for you to cut"));
-  const unsure = unsureMatches(d);
-  if (unsure.length) out.push(q("match_types", `${unsure.length} keyword${unsure.length === 1 ? " has" : "s have"} no match type written (no [ ], no quotes, no match type column). Which match type should ${unsure.length === 1 ? "it" : "they"} use?`, "Google treats a plain keyword as broad match, which can spend on loosely related searches.", "Phrase", ["Phrase", "Exact", "Broad", "Exact and phrase, both"]));
+  // A keyword written plainly goes in as phrase match (Kaizen's default, on the preview to change there): never asked.
+  // Created paused is Kaizen's rule, not a decision: never asked either.
   if (!d.adGroups.some((g) => g.rsas.length)) out.push(q("ads", "Which ads? Paste up to 15 headlines (30 characters) and 4 descriptions (90 characters), or should I write them?", "Each ad group needs at least one responsive search ad.", "I'll write one per ad group from the client's winning lines in the Copy library, for you to edit"));
-  out.push(q("go_live", "Everything is created paused for you to turn on in Google Ads. OK?", "Kaizen creates launches paused so you can check them first.", "Paused", ["Paused"]));
   return out;
 }
 
-/** The buyer's pick for "campaign", read: an existing campaign (its id), a new one (its type), or unknown */
-export function campaignChoice(answer: string | null | undefined, campaigns: AccountCampaign[]): { mode: "existing"; id: string } | { mode: "new"; type: CampaignType } | null {
+/**
+ * The buyer's pick for "campaign", read: an existing Kaizen campaign (its id, and whether it's a paused one to bring
+ * back), a new one (its type), or unknown. A campaign Kaizen didn't set up is never a pick.
+ */
+export function campaignChoice(answer: string | null | undefined, campaigns: AccountCampaign[]): { mode: "existing"; id: string; revive: boolean } | { mode: "new"; type: CampaignType } | null {
   const a = String(answer ?? "").toLowerCase();
   if (!a) return null;
   const hit = [...campaigns].sort((x, y) => y.name.length - x.name.length).find((c) => a.includes(c.name.toLowerCase()));
-  if (hit) return { mode: "existing", id: hit.id };
+  if (hit && !isKaizenName(hit.name)) return null;
+  if (hit) return { mode: "existing", id: hit.id, revive: hit.status !== "ENABLED" };
   if (/performance max|pmax/.test(a) && /new/.test(a)) return { mode: "new", type: "PERFORMANCE_MAX" };
   if (/new/.test(a)) return { mode: "new", type: "SEARCH" };
   return null;
@@ -450,17 +509,34 @@ export const NEW_AD_GROUP = "A new ad group named for the theme";
  * other campaigns), only a new one for a new campaign, and nothing to pick until one campaign is chosen. A campaign
  * answer that names more than one campaign is cleared and asked again; proposals are always one of the options.
  */
-export function followCampaign(questions: LaunchQuestion[], campaigns: AccountCampaign[], adGroups: AccountAdGroup[]): LaunchQuestion[] {
+/**
+ * Why a campaign answer isn't taken, in one sentence for the buyer, or null when it stands: two campaigns named, one
+ * Kaizen didn't set up, or a paused one (unless it's the paused Kaizen campaign offered back, or they asked to bring
+ * it back).
+ */
+export function campaignRefusal(answer: string | null | undefined, campaigns: AccountCampaign[], comeback: Pick<Comeback, "id" | "name"> | null = null): string | null {
+  const named = campaignsNamed(answer, campaigns);
+  if (named.length > 1) return `Pick one campaign: that answer named ${named.length} (${named.map((c) => c.name).join(", ")}).`;
+  if (named.length !== 1) return null;
+  const c = named[0];
+  const alt = relevantCampaigns(campaigns, String(answer ?? ""))[0]?.name ?? null;
+  if (!isKaizenName(c.name)) return notKaizenLine(c.name, alt);
+  // Nothing added to a paused campaign runs: taken only as a comeback (offered, or asked for in so many words)
+  if (c.status !== "ENABLED" && comeback?.id !== c.id && !BRING_BACK.test(String(answer ?? "")))
+    return `${c.name} is paused, so nothing added there would run. I'd use ${comeback ? `${comeback.name} brought back` : alt ? `"${alt}"` : "a new Kaizen campaign"}${comeback || alt ? " or a new Kaizen campaign" : ""}.`;
+  return null;
+}
+
+export function followCampaign(questions: LaunchQuestion[], campaigns: AccountCampaign[], adGroups: AccountAdGroup[], comeback: Pick<Comeback, "id" | "name"> | null = null): LaunchQuestion[] {
   const camp = questions.find((x) => x.key === "campaign");
   let out = questions.map((x) => ({ ...x }));
   if (camp) {
-    const named = campaignsNamed(camp.answer, campaigns);
     out = out.map((x) => {
       if (x.key !== "campaign") return x;
       const proposal = x.options.length && !x.options.includes(x.proposal) ? x.options[0] : x.proposal;
-      if (named.length > 1) return { ...x, proposal, answer: null, why: `Pick one campaign: that answer named ${named.length} (${named.map((c) => c.name).join(", ")}).` };
-      // Nothing added to a paused campaign runs: it isn't taken as the answer
-      if (named.length === 1 && named[0].status !== "ENABLED") return { ...x, proposal, answer: null, why: `${named[0].name} is paused, so nothing added there would run. Pick a live campaign or a new one.` };
+      // Two campaigns, one Kaizen didn't set up, or a paused one nobody agreed to bring back: not taken
+      const refused = campaignRefusal(x.answer, campaigns, comeback);
+      if (refused) return { ...x, proposal, answer: null, why: refused };
       return { ...x, proposal };
     });
   }
@@ -556,7 +632,8 @@ export function editPlan(plan: GooglePlan, e: PlanEdit): GooglePlan {
   if (e.type === "name") {
     const t = e.text.trim().slice(0, 255);
     if (!t) return p;
-    if (kind === "campaign") p.campaigns.filter((c) => c.key === a && c.mode === "new").forEach((c) => (c.name = t));
+    // A new campaign keeps Kaizen in its name, in the style its name had
+    if (kind === "campaign") p.campaigns.filter((c) => c.key === a && c.mode === "new").forEach((c) => (c.name = withKaizen(t, [c.name])));
     if (kind === "adgroup") p.adGroups.filter((g) => g.key === a && g.mode === "new").forEach((g) => (g.name = t));
   }
   return p;
@@ -720,6 +797,9 @@ export function googleOperations(plan: GooglePlan, customer: string): Ops {
     a.descriptions.forEach((t) => text(t, "DESCRIPTION"));
     if (a.searchThemes.length || a.byHand.length) byHand.push({ key: `assetgroup:${a.key}`, why: `Added by hand in Google Ads: ${[a.searchThemes.length ? `${a.searchThemes.length} search themes (they'd take effect right away on a live asset group)` : "", ...a.byHand].filter(Boolean).join("; ")}.` });
   }
+  // Last: a paused Kaizen campaign brought back (the one thing a launch turns on; everything new in it stays paused)
+  for (const c of plan.campaigns)
+    if (c.revive && c.mode === "existing" && c.existingId && isKaizenName(c.name)) push(`revive:${c.key}`, { campaignOperation: { update: { resourceName: `${cust}/campaigns/${c.existingId}`, status: "ENABLED" }, updateMask: "status" } });
   return { ops, keys, byHand };
 }
 

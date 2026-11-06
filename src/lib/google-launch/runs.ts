@@ -13,7 +13,9 @@ import type { CheckItem, ItemStatus, LaunchItem, LaunchQuestion, RunStatus } fro
 import type { SetupFacts } from "@/lib/setup-check";
 import {
   campaignChoice,
+  campaignRefusal,
   checkGooglePlan,
+  kaizenScopeIssues,
   draftSummary,
   editPlan,
   errorsByLine,
@@ -44,6 +46,8 @@ import {
 } from "./core";
 import { applyMatchAnswer, tabsToDraft } from "./sheet";
 import { ASKS_FOR_LINK, followLanding, landingRule, pagesText, urlIn, type LandingSet } from "@/lib/landing-pages-core";
+import { askedKey, childrenNamedKaizen, isKaizenName, NOT_ASKED, scrubPaused, withKaizen, yesOnlyAnswersAsked, type Comeback, type LaunchContext } from "@/lib/kaizen-scope";
+import { contextText } from "@/lib/launch-context";
 
 // A Google launch from the client chat (the client page, or a Google card on the KPI board), start to finish:
 //   read     the buyer's words, or the sheet they shared (any layout: see sheet.ts), and the live account (campaigns
@@ -88,9 +92,14 @@ export type GoogleResolution = {
   at: string;
   /** The client's pages the ads can land on (src/lib/landing-pages.ts) */
   landing?: LandingSet | null;
+  /** What a master buyer knows walking in (client, account history, related accounts), built once (launch-context.ts) */
+  context?: LaunchContext | null;
+  /** The paused Kaizen campaign worth bringing back for this launch, when no live Kaizen campaign fits */
+  comeback?: Comeback | null;
 };
 
-export type Turn = { role: "user" | "assistant"; text: string; at: string };
+/** asks: the question an assistant turn asked (its key), so a short "yes" answers only that one */
+export type Turn = { role: "user" | "assistant"; text: string; at: string; asks?: string | null };
 type Run = {
   id: string;
   client_id: string;
@@ -113,7 +122,7 @@ async function load(admin: SupabaseClient, id: string): Promise<Run | null> {
 }
 const patch = (admin: SupabaseClient, id: string, p: Record<string, unknown>) => admin.from("launch_runs").update({ ...p, updated_at: now() }).eq("id", id);
 
-const RULES = `Kaizen's Google launch rules: everything is created PAUSED for the buyer to turn on in Google Ads. Never propose or plan launching into a paused campaign, ad group or ad set: nothing added there runs. Only live ones, or a new one. If the buyer names a paused one, say plainly it's paused and offer the live ones or a new one. Respect Google's limits exactly: RSA headlines up to 30 characters (3 to 15 of them), descriptions up to 90 (2 to 4), display paths up to 15 each, keywords up to 80 characters and 10 words, sitelink text 25, callouts 25. No exclamation marks in headlines, no repeated punctuation, no emojis, no phone numbers in ad text, no all-caps words except brand names and acronyms. Match types: [exact], "phrase", broad as plain text. Profitability first: the searches that convert and the copy that won lead; what wastes spend becomes a negative. Refer to people by role (the buyer, the client, the head of Google), never by name. Plain text, no markdown, no emojis, no em dashes.`;
+const RULES = `Kaizen's Google launch rules: Kaizen only touches what Kaizen set up. A launch goes into a live campaign with "Kaizen" in its name (and only ad groups inside one), a paused Kaizen campaign brought back when its record says so, or a new campaign whose name has Kaizen in it the way the account names its Kaizen campaigns ("Search | Non Brand | Kaizen"). Campaigns without Kaizen in the name are context only (what converts, what runs): never propose, plan or add to them; if the buyer names one, say in one sentence Kaizen didn't set it up so you won't touch it, and offer the Kaizen one or a new Kaizen campaign. Never propose or plan launching into a paused campaign or ad group (nothing added there runs) unless it's the paused Kaizen campaign offered back. Everything new is created PAUSED: that's Kaizen's rule, not a question, so never ask or confirm it ("Taking that as paused" is never said). A plainly written keyword goes in as phrase match, Kaizen's default: never ask for a match type unless the buyer raises it. Never ask what the account, the history or the client context already answers; decide like a senior buyer and say your pick. Respect Google's limits exactly: RSA headlines up to 30 characters (3 to 15 of them), descriptions up to 90 (2 to 4), display paths up to 15 each, keywords up to 80 characters and 10 words, sitelink text 25, callouts 25. No exclamation marks in headlines, no repeated punctuation, no emojis, no phone numbers in ad text, no all-caps words except brand names and acronyms. Match types: [exact], "phrase", broad as plain text. Profitability first: the searches that convert and the copy that won lead; what wastes spend becomes a negative. Refer to people by role (the buyer, the client, the head of Google), never by name. Plain text, no markdown, no emojis, no em dashes.`;
 
 // ─── Starting one ───────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -125,7 +134,7 @@ async function accountFor(admin: SupabaseClient, clientId: string, targetId: str
 }
 
 /** A new Google launch from the chat (the buyer's words, and a sheet when one was shared); read in the background */
-export async function startGoogleRun(admin: SupabaseClient, clientId: string, profileId: string, o: { request: string; source?: SheetSource | null; targetId?: string | null; scopeType?: CampaignType | null }): Promise<{ id: string } | { error: string }> {
+export async function startGoogleRun(admin: SupabaseClient, clientId: string, profileId: string, o: { request: string; source?: SheetSource | null; targetId?: string | null; scopeType?: CampaignType | null; opener?: string | null }): Promise<{ id: string } | { error: string }> {
   // Only someone who may launch in this client's Google Ads account starts one (every surface comes here)
   const allowed = await canIdOn(admin, profileId, "ads.launch", { platform: "google", clientId });
   if (!allowed.ok) return { error: allowed.reason };
@@ -144,7 +153,8 @@ export async function startGoogleRun(admin: SupabaseClient, clientId: string, pr
       status: "reading",
       progress: o.source ? "Reading the sheet and the account" : "Reading the account",
       resolution: { request: o.request.slice(0, 3000), scopeType: o.scopeType ?? null },
-      turns: o.request.trim() ? [{ role: "user", text: o.request.slice(0, 3000), at: now() }] : [],
+      // The chat's first answer is the launch's first turn: a "yes" to it answers the question it asked
+      turns: [...(o.request.trim() ? [{ role: "user", text: o.request.slice(0, 3000), at: now() }] : []), ...(o.opener?.trim() ? [{ role: "assistant", text: o.opener.slice(0, 1500), at: now() }] : [])],
     })
     .select("id")
     .single();
@@ -248,17 +258,46 @@ async function landingFor(admin: SupabaseClient, clientId: string, account: stri
 function accountText(r: GoogleResolution, o: { groups?: number; terms?: number; waste?: number; copy?: boolean } = {}) {
   const money = (x: number | null) => (x == null ? "?" : `$${Math.round(x)}`);
   const { groups = 120, terms = 25, waste = 15, copy = true } = o;
+  // Kaizen's campaigns (and their ad groups) first: only those can be written to; the rest is context
+  const camps = [...r.campaigns].sort((a, b) => Number(isKaizenName(b.name)) - Number(isKaizenName(a.name)));
+  const kaizenIds = new Set(r.campaigns.filter((c) => isKaizenName(c.name)).map((c) => c.id));
+  const adGroups = [...r.adGroups].sort((a, b) => Number(kaizenIds.has(b.campaignId)) - Number(kaizenIds.has(a.campaignId)));
   return [
-    "CAMPAIGNS (id, type, status, bidding, daily budget, last 30 days)",
-    ...r.campaigns.map((c) => `- ${c.id} "${c.name}" ${c.type} ${c.status} ${c.bidding.toLowerCase()} ${money(c.budget)}/day · ${money(c.spend30)} spent, ${c.conversions30} conv${c.conversions30 ? ` ($${Math.round(c.spend30 / c.conversions30)}/conv)` : ""}`),
+    "CAMPAIGNS (id, type, status, bidding, daily budget, last 30 days; [Kaizen] ones can be launched into, the rest are context only)",
+    ...camps.map((c) => `- ${c.id} "${c.name}" ${isKaizenName(c.name) ? "[Kaizen]" : "[not Kaizen's]"} ${c.type} ${c.status} ${c.bidding.toLowerCase()} ${money(c.budget)}/day · ${money(c.spend30)} spent, ${c.conversions30} conv${c.conversions30 ? ` ($${Math.round(c.spend30 / c.conversions30)}/conv)` : ""}`),
     "AD GROUPS (id, campaign, ads and their best ad strength)",
-    ...r.adGroups.slice(0, groups).map((g) => `- ${g.id} "${g.name}" in "${g.campaign}" ${g.status}${g.rsas ? `, ${g.rsas} RSA${g.rsas === 1 ? "" : "s"}${g.strength ? ` (${g.strength.toLowerCase()})` : ""}` : ", no RSA"}`),
+    ...adGroups.slice(0, groups).map((g) => `- ${g.id} "${g.name}" in "${g.campaign}"${kaizenIds.has(g.campaignId) ? "" : " [not Kaizen's]"} ${g.status}${g.rsas ? `, ${g.rsas} RSA${g.rsas === 1 ? "" : "s"}${g.strength ? ` (${g.strength.toLowerCase()})` : ""}` : ", no RSA"}`),
     ...(r.adGroups.length > groups ? [`(${r.adGroups.length - groups} more ad groups)`] : []),
     ...(r.assetGroups.length ? ["PERFORMANCE MAX ASSET GROUPS", ...r.assetGroups.slice(0, groups).map((a) => `- ${a.id} "${a.name}" in "${a.campaign}"${a.strength ? ` (${a.strength.toLowerCase()})` : ""}`)] : []),
     ...(terms ? ["SEARCHES THAT CONVERTED (90 days)", ...r.converting.slice(0, terms).map((t) => `- "${t.term}" (${t.campaign}): ${t.conversions} conv, $${t.spend}`)] : []),
     ...(waste ? ["SEARCHES SPENDING WITH NO CONVERSIONS (30 days)", ...r.waste.slice(0, waste).map((t) => `- "${t.term}" (${t.campaign}): $${t.spend}, ${t.clicks} clicks`)] : []),
     ...(copy ? ["COPY LIBRARY (this client's Google lines)", ...r.winners.map((l) => `- winner ${l}`), ...r.tired.map((l) => `- tired ${l}`)] : []),
   ].join("\n");
+}
+
+/** The campaign types a launch can go into, for the comeback (keywords need Search; Performance Max only when asked) */
+const launchTypes = (scopeType: CampaignType | null) => (scopeType === "PERFORMANCE_MAX" ? ["PERFORMANCE_MAX"] : ["SEARCH"]);
+
+/** The launch's context (client, account history, related accounts), built once and kept on the run; null if it can't be */
+async function launchContext(admin: SupabaseClient, clientId: string, account: string, res: Pick<GoogleResolution, "campaigns" | "scopeType">, theme: string, wait = 8000): Promise<LaunchContext | null> {
+  const { buildLaunchContext } = await import("@/lib/launch-context");
+  const built = step(`google ${account}`, "launch context", buildLaunchContext(admin, clientId, "google", account, { live: res.campaigns.map((c) => ({ id: c.id, name: c.name, status: c.status, type: c.type })), theme, types: launchTypes(res.scopeType) })).catch((e) => {
+    console.error("[launch] google context:", msg(e));
+    return null;
+  });
+  return Promise.race([built, new Promise<null>((r) => setTimeout(() => r(null), wait))]);
+}
+
+/** The run's context, built now (and kept) for a run from before it was kept */
+async function ensureContext(admin: SupabaseClient, run: Run): Promise<LaunchContext | null> {
+  if (!run.resolution || !run.account) return null;
+  if (run.resolution.context) return run.resolution.context;
+  const ctx = await launchContext(admin, run.client_id, run.account, run.resolution, googleTheme(run.resolution.request, run.sheet, run.questions));
+  if (ctx) {
+    run.resolution = { ...run.resolution, context: ctx, comeback: run.resolution.comeback ?? ctx.comeback };
+    await patch(admin, run.id, { resolution: run.resolution });
+  }
+  return ctx;
 }
 
 /** The account as the "suggest more" step after a deploy reads it: the full picture and what's already in place */
@@ -357,8 +396,6 @@ export async function prepareGoogleRun(admin: SupabaseClient, id: string) {
   let draft: GoogleDraft = { adGroups: [], campaignNegatives: [], notes: [] };
   let read = "";
   let res!: GoogleResolution;
-  // The client's context for the tailoring step, read alongside everything else
-  const briefP = step(scope, "client context", import("@/lib/handoff").then((m) => m.accountBrief(admin, run.client_id, null)).then((b) => b.text)).catch(() => "");
   // The client's pages, for the landing-page question (usually warm: the chat started it with the account read)
   const pagesP = step(scope, "landing pages", landingFor(admin, run.client_id, account));
   try {
@@ -386,12 +423,18 @@ export async function prepareGoogleRun(admin: SupabaseClient, id: string) {
     // The pages if they're already found; otherwise they join the questions once tailored, below
     const landing = await Promise.race([pagesP, new Promise<null>((r) => setTimeout(() => r(null), 1500))]);
     res = { account, request, scopeType: base?.scopeType ?? null, ...acct, suggestions: [], checks: [], at: now(), landing };
-    const must = googleQuestions(draft, res.campaigns, res.adGroups, `${request} ${run.source.kind !== "words" ? run.source.name : ""}`, res.scopeType);
+    // What a master buyer knows walking in (the client, this account's history, the other platform), built once and
+    // kept on the run: the comeback it finds decides the campaign question when no live Kaizen campaign fits
+    const context = await launchContext(admin, run.client_id, account, res, googleTheme(request, draft, []));
+    res.context = context;
+    res.comeback = context?.comeback ?? null;
+    const must = googleQuestions(draft, res.campaigns, res.adGroups, `${request} ${run.source.kind !== "words" ? run.source.name : ""}`, res.scopeType, res.comeback);
     res.checks = intakeChecks(draft, res);
     const live = res.campaigns.filter((c) => c.status === "ENABLED").length;
-    const facts = `${count(res.campaigns.length)} campaigns (${count(live)} live), ${count(res.adGroups.length)} ad groups, ${count(res.inAccount.length)} keywords read${cached ? " (read in the last few minutes)" : ""}.`;
+    const kaizenLive = res.campaigns.filter((c) => c.status === "ENABLED" && isKaizenName(c.name)).length;
+    const facts = `${count(res.campaigns.length)} campaigns (${count(live)} live, ${count(kaizenLive)} of them Kaizen's), ${count(res.adGroups.length)} ad groups, ${count(res.inAccount.length)} keywords read${cached ? " (read in the last few minutes)" : ""}.`;
     const summary = [read ? `${read}.` : "", facts, ...draft.notes.map((x) => `Note: ${x}`)].filter(Boolean).join("\n\n");
-    await patch(admin, id, { sheet: draft, resolution: res, summary, questions: followLanding(followCampaign(must, res.campaigns, res.adGroups), "final_url", landing, googleTheme(request, draft, must)), status: "asking", progress: "Tailoring the questions to the account", error: null });
+    await patch(admin, id, { sheet: draft, resolution: res, summary, questions: followLanding(followCampaign(must, res.campaigns, res.adGroups, res.comeback), "final_url", landing, googleTheme(request, draft, must)), status: "asking", progress: "Tailoring the questions to the account", error: null });
     console.log(`[launch] ${scope} · questions on the card ${Date.now() - t0}ms`);
   } catch (e) {
     await patch(admin, id, { status: "failed", progress: null, error: msg(e).slice(0, 500) });
@@ -400,8 +443,7 @@ export async function prepareGoogleRun(admin: SupabaseClient, id: string) {
 
   // ─── The Google Ads Buyer tailors the questions (fast tier, lean prompt), merged in without touching answers ───
   try {
-    const must = googleQuestions(draft, res.campaigns, res.adGroups, `${request} ${run.source.kind !== "words" ? run.source.name : ""}`, res.scopeType);
-    const brief = await briefP;
+    const must = googleQuestions(draft, res.campaigns, res.adGroups, `${request} ${run.source.kind !== "words" ? run.source.name : ""}`, res.scopeType, res.comeback);
     const out = await step(
       scope,
       "tailor questions (fast tier)",
@@ -413,12 +455,12 @@ export async function prepareGoogleRun(admin: SupabaseClient, id: string) {
         system: `You're the Google Ads buyer about to launch new ads into a client's live Google Ads account, from a buyer's request in chat${run.source.kind !== "words" ? " and the sheet they shared (already read: below)" : ""}. Nothing is planned or written yet. Stay on what they asked to launch: never bring up other campaigns' problems, tracking, conversion actions, sign-offs, Merchant Center or anything account-wide.
 summary: 1 or 2 sentences, at most 35 words: what they want launched and the one fact in the account that matters most for it.
 wordsDraft: ${run.source.kind !== "words" ? "[] (the sheet was read)." : "what the buyer wrote in their message, as ad groups: keywords exactly as written (keep [ ] and quotes, never add notation), headlines and descriptions word for word, final URL. [] when they only described what they want."}
-questions: start from the required questions given (keep each key and its options; make the campaign options the live campaigns that fit best by name, type, status, spend and theme). Rewrite each for this client and request: question at most 15 words, why one sentence of at most 15 words, proposal at most 12 words. Add a question only when something this launch needs is still open and only the buyer can decide it (a new campaign's daily budget and bidding, Search or Performance Max, the places to show, which ad groups the copy is for, pins). Never ask what the request, the sheet or the account already answers. At most 6.
+questions: start from the required questions given (keep each key and its options; the campaign options are only live Kaizen campaigns that fit, the paused Kaizen one offered back when there is one, or a new Kaizen campaign). Rewrite each for this client and request: question at most 15 words, why one sentence of at most 15 words, proposal at most 12 words, every proposal the pick a senior buyer would make from <account_history>, <client_context> and <related_accounts> (a new campaign's budget from the monthly budget and its pacing, bidding from the target). Add a question only when something this launch needs is still open and only the buyer can decide it (a new campaign's daily budget, the places to show when the client context doesn't say, which ad groups the copy is for). Never ask what the request, the sheet, the account, its history or the client context already answers, never ask about paused creation or match types. At most 5.
 ${SHORT}
 ${RULES}`,
         schema: INTAKE,
         maxTokens: 4000,
-        prompt: `<request>${request || "(shared a sheet to launch)"}</request>\n\n${draft.adGroups.length ? `<read>\n${draftText(draft, 25)}\n</read>\n\n` : ""}<account id="${account}">\n${accountText(res, { groups: 60, terms: 12, waste: 0, copy: false })}\n</account>\n\n<client_context>\n${brief.slice(0, 2500)}\n</client_context>\n\n<required_questions>\n${must.map((q) => `- ${q.key}: ${q.question} Proposal: ${q.proposal}. Options: ${q.options.join(" | ")}`).join("\n")}\n</required_questions>`,
+        prompt: `<request>${request || "(shared a sheet to launch)"}</request>\n\n${draft.adGroups.length ? `<read>\n${draftText(draft, 25)}\n</read>\n\n` : ""}<account id="${account}">\n${accountText(res, { groups: 60, terms: 12, waste: 0, copy: false })}\n</account>\n\n${contextText(res.context)}\n\n<required_questions>\n${must.map((q) => `- ${q.key}: ${q.question} Proposal: ${q.proposal}. Options: ${q.options.join(" | ")}`).join("\n")}\n</required_questions>`,
       }),
     );
     if (run.source.kind === "words" && out.wordsDraft.length) {
@@ -426,9 +468,10 @@ ${RULES}`,
       read = draft.adGroups.length ? draftSummary(draft) : "";
     }
     // The questions again from what's now read (the words may have answered some), the model's version of each kept
-    const required = googleQuestions(draft, res.campaigns, res.adGroups, request, res.scopeType);
+    const required = googleQuestions(draft, res.campaigns, res.adGroups, request, res.scopeType, res.comeback);
     const keys = new Set(required.map((q) => q.key));
-    const fromModel = out.questions.filter((q) => keys.has(q.key) || !["campaign", "ad_group", "final_url", "keywords", "match_types", "ads", "go_live"].includes(q.key)).slice(0, 6);
+    // Never a question about paused creation or match types (Kaizen's rules, not decisions), whatever the model wrote
+    const fromModel = out.questions.filter((q) => !NOT_ASKED.test(`${q.key} ${q.question}`) && (keys.has(q.key) || !["campaign", "ad_group", "final_url", "keywords", "ads"].includes(q.key))).slice(0, 6);
     const latest = await load(admin, id);
     if (!latest) return;
     const summary = [read ? `${read}.` : "", out.summary, ...draft.notes.map((x) => `Note: ${x}`)].filter(Boolean).join("\n\n");
@@ -452,7 +495,7 @@ ${RULES}`,
       sheet: draft,
       resolution: { ...(latest.resolution ?? res), checks, landing },
       summary,
-      questions: followLanding(followCampaign(questions, res.campaigns, res.adGroups), "final_url", landing, googleTheme(request, draft, questions)),
+      questions: followLanding(followCampaign(questions, res.campaigns, res.adGroups, res.comeback), "final_url", landing, googleTheme(request, draft, questions)),
       progress: null,
     });
     console.log(`[launch] ${scope} · questions tailored ${Date.now() - t0}ms`);
@@ -473,7 +516,10 @@ ${RULES}`,
  */
 function intakeChecks(d: GoogleDraft, r: GoogleResolution): CheckItem[] {
   const out: CheckItem[] = [];
-  out.push({ key: "account", label: "The account", level: "ok", detail: `${r.campaigns.filter((c) => c.status === "ENABLED").length} live campaigns · ${r.adGroups.length} ad groups${r.assetGroups.length ? ` · ${r.assetGroups.length} asset groups` : ""}` });
+  const kaizen = r.campaigns.filter((c) => isKaizenName(c.name));
+  out.push({ key: "account", label: "The account", level: "ok", detail: `${r.campaigns.filter((c) => c.status === "ENABLED").length} live campaigns (${kaizen.filter((c) => c.status === "ENABLED").length} Kaizen's) · ${r.adGroups.length} ad groups${r.assetGroups.length ? ` · ${r.assetGroups.length} asset groups` : ""}` });
+  out.push({ key: "kaizen", label: "Kaizen's campaigns only", level: "info", detail: `Launches go into campaigns with Kaizen in the name, a paused Kaizen one brought back, or a new Kaizen campaign. The other ${r.campaigns.length - kaizen.length} are read for context only.` });
+  if (r.comeback) out.push({ key: "comeback", label: "A paused Kaizen campaign to bring back", level: "info", detail: r.comeback.why });
   if (!d.adGroups.length) return out;
   const rsas = d.adGroups.flatMap((g) => g.rsas);
   const long = rsas.flatMap((x) => [...x.headlines.filter((h) => [...h.text].length > G.headline).map((h) => `"${h.text}" (${[...h.text].length}/30)`), ...x.descriptions.filter((h) => [...h.text].length > G.description).map((h) => `a ${[...h.text].length}/90 description`)]);
@@ -486,18 +532,24 @@ function intakeChecks(d: GoogleDraft, r: GoogleResolution): CheckItem[] {
   const noUrl = d.adGroups.filter((g) => !g.finalUrl && !g.rsas.some((x) => x.finalUrl)).length;
   if (noUrl) out.push({ key: "final_url", label: `${noUrl} ad group${noUrl === 1 ? "" : "s"} without a landing page`, level: "warn", detail: "I'll ask for the final URL." });
   const guessed = d.adGroups.flatMap((g) => g.keywords).filter((k) => k.from === "default").length;
-  if (guessed) out.push({ key: "match", label: `${guessed} keyword${guessed === 1 ? "" : "s"} without a match type`, level: "info", detail: "Written without [ ] or quotes: I'll ask which match type." });
+  if (guessed) out.push({ key: "match", label: `${guessed} keyword${guessed === 1 ? "" : "s"} as phrase match`, level: "info", detail: "Written without [ ] or quotes, so they go in as phrase match (Kaizen's default). Change any on the preview." });
   return out;
 }
 
 // ─── The conversation ───────────────────────────────────────────────────────────────────────────────────────────
 
-const REPLY = obj({ answer: S, answers: arr(obj({ key: S, answer: S })), newQuestions: arr(obj({ key: S, question: S, why: S, proposal: S, options: arr(S), required: B })), build: B, offTopic: B, setAside: B });
+const REPLY = obj({ answer: S, asks: S, answers: arr(obj({ key: S, answer: S })), newQuestions: arr(obj({ key: S, question: S, why: S, proposal: S, options: arr(S), required: B })), build: B, offTopic: B, setAside: B });
+
+/** How the launch chat treats a short "yes" and what it never asks (shared by Google and Meta) */
+export const YES_RULE = `A short "yes" (or "sure", "sounds good", "go with that") answers ONLY the question your last message asked, with the proposal you made in it: never any other question. asks: the key of the ONE question your answer asks now ("" when it asks nothing).`;
 
 /** The buyer's message about the launch: answers taken in, the plan built when asked. Fast tier: someone is waiting. */
 export async function googleLaunchReply(admin: SupabaseClient, id: string, message: string): Promise<{ answer: string; offTopic: boolean; building: boolean }> {
   const run = await load(admin, id);
   if (!run?.resolution) return { answer: "", offTopic: true, building: false };
+  const context = await ensureContext(admin, run);
+  const comeback = run.resolution.comeback ?? null;
+  const lastSaid = [...run.turns].reverse().find((t) => t.role === "assistant") ?? null;
   // The client's pages, so a page named in words ("the homepage") is answered with its link (a run from before they
   // were found reads them now: kept a day, so usually at once)
   const landing = run.resolution.landing ?? (run.account ? await landingFor(admin, run.client_id, run.account) : null);
@@ -506,39 +558,46 @@ export async function googleLaunchReply(admin: SupabaseClient, id: string, messa
   const out = await step(
     `google run ${id.slice(0, 8)}`,
     "chat turn (fast tier)",
-    askJson<{ answer: string; answers: { key: string; answer: string }[]; newQuestions: Omit<LaunchQuestion, "answer">[]; build: boolean; offTopic: boolean; setAside: boolean }>({
+    askJson<{ answer: string; asks: string; answers: { key: string; answer: string }[]; newQuestions: Omit<LaunchQuestion, "answer">[]; build: boolean; offTopic: boolean; setAside: boolean }>({
       agent: "google_launcher",
       label: "google launch chat",
       clientId: run.client_id,
       override: FAST,
       system: `You're the Google Ads buyer in a conversation with the buyer about launching new ads into the client's Google Ads account. What was read, your questions (with what's answered) and the conversation are below. Stage: ${run.status}. Stay on this launch: nothing account-wide (that's offered after it's deployed).
-answers: the questions the buyer's message answers, by key, in their words made exact and in the format Google needs (keywords with their notation, a daily budget in dollars, the full final URL). When they accept your proposal ("yes", "go with that"), the answer is your proposal written out. When they give keywords or copy, the answer holds them word for word. Only what they actually said or accepted.
-newQuestions: only when their answer opens something the plan needs (question at most 15 words, why one short sentence).
+answers: the questions the buyer's message answers, by key, in their words made exact and in the format Google needs (keywords with their notation, a daily budget in dollars, the full final URL). When they accept your proposal ("yes", "go with that"), the answer is the proposal your last message made, written out. When they give keywords or copy, the answer holds them word for word. Only what they actually said or accepted.
+${YES_RULE}
+newQuestions: only when their answer opens something the plan needs and only the buyer can decide it (question at most 15 words, why one short sentence). Never about paused creation or match types.
 build: true when they ask to build, see or redo the plan, or say go ahead, or (stage ready) ask for a change to the plan. The plan is only built once every required question is answered; if some aren't, say which.
-answer: 1 or 2 short sentences. Talk like a senior media buyer a colleague just walked up to: natural and brief, one breath at a time, under 45 words. Confirm what you took in a few words, then ask ONE thing, the next open decision, with your pick in a few words. No lists or bullets, no reasoning, rules or caveats unless they ask why or something would break; the rest comes in the next turns. Push back in a sentence when something works against the client's results or the platform's rules. (Google's rules: over a limit, a duplicate, a keyword already running.) When the stage is "ready" and they say go ahead, tell them to press Deploy on the launch card (it checks the client's Google switch and who may deploy, and creates everything paused); build stays false.
+answer: 1 or 2 short sentences. Talk like a senior media buyer a colleague just walked up to: natural and brief, one breath at a time, under 45 words. Confirm what you took in a few words, then ask ONE thing, the next open decision, with your pick in a few words ("I'd send them to the Seafood box page. OK?"), never open-ended when you have a pick. Your picks come from <account_history>, <client_context> and <related_accounts>: what converts, the target, the budget pacing, what the audit and sprint said; never suggest what they show doesn't work. Only one campaign at a time, and only a Kaizen one, the paused Kaizen one offered back (say its number: "Search | Non Brand | Kaizen ran at $38 CPA vs $50 target until it was paused Oct 2; I'd bring it back with this in it. Sound good?") or a new Kaizen campaign. No lists or bullets, no reasoning, rules or caveats unless they ask why or something would break; the rest comes in the next turns. Push back in a sentence when something works against the client's results or the platform's rules. (Google's rules: over a limit, a duplicate, a keyword already running.) When the stage is "ready" and they say go ahead, tell them to press Deploy on the launch card (it checks the client's Google switch and who may deploy); build stays false.
 offTopic: true when the message isn't about this launch (answer ""). setAside: true when they say to stop or park it.
 ${asksUrl ? `${landingRule("final_url")}\n` : ""}${SHORT}
 ${RULES}`,
       schema: REPLY,
       maxTokens: 3000,
-      prompt: `<read>\n${run.sheet ? draftText(run.sheet, 25) : "(nothing yet)"}\n</read>\n\n${asksUrl ? `<landing_pages site="${landing?.site ?? ""}">\n${pagesText(landing, theme)}\n</landing_pages>\n\n` : ""}<questions>\n${run.questions.map((q) => `- ${q.key}${q.required ? " (required)" : ""}: ${q.question} Proposal: ${q.proposal}. ${q.answer ? `ANSWERED: ${q.answer}` : "Not answered yet."}`).join("\n")}\n</questions>\n\n${run.plan ? `<plan>\n${planText(run.plan)}\n</plan>\n\n` : ""}<conversation>\n${run.turns
+      prompt: `${contextText(context)}\n\n<read>\n${run.sheet ? draftText(run.sheet, 25) : "(nothing yet)"}\n</read>\n\n${asksUrl ? `<landing_pages site="${landing?.site ?? ""}">\n${pagesText(landing, theme, 15)}\n</landing_pages>\n\n` : ""}${comeback ? `<comeback>${comeback.why}</comeback>\n\n` : ""}<last_question_asked>${lastSaid ? `${lastSaid.asks ? `${lastSaid.asks}: ` : ""}${lastSaid.text.slice(-400)}` : "(none yet)"}</last_question_asked>\n\n<questions>\n${run.questions.map((q) => `- ${q.key}${q.required ? " (required)" : ""}: ${q.question} Proposal: ${q.proposal}. ${q.answer ? `ANSWERED: ${q.answer}` : "Not answered yet."}`).join("\n")}\n</questions>\n\n${run.plan ? `<plan>\n${planText(run.plan)}\n</plan>\n\n` : ""}<conversation>\n${run.turns
         .slice(-12)
         .map((t) => `${t.role === "user" ? "Buyer" : "You"}: ${t.text}`)
         .join("\n")}\n</conversation>\n\nThe buyer says: ${message.slice(0, 3000)}`,
     }),
   );
   if (out.offTopic) return { answer: "", offTopic: true, building: false };
+  // A short "yes" answers only the question just asked (never paused creation, a match type or anything else)
+  out.answers = yesOnlyAnswersAsked(message, out.answers, run.questions, lastSaid);
   let questions = applyAnswers(run.questions, out.answers);
-  if (out.newQuestions.length) questions = mergeQuestions(out.newQuestions.map((q) => ({ ...q, answer: null })), [], questions);
-  questions = followCampaign(questions, run.resolution.campaigns, run.resolution.adGroups);
+  if (out.newQuestions.length) questions = mergeQuestions(out.newQuestions.filter((q) => !NOT_ASKED.test(`${q.key} ${q.question}`)).map((q) => ({ ...q, answer: null })), [], questions);
+  questions = followCampaign(questions, run.resolution.campaigns, run.resolution.adGroups, comeback);
+  // A campaign answer that wasn't taken (Kaizen didn't set it up, it's paused, two named): that's what's said
+  const campaignGiven = out.answers.find((a) => a.key === "campaign")?.answer ?? null;
+  const refused = campaignGiven && !questions.find((q) => q.key === "campaign")?.answer ? campaignRefusal(campaignGiven, run.resolution.campaigns, comeback) : null;
   // The landing page as a real link: a page named in words taken from the list, a typed link checked
   const { settleLanding } = await import("@/lib/landing-pages");
   const settled = await settleLanding(questions, "final_url", landing, message, out.answers.some((a) => a.key === "final_url"));
   questions = followLanding(settled.questions, "final_url", landing, googleTheme(run.resolution.request, run.sheet, settled.questions));
   // Code took the page the chat asked a link for: its words would contradict the card, so the note replaces them
-  const said = settled.took && ASKS_FOR_LINK.test(out.answer) ? (settled.note ?? "") : [out.answer, settled.note].filter(Boolean).join(" ");
-  const answers = out.answers.length + (settled.took ? 1 : 0);
-  const turns = [...run.turns, { role: "user" as const, text: message.slice(0, 3000), at: now() }, { role: "assistant" as const, text: said, at: now() }].slice(-40);
+  const said = refused ?? scrubPaused(settled.took && ASKS_FOR_LINK.test(out.answer) ? (settled.note ?? "") : [out.answer, settled.note].filter(Boolean).join(" "));
+  const answers = out.answers.filter((a) => a.key !== "campaign" || !refused).length + (settled.took ? 1 : 0);
+  const asks = refused ? "campaign" : out.asks && questions.some((q) => q.key === out.asks && !q.answer) ? out.asks : askedKey(questions, { text: said });
+  const turns = [...run.turns, { role: "user" as const, text: message.slice(0, 3000), at: now() }, { role: "assistant" as const, text: said, at: now(), asks }].slice(-40);
   const resolution = landing && !run.resolution.landing ? { ...run.resolution, landing } : null;
   if (out.setAside) {
     await patch(admin, id, { questions, turns, status: "set_aside" });
@@ -562,7 +621,7 @@ export async function acceptGoogleProposals(admin: SupabaseClient, id: string, k
     run.questions.filter((q) => keys.includes(q.key) && !q.answer).map((q) => ({ key: q.key, answer: chosen[q.key] && q.options.includes(chosen[q.key]) ? chosen[q.key] : q.proposal })),
   );
   // The landing pages offered follow the ad group and keywords just chosen
-  await patch(admin, id, { questions: run.resolution ? followLanding(followCampaign(questions, run.resolution.campaigns, run.resolution.adGroups), "final_url", run.resolution.landing, googleTheme(run.resolution.request, run.sheet, questions)) : questions });
+  await patch(admin, id, { questions: run.resolution ? followLanding(followCampaign(questions, run.resolution.campaigns, run.resolution.adGroups, run.resolution.comeback ?? null), "final_url", run.resolution.landing, googleTheme(run.resolution.request, run.sheet, questions)) : questions });
 }
 
 /** A suggestion taken or skipped on the card */
@@ -643,17 +702,35 @@ const pin = (p: number, max: number) => (Number.isInteger(p) && p >= 1 && p <= m
  * takes its keywords, negatives and copy straight from it (never retyped by a model), ids are only ones the account
  * has, locations are Google's own. Returns what didn't add up.
  */
-export function buildGooglePlan(p: GoogleProposal, ctx: { account: string; draft: GoogleDraft; res: Pick<GoogleResolution, "campaigns" | "adGroups" | "assetGroups">; finalUrl: string | null; locations: Map<string, { geo: string; name: string }> }): { plan: GooglePlan; warnings: string[] } {
+export function buildGooglePlan(
+  p: GoogleProposal,
+  ctx: { account: string; draft: GoogleDraft; res: Pick<GoogleResolution, "campaigns" | "adGroups" | "assetGroups">; finalUrl: string | null; locations: Map<string, { geo: string; name: string }>; revive?: string | null },
+): { plan: GooglePlan; warnings: string[] } {
   const warnings: string[] = [];
+  // How the account names its Kaizen campaigns (and whether its ad groups carry Kaizen too), for every new name
+  const kaizenCampaigns = ctx.res.campaigns.filter((c) => isKaizenName(c.name));
+  const kaizenIds = new Set(kaizenCampaigns.map((c) => c.id));
+  const examples = kaizenCampaigns.map((c) => c.name);
+  const groupNames = ctx.res.adGroups.filter((g) => kaizenIds.has(g.campaignId)).map((g) => g.name);
+  const groupsKaizen = childrenNamedKaizen(groupNames);
   const campaigns: GCampaign[] = p.campaigns.map((c) => {
-    const live = c.mode === "existing" ? ctx.res.campaigns.find((x) => x.id === digits(c.existingId)) : null;
+    let live = c.mode === "existing" ? ctx.res.campaigns.find((x) => x.id === digits(c.existingId)) : null;
     if (c.mode === "existing" && !live) warnings.push(`"${c.name}" isn't a campaign in the account, so it's planned as a new one.`);
+    // Kaizen never writes into a campaign it didn't set up: planned as a new Kaizen campaign instead
+    if (live && !isKaizenName(live.name)) {
+      warnings.push(`"${live.name}" wasn't set up by Kaizen, so it isn't touched: planned as a new Kaizen campaign instead (set its budget).`);
+      live = null;
+    }
+    const revive = Boolean(live && live.status !== "ENABLED" && ctx.revive === live.id);
+    if (live && live.status !== "ENABLED" && !revive) warnings.push(`"${live.name}" is paused: nothing added there runs until it's turned on.`);
     const type: CampaignType = live ? (live.type === "PERFORMANCE_MAX" ? "PERFORMANCE_MAX" : "SEARCH") : c.type;
     return {
       key: c.key,
       mode: live ? "existing" : "new",
       existingId: live?.id ?? null,
-      name: live?.name ?? c.name.trim(),
+      ...(revive ? { revive: true } : {}),
+      // A new campaign always has Kaizen in its name, the way the account writes it
+      name: live?.name ?? withKaizen(c.name.trim() || "Search", examples),
       type,
       budget: live ? live.budget : c.budget > 0 ? Math.round(c.budget * 100) / 100 : null,
       bidding: c.bidding,
@@ -672,8 +749,13 @@ export function buildGooglePlan(p: GoogleProposal, ctx: { account: string; draft
   }
   const adGroups: GAdGroup[] = [];
   for (const g of p.adGroups) {
-    const live = g.mode === "existing" ? ctx.res.adGroups.find((x) => x.id === digits(g.existingId)) : null;
+    let live = g.mode === "existing" ? ctx.res.adGroups.find((x) => x.id === digits(g.existingId)) : null;
     if (g.mode === "existing" && !live) warnings.push(`"${g.name}" isn't an ad group in the account, so it's planned as a new one.`);
+    // An ad group in a campaign Kaizen didn't set up is never added to: a new ad group instead
+    if (live && !kaizenIds.has(live.campaignId)) {
+      warnings.push(`"${live.name}" is in "${live.campaign}", which Kaizen didn't set up, so it's planned as a new ad group.`);
+      live = null;
+    }
     let campaignKey = g.campaignKey;
     if (live) {
       // An existing ad group sits in its own campaign, whatever the model said
@@ -682,7 +764,7 @@ export function buildGooglePlan(p: GoogleProposal, ctx: { account: string; draft
       else {
         const lc = ctx.res.campaigns.find((x) => x.id === live.campaignId);
         campaignKey = `c${campaigns.length + 1}`;
-        campaigns.push({ key: campaignKey, mode: "existing", existingId: live.campaignId, name: lc?.name ?? live.campaign, type: "SEARCH", budget: lc?.budget ?? null, bidding: "MAXIMIZE_CONVERSIONS", targetCpa: null, targetRoas: null, locations: [], negatives: [], sitelinks: [], callouts: [], snippets: [] });
+        campaigns.push({ key: campaignKey, mode: "existing", existingId: live.campaignId, ...(lc && lc.status !== "ENABLED" && ctx.revive === lc.id ? { revive: true } : {}), name: lc?.name ?? live.campaign, type: "SEARCH", budget: lc?.budget ?? null, bidding: "MAXIMIZE_CONVERSIONS", targetCpa: null, targetRoas: null, locations: [], negatives: [], sitelinks: [], callouts: [], snippets: [] });
       }
     }
     const read = g.fromRead >= 0 ? ctx.draft.adGroups[g.fromRead] : undefined;
@@ -698,12 +780,14 @@ export function buildGooglePlan(p: GoogleProposal, ctx: { account: string; draft
       campaignKey,
       mode: live ? "existing" : "new",
       existingId: live?.id ?? null,
-      name: live?.name ?? (g.name.trim() || read?.name || "New ad group"),
+      // New ad groups carry Kaizen too when the account's Kaizen ad groups do
+      name: live?.name ?? (groupsKaizen ? withKaizen(g.name.trim() || read?.name || "New ad group", groupNames) : g.name.trim() || read?.name || "New ad group"),
       keywords: uniqKeywords([...(read?.keywords ?? []), ...kws(g.keywords)]),
       negatives: uniqKeywords([...(read?.negatives ?? []), ...kws(g.negatives)]),
       rsas,
     });
   }
+  for (const c of campaigns) if (c.revive) warnings.push(`"${c.name}" is turned back on when you deploy, so its own ad groups run again. Everything new in it is created paused for you to switch on.`);
   // Campaign negatives from the sheet: onto the campaign it names, or the first one when it names none
   for (const cn of ctx.draft.campaignNegatives) {
     const c = campaigns.find((x) => cn.campaign && x.name.toLowerCase() === cn.campaign.toLowerCase()) ?? campaigns[0];
@@ -746,22 +830,25 @@ export async function planGoogleRun(admin: SupabaseClient, id: string) {
     const choice = campaignChoice(run.questions.find((q) => q.key === "campaign")?.answer, res.campaigns);
     const urlAnswer = urlIn(run.questions.find((q) => q.key === "final_url")?.answer);
     const taken = res.suggestions.filter((s) => s.accepted === true);
+    const context = await ensureContext(admin, run);
+    const chosen = choice?.mode === "existing" ? res.campaigns.find((c) => c.id === choice.id) : null;
+    const kaizenNames = res.campaigns.filter((c) => isKaizenName(c.name)).map((c) => c.name);
     const raw = await step(`google run ${id.slice(0, 8)}`, "plan (agent's model)", askJson<RawPlan>({
       agent: "google_launcher",
       label: "google launch plan",
       clientId: run.client_id,
       system: `You lay out the Google launch the buyer agreed to, exactly as answered, as campaigns, ad groups and asset groups. Formats: mode "new" or "existing"; type "SEARCH" or "PERFORMANCE_MAX"; bidding one of MAXIMIZE_CONVERSIONS, MAXIMIZE_CONVERSION_VALUE, MAXIMIZE_CLICKS, MANUAL_CPC; each headline or description is a plain string, with " (pin 1)" at the end only when pinned; a sitelink is "link text | line 1 | line 2 | https://url"; a structured snippet is "Header: value, value, value". Code copies what was read (keywords, negatives and copy of an ad group in <read>) straight from it: point at it with fromRead (its # number) and leave keywords and rsas for that ad group empty unless the buyer added more in the conversation. fromRead -1 for an ad group not in <read>.
-- campaigns: key ("c1"…). mode "existing" with existingId (an id from <account>) when the buyer chose a live campaign; else "new" with existingId "", a name in the account's naming pattern, type SEARCH unless they chose Performance Max, budget (daily dollars, as agreed), bidding (MAXIMIZE_CONVERSIONS unless agreed otherwise; MAXIMIZE_CONVERSION_VALUE for a ROAS goal), targetCpa / targetRoas only when agreed (else 0), locations as place names Google knows ("Houston, Texas"). For an existing campaign budget 0 and locations []. negatives: campaign negatives with notation ("free", [diy]). sitelinks, callouts, snippets: only when the buyer asked for them or took a suggestion that adds them, and only where <live_setup> shows they're missing.
+- campaigns: key ("c1"…). mode "existing" with existingId (an id from <account>, only a [Kaizen] one) when the buyer chose that campaign; else "new" with existingId "", a name in the account's naming pattern for its Kaizen campaigns, always with Kaizen in it (${kaizenNames.length ? `like ${kaizenNames.slice(0, 3).map((n) => `"${n}"`).join(", ")}` : `e.g. "Search | Non Brand | Kaizen"`}), type SEARCH unless they chose Performance Max, budget (daily dollars, as agreed), bidding (MAXIMIZE_CONVERSIONS unless agreed otherwise; MAXIMIZE_CONVERSION_VALUE for a ROAS goal), targetCpa / targetRoas only when agreed (else 0), locations as place names Google knows ("Houston, Texas"). For an existing campaign budget 0 and locations []. negatives: campaign negatives with notation ("free", [diy]). sitelinks, callouts, snippets: only when the buyer asked for them or took a suggestion that adds them, and only where <live_setup> shows they're missing.
 - adGroups: key ("g1"…), campaignKey, mode "existing" with existingId (an ad group id from <account>) only when the buyer chose to add into it, else "new" with a name in the account's pattern. finalUrl: the landing page for its ads. keywords and negatives with notation ([exact], "phrase", broad plain) when they come from the conversation or a suggestion taken. rsas: only ads the buyer wrote in the conversation, or that they asked you to write (then up to 15 headlines of at most 30 characters and 4 descriptions of at most 90, built on the client's winning lines and away from the tired ones, pin 0 unless asked; pin 1 to 3 for headlines, 1 to 2 for descriptions).
 - assetGroups: only for Performance Max: an existing asset group (existingId from <account>) gets the text agreed (headlines 30, long headlines 90, descriptions 90); searchThemes and byHand (images, videos, audience signals the buyer described) are listed for doing by hand.
-Include the suggestions the buyer took; leave out the ones they skipped. note: 1 to 3 sentences on how the plan follows what was agreed.
+Include the suggestions the buyer took; leave out the ones they skipped. Bidding, targets and budgets follow <account_history> (the KPI target, what converts, the monthly budget's pacing) and never contradict the latest audit or the open sprint actions. note: 1 to 3 sentences on how the plan follows what was agreed${chosen && chosen.status !== "ENABLED" ? `, and that "${chosen.name}" is turned back on when it's deployed while everything new in it is created paused for the buyer to switch on` : ""}.
 ${RULES}`,
       schema: PLAN,
       maxTokens: 20000,
-      prompt: `<request>${res.request}</request>\n\n<read>\n${draft.adGroups.length || draft.campaignNegatives.length ? draftText(draft, 200) : "(nothing read: the plan comes from the answers and the conversation)"}\n</read>\n\n<answers>\n${run.questions.map((q) => `- ${q.key}: ${q.answer ?? "(not answered)"}`).join("\n")}\n</answers>\n\n<suggestions_taken>\n${taken.map((s) => `- ${s.title}: ${s.why}`).join("\n") || "(none)"}\n</suggestions_taken>\n\n<conversation>\n${run.turns
+      prompt: `${contextText(context)}\n\n<request>${res.request}</request>\n\n<read>\n${draft.adGroups.length || draft.campaignNegatives.length ? draftText(draft, 200) : "(nothing read: the plan comes from the answers and the conversation)"}\n</read>\n\n<answers>\n${run.questions.map((q) => `- ${q.key}: ${q.answer ?? "(not answered)"}`).join("\n")}\n</answers>\n\n<suggestions_taken>\n${taken.map((s) => `- ${s.title}: ${s.why}`).join("\n") || "(none)"}\n</suggestions_taken>\n\n<conversation>\n${run.turns
         .slice(-20)
         .map((t) => `${t.role === "user" ? "Buyer" : "You"}: ${t.text}`)
-        .join("\n")}\n</conversation>\n\n<account id="${run.account}">\n${accountText(res, { groups: 80, waste: 10 })}\n</account>\n\n<live_setup>\n${res.setup.slice(0, 3500)}\n</live_setup>${choice?.mode === "existing" ? `\n\nThe buyer chose the live campaign ${choice.id}.` : choice?.mode === "new" ? `\n\nThe buyer chose a new ${choice.type === "PERFORMANCE_MAX" ? "Performance Max" : "Search"} campaign.` : ""}`,
+        .join("\n")}\n</conversation>\n\n<account id="${run.account}">\n${accountText(res, { groups: 80, waste: 10 })}\n</account>\n\n<live_setup>\n${res.setup.slice(0, 3500)}\n</live_setup>${choice?.mode === "existing" ? (choice.revive ? `\n\nThe buyer chose to bring back the paused Kaizen campaign ${choice.id} with this in it (mode "existing").` : `\n\nThe buyer chose the live campaign ${choice.id}.`) : choice?.mode === "new" ? `\n\nThe buyer chose a new ${choice.type === "PERFORMANCE_MAX" ? "Performance Max" : "Search"} campaign.` : ""}`,
     }));
     // Google's own places for the new campaigns' locations
     const proposal = proposalFrom(raw);
@@ -772,7 +859,7 @@ ${RULES}`,
       const hit = geos.find((g) => g.name.toLowerCase().startsWith(nm.toLowerCase().split(",")[0].trim())) ?? geos[i];
       if (hit) locations.set(nm.toLowerCase().trim(), hit);
     });
-    const { plan, warnings } = buildGooglePlan(proposal, { account: run.account, draft, res, finalUrl: urlAnswer, locations });
+    const { plan, warnings } = buildGooglePlan(proposal, { account: run.account, draft, res, finalUrl: urlAnswer, locations, revive: choice?.mode === "existing" && choice.revive ? choice.id : null });
     await patch(admin, id, { plan, plan_warnings: warnings, status: "checking", progress: "Checking every line with Google (nothing is created)", error: null });
     await checkGoogleRun(admin, id);
   } catch (e) {
@@ -915,6 +1002,14 @@ export async function applyGoogleRun(admin: SupabaseClient, id: string, by: stri
     if (!(await googleWritesOn(admin, plan.account))) {
       await patch(admin, id, { status: "ready", progress: null, error: GOOGLE_OFF });
       return { blocked: GOOGLE_OFF };
+    }
+    // Kaizen only writes into what it set up: anything aimed at another campaign (or a new one without Kaizen in its
+    // name) refuses the whole deploy, whatever the card was sent
+    const scope = kaizenScopeIssues(plan);
+    if (scope.length) {
+      const why = `Not deployed: ${scope[0].message}${scope.length > 1 ? ` (and ${scope.length - 1} more line${scope.length === 2 ? "" : "s"})` : ""}`;
+      await patch(admin, id, { status: "ready", progress: null, error: why.slice(0, 500) });
+      return { blocked: why };
     }
     await patch(admin, id, { status: "applying", progress: "Creating everything in Google Ads, paused" });
     const { ops, keys, byHand } = googleOperations(plan, plan.account);
@@ -1061,6 +1156,12 @@ export async function qaGoogleRun(admin: SupabaseClient, id: string) {
       if (m && m.adGroupCriterion?.status !== "PAUSED") diffs.push(`status is ${String(m.adGroupCriterion?.status).toLowerCase()}`);
       const g = plan.adGroups.find((x) => x.key === a);
       link = googleDeepLink(plan.account, "keyword", { campaignId: g ? campaignId(g.campaignKey) : null, adGroupId: groupId(a) });
+    } else if (kind === "revive") {
+      // The campaign brought back: it should be on now
+      const id0 = campaignId(a);
+      const m = id0 ? (await q(`SELECT campaign.status FROM campaign WHERE campaign.id = ${digits(id0)}`))[0] : null;
+      if (m && m.campaign?.status !== "ENABLED") diffs.push(`status is ${String(m.campaign?.status).toLowerCase()}`);
+      link = googleDeepLink(plan.account, "campaign", { campaignId: id0 });
     } else if (kind === "budget" || kind === "targeting" || kind === "cneg" || kind === "sitelink" || kind === "callout" || kind === "snippet") {
       link = googleDeepLink(plan.account, "campaign", { campaignId: campaignId(a) });
     } else if (kind === "aneg") {

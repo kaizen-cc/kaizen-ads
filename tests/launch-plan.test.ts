@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { pdfLayout } from "@/lib/launch-sheet/pdf-layout";
 import { pdfToGrid } from "@/lib/launch-sheet/grid";
 import { gridToSheet } from "@/lib/launch-sheet/sheet";
-import { blockedBy, buildPlan, budgetOptions, copyOf, planItems, plannedSpend, runnable, runOutcome, unanswered, type Proposal } from "@/lib/launch-sheet/plan";
+import { blockedBy, buildPlan, budgetOptions, copyOf, metaScopeIssues, planItems, plannedSpend, runnable, runOutcome, unanswered, type Proposal } from "@/lib/launch-sheet/plan";
 import { adParams, adsetParams, campaignParams, creativeSpec, ENHANCEMENTS_OFF, formFields, metaTime, scheduleParams } from "@/lib/launch-sheet/payloads";
 import { applyAnswers, mergeQuestions, requiredQuestions } from "@/lib/launch-sheet/questions";
 import { explainMetaError } from "@/lib/launch-sheet/errors";
@@ -230,26 +230,26 @@ describe("creating it line by line, resumable", () => {
 describe("questions before any plan", () => {
   it("always asks what decides the writes, and the plan waits for the answers", () => {
     const must = requiredQuestions(sheet, resolution(sheet), "2026-09-01");
-    expect(must.map((q) => q.key)).toEqual(["go_live", "rows", "budget", "structure", "targeting", "pages", "posts"]);
+    expect(must.map((q) => q.key)).toEqual(["rows", "budget", "structure", "targeting", "pages", "posts"]);
     expect(must.find((q) => q.key === "rows")!.question).toMatch(/red and green/);
     expect(must.find((q) => q.key === "targeting")!.proposal).toMatch(/ages 21/);
     // The model rewrote one and added one: required ones stay required
     const merged = mergeQuestions([{ key: "budget", question: "Budget?", why: "", proposal: "Daily per period", options: [], required: false, answer: null }, { key: "cta", question: "Which button?", why: "", proposal: "Buy tickets", options: [], required: false, answer: null }], must);
     expect(merged.find((q) => q.key === "budget")).toMatchObject({ question: "Budget?", required: true });
-    expect(unanswered(merged)).toHaveLength(7);
+    expect(unanswered(merged)).toHaveLength(6);
     const answered = applyAnswers(merged, must.map((q) => ({ key: q.key, answer: q.proposal })));
     expect(unanswered(answered)).toHaveLength(0);
-    expect(applyAnswers(merged, [{ key: "nope", answer: "x" }, { key: "go_live", answer: "  " }]).find((q) => q.key === "go_live")!.answer).toBeNull();
+    expect(applyAnswers(merged, [{ key: "nope", answer: "x" }, { key: "rows", answer: "  " }]).find((q) => q.key === "rows")!.answer).toBeNull();
   });
 
   it("asks whether to add to a campaign or ad set that's running, or copy one, naming the relevant ones", () => {
     const res = resolution(sheet);
     res.existing = [
-      { level: "campaign", id: "c9", name: "Evergreen | Sales", status: "ACTIVE", dailyBudget: 80, lifetimeBudget: null, spend: null, related: true },
-      { level: "adset", id: "s9", name: "Evergreen | San Diego 21+", status: "ACTIVE", campaignId: "c9", dailyBudget: null, lifetimeBudget: null, spend: 410, related: true },
+      { level: "campaign", id: "c9", name: "Evergreen | Sales | Kaizen", status: "ACTIVE", dailyBudget: 80, lifetimeBudget: null, spend: null, related: true },
+      { level: "adset", id: "s9", name: "Evergreen | San Diego 21+ | Kaizen", status: "ACTIVE", campaignId: "c9", dailyBudget: null, lifetimeBudget: null, spend: 410, related: true },
     ];
     const q = requiredQuestions(sheet, res, "2026-09-01").find((x) => x.key === "structure")!;
-    expect(q.options).toEqual(['Add to the campaign "Evergreen | Sales", a new ad set per Page', 'Into the ad set "Evergreen | San Diego 21+" as it is', 'A new ad set copied from "Evergreen | San Diego 21+" (same targeting, pixel and optimization)', "A new campaign, one ad set per Page"]);
+    expect(q.options).toEqual(['Add to the campaign "Evergreen | Sales | Kaizen", a new ad set per Page', 'Into the ad set "Evergreen | San Diego 21+ | Kaizen" as it is', 'A new ad set copied from "Evergreen | San Diego 21+ | Kaizen" (same targeting, pixel and optimization)', "A new Kaizen campaign, one ad set per Page"]);
     expect(q.proposal).toMatch(/copied from "Evergreen/);
     expect(q.why).toMatch(/live and spending/);
   });
@@ -293,5 +293,55 @@ describe("Meta's errors in plain words", () => {
     expect(explainMetaError("Meta (adsets): Invalid parameter · Budget Too Low: Your budget must be at least $1.00").plain).toMatch(/minimum \(\$1\.00\)/);
     expect(explainMetaError("Meta (adsets): Invalid parameter · Start time is in the past").fix).toMatch(/today/);
     expect(explainMetaError("Meta (x): Something new · Odd thing: here").plain).toBe("Odd thing: here");
+  });
+});
+
+describe("Kaizen's scope on Meta", () => {
+  const scope = {
+    campaigns: [
+      { id: "k1", name: "Evergreen | Sales | Kaizen", effective: "ACTIVE" },
+      { id: "k2", name: "Fest | Sales | Kaizen", effective: "PAUSED" },
+      { id: "o1", name: "Client Boosts", effective: "ACTIVE" },
+    ],
+    adsets: [
+      { id: "ks1", name: "SD 21+ | Kaizen", campaignId: "k1", campaign: "Evergreen | Sales | Kaizen" },
+      { id: "ks2", name: "LA 21+ | Kaizen", campaignId: "k1", campaign: "Evergreen | Sales | Kaizen" },
+      { id: "os1", name: "Boost audience", campaignId: "o1", campaign: "Client Boosts" },
+    ],
+  };
+  it("plans a campaign Kaizen didn't set up as a new Kaizen one, never copies its ad sets, and names new ones the Kaizen way", () => {
+    const p = proposal(sheet);
+    p.campaigns[0] = { ...p.campaigns[0], mode: "existing", existingId: "o1", name: "Client Boosts" };
+    p.adsets[0] = { ...p.adsets[0], cloneFrom: "os1" };
+    const { plan, warnings } = buildPlan(p, { ...ctx(sheet), scope });
+    expect(plan.campaigns[0]).toMatchObject({ mode: "new", existingId: null, name: "Client Boosts | Kaizen" });
+    expect(plan.adsets[0].cloneFrom).toBeNull();
+    expect(plan.adsets[0].name).toBe("PB | San Diego 15mi | 21+ | Kaizen");
+    expect(warnings.filter((w) => /wasn't set up by Kaizen/.test(w))).toHaveLength(2);
+    expect(metaScopeIssues(plan, scope)).toEqual([]);
+  });
+  it("adds into a Kaizen ad set as it is, and brings a paused Kaizen campaign back last", () => {
+    const p = proposal(sheet);
+    p.campaigns[0] = { ...p.campaigns[0], mode: "existing", existingId: "k2", name: "x" };
+    const { plan } = buildPlan(p, { ...ctx(sheet), scope, revive: "k2" });
+    expect(plan.campaigns[0]).toMatchObject({ mode: "existing", existingId: "k2", name: "Fest | Sales | Kaizen", revive: true });
+    const items = planItems(plan);
+    expect(items.at(-1)).toMatchObject({ key: "revive:c1", label: 'Turn "Fest | Sales | Kaizen" back on' });
+    // It waits for every other line
+    expect(runnable(items, plan).some((i) => i.key === "revive:c1")).toBe(false);
+    const done = items.map((i) => (i.key === "revive:c1" ? i : { ...i, status: "created" as const }));
+    expect(runnable(done, plan).map((i) => i.key)).toEqual(["revive:c1"]);
+    const p2 = proposal(sheet);
+    p2.campaigns[0] = { ...p2.campaigns[0], mode: "existing", existingId: "k1", name: "x" };
+    p2.adsets[0] = { ...p2.adsets[0], mode: "existing", existingId: "ks1" };
+    const b = buildPlan(p2, { ...ctx(sheet), scope }).plan;
+    expect(b.adsets[0]).toMatchObject({ mode: "existing", existingId: "ks1", name: "SD 21+ | Kaizen" });
+    expect(b.campaigns[0].revive).toBeUndefined();
+  });
+  it("refuses at create time anything aimed outside Kaizen's scope", () => {
+    const { plan } = buildPlan(proposal(sheet), { ...ctx(sheet), scope });
+    const bad = { ...plan, campaigns: [{ ...plan.campaigns[0], mode: "existing" as const, existingId: "o1" }], adsets: [{ ...plan.adsets[0], cloneFrom: "os1" }] };
+    expect(metaScopeIssues(bad, scope)).toEqual(['"Client Boosts" wasn\'t set up by Kaizen, so nothing is added to it.', 'The ad set "Boost audience" wasn\'t set up by Kaizen, so it isn\'t copied.']);
+    expect(metaScopeIssues({ ...plan, campaigns: [{ ...plan.campaigns[0], name: "PB Halloween" }] }, scope)).toEqual(['The new campaign "PB Halloween" needs Kaizen in its name.']);
   });
 });

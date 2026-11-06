@@ -6,6 +6,7 @@ import { cachedRead } from "@/lib/launch-cache";
 import { copyWarnings } from "./payloads";
 import { copyOf } from "./plan";
 import { budgetSanity } from "./budget";
+import { isKaizenAdset, isKaizenName } from "@/lib/kaizen-scope";
 import type { CheckItem, ExistingMatch, LaunchSheet, ResolvedCreative, ResolvedFile, ResolvedGeo, ResolvedPost, Resolution } from "./types";
 
 // Checking a launch sheet against the real ad account before anything is planned. Read-only: nothing is written to
@@ -382,9 +383,17 @@ export async function resolveSheet(admin: SupabaseClient, clientId: string, shee
         const n = norm(name);
         return words.length > 0 && words.filter((w) => n.includes(w)).length >= Math.min(2, words.length);
       };
+      // Kaizen only launches into what it set up: a Kaizen-named campaign, or an ad set Kaizen named or that sits in one.
+      // The rest of the account is read for context and named here only so a buyer naming it is told it's not touched.
+      res.campaigns = setup.campaigns.map((c) => ({ id: c.id, name: c.name, status: c.effective }));
+      const kaizenCampaigns = setup.campaigns.filter((c) => isKaizenName(c.name));
+      const kaizenSets = setup.adsets.filter((s) => isKaizenAdset(s));
+      res.outside = [...setup.campaigns.filter((c) => !isKaizenName(c.name)).map((c) => c.name), ...setup.adsets.filter((s) => !isKaizenAdset(s)).map((s) => s.name)].slice(0, 200);
+      const looksLike = [...setup.campaigns.filter((c) => hit(c.name)), ...setup.adsets.filter((s) => hit(s.name) || hit(s.campaign))];
+      const outsideLike = looksLike.filter((x) => ("campaignId" in x ? !isKaizenAdset(x) : !isKaizenName(x.name))).length;
       const matches: ExistingMatch[] = [
-        ...setup.campaigns.filter((c) => hit(c.name)).map((c) => ({ level: "campaign" as const, id: c.id, name: c.name, status: c.effective, dailyBudget: c.dailyBudget, lifetimeBudget: c.lifetimeBudget, spend: null })),
-        ...setup.adsets.filter((s) => hit(s.name) || hit(s.campaign)).map((s) => ({ level: "adset" as const, id: s.id, name: s.name, status: s.effective, campaignId: s.campaignId, dailyBudget: s.dailyBudget, lifetimeBudget: s.lifetimeBudget, spend: null })),
+        ...kaizenCampaigns.filter((c) => hit(c.name)).map((c) => ({ level: "campaign" as const, id: c.id, name: c.name, status: c.effective, dailyBudget: c.dailyBudget, lifetimeBudget: c.lifetimeBudget, spend: null })),
+        ...kaizenSets.filter((s) => hit(s.name) || hit(s.campaign)).map((s) => ({ level: "adset" as const, id: s.id, name: s.name, status: s.effective, campaignId: s.campaignId, campaignName: s.campaign, dailyBudget: s.dailyBudget, lifetimeBudget: s.lifetimeBudget, spend: null })),
       ].slice(0, 20);
       // Each matching campaign's lifetime spend, all at once
       await Promise.all(
@@ -401,15 +410,16 @@ export async function resolveSheet(admin: SupabaseClient, clientId: string, shee
       for (const a of setup.ads) spend14.set(a.adsetId, (spend14.get(a.adsetId) ?? 0) + a.spend14);
       const related: ExistingMatch[] = matches.length
         ? []
-        : setup.adsets
+        : kaizenSets
             .filter((s) => s.effective === "ACTIVE")
             .sort((a, b) => (spend14.get(b.id) ?? 0) - (spend14.get(a.id) ?? 0))
             .slice(0, 3)
             .flatMap((s) => {
-              const c = setup.campaigns.find((x) => x.id === s.campaignId);
+              // The campaign is offered to add to only when it's Kaizen's too
+              const c = kaizenCampaigns.find((x) => x.id === s.campaignId);
               return [
                 ...(c ? [{ level: "campaign" as const, id: c.id, name: c.name, status: c.effective, dailyBudget: c.dailyBudget, lifetimeBudget: c.lifetimeBudget, spend: null, related: true }] : []),
-                { level: "adset" as const, id: s.id, name: s.name, status: s.effective, campaignId: s.campaignId, dailyBudget: s.dailyBudget, lifetimeBudget: s.lifetimeBudget, spend: Math.round((spend14.get(s.id) ?? 0) * 100) / 100, related: true },
+                { level: "adset" as const, id: s.id, name: s.name, status: s.effective, campaignId: s.campaignId, campaignName: s.campaign, dailyBudget: s.dailyBudget, lifetimeBudget: s.lifetimeBudget, spend: Math.round((spend14.get(s.id) ?? 0) * 100) / 100, related: true },
               ];
             })
             .filter((m, i, all) => all.findIndex((x) => x.id === m.id) === i);
@@ -419,8 +429,9 @@ export async function resolveSheet(admin: SupabaseClient, clientId: string, shee
         key: "existing",
         label: "Already in the account",
         level: matches.length ? "warn" : "ok",
-        detail: matches.length ? `${matches.filter((m) => m.level === "campaign").length} campaign(s) and ${matches.filter((m) => m.level === "adset").length} ad set(s) look like this event: ${matches.slice(0, 4).map((m) => `"${m.name}" (${m.status.toLowerCase().replace(/_/g, " ")})`).join(", ")}. New ads can go into them instead of duplicating.` : "Nothing in the account looks like this event: it would be new.",
+        detail: matches.length ? `${matches.filter((m) => m.level === "campaign").length} Kaizen campaign(s) and ${matches.filter((m) => m.level === "adset").length} ad set(s) look like this event: ${matches.slice(0, 4).map((m) => `"${m.name}" (${m.status.toLowerCase().replace(/_/g, " ")})`).join(", ")}. New ads can go into them instead of duplicating.` : "Nothing Kaizen set up looks like this event: it would be new.",
       });
+      cs.push({ key: "kaizen", label: "Kaizen's campaigns only", level: "info", detail: `Launches go into Kaizen-named campaigns and their ad sets, a paused Kaizen campaign brought back, or a new Kaizen campaign. ${setup.campaigns.length - kaizenCampaigns.length} other campaign${setup.campaigns.length - kaizenCampaigns.length === 1 ? " is" : "s are"} read for context only${outsideLike ? ` (${outsideLike} of them look like this event and aren't touched)` : ""}.` });
       if (res.spend.matched != null)
         cs.push({
           key: "spend",
