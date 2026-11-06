@@ -10,7 +10,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 /** More than this many Bibles for one person within a day: one digest instead */
 export const DIGEST_AFTER = 3;
 
-export type BuildReason = "new" | "intake" | "monthly" | "manual";
+export type BuildReason = "new" | "intake" | "monthly" | "manual" | "backfill";
 
 /** The intake tag, as the team reads it */
 export function intakeTag(fromIntake: boolean) {
@@ -54,16 +54,20 @@ export function materialHash(b: { readThisFirst?: string | null; overview?: unkn
  * before to compare, it doesn't: when unsure, only new versions are announced).
  */
 export function shouldAnnounce(w: { isNew: boolean; reason: string | null; prevHash: string | null; hash: string }) {
+  // The owner's rule: monthly refreshes never tell anyone, and neither does the automatic rebuild of every client's
+  // Bible (backfill, or a build started before reasons were kept). Only a new client's Bible, a new intake and a
+  // rebuild someone started by hand do.
+  if (!w.reason || w.reason === "monthly" || w.reason === "backfill") return false;
   if (w.isNew) return true;
   if (w.prevHash && w.prevHash === w.hash) return false;
-  if (w.reason === "monthly") return Boolean(w.prevHash);
   return true;
 }
 
 /** The Head of Creative(s), and whoever holds the client's designer or video editor seat (lead makers included) */
 export async function bibleReviewers(admin: SupabaseClient, clientId: string): Promise<string[]> {
   const [{ data: heads }, { data: seats }] = await Promise.all([
-    admin.from("profiles").select("id").eq("role", "head_of_creative").eq("is_active", true),
+    // The Head of Creative and the lead designer and lead video editor see every client's
+    admin.from("profiles").select("id").in("role", ["head_of_creative", "lead_graphic_designer", "lead_video_editor"]).eq("is_active", true),
     admin.from("client_assignments").select("profile_id, profiles!inner(is_active)").eq("client_id", clientId).in("role", ["graphic_designer", "video_editor"]).eq("profiles.is_active", true),
   ]);
   return [...new Set([...(heads ?? []).map((p) => p.id as string), ...(seats ?? []).map((s) => s.profile_id as string)])];
@@ -132,7 +136,7 @@ export type BibleToReview = { clientId: string; client: string; slug: string; ve
  */
 export async function loadBiblesToReview(db: SupabaseClient, me: { id: string; role: string }): Promise<BibleToReview[]> {
   let clientIds: string[] | null = null;
-  if (me.role !== "head_of_creative") {
+  if (!["head_of_creative", "lead_graphic_designer", "lead_video_editor"].includes(me.role)) {
     const { data: seats } = await db.from("client_assignments").select("client_id").eq("profile_id", me.id).in("role", ["graphic_designer", "video_editor"]);
     clientIds = [...new Set((seats ?? []).map((s) => s.client_id as string))];
     if (!clientIds.length) return [];

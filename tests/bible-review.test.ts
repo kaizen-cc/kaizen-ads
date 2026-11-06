@@ -19,11 +19,13 @@ describe("a Brand Bible ready for the creative team's review", () => {
   });
 
   it("announces new Bibles and material changes, never an unchanged rewrite or an unsure monthly refresh", () => {
-    expect(shouldAnnounce({ isNew: true, reason: "monthly", prevHash: null, hash: "x" })).toBe(true);
+    expect(shouldAnnounce({ isNew: true, reason: "new", prevHash: null, hash: "x" })).toBe(true);
+    expect(shouldAnnounce({ isNew: true, reason: "backfill", prevHash: null, hash: "x" })).toBe(false);
+    expect(shouldAnnounce({ isNew: false, reason: null, prevHash: null, hash: "x" })).toBe(false);
     expect(shouldAnnounce({ isNew: false, reason: "manual", prevHash: "x", hash: "x" })).toBe(false);
     expect(shouldAnnounce({ isNew: false, reason: "monthly", prevHash: "x", hash: "x" })).toBe(false);
     expect(shouldAnnounce({ isNew: false, reason: "monthly", prevHash: null, hash: "x" })).toBe(false);
-    expect(shouldAnnounce({ isNew: false, reason: "monthly", prevHash: "x", hash: "y" })).toBe(true);
+    expect(shouldAnnounce({ isNew: false, reason: "monthly", prevHash: "x", hash: "y" })).toBe(false);
     expect(shouldAnnounce({ isNew: false, reason: "intake", prevHash: null, hash: "y" })).toBe(true);
     expect(shouldAnnounce({ isNew: false, reason: "manual", prevHash: "x", hash: "y" })).toBe(true);
   });

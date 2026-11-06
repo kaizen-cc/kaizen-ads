@@ -470,7 +470,8 @@ export async function autoBibles(admin: SupabaseClient, max = 1) {
   const ago = (iso: string | null | undefined) => (iso ? now - Date.parse(iso) : Infinity);
 
   type Todo = { id: string; name: string; rank: number; why: string };
-  const reasonOf = (why: string) => (why === "monthly update" ? "monthly" : why === "new intake" ? "intake" : "new");
+  // The automatic rebuild of every client's Bible is a backfill: nobody is told (the owner pushes those through)
+  const reasonOf = (why: string) => (why === "monthly update" ? "monthly" : why === "new intake" ? "intake" : "backfill");
   const todo: Todo[] = [];
   for (const c of clients ?? []) {
     const b = bible.get(c.id);
