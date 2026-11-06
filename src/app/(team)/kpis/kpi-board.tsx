@@ -24,6 +24,7 @@ import { MarketPanel } from "../clients/[slug]/market-panel";
 import { kpiCreative, type KpiAds, type KpiCreative } from "./creative-actions";
 import { VideoMetrics } from "@/components/video-metrics";
 import { QuickActions } from "./quick-actions";
+import { PlanStep } from "./plan-step";
 import { Layer } from "../clients/[slug]/layer";
 import { GoogleAdsMark, MetaMark } from "@/components/source-logo";
 import { SUCCESS, TARGET_FROM, successLine, type BenchmarkTarget, type Success, type TargetFrom } from "@/lib/kpi/success";
@@ -828,6 +829,13 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
                   </div>
                 </div>
                 <NextMove r={r} moves={moves} onActions={() => setTab("actions")} onNotes={() => setTab("notes")} />
+                {r.accountId && r.sheet?.solution && (
+                  <section className="grid gap-2 rounded-[20px] border border-line bg-surface p-4 md:p-5">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">The plan, in the account</p>
+                    <p className="text-[13px] leading-relaxed text-muted">Turn the #1 problem&apos;s plan into the exact changes, checked before anything is written.</p>
+                    <PlanStep key={`${r.id}:${r.sheet.solution}`} targetId={r.id} step={r.sheet.solution} platform={r.platform} />
+                  </section>
+                )}
                 {r.accountId && <Campaigns key={`${r.id}:${r.conversion}:${r.target}`} id={r.id} target={r.targetFrom === "benchmark" ? null : r.target} conversion={r.conversion} platform={r.platform} />}
                 {r.audit?.status === "ready" && r.audit.quick && r.audit.quick.length > 0 && (
                   <section className="grid gap-1 rounded-[20px] border border-line bg-surface px-4 pb-4 md:px-5 md:pb-5">

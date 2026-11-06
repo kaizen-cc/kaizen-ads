@@ -182,6 +182,26 @@ export function computeSnapshot(
   };
 }
 
+/** Which campaigns a KPI counts: only names containing campaign_match (when set), never the ones in excluded_campaigns (by id). */
+export type CampaignScope = { campaign_match?: string | null; excluded_campaigns?: string[] | null };
+
+/**
+ * Whether a campaign is in a KPI's scope, the one rule the KPI board, reports and their AI context all follow: its name
+ * contains the KPI's campaign match (when set) and it isn't one left out (a campaign the client runs themselves).
+ */
+export function campaignIncluded(scope: CampaignScope | null | undefined, c: { id?: string | number | null; name?: string | null }): boolean {
+  const m = scope?.campaign_match?.trim().toLowerCase();
+  if (m && !(c.name ?? "").toLowerCase().includes(m)) return false;
+  if (c.id != null && c.id !== "" && (scope?.excluded_campaigns ?? []).includes(String(c.id))) return false;
+  return true;
+}
+
+/** Rows (daily campaign rows, ad rows) kept to the KPI's campaigns. */
+export function inScope<T extends { campaign_id?: string | number | null; campaign_name?: string | null }>(rows: T[], scope: CampaignScope | null | undefined): T[] {
+  if (!scope?.campaign_match?.trim() && !(scope?.excluded_campaigns ?? []).length) return rows;
+  return rows.filter((r) => campaignIncluded(scope, { id: r.campaign_id, name: r.campaign_name }));
+}
+
 /**
  * Add up campaign rows into days, optionally only campaigns whose name contains `match`, and leaving out the campaigns
  * in `exclude` (ones the client runs themselves, that we're not on the hook for).
@@ -194,8 +214,7 @@ export function toDays(
   goals?: Map<string, string[]>,
   platform = "meta",
 ): Day[] {
-  const m = match?.trim().toLowerCase();
-  const out = new Set(exclude ?? []);
+  const scope: CampaignScope = { campaign_match: match, excluded_campaigns: exclude };
   const byDate = new Map<string, Day>();
   // A Meta campaign whose goal isn't known yet: its strongest result over the whole period (MAIN_RESULTS), chosen once
   // per campaign so it's counted the same way every day
@@ -209,8 +228,7 @@ export function toDays(
     }
   }
   for (const r of rows) {
-    if (m && !(r.campaign_name ?? "").toLowerCase().includes(m)) continue;
-    if (r.campaign_id && out.has(String(r.campaign_id))) continue;
+    if (!campaignIncluded(scope, { id: r.campaign_id, name: r.campaign_name })) continue;
     const d = byDate.get(r.date) ?? { date: r.date, spend: 0, actions: {}, values: {}, linkClicks: 0, uniqueLinkClicks: 0 };
     d.spend += Number(r.spend) || 0;
     d.linkClicks! += Number(r.link_clicks) || 0;

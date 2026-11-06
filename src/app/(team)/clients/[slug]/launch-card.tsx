@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { WriteOff } from "@/components/write-gate";
 import type { BudgetSpec, CheckItem, LaunchItem, LaunchPlan, LaunchQuestion, PlanAd, PlanAdset, PlanCampaign } from "@/lib/launch-sheet/types";
 import { buildLaunchPlan, confirmLaunch, continueLaunch, loadLaunch, replyToLaunch, setAsideLaunch, takeLaunchProposals, type LaunchView } from "./launch-sheet-actions";
 
@@ -447,7 +448,11 @@ export function LaunchCard({ id, compact = false, reply = false }: { id: string;
         </p>
       )}
 
-      {v.status === "ready" && !v.live && <p className="rounded-[10px] border border-warn/30 bg-warn-soft/30 px-3 py-2 text-[12px] text-ink/80">{v.liveNote ?? "Live changes are off for this client."} The plan stays here to create once they&apos;re on.</p>}
+      {v.status === "ready" && !v.live && (v.write && !v.write.live ? (
+        <WriteOff status={v.write} canSwitch={v.canSwitch} account={v.plan?.account ?? null} compact onLive={() => void loadLaunch(v.id).then((next) => next && setV(next))} />
+      ) : (
+        <p className="rounded-[10px] border border-warn/30 bg-warn-soft/30 px-3 py-2 text-[12px] text-ink/80">{v.liveNote ?? "Live changes are off for this client."} The plan stays here to create once they&apos;re on.</p>
+      ))}
       {v.status === "ready" && v.live && !v.canConfirm && <p className="text-[11.5px] text-ink/50">The client&apos;s Meta buyer, the head of Meta, a lead or an exec confirms a launch.</p>}
       {error && <p className="text-[12px] text-bad">{error}</p>}
 

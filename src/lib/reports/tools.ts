@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AiTool } from "@/lib/ai";
+import { campaignIncluded, type CampaignScope } from "@/lib/kpi/calc";
 
 // What the report chat can look up while it works, all read only: the report's own ad account (Meta insights at any
 // level, range and breakdown, and any ad's copy and creative; or a Google Ads query), Motion's creative analytics for
@@ -27,8 +28,21 @@ function slim(rows: Record<string, unknown>[]) {
 export type Pulled = { label: string; data: string };
 
 export async function reportTools(admin: SupabaseClient, r: { client_id: string; platform: string; kpi_targets: unknown; period_end?: string }, pulled: Pulled[]): Promise<AiTool[]> {
-  const t = r.kpi_targets as { ad_account_id: string | null } | null;
+  const t = r.kpi_targets as ({ ad_account_id: string | null } & CampaignScope) | null;
   const account = t?.ad_account_id ?? null;
+  // The KPI's campaigns only: a campaign left out of it (one the client runs themselves) or outside its campaign match
+  // never comes back from a lookup, so the AI can't report on it or take ideas from it
+  const excluded = (t?.excluded_campaigns ?? []).filter(Boolean);
+  const match = t?.campaign_match?.trim() || null;
+  const scoped = Boolean(excluded.length || match);
+  const scopeNote = scoped ? ` Only the campaigns this report covers come back${match ? ` (names containing "${match}")` : ""}; campaigns left out of the report (the client's own) are filtered out and must not be discussed.` : "";
+  const keep = <T,>(rows: T[], of: (row: T) => { id?: string | number | null; name?: string | null } | null) =>
+    scoped
+      ? rows.filter((row) => {
+          const c = of(row);
+          return !c || campaignIncluded(t, c);
+        })
+      : rows;
   const { data: client } = await admin.from("clients").select("name, motion_workspace_id").eq("id", r.client_id).maybeSingle();
   const note = (label: string, data: unknown) => {
     const text = typeof data === "string" ? data : JSON.stringify(data);
@@ -144,7 +158,7 @@ export async function reportTools(admin: SupabaseClient, r: { client_id: string;
     tools.push(
       {
         name: "meta_insights",
-        description: `Pulls live numbers from ${client?.name ?? "the client"}'s Meta ad account (read only). Any date range, at the account, campaign, ad set or ad level, optionally broken down (age, gender, placement, device, region) or by day/week. Use it whenever the buyer asks for a number, a comparison or a breakdown the report doesn't already have.`,
+        description: `Pulls live numbers from ${client?.name ?? "the client"}'s Meta ad account (read only). Any date range, at the account, campaign, ad set or ad level, optionally broken down (age, gender, placement, device, region) or by day/week. Use it whenever the buyer asks for a number, a comparison or a breakdown the report doesn't already have.${scopeNote}`,
         input_schema: {
           type: "object",
           properties: {
@@ -164,15 +178,19 @@ export async function reportTools(admin: SupabaseClient, r: { client_id: string;
           if (!DAY.test(since) || !DAY.test(until) || since > until) throw new Error("Dates must be YYYY-MM-DD, since before until.");
           const level = String(input.level);
           const fields = (Array.isArray(input.fields) && input.fields.length ? (input.fields as string[]) : ["spend", "impressions", "reach", "clicks", "ctr", "actions", "cost_per_action_type"]).filter((f) => META_FIELDS.includes(f));
-          const names = level === "campaign" ? ["campaign_name"] : level === "adset" ? ["campaign_name", "adset_name"] : level === "ad" ? ["campaign_name", "ad_id", "ad_name"] : [];
+          const names = level === "campaign" ? ["campaign_id", "campaign_name"] : level === "adset" ? ["campaign_id", "campaign_name", "adset_name"] : level === "ad" ? ["campaign_id", "campaign_name", "ad_id", "ad_name"] : [];
+          // Meta leaves the campaigns out before it adds up (so even account totals are the report's campaigns only)
+          const filtering = [...(excluded.length ? [{ field: "campaign.id", operator: "NOT_IN", value: excluded }] : []), ...(match ? [{ field: "campaign.name", operator: "CONTAIN", value: match }] : [])];
           const rows = await metaInsights(account, {
             level,
             time_range: JSON.stringify({ since, until }),
             fields: [...names, ...fields].join(","),
             ...(input.breakdown && META_BREAKDOWNS.includes(String(input.breakdown)) ? { breakdowns: String(input.breakdown) } : {}),
             ...(input.time_increment && input.time_increment !== "all_days" ? { time_increment: String(input.time_increment) } : {}),
+            ...(filtering.length ? { filtering: JSON.stringify(filtering) } : {}),
           });
-          return note(`Meta · ${level}${input.breakdown ? ` by ${input.breakdown}` : ""} · ${since} to ${until}`, slim(rows as unknown as Record<string, unknown>[]));
+          const kept = keep(rows as unknown as Record<string, unknown>[], (x) => (x.campaign_id != null || x.campaign_name != null ? { id: x.campaign_id as string | null, name: x.campaign_name as string | null } : null));
+          return note(`Meta · ${level}${input.breakdown ? ` by ${input.breakdown}` : ""} · ${since} to ${until}`, slim(kept));
         },
       },
       {
@@ -188,10 +206,13 @@ export async function reportTools(admin: SupabaseClient, r: { client_id: string;
     const { googleQuery } = await import("@/lib/context/google-ads");
     tools.push({
       name: "google_ads_query",
-      description: `Runs a read-only GAQL SELECT on ${client?.name ?? "the client"}'s Google Ads account, e.g. "SELECT campaign.name, metrics.cost_micros, metrics.conversions FROM campaign WHERE segments.date BETWEEN '2026-10-26' AND '2026-11-01'". Cost is in micros (divide by 1,000,000). Use it for any number, search term, keyword or breakdown the report doesn't already have.`,
+      description: `Runs a read-only GAQL SELECT on ${client?.name ?? "the client"}'s Google Ads account, e.g. "SELECT campaign.name, metrics.cost_micros, metrics.conversions FROM campaign WHERE segments.date BETWEEN '2026-10-26' AND '2026-11-01'". Cost is in micros (divide by 1,000,000). Use it for any number, search term, keyword or breakdown the report doesn't already have.${scopeNote ? `${scopeNote} Select campaign.id and campaign.name so rows can be kept to them.` : ""}`,
       input_schema: { type: "object", properties: { query: { type: "string" } }, required: ["query"], additionalProperties: false },
       run: async (input) => {
-        const rows = await googleQuery(account, String(input.query));
+        const rows = keep((await googleQuery(account, String(input.query))) as unknown as Record<string, unknown>[], (x) => {
+          const c = x.campaign as { id?: string | number; name?: string } | undefined;
+          return c && (c.id != null || c.name != null) ? { id: c.id ?? null, name: c.name ?? null } : null;
+        });
         return note(`Google Ads · ${String(input.query).replace(/\s+/g, " ").slice(0, 120)}`, rows.slice(0, 300));
       },
     });

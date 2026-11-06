@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { servicesOf, SERVICES, type ServiceSlug } from "@/lib/services";
+import { inScope, type CampaignScope } from "@/lib/kpi/calc";
 import type { ReportMetrics } from "./metrics";
 
 // What a report says about why the numbers are where they are, and when it's natural to mention another Kaizen
@@ -33,10 +34,11 @@ export type Opportunity = { service: ServiceSlug; label: string; why: string; an
 const pct = (a: number | null, b: number | null) => (a == null || b == null || !b ? null : (a - b) / b);
 const r1 = (x: number) => Math.round(x * 10) / 10;
 
-export async function diagnose(admin: SupabaseClient, clientId: string, m: ReportMetrics): Promise<Diagnosis> {
+/** scope: the report's KPI, so new ads and worn-out ads are only the ones in its campaigns (never a client-run campaign's). */
+export async function diagnose(admin: SupabaseClient, clientId: string, m: ReportMetrics, scope?: CampaignScope | null): Promise<Diagnosis> {
   const [{ data: client }, { data: fatigue }] = await Promise.all([
     admin.from("clients").select("vertical_id, verticals(benchmarks)").eq("id", clientId).maybeSingle(),
-    m.platform === "meta" ? admin.from("ad_fatigue").select("severity").eq("client_id", clientId).eq("state", "open") : Promise.resolve({ data: [] }),
+    m.platform === "meta" ? admin.from("ad_fatigue").select("ad_id, severity").eq("client_id", clientId).eq("state", "open") : Promise.resolve({ data: [] as { ad_id: string; severity: string }[] }),
   ]);
   const bench = ((client?.verticals as unknown as { benchmarks: { metric: string; good: number | null }[] } | null)?.benchmarks ?? []) as { metric: string; good: number | null }[];
   const benchOf = (k: string) => bench.find((b) => b.metric === k)?.good ?? null;
@@ -44,16 +46,21 @@ export async function diagnose(admin: SupabaseClient, clientId: string, m: Repor
   // New ads tried in the period (Meta): their first spend inside it, enough to judge, against the period's cost
   let tried = 0;
   let beat = 0;
-  if (m.platform === "meta" && m.main.costPerResult != null) {
-    const { data: rows } = await admin
+  const scoped = Boolean(scope?.campaign_match?.trim() || scope?.excluded_campaigns?.length);
+  // The ads in the report's campaigns (when some are left out), so worn-out ads elsewhere aren't counted
+  let ours: Set<string> | null = null;
+  if (m.platform === "meta" && (m.main.costPerResult != null || scoped)) {
+    const { data: all } = await admin
       .from("meta_ad_daily")
-      .select("ad_id, date, metrics")
+      .select("ad_id, date, metrics, campaign_id, campaign_name")
       .eq("client_id", clientId)
       .gte("date", new Date(Date.parse(`${m.main.start}T12:00:00Z`) - 21 * 86_400_000).toISOString().slice(0, 10))
       .lte("date", m.main.end)
       .limit(8000);
+    const rows = inScope(all ?? [], scope);
+    if (scoped) ours = new Set(rows.map((r) => String(r.ad_id)));
     const ads = new Map<string, { first: string; spend: number }>();
-    for (const r of rows ?? []) {
+    for (const r of rows) {
       const spend = Number((r.metrics as { spend?: string }).spend) || 0;
       if (!spend) continue;
       const a = ads.get(r.ad_id) ?? { first: r.date, spend: 0 };
@@ -61,7 +68,7 @@ export async function diagnose(admin: SupabaseClient, clientId: string, m: Repor
       a.spend += spend;
       ads.set(r.ad_id, a);
     }
-    const fresh = [...ads.entries()].filter(([, a]) => a.first >= m.main.start && a.spend >= Math.max(30, (m.main.costPerResult ?? 0) * 1.5));
+    const fresh = m.main.costPerResult == null ? [] : [...ads.entries()].filter(([, a]) => a.first >= m.main.start && a.spend >= Math.max(30, (m.main.costPerResult ?? 0) * 1.5));
     tried = fresh.length;
     // Whether each new ad got its results cheaper than the period overall: from the report's own top ads where known
     const top = new Map(m.topAds.map((a) => [a.id, a]));
@@ -79,8 +86,9 @@ export async function diagnose(admin: SupabaseClient, clientId: string, m: Repor
   const costNow = m.roasKpi ? m.main.roas : m.main.costPerResult;
   const costBefore = m.roasKpi ? m.compare.roas : m.compare.costPerResult;
   const target = m.target;
-  const tiring = (fatigue ?? []).filter((f) => f.severity === "tiring").length;
-  const tired = (fatigue ?? []).filter((f) => f.severity === "tired").length;
+  const worn = ((fatigue ?? []) as { ad_id: string; severity: string }[]).filter((f) => !ours || ours.has(String(f.ad_id)));
+  const tiring = worn.filter((f) => f.severity === "tiring").length;
+  const tired = worn.filter((f) => f.severity === "tired").length;
 
   const ctrLow = (ctrNow != null && benchOf("ctr") != null && ctrNow < benchOf("ctr")! * 0.85) || (pct(ctrNow, ctrBefore) ?? 0) <= -0.2;
   // Cost per result: worse than target, or 20% worse than before (for ROAS, lower is worse)

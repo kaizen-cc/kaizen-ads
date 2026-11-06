@@ -14,6 +14,7 @@ import { slackConnection, slackIdentity } from "@/lib/slack-user";
 import { ReportStudio } from "../report-studio";
 import { after } from "next/server";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
+import { writeStatus } from "@/lib/write-status";
 
 export const metadata: Metadata = { title: "Report" };
 // Revising and checking a report, putting a joint message together and posting it with its PDF can take a minute
@@ -27,7 +28,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
   const db = await createClient();
   const { data: r } = await db
     .from("reports")
-    .select("id, kind, platform, status, period_start, period_end, owner_id, viewed_at, bundle_id, message, message_basis, sections, metrics, extra_metrics, extras, layout, qa, chat, error, posted_at, previous, clients(name, slug, slack_channel_id), profiles!reports_owner_id_fkey(full_name), kpi_targets(id, client_id, platform, owner_id, report_layout)")
+    .select("id, kind, platform, status, period_start, period_end, owner_id, viewed_at, bundle_id, message, message_basis, sections, metrics, extra_metrics, extras, layout, qa, chat, error, posted_at, previous, clients(name, slug, slack_channel_id), profiles!reports_owner_id_fkey(full_name), kpi_targets(id, client_id, platform, owner_id, report_layout, ad_account_id)")
     .eq("id", id)
     .maybeSingle();
   if (!r) notFound();
@@ -39,11 +40,14 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
     await createAdminClient().from("reports").update({ viewed_at: new Date().toISOString() }).eq("id", r.id).is("viewed_at", null);
   });
 
-  const [slack, identity, { data: bundle }, { data: parts }] = await Promise.all([
+  const account = (r.kpi_targets as unknown as { ad_account_id: string | null } | null)?.ad_account_id ?? null;
+  const [slack, identity, { data: bundle }, { data: parts }, write] = await Promise.all([
     slackConnection(me.id),
     slackIdentity(me.id).catch(() => null),
     r.bundle_id ? db.from("report_bundles").select("id, kind, status, ranges, created_by, message, message_approved_at, profiles!report_bundles_created_by_fkey(full_name)").eq("id", r.bundle_id).maybeSingle() : Promise.resolve({ data: null }),
     r.bundle_id ? db.from("reports").select("id, platform, status, owner_id, profiles!reports_owner_id_fkey(full_name)").eq("bundle_id", r.bundle_id).neq("status", "skipped") : Promise.resolve({ data: [] }),
+    // Whether the report's next steps can be applied in the ad account (live changes for the client), read up front
+    target && adminConfigured() && (r.platform === "meta" || r.platform === "google") ? writeStatus(createAdminClient(), { clientId: target.client_id, account }, r.platform).catch(() => null) : Promise.resolve(null),
   ]);
   const client = r.clients as unknown as { name: string; slug: string; slack_channel_id: string | null };
   const metrics = (r.metrics as ReportMetrics | null) ?? null;
@@ -98,6 +102,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
             : null
         }
         slack={{ connected: slack.connected, name: identity?.name || null, image: identity?.image ?? null, me: me.fullName }}
+        act={target ? { write, canSwitch: me.isExec } : null}
       />
     </div>
   );

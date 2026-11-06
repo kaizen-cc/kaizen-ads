@@ -4,7 +4,7 @@ import { askJson } from "@/lib/ai";
 import type { Staff } from "@/lib/auth";
 import { googleMutate, googleWritableSetup, type WritableSetup } from "@/lib/context/google-ads";
 import { metaGraph } from "@/lib/context/meta";
-import { diagnoseAccess, metaWritableSetup, metaWrite, type MetaSetup } from "@/lib/meta-write";
+import { diagnoseAccess, metaWritableSetup, metaWrite, writeBlocked, type MetaSetup } from "@/lib/meta-write";
 import { replaceLinks, type ObjRef } from "@/lib/chat-change-core";
 import { adStats, statsText, targetOf, windowLabel, type AdStats } from "@/lib/ad-stats";
 
@@ -391,6 +391,9 @@ export async function checkOps(admin: SupabaseClient, platform: string, account:
 }
 
 async function check(admin: SupabaseClient, platform: string, account: string, ops: PlannedOp[]): Promise<PlannedOp[]> {
+  // Live changes off for this Meta account: the sandbox refuses even a dry run, so every line would read "won't go
+  // through". Leave them unchecked instead: the plan stays a checklist to do by hand, and is checked once it's on.
+  if (platform === "meta" && (await writeBlocked(admin, account))) return ops.map((op) => ({ ...op, check: null }));
   const out: PlannedOp[] = [];
   let why: string | null = null;
   for (const op of ops) {

@@ -69,6 +69,69 @@ export async function saveLayout(id: string, layout: ReportLayout): Promise<Resu
   return { ok: true };
 }
 
+/**
+ * Leaves a campaign out of this client's KPI, or counts it again (undo): the same exclusions as the KPI board's
+ * Campaigns list, so the KPI, audits and every report follow (a campaign the client runs themselves, like their own
+ * brand's ads). The KPI is worked out again straight away; the report shows it once it's regenerated, which reads the
+ * KPI fresh.
+ */
+export async function setReportCampaignExcluded(id: string, campaign: { id?: string | null; name: string }, exclude: boolean): Promise<Result<{ campaignId: string }>> {
+  const ok = await mine(id);
+  if (!ok) return { ok: false, error: "Not found." };
+  const t = ok.r.kpi_targets as unknown as { id: string; client_id: string; platform: string } | null;
+  if (!t) return { ok: false, error: "This report has no KPI to change." };
+  const admin = createAdminClient();
+  const { data: cur } = await admin.from("kpi_targets").select("ad_account_id, excluded_campaigns").eq("id", t.id).single();
+  if (!cur) return { ok: false, error: "Couldn't read the KPI." };
+  // Older reports kept only the campaign's name: its id is read from the account's rows
+  let campaignId = String(campaign.id ?? "").trim().slice(0, 64);
+  if (!campaignId && campaign.name && cur.ad_account_id) {
+    const google = t.platform === "google";
+    const { data: row } = await admin
+      .from(google ? "google_campaign_daily" : "meta_campaign_daily")
+      .select("campaign_id")
+      .eq("ad_account_id", google ? String(cur.ad_account_id).replace(/\D/g, "") : String(cur.ad_account_id))
+      .eq("campaign_name", campaign.name.slice(0, 300))
+      .order("date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    campaignId = String(row?.campaign_id ?? "");
+  }
+  if (!campaignId) return { ok: false, error: "Couldn't find that campaign in the ad account." };
+  const left = new Set(((cur.excluded_campaigns ?? []) as string[]).map(String));
+  if (exclude) left.add(campaignId);
+  else left.delete(campaignId);
+  const { error } = await admin.from("kpi_targets").update({ excluded_campaigns: [...left] }).eq("id", t.id);
+  if (error) return { ok: false, error: error.message };
+  after(async () => {
+    const { refreshClientKpis } = await import("@/lib/kpi/sync");
+    await refreshClientKpis(admin, t.client_id).catch(() => null);
+  });
+  revalidatePath("/kpis", "layout");
+  done(id);
+  return { ok: true, campaignId };
+}
+
+/**
+ * "Plan the change" on one of the report's next steps: the buyer agent turns it into the exact changes in this
+ * report's ad account (the same planned-change card as the client chat: each object before → after, the platform's
+ * dry run, confirm). Nothing is written until someone allowed confirms, and only while live changes are on.
+ */
+export async function planReportStep(id: string, step: string): Promise<Result<{ changeId: string }>> {
+  const ok = await mine(id);
+  if (!ok) return { ok: false, error: "Not found." };
+  const t = ok.r.kpi_targets as unknown as { id: string; client_id: string; platform: string } | null;
+  if (!t || (t.platform !== "meta" && t.platform !== "google")) return { ok: false, error: "This report has no ad account to change." };
+  const text = step.replace(/\s+/g, " ").trim().slice(0, 1500);
+  if (text.length < 4) return { ok: false, error: "That step is empty." };
+  const admin = createAdminClient();
+  const { startChatChange, planChatChange } = await import("@/lib/chat-changes");
+  const r = await startChatChange(admin, t.client_id, ok.me.id, t.platform, `A next step from the client report: ${text}`, t.id);
+  if ("error" in r) return { ok: false, error: r.error };
+  after(() => planChatChange(admin, r.id));
+  return { ok: true, changeId: r.id };
+}
+
 /** An older report's campaigns get what each counted in the period, so a campaign's result can be picked by hand */
 export async function loadCampaignEvents(id: string): Promise<Result> {
   const ok = await mine(id);

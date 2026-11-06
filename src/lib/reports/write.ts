@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson, askJsonWithTools, type AgentKey } from "@/lib/ai";
 import { reportTools, toolsLine, type Pulled } from "./tools";
 import { metricsText, reportMetrics, trendSeries, type ReportMetrics, type TrendPoint } from "./metrics";
-import { METRIC_KEYS, reportBasis, type MetricKey } from "./format";
+import { METRIC_KEYS, leftOutText, reportBasis, type MetricKey } from "./format";
 import { voiceOf, workDone } from "./work";
 import { diagnose, diagnosisText, opportunityFor } from "./diagnose";
 
@@ -89,7 +89,25 @@ async function context(admin: SupabaseClient, reportId: string) {
   const owner = (r.profiles as unknown as { full_name: string } | null)?.full_name ?? null;
   const { data: prefs } = await admin.from("client_report_prefs").select("notes").eq("client_id", r.client_id).maybeSingle();
   const { data: last } = await admin.from("reports").select("period_start, sections").eq("target_id", r.target_id).eq("kind", r.kind).lt("period_start", r.period_start).in("status", ["posted", "submitted"]).order("period_start", { ascending: false }).limit(1).maybeSingle();
-  return { r, client, target, owner, prefs: ((prefs?.notes ?? []) as string[]).slice(-20), last };
+  return { r, client, target, owner, prefs: ((prefs?.notes ?? []) as string[]).slice(-20), last, leftOut: await leftOutNames(admin, target) };
+}
+
+/**
+ * The names of the campaigns left out of this KPI by hand (read fresh from the KPI, so a campaign excluded after the
+ * numbers were drawn is still kept out of the AI's writing, its revisions and the QA).
+ */
+async function leftOutNames(admin: SupabaseClient, t: Parameters<typeof reportMetrics>[1] | null): Promise<string[]> {
+  const ids = (t?.excluded_campaigns ?? []).filter(Boolean);
+  if (!t?.ad_account_id || !ids.length) return [];
+  const google = t.platform === "google";
+  const { data } = await admin
+    .from(google ? "google_campaign_daily" : "meta_campaign_daily")
+    .select("campaign_id, campaign_name")
+    .eq("ad_account_id", google ? String(t.ad_account_id).replace(/\D/g, "") : String(t.ad_account_id))
+    .in("campaign_id", ids.slice(0, 100))
+    .order("date", { ascending: false })
+    .limit(400);
+  return [...new Set((data ?? []).map((x) => String(x.campaign_name ?? "")).filter(Boolean))];
 }
 
 /** Data the buyer had the AI pull in the chat (from the ad account, Motion, calls, Slack…): real data the report may use */
@@ -112,6 +130,7 @@ function sourcesBlock(c: Awaited<ReturnType<typeof context>>, metrics: ReportMet
     `<buyer>${c.owner ?? "the buyer"}</buyer>`,
     `<numbers>\n${metricsText(metrics)}\n</numbers>`,
     ...(((c.r as unknown as { extra_metrics?: ReportMetrics[] | null }).extra_metrics ?? []) as ReportMetrics[]).map((m) => `<numbers range="${m.main.label}">\n${metricsText(m)}\n</numbers>`),
+    leftOutText({ leftOut: [...(metrics.leftOut ?? []), ...((((c.r as unknown as { extra_metrics?: ReportMetrics[] | null }).extra_metrics ?? []) as ReportMetrics[]).flatMap((m) => m.leftOut ?? []))] }, c.leftOut),
     `<work_log period="${c.r.period_start} to ${c.r.period_end}">\n${work}\n</work_log>`,
     diagnosisText(metrics.diagnosis, metrics.opportunity),
     lastNext.length ? `<what_the_last_report_said_was_next>\n${lastNext.map((x) => `- ${x}`).join("\n")}\n</what_the_last_report_said_was_next>` : "",
@@ -160,9 +179,11 @@ export async function draftReport(admin: SupabaseClient, reportId: string) {
       const more = ((b?.ranges ?? []) as { start: string; end: string }[]).slice(1);
       extra = await Promise.all(more.map((x) => reportMetrics(admin, c.target, "custom", dayAfter(x.end), { start: x.start, end: x.end })));
     }
-    const work = await workDone(admin, c.target, [metrics.main.start, ...extra.map((m) => m.main.start)].sort()[0], metrics.main.end);
+    // The campaigns this report leaves out stay out of the work log too (changes made in them, moves about them)
+    const skip = [...new Set([...c.leftOut, ...[metrics, ...extra].flatMap((m) => (m.leftOut ?? []).map((x) => x.name))])];
+    const work = await workDone(admin, c.target, [metrics.main.start, ...extra.map((m) => m.main.start)].sort()[0], metrics.main.end, skip);
     // Where the numbers are weak and why, and whether this is the moment to raise another service
-    metrics.diagnosis = await diagnose(admin, c.r.client_id, metrics).catch(() => undefined);
+    metrics.diagnosis = await diagnose(admin, c.r.client_id, metrics, c.target).catch(() => undefined);
     metrics.opportunity = metrics.diagnosis ? await opportunityFor(admin, c.r, metrics, metrics.diagnosis).catch(() => null) : null;
     await admin.from("reports").update({ metrics, work, extra_metrics: extra.length ? extra : null }).eq("id", reportId);
     (c.r as unknown as { extra_metrics: ReportMetrics[] }).extra_metrics = extra;

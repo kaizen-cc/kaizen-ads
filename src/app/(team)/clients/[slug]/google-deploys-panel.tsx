@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { AuditWhy } from "@/components/audit-why";
+import { WriteOff } from "@/components/write-gate";
 import type { Deploy, DeployPlan, DeployTarget, Kw } from "@/lib/google-deploy";
 import { decideDeploy, deployState, deployTargets, editDeploy, markDeployApplied, pushDeployAction, rewriteDeploy } from "../../ideas/google-actions";
 
@@ -433,7 +434,11 @@ function Push({ d, pending, onPush, onCancel }: { d: Deploy; pending: boolean; o
   if (!t.writes)
     return (
       <div className="grid gap-2 rounded-[14px] border border-line bg-bg/50 p-3.5 text-[13px] text-muted">
-        <p>Live changes are off for this client (an exec switches them on in their Team &amp; setup). Until then, apply it by hand from the checklist above and mark it applied.</p>
+        {t.write && !t.write.live ? (
+          <WriteOff status={t.write} canSwitch={t.canSwitch} onLive={() => void deployTargets(d.id).then(setT)} />
+        ) : (
+          <p>Live changes are off for this client (an exec switches them on in their Team &amp; setup). Until then, apply it by hand from the checklist above and mark it applied.</p>
+        )}
         <button type="button" onClick={onCancel} className="min-h-11 justify-self-start rounded-full px-4 text-sm text-muted hover:text-fg">
           Back
         </button>

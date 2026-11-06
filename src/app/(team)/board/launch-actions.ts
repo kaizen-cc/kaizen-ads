@@ -8,6 +8,7 @@ import { metaConfigured } from "@/lib/context/meta";
 import { delivery, editLaunch, setDelivery, type AdEdit, type Delivery } from "@/lib/launch-manage";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { writeStatus, type WriteStatus } from "@/lib/write-status";
 
 // The Launch panel on a ticket in Ready to launch: plan (the Media Buyer proposes, Kaizen's checks and Meta's dry run),
 // adjust, then create the ads paused. See src/lib/launcher.ts.
@@ -30,6 +31,8 @@ export type LaunchView = {
   /** Who signed off the locked settings, when it matches the plan as it is now */
   signoff: SignOff | null;
   signed: boolean;
+  /** Whether a launch for this client goes into its own account (live changes on) or Kaizen's sandbox, read up front */
+  write: WriteStatus;
 };
 
 /** The Ads Manager link, always in its current form (the ads' editor, scoped to their campaign and ad set). */
@@ -75,6 +78,7 @@ async function view(id: string): Promise<LaunchView | null> {
     edits: (l.edits ?? []) as LaunchView["edits"],
     signoff: (l.signoff ?? null) as SignOff | null,
     signed: l.plan ? signedOff(l.plan as LaunchPlan, (l.signoff ?? null) as SignOff | null) : false,
+    write: await writeStatus(createAdminClient(), l.client_id as string, "meta"),
   };
 }
 

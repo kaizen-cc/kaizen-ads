@@ -8,6 +8,7 @@ import { readGoogleIdea, type GoogleInsight } from "@/lib/google-ideas";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { DeployKind, DeployPlan, DeployTarget } from "@/lib/google-deploy";
+import type { WriteStatus } from "@/lib/write-status-core";
 import type { KeywordList, ListKeyword, Research } from "@/lib/keyword-research";
 
 /** The AI's read of one Google winner (written the first time someone points at it, then kept a week). */
@@ -135,20 +136,22 @@ export async function markDeployApplied(id: string): Promise<{ ok: true } | { ok
 }
 
 /** The campaigns and ad groups it could go into, for the push picker. */
-export async function deployTargets(id: string): Promise<{ ok: true; writes: boolean; campaigns: { id: string; name: string }[]; adGroups: { id: string; name: string; campaignId: string; campaign: string }[] } | { ok: false; error: string }> {
+export async function deployTargets(id: string): Promise<{ ok: true; writes: boolean; write: WriteStatus | null; canSwitch: boolean; campaigns: { id: string; name: string }[]; adGroups: { id: string; name: string; campaignId: string; campaign: string }[] } | { ok: false; error: string }> {
   try {
-    const { d } = await loadMine(id);
+    const { d, me } = await loadMine(id);
     const admin = createAdminClient();
-    const [{ googleWritesOn }, { googleAccountOf }] = await Promise.all([import("@/lib/ad-changes"), import("@/lib/google-deploy")]);
+    const [{ googleWritesOn }, { googleAccountOf }, { writeStatus }] = await Promise.all([import("@/lib/ad-changes"), import("@/lib/google-deploy"), import("@/lib/write-status")]);
     const account = await googleAccountOf(admin, d.client_id as string);
-    const writes = await googleWritesOn(admin, account);
-    if (!account) return { ok: true, writes, campaigns: [], adGroups: [] };
+    const [writes, write] = await Promise.all([googleWritesOn(admin, account), writeStatus(admin, { clientId: d.client_id as string, account }, "google").catch(() => null)]);
+    if (!account) return { ok: true, writes, write, canSwitch: me.isExec, campaigns: [], adGroups: [] };
     const { googleAdsConfigured, googleWritableSetup } = await import("@/lib/context/google-ads");
-    if (!googleAdsConfigured()) return { ok: true, writes: false, campaigns: [], adGroups: [] };
+    if (!googleAdsConfigured()) return { ok: true, writes: false, write, canSwitch: me.isExec, campaigns: [], adGroups: [] };
     const s = await googleWritableSetup(account);
     return {
       ok: true,
       writes,
+      write,
+      canSwitch: me.isExec,
       campaigns: s.campaigns.filter((c) => c.type === "SEARCH").map((c) => ({ id: c.id, name: c.name })),
       adGroups: s.adGroups.filter((g) => s.campaigns.some((c) => c.id === g.campaignId && c.type === "SEARCH")).map((g) => ({ id: g.id, name: g.name, campaignId: g.campaignId, campaign: g.campaign })),
     };

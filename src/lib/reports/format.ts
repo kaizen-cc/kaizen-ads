@@ -196,3 +196,19 @@ export function reportBasis(sections: unknown, extras: string | null | undefined
   for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) | 0;
   return `${text.length}:${(h >>> 0).toString(36)}`;
 }
+
+/**
+ * The campaigns a report leaves out, for the AI that writes and checks it: named only so it never reports on them, gives
+ * advice about them or takes ideas from them (a client running their own brand's ads, or campaigns outside the KPI).
+ */
+export function leftOutText(m: Pick<ReportMetrics, "leftOut"> | null | undefined, words: string[] = []) {
+  const names = [...new Set([...(m?.leftOut ?? []).map((c) => c.name), ...words].filter(Boolean))];
+  if (!names.length) return "";
+  return `<campaigns_not_in_this_report rule="These campaigns are not ours to report on (the client runs them, or they're outside this KPI). Their numbers are already left out of everything above. Never mention them, describe their results, recommend changes to them, or draw ideas or next steps from them, even if they show up in the work log, the chat or a lookup.">\n${names.map((n) => `- ${n}`).join("\n")}\n</campaigns_not_in_this_report>`;
+}
+
+/** A line of text (a change in the account's log, a sprint move) about a campaign the report leaves out. */
+export function aboutLeftOut(text: string | null | undefined, names: string[]) {
+  const t = (text ?? "").toLowerCase();
+  return Boolean(t) && names.some((n) => n.trim().length >= 4 && t.includes(n.trim().toLowerCase()));
+}

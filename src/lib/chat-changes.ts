@@ -20,11 +20,12 @@ import { SLOTS, canHold } from "@/lib/roles";
 export type ChatPlatform = "meta" | "google" | "team";
 
 /** A new change from the chat: the row the plan card follows, planned in the background. Null when there's nothing to change. */
-export async function startChatChange(admin: SupabaseClient, clientId: string, profileId: string, platform: ChatPlatform, instruction: string): Promise<{ id: string } | { error: string }> {
+export async function startChatChange(admin: SupabaseClient, clientId: string, profileId: string, platform: ChatPlatform, instruction: string, targetId?: string | null): Promise<{ id: string } | { error: string }> {
   let target: { id: string; ad_account_id: string | null } | null = null;
   if (platform !== "team") {
     const { data: ts } = await admin.from("kpi_targets").select("id, ad_account_id").eq("client_id", clientId).eq("platform", platform).eq("active", true).not("ad_account_id", "is", null).order("created_at");
-    target = (ts ?? [])[0] ?? null;
+    // A step from a report or a KPI names its own account; otherwise the client's first one on the platform
+    target = (ts ?? []).find((t) => t.id === targetId) ?? (ts ?? [])[0] ?? null;
     if (!target?.ad_account_id) return { error: `There's no ${platform === "meta" ? "Meta" : "Google Ads"} account linked to this client on the KPI board, so I can't reach it.` };
   }
   const { data, error } = await admin

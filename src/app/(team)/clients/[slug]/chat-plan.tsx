@@ -4,6 +4,7 @@ import { AdImg } from "@/components/ad-img";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { HoverCard } from "@/components/hover-card";
+import { WriteChip, WriteOff } from "@/components/write-gate";
 import type { PlannedOp } from "@/lib/ad-changes";
 import { kpiText, lineOf, verifyLink, type Metrics, type ObjRef, type OpEdit } from "@/lib/chat-change-core";
 import { confirmChatChange, discardChatChange, loadChatChange, saveChatChecklist, type ChatChangeView } from "./chat-change-actions";
@@ -286,6 +287,7 @@ export function ChatPlan({ id }: { id: string }) {
         <span className="flex items-center gap-2 text-[10.5px] font-medium uppercase tracking-[0.16em] text-ink/60">
           <span className={`h-2 w-2 rounded-full ${p.dot}`} />
           {v.platform === "team" ? "Team change" : `Plan · ${p.name}`}
+          {v.write && <WriteChip status={v.write} />}
         </span>
         <span className="text-[10.5px] text-ink/45">
           {v.status === "planning" ? "Reading the live account…" : v.status === "applying" ? "Making the changes…" : v.status === "applied" ? `Done${v.appliedBy ? ` · ${v.appliedBy}` : ""}` : v.status === "partial" ? "Partly done" : v.status === "discarded" ? "Dropped" : v.status === "nothing" ? "Nothing to change" : v.savedAt ? "Saved as a checklist" : `${chosen.size} of ${ops.length} ticked`}
@@ -323,9 +325,11 @@ export function ChatPlan({ id }: { id: string }) {
         </ul>
       )}
 
-      {open && !v.live && v.platform !== "team" && (
+      {open && !v.live && v.platform !== "team" && (v.write ? (
+        <WriteOff status={v.write} canSwitch={v.canSwitch} account={v.account} compact onLive={() => void loadChatChange(v.id).then((next) => next && setV(next))} />
+      ) : (
         <p className="rounded-[10px] border border-warn/30 bg-warn-soft/30 px-3 py-2 text-[12px] text-ink/80">{v.liveNote ?? "Live changes are off for this client."} Save it as a checklist to apply by hand, or confirm it here once they&apos;re on.</p>
-      )}
+      ))}
       {open && !v.canConfirm && <p className="text-[11.5px] text-ink/50">{v.platform === "team" ? "An exec or a lead confirms a buyer change." : `The client's buyer, the head of ${p.name}, a lead or an exec confirms this.`}</p>}
       {error && <p className="text-[12px] text-bad">{error}</p>}
 

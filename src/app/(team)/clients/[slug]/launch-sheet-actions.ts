@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { requireStaff, type Staff } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import type { WriteStatus } from "@/lib/write-status-core";
 import { runnable, unanswered } from "@/lib/launch-sheet/plan";
 import type { CheckItem, LaunchItem, LaunchPlan, LaunchQuestion, LaunchSheet, Resolution, RunStatus } from "@/lib/launch-sheet/types";
 
@@ -30,6 +31,9 @@ export type LaunchView = {
   qa: { at: string; lines: { key: string; ok: boolean; diffs: string[]; link: string | null }[] } | null;
   live: boolean;
   liveNote: string | null;
+  /** The full read, for the disabled state in place of Create (and the switch, for execs) */
+  write: WriteStatus;
+  canSwitch: boolean;
   canConfirm: boolean;
   resumable: boolean;
   confirmedBy: string | null;
@@ -67,13 +71,11 @@ async function view(id: string): Promise<LaunchView | null> {
   const plan = (r.plan as LaunchPlan | null) ?? null;
   const sheet = r.sheet as LaunchSheet | null;
   const res = r.resolution as Resolution | null;
-  let live = false;
-  let liveNote: string | null = null;
-  if (r.account) {
-    const { writeBlocked } = await import("@/lib/meta-write");
-    liveNote = await writeBlocked(createAdminClient(), r.account as string);
-    live = !liveNote;
-  }
+  // Whether creating it would write to the account: the same read as every apply button (src/lib/write-status.ts)
+  const { writeStatus } = await import("@/lib/write-status");
+  const write = await writeStatus(createAdminClient(), { clientId: r.client_id as string, account: (r.account as string | null) || null }, "meta");
+  const live = Boolean(r.account) && write.live;
+  const liveNote = r.account ? write.reason : null;
   const lockedRecently = r.locked_at && Date.now() - Date.parse(r.locked_at as string) < 10 * 60_000;
   const src = r.source as { name?: string; url?: string };
   return {
@@ -94,6 +96,8 @@ async function view(id: string): Promise<LaunchView | null> {
     qa: (r.qa as LaunchView["qa"]) ?? null,
     live,
     liveNote,
+    write,
+    canSwitch: me.isExec,
     canConfirm: await mayConfirm(me, r.client_id as string),
     resumable: status === "applying" && !lockedRecently && Boolean(plan && runnable(items, plan).length),
     confirmedBy: (r.confirmer as unknown as { full_name: string } | null)?.full_name ?? null,

@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { LaunchCheck } from "@/lib/launcher";
 import { EVENTS, eventLabel, firedAgo } from "@/lib/meta-events";
+import { WriteOff } from "@/components/write-gate";
 import { LaunchManage } from "./launch-manage";
 import { LaunchMove } from "./launch-move";
 import { confirmLaunch, discardLaunch, launchFor, loadLaunch, replanLaunch, sandboxCampaign, startLaunch, type LaunchView } from "./launch-actions";
@@ -162,6 +163,14 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
           </button>
         )}
       </header>
+
+      {/* Live changes off for the client: say so before anything is pressed (it's a test in Kaizen's sandbox) */}
+      {!l.write.live && !["launched", "launching"].includes(l.status) && (
+        <div className="relative grid gap-2">
+          <WriteOff status={l.write} canSwitch={isExec} account={l.plan?.account && !l.sandbox ? l.plan.account : null} compact onLive={() => run(async () => (await replanLaunch(l.id, {}), setL(await loadLaunch(l.id))))} />
+          {l.sandbox && l.write.off === "client" && <p className="text-[11.5px] text-faint">Until then, a launch from here is a test in Kaizen&apos;s sandbox account; the real launch is done by hand in Ads Manager.</p>}
+        </div>
+      )}
 
       {busy && (
         <p className="relative flex items-center gap-2.5 text-sm text-muted">

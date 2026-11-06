@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { changeKey } from "@/lib/account-changes";
+import { aboutLeftOut } from "./format";
 
 // Everything done on an account in a report's period, from every place it shows up: changes in the ad account (its
 // change history, and changes applied from Kaizen Ads), the sprint's moves, audits, creative made and in production,
@@ -12,7 +13,8 @@ type Target = { id: string; client_id: string; platform: string; ad_account_id: 
 const day = (iso: string) => String(iso).slice(0, 10);
 const clip = (s: string | null | undefined, n: number) => (s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 
-export async function workDone(admin: SupabaseClient, t: Target, start: string, end: string) {
+/** skip: the names of campaigns the report leaves out (the client's own): changes and moves about them aren't listed. */
+export async function workDone(admin: SupabaseClient, t: Target, start: string, end: string, skip: string[] = []) {
   const from = `${start}T00:00:00-05:00`;
   const to = `${end}T23:59:59-05:00`;
   const account = t.ad_account_id ? changeKey(t.platform, String(t.ad_account_id)) : null;
@@ -30,13 +32,16 @@ export async function workDone(admin: SupabaseClient, t: Target, start: string, 
   const platformWord = t.platform === "google" ? "Google" : "Meta";
   const sprintNow = (sprint.data ?? [])[0] as { status: string; sprint_actions: { title: string; status: string; when: string | null; why: string | null; note: string | null; done_at: string | null }[] } | undefined;
   const moves = sprintNow?.sprint_actions ?? [];
-  const doneMoves = moves.filter((m) => m.status === "done" && m.done_at && m.done_at >= from && m.done_at <= to);
-  const openMoves = moves.filter((m) => m.status === "todo" || m.status === "doing");
+  const ours = (...text: (string | null | undefined)[]) => !skip.length || !text.some((x) => aboutLeftOut(x, skip));
+  const doneMoves = moves.filter((m) => m.status === "done" && m.done_at && m.done_at >= from && m.done_at <= to && ours(m.title, m.why, m.note));
+  const openMoves = moves.filter((m) => (m.status === "todo" || m.status === "doing") && ours(m.title, m.why, m.note));
+  const accountChanges = ((changes.data ?? []) as { at: string; who: string | null; what: string; object: string | null }[]).filter((c) => ours(c.what, c.object));
+  const appliedHere = ((applied.data ?? []) as { title: string; applied_at: string; ops: unknown }[]).filter((a) => ours(a.title, JSON.stringify(a.ops ?? null)));
   const onPlatform = (p: string | null) => !p || new RegExp(platformWord, "i").test(p);
 
   // The account's own change log, grouped (twenty budget edits read as one line, not twenty)
   const grouped = new Map<string, { n: number; objects: Set<string>; first: string; last: string }>();
-  for (const c of (changes.data ?? []) as { at: string; who: string | null; what: string; object: string | null }[]) {
+  for (const c of accountChanges) {
     const g = grouped.get(c.what) ?? { n: 0, objects: new Set<string>(), first: c.at, last: c.at };
     g.n++;
     if (c.object) g.objects.add(c.object);
@@ -45,11 +50,11 @@ export async function workDone(admin: SupabaseClient, t: Target, start: string, 
   }
 
   const lines = [
-    `<changes_in_the_${platformWord.toLowerCase()}_account count="${(changes.data ?? []).length}">`,
+    `<changes_in_the_${platformWord.toLowerCase()}_account count="${accountChanges.length}">`,
     ...[...grouped.entries()].map(([what, g]) => `- ${what} ×${g.n}${g.objects.size ? ` (${[...g.objects].slice(0, 5).join("; ")}${g.objects.size > 5 ? "…" : ""})` : ""}, ${day(g.first)}${g.first !== g.last ? ` to ${day(g.last)}` : ""}`),
     `</changes_in_the_${platformWord.toLowerCase()}_account>`,
     `<changes_applied_from_kaizen_ads>`,
-    ...((applied.data ?? []) as { title: string; applied_at: string }[]).map((a) => `- ${day(a.applied_at)}: ${a.title}`),
+    ...appliedHere.map((a) => `- ${day(a.applied_at)}: ${a.title}`),
     `</changes_applied_from_kaizen_ads>`,
     `<optimization_sprint>`,
     ...doneMoves.map((m) => `- DONE ${day(m.done_at!)}: ${m.title}${m.note ? ` (${clip(m.note, 160)})` : ""}`),
@@ -74,8 +79,8 @@ export async function workDone(admin: SupabaseClient, t: Target, start: string, 
   return {
     text: lines.join("\n"),
     counts: {
-      accountChanges: (changes.data ?? []).length,
-      applied: (applied.data ?? []).length,
+      accountChanges: accountChanges.length,
+      applied: appliedHere.length,
       sprintDone: doneMoves.length,
       sprintOpen: openMoves.length,
       creativeDelivered: ((made.data ?? []) as { platform: string | null }[]).filter((x) => onPlatform(x.platform)).length,

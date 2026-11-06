@@ -2,7 +2,7 @@ import "server-only";
 import { businessModel, googleHealth, googleHealthText, type GoogleHealth } from "@/lib/google-flags";
 import type { BenchmarkTarget } from "@/lib/kpi/success";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { pickType, resultsOf, toDays, nyParts, type Day } from "@/lib/kpi/calc";
+import { campaignIncluded, inScope, pickType, resultsOf, toDays, nyParts, type Day } from "@/lib/kpi/calc";
 import { conversionFor, conversionLabel } from "@/lib/kpi/conversions";
 import { accountRows, goalsFor } from "@/lib/kpi/sync";
 import { actionLabel } from "@/lib/kpi/explore";
@@ -36,6 +36,8 @@ export type Period = {
 export type CampaignLine = { name: string; spend: number; results: number; costPerResult: number | null; roas: number | null; ctr: number | null; id?: string; result?: string | null; impressions?: number; clicks?: number; cpc?: number | null; cpm?: number | null; revenue?: number; events?: CampaignEvent[] };
 /** One thing a campaign counted in the period (Meta's action type, its name, how many), for picking its result by hand */
 export type CampaignEvent = { type: string; label: string; count: number };
+/** A campaign kept out of the report: excluded by hand (a client-run campaign) or outside the KPI's campaign match */
+export type LeftOut = { id: string; name: string; spend: number; why: "excluded" | "match" };
 export type TopAd = { id: string; name: string; campaign: string | null; spend: number; results: number; costPerResult: number | null; ctr: number | null; clicks: number; link: string | null; image: string | null; copy?: { body: string | null; headline: string | null; cta: string | null; url: string | null } };
 
 export type ReportMetrics = {
@@ -50,6 +52,8 @@ export type ReportMetrics = {
   mtd: Period | null; // weekly only
   mtdCompare: Period | null;
   campaigns: CampaignLine[];
+  /** Campaigns that spent in the main period but aren't counted (left out of the KPI, or outside its campaign match) */
+  leftOut?: LeftOut[];
   topAds: TopAd[];
   dataThrough: string | null;
   gaps: string[]; // days in the period with no data at all (a sync gap, or the account off)
@@ -194,9 +198,20 @@ export async function withCampaignEvents(admin: SupabaseClient, m: ReportMetrics
 /** Every number a report shows, for one KPI target, as of `today` (New York). */
 export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "weekly" | "monthly" | "custom", today = nyParts(new Date()).date, range?: { start: string; end: string }, opts: { lite?: boolean; daily?: boolean } = {}): Promise<ReportMetrics> {
   const platform = t.platform === "google" ? "google" : "meta";
-  const left = new Set(t.excluded_campaigns ?? []);
-  const all = ((await accountRows(admin, t.ad_account_id ?? "", platform)) as Row[]).filter((r) => (!t.campaign_match || (r.campaign_name ?? "").toLowerCase().includes(t.campaign_match.toLowerCase())) && !left.has(String(r.campaign_id)));
+  const every = (await accountRows(admin, t.ad_account_id ?? "", platform)) as Row[];
+  const all = inScope(every, t);
   const ps = periodsFor(kind, today, range);
+  // The campaigns that spent in the period but aren't the KPI's (run by the client, or outside its campaign match): kept
+  // out of every number, and named to the AI only so it never talks about them
+  const outside = new Map<string, LeftOut>();
+  for (const r of every) {
+    if (r.date < ps.main.start || r.date > ps.main.end || campaignIncluded(t, { id: r.campaign_id, name: r.campaign_name })) continue;
+    const id = String(r.campaign_id);
+    const e = outside.get(id) ?? { id, name: r.campaign_name ?? id, spend: 0, why: (t.excluded_campaigns ?? []).includes(id) ? "excluded" : "match" };
+    e.spend = r2(e.spend + (Number(r.spend) || 0));
+    outside.set(id, e);
+  }
+  const leftOut = [...outside.values()].filter((c) => c.spend > 0).sort((a, b) => b.spend - a.spend).slice(0, 40);
   const kpiConv = conversionFor(t.conversion);
 
   // What each campaign is optimized for, read from the ad account (Meta). Reports count those, unless it's a ROAS KPI
@@ -271,8 +286,7 @@ export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "wee
       .limit(5000);
     const per = new Map<string, TopAd & { impressions: number }>();
     for (const a of ads ?? []) {
-      if (t.campaign_match && !(a.campaign_name ?? "").toLowerCase().includes(t.campaign_match.toLowerCase())) continue;
-      if (left.has(String(a.campaign_id))) continue;
+      if (!campaignIncluded(t, { id: a.campaign_id, name: a.campaign_name })) continue;
       const m = a.metrics as { spend?: string; impressions?: string; inline_link_clicks?: string; actions?: { action_type: string; value: string }[] };
       const e = per.get(a.ad_id) ?? { id: a.ad_id, name: a.ad_name, campaign: a.campaign_name, spend: 0, results: 0, costPerResult: null, ctr: null, clicks: 0, link: null, image: null, impressions: 0 };
       e.spend += Number(m.spend) || 0;
@@ -319,6 +333,7 @@ export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "wee
     mtd: ps.mtd ? period(all, days, ps.mtd, conv, type) : null,
     mtdCompare: ps.mtdCompare ? period(all, days, ps.mtdCompare, conv, type) : null,
     campaigns,
+    ...(leftOut.length ? { leftOut } : {}),
     topAds,
     dataThrough: [...days].map((d) => d.date).sort().at(-1) ?? null,
     gaps,

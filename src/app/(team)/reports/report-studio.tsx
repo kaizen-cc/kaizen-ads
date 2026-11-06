@@ -10,8 +10,10 @@ import { RecapDeckButton } from "./recap-deck-button";
 import { METRIC_KEYS, columnKeys, metricLabel, platformName, reportBasis, TABLE_DEFAULT, tileKeys, type MetricKey, type ReportLayout } from "@/lib/reports/format";
 import type { ReportMetrics } from "@/lib/reports/metrics";
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
-import { approveBuiltMessage, approveMyPart, builtMessage, checkAgain, loadCampaignEvents, refreshSlackMessage, regenerate, reopenReport, reviseWithAi, saveLayout, saveReport, sendMyPartNow, sendReport, skipReport } from "./actions";
+import { approveBuiltMessage, approveMyPart, builtMessage, checkAgain, loadCampaignEvents, refreshSlackMessage, regenerate, reopenReport, reviseWithAi, saveLayout, saveReport, sendMyPartNow, sendReport, setReportCampaignExcluded, skipReport } from "./actions";
 import { RegenerateButton, UndoRegenerate } from "./regenerate-button";
+import { NextStepsAct } from "./next-steps-act";
+import type { WriteStatus } from "@/lib/write-status-core";
 
 // One report, start to finish, in three steps: the report (a live preview of the document: click any line to change
 // it, or ask the AI on the side and watch it change), then the Slack message (shown as it will look in the client's
@@ -131,11 +133,14 @@ export function ReportStudio({
   client,
   bundle,
   slack,
+  act = null,
 }: {
   report: StudioReport;
   client: { name: string; slug: string; hasChannel: boolean };
   bundle: StudioBundle | null;
   slack: { connected: boolean; name: string | null; image: string | null; me: string };
+  /** Acting on the report's next steps: whether changes can be written to its account, and who can switch them on */
+  act?: { write: WriteStatus | null; canSwitch: boolean } | null;
 }) {
   const router = useRouter();
   const built = report.kind === "built";
@@ -161,6 +166,34 @@ export function ReportStudio({
   // The metrics the buyer chose: saved on the report and as this client's layout for the next one
   const [layout, setLayoutState] = useState<ReportLayout | null>(report.layout);
   const [addingMetric, setAddingMetric] = useState<"tiles" | "table" | "columns" | "campaign" | null>(null);
+  // Campaigns excluded from the KPI here (a client-run campaign): gone from the page at once, with an undo, and out of
+  // the numbers once the report is regenerated. `excluding`: the one waiting on its confirm. `restored`: counted again.
+  const [excluding, setExcluding] = useState<string | null>(null);
+  const [gone, setGone] = useState<{ id: string | null; name: string }[]>([]);
+  const [restored, setRestored] = useState<string[]>([]);
+  const excludeCampaign = (c: { id: string | null; name: string }, on: boolean) => {
+    setExcluding(null);
+    const before = gone;
+    const was = restored;
+    setGone(on ? [...gone.filter((x) => x.name !== c.name), c] : gone.filter((x) => x.name !== c.name));
+    if (!on) setRestored([...new Set([...restored, c.name])]);
+    start(async () => {
+      const r = await setReportCampaignExcluded(report.id, c, on);
+      if (!r.ok) {
+        setGone(before);
+        setRestored(was);
+        return setNote({ ok: false, text: r.error });
+      }
+      setNote(on ? null : { ok: true, text: `${c.name} counts again in ${client.name}'s KPI, audits and reports. Regenerate to bring it back into this report.` });
+    });
+  };
+  const regenerateNow = () =>
+    start(async () => {
+      const r = await regenerate(report.id);
+      if (!r.ok) return setNote({ ok: false, text: r.error });
+      setGone([]);
+      router.refresh();
+    });
   const setLayout = (next: ReportLayout) => {
     setLayoutState(next);
     start(async () => {
@@ -356,6 +389,27 @@ export function ReportStudio({
       </div>
 
       {note && <p className={`rounded-[12px] px-4 py-3 text-sm ${note.ok ? "bg-ok-soft text-ok" : "bg-bad-soft text-bad"}`}>{note.text}</p>}
+      {gone.length > 0 && !busy && (
+        <div className="grid gap-2">
+          {gone.map((g) => (
+            <div key={g.name} className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[14px] border border-line bg-surface px-4 py-3">
+              <p className="min-w-0 flex-1 basis-64 text-[13px] leading-snug text-muted">
+                <span className="font-medium text-fg">{g.name}</span> is excluded from {client.name}&rsquo;s KPI, audits and reports. Regenerate to redraw this report&rsquo;s numbers without it.
+              </p>
+              <div className="flex shrink-0 gap-1.5">
+                {!sent && (
+                  <button type="button" disabled={pending} onClick={regenerateNow} className="h-11 rounded-full bg-fg px-4 text-[13px] font-medium text-bg disabled:opacity-50 md:h-9">
+                    Regenerate now
+                  </button>
+                )}
+                <button type="button" disabled={pending} onClick={() => excludeCampaign(g, false)} className="h-11 rounded-full border border-line px-4 text-[13px] text-muted hover:text-fg disabled:opacity-50 md:h-9">
+                  Undo
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       {report.regen && !busy && !sent && <UndoRegenerate key={report.regen.at} id={report.id} at={report.regen.at} by={report.regen.by} />}
 
       {step === "report" && (
@@ -407,7 +461,8 @@ export function ReportStudio({
                   setSections({ ...sections, [k]: v ? sections[k].map((y, j) => (j === Number(n) ? v : y)) : sections[k].filter((_, j) => j !== Number(n)) });
                 };
                 // The metrics on the page now, as the PDF draws them
-                const m = report.metrics;
+                const goneNames = new Set(gone.map((g) => g.name));
+                const m = report.metrics && goneNames.size ? { ...report.metrics, campaigns: report.metrics.campaigns.filter((c) => !goneNames.has(c.name)) } : report.metrics;
                 const monthlyTiles = report.kind === "monthly";
                 const tiles = m ? tileKeys(m, layout, monthlyTiles) : [];
                 const table = layout?.table?.length ? layout.table : TABLE_DEFAULT;
@@ -419,6 +474,8 @@ export function ReportStudio({
                 const shownCampaigns = m ? m.campaigns.filter((c) => !hide.includes(c.name)).slice(0, limit).map((c) => c.name) : [];
                 const offPage = m ? m.campaigns.filter((c) => !shownCampaigns.includes(c.name) && !add.includes(c.name)) : [];
                 const list = { tiles, table, columns };
+                // Excluded here: off the page right away (the numbers follow on regenerate)
+                const shownLayout: ReportLayout | null = goneNames.size ? { ...layout, campaigns: { ...(layout?.campaigns ?? {}), hide: [...new Set([...hide, ...goneNames])] } } : layout;
                 const swap = (where: "tiles" | "table" | "columns", i: number, k: MetricKey | null) => {
                   const now = [...list[where]];
                   if (k) now[i] = k;
@@ -546,6 +603,33 @@ export function ReportStudio({
                       >
                         Take it out of the report
                       </button>
+                      {excluding === name ? (
+                        <div className="grid gap-2 rounded-[12px] border border-warn/40 bg-warn-soft px-3 py-2.5">
+                          <p className="text-[12.5px] leading-snug text-fg">
+                            Leave &ldquo;{name}&rdquo; out everywhere? It stops counting in {client.name}&rsquo;s KPI, audits and every report, like a campaign the client runs themselves. You can undo it.
+                          </p>
+                          <div className="flex flex-wrap gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                excludeCampaign({ id: c?.id ?? null, name }, true);
+                                close();
+                              }}
+                              className="h-10 rounded-full bg-fg px-4 text-[13px] font-medium text-bg md:h-9"
+                            >
+                              Exclude it
+                            </button>
+                            <button type="button" onClick={() => setExcluding(null)} className="h-10 rounded-full px-3 text-[13px] text-muted hover:text-fg md:h-9">
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button type="button" onClick={() => setExcluding(name)} className="min-h-10 rounded-[10px] px-3 py-2 text-left text-[13px] leading-snug text-muted hover:bg-surface-2 hover:text-fg">
+                          Exclude this campaign from reports and audits
+                          <span className="block text-[11.5px] text-faint">For a campaign the client runs themselves</span>
+                        </button>
+                      )}
                     </>
                   );
                 };
@@ -609,6 +693,30 @@ export function ReportStudio({
                           ) : (
                             <p className="text-[12.5px] text-faint">Every campaign that spent in the period is already in the report.</p>
                           ))}
+                        {(() => {
+                          // Campaigns this report's numbers leave out, with the ones excluded by hand one tap from counting again
+                          const out = (report.metrics?.leftOut ?? []).filter((c) => !restored.includes(c.name) && !goneNames.has(c.name));
+                          if (!out.length) return null;
+                          return (
+                            <div className="flex flex-wrap items-center gap-1.5 border-t border-line pt-2 text-[12.5px]">
+                              <span className="mr-1 text-faint">Not in this report:</span>
+                              {out.map((c) => (
+                                <span key={c.id} className="inline-flex min-h-9 max-w-full items-center gap-2 rounded-full bg-surface-2 py-1 pl-3 pr-1 max-md:min-h-10">
+                                  <span className="min-w-0 truncate text-muted" title={c.why === "match" ? "Outside the KPI's campaign match" : "Excluded from the KPI"}>
+                                    {c.name} <span className="tabular text-faint">· ${Math.round(c.spend).toLocaleString("en-US")}</span>
+                                  </span>
+                                  {c.why === "excluded" ? (
+                                    <button type="button" disabled={pending} onClick={() => excludeCampaign({ id: c.id, name: c.name }, false)} className="h-7 shrink-0 rounded-full px-2.5 text-[12px] text-brand-text hover:bg-surface disabled:opacity-50 max-md:h-8">
+                                      Count it again
+                                    </button>
+                                  ) : (
+                                    <span className="pr-2 text-[11.5px] text-faint">outside the match</span>
+                                  )}
+                                </span>
+                              ))}
+                            </div>
+                          );
+                        })()}
                         <div className="flex flex-wrap items-center gap-1.5 border-t border-line pt-2 text-[12.5px]">
                           <span className="mr-1 text-faint">Add:</span>
                           {[...LISTS, ["extras", extras.trim() ? "To the note" : "A note (CRM sales, other channels)"] as const].map(([k, label]) => (
@@ -642,8 +750,8 @@ ${t}` : t);
                     <PdfPreview
                       source={`/api/reports/${report.id}/preview${joint ? "?whole=1" : ""}`}
                       baseKey={`${report.status}:${JSON.stringify(report.metrics ?? null).length}`}
-                      patch={(input) => ({ ...input, parts: input.parts.map((p) => (p.platform === report.platform ? { ...p, sections: sections ?? p.sections, extras, layout } : p)) })}
-                      patchKey={JSON.stringify({ sections, extras, layout })}
+                      patch={(input) => ({ ...input, parts: input.parts.map((p) => (p.platform === report.platform ? { ...p, sections: sections ?? p.sections, extras, layout: shownLayout } : p)) })}
+                      patchKey={JSON.stringify({ sections, extras, layout: shownLayout })}
                       fields={fields}
                       editable={editable}
                       onSave={(id, v) => save(id, v)}
@@ -666,6 +774,7 @@ ${t}` : t);
                 </button>
               )}
             </div>
+            {act && sections && !busy && <NextStepsAct reportId={report.id} platform={report.platform} steps={[...sections.next, ...(sections.stories ?? []).map((st) => st.next)]} write={act.write} canSwitch={act.canSwitch} />}
           </div>
 
           {/* The side: ask the AI for a change (the document updates), or the QA's checks */}

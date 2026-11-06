@@ -9,6 +9,7 @@ import { metaConfigured } from "@/lib/context/meta";
 import type { AuditResult } from "@/lib/audit";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { writeStatus, type WriteStatus } from "@/lib/write-status";
 
 // Turning an audit action or a sprint move into changes in the ad account (Google Ads or Meta), then applying them on
 // confirm. Meta writes also pass the sandbox switch (src/lib/meta-write.ts).
@@ -24,6 +25,10 @@ export type ChangeView = {
   canApply: boolean;
   /** The ad account (digits), for links straight to each object */
   account: string;
+  /** Whether applying would actually write to the account (live changes on for the client), read before pressing */
+  write: WriteStatus;
+  /** Execs can switch live changes on right from the card */
+  canSwitch: boolean;
 };
 
 type From = { source: "audit"; auditId: string; index: number } | { source: "sprint"; actionId: string };
@@ -46,8 +51,9 @@ async function resolve(from: From) {
 async function view(id: string): Promise<ChangeView | null> {
   const me = await requireStaff();
   const db = await createClient();
-  const { data: c } = await db.from("ad_changes").select("id, platform, account, status, ops, note, error, applied_at, applier:profiles!ad_changes_applied_by_fkey(full_name), kpi_targets(owner_id)").eq("id", id).maybeSingle();
+  const { data: c } = await db.from("ad_changes").select("id, client_id, platform, account, status, ops, note, error, applied_at, applier:profiles!ad_changes_applied_by_fkey(full_name), kpi_targets(owner_id)").eq("id", id).maybeSingle();
   if (!c) return null;
+  const write = await writeStatus(createAdminClient(), { clientId: c.client_id as string | null, account: String(c.account ?? "") }, c.platform === "meta" ? "meta" : "google");
   return {
     id: c.id,
     status: c.status as ChangeView["status"],
@@ -58,7 +64,54 @@ async function view(id: string): Promise<ChangeView | null> {
     appliedAt: c.applied_at,
     account: String(c.account ?? ""),
     canApply: canApply(me, (c.kpi_targets as unknown as { owner_id: string | null } | null)?.owner_id ?? null, c.platform as string),
+    write,
+    canSwitch: me.isExec,
   };
+}
+
+/**
+ * Whether a change planned from this action could be written to its account right now, for the button before it's
+ * pressed (canSwitch: execs can switch live changes on right there).
+ */
+export async function writeFor(from: From): Promise<{ write: WriteStatus; canSwitch: boolean } | null> {
+  const me = await requireStaff();
+  if (!adminConfigured()) return null;
+  const r = await resolve(from);
+  if (!r) return null;
+  const admin = createAdminClient();
+  const { data: t } = await admin.from("kpi_targets").select("client_id, platform, ad_account_id").eq("id", r.targetId).maybeSingle();
+  if (!t || !["google", "meta"].includes(t.platform as string)) return null;
+  return { write: await writeStatus(admin, { clientId: t.client_id as string, account: (t.ad_account_id as string | null) ?? null }, t.platform as "meta" | "google"), canSwitch: me.isExec };
+}
+
+/** The same read for a KPI's own account (its #1 problem's plan, the next step written on the board). */
+export async function writeForTarget(targetId: string): Promise<{ write: WriteStatus; canSwitch: boolean } | null> {
+  const me = await requireStaff();
+  if (!adminConfigured()) return null;
+  // Read with the viewer's own access first: only someone who can see the KPI learns about its account
+  const { data: t } = await (await createClient()).from("kpi_targets").select("client_id, platform, ad_account_id").eq("id", targetId).maybeSingle();
+  if (!t || !["google", "meta"].includes(t.platform as string)) return null;
+  return { write: await writeStatus(createAdminClient(), { clientId: t.client_id as string, account: (t.ad_account_id as string | null) ?? null }, t.platform as "meta" | "google"), canSwitch: me.isExec };
+}
+
+/**
+ * "Plan the change" on a next step written for a KPI (the board's #1 problem and its plan): the buyer agent turns it
+ * into the exact changes in that KPI's account, on the same plan card as the client chat. Nothing is written until
+ * someone allowed confirms, and only while live changes are on.
+ */
+export async function planTargetStep(targetId: string, step: string): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  if (!adminConfigured()) return { ok: false, error: "Can't do this here." };
+  const { data: t } = await (await createClient()).from("kpi_targets").select("id, client_id, platform, ad_account_id").eq("id", targetId).maybeSingle();
+  if (!t || !t.ad_account_id || !["google", "meta"].includes(t.platform as string)) return { ok: false, error: "This account has no ad account to change." };
+  const text = step.replace(/\s+/g, " ").trim().slice(0, 1500);
+  if (text.length < 4) return { ok: false, error: "That step is empty." };
+  const admin = createAdminClient();
+  const { startChatChange, planChatChange } = await import("@/lib/chat-changes");
+  const r = await startChatChange(admin, t.client_id as string, me.id, t.platform as "meta" | "google", `A next step from the KPI board: ${text}`, t.id as string);
+  if ("error" in r) return { ok: false, error: r.error };
+  after(() => planChatChange(admin, r.id));
+  return { ok: true, id: r.id };
 }
 
 /** The latest change planned from this action, if any. */
@@ -113,6 +166,7 @@ export async function applyPlanned(id: string, pick?: number[]): Promise<{ ok: t
   const c = await view(id);
   if (!c) return { ok: false, error: "Not found." };
   if (!c.canApply) return { ok: false, error: "Only the account's buyer, the head of its platform or an exec can apply changes." };
+  if (!c.write.live) return { ok: false, error: c.write.reason ?? "Live changes are off for this client." };
   try {
     const status = await applyChange(createAdminClient(), id, me, pick);
     revalidatePath("/kpis", "layout");

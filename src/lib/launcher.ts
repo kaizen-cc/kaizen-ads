@@ -3,7 +3,7 @@ import { reworkAds } from "@/lib/partial-approval";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { metaGraph, pageLeadForms } from "@/lib/context/meta";
-import { metaWrite, metaWriteSetting, writeBlocked } from "@/lib/meta-write";
+import { liveAccounts, metaWrite, metaWriteSetting, writeBlocked } from "@/lib/meta-write";
 
 // The launcher: a ticket's approved creative and copy, pushed to Meta as PAUSED ads for the buyer to QA and turn on.
 //
@@ -334,7 +334,8 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
     if (!ticket) throw new Error("Ticket not found");
     const setting = await metaWriteSetting(admin);
     const clientAccount = (ticket.clients.meta_ad_account_id ?? "").replace(/\D/g, "");
-    const sandbox = setting.sandbox;
+    // A client an exec switched live changes on for launches into its own account, even while the sandbox is on
+    const sandbox = setting.sandbox && !(clientAccount && (await liveAccounts(admin, "meta")).has(clientAccount));
     const account = sandbox ? setting.sandboxAccount : clientAccount;
 
     if (sandbox) add("sandbox", "Sandbox", "warn", `A test launch into Kaizen's own ad account (${setting.sandboxAccount}). Nothing reaches ${ticket.clients.name}'s account, and the ticket stays in Ready to launch.`);

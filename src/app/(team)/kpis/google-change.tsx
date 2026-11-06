@@ -5,11 +5,15 @@ import { useEffect, useState, useTransition } from "react";
 import type { PlannedOp } from "@/lib/ad-changes";
 import { lineOf, opLink } from "@/lib/chat-change-core";
 import { OpLink } from "@/components/object-links";
-import { applyPlanned, changeFor, discardPlanned, loadChange, planFrom, type ChangeView } from "./change-actions";
+import { WriteChip, WriteOff } from "@/components/write-gate";
+import type { WriteStatus } from "@/lib/write-status-core";
+import { applyPlanned, changeFor, discardPlanned, loadChange, planFrom, writeFor, type ChangeView } from "./change-actions";
 
 // "Make this change in Google Ads / Meta" on an audit action or a sprint move: the buyer agent turns it into the exact
 // changes (from the account's live setup), the platform checks each one without applying it (a dry run), and someone
-// allowed confirms. Meta writes also pass the sandbox switch in Settings.
+// allowed confirms. Meta writes also pass the sandbox switch in Settings. Whether it can actually write (the client's
+// live changes) shows before anything is pressed: off, the button gives way to "Live changes are off for <Client>" and
+// the plan is a checklist to do by hand, each line linked to its place in Ads Manager or Google Ads.
 
 type From = { source: "audit"; auditId: string; index: number } | { source: "sprint"; actionId: string };
 
@@ -22,7 +26,7 @@ const P: Record<Platform, { name: string; full: string; head: string; border: st
   meta: { name: "Meta", full: "Meta", head: "the Head of Meta", border: "border-[#0866ff]/45 hover:bg-[#0866ff]/10", panel: "border-[#0866ff]/35 bg-[#0866ff]/[0.06]", text: "text-[#7aa7ff]", button: "bg-[#0866ff]", spin: "border-[#7aa7ff]" },
 };
 
-function Line({ op, platform, account }: { op: PlannedOp; platform: Platform; account: string }) {
+function Line({ op, platform, account, manual = false }: { op: PlannedOp; platform: Platform; account: string; manual?: boolean }) {
   const [what, from, to] = (() => {
     switch (op.kind) {
       case "campaign_status":
@@ -51,7 +55,7 @@ function Line({ op, platform, account }: { op: PlannedOp; platform: Platform; ac
     <li className="grid gap-1 rounded-[12px] border border-line bg-bg/50 px-3.5 py-2.5">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <span className="min-w-0 break-words text-sm">{what}</span>
-        {state && <span className={`text-[11px] ${tone}`}>{state === "checked" ? `✓ ${P[platform].name} says it'll go through` : state === "applied" ? "✓ Applied" : `× ${state}`}</span>}
+        {state ? <span className={`text-[11px] ${tone}`}>{state === "checked" ? `✓ ${P[platform].name} says it'll go through` : state === "applied" ? "✓ Applied" : `× ${state}`}</span> : manual && <span className="text-[11px] text-faint">To do by hand</span>}
       </div>
       <p className="break-words text-sm">
         {from != null && (
@@ -75,10 +79,17 @@ export function GoogleChange({ from, disabled, platform = "google" }: { from: Fr
   const router = useRouter();
   const [c, setC] = useState<ChangeView | null>(null);
   const [open, setOpen] = useState(false);
+  // Can it write to the account at all: read before anything is pressed
+  const [gate, setGate] = useState<{ write: WriteStatus; canSwitch: boolean } | null>(null);
   // The last change planned from this action, if there is one (one under way opens)
   const key = from.source === "audit" ? `${from.auditId}:${from.index}` : from.actionId;
   useEffect(() => {
     let live = true;
+    void writeFor(from)
+      .then((g) => {
+        if (live) setGate(g);
+      })
+      .catch(() => null);
     void changeFor(from).then((x) => {
       if (!live || !x) return;
       setC(x);
@@ -93,6 +104,15 @@ export function GoogleChange({ from, disabled, platform = "google" }: { from: Fr
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const busy = c?.status === "planning" || c?.status === "applying";
+  const write = c?.write ?? gate?.write ?? null;
+  const canSwitch = c?.canSwitch ?? gate?.canSwitch ?? false;
+  const off = write && !write.live ? write : null;
+  // Switched on by an exec right here: read it again, so Apply comes back without a reload
+  const nowLive = () =>
+    start(async () => {
+      setGate(await writeFor(from));
+      if (c) setC(await loadChange(c.id));
+    });
 
   // While the plan is being written (or applied), follow it
   useEffect(() => {
@@ -133,25 +153,34 @@ export function GoogleChange({ from, disabled, platform = "google" }: { from: Fr
 
   if (!open || !c)
     return (
-      <div className="flex flex-wrap items-center gap-2">
-        <button type="button" disabled={disabled || pending} onClick={plan} className={`inline-flex min-h-[40px] items-center gap-1.5 rounded-full border px-3 py-2 text-left text-xs disabled:opacity-50 md:min-h-0 md:px-2.5 md:py-0.5 md:text-[11px] ${p.border} ${p.text}`}>
-          <span aria-hidden>⚡</span>
-          {pending ? "Planning…" : c?.status === "applied" ? `Applied in ${p.full} · plan again` : `Make this change in ${p.full}`}
-        </button>
-        {c?.status === "applied" && !open && (
-          <button type="button" onClick={() => setOpen(true)} className="py-2 text-[11px] text-faint hover:text-fg md:py-0">
-            See what was applied
+      <div className="grid min-w-0 gap-2">
+        {off && c?.status !== "applied" && <WriteOff status={off} canSwitch={canSwitch} account={c?.account ?? null} compact onLive={nowLive} />}
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" disabled={disabled || pending} onClick={plan} className={`inline-flex min-h-[40px] items-center gap-1.5 rounded-full border px-3 py-2 text-left text-xs disabled:opacity-50 md:min-h-0 md:px-2.5 md:py-0.5 md:text-[11px] ${p.border} ${p.text}`}>
+            <span aria-hidden>{off ? "☰" : "⚡"}</span>
+            {pending ? "Planning…" : c?.status === "applied" ? `Applied in ${p.full} · plan again` : off ? "Plan it as a checklist" : `Make this change in ${p.full}`}
           </button>
-        )}
-        {error && <span className="text-[11px] text-bad">{error}</span>}
+          {c?.status === "applied" && !open && (
+            <button type="button" onClick={() => setOpen(true)} className="py-2 text-[11px] text-faint hover:text-fg md:py-0">
+              See what was applied
+            </button>
+          )}
+          {error && <span className="text-[11px] text-bad">{error}</span>}
+        </div>
       </div>
     );
 
-  const ready = c.ops.filter((o) => o.check?.ok && !o.result?.ok);
+  // Checked by the platform, or planned while live changes were off (not checked yet: the real write is checked anyway)
+  const ready = c.ops.filter((o) => o.check?.ok !== false && !o.result?.ok);
   return (
     <div className={`grid min-w-0 gap-3 rounded-[14px] border p-3.5 md:p-4 ${p.panel}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className={`text-[10px] font-semibold uppercase tracking-[0.16em] ${p.text}`}>Change in {p.full}</p>
+        <p className={`flex flex-wrap items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.16em] ${p.text}`}>
+          {off ? "Checklist" : "Change"} in {p.full}
+          <span className="normal-case tracking-normal">
+            <WriteChip status={c.write} />
+          </span>
+        </p>
         <button type="button" onClick={() => setOpen(false)} className="-my-2 py-2 pl-3 text-[11px] text-faint hover:text-fg md:my-0 md:py-0 md:pl-0">
           Hide
         </button>
@@ -167,7 +196,7 @@ export function GoogleChange({ from, disabled, platform = "google" }: { from: Fr
       {c.ops.length > 0 && (
         <ul className="grid gap-2">
           {c.ops.map((op, i) => (
-            <Line key={i} op={op} platform={platform} account={c.account} />
+            <Line key={i} op={op} platform={platform} account={c.account} manual={Boolean(off)} />
           ))}
         </ul>
       )}
@@ -195,9 +224,11 @@ export function GoogleChange({ from, disabled, platform = "google" }: { from: Fr
         </div>
       )}
 
+      {off && ["ready", "partial", "failed"].includes(c.status) && <WriteOff status={off} canSwitch={canSwitch} account={c.account} onLive={nowLive} />}
+
       {!confirm && (
         <div className="flex flex-wrap items-center gap-2">
-          {(c.status === "ready" || c.status === "partial") && ready.length > 0 &&
+          {(c.status === "ready" || c.status === "partial") && ready.length > 0 && !off &&
             (c.canApply ? (
               <button type="button" onClick={() => setConfirm(true)} disabled={pending} className={`h-11 w-full rounded-full px-4 text-sm font-medium text-white hover:brightness-110 disabled:opacity-60 sm:w-auto md:h-9 ${p.button}`}>
                 Apply {ready.length} {ready.length === 1 ? "change" : "changes"}

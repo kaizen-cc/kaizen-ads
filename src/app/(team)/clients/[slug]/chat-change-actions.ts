@@ -2,7 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { isExecOrLead, requireStaff, type Staff } from "@/lib/auth";
-import { applyChange, checkOps, googleWritesOn, type PlannedOp } from "@/lib/ad-changes";
+import { applyChange, checkOps, type PlannedOp } from "@/lib/ad-changes";
+import { writeStatus, type WriteStatus } from "@/lib/write-status";
 import { editOp, edited, type OpEdit } from "@/lib/chat-change-core";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -22,6 +23,10 @@ export type ChatChangeView = {
   /** Live changes for this client: off means confirm isn't possible, only a checklist */
   live: boolean;
   liveNote: string | null;
+  /** The full read for the card's header and the disabled state (null for a team change) */
+  write: WriteStatus | null;
+  /** Execs can switch live changes on right from the card */
+  canSwitch: boolean;
   canConfirm: boolean;
   savedAt: string | null;
   appliedBy: string | null;
@@ -43,16 +48,11 @@ async function mayConfirm(me: Staff, row: { platform: string; client_id: string;
   return Boolean(seat) || (t as { owner_id?: string | null } | null)?.owner_id === me.id;
 }
 
-async function liveFor(platform: string, account: string): Promise<{ live: boolean; note: string | null }> {
-  if (platform === "team") return { live: true, note: null };
-  const admin = createAdminClient();
-  if (platform === "meta") {
-    const { writeBlocked } = await import("@/lib/meta-write");
-    const blocked = await writeBlocked(admin, account);
-    return { live: !blocked, note: blocked };
-  }
-  const on = await googleWritesOn(admin, account);
-  return { live: on, note: on ? null : "Live changes are off for this client's Google Ads: an exec switches them on in the client's Team & setup." };
+/** Whether confirming would write to the account: the same read as every apply button (src/lib/write-status.ts) */
+async function liveFor(platform: string, account: string, clientId: string): Promise<{ live: boolean; note: string | null; write: WriteStatus | null }> {
+  if (platform === "team") return { live: true, note: null, write: null };
+  const write = await writeStatus(createAdminClient(), { clientId, account }, platform === "google" ? "google" : "meta");
+  return { live: write.live, note: write.reason, write };
 }
 
 async function view(id: string): Promise<ChatChangeView | null> {
@@ -68,7 +68,7 @@ async function view(id: string): Promise<ChatChangeView | null> {
     error = "The plan took too long and stopped. Ask again in the chat.";
     await createAdminClient().from("ad_changes").update({ status, error, updated_at: new Date().toISOString() }).eq("id", id).eq("status", "planning");
   }
-  const [{ live, note: liveNote }, canConfirm] = await Promise.all([liveFor(c.platform as string, c.account as string), mayConfirm(me, { platform: c.platform as string, client_id: c.client_id as string, target_id: c.target_id as string | null })]);
+  const [{ live, note: liveNote, write }, canConfirm] = await Promise.all([liveFor(c.platform as string, c.account as string, c.client_id as string), mayConfirm(me, { platform: c.platform as string, client_id: c.client_id as string, target_id: c.target_id as string | null })]);
   return {
     id: c.id as string,
     platform: c.platform as ChatChangeView["platform"],
@@ -80,6 +80,8 @@ async function view(id: string): Promise<ChatChangeView | null> {
     error,
     live,
     liveNote,
+    write,
+    canSwitch: me.isExec,
     canConfirm,
     savedAt: (c.saved_at as string | null) ?? null,
     appliedBy: (c.applier as unknown as { full_name: string } | null)?.full_name ?? null,
