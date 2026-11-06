@@ -136,7 +136,7 @@ export async function buildBible(admin: SupabaseClient, clientId: string, opts: 
   const [{ data: client }, ctx, { data: prev }] = await Promise.all([
     admin.from("clients").select("id, name, website").eq("id", clientId).maybeSingle(),
     clientContext(admin, clientId),
-    admin.from("client_brand_bibles").select("markdown, version, sources_pasted, research, researched_at").eq("client_id", clientId).maybeSingle(),
+    admin.from("client_brand_bibles").select("markdown, version, sources_pasted, research, researched_at, generated_at").eq("client_id", clientId).maybeSingle(),
   ]);
   if (!client || !ctx) return "missing";
   const sources = opts.pasted?.trim() || prev?.sources_pasted || (await intakeSource(admin, clientId));
@@ -161,6 +161,8 @@ export async function buildBible(admin: SupabaseClient, clientId: string, opts: 
     // Research is the expensive half: kept as soon as it's done, and reused for 30 days (a retry or an update within
     // the month doesn't pay for it again). Gathering pages runs on Sonnet with a few searches; the strategy is Opus.
     const fresh = prev?.research && prev.researched_at && Date.now() - Date.parse(prev.researched_at) < 30 * 86_400_000;
+    // A monthly refresh only needs what changed since the first, full research: fewer searches and pages read
+    const light = opts.reason === "monthly" && Boolean(prev?.research) && Boolean(prev?.generated_at);
     const aim = `What Kaizen already knows about this client (don't repeat it; use it to aim the research):\n${context.slice(0, 10000)}`;
     // The review bank, collected for real (the store's review app, Trustpilot, Google, comments on their Facebook and
     // Instagram posts and ads) while the web research runs; a failure here never stops the build
@@ -175,9 +177,9 @@ export async function buildBible(admin: SupabaseClient, clientId: string, opts: 
             researchWeb({
               agent: "brandbible",
               model: "sonnet",
-              maxSearches: 10,
-              maxFetches: 10,
-              maxTurns: 5,
+              maxSearches: light ? 4 : 10,
+              maxFetches: light ? 4 : 10,
+              maxTurns: light ? 3 : 5,
               label: `brand bible research ${client.name}`,
               system: "You research a client for Kaizen Marketing's Brand Bible. Follow the research playbook skill. Report only what you actually found, each fact with its full source URL and the date you read it.",
               prompt: `Research ${client.name}${client.website ? ` (website: ${client.website})` : ""}: the brand itself. Today is ${today()}.
@@ -196,9 +198,9 @@ ${aim}`,
             researchWeb({
               agent: "brandbible",
               model: "sonnet",
-              maxSearches: 12,
-              maxFetches: 10,
-              maxTurns: 5,
+              maxSearches: light ? 4 : 12,
+              maxFetches: light ? 4 : 10,
+              maxTurns: light ? 3 : 5,
               label: `brand bible research ${client.name} (market)`,
               system: "You research a client's market for Kaizen Marketing's Brand Bible. Follow the research playbook skill. Report only what you actually found, each fact with its full source URL and the date you read it.",
               prompt: `Research the market around ${client.name}${client.website ? ` (${client.website})` : ""}. Today is ${today()}.
@@ -249,7 +251,7 @@ export async function writeBible(admin: SupabaseClient, clientId: string): Promi
   const [{ data: client }, ctx, { data: row }] = await Promise.all([
     admin.from("clients").select("id, name, slug").eq("id", clientId).maybeSingle(),
     clientContext(admin, clientId),
-    admin.from("client_brand_bibles").select("markdown, version, sources_pasted, research, build_stage, review_bank, status, reviewed_at, reviewed_by, build_reason, content_hash").eq("client_id", clientId).maybeSingle(),
+    admin.from("client_brand_bibles").select("markdown, version, sources_pasted, research, build_stage, review_bank, status, reviewed_at, reviewed_by, build_reason, content_hash, generated_at").eq("client_id", clientId).maybeSingle(),
   ]);
   if (!client || !ctx || !row) return "missing";
   const { renderReviewBank, placeReviewBank } = await import("@/lib/review-bank");
@@ -270,7 +272,9 @@ export async function writeBible(admin: SupabaseClient, clientId: string): Promi
       // A full Bible runs 25-40k tokens of writing. Medium effort keeps the thinking before it short enough that the whole
       // run fits the server's time limit (high effort spent the 64k ceiling on thinking and ran out before finishing)
       maxTokens: 100000,
-      override: { effort: "medium" },
+      // The first Bible, a new intake and a hand-started rebuild are written on the top model; the monthly refresh on the
+      // mid-tier one (it updates a Bible that already exists)
+      override: row.build_reason === "monthly" && row.markdown && row.generated_at ? { model: "sonnet", effort: "medium" } : { effort: "medium" },
       onText: () => {},
       system: "You are Kaizen Marketing's brand strategist.",
       schema: BRAND_BIBLE_SCHEMA,
