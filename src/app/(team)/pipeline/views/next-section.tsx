@@ -6,20 +6,12 @@ import { NextList } from "./next-list";
 
 /**
  * Next for me, on the Overview under the recap: everything on the signed-in person (tickets, decisions, their
- * accounts), in folding groups. The Google team also gets the Google ideas waiting on them; team members the patterns
+ * accounts), in folding cards under a header with its numbers (the header and its title live in NextList). The Google team also gets the Google ideas waiting on them; team members the patterns
  * that work for clients like theirs (execs and leads have those in the themes above). Linked to as /pipeline#next.
  */
 export function NextSection({ data, me, deploys = [], patterns = null, canBrief = false }: { data: NextForMe; me: string; deploys?: Deploy[]; patterns?: PatternsState | null; canBrief?: boolean }) {
-  const n = data.now.length + data.decide.length;
   return (
     <section id="next" aria-labelledby="next-title" className="grid scroll-mt-24 gap-6">
-      <div className="grid gap-1.5">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">Next for me</p>
-        <h2 id="next-title" className="font-heading text-2xl tracking-tight md:text-[28px]">
-          {n ? `${n} ${n === 1 ? "thing needs" : "things need"} you` : "Everything that's next for you"}
-        </h2>
-        <p className="text-sm text-muted">Your tickets, decisions and accounts in one place, most urgent first.</p>
-      </div>
       <NextList data={data} me={me} />
       {deploys.length > 0 && (
         <div className="grid gap-3">
