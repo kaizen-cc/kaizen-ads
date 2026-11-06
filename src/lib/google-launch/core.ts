@@ -372,8 +372,9 @@ const words = (s: string) => s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w
 /** The live campaigns most likely to fit what's being launched: same words in the name, then Search and spend */
 export function relevantCampaigns(campaigns: AccountCampaign[], about: string, type: CampaignType | null = null, n = 4) {
   const want = new Set(words(about));
-  const score = (c: AccountCampaign) => words(c.name).filter((w) => want.has(w)).length * 100 + (c.status === "ENABLED" ? 50 : 0) + (type && c.type === type ? 30 : 0) + Math.min(40, c.spend30 / 50);
-  return [...campaigns].filter((c) => c.status !== "REMOVED" && ["SEARCH", "PERFORMANCE_MAX"].includes(c.type)).sort((a, b) => score(b) - score(a)).slice(0, n);
+  const score = (c: AccountCampaign) => words(c.name).filter((w) => want.has(w)).length * 100 + (c.status === "ENABLED" ? 1000 : 0) + (type && c.type === type ? 30 : 0) + Math.min(40, c.spend30 / 50);
+  // Only live campaigns: nothing added to a paused one runs
+  return [...campaigns].filter((c) => c.status === "ENABLED" && ["SEARCH", "PERFORMANCE_MAX"].includes(c.type)).sort((a, b) => score(b) - score(a)).slice(0, n);
 }
 
 export const campaignOption = (c: AccountCampaign) => `${c.name} (${c.type === "PERFORMANCE_MAX" ? "PMax" : "Search"}, ${c.status === "ENABLED" ? "on" : "paused"}, $${Math.round(c.spend30)} in 30 days)`;
@@ -457,7 +458,10 @@ export function followCampaign(questions: LaunchQuestion[], campaigns: AccountCa
     out = out.map((x) => {
       if (x.key !== "campaign") return x;
       const proposal = x.options.length && !x.options.includes(x.proposal) ? x.options[0] : x.proposal;
-      return named.length > 1 ? { ...x, proposal, answer: null, why: `Pick one campaign: that answer named ${named.length} (${named.map((c) => c.name).join(", ")}).` } : { ...x, proposal };
+      if (named.length > 1) return { ...x, proposal, answer: null, why: `Pick one campaign: that answer named ${named.length} (${named.map((c) => c.name).join(", ")}).` };
+      // Nothing added to a paused campaign runs: it isn't taken as the answer
+      if (named.length === 1 && named[0].status !== "ENABLED") return { ...x, proposal, answer: null, why: `${named[0].name} is paused, so nothing added there would run. Pick a live campaign or a new one.` };
+      return { ...x, proposal };
     });
   }
   const answer = out.find((x) => x.key === "campaign")?.answer ?? null;
@@ -467,7 +471,8 @@ export function followCampaign(questions: LaunchQuestion[], campaigns: AccountCa
     if (!camp) return x;
     if (!choice) return { ...x, options: [], proposal: "Pick the campaign first", answer: null, why: "The ad groups to choose from depend on the campaign." };
     if (choice.mode === "new") return { ...x, options: [NEW_AD_GROUP], proposal: NEW_AD_GROUP, answer: x.answer && !/new/i.test(x.answer) ? null : x.answer };
-    const inside = adGroups.filter((g) => g.campaignId === choice.id && g.status !== "REMOVED");
+    // Only live ad groups: nothing added to a paused one runs
+    const inside = adGroups.filter((g) => g.campaignId === choice.id && g.status === "ENABLED");
     const options = [...inside.slice(0, 8).map((g) => `${g.name}${g.status === "PAUSED" ? " (paused)" : ""}${g.rsas ? `, ${g.rsas} ad${g.rsas === 1 ? "" : "s"}` : ""}`), NEW_AD_GROUP];
     // An answer naming an ad group from another campaign no longer stands
     const ans = x.answer;

@@ -43,8 +43,11 @@ export function requiredQuestions(sheet: LaunchSheet, res: Resolution, today: st
   else out.push(q("budget", "What budget should this launch run on?", "The sheet doesn't give one Meta can take.", "Ask the client's monthly budget on the KPI board", []));
   // Where the ads land: an existing campaign or ad set (as it is, or a new ad set copied from one), else a new campaign
   const matched = res.existing.filter((e) => !e.related);
-  const camps = res.existing.filter((e) => e.level === "campaign").slice(0, 2);
-  const sets = res.existing.filter((e) => e.level === "adset").slice(0, 2);
+  const live = (e: { status: string }) => e.status === "ACTIVE";
+  const byLive = <T extends { status: string }>(xs: T[]) => [...xs].sort((x, y) => Number(live(y)) - Number(live(x)));
+  // Only live ones: nothing added to a paused campaign or ad set runs
+  const camps = byLive(res.existing.filter((e) => e.level === "campaign" && live(e))).slice(0, 2);
+  const sets = byLive(res.existing.filter((e) => e.level === "adset" && live(e))).slice(0, 2);
   const options = [
     ...camps.map((c) => `Add to the campaign "${c.name}", a new ad set per Page`),
     ...sets.slice(0, 1).map((s) => `Into the ad set "${s.name}" as it is`),
