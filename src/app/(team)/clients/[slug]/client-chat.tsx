@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { requestAudit } from "@/components/audit-watcher";
+import { useFabClear } from "@/components/fab-clear";
 import type { ChatTurn } from "@/lib/handoff";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { askClientAi, clearClientAi, loadClientAi, openClientDoc, undoClientDesk } from "./actions";
@@ -91,6 +92,8 @@ export function ClientChat({ clientId, client, initial, targets, live, variant =
   // On the client page the open chat is in the address (?chat=1), so back closes it and a link opens it. The inline
   // button sits on cards that can share a page, so it keeps its own.
   const floating = variant === "floating";
+  // The "Ask about" pill owns the bottom-right corner: the feedback bubble sits above it
+  useFabClear(72, floating);
   const inAddress = useParam("chat") === "1";
   const [openHere, setOpenHere] = useState(false);
   const open = floating ? inAddress : openHere;

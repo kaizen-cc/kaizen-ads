@@ -224,7 +224,8 @@ export function FeedbackBubble() {
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={() => (drag.current = null)}
-          style={{ transform: `translateY(${-lift}px)`, touchAction: "none" }}
+          // Above a page's own corner button (--fab-clear, set by useFabClear), plus wherever it was dragged
+          style={{ transform: `translateY(calc(${-lift}px - var(--fab-clear, 0px)))`, touchAction: "none" }}
           className="group fixed bottom-[calc(74px+env(safe-area-inset-bottom))] right-0 z-40 grid h-12 w-11 cursor-grab select-none place-items-center rounded-l-full bg-brand text-white shadow-[0_10px_28px_-10px_rgba(178,30,44,0.85)] transition-[background-color,transform] hover:bg-brand-hover active:cursor-grabbing md:bottom-6 md:right-6 md:h-14 md:w-14 md:rounded-full md:hover:scale-105"
         >
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
