@@ -84,10 +84,11 @@ export function useClaudeImport(onProgress: () => void) {
   return { job, start, clear: () => setJob((j) => (j?.running ? j : null)) };
 }
 
-type Step = { at: "drop" } | { at: "reading"; pct: number } | { at: "preview"; fileName: string; convs: ImportedConversation[]; projects: ImportedProject[]; already: number; account: string | null; notice: string | null };
+type Step = { at: "drop" } | { at: "reading"; pct: number; label?: string } | { at: "preview"; fileName: string; convs: ImportedConversation[]; projects: ImportedProject[]; already: number; account: string | null; notice: string | null };
 type Problem = { text: string; emails?: string[] };
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+const bytes = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.max(n >= 1e6 ? Math.round(n / 1e6) : 0, n > 0 ? 1 : 0)} MB`);
 const listOf = (names: string[]) => (names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`);
 const when = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const linkClass = "font-medium text-brand-text underline decoration-brand/30 underline-offset-2 hover:decoration-brand";
@@ -131,21 +132,25 @@ export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpe
     setError(null);
     setStep({ at: "reading", pct: 0 });
     try {
-      const raw = await readClaudeExportFiles(files, (d, t) => setStep({ at: "reading", pct: Math.round((d / t) * 100) }));
+      // An organization's export is narrowed to their own chats as it streams (others' are never parsed or kept)
+      const raw = await readClaudeExportFiles(files, {
+        email,
+        onProgress: (p) => setStep({ at: "reading", pct: Math.round((p.done / p.total) * 100), label: `Reading ${p.file}, ${bytes(p.fileDone)} of ${bytes(p.fileTotal)}` }),
+      });
       const names = raw.files.map((f) => f.name);
-      if (!raw.conversations.length) {
-        throw new Error(
-          names.length
-            ? `No chats found in ${listOf(names)}. Your chats are in the conversations ZIP${names.length > 1 ? "s" : ""} (conversations-000.zip and so on), or conversations.json in an older export.`
-            : "Those files don't have any chats in them.",
-        );
-      }
-      // Only their own: an organization's export is narrowed to their chats here, before anything is shown or sent
+      // Only their own: what's left of an organization's export is narrowed here, before anything is shown or sent
       const own = ownChats(raw, email);
       if (!own.ok) {
         setStep({ at: "drop" });
         setError({ text: own.message, emails: own.emails });
         return;
+      }
+      if (!raw.conversations.length && !own.skippedChats) {
+        throw new Error(
+          names.length
+            ? `No chats found in ${listOf(names)}. Your chats are in the conversations ZIP${names.length > 1 ? "s" : ""} (conversations-000.zip and so on), or conversations.json in an older export.`
+            : "Those files don't have any chats in them.",
+        );
       }
       const all = parseConversations(own.conversations);
       if (!all.length) throw new Error(own.kind === "org" ? "You don't have any chats in this export." : `No chats with messages in ${listOf(names)}.`);
@@ -226,7 +231,7 @@ export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpe
             <DownloadStep
               key={`${manifest.createdAt ?? ""} ${manifest.files.map((f) => f.filename).join(" ")}`}
               manifest={manifest}
-              reading={step.at === "reading" ? step.pct : null}
+              reading={step.at === "reading" ? { pct: step.pct, label: step.label } : null}
               disabled={busy}
               error={error}
               onFiles={async (files) => {
@@ -288,13 +293,13 @@ export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpe
                 className={`grid min-h-[150px] place-items-center rounded-[20px] border-2 border-dashed px-4 py-6 text-center transition disabled:cursor-default ${drag ? "border-brand bg-brand-soft/40" : "border-line hover:border-brand/40 hover:bg-ink/[0.02]"}`}
               >
                 {step.at === "reading" ? (
-                  <Reading pct={step.pct} />
+                  <Reading pct={step.pct} label={step.label} />
                 ) : running ? (
                   <span className="text-[13.5px] text-muted">One import at a time. This one keeps going while Kaizen AI is open.</span>
                 ) : (
                   <span className="grid gap-1">
                     <span className="text-[15px] font-medium text-fg">Drop the file from Claude&rsquo;s email here, or tap to choose it</span>
-                    <span className="text-[12.5px] text-faint">The .json from the email, the export ZIPs (up to 1.5 GB each, several at once is fine), or conversations.json</span>
+                    <span className="text-[12.5px] text-faint">The .json from the email, the export ZIPs (up to 4 GB each, several at once is fine), or conversations.json</span>
                   </span>
                 )}
               </button>
@@ -338,13 +343,14 @@ export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpe
   );
 }
 
-function Reading({ pct }: { pct: number }) {
+function Reading({ pct, label }: { pct: number; label?: string }) {
   return (
     <span className="grid w-full max-w-[320px] gap-2">
       <span className="text-[14px] font-medium text-fg">Reading your export…</span>
       <span className="h-1.5 overflow-hidden rounded-full bg-ink/[0.08]">
         <span className="block h-full rounded-full bg-brand transition-[width]" style={{ width: `${pct}%` }} />
       </span>
+      {label ? <span className="truncate text-[12.5px] tabular-nums text-muted">{label}</span> : null}
     </span>
   );
 }
@@ -379,7 +385,7 @@ const Check = ({ className = "" }: { className?: string }) => (
  * The manifest's parts the import needs, each with its link (opened by the person: the download needs their Claude
  * login), then the files they downloaded, checked against the list before they're read.
  */
-function DownloadStep({ manifest, reading, disabled, error, onFiles, onRead, onBack }: { manifest: Manifest; reading: number | null; disabled: boolean; error: Problem | null; onFiles: (files: File[]) => Promise<File[]>; onRead: (files: File[]) => void; onBack: () => void }) {
+function DownloadStep({ manifest, reading, disabled, error, onFiles, onRead, onBack }: { manifest: Manifest; reading: { pct: number; label?: string } | null; disabled: boolean; error: Problem | null; onFiles: (files: File[]) => Promise<File[]>; onRead: (files: File[]) => void; onBack: () => void }) {
   const [opened, setOpened] = useState<Set<string>>(() => new Set());
   const [picked, setPicked] = useState<File[]>([]);
   const [missing, setMissing] = useState<ManifestFile[]>([]);
@@ -524,7 +530,7 @@ function DownloadStep({ manifest, reading, disabled, error, onFiles, onRead, onB
 
       {reading !== null ? (
         <div className="grid min-h-[96px] place-items-center rounded-[20px] border border-line px-4 py-4">
-          <Reading pct={reading} />
+          <Reading pct={reading.pct} label={reading.label} />
         </div>
       ) : (
         <div className="grid gap-2">

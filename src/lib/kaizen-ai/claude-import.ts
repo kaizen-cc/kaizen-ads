@@ -305,14 +305,16 @@ export type Ownership =
  * Only the importer's own chats and projects. A personal export (one account) comes through whole. An org export
  * (several accounts in conversations.json, or several members in users.json) keeps only what belongs to the member
  * whose email_address is the person's Kaizen email (exact, any case); with no users.json to tell who is who it's
- * refused, and so is one that doesn't list their email.
+ * refused, and so is one that doesn't list their email. When the reader already left other people's chats out as it
+ * streamed (skipped), they're counted in as if they'd been dropped here.
  */
-export function ownChats(files: { conversations: unknown; projects: unknown; users: unknown }, email: string): Ownership {
+export function ownChats(files: { conversations: unknown; projects: unknown; users: unknown; skipped?: { chats: number; projects: number; accounts: string[] } }, email: string): Ownership {
   const convs = rawList(files.conversations, "conversations");
   const projects = rawList(files.projects, "projects");
   const users = files.users == null ? null : parseUsers(files.users);
   const accounts = new Set(convs.map(accountOf).filter((a): a is string => Boolean(a)));
-  const org = accounts.size > 1 || (users?.length ?? 0) > 1;
+  const skipped = files.skipped ?? { chats: 0, projects: 0, accounts: [] };
+  const org = accounts.size > 1 || (users?.length ?? 0) > 1 || skipped.chats > 0;
 
   if (!org) {
     const account = [...accounts][0] ?? (users?.length === 1 ? users[0].uuid : null);
@@ -340,7 +342,7 @@ export function ownChats(files: { conversations: unknown; projects: unknown; use
   }
   const kept = convs.filter((c) => accountOf(c) === me.uuid);
   const keptProjects = projects.filter((p) => creatorOf(p) === me.uuid);
-  const others = new Set([...accounts].filter((a) => a !== me.uuid));
+  const others = new Set([...accounts, ...skipped.accounts].filter((a) => a !== me.uuid));
   for (const u of users) if (u.uuid !== me.uuid) others.add(u.uuid);
   return {
     ok: true,
@@ -349,8 +351,8 @@ export function ownChats(files: { conversations: unknown; projects: unknown; use
     conversations: kept,
     projects: keptProjects,
     otherPeople: others.size,
-    skippedChats: convs.length - kept.length,
-    skippedProjects: projects.length - keptProjects.length,
+    skippedChats: convs.length - kept.length + skipped.chats,
+    skippedProjects: projects.length - keptProjects.length + skipped.projects,
   };
 }
 
