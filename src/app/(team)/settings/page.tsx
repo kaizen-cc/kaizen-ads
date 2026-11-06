@@ -261,13 +261,14 @@ async function KnowledgeBlocks({ items, spine }: { items: Item[]; spine: { body:
   let canRule = false;
   if (adminConfigured()) {
     const admin = createAdminClient();
-    const [{ loomStatus }, { insightsStatus }, { canRebut }, { data: cs }] = await Promise.all([
+    const [{ loomStatus }, { insightsStatus }, { rebutRightsOf }, { data: cs }] = await Promise.all([
       import("@/lib/loom-intake"),
       import("@/lib/buying-insights"),
       import("@/lib/audit-rebuttals"),
       admin.from("clients").select("id, name").is("archived_at", null).eq("internal", false).order("name"),
     ]);
-    [loom, insights, canRule] = await Promise.all([loomStatus(admin), insightsStatus(admin), canRebut(admin, me.id)]);
+    // Rules on some contradiction: the permission, or a head of Meta or Google (each sheet checks its own platform)
+    [loom, insights, canRule] = await Promise.all([loomStatus(admin), insightsStatus(admin), rebutRightsOf(admin, me.id).then((r) => r.meta || r.google || r.both || r.none)]);
     clients = (cs ?? []).map((c) => ({ id: c.id as string, name: c.name as string }));
   }
   const hero: KnowledgeHero = {

@@ -8,10 +8,13 @@ import { pickWinner, rankLearnings, scopeLabel, widenScope, type ClientPlace, ty
 // conditional learning (what holds, under which condition, for whom), consolidated nightly (duplicates merged,
 // contradictions settled or put to an exec, stale ones retired), and every call reads only the few that fit it.
 
-export type LearningSource = "creative_review_disagreements" | "audit_rebuttals" | "copy_rule_overrides";
+export type LearningSource = "creative_review_disagreements" | "audit_rebuttals" | "copy_rule_overrides" | "audit_item_messages";
 
-/** The agent that learns from each kind of pushback */
-export const SOURCE_AGENT: Record<LearningSource, AgentKey> = { creative_review_disagreements: "creativereview", audit_rebuttals: "auditor", copy_rule_overrides: "copy" };
+/**
+ * The agent that learns from each kind of pushback, unless the caller names it (a Google audit's rebuttal teaches the
+ * Google auditor; a lesson taught in the Why chat on a Google idea plan teaches the Google launcher)
+ */
+export const SOURCE_AGENT: Record<LearningSource, AgentKey> = { creative_review_disagreements: "creativereview", audit_rebuttals: "auditor", copy_rule_overrides: "copy", audit_item_messages: "google_launcher" };
 
 type Row = {
   id: string;
@@ -70,13 +73,13 @@ async function placeOf(admin: SupabaseClient, clientId: string, cache?: Map<stri
  * A rebuttal, disagreement or override was saved: keep it as a learning for its client, then classify it (what it
  * really says, under which condition, a one-off or a lesson). Never throws: the team's action has already gone through.
  */
-export async function recordLearning(admin: SupabaseClient, s: { table: LearningSource; id: string; clientId: string; text: string }) {
+export async function recordLearning(admin: SupabaseClient, s: { table: LearningSource; id: string; clientId: string; text: string; agent?: AgentKey }) {
   try {
     const place = await placeOf(admin, s.clientId);
     // Once per source row (a unique index on it; a second save is a no-op)
     const { data, error } = await admin
       .from("agent_learnings")
-      .insert({ agent_key: SOURCE_AGENT[s.table], source_table: s.table, source_id: s.id, client_id: s.clientId, model: place.model, vertical_id: place.verticalId, lesson: s.text.slice(0, 800), evidence_clients: [s.clientId], sources: [{ table: s.table, id: s.id }] })
+      .insert({ agent_key: s.agent ?? SOURCE_AGENT[s.table], source_table: s.table, source_id: s.id, client_id: s.clientId, model: place.model, vertical_id: place.verticalId, lesson: s.text.slice(0, 800), evidence_clients: [s.clientId], sources: [{ table: s.table, id: s.id }] })
       .select("id")
       .maybeSingle();
     if (error && error.code !== "23505") throw new Error(error.message);

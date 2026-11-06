@@ -1,16 +1,30 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { canRebut, rebutRights, type RebutPlatform, type RebutProfile, type RebutRights } from "@/lib/rebut-permission";
 
-// Pushing back on an audit: a person given the permission disagrees with one finding and says why. It's kept on the
+// Pushing back on an audit: a person allowed to (src/lib/rebut-permission.ts) disagrees with one finding and says why. It's kept on the
 // audit, every later audit of the client reads it (so the same conclusion isn't drawn again without new evidence), and
 // it goes into client memory, which every agent reads.
 
 export type Rebuttal = { id: string; itemKey: string; finding: string; reason: string; by: string; at: string };
 
-/** Whether this person may push back on audits (a per-person permission, set in the database) */
-export async function canRebut(admin: SupabaseClient, profileId: string) {
-  const { data } = await admin.from("profiles").select("can_rebut_audits").eq("id", profileId).maybeSingle();
-  return Boolean(data?.can_rebut_audits);
+/** The fields the pushback rule reads (src/lib/rebut-permission.ts) */
+export async function rebutProfile(admin: SupabaseClient, profileId: string): Promise<RebutProfile> {
+  const { data } = await admin.from("profiles").select("can_rebut_audits, role").eq("id", profileId).maybeSingle();
+  return data ? { can_rebut_audits: Boolean(data.can_rebut_audits), role: (data.role as string | null) ?? null } : null;
+}
+
+/**
+ * Whether this person may push back on an audit item about this platform: the per-person permission, or the head of
+ * that platform (Google: the Head of Google; Meta: the Head of Meta; both: either)
+ */
+export async function mayRebut(admin: SupabaseClient, profileId: string, platform: RebutPlatform) {
+  return canRebut(await rebutProfile(admin, profileId), platform);
+}
+
+/** What this person may push back on, per platform (for a page with items about several) */
+export async function rebutRightsOf(admin: SupabaseClient, profileId: string): Promise<RebutRights> {
+  return rebutRights(await rebutProfile(admin, profileId));
 }
 
 /** The pushback on one audit, by finding */
@@ -35,7 +49,7 @@ export async function rebuttalsBlock(admin: SupabaseClient, clientId: string, ta
 /** Save one pushback, and teach it to client memory */
 export async function saveRebuttal(
   admin: SupabaseClient,
-  r: { clientId: string; kind: "account" | "business"; auditId: string; itemKey: string; finding: string; reason: string; by: string },
+  r: { clientId: string; kind: "account" | "business"; auditId: string; itemKey: string; finding: string; reason: string; by: string; /** The ad platform the finding is about: a Google one teaches the Google auditor */ platform?: RebutPlatform },
 ) {
   const finding = r.finding.trim().slice(0, 600);
   const reason = r.reason.trim().slice(0, 1500);
@@ -57,7 +71,28 @@ export async function saveRebuttal(
   const { after } = await import("next/server");
   after(async () => {
     const { recordLearning } = await import("@/lib/learnings");
-    await recordLearning(admin, { table: "audit_rebuttals", id, clientId: r.clientId, text: `Finding pushed back on (${r.kind} audit): "${finding}" · why: ${reason}` });
+    await recordLearning(admin, { table: "audit_rebuttals", id, clientId: r.clientId, agent: r.platform === "google" ? "google_auditor" : "auditor", text: `Finding pushed back on (${r.platform === "google" ? "Google " : r.platform === "meta" ? "Meta " : ""}${r.kind} audit): "${finding}" · why: ${reason}` });
   });
   return id;
+}
+
+/**
+ * A lesson taught from the Why chat on a Google idea plan (no audit behind it): into client memory, and a conditional
+ * learning for the Google launcher that wrote it, kept on the chat message it came from
+ */
+export async function saveDeployLesson(admin: SupabaseClient, r: { clientId: string; messageId: string; finding: string; reason: string; by: string }) {
+  const finding = r.finding.trim().slice(0, 600);
+  const reason = r.reason.trim().slice(0, 1500);
+  await admin.from("client_memory").insert({
+    client_id: r.clientId,
+    kind: "note",
+    source: "audit",
+    created_by: r.by,
+    body: `A senior Google buyer disagreed with a Google idea plan ("${finding.slice(0, 200)}"): ${reason}`.replace(/\s*—\s*/g, ", ").slice(0, 1000),
+  });
+  const { after } = await import("next/server");
+  after(async () => {
+    const { recordLearning } = await import("@/lib/learnings");
+    await recordLearning(admin, { table: "audit_item_messages", id: r.messageId, clientId: r.clientId, agent: "google_launcher", text: `Google idea plan pushed back on: "${finding}" · why: ${reason}` });
+  });
 }

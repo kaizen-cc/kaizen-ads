@@ -5,23 +5,26 @@ import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import type { WhyKind, WhyMessage } from "@/lib/audit-why";
 import { askWhyAction, loadWhy, teachWhy } from "@/app/(team)/kpis/why-actions";
 
-// "Why?" on an audit item or a sprint move: a small chat with the agent that wrote it (team only, never clients).
-// It answers from the audit's own numbers; when someone disagrees and says why, it offers the lesson it would take,
-// and "Teach the agent this" saves it so the next audits of the client learn it. Open in the address (?why=), so
-// back closes it.
+// "Why?" on an audit item, a sprint move or a Google idea plan: a small chat with the agent that wrote it (team only,
+// never clients). It answers from the audit's own numbers; when someone disagrees and says why, it offers the lesson it
+// would take, and "Teach the agent this" saves it so the next audits of the client learn it (for the people allowed to
+// push back on that platform; everyone else sees who can). Open in the address (?why=), so back closes it.
 
-export function AuditWhy({ kind, auditId, itemKey, count = 0, agent = "auditor" }: { kind: WhyKind; auditId: string; itemKey: string; count?: number; agent?: "auditor" | "google_auditor" }) {
+const WHO = { auditor: "Auditor", google_auditor: "Google auditor", google_launcher: "Google Ads buyer" } as const;
+
+export function AuditWhy({ kind, auditId, itemKey, count = 0, agent = "auditor" }: { kind: WhyKind; auditId: string; itemKey: string; count?: number; agent?: keyof typeof WHO }) {
   const id = `${auditId}~${itemKey}`;
   const open = useParam("why") === id;
   const [messages, setMessages] = useState<WhyMessage[] | null>(null);
   const [canTeach, setCanTeach] = useState(false);
+  const [whoTeaches, setWhoTeaches] = useState("Someone with the audit pushback permission can teach it this.");
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [thinking, setThinking] = useState(false);
   const [teaching, startTeach] = useTransition();
   const [loading, startLoad] = useTransition();
   const end = useRef<HTMLDivElement>(null);
-  const who = agent === "google_auditor" ? "Google auditor" : "Auditor";
+  const who = WHO[agent];
 
   useEffect(() => {
     if (!open || messages) return;
@@ -30,6 +33,7 @@ export function AuditWhy({ kind, auditId, itemKey, count = 0, agent = "auditor" 
       if (!r.ok) return setError(r.error);
       setMessages(r.messages);
       setCanTeach(r.canTeach);
+      setWhoTeaches(r.whoTeaches);
     });
   }, [open, messages, kind, auditId, itemKey]);
 
@@ -84,7 +88,7 @@ export function AuditWhy({ kind, auditId, itemKey, count = 0, agent = "auditor" 
       </div>
 
       {loading && !messages && <p className="text-[12.5px] text-faint">Opening the thread…</p>}
-      {messages && messages.length === 0 && !thinking && <p className="text-[12.5px] leading-relaxed text-muted">Ask what this is based on, or say why you disagree. The {who.toLowerCase()} answers from the numbers this audit read and the client page.</p>}
+      {messages && messages.length === 0 && !thinking && <p className="text-[12.5px] leading-relaxed text-muted">Ask what this is based on, or say why you disagree. The {who.toLowerCase()} answers from {kind === "deploy" ? "the winner this plan is built on" : "the numbers this audit read"} and the client page.</p>}
 
       {(messages?.length || thinking) && (
         <div className="grid max-h-[420px] gap-2.5 overflow-y-auto overscroll-contain pr-0.5">
@@ -107,13 +111,13 @@ export function AuditWhy({ kind, auditId, itemKey, count = 0, agent = "auditor" 
                       <span className="text-muted">{m.lesson}</span>
                     </p>
                     {m.taught ? (
-                      <p className="text-[12px] text-ok">✓ Taught. The next audits of this client read it.</p>
+                      <p className="text-[12px] text-ok">✓ Taught. {kind === "deploy" ? "The next Google plans and changes for this client read it." : "The next audits of this client read it."}</p>
                     ) : canTeach ? (
                       <button type="button" disabled={teaching} onClick={() => teach(m)} className="min-h-11 justify-self-start rounded-full bg-fg px-4 text-[12.5px] font-medium text-bg disabled:opacity-60 md:min-h-8">
                         Teach the agent this
                       </button>
                     ) : (
-                      <p className="text-[11.5px] text-faint">Someone with the audit pushback permission can teach it this.</p>
+                      <p className="text-[11.5px] text-faint">{whoTeaches}</p>
                     )}
                   </div>
                 )}

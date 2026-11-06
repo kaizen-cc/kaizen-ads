@@ -3,12 +3,14 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
+import { AuditWhy } from "@/components/audit-why";
 import type { Deploy, DeployPlan, DeployTarget, Kw } from "@/lib/google-deploy";
 import { decideDeploy, deployState, deployTargets, editDeploy, markDeployApplied, pushDeployAction, rewriteDeploy } from "../../ideas/google-actions";
 
 // Google ideas taken to this client from Ideas › Google: copy, a campaign or keywords around a winner from another
 // account. Each is approved, edited or declined like a suggested brief; approved, it's applied by hand from its
-// checklist or (with Google writes on) pushed to Google Ads paused. The one in the address (?deploy=) opens.
+// checklist or (with Google writes on) pushed to Google Ads paused. The one in the address (?deploy=) opens. "Why?"
+// under a plan asks the Google launcher that wrote it; the Head of Google (or whoever rules on audits) can teach it.
 
 const KIND: Record<Deploy["kind"], string> = { copy: "Ad copy", campaign: "Campaign", keywords: "Keywords" };
 const STATUS: Record<Deploy["status"], { label: string; cls: string }> = {
@@ -128,6 +130,11 @@ function Body({ d, canAct, onChange }: { d: Deploy; canAct: boolean; onChange: (
       </div>
       {d.error && <p className="rounded-[12px] bg-bad-soft px-3 py-2 text-[12.5px] text-bad">{d.error}</p>}
       {d.plan && (mode === "edit" ? <Editor plan={d.plan} pending={pending} onCancel={() => setMode("view")} onSave={(p) => run(() => editDeploy(d.id, p))} /> : <Plan d={d} plan={d.plan} />)}
+      {d.plan && mode !== "edit" && (
+        <div className="grid gap-2 border-t border-line pt-3">
+          <AuditWhy kind="deploy" auditId={d.id} itemKey="plan" agent="google_launcher" />
+        </div>
+      )}
       {d.declineReason && <p className="text-[12.5px] text-muted">Declined: {d.declineReason}</p>}
       {d.applied?.results?.length ? (
         <ul className="grid gap-1.5">

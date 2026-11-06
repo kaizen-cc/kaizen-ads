@@ -7,6 +7,7 @@ import type { BusinessAuditResult } from "@/lib/business-audit";
 import type { BusinessRouting, RoutedAction } from "@/lib/business-audit-route";
 import { Rebut, type RebutNote } from "@/components/audit-rebut";
 import { AuditWhy } from "@/components/audit-why";
+import { businessItemPlatform, NO_RIGHTS, rightFor, type RebutRights } from "@/lib/rebut-permission";
 import { ObjectLinks } from "@/components/object-links";
 import { BriefPreviewButton } from "@/components/quick-brief-sheet";
 
@@ -27,7 +28,7 @@ const TONE: Record<string, { label: string; chip: string; dot: string }> = {
 const WHEN: Record<string, string> = { now: "Today", this_week: "This week", next: "Next" };
 const SEV: Record<string, string> = { high: "border-l-bad", medium: "border-l-warn", low: "border-l-line" };
 
-export function BusinessAuditPanel({ clientId, slug: given = null, latest, pushback, canRebut, asked = {} }: { clientId: string; /** For links to the client's tasks (read from the address when not given) */ slug?: string | null; latest: BusinessAuditView | null; pushback: Record<string, RebutNote[]>; canRebut: boolean; /** "Why?" messages per item so far */ asked?: Record<string, number> }) {
+export function BusinessAuditPanel({ clientId, slug: given = null, latest, pushback, rights = NO_RIGHTS, asked = {} }: { clientId: string; /** For links to the client's tasks (read from the address when not given) */ slug?: string | null; latest: BusinessAuditView | null; pushback: Record<string, RebutNote[]>; /** What this person may push back on, per platform (a Google item: the Head of Google too) */ rights?: RebutRights; /** "Why?" messages per item so far */ asked?: Record<string, number> }) {
   const router = useRouter();
   const path = usePathname();
   const slug = given ?? (path.startsWith("/clients/") ? (path.split("/")[2] ?? null) : null);
@@ -79,12 +80,15 @@ export function BusinessAuditPanel({ clientId, slug: given = null, latest, pushb
   };
 
   const r = latest?.status === "ready" ? latest.result : null;
-  const rebut = (key: string, finding: string) => (latest ? <Rebut kind="business" auditId={latest.id} itemKey={key} finding={finding} notes={pushback[key] ?? []} can={canRebut} /> : null);
+  // Each item is about a platform (its channel; the whole business is both): a Google one is the Google auditor's to
+  // answer, and the Head of Google may push back on it like the people given the permission
+  const platformOfItem = (key: string) => businessItemPlatform(r, key);
+  const rebut = (key: string, finding: string) => (latest ? <Rebut kind="business" auditId={latest.id} itemKey={key} finding={finding} notes={pushback[key] ?? []} can={rightFor(rights, platformOfItem(key))} /> : null);
   // Under each item: ask the auditor why (team only), and push back (for those who may)
   const talk = (key: string, finding: string) =>
     latest ? (
       <div className="grid gap-2 border-t border-line pt-3">
-        <AuditWhy kind="business" auditId={latest.id} itemKey={key} count={asked[`${latest.id}|${key}`] ?? 0} />
+        <AuditWhy kind="business" auditId={latest.id} itemKey={key} count={asked[`${latest.id}|${key}`] ?? 0} agent={platformOfItem(key) === "google" ? "google_auditor" : "auditor"} />
         {rebut(key, finding)}
       </div>
     ) : null;

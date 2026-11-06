@@ -3,8 +3,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson, type AgentKey } from "@/lib/ai";
 import { clock } from "@/lib/loom";
 import { GOOGLE_AGENTS, MARK, META_AGENTS, rewriteBuyerSkills } from "@/lib/buying-insights";
+import { canRebut, platformOf, type RebutProfile } from "@/lib/rebut-permission";
 
-// Contradictions in the senior buyer's teachings, settled by the people who rule on audits (profiles.can_rebut_audits).
+// Contradictions in the senior buyer's teachings, settled by the people who rule on audits (profiles.can_rebut_audits)
+// and the head of the teaching's platform: a Google one goes to the Head of Google too (src/lib/rebut-permission.ts).
 // Consolidation flags one when a new point gives the opposite advice to another point (or to a skill the agency wrote);
 // it isn't taught until someone rules. They hear it in the bell, open a review sheet with both sides and their sources,
 // and either rule at once (teach this one, both hold, don't teach it) or talk it through with the Media Buyer (Meta) or
@@ -17,11 +19,14 @@ const OPEN = "conflict_with.not.is.null,conflict_skill.not.is.null";
 export const TITLE = "Need more clarity on a contradiction in a media buying tactic";
 export const conflictHref = (id: string) => `/settings?tab=agents&section=knowledge&kn=buyer&conflict=${id}`;
 
-/** The people who rule on contradictions */
+/** Everyone who could rule on some contradiction: the permission, and the heads of Meta and Google */
 async function rulers(admin: Admin) {
-  const { data } = await admin.from("profiles").select("id").eq("can_rebut_audits", true).eq("is_active", true);
-  return (data ?? []).map((p) => p.id as string);
+  const { data } = await admin.from("profiles").select("id, can_rebut_audits, role").eq("is_active", true).or("can_rebut_audits.eq.true,role.in.(head_of_google,head_of_meta)");
+  return (data ?? []).map((p) => ({ id: p.id as string, profile: { can_rebut_audits: Boolean(p.can_rebut_audits), role: (p.role as string | null) ?? null } satisfies RebutProfile }));
 }
+
+/** Whether this person rules on a teaching of this platform (meta, google, both or none) */
+export const rulesOn = (p: RebutProfile, platform: string | null | undefined) => canRebut(p, platformOf(platform));
 
 /**
  * Contradictions nobody was told about yet, into the bell of everyone who can rule: one alert each when there are a
@@ -30,7 +35,7 @@ async function rulers(admin: Admin) {
 export async function notifyContradictions(admin: Admin) {
   const { data } = await admin
     .from("media_buying_insights")
-    .select("id, body, conflict_skill, other:conflict_with(body)")
+    .select("id, body, platform, conflict_skill, other:conflict_with(body)")
     .is("ruling", null)
     .eq("excluded", false)
     .is("merged_into", null)
@@ -42,11 +47,12 @@ export async function notifyContradictions(admin: Admin) {
   if (!fresh.length) return { notified: 0 };
   const people = await rulers(admin);
   if (!people.length) return { notified: 0 };
+  // Each one to the people who can rule on its platform; the batch alert to anyone who can rule on at least one
   const rows =
     fresh.length <= 3
       ? fresh.flatMap((c) =>
-          people.map((p) => ({
-            profile_id: p,
+          people.filter((p) => rulesOn(p.profile, c.platform as string)).map((p) => ({
+            profile_id: p.id,
             kind: "contradiction",
             title: TITLE,
             body: `"${String(c.body).slice(0, 220)}" disagrees with ${c.conflict_skill ? `the written skill "${c.conflict_skill}"` : `"${String((c.other as unknown as { body: string } | null)?.body ?? "another point").slice(0, 200)}"`}. Your call decides what the buyers are taught.`.slice(0, 1000),
@@ -55,13 +61,16 @@ export async function notifyContradictions(admin: Admin) {
             priority: "normal",
           })),
         )
-      : people.map((p) => ({
-          profile_id: p,
+      : people.flatMap((p) => {
+          const mine = fresh.filter((c) => rulesOn(p.profile, c.platform as string));
+          return mine.length ? [{ p, mine }] : [];
+        }).map(({ p, mine }) => ({
+          profile_id: p.id,
           kind: "contradiction",
-          title: `Need more clarity on ${fresh.length} contradictions in media buying tactics`,
-          body: `The senior buyer's Looms disagree with each other (or with a written skill) in ${fresh.length} places. None of them is taught until it's ruled on: open the first and go one by one.`,
-          href: conflictHref(fresh[0].id as string),
-          key: `contradictions:${fresh[0].id}`,
+          title: `Need more clarity on ${mine.length} contradiction${mine.length === 1 ? "" : "s"} in media buying tactics`,
+          body: `The senior buyer's Looms disagree with each other (or with a written skill) in ${mine.length} place${mine.length === 1 ? "" : "s"}. None of them is taught until it's ruled on: open the first and go one by one.`,
+          href: conflictHref(mine[0].id as string),
+          key: `contradictions:${mine[0].id}`,
           priority: "normal",
         }));
   await admin.from("notifications").upsert(rows, { onConflict: "profile_id,key", ignoreDuplicates: true });

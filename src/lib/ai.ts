@@ -125,6 +125,12 @@ export function wellFormed(s: string) {
   return s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "");
 }
 
+/**
+ * Agents that also read another agent's lessons: what the Head of Google (or whoever rules on audits) taught the Google
+ * auditor about a client's account holds when the Google launcher changes it and when the Google reporter explains it
+ */
+const LEARNS_ALSO: Partial<Record<AgentKey, AgentKey[]>> = { google_launcher: ["google_auditor"], google_reporter: ["google_auditor"] };
+
 async function withKnowledge(agent: AgentKey, label: string, prompt: string, clientId?: string | null) {
   if (!adminConfigured()) return prompt;
   const { knowledgeBlock } = await import("@/lib/knowledge");
@@ -134,7 +140,7 @@ async function withKnowledge(agent: AgentKey, label: string, prompt: string, cli
   let learned = "";
   if (!prompt.includes("<learned_from_the_team")) {
     const { learningsBlock } = await import("@/lib/learnings");
-    learned = await learningsBlock(createAdminClient(), [agent], clientId ?? null, prompt.slice(-4000)).catch(() => "");
+    learned = await learningsBlock(createAdminClient(), [agent, ...(LEARNS_ALSO[agent] ?? [])], clientId ?? null, prompt.slice(-4000)).catch(() => "");
   }
   // A buyer agent working on one account: the senior buyer's playbook for that platform and that kind of business
   // (its sub-vertical, vertical, business model), which the global skills leave out on purpose

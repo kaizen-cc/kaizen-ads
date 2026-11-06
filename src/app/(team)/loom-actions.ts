@@ -130,7 +130,7 @@ export async function attributeBuyerInsights(): Promise<R<{ attributed: number; 
 export async function ruleBuyerInsight(id: string, ruling: "keep" | "drop" | "both"): Promise<R> {
   try {
     const me = await requireStaff();
-    if (!(await ruler(me))) return { ok: false, error: "Only the people who rule on audits can decide this." };
+    if (!(await ruler(me, id))) return { ok: false, error: "Only the people who rule on audits (and the head of its platform) can decide this." };
     await (await import("@/lib/buying-insights")).ruleInsight(createAdminClient(), id, ruling, me.id);
     revalidatePath("/settings", "layout");
     return { ok: true };
@@ -186,8 +186,20 @@ export async function prospectBecameClient(id: string, clientId: string): Promis
 
 // ─── Contradictions: the review sheet ───────────────────────────────────────
 
-async function ruler(me: Staff) {
-  return (await import("@/lib/audit-rebuttals")).canRebut(createAdminClient(), me.id);
+/**
+ * Whether this person rules on this contradiction: the people who rule on audits, and the head of its platform (a
+ * Google teaching: the Head of Google too). By a teaching's id, or a chat message on one.
+ */
+async function ruler(me: Staff, ref: string | { messageId: string }) {
+  const admin = createAdminClient();
+  let insightId: string | null = typeof ref === "string" ? ref : null;
+  if (typeof ref !== "string") {
+    const { data: m } = await admin.from("insight_conflict_messages").select("insight_id").eq("id", ref.messageId).maybeSingle();
+    insightId = (m?.insight_id as string | undefined) ?? null;
+  }
+  if (!insightId) return false;
+  const [{ data: i }, { rebutProfile }, { rulesOn }] = await Promise.all([admin.from("media_buying_insights").select("platform").eq("id", insightId).maybeSingle(), import("@/lib/audit-rebuttals"), import("@/lib/insight-conflicts")]);
+  return rulesOn(await rebutProfile(admin, me.id), (i?.platform as string | null) ?? null);
 }
 
 /** One contradiction, both sides and the chat (anyone on the team can read; only rulers act) */
@@ -196,7 +208,7 @@ export async function loadConflict(id: string): Promise<R<{ detail: ConflictDeta
     const me = await requireStaff();
     const detail = await (await import("@/lib/insight-conflicts")).conflictDetail(createAdminClient(), id);
     if (!detail) return { ok: false, error: "That contradiction isn't there any more." };
-    return { ok: true, detail, canRule: await ruler(me) };
+    return { ok: true, detail, canRule: await ruler(me, id) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Couldn't open it." };
   }
@@ -206,7 +218,7 @@ export async function loadConflict(id: string): Promise<R<{ detail: ConflictDeta
 export async function talkConflict(id: string, text: string): Promise<R<{ answer: ConflictMessage }>> {
   try {
     const me = await requireStaff();
-    if (!(await ruler(me))) return { ok: false, error: "Only the people who rule on audits can talk this through." };
+    if (!(await ruler(me, id))) return { ok: false, error: "Only the people who rule on audits (and the head of its platform) can talk this through." };
     if (!aiEnabled()) return { ok: false, error: "The AI isn't connected." };
     const answer = await (await import("@/lib/insight-conflicts")).askConflict(createAdminClient(), id, text, me.id);
     return { ok: true, answer };
@@ -219,7 +231,7 @@ export async function talkConflict(id: string, text: string): Promise<R<{ answer
 export async function teachRefinedRule(messageId: string): Promise<R> {
   try {
     const me = await requireStaff();
-    if (!(await ruler(me))) return { ok: false, error: "Only the people who rule on audits can teach it." };
+    if (!(await ruler(me, { messageId }))) return { ok: false, error: "Only the people who rule on audits (and the head of its platform) can teach it." };
     await (await import("@/lib/insight-conflicts")).teachRefined(createAdminClient(), messageId, me.id);
     revalidatePath("/settings", "layout");
     return { ok: true };

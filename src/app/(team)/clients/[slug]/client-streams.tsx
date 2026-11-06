@@ -70,22 +70,22 @@ export async function BusinessAuditStream({ clientId, meId }: { clientId: string
   if (!adminConfigured()) return null;
   const admin = createAdminClient();
   const supabase = await createClient();
-  const [{ data: ba }, { auditRebuttals, canRebut }, { BusinessAuditPanel }] = await Promise.all([
+  const [{ data: ba }, { auditRebuttals, rebutRightsOf }, { BusinessAuditPanel }] = await Promise.all([
     supabase.from("business_audits").select("id, status, step, error, result, created_at, profiles(full_name)").eq("client_id", clientId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
     import("@/lib/audit-rebuttals"),
     import("./business-audit-panel"),
   ]);
   const { whyCounts } = await import("@/lib/audit-why");
-  const [pushback, mayRebut, asked] = await T(
+  const [pushback, rights, asked] = await T(
     "business audit",
-    Promise.all([ba ? auditRebuttals(admin, ba.id as string) : Promise.resolve({} as Awaited<ReturnType<typeof auditRebuttals>>), canRebut(admin, meId), ba ? whyCounts(supabase, [ba.id as string]).catch(() => ({}) as Record<string, number>) : Promise.resolve({} as Record<string, number>)]),
+    Promise.all([ba ? auditRebuttals(admin, ba.id as string) : Promise.resolve({} as Awaited<ReturnType<typeof auditRebuttals>>), rebutRightsOf(admin, meId), ba ? whyCounts(supabase, [ba.id as string]).catch(() => ({}) as Record<string, number>) : Promise.resolve({} as Record<string, number>)]),
   );
   return (
     <BusinessAuditPanel
       clientId={clientId}
       latest={ba ? { id: ba.id as string, status: ba.status as "running" | "ready" | "failed", step: (ba.step as string | null) ?? null, error: (ba.error as string | null) ?? null, result: (ba.result as never) ?? null, at: ba.created_at as string, by: (ba.profiles as unknown as { full_name: string } | null)?.full_name ?? null } : null}
       pushback={pushback}
-      canRebut={mayRebut}
+      rights={rights}
       asked={asked}
     />
   );

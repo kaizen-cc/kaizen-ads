@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireStaff } from "@/lib/auth";
-import { auditRebuttals, canRebut } from "@/lib/audit-rebuttals";
+import { auditRebuttals, mayRebut } from "@/lib/audit-rebuttals";
+import { platformOf } from "@/lib/rebut-permission";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { Rebut } from "@/components/audit-rebut";
 import { AuditWhy } from "@/components/audit-why";
@@ -57,16 +58,17 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
   // Where an action can become a change made from here: Google Ads, or Meta (behind the sandbox switch)
   const writable = t.platform === "google" ? (googleAdsConfigured() ? "google" : null) : t.platform === "meta" ? (metaConfigured() ? "meta" : null) : null;
   const admin = adminConfigured() ? createAdminClient() : null;
-  const [{ data: snap }, { data: history }, { data: sprint }, pushback, mayRebut, asked] = await Promise.all([
+  const [{ data: snap }, { data: history }, { data: sprint }, pushback, canPushBack, asked] = await Promise.all([
     supabase.from("kpi_snapshots").select("windows, deviation").eq("target_id", a.target_id).maybeSingle(),
     supabase.from("account_audits").select("id, created_at, status, result").eq("target_id", a.target_id).order("created_at", { ascending: false }).limit(10),
     supabase.from("optimization_sprints").select("id, audit_id, sprint_actions(title, status)").eq("target_id", a.target_id).eq("status", "active").maybeSingle(),
     admin ? auditRebuttals(admin, a.id) : Promise.resolve({} as Awaited<ReturnType<typeof auditRebuttals>>),
-    admin ? canRebut(admin, me.id) : Promise.resolve(false),
+    // The permission, or the head of this account's platform (the Head of Google on a Google audit)
+    admin ? mayRebut(admin, me.id, platformOf(t.platform)) : Promise.resolve(false),
     whyCounts(supabase, [a.id]).catch(() => ({}) as Record<string, number>),
   ]);
   // Disagree with a finding: kept on the audit, read by the next one and by every agent through client memory
-  const rebut = (itemKey: string, finding: string) => <Rebut kind="account" auditId={a.id} itemKey={itemKey} finding={finding} notes={pushback[itemKey] ?? []} can={mayRebut} />;
+  const rebut = (itemKey: string, finding: string) => <Rebut kind="account" auditId={a.id} itemKey={itemKey} finding={finding} notes={pushback[itemKey] ?? []} can={canPushBack} />;
   // Ask the agent that wrote it why (team only): it answers from the numbers this audit read
   const agent = t.platform === "google" ? "google_auditor" : "auditor";
   const why = (itemKey: string) => <AuditWhy kind="account" auditId={a.id} itemKey={itemKey} count={asked[`${a.id}|${itemKey}`] ?? 0} agent={agent} />;
