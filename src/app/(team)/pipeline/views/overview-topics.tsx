@@ -230,7 +230,7 @@ export function AllClear({ items }: { items: string[] }) {
  * target), creative and growth (briefs, ads wearing out), new clients, and delivery (allotments, plus the work or the
  * team passed in). Each theme carries its count, a one-line headline, a few points, and its topic panels.
  */
-export function buildThemes(d: SharedTopics, extra: { first?: Theme | null; delivery?: { content: React.ReactNode; points: string[]; count: number } | null; production?: Production | null } = {}): Theme[] {
+export function buildThemes(d: SharedTopics, extra: { first?: Theme | null; delivery?: { content: React.ReactNode; points: string[]; count: number } | null; production?: Production | null; calm?: boolean } = {}): Theme[] {
   const topics = [...actTopics(d), ...accountTopics(d)];
   const built = topics.filter((b) => b.tile && b.panel);
   // A topic with nothing counted yet (patterns before their first read) still shows in its theme
@@ -255,12 +255,13 @@ export function buildThemes(d: SharedTopics, extra: { first?: Theme | null; deli
   ) : null;
   const themes: Theme[] = [];
   if (extra.first) themes.push(extra.first);
+  // calm (the creative team): what's here is theirs to act on, not an account at risk, so it reads as a to-do, not an alarm
   themes.push({
     id: "risk",
-    title: "Clients at risk",
-    tone: sum(risk) ? "bad" : "ok",
+    title: extra.calm ? "Needs a look" : "Clients at risk",
+    tone: sum(risk) ? (extra.calm ? "warn" : "bad") : "ok",
     count: sum(risk),
-    headline: sum(risk) ? "Off-target accounts, promises and messages waiting on us, work that's stuck" : "Every account, promise and message is in hand",
+    headline: sum(risk) ? (extra.calm ? "Messages and promises waiting on us, and work that's stuck" : "Off-target accounts, promises and messages waiting on us, work that's stuck") : extra.calm ? "Every promise and message is in hand" : "Every account, promise and message is in hand",
     points: points(risk),
     content: risk.map((b) => b.panel),
   });

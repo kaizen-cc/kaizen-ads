@@ -4,6 +4,7 @@ import { JWT } from "google-auth-library";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { compact, saveItems, trimBody, type CollectResult, type ContextItem } from "./shared";
 import { LIVE } from "@/lib/live";
+import { gmailLink, isCalendarEmail, isInternalOnly } from "@/lib/email-filters";
 
 // Reads Gmail and the client Drive folders with a Workspace service account (domain-wide delegation).
 //   GOOGLE_SERVICE_ACCOUNT_JSON  the service account's JSON key
@@ -98,7 +99,7 @@ export async function contactMap(admin: SupabaseClient) {
 
 // ─── Gmail ──────────────────────────────────────────────────────────────────
 
-export type GmailPart = { mimeType?: string; body?: { data?: string }; parts?: GmailPart[] };
+export type GmailPart = { mimeType?: string; filename?: string; body?: { data?: string }; parts?: GmailPart[] };
 export type GmailMessage = { id: string; threadId: string; snippet?: string; internalDate: string; payload: GmailPart & { headers: { name: string; value: string }[] } };
 
 const decode = (data: string) => Buffer.from(data.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
@@ -140,7 +141,10 @@ export async function collectGmail(mailbox: string, since: Date, contacts: Map<s
   for (const id of capped) {
     const m = await google<GmailMessage>(token, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}`, { format: "full" });
     const header = (n: string) => m.payload.headers.find((h) => h.name.toLowerCase() === n)?.value ?? null;
-    const clients = new Set(["from", "to", "cc"].flatMap((h) => addresses(header(h))).flatMap((a) => contacts.get(a) ?? []));
+    // Calendar invites and RSVPs, and mail only between us, aren't the client talking
+    const everyone = ["from", "to", "cc"].flatMap((h) => addresses(header(h)));
+    if (isCalendarEmail(header("subject"), m.payload) || isInternalOnly(everyone)) continue;
+    const clients = new Set(everyone.flatMap((a) => contacts.get(a) ?? []));
     const body = trimBody(withoutQuotes(plainText(m.payload) ?? m.snippet ?? ""));
     for (const clientId of clients) {
       items.push({
@@ -153,7 +157,7 @@ export async function collectGmail(mailbox: string, since: Date, contacts: Map<s
         author: header("from"),
         title: header("subject"),
         body,
-        url: `https://mail.google.com/mail/u/${mailbox}/#all/${m.threadId}`,
+        url: gmailLink(mailbox, m.threadId),
         meta: { mailbox, to: header("to") },
       });
     }
@@ -246,6 +250,8 @@ export async function pullEmailHistory(admin: SupabaseClient, deadline: number, 
           for (const m of got) {
             if (!m) continue;
             const header = (n: string) => m.payload.headers.find((h) => h.name.toLowerCase() === n)?.value ?? null;
+            // Calendar invites and RSVPs, and mail only between us, aren't the client's history
+            if (isCalendarEmail(header("subject"), m.payload) || isInternalOnly(["from", "to", "cc"].flatMap((h) => addresses(header(h))))) continue;
             items.push({
               client_id: c.id,
               source: "gmail",
@@ -255,7 +261,7 @@ export async function pullEmailHistory(admin: SupabaseClient, deadline: number, 
               author: header("from"),
               title: header("subject"),
               body: trimBody(withoutQuotes(plainText(m.payload) ?? m.snippet ?? "")),
-              url: `https://mail.google.com/mail/u/${mailbox}/#all/${m.threadId}`,
+              url: gmailLink(mailbox, m.threadId),
               meta: { mailbox, to: header("to"), history: true },
             });
           }

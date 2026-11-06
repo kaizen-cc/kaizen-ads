@@ -66,7 +66,14 @@ export default async function Home() {
   ]);
   const hidden = new Set((hiddenRows ?? []).map((r) => r.key as string));
   h.attention = h.attention.filter((a) => !hidden.has(`alert:${a.id}`));
-  const callPromises = callPromisesAll?.filter((p) => !hidden.has(`call:${p.commitmentId}`)) ?? null;
+  // The Head of Creative: only the call promises with a brief to make; the rest are the buyers' and account managers'
+  const creativeLead = me.role === "head_of_creative";
+  const callPromises = callPromisesAll?.filter((p) => !hidden.has(`call:${p.commitmentId}`) && (!creativeLead || p.suggestion)) ?? null;
+  // ...and only the new clients on a creative package, without the unmatched intake forms (the account manager's)
+  if (onboarding && creativeLead) {
+    onboarding.clients = onboarding.clients.filter((c) => c.creative || c.firstRound);
+    onboarding.unmatched = [];
+  }
   const owed = { items: owedItems.filter((o) => o.targetId === me.id || !hidden.has(`owed:${o.id}`)), said: said.filter((p) => p.ownerId === me.id || !hidden.has(`said:${p.id}`)), me: me.id };
 
   const kpis = kpiLines.filter((k): k is KpiPulse => Boolean(k));

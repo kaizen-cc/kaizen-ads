@@ -4,7 +4,7 @@ import { Toaster } from "@/components/toasts";
 import { AuditWatcher } from "@/components/audit-watcher";
 import { ActivityTracker } from "@/components/activity-tracker";
 import { requireStaff } from "@/lib/auth";
-import { roleLabel } from "@/lib/roles";
+import { isCreativeRole, roleLabel } from "@/lib/roles";
 import { formatList } from "@/lib/creative-formats";
 import { CreativeFormatsProvider } from "@/components/creative-formats-provider";
 import { createClient } from "@/lib/supabase/server";
@@ -15,7 +15,7 @@ export default async function TeamLayout({ children }: LayoutProps<"/">) {
   const { data: pref } = await (await createClient()).from("profiles").select("theme").eq("id", me.id).maybeSingle();
   return (
     <UploadProvider>
-      <TeamShell name={me.fullName} roles={roleLabel(me.role)} tier={me.isExec ? "exec" : me.isLead ? "lead" : "member"} theme={(pref?.theme as Theme | null) ?? null}>
+      <TeamShell name={me.fullName} roles={roleLabel(me.role)} tier={me.isExec ? "exec" : me.isLead ? "lead" : "member"} creative={isCreativeRole(me.role) ? (me.role === "head_of_creative" ? "lead" : "maker") : null} theme={(pref?.theme as Theme | null) ?? null}>
         <CreativeFormatsProvider formats={formatList(me)}>{children}</CreativeFormatsProvider>
       </TeamShell>
       <Toaster />

@@ -60,6 +60,13 @@ export function baseRole(role: string | null | undefined): string | null {
 /** Whether someone works as this role (a lead maker counts as their base role too) */
 export const worksAs = (role: string | null | undefined, ...as: TeamRole[]) => as.includes(baseRole(role) as TeamRole);
 
+/**
+ * The creative team: the Head of Creative, graphic designers and video editors (lead makers included). Their screens
+ * leave out the media-buying tools (the KPI board, audits and sprints, reports, the Ads Lab) and the alerts only a
+ * buyer or account manager can act on. Matches profiles.is_creative in the database.
+ */
+export const isCreativeRole = (role: string | null | undefined) => worksAs(role, "head_of_creative", "graphic_designer", "video_editor");
+
 /** Per-client slots and who can fill them. */
 export const SLOTS = [
   { value: "meta_buyer", label: "Meta buyer", eligible: ["media_buyer", "head_of_meta"] as TeamRole[] },

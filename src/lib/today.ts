@@ -9,6 +9,7 @@ import { loadSaidPromises } from "@/lib/message-promises";
 import { loadCallPromises, loadOnboarding, loadSuggestions, type OpenSuggestion } from "@/lib/suggestions";
 import { assetsStale } from "@/lib/client-assets";
 import { LIVE } from "@/lib/live";
+import { isCreativeRole } from "@/lib/roles";
 
 // The daily recap: everything that needs an exec or lead today, one item at a time, most critical first. Critical
 // means it can cost us the client: a promise we made and haven't kept, a new client waiting on us, an important
@@ -161,13 +162,28 @@ async function mine(db: SupabaseClient, me: Staff): Promise<Draft[]> {
   return out;
 }
 
+// The creative team's day: what's on them and what they can act on (ads wearing out, late or stuck tickets, first
+// rounds, briefs, clients behind on creative, promises with a brief to make) can be urgent. Anything else (someone
+// else's escalation, a footage nudge) stays in the day as information, never an alarm.
+const CREATIVE_ACTIONABLE = new Set(["mine", "owed", "owed2", "said", "said2", "fatigue", "attention", "onboarding", "allot-behind", "promise", "brief"]);
+export function forCreative<T extends { key: string; score: number }>(items: T[]): T[] {
+  return items.map((d) => (CREATIVE_ACTIONABLE.has(d.key.split(":")[0]) ? d : { ...d, score: Math.min(d.score, 59) }));
+}
+
 /** Every item for this person right now, scored. */
 async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
+  const out = await gatherAll(db, me);
+  return isCreativeRole(me.role) ? forCreative(out) : out;
+}
+
+async function gatherAll(db: SupabaseClient, me: Staff): Promise<Draft[]> {
+  const creative = isCreativeRole(me.role);
   const topics = topicsFor(me);
   const manager = me.isExec || me.isLead;
   const callPromises = manager || me.isBuyer || me.isCoordinator;
   const [promises, onboarding, suggestions, fatigue, home, own, owed, said] = await Promise.all([
-    callPromises ? loadCallPromises(db).catch(() => []) : [],
+    // The creative team: only the call promises with a brief to make (the rest are the buyers' and account managers')
+    callPromises ? loadCallPromises(db).then((ps) => (creative ? ps.filter((p) => p.suggestion) : ps)).catch(() => []) : [],
     topics.has("onboarding") ? loadOnboarding(db).catch(() => null) : null,
     topics.has("briefs") ? loadSuggestions(db, (await import("@/lib/creative-formats")).formatsFor(me)).catch(() => null) : null,
     topics.has("ads") ? loadWatchList(db, manager ? { limit: 20 } : { buyerId: me.id, limit: 20 }).catch(() => []) : [],
@@ -183,7 +199,10 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
     const late = Math.max(0, bizDays(p.dueAt));
     const mineToo = p.ownerId === me.id;
     const second = p.status === "escalated";
-    const open = p.source === "gmail" ? "Open the email" : "Open in Slack";
+    // An email opens only in its owner's inbox (anyone else gets Gmail's error page): theirs gets the link, a lead the client
+    const otherInbox = p.source === "gmail" && !mineToo;
+    const open = otherInbox ? "Open the client" : p.source === "gmail" ? "Open the email" : "Open in Slack";
+    const link = otherInbox ? (p.clientSlug ? `/clients/${p.clientSlug}` : null) : p.url;
     const make = ["creative", "copy", "offer"].includes(p.kind ?? "") && p.clientSlug;
     out.push({
       key: mineToo ? `${second ? "said2" : "said"}:${p.id}` : `said-lead:${p.id}`,
@@ -206,8 +225,8 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
                 from: { kicker: "Promised in a message", label: p.group?.title ?? p.what },
               },
             }
-          : { label: open, href: p.url ?? p.channelUrl ?? "/today" },
-      ...(make && p.url ? { alt: { label: open, href: p.url } } : p.channelUrl ? { alt: { label: "Open the channel", href: p.channelUrl } } : {}),
+          : { label: open, href: link ?? p.channelUrl ?? "/today" },
+      ...(make && link ? { alt: { label: open, href: link } } : p.channelUrl ? { alt: { label: "Open the channel", href: p.channelUrl } } : {}),
       ...(mineToo ? { dismiss: "Done, or not needed" } : {}),
     });
   }
@@ -217,7 +236,10 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
     const waited = Math.max(1, bizDays(o.askedAt));
     const mineToo = o.targetId === me.id;
     const second = o.status === "escalated";
-    const where = o.source === "gmail" ? "Open the email" : "Open in Slack";
+    // Someone else's email opens only in their inbox: a lead gets the client (or the recap) instead of Gmail's error page
+    const otherInbox = o.source === "gmail" && !mineToo;
+    const where = otherInbox ? (o.clientSlug ? "Open the client" : "Open the recap") : o.source === "gmail" ? "Open the email" : "Open in Slack";
+    const link = otherInbox ? (o.clientSlug ? `/clients/${o.clientSlug}` : null) : o.url;
     out.push({
       key: mineToo ? `${second ? "owed2" : "owed"}:${o.id}` : `owed-lead:${o.id}`,
       topic: "promises",
@@ -230,7 +252,7 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
       story: `${o.from} wrote ${o.where} on ${day(o.askedAt)}: "${o.body.replace(/\s+/g, " ").slice(0, 220)}${o.body.length > 220 ? "…" : ""}"`,
       why: mineToo ? (second ? "Second notice: your lead and the exec team have been told" : "Nobody's answered it yet") : "They had a notice and still haven't answered",
       evidence: [],
-      action: { label: where, href: o.url ?? o.channelUrl ?? "/today" },
+      action: { label: where, href: link ?? o.channelUrl ?? "/today" },
       ...(o.channelUrl ? { alt: { label: "Open the channel", href: o.channelUrl } } : {}),
       ...(mineToo ? { dismiss: "Doesn't need a reply", reply: { id: o.id, source: o.source, url: o.url, draft: o.draft, channel: o.channelName } } : {}),
     });
@@ -278,7 +300,8 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
         evidence: c.firstRound.evidence.slice(0, 3),
         action: { label: c.round.length > 1 ? `Review concept 1 of ${c.round.length}` : "Review the first round", suggestion: c.firstRound },
       });
-    } else if (manager || me.isCoordinator ? !c.intake || c.intake.status === "unmatched" : false) {
+    } else if ((manager && !creative) || me.isCoordinator ? !c.intake || c.intake.status === "unmatched" : false) {
+      // Chasing an intake form is the account manager's (and the buyers' and execs'), never the creative team's
       const waited = bizDays(c.since);
       if (waited >= 3)
         out.push({

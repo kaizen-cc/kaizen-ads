@@ -3,6 +3,7 @@ import type { Tracker } from "@/lib/progress";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { compact, getCursor, saveItems, setCursor, trimBody, type CollectResult, type ContextItem } from "./shared";
 import { LIVE } from "@/lib/live";
+import { fixGmailLink } from "@/lib/email-filters";
 
 // Reads client channels through the Kaizen OS Slack app (its bot token, set as SLACK_BOT_TOKEN).
 // The bot must be a member of a channel to read it. Needs channels:history, groups:history,
@@ -167,9 +168,12 @@ export function slackWorkspace(): Promise<string | null> {
 
 /**
  * A link that opens the exact message: a bare slack.com/archives link doesn't know which workspace to open, so it
- * lands on a picker or the wrong place. Ours get the workspace's own address. Anything else is left as it is.
+ * lands on a picker or the wrong place. Ours get the workspace's own address. An email saved with Gmail's old
+ * /mail/u/<address>/ link (a 404 when that address isn't the one signed in) gets the link that picks the account.
+ * Anything else is left as it is.
  */
 export async function openableLink<T extends string | null>(href: T): Promise<T> {
+  if (href?.startsWith("https://mail.google.com/")) return fixGmailLink(href);
   if (!href || !href.startsWith("https://slack.com/archives/")) return href;
   const base = await slackWorkspace();
   return (base ? href.replace("https://slack.com/", base) : href) as T;

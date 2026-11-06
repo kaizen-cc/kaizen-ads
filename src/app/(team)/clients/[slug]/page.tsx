@@ -8,7 +8,7 @@ import type { ClientCall } from "./calls-panel";
 import { notFound } from "next/navigation";
 import type { Digest } from "@/lib/ai";
 import { isExecOrLead, requireStaff, seesAllClients } from "@/lib/auth";
-import { SLOTS, canHold } from "@/lib/roles";
+import { SLOTS, canHold, isCreativeRole } from "@/lib/roles";
 import { freshness, nyToday } from "@/lib/dates";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -420,7 +420,8 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       knowledge={knowledge}
       loom={loom}
       playbook={{ items: ledger, learnings: brandBible?.learnings ?? [] }}
-      reports={reportHistory}
+      // Client reports are the buyers' and account managers', not the creative team's
+      reports={isCreativeRole(me.role) ? null : reportHistory}
       launchRules={launchRules}
       readiness={readiness}
       services={{
@@ -471,7 +472,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       billingHistory={billingHistory}
       cycle={{ billingDay: (client.billing_day as number | null) ?? null, source: (client.billing_day_source as string | null) ?? null, start: (usage?.period_start as string | null) ?? null, end: (usage?.period_end as string | null) ?? null, gap: gaps?.get(client.id) ?? null }}
       creativeDb={(client.creative_db as CreativeDb | null) ?? null}
-      can={{ admin: me.isExec, contacts: seesAllClients(me), allot: me.isExec || me.isLead, assign: isExecOrLead(me) }}
+      can={{ admin: me.isExec, contacts: seesAllClients(me), allot: me.isExec || me.isLead, assign: isExecOrLead(me), buyerTools: !isCreativeRole(me.role) }}
     />
   );
 }

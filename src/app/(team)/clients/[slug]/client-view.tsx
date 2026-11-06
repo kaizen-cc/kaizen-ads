@@ -168,7 +168,8 @@ export type ClientViewProps = {
   /** Live changes in their ad accounts, switched on for this client (or for everyone) */
   liveWrites?: { on: boolean; by: string | null; at: string | null; globalOn: boolean } | null;
   creativeDb?: CreativeDb | null;
-  can: { admin: boolean; contacts: boolean; allot: boolean; assign: boolean };
+  /** buyerTools: the media-buying tabs (Google policy and ideas to apply); the creative team doesn't get them */
+  can: { admin: boolean; contacts: boolean; allot: boolean; assign: boolean; buyerTools?: boolean };
   demo?: boolean; // design preview: the refresh only plays its animation
   connections: { meta: Freshness | null; slackClient: Freshness | null; slackInternal: Freshness | null; drive: Freshness | null };
   creative?: ClientCreative | null; // tickets in motion and launched, live and paused ads
@@ -905,6 +906,9 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                       hint: "The Google Ads go-to-market strategy: campaigns, keywords, geo, copy and assets",
                       content: <div className="grid gap-6">{!demo ? <GtmPanel clientId={client.id} slug={client.slug} gtm={googleGtm} canReview={can.assign} readOnly={!live} platform="google" /> : <p className="text-sm text-faint">Not in the demo.</p>}</div>,
                     },
+                    ...(can.buyerTools === false
+                      ? []
+                      : [
                     {
                       id: "policy",
                       label: "Policy",
@@ -922,6 +926,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                         </div>
                       ),
                     },
+                        ]),
                   ],
                 },
               ]

@@ -5,6 +5,7 @@ import { LIVE, isLive } from "@/lib/live";
 import { getCursor, setCursor, trimBody } from "@/lib/context/shared";
 import { listChannels, openableLink, permalink, queueSlackLooms, slack, slackConfigured, type SlackMessage } from "@/lib/context/slack";
 import { addresses, gmailToken, google, googleConfigured, plainText, withoutQuotes, type GmailMessage } from "@/lib/context/google";
+import { gmailLink, isCalendarEmail } from "@/lib/email-filters";
 import { APPROVE_EMOJI, COMMIT, REQUESTISH, clearNotices, followPromises, recordPromises, type Candidate } from "@/lib/message-promises";
 
 // Messages someone on the team owes a reply to. Slack: anyone tagged in a channel the Kaizen OS bot is in, and a
@@ -375,8 +376,11 @@ async function scanGmail(admin: Admin) {
         const from = addresses(header("from"))[0];
         // Written to them (not a copy), by a client contact or a teammate; mailing lists and tools don't count
         if (!from || header("list-id") || !(addresses(header("to")) as string[]).includes(mailbox)) continue;
-        const contact = contacts.get(from);
+        // A calendar invite or RSVP isn't a message to answer
+        if (isCalendarEmail(header("subject"), m.payload)) continue;
         const mate = team.get(from);
+        // A teammate's email is the team's, never filed to a client (even if their address is on a client's contacts)
+        const contact = mate ? undefined : contacts.get(from);
         if (!contact && !mate) continue;
         const name = (header("from") ?? "").replace(/<[^>]+>/, "").replace(/"/g, "").trim() || contact?.name || mate?.full_name || from;
         rows.push({
@@ -392,7 +396,7 @@ async function scanGmail(admin: Admin) {
           asked_at: new Date(Number(m.internalDate)).toISOString(),
           subject: header("subject"),
           body: trimBody(withoutQuotes(plainText(m.payload) ?? m.snippet ?? ""), 1500),
-          url: `https://mail.google.com/mail/u/${mailbox}/#all/${m.threadId}`,
+          url: gmailLink(mailbox, m.threadId),
         });
       }
       if (rows.length) {
@@ -420,6 +424,8 @@ async function sentMail(admin: Admin, token: string, mailbox: string, me: string
     const m = await google<GmailMessage>(token, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}`, { format: "full" });
     const header = (n: string) => m.payload.headers.find((h) => h.name.toLowerCase() === n)?.value ?? null;
     const sentAt = new Date(Number(m.internalDate)).toISOString();
+    // Answering a calendar invite (Accepted, Declined) answers nothing and promises nothing
+    if (isCalendarEmail(header("subject"), m.payload)) continue;
     // Anything waiting on them in this thread is answered
     const { data: waiting } = await admin.from("owed_replies").select("id, status, target_id, from_name, client_id, url").eq("source", "gmail").eq("mailbox", mailbox).eq("gmail_thread_id", m.threadId).in("status", OPEN).lt("asked_at", sentAt);
     for (const o of waiting ?? []) await closeAnswered(admin, o);
@@ -445,7 +451,7 @@ async function sentMail(admin: Admin, token: string, mailbox: string, me: string
       client_id: client?.clientId ?? null,
       mailbox,
       gmail_thread_id: m.threadId,
-      url: `https://mail.google.com/mail/u/${mailbox}/#all/${m.threadId}`,
+      url: gmailLink(mailbox, m.threadId),
       said_at: sentAt,
       said: `(email "${header("subject") ?? ""}") ${body.replace(/\s+/g, " ").slice(0, 1200)}`,
       before: before.join("\n"),
@@ -738,6 +744,8 @@ export async function loadOwedReplies(db: SupabaseClient, me: { id: string; role
     .limit(80);
   const rows = await Promise.all((data ?? []).map(async (o) => ({ ...o, url: await openableLink((o.url as string | null) ?? null) })));
   return rows
+    // Calendar invites and RSVPs read before they were filtered out at the inbox: nothing to reply to
+    .filter((o) => !(o.source === "gmail" && isCalendarEmail(o.subject as string | null)))
     .filter((o) => {
       // A paused or archived client's messages aren't chased on the board
       const c = o.clients as unknown as { status?: string | null; archived_at?: string | null } | null;

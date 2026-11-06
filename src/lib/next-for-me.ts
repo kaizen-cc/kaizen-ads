@@ -6,6 +6,7 @@ import { loadHome, loadKpiPulse } from "@/lib/home";
 import { loadWatchList } from "@/lib/fatigue";
 import { loadCallPromises, loadOnboarding, loadSuggestions, type OpenSuggestion } from "@/lib/suggestions";
 import { formatsFor } from "@/lib/creative-formats";
+import { isCreativeRole } from "@/lib/roles";
 
 // Everything that's on one person, in one list: what to do now, what to decide, what to keep an eye on, and what's
 // coming. Pulled from the tickets, the briefs the AI wrote, the KPI tracker, the fatigue watcher and onboarding, and
@@ -28,6 +29,8 @@ export type NextForMe = {
   now: NextItem[];
   decide: NextItem[];
   watch: NextItem[];
+  /** What the client still owes us, as information (the creative team: an intake form not in yet, so they can go ahead with what we have) */
+  waiting: NextItem[];
   coming: NextItem[];
   stats: { onMe: number; late: number; dueToday: number; toDecide: number };
 };
@@ -49,8 +52,23 @@ const ago = (iso: string) => {
   return days <= 0 ? "today" : days === 1 ? "1 day" : `${days} days`;
 };
 
+/**
+ * Who chases a new client's marketing intake form: their account manager (the customer success person on the client),
+ * or, when nobody is on it as account manager yet, the customer success team and the client's own buyers. Never the
+ * creative team, and not a lead just for being a lead.
+ */
+export function chasesIntake(me: { id: string; isCoordinator: boolean; role: string }, seats: { profileId: string; role: string }[]) {
+  if (isCreativeRole(me.role)) return false;
+  const managers = seats.filter((s) => s.role === "coordinator");
+  if (managers.length) return managers.some((s) => s.profileId === me.id);
+  return me.isCoordinator || seats.some((s) => s.profileId === me.id && (s.role === "meta_buyer" || s.role === "google_buyer"));
+}
+
 export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<NextForMe> {
-  const buyerish = me.isBuyer || me.isLead || me.isExec || me.role === "google_buyer";
+  // The creative team (the Head of Creative too) has no ad accounts, sprints or onboarding paperwork: their list is
+  // their tickets, reviews, first rounds and briefs to decide, and ads wearing out on their clients
+  const creative = isCreativeRole(me.role);
+  const buyerish = !creative && (me.isBuyer || me.isLead || me.isExec || me.role === "google_buyer");
   // Meta ads wearing out are for the Meta side, not Google's
   const metaSide = me.role !== "google_buyer" && me.role !== "head_of_google";
   // My clients: the ones I'm assigned to and the ad accounts I own in the KPI tracker
@@ -63,15 +81,22 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
   const [h, kpis, fatigue, onboarding, promises, suggestions] = await Promise.all([
     loadHome(db, me),
     buyerish ? loadKpiPulse(db, me.id) : Promise.resolve(null),
-    buyerish && metaSide ? loadWatchList(db, { buyerId: me.id, limit: 30 }) : Promise.resolve([]),
-    buyerish ? loadOnboarding(db) : Promise.resolve(null),
-    buyerish ? loadCallPromises(db) : Promise.resolve([]),
+    // Ads wearing out: a buyer's own; the creative team's, on the clients they make for (the Head of Creative every client)
+    buyerish && metaSide
+      ? loadWatchList(db, { buyerId: me.id, limit: 30 })
+      : creative
+        ? loadWatchList(db, { limit: 30 }).then((ws) => (me.isLead ? ws : ws.filter((w) => myClients.has(w.clientId))))
+        : Promise.resolve([]),
+    // New clients: first rounds for the buyers and the Head of Creative, intake chasing for account managers
+    buyerish || me.isCoordinator || creative ? loadOnboarding(db) : Promise.resolve(null),
+    buyerish || me.role === "head_of_creative" ? loadCallPromises(db) : Promise.resolve([]),
     me.isLead || me.isExec ? loadSuggestions(db, formatsFor(me)) : Promise.resolve(null),
   ]);
 
   const now: NextItem[] = [];
   const decide: NextItem[] = [];
   const watch: NextItem[] = [];
+  const waiting: NextItem[] = [];
   const coming: NextItem[] = [];
   const today = new Date().toLocaleDateString("en-US", { timeZone: "America/New_York" });
   const dueToday = (iso: string | null) => Boolean(iso && new Date(iso).toLocaleDateString("en-US", { timeZone: "America/New_York" }) === today);
@@ -147,11 +172,21 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
   }
 
   // ─── Briefs waiting on a decision (my clients; leads and execs also the strategist's suggestions) ───
+  // Who is on each new client, so an intake form still missing goes to the person who chases it
+  const fresh = (onboarding?.clients ?? []).filter((c) => !c.firstRound && !c.intake && c.creative).map((c) => c.clientId);
+  const { data: seatRows } = fresh.length ? await db.from("client_assignments").select("client_id, profile_id, role").in("client_id", fresh) : { data: [] };
+  const seatsOf = (id: string) => (seatRows ?? []).filter((s) => s.client_id === id).map((s) => ({ profileId: s.profile_id as string, role: s.role as string }));
   for (const c of onboarding?.clients ?? []) {
-    if (!myClients.has(c.clientId) && !me.isLead) continue;
-    if (c.firstRound)
+    if (c.firstRound) {
+      // A first round is a creative decision: the client's buyer, and the leads (not the account manager)
+      if ((!myClients.has(c.clientId) && !me.isLead) || !(buyerish || me.role === "head_of_creative")) continue;
       decide.push({ id: `o-${c.clientId}`, kind: "first_round", tone: "brand", client: c.name, title: c.firstRound.draft.title, why: c.round.length > 1 ? `Their first round is written: ${c.round.length} concepts, one ticket each` : "Their first round is written and waiting for you", when: `Waiting ${ago(c.firstRound.createdAt)}`, action: "Review it", suggestion: c.firstRound });
-    else if (!c.intake && c.creative) {
+    } else if (!c.intake && c.creative && creative && (me.isLead || myClients.has(c.clientId))) {
+      // The creative team: a status, not a chase (the account manager chases it). Clients are slow with these, so the
+      // usual call is to go ahead with what we have; this says how long it's been so they can decide
+      const days = Math.floor((Date.now() - Date.parse(c.since)) / 86_400_000);
+      waiting.push({ id: `iw-${c.clientId}`, kind: "intake", tone: "ok", client: c.name, title: "Intake not in yet · proceed with what we have", why: "Their account manager is following up", when: days <= 0 ? "Enrolled today" : `Waiting ${days} ${days === 1 ? "day" : "days"}`, href: `/clients/${c.slug}`, action: "Open client" });
+    } else if (!c.intake && c.creative && chasesIntake(me, seatsOf(c.clientId))) {
       const days = Math.floor((Date.now() - Date.parse(c.since)) / 86_400_000);
       if (days >= 2) watch.push({ id: `i-${c.clientId}`, kind: "intake", tone: days > 4 ? "bad" : "warn", client: c.name, title: "Marketing intake form not in yet", why: "Their first round waits on it (or write it without)", when: `${days} days since enrolling`, href: `/clients/${c.slug}`, action: "Open client" });
     }
@@ -212,6 +247,7 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
     now: sort(now),
     decide: sort(decide),
     watch: sort(watch),
+    waiting,
     coming,
     stats: { onMe: h.mine.length, late: h.mine.filter((r) => r.minutes_over > 0).length, dueToday: h.dueToday, toDecide: decide.length },
   };

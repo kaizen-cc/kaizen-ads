@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useSyncExternalStore } from "react";
 import { closeThen, pushParams, useParam } from "@/lib/url-state";
 import type { NextForMe, NextItem } from "@/lib/next-for-me";
 import type { OpenSuggestion } from "@/lib/suggestions";
@@ -12,10 +13,39 @@ const SECTIONS: { key: keyof Omit<NextForMe, "stats">; title: string; hint: stri
   { key: "now", title: "Now", hint: "Late, due today, or waiting on you", empty: "Nothing urgent. Nice." },
   { key: "decide", title: "To decide", hint: "Briefs the AI suggests for your clients", empty: "No briefs waiting on you." },
   { key: "watch", title: "Keep an eye on", hint: "Your accounts and clients", empty: "Your accounts look healthy." },
+  { key: "waiting", title: "Waiting on the client", hint: "For your information: nothing to chase", empty: "" },
   { key: "coming", title: "Coming up", hint: "On you, not due yet", empty: "Nothing else lined up." },
 ];
 
 const DOT: Record<NextItem["tone"], string> = { bad: "bg-bad", warn: "bg-warn", brand: "bg-brand", ok: "bg-ok" };
+
+// Which sections someone folded away, remembered per person in this browser (kz:next:closed:<their id>). Before the
+// browser has said (the server render), every section is open.
+const listeners = new Set<() => void>();
+const keyOf = (me: string) => `kz:next:closed:${me}`;
+const readClosed = (me: string) => {
+  try {
+    return localStorage.getItem(keyOf(me)) ?? "";
+  } catch {
+    return "";
+  }
+};
+const writeClosed = (me: string, keys: string[]) => {
+  try {
+    localStorage.setItem(keyOf(me), keys.join(","));
+  } catch {
+    /* private window: what's folded just isn't remembered */
+  }
+  listeners.forEach((l) => l());
+};
+const subscribe = (l: () => void) => {
+  listeners.add(l);
+  return () => listeners.delete(l);
+};
+function useClosed(me: string) {
+  const raw = useSyncExternalStore(subscribe, () => readClosed(me), () => "");
+  return raw ? raw.split(",") : [];
+}
 
 const KIND: Record<NextItem["kind"], string> = {
   sprint: "Sprint",
@@ -33,9 +63,11 @@ const KIND: Record<NextItem["kind"], string> = {
   task: "Plan task",
 };
 
-/** Everything on one person, in four calm sections. Briefs open right here; everything else goes where it lives. */
-export function NextList({ data }: { data: NextForMe }) {
+/** Everything on one person, in four calm sections, each folding away. Briefs open right here; everything else goes where it lives. */
+export function NextList({ data, me }: { data: NextForMe; me: string }) {
   const router = useRouter();
+  const closed = useClosed(me);
+  const toggle = (key: string) => writeClosed(me, closed.includes(key) ? closed.filter((k) => k !== key) : [...closed, key]);
   // The brief open is in the address (?brief=id), so back closes it and a link opens it
   const openId = useParam("brief");
   const sheet = (openId && SECTIONS.flatMap((x) => data[x.key]).find((it) => it.suggestion?.id === openId)?.suggestion) || null;
@@ -58,7 +90,7 @@ export function NextList({ data }: { data: NextForMe }) {
         ))}
       </div>
 
-      {total === 0 && data.coming.length === 0 ? (
+      {total === 0 && data.coming.length === 0 && data.waiting.length === 0 ? (
         <div className="grid place-items-center gap-2 rounded-[16px] border border-dashed border-line px-6 py-16 text-center">
           <p className="font-medium">You&apos;re all caught up</p>
           <p className="max-w-sm text-sm text-muted">New work, briefs to decide and anything off on your accounts land here as they come in.</p>
@@ -66,19 +98,36 @@ export function NextList({ data }: { data: NextForMe }) {
       ) : (
         SECTIONS.map((s) => {
           const items = data[s.key];
-          if (!items.length && s.key === "coming") return null;
+          if (!items.length && (s.key === "coming" || s.key === "waiting")) return null;
+          const open = !closed.includes(s.key);
+          const urgent = items.filter((it) => it.tone === "bad").length;
           return (
             <section key={s.key} className="grid gap-2.5">
-              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-                <h2 className="font-heading text-lg">
-                  {s.title} {items.length > 0 && <span className="text-faint">{items.length}</span>}
-                </h2>
-                <span className="text-xs text-faint">{s.hint}</span>
-              </div>
-              {items.length === 0 ? (
+              <h2>
+                <button
+                  type="button"
+                  onClick={() => toggle(s.key)}
+                  aria-expanded={open}
+                  aria-controls={`next-${s.key}`}
+                  className="group flex min-h-11 w-full items-center gap-3 rounded-[12px] text-left"
+                >
+                  <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3 gap-y-0.5">
+                    <span className="font-heading text-lg">{s.title}</span>
+                    <span className={`tabular rounded-full px-2 py-0.5 text-xs ${items.length ? "bg-surface-2 text-muted" : "text-faint"}`}>{items.length}</span>
+                    {!open && urgent > 0 && <span className="tabular text-xs text-bad">{urgent} late</span>}
+                    <span className="hidden text-xs text-faint sm:inline">{s.hint}</span>
+                  </span>
+                  <span aria-hidden className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-faint transition-colors group-hover:bg-surface-2 group-hover:text-fg">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`transition-transform duration-200 ${open ? "" : "-rotate-90"}`}>
+                      <path d="m6 9 6 6 6-6" />
+                    </svg>
+                  </span>
+                </button>
+              </h2>
+              {!open ? null : items.length === 0 ? (
                 <p className="rounded-[14px] border border-line bg-surface px-4 py-3 text-sm text-faint">{s.empty}</p>
               ) : (
-                <ul className="grid divide-y divide-line overflow-hidden rounded-[14px] border border-line bg-surface">
+                <ul id={`next-${s.key}`} className="grid divide-y divide-line overflow-hidden rounded-[14px] border border-line bg-surface">
                   {items.map((it) => (
                     <Row key={it.id} it={it} onBrief={(b) => pushParams({ brief: b.id })} />
                   ))}

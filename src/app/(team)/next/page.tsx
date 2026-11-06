@@ -45,7 +45,7 @@ export default async function NextForMe() {
         <TodayHero db={db} me={me} />
       </Suspense>
       <HandoffCallout db={db} me={me.id} />
-      <NextList data={data} />
+      <NextList data={data} me={me.id} />
       {deploys.length > 0 && (
         <section className="grid gap-3">
           <div>

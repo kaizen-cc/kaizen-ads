@@ -5,6 +5,7 @@ import { askJson } from "@/lib/ai";
 import { asanaSince } from "@/lib/calls";
 import { openableLink, slack } from "@/lib/context/slack";
 import { addresses, gmailToken, google, plainText, withoutQuotes, type GmailMessage } from "@/lib/context/google";
+import { isCalendarEmail } from "@/lib/email-filters";
 import { LEAD_OF, notify, plain, workingHours, type Msg, type SlackWho } from "@/lib/owed-replies";
 import { loadGroups, shadowedMessages, type PromiseGroup } from "@/lib/promise-groups";
 import { matchClientName } from "@/lib/client-name-match";
@@ -640,6 +641,8 @@ export async function loadSaidPromises(db: SupabaseClient, me: { id: string; rol
   const links = new Map(await Promise.all((data ?? []).map(async (p) => [p.id as string, await openableLink((p.url as string | null) ?? null)] as const)));
   return (data ?? [])
     .filter((p) => !shadow.has(p.id as string))
+    // A reply to a calendar invite (saved as `(email "Accepted: …") …`) promised nothing
+    .filter((p) => !(p.source === "gmail" && isCalendarEmail(/^\(email "([^"]*)"\)/.exec(String(p.said ?? ""))?.[1])))
     // A paused or archived client's yeses aren't chased on the board
     .filter((p) => {
       const c = p.clients as unknown as { status?: string | null; archived_at?: string | null } | null;

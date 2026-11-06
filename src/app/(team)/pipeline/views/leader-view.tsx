@@ -34,6 +34,8 @@ export function LeaderView(d: LeaderData & { handoffs?: React.ReactNode; recap?:
   const working = d.stats.teamActive > 0;
   const themes = buildThemes(d, {
     production: d.production,
+    // The Head of Creative: no ad accounts here, so nothing reads as a client at risk
+    calm: d.department === "Creative",
     first: {
       id: "queue",
       title: "Your queue",

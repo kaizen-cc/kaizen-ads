@@ -10,11 +10,24 @@ import { noticeItem, noticeLink, replyAddress } from "@/lib/notice-links";
 
 export type Notice = { id: string; kind: string; title: string; body: string | null; href: string | null; priority: "critical" | "normal"; createdAt: string; read: boolean; actor: string | null; key: string | null };
 
-export async function loadNotifications(db: SupabaseClient, limit = 40): Promise<{ items: Notice[]; unread: number }> {
+/**
+ * Alerts the creative team can't act on: accounts off target, optimization sprints and connections are the buyers' and
+ * execs'. They're left off a designer's, editor's or the Head of Creative's bell (still on record, as every notice is).
+ */
+export const NOT_FOR_CREATIVE = ["kpi", "sprint", "connection"];
+
+export async function loadNotifications(db: SupabaseClient, limit = 40, opts: { skipKinds?: string[] } = {}): Promise<{ items: Notice[]; unread: number }> {
+  const skip = opts.skipKinds?.length ? `(${opts.skipKinds.join(",")})` : null;
+  let list = db.from("notifications").select("id, kind, title, body, href, priority, created_at, read_at, key, actor:profiles!notifications_actor_id_fkey(full_name)").eq("alert", true).is("cleared_at", null);
+  let unread = db.from("notifications").select("id", { count: "exact", head: true }).eq("alert", true).is("read_at", null).is("cleared_at", null);
+  if (skip) {
+    list = list.not("kind", "in", skip);
+    unread = unread.not("kind", "in", skip);
+  }
   const [{ data }, { count }] = await Promise.all([
     // Only alerts: something on this person to act on. Updates are kept but left to the daily review and the Overview
-    db.from("notifications").select("id, kind, title, body, href, priority, created_at, read_at, key, actor:profiles!notifications_actor_id_fkey(full_name)").eq("alert", true).is("cleared_at", null).order("created_at", { ascending: false }).limit(limit),
-    db.from("notifications").select("id", { count: "exact", head: true }).eq("alert", true).is("read_at", null).is("cleared_at", null),
+    list.order("created_at", { ascending: false }).limit(limit),
+    unread,
   ]);
   // Slack links get our workspace's address, so a click opens the message itself
   const hrefs = await Promise.all((data ?? []).map((n) => openableLink((n.href as string | null) ?? null)));

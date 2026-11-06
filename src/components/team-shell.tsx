@@ -4,7 +4,7 @@ import Image from "next/image";
 import { ThemeSwitch } from "./theme-switch";
 import type { Theme } from "@/app/(team)/theme-actions";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { NotificationBell } from "./notification-bell";
 import { BriefJobsIndicator, BriefJobsRoot } from "./brief-jobs";
@@ -12,7 +12,10 @@ import { MediaJobsIndicator, MediaJobsRoot } from "./media-jobs";
 import { PersonAvatar } from "@/components/person-avatar";
 
 type Tier = "exec" | "lead" | "member";
-type Item = { href: string; label: string; icon: string; tiers?: Tier[] };
+// buyer: media-buying tools the creative team doesn't use (hidden for them); creativeLead: only the Head of Creative
+type Item = { href: string; label: string; icon: string; tiers?: Tier[]; buyer?: boolean; creativeLead?: boolean };
+/** The creative team's place in the menu: the Head of Creative, a designer or editor, or not creative */
+export type CreativeSide = "lead" | "maker" | null;
 
 const I = {
   home: "M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z",
@@ -34,9 +37,11 @@ const GROUPS: { title: string; items: Item[] }[] = [
       { href: "/pipeline", label: "Overview", icon: I.home, tiers: ["exec", "lead"] },
       { href: "/next", label: "Next for me", icon: I.next, tiers: ["lead", "member"] },
       { href: "/board", label: "Board", icon: I.board },
+      // The creative team's own KPIs (the Creative KPI tab on the Board), one tap away for the Head of Creative
+      { href: "/board?view=kpis", label: "Team KPIs", icon: I.kpis, creativeLead: true },
       { href: "/clients", label: "Clients", icon: I.clients },
-      { href: "/kpis", label: "KPIs", icon: I.kpis },
-      { href: "/reports", label: "Reports", icon: I.reports },
+      { href: "/kpis", label: "KPIs", icon: I.kpis, buyer: true },
+      { href: "/reports", label: "Reports", icon: I.reports, buyer: true },
       { href: "/ai", label: "Kaizen AI", icon: I.ai },
     ],
   },
@@ -44,7 +49,7 @@ const GROUPS: { title: string; items: Item[] }[] = [
     title: "Ideas",
     items: [
       { href: "/ideas", label: "Ideas", icon: I.ideas },
-      { href: "/lab", label: "Ads Lab", icon: I.lab, tiers: ["exec", "lead"] },
+      { href: "/lab", label: "Ads Lab", icon: I.lab, tiers: ["exec", "lead"], buyer: true },
     ],
   },
 ];
@@ -59,14 +64,18 @@ function Icon({ d }: { d: string }) {
   );
 }
 
-export function TeamShell({ name, roles, tier, theme = null, children }: { name: string; roles: string; tier: Tier; theme?: Theme | null; children: React.ReactNode }) {
+export function TeamShell({ name, roles, tier, creative = null, theme = null, children }: { name: string; roles: string; tier: Tier; creative?: CreativeSide; theme?: Theme | null; children: React.ReactNode }) {
   const path = usePathname();
-  const can = (i: Item) => !i.tiers || i.tiers.includes(tier);
+  const view = useSearchParams().get("view");
+  // The creative team doesn't get the media-buying tools; the Head of Creative gets their team's KPIs instead
+  const can = (i: Item) => (!i.tiers || i.tiers.includes(tier)) && !(i.buyer && creative) && (!i.creativeLead || creative === "lead");
   const groups = GROUPS.map((g) => ({ ...g, items: g.items.filter(can) }));
   const settings = can(SETTINGS) ? SETTINGS : null;
-  // The tab bar on phones: home (Overview or Next for me), the board, clients and KPIs; everything else is in the menu
+  // The tab bar on phones: home (Overview or Next for me), the board, clients and KPIs (the creative team: their own
+  // KPIs, or Ideas); everything else is in the menu
   const all = groups.flatMap((g) => g.items);
-  const tabs = [all.find((i) => i.href === "/pipeline" || i.href === "/next"), ...["/board", "/clients", "/kpis"].map((h) => all.find((i) => i.href === h))].filter((i): i is Item => Boolean(i)).slice(0, 4);
+  const fourth = (creative ? ["/board?view=kpis", "/ideas"] : ["/kpis"]).map((h) => all.find((i) => i.href === h)).find(Boolean);
+  const tabs = [all.find((i) => i.href === "/pipeline" || i.href === "/next"), all.find((i) => i.href === "/board"), all.find((i) => i.href === "/clients"), fourth].filter((i): i is Item => Boolean(i)).slice(0, 4);
   const [menu, setMenu] = useState(false);
   // The menu closes on its own when the page changes, and the page behind doesn't scroll while it's open
   const [seenPath, setSeenPath] = useState(path);
@@ -87,8 +96,14 @@ export function TeamShell({ name, roles, tier, theme = null, children }: { name:
   }, [menu]);
   const home = tier === "member" ? "/next" : "/pipeline";
   // Winners and Market live under Ideas; Team under Settings
-  const active = (href: string) =>
-    path === href || path.startsWith(`${href}/`) || (href === "/ideas" && (path.startsWith("/winners") || path.startsWith("/market"))) || (href === "/settings" && path.startsWith("/team"));
+  // A place with a view in its address (Team KPIs) is on only with that view, and the Board then isn't
+  const teamKpis = all.some((i) => i.href === "/board?view=kpis");
+  const active = (href: string) => {
+    const [base, query] = href.split("?");
+    if (query) return path === base && view === new URLSearchParams(query).get("view");
+    if (href === "/board" && teamKpis && view === "kpis" && path === "/board") return false;
+    return path === href || path.startsWith(`${href}/`) || (href === "/ideas" && (path.startsWith("/winners") || path.startsWith("/market"))) || (href === "/settings" && path.startsWith("/team"));
+  };
   const link = (item: Item) => {
     const on = active(item.href);
     return (

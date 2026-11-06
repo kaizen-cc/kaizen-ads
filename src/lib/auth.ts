@@ -2,7 +2,7 @@ import "server-only";
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { isLeadMaker, type TeamRole } from "@/lib/roles";
+import { isCreativeRole, isLeadMaker, type TeamRole } from "@/lib/roles";
 
 export type Staff = {
   kind: "staff";
@@ -95,6 +95,18 @@ export async function requireExec() {
   const staff = await requireStaff();
   if (!staff.isExec) redirect("/pipeline");
   return staff;
+}
+
+/**
+ * The media-buying pages (the KPI board with its audits and sprints, reports, the Ads Lab) aren't the creative team's.
+ * Someone on it who lands on one (an old link, a bookmark) goes to their own place instead of a dead end: the
+ * creative team's KPIs for the KPI board (the Head of Creative; designers and editors the Board), home otherwise.
+ */
+export async function keepCreativeOut(page: "kpis" | "reports" | "lab") {
+  const staff = await requireStaff();
+  if (!isCreativeRole(staff.role)) return staff;
+  const lead = staff.role === "head_of_creative";
+  redirect(page === "kpis" ? (lead ? "/board?view=kpis" : "/board") : lead ? "/pipeline" : "/next");
 }
 
 export async function requireContact() {
