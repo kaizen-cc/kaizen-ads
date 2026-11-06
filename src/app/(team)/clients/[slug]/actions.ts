@@ -559,7 +559,23 @@ export async function markShotListSent(id: string, slug: string) {
 /** Starts the thread over. */
 export async function clearClientAi(clientId: string) {
   const me = await requireStaff();
-  await createAdminClient().from("client_chats").delete().eq("client_id", clientId).eq("profile_id", me.id);
+  const admin = createAdminClient();
+  await admin.from("client_chats").delete().eq("client_id", clientId).eq("profile_id", me.id);
+  // A new conversation is a clean slate for actions: any launch this person had open with this client is set aside
+  // (nothing was created; it stays in the log) and a waiting "suggest more?" offer is closed, so the next message
+  // starts fresh instead of carrying on the last launch. The client's context and the account read stay as they are.
+  await admin
+    .from("launch_runs")
+    .update({ status: "set_aside", progress: null, updated_at: new Date().toISOString() })
+    .eq("client_id", clientId)
+    .eq("created_by", me.id)
+    .in("status", ["reading", "resolving", "asking", "planning", "checking", "ready"]);
+  const more = await import("@/lib/launch-more");
+  for (let i = 0; i < 5; i++) {
+    const offer = await more.pendingOffer(admin, clientId, me.id).catch(() => null);
+    if (!offer) break;
+    await more.declineMore(admin, offer.id);
+  }
 }
 
 /** Execs: put a client on an ongoing creative package from the client page (its allotment follows). */
