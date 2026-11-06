@@ -45,6 +45,18 @@ const KIND_ICON: Record<string, string> = {
 export function NotificationBell({ placement = "side" }: { placement?: "side" | "top" }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  // Computers: the panel grows out of the bell, anchored where the bell is (read when it opens)
+  const bell = useRef<HTMLButtonElement>(null);
+  const [anchor, setAnchor] = useState<{ top: number; left: number; bellX: number } | null>(null);
+  const toggle = () => {
+    const r = bell.current?.getBoundingClientRect();
+    if (r) {
+      const width = Math.min(400, window.innerWidth - 24);
+      const left = Math.max(12, Math.min(r.left + r.width / 2 - 28, window.innerWidth - width - 12));
+      setAnchor({ top: r.bottom + 10, left, bellX: r.left + r.width / 2 - left });
+    }
+    setOpen((o) => !o);
+  };
   const [items, setItems] = useState<Notice[]>([]);
   const [unread, setUnread] = useState(0);
   const seen = useRef<Set<string> | null>(null);
@@ -127,16 +139,19 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
   const earlier = items.filter((n) => !isToday(n.createdAt));
   const panel =
     placement === "side"
-      ? "fixed left-[252px] top-4 bottom-4 w-[min(400px,calc(100vw-268px))]"
+      ? // A popover under the bell, as tall as what's in it (up to the bottom of the screen)
+        "fixed w-[min(400px,calc(100vw-24px))]"
       : // Phones (the top bar's bell): a full-screen sheet, clear of the notch and home indicator
         "fixed inset-0 pt-safe pb-safe";
+  const placed = placement === "side" && anchor ? { top: anchor.top, left: anchor.left, maxHeight: `calc(100dvh - ${anchor.top + 16}px)`, transformOrigin: `${anchor.bellX}px -10px`, animation: "bell-pop .26s cubic-bezier(.2,.9,.25,1.15) both" } : { animation: "drawer-in .18s ease-out" };
   const sheet = placement === "top";
 
   return (
     <>
       <button
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        ref={bell}
+        onClick={toggle}
         aria-label={unread ? `${unread} new notifications` : "Notifications"}
         className={`relative grid place-items-center rounded-full text-muted transition-colors hover:bg-surface-2 hover:text-fg ${placement === "top" ? "h-11 w-11" : "h-9 max-md:h-11 w-9 max-md:w-11"}`}
       >
@@ -152,9 +167,11 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
       {open &&
         createPortal(
         <>
-          <div className="fixed inset-0 z-[90] bg-black/30" onClick={() => setOpen(false)} aria-hidden />
-          <div role="dialog" aria-label="Notifications" className={`${panel} z-[91] grid grid-rows-[auto_minmax(0,1fr)] overflow-hidden border-line bg-surface ${sheet ? "" : "rounded-[18px] border shadow-[0_30px_80px_-20px_rgba(0,0,0,0.7)]"}`} style={{ animation: "drawer-in .18s ease-out" }}>
-            <div className={`flex items-center justify-between gap-3 border-b border-line px-4 ${sheet ? "py-2" : "py-3"}`}>
+          <div className={`fixed inset-0 z-[90] ${sheet ? "bg-black/30" : "bg-black/10"}`} onClick={() => setOpen(false)} aria-hidden />
+          <div role="dialog" aria-label="Notifications" className={`${panel} z-[91] flex flex-col border-line bg-surface ${sheet ? "overflow-hidden" : ""} ${sheet ? "" : "rounded-[18px] border shadow-[0_30px_80px_-20px_rgba(0,0,0,0.7)]"}`} style={placed}>
+            {/* The little point toward the bell it came out of */}
+            {placement === "side" && anchor ? <span aria-hidden className="pointer-events-none absolute -top-[7px] h-3.5 w-3.5 rotate-45 rounded-[3px] border-l border-t border-line bg-surface" style={{ left: anchor.bellX - 7 }} /> : null}
+            <div className={`flex shrink-0 items-center justify-between gap-3 border-b border-line px-4 ${sheet ? "py-2" : "py-3"}`}>
               <div className="min-w-0">
                 <p className="font-heading text-[16px]">Notifications</p>
                 <p className="text-[11px] text-faint">Only what&apos;s on you: replies you owe, yeses you haven&apos;t done, work handed to you. Updates are in your day.</p>
@@ -193,7 +210,7 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
                 )}
               </span>
             </div>
-            <div className="overflow-y-auto overscroll-contain">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-b-[18px]">
               {!items.length && (
                 <div className="grid place-items-center gap-2 px-6 py-16 text-center">
                   <span className="grid h-10 w-10 place-items-center rounded-full bg-ok-soft text-ok">✓</span>

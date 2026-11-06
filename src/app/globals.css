@@ -399,6 +399,12 @@ body {
     transform: translateX(100%);
   }
 }
+/* The notifications popover growing out of the bell */
+@keyframes bell-pop {
+  from { opacity: 0; transform: scale(.6) translateY(-6px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) { @keyframes bell-pop { from { opacity: 0 } to { opacity: 1 } } }
 @keyframes drawer-in {
   from {
     transform: translateX(-100%);
