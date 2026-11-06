@@ -396,7 +396,8 @@ function bucketsOf(list: TodayItem[]): Bucket[] {
   // The list comes most urgent first, so each client lands where its most urgent item is, and leads with it
   const m = new Map<string, TodayItem[]>();
   for (const i of list) {
-    const k = i.clientId ? `c:${i.clientId}` : `n:${i.client.trim().toLowerCase()}`;
+    // By name: some items (promises from calls, replies) carry no client id, and the same client must still be one row
+    const k = i.client.trim().toLowerCase().replace(/\s+/g, " ");
     m.set(k, [...(m.get(k) ?? []), i]);
   }
   return [...m.entries()].map(([key, items]) => ({ key, client: items[0].client, items, tier: items[0].tier }));
