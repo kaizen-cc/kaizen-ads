@@ -9,16 +9,19 @@ import {
   ensureFolderPath,
   findOrCreateFolder,
   folderSegments,
+  isOldLayoutPath,
   locateAdCreative,
   nextAttempt,
   REPLACED,
+  relocateFile,
   slotOf,
   yearMonth,
   type FolderCache,
   type FolderDrive,
+  type MoveDrive,
 } from "@/lib/creative-drive-paths";
 
-// Creative uploaded on a ticket, copied into the client's Google Drive ("Ad Creative / Year / Month / Concept / Format").
+// Creative uploaded on a ticket, copied into the client's Google Drive ("Ad Creative / Avatar / Angle / 2026-11 Concept").
 // Everything here runs after the response or on the schedule: the upload itself never waits for Drive.
 //
 // Needs (Vercel env): GOOGLE_SERVICE_ACCOUNT_JSON and GOOGLE_DRIVE_USER (a Workspace person who can open every client
@@ -132,12 +135,30 @@ export const drive = {
     if (!up.ok) throw new DriveError(`Drive upload: ${up.status} ${(await up.text()).slice(0, 200)}`, up.status);
     return (await up.json()) as { id: string; webViewLink?: string };
   },
-  async move(id: string, to: string, from: string[]) {
-    await call("PATCH", `${API}/${id}`, { params: { addParents: to, removeParents: from.join(","), fields: "id", ...ALL }, json: {} });
+  /** New parents (and a new name when given): the same file, never a copy */
+  async move(id: string, to: string, from: string[], name?: string) {
+    await call("PATCH", `${API}/${id}`, { params: { addParents: to, ...(from.length ? { removeParents: from.join(",") } : {}), fields: "id", ...ALL }, json: name ? { name } : {} });
+  },
+  async rename(id: string, name: string) {
+    await call("PATCH", `${API}/${id}`, { params: { fields: "id", ...ALL }, json: { name } });
   },
 };
 
 const folderDrive: FolderDrive = { listFolders: drive.listFolders, createFolder: drive.createFolder };
+const moveDrive: MoveDrive = {
+  ...folderDrive,
+  async where(id) {
+    try {
+      const m = await drive.meta(id);
+      return { parents: m.parents ?? [], name: m.name, trashed: Boolean(m.trashed) };
+    } catch (e) {
+      if (e instanceof DriveError && e.status === 404) return null;
+      throw e;
+    }
+  },
+  move: drive.move,
+  rename: drive.rename,
+};
 
 /** client_drive_folders as the folder cache for one client's Ad Creative folder */
 export function folderCache(admin: SupabaseClient, clientId: string, root: string): FolderCache {
@@ -197,7 +218,32 @@ type SlotRow = {
   attempts: number;
   locked_at: string | null;
   retired_at: string | null;
+  drive_name?: string | null;
+  drive_path?: string | null;
 };
+
+type RequestPlace = { id: string; number: number; title: string | null; created_at: string; avatar: string | null; avatar_test: boolean | null; angles: { name: string } | null };
+const PLACE_COLUMNS = "id, number, title, created_at, avatar, avatar_test, angles(name)";
+
+/**
+ * Where a ticket's creative lives under Ad Creative: avatar, angle, "2026-11 Concept". Another ticket for the client the
+ * same month with the same title makes this one carry its number, so their files never mix.
+ */
+async function placeOf(admin: SupabaseClient, clientId: string, r: RequestPlace) {
+  const ym = yearMonth(r.created_at);
+  const { data: twins } = await admin
+    .from("requests")
+    .select("created_at")
+    .eq("client_id", clientId)
+    .ilike("title", (r.title ?? "").replace(/[%_\\]/g, "\\$&"))
+    .lt("number", r.number)
+    .gte("created_at", new Date(new Date(r.created_at).getTime() - 32 * 86_400_000).toISOString())
+    .limit(20);
+  const earlier = (twins ?? []).some((t) => yearMonth(t.created_at as string).key === ym.key);
+  const concept = conceptName(r.title, r.number, earlier);
+  const segments = folderSegments({ createdAt: r.created_at, concept, avatar: r.avatar, avatarTest: r.avatar_test, angle: r.angles?.name });
+  return { concept, segments, path: segments.join("/") };
+}
 
 /**
  * Lines a design's Drive files up with what's on the ticket now: each file of its current version wanted in its slot
@@ -363,30 +409,14 @@ async function uploadOne(admin: SupabaseClient, row: SlotRow): Promise<"synced" 
 
   const [{ data: d }, { data: r }, { data: c }] = await Promise.all([
     admin.from("designs").select("position").eq("id", file.design_id).single(),
-    admin.from("requests").select("id, number, title, format, created_at").eq("id", row.request_id!).single(),
+    admin.from("requests").select(PLACE_COLUMNS).eq("id", row.request_id!).single(),
     admin.from("clients").select("name").eq("id", row.client_id).single(),
   ]);
   if (!d || !r || !c) throw new Error("The ticket or client isn't there anymore");
 
-  // Another ticket for this client the same month with the same title: this one carries its number
-  const ym = yearMonth(r.created_at as string);
-  const { data: twins } = await admin
-    .from("requests")
-    .select("created_at")
-    .eq("client_id", row.client_id)
-    .ilike("title", ((r.title as string) ?? "").replace(/[%_\\]/g, "\\$&"))
-    .lt("number", r.number as number)
-    .gte("created_at", new Date(new Date(r.created_at as string).getTime() - 32 * 86_400_000).toISOString())
-    .limit(20);
-  const earlier = (twins ?? []).some((t) => {
-    const x = yearMonth(t.created_at as string);
-    return x.year === ym.year && x.month === ym.month;
-  });
-  const concept = conceptName(r.title as string, r.number as number, earlier);
-
+  const { concept, segments, path } = await placeOf(admin, row.client_id, r as unknown as RequestPlace);
   const root = await adCreativeRoot(admin, row.client_id);
   const cache = folderCache(admin, row.client_id, root);
-  const segments = folderSegments({ createdAt: r.created_at as string, concept, format: r.format as string, mime: file.mime });
   let parent: string;
   try {
     parent = await ensureFolderPath(folderDrive, cache, root, segments);
@@ -410,7 +440,7 @@ async function uploadOne(admin: SupabaseClient, row: SlotRow): Promise<"synced" 
       const m = await drive.meta(row.drive_file_id);
       if (!m.trashed) {
         uploaded = await drive.upload({ fileId: row.drive_file_id, name, mime: file.mime, bytes });
-        // The concept or month folder changed (a renamed ticket): the file follows
+        // The avatar, angle or concept folder changed (an edited ticket, or the first layout): the file follows
         if (m.parents?.length && !m.parents.includes(parent)) await drive.move(row.drive_file_id, parent, m.parents);
       }
     } catch (e) {
@@ -434,6 +464,7 @@ async function uploadOne(admin: SupabaseClient, row: SlotRow): Promise<"synced" 
     drive_file_id: uploaded.id,
     drive_url: uploaded.webViewLink ?? `https://drive.google.com/file/d/${uploaded.id}/view`,
     drive_name: name,
+    drive_path: path,
     synced_at: new Date().toISOString(),
     retired_at: null,
   });
@@ -467,6 +498,107 @@ async function retireOne(admin: SupabaseClient, row: SlotRow): Promise<"retired"
   if (!from.includes(replaced)) await drive.move(row.drive_file_id, replaced, from);
   await finish();
   return "retired";
+}
+
+// ─── Keeping files where the layout says ──────────────────────────────────────────────────────────────────────────
+
+/**
+ * Files already in Drive put where they belong now: everything synced under the first layout (Year / Month / Concept /
+ * Format) and any ticket whose avatar, angle or title changed since (a trigger clears drive_path). Each file is moved,
+ * never copied, re-uploaded or deleted; files taken off the ticket go to "_Replaced" in their new concept folder. The old
+ * Year / Month folders are left where they are and listed, for someone to tidy by hand once they're empty.
+ */
+export async function relayoutDrive(admin: SupabaseClient, opts: { clientId?: string; limit?: number; budgetMs?: number } = {}) {
+  const started = Date.now();
+  const budget = opts.budgetMs ?? 120_000;
+  const out = { moved: 0, renamed: 0, inPlace: 0, gone: 0, failed: 0, waiting: 0, oldFolders: [] as { client_id: string; path: string; folder_id: string }[] };
+  if (!driveWriteConfigured()) return out;
+
+  let q = admin
+    .from("creative_drive_files")
+    .select("id, client_id, request_id, design_id, status, synced_file_id, drive_file_id, drive_name")
+    .is("drive_path", null)
+    .not("drive_file_id", "is", null)
+    .in("status", ["synced", "retired"])
+    .order("updated_at", { ascending: true })
+    .limit(opts.limit ?? 500);
+  if (opts.clientId) q = q.eq("client_id", opts.clientId);
+  const { data: rows } = await q;
+  const list = (rows ?? []) as Pick<SlotRow, "id" | "client_id" | "request_id" | "design_id" | "status" | "synced_file_id" | "drive_file_id" | "drive_name">[];
+
+  const requestIds = [...new Set(list.map((r) => r.request_id).filter((x): x is string => Boolean(x)))];
+  const clientIds = [...new Set(list.map((r) => r.client_id))];
+  const fileIds = [...new Set(list.map((r) => r.synced_file_id).filter((x): x is string => Boolean(x)))];
+  const designIds = [...new Set(list.map((r) => r.design_id))];
+  const [{ data: reqs }, { data: clients }, { data: files }, { data: designs }] = await Promise.all([
+    requestIds.length ? admin.from("requests").select(PLACE_COLUMNS).in("id", requestIds) : Promise.resolve({ data: [] }),
+    clientIds.length ? admin.from("clients").select("id, name").in("id", clientIds) : Promise.resolve({ data: [] }),
+    fileIds.length ? admin.from("design_files").select("id, original_name, mime, aspect, card").in("id", fileIds) : Promise.resolve({ data: [] }),
+    designIds.length ? admin.from("designs").select("id, position").in("id", designIds) : Promise.resolve({ data: [] }),
+  ]);
+  const reqById = new Map(((reqs ?? []) as unknown as RequestPlace[]).map((r) => [r.id, r]));
+  const clientName = new Map(((clients ?? []) as { id: string; name: string }[]).map((c) => [c.id, c.name]));
+  const fileById = new Map(((files ?? []) as { id: string; original_name: string; mime: string | null; aspect: string | null; card: number | null }[]).map((f) => [f.id, f]));
+  const position = new Map(((designs ?? []) as { id: string; position: number }[]).map((d) => [d.id, d.position]));
+
+  const places = new Map<string, Awaited<ReturnType<typeof placeOf>>>();
+  const roots = new Map<string, string | null>(); // null: no Ad Creative folder, those wait
+  for (const row of list) {
+    if (Date.now() - started > budget) break;
+    const r = row.request_id ? reqById.get(row.request_id) : undefined;
+    if (!r) {
+      // No ticket to place it by: left where it is, and not looked at again
+      await admin.from("creative_drive_files").update({ drive_path: "" }).eq("id", row.id).is("drive_path", null);
+      continue;
+    }
+    try {
+      if (!roots.has(row.client_id)) {
+        try {
+          roots.set(row.client_id, await adCreativeRoot(admin, row.client_id));
+        } catch (e) {
+          if (!(e instanceof NoFolder)) throw e;
+          roots.set(row.client_id, null);
+        }
+      }
+      const root = roots.get(row.client_id);
+      if (!root) {
+        out.waiting++;
+        continue;
+      }
+      if (!places.has(r.id)) places.set(r.id, await placeOf(admin, row.client_id, r));
+      const place = places.get(r.id)!;
+      const f = row.synced_file_id ? fileById.get(row.synced_file_id) : undefined;
+      const pos = position.get(row.design_id);
+      const name =
+        f && pos != null && clientName.has(row.client_id)
+          ? driveFileName({ client: clientName.get(row.client_id)!, concept: place.concept, position: pos, card: f.card, aspect: f.aspect, originalName: f.original_name, mime: f.mime })
+          : null;
+      const cache = folderCache(admin, row.client_id, root);
+      const { result } = await relocateFile(moveDrive, cache, root, { fileId: row.drive_file_id!, segments: place.segments, replaced: row.status === "retired", name });
+      if (result === "moved") out.moved++;
+      else if (result === "renamed") out.renamed++;
+      else if (result === "gone") out.gone++;
+      else out.inPlace++;
+      const renamed = name && (result === "moved" || result === "renamed") ? { drive_name: name } : {};
+      // Only if nothing changed meanwhile (an upload took the row, or the ticket was edited again)
+      await admin.from("creative_drive_files").update({ drive_path: place.path, ...renamed }).eq("id", row.id).eq("status", row.status).is("drive_path", null);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      out.failed++;
+      console.error("[creative-drive] relayout", row.id, message);
+      // A cached folder deleted by hand: forget the cache, the folders are found or made again next run
+      const root = roots.get(row.client_id);
+      if (e instanceof DriveError && e.status === 404 && root) await folderCache(admin, row.client_id, root).forget();
+      if (classifyDriveError(message).kind === "no_access") break;
+    }
+  }
+
+  // The first layout's Year / Month folders: left in place (never deleted), listed so someone can tidy them by hand
+  let old = admin.from("client_drive_folders").select("client_id, path, folder_id").like("path", "2___%").limit(2000);
+  if (opts.clientId) old = old.eq("client_id", opts.clientId);
+  const { data: oldRows } = await old;
+  out.oldFolders = ((oldRows ?? []) as { client_id: string; path: string; folder_id: string }[]).filter((f) => isOldLayoutPath(f.path)).slice(0, 100);
+  return out;
 }
 
 /**

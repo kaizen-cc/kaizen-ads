@@ -255,7 +255,13 @@ export async function GET(request: Request) {
       const mediaJobs = await (await import("@/lib/ai-media-jobs")).pickUpMediaJobs(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
       return Response.json({ ...(await (await import("@/lib/launcher")).launchStep(admin)), briefJobs, mediaJobs });
     }
-    if (step === "creative_drive") return Response.json(await (await import("@/lib/creative-drive")).processDriveQueue(admin, { limit: 200, budgetMs: 600_000 }));
+    if (step === "creative_drive") {
+      // The queue first (new creative), then files already in Drive moved to where the layout says (avatar / angle / concept)
+      const lib = await import("@/lib/creative-drive");
+      const queue = await lib.processDriveQueue(admin, { limit: 200, budgetMs: 480_000 });
+      const relayout = await lib.relayoutDrive(admin, { budgetMs: 150_000 }).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+      return Response.json({ ...queue, relayout });
+    }
     if (step === "audits") return Response.json(await (await import("@/lib/auto-audits")).autoAudits(admin));
     if (step === "bibles") return Response.json(await (await import("@/lib/brand-bible")).autoBibles(admin, 3));
     if (step === "presentations") {

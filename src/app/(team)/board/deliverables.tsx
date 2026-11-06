@@ -630,7 +630,7 @@ export function Deliverables({ ticket, demoDesigns, onState, canDisagree = false
 }
 
 /**
- * Each file's copy in the client's Drive (Ad Creative / Year / Month / Concept / Format): "In Drive ✓" with a link per
+ * Each file's copy in the client's Drive (Ad Creative / Avatar / Angle / Month Concept): "In Drive ✓" with a link per
  * size or slide, "Syncing…", or what stopped it, with where to fix it. Nothing until the file is lined up for Drive.
  */
 function DriveStatus({ files }: { files: Design["versions"][number]["files"] }) {
