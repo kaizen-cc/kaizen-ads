@@ -78,6 +78,38 @@ export function Checklist({ checks }: { checks: CheckItem[] }) {
   );
 }
 
+/** What a question is about, in two or three words, for the "still needed" line */
+const NEED: Record<string, string> = { campaign: "Campaign", ad_group: "Ad group", final_url: "Landing page", keywords: "Keywords and match types", match_types: "Match types", ads: "Ad copy", go_live: "OK to create paused", structure: "Where it goes", budget: "Budget", targeting: "Targeting", schedule: "Schedule", copy: "Copy", creative: "Creative" };
+export const needOf = (q: LaunchQuestion) => NEED[q.key] ?? (q.question.length > 40 ? `${q.question.slice(0, 38)}…` : q.question);
+
+/**
+ * Chat first: while it's asking, the card stays small (what's still needed, answered in the chat in your own words)
+ * and the questions open only if they'd rather answer on the card. The preview shows once it has everything.
+ */
+export function StillNeeded({ open, onShow }: { open: LaunchQuestion[]; onShow: () => void }) {
+  return (
+    <div className="grid min-w-0 gap-2 rounded-[12px] border border-ink/[0.08] bg-ink/[0.02] px-3 py-2.5">
+      <p className="text-[12px] leading-snug text-ink/75">
+        {open.length ? `${open.length} thing${open.length === 1 ? "" : "s"} still needed. Answer in the chat, in your own words: the preview shows here once I have everything.` : "Everything's answered. Building the preview…"}
+      </p>
+      {open.length > 0 && (
+        <ul className="flex min-w-0 flex-wrap gap-1">
+          {open.map((q) => (
+            <li key={q.key} className="max-w-full truncate rounded-full bg-ink/[0.06] px-2.5 py-0.5 text-[11px] text-ink/65" title={q.question}>
+              {needOf(q)}
+            </li>
+          ))}
+        </ul>
+      )}
+      {open.length > 0 && (
+        <button type="button" onClick={onShow} className="min-h-8 justify-self-start text-[11.5px] text-ink/50 underline-offset-2 hover:text-fg hover:underline">
+          Answer on the card instead
+        </button>
+      )}
+    </div>
+  );
+}
+
 /** What the buyer wrote under one question, sent to the launch so the AI reads it in that question's context */
 export const aboutQuestion = (q: LaunchQuestion, text: string) =>
   `About the question "${q.question}" (key ${q.key}). If this gives the answer, take it as the answer to that question, exactly as written. If it's thinking or a question, reply to it briefly and propose the answer: ${text}`;
@@ -334,6 +366,8 @@ export function LaunchCard({ id, compact = false, reply = false }: { id: string;
   const router = useRouter();
   const [v, setV] = useState<LaunchView | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  // Chat first: the questions open on the card only when asked for
+  const [showQs, setShowQs] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [said, setSaid] = useState<string | null>(null);
@@ -452,7 +486,8 @@ export function LaunchCard({ id, compact = false, reply = false }: { id: string;
         </div>
       )}
 
-      {v.questions.length > 0 && (v.status === "asking" || !plan) && (
+      {v.questions.length > 0 && v.status === "asking" && !showQs && v.canConfirm && <StillNeeded open={requiredOpen} onShow={() => setShowQs(true)} />}
+      {v.questions.length > 0 && (v.status === "asking" ? showQs || !v.canConfirm : !plan) && (
         <div className="grid gap-2">
           <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-ink/45">Only you can decide{requiredOpen.length ? ` · ${requiredOpen.length} to go` : ""}</p>
           <ul className="grid gap-2">

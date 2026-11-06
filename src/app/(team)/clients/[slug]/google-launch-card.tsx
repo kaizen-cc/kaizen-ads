@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { WriteOff } from "@/components/write-gate";
 import { chars, G, kwText, type AdLine, type GAdGroup, type GCampaign, type GooglePlan, type Match, type PlanEdit, type Rsa } from "@/lib/google-launch/core";
 import type { LaunchItem } from "@/lib/launch-sheet/types";
-import { aboutQuestion, Checklist, Mark, Question } from "./launch-card";
+import { aboutQuestion, Checklist, Mark, Question, StillNeeded } from "./launch-card";
 import { Clamp, LaunchMore } from "./launch-more";
 import {
   buildGoogleLaunchPlan,
@@ -318,6 +318,8 @@ export function GoogleLaunchCard({ id, compact = false }: { id: string; compact?
   const router = useRouter();
   const [v, setV] = useState<GoogleLaunchView | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  // Chat first: the questions open on the card only when asked for
+  const [showQs, setShowQs] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Polls while the questions are being tailored (status asking with progress), at most about two minutes
   const tailoring = useRef(0);
@@ -419,7 +421,8 @@ export function GoogleLaunchCard({ id, compact = false }: { id: string; compact?
         </div>
       )}
 
-      {v.questions.length > 0 && (v.status === "asking" || !plan) && (
+      {v.questions.length > 0 && v.status === "asking" && !showQs && mine && <StillNeeded open={requiredOpen} onShow={() => setShowQs(true)} />}
+      {v.questions.length > 0 && (v.status === "asking" ? showQs || !mine : !plan) && (
         <div className="grid gap-2">
           <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-ink/45">Only you can decide{requiredOpen.length ? ` · ${requiredOpen.length} to go` : ""}</p>
           <ul className="grid gap-2">
@@ -440,7 +443,7 @@ export function GoogleLaunchCard({ id, compact = false }: { id: string; compact?
           </ul>
         </div>
       )}
-      {mine && ["asking", "ready"].includes(v.status) && (
+      {mine && (v.status === "ready" || (v.status === "asking" && showQs)) && (
         <div className="flex flex-wrap items-center gap-2">
           {v.status === "asking" && open.length > 1 && (
             <button type="button" disabled={Boolean(busy)} onClick={() => void act("all", () => takeGoogleProposals(v.id, open.map((q) => q.key)))} className="h-11 rounded-full border border-ink/15 px-4 text-[12.5px] text-ink/75 hover:text-fg disabled:opacity-40 md:h-9">

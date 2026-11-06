@@ -474,7 +474,7 @@ export async function googleLaunchReply(admin: SupabaseClient, id: string, messa
 answers: the questions the buyer's message answers, by key, in their words made exact and in the format Google needs (keywords with their notation, a daily budget in dollars, the full final URL). When they accept your proposal ("yes", "go with that"), the answer is your proposal written out. When they give keywords or copy, the answer holds them word for word. Only what they actually said or accepted.
 newQuestions: only when their answer opens something the plan needs (question at most 15 words, why one short sentence).
 build: true when they ask to build, see or redo the plan, or say go ahead, or (stage ready) ask for a change to the plan. The plan is only built once every required question is answered; if some aren't, say which.
-answer: 1 to 4 short sentences: confirm what you took, push back with the reason when something works against the client's results or Google's rules (over a limit, a duplicate, a keyword already running), and ask what's still open. When the stage is "ready" and they say go ahead, tell them to press Deploy on the launch card (it checks the client's Google switch and who may deploy, and creates everything paused); build stays false.
+answer: 1 to 3 short sentences. Talk like a senior media buyer a colleague just walked up to: natural and brief, one breath at a time. Confirm what you took in a few words, then ask only the next one or two things you need (the most important first, with your suggestion when you have one), never a list of everything still open; the rest comes in the next turns. Push back in a sentence when something works against the client's results or the platform's rules. (Google's rules: over a limit, a duplicate, a keyword already running.) When the stage is "ready" and they say go ahead, tell them to press Deploy on the launch card (it checks the client's Google switch and who may deploy, and creates everything paused); build stays false.
 offTopic: true when the message isn't about this launch (answer ""). setAside: true when they say to stop or park it.
 ${SHORT}
 ${RULES}`,
@@ -496,8 +496,9 @@ ${RULES}`,
     return { answer: out.answer || "Set aside. Nothing was created.", offTopic: false, building: false };
   }
   const open = unanswered(questions);
-  const building = out.build && !open.length && (run.status === "asking" || out.answers.length > 0);
-  const answer = out.build && open.length ? `${out.answer}\n\nBefore I can plan it I still need: ${open.map((q) => q.question).join(" ")}` : out.answer;
+  // Chat first: once a reply leaves nothing required open, the preview is built (they don't have to say "build it")
+  const building = !open.length && (out.build || out.answers.length > 0) && (run.status === "asking" || out.answers.length > 0);
+  const answer = out.build && open.length ? `${out.answer}\n\nBefore I can plan it I still need: ${open.map((q) => q.question).join(" ")}` : building && !out.build ? `${out.answer}\n\nThat's everything I need: building the preview on the card now. Nothing goes live until you deploy it.` : out.answer;
   const changed = out.answers.length > 0 && ["ready", "failed"].includes(run.status);
   await patch(admin, id, { questions, turns, ...(building ? { status: "planning", progress: "Laying out the plan" } : changed ? { status: "asking" } : {}) });
   return { answer, offTopic: false, building };

@@ -210,8 +210,9 @@ export async function launchReply(admin: SupabaseClient, id: string, message: st
   const open = unanswered(questions);
   // Once a plan is checked, "go ahead" is the Create button on the card (it checks who may confirm): only a change
   // to an answer rebuilds it
-  const building = out.build && !open.length && (run.status === "asking" || out.answers.length > 0);
-  const answer = out.build && open.length ? `${out.answer}\n\nBefore I can plan it I still need: ${open.map((q) => q.question).join(" ")}` : out.answer;
+  // Chat first: once a reply leaves nothing required open, the preview is built (they don't have to say "build it")
+  const building = !open.length && (out.build || out.answers.length > 0) && (run.status === "asking" || out.answers.length > 0);
+  const answer = out.build && open.length ? `${out.answer}\n\nBefore I can plan it I still need: ${open.map((q) => q.question).join(" ")}` : building && !out.build ? `${out.answer}\n\nThat's everything I need: building the preview on the card now. Nothing goes live until you deploy it.` : out.answer;
   // A change after the plan was made: back to asking until it's rebuilt
   const changed = out.answers.length > 0 && ["ready", "failed"].includes(run.status);
   await patch(admin, id, { questions, turns, ...(building ? { status: "planning", progress: "Laying out the plan" } : changed ? { status: "asking" } : {}) });
