@@ -14,8 +14,8 @@ export function RemoveGenerated({ kind, id, sent }: { kind: "bundle" | "report";
   const [error, setError] = useState<string | null>(null);
   if (ask)
     return (
-      <span className="flex shrink-0 items-center gap-1.5">
-        <span className="text-[11px] text-faint max-md:hidden">{sent ? "Hide it? (kept in the client's history)" : "Delete it for good?"}</span>
+      <span role="dialog" aria-label={sent ? "Hide this report" : "Delete this report"} className="flex shrink-0 items-center gap-2 rounded-full border border-line bg-surface py-1 pl-3.5 pr-1 shadow-[0_12px_32px_-14px_rgba(0,0,0,0.8)]">
+        <span className="whitespace-nowrap text-[12px] text-muted">{sent ? "Hide it?" : "Delete for good?"}</span>
         <button
           type="button"
           disabled={pending}
@@ -26,14 +26,14 @@ export function RemoveGenerated({ kind, id, sent }: { kind: "bundle" | "report";
               router.refresh();
             })
           }
-          className="h-8 rounded-full bg-bad px-3 text-xs font-medium text-white disabled:opacity-50 max-md:h-11"
+          className="h-8 rounded-full bg-bad px-3.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50 max-md:h-10"
         >
           {pending ? "…" : sent ? "Hide" : "Delete"}
         </button>
-        <button type="button" onClick={() => setAsk(false)} className="h-8 rounded-full px-2.5 text-xs text-muted hover:text-fg max-md:h-11">
+        <button type="button" onClick={() => setAsk(false)} className="h-8 rounded-full px-3 text-xs text-muted hover:bg-surface-2 hover:text-fg max-md:h-10">
           Cancel
         </button>
-        {error && <span className="text-[11px] text-bad">{error}</span>}
+        {error && <span className="pr-2 text-[11px] text-bad">{error}</span>}
       </span>
     );
   return (

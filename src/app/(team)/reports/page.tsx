@@ -89,6 +89,10 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const reach = ((built ?? []) as unknown as BuiltRow[]).filter(
     (b) => me.isExec || b.created_by === me.id || b.reports.some((p) => p.owner_id === me.id) || (headLine != null && b.reports.some((p) => p.platform === headLine)),
   );
+  // Who built each one, by name
+  const builderIds = [...new Set(reach.map((b) => b.created_by).filter((x): x is string => Boolean(x)))];
+  const { data: builders } = builderIds.length && admin ? await admin.from("profiles").select("id, full_name").in("id", builderIds) : { data: [] as { id: string; full_name: string | null }[] };
+  const builderName = new Map((builders ?? []).map((p) => [p.id as string, (p.full_name as string | null) ?? null]));
   const builtRows = reach.filter((b) => b.status !== "sent");
   const sentBuilt = reach.filter((b) => b.status === "sent" && (b.sent_at ?? b.created_at) >= daysAgo(30));
   const yesterday = new Date(Date.parse(`${today}T12:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
@@ -139,6 +143,8 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
       tag: { kind: "built", label: "Built by hand", dates: (b.ranges ?? []).map((x) => x.label).join(" + ") },
       status: b.status,
       sentAt: b.sent_at,
+      createdAt: b.created_at,
+      createdBy: b.created_by === me.id ? "you" : b.created_by ? (builderName.get(b.created_by) ?? null) : null,
       parts: parts.map((p) => ({ id: p.id, platform: p.platform, status: p.status, owner: p.profiles?.full_name ?? null, mine: p.owner_id === me.id, viewedAt: p.viewed_at })),
       href: mine ? `/reports/${mine.id}` : "/reports",
       yourTurn: parts.some((p) => p.owner_id === me.id && ["draft", "drafting", "queued"].includes(p.status)),

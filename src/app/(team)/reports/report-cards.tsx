@@ -124,6 +124,9 @@ export type CardBundle = {
   tag: Tag;
   status: string;
   sentAt: string | null;
+  /** When it was built, and by whom ("you" for the person looking) */
+  createdAt: string;
+  createdBy: string | null;
   parts: { id: string; platform: string; status: string; owner: string | null; mine: boolean; viewedAt: string | null }[];
   href: string;
   yourTurn: boolean;
@@ -147,6 +150,11 @@ export function BundleCard({ b, showOwner }: { b: CardBundle; showOwner: boolean
         <span className="grid min-w-0 gap-1.5">
           <span className="truncate font-heading text-[16px] leading-tight">{b.client}</span>
           <TagChip tag={b.tag} />
+          <span className="text-[11.5px] text-faint">
+            Built {new Date(b.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" })} at{" "}
+            {new Date(b.createdAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })}
+            {b.createdBy ? ` by ${b.createdBy === "you" ? "you" : b.createdBy.split(" ")[0]}` : ""}
+          </span>
           <span className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs">
             {b.parts.map((p) => (
               <span key={p.id} className={`inline-flex items-center gap-1.5 ${p.status === "submitted" || p.status === "posted" ? "text-ok" : "text-muted"}`}>
