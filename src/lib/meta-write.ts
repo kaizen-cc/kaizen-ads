@@ -173,40 +173,123 @@ export async function metaWritableSetup(admin: SupabaseClient, account: string):
   };
 }
 
-/** Where an admin of the ad account accepts Meta's Custom Audience terms (needed to edit anything using a customer list) */
-export const audienceTermsUrl = (account: string) => `https://business.facebook.com/ads/manage/customaudiences/tos/?act=${bare(account)}`;
+/** Kaizen's own Business Manager: the business our system user acts through when it changes a client's account. */
+export type KaizenBusiness = { id: string; name: string; source: "env" | "graph" };
+
+let businessCache: { at: number; value: KaizenBusiness | null } | null = null;
+
+/**
+ * Which Business Manager is ours. META_BUSINESS_ID when it's set (its name read from Meta); otherwise asked of Meta: the
+ * businesses the system user belongs to (a system user belongs to exactly one), then its own business field. Kept in
+ * memory for 6 hours (a miss for 10 minutes), so a page of 60 accounts asks once.
+ */
+export async function kaizenBusiness(): Promise<KaizenBusiness | null> {
+  if (businessCache && Date.now() - businessCache.at < (businessCache.value ? 6 * 3_600_000 : 600_000)) return businessCache.value;
+  let value: KaizenBusiness | null = null;
+  const env = (process.env.META_BUSINESS_ID ?? "").replace(/\D/g, "");
+  if (env) {
+    const r = metaConfigured() ? await metaGraph<{ name?: string }>(env, { fields: "name" }).catch(() => null) : null;
+    value = { id: env, name: r?.name || "Kaizen Marketing", source: "env" };
+  } else if (metaConfigured()) {
+    const list = await metaGraph<{ data?: { id: string; name?: string }[] }>("me/businesses", { fields: "id,name", limit: "5" }).catch(() => null);
+    const first = list?.data?.[0];
+    if (first?.id) value = { id: first.id, name: first.name || "Kaizen Marketing", source: "graph" };
+    else {
+      const me = await metaGraph<{ business?: { id?: string; name?: string } }>("me", { fields: "business{id,name}" }).catch(() => null);
+      if (me?.business?.id) value = { id: me.business.id, name: me.business.name || "Kaizen Marketing", source: "graph" };
+    }
+  }
+  businessCache = { at: Date.now(), value };
+  return value;
+}
+
+/**
+ * Where Meta's Custom Audience terms are accepted for an ad account. With business_id they're accepted on behalf of
+ * Kaizen's Business Manager, the business our system user changes the account through. Accepted as the client's own
+ * business, Meta can still refuse our changes, because the terms are held per business.
+ */
+export const audienceTermsUrl = (account: string, businessId?: string | null) =>
+  `https://business.facebook.com/ads/manage/customaudiences/tos/?act=${bare(account)}${businessId ? `&business_id=${businessId}` : ""}`;
+
+/** none: not assigned · view: view only · terms: uses customer lists without the terms · ready: every change goes through */
+export type AccessStatus = "none" | "view" | "terms" | "ready";
 
 /**
  * access: what our system user may do on the account. "manage" (Manage campaigns or full control: changes go through),
- * "view" (assigned but view-only: Meta refuses every change), "none" (not assigned: Meta won't even show it to us)
+ * "view" (assigned but view-only: Meta refuses every change), "none" (not assigned: Meta won't even show it to us).
+ * usesLists: whether the account has any customer-list audience (null: not looked up, or couldn't tell). Without one,
+ * missing terms block nothing. status: the one group the account belongs in, worked out here so every count and list
+ * reads the same thing.
  */
-export type AudienceTerms = { account: string; name: string | null; accepted: boolean | null; error: string | null; url: string; access: "manage" | "view" | "none"; tasks: string[]; owner: string | null; assignUrl: string };
+export type AudienceTerms = {
+  account: string;
+  name: string | null;
+  accepted: boolean | null;
+  usesLists: boolean | null;
+  tosKeys: string[];
+  error: string | null;
+  url: string;
+  access: "manage" | "view" | "none";
+  tasks: string[];
+  owner: string | null;
+  assignUrl: string;
+  status: AccessStatus;
+};
 
 /** Business settings for the ad account, where the system user is assigned (Assign people → Manage campaigns) */
 export const assignUrl = (account: string) => `https://business.facebook.com/settings/ad-accounts/${bare(account)}`;
 
+// The tos_accepted keys that mean the customer-list (Custom Audience) terms. custom_audience_tos is the one Meta checks
+// for uploaded lists; value_based_custom_audience_tos is read too in case Meta reports it under that name
+const LIST_TOS = ["custom_audience_tos", "value_based_custom_audience_tos"];
+
+/** Does the account have any customer-list audience? Filtered by Meta first, by hand if the filter is refused. */
+async function hasCustomerLists(id: string): Promise<boolean | null> {
+  type L = { data?: { subtype?: string }[]; paging?: { next?: string } };
+  const filtered = await metaGraph<L>(`act_${id}/customaudiences`, { fields: "subtype", filtering: JSON.stringify([{ field: "subtype", operator: "EQUAL", value: "CUSTOM" }]), limit: "1" }).catch(() => null);
+  // Something other than a list back means Meta ignored the filter: read them all instead
+  if (filtered?.data && filtered.data.every((a) => !a.subtype || a.subtype === "CUSTOM")) return filtered.data.length > 0;
+  const all = await metaGraph<L>(`act_${id}/customaudiences`, { fields: "subtype", limit: "200" }).catch(() => null);
+  if (!all?.data) return null;
+  // More than one page and no list on the first: can't tell, so it counts as used
+  return all.data.some((a) => a.subtype === "CUSTOM") ? true : all.paging?.next ? null : false;
+}
+
 /**
- * Has each ad account accepted Meta's Custom Audience terms? Without them Meta refuses any change to an ad set that
- * targets an uploaded customer list, pausing included. Read from the account's tos_accepted, a few at a time.
+ * Can our system user change each ad account, and does it hold Meta's Custom Audience terms? Without the terms Meta
+ * refuses any change to an ad set that targets an uploaded customer list, pausing included, so they only matter on
+ * accounts that use customer lists: every account missing them is checked for one. A few accounts at a time.
  */
 export async function audienceTerms(accounts: string[]): Promise<AudienceTerms[]> {
   const ids = [...new Set(accounts.map(bare).filter(Boolean))];
+  const business = await kaizenBusiness().catch(() => null);
+  const keysSeen = new Map<string, number>();
   const out: AudienceTerms[] = [];
   for (let i = 0; i < ids.length; i += 8)
     out.push(
       ...(await Promise.all(
-        ids.slice(i, i + 8).map(async (id) => {
+        ids.slice(i, i + 8).map(async (id): Promise<AudienceTerms> => {
+          const url = audienceTermsUrl(id, business?.id);
           try {
-            const r = await metaGraph<{ name?: string; tos_accepted?: Record<string, number>; user_tasks?: string[]; business?: { name?: string } }>(`act_${id}`, { fields: "name,tos_accepted,user_tasks,business{name}" });
+            const r = await metaGraph<{ name?: string; tos_accepted?: Record<string, number | boolean> | null; user_tasks?: string[]; business?: { name?: string } }>(`act_${id}`, { fields: "name,tos_accepted,user_tasks,business{name}" });
             const tasks = r.user_tasks ?? [];
             const access = tasks.includes("ADVERTISE") || tasks.includes("MANAGE") ? ("manage" as const) : ("view" as const);
-            return { account: id, name: r.name ?? null, accepted: Boolean(r.tos_accepted?.custom_audience_tos), error: null, url: audienceTermsUrl(id), access, tasks, owner: r.business?.name ?? null, assignUrl: assignUrl(id) };
+            const tos = r.tos_accepted && typeof r.tos_accepted === "object" ? r.tos_accepted : {};
+            const tosKeys = Object.keys(tos).sort();
+            for (const k of tosKeys) keysSeen.set(k, (keysSeen.get(k) ?? 0) + 1);
+            const accepted = LIST_TOS.some((k) => Boolean(tos[k]));
+            const usesLists = access === "manage" && !accepted ? await hasCustomerLists(id) : null;
+            const status: AccessStatus = access === "view" ? "view" : !accepted && usesLists !== false ? "terms" : "ready";
+            return { account: id, name: r.name ?? null, accepted, usesLists, tosKeys, error: null, url, access, tasks, owner: r.business?.name ?? null, assignUrl: assignUrl(id), status };
           } catch (e) {
             // Unreadable: almost always the system user isn't assigned to the account (or it was removed)
-            return { account: id, name: null, accepted: null, error: (e instanceof Error ? e.message : String(e)).slice(0, 200), url: audienceTermsUrl(id), access: "none" as const, tasks: [], owner: null, assignUrl: assignUrl(id) };
+            return { account: id, name: null, accepted: null, usesLists: null, tosKeys: [], error: (e instanceof Error ? e.message : String(e)).slice(0, 200), url, access: "none", tasks: [], owner: null, assignUrl: assignUrl(id), status: "none" };
           }
         }),
       )),
     );
+  // What Meta actually reports in tos_accepted, to check against accounts the terms were accepted on
+  if (ids.length)
+    console.info(`[audience-terms] ${ids.length} accounts · business ${business ? `${business.id} (${business.source})` : "unknown"} · tos_accepted keys: ${[...keysSeen].map(([k, n]) => `${k}=${n}`).join(", ") || "none"}`);
   return out;
 }

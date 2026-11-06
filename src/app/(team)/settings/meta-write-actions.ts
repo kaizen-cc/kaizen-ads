@@ -51,8 +51,13 @@ export async function checkMetaWrite(account: string): Promise<{ ok: boolean; de
 
 export type TermsRow = import("@/lib/meta-write").AudienceTerms & { client: string | null; slug: string | null; live: boolean };
 
-/** Custom Audience terms for one client's Meta ad accounts, or (no client) every active client's, missing ones first. */
-export async function checkAudienceTerms(clientId?: string): Promise<{ ok: true; rows: TermsRow[]; tokenMissing: string[] } | { ok: false; error: string }> {
+export type TermsResult = { ok: true; rows: TermsRow[]; tokenMissing: string[]; business: { id: string; name: string } | null; checkedAt: string } | { ok: false; error: string };
+
+/**
+ * Meta access for changes on one client's Meta ad accounts, or (no client) every active client's: each with the one
+ * group it belongs in (status), worst first. Every count and list on screen is read from these rows.
+ */
+export async function checkAudienceTerms(clientId?: string): Promise<TermsResult> {
   const { requireStaff } = await import("@/lib/auth");
   await requireStaff();
   if (!adminConfigured()) return { ok: false, error: "Can't check here." };
@@ -64,21 +69,21 @@ export async function checkAudienceTerms(clientId?: string): Promise<{ ok: true;
   if (clientId) cq = cq.eq("id", clientId);
   const { data: clients } = await cq;
   const byId = new Map((clients ?? []).map((c) => [c.id as string, c]));
-  if (!byId.size) return { ok: true, rows: [], tokenMissing: [] };
+  if (!byId.size) return { ok: true, rows: [], tokenMissing: [], business: null, checkedAt: new Date().toISOString() };
   const { data: t } = await admin.from("kpi_targets").select("client_id, ad_account_id").eq("platform", "meta").in("client_id", [...byId.keys()]);
   const owner = new Map<string, string>();
   for (const x of t ?? []) {
     const a = String(x.ad_account_id ?? "").replace(/^act_/, "").replace(/\D/g, "");
     if (a && !owner.has(a)) owner.set(a, x.client_id as string);
   }
-  const { tokenScopes } = await import("@/lib/meta-write");
-  const [terms, scopes] = await Promise.all([audienceTerms([...owner.keys()]), tokenScopes()]);
+  const { tokenScopes, kaizenBusiness } = await import("@/lib/meta-write");
+  const [terms, scopes, business] = await Promise.all([audienceTerms([...owner.keys()]), tokenScopes(), kaizenBusiness().catch(() => null)]);
   const rows: TermsRow[] = terms.map((r) => {
     const c = byId.get(owner.get(r.account) ?? "");
     return { ...r, client: (c?.name as string) ?? null, slug: (c?.slug as string) ?? null, live: c?.live_ad_writes === true };
   });
-  // Worst first: not assigned, view-only, terms missing, all good
-  const rank = (r: TermsRow) => (r.access === "none" ? 0 : r.access === "view" ? 1 : r.accepted === false ? 2 : 3);
-  rows.sort((a, b) => rank(a) - rank(b) || Number(b.live) - Number(a.live) || (a.client ?? "").localeCompare(b.client ?? ""));
-  return { ok: true, rows, tokenMissing: scopes.missing };
+  // Worst first: not assigned, view-only, customer-list terms missing, ready
+  const rank = { none: 0, view: 1, terms: 2, ready: 3 } as const;
+  rows.sort((a, b) => rank[a.status] - rank[b.status] || Number(b.live) - Number(a.live) || (a.client ?? "").localeCompare(b.client ?? ""));
+  return { ok: true, rows, tokenMissing: scopes.missing, business: business ? { id: business.id, name: business.name } : null, checkedAt: new Date().toISOString() };
 }

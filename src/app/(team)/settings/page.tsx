@@ -29,6 +29,7 @@ import { DeletedTicketRow, type DeletedTicket } from "./deleted-ticket";
 import { STAGES } from "@/lib/stages";
 import { LastRun, ProgressBar, RetryOne, SyncNowButton, type Progress, type RunState } from "./sync-buttons";
 import type { SyncJob } from "./sync-actions";
+import { SyncShell } from "./sync-shell";
 
 // Inspecting a big ad account reads a few thousand rows; Sync now runs a whole job in the background
 export const maxDuration = 800;
@@ -661,11 +662,12 @@ async function Sync({ motion }: { motion: string | null }) {
           <p className="text-[11px] text-faint">{s.about}</p>
           <LastRun run={s.run} />
         </div>
-        <ul className="grid max-h-80 gap-0.5 overflow-y-auto [scrollbar-width:thin]">
-          {[...s.failing, ...s.list.filter((r) => !errorOf(r))].slice(0, 150).map((r) => (
-            <li key={r.source} className={`grid ${s.retry ? "grid-cols-[minmax(0,1fr)_auto_auto] md:grid-cols-[minmax(0,1fr)_88px_auto]" : "grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(0,1fr)_88px]"} items-center gap-2 rounded-[8px] px-2 py-1.5 text-xs odd:bg-bg`}>
+        <ul className="grid max-h-80 divide-y divide-line overflow-y-auto rounded-[12px] border border-line [scrollbar-width:thin]">
+          {[...s.failing, ...s.stale, ...s.list.filter((r) => !errorOf(r) && !s.stale.includes(r))].slice(0, 150).map((r) => (
+            <li key={r.source} className={`grid ${s.retry ? "grid-cols-[auto_minmax(0,1fr)_auto_auto] md:grid-cols-[auto_minmax(0,1fr)_88px_auto]" : "grid-cols-[auto_minmax(0,1fr)_auto] md:grid-cols-[auto_minmax(0,1fr)_88px]"} min-h-11 items-center gap-2.5 px-3 py-1.5 text-xs md:min-h-9`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${errorOf(r) ? "bg-bad" : s.stale.includes(r) ? "bg-warn" : "bg-ok"}`} aria-hidden />
               <span className="grid min-w-0">
-                <span className="truncate text-muted" title={r.source}>
+                <span className="truncate text-fg/90" title={r.source}>
                   {s.label(r.source)}
                 </span>
                 {errorOf(r) && (
@@ -688,53 +690,11 @@ async function Sync({ motion }: { motion: string | null }) {
     </details>
   );
 
-  return (
-    <div className="grid grid-cols-[minmax(0,1fr)] gap-8 md:gap-10">
-      {/* The state of it all, at a glance */}
-      <section className="grid grid-cols-[minmax(0,1fr)] items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
-        <div className={`relative grid content-start gap-5 overflow-hidden rounded-[20px] border p-5 md:p-6 ${failingN ? "border-bad/30" : behindN ? "border-warn/30" : "border-ok/30"} bg-surface`}>
-          <div aria-hidden className={`pointer-events-none absolute -left-20 -top-24 h-56 w-56 rounded-full blur-[80px] ${failingN ? "bg-bad/20" : behindN ? "bg-warn/15" : "bg-ok/15"}`} />
-          <div className="relative grid gap-1">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">Sync health</p>
-            <p className="font-heading text-xl leading-tight md:text-2xl">{attention.length ? `${attention.length} ${attention.length === 1 ? "sync needs" : "syncs need"} attention` : "Everything's syncing"}</p>
-            <p className="text-sm text-muted">{latest ? `Last activity ${freshness(latest).label.toLowerCase()}.` : "Nothing has run yet."} Each source runs on its own schedule; Sync now runs one right away.</p>
-          </div>
-          <div className="relative grid grid-cols-3 gap-2">
-            {(
-              [
-                ["Healthy", healthy, "text-ok"],
-                ["Behind", behindN, "text-warn"],
-                ["Failing", failingN, "text-bad"],
-              ] as const
-            ).map(([k, n, tone]) => (
-              <div key={k} className="grid gap-0.5 rounded-[12px] bg-bg/60 px-3 py-2.5">
-                <span className={`tabular font-heading text-2xl ${n ? tone : "text-faint"}`}>{n}</span>
-                <span className="text-[11px] text-faint">{k}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-        {/* Writing to the ad platforms: Meta, then Google, stacked */}
-        <div className="grid min-w-0 content-start gap-4">
-          <MetaWriteCard
-            sandbox={write.sandbox}
-            sandboxAccount={write.sandboxAccount}
-            urlTags={write.urlTags ?? null}
-            defaultTags={DEFAULT_URL_TAGS}
-            canEdit={me.isExec}
-            updated={mw?.updated_at ? `${new Date(mw.updated_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })}${mwBy ? ` by ${mwBy}` : ""}` : null}
-          />
-          <GoogleWriteCard
-            enabled={(gw?.value as { enabled?: boolean } | null)?.enabled === true}
-            canEdit={me.isExec}
-            updated={gw?.updated_at ? `${new Date(gw.updated_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })}${gwBy ? ` by ${gwBy}` : ""}` : null}
-          />
-          <div className="rounded-[20px] border border-line bg-surface p-5">
-            <AudienceTermsCheck />
-          </div>
-        </div>
-      </section>
+  const googleOn = (gw?.value as { enabled?: boolean } | null)?.enabled === true;
+  const changedAt = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" });
 
+  const syncsPanel = (
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-8 md:gap-10">
       {/* What needs someone, first */}
       {attention.length > 0 && (
         <section className="grid gap-3">
@@ -791,6 +751,25 @@ async function Sync({ motion }: { motion: string | null }) {
         retried on its own from inside its tile.
       </p>
     </div>
+  );
+
+  return (
+    <SyncShell
+      hero={{ healthy, behind: behindN, failing: failingN, total: syncs.length, latest: latest ? freshness(latest).label.toLowerCase() : null, metaSandbox: write.sandbox, googleOn }}
+      syncs={syncsPanel}
+      meta={<AudienceTermsCheck />}
+      google={<GoogleWriteCard enabled={googleOn} canEdit={me.isExec} updated={gw?.updated_at ? `${changedAt(gw.updated_at)}${gwBy ? ` by ${gwBy}` : ""}` : null} />}
+      writes={
+        <MetaWriteCard
+          sandbox={write.sandbox}
+          sandboxAccount={write.sandboxAccount}
+          urlTags={write.urlTags ?? null}
+          defaultTags={DEFAULT_URL_TAGS}
+          canEdit={me.isExec}
+          updated={mw?.updated_at ? `${changedAt(mw.updated_at)}${mwBy ? ` by ${mwBy}` : ""}` : null}
+        />
+      }
+    />
   );
 }
 
