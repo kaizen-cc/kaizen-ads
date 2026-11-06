@@ -78,9 +78,29 @@ export function Checklist({ checks }: { checks: CheckItem[] }) {
   );
 }
 
-export function Question({ q, busy, onUse }: { q: LaunchQuestion; busy: boolean; onUse: (answer: string | null) => void }) {
+/** What the buyer wrote under one question, sent to the launch so the AI reads it in that question's context */
+export const aboutQuestion = (q: LaunchQuestion, text: string) =>
+  `About the question "${q.question}" (key ${q.key}). If this gives the answer, take it as the answer to that question, exactly as written. If it's thinking or a question, reply to it briefly and propose the answer: ${text}`;
+
+export function Question({ q, busy, onUse, onWrite }: { q: LaunchQuestion; busy: boolean; onUse: (answer: string | null) => void; onWrite?: (text: string) => Promise<string | null> }) {
+  // Write in: the answer itself, or thinking out loud the AI replies to (and takes as the answer when it can)
+  const [writing, setWriting] = useState(false);
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [reply, setReply] = useState<string | null>(null);
+  const send = async () => {
+    const t = text.trim();
+    if (!t || !onWrite) return;
+    setSending(true);
+    const r = await onWrite(t).catch(() => null);
+    setSending(false);
+    setText("");
+    setReply(r);
+    setWriting(false);
+  };
+  const waitsOnCampaign = q.options.length === 0 && /first$/i.test(q.proposal);
   return (
-    <li className={`grid gap-1.5 rounded-[12px] border px-3 py-2.5 ${q.answer ? "border-ok/25 bg-ok-soft/10" : "border-ink/[0.08] bg-ink/[0.02]"}`}>
+    <li className={`grid min-w-0 gap-1.5 rounded-[12px] border px-3 py-2.5 ${q.answer ? "border-ok/25 bg-ok-soft/10" : "border-ink/[0.08] bg-ink/[0.02]"}`}>
       <p className="text-[12.5px] font-medium leading-snug">
         {q.question}
         {q.required && !q.answer && <span className="ml-1 text-brand-text">*</span>}
@@ -91,23 +111,32 @@ export function Question({ q, busy, onUse }: { q: LaunchQuestion; busy: boolean;
         </p>
       )}
       {q.answer ? (
-        <p className="flex items-start gap-1.5 text-[12px] text-ink/85">
+        <div className="flex items-start gap-1.5 text-[12px] text-ink/85">
           <span className="text-ok">✓</span>
-          <span className="[overflow-wrap:anywhere]">{q.answer}</span>
-        </p>
+          <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{q.answer}</span>
+          {onWrite && !writing && (
+            <button type="button" disabled={busy} onClick={() => setWriting(true)} className="min-h-8 shrink-0 text-[11.5px] text-ink/50 underline-offset-2 hover:text-fg hover:underline">
+              Change
+            </button>
+          )}
+        </div>
       ) : (
         <>
-          <p className="text-[12px] leading-snug text-ink/75 [overflow-wrap:anywhere]">
-            <span className="text-ink/45">Proposal: </span>
-            {q.proposal}
-          </p>
+          {q.proposal && (
+            <p className="text-[12px] leading-snug text-ink/75 [overflow-wrap:anywhere]">
+              <span className="text-ink/45">{waitsOnCampaign ? "" : "Proposal: "}</span>
+              {q.proposal}
+            </p>
+          )}
           <div className="flex flex-wrap gap-1.5">
-            <button type="button" disabled={busy} onClick={() => onUse(null)} className="h-10 rounded-full bg-fg px-3.5 text-[12px] text-bg disabled:opacity-40 md:h-8">
-              Use this
-            </button>
+            {q.proposal && !waitsOnCampaign && (
+              <button type="button" disabled={busy} onClick={() => onUse(null)} className="h-10 rounded-full bg-fg px-3.5 text-[12px] text-bg disabled:opacity-40 md:h-8">
+                Use this
+              </button>
+            )}
             {q.options
               .filter((o) => o.trim() && o.trim() !== q.proposal.trim())
-              .slice(0, 4)
+              .slice(0, 8)
               .map((o) => (
                 <button key={o} type="button" title={o} disabled={busy} onClick={() => onUse(o)} className="h-10 max-w-full truncate rounded-full border border-ink/10 px-3.5 text-[12px] text-ink/70 hover:text-fg disabled:opacity-40 md:h-8">
                   {o}
@@ -116,6 +145,28 @@ export function Question({ q, busy, onUse }: { q: LaunchQuestion; busy: boolean;
           </div>
         </>
       )}
+      {onWrite && (writing || !q.answer) && (
+        <div className="flex min-w-0 items-end gap-1.5">
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void send();
+              }
+            }}
+            rows={1}
+            disabled={busy || sending}
+            placeholder={q.answer ? "Change it, or tell me what you're thinking" : "Write your answer, or what you're thinking"}
+            className="field-sizing-content max-h-40 min-h-10 min-w-0 flex-1 resize-none rounded-[10px] border border-ink/10 bg-transparent px-3 py-2 text-[12.5px] leading-snug outline-none placeholder:text-ink/35 focus:border-ink/30 disabled:opacity-50 md:min-h-9"
+          />
+          <button type="button" disabled={busy || sending || !text.trim()} onClick={() => void send()} className="h-10 shrink-0 rounded-full border border-ink/15 px-3.5 text-[12px] text-ink/80 hover:text-fg disabled:opacity-40 md:h-9">
+            {sending ? "Reading…" : "Send"}
+          </button>
+        </div>
+      )}
+      {reply && <p className="rounded-[10px] bg-ink/[0.04] px-3 py-2 text-[12px] leading-snug text-ink/80 [overflow-wrap:anywhere]">{reply}</p>}
     </li>
   );
 }
@@ -406,7 +457,18 @@ export function LaunchCard({ id, compact = false, reply = false }: { id: string;
           <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-ink/45">Only you can decide{requiredOpen.length ? ` · ${requiredOpen.length} to go` : ""}</p>
           <ul className="grid gap-2">
             {v.questions.map((q) => (
-              <Question key={q.key} q={q} busy={Boolean(busy) || v.status !== "asking" || !v.canConfirm} onUse={(answer) => void act(`use:${q.key}`, () => (answer ? takeLaunchProposals(v.id, [q.key], { [q.key]: answer }) : takeLaunchProposals(v.id, [q.key])))} />
+              <Question key={q.key} q={q} busy={Boolean(busy) || v.status !== "asking" || !v.canConfirm} onUse={(answer) => void act(`use:${q.key}`, () => (answer ? takeLaunchProposals(v.id, [q.key], { [q.key]: answer }) : takeLaunchProposals(v.id, [q.key])))}
+                onWrite={async (text) => {
+                  const r = await replyToLaunch(v.id, aboutQuestion(q, text));
+                  if (!r.ok) {
+                    setError(r.error);
+                    return null;
+                  }
+                  setV(r.view);
+                  router.refresh();
+                  return r.answer || null;
+                }}
+              />
             ))}
           </ul>
           {v.status === "asking" && v.canConfirm && (

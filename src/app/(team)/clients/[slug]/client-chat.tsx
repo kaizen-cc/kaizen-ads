@@ -352,20 +352,27 @@ export function ClientChat({
                     {t.status === "running" ? "Running now, follow it on the page" : t.status === "queued" ? "Queued for a free slot" : t.status === "ready" ? "Last audit ready" : t.status === "failed" ? "The last one didn't finish" : "Never audited"}
                   </span>
                 </span>
-                <span className="flex shrink-0 gap-1.5">
-                  {t.auditId && t.status === "ready" && (
-                    <Link href={`/kpis/audit/${t.auditId}`} className="grid h-10 place-items-center rounded-full border border-ink/10 px-3 text-xs text-ink/65 hover:text-fg md:h-8">
-                      Open
-                    </Link>
-                  )}
-                  <button
-                    type="button"
-                    disabled={!live || starting === t.id || t.status === "running" || t.status === "queued"}
-                    onClick={() => audit(t)}
-                    className="h-10 rounded-full bg-fg px-3 text-xs text-bg disabled:opacity-40 md:h-8"
-                  >
-                    {starting === t.id ? "Starting…" : t.status === "none" ? "Run an audit" : "Run again"}
-                  </button>
+                <span className="flex shrink-0 items-center gap-2">
+                  {/* Opening the audit is the main thing; running it again is a quiet text link (or the button when there's nothing to open) */}
+                  {(() => {
+                    const canOpen = Boolean(t.auditId && t.status === "ready");
+                    const off = !live || starting === t.id || t.status === "running" || t.status === "queued";
+                    const label = starting === t.id ? "Starting…" : t.status === "none" ? "Run an audit" : "Run again";
+                    return canOpen ? (
+                      <>
+                        <button type="button" disabled={off} onClick={() => audit(t)} className="min-h-10 px-1 text-[11.5px] text-ink/50 underline-offset-2 hover:text-fg hover:underline disabled:opacity-40 md:min-h-8">
+                          {label}
+                        </button>
+                        <Link href={`/kpis/audit/${t.auditId}`} className="grid h-10 place-items-center rounded-full bg-fg px-4 text-xs font-medium text-bg md:h-8">
+                          Open the audit
+                        </Link>
+                      </>
+                    ) : (
+                      <button type="button" disabled={off} onClick={() => audit(t)} className="h-10 rounded-full bg-fg px-3 text-xs text-bg disabled:opacity-40 md:h-8">
+                        {label}
+                      </button>
+                    );
+                  })()}
                 </span>
               </div>
             ))

@@ -121,6 +121,19 @@ export async function takeGoogleProposals(id: string, keys: string[], chosen: Re
   return view(id);
 }
 
+/** What the buyer wrote under one question (or about the launch): an answer it takes, or thinking it replies to */
+export async function replyToGoogleLaunch(id: string, text: string): Promise<{ ok: true; answer: string; view: GoogleLaunchView } | { ok: false; error: string }> {
+  await requireStaff();
+  const w = await workable(id);
+  if ("error" in w) return { ok: false, error: w.error };
+  if (!["asking", "ready", "failed"].includes(w.v.status)) return { ok: false, error: "This launch isn't waiting on you." };
+  const admin = createAdminClient();
+  const { googleLaunchReply, planGoogleRun } = await import("@/lib/google-launch/runs");
+  const r = await googleLaunchReply(admin, id, text.trim().slice(0, 3000));
+  if (r.building) after(() => planGoogleRun(admin, id));
+  return { ok: true, answer: r.offTopic ? "That isn't about this launch: ask it in the chat." : r.answer, view: (await view(id))! };
+}
+
 /** A suggestion from the account taken, skipped, or back to open */
 export async function setGoogleLaunchSuggestion(id: string, key: string, accepted: boolean | null): Promise<GoogleLaunchView | null> {
   await requireStaff();

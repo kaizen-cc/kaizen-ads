@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { WriteOff } from "@/components/write-gate";
 import { chars, G, kwText, type AdLine, type GAdGroup, type GCampaign, type GooglePlan, type Match, type PlanEdit, type Rsa } from "@/lib/google-launch/core";
 import type { LaunchItem } from "@/lib/launch-sheet/types";
-import { Checklist, Mark, Question } from "./launch-card";
+import { aboutQuestion, Checklist, Mark, Question } from "./launch-card";
 import { Clamp, LaunchMore } from "./launch-more";
 import {
   buildGoogleLaunchPlan,
@@ -15,6 +15,7 @@ import {
   loadGoogleLaunch,
   recheckGoogleLaunch,
   setAsideGoogleLaunch,
+  replyToGoogleLaunch,
   takeGoogleProposals,
   type GoogleLaunchView,
 } from "./google-launch-actions";
@@ -423,7 +424,18 @@ export function GoogleLaunchCard({ id, compact = false }: { id: string; compact?
           <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-ink/45">Only you can decide{requiredOpen.length ? ` · ${requiredOpen.length} to go` : ""}</p>
           <ul className="grid gap-2">
             {v.questions.map((q) => (
-              <Question key={q.key} q={q} busy={Boolean(busy) || v.status !== "asking" || !mine} onUse={(answer) => void act(`use:${q.key}`, () => (answer ? takeGoogleProposals(v.id, [q.key], { [q.key]: answer }) : takeGoogleProposals(v.id, [q.key])))} />
+              <Question key={q.key} q={q} busy={Boolean(busy) || v.status !== "asking" || !mine} onUse={(answer) => void act(`use:${q.key}`, () => (answer ? takeGoogleProposals(v.id, [q.key], { [q.key]: answer }) : takeGoogleProposals(v.id, [q.key])))}
+                onWrite={async (text) => {
+                  const r = await replyToGoogleLaunch(v.id, aboutQuestion(q, text));
+                  if (!r.ok) {
+                    setError(r.error);
+                    return null;
+                  }
+                  setV(r.view);
+                  router.refresh();
+                  return r.answer || null;
+                }}
+              />
             ))}
           </ul>
         </div>
