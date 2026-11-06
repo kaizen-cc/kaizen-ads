@@ -540,3 +540,109 @@ export async function googleQuery(account: string, query: string) {
   if (!/^\s*select\s/i.test(query)) throw new Error("Only SELECT queries are allowed.");
   return search(account.replace(/-/g, ""), query);
 }
+
+/** One piece of Google ad copy and how it did: an RSA headline or description, a sitelink or a callout (PMax text too) */
+export type GoogleCopyAsset = {
+  kind: "headline" | "long_headline" | "description" | "sitelink" | "callout";
+  text: string;
+  /** Google's own rating among the ad's assets: BEST, GOOD, LOW, LEARNING, PENDING, UNKNOWN */
+  label: string | null;
+  /** Where an RSA asset is pinned (HEADLINE_1, DESCRIPTION_2…), else null */
+  pinned: string | null;
+  source: "rsa" | "pmax" | "campaign";
+  campaignId: string;
+  campaignName: string;
+  adGroup: string | null;
+  impressions: number;
+  clicks: number;
+  conversions: number;
+  value: number;
+  spend: number;
+};
+
+/** A Performance Max asset group and how it did */
+export type GoogleAssetGroup = { id: string; name: string; campaignId: string; campaignName: string; strength: string | null; impressions: number; clicks: number; conversions: number; value: number; spend: number };
+
+/**
+ * The account's ad copy with its numbers over the last `days` (asset-level: each RSA headline and description with
+ * Google's performance label and pin, sitelinks and callouts, Performance Max text with its label) and the Performance
+ * Max asset groups. Every query is optional: one Google refuses leaves the others.
+ */
+export async function googleCopyAssets(account: string, days = 90): Promise<{ assets: GoogleCopyAsset[]; groups: GoogleAssetGroup[] }> {
+  const id = digits(account);
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  const range = `segments.date BETWEEN '${ymd(new Date(Date.now() - days * 86_400_000))}' AND '${today}'`;
+  const safe = (q: string) => search(id, q).catch(() => [] as Row[]);
+  const metrics = "metrics.impressions, metrics.clicks, metrics.conversions, metrics.conversions_value, metrics.cost_micros";
+  const [rsa, ext, pmax, groups] = await Promise.all([
+    safe(`SELECT ad_group_ad_asset_view.field_type, ad_group_ad_asset_view.performance_label, ad_group_ad_asset_view.pinned_field, asset.text_asset.text, campaign.id, campaign.name, ad_group.name, ${metrics} FROM ad_group_ad_asset_view WHERE ${range} AND ad_group_ad_asset_view.field_type IN ('HEADLINE', 'DESCRIPTION') AND metrics.impressions > 0`),
+    safe(`SELECT campaign_asset.field_type, asset.sitelink_asset.link_text, asset.callout_asset.callout_text, campaign.id, campaign.name, ${metrics} FROM campaign_asset WHERE ${range} AND campaign_asset.field_type IN ('SITELINK', 'CALLOUT') AND metrics.impressions > 0`),
+    safe(`SELECT asset_group_asset.field_type, asset_group_asset.performance_label, asset.text_asset.text, asset_group.name, campaign.id, campaign.name FROM asset_group_asset WHERE asset_group_asset.field_type IN ('HEADLINE', 'LONG_HEADLINE', 'DESCRIPTION') AND asset_group_asset.status = 'ENABLED'`),
+    safe(`SELECT asset_group.id, asset_group.name, asset_group.ad_strength, campaign.id, campaign.name, ${metrics} FROM asset_group WHERE ${range} AND metrics.impressions > 0`),
+  ]);
+  const m = (r: Row) => ({ impressions: num(r.metrics?.impressions), clicks: num(r.metrics?.clicks), conversions: num(r.metrics?.conversions), value: num(r.metrics?.conversionsValue), spend: Math.round(num(r.metrics?.costMicros) / 10_000) / 100 });
+  const kindOf = (t: unknown): GoogleCopyAsset["kind"] | null => ({ HEADLINE: "headline", LONG_HEADLINE: "long_headline", DESCRIPTION: "description", SITELINK: "sitelink", CALLOUT: "callout" })[String(t)] as GoogleCopyAsset["kind"] | undefined ?? null;
+  const out: GoogleCopyAsset[] = [];
+  type V = { fieldType?: string; performanceLabel?: string; pinnedField?: string };
+  for (const r of rsa) {
+    const v = (r.adGroupAdAssetView ?? {}) as V;
+    const kind = kindOf(v.fieldType);
+    const text = String((r.asset as { textAsset?: { text?: string } } | undefined)?.textAsset?.text ?? "").trim();
+    if (!kind || !text) continue;
+    out.push({ kind, text, label: v.performanceLabel ?? null, pinned: v.pinnedField && v.pinnedField !== "UNSPECIFIED" ? v.pinnedField : null, source: "rsa", campaignId: String(r.campaign?.id ?? ""), campaignName: String(r.campaign?.name ?? ""), adGroup: String(r.adGroup?.name ?? "") || null, ...m(r) });
+  }
+  for (const r of ext) {
+    const kind = kindOf((r.campaignAsset as { fieldType?: string } | undefined)?.fieldType);
+    const a = (r.asset ?? {}) as { sitelinkAsset?: { linkText?: string }; calloutAsset?: { calloutText?: string } };
+    const text = String(kind === "sitelink" ? (a.sitelinkAsset?.linkText ?? "") : (a.calloutAsset?.calloutText ?? "")).trim();
+    if (!kind || !text) continue;
+    out.push({ kind, text, label: null, pinned: null, source: "campaign", campaignId: String(r.campaign?.id ?? ""), campaignName: String(r.campaign?.name ?? ""), adGroup: null, ...m(r) });
+  }
+  for (const r of pmax) {
+    const v = (r.assetGroupAsset ?? {}) as V;
+    const kind = kindOf(v.fieldType);
+    const text = String((r.asset as { textAsset?: { text?: string } } | undefined)?.textAsset?.text ?? "").trim();
+    if (!kind || !text) continue;
+    out.push({ kind, text, label: v.performanceLabel ?? null, pinned: null, source: "pmax", campaignId: String(r.campaign?.id ?? ""), campaignName: String(r.campaign?.name ?? ""), adGroup: String(r.assetGroup?.name ?? "") || null, impressions: 0, clicks: 0, conversions: 0, value: 0, spend: 0 });
+  }
+  return {
+    assets: out,
+    groups: groups.map((r) => ({ id: String(r.assetGroup?.id ?? ""), name: String(r.assetGroup?.name ?? ""), campaignId: String(r.campaign?.id ?? ""), campaignName: String(r.campaign?.name ?? ""), strength: (r.assetGroup?.adStrength as string | undefined) ?? null, ...m(r) })),
+  };
+}
+
+/** Converting search terms in some campaigns (the themes behind the winners), last `days` */
+export async function googleConvertingTerms(account: string, days = 90) {
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  const rows = await search(digits(account), `SELECT search_term_view.search_term, campaign.id, campaign.name, metrics.cost_micros, metrics.clicks, metrics.conversions, metrics.conversions_value FROM search_term_view WHERE segments.date BETWEEN '${ymd(new Date(Date.now() - days * 86_400_000))}' AND '${today}' AND metrics.conversions > 0 ORDER BY metrics.conversions DESC LIMIT 200`).catch(() => [] as Row[]);
+  return rows.map((r) => ({ term: String(r.searchTermView?.searchTerm ?? ""), campaignId: String(r.campaign?.id ?? ""), campaignName: String(r.campaign?.name ?? ""), spend: Math.round(num(r.metrics?.costMicros) / 10_000) / 100, clicks: num(r.metrics?.clicks), conversions: num(r.metrics?.conversions), value: num(r.metrics?.conversionsValue) }));
+}
+
+/** Keep one client's Google copy and its numbers (last 90 days) for the Copy library: the account's rows replaced */
+export async function syncGoogleCopy(admin: SupabaseClient, clientId: string, account: string) {
+  const { assets } = await googleCopyAssets(account, 90);
+  const acct = digits(account);
+  const now = new Date().toISOString();
+  // One row per piece of copy per campaign and ad group (an RSA asset reports once per ad it's in)
+  const by = new Map<string, Record<string, unknown> & { impressions: number; clicks: number; conversions: number; value: number; spend: number; labels: string[] }>();
+  for (const a of assets) {
+    const k = `${a.kind}|${a.campaignId}|${a.adGroup ?? ""}|${a.text}`;
+    const r = by.get(k) ?? { client_id: clientId, account: acct, kind: a.kind, text: a.text.slice(0, 500), source: a.source, pinned: a.pinned, campaign_id: a.campaignId, campaign_name: a.campaignName, ad_group: a.adGroup, impressions: 0, clicks: 0, conversions: 0, value: 0, spend: 0, labels: [], synced_at: now };
+    r.impressions += a.impressions;
+    r.clicks += a.clicks;
+    r.conversions += a.conversions;
+    r.value += a.value;
+    r.spend += a.spend;
+    if (a.label) r.labels.push(a.label);
+    by.set(k, r);
+  }
+  // Google's best rating for it wins (BEST over GOOD over LOW)
+  const rank = ["BEST", "GOOD", "LOW", "LEARNING", "PENDING", "UNKNOWN", "UNSPECIFIED"];
+  const rows = [...by.values()].map(({ labels, ...r }) => ({ ...r, label: labels.sort((x, y) => rank.indexOf(x) - rank.indexOf(y))[0] ?? null, spend: Math.round(r.spend * 100) / 100, value: Math.round(r.value * 100) / 100, conversions: Math.round(r.conversions * 10) / 10 }));
+  await admin.from("google_copy_assets").delete().eq("client_id", clientId).eq("account", acct);
+  for (let i = 0; i < rows.length; i += 500) {
+    const { error } = await admin.from("google_copy_assets").insert(rows.slice(i, i + 500));
+    if (error) throw new Error(error.message);
+  }
+  return rows.length;
+}

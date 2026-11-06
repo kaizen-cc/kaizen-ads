@@ -95,6 +95,8 @@ export async function updateGoogleIdeas(admin: SupabaseClient, deadline = Date.n
     try {
       const d = await googleIdeaRows(a.account);
       checked++;
+      // The account's copy, asset by asset with Google's ratings, for the Copy library (a light read alongside)
+      await import("@/lib/context/google-ads").then(({ syncGoogleCopy }) => syncGoogleCopy(admin, a.client_id, a.account)).catch((e) => console.error("[google copy]", a.account, e instanceof Error ? e.message : e));
       const sum = (rows: GoogleIdeaRow[]) => rows.reduce((o, r) => ({ spend: o.spend + stats(r).spend, conversions: o.conversions + stats(r).conversions, value: o.value + stats(r).value }), { spend: 0, conversions: 0, value: 0 });
       const usual180 = resultOf(sum(d.t180), a.roas);
       const usual30 = resultOf(sum(d.t30), a.roas);

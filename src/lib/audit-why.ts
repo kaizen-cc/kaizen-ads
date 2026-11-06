@@ -48,6 +48,16 @@ function pick(r: AuditResult | BusinessAuditResult, key: string): { title: strin
   if (kind === "watchout") return as(at(res.watchouts)?.title, at(res.watchouts));
   if (kind === "test") return as(at(res.tests)?.name, at(res.tests));
   if (kind === "creative") return as(at(res.creative)?.concept, at(res.creative));
+  // The creative analysis: its read, and the top and bottom ads it ranked (names and numbers, no pictures)
+  if (kind === "creative-analysis" && res.creativeAnalysis) {
+    const c = res.creativeAnalysis;
+    const brief = (xs: typeof c.top) => xs.map((x) => ({ name: x.name, headline: x.headline, spend: x.spend, share: x.share, cpa: x.cpa, roas: x.roas, ctr: x.ctr, hookRate: x.hookRate, holdRate: x.holdRate, watchPct: x.watchPct, angle: x.angle, avatar: x.avatar, format: x.format, fatigue: x.fatigue }));
+    return as(c.read?.common?.[0] ?? "Creative analysis", { read: c.read, average: c.average, target: c.target, top: brief(c.top), bottom: brief(c.bottom), traits: c.traits, fatiguing: c.fatiguing, gaps: c.gaps });
+  }
+  if (kind === "creative-analysis" && res.googleCreative) {
+    const g = res.googleCreative;
+    return as(g.read?.common?.[0] ?? "Creative analysis", { read: g.read, headlines: g.headlines, descriptions: g.descriptions, groups: g.groups, themes: g.themes, low: g.low });
+  }
   if (kind === "channel") {
     const c = (res.channels ?? []).find((x) => x.channel === raw);
     return as(c?.headline, c);

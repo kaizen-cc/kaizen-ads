@@ -20,6 +20,7 @@ import { loadGoogleMarket } from "@/lib/google-market";
 import { GoogleMarketView } from "./google-market-view";
 import { GoogleVerticalsView } from "./google-verticals-view";
 import { GoogleAdsMark, MetaMark } from "@/components/source-logo";
+import { CopyLibrary } from "@/components/copy-library";
 
 export const metadata: Metadata = { title: "Ideas" };
 
@@ -31,6 +32,7 @@ const GOOGLE_TABS = [
   ["winners", "Live winners", "What's converting cheapest in our Google accounts right now"],
   ["market", "In the market", "Keyword research for a client, and what people search in each industry"],
   ["verticals", "Verticals", "A Google playbook for each market we serve"],
+  ["copy", "Copy library", "Our best headlines, descriptions, sitelinks and callouts across clients, with Google's ratings"],
 ] as const;
 
 const TABS = [
@@ -38,12 +40,13 @@ const TABS = [
   ["winners", "Live winners", "What's beating its own account right now"],
   ["market", "In the market", "Live Meta ads from comparable brands, from Motion"],
   ["verticals", "Verticals", "The markets we serve: benchmarks and a playbook for each"],
+  ["copy", "Copy library", "Our best primary texts, headlines and descriptions across clients, by industry and sub-vertical"],
 ] as const;
 
 /** Where ideas come from: what's working in our accounts, and what's working out in the market. */
 export default async function Ideas({ searchParams }: PageProps<"/ideas">) {
   const sp = await searchParams;
-  const tab = sp.tab === "market" ? "market" : sp.tab === "verticals" ? "verticals" : sp.tab === "winners" ? "winners" : "fame";
+  const tab = sp.tab === "market" ? "market" : sp.tab === "verticals" ? "verticals" : sp.tab === "winners" ? "winners" : sp.tab === "copy" ? "copy" : "fame";
   // Two sides, the same four kinds of ideas: Meta (briefs for the creative team) and Google (search ads, keywords and
   // search terms). Everyone can look at both
   const line = sp.line === "google" ? "google" : "meta";
@@ -86,14 +89,18 @@ export default async function Ideas({ searchParams }: PageProps<"/ideas">) {
               href={keep(k)}
               title={hint}
               aria-current={tab === k ? "page" : undefined}
-              className={`flex-1 whitespace-nowrap rounded-[14px] px-3 py-2.5 text-center text-sm transition-colors sm:flex-none sm:rounded-full sm:px-4 sm:py-2 ${tab === k ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}
+              className={`flex-1 whitespace-nowrap rounded-[14px] px-3 py-2.5 last:odd:col-span-2 text-center text-sm transition-colors sm:flex-none sm:rounded-full sm:px-4 sm:py-2 ${tab === k ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}
             >
               {label}
             </Link>
           ))}
         </nav>
       </div>
-      {line === "google" ? (
+      {tab === "copy" ? (
+        <div className="mx-auto w-full max-w-6xl">
+          <CopyLibrary title="Copy library" />
+        </div>
+      ) : line === "google" ? (
         tab === "market" ? (
           <GoogleMarket />
         ) : tab === "verticals" ? (

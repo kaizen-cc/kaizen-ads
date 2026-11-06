@@ -5,6 +5,8 @@ import { loadClientKpis } from "@/lib/kpi/client";
 import { kpiValue } from "@/lib/kpi/format";
 import type { AuditResult } from "@/lib/audit";
 import type { AuditObject } from "@/lib/chat-change-core";
+import { CREATIVE_READ_RULES, CREATIVE_READ_SCHEMA, creativeAnalysisText, type CreativeAnalysis } from "@/lib/creative-analysis-core";
+import { googleCreativeText, type GoogleCreativeAnalysis } from "@/lib/google-creative-core";
 
 // The whole business at once: every channel we run or have data for (Meta, Google, creative production, and what the
 // client is telling us in Slack, email and calls), audited together on the client page. It reads the latest account
@@ -20,6 +22,10 @@ export type BusinessAuditResult = {
   actions: { title: string; channel: BusinessChannel; owner: "media_buyer" | "creative" | "client" | "strategist" | "account_manager"; when: "now" | "this_week" | "next"; steps: string[]; why: string; impact: string; /** The campaigns, ad sets or ads it names, with their real IDs */ objects?: AuditObject[] }[];
   /** Creative worth making next, across the channels (older audits don't have it) */
   creative?: { concept: string; angle: string; hook: string; format: string; why: string }[];
+  /** The creative analysis of the main Meta account (its KPI's campaigns only), with the auditor's read (older audits don't have it) */
+  creativeAnalysis?: CreativeAnalysis | null;
+  /** The Google account's copy analysis (its KPI's campaigns only); the read covers both platforms */
+  googleCreative?: GoogleCreativeAnalysis | null;
   watchouts: { title: string; why: string }[];
   watch: string[];
   questions: string[];
@@ -49,6 +55,7 @@ const SCHEMA = obj({
     }),
   ),
   creative: list(obj({ concept: S, angle: S, hook: S, format: S, why: S })),
+  creativeRead: CREATIVE_READ_SCHEMA,
   watchouts: list(obj({ title: S, why: S })),
   watch: list(S),
   questions: list(S),
@@ -65,10 +72,11 @@ diagnosis: 2 to 4 short paragraphs on why the business is where it is, across ch
 channels: one entry per channel (meta, google, creative, communication, and business for the overall picture: budget split, offer, site, seasonality), each with its status, a one-line headline and 1 to 4 notes with real numbers.
 causes: the root causes across the business, most important first, with the channel, severity and evidence lines.
 actions: 5 to 10 concrete moves, most important first, each with its channel, owner (media_buyer, creative, client, strategist or account_manager), when (now, this_week, next), short imperative steps, why and the expected impact. Name the thing; never vague. objects: every Meta campaign, ad set or ad, or Google campaign or ad group, the action names, each with its type (campaign, adset, ad, ad_group or keyword) and its own name copied exactly as it appears in what you were given (not its campaign). Empty when it names none. Never make up a name.
-creative: 2 to 4 creative directions the creative team could brief tomorrow (each one concept, its own brief), from what's working across the channels, the Brand Bible and the latest account audits' creative ideas: concept in a line, the angle, the opening hook as it would be said or shown, the format (image, video or carousel, and the length or card count), and why with the evidence.
+creative: 2 to 4 creative directions the creative team could brief tomorrow (each one concept, its own brief), from the creative analysis (more of what the top creatives share, a replacement for what's tiring, a gap filled), what's working across the channels, the Brand Bible and the latest account audits' creative ideas: concept in a line, the angle, the opening hook as it would be said or shown, the format (image, video or carousel, and the length or card count), and why with the evidence.
 watchouts: 2 to 5 things that could mislead us or break.
 watch: the 3 to 5 numbers to watch over the next two weeks, each with the line that says it's working.
-questions: what to ask the client that would change the plan.`;
+questions: what to ask the client that would change the plan.
+${CREATIVE_READ_RULES} When there's a Google creative_analysis too (on Google the creative is the copy: headlines, descriptions, asset groups, the converting search themes), read both and say which platform each line is about; carry what's proven on one platform to the other. When there's no creative_analysis, leave its three lists empty.`;
 
 const n0 = (v: number) => v.toLocaleString("en-US", { maximumFractionDigits: 0 });
 
@@ -119,9 +127,35 @@ ${usage ? `This month's allotment: ${usage.images_used}/${usage.images_per_month
 Tiring ads: ${(fatigue ?? []).map((f) => `${f.ad_name} (${f.severity})`).join("; ") || "none flagged"}.
 </creative_production>`;
     const pushback = await rebuttalsBlock(admin, clientId, "whole business audit across meta google creative").catch(() => "");
+    // The creative analysis of the Meta account with the most spend (its KPI's campaigns only)
+    await step("Ranking the creatives against the KPI");
+    const mainMeta = kpis.filter((k) => k.platform === "meta").sort((x, y) => (y.windows.d30?.spend ?? 0) - (x.windows.d30?.spend ?? 0))[0];
+    const creativeAnalysis = mainMeta
+      ? await import("@/lib/creative-analysis")
+          .then(({ creativeAnalysisForTarget }) => creativeAnalysisForTarget(admin, mainMeta.id))
+          .catch((e) => {
+            console.error("[business audit] creative analysis", e instanceof Error ? e.message : e);
+            return null;
+          })
+      : null;
+    // And the Google account with the most spend: its copy, asset groups and converting search themes
+    const mainGoogle = kpis.filter((k) => k.platform === "google").sort((x, y) => (y.windows.d30?.spend ?? 0) - (x.windows.d30?.spend ?? 0))[0];
+    const googleCreative = mainGoogle
+      ? await (async () => {
+          const { data: gt } = await admin.from("kpi_targets").select("ad_account_id, conversion, target, campaign_match, excluded_campaigns").eq("id", mainGoogle.id).maybeSingle();
+          if (!gt?.ad_account_id) return null;
+          const [{ googleCopyAssets, googleConvertingTerms }, { analyzeGoogleCopy }, { conversionFor }] = await Promise.all([import("@/lib/context/google-ads"), import("@/lib/google-creative-core"), import("@/lib/kpi/conversions")]);
+          const [copy, terms] = await Promise.all([googleCopyAssets(String(gt.ad_account_id), 90), googleConvertingTerms(String(gt.ad_account_id), 90)]);
+          return analyzeGoogleCopy({ assets: copy.assets, groups: copy.groups, terms, scope: { campaign_match: gt.campaign_match as string | null, excluded_campaigns: (gt.excluded_campaigns ?? []) as string[] }, roas: Boolean(conversionFor(String(gt.conversion)).roas), target: gt.target == null ? null : Number(gt.target) });
+        })().catch((e) => {
+          console.error("[business audit] google creative", e instanceof Error ? e.message : e);
+          return null;
+        })
+      : null;
+    const creativeBlock = [creativeAnalysis ? `<creative_analysis account="Meta${mainMeta?.label ? ` · ${mainMeta.label}` : ""}" note="the KPI's campaigns only">\n${creativeAnalysisText(creativeAnalysis)}\n</creative_analysis>` : "", googleCreative ? `<creative_analysis platform="google" note="the KPI's campaigns only; on Google the creative is the copy">\n${googleCreativeText(googleCreative)}\n</creative_analysis>` : ""].filter(Boolean).join("\n\n");
 
     await step("Auditing the whole business");
-    type Raw = Omit<BusinessAuditResult, "actions"> & { actions: (Omit<BusinessAuditResult["actions"][number], "objects"> & { objects?: { type: string; name: string }[] })[] };
+    type Raw = Omit<BusinessAuditResult, "actions" | "creativeAnalysis" | "googleCreative"> & { creativeRead?: CreativeAnalysis["read"]; actions: (Omit<BusinessAuditResult["actions"][number], "objects"> & { objects?: { type: string; name: string }[] })[] };
     const raw = await askJson<Raw>({
       agent: "auditor",
       label: `business audit ${client.name}`,
@@ -138,17 +172,18 @@ ${paid || "(no KPI targets set on any ad account)"}
 </paid_channels>
 
 ${creative}
-${pushback ? `\n${pushback}\n` : ""}
+${creativeBlock ? `\n${creativeBlock}\n` : ""}${pushback ? `\n${pushback}\n` : ""}
 Today is ${new Date().toISOString().slice(0, 10)}. Audit ${client.name}'s whole business with us.`,
     });
     // What each move names, found in the client's ad accounts by name (never an ID the model wrote)
     const { clientObjectIndex, resolveObjects } = await import("@/lib/audit-objects");
     const index = raw.actions.some((a) => a.objects?.length) ? await clientObjectIndex(admin, clientId).catch(() => ({ meta: [], google: [] })) : { meta: [], google: [] };
-    const out: BusinessAuditResult = { ...raw, actions: raw.actions.map((a) => ({ ...a, objects: resolveObjects(a.channel === "google" ? index.google : a.channel === "meta" ? index.meta : [...index.meta, ...index.google], a.objects) })) };
+    const { creativeRead, ...rest } = raw;
+    const out: BusinessAuditResult = { ...rest, creativeAnalysis: creativeAnalysis ? { ...creativeAnalysis, read: creativeRead } : null, googleCreative: googleCreative ? { ...googleCreative, read: creativeAnalysis ? undefined : creativeRead } : null, actions: raw.actions.map((a) => ({ ...a, objects: resolveObjects(a.channel === "google" ? index.google : a.channel === "meta" ? index.meta : [...index.meta, ...index.google], a.objects) })) };
     const clean = <T>(x: T): T => JSON.parse(JSON.stringify(x).replace(/\s*—\s*/g, ", "));
     await admin
       .from("business_audits")
-      .update({ status: "ready", step: null, result: clean(out), numbers: `<paid_channels>\n${paid}\n</paid_channels>\n\n${creative}`.slice(0, 200_000), inputs: { kpis: kpis.length, accountAudits: latest.size, requests: reqs.length, fatigue: fatigue?.length ?? 0 }, finished_at: new Date().toISOString() })
+      .update({ status: "ready", step: null, result: clean(out), numbers: `<paid_channels>\n${paid}\n</paid_channels>\n\n${creative}${creativeBlock ? `\n\n${creativeBlock}` : ""}`.slice(0, 200_000), inputs: { kpis: kpis.length, accountAudits: latest.size, requests: reqs.length, fatigue: fatigue?.length ?? 0 }, finished_at: new Date().toISOString() })
       .eq("id", id);
     // Its moves go to the teams: each paid channel's sprint (added to one being worked, never reset) and the rest as tasks
     const { routeBusinessAudit } = await import("@/lib/business-audit-route");

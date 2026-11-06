@@ -249,6 +249,11 @@ export type MetaAd = MetaSummary & {
   adset: string;
   headline: string | null;
   text: string | null;
+  /** The link description, and every version of each line a dynamic (asset feed) ad rotates, for the Copy library */
+  description?: string | null;
+  texts?: string[];
+  headlines?: string[];
+  descriptions?: string[];
   thumbnail: string | null;
   image?: string | null; // the full image, for image ads
   /** image, video or carousel, from the creative */
@@ -381,8 +386,8 @@ async function snapshot(admin: SupabaseClient, clientId: string, adAccountId: st
     title?: string;
     body?: string;
     thumbnail_url?: string;
-    object_story_spec?: { link_data?: { name?: string; message?: string }; video_data?: { title?: string; message?: string } };
-    asset_feed_spec?: { titles?: { text: string }[]; bodies?: { text: string }[] };
+    object_story_spec?: { link_data?: { name?: string; message?: string; description?: string }; video_data?: { title?: string; message?: string; link_description?: string } };
+    asset_feed_spec?: { titles?: { text: string }[]; bodies?: { text: string }[]; descriptions?: { text: string }[] };
     effective_object_story_id?: string;
   };
   // One request per ad, so one ad Meta won't describe can't blank the others. A big thumbnail (the default is 64px),
@@ -417,6 +422,15 @@ async function snapshot(admin: SupabaseClient, clientId: string, adAccountId: st
       (c?.effective_object_story_id ? postText[c.effective_object_story_id]?.message : undefined) ??
       null,
   });
+  // The link description and every version a dynamic ad rotates (kept apart: the library counts each line on its own)
+  const uniq = (xs: (string | undefined | null)[], n: number) => [...new Set(xs.map((x) => x?.trim()).filter((x): x is string => Boolean(x)))].slice(0, 5).map((x) => x.slice(0, n));
+  const variantsOf = (c?: Creative) => {
+    const description = c?.object_story_spec?.link_data?.description ?? c?.object_story_spec?.video_data?.link_description ?? c?.asset_feed_spec?.descriptions?.[0]?.text ?? null;
+    const texts = uniq((c?.asset_feed_spec?.bodies ?? []).map((b) => b.text), 2000);
+    const headlines = uniq((c?.asset_feed_spec?.titles ?? []).map((b) => b.text), 300);
+    const descriptions = uniq((c?.asset_feed_spec?.descriptions ?? []).map((b) => b.text), 300);
+    return { description: description?.slice(0, 300) ?? null, ...(texts.length > 1 ? { texts } : {}), ...(headlines.length > 1 ? { headlines } : {}), ...(descriptions.length > 1 ? { descriptions } : {}) };
+  };
   const ranking = (list: InsightRow[], key: string) =>
     (list
       .slice()
@@ -442,6 +456,7 @@ async function snapshot(admin: SupabaseClient, clientId: string, adAccountId: st
       adset: String(latest.adset_name ?? ""),
       headline: copyOf(c).headline,
       text: copyOf(c).text?.slice(0, 2000) ?? null,
+      ...variantsOf(c),
       thumbnail: c?.thumbnail_url ?? null,
       image: c?.image_url ?? null,
       format: formatOf(c),

@@ -21,6 +21,8 @@ export type ToolCtx = {
   messageId: string; // the assistant message the cards belong to
   cards: Card[];
   files: Attachment[]; // attached to the newest message
+  /** "<client id>|<platform>" whose copy context is already in the system prompt (so write_ad_copy doesn't send it again) */
+  copyContextFor?: string | null;
 };
 
 /** A tool plus the line shown while it runs */
@@ -464,6 +466,46 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
       },
     },
     {
+      name: "get_copy_library",
+      description:
+        "A client's Copy library: every primary text, headline and description that has run in their Meta ads, and every Google RSA headline and description, sitelink and callout (with Google's Best / Good / Low rating and pins), with its numbers added up across the ads that used it (spend, CTR, conversions, cost per result or ROAS against the KPI) and a badge (winner, solid, tired, not proven), best first. Use it to reuse what's proven, to write variations of a winning line, to carry what converts on one platform to the other, or to see what's wearing out. Filter by platform, type, badge, angle or words.",
+      input_schema: {
+        type: "object",
+        properties: {
+          client: CLIENT,
+          platform: { type: "string", enum: ["meta", "google"] },
+          type: { type: "string", enum: ["primary", "headline", "description", "long_headline", "sitelink", "callout"] },
+          badge: { type: "string", enum: ["winner", "solid", "tired", "unproven"] },
+          angle: { type: "string" },
+          search: { type: "string", description: "Words to find in the copy, angle, avatar or hook" },
+          limit: { type: "integer", description: "How many lines (default 15, at most 40)" },
+        },
+        additionalProperties: false,
+      },
+      status: (input, client) => `Reading the Copy library for ${nameFor(ctx, input) ?? client ?? "the client"}…`,
+      run: async (input) => {
+        const c = await clientOf(ctx, input);
+        const { clientCopyLines } = await import("@/lib/copy-library");
+        const kinds = ["primary", "headline", "description", "long_headline", "sitelink", "callout"] as const;
+        const badges = ["winner", "solid", "tired", "unproven"] as const;
+        const lines = await clientCopyLines(ctx.db, c.id, {
+          platform: input.platform === "google" ? "google" : input.platform === "meta" ? "meta" : null,
+          kind: kinds.find((k) => k === input.type) ?? null,
+          badge: badges.find((b) => b === input.badge) ?? null,
+          angle: input.angle ? String(input.angle) : null,
+          search: input.search ? String(input.search) : null,
+        });
+        const n = Math.max(1, Math.min(40, Number(input.limit) || 15));
+        return {
+          client: c.name,
+          judged_on: { meta: lines.find((l) => l.platform === "meta")?.roasKpi ? "ROAS" : "cost per result", google: lines.find((l) => l.platform === "google")?.roasKpi ? "ROAS" : "cost per conversion" },
+          total: lines.length,
+          link: `/clients/${c.slug}?service=meta&tab=copy`,
+          lines: lines.slice(0, n).map((l) => ({ platform: l.platform, google_rating: l.label ?? undefined, pinned: l.pinned ?? undefined, type: l.kind, badge: l.badge, why: l.reason, text: l.text.slice(0, 1500), spend: l.spend, results: l.results, cost_per_result: l.cpa, roas: l.roas, vs_kpi: l.vsKpi, ctr: l.ctr, ads: l.ads, days_running: l.days, last_ran: l.lastSeen, live: l.live, angle: l.angle, avatar: l.avatar, hook: l.hook, offer: l.offer, starred: l.starred })),
+        };
+      },
+    },
+    {
       name: "write_ad_copy",
       description:
         "Shows ad copy you've written as a copy card with character counts (Meta: primary text, headline up to 40, description up to 30, call to action; Google RSA: headlines up to 30, descriptions up to 90, sitelinks text up to 25 with two lines up to 35, callouts up to 25), checks Meta copy against what the client told us to avoid, and flags anything over a limit so you can fix it. Write the copy first, then call this with it.",
@@ -503,6 +545,12 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
             const { checkAgainstClient } = await import("@/lib/copy-draft");
             const v = await checkAgainstClient(ctx.admin, c.id, out.meta.map((a) => ({ kind: "short" as const, formula: "", angle: a.angle, primaryText: a.primaryText, headline: a.headline.text, linkDescription: a.description.text, cta: a.cta }))).catch(() => []);
             for (const x of v) flags.push(`Ad ${x.ad}: "${x.quote}" goes against ${x.rule}`);
+            // A tired line from the Copy library reused as it is
+            const [{ clientCopyLines }, { normalize }] = await Promise.all([import("@/lib/copy-library"), import("@/lib/copy-library-core")]);
+            const tired = new Set((await clientCopyLines(ctx.db, c.id, { badge: "tired" }).catch(() => [])).map((l) => normalize(l.text)));
+            out.meta.forEach((a, i) => {
+              for (const [k, t] of [["primary text", a.primaryText], ["headline", a.headline.text], ["description", a.description.text]] as const) if (t && tired.has(normalize(t))) flags.push(`Ad ${i + 1}: the ${k} is a tired line in the Copy library (its ads are wearing out): write a fresh version`);
+            });
           }
         } else {
           const g = (input.google ?? {}) as { headlines?: string[]; descriptions?: string[]; sitelinks?: { text: string; line1?: string; line2?: string }[]; callouts?: string[] };
@@ -518,10 +566,25 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
           out.google.callouts.forEach((x, i) => over(x) && flags.push(`Callout ${i + 1} is ${[...x.text].length}/25`));
           const dupes = out.google.headlines.map((h) => h.text.toLowerCase()).filter((h, i, l) => h && l.indexOf(h) !== i);
           if (dupes.length) flags.push(`Repeated headlines: ${[...new Set(dupes)].join(", ")}`);
+          // A line Google already rates Low for this client, reused as it is
+          if (c) {
+            const [{ clientCopyLines }, { normalize }] = await Promise.all([import("@/lib/copy-library"), import("@/lib/copy-library-core")]);
+            const low = new Set((await clientCopyLines(ctx.db, c.id, { platform: "google" }).catch(() => [])).filter((l) => l.label === "LOW").map((l) => normalize(l.text)));
+            for (const t of [...out.google.headlines, ...out.google.descriptions]) if (t.text && low.has(normalize(t.text))) flags.push(`"${t.text}" is already rated Low by Google for this client: write a fresh one`);
+          }
           if (out.google.headlines.length && out.google.headlines.length < 8) flags.push("Fewer than 8 headlines: Google rates RSAs with more variety higher");
         }
         card(out);
-        return flags.length ? { shown: true, fix_these: flags, note: "Rewrite what's flagged and call write_ad_copy again with the fixed set." } : { shown: true, all_within_limits: true };
+        // Copy for a client not already read with its copy context: send it, so the next pass is written from it
+        let context: string | null = null;
+        const seen = `${c?.id}|${out.platform}`;
+        if (c && ctx.copyContextFor !== seen) {
+          const { copyContext } = await import("@/lib/copy-library");
+          context = await copyContext(ctx.admin, c.id, 14_000, out.platform).catch(() => null);
+          ctx.copyContextFor = seen;
+        }
+        const extra = context ? { copy_context: context, note_on_context: `This is the client's copy context for ${out.platform === "google" ? "Google" : "Meta"} (proven and tired lines on both platforms, voice, rules, limits). Check the copy you showed against it; if it falls short, rewrite and call write_ad_copy again.` } : {};
+        return flags.length ? { shown: true, fix_these: flags, note: "Rewrite what's flagged and call write_ad_copy again with the fixed set.", ...extra } : { shown: true, all_within_limits: true, ...extra };
       },
     },
     {

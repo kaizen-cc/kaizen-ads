@@ -18,7 +18,7 @@ export const maxDuration = 300;
 
 export default async function NewRequest({ searchParams }: PageProps<"/requests/new">) {
   const me = await requireStaff();
-  const { client, from, brief, asana, ai, card, audit, business, idea, draft } = await searchParams;
+  const { client, from, brief, asana, ai, card, audit, business, idea, draft, copyline } = await searchParams;
   const supabase = await createClient();
   const [{ data: rows }, { data: usage }, { data: angles }, { data: assignments }] = await Promise.all([
     supabase.from("clients").select("id, name, slug, status, creative_package").is("archived_at", null).in("status", LIVE).order("name"),
@@ -54,7 +54,9 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
         ? await fromAsana(asana, me)
         : typeof ai === "string"
           ? await fromKaizenAi(supabase, ai, Number(card) || 0, allowed)
-          : null);
+          : typeof copyline === "string"
+            ? await fromCopyLine(supabase, copyline)
+            : null);
   // An audit's creative idea: its quick preview opens first, over the client's start page
   const auditIdea = !restart && (typeof audit === "string" || typeof business === "string") ? await fromAuditIdea(supabase, typeof business === "string" ? "business" : "account", (typeof business === "string" ? business : audit) as string, Number(idea) || 0) : null;
   const initialClient = restart?.draft.clientId ?? auditIdea?.clientId ?? (typeof client === "string" ? (clients.find((c) => c.slug === client && c.creative)?.id ?? null) : null);
@@ -114,6 +116,33 @@ async function fromKaizenAi(db: Awaited<ReturnType<typeof createClient>>, messag
       origin: { kind: "brief", label: `Briefed in Kaizen AI: ${b.title}`.slice(0, 200) },
       // Written entirely by Kaizen AI: sent unchanged, it skips the AI review
       ai: stampAi(fields, { kind: "kaizen-ai", messageId, card: index }, allowed),
+    },
+  };
+}
+
+/** A proven line from the Copy library ("Use in a request"): the request starts on its angle with the line in the brief */
+async function fromCopyLine(db: Awaited<ReturnType<typeof createClient>>, ref: string): Promise<{ draft: Partial<Draft> & { clientId: string } } | null> {
+  const [clientId, key] = ref.split(".");
+  if (!/^[0-9a-f-]{36}$/.test(clientId ?? "") || !key) return null;
+  const { findCopyLine } = await import("@/lib/copy-library");
+  const { KIND_LABEL, BADGE_LABEL } = await import("@/lib/copy-library-core");
+  const l = await findCopyLine(db, clientId, key).catch(() => null);
+  if (!l) return null;
+  const kpi = l.roasKpi ? `${l.roas ?? 0}x ROAS` : l.cpa == null ? "no results yet" : `$${l.cpa} per result`;
+  const label = `Built on proven copy: "${l.text.replace(/\s+/g, " ").slice(0, 80)}${l.text.length > 80 ? "…" : ""}"`;
+  return {
+    draft: {
+      clientId,
+      priority: "normal",
+      angle: l.angle ?? "",
+      ...(l.avatar ? { avatar: l.avatar } : {}),
+      brief: [
+        `Copy to build on (${BADGE_LABEL[l.badge]} in the Copy library: ${kpi}, $${Math.round(l.spend)} spent, CTR ${l.ctr ?? "?"}%, ${l.ads} ${l.ads === 1 ? "ad" : "ads"} over ${l.days} days).`,
+        `${KIND_LABEL[l.kind]}:`,
+        `"${l.text}"`,
+        "Keep this line in the copy set (as it is, or a close variation), and make the creative carry the same promise.",
+      ].join("\n"),
+      origin: { kind: "brief", label: label.slice(0, 200) },
     },
   };
 }

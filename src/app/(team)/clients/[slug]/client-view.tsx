@@ -33,6 +33,7 @@ import { LaunchRules, type LaunchRule } from "./launch-rules";
 import { ServicesPanel, type Tier } from "./services-panel";
 import type { Readiness } from "@/lib/readiness";
 import { CreativePanel } from "./creative-panel";
+import { CopyLibrary } from "@/components/copy-library";
 import { KpiPanel } from "./kpi-panel";
 import { ClientChat, type AuditTarget } from "./client-chat";
 import type { AuditSummary } from "../../kpis/audit-panel";
@@ -862,6 +863,12 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                       ),
                     },
                     {
+                      id: "copy",
+                      label: "Copy library",
+                      hint: "Every primary text, headline and description that ran, ranked on the KPI: reuse what's proven or make variations",
+                      content: <CopyLibrary clientId={client.id} slug={client.slug} />,
+                    },
+                    {
                       id: "strategy",
                       label: "Strategy",
                       hint: "The Meta go-to-market strategy, and where new ads go",
@@ -899,6 +906,12 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                       label: "Campaigns",
                       hint: "Every campaign: spend, results, cost and impression share",
                       content: googleCampaigns ? <CampaignsPanel p={googleCampaigns} /> : <p className="text-sm text-faint">No Google campaign data yet.</p>,
+                    },
+                    {
+                      id: "copy",
+                      label: "Copy library",
+                      hint: "Every headline, description, sitelink and callout that ran, with Google's rating, ranked on the KPI (and what's proven on Meta)",
+                      content: <CopyLibrary clientId={client.id} slug={client.slug} />,
                     },
                     {
                       id: "strategy",
@@ -979,6 +992,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                         </div>
                       ),
                     },
+                    ...(has.meta || has.google ? [{ id: "copy", label: "Copy library", hint: "Our best primary texts, headlines and descriptions for this client, ranked on the KPI", content: <CopyLibrary clientId={client.id} slug={client.slug} /> }] : []),
                     { id: "angles", label: "Angles", count: angles.filter((a) => a.status !== "archived").length || null, hint: "Angles and avatars; copy is approved once per angle", content: (<Section title="Angles & avatars" description="Copy is approved once per angle and reused for every creative on it.">
             {angles.length > 0 ? (
               <ul className="grid gap-2 sm:grid-cols-2">

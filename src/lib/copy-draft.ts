@@ -75,15 +75,17 @@ export async function draftCopy(admin: SupabaseClient, requestId: string, actorI
   };
 
   try {
-    const [{ sources, model }, refs, creative, team] = await Promise.all([
+    const [{ sources, model }, refs, creative, team, proven] = await Promise.all([
       getAgent("copy"),
       readReferences(r.refs ?? []),
       creativeImages(admin, requestId),
       // What the team established the client does allow (a copy check read their rule too strictly before), as
       // conditional learnings: only the few that fit this ticket
       import("@/lib/learnings").then(({ learningsBlock }) => learningsBlock(admin, ["copy"], r.client_id, [r.title, r.angle_name, r.audience, r.brief].filter(Boolean).join(" · "))),
+      // The client's proven lines from the Copy library (winners and solid, with their numbers), as examples
+      import("@/lib/copy-library").then(({ provenCopyBlock }) => provenCopyBlock(admin, r.client_id)).catch(() => ""),
     ]);
-    const allowedBlock = team ? `\n${team}` : "";
+    const allowedBlock = `${team ? `\n${team}` : ""}${proven ? `\n${proven}` : ""}`;
     const out = await askJson<{ ads: Ad[]; notes: string }>({
       agent: "copy",
       label: `copy ${ctx.name}`,

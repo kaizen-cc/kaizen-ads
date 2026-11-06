@@ -166,7 +166,7 @@ export async function draftDeploy(admin: SupabaseClient, deployId: string, chang
   if (!d) return;
   try {
     const clientId = d.client_id as string;
-    const [ctx, { data: bible }, gtm, playbook, patterns, model, setup] = await Promise.all([
+    const [ctx, { data: bible }, gtm, playbook, patterns, model, setup, copy] = await Promise.all([
       clientContext(admin, clientId),
       admin.from("client_brand_bibles").select("read_this_first, markdown").eq("client_id", clientId).maybeSingle(),
       import("@/lib/gtm").then(({ gtmForContext }) => gtmForContext(admin, clientId, "google")).catch(() => ""),
@@ -181,6 +181,9 @@ export async function draftDeploy(admin: SupabaseClient, deployId: string, chang
         const s = await googleWritableSetup(account);
         return `Campaigns now: ${s.campaigns.map((c) => `"${c.name}" (${c.status.toLowerCase()}, ${c.type.toLowerCase()})`).join("; ") || "none"}.\nAd groups: ${s.adGroups.slice(0, 60).map((g) => `"${g.name}" in "${g.campaign}"`).join("; ") || "none"}.`;
       })().catch(() => ""),
+      // The client's copy context for Google: their proven Google lines, what's proven on Meta (Meta and Google share
+      // what works), their rules and voice, and Google's limits
+      import("@/lib/copy-library").then(({ copyContext }) => copyContext(admin, clientId, 10_000, "google")).catch(() => ""),
     ]);
     if (!ctx) throw new Error("Client not found");
     const idea = d.idea as { kind: string; text: string; result: string };
@@ -193,7 +196,7 @@ export async function draftDeploy(admin: SupabaseClient, deployId: string, chang
       schema: SCHEMA,
       maxTokens: 6000,
       prompt: `${contextBlock(ctx)}
-${bible?.markdown ? `\n<brand_bible note="the foundation: what's true and allowed">\n${(bible.read_this_first ?? "").slice(0, 4000)}\n\n${String(bible.markdown).slice(0, 14000)}\n</brand_bible>\n` : ""}${gtm ? `\n<google_go_to_market>\n${gtm.slice(0, 14000)}\n</google_go_to_market>\n` : ""}${model ? `\n${model}\n` : ""}${playbook ? `\n${playbook}\n` : ""}${patterns ? `\n${patterns}\n` : ""}${setup ? `\n<their_google_ads_account>\n${setup}\n</their_google_ads_account>\n` : ""}
+${bible?.markdown ? `\n<brand_bible note="the foundation: what's true and allowed">\n${(bible.read_this_first ?? "").slice(0, 4000)}\n\n${String(bible.markdown).slice(0, 14000)}\n</brand_bible>\n` : ""}${gtm ? `\n<google_go_to_market>\n${gtm.slice(0, 14000)}\n</google_go_to_market>\n` : ""}${model ? `\n${model}\n` : ""}${playbook ? `\n${playbook}\n` : ""}${patterns ? `\n${patterns}\n` : ""}${setup ? `\n<their_google_ads_account>\n${setup}\n</their_google_ads_account>\n` : ""}${copy ? `\n${copy}\n` : ""}
 <the_idea from="another client's Google account, a winner">
 Kind: ${idea.kind === "search_term" ? "a search term people typed before converting" : idea.kind === "keyword" ? "a keyword" : "a responsive search ad"}
 ${idea.text}

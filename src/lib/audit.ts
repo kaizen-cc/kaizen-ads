@@ -5,11 +5,14 @@ import { askJson, clientContext, contextBlock } from "@/lib/ai";
 import { aggregate, completeDays, pickType, type Day } from "@/lib/kpi/calc";
 import { PURCHASE_TYPES, conversionFor, conversionLabel, countResult, type Conversion } from "@/lib/kpi/conversions";
 import { accountSetup, metaConfigured, syncClientAds, type AccountSetup } from "@/lib/context/meta";
-import { googleAuditDetail, googleSetup, googleWritableSetup, type GoogleSetup } from "@/lib/context/google-ads";
+import { googleAuditDetail, googleConvertingTerms, googleCopyAssets, googleSetup, googleWritableSetup, type GoogleSetup } from "@/lib/context/google-ads";
+import { analyzeGoogleCopy, GOOGLE_CREATIVE_READ_RULES, googleCreativeText, type GoogleCreativeAnalysis } from "@/lib/google-creative-core";
 import { accountRows, type CampaignRow } from "@/lib/kpi/sync";
 import type { Benchmark } from "@/lib/verticals";
 import type { AuditObject } from "@/lib/chat-change-core";
 import { googleIndex, metaIndex, resolveObjects, type ObjectIndex, type ObjectRef } from "@/lib/audit-objects";
+import { inScope, scopeRows, scopeText, type KpiScope } from "@/lib/kpi/scope";
+import { CREATIVE_READ_RULES, CREATIVE_READ_SCHEMA, creativeAnalysisText, type CreativeAnalysis } from "@/lib/creative-analysis-core";
 
 // The account audit: one ad account (a KPI target) scrubbed the way a senior media buyer would, against its target,
 // its own last 90 days, its live setup in Meta, the client's full context (Brand Bible, strategy, memory, calls), what
@@ -35,6 +38,10 @@ export type AuditResult = {
   watchouts?: { title: string; why: string }[];
   watch: string[];
   questions: string[];
+  /** The creative analysis: the KPI's top and bottom creatives, what the winners share, what's tiring, what's missing (Meta) */
+  creativeAnalysis?: CreativeAnalysis | null;
+  /** Google: the creative analysis of the copy (top and bottom headlines and descriptions, asset groups, search themes) */
+  googleCreative?: GoogleCreativeAnalysis | null;
   /** Lessons this audit added to the client page */
   learnings?: { kind: "avoid" | "prefer" | "note"; body: string; resurfaced: boolean }[];
 };
@@ -54,6 +61,8 @@ const FOUND_SCHEMA = obj({
   tracking: list(S),
   learnings: list(obj({ kind: { type: "string", enum: ["avoid", "prefer", "note"] }, body: S, resurfaced: { type: "boolean" } })),
 });
+/** Meta audits also read the creative analysis */
+const FOUND_SCHEMA_META = { ...FOUND_SCHEMA, properties: { ...FOUND_SCHEMA.properties, creativeRead: CREATIVE_READ_SCHEMA }, required: [...FOUND_SCHEMA.required, "creativeRead"] };
 const PLAN_SCHEMA = obj({
   actions: list(
     obj({
@@ -102,7 +111,7 @@ const PLAN_SYSTEM = `${BASE}
 This pass is "Here's what I'd do if I were you" and "what I'd watch out for", built on the findings you're given.
 actions: 5 to 10 concrete moves, most important first, specific enough to do without asking: which campaign or ad set, what to change it to, what to turn off, how much budget to move. owner: media_buyer, creative (the creative team), client (only the client can fix it: offer, site, stock, tracking access) or strategist. when: now (today), this_week or next. steps as short imperative lines. why with the evidence. impact: what it should move and roughly how much. Never vague ("optimize targeting"): name the thing. inPlatform: true only when the action includes switching campaigns, ad sets or ads on or off, or changing daily budgets (on Google also target CPA / ROAS and negative keywords): changes Kaizen Ads can make in the ad account for the buyer. false for tracking, reporting, the site, the offer, creative, copy, naming, audiences or anything done outside the ad account. short: the move in 3 to 7 words, verb first, naming the thing and the number ("Raise Broad ad set to $150/day", "Pause the 3 flash-sale ad sets"), for a quick-action list. objects: every campaign, ad set or ad (on Google: campaign, ad group or keyword) the action names, each with its type (campaign, adset, ad, ad_group or keyword) and its own name copied exactly, character for character, as it appears in the numbers or the live setup (just the object's name: not its campaign, not the ID in brackets). Empty when it names none. Never make up a name.
 tests: 2 to 4 tests: hypothesis, setup in Meta, the metric, what success looks like with a number, a budget and duration that can read out at this account's spend.
-creative: 2 to 4 creative directions the creative team could brief tomorrow (each one concept, its own brief), built from the playbook's proven angles, our Hall of Fame and the Brand Bible (never copy a competitor): what to make to fix the creative problem when there is one, otherwise the next ads worth making to keep the account fresh. concept in a line, the angle, the opening hook as it would be said or shown, the format (image, video or carousel, and the length or card count), and why with the evidence from this account.
+creative: 2 to 4 creative directions the creative team could brief tomorrow (each one concept, its own brief), built from the creative analysis when there is one (more of what the top creatives share, a replacement for what's tiring, a gap filled), the playbook's proven angles, our Hall of Fame and the Brand Bible (never copy a competitor): what to make to fix the creative problem when there is one, otherwise the next ads worth making to keep the account fresh. concept in a line, the angle, the opening hook as it would be said or shown, the format (image, video or carousel, and the length or card count), and why with the evidence from this account.
 budget: the call on budget and pacing (hold, cut, scale, reallocate) and the specific moves.
 watchouts: 3 to 6 things I'd watch out for in these results and in making these changes: what could mislead us (a small sample, a one-off spike, attribution lag, a promo ending), what the changes could break (resetting learning, starving a winner), and what to check before reading a result. Each with why.
 watch: the 3 to 5 numbers to watch over the next 7 days, each with the line that says it's working.
@@ -358,6 +367,7 @@ const STEPS: { key: string; label: string; weight: number }[] = [
   { key: "setup", label: "Checking the live setup in Meta", weight: 6 },
   { key: "client", label: "Reading the client page", weight: 4 },
   { key: "fatigue", label: "Checking for tiring ads", weight: 2 },
+  { key: "creative", label: "Ranking the creatives against the KPI", weight: 3 },
   { key: "vertical", label: "Comparing with the sub-vertical, our winners and the market", weight: 4 },
   { key: "found", label: "Working out why it's where it is", weight: 40 },
   { key: "plan", label: "Writing what I'd do and what to watch out for", weight: 38 },
@@ -365,7 +375,7 @@ const STEPS: { key: string; label: string; weight: number }[] = [
 
 /** Keeps the audit's steps and progress in step with what it's really doing, for the card to follow. */
 function milestones(admin: SupabaseClient, id: string, platform = "meta") {
-  const label = (s: (typeof STEPS)[number]) => (platform === "google" && s.key === "setup" ? "Checking the live setup, keywords and search terms in Google Ads" : platform === "google" && s.key === "numbers" ? "Reading 90 days of the Google Ads account" : s.label);
+  const label = (s: (typeof STEPS)[number]) => (platform === "google" && s.key === "setup" ? "Checking the live setup, keywords and search terms in Google Ads" : platform === "google" && s.key === "numbers" ? "Reading 90 days of the Google Ads account" : platform === "google" && s.key === "creative" ? "Ranking the headlines, descriptions and asset groups against the KPI" : s.label);
   const steps: AuditStep[] = STEPS.map((s) => ({ key: s.key, label: label(s), status: "pending", detail: null, startedAt: null, finishedAt: null }));
   let partial = 0; // how far through the running step (0 to 1), for the long AI steps
   const pct = () => {
@@ -416,7 +426,7 @@ export async function runAudit(admin: SupabaseClient, id: string) {
   if (t0?.platform === "google") return runGoogleAudit(admin, id, a);
   const m = milestones(admin, id);
   try {
-    const { data: t } = await admin.from("kpi_targets").select("ad_account_id, conversion, custom_action, campaign_match, target, monthly_budget, budget_note, sheet").eq("id", a.target_id).single();
+    const { data: t } = await admin.from("kpi_targets").select("ad_account_id, conversion, custom_action, campaign_match, excluded_campaigns, target, monthly_budget, budget_note, sheet").eq("id", a.target_id).single();
     if (!t?.ad_account_id) throw new Error("No ad account on this KPI");
     const conv = conversionFor(t.conversion);
     const account = String(t.ad_account_id).replace(/^act_/, "");
@@ -450,11 +460,12 @@ export async function runAudit(admin: SupabaseClient, id: string) {
       });
       rows = await readRows();
     }
-    const scoped = t.campaign_match ? rows.filter((r) => (r.campaign_name ?? "").toLowerCase().includes(String(t.campaign_match).toLowerCase())) : rows;
+    // Only the campaigns the KPI counts: its "Only campaigns containing" text, and never the ones left out of it
+    const scoped = scopeRows(rows, t as KpiScope);
     if (!scoped.length)
       throw new Error(
         rows.length
-          ? `No ads in campaigns containing "${t.campaign_match}" in the last 90 days. Check "Only campaigns containing" on this KPI.`
+          ? `No ads in the campaigns this KPI counts in the last 90 days. Check "Only campaigns containing" and the campaigns left out on this KPI.`
           : "Meta returned no ads for this account in the last 90 days. Check the ad account ID on this KPI and that it's shared with Kaizen's system user.",
       );
     const days: Day[] = scoped.map((r) => ({ date: r.date, spend: n(r.metrics.spend), actions: acts(r.metrics.actions), values: acts(r.metrics.action_values) }));
@@ -473,7 +484,11 @@ export async function runAudit(admin: SupabaseClient, id: string) {
 
     // 2. The live setup
     await m.start("setup");
-    const setup = metaConfigured() ? await accountSetup(account).catch(() => null) : null;
+    const fullSetup = metaConfigured() ? await accountSetup(account).catch(() => null) : null;
+    // The live setup of the KPI's campaigns only (and their ad sets)
+    const kept = (c: { id: string; name: string }) => inScope(t as KpiScope, { id: c.id, name: c.name });
+    const setup = fullSetup ? { ...fullSetup, campaigns: fullSetup.campaigns.filter(kept), adsets: fullSetup.adsets.filter((x) => fullSetup.campaigns.some((c) => c.id === x.campaignId && kept(c))) } : null;
+    const leftOut = [...new Set(rows.filter((r) => !inScope(t as KpiScope, { id: r.campaign_id, name: r.campaign_name })).map((r) => r.campaign_name ?? r.campaign_id ?? ""))].filter(Boolean);
     if (setup) {
       const learning = setup.adsets.filter((x) => x.learning && x.learning !== "SUCCESS").length;
       await m.finish("setup", `${setup.campaigns.length} campaigns and ${setup.adsets.length} ad sets live or paused${learning ? ` · ${learning} still learning` : ""} · placements, age, gender and country splits`);
@@ -490,6 +505,8 @@ export async function runAudit(admin: SupabaseClient, id: string) {
       setupBlock: setupText(setup),
       index: metaIndex(account, scoped, setup),
       inputs: { days: d.days, ads: d.ads, campaigns: setup?.campaigns.length ?? null, adsets: setup?.adsets.length ?? null, liveSetup: Boolean(setup) },
+      scopeNote: scopeText(t as KpiScope, leftOut),
+      creative: { rows: scoped, today },
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
@@ -511,6 +528,12 @@ type AuditInput = {
   inputs: Record<string, unknown>;
   /** The account's campaigns, ad sets and ads with their IDs, to find what the actions name */
   index: ObjectIndex;
+  /** Which campaigns count, in words */
+  scopeNote?: string;
+  /** Meta: the KPI's ad-level days, for the creative analysis */
+  creative?: { rows: Row[]; today: string };
+  /** Google: the copy analysis, already worked out from the account's assets */
+  googleCreative?: GoogleCreativeAnalysis | null;
 };
 
 /** Everything after the account's own numbers and setup: the same for Meta and Google. */
@@ -543,9 +566,27 @@ async function finishAudit(admin: SupabaseClient, id: string, a: { target_id: st
 
     // 4. Tiring ads (Meta's fatigue watcher; Google isn't watched for fatigue yet)
     await m.start("fatigue");
-    const { data: fatigue } = x.platform === "meta" ? await admin.from("ad_fatigue").select("ad_name, severity, signals").eq("client_id", a.client_id).in("state", ["open", "refreshing"]).limit(15) : { data: [] as { ad_name: string; severity: string; signals: unknown }[] };
+    const { data: allFatigue } = x.platform === "meta" ? await admin.from("ad_fatigue").select("ad_id, ad_name, severity, signals").eq("client_id", a.client_id).in("state", ["open", "refreshing"]).limit(60) : { data: [] as { ad_id: string; ad_name: string; severity: string; signals: unknown }[] };
+    // Only ads in the KPI's campaigns
+    const scopedAds = x.creative ? new Set(x.creative.rows.map((r) => r.ad_id)) : null;
+    const fatigue = (allFatigue ?? []).filter((f) => !scopedAds || scopedAds.has(f.ad_id as string)).slice(0, 15);
     if (x.platform === "meta") await m.finish("fatigue", fatigue?.length ? `${fatigue.length} ${fatigue.length === 1 ? "ad" : "ads"} flagged as tiring` : "No ads flagged as tiring");
     else await m.finish("fatigue", "Ad fatigue is watched on Meta only for now", "skipped");
+
+    // The creative analysis (Meta): the KPI's creatives ranked, compared and checked for gaps
+    await m.start("creative");
+    let creative: CreativeAnalysis | null = null;
+    if (x.creative) {
+      const { analyzeCreative } = await import("@/lib/creative-analysis");
+      creative = await analyzeCreative(admin, a.client_id, x.creative.rows, { conv, type, target: t.target == null ? null : Number(t.target), label: conversionLabel(t.conversion, t.custom_action).toLowerCase(), today: x.creative.today }).catch((e) => {
+        console.error("[audit] creative analysis", e instanceof Error ? e.message : e);
+        return null;
+      });
+      await m.finish("creative", creative ? `${creative.ads} ads · top ${creative.top.length} and bottom ${creative.bottom.length} · ${creative.fatiguing.length} tiring · ${creative.gaps.length} gaps` : "Not enough ads in the window to rank", creative ? "done" : "skipped");
+    } else if (x.googleCreative) {
+      const g = x.googleCreative;
+      await m.finish("creative", `${g.headlines.top.length + g.headlines.bottom.length} headlines and ${g.descriptions.top.length + g.descriptions.bottom.length} descriptions ranked · ${g.groups.length} asset groups · ${g.themes.length} search themes · ${g.low} rated Low`);
+    } else await m.finish("creative", "No ad copy with enough impressions to rank", "skipped");
 
     // 5. The sub-vertical
     await m.start("vertical");
@@ -591,7 +632,7 @@ async function finishAudit(admin: SupabaseClient, id: string, a: { target_id: st
 
 <target>
 ${client.name}: ${label}. Target: ${target == null ? "not set" : `${roas ? `${target}x ROAS` : `$${target} per result`}${bench ? ` (no target set: the ${sub?.name ?? "industry"} benchmark, ${bench.source} ${bench.year}; beat the industry)` : ""}`}. Last 14 days: ${x.last14 == null ? "no results" : roas ? `${x.last14}x` : `$${x.last14}`} (${gap == null ? "?" : gap > 0 ? `${gap}% worse than target` : `${-gap}% better than target`}); the 14 days before: ${x.prev14 ?? "no results"}.
-Monthly budget: ${t.monthly_budget ? `$${t.monthly_budget}` : "not set"}${t.budget_note ? ` (${t.budget_note})` : ""}.${t.campaign_match ? ` Only campaigns containing "${t.campaign_match}" count toward this KPI.` : ""} Results are counted as ${x.platform === "google" ? "Google's" : "Meta's"} "${type ?? "?"}".
+Monthly budget: ${t.monthly_budget ? `$${t.monthly_budget}` : "not set"}${t.budget_note ? ` (${t.budget_note})` : ""}.${x.scopeNote ? ` ${x.scopeNote}` : t.campaign_match ? ` Only campaigns containing "${t.campaign_match}" count toward this KPI.` : ""} Results are counted as ${x.platform === "google" ? "Google's" : "Meta's"} "${type ?? "?"}".
 </target>
 
 <account_numbers platform="${x.platform}">
@@ -612,7 +653,7 @@ ${Object.entries(t.sheet as Record<string, string>).filter(([k, v]) => v && !["n
 ${x.setupBlock}
 </live_setup>
 
-<ads_tiring source="our fatigue watcher">
+${creative ? `<creative_analysis note="the KPI's campaigns only">\n${creativeAnalysisText(creative)}\n</creative_analysis>\n\n` : ""}${x.googleCreative ? `<creative_analysis platform="google" note="the KPI's campaigns only; on Google the creative is the copy">\n${googleCreativeText(x.googleCreative)}\n</creative_analysis>\n\n` : ""}<ads_tiring source="our fatigue watcher">
 ${(fatigue ?? []).map((f) => `- ${f.ad_name}: ${f.severity}, ${JSON.stringify(f.signals).slice(0, 300)}`).join("\n") || "(none flagged)"}
 </ads_tiring>
 
@@ -631,12 +672,12 @@ Today is ${new Date().toISOString().slice(0, 10)}.`;
     // 6. What I found
     await m.start("found");
     let last = 0;
-    const found = await askJson<Pick<AuditResult, "verdict" | "diagnosis" | "causes" | "tracking"> & { learnings: { kind: "avoid" | "prefer" | "note"; body: string; resurfaced: boolean }[] }>({
+    const found = await askJson<Pick<AuditResult, "verdict" | "diagnosis" | "causes" | "tracking"> & { learnings: { kind: "avoid" | "prefer" | "note"; body: string; resurfaced: boolean }[]; creativeRead?: CreativeAnalysis["read"] }>({
       agent: x.platform === "google" ? "google_auditor" : "auditor",
       label: `audit ${client.name} · findings`,
       clientId: a.client_id,
-      system: x.platform === "google" ? swapBase(FOUND_SYSTEM) : FOUND_SYSTEM,
-      schema: FOUND_SCHEMA,
+      system: x.platform === "google" ? `${swapBase(FOUND_SYSTEM)}${x.googleCreative ? `\n${GOOGLE_CREATIVE_READ_RULES}` : ""}` : `${FOUND_SYSTEM}\n${CREATIVE_READ_RULES}`,
+      schema: x.platform === "google" && !x.googleCreative ? FOUND_SCHEMA : FOUND_SCHEMA_META,
       maxTokens: 32000,
       onText: (so) => {
         if (Date.now() - last < 4000) return;
@@ -675,7 +716,7 @@ Today is ${new Date().toISOString().slice(0, 10)}.`;
       agent: x.platform === "google" ? "google_auditor" : "auditor",
       label: `audit ${client.name} · plan`,
       clientId: a.client_id,
-      system: x.platform === "google" ? swapBase(PLAN_SYSTEM) : PLAN_SYSTEM,
+      system: x.platform === "google" ? `${swapBase(PLAN_SYSTEM)}\nOn Google the creative is the copy: each creative item is new copy to write next, from the creative analysis (more of what the top headlines say, a replacement for what Google rates Low, a converting search theme no headline answers yet) and what's proven on Meta for this client. concept: the message; angle; hook: the lead headline as written (30 characters or less); format: RSA headlines and descriptions, a Performance Max asset group, or sitelinks and callouts; why with the evidence.` : PLAN_SYSTEM,
       schema: PLAN_SCHEMA,
       maxTokens: 32000,
       onText: (so) => {
@@ -697,13 +738,16 @@ Now write what you'd do if you were the buyer, and what you'd watch out for.`,
     await m.finish("plan", `${plan.actions.length} actions${linked ? ` (${linked} campaigns, ad sets or ads linked)` : ""} · ${plan.tests.length} tests · ${plan.watchouts?.length ?? 0} things to watch out for`);
 
     const clean = <T>(x: T): T => JSON.parse(JSON.stringify(x).replace(/\s*—\s*/g, ", "));
+    const { creativeRead, ...findings } = found;
+    const creativeAnalysis = creative ? { ...creative, read: creativeRead ?? undefined } : null;
+    const googleCreative = x.googleCreative ? { ...x.googleCreative, read: creativeRead ?? undefined } : null;
     await admin
       .from("account_audits")
       .update({
         status: "ready",
         step: null,
         progress: 100,
-        result: clean({ ...found, ...plan, learnings: lessons }),
+        result: clean({ ...findings, ...plan, learnings: lessons, creativeAnalysis, googleCreative }),
         // What the audit read, kept for the "Why?" chat on each item: the target, the numbers, the scorecard and the setup
         numbers: [`<target>\n${context.split("<target>")[1]?.split("</target>")[0]?.trim() ?? ""}\n</target>`, `<account_numbers platform="${x.platform}">\n${x.numbersText}\n</account_numbers>`, scorecard ? `<campaigns_scorecard>\n${scorecard}\n</campaigns_scorecard>` : "", `<live_setup>\n${x.setupBlock}\n</live_setup>`].filter(Boolean).join("\n\n").slice(0, 400_000),
         inputs: { ...x.inputs, platform: x.platform, fatigue: fatigue?.length ?? 0, hallOfFame: fame?.length ?? 0, playbook: Boolean(playbook), market: Boolean(market), benchmarks: Boolean(bm) },
@@ -719,7 +763,7 @@ Now write what you'd do if you were the buyer, and what you'd watch out for.`,
 async function runGoogleAudit(admin: SupabaseClient, id: string, a: { target_id: string; client_id: string }) {
   const m = milestones(admin, id, "google");
   try {
-    const { data: t } = await admin.from("kpi_targets").select("ad_account_id, conversion, custom_action, campaign_match, target, monthly_budget, budget_note, sheet").eq("id", a.target_id).single();
+    const { data: t } = await admin.from("kpi_targets").select("ad_account_id, conversion, custom_action, campaign_match, excluded_campaigns, target, monthly_budget, budget_note, sheet").eq("id", a.target_id).single();
     if (!t?.ad_account_id) throw new Error("No Google Ads customer ID on this KPI");
     const conv = conversionFor(t.conversion);
     const account = String(t.ad_account_id);
@@ -727,8 +771,9 @@ async function runGoogleAudit(admin: SupabaseClient, id: string, a: { target_id:
     await m.start("numbers");
     const since = new Date(Date.now() - 90 * DAY).toISOString().slice(0, 10);
     const all = (await accountRows(admin, account, "google")).filter((r) => r.date >= since);
-    const rows = t.campaign_match ? all.filter((r) => (r.campaign_name ?? "").toLowerCase().includes(String(t.campaign_match).toLowerCase())) : all;
-    if (!rows.length) throw new Error(all.length ? `No campaigns containing "${t.campaign_match}" in the last 90 days.` : "No Google Ads numbers for this account yet. Pull from Google on the KPI card first.");
+    const rows = scopeRows(all, t as KpiScope);
+    const leftOut = [...new Set(all.filter((r) => !inScope(t as KpiScope, { id: r.campaign_id, name: r.campaign_name })).map((r) => r.campaign_name ?? r.campaign_id))].filter(Boolean) as string[];
+    if (!rows.length) throw new Error(all.length ? `No campaigns this KPI counts in the last 90 days. Check "Only campaigns containing" and the campaigns left out.` : "No Google Ads numbers for this account yet. Pull from Google on the KPI card first.");
     const days: Day[] = rows.map((r) => ({ date: r.date, spend: n(r.spend), actions: r.actions ?? {}, values: r.action_values ?? {} }));
     const type = pickType(days, conv, t.custom_action);
     const today = rows.reduce((x, r) => (r.date > x ? r.date : x), rows[0].date);
@@ -739,12 +784,18 @@ async function runGoogleAudit(admin: SupabaseClient, id: string, a: { target_id:
     await m.finish("numbers", `${d.days} days · ${d.campaigns} campaigns · $${n0(rows.reduce((x, r) => x + n(r.spend), 0))} spent`);
 
     await m.start("setup");
-    const [setup, detail, writable] = await Promise.all([
+    const [fullSetup, detail, writable, copy, terms] = await Promise.all([
       googleSetup(account).catch(() => null),
       googleAuditDetail(account).catch(() => ({ text: "", counts: { adGroups: 0, keywords: 0, searchTerms: 0 } })),
       // Ad groups with their IDs, so actions that name one link straight to it
       googleWritableSetup(account).catch(() => null),
+      // The copy asset by asset (with Google's ratings), Performance Max asset groups, and the converting searches
+      googleCopyAssets(account, 90).catch(() => ({ assets: [], groups: [] })),
+      googleConvertingTerms(account, 90).catch(() => []),
     ]);
+    const googleCreative = analyzeGoogleCopy({ assets: copy.assets, groups: copy.groups, terms, scope: t as KpiScope, roas: Boolean(conv.roas), target: t.target == null ? null : Number(t.target) });
+    // The KPI's campaigns only
+    const setup = fullSetup ? { ...fullSetup, campaigns: fullSetup.campaigns.filter((c) => inScope(t as KpiScope, { id: c.id, name: c.name })) } : null;
     await m.finish("setup", setup ? `${setup.campaigns.length} campaigns · ${setup.conversions.length} conversion actions · ${detail.counts.keywords} keywords and ${detail.counts.searchTerms} search terms read` : "Couldn't read the live setup from Google Ads; working from the numbers", setup ? "done" : "skipped");
 
     await finishAudit(admin, id, a, m, {
@@ -756,7 +807,9 @@ async function runGoogleAudit(admin: SupabaseClient, id: string, a: { target_id:
       last14: d.last14.value,
       prev14: d.prev14.value,
       setupBlock: googleSetupText(setup, detail.text),
-      index: googleIndex(account, rows, setup, writable?.adGroups ?? []),
+      index: googleIndex(account, rows, setup, (writable?.adGroups ?? []).filter((g) => !setup || setup.campaigns.some((c) => c.id === g.campaignId))),
+      scopeNote: scopeText(t as KpiScope, leftOut) + (leftOut.length ? " The keywords and search terms in the live setup may include those campaigns: leave them out." : ""),
+      googleCreative,
       inputs: { days: d.days, campaigns: d.campaigns, liveSetup: Boolean(setup), keywords: detail.counts.keywords, searchTerms: detail.counts.searchTerms },
     });
   } catch (e) {

@@ -10,6 +10,8 @@ import { AuditWhy } from "@/components/audit-why";
 import { businessItemPlatform, NO_RIGHTS, rightFor, type RebutRights } from "@/lib/rebut-permission";
 import { ObjectLinks } from "@/components/object-links";
 import { BriefPreviewButton } from "@/components/quick-brief-sheet";
+import { CreativeAnalysisView } from "@/components/creative-analysis-view";
+import { GoogleCreativeView } from "@/components/google-creative-view";
 
 // The full business audit on the client page: one button that audits every channel together (Meta, Google, creative,
 // what the client is telling us), and the latest result in the same found / do / watch shape as an account audit.
@@ -208,6 +210,22 @@ export function BusinessAuditPanel({ clientId, slug: given = null, latest, pushb
               ))}
             </div>
           </Block>
+
+          {r.creativeAnalysis && (
+            <Block title="Creative analysis">
+              <p className="-mt-1 text-[13px] text-muted">The main Meta account, its KPI&apos;s campaigns only, last 30 days.</p>
+              <CreativeAnalysisView a={r.creativeAnalysis} nextHint={(r.creative ?? []).length ? "What to make next is right below, each idea one click from its brief." : undefined} />
+              {talk("creative-analysis", r.creativeAnalysis.read?.common?.[0] ?? "Creative analysis")}
+            </Block>
+          )}
+
+          {r.googleCreative && (
+            <Block title={r.creativeAnalysis ? "Creative analysis · Google" : "Creative analysis"}>
+              <p className="-mt-1 text-[13px] text-muted">The main Google account, its KPI&apos;s campaigns only, last 90 days. On Google the creative is the copy.</p>
+              <GoogleCreativeView a={r.googleCreative} />
+              {!r.creativeAnalysis && talk("creative-analysis", r.googleCreative.read?.common?.[0] ?? "Creative analysis")}
+            </Block>
+          )}
 
           {(r.creative ?? []).length > 0 && latest && (
             <Block title="Creative I'd make">

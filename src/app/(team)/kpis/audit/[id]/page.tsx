@@ -17,6 +17,8 @@ import { metaConfigured } from "@/lib/context/meta";
 import { VERDICT } from "../../verdict";
 import { ActionCard, RerunAudit, StartSprint } from "./audit-parts";
 import { BriefPreviewButton } from "@/components/quick-brief-sheet";
+import { CreativeAnalysisView } from "@/components/creative-analysis-view";
+import { GoogleCreativeView } from "@/components/google-creative-view";
 
 export const metadata: Metadata = { title: "Account audit" };
 export const maxDuration = 800;
@@ -106,6 +108,13 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
   const v = VERDICT[r.verdict.status] ?? VERDICT.at_risk;
   const inputs = (a.inputs ?? {}) as Record<string, number | boolean | null>;
   const deviation = snap?.deviation == null ? null : Math.round(Number(snap.deviation) * 100);
+  // Sections after the plan are numbered as they appear
+  const ca = r.creativeAnalysis ?? null;
+  const gc = r.googleCreative ?? null;
+  const nums = ["03", "04", "05", "06"];
+  const nCa = ca || gc ? nums.shift()! : "";
+  const nCreative = r.creative.length > 0 ? nums.shift()! : "";
+  const nWatch = nums.shift()!;
 
   return (
     <div className="mx-auto grid w-full min-w-0 max-w-6xl gap-10 pb-16 md:gap-14">
@@ -290,8 +299,22 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
         )}
       </Section>
 
+      {ca && (
+        <Section n={nCa} title="Creative analysis" sub="The KPI's campaigns only, last 30 days: the best and worst creatives by the account's KPI, what the winners share, what's tiring and what's missing.">
+          <CreativeAnalysisView a={ca} nextHint={r.creative.length ? "What to make next is right below: each idea builds on this read and opens its brief." : undefined} />
+          {talk("creative-analysis", ca.read?.common?.[0] ?? "Creative analysis")}
+        </Section>
+      )}
+
+      {gc && !ca && (
+        <Section n={nCa} title="Creative analysis" sub="On Google the creative is the copy. The KPI's campaigns only, last 90 days: the best and worst headlines and descriptions with Google's rating, the Performance Max asset groups, and what the converting searches are about.">
+          <GoogleCreativeView a={gc} nextHint={r.creative.length ? "What to write next is right below: each idea builds on this read." : undefined} />
+          {talk("creative-analysis", gc.read?.common?.[0] ?? "Creative analysis")}
+        </Section>
+      )}
+
       {r.creative.length > 0 && (
-        <Section n="03" title="Creative I'd make" sub="From the playbook's proven angles, our Hall of Fame and the Brand Bible. Each one opens its quick preview right here; the full brief is written only when you choose it.">
+        <Section n={nCreative} title="Creative I'd make" sub="From the playbook's proven angles, our Hall of Fame and the Brand Bible. Each one opens its quick preview right here; the full brief is written only when you choose it.">
           <div className="grid gap-3 md:grid-cols-2">
             {r.creative.map((c, i) => (
               <article key={i} className="grid min-w-0 content-start gap-3 rounded-[16px] border border-line bg-surface p-4 md:p-5">
@@ -323,7 +346,7 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
         </Section>
       )}
 
-      <Section n={r.creative.length > 0 ? "04" : "03"} title="What I'd watch out for" sub="What could mislead us in these results, what the changes could break, and what to keep an eye on.">
+      <Section n={nWatch} title="What I'd watch out for" sub="What could mislead us in these results, what the changes could break, and what to keep an eye on.">
         {(r.watchouts ?? []).length > 0 && (
           <div className="grid gap-3 md:grid-cols-2">
             {(r.watchouts ?? []).map((w, i) => (

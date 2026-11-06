@@ -281,15 +281,24 @@ export async function runTurn(input: TurnInput): Promise<void> {
       recent = rows.filter((m) => m.created_at > s.upto);
     }
   }
-  const [brief, knowledge, convo] = await Promise.all([
+  // Copy for a client is written from the client's whole copy context (the Copy library's proven and tired lines, the
+  // Brand Bible's voice, their rules and what to avoid, settled copy checks, what they approved or sent back, Meta's
+  // limits): automatically when the Copywriter answers or the message asks for copy, not only through a tool
+  const { wantsCopy, wantsGoogle } = await import("@/lib/copy-library-core");
+  // Google copy when the message is about Google or the Google buyer answers; else Meta (both platforms' proven lines come either way)
+  const copyPlatform = agent === "google_auditor" || wantsGoogle(userText) ? "google" : "meta";
+  const copyAsked = agent === "copy" || wantsCopy(userText);
+  const [brief, knowledge, convo, copyCtx] = await Promise.all([
     client ? clientBrief(admin, client.id).catch((e) => `(The client's context couldn't be read: ${e instanceof Error ? e.message : "unknown"})`) : Promise.resolve(""),
     knowledgeFor(agent, label, userText.slice(0, 6000), client?.id ?? null).catch(() => ""),
     history(admin, recent),
+    client && copyAsked ? import("@/lib/copy-library").then(({ copyContext }) => copyContext(admin, client!.id, 14_000, copyPlatform)).catch(() => "") : Promise.resolve(""),
   ]);
   for (const [id, files] of convo.updated) await admin.from("ai_messages").update({ attachments: files }).eq("id", id);
   const today = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "America/New_York" });
   const system: Anthropic.TextBlockParam[] = [cachedBlock(withAgent(`${SYSTEM}\n\nYou're answering as Kaizen's ${agentLabel(agent)}: use that role's judgement, skills and playbook below.`, cfg))];
-  if (brief) system.push(cachedBlock(`<client name="${client!.name.replace(/"/g, "'")}" note="this thread is pinned to them${thread.client_confirmed ? "" : " (detected from the message; not yet confirmed)"}; newest first">\n${brief}\n</client>`));
+  // The copy context rides in the client's cached block (the cache takes four marks)
+  if (brief) system.push(cachedBlock(`<client name="${client!.name.replace(/"/g, "'")}" note="this thread is pinned to them${thread.client_confirmed ? "" : " (detected from the message; not yet confirmed)"}; newest first">\n${brief}\n</client>${copyCtx ? `\n\n${copyCtx}\nWrite any copy for this client from the copy_context above: model new lines on the proven ones (new words, same hooks and structure), never reuse a tired line as it is, never break a rule or anything to avoid, keep to the platform's limits, then show it with write_ad_copy.` : ""}`));
   // Imported threads: the person's private notes and the summary of older turns, in one cached block (the cache
   // takes four marks: the system, the client, this and the tools)
   const imported: string[] = [];
@@ -305,14 +314,16 @@ export async function runTurn(input: TurnInput): Promise<void> {
   }
   if (earlier) imported.push(`<earlier_in_this_thread note="a summary of the older part of this conversation, which the person had in Claude and imported; the newest turns follow as messages">\n${earlier}\n</earlier_in_this_thread>`);
   if (imported.length) system.push(cachedBlock(imported.join("\n\n")));
-  system.push({ type: "text", text: [`Today is ${today} (New York). You're talking with the team's ${roleLabel(me.role)}${me.isExec ? " (an executive)" : me.isLead ? " (a lead)" : ""}.`, knowledge].filter(Boolean).join("\n\n") });
+  // Copy asked for with no client: ask which one first (copy without the client's voice, rules and proven lines isn't ours)
+  const noClientCopy = copyAsked && !client && wantsCopy(userText) ? "This message asks for ad copy but no client is set on the thread. Before writing any copy, ask which client it's for (they can pick it in the header), unless they've said it's generic." : "";
+  system.push({ type: "text", text: [`Today is ${today} (New York). You're talking with the team's ${roleLabel(me.role)}${me.isExec ? " (an executive)" : me.isLead ? " (a lead)" : ""}.`, knowledge, noClientCopy].filter(Boolean).join("\n\n") });
 
   // ─── The answer, with tools on the way ───
   const { data: placeholder } = await admin.from("ai_messages").insert({ thread_id: thread.id, role: "assistant", content: "", agent_key: agent, model }).select("id").single();
   const messageId = (placeholder?.id as string | undefined) ?? crypto.randomUUID();
   const userFiles = (rows.at(-1)?.attachments ?? []) as Attachment[];
   const cards: Card[] = [];
-  const tools = await chatTools({ me, db, admin, clientId: client?.id ?? null, messageId, cards, files: userFiles });
+  const tools = await chatTools({ me, db, admin, clientId: client?.id ?? null, messageId, cards, files: userFiles, copyContextFor: copyCtx && client ? `${client.id}|${copyPlatform}` : null });
   const defs = tools.map(({ name, description, input_schema }) => ({ name, description, input_schema: input_schema as Anthropic.Tool.InputSchema }));
   if (defs.length) (defs[defs.length - 1] as Anthropic.Tool).cache_control = { type: "ephemeral" };
   const messages = convo.messages;

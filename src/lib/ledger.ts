@@ -11,7 +11,7 @@ import type { PeerInfo, VerticalInfo } from "@/lib/peer-match";
 // angle names. What changes (a new winner, a new loser) is written into the Brand Bible's living learnings, dated.
 
 type Admin = SupabaseClient;
-type Row = { ad_id: string; ad_name: string | null; adset_id: string | null; adset_name: string | null; campaign_name: string | null; date: string; metrics: Record<string, unknown> };
+type Row = { ad_id: string; ad_name: string | null; adset_id: string | null; adset_name: string | null; campaign_id: string | null; campaign_name: string | null; date: string; metrics: Record<string, unknown> };
 type Agg = { spend: number; results: number; revenue: number; impressions: number; clicks: number; first: string; last: string; ads: Set<string> };
 
 const num = (x: unknown) => Number(x) || 0;
@@ -72,7 +72,7 @@ export async function buildLedger(admin: Admin, clientId: string) {
   // Every day of every ad (paged: an account can have tens of thousands of rows)
   const rows: Row[] = [];
   for (let from = 0; from < 200_000; from += 1000) {
-    const { data } = await admin.from("meta_ad_daily").select("ad_id, ad_name, adset_id, adset_name, campaign_name, date, metrics").eq("client_id", clientId).order("date").range(from, from + 999);
+    const { data } = await admin.from("meta_ad_daily").select("ad_id, ad_name, adset_id, adset_name, campaign_id, campaign_name, date, metrics").eq("client_id", clientId).order("date").range(from, from + 999);
     rows.push(...((data ?? []) as Row[]));
     if (!data || data.length < 1000) break;
   }
@@ -86,7 +86,7 @@ export async function buildLedger(admin: Admin, clientId: string) {
     admin.from("client_ledger").select("kind, key, verdict, detail").eq("client_id", clientId),
     admin.from("angles").select("name, description").eq("client_id", clientId),
   ]);
-  type Creative = { text?: string; headline?: string; image?: string; thumbnail?: string; cta?: string; link?: string; format?: string };
+  type Creative = { text?: string; headline?: string; description?: string; texts?: string[]; headlines?: string[]; descriptions?: string[]; image?: string; thumbnail?: string; cta?: string; link?: string; format?: string };
   const creative = new Map<string, Creative>();
   for (const s of snaps ?? []) for (const a of (s.ads ?? []) as (Creative & { id: string })[]) creative.set(a.id, { ...creative.get(a.id), ...Object.fromEntries(Object.entries(a).filter(([, v]) => v != null && v !== "")) });
   for (const f of fame ?? []) creative.set(f.ad_id as string, { ...(f.creative as Creative), ...creative.get(f.ad_id as string) });
@@ -99,7 +99,7 @@ export async function buildLedger(admin: Admin, clientId: string) {
   const before = new Map((prior ?? []).map((p) => [`${p.kind}|${p.key}`, p]));
 
   // Add each ad up, and each ad set
-  const byAd = new Map<string, Agg & { name: string; adset: string; adsetId: string; campaign: string }>();
+  const byAd = new Map<string, Agg & { name: string; adset: string; adsetId: string; campaign: string; campaignId: string }>();
   const byAdset = new Map<string, Agg & { name: string; campaign: string }>();
   const add = (a: Agg, r: Row) => {
     const m = r.metrics;
@@ -114,7 +114,7 @@ export async function buildLedger(admin: Admin, clientId: string) {
   };
   const blank = (d: string): Agg => ({ spend: 0, results: 0, revenue: 0, impressions: 0, clicks: 0, first: d, last: d, ads: new Set() });
   for (const r of rows) {
-    const ad = byAd.get(r.ad_id) ?? { ...blank(r.date), name: r.ad_name ?? r.ad_id, adset: r.adset_name ?? "", adsetId: r.adset_id ?? "", campaign: r.campaign_name ?? "" };
+    const ad = byAd.get(r.ad_id) ?? { ...blank(r.date), name: r.ad_name ?? r.ad_id, adset: r.adset_name ?? "", adsetId: r.adset_id ?? "", campaign: r.campaign_name ?? "", campaignId: r.campaign_id ?? "" };
     add(ad, r);
     if (r.ad_name) ad.name = r.ad_name;
     byAd.set(r.ad_id, ad);
@@ -169,8 +169,14 @@ export async function buildLedger(admin: Admin, clientId: string) {
         adset: a.adset,
         adsetId: a.adsetId,
         campaign: a.campaign,
+        ...(a.campaignId ? { campaignId: a.campaignId } : {}),
         ...(cr.text ? { text: cr.text.slice(0, 2000) } : {}),
         ...(cr.headline ? { headline: cr.headline } : {}),
+        // The link description and every version a dynamic ad rotates: the Copy library counts each line
+        ...(cr.description ? { description: cr.description.slice(0, 300) } : {}),
+        ...(cr.texts?.length ? { texts: cr.texts.slice(0, 5).map((x) => x.slice(0, 2000)) } : {}),
+        ...(cr.headlines?.length ? { headlines: cr.headlines.slice(0, 5) } : {}),
+        ...(cr.descriptions?.length ? { descriptions: cr.descriptions.slice(0, 5) } : {}),
         ...(cr.image || cr.thumbnail ? { image: cr.image ?? cr.thumbnail } : {}),
         ...(cr.cta ? { cta: cr.cta } : {}),
         ...(t?.format ? { format: t.format } : {}),
