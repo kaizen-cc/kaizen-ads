@@ -22,7 +22,13 @@ export async function asana<T>(path: string, params: Record<string, string> = {}
       await new Promise((r) => setTimeout(r, Number(res.headers.get("retry-after") ?? 5) * 1000));
       continue;
     }
-    const body = (await res.json()) as { data: T; next_page?: { offset: string } | null; errors?: { message: string }[] };
+    // Asana's own hiccups ("Oops! An unexpected error occurred... retrying the request once fixes this"): a read is
+    // safe to repeat, so wait a moment and try again before giving up
+    if (res.status >= 500 && attempt < 3) {
+      await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt));
+      continue;
+    }
+    const body = (await res.json().catch(() => ({}))) as { data: T; next_page?: { offset: string } | null; errors?: { message: string }[] };
     if (!res.ok) throw new Error(`Asana: ${body.errors?.[0]?.message ?? res.status}`);
     return body;
   }
