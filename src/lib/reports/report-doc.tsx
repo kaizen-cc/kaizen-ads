@@ -224,12 +224,16 @@ function Notes({ sections, hot }: { sections: Sections; hot?: (what: string) => 
   );
 }
 
-function Mtd({ m }: { m: ReportMetrics }) {
+/** ROAS shows only when it's the KPI or the buyer put it in the report: a CPA report never sneaks it back in */
+const showsRoas = (m: ReportMetrics, layout?: ReportLayout | null) => Boolean(m.roasKpi) || [...(layout?.tiles ?? []), ...(layout?.table ?? []), ...(layout?.columns ?? [])].some((k) => String(k) === "roas");
+
+function Mtd({ m, layout }: { m: ReportMetrics; layout?: ReportLayout | null }) {
   if (!m.mtd) return null;
   const a = m.mtd;
   const b = m.mtdCompare;
   const one = singular(m.conversion);
-  const line = (p: NonNullable<ReportMetrics["mtd"]>) => `${money(p.spend)} spent, ${count(p.results)} ${m.conversion.toLowerCase()}${p.costPerResult != null ? ` at ${money(p.costPerResult)} per ${one}` : ""}${p.revenue > 0 ? `, ${multiple(p.roas)} ROAS` : ""}`;
+  const roas = showsRoas(m, layout);
+  const line = (p: NonNullable<ReportMetrics["mtd"]>) => `${money(p.spend)} spent, ${count(p.results)} ${m.conversion.toLowerCase()}${p.costPerResult != null ? ` at ${money(p.costPerResult)} per ${one}` : ""}${p.revenue > 0 && roas ? `, ${multiple(p.roas)} ROAS` : ""}`;
   return (
     <View style={s.section} wrap={false}>
       <Text style={s.eyebrow}>Month to date</Text>
@@ -347,7 +351,7 @@ function Weekly({ input, part, images }: { input: ReportPdfInput; part: ReportPa
         <Tiles tiles={part.layout?.tiles?.length ? tilesFor(m, part.layout.tiles) : headlineTiles(m)} hot={hotFor(input, part, "tile")} />
       </View>
       <Stories stories={part.sections.stories} hot={hotFor(input, part, null)} />
-      <Mtd m={m} />
+      <Mtd m={m} layout={part.layout} />
       <TopAds ads={m.topAds.slice(0, 3)} images={images} conversion={m.conversion} />
       <Campaigns m={m} limit={6} layout={part.layout} hot={hotFor(input, part, null)} />
       <Notes sections={part.sections} hot={hotFor(input, part, null)} />
