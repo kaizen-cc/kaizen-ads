@@ -14,6 +14,7 @@ import type { ReportLayout } from "./format";
 import { layoutOf } from "./share";
 import { siteUrl } from "@/lib/site";
 import { draftReport, type Sections } from "./write";
+import { forClient, isWhiteLabel, WHITE_LABEL_RULE, whiteLabelFileName } from "./white-label";
 
 // The report builder. Someone builds a report for a client: one or more date ranges (the last 7 days AND the month,
 // say) and one or more services. Each service is a part, written by the AI for that service's buyer, who reviews and
@@ -125,30 +126,32 @@ type Part = { id: string; platform: string; status: string; owner_id: string | n
 
 async function loadParts(admin: SupabaseClient, bundleId: string) {
   const [{ data: b }, { data: parts }] = await Promise.all([
-    admin.from("report_bundles").select("id, token, client_id, status, ranges, created_by, message, message_approved_at, clients(name, slack_channel_id, slug, portal_live)").eq("id", bundleId).single(),
+    admin.from("report_bundles").select("id, token, client_id, status, ranges, created_by, message, message_approved_at, clients(name, slack_channel_id, slug, portal_live, client_type)").eq("id", bundleId).single(),
     admin.from("reports").select("id, platform, status, owner_id, message, sections, metrics, extra_metrics, extras, layout, kpi_targets(report_layout), profiles!reports_owner_id_fkey(full_name)").eq("bundle_id", bundleId).neq("status", "skipped"),
   ]);
   if (!b) throw new Error("Report not found");
   const sorted = ((parts ?? []) as unknown as Part[]).sort((a, c) => (a.platform === "meta" ? 0 : 1) - (c.platform === "meta" ? 0 : 1));
-  return { b, parts: sorted, client: b.clients as unknown as { name: string; slack_channel_id: string | null; slug?: string; portal_live?: boolean }, ranges: (b.ranges ?? []) as BuiltRange[] };
+  const client = b.clients as unknown as { name: string; slack_channel_id: string | null; slug?: string; portal_live?: boolean; client_type?: string | null };
+  return { b, parts: sorted, client, ranges: (b.ranges ?? []) as BuiltRange[], whiteLabel: isWhiteLabel(client.client_type) };
 }
 
 /** The Slack message: one part's own message, or (joint) the parts' messages combined into one post from Kaizen. */
 export async function composeMessage(admin: SupabaseClient, bundleId: string) {
-  const { parts, client, ranges } = await loadParts(admin, bundleId);
+  const { parts, client, ranges, whiteLabel } = await loadParts(admin, bundleId);
   const ready = parts.filter((p) => p.message?.trim());
   if (!ready.length) return "";
-  if (parts.length === 1) return ready[0].message!.trim();
+  if (parts.length === 1) return forClient(ready[0].message!.trim(), whiteLabel);
   const out = await askJson<{ message: string }>({
     agent: "reporter",
     label: "joint report message",
     bare: true,
     maxTokens: 6000,
-    system: `You combine the buyers' report messages for one client into a single Slack post that goes to the client's channel from Kaizen Marketing, with one PDF covering everything. Open with one or two lines on the whole account across the services. Then one short part per service under its bold name (*Meta Ads*, *Google Ads*), keeping each buyer's key numbers, what we did and what's next in their own words, shortened. Every number exactly as given; nothing new. Slack formatting: *bold* for headers, "• " for bullets, no # headings, no emojis unless the buyers used them. End with one line saying the full report is attached. Never mention anything internal (AI, Kaizen Ads, team members other than the client's own people).`,
+    system: `${whiteLabel ? `You combine the buyers' report messages for one client into a single Slack post that goes to the client's channel, with one PDF covering everything. ${WHITE_LABEL_RULE}` : "You combine the buyers' report messages for one client into a single Slack post that goes to the client's channel from Kaizen Marketing, with one PDF covering everything."} Open with one or two lines on the whole account across the services. Then one short part per service under its bold name (*Meta Ads*, *Google Ads*), keeping each buyer's key numbers, what we did and what's next in their own words, shortened. Every number exactly as given; nothing new. Slack formatting: *bold* for headers, "• " for bullets, no # headings, no emojis unless the buyers used them. End with one line saying the full report is attached. Never mention anything internal (AI, Kaizen Ads, team members other than the client's own people).`,
     schema: { type: "object", properties: { message: { type: "string" } }, required: ["message"], additionalProperties: false },
     prompt: `Client: ${client.name}\nPeriod: ${rangesLabel(ranges)}\n\n${ready.map((p) => `<message service="${platformName(p.platform)}" from="${p.profiles?.full_name ?? "the buyer"}">\n${p.message}\n</message>`).join("\n\n")}`,
   });
-  return out.message.trim();
+  // The backstop: a white label client's message never names the agency, whatever the AI wrote
+  return forClient(out.message.trim(), whiteLabel);
 }
 
 /** A buyer approves their part. When the builder already approved the message and every part is in, it goes out. */
@@ -205,14 +208,15 @@ export async function builtPdf(admin: SupabaseClient, bundleId: string, edit = f
 
 /** The whole report's document input (every part), for the PDF and the studio's preview */
 export async function builtInput(admin: SupabaseClient, bundleId: string, edit = false): Promise<ReportPdfInput> {
-  const { parts, client, ranges } = await loadParts(admin, bundleId);
+  const { parts, client, ranges, whiteLabel } = await loadParts(admin, bundleId);
   return {
     client: client.name,
     kind: "built",
     periodLabel: rangesLabel(ranges),
     parts: parts.filter((p) => p.metrics && p.sections).map((p): ReportPart => ({ platform: p.platform === "google" ? "google" : "meta", buyer: p.profiles?.full_name ?? null, metrics: p.metrics!, sections: p.sections!, extras: p.extras, extra: p.extra_metrics, layout: layoutOf(p) })),
     edit,
-    dashboard: client.portal_live && client.slug ? `${siteUrl()}/c/${client.slug}/dashboard` : null,
+    dashboard: client.portal_live && client.slug && !whiteLabel ? `${siteUrl()}/c/${client.slug}/dashboard` : null,
+    whiteLabel,
   };
 }
 
@@ -225,7 +229,7 @@ export async function deliverBuilt(admin: SupabaseClient, bundleId: string, by: 
   const { data: claimed } = await admin.from("report_bundles").update({ status: "sending" }).eq("id", bundleId).in("status", ["waiting", "collecting"]).select("id").maybeSingle();
   if (!claimed) return;
   try {
-    const { b, parts, client, ranges } = await loadParts(admin, bundleId);
+    const { b, parts, client, ranges, whiteLabel } = await loadParts(admin, bundleId);
     const { data: chosen } = await admin.from("report_bundles").select("delivery").eq("id", bundleId).maybeSingle().then((r) => (r.error ? { data: null } : r));
     const delivery = normalizeDelivery(chosen?.delivery ?? null);
     if (delivery.channels.includes("slack") && !client.slack_channel_id) throw new Error("This client has no Slack channel set. Add it on the client page, or send it by email.");
@@ -235,7 +239,7 @@ export async function deliverBuilt(admin: SupabaseClient, bundleId: string, by: 
     if (stale.length) throw new Error(`The ${stale.map((p) => platformName(p.platform)).join(" and ")} part isn't for ${main.label} yet. Regenerate it first.`);
     const bytes = await builtPdf(admin, bundleId);
     const label = rangesLabel(ranges);
-    const pdf = { filename: pdfFileName(client.name, "Report", label), title: `${client.name} · Report · ${label}`, bytes };
+    const pdf = { filename: whiteLabel ? whiteLabelFileName(client.name, "built", label) : pdfFileName(client.name, "Report", label), title: `${client.name} · Report · ${label}`, bytes };
     const joint = parts.length > 1;
     const { data: me } = await admin.from("profiles").select("full_name, email").eq("id", by).maybeSingle();
     const out = await deliver(admin, {
@@ -250,8 +254,10 @@ export async function deliverBuilt(admin: SupabaseClient, bundleId: string, by: 
       delivery,
       slackAs: joint ? "app" : "user",
       slackUserId: joint ? null : (parts[0].owner_id ?? by),
-      // Couldn't post as the buyer: the message still goes, from the app, with the link to the report
-      appFallback: `\n\nThe full report: ${SITE()}/r/${b.token}`,
+      // Couldn't post as the buyer: the message still goes, from the app, with the link to the report (never for a white
+      // label client: that page is the agency's)
+      appFallback: whiteLabel ? "" : `\n\nThe full report: ${SITE()}/r/${b.token}`,
+
       bundleId,
       reportId: joint ? null : parts[0].id,
     });

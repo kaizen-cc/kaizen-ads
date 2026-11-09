@@ -18,6 +18,7 @@ import { writeStatus } from "@/lib/write-status";
 import { lastFullWeek, periodMismatch, rangeLabel, todayIn } from "@/lib/reports/period";
 import { clientDelivery } from "@/lib/reports/send";
 import { readHistory } from "@/lib/reports/history";
+import { isWhiteLabel } from "@/lib/reports/white-label";
 
 export const metadata: Metadata = { title: "Report" };
 // Revising and checking a report, putting a joint message together and posting it with its PDF can take a minute
@@ -31,7 +32,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
   const db = await createClient();
   const { data: r } = await db
     .from("reports")
-    .select("id, kind, platform, status, client_id, period_start, period_end, owner_id, viewed_at, bundle_id, message, message_basis, sections, metrics, extra_metrics, extras, layout, qa, chat, error, posted_at, previous, clients(name, slug, slack_channel_id), profiles!reports_owner_id_fkey(full_name), kpi_targets(id, client_id, platform, owner_id, report_layout, ad_account_id)")
+    .select("id, kind, platform, status, client_id, period_start, period_end, owner_id, viewed_at, bundle_id, message, message_basis, sections, metrics, extra_metrics, extras, layout, qa, chat, error, posted_at, previous, clients(name, slug, slack_channel_id, client_type), profiles!reports_owner_id_fkey(full_name), kpi_targets(id, client_id, platform, owner_id, report_layout, ad_account_id)")
     .eq("id", id)
     .maybeSingle();
   if (!r) notFound();
@@ -52,7 +53,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
     // Whether the report's next steps can be applied in the ad account (live changes for the client), read up front
     target && adminConfigured() && (r.platform === "meta" || r.platform === "google") ? writeStatus(createAdminClient(), { clientId: target.client_id, account }, r.platform).catch(() => null) : Promise.resolve(null),
   ]);
-  const client = r.clients as unknown as { name: string; slug: string; slack_channel_id: string | null };
+  const client = r.clients as unknown as { name: string; slug: string; slack_channel_id: string | null; client_type?: string | null };
   const metrics = (r.metrics as ReportMetrics | null) ?? null;
   const ranges = (bundle?.ranges ?? []) as { key?: string; label: string }[];
   const today = todayIn();
@@ -108,7 +109,8 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
         }}
         delivery={delivery}
         history={history}
-        client={{ name: client.name, slug: client.slug, hasChannel: Boolean(client.slack_channel_id) }}
+        client={{ name: client.name, slug: client.slug, hasChannel: Boolean(client.slack_channel_id), whiteLabel: isWhiteLabel(client.client_type) }}
+
         bundle={
           bundle
             ? {

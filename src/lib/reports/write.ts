@@ -7,6 +7,7 @@ import { METRIC_KEYS, leftOutText, reportBasis, type MetricKey } from "./format"
 import { voiceOf, workDone } from "./work";
 import { diagnose, diagnosisText, opportunityFor } from "./diagnose";
 import { daysIn, previousPeriod, rangeLabel, todayIn } from "./period";
+import { forClient, isWhiteLabel, scrubSections, WHITE_LABEL_RULE } from "./white-label";
 
 // Writing a client report: the numbers (reportMetrics), the work behind them (workDone), the buyer's own voice (their
 // recaps in client channels), what this client likes in a report (learned from past edits), and what the buyer added
@@ -36,7 +37,9 @@ const agentFor = (platform: string): AgentKey => (platform === "google" ? "googl
 
 type Kind = "weekly" | "monthly" | "custom" | "built";
 
-function writerSystem(kind: Kind, platform: string): string {
+/** whiteLabel: the client is an agency partner's, who passes the report on as their own (no agency name or link, ever) */
+function writerSystem(kind: Kind, platform: string, whiteLabel = false): string {
+  if (whiteLabel) return `${writerSystem(kind, platform)}\n${WHITE_LABEL_RULE}`;
   const where = platform === "google" ? "Google Ads" : "Meta Ads";
   // A built report (from the report builder) reads like an on-demand recap; its other date ranges get their own short part
   if (kind === "built")
@@ -81,16 +84,17 @@ function dataFlags(m: ReportMetrics): QaFlag[] {
 async function context(admin: SupabaseClient, reportId: string) {
   const { data: r } = await admin
     .from("reports")
-    .select("id, kind, platform, period_start, period_end, client_id, target_id, owner_id, bundle_id, extras, metrics, extra_metrics, work, sections, message, chat, clients(name), kpi_targets(id, client_id, platform, ad_account_id, conversion, custom_action, campaign_match, target, monthly_budget, excluded_campaigns, campaign_results), profiles!reports_owner_id_fkey(full_name)")
+    .select("id, kind, platform, period_start, period_end, client_id, target_id, owner_id, bundle_id, extras, metrics, extra_metrics, work, sections, message, chat, clients(name, client_type), kpi_targets(id, client_id, platform, ad_account_id, conversion, custom_action, campaign_match, target, monthly_budget, excluded_campaigns, campaign_results), profiles!reports_owner_id_fkey(full_name)")
     .eq("id", reportId)
     .single();
   if (!r) throw new Error("Report not found");
   const client = (r.clients as unknown as { name: string }).name;
+  const whiteLabel = isWhiteLabel((r.clients as unknown as { client_type?: string | null }).client_type);
   const target = r.kpi_targets as unknown as Parameters<typeof reportMetrics>[1];
   const owner = (r.profiles as unknown as { full_name: string } | null)?.full_name ?? null;
   const { data: prefs } = await admin.from("client_report_prefs").select("notes").eq("client_id", r.client_id).maybeSingle();
   const { data: last } = await admin.from("reports").select("period_start, sections").eq("target_id", r.target_id).eq("kind", r.kind).lt("period_start", r.period_start).in("status", ["posted", "submitted"]).order("period_start", { ascending: false }).limit(1).maybeSingle();
-  return { r, client, target, owner, prefs: ((prefs?.notes ?? []) as string[]).slice(-20), last, leftOut: await leftOutNames(admin, target) };
+  return { r, client, whiteLabel, target, owner, prefs: ((prefs?.notes ?? []) as string[]).slice(-20), last, leftOut: await leftOutNames(admin, target) };
 }
 
 /**
@@ -152,7 +156,7 @@ export async function qaReport(admin: SupabaseClient, reportId: string): Promise
   const out = await askJson<{ verdict: Qa["verdict"]; flags: QaFlag[] }>({
     agent: "report_qa",
     label: "report QA",
-    system: QA_SYSTEM,
+    system: c.whiteLabel ? `${QA_SYSTEM}\nThis client is white label (an agency partner passes the report on as their own): flag as fix any mention of Kaizen, Kaizen Marketing or Kaizen Ads, any link to the agency's site or portal, and any other service raised.` : QA_SYSTEM,
     schema: QA_SCHEMA,
     maxTokens: 8000,
     prompt: `${sourcesBlock(c, metrics, work, "")}\n\n<draft_message>\n${c.r.message ?? ""}\n</draft_message>\n\n<draft_sections>\n${JSON.stringify(c.r.sections ?? {})}\n</draft_sections>`,
@@ -187,19 +191,25 @@ export async function draftReport(admin: SupabaseClient, reportId: string) {
     const work = await workDone(admin, c.target, [metrics.main.start, ...extra.map((m) => m.main.start)].sort()[0], metrics.main.end, skip);
     // Where the numbers are weak and why, and whether this is the moment to raise another service
     metrics.diagnosis = await diagnose(admin, c.r.client_id, metrics, c.target).catch(() => undefined);
-    metrics.opportunity = metrics.diagnosis ? await opportunityFor(admin, c.r, metrics, metrics.diagnosis).catch(() => null) : null;
+    // Never another of the agency's services for a white label client: the partner sells their own
+    metrics.opportunity = metrics.diagnosis && !c.whiteLabel ? await opportunityFor(admin, c.r, metrics, metrics.diagnosis).catch(() => null) : null;
     await admin.from("reports").update({ metrics, work, extra_metrics: extra.length ? extra : null }).eq("id", reportId);
     (c.r as unknown as { extra_metrics: ReportMetrics[] }).extra_metrics = extra;
     const out = await askJson<{ message: string; sections: Sections }>({
       agent: agentFor(c.r.platform),
       label: `${kind} report`,
       clientId: c.r.client_id,
-      system: writerSystem(kind, c.r.platform),
+      system: writerSystem(kind, c.r.platform, c.whiteLabel),
       schema: DRAFT_SCHEMA,
       maxTokens: 12000,
       prompt: `${sourcesBlock(c, metrics, work.text, voice)}\n\n${await trendsFor(admin, c, metrics)}${STORY_RULES}\n\nWrite the ${kind === "custom" || kind === "built" ? `recap for ${[metrics.main.label, ...extra.map((m) => m.main.label)].join(" and ")}` : `${kind} report`}.`,
     });
     out.sections = await fillStories(admin, c.target, out.sections, metrics.main.end);
+    // The backstop: a white label client's report never names the agency, whatever the AI wrote
+    if (c.whiteLabel) {
+      out.message = forClient(out.message, true);
+      out.sections = scrubSections(out.sections);
+    }
     await admin.from("reports").update({ message: out.message, sections: out.sections, message_basis: reportBasis(out.sections, c.r.extras), updated_at: new Date().toISOString() }).eq("id", reportId);
     // The QA runs before the buyer hears about it, so the note they get says whether there's anything to fix
     await qaReport(admin, reportId).catch(() => null);
@@ -235,18 +245,20 @@ const REVISE_SCHEMA = obj({ reply: S, message: S, sections: SECTIONS, lesson: S 
  * report as it stands now (same format and voice; only what the edits changed), so the two never say different things.
  */
 export async function refreshMessage(admin: SupabaseClient, reportId: string) {
-  const { data: r } = await admin.from("reports").select("platform, message, sections, extras, metrics").eq("id", reportId).single();
+  const { data: r } = await admin.from("reports").select("platform, message, sections, extras, metrics, clients(client_type)").eq("id", reportId).single();
+  const whiteLabel = isWhiteLabel((r?.clients as unknown as { client_type?: string | null } | null)?.client_type);
   if (!r?.sections || !r.message?.trim()) return { message: r?.message ?? "", basis: reportBasis(r?.sections, r?.extras) };
   const out = await askJson<{ message: string }>({
     agent: agentFor(r.platform),
     label: "refresh report message",
     override: { model: "sonnet", effort: "low" },
-    system: "The media buyer edited their client report after its Slack message was written. Bring the Slack message up to date with the report exactly as it stands now: keep its format, structure, voice and length, and change only what the edits changed (a number, a point added or removed, a reworded line, a different plan). Every number must match the report. Slack formatting (*bold*, bullets) as it was.",
+    system: `The media buyer edited their client report after its Slack message was written. Bring the Slack message up to date with the report exactly as it stands now: keep its format, structure, voice and length, and change only what the edits changed (a number, a point added or removed, a reworded line, a different plan). Every number must match the report. Slack formatting (*bold*, bullets) as it was.${whiteLabel ? `\n${WHITE_LABEL_RULE}` : ""}`,
     schema: obj({ message: S }),
     maxTokens: 4000,
     prompt: `<the_report_now>\n${JSON.stringify(r.sections)}${r.extras?.trim() ? `\nAlso: ${r.extras.trim()}` : ""}\n</the_report_now>\n\n<the_message_as_it_was>\n${r.message}\n</the_message_as_it_was>\n\nReturn the message, up to date.`,
   });
   const basis = reportBasis(r.sections, r.extras);
+  out.message = forClient(out.message, whiteLabel);
   await admin.from("reports").update({ message: out.message, message_basis: basis, updated_at: new Date().toISOString() }).eq("id", reportId);
   return { message: out.message, basis };
 }
@@ -274,7 +286,7 @@ export async function reviseReport(admin: SupabaseClient, reportId: string, ask:
     agent: agentFor(c.r.platform),
     label: "revise report",
     clientId: c.r.client_id,
-    system: `${writerSystem(c.r.kind as Kind, c.r.platform)}\n\n${REVISE_SYSTEM}\n${PERIOD_RULE}\n\n${toolsLine(tools)}`,
+    system: `${writerSystem(c.r.kind as Kind, c.r.platform, c.whiteLabel)}\n\n${REVISE_SYSTEM}\n${PERIOD_RULE}\n\n${toolsLine(tools)}`,
     schema: REVISE_SCHEMA,
     tools,
     maxRounds: 6,
@@ -293,7 +305,12 @@ export async function reviseReport(admin: SupabaseClient, reportId: string, ask:
     { role: "assistant" as const, text: out.reply, at: now, ...(pulled.length ? { pulled: pulled.map((x) => x.label), data } : {}) },
   ].slice(-40);
   out.sections = await fillStories(admin, c.target, out.sections, metrics.main.end);
+  if (c.whiteLabel) {
+    out.message = forClient(out.message, true);
+    out.sections = scrubSections(out.sections);
+  }
   await admin.from("reports").update({ message: out.message, sections: out.sections, message_basis: reportBasis(out.sections, c.r.extras), chat: next, updated_at: now }).eq("id", reportId);
+
   if (out.lesson.trim()) await rememberPref(admin, c.r.client_id, out.lesson.trim());
   const qa = await qaReport(admin, reportId).catch(() => null);
   return { chat: next, message: out.message, sections: out.sections, qa, lesson: out.lesson.trim() || null };

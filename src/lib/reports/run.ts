@@ -6,7 +6,7 @@ import { LIVE } from "@/lib/live";
 import { sendEmail } from "@/lib/email";
 import { emailHtml, emailText } from "@/lib/email-layout";
 import { logClientEmail } from "@/lib/client-emails";
-import { postAsUser } from "@/lib/slack-user";
+import { postAsApp, postAsUser } from "@/lib/slack-user";
 import { renderReportPdf } from "./pdf";
 import { periodsFor, type ReportMetrics } from "./metrics";
 import { platformName } from "./format";
@@ -16,6 +16,7 @@ import { reportListeners } from "./access";
 import { periodMismatch } from "./period";
 import { pdfFileName, type Delivery } from "./delivery-core";
 import { clientDelivery, deliver, recordSend } from "./send";
+import { forClient, isWhiteLabel, WHITE_LABEL_FROM, whiteLabelFileName } from "./white-label";
 
 // The reporting cadence. Mondays: a weekly report is queued for every live account that spent in the last week, and
 // drafted a few at a time. The 1st: the monthly recap, one part per buyer on the client (Meta, Google), held until
@@ -88,10 +89,10 @@ export async function draftQueued(admin: SupabaseClient, budgetMs = 600_000, opt
   return done;
 }
 
-type Loaded = { id: string; kind: "weekly" | "monthly" | "custom"; platform: "meta" | "google"; period_start: string; period_end: string; message: string | null; sections: Sections | null; metrics: ReportMetrics | null; extras: string | null; client_id: string; bundle_id: string | null; owner: string | null; client: { name: string; slack_channel_id: string | null; slug?: string; portal_live?: boolean } };
+type Loaded = { id: string; kind: "weekly" | "monthly" | "custom"; platform: "meta" | "google"; period_start: string; period_end: string; message: string | null; sections: Sections | null; metrics: ReportMetrics | null; extras: string | null; client_id: string; bundle_id: string | null; owner: string | null; client: { name: string; slack_channel_id: string | null; slug?: string; portal_live?: boolean; client_type?: string | null } };
 
 async function load(admin: SupabaseClient, id: string): Promise<Loaded> {
-  const { data: r } = await admin.from("reports").select("id, kind, platform, period_start, period_end, message, sections, metrics, extras, client_id, bundle_id, clients(name, slack_channel_id, slug, portal_live), profiles!reports_owner_id_fkey(full_name)").eq("id", id).single();
+  const { data: r } = await admin.from("reports").select("id, kind, platform, period_start, period_end, message, sections, metrics, extras, client_id, bundle_id, clients(name, slack_channel_id, slug, portal_live, client_type), profiles!reports_owner_id_fkey(full_name)").eq("id", id).single();
   if (!r) throw new Error("Report not found");
   return { ...(r as unknown as Loaded), owner: (r.profiles as unknown as { full_name: string } | null)?.full_name ?? null, client: r.clients as unknown as Loaded["client"] };
 }
@@ -114,6 +115,7 @@ const monthOf = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en
 export async function reportPdf(admin: SupabaseClient, reports: Loaded[]) {
   const first = reports[0];
   return renderReportPdf({
+    whiteLabel: whiteLabelOf(first),
     dashboard: dashboardUrl(first),
     shots: first.kind === "monthly" ? await shotsAsk(admin, first) : null,
     client: first.client.name,
@@ -130,12 +132,15 @@ async function shotsAsk(admin: SupabaseClient, r: Loaded) {
   const cur = await currentShotList(admin, r.client_id).catch(() => null);
   const open = (cur?.list.shots ?? []).filter((s) => !s.delivered);
   if (!cur || !open.length) return null;
-  return { month: cur.list.month, items: open.map((s) => s.what), url: r.client.portal_live && r.client.slug ? `${SITE()}/c/${r.client.slug}/shots` : null };
+  return { month: cur.list.month, items: open.map((s) => s.what), url: r.client.portal_live && r.client.slug && !whiteLabelOf(r) ? `${SITE()}/c/${r.client.slug}/shots` : null };
 }
 
-/** The client's live dashboard, linked under each report (when their portal is open) */
-const dashboardUrl = (r: { client: { slug?: string; portal_live?: boolean } }) => (r.client.portal_live && r.client.slug ? `${SITE()}/c/${r.client.slug}/dashboard` : null);
-const dashboardLine = (r: { client: { slug?: string; portal_live?: boolean } }) => {
+/** A white label client: generic reports, no agency name, brand or link anywhere (the PDF, its name, Slack, email) */
+const whiteLabelOf = (r: { client: { client_type?: string | null } }) => isWhiteLabel(r.client.client_type);
+
+/** The client's live dashboard, linked under each report (when their portal is open; never for a white label client) */
+const dashboardUrl = (r: { client: { slug?: string; portal_live?: boolean; client_type?: string | null } }) => (r.client.portal_live && r.client.slug && !whiteLabelOf(r) ? `${SITE()}/c/${r.client.slug}/dashboard` : null);
+const dashboardLine = (r: { client: { slug?: string; portal_live?: boolean; client_type?: string | null } }) => {
   const url = dashboardUrl(r);
   return url ? `\n\n<${url}|See every number on your live dashboard>` : "";
 };
@@ -159,7 +164,7 @@ export async function sendWeekly(admin: SupabaseClient, id: string, by: { id: st
     platform: r.platform,
     period: { start: r.period_start, end: r.period_end, label: period },
     message: r.message ?? "",
-    pdf: { filename: pdfFileName(r.client.name, service, period), title: `${r.client.name} · ${service} Ads · ${period}`, bytes },
+    pdf: { filename: whiteLabelOf(r) ? whiteLabelFileName(r.client.name, r.kind, period, service) : pdfFileName(r.client.name, service, period), title: `${r.client.name} · ${service} Ads · ${period}`, bytes },
     parts: [{ platform: r.platform, metrics: r.metrics, sections: r.sections }],
     by,
     delivery,
@@ -258,34 +263,48 @@ async function deliverLatePart(admin: SupabaseClient, id: string, by: { id: stri
   const r = await load(admin, id);
   const { data: b } = await admin.from("report_bundles").select("token, client_id, period_start").eq("id", r.bundle_id!).single();
   if (!b) return;
-  const link = `${SITE()}/r/${b.token}`;
+  const wl = whiteLabelOf(r);
+  // A white label client gets no link to the agency's recap page: the PDF is the recap
+  const link = wl ? null : `${SITE()}/r/${b.token}`;
   const month = monthOf(b.period_start);
   const service = platformName(r.platform);
   const bytes = await reportPdf(admin, [r]);
-  const text = `${r.message?.trim() ?? ""}\n\n*Your ${month} recap, now with ${service}:* ${link}`.trim();
+  const text = wl ? forClient(`${r.message?.trim() ?? ""}\n\n*Your ${month} recap, now with ${service}, is attached.*`, true) : `${r.message?.trim() ?? ""}\n\n*Your ${month} recap, now with ${service}:* ${link}`.trim();
+  const filename = wl ? whiteLabelFileName(r.client.name, "monthly", month, service) : `${r.client.name} - ${service} ${month}.pdf`;
+  const pdf = { filename, title: `${r.client.name} · ${service} · ${month}`, bytes };
   const delivered: Record<string, unknown> = {};
   if (r.client.slack_channel_id) {
-    const out = await postAsUser(by.id, { channel: r.client.slack_channel_id, text, pdf: { filename: `${r.client.name} - ${service} ${month}.pdf`, title: `${r.client.name} · ${service} · ${month}`, bytes } });
-    const fallback = !out.ok ? await botPost(r.client.slack_channel_id, text) : null;
+    const out = await postAsUser(by.id, { channel: r.client.slack_channel_id, text, pdf });
+    const fallback = !out.ok ? await appPost(r.client.slack_channel_id, text, wl ? pdf : null) : null;
     delivered.slack = out.ok ? { channel: out.channel, ts: out.ts } : fallback?.ok ? { channel: r.client.slack_channel_id, ts: fallback.ts, as: "app" } : { error: out.error };
   }
   const sentTo: string[] = [];
   let logged: { subject: string; text: string; html: string } | null = null;
   for (const c of await recapRecipients(admin, b.client_id as string)) {
-    const parts = { kicker: r.client.name, title: `${service} is in your ${month} recap`, hello: `Hi ${c.full_name?.split(" ")[0] ?? "there"},`, lines: [r.sections?.headline ?? `The ${service} part of your ${month} recap is ready.`], cta: { label: "See the recap →", url: link } };
-    const mail = { subject: `Your ${month} recap from Kaizen: ${service} is in`, text: emailText(parts), html: emailHtml(parts) };
-    const res = await sendEmail({ to: c.email, ...mail });
+    const headline = r.sections?.headline ?? `The ${service} part of your ${month} recap is ready.`;
+    const parts = wl
+      ? { kicker: r.client.name, title: `${service} is in your ${month} recap`, hello: `Hi ${c.full_name?.split(" ")[0] ?? "there"},`, lines: [forClient(headline, true), "The full report is attached as a PDF."], whiteLabel: true }
+      : { kicker: r.client.name, title: `${service} is in your ${month} recap`, hello: `Hi ${c.full_name?.split(" ")[0] ?? "there"},`, lines: [headline], cta: { label: "See the recap →", url: link! } };
+    const mail = { subject: wl ? `Your ${month} recap: ${service} is in` : `Your ${month} recap from Kaizen: ${service} is in`, text: emailText(parts), html: emailHtml(parts) };
+    const res = await sendEmail({ to: c.email, ...mail, ...(wl ? { fromName: WHITE_LABEL_FROM, attachments: [{ filename, content: Buffer.from(bytes).toString("base64") }] } : {}) });
     if (res.ok) sentTo.push(c.email);
     if (res.ok && sentTo.length === 1) logged = mail;
   }
   if (logged) await logClientEmail(admin, { clientId: b.client_id as string, kind: "recap", ...logged, to: sentTo, by: by.id });
   delivered.email = sentTo;
   await admin.from("reports").update({ status: "posted", posted_at: new Date().toISOString(), posted_by: by.id }).eq("id", id);
-  await keepRecapSend(admin, { clientId: b.client_id as string, name: r.client.name, bundleId: r.bundle_id!, reportId: id, platform: r.platform, start: r.period_start, end: r.period_end, month, text, bytes, filename: `${r.client.name} - ${service} ${month}.pdf`, delivered, by: by.id, parts: [r] });
+  await keepRecapSend(admin, { clientId: b.client_id as string, name: r.client.name, bundleId: r.bundle_id!, reportId: id, platform: r.platform, start: r.period_start, end: r.period_end, month, text, bytes, filename, delivered, by: by.id, parts: [r], whiteLabel: wl });
+}
+
+/** The app's own post when the buyer can't post: a white label client's carries the PDF (it has no recap link) */
+async function appPost(channel: string, text: string, pdf: { filename: string; title: string; bytes: Uint8Array } | null): Promise<{ ok: boolean; ts?: string }> {
+  if (!pdf) return botPost(channel, text);
+  const out = await postAsApp({ channel, text, pdf });
+  return out.ok ? { ok: true, ts: out.ts } : { ok: false };
 }
 
 /** A monthly recap (or a late part of one) in the send history, with its PDF as it went */
-async function keepRecapSend(admin: SupabaseClient, x: { clientId: string; name: string; bundleId: string; reportId?: string; platform: string | null; start: string; end: string; month: string; text: string; bytes: Uint8Array; filename: string; delivered: Record<string, unknown>; by: string; parts: Loaded[] }) {
+async function keepRecapSend(admin: SupabaseClient, x: { clientId: string; name: string; bundleId: string; reportId?: string; platform: string | null; start: string; end: string; month: string; text: string; bytes: Uint8Array; filename: string; delivered: Record<string, unknown>; by: string; parts: Loaded[]; whiteLabel?: boolean }) {
   const slack = (x.delivered.slack ?? null) as { channel: string; ts?: string; as?: string } | { error: string } | null;
   const to = (x.delivered.email ?? []) as string[];
   const went = [...(slack && "channel" in slack ? (["slack"] as const) : []), ...(to.length ? (["email"] as const) : [])];
@@ -306,7 +325,7 @@ async function keepRecapSend(admin: SupabaseClient, x: { clientId: string; name:
       reportId: x.reportId ?? null,
       bundleId: x.bundleId,
     },
-    { went: [...went], slack, email: to.length ? { to, failed: [], subject: `Your ${x.month} recap from Kaizen` } : null, status: "sent" },
+    { went: [...went], slack, email: to.length ? { to, failed: [], subject: x.whiteLabel ? `Your ${x.month} recap` : `Your ${x.month} recap from Kaizen` } : null, status: "sent" },
   ).catch(() => null);
 }
 
@@ -318,18 +337,22 @@ export async function deliverBundle(admin: SupabaseClient, bundleId: string, by:
     const { data: ids } = await admin.from("reports").select("id").eq("bundle_id", bundleId).in("status", ["submitted", "posted"]);
     const parts = await Promise.all((ids ?? []).map((x) => load(admin, x.id)));
     const client = parts[0].client;
-    const link = `${SITE()}/r/${b.token}`;
+    const wl = whiteLabelOf(parts[0]);
+    // A white label client gets no link to the agency's recap page or portal: the PDF is the recap
+    const link = wl ? null : `${SITE()}/r/${b.token}`;
     const month = monthOf(b.period_start);
     const bytes = await reportPdf(admin, parts);
     const intro = parts.map((p) => p.message?.trim()).filter(Boolean).join("\n\n");
     const shots = await shotsAsk(admin, parts[0]);
     const ask = shots ? `\n\n*For ${shots.month}, we need ${shots.items.length === 1 ? "one shot" : `${shots.items.length} shots`} from you* so the next round of ads stays fresh${shots.url ? `: <${shots.url}|send them on your shot list>` : ` (${shots.items.slice(0, 3).join("; ")}${shots.items.length > 3 ? "…" : ""})`}` : "";
-    const text = `${intro}\n\n*Your ${month} recap:* ${link}${dashboardLine(parts[0])}${ask}`;
+    const text = wl ? forClient(`${intro}\n\n*Your ${month} recap is attached.*${ask}`, true) : `${intro}\n\n*Your ${month} recap:* ${link}${dashboardLine(parts[0])}${ask}`;
+    const filename = wl ? whiteLabelFileName(client.name, "monthly", month) : `${client.name} - ${month} recap.pdf`;
+    const pdf = { filename, title: `${client.name} · ${month} recap`, bytes };
     const delivered: Record<string, unknown> = {};
     if (client.slack_channel_id) {
-      const out = await postAsUser(by.id, { channel: client.slack_channel_id, text, pdf: { filename: `${client.name} - ${month} recap.pdf`, title: `${client.name} · ${month} recap`, bytes } });
-      // The buyer who completed it hasn't connected Slack: the recap still goes out, from the Kaizen app (with the link)
-      const fallback = !out.ok ? await botPost(client.slack_channel_id, text) : null;
+      const out = await postAsUser(by.id, { channel: client.slack_channel_id, text, pdf });
+      // The buyer who completed it hasn't connected Slack: the recap still goes out, from the Kaizen app (with the link; a white label client's with the PDF)
+      const fallback = !out.ok ? await appPost(client.slack_channel_id, text, wl ? pdf : null) : null;
       delivered.slack = out.ok ? { channel: out.channel, ts: out.ts } : fallback?.ok ? { channel: client.slack_channel_id, ts: fallback.ts, as: "app" } : { error: out.error };
     }
     // Email to the people picked for this client's reports, else their contacts (primary first)
@@ -339,19 +362,32 @@ export async function deliverBundle(admin: SupabaseClient, bundleId: string, by:
     let logged: { subject: string; text: string; html: string } | null = null;
     for (const c of to.slice(0, 6)) {
       const dash = dashboardUrl(parts[0]);
-      const mail = {
-        preheader: headline,
-        kicker: client.name,
-        title: `Your ${month} recap is ready`,
-        highlight: month,
-        hello: `Hi ${c.full_name?.split(" ")[0] ?? "there"},`,
-        lines: ["Here's the short version:"],
-        bullets: parts.map((x) => `${x.platform === "google" ? "Google Ads" : "Meta Ads"}: ${x.sections?.headline ?? ""}`).filter((x) => !x.endsWith(": ")),
-        cta: { label: "Read the recap →", url: link },
-        note: [dash ? `For every number, any dates: ${dash}` : "You can download it as a PDF from the page.", shots ? `For ${shots.month}, we need a few photos and clips from you so your ads stay fresh: ${shots.items.slice(0, 4).join("; ")}${shots.items.length > 4 ? "…" : ""}.${shots.url ? ` Send them here: ${shots.url}` : ""}` : ""].filter(Boolean).join(" "),
-      };
-      const out = { subject: `Your ${month} recap from Kaizen`, text: emailText(mail), html: emailHtml(mail) };
-      const res = await sendEmail({ to: c.email, ...out });
+      const shotsNote = shots ? `For ${shots.month}, we need a few photos and clips from you so your ads stay fresh: ${shots.items.slice(0, 4).join("; ")}${shots.items.length > 4 ? "…" : ""}.${shots.url ? ` Send them here: ${shots.url}` : ""}` : "";
+      const mail = wl
+        ? {
+            preheader: forClient(headline, true),
+            kicker: client.name,
+            title: `Your ${month} recap is ready`,
+            highlight: month,
+            hello: `Hi ${c.full_name?.split(" ")[0] ?? "there"},`,
+            lines: ["Here's the short version:"],
+            bullets: parts.map((x) => forClient(`${x.platform === "google" ? "Google Ads" : "Meta Ads"}: ${x.sections?.headline ?? ""}`, true)).filter((x) => !x.endsWith(":")),
+            note: forClient(["The full recap is attached as a PDF.", shotsNote].filter(Boolean).join(" "), true),
+            whiteLabel: true,
+          }
+        : {
+            preheader: headline,
+            kicker: client.name,
+            title: `Your ${month} recap is ready`,
+            highlight: month,
+            hello: `Hi ${c.full_name?.split(" ")[0] ?? "there"},`,
+            lines: ["Here's the short version:"],
+            bullets: parts.map((x) => `${x.platform === "google" ? "Google Ads" : "Meta Ads"}: ${x.sections?.headline ?? ""}`).filter((x) => !x.endsWith(": ")),
+            cta: { label: "Read the recap →", url: link! },
+            note: [dash ? `For every number, any dates: ${dash}` : "You can download it as a PDF from the page.", shotsNote].filter(Boolean).join(" "),
+          };
+      const out = { subject: wl ? `Your ${month} recap` : `Your ${month} recap from Kaizen`, text: emailText(mail), html: emailHtml(mail) };
+      const res = await sendEmail({ to: c.email, ...out, ...(wl ? { fromName: WHITE_LABEL_FROM, attachments: [{ filename, content: Buffer.from(bytes).toString("base64") }] } : {}) });
       if (res.ok) sentTo.push(c.email);
       if (res.ok && sentTo.length === 1) logged = out;
     }
@@ -359,7 +395,8 @@ export async function deliverBundle(admin: SupabaseClient, bundleId: string, by:
     delivered.email = sentTo;
     await admin.from("report_bundles").update({ status: "sent", sent_at: new Date().toISOString(), delivered }).eq("id", bundleId);
     await admin.from("reports").update({ status: "posted", posted_at: new Date().toISOString(), posted_by: by.id }).eq("bundle_id", bundleId).eq("status", "submitted");
-    await keepRecapSend(admin, { clientId: b.client_id as string, name: client.name, bundleId, platform: parts.length === 1 ? parts[0].platform : null, start: parts[0].period_start, end: parts[0].period_end, month, text, bytes, filename: `${client.name} - ${month} recap.pdf`, delivered, by: by.id, parts });
+    await keepRecapSend(admin, { clientId: b.client_id as string, name: client.name, bundleId, platform: parts.length === 1 ? parts[0].platform : null, start: parts[0].period_start, end: parts[0].period_end, month, text, bytes, filename, delivered, by: by.id, parts, whiteLabel: wl });
+
   } catch (e) {
     await admin.from("report_bundles").update({ status: "failed", error: (e instanceof Error ? e.message : String(e)).slice(0, 400) }).eq("id", bundleId);
     throw e;

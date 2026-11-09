@@ -7,6 +7,7 @@ import { postAsApp, postAsUser } from "@/lib/slack-user";
 import { siteUrl } from "@/lib/site";
 import type { ReportMetrics } from "./metrics";
 import { buildReportEmail, channelsLabel, normalizeDelivery, type Channel, type Delivery, type Recipient } from "./delivery-core";
+import { forClient, isWhiteLabel, WHITE_LABEL_FROM } from "./white-label";
 
 // Sending a report to the client, by Slack, email or both, and keeping what went: every send (and every resend) is a
 // row in report_sends with who sent it, when, where, to whom, the period and a frozen copy of the PDF, so a sent report
@@ -50,7 +51,8 @@ export async function rememberDelivery(admin: SupabaseClient, clientId: string, 
 
 export type SendPart = { platform: "meta" | "google"; metrics: ReportMetrics | null; sections: { headline?: string | null; summary?: string | null } | null };
 export type SendArgs = {
-  client: { id: string; name: string; slack_channel_id: string | null; slug?: string | null; portal_live?: boolean | null };
+  /** client_type "whitelabel": no agency name, link or brand anywhere in what goes */
+  client: { id: string; name: string; slack_channel_id: string | null; slug?: string | null; portal_live?: boolean | null; client_type?: string | null };
   kind: string;
   platform: string | null;
   period: { start: string | null; end: string | null; label: string };
@@ -81,11 +83,15 @@ export type SendOutcome = {
   needsConnect?: boolean;
 };
 
-const dashboardOf = (c: SendArgs["client"]) => (c.portal_live && c.slug ? `${siteUrl()}/c/${c.slug}/dashboard` : null);
+// A white label client's report never links the agency's portal
+const dashboardOf = (c: SendArgs["client"]) => (c.portal_live && c.slug && !isWhiteLabel(c.client_type) ? `${siteUrl()}/c/${c.slug}/dashboard` : null);
 const b64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 
 /** Sends a report where the buyer chose, then keeps the send (and the PDF as it went) in the history */
-export async function deliver(admin: SupabaseClient, a: SendArgs): Promise<SendOutcome> {
+export async function deliver(admin: SupabaseClient, sent: SendArgs): Promise<SendOutcome> {
+  // A white label client: the message as it goes (and as it's kept) never names the agency or links its site
+  const wl = isWhiteLabel(sent.client.client_type);
+  const a: SendArgs = wl ? { ...sent, message: forClient(sent.message, true), note: sent.note ? forClient(sent.note, true) : sent.note, appFallback: sent.appFallback != null ? forClient(sent.appFallback, true) : sent.appFallback } : sent;
   const d = normalizeDelivery(a.delivery);
   const went: Channel[] = [];
   let slack: SendOutcome["slack"] = null;
@@ -102,7 +108,7 @@ export async function deliver(admin: SupabaseClient, a: SendArgs): Promise<SendO
       // A joint report that couldn't attach its PDF still goes, from the app (and so does a built one whose buyer can't post)
       let viaApp = a.slackAs === "app";
       if (!out.ok && (a.slackAs === "app" || a.appFallback != null)) {
-        out = await postAsApp({ channel: a.client.slack_channel_id, text: `${text}${a.appFallback ?? ""}` });
+        out = await postAsApp({ channel: a.client.slack_channel_id, text: wl ? forClient(`${text}${a.appFallback ?? ""}`, true) : `${text}${a.appFallback ?? ""}` });
         viaApp = true;
       }
       if (out.ok) {
@@ -113,7 +119,7 @@ export async function deliver(admin: SupabaseClient, a: SendArgs): Promise<SendO
   }
 
   if (d.channels.includes("email")) {
-    const mail = (first: string | null) => buildReportEmail({ client: a.client.name, kind: a.kind, periodLabel: a.period.label, parts: a.parts, from: { name: a.by.fullName, email: a.by.email }, first, dashboard: dashboardOf(a.client), note: a.note });
+    const mail = (first: string | null) => buildReportEmail({ client: a.client.name, kind: a.kind, periodLabel: a.period.label, parts: a.parts, from: { name: a.by.fullName, email: a.by.email }, first, dashboard: dashboardOf(a.client), note: a.note, whiteLabel: wl });
     const sent: string[] = [];
     const failed: { email: string; error: string }[] = [];
     let logged: { subject: string; text: string; html: string } | null = null;
@@ -121,8 +127,8 @@ export async function deliver(admin: SupabaseClient, a: SendArgs): Promise<SendO
     else
       for (const r of d.recipients) {
         const e = mail(r.name?.split(" ")[0] ?? null);
-        const html = emailHtml({ preheader: e.preheader, kicker: e.kicker, title: e.title, highlight: e.highlight, hello: e.hello, lines: e.lines, bullets: e.bullets, cta: e.cta ?? undefined, note: e.note });
-        const res = await sendEmail({ to: r.email, subject: e.subject, html, text: e.text, replyTo: e.replyTo ?? undefined, attachments: [{ filename: a.pdf.filename, content: b64(a.pdf.bytes) }] });
+        const html = emailHtml({ preheader: e.preheader, kicker: e.kicker, title: e.title, highlight: e.highlight, hello: e.hello, lines: e.lines, bullets: e.bullets, cta: e.cta ?? undefined, note: e.note, ...(wl ? { whiteLabel: true } : {}) });
+        const res = await sendEmail({ to: r.email, subject: e.subject, html, text: e.text, replyTo: e.replyTo ?? undefined, attachments: [{ filename: a.pdf.filename, content: b64(a.pdf.bytes) }], ...(wl ? { fromName: WHITE_LABEL_FROM } : {}) });
         if (res.ok) {
           sent.push(r.email);
           logged ??= { subject: e.subject, text: e.text, html };
@@ -209,7 +215,8 @@ export async function resendReport(admin: SupabaseClient, sendId: string, by: { 
   const { data } = await admin.from("report_sends").select("id, client_id, report_id, bundle_id, kind, platform, period_start, period_end, period_label, message, pdf_path, file_name").eq("id", sendId).maybeSingle();
   const s = data as SendRow | null;
   if (!s) throw new Error("That send isn't in the history.");
-  const { data: client } = await admin.from("clients").select("id, name, slack_channel_id, slug, portal_live").eq("id", s.client_id).single();
+  const { data: client } = await admin.from("clients").select("id, name, slack_channel_id, slug, portal_live, client_type").eq("id", s.client_id).single();
+
   if (!client) throw new Error("Client not found.");
   const bytes = await sendPdf(admin, s);
   if (!bytes) throw new Error("The PDF that went couldn't be found.");

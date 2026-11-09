@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import { cache, type CSSProperties, type ReactNode } from "react";
 import type { Metadata, Viewport } from "next";
 import { notFound } from "next/navigation";
 import { count, headlineTiles, kpiRows, money, multiple, percent, platformName, singular, type Delta, type Tile } from "@/lib/reports/format";
@@ -7,7 +7,12 @@ import { loadBundle } from "@/lib/reports/share";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { AdImage } from "./ad-image";
 
-export const metadata: Metadata = { title: "Monthly recap · Kaizen Marketing", robots: { index: false, follow: false } };
+// A white label client's recap names no agency, in the tab either
+const bundleOf = cache(async (token: string) => (adminConfigured() ? loadBundle(createAdminClient(), token) : null));
+export async function generateMetadata({ params }: PageProps<"/r/[token]">): Promise<Metadata> {
+  const bundle = await bundleOf((await params).token);
+  return { title: bundle?.whiteLabel ? `${bundle.title} · ${bundle.client}` : "Monthly recap · Kaizen Marketing", robots: { index: false, follow: false } };
+}
 export const viewport: Viewport = { themeColor: "#ffffff" };
 
 // Client-facing, so always light: the app's color tokens, redefined for this page only.
@@ -27,6 +32,8 @@ const LIGHT = {
   "--ok": "#16794c",
   "--bad": "#c8102e",
 } as CSSProperties;
+// White label: the same page in a neutral slate, no agency red
+const NEUTRAL = { ...LIGHT, "--brand": "#475569", "--brand-hover": "#334155", "--brand-text": "#475569", "--brand-soft": "rgba(71, 85, 105, 0.07)" } as CSSProperties;
 
 const toneClass = (d: Delta | null) => (!d ? "text-faint" : d.tone === "good" ? "text-ok" : d.tone === "bad" ? "text-bad" : "text-muted");
 
@@ -37,15 +44,15 @@ const toneClass = (d: Delta | null) => (!d ? "text-faint" : d.tone === "good" ? 
 export default async function MonthlyRecap({ params }: PageProps<"/r/[token]">) {
   const { token } = await params;
   if (!adminConfigured()) notFound();
-  const bundle = await loadBundle(createAdminClient(), token);
+  const bundle = await bundleOf(token);
   if (!bundle) notFound();
   const ready = bundle.ready && bundle.input.parts.length > 0;
   const parts = bundle.input.parts;
 
   return (
-    <div style={LIGHT} className="min-h-screen overflow-x-clip bg-bg pb-[env(safe-area-inset-bottom)] text-fg">
+    <div style={bundle.whiteLabel ? NEUTRAL : LIGHT} className="min-h-screen overflow-x-clip bg-bg pb-[env(safe-area-inset-bottom)] text-fg">
       <header className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 pt-[max(1.5rem,env(safe-area-inset-top))] sm:px-8 sm:pt-8 print:pt-0">
-        <p className="font-heading text-[13px] tracking-[0.18em] text-fg">KAIZEN MARKETING</p>
+        <p className="font-heading text-[13px] tracking-[0.18em] text-fg">{bundle.whiteLabel ? "PERFORMANCE REPORT" : "KAIZEN MARKETING"}</p>
         {ready && (
           <a href={`/r/${token}/pdf`} className="shrink-0 rounded-brand bg-brand px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-hover active:bg-brand-hover max-md:inline-flex max-md:min-h-11 max-md:items-center print:hidden">
             Download PDF
@@ -83,7 +90,7 @@ export default async function MonthlyRecap({ params }: PageProps<"/r/[token]">) 
         </section>
       )}
 
-      <footer className="mx-auto max-w-5xl border-t border-line px-4 py-8 text-xs text-faint sm:px-8">Kaizen Marketing · {bundle.client} · {bundle.periodLabel}</footer>
+      <footer className="mx-auto max-w-5xl border-t border-line px-4 py-8 text-xs text-faint sm:px-8">{bundle.whiteLabel ? "Performance report" : "Kaizen Marketing"} · {bundle.client} · {bundle.periodLabel}</footer>
     </div>
   );
 }

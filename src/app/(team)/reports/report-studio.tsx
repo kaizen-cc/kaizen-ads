@@ -16,6 +16,7 @@ import { RegenerateButton, UndoRegenerate } from "./regenerate-button";
 import { NextStepsAct } from "./next-steps-act";
 import type { WriteStatus } from "@/lib/write-status-core";
 import { buildReportEmail, channelsLabel, type Delivery } from "@/lib/reports/delivery-core";
+import { forClient, whiteLabelFileName } from "@/lib/reports/white-label";
 import { DeliveryPicker, type DeliveryOptions } from "./delivery-picker";
 import { PeriodPicker } from "./period-picker";
 import { SendHistory, type HistoryItem } from "./send-history";
@@ -193,7 +194,8 @@ export function ReportStudio({
   history = [],
 }: {
   report: StudioReport;
-  client: { name: string; slug: string; hasChannel: boolean };
+  /** whiteLabel: the client's reports go out generic (no Kaizen anywhere), shown that way here */
+  client: { name: string; slug: string; hasChannel: boolean; whiteLabel?: boolean };
   bundle: StudioBundle | null;
   slack: { connected: boolean; name: string | null; image: string | null; me: string };
   /** Acting on the report's next steps: whether changes can be written to its account, and who can switch them on */
@@ -412,7 +414,7 @@ export function ReportStudio({
   const stale = report.period.stale.length > 0 && !sent && !busy;
 
   const from = joint ? { name: "Kaizen", image: null, app: true } : { name: slack.name || slack.me, image: slack.image, app: false };
-  const fileName = `${client.name} - ${built ? "Report" : `${platformName(report.platform).replace(" Ads", "")} report`} - ${report.periodLabel}.pdf`;
+  const fileName = client.whiteLabel ? whiteLabelFileName(client.name, built ? "built" : report.kind, report.periodLabel, built ? null : platformName(report.platform)) : `${client.name} - ${built ? "Report" : `${platformName(report.platform).replace(" Ads", "")} report`} - ${report.periodLabel}.pdf`;
   const waitingParts = bundle?.parts.filter((p) => p.status !== "submitted" && p.status !== "posted") ?? [];
   const STEPS = [
     { key: "report", label: built && joint ? "Your part" : "Report" },
@@ -1136,12 +1138,13 @@ ${t}` : t);
                       <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={16} autoFocus className="w-full rounded-[12px] border border-brand/50 bg-surface px-4 py-3 font-mono text-[13px] leading-relaxed outline-none focus:border-brand-text/60" />
                     ) : (
                       <button type="button" onClick={() => setEditMsg(true)} className="block w-full cursor-text rounded-[12px] text-left ring-brand/40 transition-shadow hover:ring-2" aria-label="Edit the message">
-                        <SlackPreview from={from} text={message} file={fileName} />
+                        <SlackPreview from={from} text={forClient(message, client.whiteLabel)} file={fileName} />
                       </button>
                     )}
                   </>
                 )}
-                {viaEmail && <EmailPreview mail={buildReportEmail({ client: client.name, kind: report.kind, periodLabel: report.periodLabel, parts: [{ platform: report.platform, metrics: report.metrics, sections }], from: { name: slack.me, email: null }, first: route.recipients[0]?.name?.split(" ")[0] ?? null, note: emailNote })} to={route.recipients.map((r) => r.email)} file={fileName} />}
+                {viaEmail && <EmailPreview mail={buildReportEmail({ client: client.name, kind: report.kind, periodLabel: report.periodLabel, parts: [{ platform: report.platform, metrics: report.metrics, sections }], from: { name: slack.me, email: null }, first: route.recipients[0]?.name?.split(" ")[0] ?? null, note: emailNote, whiteLabel: client.whiteLabel })} to=
+{route.recipients.map((r) => r.email)} file={fileName} />}
               </>
             )}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-faint">

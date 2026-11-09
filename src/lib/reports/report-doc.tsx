@@ -2,13 +2,15 @@ import { Fragment } from "react";
 import { Document, Font, Image, Link, Page, StyleSheet, Text, View } from "@react-pdf/renderer";
 import type { ReportMetrics, TopAd } from "./metrics";
 import type { Sections, Story } from "./write";
+import { scrubAgency, scrubSections } from "./white-label";
 import { campaignLines, columnKeys, conversionTiles, formatMetric, count, headlineTiles, kpiRows, metricLabel, metricText, money, percent, multiple, platformName, rowsFor, singular, tilesFor, type Delta, type MetricKey, type ReportLayout, type Tile } from "./format";
 
 // The client report as a PDF document: the weekly recap (one platform, a page or two), the monthly recap as a landscape
 // slide deck (one idea per slide: the cover, the month at a glance, then for each platform where it stands against its
 // target, the numbers, each trend as its own story, the best ads, the campaigns and the plan, and a closing slide), and a
 // built report (a cover, then each platform). Helvetica, lots of
-// white, Kaizen red only where the eye should go. The same document on the server (the PDF the client gets) and in the
+// white, Kaizen red only where the eye should go (a white label client's: a neutral slate, no agency name, mark or link
+// anywhere, so the partner can pass it on as their own). The same document on the server (the PDF the client gets) and in the
 // studio's browser (the preview, drawn as the buyer edits, so a change shows at once); ad images come in ready-made.
 
 /** extra: a built report's other date ranges (the first range is metrics) */
@@ -17,7 +19,8 @@ export type ReportPart = { platform: "meta" | "google"; buyer: string | null; me
 /** built: a report from the report builder (a cover, the whole account when it covers more than one service, then each) */
 /** edit: the studio's preview, with an invisible link over every metric, row and column the buyer can change (never sent) */
 /** dashboard: the client's live dashboard in their portal, linked from every part (when their portal is open) */
-export type ReportPdfInput = { client: string; kind: "weekly" | "monthly" | "built"; periodLabel: string; parts: ReportPart[]; edit?: boolean; dashboard?: string | null; /** The monthly recap's ask: next cycle's shot list (clients on a creative package) */ shots?: { month: string; items: string[]; url: string | null } | null };
+/** whiteLabel: a white label client's report: generic, with no agency name, mark, red or link anywhere */
+export type ReportPdfInput = { client: string; kind: "weekly" | "monthly" | "built"; periodLabel: string; parts: ReportPart[]; edit?: boolean; dashboard?: string | null; /** The monthly recap's ask: next cycle's shot list (clients on a creative package) */ shots?: { month: string; items: string[]; url: string | null } | null; whiteLabel?: boolean };
 
 // Words wrap whole: no "APPLICA-TION" in a tile label or a column header
 Font.registerHyphenationCallback((word) => [word]);
@@ -69,6 +72,14 @@ const s = StyleSheet.create({
   extras: { borderLeftWidth: 2, borderLeftColor: RED, paddingLeft: 12, fontSize: 9.5, color: "#3a3a40", lineHeight: 1.55 },
 });
 
+/** The brand on the page: Kaizen's red and name, or (white label) a quiet slate accent and no agency anywhere */
+type Brand = { accent: string; agency: string | null };
+const KAIZEN: Brand = { accent: RED, agency: "Kaizen Marketing" };
+const NEUTRAL: Brand = { accent: "#475569", agency: null };
+const brandOf = (input: Pick<ReportPdfInput, "whiteLabel">): Brand => (input.whiteLabel ? NEUTRAL : KAIZEN);
+/** A link a white label report may carry: never one to the agency's site or portal */
+const linkFor = (b: Brand, url: string | null | undefined) => (url && (b.agency || !/kaizen/i.test(url)) ? url : null);
+
 const toneColor = (d: Delta | null) => (!d ? FAINT : d.tone === "good" ? GOOD : d.tone === "bad" ? BAD : MUTED);
 
 /** Where the studio's preview can click: an invisible link over the element (its address says what it is) */
@@ -78,12 +89,12 @@ function Hot({ href }: { href: string | null }) {
   return href ? <Link src={`${EDIT_HOST}/${href}`} style={hotStyle} /> : null;
 }
 
-function Footer({ client }: { client: string }) {
+function Footer({ client, b }: { client: string; b: Brand }) {
   return (
     <>
       {/* The page number sits on its own: a render-prop Text inside an absolute View drops the whole View */}
       <View style={s.footer} fixed>
-        <Text>Kaizen Marketing · {client}</Text>
+        <Text>{b.agency ? `${b.agency} · ${client}` : `Performance report · ${client}`}</Text>
       </View>
       <Text style={s.pageNumber} fixed render={({ pageNumber, totalPages }) => `${pageNumber} / ${totalPages}`} />
     </>
@@ -106,7 +117,7 @@ function Tiles({ tiles, hot }: { tiles: Tile[]; hot?: (i: number) => string | nu
   );
 }
 
-function TopAds({ ads, images, conversion }: { ads: TopAd[]; images: (string | null)[]; conversion: string }) {
+function TopAds({ ads, images, conversion, b }: { ads: TopAd[]; images: (string | null)[]; conversion: string; b: Brand }) {
   if (!ads.length) return null;
   const one = singular(conversion);
   return (
@@ -122,8 +133,8 @@ function TopAds({ ads, images, conversion }: { ads: TopAd[]; images: (string | n
               {count(a.results)} {conversion.toLowerCase()} · {money(a.costPerResult)} per {one} · {money(a.spend)} spent{a.ctr != null ? ` · ${percent(a.ctr)} CTR` : ""}
             </Text>
           </View>
-          {a.link ? (
-            <Link src={a.link} style={s.link}>
+          {linkFor(b, a.link) ? (
+            <Link src={linkFor(b, a.link)!} style={[s.link, { color: b.accent }]}>
               View ad
             </Link>
           ) : null}
@@ -199,7 +210,7 @@ function KpiTable({ m, layout, hot }: { m: ReportMetrics; layout?: ReportLayout 
   );
 }
 
-function Notes({ sections, hot }: { sections: Sections; hot?: (what: string) => string | null }) {
+function Notes({ sections, hot, b }: { sections: Sections; hot?: (what: string) => string | null; b: Brand }) {
   const groups = [
     { key: "did", title: "What we did", items: sections.did },
     { key: "doing", title: "What we're doing", items: sections.doing },
@@ -213,7 +224,7 @@ function Notes({ sections, hot }: { sections: Sections; hot?: (what: string) => 
           <Text style={s.noteHead}>{g.title}</Text>
           {g.items.map((x, i) => (
             <View key={i} style={s.bullet}>
-              <Text style={s.dot}>•</Text>
+              <Text style={[s.dot, { color: b.accent }]}>•</Text>
               <Text style={s.bulletText}>{x}</Text>
               <Hot href={hot?.(`text/${g.key}/${i}`) ?? null} />
             </View>
@@ -246,10 +257,10 @@ function Mtd({ m, layout }: { m: ReportMetrics; layout?: ReportLayout | null }) 
   );
 }
 
-function Band({ client, title, period }: { client: string; title: string; period: string }) {
+function Band({ client, title, period, b }: { client: string; title: string; period: string; b: Brand }) {
   return (
     <View style={s.band}>
-      <View style={s.bandRule} />
+      <View style={[s.bandRule, { backgroundColor: b.accent }]} />
       <Text style={s.bandClient}>{client}</Text>
       <Text style={s.bandMeta}>
         {title} · {period}
@@ -259,7 +270,7 @@ function Band({ client, title, period }: { client: string; title: string; period
 }
 
 /** Trend charts, each told as a story: the chart (bars, the latest in red), then what we see, why, and what's next */
-function Stories({ stories, hot }: { stories?: Story[]; hot?: (what: string) => string | null }) {
+function Stories({ stories, hot, b }: { stories?: Story[]; hot?: (what: string) => string | null; b: Brand }) {
   const list = (stories ?? []).filter((st) => st.points?.length);
   if (!list.length) return null;
   return (
@@ -286,7 +297,7 @@ function Stories({ stories, hot }: { stories?: Story[]; hot?: (what: string) => 
                 return (
                   <View key={k} style={{ flex: 1, alignItems: "center", justifyContent: "flex-end", height: "100%" }}>
                     <Text style={{ fontSize: 7.5, color: last ? INK : MUTED, fontFamily: last ? "Helvetica-Bold" : "Helvetica", marginBottom: 3 }}>{fmt(p.value)}</Text>
-                    <View style={{ width: "62%", height: `${Math.max(2, ((p.value ?? 0) / max) * 82)}%`, backgroundColor: last ? RED : "#d4d4d8", borderTopLeftRadius: 3, borderTopRightRadius: 3 }} />
+                    <View style={{ width: "62%", height: `${Math.max(2, ((p.value ?? 0) / max) * 82)}%`, backgroundColor: last ? b.accent : "#d4d4d8", borderTopLeftRadius: 3, borderTopRightRadius: 3 }} />
                   </View>
                 );
               })}
@@ -301,7 +312,7 @@ function Stories({ stories, hot }: { stories?: Story[]; hot?: (what: string) => 
             </View>
             {lines.map(([label, text, key]) => (
               <View key={key} style={{ flexDirection: "row", gap: 8, marginBottom: 5 }}>
-                <Text style={{ width: 70, fontSize: 8, fontFamily: "Helvetica-Bold", color: key === "next" ? RED : INK, textTransform: "uppercase", letterSpacing: 0.4, paddingTop: 1 }}>{label}</Text>
+                <Text style={{ width: 70, fontSize: 8, fontFamily: "Helvetica-Bold", color: key === "next" ? b.accent : INK, textTransform: "uppercase", letterSpacing: 0.4, paddingTop: 1 }}>{label}</Text>
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 9.5, lineHeight: 1.5, color: "#3a3a40" }}>{text}</Text>
                   <Hot href={hot?.(`text/story-${i}-${key}`) ?? null} />
@@ -330,7 +341,7 @@ function Words({ input, part }: { input: ReportPdfInput; part: ReportPart }) {
           <Hot href={hot?.("text/summary") ?? null} />
         </View>
       ) : null}
-      {input.dashboard ? (
+      {input.dashboard && !input.whiteLabel ? (
         <Link src={input.dashboard} style={{ marginTop: -10, marginBottom: 18, fontSize: 9, color: RED, fontFamily: "Helvetica-Bold", textDecoration: "none" }}>
           See every number, any dates, on your live dashboard →
         </Link>
@@ -341,21 +352,26 @@ function Words({ input, part }: { input: ReportPdfInput; part: ReportPart }) {
 
 function Weekly({ input, part, images }: { input: ReportPdfInput; part: ReportPart; images: (string | null)[] }) {
   const m = part.metrics;
+  const b = brandOf(input);
   return (
     <Page size="A4" style={s.page}>
-      <Footer client={input.client} />
-      <Band client={input.client} title={`Weekly report · ${platformName(part.platform)}`} period={input.periodLabel} />
+      <Footer client={input.client} b={b} />
+      <Band client={input.client} title={`Weekly report · ${platformName(part.platform)}`} period={input.periodLabel} b={b} />
       <Words input={input} part={part} />
       <View style={s.section}>
         <Text style={s.eyebrow}>Last 7 days vs the week before</Text>
         <Tiles tiles={part.layout?.tiles?.length ? tilesFor(m, part.layout.tiles) : headlineTiles(m)} hot={hotFor(input, part, "tile")} />
       </View>
-      <Stories stories={part.sections.stories} hot={hotFor(input, part, null)} />
+      <Stories stories={part.sections.stories} hot={hotFor(input, part, null)} b={b} />
       <Mtd m={m} layout={part.layout} />
-      <TopAds ads={m.topAds.slice(0, 3)} images={images} conversion={m.conversion} />
+      <TopAds ads={m.topAds.slice(0, 3)} images={images} conversion={m.conversion} b={b} />
       <Campaigns m={m} limit={6} layout={part.layout} hot={hotFor(input, part, null)} />
-      <Notes sections={part.sections} hot={hotFor(input, part, null)} />
-      {part.buyer ? <Text style={{ fontSize: 9, color: MUTED }}>Prepared by {part.buyer}, Kaizen Marketing</Text> : null}
+      <Notes sections={part.sections} hot={hotFor(input, part, null)} b={b} />
+      {part.buyer && b.agency ? (
+        <Text style={{ fontSize: 9, color: MUTED }}>
+          Prepared by {part.buyer}, {b.agency}
+        </Text>
+      ) : null}
     </Page>
   );
 }
@@ -364,10 +380,11 @@ function Weekly({ input, part, images }: { input: ReportPdfInput; part: ReportPa
 function Overview({ input }: { input: ReportPdfInput }) {
   const ranges = [input.parts[0].metrics, ...(input.parts[0].extra ?? [])].map((m) => m.main.label);
   const w = ["30%", "17.5%", "17.5%", "17.5%", "17.5%"];
+  const b = brandOf(input);
   return (
     <Page size="A4" style={s.page}>
-      <Footer client={input.client} />
-      <Band client={input.client} title="The whole account" period={input.periodLabel} />
+      <Footer client={input.client} b={b} />
+      <Band client={input.client} title="The whole account" period={input.periodLabel} b={b} />
       {ranges.map((label, ri) => {
         const rows = input.parts.map((p) => ({ p, m: ri === 0 ? p.metrics : p.extra?.[ri - 1] })).filter((x): x is { p: ReportPart; m: ReportMetrics } => Boolean(x.m));
         const spend = rows.reduce((n, x) => n + x.m.main.spend, 0);
@@ -403,7 +420,7 @@ function Overview({ input }: { input: ReportPdfInput }) {
         <Text style={s.eyebrow}>In short</Text>
         {input.parts.map((p) => (
           <View key={p.platform} style={s.bullet}>
-            <Text style={s.dot}>•</Text>
+            <Text style={[s.dot, { color: b.accent }]}>•</Text>
             <Text style={s.bulletText}>
               <Text style={{ fontFamily: "Helvetica-Bold" }}>{platformName(p.platform)}: </Text>
               {p.sections.headline}
@@ -435,28 +452,30 @@ function Ranges({ part }: { part: ReportPart }) {
 
 function Cover({ input }: { input: ReportPdfInput }) {
   const buyers = [...new Set(input.parts.map((p) => p.buyer).filter(Boolean))];
+  const b = brandOf(input);
   return (
     <Page size="A4" style={[s.page, { backgroundColor: INK, color: "#ffffff", justifyContent: "space-between", paddingTop: 72, paddingBottom: 56 }]}>
-      <Text style={{ fontSize: 10, fontFamily: "Helvetica-Bold", letterSpacing: 2, color: "#ffffff" }}>KAIZEN MARKETING</Text>
+      <Text style={{ fontSize: 10, fontFamily: "Helvetica-Bold", letterSpacing: 2, color: "#ffffff" }}>{(b.agency ?? "Performance report").toUpperCase()}</Text>
       <View>
-        <View style={{ width: 40, height: 4, backgroundColor: RED, marginBottom: 22 }} />
+        <View style={{ width: 40, height: 4, backgroundColor: b.accent, marginBottom: 22 }} />
         <Text style={{ fontSize: 40, fontFamily: "Helvetica-Bold", letterSpacing: -1, lineHeight: 1.1 }}>{input.client}</Text>
         <Text style={{ fontSize: 16, color: "#b4b4bb", marginTop: 12 }}>
           Report · {input.periodLabel}
         </Text>
         <Text style={{ fontSize: 10, color: "#7a7a82", marginTop: 26 }}>{input.parts.map((p) => platformName(p.platform)).join("  ·  ")}</Text>
       </View>
-      <Text style={{ fontSize: 9, color: "#7a7a82" }}>{buyers.length ? `Prepared by ${buyers.join(" and ")}` : "Prepared by Kaizen Marketing"}</Text>
+      <Text style={{ fontSize: 9, color: "#7a7a82" }}>{!b.agency ? `Prepared for ${input.client}` : buyers.length ? `Prepared by ${buyers.join(" and ")}` : `Prepared by ${b.agency}`}</Text>
     </Page>
   );
 }
 
 function MonthlyPart({ input, part, images }: { input: ReportPdfInput; part: ReportPart; images: (string | null)[] }) {
   const m = part.metrics;
+  const b = brandOf(input);
   return (
     <Page size="A4" style={s.page}>
-      <Footer client={input.client} />
-      <View style={s.platformHead}>
+      <Footer client={input.client} b={b} />
+      <View style={[s.platformHead, { borderBottomColor: b.accent }]}>
         <Text style={s.platformName}>{platformName(part.platform)}</Text>
         <Text style={{ fontSize: 9, color: MUTED }}>
           {m.main.label} vs {m.compare.label}
@@ -467,17 +486,17 @@ function MonthlyPart({ input, part, images }: { input: ReportPdfInput; part: Rep
         <Text style={s.eyebrow}>{input.kind === "built" ? `${m.main.label} vs ${m.compare.label}` : "Conversions"}</Text>
         <Tiles tiles={part.layout?.tiles?.length ? tilesFor(m, part.layout.tiles) : input.kind === "built" ? headlineTiles(m) : conversionTiles(m)} hot={hotFor(input, part, "tile")} />
       </View>
-      <Stories stories={part.sections.stories} hot={hotFor(input, part, null)} />
+      <Stories stories={part.sections.stories} hot={hotFor(input, part, null)} b={b} />
       <Ranges part={part} />
       <KpiTable m={m} layout={part.layout} hot={hotFor(input, part, "row")} />
-      {part.platform === "meta" ? <TopAds ads={m.topAds.slice(0, 3)} images={images} conversion={m.conversion} /> : null}
+      {part.platform === "meta" ? <TopAds ads={m.topAds.slice(0, 3)} images={images} conversion={m.conversion} b={b} /> : null}
       <Campaigns m={m} limit={8} layout={part.layout} hot={hotFor(input, part, null)} />
-      <Notes sections={part.sections} hot={hotFor(input, part, null)} />
+      <Notes sections={part.sections} hot={hotFor(input, part, null)} b={b} />
       {part.extras?.trim() ? (
         <View style={s.section} wrap={false}>
           <Text style={s.eyebrow}>{input.kind === "built" ? "Also" : "Also this month"}</Text>
           <View>
-            <Text style={s.extras}>{part.extras.trim()}</Text>
+            <Text style={[s.extras, { borderLeftColor: b.accent }]}>{part.extras.trim()}</Text>
             <Hot href={hotFor<string>(input, part, null)?.("text/extras") ?? null} />
           </View>
         </View>
@@ -503,11 +522,11 @@ const d = StyleSheet.create({
   bigValue: { fontSize: 30, fontFamily: "Helvetica-Bold", letterSpacing: -0.8, lineHeight: 1.1 },
 });
 
-function SlideFooter({ client, dark }: { client: string; dark?: boolean }) {
+function SlideFooter({ client, dark, b }: { client: string; dark?: boolean; b: Brand }) {
   return (
     <>
       <View style={d.footer} fixed>
-        <Text style={dark ? { color: "#7a7a82" } : undefined}>Kaizen Marketing · {client}</Text>
+        <Text style={dark ? { color: "#7a7a82" } : undefined}>{b.agency ? `${b.agency} · ${client}` : `Performance report · ${client}`}</Text>
       </View>
       <Text style={[d.pageNumber, dark ? { color: "#7a7a82" } : {}]} fixed render={({ pageNumber, totalPages }) => `${pageNumber} / ${totalPages}`} />
     </>
@@ -515,10 +534,11 @@ function SlideFooter({ client, dark }: { client: string; dark?: boolean }) {
 }
 
 function Slide({ input, children, dark, kicker }: { input: ReportPdfInput; children: React.ReactNode; dark?: boolean; kicker?: string }) {
+  const b = brandOf(input);
   return (
     <Page size={[SLIDE_W, SLIDE_H]} style={[d.slide, dark ? d.dark : {}]}>
-      <SlideFooter client={input.client} dark={dark} />
-      {kicker ? <Text style={d.kicker}>{kicker}</Text> : null}
+      <SlideFooter client={input.client} dark={dark} b={b} />
+      {kicker ? <Text style={[d.kicker, { color: b.accent }]}>{kicker}</Text> : null}
       {children}
     </Page>
   );
@@ -526,18 +546,19 @@ function Slide({ input, children, dark, kicker }: { input: ReportPdfInput; child
 
 function DeckCover({ input }: { input: ReportPdfInput }) {
   const buyers = [...new Set(input.parts.map((p) => p.buyer).filter(Boolean))];
+  const b = brandOf(input);
   return (
     <Page size={[SLIDE_W, SLIDE_H]} style={[d.slide, d.dark, { justifyContent: "space-between", paddingTop: 56, paddingBottom: 48 }]}>
       <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-        <Text style={{ fontSize: 10, fontFamily: "Helvetica-Bold", letterSpacing: 2.4 }}>KAIZEN MARKETING</Text>
+        <Text style={{ fontSize: 10, fontFamily: "Helvetica-Bold", letterSpacing: 2.4 }}>{(b.agency ?? "Performance report").toUpperCase()}</Text>
         <Text style={{ fontSize: 10, color: "#7a7a82" }}>{input.parts.map((p) => platformName(p.platform)).join("  ·  ")}</Text>
       </View>
       <View>
-        <View style={{ width: 56, height: 5, backgroundColor: RED, marginBottom: 26 }} />
+        <View style={{ width: 56, height: 5, backgroundColor: b.accent, marginBottom: 26 }} />
         <Text style={{ fontSize: 54, fontFamily: "Helvetica-Bold", letterSpacing: -1.6, lineHeight: 1.05 }}>{input.client}</Text>
         <Text style={{ fontSize: 20, color: "#b4b4bb", marginTop: 14 }}>Monthly recap · {input.periodLabel}</Text>
       </View>
-      <Text style={{ fontSize: 10, color: "#7a7a82" }}>{buyers.length ? `Prepared by ${buyers.join(" and ")}` : "Prepared by Kaizen Marketing"}</Text>
+      <Text style={{ fontSize: 10, color: "#7a7a82" }}>{!b.agency ? `Prepared for ${input.client}` : buyers.length ? `Prepared by ${buyers.join(" and ")}` : `Prepared by ${b.agency}`}</Text>
     </Page>
   );
 }
@@ -582,7 +603,7 @@ function DeckGlance({ input }: { input: ReportPdfInput }) {
         {input.parts.map((p) => {
           const m = p.metrics;
           return (
-            <View key={p.platform} style={{ flex: 1, borderTopWidth: 3, borderTopColor: RED, paddingTop: 14 }}>
+            <View key={p.platform} style={{ flex: 1, borderTopWidth: 3, borderTopColor: brandOf(input).accent, paddingTop: 14 }}>
               <Text style={{ fontSize: 15, fontFamily: "Helvetica-Bold", marginBottom: 12 }}>{platformName(p.platform)}</Text>
               <View style={{ flexDirection: "row", gap: 12, marginBottom: 14 }}>
                 <View style={{ flex: 1 }}>
@@ -625,7 +646,7 @@ function DeckIntro({ input, part }: { input: ReportPdfInput; part: ReportPart })
               <Hot href={hot?.("text/summary") ?? null} />
             </View>
           ) : null}
-          {input.dashboard ? (
+          {input.dashboard && !input.whiteLabel ? (
             <Link src={input.dashboard} style={{ marginTop: 18, fontSize: 10, color: RED, fontFamily: "Helvetica-Bold", textDecoration: "none" }}>
               See every number, any dates, on your live dashboard →
             </Link>
@@ -663,6 +684,7 @@ function DeckNumbers({ input, part }: { input: ReportPdfInput; part: ReportPart 
 /** One trend, one slide: the chart large on the left, what we see, why and what's next on the right */
 function DeckStory({ input, part, story, i }: { input: ReportPdfInput; part: ReportPart; story: Story; i: number }) {
   const hot = hotFor<string>(input, part, null);
+  const b = brandOf(input);
   const pts = story.points ?? [];
   const max = Math.max(...pts.map((p) => p.value ?? 0), 0) || 1;
   const fmt = (v: number | null) => formatMetric(story.metric, v);
@@ -685,7 +707,7 @@ function DeckStory({ input, part, story, i }: { input: ReportPdfInput; part: Rep
               return (
                 <View key={k} style={{ flex: 1, alignItems: "center", justifyContent: "flex-end", height: "100%" }}>
                   <Text style={{ fontSize: 9, color: last ? INK : MUTED, fontFamily: last ? "Helvetica-Bold" : "Helvetica", marginBottom: 4 }}>{fmt(p.value)}</Text>
-                  <View style={{ width: "64%", height: `${Math.max(2, ((p.value ?? 0) / max) * 86)}%`, backgroundColor: last ? RED : "#d4d4d8", borderTopLeftRadius: 4, borderTopRightRadius: 4 }} />
+                  <View style={{ width: "64%", height: `${Math.max(2, ((p.value ?? 0) / max) * 86)}%`, backgroundColor: last ? b.accent : "#d4d4d8", borderTopLeftRadius: 4, borderTopRightRadius: 4 }} />
                 </View>
               );
             })}
@@ -702,7 +724,7 @@ function DeckStory({ input, part, story, i }: { input: ReportPdfInput; part: Rep
         <View style={{ flex: 1, gap: 16 }}>
           {lines.map(([label, text, key]) => (
             <View key={key}>
-              <Text style={{ fontSize: 8.5, fontFamily: "Helvetica-Bold", color: key === "next" ? RED : INK, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 5 }}>{label}</Text>
+              <Text style={{ fontSize: 8.5, fontFamily: "Helvetica-Bold", color: key === "next" ? b.accent : INK, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 5 }}>{label}</Text>
               <View>
                 <Text style={{ fontSize: 11.5, lineHeight: 1.55, color: "#3a3a40" }}>{text}</Text>
                 <Hot href={hot?.(`text/story-${i}-${key}`) ?? null} />
@@ -737,8 +759,8 @@ function DeckAds({ input, part, images }: { input: ReportPdfInput; part: ReportP
               {money(a.spend)} spent{a.ctr != null ? ` · ${percent(a.ctr)} CTR` : ""}
             </Text>
             {a.copy?.body ? <Text style={{ fontSize: 9, color: "#3a3a40", lineHeight: 1.45, marginTop: 6 }}>{a.copy.body.length > 150 ? `${a.copy.body.slice(0, 147).trimEnd()}…` : a.copy.body}</Text> : null}
-            {a.link ? (
-              <Link src={a.link} style={[s.link, { marginTop: 8 }]}>
+            {linkFor(brandOf(input), a.link) ? (
+              <Link src={linkFor(brandOf(input), a.link)!} style={[s.link, { marginTop: 8, color: brandOf(input).accent }]}>
                 View ad →
               </Link>
             ) : null}
@@ -752,6 +774,7 @@ function DeckAds({ input, part, images }: { input: ReportPdfInput; part: ReportP
 /** The plan: what we did, what we're doing and what's next, side by side, then anything else this month */
 function DeckPlan({ input, part }: { input: ReportPdfInput; part: ReportPart }) {
   const hot = hotFor<string>(input, part, null);
+  const b = brandOf(input);
   const groups = [
     { key: "did", title: "What we did", items: part.sections.did },
     { key: "doing", title: "What we're doing", items: part.sections.doing },
@@ -762,11 +785,11 @@ function DeckPlan({ input, part }: { input: ReportPdfInput; part: ReportPart }) 
     <Slide input={input} kicker={`${platformName(part.platform)} · The plan`}>
       <View style={{ flexDirection: "row", gap: 22 }}>
         {groups.map((g) => (
-          <View key={g.key} style={{ flex: 1, borderTopWidth: 3, borderTopColor: g.key === "next" ? RED : INK, paddingTop: 12 }}>
+          <View key={g.key} style={{ flex: 1, borderTopWidth: 3, borderTopColor: g.key === "next" ? b.accent : INK, paddingTop: 12 }}>
             <Text style={{ fontSize: 14, fontFamily: "Helvetica-Bold", marginBottom: 10 }}>{g.title}</Text>
             {g.items.map((x, i) => (
               <View key={i} style={[s.bullet, { marginBottom: 7 }]}>
-                <Text style={s.dot}>•</Text>
+                <Text style={[s.dot, { color: b.accent }]}>•</Text>
                 <Text style={[s.bulletText, { fontSize: 10.5 }]}>{x}</Text>
                 <Hot href={hot?.(`text/${g.key}/${i}`) ?? null} />
               </View>
@@ -778,12 +801,16 @@ function DeckPlan({ input, part }: { input: ReportPdfInput; part: ReportPart }) 
         <View style={{ marginTop: 22 }}>
           <Text style={s.eyebrow}>Also this month</Text>
           <View>
-            <Text style={[s.extras, { fontSize: 10.5 }]}>{part.extras.trim()}</Text>
+            <Text style={[s.extras, { fontSize: 10.5, borderLeftColor: b.accent }]}>{part.extras.trim()}</Text>
             <Hot href={hot?.("text/extras") ?? null} />
           </View>
         </View>
       ) : null}
-      {part.buyer ? <Text style={{ fontSize: 9, color: MUTED, marginTop: 18 }}>Prepared by {part.buyer}, Kaizen Marketing</Text> : null}
+      {part.buyer && b.agency ? (
+        <Text style={{ fontSize: 9, color: MUTED, marginTop: 18 }}>
+          Prepared by {part.buyer}, {b.agency}
+        </Text>
+      ) : null}
     </Slide>
   );
 }
@@ -791,10 +818,12 @@ function DeckPlan({ input, part }: { input: ReportPdfInput; part: ReportPart }) 
 /** The close: next month in a line per platform, and where to see it live */
 function DeckClose({ input }: { input: ReportPdfInput }) {
   const next = input.parts.flatMap((p) => p.sections.next.slice(0, 3).map((x) => ({ p: p.platform, x })));
+  const b = brandOf(input);
+  const shotsUrl = linkFor(b, input.shots?.url);
   return (
     <Page size={[SLIDE_W, SLIDE_H]} style={[d.slide, d.dark, { justifyContent: "center" }]}>
-      <SlideFooter client={input.client} dark />
-      <View style={{ width: 56, height: 5, backgroundColor: RED, marginBottom: 22 }} />
+      <SlideFooter client={input.client} dark b={b} />
+      <View style={{ width: 56, height: 5, backgroundColor: b.accent, marginBottom: 22 }} />
       <Text style={{ fontSize: 34, fontFamily: "Helvetica-Bold", letterSpacing: -0.8, marginBottom: 20 }}>Next month</Text>
       {next.map((n, i) => (
         <View key={i} style={{ flexDirection: "row", marginBottom: 8, maxWidth: 620 }}>
@@ -803,7 +832,7 @@ function DeckClose({ input }: { input: ReportPdfInput }) {
         </View>
       ))}
       {input.shots?.items.length ? (
-        <View style={{ marginTop: 18, maxWidth: 620, borderLeftWidth: 3, borderLeftColor: RED, paddingLeft: 12 }}>
+        <View style={{ marginTop: 18, maxWidth: 620, borderLeftWidth: 3, borderLeftColor: b.accent, paddingLeft: 12 }}>
           <Text style={{ fontSize: 12, fontFamily: "Helvetica-Bold", color: "#ffffff", marginBottom: 6 }}>What we need from you for {input.shots.month}</Text>
           {input.shots.items.slice(0, 6).map((x, i) => (
             <Text key={i} style={{ fontSize: 10.5, lineHeight: 1.5, color: "#e4e4e7" }}>
@@ -811,14 +840,14 @@ function DeckClose({ input }: { input: ReportPdfInput }) {
             </Text>
           ))}
           {input.shots.items.length > 6 ? <Text style={{ fontSize: 10, color: "#a1a1aa", marginTop: 2 }}>and {input.shots.items.length - 6} more</Text> : null}
-          {input.shots.url ? (
-            <Link src={input.shots.url} style={{ marginTop: 6, fontSize: 10.5, color: "#ffffff", fontFamily: "Helvetica-Bold", textDecoration: "none" }}>
+          {shotsUrl ? (
+            <Link src={shotsUrl} style={{ marginTop: 6, fontSize: 10.5, color: "#ffffff", fontFamily: "Helvetica-Bold", textDecoration: "none" }}>
               Send them on your shot list →
             </Link>
           ) : null}
         </View>
       ) : null}
-      {input.dashboard ? (
+      {input.dashboard && !input.whiteLabel ? (
         <Link src={input.dashboard} style={{ marginTop: 22, fontSize: 11, color: "#ffffff", fontFamily: "Helvetica-Bold", textDecoration: "none" }}>
           Your live dashboard, any day, any dates →
         </Link>
@@ -859,10 +888,16 @@ function hotFor<T extends number | string>(input: ReportPdfInput, part: ReportPa
 }
 
 /** The whole document. images: each part's top ads as data URIs (null where none could be fetched) */
-export function ReportDocument({ input, images }: { input: ReportPdfInput; images: (string | null)[][] }) {
+export function ReportDocument({ input: given, images }: { input: ReportPdfInput; images: (string | null)[][] }) {
+  // White label: every written line cleaned of the agency too (whatever the AI or the buyer wrote), and no portal links
+  const input: ReportPdfInput = given.whiteLabel
+    ? { ...given, dashboard: null, shots: given.shots ? { ...given.shots, url: linkFor(NEUTRAL, given.shots.url), items: given.shots.items.map(scrubAgency) } : given.shots, parts: given.parts.map((p) => ({ ...p, buyer: null, sections: scrubSections(p.sections), extras: p.extras ? scrubAgency(p.extras) : p.extras })) }
+    : given;
   const title = `${input.client} · ${input.kind === "weekly" ? "Weekly report" : input.kind === "built" ? "Report" : "Monthly recap"} · ${input.periodLabel}`;
+  // The file's own properties too: a white label report names no agency there either
+  const by = brandOf(input).agency ?? "Performance report";
   return (
-    <Document title={title} author="Kaizen Marketing" creator="Kaizen Marketing" producer="Kaizen Marketing">
+    <Document title={title} author={brandOf(input).agency ?? input.client} creator={by} producer={by}>
       {input.kind === "weekly" ? (
         input.parts.map((p, i) => <Weekly key={i} input={input} part={p} images={images[i] ?? []} />)
       ) : input.kind === "monthly" ? (

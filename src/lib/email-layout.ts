@@ -6,7 +6,7 @@ import { siteUrl } from "@/lib/site";
 // steps or bullets instead of paragraphs, and one red button. Tables and inline styles, so every mail app shows it.
 
 const esc = (t: string) => t.replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]!);
-const RED = "#b21e2c";
+const BRAND = "#b21e2c";
 const INK = "#111111";
 const BODY = "#3a3a3a";
 const MUTED = "#6b6b6b";
@@ -27,9 +27,12 @@ export type EmailParts = {
   bullets?: string[];
   cta?: { label: string; url: string };
   note?: string;
+  /** A white label client's email: the same layout in a neutral slate, with no agency logo, name or footer */
+  whiteLabel?: boolean;
 };
 
 export function emailHtml(p: EmailParts) {
+  const RED = p.whiteLabel ? "#334155" : BRAND;
   const title = esc(p.title);
   const titled = p.highlight && p.title.includes(p.highlight) ? title.replace(esc(p.highlight), `<span style="background:${RED};color:#ffffff;padding:0 6px;border-radius:2px">${esc(p.highlight)}</span>`) : title;
   const steps = p.steps?.length
@@ -46,7 +49,7 @@ export function emailHtml(p: EmailParts) {
 ${p.preheader ? `<div style="display:none;max-height:0;overflow:hidden;opacity:0">${esc(p.preheader)}</div>` : ""}
 <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#fafafa"><tr><td align="center" style="padding:32px 14px">
 <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:560px">
-<tr><td style="padding:0 6px 18px"><img src="${siteUrl()}/kaizen-logo.png" width="112" height="31" alt="Kaizen" style="display:block;border:0"></td></tr>
+${p.whiteLabel ? "" : `<tr><td style="padding:0 6px 18px"><img src="${siteUrl()}/kaizen-logo.png" width="112" height="31" alt="Kaizen" style="display:block;border:0"></td></tr>`}
 <tr><td style="background:#ffffff;border:1px solid #ececec;border-radius:14px;padding:32px 30px">
 ${p.kicker ? `<p style="margin:0 0 12px;font:600 11px/1.4 ${FONT};letter-spacing:.16em;text-transform:uppercase;color:${RED}">${esc(p.kicker)}</p>` : ""}
 <h1 style="margin:0 0 18px;font:700 26px/1.25 ${HEAD};color:#000000;letter-spacing:-.01em">${titled}</h1>
@@ -56,7 +59,7 @@ ${steps}${bullets}
 ${p.cta ? `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:6px 0 4px"><tr><td style="background:${RED};border-radius:4px"><a href="${esc(p.cta.url)}" style="display:inline-block;padding:14px 26px;font:600 15px/1 ${FONT};color:#ffffff;text-decoration:none">${esc(p.cta.label)}</a></td></tr></table>` : ""}
 ${p.note ? `<p style="margin:20px 0 0;font:12.5px/1.55 ${FONT};color:${MUTED}">${esc(p.note)}</p>` : ""}
 </td></tr>
-<tr><td style="padding:18px 6px 0;font:12px/1.5 ${FONT};color:#9a9a9a">Kaizen Marketing · Get 1% better every day.</td></tr>
+${p.whiteLabel ? "" : `<tr><td style="padding:18px 6px 0;font:12px/1.5 ${FONT};color:#9a9a9a">Kaizen Marketing · Get 1% better every day.</td></tr>`}
 </table></td></tr></table></body></html>`;
 }
 
@@ -73,8 +76,8 @@ export function emailText(p: EmailParts) {
     p.cta ? `${p.cta.label}: ${p.cta.url}` : null,
     p.cta ? "" : null,
     p.note ?? null,
-    "",
-    "— The Kaizen team",
+    p.whiteLabel ? null : "",
+    p.whiteLabel ? null : "— The Kaizen team",
   ]
     .filter((x) => x != null)
     .join("\n");

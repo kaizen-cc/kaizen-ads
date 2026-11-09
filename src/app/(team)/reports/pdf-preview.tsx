@@ -135,7 +135,13 @@ export function PdfPreview({
 
   return (
     <div ref={wrap} className="relative grid gap-4">
-      {drawing && pages && <span className="pointer-events-none sticky top-20 z-10 justify-self-end rounded-full bg-fg px-3 py-1 text-[11.5px] text-bg shadow-lg">Updating…</span>}
+      {/* A white label client's report is generic: the buyer sees that what's drawn is what goes */}
+      {base?.input.whiteLabel && (
+        <p className="justify-self-start rounded-full border border-line bg-surface-2 px-3 py-1 text-[12px] text-muted">
+          <span className="font-medium text-fg">White label:</span> no Kaizen branding
+        </p>
+      )}
+      {drawing && pages &&<span className="pointer-events-none sticky top-20 z-10 justify-self-end rounded-full bg-fg px-3 py-1 text-[11.5px] text-bg shadow-lg">Updating…</span>}
       {!pages && !failed && (
         <div className="grid aspect-[8.5/11] place-items-center rounded-[6px] bg-white">
           <span className="h-1.5 w-24 overflow-hidden rounded-full bg-[#ececee]">

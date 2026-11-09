@@ -1,5 +1,6 @@
 import { headlineTiles, platformName } from "./format";
 import type { ReportMetrics } from "./metrics";
+import { scrubAgency } from "./white-label";
 
 // How a report reaches the client: Slack, email or both, and who the email goes to. Plain functions (no server code),
 // shared by the send step, the history's Resend and the tests: cleaning up the choice, and writing the email itself
@@ -77,6 +78,8 @@ export type ReportEmailInput = {
   dashboard?: string | null;
   /** A note the buyer added for this send */
   note?: string | null;
+  /** A white label client: no agency name, sign-off or link anywhere in it */
+  whiteLabel?: boolean;
 };
 
 export type ReportEmail = {
@@ -92,22 +95,35 @@ export type ReportEmail = {
   cta: { label: string; url: string } | null;
   note: string;
   text: string;
+  whiteLabel: boolean;
 };
 
 /** The email for a report: short, branded, the numbers that matter, the PDF attached (the dashboard linked when there is one) */
 export function buildReportEmail(p: ReportEmailInput): ReportEmail {
+  const mail = writeReportEmail(p);
+  if (!p.whiteLabel) return mail;
+  // The backstop: whatever the buyer or the report said, a white label client's email never names the agency
+  const clean = (t: string) => scrubAgency(t);
+  return { ...mail, subject: clean(mail.subject), preheader: clean(mail.preheader), kicker: clean(mail.kicker), title: clean(mail.title), hello: clean(mail.hello), lines: mail.lines.map(clean), bullets: mail.bullets.map(clean), note: clean(mail.note), text: clean(mail.text) };
+}
+
+function writeReportEmail(p: ReportEmailInput): ReportEmail {
+  const wl = Boolean(p.whiteLabel);
   const joint = p.parts.length > 1;
   const subject = reportSubject(p.client, p.kind, p.periodLabel);
   const lines = joint ? p.parts.flatMap((x) => summaryLines(x.sections).slice(0, 1).map((l) => `${platformName(x.platform)}: ${l}`)) : summaryLines(p.parts[0]?.sections);
   const bullets = p.parts.flatMap((x) => keyNumbers(x.metrics, joint ? platformName(x.platform).replace(" Ads", "") : undefined));
-  const firstName = p.from.name.split(" ")[0] || "The Kaizen team";
+  const firstName = p.from.name.split(" ")[0] || (wl ? "Your account team" : "The Kaizen team");
   const hello = p.first ? `Hi ${p.first},` : "Hi there,";
   const intro = `Here's your ${KIND_WORD[p.kind] ?? "report"} for ${p.periodLabel}. The full report is attached as a PDF.`;
-  const note = [p.note?.trim() || "", "Any questions, just reply to this email.", `${firstName}, Kaizen Marketing`].filter(Boolean).join(" ");
-  const cta = p.dashboard ? { label: "See every number on your dashboard", url: p.dashboard } : null;
+  // White label: signed by the buyer alone, and no link to the agency's portal
+  const sign = wl ? firstName : `${firstName}, Kaizen Marketing`;
+  const note = [p.note?.trim() || "", "Any questions, just reply to this email.", sign].filter(Boolean).join(" ");
+  const cta = p.dashboard && !wl ? { label: "See every number on your dashboard", url: p.dashboard } : null;
   const allLines = [intro, ...lines];
-  const text = [hello, "", ...allLines.flatMap((l) => [l, ""]), ...(bullets.length ? ["The key numbers:", ...bullets.map((b) => `• ${b}`), ""] : []), ...(cta ? [`${cta.label}: ${cta.url}`, ""] : []), ...(p.note?.trim() ? [p.note.trim(), ""] : []), "Any questions, just reply to this email.", "", firstName, "Kaizen Marketing"].join("\n");
+  const text = [hello, "", ...allLines.flatMap((l) => [l, ""]), ...(bullets.length ? ["The key numbers:", ...bullets.map((b) => `• ${b}`), ""] : []), ...(cta ? [`${cta.label}: ${cta.url}`, ""] : []), ...(p.note?.trim() ? [p.note.trim(), ""] : []), "Any questions, just reply to this email.", "", firstName, ...(wl ? [] : ["Kaizen Marketing"])].join("\n");
   return {
+    whiteLabel: wl,
     subject,
     replyTo: p.from.email && isEmail(p.from.email) ? p.from.email : null,
     preheader: lines[0] ?? `${p.client} · ${p.periodLabel}`,
