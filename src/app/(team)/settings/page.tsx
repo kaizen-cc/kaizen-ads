@@ -1,6 +1,6 @@
 import { GoogleWriteCard, MetaWriteCard } from "./meta-write-card";
 import { AudienceTermsCheck } from "@/components/audience-terms";
-import { MetaBusinessConnections } from "@/components/meta-business-connections";
+import { BusinessManagers } from "@/components/meta-business-connections";
 import { Connections } from "./connections";
 import { DEFAULT_URL_TAGS, metaWriteSetting } from "@/lib/meta-write";
 import Link from "next/link";
@@ -786,7 +786,7 @@ async function Sync({ motion }: { motion: string | null }) {
         me.isExec ? (
           <div className="grid min-w-0 gap-8">
             <AudienceTermsCheck />
-            <MetaBusinessConnections />
+            <BusinessManagers />
           </div>
         ) : (
           <AudienceTermsCheck />

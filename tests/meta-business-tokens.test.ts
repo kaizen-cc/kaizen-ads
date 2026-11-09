@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { randomBytes } from "node:crypto";
-import { accountFromPath, checkDebugToken, encryptionKey, isWriteCall, pickToken, redactTokens, seal, unseal, type TokenReach } from "@/lib/meta-token-core";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { accountFromPath, checkDebugToken, encryptionKey, isWriteCall, ownersFrom, reachLine, redactTokens, routeToken, seal, unseal, type BmState, type RouteCtx, type TokenReach } from "@/lib/meta-token-core";
 
-// Client Business Manager tokens: encrypted at rest, never in any text that leaves the server, used only for the ad
-// accounts they reach (and for writes, only where they can manage), and only when they're Kaizen's app with the right
-// permissions.
+// Business Manager tokens: encrypted at rest, never in any text that leaves the server, used for the ad accounts of
+// the clients that picked that Business Manager (Kaizen's own otherwise), and only when they're Kaizen's app with the
+// right permissions.
 
 const FAKE = `EAAB${"x7Y2kQ9".repeat(20)}`;
 
@@ -43,34 +45,67 @@ describe("token encryption", () => {
 });
 
 describe("which token a call uses", () => {
+  // Kaizen (default), ZenChange (connected), Get Me Friends (not connected), Blue Cherry Group (stopped working)
+  const bms = new Map<string, BmState>([
+    ["kaizen", { id: "kaizen", isDefault: true, status: "active", hasToken: false }],
+    ["zen", { id: "zen", isDefault: false, status: "active", hasToken: true }],
+    ["gmf", { id: "gmf", isDefault: false, status: "not_connected", hasToken: false }],
+    ["blue", { id: "blue", isDefault: false, status: "invalid", hasToken: false }],
+  ]);
   const reach: TokenReach[] = [
-    { tokenId: "zen", account: "111", canManage: true, status: "active", createdAt: "2026-11-01" },
-    { tokenId: "zen", account: "222", canManage: false, status: "active", createdAt: "2026-11-01" },
-    { tokenId: "old", account: "333", canManage: true, status: "invalid", createdAt: "2026-10-01" },
+    { tokenId: "zen", account: "111", canManage: true },
+    { tokenId: "zen", account: "222", canManage: false },
   ];
-  it("a covered account uses the client token", () => {
-    expect(pickToken("111", reach, false)).toBe("zen");
-    expect(pickToken("act_111", reach, true)).toBe("zen");
+  // Client → Business Manager, by the accounts each client owns
+  const owners = ownersFrom([
+    { account: "act_111", bm: "zen" },
+    { account: "222", bm: "zen" },
+    { account: "333", bm: "zen" },
+    { account: "444", bm: null },
+    { account: "555", bm: "kaizen" },
+    { account: "666", bm: "gmf" },
+    { account: "777", bm: "blue" },
+  ]);
+  const ctx: RouteCtx = { owners, bms, reach };
+  it("a client on a partner Business Manager reads and writes through its token", () => {
+    expect(routeToken("111", false, ctx)).toEqual({ tokenId: "zen", owned: true });
+    expect(routeToken("act_111", true, ctx)).toEqual({ tokenId: "zen", owned: true });
   });
-  it("an uncovered account uses Kaizen's own (null)", () => {
-    expect(pickToken("999", reach, false)).toBeNull();
-    expect(pickToken(null, reach, false)).toBeNull();
+  it("a client with no pick, or Kaizen picked, uses Kaizen's own", () => {
+    expect(routeToken("444", false, ctx)).toEqual({ tokenId: null, owned: true });
+    expect(routeToken("555", true, ctx)).toEqual({ tokenId: null, owned: true });
   });
-  it("a write needs a token that can manage the account", () => {
-    expect(pickToken("222", reach, false)).toBe("zen");
-    expect(pickToken("222", reach, true)).toBeNull();
+  it("a Business Manager that isn't connected or stopped working falls back to Kaizen's", () => {
+    expect(routeToken("666", false, ctx)).toEqual({ tokenId: null, owned: true });
+    expect(routeToken("777", true, ctx)).toEqual({ tokenId: null, owned: true });
   });
-  it("an invalid or revoked token is never used", () => {
-    expect(pickToken("333", reach, false)).toBeNull();
-    expect(pickToken("333", reach, true)).toBeNull();
+  it("a write where the token is known to only view the account goes through Kaizen's; reads stay on the partner", () => {
+    expect(routeToken("222", false, ctx).tokenId).toBe("zen");
+    expect(routeToken("222", true, ctx).tokenId).toBeNull();
   });
-  it("prefers a token that can manage, then the newest", () => {
-    const two: TokenReach[] = [
-      { tokenId: "a", account: "5", canManage: false, status: "active", createdAt: "2026-11-05" },
-      { tokenId: "b", account: "5", canManage: true, status: "active", createdAt: "2026-11-01" },
-      { tokenId: "c", account: "5", canManage: true, status: "active", createdAt: "2026-11-03" },
-    ];
-    expect(pickToken("5", two, false)).toBe("c");
+  it("an account the last check didn't list is left for Meta to decide", () => {
+    expect(routeToken("333", true, ctx).tokenId).toBe("zen");
+  });
+  it("an account no client owns uses Kaizen's own", () => {
+    expect(routeToken("999", false, ctx)).toEqual({ tokenId: null, owned: false });
+    expect(routeToken(null, false, ctx)).toEqual({ tokenId: null, owned: false });
+  });
+  it("one account on two clients: a partner pick wins over Kaizen's", () => {
+    const o = ownersFrom([
+      { account: "8", bm: null },
+      { account: "act_8", bm: "zen" },
+      { account: "8", bm: null },
+    ]);
+    expect(o.get("8")).toBe("zen");
+  });
+  it("says whether the chosen token reaches each account, in plain words", () => {
+    const zen = { name: "ZenChange", isDefault: false, status: "active" as const, checked: true };
+    expect(reachLine("111", zen, { canManage: true })).toEqual({ ok: true, text: "Reached via ZenChange · can change" });
+    expect(reachLine("123", zen, null)).toEqual({ ok: false, text: "ZenChange's token can't see act_123: assign it to the system user in ZenChange's Business Manager" });
+    expect(reachLine("222", zen, { canManage: false }).ok).toBe(false);
+    expect(reachLine("1", { ...zen, checked: false }, null).ok).toBe(true);
+    expect(reachLine("1", { ...zen, status: "not_connected" }, null).ok).toBe(false);
+    expect(reachLine("1", { name: "Kaizen", isDefault: true, status: "active", checked: true }, null).ok).toBe(true);
   });
   it("reads the account from the path", () => {
     expect(accountFromPath("act_123/insights")).toBe("123");
@@ -85,6 +120,22 @@ describe("which token a call uses", () => {
   });
 });
 
+describe("the Business Managers migration", () => {
+  const sql = readFileSync(join(process.cwd(), "supabase/migrations/20261109140000_meta_business_tokens.sql"), "utf8");
+  it("seeds Kaizen as the default with no stored token, and the three partners not connected", () => {
+    expect(sql).toMatch(/\('Kaizen', true, 0, 'active'\)/);
+    expect(sql).toMatch(/\('ZenChange', false, 1, 'not_connected'\)/);
+    expect(sql).toMatch(/\('Get Me Friends', false, 2, 'not_connected'\)/);
+    expect(sql).toMatch(/\('Blue Cherry Group', false, 3, 'not_connected'\)/);
+    expect(sql).toMatch(/on conflict \(name\) do nothing/);
+  });
+  it("gives each client a Business Manager (null: Kaizen) and keeps tokens server only", () => {
+    expect(sql).toMatch(/add column if not exists meta_business uuid references public\.meta_business_tokens \(id\) on delete set null/);
+    expect(sql).not.toMatch(/client_id/);
+    expect(sql).toMatch(/revoke all on public\.meta_business_tokens from anon, authenticated/);
+    expect(sql).toMatch(/is_default and token_ciphertext is null/);
+  });
+});
 describe("redaction", () => {
   it("removes access_token and friends from URLs and bodies", () => {
     const s = redactTokens(`fetch failed https://graph.facebook.com/v24.0/act_1?fields=x&access_token=${FAKE}&appsecret_proof=abc123 {"input_token":"${FAKE}"}`);

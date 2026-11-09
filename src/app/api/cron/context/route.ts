@@ -94,7 +94,7 @@ function due(step: string | null) {
   if (step === "market") return hour === 8;
   if (step === "creative_drive") return true; // every 10 minutes (vercel.json): ticket creative copied into each client's Drive, retries
   if (step === "bibles") return true; // every 10 minutes (vercel.json): every client gets a Brand Bible, kept current
-  if (step === "meta_tokens") return true; // daily (vercel.json): each client business's Meta token checked, execs told when one stops working
+  if (step === "meta_tokens") return true; // daily (vercel.json): each Business Manager's Meta token checked, execs told when one stops working
   if (step === "bible_write") return true; // started by a Bible build once its research is in (?client=<id>)
   if (step === "presentation_write") return true; // started once a Bible is written (?client=<id>): its client presentation, drafted (never sent)
   if (step === "presentations") return true; // every 10 minutes (vercel.json): a new client's presentation, written and sent

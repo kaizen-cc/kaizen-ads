@@ -19,12 +19,12 @@ export const metaConfigured = () => Boolean(process.env.META_SYSTEM_USER_TOKEN);
 const proofFor = (token: string): Record<string, string> =>
   process.env.META_APP_SECRET ? { appsecret_proof: createHmac("sha256", process.env.META_APP_SECRET).update(token).digest("hex") } : {};
 
-// ─── Which token: Kaizen's own, or a client business's ─────────────────────
-// Some ad accounts live in a client's own Business Manager and are reached with a token from a system user there
-// (meta_business_tokens). Every call aimed at an ad account uses the token that reaches it: the account comes from
-// the path (act_123/…), from opts.account, or from the account scope a caller opened with withMetaAccount (for calls
-// on an ad, ad set, video or report ID inside that account). A write only uses a client token that can manage the
-// account. Calls tied to no account (me/…, search, a business) keep Kaizen's own token.
+// ─── Which token: Kaizen's own, or a partner Business Manager's ────────────
+// Each client picks the Business Manager its ad accounts are run through (Kaizen by default, or a white-label partner
+// such as ZenChange, whose token is in meta_business_tokens). Every call aimed at an ad account uses the token of the
+// Business Manager its client picked: the account comes from the path (act_123/…), from opts.account, or from the
+// account scope a caller opened with withMetaAccount (for calls on an ad, ad set, video or report ID inside that
+// account). Accounts no client owns, and calls tied to no account (me/…, search, a business), use Kaizen's own.
 
 const scope = new AsyncLocalStorage<{ account: string }>();
 
@@ -37,15 +37,16 @@ export function withMetaAccount<T>(account: string | null | undefined, fn: () =>
 /** account: the ad account the call belongs to. write: needs a token that can manage it. token "default": Kaizen's own. */
 export type GraphOpts = { account?: string | null; write?: boolean; token?: "default" };
 
-type Resolved = { token: string; client: boolean };
+/** client: a partner Business Manager's token. owned: a client owns the account, so its choice decides. */
+type Resolved = { token: string; client: boolean; owned: boolean };
 
 async function resolveToken(path: string, method: "GET" | "POST", opts: GraphOpts): Promise<Resolved & { account: string | null }> {
   const fallback = { token: process.env.META_SYSTEM_USER_TOKEN!, client: false };
   const account = bareAccount(opts.account) || accountFromPath(path) || scope.getStore()?.account || null;
-  if (opts.token === "default" || !account) return { ...fallback, account };
-  const { metaTokenFor } = await import("@/lib/meta-tokens");
-  const hit = await metaTokenFor(account, { write: opts.write ?? isWriteCall(path, method) }).catch(() => null);
-  return hit ? { token: hit.token, client: true, account } : { ...fallback, account };
+  if (opts.token === "default" || !account) return { ...fallback, owned: false, account };
+  const { metaRoute } = await import("@/lib/meta-tokens");
+  const r = await metaRoute(account, { write: opts.write ?? isWriteCall(path, method) }).catch(() => ({ hit: null, owned: false }));
+  return r.hit ? { token: r.hit.token, client: true, owned: r.owned, account } : { ...fallback, owned: r.owned, account };
 }
 
 type GraphError = { message: string; code: number; error_subcode?: number; error_user_title?: string; error_user_msg?: string };
@@ -92,7 +93,7 @@ const unseen = (e: unknown) => {
 };
 
 /**
- * A call with a token the caller holds (validating a client business's token). Never Kaizen's own unless passed.
+ * A call with a token the caller holds (checking a Business Manager's token). Never Kaizen's own unless passed.
  * The token stays out of every error.
  */
 export const metaGraphAs = <T>(token: string, path: string, params: Record<string, string> = {}, method: "GET" | "POST" = "GET") => send<T>(token, path, params, method);
@@ -107,22 +108,31 @@ export function withAttribution(path: string, params: Record<string, string>): R
 }
 
 /**
- * Every Graph call: with the token that reaches the account it's aimed at (see resolveToken). A read of an ad, ad set,
- * video or post outside any account scope that Kaizen's token can't see is tried once with each client business's
- * token, so objects in a client's own Business Manager still read wherever they're opened. Writes never fall back.
+ * Every Graph call: with the token of the Business Manager its account's client picked (see resolveToken). Reads only,
+ * never writes, get a second try when Meta says the token can't see the object: a partner token's read is tried with
+ * Kaizen's own (an account the partner's system user hasn't been given yet), and a read Kaizen's token can't see, on
+ * an account no client owns or outside any account, is tried once with each connected partner's token.
  */
 async function graph<T>(path: string, params: Record<string, string> = {}, method: "GET" | "POST" = "GET", opts: GraphOpts = {}): Promise<T> {
   const r = await resolveToken(path, method, opts);
   try {
     return await send<T>(r.token, path, params, method);
   } catch (e) {
-    if (method !== "GET" || r.client || r.account || opts.token === "default" || !unseen(e)) throw e;
-    const { clientTokens } = await import("@/lib/meta-tokens");
-    for (const t of await clientTokens().catch(() => [])) {
+    if (method !== "GET" || opts.token === "default" || !unseen(e)) throw e;
+    if (r.client) {
       try {
-        return await send<T>(t, path, params, method);
+        return await send<T>(process.env.META_SYSTEM_USER_TOKEN!, path, params, method);
       } catch {
-        // the next business, or Kaizen's own error
+        throw e;
+      }
+    }
+    if (r.owned) throw e;
+    const { partnerTokens } = await import("@/lib/meta-tokens");
+    for (const t of await partnerTokens().catch(() => [])) {
+      try {
+        return await send<T>(t.token, path, params, method);
+      } catch {
+        // the next Business Manager, or Kaizen's own error
       }
     }
     throw e;
@@ -566,7 +576,8 @@ async function snapshot(admin: SupabaseClient, clientId: string, adAccountId: st
  * not only creative ones). The list is saved so the KPI page can show accounts Meta shares that no client has yet.
  */
 export async function linkAdAccounts(admin: SupabaseClient) {
-  const accounts: { id: string; account_id: string; name: string; account_status: number }[] = [];
+  // bm: the partner Business Manager whose system user sees it (absent: Kaizen's own)
+  const accounts: { id: string; account_id: string; name: string; account_status: number; bm?: { id: string; name: string } }[] = [];
   let after = "";
   do {
     const page = await graph<{ data: typeof accounts; paging?: { cursors?: { after?: string }; next?: string } }>("me/adaccounts", {
@@ -577,19 +588,23 @@ export async function linkAdAccounts(admin: SupabaseClient) {
     accounts.push(...page.data);
     after = page.paging?.next ? (page.paging.cursors?.after ?? "") : "";
   } while (after);
-  // Plus the accounts each connected client business's system user sees (their own Business Managers)
-  const { clientTokens } = await import("@/lib/meta-tokens");
-  for (const token of await clientTokens().catch(() => [] as string[])) {
+  // Plus the accounts each connected partner Business Manager's system user sees, labelled with it
+  const { partnerTokens } = await import("@/lib/meta-tokens");
+  for (const p of await partnerTokens().catch(() => [] as { id: string; name: string; token: string }[])) {
     let next = "";
     for (let i = 0; i < 10; i++) {
-      const page = await send<{ data: typeof accounts; paging?: { cursors?: { after?: string }; next?: string } }>(token, "me/adaccounts", { fields: "account_id,name,account_status", limit: "200", ...(next ? { after: next } : {}) }, "GET").catch(() => null);
-      for (const a of page?.data ?? []) if (!accounts.some((x) => x.account_id === a.account_id)) accounts.push(a);
+      const page = await send<{ data: typeof accounts; paging?: { cursors?: { after?: string }; next?: string } }>(p.token, "me/adaccounts", { fields: "account_id,name,account_status", limit: "200", ...(next ? { after: next } : {}) }, "GET").catch(() => null);
+      for (const a of page?.data ?? []) if (!accounts.some((x) => x.account_id === a.account_id)) accounts.push({ ...a, bm: { id: p.id, name: p.name } });
       next = page?.paging?.next ? (page.paging.cursors?.after ?? "") : "";
       if (!next) break;
     }
   }
 
-  const { data: all } = await admin.from("clients").select("id, name, meta_ad_account_id, creative_package, status, archived_at");
+  type Linkable = { id: string; name: string; meta_ad_account_id: string | null; meta_business?: string | null; creative_package: unknown; status: string | null; archived_at: string | null };
+  let { data: all, error: allError } = await admin.from("clients").select("id, name, meta_ad_account_id, meta_business, creative_package, status, archived_at").returns<Linkable[]>();
+  // Before the Business Managers migration: without the column
+  if (allError) ({ data: all, error: allError } = await admin.from("clients").select("id, name, meta_ad_account_id, creative_package, status, archived_at").returns<Linkable[]>());
+  if (allError) throw new Error(`Reading clients: ${allError.message}`);
   // Every client's account is taken, archived ones too (it isn't free to link to someone else)
   const taken = new Set((all ?? []).map((c) => c.meta_ad_account_id).filter(Boolean));
   const clients = (all ?? []).filter((c) => isLive(c));
@@ -604,13 +619,15 @@ export async function linkAdAccounts(admin: SupabaseClient) {
     });
     // Only a single clear match; anything ambiguous waits for someone to pick on the KPI page
     if (hits.length === 1) {
-      await admin.from("clients").update({ meta_ad_account_id: hits[0].account_id }).eq("id", c.id);
+      // Found only through a partner's Business Manager: the client runs through it (unless one is already picked)
+      const bm = hits[0].bm && !c.meta_business ? { meta_business: hits[0].bm.id } : {};
+      await admin.from("clients").update({ meta_ad_account_id: hits[0].account_id, ...bm }).eq("id", c.id);
       c.meta_ad_account_id = hits[0].account_id;
       taken.add(hits[0].account_id);
-      linked.push(`${c.name} → ${hits[0].name}`);
+      linked.push(`${c.name} → ${hits[0].name}${hits[0].bm ? ` (via ${hits[0].bm.name})` : ""}`);
     }
   }
-  const unlinked = accounts.filter((a) => !taken.has(a.account_id) && a.account_status === 1).map((a) => ({ id: a.account_id, name: a.name }));
+  const unlinked = accounts.filter((a) => !taken.has(a.account_id) && a.account_status === 1).map((a) => ({ id: a.account_id, name: a.name, ...(a.bm ? { bm: a.bm } : {}) }));
   await admin.from("sync_state").upsert({ source: "meta:accounts", last_run_at: new Date().toISOString(), last_result: { total: accounts.length, unlinked } });
   return {
     accounts: accounts.map((a) => `${a.name} (${a.account_id})${a.account_status === 1 ? "" : " · not active"}`),
@@ -723,7 +740,7 @@ export function describeMeta(s: { date_start: string; date_stop: string; summary
 /** Try progressively bigger requests on one ad account and report Meta's exact answer to each. */
 export async function debugMeta(adAccountId: string) {
   const act = `act_${adAccountId.replace(/^act_/, "")}`;
-  // The token this account actually uses (a client business's, or Kaizen's own)
+  // The token this account actually uses (its client's Business Manager's, or Kaizen's own)
   const { token, client } = await resolveToken(act, "GET", {});
   const probe = async (label: string, version: string, path: string, params: Record<string, string>) => {
     const res = await fetch(`https://graph.facebook.com/${version}/${path}?${new URLSearchParams({ ...params, ...proofFor(token), access_token: token })}`, { cache: "no-store" });
@@ -743,7 +760,7 @@ export async function debugMeta(adAccountId: string) {
   const ads = await fetch(`https://graph.facebook.com/${VERSION}/${act}/ads?${new URLSearchParams({ fields: "id", limit: "1", ...proofFor(token), access_token: token })}`, { cache: "no-store" }).then((r) => r.json() as Promise<{ data?: { id: string }[] }>);
   const adId = ads.data?.[0]?.id;
   if (adId) out.push(await probe("one ad's creative", VERSION, adId, { fields: "effective_status,creative.thumbnail_width(600).thumbnail_height(600){title,body,thumbnail_url,image_url,object_story_spec,asset_feed_spec,effective_object_story_id}" }));
-  return { version: VERSION, appSecretProof: Boolean(process.env.META_APP_SECRET), token: client ? "client business" : "Kaizen", probes: out };
+  return { version: VERSION, appSecretProof: Boolean(process.env.META_APP_SECRET), token: client ? "partner Business Manager" : "Kaizen", probes: out };
 }
 
 // ─── One ad, in full, on demand (the winners library and client pages open it) ───

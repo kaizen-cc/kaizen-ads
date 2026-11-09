@@ -1736,7 +1736,7 @@ function AddKpi({ clients, buyers, platform, preset = null, onDone }: { clients:
 }
 
 /** Ad accounts Meta shares with the agency that the name match couldn't pin to a client. */
-function Unlinked({ accounts, clients }: { accounts: { id: string; name: string }[]; clients: { id: string; name: string }[] }) {
+function Unlinked({ accounts, clients }: { accounts: { id: string; name: string; bm?: { id: string; name: string } }[]; clients: { id: string; name: string }[] }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="rounded-[14px] border border-dashed border-line px-4 py-2 md:px-5 md:py-4">
@@ -1752,7 +1752,7 @@ function Unlinked({ accounts, clients }: { accounts: { id: string; name: string 
             <li key={a.id} className="grid items-center gap-3 rounded-[10px] bg-surface px-4 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
               <span className="min-w-0">
                 <span className="block truncate text-sm">{a.name}</span>
-                <span className="tabular text-xs text-faint">act_{a.id}</span>
+                <span className="tabular text-xs text-faint">act_{a.id} · via {a.bm?.name ?? "Kaizen"}</span>
               </span>
               <ActionForm action={linkAdAccount.bind(null, a.id)} submitLabel="Link" className="flex flex-wrap items-center gap-2 [&>div]:shrink-0">
                 <select name="client_id" required defaultValue="" className={`${field} min-w-0 flex-1`}>
@@ -1798,7 +1798,7 @@ export function KpiBoard({
   me: { id: string; firstName: string };
   initialOwner: string;
   lastSync: string | null;
-  unlinked?: { id: string; name: string }[];
+  unlinked?: { id: string; name: string; bm?: { id: string; name: string } }[];
   /** Google Ads is set up (it reads through the manager account); its KPIs fill in on the next sync */
   googleConnected?: boolean;
   /** One account to open and bring into view (from a recap card, a notification or the client page) */

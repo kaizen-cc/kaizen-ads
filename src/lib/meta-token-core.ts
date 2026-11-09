@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 
-// The plain parts of client Business Manager tokens, kept apart from the database and Meta so they can be tested:
+// The plain parts of Business Manager tokens, kept apart from the database and Meta so they can be tested:
 // encryption at rest, redaction of tokens from any text, which token a Graph call to an ad account uses, and what a
 // pasted token must be (Kaizen's app, the right permissions) before it's saved.
 
@@ -37,7 +37,7 @@ export function unseal(s: Sealed, key: Buffer): string {
   return Buffer.concat([d.update(Buffer.from(s.ciphertext, "base64")), d.final()]).toString("utf8");
 }
 
-export const NO_KEY = "Add TOKEN_ENCRYPTION_KEY in Vercel first: without it a client's token can't be stored safely.";
+export const NO_KEY = "Add TOKEN_ENCRYPTION_KEY in Vercel first: without it a Business Manager's token can't be stored safely.";
 
 // ─── Redaction ─────────────────────────────────────────────────────────────
 
@@ -65,20 +65,64 @@ export function accountFromPath(path: string): string | null {
   return m ? m[1] : null;
 }
 
-export type TokenReach = { tokenId: string; account: string; canManage: boolean; status: string; createdAt?: string | null };
+/** A Business Manager's token reaching an ad account (from meta_business_token_accounts). */
+export type TokenReach = { tokenId: string; account: string; canManage: boolean };
+
+export type BmStatus = "not_connected" | "active" | "invalid" | "revoked";
+
+/** A Business Manager as routing sees it: usable when it isn't Kaizen's, is active and has a token. */
+export type BmState = { id: string; isDefault: boolean; status: BmStatus; hasToken: boolean };
+
+export type RouteCtx = {
+  /** Ad account (bare) → the Business Manager its client picked (null: Kaizen's). Only accounts a client owns. */
+  owners: Map<string, string | null>;
+  bms: Map<string, BmState>;
+  reach: TokenReach[];
+};
 
 /**
- * The client business token for this account, or null for Kaizen's own token. Only active tokens count. A read takes
- * any active token that reaches the account; a write takes only one that can manage it (a token that only reads the
- * account never writes to it). The newest token wins when two reach the same account.
+ * Which Business Manager's token a call to this ad account uses. tokenId null: Kaizen's own. owned: a client owns the
+ * account (its KPI targets or Details ID), so its choice of Business Manager decides; an account no client owns uses
+ * Kaizen's (and a read Kaizen can't see may still be tried with the other tokens). A Business Manager that isn't
+ * connected or stopped working falls back to Kaizen's. A write goes through the chosen token unless what it reaches
+ * says it can only view the account; an account its last check didn't list is left for Meta to decide.
  */
-export function pickToken(account: string | null | undefined, reach: TokenReach[], write: boolean): string | null {
+export function routeToken(account: string | null | undefined, write: boolean, ctx: RouteCtx): { tokenId: string | null; owned: boolean } {
   const id = bareAccount(account);
-  if (!id) return null;
-  const hits = reach
-    .filter((r) => r.status === "active" && bareAccount(r.account) === id && (!write || r.canManage))
-    .sort((a, b) => Number(b.canManage) - Number(a.canManage) || String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")));
-  return hits[0]?.tokenId ?? null;
+  if (!id) return { tokenId: null, owned: false };
+  if (!ctx.owners.has(id)) return { tokenId: null, owned: false };
+  const sel = ctx.owners.get(id) ?? null;
+  const bm = sel ? ctx.bms.get(sel) : null;
+  if (!bm || bm.isDefault || bm.status !== "active" || !bm.hasToken) return { tokenId: null, owned: true };
+  if (write) {
+    const known = ctx.reach.find((r) => r.tokenId === bm.id && bareAccount(r.account) === id);
+    if (known && !known.canManage) return { tokenId: null, owned: true };
+  }
+  return { tokenId: bm.id, owned: true };
+}
+
+/**
+ * Ad account → its client's Business Manager. One account on two clients: a chosen (non-default) Business Manager
+ * wins over Kaizen's, so an account isn't pulled back to Kaizen by a stale duplicate.
+ */
+export function ownersFrom(rows: { account: string | null | undefined; bm: string | null | undefined }[]): Map<string, string | null> {
+  const out = new Map<string, string | null>();
+  for (const r of rows) {
+    const id = bareAccount(r.account);
+    if (!id) continue;
+    if (!out.has(id) || (!out.get(id) && r.bm)) out.set(id, r.bm ?? null);
+  }
+  return out;
+}
+
+/** What Team & setup says about one of the client's accounts and the chosen Business Manager's token. */
+export function reachLine(account: string, bm: { name: string; isDefault: boolean; status: BmStatus; checked: boolean }, reach: { canManage: boolean } | null): { ok: boolean; text: string } {
+  const act = `act_${bareAccount(account)}`;
+  if (bm.isDefault) return { ok: true, text: "Through Kaizen's system user" };
+  if (bm.status !== "active") return { ok: false, text: `${bm.name} isn't connected, so Kaizen's own token is used` };
+  if (reach) return reach.canManage ? { ok: true, text: `Reached via ${bm.name} · can change` } : { ok: false, text: `Reached via ${bm.name} · view only: give the system user Manage campaigns on ${act} in ${bm.name}'s Business Manager` };
+  if (!bm.checked) return { ok: true, text: `Via ${bm.name} · not checked yet` };
+  return { ok: false, text: `${bm.name}'s token can't see ${act}: assign it to the system user in ${bm.name}'s Business Manager` };
 }
 
 /** A POST that changes something (an insights POST only starts a report, which reading covers). */
@@ -104,7 +148,7 @@ export function checkDebugToken(d: DebugToken | null | undefined, kaizenAppId: s
   if (kaizenAppId && String(d.app_id) !== String(kaizenAppId))
     return {
       ok: false,
-      reason: `This token was made for another app${d.application ? ` ("${d.application}")` : ""}, not Kaizen's. In the client's Business Manager, generate the system user's token with Kaizen's app selected.`,
+      reason: `This token was made for another app${d.application ? ` ("${d.application}")` : ""}, not Kaizen's. In that Business Manager, generate the system user's token with Kaizen's app selected.`,
     };
   const scopes = [...new Set(d.scopes ?? [])].sort();
   const missing = REQUIRED_SCOPES.filter((s) => !scopes.includes(s));

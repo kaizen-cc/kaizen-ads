@@ -153,7 +153,7 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
 
   // Ad accounts Meta shares with us that no client has yet (server-side bookmark; execs link them)
   const { data: accounts } = me.isExec && adminConfigured() ? await createAdminClient().from("sync_state").select("last_result").eq("source", "meta:accounts").maybeSingle() : { data: null };
-  const unlinked = ((accounts?.last_result as { unlinked?: { id: string; name: string }[] } | null)?.unlinked ?? []).slice(0, 50);
+  const unlinked = ((accounts?.last_result as { unlinked?: { id: string; name: string; bm?: { id: string; name: string } }[] } | null)?.unlinked ?? []).slice(0, 50);
 
   const lastSync = (snaps ?? []).map((s) => s.computed_at as string).sort().at(-1) ?? null;
   const mine = rows.some((r) => r.ownerId === me.id);

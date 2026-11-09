@@ -99,7 +99,7 @@ async function driveFiles(token: string, url: string): Promise<ResolvedFile[]> {
 async function usablePages(account: string) {
   type P = { id: string; name: string; tasks?: string[]; instagram_business_account?: { id: string; username?: string } };
   const [mine, promote, igs] = await Promise.all([
-    // The Pages of the system user that launches into this account (a client business's own, or Kaizen's)
+    // The Pages of the system user that launches into this account (its client's Business Manager's, or Kaizen's)
     metaGraph<{ data: P[] }>("me/accounts", { fields: "name,tasks,instagram_business_account{id,username}", limit: "200" }, "GET", { account, write: true }).catch(() => ({ data: [] as P[] })),
     metaGraph<{ data: P[] }>(`act_${account}/promote_pages`, { fields: "name,instagram_business_account{id,username}", limit: "200" }).catch(() => ({ data: [] as P[] })),
     metaGraph<{ data: { id: string; username?: string }[] }>(`act_${account}/instagram_accounts`, { fields: "username", limit: "100" }).catch(() => ({ data: [] })),

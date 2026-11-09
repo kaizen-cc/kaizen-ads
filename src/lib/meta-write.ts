@@ -84,7 +84,7 @@ export async function writeBlocked(admin: SupabaseClient, account: string): Prom
 export async function metaWrite<T = { id?: string; success?: boolean }>(admin: SupabaseClient, account: string, path: string, params: Record<string, string>, validateOnly: boolean): Promise<T> {
   const blocked = await writeBlocked(admin, account);
   if (blocked) throw new Error(blocked);
-  // The token that can manage this account: a client business's when one does, otherwise Kaizen's own
+  // The token that can manage this account: its client's Business Manager's (a partner's), otherwise Kaizen's own
   return metaGraph<T>(path, { ...params, ...(validateOnly ? { execution_options: JSON.stringify(["validate_only"]) } : {}) }, "POST", { account, write: true });
 }
 
@@ -129,7 +129,7 @@ export async function diagnoseAccess(account: string): Promise<string> {
   const who = `${me?.name ? `The system user "${me.name}" (${me.id})` : "The system user"} ${via.label}`;
   if (scopes.missing.includes("ads_management"))
     return via.client
-      ? `${who}: its token was generated without ads_management (it has ${scopes.granted.join(", ") || "nothing readable"}). In ${via.name}'s Business Manager: Users → System users → Generate new token with ads_management ticked, then Replace it in the client's Team & setup.`
+      ? `${who}: its token was generated without ads_management (it has ${scopes.granted.join(", ") || "nothing readable"}). In ${via.name}'s Business Manager: Users → System users → Generate new token with ads_management ticked, then Replace it under Business Managers in Settings › Sync health.`
       : `${who}: its token was generated without ads_management (it has ${scopes.granted.join(", ") || "nothing readable"}). In Business Manager: Users → System users → Generate new token with ads_management ticked, then replace META_SYSTEM_USER_TOKEN in Vercel and redeploy.`;
   if ("error" in acct) return `${who} can't even read ad account ${id}: ${acct.error}`;
   const tasks = acct.user_tasks ?? [];
@@ -140,12 +140,12 @@ export async function diagnoseAccess(account: string): Promise<string> {
   return `${who} has ${can} on "${acct.name ?? id}" (${id}, ${owner}) and the token has ads_management, so Meta is refusing for another reason: often the app itself isn't approved for ads_management (Advanced Access) or the system user's role in our Business Manager is Employee instead of Admin.`;
 }
 
-/** Which business a change to this account goes through: a connected client business, or Kaizen's own. */
+/** Which business a change to this account goes through: the client's partner Business Manager, or Kaizen's own. */
 export async function viaBusiness(account: string): Promise<{ client: boolean; name: string; label: string }> {
   const { metaTokenVia } = await import("@/lib/meta-tokens");
   const v = await metaTokenVia(bare(account), { write: true }).catch(() => null);
   if (v) {
-    const name = v.businessName || "the client";
+    const name = v.name;
     return { client: true, name, label: `via ${name}'s business` };
   }
   return { client: false, name: "Kaizen", label: "via Kaizen's business" };
@@ -159,7 +159,7 @@ export async function writeAccess(admin: SupabaseClient, account: string): Promi
     return {
       ok: false,
       detail: via.client
-        ? `The token ${via.label} is missing ${scopes.missing.join(", ")}. In ${via.name}'s Business Manager, generate a new token for the system user with those permissions ticked, then Replace it in the client's Team & setup. It has now: ${scopes.granted.join(", ") || "nothing readable"}.`
+        ? `The token ${via.label} is missing ${scopes.missing.join(", ")}. In ${via.name}'s Business Manager, generate a new token for the system user with those permissions ticked, then Replace it under Business Managers in Settings › Sync health. It has now: ${scopes.granted.join(", ") || "nothing readable"}.`
         : `The system user's token is missing ${scopes.missing.join(", ")}. Generate a new token for the system user in Business Manager (Users → System users → Generate new token) with those permissions ticked, then replace META_SYSTEM_USER_TOKEN in Vercel. It has now: ${scopes.granted.join(", ") || "nothing readable"}.`,
     };
   try {
@@ -288,7 +288,7 @@ export type AudienceTerms = {
   tosKeys: string[];
   error: string | null;
   url: string;
-  /** The client business a change goes through (its own connected token), or null for Kaizen's */
+  /** The partner Business Manager a change goes through (its client's pick), or null for Kaizen's */
   via: string | null;
   access: "manage" | "view" | "none";
   tasks: string[];
@@ -330,12 +330,12 @@ export async function audienceTerms(accounts: string[]): Promise<AudienceTerms[]
     out.push(
       ...(await Promise.all(
         ids.slice(i, i + 8).map(async (id): Promise<AudienceTerms> => {
-          // Checked with the token a change to this account uses: a client business's own, or Kaizen's. Through a
-          // client's token, the terms are the client business's to accept
+          // Checked with the token a change to this account uses: its client's Business Manager's, or Kaizen's. Through a
+          // partner's token, the terms are that Business Manager's to accept
           const { metaTokenVia } = await import("@/lib/meta-tokens");
           const via = await metaTokenVia(id, { write: true }).catch(() => null);
           const url = audienceTermsUrl(id, via ? via.businessId : business?.id);
-          const viaName = via ? via.businessName || "the client" : null;
+          const viaName = via ? via.name : null;
           try {
             const r = await metaGraph<{ name?: string; tos_accepted?: Record<string, number | boolean> | null; user_tasks?: string[]; business?: { name?: string } }>(`act_${id}`, { fields: "name,tos_accepted,user_tasks,business{name}" }, "GET", { account: id, write: true });
             const tasks = r.user_tasks ?? [];

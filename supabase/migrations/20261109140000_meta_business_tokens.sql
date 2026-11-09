@@ -1,17 +1,24 @@
--- A Meta access token per client Business Manager. Some client ad accounts live in the client's own Business Manager,
--- where Kaizen's system user can't be given access through a partner share. The client's business gives Kaizen's app
--- partner access, a system user is made there with the ad accounts and the app, and its token is pasted into Kaizen Ads.
--- Every Graph call aimed at an account that token reaches uses it; everything else keeps Kaizen's own token.
+-- The Business Managers Kaizen works through, and the Meta token for each. Kaizen is the default (its system user's
+-- token is META_SYSTEM_USER_TOKEN in Vercel, never stored here); ZenChange, Get Me Friends and Blue Cherry Group are
+-- white-label partner agencies whose clients' ad accounts live in their own Business Managers. Each one gives Kaizen's
+-- app access, a system user is made there with the ad accounts and the app, and an exec pastes its token in Settings.
+-- Each client picks its Business Manager in Team & setup (clients.meta_business, null = Kaizen), and every Graph call
+-- for that client's ad accounts, reads and changes, goes through that Business Manager's token.
 --
 -- The token is encrypted by the app (AES-256-GCM, key in TOKEN_ENCRYPTION_KEY): iv, auth tag and ciphertext, base64.
 -- Never readable from the browser: RLS is on with no policies, so only the server (service role) reads or writes these
--- tables. Execs see the metadata through server actions.
+-- tables. Everyone sees names and status through server actions.
 
 create table if not exists public.meta_business_tokens (
   id               uuid primary key default gen_random_uuid(),
+  -- Kaizen's name for it (Kaizen, ZenChange, Get Me Friends, Blue Cherry Group)
+  name             text not null unique,
+  -- Kaizen's own: uses META_SYSTEM_USER_TOKEN, never a stored token
+  is_default       boolean not null default false,
+  sort             int not null default 0,
+  -- Meta's Business Manager, filled from the token when it's connected
   business_id      text,
   business_name    text,
-  label            text,
   token_iv         text,
   token_tag        text,
   token_ciphertext text,
@@ -21,22 +28,31 @@ create table if not exists public.meta_business_tokens (
   app_id           text,
   system_user_id   text,
   system_user_name text,
-  client_id        uuid references public.clients (id) on delete set null,
-  created_by       uuid references public.profiles (id) on delete set null,
+  connected_by     uuid references public.profiles (id) on delete set null,
+  connected_at     timestamptz,
   created_at       timestamptz not null default now(),
   last_checked_at  timestamptz,
   last_error       text,
-  status           text not null default 'active' check (status in ('active', 'invalid', 'revoked')),
-  -- A revoked token keeps its row (who, when, which business) but never its ciphertext
-  constraint meta_business_tokens_cipher check (status = 'revoked' or (token_iv is not null and token_tag is not null and token_ciphertext is not null))
+  status           text not null default 'not_connected' check (status in ('not_connected', 'active', 'invalid', 'revoked')),
+  -- A connected partner Business Manager holds its encrypted token; Kaizen's never does
+  constraint meta_business_tokens_cipher check (
+    (is_default and token_ciphertext is null)
+    or (not is_default and (status in ('not_connected', 'revoked') or (token_iv is not null and token_tag is not null and token_ciphertext is not null)))
+  )
 );
-create index if not exists meta_business_tokens_status on public.meta_business_tokens (status);
-create index if not exists meta_business_tokens_client on public.meta_business_tokens (client_id);
--- One live token per business: a new one for the same business replaces the old
-create unique index if not exists meta_business_tokens_one_live on public.meta_business_tokens (business_id) where status <> 'revoked' and business_id is not null;
+create unique index if not exists meta_business_tokens_one_default on public.meta_business_tokens (is_default) where is_default;
+-- One Kaizen Ads row per Meta Business Manager: the same token can't be connected under two names
+create unique index if not exists meta_business_tokens_business on public.meta_business_tokens (business_id) where business_id is not null and status <> 'revoked';
 
--- Which ad accounts each token reaches, refreshed on save and by the daily check. can_manage: the system user may
--- change the account (Manage campaigns or full control), not only read it.
+insert into public.meta_business_tokens (name, is_default, sort, status) values
+  ('Kaizen', true, 0, 'active'),
+  ('ZenChange', false, 1, 'not_connected'),
+  ('Get Me Friends', false, 2, 'not_connected'),
+  ('Blue Cherry Group', false, 3, 'not_connected')
+on conflict (name) do nothing;
+
+-- Which ad accounts each Business Manager's token reaches, refreshed on connect and by the daily check. can_manage:
+-- the system user may change the account (Manage campaigns or full control), not only read it.
 create table if not exists public.meta_business_token_accounts (
   business_token_id uuid not null references public.meta_business_tokens (id) on delete cascade,
   ad_account_id     text not null,
@@ -51,3 +67,8 @@ alter table public.meta_business_tokens enable row level security;
 alter table public.meta_business_token_accounts enable row level security;
 revoke all on public.meta_business_tokens from anon, authenticated;
 revoke all on public.meta_business_token_accounts from anon, authenticated;
+
+-- Each client's Business Manager: null is Kaizen's (the default). Read like every other client column; set by execs.
+alter table public.clients add column if not exists meta_business uuid references public.meta_business_tokens (id) on delete set null;
+create index if not exists clients_meta_business on public.clients (meta_business) where meta_business is not null;
+comment on column public.clients.meta_business is 'The Business Manager whose Meta token reads and changes this client''s ad accounts (meta_business_tokens); null: Kaizen''s own';

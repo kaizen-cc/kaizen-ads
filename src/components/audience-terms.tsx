@@ -299,7 +299,7 @@ function AccountRow({ r, all, bizName, hasBiz }: { r: TermsRow; all: boolean; bi
           ? { href: r.url, label: "Accept terms", title: r.via ? `Accept as ${r.via}, the business our changes go through` : `Accept as ${bizName}, not as the client` }
           : null;
   const title = all ? (r.client ?? r.name ?? "Ad account") : (r.name ?? "Ad account");
-  // Which token a change goes through: the client business's own connection, or Kaizen's
+  // Which token a change goes through: the client's Business Manager (a partner's), or Kaizen's
   const via = r.via ? `via ${r.via}'s business` : `via ${bizName}'s business`;
   const sub = `${all ? `${r.name ?? "Ad account"} · ${r.account}` : r.account} · ${via}`;
 
@@ -395,7 +395,7 @@ function AccountRow({ r, all, bizName, hasBiz }: { r: TermsRow; all: boolean; bi
 }
 
 function why(r: TermsRow, bizName: string, hasBiz: boolean) {
-  // Through a client business's own connection: its system user, its terms
+  // Through a partner Business Manager: its system user, its terms
   if (r.via) {
     if (r.status === "none") return `The system user connected from ${r.via}'s business can't see this account. In their Business Manager: Ad accounts › this account › Assign people › that system user › Manage campaigns, then Check again on the connection.`;
     if (r.status === "view") return `The system user connected from ${r.via}'s business can only view this account. In their Business Manager, turn on Manage campaigns for it on this account, then Check again on the connection.`;

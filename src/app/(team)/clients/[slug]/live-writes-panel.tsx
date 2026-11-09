@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState, useTransition, type ReactNode } from "react";
 import { AudienceTermsCheck } from "@/components/audience-terms";
-import { MetaBusinessConnections } from "@/components/meta-business-connections";
+import { ClientBusinessManagerSelect } from "@/components/meta-business-connections";
 import { checkGoogleAccess, type GoogleAccessResult } from "../../settings/meta-write-actions";
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -60,8 +60,8 @@ export function LiveWritesPanel({ clientId, slug, data, canEdit, toggle }: { cli
           </p>
         )}
         {!m.field && m.accounts.length > 0 && <p className="text-[12.5px] text-warn">No Meta ad account ID in Details: the launcher can&rsquo;t launch into their account until it&rsquo;s set.</p>}
+        <ClientBusinessManagerSelect clientId={clientId} slug={slug} canEdit={canEdit} />
         <AudienceTermsCheck clientId={clientId} />
-        {canEdit && <MetaBusinessConnections clientId={clientId} slug={slug} />}
       </PlatformSwitch>
 
       <PlatformSwitch

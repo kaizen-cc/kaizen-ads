@@ -98,8 +98,19 @@ export async function linkAdAccount(accountId: string, form: FormData): Promise<
   const clientId = str(form, "client_id");
   if (!clientId) return { ok: false, error: "Pick a client." };
   const supabase = await createClient();
+  // Seen only through a partner's Business Manager (ZenChange and the like): the client runs through it, unless one is picked
+  let bm: string | null = null;
+  if (adminConfigured()) {
+    const { data: state } = await createAdminClient().from("sync_state").select("last_result").eq("source", "meta:accounts").maybeSingle();
+    bm = ((state?.last_result ?? {}) as { unlinked?: { id: string; bm?: { id: string } }[] }).unlinked?.find((a) => a.id === accountId)?.bm?.id ?? null;
+  }
   const { error } = await supabase.from("clients").update({ meta_ad_account_id: accountId }).eq("id", clientId);
   if (error) return { ok: false, error: error.message };
+  if (bm) {
+    await supabase.from("clients").update({ meta_business: bm }).eq("id", clientId).is("meta_business", null);
+    const { clearTokenCache } = await import("@/lib/meta-tokens");
+    clearTokenCache();
+  }
   const { data: existing } = await supabase.from("kpi_targets").select("id").eq("client_id", clientId).eq("platform", "meta").limit(1);
   if (existing?.length) await supabase.from("kpi_targets").update({ ad_account_id: accountId }).eq("client_id", clientId).eq("platform", "meta").is("ad_account_id", null);
   else await supabase.from("kpi_targets").insert({ client_id: clientId, platform: "meta", ad_account_id: accountId, conversion: "purchases", updated_by: me.id });
